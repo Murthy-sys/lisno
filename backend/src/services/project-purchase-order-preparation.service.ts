@@ -110,12 +110,17 @@ export async function buildProjectPurchaseOrderPreparation(projectId: string, se
       children: rows.map((row) => ({ id: String(row._id), sourceLineItemKey: row.sourceLineItemKey ?? null,
         vendorId: row.vendorId == null ? null : String(row.vendorId), uomId: String(row.uomId) }))
     });
+  const staleSourceItems = new Set<string>();
   const actionableRows = rows.flatMap((row) => {
     let itemSource: ReturnType<typeof storedProcurementSource>;
     try { itemSource = storedProcurementSource(row); } catch { sourceConflict(); }
-    const line = itemSource ? sourceLines.get(itemSource.sourceLineItemKey) : undefined;
+    let line = itemSource ? sourceLines.get(itemSource.sourceLineItemKey) : undefined;
     if (itemSource && (itemSource.estimateId !== source.estimateId || itemSource.estimateVersion !== source.estimateVersion ||
-      itemSource.estimateReviewRoundId !== source.estimateReviewRoundId || !line || line.sectionId !== itemSource.sourceSectionId)) sourceConflict();
+      itemSource.estimateReviewRoundId !== source.estimateReviewRoundId || !line || line.sectionId !== itemSource.sourceSectionId)) {
+      if (!source.preparationSource) sourceConflict();
+      staleSourceItems.add(String(row._id));
+      itemSource = null; line = undefined;
+    }
     if (line) itemIdsByLine.set(line.key, [...(itemIdsByLine.get(line.key) ?? []), String(row._id)]);
     return line && (!line.included || line.amountPaise === null || !approvedEstimateAmountPaiseIsActionable(line.amountPaise))
       ? [] : [{ row, itemSource, line }];
@@ -129,7 +134,7 @@ export async function buildProjectPurchaseOrderPreparation(projectId: string, se
     line.source === "configuration" && line.mainBasketId ? currentBasketNames.get(line.mainBasketId) ?? null : null,
     line.source === "configuration" && line.subBasketId && line.mainBasketId &&
       currentSubBasketNames.get(line.subBasketId)?.basketId === line.mainBasketId
-      ? currentSubBasketNames.get(line.subBasketId)?.name ?? null : null));
+      ? currentSubBasketNames.get(line.subBasketId)?.name ?? null : null, Boolean(source.preparationSource)));
   const currentLabelsByKey = new Map(estimateLines.map((line) => [line.key, {
     mainBasketName: line.mainBasketName, subBasketName: line.subBasketName, mainLineName: line.mainLineName
   }]));
@@ -170,7 +175,9 @@ export async function buildProjectPurchaseOrderPreparation(projectId: string, se
     return total;
   }));
 
-  const blockers: PurchaseOrderPreparationBlocker[] = [];
+  const blockers: PurchaseOrderPreparationBlocker[] = [...staleSourceItems].map(itemId => ({
+    code: "ESTIMATE_SOURCE_RECONCILIATION_REQUIRED", itemId,
+    message: "Review this prepared item against the current frozen estimate source before using it in a work order." }));
   const digestItems: Record<string, unknown>[] = [];
   let readyItemCount = 0;
   for (const { row, itemSource, line } of actionableRows) {
@@ -271,14 +278,14 @@ export async function buildProjectPurchaseOrderPreparation(projectId: string, se
           mode: eligibleIds.length ? digestMode(modeResolutions.get(line.key) ?? null, new Set(eligibleIds)) : null,
           itemIds: [...itemIds].sort() };
       });
-  const digest = createHash("sha256").update(JSON.stringify({ projectId, estimateSource, orderDefaults,
+  const digest = createHash("sha256").update(JSON.stringify({ projectId, estimateSource, ...(source.preparationSource ? { preparationSource: source.preparationSource } : {}), orderDefaults,
     sourceLines: digestSourceLines,
     items: digestItems, manualOrders: orders.map((order) => ({ id: String(order._id), status: String(order.status),
       approvedRevisionId: order.approvedRevisionId ?? null, draftItemIds: (order.draftLines ?? []).map((line: Row) => String(line.procurementItemId)).sort() }))
       .sort((left, right) => left.id.localeCompare(right.id)),
     commitments: { committedPaise, committedGstPaise, committedTotalPaise }
   })).digest("hex");
-  return { projectId, orderDefaults, estimateSource, approvedEstimatePaise, committedPaise, committedGstPaise,
+  return { projectId, orderDefaults, estimateSource, ...(source.preparationSource ? { preparationSource: source.preparationSource } : {}), approvedEstimatePaise, committedPaise, committedGstPaise,
     committedTotalPaise, remainingPaise: approvedEstimatePaise - committedPaise, estimateLines, sections,
     netPaise, itemCount: actionableRows.length, readyItemCount, blockers, digest };
 }
@@ -290,7 +297,7 @@ function preparationEstimateLine(line: ApprovedProcurementSourceLine, itemIds: s
   projectRate: ProcurementBasketProjectRate,
   currentMainLineName: string | null,
   currentBasketName: string | null,
-  currentSubBasketName: string | null): PurchaseOrderPreparationEstimateLine {
+  currentSubBasketName: string | null, includeSpecification = false): PurchaseOrderPreparationEstimateLine {
   return {
     key: line.key, included: line.included, source: line.source === "configuration" ? "configuration" : "legacy",
     estimateMode: resolveProcurementEstimateMode(line, line.source === "configuration" &&
@@ -303,6 +310,7 @@ function preparationEstimateLine(line: ApprovedProcurementSourceLine, itemIds: s
     subBasketId: line.subBasketId ?? null, subBasketName: currentSubBasketName ?? line.subBasketName ?? null,
     mainLineId: line.mainLineId ?? null, mainLineName: currentMainLineName ?? line.mainLineName ?? line.specification,
     quantity: String(line.quantity), unit: line.unit, amountPaise: line.amountPaise,
+    ...(includeSpecification ? { specification: line.specification } : {}),
     itemIds: [...itemIds], mode,
     projectRate,
     ...(standardSuggestion ? { standardSuggestion } : {})

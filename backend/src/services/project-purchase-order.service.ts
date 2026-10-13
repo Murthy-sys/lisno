@@ -1,3 +1,8 @@
+import { EstimateClientReviewRoundModel } from "../models/EstimateClientReviewRound.js";
+import { ProjectPurchaseOrderModeDecisionModel } from "../models/ProjectPurchaseOrderModeDecision.js";
+import { ProcurementBasketBaseRateModel } from "../models/ProcurementBasketBaseRate.js";
+import { EstimatePreparationSnapshotModel } from "../models/EstimatePreparationSnapshot.js";
+import { approvedEstimateLineItemKey } from "../domain/estimate-line-item.js";
 import { notifyIssuedWorkCommitted } from "./issued-work-delivery.js";
 import { createHash, randomUUID } from "node:crypto";
 import mongoose, { type ClientSession } from "mongoose";
@@ -5,10 +10,10 @@ import type { ZodType } from "zod";
 import {
   calculatePurchaseOrderLine, calculatePurchaseOrderTotals,
   purchaseOrderAmendSchema, purchaseOrderCancelSchema, purchaseOrderDecisionSchema,
-  purchaseOrderDraftSchema, purchaseOrderQuerySchema, purchaseOrderSubmitSchema, purchaseOrderUpdateSchema,
+  purchaseOrderDraftSchema, purchaseOrderQuerySchema, purchaseOrderSubmitSchema, purchaseOrderUpdateSchema, purchaseOrderIssueSchema, purchaseOrderReconcileSchema, type PurchaseOrderReconcileInput,
   type ApprovedPurchaseOrderLine, type PurchaseOrderAmendInput, type PurchaseOrderDecisionInput,
   type PurchaseOrderDraftInput, type PurchaseOrderLineInput, type PurchaseOrderQuery,
-  type PurchaseOrderSubmitInput, type PurchaseOrderUpdateInput
+  type PurchaseOrderSubmitInput, type PurchaseOrderUpdateInput, type PurchaseOrderIssueInput
 } from "../domain/project-purchase-order.js";
 import { MAX_FINANCE_AMOUNT_PAISE } from "../domain/project-finance.js";
 import { ApiError } from "../middleware/errors.js";
@@ -23,11 +28,13 @@ import { ProjectWorkflowTaskModel } from "../models/ProjectWorkflowTask.js";
 import { UserModel } from "../models/User.js";
 import type { AuditService } from "./audit.service.js";
 import type { PublicUser } from "./auth.service.js";
-import { assertProcurementProjectAccess, procurementItemSourceSnapshot } from "./procurement.service.js";
+import { assertProcurementProjectAccess, procurementItemSourceSnapshot, procurementPreparationProjectFilter } from "./procurement.service.js";
 import { vendorActivation } from "./vendor-readiness.service.js";
 import { assertPurchaseOrderAllocations } from "./procurement-vendor-allocation.service.js";
 import { assertNoIssuedBasketSourceOverlap } from "./project-purchase-order-tender-overlap.js";
 import { assertCompletionReviewAllowsOrderChanges } from "./site-completion-fence.js";
+
+import { assertProjectWorkOrderIssueEligible, projectWorkOrderIssueReadiness } from "./project-work-order-eligibility.service.js";
 
 type Row = Record<string, any>;
 type Source = Awaited<ReturnType<typeof procurementItemSourceSnapshot>>;
@@ -45,6 +52,8 @@ export interface PurchaseOrderDto {
   tenderAwardId: string | null;
   vendor: { id: string; code: string; name: string };
   status: string;
+  scopeReviewRequired?: boolean;
+  issueReadiness?: Awaited<ReturnType<typeof projectWorkOrderIssueReadiness>>;
   version: number;
   revision: number;
   estimateSource: { estimateId: string; estimateVersion: number; estimateReviewRoundId: string | null };
@@ -83,6 +92,8 @@ export interface ProjectPurchaseOrderService {
   update(actor: PublicUser, projectId: string, orderId: string, input: PurchaseOrderUpdateInput): Promise<PurchaseOrderDto>;
   submit(actor: PublicUser, projectId: string, orderId: string, input: PurchaseOrderSubmitInput): Promise<PurchaseOrderDto>;
   decide(actor: PublicUser, projectId: string, orderId: string, input: PurchaseOrderDecisionInput): Promise<PurchaseOrderDto>;
+  issue(actor: PublicUser, projectId: string, orderId: string, input: PurchaseOrderIssueInput): Promise<PurchaseOrderDto>;
+  reconcile(actor: PublicUser, projectId: string, orderId: string, input: PurchaseOrderReconcileInput): Promise<PurchaseOrderDto>;
   amend(actor: PublicUser, projectId: string, orderId: string, input: PurchaseOrderAmendInput): Promise<PurchaseOrderDto>;
   cancel(actor: PublicUser, projectId: string, orderId: string, input: PurchaseOrderAmendInput): Promise<PurchaseOrderDto>;
   commitments(actor: PublicUser, projectId: string): Promise<{ approvedEstimatePaise: number; committedPaise: number; committedGstPaise: number; committedTotalPaise: number; remainingPaise: number }>;
@@ -118,7 +129,42 @@ export function createProjectPurchaseOrderService(input: { audit: AuditService; 
 
   async function detail(projectId: string, orderId: string, session: ClientSession): Promise<PurchaseOrderDto> {
     const order = await requireOrder(projectId, orderId, session);
-    return orderDto(order, await ProjectPurchaseOrderRevisionModel.find({ orderId }).sort({ revision: 1 }).session(session).lean());
+    const dto = orderDto(order, await ProjectPurchaseOrderRevisionModel.find({ orderId }).sort({ revision: 1 }).session(session).lean());
+    const readiness = await projectWorkOrderIssueReadiness(projectId, session);
+    if (readiness.required) dto.issueReadiness = orderIssueReadiness(order, readiness);
+    return dto;
+  }
+
+  async function approveRevision(actor: PublicUser, order: Row, revision: Row, budgetOverrideReason: string | null, session: ClientSession, issue = false) {
+    const projectId = String(order.projectId);
+    const orderId = String(order._id);
+    const source = await procurementItemSourceSnapshot(projectId, session, true);
+    const collaborative = Boolean(source.preparationSource);
+    if (issue || !collaborative) await assertPreparedOrderIssueEligible(order, session);
+    await assertNoProjectRequestOverlap(projectId, revision.lines.map((line: Row) => String(line.procurementItemId)), session);
+    assertSource(order, source);
+    await requireActiveVendor(order.vendorId, session);
+    assertRevisionSource(revision, source);
+    // Every approval for this project writes the same document before reading
+    // commitments. Concurrent snapshots cannot approve disjoint orders using
+    // the same remaining budget, even when their vendors differ.
+    const approvalFence = await ProjectModel.findOneAndUpdate({ _id: projectId, ...procurementPreparationProjectFilter() },
+      { $inc: { purchaseOrderApprovalEpoch: 1 } }, { session, returnDocument: "after", runValidators: true, timestamps: false }).lean();
+    if (!approvalFence) throw new ApiError(409, "PURCHASE_ORDER_PROJECT_NOT_ACTIVE", "A purchase order can be approved only for an active project.");
+    await assertNoIssuedBasketSourceOverlap(projectId,
+      revision.lines.map((line: Row) => String(line.sourceLineItemKey)), session);
+    const budgetPaise = procurementBudgetPaise(source);
+    const others = await ProjectPurchaseOrderModel.find({ projectId, _id: { $ne: orderId }, approvedRevisionId: { $ne: null }, cancelledAt: null })
+      .select({ approvedNetPaise: 1 }).session(session).lean();
+    const commitments = others.reduce((sum, other) => sum + BigInt(storedApprovedPaise(other, "approvedNetPaise")), BigInt(revision.netPaise));
+    if (commitments > BigInt(budgetPaise) && !budgetOverrideReason) throw new ApiError(400, "PURCHASE_ORDER_BUDGET_OVERRIDE_REQUIRED", "This approval exceeds the approved estimate. Enter a Super Admin override reason.", { budgetOverrideReason: "Required above the approved estimate." });
+    await assertPurchaseOrderAllocations({ projectId, lines: revision.lines as ApprovedPurchaseOrderLine[], excludeOrderIds: [orderId] }, session);
+    if (!collaborative || issue) {
+      await cutOverProjectAuthority(projectId, actor.id, now(), input.audit, session);
+      await input.onApproved({ actorId: actor.id, approvedRevisionId: String(revision._id), occurredAt: now(), orderId, projectId, vendorId: order.vendorId, revision: revision.revision, lines: revision.lines as ApprovedPurchaseOrderLine[] }, session);
+      return { collaborative, totals: { approvedRevisionId: revision._id, approvedRevision: revision.revision, approvedNetPaise: revision.netPaise, approvedGstPaise: revision.gstPaise, approvedTotalPaise: revision.totalPaise, approvedAt: now() } };
+    }
+    return { collaborative, totals: {} };
   }
 
   return {
@@ -142,7 +188,7 @@ export function createProjectPurchaseOrderService(input: { audit: AuditService; 
     pending(actor, query) {
       return tx(actor, "super_admin", null, async (session) => {
         const { limit, offset } = validate(purchaseOrderQuerySchema, query);
-        const filter = { status: "pending_approval" };
+        const filter = { status: { $in: ["pending_approval", "ready_to_issue"] } };
         const total = await ProjectPurchaseOrderModel.countDocuments(filter).session(session);
         const orders = await ProjectPurchaseOrderModel.find(filter).sort({ updatedAt: 1, _id: 1 }).skip(offset).limit(limit).session(session).lean();
         const items: PurchaseOrderDto[] = [];
@@ -209,7 +255,7 @@ export function createProjectPurchaseOrderService(input: { audit: AuditService; 
         const totals = calculatePurchaseOrderTotals(lines.map(line => calculatePurchaseOrderLine(line as PurchaseOrderLineInput)));
         const timestamp = now();
         await ProjectPurchaseOrderModel.updateOne({ _id: orderId, projectId, version: fields.expectedVersion }, {
-          $set: { status: "draft", terms: fields.terms, draftLines: lines, draftNetPaise: totals.netPaise,
+          $set: { status: "draft", terms: fields.terms, draftLines: lines, scopeReviewRequired: false, draftNetPaise: totals.netPaise,
             draftGstPaise: totals.gstPaise, draftTotalPaise: totals.totalPaise, updatedById: actor.id, updatedAt: timestamp },
           $inc: { version: 1 }, $push: { receipts: receipt("update", fields.idempotencyKey, requestDigest, fields.expectedVersion + 1, null, timestamp) }
         }, { session, runValidators: true, timestamps: false }).then(assertMatched);
@@ -227,6 +273,7 @@ export function createProjectPurchaseOrderService(input: { audit: AuditService; 
         await assertCompletionReviewAllowsOrderChanges(projectId, session);
         assertVersion(order, fields.expectedVersion);
         if (order.status !== "draft") stateConflict();
+        if (order.scopeReviewRequired) throw new ApiError(409, "PURCHASE_ORDER_SCOPE_REVIEW_REQUIRED", "Save the revised quantities and commercial terms before submitting this reconciled order.");
         const source = await procurementItemSourceSnapshot(projectId, session, true);
         await assertNoProjectRequestOverlap(projectId, order.draftLines.map((line: Row) => String(line.procurementItemId)), session);
         assertSource(order, source);
@@ -264,36 +311,19 @@ export function createProjectPurchaseOrderService(input: { audit: AuditService; 
         }
         await assertCompletionReviewAllowsOrderChanges(projectId, session);
         assertVersion(order, fields.expectedVersion);
-        if (order.status !== "pending_approval" || order.submittedRevisionId !== fields.submittedRevisionId) stateConflict();
+        if (!(order.status === "pending_approval" || order.status === "ready_to_issue" && fields.decision !== "approve") || order.submittedRevisionId !== fields.submittedRevisionId) stateConflict();
         const revision = await requireRevision(order, fields.submittedRevisionId, session);
+        let collaborative = false;
         let approvedTotals: { approvedRevisionId?: string; approvedRevision?: number; approvedNetPaise?: number; approvedGstPaise?: number; approvedTotalPaise?: number; approvedAt?: Date } = {};
         if (fields.decision === "approve") {
-          const source = await procurementItemSourceSnapshot(projectId, session, true);
-          await assertNoProjectRequestOverlap(projectId, revision.lines.map((line: Row) => String(line.procurementItemId)), session);
-          assertSource(order, source);
-          await requireActiveVendor(order.vendorId, session);
-          assertRevisionSource(revision, source);
-          // Every approval for this project writes the same document before reading
-          // commitments. Concurrent snapshots cannot approve disjoint orders using
-          // the same remaining budget, even when their vendors differ.
-          const approvalFence = await ProjectModel.findOneAndUpdate({ _id: projectId, status: "active" },
-            { $inc: { purchaseOrderApprovalEpoch: 1 } }, { session, returnDocument: "after", runValidators: true, timestamps: false }).lean();
-          if (!approvalFence) throw new ApiError(409, "PURCHASE_ORDER_PROJECT_NOT_ACTIVE", "A purchase order can be approved only for an active project.");
-          await assertNoIssuedBasketSourceOverlap(projectId,
-            revision.lines.map((line: Row) => String(line.sourceLineItemKey)), session);
-          const budgetPaise = procurementBudgetPaise(source);
-          const others = await ProjectPurchaseOrderModel.find({ projectId, _id: { $ne: orderId }, approvedRevisionId: { $ne: null }, cancelledAt: null })
-            .select({ approvedNetPaise: 1 }).session(session).lean();
-          const commitments = others.reduce((sum, other) => sum + BigInt(storedApprovedPaise(other, "approvedNetPaise")), BigInt(revision.netPaise));
-          if (commitments > BigInt(budgetPaise) && !fields.budgetOverrideReason) throw new ApiError(400, "PURCHASE_ORDER_BUDGET_OVERRIDE_REQUIRED", "This approval exceeds the approved estimate. Enter a Super Admin override reason.", { budgetOverrideReason: "Required above the approved estimate." });
-          await assertPurchaseOrderAllocations({ projectId, lines: revision.lines as ApprovedPurchaseOrderLine[], excludeOrderIds: [orderId] }, session);
-          await input.onApproved({ actorId: actor.id, approvedRevisionId: String(revision._id), occurredAt: now(), orderId, projectId, vendorId: order.vendorId, revision: revision.revision, lines: revision.lines as ApprovedPurchaseOrderLine[] }, session);
-          approvedTotals = { approvedRevisionId: revision._id, approvedRevision: revision.revision, approvedNetPaise: revision.netPaise, approvedGstPaise: revision.gstPaise, approvedTotalPaise: revision.totalPaise, approvedAt: now() };
+          const approval = await approveRevision(actor, order, revision, fields.budgetOverrideReason, session);
+          approvedTotals = approval.totals;
+          collaborative = approval.collaborative;
         }
         const timestamp = now();
         const decisionId = `purchase-order-decision-${randomUUID()}`;
-        const status = fields.decision === "approve" ? "approved" : fields.decision === "request_changes" ? "changes_requested" : "rejected";
-        await ProjectPurchaseOrderModel.updateOne({ _id: orderId, projectId, version: fields.expectedVersion, status: "pending_approval", submittedRevisionId: fields.submittedRevisionId }, {
+        const status = fields.decision === "approve" ? collaborative ? "ready_to_issue" : "approved" : fields.decision === "request_changes" ? "changes_requested" : "rejected";
+        await ProjectPurchaseOrderModel.updateOne({ _id: orderId, projectId, version: fields.expectedVersion, status: order.status, submittedRevisionId: fields.submittedRevisionId }, {
           $set: { status, ...approvedTotals, updatedById: actor.id, updatedAt: timestamp },
           $inc: { version: 1 },
           $push: { decisions: { id: decisionId, revisionId: revision._id, revision: revision.revision, decision: fields.decision,
@@ -305,6 +335,56 @@ export function createProjectPurchaseOrderService(input: { audit: AuditService; 
       });
       if (result.status === "approved") await notifyIssuedWorkCommitted(input.onIssuedCommitted);
       return result;
+    },
+    async issue(actor, projectId, orderId, value) {
+      const result = await tx(actor, "procurement", projectId, async session => {
+        const fields = validate(purchaseOrderIssueSchema, value);
+        const order = await requireOrder(projectId, orderId, session);
+        const requestDigest = digest(fields);
+        if (order.projectRequestId || order.tenderAwardId) stateConflict();
+        if (hasReceipt(order, "issue", fields.idempotencyKey, requestDigest) || order.status === "approved" && order.approvedRevisionId === order.submittedRevisionId) return detail(projectId, orderId, session);
+        assertVersion(order, fields.expectedVersion);
+        if (order.status !== "ready_to_issue" || order.approvedRevisionId) stateConflict();
+        await assertCompletionReviewAllowsOrderChanges(projectId, session);
+        await assertPreparedOrderIssueEligible(order, session);
+        const revision = await requireRevision(order, order.submittedRevisionId, session);
+        const decision = [...order.decisions].reverse().find((entry: Row) => entry.revisionId === order.submittedRevisionId);
+        if (!decision || decision.decision !== "approve") stateConflict();
+        const approval = await approveRevision(actor, order, revision, decision.budgetOverrideReason, session, true);
+        const timestamp = now();
+        await ProjectPurchaseOrderModel.updateOne({ _id: orderId, projectId, version: fields.expectedVersion, status: "ready_to_issue", approvedRevisionId: null }, {
+          $set: { status: "approved", ...approval.totals, updatedById: actor.id, updatedAt: timestamp }, $inc: { version: 1 },
+          $push: { receipts: receipt("issue", fields.idempotencyKey, requestDigest, fields.expectedVersion + 1, String(revision._id), timestamp) }
+        }, { session, runValidators: true, timestamps: false }).then(assertMatched);
+        await audit(input.audit, actor.id, "project_purchase_order_issued", orderId, timestamp, { projectId, revisionId: revision._id }, session);
+        return detail(projectId, orderId, session);
+      });
+      if (result.status === "approved") await notifyIssuedWorkCommitted(input.onIssuedCommitted);
+      return result;
+    },
+    reconcile(actor, projectId, orderId, value) {
+      return tx(actor, "procurement", projectId, async session => {
+        const fields = validate(purchaseOrderReconcileSchema, value);
+        const order = await requireOrder(projectId, orderId, session);
+        const requestDigest = digest(fields);
+        if (hasReceipt(order, "reconcile", fields.idempotencyKey, requestDigest)) return detail(projectId, orderId, session);
+        assertVersion(order, fields.expectedVersion);
+        if (order.projectRequestId || order.tenderAwardId || order.approvedRevisionId || order.status === "cancelled") stateConflict();
+        const source = await procurementItemSourceSnapshot(projectId, session, true);
+        if (!source.preparationSource) stateConflict();
+        await assertCompletionReviewAllowsOrderChanges(projectId, session);
+        const prior = order.submittedRevisionId ? await requireRevision(order, order.submittedRevisionId, session) : null;
+        const scopeReviewRequired = await reconcilePurchaseOrderItems(projectId, order.draftLines.map((line: Row) => String(line.procurementItemId)), source, actor.id, now(), session, fields.acknowledgeScopeChanges);
+        const lines = await draftLines(projectId, order.vendorId, order.draftLines, source, session, order.draftLines);
+        const timestamp = now();
+        await ProjectPurchaseOrderModel.updateOne({ _id: orderId, projectId, version: fields.expectedVersion, approvedRevisionId: null }, {
+          $set: { status: "draft", estimateId: source.estimateId, estimateVersion: source.estimateVersion, estimateReviewRoundId: source.estimateReviewRoundId,
+            draftLines: lines, submittedRevisionId: null, scopeReviewRequired, updatedById: actor.id, updatedAt: timestamp }, $inc: { version: 1 },
+          $push: { receipts: receipt("reconcile", fields.idempotencyKey, requestDigest, fields.expectedVersion + 1, prior ? String(prior._id) : null, timestamp) }
+        }, { session, runValidators: true, timestamps: false }).then(assertMatched);
+        await audit(input.audit, actor.id, "project_purchase_order_reconciled", orderId, timestamp, { projectId, priorRevisionId: prior?._id ?? null, estimateVersion: source.estimateVersion }, session, fields.reason);
+        return detail(projectId, orderId, session);
+      });
     },
     amend(actor, projectId, orderId, value) {
       return tx(actor, "procurement", projectId, async (session) => {
@@ -428,7 +508,7 @@ async function requireActiveVendor(vendorId: string, session: ClientSession): Pr
   return vendor;
 }
 async function assertNoProjectRequestOverlap(projectId: string, itemIds: readonly string[], session: ClientSession): Promise<void> {
-  const active = await ProjectPurchaseOrderRequestModel.exists({ projectId, status: { $in: ["pending_approval", "changes_requested"] } }).session(session);
+  const active = await ProjectPurchaseOrderRequestModel.exists({ projectId, status: { $in: ["pending_approval", "changes_requested", "ready_to_issue"] } }).session(session);
   if (active) throw new ApiError(409, "PURCHASE_ORDER_REQUEST_OVERLAP", "The project purchase-order request must be resolved before creating or approving an individual order.");
   const approvedRequests = await ProjectPurchaseOrderRequestModel.find({ projectId, status: "approved" }).select({ submittedRevisionId: 1 }).session(session).lean() as Row[];
   if (!approvedRequests.length) return;
@@ -453,7 +533,8 @@ function procurementBudgetPaise(source: Source): number {
   return checkedProjectPaise(source.lineItems.reduce((amount, line) => amount + BigInt(line.amountPaise), 0n));
 }
 export async function cutOverProjectAuthority(projectId: string, actorId: string, timestamp: Date, auditService: AuditService, session: ClientSession): Promise<void> {
-  const project = await ProjectModel.findById(projectId).select({ status: 1, completionAuthority: 1, completionAuthorityVersion: 1 }).session(session).lean();
+  const project = await ProjectModel.findById(projectId).select({ status: 1, estimationWorkflowVersion: 1, completionAuthority: 1, completionAuthorityVersion: 1 }).session(session).lean();
+  if (project?.estimationWorkflowVersion === 2 && (project.status === "planning" || !(await projectWorkOrderIssueReadiness(projectId, session)).canIssue)) return;
   if (!project || project.status !== "active") throw new ApiError(409, "PURCHASE_ORDER_PROJECT_NOT_ACTIVE", "A purchase order can be created only for an active project.");
   if (project.completionAuthority != null && !["legacy_staff", "vendor_client"].includes(project.completionAuthority)) throw new ApiError(409, "PURCHASE_ORDER_PROJECT_AUTHORITY_CONFLICT", "Project completion authority is inconsistent.");
   if (project.completionAuthority !== "vendor_client") {
@@ -514,7 +595,7 @@ function orderDto(order: Row, revisions: readonly Row[]): PurchaseOrderDto {
     projectRequestId: order.projectRequestId == null ? null : String(order.projectRequestId),
     tenderAwardId: order.tenderAwardId == null ? null : String(order.tenderAwardId),
     vendor: { id: String(order.vendorId), code: String(order.vendorCode), name: String(order.vendorName) },
-    status: String(order.status), version: Number(order.version), revision: Number(order.revision),
+    status: String(order.status), ...(order.scopeReviewRequired ? { scopeReviewRequired: true } : {}), version: Number(order.version), revision: Number(order.revision),
     estimateSource: { estimateId: String(order.estimateId), estimateVersion: Number(order.estimateVersion), estimateReviewRoundId: order.estimateReviewRoundId ?? null },
     terms: order.terms ?? null,
     draftLines: order.draftLines.map((line: Row) => ({ id: line.id, procurementItemId: line.procurementItemId,
@@ -537,4 +618,65 @@ function orderDto(order: Row, revisions: readonly Row[]): PurchaseOrderDto {
         deliveryLocation: line.deliveryLocation ?? null })) as ApprovedPurchaseOrderLineDto[],
       totals: { netPaise: Number(revision.netPaise), gstPaise: Number(revision.gstPaise), totalPaise: Number(revision.totalPaise) } })),
     createdAt: new Date(order.createdAt).toISOString(), updatedAt: new Date(order.updatedAt).toISOString() };
+}
+
+export async function assertPreparedOrderIssueEligible(order: Row, session: ClientSession): Promise<void> {
+  const source = typeof order.estimateReviewRoundId === "string" ? { estimateId: String(order.estimateId), estimateVersion: Number(order.estimateVersion), estimateReviewRoundId: order.estimateReviewRoundId } : undefined;
+  await assertProjectWorkOrderIssueEligible(String(order.projectId), session, source);
+  if (!source && (await projectWorkOrderIssueReadiness(String(order.projectId), session)).required)
+    throw new ApiError(409, "WORK_ORDER_SOURCE_RECONCILIATION_REQUIRED", "Reconcile and approve this order against the final estimate before issuing it.");
+}
+
+export function orderIssueReadiness(order: Row, readiness: Awaited<ReturnType<typeof projectWorkOrderIssueReadiness>>) {
+  const blockers = [...readiness.blockers];
+  if (order.status !== "ready_to_issue" && order.status !== "approved") blockers.push("Internal approval of the current purchase-order revision is required.");
+  const final = readiness.finalSource;
+  if (final && (final.estimateId !== order.estimateId || final.estimateVersion !== order.estimateVersion || final.estimateReviewRoundId !== order.estimateReviewRoundId))
+    blockers.push("Reconcile this preparation with the final estimate and obtain internal approval again.");
+  return { ...readiness, blockers, canIssue: blockers.length === 0 && order.status === "ready_to_issue" };
+}
+
+/** Rebind only the current preparation; immutable submitted quote revisions retain their original source. */
+export async function reconcilePurchaseOrderItems(projectId: string, itemIds: string[], source: Source, actorId: string, at: Date,
+  session: ClientSession, acknowledgeScopeChanges = false): Promise<boolean> {
+  let scopeReviewRequired = false;
+  for (const itemId of [...new Set(itemIds)].sort()) {
+    const item = await ProjectProcurementItemModel.findOne({ _id: itemId, projectId, removedAt: null }).session(session).lean() as Row | null;
+    const line = source.lineItems.find(entry => entry.key === item?.sourceLineItemKey);
+    if (!item || !line || item.estimateId !== source.estimateId || item.sourceSectionId !== line.sectionId)
+      throw new ApiError(409, "PURCHASE_ORDER_SCOPE_RECONCILIATION_REQUIRED", "A prepared line was removed or moved. Revise the prepared scope before reconciling.");
+    if (item.estimateVersion === source.estimateVersion && item.estimateReviewRoundId === source.estimateReviewRoundId) continue;
+    const prior = item.estimateReviewRoundId
+      ? await EstimateClientReviewRoundModel.findOne({ _id: item.estimateReviewRoundId, projectId, estimateId: item.estimateId, estimateVersion: item.estimateVersion, status: "approved" }).session(session).lean()
+      : await EstimatePreparationSnapshotModel.findOne({ _id: item.preparationSource?.sourceSnapshotId, projectId, estimateId: item.estimateId, estimateVersion: item.estimateVersion }).session(session).lean();
+    const oldLines = ((item.estimateReviewRoundId ? prior?.estimateSnapshot : prior?.snapshot) as Row | undefined)?.lineItems as Row[] | undefined;
+    const old = oldLines?.find((entry, index) => approvedEstimateLineItemKey({ id: entry.id, estimateId: item.estimateId, estimateVersion: item.estimateVersion, index }) === line.key);
+    if (!old || !old.included || (old.uomId ?? old.unit) !== (line.uomId ?? line.unit))
+      throw new ApiError(409, "PURCHASE_ORDER_SCOPE_RECONCILIATION_REQUIRED", "The original source or compatible unit is unavailable. Revise the prepared scope before reconciling.");
+    const priorSpecification = old.source === "configuration" ? `${old.subBasketName ?? old.mainBasketName} · ${old.mainLineName}` : old.specification;
+    const scopeChanged = Number(old.quantity) !== line.quantity || old.roomName !== line.roomName || (old.roomId ?? null) !== (line.roomId ?? null) || priorSpecification !== line.specification || old.catalogueId !== line.catalogueId;
+    if (scopeChanged && !acknowledgeScopeChanges)
+      throw new ApiError(409, "PURCHASE_ORDER_SCOPE_REVIEW_REQUIRED", "Room or quantity changed. Review the final scope and acknowledge its changes before rebuilding the draft.");
+    scopeReviewRequired ||= scopeChanged;
+    if (!scopeChanged) {
+      for (const Model of [ProjectPurchaseOrderModeDecisionModel, ProcurementBasketBaseRateModel]) {
+        const priorDecisions = await Model.find({ projectId, estimateId: item.estimateId, estimateVersion: item.estimateVersion,
+          estimateReviewRoundId: item.estimateReviewRoundId, sourceLineItemKey: item.sourceLineItemKey }).session(session).lean() as Row[];
+        for (const priorDecision of priorDecisions) {
+          const sourceFields = { estimateId: source.estimateId, estimateVersion: source.estimateVersion, estimateReviewRoundId: source.estimateReviewRoundId };
+          if (await Model.exists({ projectId, ...sourceFields, sourceLineItemKey: item.sourceLineItemKey,
+            ...(priorDecision.mainBasketId ? { mainBasketId: priorDecision.mainBasketId } : {}) }).session(session)) continue;
+          const { _id: _oldId, createdAt: _createdAt, updatedAt: _updatedAt, ...fields } = priorDecision;
+          await Model.create([{ ...fields, ...sourceFields, _id: `order-reconciled-preparation-${randomUUID()}`, version: 1,
+            createdById: actorId, updatedById: actorId, createdAt: at, updatedAt: at }], { session });
+        }
+      }
+    }
+    const updated = await ProjectProcurementItemModel.updateOne({ _id: itemId, projectId, version: item.version, removedAt: null }, {
+      $set: { estimateId: source.estimateId, estimateVersion: source.estimateVersion, estimateReviewRoundId: source.estimateReviewRoundId,
+        preparationSource: source.preparationSource, updatedById: actorId, updatedAt: at }, $inc: { version: 1 }
+    }, { session, runValidators: true, timestamps: false });
+    if (updated.matchedCount !== 1) stateConflict();
+  }
+  return scopeReviewRequired;
 }

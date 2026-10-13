@@ -1,3 +1,6 @@
+import type { WorkOrderIssueReadiness } from "../../api/types";
+import { WorkOrderReadiness } from "./ProcurementEstimateSource";
+import { refreshProcurementLifecycle } from "./procurementLifecycleQueries";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useId, useRef, useState, type RefObject } from "react";
 
@@ -75,9 +78,9 @@ function AwardWithdrawal({ projectId, basketId, enquiryId, award, frozen, afterC
   </section>;
 }
 
-function AwardModal({ projectId, basketId, enquiry, bid, awardId, frozen, onClose, returnFocusRef, afterChange }: {
+function AwardModal({ projectId, basketId, enquiry, bid, awardId, frozen, collaborative, issueReadiness, onClose, returnFocusRef, afterChange }: {
   projectId: string; basketId: string; enquiry: BasketEnquiry; bid: BasketBidComparisonRow | null;
-  awardId: string | null; frozen: boolean;
+  awardId: string | null; frozen: boolean; collaborative: boolean; issueReadiness?: WorkOrderIssueReadiness;
   onClose: () => void; returnFocusRef: RefObject<HTMLButtonElement | null>; afterChange: () => Promise<void>;
 }) {
   const queryClient = useQueryClient();
@@ -155,6 +158,7 @@ function AwardModal({ projectId, basketId, enquiry, bid, awardId, frozen, onClos
       queryClient.invalidateQueries({ queryKey: purchaseOrderKeys.commitments(projectId) }),
       queryClient.invalidateQueries({ queryKey: vendorWorkProgressKey(projectId) })
     ]);
+    await refreshProcurementLifecycle(queryClient);
     await afterChange();
   }
   function rememberSaved(saved: BasketAward) {
@@ -192,7 +196,7 @@ function AwardModal({ projectId, basketId, enquiry, bid, awardId, frozen, onClos
       const idempotencyKey = submitRequestRef.current?.signature === signature ? submitRequestRef.current.key : procurementRequestKey();
       submitRequestRef.current = { signature, key: idempotencyKey };
       saved = await submitBasketAward(projectId, basketId, enquiry.id, saved.id,
-        { expectedVersion: saved.version, idempotencyKey, autoIssueOnApproval: true });
+        { expectedVersion: saved.version, idempotencyKey, autoIssueOnApproval: !collaborative });
       rememberSaved(saved);
     }
     if (procurementCanIssue(saved.proposal) && saved.status === "pending_approvals" &&
@@ -205,7 +209,7 @@ function AwardModal({ projectId, basketId, enquiry, bid, awardId, frozen, onClos
         slot: "procurement", decision: "approve", idempotencyKey });
       rememberSaved(saved);
       // Older submitted proposals use manual issue; the same Procurement action completes them.
-      if (saved.status === "ready_to_issue" && !saved.autoIssueOnApproval && procurementCanIssue(saved.proposal)) {
+      if (!collaborative && saved.status === "ready_to_issue" && !saved.autoIssueOnApproval && procurementCanIssue(saved.proposal)) {
         await issueSaved(saved);
         saved = await getBasketAward(projectId, basketId, enquiry.id, saved.id);
         rememberSaved(saved);
@@ -255,7 +259,7 @@ function AwardModal({ projectId, basketId, enquiry, bid, awardId, frozen, onClos
   const approvals = current?.approvals ?? [];
   const awaiting = (current?.proposal.requiredSlots ?? []).filter((slot) => !approvals.some((entry) => entry.slot === slot && entry.decision === "approve"));
   const directIssue = Boolean(result && procurementCanIssue(result));
-  const approvalStatus = !current ? directIssue ? "Procurement can issue this work order and lock the payment schedule directly." : "Select the required approvers, then send this award for approvals."
+  const approvalStatus = collaborative && current?.status !== "issued" ? current?.status === "ready_to_issue" ? "Internally approved. Issue the work order separately after final client approval and initial payment." : "Prepare this award for internal approval. Vendor work remains unissued until final approval, initial payment and explicit issue." : !current ? directIssue ? "Procurement can issue this work order and lock the payment schedule directly." : "Select the required approvers, then send this award for approvals."
     : current.status === "issued" ? "Work order issued and payment schedule locked."
     : current.status === "rejected" ? directIssue ? "This revision was rejected. Issue a new revision with Procurement approval." : "This revision was rejected. Send a new revision for approvals."
     : current.status === "draft" ? directIssue ? "Procurement can issue this work order and lock the payment schedule directly." : "Not sent. Send this award to create approval tasks."
@@ -290,7 +294,7 @@ function AwardModal({ projectId, basketId, enquiry, bid, awardId, frozen, onClos
     closeButtonRef={closeButtonRef} closeButtonLabel="Close award vendor" onClose={closeModal} initialFocusRef={closeButtonRef} returnFocusRef={returnFocusRef} busy={dismissBusy}>
     <div className="procurement-basket__award-modal-body" role="region" aria-label="Award details" tabIndex={0}><div className="procurement-basket__award">{award.isPending && activeAwardId ? <PageState state="loading" message="Loading saved award…" /> : award.isError ? <p role="alert" className="procurement-basket__error">{procurementError(award.error, "The saved award could not be loaded.")}</p> : null}
       {!bid && current ? <p role="alert" className="procurement-basket__notice">This saved bid is no longer current. Review its frozen proposal below, then choose an eligible current bid and send a new revision for approvals.</p> : null}
-      {current?.requiresRevision ? <p role="alert" className="procurement-basket__notice">This award was withdrawn for a BOQ revision. Resend the revised BOQ and choose a current bid before sending it again.</p> : null}
+      {current?.requiresRevision ? <p role="alert" className="procurement-basket__notice">{enquiry.sourceReconciliation ? "The final estimate source changed. Review this proposal and submit a new award revision for fresh approval. Unchanged bids can be retained." : "This award was withdrawn for a BOQ revision. Resend the revised BOQ and choose a current bid before sending it again."}</p> : null}
       {bid && current && current.bidId !== bid.bidId ? <p className="procurement-basket__notice">Sending this bid will create a new proposal revision. Existing approvals remain in history and the new revision needs its own approvals.</p> : null}
       {bid && current && current.bidId === bid.bidId && preview.data && !upToDate ? <p className="procurement-basket__notice">The saved proposal differs from the current inputs or server calculation. Sending it will create a new approval revision.</p> : null}
       <div className="procurement-basket__award-vendor"><div><span>{bid ? "Selected vendor" : "Saved award"}</span><h3>{displayVendor ?? "Vendor unavailable"}</h3><p>{bid ? `KPI ${score(bid.officialKpiScoreBps)} · Comparison ${score(bid.comparisonScoreBps)}` : `Proposal revision ${current?.proposal.revision ?? "unavailable"}`}</p></div><strong>{displayTotals ? formatPaise(displayTotals.totalPaise) : "Amount unavailable"}</strong></div>
@@ -305,18 +309,20 @@ function AwardModal({ projectId, basketId, enquiry, bid, awardId, frozen, onClos
       </div>
       {result ? <p className="procurement-basket__approval-status" role="status">{approvalStatus}</p> : null}
       {result?.requiredSlots.includes("budget_override") ? <p className="procurement-basket__notice">A Super Admin budget override approval is required before this work order can be issued.</p> : null}
+      {collaborative ? <WorkOrderReadiness readiness={issueReadiness} /> : null}
+      {collaborative && !issueReadiness ? <p role="status">Refresh the project to check work order release conditions.</p> : null}
       {current?.status === "ready_to_issue" && current.issueBlocker ? <p role="alert" className="procurement-basket__error">{current.issueBlocker.message}</p> : null}
       {showLegacyReviewers && proposalEditable && !frozen && bid ? <button className="procurement-basket__choose-reviewers" type="button" onClick={() => setReviewersTouched(true)}>Select approvers for a new revision</button> : null}
       {approverBlockers.map((blocker) => <p key={`${blocker.slot}:${blocker.code}`} role="alert" className="procurement-basket__error">{blocker.message}</p>)}
       {message ? <p role={sendForApprovals.isError || issue.isError ? "alert" : "status"} className={sendForApprovals.isError || issue.isError ? "procurement-basket__error" : "procurement-basket__notice"}>{message}</p> : null}
     </div></div>
-    <div className="procurement-basket__award-modal-footer ui-dialog__actions"><div className="procurement-basket__drawer-actions"><button type="button" onClick={closeModal} disabled={dismissBusy}>Close</button>{canSend ? <button type="button" disabled={busy || missingReviewers.length > 0 || bps === null || !previewReady || approverBlockers.length > 0 || missingAssignment} onClick={() => sendForApprovals.mutate()}>{directIssue ? "Issue work order & lock payment" : "Send for approvals"}</button> : null}{canRetryIssue ? <button type="button" disabled={busy} onClick={() => issue.mutate()}>Retry issue and lock</button> : null}</div></div>
+    <div className="procurement-basket__award-modal-footer ui-dialog__actions"><div className="procurement-basket__drawer-actions"><button type="button" onClick={closeModal} disabled={dismissBusy}>Close</button>{canSend ? <button type="button" disabled={busy || missingReviewers.length > 0 || bps === null || !previewReady || approverBlockers.length > 0 || missingAssignment} onClick={() => sendForApprovals.mutate()}>{collaborative ? "Submit for internal approval" : directIssue ? "Issue work order & lock payment" : "Send for approvals"}</button> : null}{canRetryIssue ? <button type="button" disabled={busy || collaborative && !issueReadiness?.canIssue} onClick={() => issue.mutate()}>{collaborative ? "Issue approved work order" : "Retry issue and lock"}</button> : null}</div></div>
   </Dialog>;
 }
 
-export function ProcurementBasketComparison({ projectId, basketId, enquiry, frozen, invitationBlocker = null, afterChange }: {
+export function ProcurementBasketComparison({ projectId, basketId, enquiry, frozen, invitationBlocker = null, collaborative = Boolean(enquiry.preparationSource || enquiry.sourceReconciliation), issueReadiness, afterChange }: {
   projectId: string; basketId: string; enquiry: BasketEnquiry; frozen: boolean;
-  invitationBlocker?: string | null; afterChange: () => Promise<void>;
+  invitationBlocker?: string | null; collaborative?: boolean; issueReadiness?: WorkOrderIssueReadiness; afterChange: () => Promise<void>;
 }) {
   const queryClient = useQueryClient();
   const counterBlockerId = useId();
@@ -353,7 +359,7 @@ export function ProcurementBasketComparison({ projectId, basketId, enquiry, froz
     {reviewSaved && existingAward.data ? <AwardModal key="saved-recovery" projectId={projectId} basketId={basketId}
       enquiry={enquiry} bid={null}
       awardId={existingAwardId} frozen={frozen} onClose={() => setReviewSaved(false)}
-      returnFocusRef={awardTrigger} afterChange={afterChange} /> : null}
+      returnFocusRef={awardTrigger} afterChange={afterChange} collaborative={collaborative} issueReadiness={issueReadiness} /> : null}
   </section>;
   const rows = [...comparison.data.rows].sort((first, second) =>
     (first.priorityRank ?? Number.MAX_SAFE_INTEGER) - (second.priorityRank ?? Number.MAX_SAFE_INTEGER));
@@ -418,6 +424,6 @@ export function ProcurementBasketComparison({ projectId, basketId, enquiry, froz
       projectId={projectId} basketId={basketId} enquiry={enquiry} bid={activeBid}
       awardId={comparison.data.awardId}
       frozen={frozen} onClose={() => { setSelectedBidId(null); setReviewSaved(false); }}
-      returnFocusRef={awardTrigger} afterChange={afterChange} /> : null}
+      returnFocusRef={awardTrigger} afterChange={afterChange} collaborative={collaborative} issueReadiness={issueReadiness} /> : null}
   </section>;
 }

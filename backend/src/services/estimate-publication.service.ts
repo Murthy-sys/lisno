@@ -1,3 +1,6 @@
+import { effectiveCommercialStatus, estimateCommercialStatusFields, type EstimationLifecycle } from "../domain/estimation-lifecycle.js";
+import { currentFinalDesignBinding, fenceCollaborativeEstimate, requireEstimateStaffActor } from "./estimate-collaboration-policy.service.js";
+import { assertEstimateRequirementsResolved } from "./estimate-requirements.service.js";
 import { estimateConfigurationRateMatches } from "../domain/estimate-mode-pricing.js";
 import { createMongoRepository } from "../repositories/mongo.js";
 import { randomUUID } from "node:crypto";
@@ -55,6 +58,7 @@ export interface EstimatePublicationService {
 }
 
 interface PublicationEstimate {
+  estimation?: EstimationLifecycle;
   _id: string;
   leadId: string;
   ownerId: string;
@@ -239,8 +243,15 @@ export function createEstimatePublicationService(input: {
             : 1;
           const roundId = `estimate-client-review-${randomUUID()}`;
           const snapshot = toEstimateSnapshot(currentEstimate, currentLead);
+          await fenceCollaborativeEstimate(currentEstimate, session);
+          let designBinding = {};
+          if (currentEstimate.estimation) {
+            await assertEstimateRequirementsResolved(String(currentEstimate.projectId), currentEstimate.estimation.requirementsVersion, session);
+            if (currentEstimate.estimation.phase === "post") designBinding = await currentFinalDesignBinding(currentEstimate, session);
+          }
           const roundInput = {
             _id: roundId,
+            ...(currentEstimate.estimation ? { phase: currentEstimate.estimation.phase, requirementsVersion: currentEstimate.estimation.requirementsVersion, ...designBinding } : {}),
             estimateId: publication.estimateId,
             leadId: publication.leadId,
             projectId: currentEstimate.projectId,
@@ -281,7 +292,8 @@ export function createEstimatePublicationService(input: {
           const estimateUpdate = publication.expectedStatus === "draft"
             ? {
                 $set: {
-                  status: "sent_to_client",
+                  ...estimateCommercialStatusFields(currentEstimate, "sent_to_client"),
+                  ...(currentEstimate.estimation ? { "estimation.pendingReviewRoundId": roundId } : {}),
                   sentToClientAt: occurredAt,
                   submittedAt,
                   approvalRequired: false
@@ -293,13 +305,14 @@ export function createEstimatePublicationService(input: {
               }
             : {
                 $set: {
-                  status: "sent_to_client",
+                  ...estimateCommercialStatusFields(currentEstimate, "sent_to_client"),
+                  ...(currentEstimate.estimation ? { "estimation.pendingReviewRoundId": roundId } : {}),
                   sentToClientAt: occurredAt
                 },
                 $push: { notifications: compatibilityNotification }
               };
           const transition = await EstimateModel.updateOne(
-            publicationEstimateFilter(publication),
+            publicationEstimateFilter(publication, Boolean(currentEstimate.estimation)),
             estimateUpdate,
             { session }
           );
@@ -308,13 +321,13 @@ export function createEstimatePublicationService(input: {
           const leadTransition = await LeadModel.updateOne(
             {
               _id: publication.leadId,
-              ownerId: publication.actorId,
+              ownerId: currentLead.ownerId,
               projectId: currentEstimate.projectId
             },
             {
               $set: {
-                stage: "estimate_sent",
-                nextAction: "client estimate decision",
+                stage: currentEstimate.estimation?.preApproval ? "won" : "estimate_sent",
+                nextAction: currentEstimate.estimation?.preApproval ? "Final estimate decision" : "client estimate decision",
                 nextActionAt: occurredAt
               }
             },
@@ -352,6 +365,8 @@ export function createEstimatePublicationService(input: {
             }
           }, session);
 
+          resultEstimate = { ...mapPublishedEstimate({ estimate: currentEstimate, expectedStatus: publication.expectedStatus, occurredAt, submittedAt, compatibilityNotification, submittedReview }),
+            ...(currentEstimate.estimation ? { estimation: { ...currentEstimate.estimation, status: "sent_to_client", pendingReviewRoundId: roundId } } : {}) };
           const createdObject = createdRound.toObject() as unknown as RoundRow;
           transactionBodyCompleted = true;
           return {
@@ -412,12 +427,14 @@ export function createEstimatePublicationService(input: {
   };
 }
 
-function publicationEstimateFilter(input: PublishEstimateToClientInput) {
+function publicationEstimateFilter(input: PublishEstimateToClientInput, collaborative = false) {
+  if (!collaborative) return { _id: input.estimateId, leadId: input.leadId, ownerId: input.actorId, status: input.expectedStatus, version: input.expectedEstimateVersion };
   return {
     _id: input.estimateId,
     leadId: input.leadId,
-    ownerId: input.actorId,
-    status: input.expectedStatus,
+     $and: [
+      { $or: [{ "estimation.workflowVersion": 2, "estimation.status": input.expectedStatus }, { "estimation.workflowVersion": { $ne: 2 }, status: input.expectedStatus, ownerId: input.actorId }] }
+    ],
     version: input.expectedEstimateVersion
   };
 }
@@ -426,9 +443,11 @@ async function findEstimateForPublication(
   input: PublishEstimateToClientInput,
   session?: mongoose.ClientSession
 ): Promise<PublicationEstimate | null> {
-  const query = EstimateModel.findOne(publicationEstimateFilter(input));
+  const query = EstimateModel.findOne(publicationEstimateFilter(input, true));
   if (session) query.session(session);
-  return await query.lean() as unknown as PublicationEstimate | null;
+  const estimate = await query.lean() as unknown as PublicationEstimate | null;
+  if (estimate?.estimation) await requireEstimateStaffActor(input.actorId, estimate, session);
+  return estimate;
 }
 
 async function findMatchingLead(
@@ -438,7 +457,6 @@ async function findMatchingLead(
 ): Promise<PublicationLead | null> {
   const query = LeadModel.findOne({
     _id: input.leadId,
-    ownerId: input.actorId,
     projectId
   });
   if (session) query.session(session);
@@ -470,7 +488,7 @@ function toPostTransitionPdfInput(
   };
 }
 
-function toEstimateSnapshot(
+export function toEstimateSnapshot(
   estimate: PublicationEstimate,
   lead: PublicationLead
 ): EstimateClientReviewSnapshot {
@@ -479,6 +497,9 @@ function toEstimateSnapshot(
     projectName: lead.projectName,
     location: lead.location,
     propertyType: estimate.propertyType,
+    rooms: Array.isArray(estimate.rooms) ? structuredClone(estimate.rooms) : [],
+    scopes: Array.isArray(estimate.scopes) ? [...estimate.scopes] as string[] : [],
+    bedroomCount: typeof estimate.bedroomCount === "number" ? estimate.bedroomCount : null,
     lineItems: estimate.lineItems.map((line, index) => ({
       source: line.source,
       itemType: line.itemType,
@@ -537,7 +558,7 @@ function toEstimateSnapshot(
   };
 }
 
-function assertPublishableConfiguredLines(estimate: PublicationEstimate): void {
+export function assertPublishableConfiguredLines(estimate: PublicationEstimate): void {
   const configured = estimate.lineItems.filter((line) => line.source === "configuration" && line.included);
   if (configured.length === 0) return;
   if (configured.some((line) =>
@@ -612,7 +633,7 @@ async function fencePublicationConfigurationDependencies(
   }
 }
 
-async function assertCurrentConfiguredPublication(
+export async function assertCurrentConfiguredPublication(
   estimate: PublicationEstimate,
   session?: mongoose.ClientSession
 ): Promise<void> {
@@ -747,16 +768,19 @@ async function loadCommittedEstimate(
   input: PublishEstimateToClientInput
 ): Promise<Record<string, unknown>> {
   try {
-    const estimate = await EstimateModel.findOne({
-      _id: input.estimateId,
-      leadId: input.leadId,
-      ownerId: input.actorId,
-      status: "sent_to_client",
-      version: input.expectedEstimateVersion
+    let estimate = await EstimateModel.findOne({
+      _id: input.estimateId, leadId: input.leadId, ownerId: input.actorId,
+      status: "sent_to_client", version: input.expectedEstimateVersion
     }).lean();
+    if (!estimate) {
+      estimate = await EstimateModel.findOne({ _id: input.estimateId, leadId: input.leadId,
+        "estimation.workflowVersion": 2, "estimation.status": "sent_to_client", version: input.expectedEstimateVersion,
+        $or: [{ ownerId: input.actorId }, { designPlanDesignerId: input.actorId, "estimation.phase": "post" }]
+      }).lean();
+    }
     if (!estimate) publicationRecoveryFailed();
     const { _id, ...persisted } = estimate as unknown as PublicationEstimate;
-    return { ...persisted, id: String(_id) };
+    return { ...persisted, id: String(_id), status: effectiveCommercialStatus(persisted) };
   } catch (error) {
     if (
       error instanceof ApiError &&

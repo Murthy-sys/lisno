@@ -1,7 +1,7 @@
 import { Router } from "express";
 import {
   purchaseOrderAmendSchema, purchaseOrderCancelSchema, purchaseOrderDecisionSchema,
-  purchaseOrderDraftSchema, purchaseOrderQuerySchema, purchaseOrderSubmitSchema, purchaseOrderUpdateSchema
+  purchaseOrderDraftSchema, purchaseOrderQuerySchema, purchaseOrderSubmitSchema, purchaseOrderUpdateSchema, purchaseOrderIssueSchema, purchaseOrderReconcileSchema
 } from "../domain/project-purchase-order.js";
 import { authenticate } from "../middleware/auth.js";
 import { requireOperation } from "../middleware/authorization.js";
@@ -44,6 +44,12 @@ export function createProjectPurchaseOrderRouter(auth: AuthService, service: Pro
   });
   router.post("/procurement/projects/:projectId/purchase-orders/:orderId/cancel", protectedRoute, requireOperation("POST /procurement/projects/:projectId/purchase-orders/:orderId/cancel"), validateBody(purchaseOrderCancelSchema), async (request, response, next) => {
     try { response.json({ data: await service.cancel(request.authenticatedUser!, String(request.params.projectId), String(request.params.orderId), request.body) }); } catch (error) { next(error); }
+  });
+  router.post("/procurement/projects/:projectId/purchase-orders/:orderId/issue", protectedRoute, requireOperation("POST /procurement/projects/:projectId/purchase-orders/:orderId/issue"), validateBody(purchaseOrderIssueSchema), async (request, response, next) => {
+    try { response.json({ data: await service.issue(request.authenticatedUser!, String(request.params.projectId), String(request.params.orderId), request.body) }); } catch (error) { next(error); }
+  });
+  router.post("/procurement/projects/:projectId/purchase-orders/:orderId/reconcile", protectedRoute, requireOperation("POST /procurement/projects/:projectId/purchase-orders/:orderId/reconcile"), validateBody(purchaseOrderReconcileSchema), async (request, response, next) => {
+    try { response.json({ data: await service.reconcile(request.authenticatedUser!, String(request.params.projectId), String(request.params.orderId), request.body) }); } catch (error) { next(error); }
   });
   return router;
 }

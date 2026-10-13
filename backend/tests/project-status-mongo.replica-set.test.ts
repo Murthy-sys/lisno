@@ -19,6 +19,11 @@ import { ProjectWorkflowTaskModel } from "../src/models/ProjectWorkflowTask.js";
 import { AiEstimatorKnowledgeVendorModel } from "../src/models/AiEstimatorKnowledgeVendor.js";
 import { readMongoProjectStatusExecutionEvidence } from "../src/repositories/project-status.js";
 import { chatUser } from "./helpers/project-chat.js";
+import { newEstimationLifecycle } from "../src/domain/estimation-lifecycle.js";
+import { DesignPlanReviewRoundModel } from "../src/models/DesignPlanReviewRound.js";
+import { EstimateDesignDrawingModel } from "../src/models/EstimateDesignDrawing.js";
+import { EstimateDesignRevisionModel } from "../src/models/EstimateDesignRevision.js";
+import { DesignWorkflowStateModel } from "../src/models/DesignWorkflowState.js";
 
 vi.mock("../src/services/vendor-readiness.service.js", () => ({
   vendorActivations: vi.fn(async (vendors: Array<{ _id: string }>) => new Map(vendors.map(vendor => [String(vendor._id), { effectiveStatus: "active" }])))
@@ -41,6 +46,57 @@ async function fixture() {
 }
 
 describe("project status Mongo snapshot reads", () => {
+  it("follows pre-approval through design, final approval and exact payment attestation using immutable sources", async () => {
+    const f = await fixture();
+    const estimation = { ...newEstimationLifecycle(3), phase: "post" as const, designScopeRevision: 2,
+      preApproval: { reviewRoundId: "review-a", estimateVersion: 4, approvedAt: CHAT_NOW } };
+    await ProjectModel.collection.updateOne({ _id: "a" }, { $set: { estimationWorkflowVersion: 2, status: "planning" } });
+    await EstimateModel.collection.updateOne({ _id: "estimate-a" }, { $set: { estimation, status: "client_approved", version: 9,
+      clientDecisionAt: new Date(CHAT_NOW), designPlanStatus: "assigned", designPlanVersion: 0, designPlanDesignerId: "designer-a" } });
+    await EstimateClientReviewRoundModel.collection.updateOne({ _id: "review-a" }, { $set: { phase: "pre", requirementsVersion: 1,
+      status: "approved", decision: "approve", decisionSource: "client_portal", decidedById: "client-a", decidedAt: new Date(CHAT_NOW) } });
+    await ProjectFinanceBucketModel.collection.insertOne({ _id: "budget-a", projectId: "a", estimateId: "estimate-a", estimateVersion: 4,
+      estimateReviewRoundId: "review-a", status: "pending_design" });
+    const designing = await f.statusService.get(f.actor("client-a"), "a");
+    expect(designing).toMatchObject({ state: "active", currentStage: { key: "internal_kickoff" } });
+    expect(designing.pendingActions.some(action => action.stageKey === "initial_payment")).toBe(false);
+    expect(await DesignWorkflowStateModel.countDocuments()).toBe(0);
+
+    const finalApproval = { reviewRoundId: "final-a", estimateVersion: 8, approvedAt: CHAT_NOW, requirementsVersion: 3,
+      designReviewRoundId: "design-a", designPlanVersion: 1, designScopeRevision: 2 };
+    await EstimateModel.collection.updateOne({ _id: "estimate-a" }, { $set: {
+      estimation: { ...estimation, finalApproval, approvedDesignScopeRevision: 2, status: "client_approved", editClosedAt: CHAT_NOW },
+      designPlanStatus: "approved", designPlanVersion: 1, designPlanApprovedAt: new Date(CHAT_NOW), designFrozenAt: new Date(CHAT_NOW),
+      designPlanApprovedById: "client-a", designPlanApprovalSource: "client_portal" } });
+    await EstimateClientReviewRoundModel.collection.insertOne({ _id: "final-a", estimateId: "estimate-a", projectId: "a", leadId: "lead-a",
+      estimateVersion: 8, sendGeneration: 2, phase: "post", requirementsVersion: 3, designReviewRoundId: "design-a", designPlanVersion: 1,
+      designScopeRevision: 2, status: "approved", decision: "approve", decisionSource: "client_portal", decidedById: "client-a",
+      decidedAt: new Date(CHAT_NOW), createdAt: new Date(CHAT_NOW), dedupeKey: "f".repeat(64), estimateSnapshot: {
+        subtotal: 100, gst: 18, total: 118, lineItems: [{ id: "line-electric", catalogueId: "EL01", included: true,
+          roomName: "Hall", specification: "Electrical", unit: "unit", quantity: 1, amount: 100, rate: 100 }] } });
+    await DesignPlanReviewRoundModel.collection.insertOne({ _id: "design-a", estimateId: "estimate-a", projectId: "a", designPlanVersion: 1,
+      designScopeRevision: 2, status: "approved", decision: "approve", decisionSource: "client_portal", decidedById: "client-a", decidedByRole: "client",
+      decidedAt: new Date(CHAT_NOW), submittedRevisionIds: ["drawing-revision-a"] });
+    await EstimateDesignDrawingModel.collection.insertOne({ _id: "drawing-a", estimateId: "estimate-a", active: true });
+    await EstimateDesignRevisionModel.collection.insertOne({ _id: "drawing-revision-a", drawingId: "drawing-a", revisionNumber: 1,
+      reviewStatus: "approved", reviewerId: "client-a", reviewedAt: new Date(CHAT_NOW) });
+    await ProjectFinanceBucketModel.collection.updateOne({ _id: "budget-a" }, { $set: { effectiveBaseline: {
+      estimateId: "estimate-a", estimateVersion: 8, estimateReviewRoundId: "final-a" } } });
+    const payment = await f.statusService.get(f.actor("client-a"), "a");
+    expect(payment).toMatchObject({ state: "active", currentStage: { key: "initial_payment" }, pendingActions: [{ responsibleRole: "super_admin", people: [{ id: "super" }] }] });
+    await DesignWorkflowStateModel.collection.insertOne({ _id: "a", projectId: "a", version: 1, estimationWorkflowVersion: 2,
+      designStartedAt: CHAT_NOW, initialPaymentAt: CHAT_NOW, initialPaymentEstimateId: "estimate-a", initialPaymentEstimateVersion: 4,
+      stages: {}, pauses: [], history: [] });
+    expect((await f.statusService.get(f.actor("client-a"), "a")).currentStage?.key).toBe("initial_payment");
+    await DesignWorkflowStateModel.collection.updateOne({ _id: "a" }, { $set: { initialPaymentEstimateVersion: 8,
+      initialPaymentReviewRoundId: "final-a", initialPaymentDesignReviewRoundId: "design-a" } });
+    const paid = await f.statusService.get(f.actor("client-a"), "a");
+    expect(paid.state).toBe("active");
+    expect(paid.pendingActions.some(action => action.stageKey === "initial_payment")).toBe(false);
+    await EstimateClientReviewRoundModel.collection.updateOne({ _id: "final-a" }, { $set: { designScopeRevision: 1 } });
+    expect(await f.statusService.get(f.actor("client-a"), "a")).toMatchObject({ state: "unavailable", pendingActions: [] });
+  });
+
   it("matches memory pending state, validates membership and performs no domain writes", async () => {
     const f = await fixture();
     const counts = await Promise.all(chatModels.map(model => model.countDocuments()));

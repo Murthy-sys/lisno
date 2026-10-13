@@ -361,7 +361,7 @@ function StageActionForm({ action, workflow, stage, onClose, onSaved, autoFocus 
       </div> : null}
       {isInternalKickoff ? <div className="workflow-stage-actions__handover">
         {presentation !== "designer" ? <strong>Design handover acknowledgement</strong> : null}
-        <label><Checkbox required checked={designHandoverAcknowledged} onChange={(event) => setDesignHandoverAcknowledged(event.target.checked)} />I acknowledge that the design flow has been handed over to me after initial payment.</label>
+        <label><Checkbox required checked={designHandoverAcknowledged} onChange={(event) => setDesignHandoverAcknowledged(event.target.checked)} />{workflow.initialPayment?.workflowVersion === 2 ? "I acknowledge the design handover following pre-estimate approval." : "I acknowledge that the design flow has been handed over to me after initial payment."}</label>
         {presentation !== "designer" ? <p>Acknowledge receipt of the design flow, attach the signed checklist, then complete and save Internal Kick off. Saving stops this stage’s countdown.</p> : null}
       </div> : null}
       {meetingActions.has(action.id) ? <Field id={`${id}-meeting`} label={action.id === "internal_kickoff_complete" ? "Meeting conducted at" : "Meeting date and time"} hint="Dates use your local time zone." required>{(props) => <Input {...props} type="datetime-local" value={meetingAt} onChange={(event) => setMeetingAt(event.target.value)} />}</Field> : null}

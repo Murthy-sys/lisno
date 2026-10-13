@@ -1,3 +1,4 @@
+import { ApiError } from "../middleware/errors.js";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { z } from "zod";
@@ -14,18 +15,15 @@ import {
   type PermissionCode
 } from "../domain/authorization.js";
 import {
-  isReservedDemoEmail,
   isReservedDevelopmentDemoIdentity
 } from "../domain/demo-identities.js";
-import { normalizeEmail } from "../domain/email.js";
 import { roleSchema } from "../domain/roles.js";
 import {
-  RepositoryConflictError,
   type AppRepository,
   type UserRecord
 } from "../repositories/types.js";
-import { createAuditService, type AuditService } from "./audit.service.js";
-import { systemClock, type Clock } from "./workflow.js";
+import { type AuditService } from "./audit.service.js";
+import { type Clock } from "./workflow.js";
 
 const tokenPayloadSchema = z
   .object({
@@ -69,7 +67,7 @@ export interface AuthPayload {
 }
 
 export const AUTHORIZATION_POLICY_VERSION =
-  "2026-10-11.vendor-basket-proposals.v1" as const;
+  "2026-10-13.client-estimation.v1" as const;
 
 export interface AuthorizationSnapshot {
   readonly role: Role;
@@ -132,6 +130,7 @@ export class ExpiredTokenError extends Error {
 }
 
 export interface AuthService {
+  assertClientInvitationRequestContext?(context: AuthenticationRequestContext): void;
   login(
     email: string,
     password: string,
@@ -154,8 +153,6 @@ export function createAuthService(
   dependencies?: AuthServiceDependencies
 ): AuthService {
   const validatedConfig = authConfigSchema.parse(config);
-  const clock = dependencies?.clock ?? systemClock;
-  const auditService = dependencies?.auditService ?? createAuditService(repository);
   const hasIssuedDevelopmentDemoAuthorization = isIssuedDevelopmentDemoAuthorization(
     dependencies?.developmentDemoAuthorization
   );
@@ -164,6 +161,9 @@ export function createAuthService(
   );
 
   return {
+    assertClientInvitationRequestContext(context) {
+      if (usesBuiltInDevelopmentSecret && !isLoopbackRemoteAddress(context.remoteAddress)) throw new InvalidCredentialsError();
+    },
     async login(email, password, context) {
       const user = await repository.findUserByEmail(email);
       const passwordMatches = await bcrypt.compare(
@@ -198,94 +198,8 @@ export function createAuthService(
       return { token, user: toPublicUser(user) };
     },
 
-    async signupClient(input, context) {
-      const emailNormalized = normalizeEmail(input.email);
-      if (isReservedDemoEmail(emailNormalized)) {
-        throw new AccountExistsError();
-      }
-      if (
-        usesBuiltInDevelopmentSecret &&
-        !isLoopbackRemoteAddress(context.remoteAddress)
-      ) {
-        throw new InvalidCredentialsError();
-      }
-      let user: UserRecord;
-      try {
-        user = await repository.runInTransaction(async (transaction) => {
-          await transaction.coordinateAuthorizationMutation();
-          await transaction.coordinateClientEmail(emailNormalized);
-          if (await transaction.findUserByEmail(emailNormalized)) {
-            throw new AccountExistsError();
-          }
-
-          const occurredAt = clock().toISOString();
-          let created: UserRecord;
-          try {
-            created = await transaction.createUser({
-              name: input.name.trim(),
-              email: input.email.trim(),
-              mobile: input.mobile.trim(),
-              address: input.address?.trim() || null,
-              passwordHash: await bcrypt.hash(input.password, 12),
-              role: "client",
-              active: true,
-              createdAt: occurredAt,
-              updatedAt: occurredAt
-            });
-          } catch (error) {
-            if (error instanceof RepositoryConflictError) throw new AccountExistsError();
-            throw error;
-          }
-
-          const linkedProjects = await transaction.linkUnclaimedProjectsToClient(
-            emailNormalized,
-            created.id,
-            occurredAt
-          );
-          await auditService.append(
-            {
-              actorId: created.id,
-              action: "client_signed_up",
-              entityType: "user",
-              entityId: created.id,
-              occurredAt,
-              newValues: { role: "client", email: created.emailNormalized }
-            },
-            transaction
-          );
-          for (const project of linkedProjects) {
-            await auditService.append(
-              {
-                actorId: created.id,
-                action: "client_project_linked",
-                entityType: "project",
-                entityId: project.id,
-                occurredAt,
-                oldValues: { clientId: null },
-                newValues: { clientId: created.id }
-              },
-              transaction
-            );
-          }
-          return created;
-        });
-      } catch (error) {
-        if (error instanceof AccountExistsError || error instanceof RepositoryConflictError) {
-          throw new AccountExistsError();
-        }
-        throw error;
-      }
-
-      const token = jwt.sign(
-        {
-          id: user.id,
-          role: user.role,
-          sessionVersion: user.sessionVersion ?? 1
-        },
-        validatedConfig.jwtSecret,
-        { expiresIn: validatedConfig.jwtExpiresInSeconds }
-      );
-      return { token, user: toPublicUser(user) };
+    async signupClient(_input, _context) {
+      throw new ApiError(403, "CLIENT_INVITATION_REQUIRED", "Client accounts are created by accepting a project invitation. Existing clients can continue to sign in.");
     },
 
     async authenticate(token, context) {

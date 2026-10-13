@@ -2,21 +2,22 @@ import type { ProjectPendingAction, ProjectStatusPerson, ProjectStatusSummary } 
 import type { ProjectCompletionSummary } from "./project-completion.js";
 import type { ChatEstimateSource, ChatWorkflowSource } from "../repositories/project-chat.js";
 import type { ProjectRecord } from "../repositories/types.js";
-import { emptyDesignWorkflowState, workflowFurnitureRoomReady, workflowIsPaused, workflowStagePrerequisiteBlockers, workflowSubmissionBlockers, type DesignWorkflowState } from "./design-workflow-state.js";
+import { emptyDesignWorkflowState, workflowDesignStartAt, workflowFurnitureRoomReady, workflowIsPaused, workflowStagePrerequisiteBlockers, workflowSubmissionBlockers, type DesignWorkflowState } from "./design-workflow-state.js";
 import { createProjectDesignWorkflow, type DesignStageType } from "./design-workflow.js";
 import { projectWorkflowBlueprints } from "./project-workflow.js";
 import type { Role } from "./roles.js";
 import type { WorkflowSpacePlanningSource } from "./workflow-space-planning.js";
+import { effectiveCommercialStatus } from "./estimation-lifecycle.js";
 
 /** Approval evidence and source selection are validated by the source reader, not status labels. */
 export interface ProjectStatusInput {
-  project: Pick<ProjectRecord, "id" | "name" | "status" | "clientId" | "assignedEstimatorId" | "initiatingDesignerId" | "assignedDesignerIds" | "managerId" | "designWorkflowStages" | "completionAuthority" | "completionAuthorityVersion" | "completionDecisionId">;
+  project: Pick<ProjectRecord, "id" | "name" | "status" | "clientId" | "assignedEstimatorId" | "initiatingDesignerId" | "assignedDesignerIds" | "managerId" | "designWorkflowStages" | "completionAuthority" | "completionAuthorityVersion" | "completionDecisionId" | "estimationWorkflowVersion">;
   participants: readonly ProjectStatusPerson[];
   estimate: ChatEstimateSource | null;
   salesOwnerIds: readonly string[];
   designAssignmentOwnerIds?: readonly string[];
   /** estimateVersion is the immutable approved snapshot version after approval, otherwise the live version. */
-  commercial: { state: "none" | "pending" | "approved" | "conflict"; estimateId: string | null; estimateVersion: number | null };
+  commercial: { state: "none" | "pending" | "pre_approved" | "approved" | "conflict"; estimateId: string | null; estimateVersion: number | null };
   workflow: DesignWorkflowState | null;
   design: WorkflowSpacePlanningSource | null;
   tasks: readonly ChatWorkflowSource[];
@@ -45,6 +46,8 @@ const recordedDate = (date: string | Date | null | undefined): string | null => 
 /** Viewer-independent, read-only projection. Participant membership has already been authorized. */
 export function deriveProjectStatus(input: ProjectStatusInput): ProjectStatusSummary {
   const { project, estimate, commercial } = input;
+  const lifecycle = estimate?.estimation?.workflowVersion === 2 ? estimate.estimation : null;
+  const approval = lifecycle?.finalApproval ?? lifecycle?.preApproval;
   const result: ProjectStatusSummary = {
     projectId: project.id, projectName: project.name, projectStatus: project.status,
     serverNow: input.serverNow, state: "active", currentStage: null, pendingActions: [], issue: null
@@ -92,13 +95,15 @@ export function deriveProjectStatus(input: ProjectStatusInput): ProjectStatusSum
   if (!recordedDate(input.serverNow) || commercial.state === "conflict" ||
       (estimate?.projectId && estimate.projectId !== project.id) ||
       commercial.estimateId !== (estimate?.id ?? null) ||
-      (estimate && commercial.estimateVersion !== (commercial.state === "approved" ? Math.max(1, estimate.version - 1) : estimate.version))) return unavailable("estimate_approval");
+      (project.estimationWorkflowVersion === 2 && estimate && !lifecycle) ||
+      (lifecycle && project.estimationWorkflowVersion !== 2) ||
+      (estimate && commercial.estimateVersion !== (lifecycle ? approval?.estimateVersion ?? estimate.version : commercial.state === "approved" ? Math.max(1, estimate.version - 1) : estimate.version))) return unavailable("estimate_approval");
 
   if (project.completionAuthority === "vendor_client" && commercial.state !== "approved" &&
       (input.execution?.hasApprovedOrder || input.participants.some(person => person.role === "vendor"))) return unavailable("estimate_approval");
 
-  if (commercial.state !== "approved") {
-    const status = estimate?.status ?? "draft";
+  if (commercial.state !== "approved" && commercial.state !== "pre_approved") {
+    const status = estimate ? effectiveCommercialStatus(estimate) : "draft";
     if (commercial.state === "pending") {
       if (status !== "sent_to_client") return unavailable("estimate_approval");
       add("estimate_approval", `estimate:${estimate!.id}:client-review`, "Review and approve the submitted estimate or request changes.", "client", clientIds);
@@ -123,12 +128,27 @@ export function deriveProjectStatus(input: ProjectStatusInput): ProjectStatusSum
   };
   const designAssignmentPending = estimate.designPlanStatus === "pending_assignment";
   const invalidDesignSource = Boolean(input.issues?.design || input.design?.sourceIssue || input.design && (input.design.estimateId !== estimate.id || input.design.designPlanVersion !== estimate.designPlanVersion));
-  const workflow = workflowEnabled ? input.workflow ?? emptyDesignWorkflowState(project.id) : emptyDesignWorkflowState(project.id);
+  const workflow = workflowEnabled || lifecycle ? input.workflow ?? emptyDesignWorkflowState(project.id) : emptyDesignWorkflowState(project.id);
   if (workflowEnabled && input.issues?.workflow) return unavailable("internal_kickoff");
   if (workflowEnabled && (workflow.projectId !== project.id ||
-      workflow.initialPaymentEstimateId && workflow.initialPaymentEstimateId !== estimate.id ||
-      workflow.initialPaymentEstimateVersion !== undefined && workflow.initialPaymentEstimateVersion !== commercial.estimateVersion)) return unavailable("initial_payment");
-  if (workflowEnabled && !workflow.initialPaymentAt) {
+      !lifecycle && (workflow.initialPaymentEstimateId && workflow.initialPaymentEstimateId !== estimate.id ||
+      workflow.initialPaymentEstimateVersion !== undefined && workflow.initialPaymentEstimateVersion !== commercial.estimateVersion))) return unavailable("initial_payment");
+  if (lifecycle) {
+    if (!lifecycle.preApproval || !recordedDate(workflowDesignStartAt(workflow))) return unavailable("internal_kickoff");
+    if (workflow.initialPaymentAt && !recordedDate(workflow.initialPaymentAt)) return unavailable("initial_payment");
+    const final = lifecycle.finalApproval;
+    if (final && (invalidDesignSource || !input.design?.readyForCompletion || input.design.reviewRoundId !== final.designReviewRoundId ||
+        input.design.designPlanVersion !== final.designPlanVersion)) return unavailable("space_planning_tentative_look_feel");
+    const receiptCurrent = final && workflow.initialPaymentAt && workflow.initialPaymentEstimateId === estimate.id &&
+      workflow.initialPaymentEstimateVersion === final.estimateVersion && workflow.initialPaymentReviewRoundId === final.reviewRoundId &&
+      workflow.initialPaymentDesignReviewRoundId === final.designReviewRoundId;
+    if (final && !receiptCurrent) {
+      add("initial_payment", "initial-payment", workflow.initialPaymentAt ? "Confirm the recorded initial payment against the final approved estimate." : "Record confirmation that the initial payment was received.",
+        "super_admin", input.participants.filter(person => person.role === "super_admin").map(person => person.id));
+      return finish();
+    }
+  }
+  if (!lifecycle && workflowEnabled && !workflow.initialPaymentAt) {
     const financeHeads = input.participants.filter(person => person.role === "finance_head");
     const superAdmins = input.participants.filter(person => person.role === "super_admin");
     const soleSuperAdminId = superAdmins.length === 1 ? superAdmins[0]!.id : null;
@@ -139,7 +159,7 @@ export function deriveProjectStatus(input: ProjectStatusInput): ProjectStatusSum
     }
     return finish();
   }
-  if (workflowEnabled && !recordedDate(workflow.initialPaymentAt)) return unavailable("initial_payment");
+  if (!lifecycle && workflowEnabled && !recordedDate(workflow.initialPaymentAt)) return unavailable("initial_payment");
   if (workflowEnabled && project.designWorkflowStages && (project.designWorkflowStages.length !== 6 || new Set(project.designWorkflowStages.map(stage => stage.type)).size !== 6 || project.designWorkflowStages.some(stage => !STAGES.has(stage.type)))) return unavailable("internal_kickoff");
 
   const internal = workflow.stages.internal_kickoff ?? {};
@@ -151,7 +171,7 @@ export function deriveProjectStatus(input: ProjectStatusInput): ProjectStatusSum
   for (const [key, stage] of Object.entries(workflow.stages)) {
     if (stage?.completedAt && (!recordedDate(stage.completedAt) || Date.parse(stage.completedAt) > Date.parse(input.serverNow) || workflowStagePrerequisiteBlockers(workflow, key as DesignStageType).length)) return unavailable(key);
   }
-  if (furniture.rooms && (input.issues?.furniture || furniture.scopeEstimateId && furniture.scopeEstimateId !== estimate.id || furniture.scopeEstimateVersion !== undefined && furniture.scopeEstimateVersion !== commercial.estimateVersion)) return unavailable("existing_furniture_dimensions");
+  if (furniture.rooms && (input.issues?.furniture || furniture.scopeEstimateId && furniture.scopeEstimateId !== estimate.id || furniture.scopeEstimateVersion !== undefined && furniture.scopeEstimateVersion !== (lifecycle?.designScopeRevision ?? commercial.estimateVersion))) return unavailable("existing_furniture_dimensions");
   if (furniture.completedAt && (!furniture.acceptedAt || !furniture.rooms || furniture.scopeReturn || !furniture.noExistingFurniture && furniture.rooms.some(room => !workflowFurnitureRoomReady(furniture, room)))) return unavailable("existing_furniture_dimensions");
   if (workflowEnabled && planning.completedAt) {
     const planningStageId = project.designWorkflowStages?.find(stage => stage.type === "space_planning_tentative_look_feel")?.id;
@@ -250,6 +270,25 @@ export function deriveProjectStatus(input: ProjectStatusInput): ProjectStatusSum
     } else if (!design?.readyForCompletion || planning.spacePlanningApproval?.estimateId !== estimate.id || planning.spacePlanningApproval.designPlanVersion !== design.designPlanVersion || planning.spacePlanningApproval.reviewRoundId !== design.reviewRoundId) return unavailable("space_planning_tentative_look_feel");
   }
 
+  if (lifecycle && !lifecycle.finalApproval) {
+    if (estimate.designPlanStatus === "approved" && input.design?.readyForCompletion) {
+      if (lifecycle.approvedDesignScopeRevision !== lifecycle.designScopeRevision) {
+        add("space_planning_tentative_look_feel", `estimate:${estimate.id}:reconcile-design`, "Reconcile the Design plan with the revised estimate scope and obtain approval again.", "designer", [estimate.designPlanDesignerId]);
+      } else if (lifecycle.status === "sent_to_client") {
+        add("estimate_approval", `estimate:${estimate.id}:final-review`, "Review and approve the final estimate or request changes.", "client", clientIds);
+      } else if (["draft", "designer_changes_requested", "client_changes_requested", "ready_for_client"].includes(lifecycle.status)) {
+        add("estimate_submission", `estimate:${estimate.id}:final-submit`, "Complete the final estimate and submit it to the Client for approval.", "designer", [estimate.designPlanDesignerId]);
+      } else if (lifecycle.status === "pending_manager_assignment") {
+        add("estimate_internal_review", `estimate:${estimate.id}:assign-review`, "Assign a Designer to review the final estimate.", "design_manager", [estimate.assignedManagerId ?? project.managerId]);
+      } else if (lifecycle.status === "pending_designer_approval") {
+        add("estimate_internal_review", `estimate:${estimate.id}:designer-review`, "Review the final estimate and approve it or request corrections.", "designer", [estimate.assignedDesignerId]);
+      } else return unavailable("estimate_approval");
+    }
+    if (input.execution?.hasCurrentProcurementItems) add("purchase_order", "purchase-order:prepare", "Prepare procurement and obtain internal approvals while final estimation is in progress.", "procurement", input.execution.procurementOwnerIds);
+    if (workflowEnabled && !internal.calendarAcceptedAt) add("internal_kickoff", "internal-kickoff:calendar", "Accept the Internal Kick off calendar meeting.", "estimator_sales", [project.assignedEstimatorId]);
+    return finish();
+  }
+
   if (estimate.designPlanStatus === "approved" && input.design?.readyForCompletion) {
     if (input.issues?.execution) return unavailable("execution");
     if (project.completionAuthority !== "vendor_client" && input.execution?.hasCurrentProcurementItems) {
@@ -316,9 +355,9 @@ export function deriveProjectStatus(input: ProjectStatusInput): ProjectStatusSum
     }
     if (!project.completionAuthority && project.status !== "completed") return unavailable("execution");
     let blueprints: ReturnType<typeof projectWorkflowBlueprints>;
-    try { blueprints = projectWorkflowBlueprints({ estimateId: estimate.id, estimateVersion: Math.max(1, estimate.version - 1), lineItems: estimate.lineItems }); }
+    try { blueprints = projectWorkflowBlueprints({ estimateId: estimate.id, estimateVersion: commercial.estimateVersion!, lineItems: estimate.lineItems }); }
     catch { return unavailable("execution"); }
-    const tasks = input.tasks.filter(task => task.kind !== "design_plan_upload");
+    const tasks = input.tasks.filter(task => task.kind !== "design_plan_upload" && !task.preparationOnly);
     const matchesBlueprint = (task: ChatWorkflowSource, blueprint: (typeof blueprints)[number]) => blueprint.kind === task.kind && blueprint.assigneeRole === task.assigneeRole && blueprint.sourceSectionId === task.sourceSectionId && blueprint.sourceLineItemKey === task.sourceLineItemKey;
     if (new Set(tasks.map(task => task.id)).size !== tasks.length || blueprints.some(blueprint => tasks.filter(task => matchesBlueprint(task, blueprint)).length !== 1) || tasks.some(task => task.projectId !== project.id || task.estimateId !== estimate.id || task.designPlanVersion !== input.design!.designPlanVersion || !["open", "in_progress", "completed"].includes(task.status ?? "") || !blueprints.some(blueprint => matchesBlueprint(task, blueprint)))) return unavailable("execution");
     for (const task of [...tasks].sort((a, b) => a.kind.localeCompare(b.kind) || a.id.localeCompare(b.id))) {

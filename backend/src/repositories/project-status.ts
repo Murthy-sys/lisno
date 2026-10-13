@@ -12,6 +12,7 @@ import { AiEstimatorKnowledgeVendorModel } from "../models/AiEstimatorKnowledgeV
 import { UserModel } from "../models/User.js";
 import { VendorWorkAssignmentModel } from "../models/VendorWorkAssignment.js";
 import { vendorActivations } from "../services/vendor-readiness.service.js";
+import type { EstimationLifecycle } from "../domain/estimation-lifecycle.js";
 
 export interface ProjectStatusExecutionEvidence {
   hasApprovedOrder: boolean;
@@ -83,12 +84,16 @@ export interface ProjectStatusEstimateEvidence {
   estimates: Array<{
     id: string; leadId: string; projectId: string | null; status: string; version: number;
     clientDecisionAt: string | null;
+    estimation?: EstimationLifecycle | null;
   }>;
   rounds: Array<{
     id: string; estimateId: string; leadId: string; projectId: string | null;
     estimateVersion: number; sendGeneration: number; status: string;
     decision: string | null; decisionSource: string | null; decidedById: string | null;
     decidedAt: string | null; createdAt: string | null; proofValid: boolean;
+    phase?: "pre" | "post" | null;
+    requirementsVersion?: number | null; designReviewRoundId?: string | null;
+    designPlanVersion?: number | null; designScopeRevision?: number | null;
   }>;
   financeSource: { estimateId: string; estimateVersion: number; reviewRoundId: string | null } | null;
 }
@@ -105,15 +110,16 @@ export async function readMongoProjectStatusEstimateEvidence(projectId: string, 
   if (session) leadQuery.session(session);
   const leads = await leadQuery.lean();
   const estimateQuery = EstimateModel.find({ $or: [{ projectId }, { leadId: { $in: leads.map(row => row._id) } }] })
-    .select("leadId projectId status version clientDecisionAt");
+    .select("leadId projectId status version clientDecisionAt estimation");
   if (session) estimateQuery.session(session);
   const estimates = await estimateQuery.lean();
   const roundQuery = EstimateClientReviewRoundModel.find({ $or: [{ projectId }, { estimateId: { $in: estimates.map(row => row._id) } }] })
-    .select("estimateId leadId projectId estimateVersion sendGeneration status decision decisionSource decidedById decidedAt createdAt");
-  const financeQuery = ProjectFinanceBucketModel.findOne({ projectId }).select("estimateId estimateVersion estimateReviewRoundId");
+    .select("estimateId leadId projectId estimateVersion sendGeneration status decision decisionSource decidedById decidedAt createdAt phase requirementsVersion designReviewRoundId designPlanVersion designScopeRevision");
+  const financeQuery = ProjectFinanceBucketModel.findOne({ projectId }).select("estimateId estimateVersion estimateReviewRoundId effectiveBaseline");
   if (session) { roundQuery.session(session); financeQuery.session(session); }
   const rounds = await roundQuery.lean();
-  const finance = await financeQuery.lean();
+  const savedFinance = await financeQuery.lean();
+  const finance = savedFinance?.effectiveBaseline ? { ...savedFinance, ...savedFinance.effectiveBaseline } : savedFinance;
   const proofQuery = EstimateClientResponseProofModel.find({ reviewRoundId: { $in: rounds.map(row => row._id) } })
     .select("estimateId reviewRoundId uploadedById uploadedAt originalFilename mimeType byteSize sha256 +storageReference");
   if (session) proofQuery.session(session);
@@ -121,7 +127,8 @@ export async function readMongoProjectStatusEstimateEvidence(projectId: string, 
   return {
     projectId,
     estimates: estimates.map(row => ({ id: String(row._id), leadId: String(row.leadId), projectId: row.projectId ?? null,
-      status: String(row.status), version: Number(row.version), clientDecisionAt: timestamp(row.clientDecisionAt) })),
+      status: String(row.status), version: Number(row.version), clientDecisionAt: timestamp(row.clientDecisionAt),
+      ...(row.estimation ? { estimation: row.estimation as EstimationLifecycle } : {}) })),
     rounds: rounds.map(row => {
       const matching = proofs.filter(proof => String(proof.reviewRoundId) === String(row._id));
       const proof = matching.length === 1 ? matching[0] : undefined;
@@ -129,6 +136,9 @@ export async function readMongoProjectStatusEstimateEvidence(projectId: string, 
         estimateVersion: Number(row.estimateVersion), sendGeneration: Number(row.sendGeneration), status: String(row.status),
         decision: row.decision ?? null, decisionSource: row.decisionSource ?? null, decidedById: row.decidedById ?? null,
         decidedAt: timestamp(row.decidedAt), createdAt: timestamp(row.createdAt),
+        phase: row.phase ?? null,
+        requirementsVersion: row.requirementsVersion ?? null, designReviewRoundId: row.designReviewRoundId ?? null,
+        designPlanVersion: row.designPlanVersion ?? null, designScopeRevision: row.designScopeRevision ?? null,
         proofValid: Boolean(proof && String(proof.estimateId) === String(row.estimateId) && proof.uploadedById === row.decidedById &&
           typeof proof.storageReference === "string" && proof.storageReference.length > 0 && typeof proof.originalFilename === "string" && proof.originalFilename.length > 0 &&
           ["application/pdf", "image/jpeg", "image/png", "image/webp"].includes(proof.mimeType) && Number.isSafeInteger(proof.byteSize) && proof.byteSize > 0 &&

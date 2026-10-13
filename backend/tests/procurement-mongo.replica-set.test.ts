@@ -1,3 +1,7 @@
+import { LeadModel } from "../src/models/Lead.js";
+import { createHash } from "node:crypto";
+import { newEstimationLifecycle } from "../src/domain/estimation-lifecycle.js";
+import { EstimatePreparationSnapshotModel } from "../src/models/EstimatePreparationSnapshot.js";
 import { Readable } from "node:stream";
 
 import mongoose from "mongoose";
@@ -20,12 +24,12 @@ import { UserModel } from "../src/models/User.js";
 import { createMemoryRepository } from "../src/repositories/memory.js";
 import { createAuditService } from "../src/services/audit.service.js";
 import {
-  createProcurementService,
+  createProcurementService, readProcurementDashboardApprovalRounds, readProcurementDashboardPortfolioReport, procurementDashboardProjection,
   procurementItemSourceSnapshot,
   runProcurementReceiptCleanupJobs,
   runProcurementReceiptReconciliationJobs
 } from "../src/services/procurement.service.js";
-import { createProjectFinanceService } from "../src/services/project-finance.service.js";
+import { createProjectFinanceService, syncCollaborativeFinanceBaseline } from "../src/services/project-finance.service.js";
 import type { FileStorage, SaveFileInput } from "../src/storage/storage.js";
 import { startMongoReplicaSet } from "./helpers/mongo-replica-set.js";
 
@@ -69,6 +73,82 @@ afterAll(async () => {
 });
 
 describe("Procurement approved-item workspace and receipt ledger", () => {
+  it("reads immutable pre-approval preparation while design and payment are pending, and blocks spending", async () => {
+    await collaborativePreparationFixture();
+    const storage = new MemoryStorage();
+    const service = procurementService(storage);
+    const projects = await service.listProjects(procurementActor());
+    expect(projects).toHaveLength(1);
+    expect(projects[0]).toMatchObject({ preparationSource: { kind: "approved_pre", sourceSnapshotId: ROUND_ID },
+      issueReadiness: { required: true, canIssue: false } });
+    const source = await mongoose.connection.transaction(session => procurementItemSourceSnapshot(PROJECT_ID, session, true));
+    expect(source).toMatchObject({ estimateVersion: 1, designPlanVersion: 0, designPlanApprovedAt: null,
+      preparationSource: { kind: "approved_pre" } });
+    await expect(service.postExpense(procurementActor(), PROJECT_ID, expenseInput(), receiptUpload()))
+      .rejects.toMatchObject({ status: 409 });
+    expect(await FinanceLedgerEntryModel.countDocuments()).toBe(0);
+    expect(storage.files.size).toBe(0);
+  });
+
+  it("keeps pre-approval dashboard detail and portfolio aligned across later working versions", async () => {
+    await collaborativePreparationFixture();
+    await LeadModel.collection.insertOne({ _id: "procurement-lead", projectId: PROJECT_ID });
+    const rounds = await readProcurementDashboardApprovalRounds([ESTIMATE_ID]);
+    expect(rounds.get(ESTIMATE_ID)?.[0]).toMatchObject({ id: ROUND_ID, estimateVersion: 1 });
+    const [project, estimate, task, bucket] = await Promise.all([
+      ProjectModel.findById(PROJECT_ID).lean(), EstimateModel.findById(ESTIMATE_ID).lean(),
+      ProjectWorkflowTaskModel.findById("procurement-task").lean(), ProjectFinanceBucketModel.findOne({ projectId: PROJECT_ID }).lean()
+    ]);
+    const detail = procurementDashboardProjection({ project: project!, estimate: estimate!, approvedRounds: rounds.get(ESTIMATE_ID)!,
+      task, bucket, entries: [] });
+    const portfolio = await readProcurementDashboardPortfolioReport();
+    expect(detail).toMatchObject({ estimateVersion: 1, designPlanVersion: 0, approvedAmountPaise: 250_000, postedSpendPaise: 0 });
+    expect(portfolio).toMatchObject({ eligibleProjects: 1, trackedProjects: 1, approvedAmountPaise: detail.approvedAmountPaise,
+      postedSpendPaise: 0, variancePaise: detail.variancePaise });
+  });
+
+  it("uses only an explicit frozen post release until final approval replaces the preparation source", async () => {
+    await collaborativePreparationFixture();
+    const before = await EstimateClientReviewRoundModel.findById(ROUND_ID).lean();
+    const snapshot = { ...before!.estimateSnapshot, lineItems: before!.estimateSnapshot.lineItems.map((line: any, index: number) => ({ ...line,
+      id: `stable-${index}`, amount: line.amount * 2 })), subtotal: 20_000, gst: 3_600, total: 23_600 };
+    await EstimatePreparationSnapshotModel.create({ _id: "released-source", projectId: PROJECT_ID,
+      estimateId: ESTIMATE_ID, estimateVersion: 4, requirementsVersion: 0, designScopeRevision: 1,
+      phase: "post", sourceDigest: createHash("sha256").update(JSON.stringify(snapshot)).digest("hex"), snapshot,
+      releasedById: SUPER_ADMIN_ID, releasedAt: NOW });
+    await EstimateModel.updateOne({ _id: ESTIMATE_ID }, { $set: { version: 5,
+      "estimation.preparationSnapshotId": "released-source", subtotal: 999_999, total: 999_999 } });
+    const released = await mongoose.connection.transaction(session => procurementItemSourceSnapshot(PROJECT_ID, session));
+    expect(released).toMatchObject({ estimateVersion: 4, estimateReviewRoundId: null, subtotalPaise: 2_000_000,
+      preparationSource: { kind: "released_post", sourceSnapshotId: "released-source" } });
+    const finalRef = { reviewRoundId: "final-round", estimateVersion: 6, approvedAt: NOW.toISOString(), requirementsVersion: 0,
+      designReviewRoundId: "design-final", designPlanVersion: 1, designScopeRevision: 1 };
+    await EstimateClientReviewRoundModel.collection.insertOne({ ...before!, _id: "final-round", phase: "post", projectId: PROJECT_ID,
+      estimateVersion: 6, sendGeneration: 2, dedupeKey: "f".repeat(64), estimateSnapshot: snapshot });
+    await EstimateModel.updateOne({ _id: ESTIMATE_ID }, { $set: { version: 7,
+      "estimation.finalApproval": finalRef, "estimation.status": "client_approved", "estimation.editClosedAt": NOW,
+      designPlanStatus: "approved", designPlanVersion: 1, designPlanApprovedAt: NOW, designPlanApprovedById: SUPER_ADMIN_ID } });
+    const final = await mongoose.connection.transaction(session => procurementItemSourceSnapshot(PROJECT_ID, session));
+    expect(final).toMatchObject({ estimateVersion: 6, estimateReviewRoundId: "final-round", designPlanVersion: 1,
+      preparationSource: { kind: "approved_final", sourceSnapshotId: "final-round" } });
+    expect((await EstimateClientReviewRoundModel.findById(ROUND_ID).lean())!.estimateSnapshot).toEqual(before!.estimateSnapshot);
+    await mongoose.connection.transaction(session => syncCollaborativeFinanceBaseline(ESTIMATE_ID, session));
+    const listed = await procurementService(new MemoryStorage()).listProjects(procurementActor());
+    expect(listed[0]).toMatchObject({ preparationSource: { kind: "approved_final" }, issueReadiness: { canIssue: false } });
+    const [project, estimate, task, bucket, rounds] = await Promise.all([
+      ProjectModel.findById(PROJECT_ID).lean(), EstimateModel.findById(ESTIMATE_ID).lean(),
+      ProjectWorkflowTaskModel.findById("procurement-task").lean(), ProjectFinanceBucketModel.findOne({ projectId: PROJECT_ID }).lean(),
+      readProcurementDashboardApprovalRounds([ESTIMATE_ID])
+    ]);
+    expect(bucket).toMatchObject({ status: "pending_design", designPlanVersion: 0, directSpendPaise: 0 });
+    const dashboard = procurementDashboardProjection({ project: project!, estimate: estimate!, task, bucket,
+      approvedRounds: rounds.get(ESTIMATE_ID)!, entries: [] });
+    expect(dashboard.estimateVersion).toBe(6);
+    await LeadModel.collection.insertOne({ _id: "procurement-lead", projectId: PROJECT_ID });
+    const portfolio = await readProcurementDashboardPortfolioReport();
+    expect(portfolio).toMatchObject({ trackedProjects: 1, approvedAmountPaise: dashboard.approvedAmountPaise });
+  });
+
   it("reads each current client from the same project without extra queries or writes", async () => {
     await createGalleryPeerFixture();
     const storage = new MemoryStorage();
@@ -1479,4 +1559,17 @@ async function createUser(
     managerId: null,
     authorizedClientIds: []
   });
+}
+
+async function collaborativePreparationFixture() {
+  const estimation = { ...newEstimationLifecycle(), phase: "post" as const,
+    preApproval: { reviewRoundId: ROUND_ID, estimateVersion: 1, approvedAt: NOW.toISOString() } };
+  await ProjectModel.updateOne({ _id: PROJECT_ID }, { $set: { status: "planning", estimationWorkflowVersion: 2 } });
+  await EstimateModel.updateOne({ _id: ESTIMATE_ID }, { $set: { estimation, version: 4,
+    designPlanStatus: "draft", designPlanVersion: 0, designPlanApprovedAt: null,
+    designPlanApprovedById: null, designPlanApprovalSource: null } });
+  await EstimateClientReviewRoundModel.collection.updateOne({ _id: ROUND_ID }, { $set: { phase: "pre", projectId: PROJECT_ID } });
+  await ProjectWorkflowTaskModel.updateOne({ _id: "procurement-task" }, { $set: { designPlanVersion: 0 } });
+  await ProjectFinanceBucketModel.updateOne({ projectId: PROJECT_ID }, { $set: { status: "pending_design",
+    designPlanVersion: 0, openedAt: null, openedById: null } });
 }

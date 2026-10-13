@@ -22,6 +22,20 @@ const page = (items: unknown[], offset = 0, hasMore = false) => response({ items
 const safe = (vendor: ProcurementVendorDetail) => { const { procurementProfile, geoTaggedPicture, msmeCertificate, ...summary } = vendor; return summary; };
 const savedCertificate = { id: "certificate-one", originalFilename: "synthetic-msme.pdf", mimeType: "application/pdf" as const, byteSize: 4, uploadedAt: vendorMetadata.updatedAt, url: "/admin/ai-estimator-knowledge/vendors/vendor-one/msme-certificate?v=certificate-one" };
 const stagedCertificate = { uploadId: "upload-one", originalFilename: "synthetic-msme.pdf", mimeType: "application/pdf", byteSize: 4, expiresAt: "2099-01-01T00:00:00Z" };
+const mainBasketIntake = {
+  basket: { name: "Stone finishes", description: "Natural stone finishes" },
+  subBasket: { name: "Interior stone", description: "Interior wall and floor stone" },
+  mainLines: [{ name: "Stone installation" }]
+};
+function fillBasketRequest(panel: HTMLElement, newMainBasket = true, subBasketName = mainBasketIntake.subBasket.name) {
+  if (newMainBasket) {
+    fireEvent.change(within(panel).getByRole("textbox", { name: "Main Basket name" }), { target: { value: mainBasketIntake.basket.name } });
+    fireEvent.change(within(panel).getByRole("textbox", { name: "Main Basket description" }), { target: { value: mainBasketIntake.basket.description } });
+  }
+  fireEvent.change(within(panel).getByRole("textbox", { name: "Sub Basket name" }), { target: { value: subBasketName } });
+  fireEvent.change(within(panel).getByRole("textbox", { name: "Sub Basket description" }), { target: { value: mainBasketIntake.subBasket.description } });
+  fireEvent.change(within(panel).getByRole("textbox", { name: "Main Line 1 name" }), { target: { value: mainBasketIntake.mainLines[0].name } });
+}
 let stored: ProcurementVendorDetail;
 let writes: Record<string, unknown>[];
 function start(existing = true, canCreateBasket = true, canUpdate = true, canCorrectBaseline = canUpdate, canRequestMainBasket = canCreateBasket) {
@@ -413,30 +427,29 @@ describe("Procurement vendor profile", () => {
     await waitFor(() => expect(view.saved).toHaveBeenCalledOnce());
     expect(writes[0]).toMatchObject({ procurementProfile: { mainBasketIds: [vendorBasket.id], subBasketIds: [vendorSubBasket.id] } });
   });
-  it("creates a full configuration draft without saving or reclassifying the underlying vendor", async () => {
+  it("saves an intake request draft without saving or reclassifying the underlying vendor", async () => {
     const requests: Record<string, unknown>[] = [];
-    const proposal = proposalFixture({ counts: { subBaskets: 0, mainLines: 0 } });
+    const proposal = proposalFixture({ requestMode: "hierarchy_intake", intake: mainBasketIntake });
     server.use(
       http.post("/api/v1/procurement/vendor-basket-proposals", async ({ request }) => { requests.push(await request.json() as Record<string, unknown>); return response(proposal); }),
       http.get("/api/v1/procurement/vendor-basket-proposals/proposal-one", () => response(proposal)),
-      http.get("/api/v1/procurement/vendor-basket-proposals/proposal-one/hierarchy", () => page([])),
-      http.get("/api/v1/procurement/vendor-basket-proposals/proposal-one/masters/:masterKind", () => page([])),
-      http.get("/api/v1/procurement/vendor-basket-proposals/references", () => page([])),
-      http.get("/api/v1/procurement/vendor-basket-proposals/proposal-one/readiness", () => response({ head: proposal.head, version: 1, requestVersion: null, ready: false, findings: [] }))
     );
     const view = start(false); const user = userEvent.setup(); await mainChoice(vendorBasket.name); await fillNew(user);
     const entity = screen.getByRole("textbox", { name: "Entity Name" });
     const position = screen.getByRole("textbox", { name: "Position" });
     fireEvent.change(position, { target: { value: "Preserved contact role" } });
     const open = screen.getByRole("button", { name: "Add Main Basket" }); await user.click(open);
-    const panel = screen.getByRole("dialog", { name: "Configure Main Basket" });
+    const panel = screen.getByRole("dialog", { name: "Request Main Basket" });
     expect(within(panel).queryByRole("textbox", { name: "Vendor name" })).not.toBeInTheDocument();
-    await user.type(within(panel).getByRole("textbox", { name: "New Main Basket name" }), "Stone finishes");
-    await user.click(within(panel).getByRole("button", { name: "Create configuration draft" }));
-    await screen.findByRole("button", { name: "Add Sub-Basket" });
-    expect(requests).toEqual([{ vendorId: null, name: "Stone finishes", idempotencyKey: expect.any(String) }]);
+    fillBasketRequest(panel);
+    await user.click(within(panel).getByRole("button", { name: "Save draft" }));
+    const savedRequest = await screen.findByRole("dialog", { name: "Basket request" });
+    expect(within(savedRequest).getByRole("textbox", { name: "Main Basket name" })).toHaveValue("Stone finishes");
+    expect(within(savedRequest).getByRole("textbox", { name: "Main Line 1 name" })).toHaveValue("Stone installation");
+    expect(within(savedRequest).queryByRole("button", { name: "Approve & activate" })).not.toBeInTheDocument();
+    expect(requests).toEqual([{ vendorId: null, name: "Stone finishes", requestMode: "hierarchy_intake", intake: mainBasketIntake, idempotencyKey: expect.any(String) }]);
     expect(writes).toHaveLength(0); expect(view.saved).not.toHaveBeenCalled();
-    await user.click(screen.getByRole("button", { name: "Close" }));
+    await user.keyboard("{Escape}");
     expect(entity).toHaveValue("New Synthetic Vendor"); expect(position).toHaveValue("Preserved contact role");
     expect(await mainChoice(vendorBasket.name)).toBeChecked();
     expect(screen.getByRole("button", { name: /^Main Baskets,/ })).not.toHaveAccessibleName(/Stone finishes/);
@@ -447,8 +460,8 @@ describe("Procurement vendor profile", () => {
     const picture = screen.getByLabelText("Geo Tagged Picture of the Vendor") as HTMLInputElement;
     const file = new File(["image"], "synthetic.png", { type: "image/png" }); await user.upload(picture, file);
     const open = screen.getByRole("button", { name: "Add Main Basket" }); open.focus(); await user.keyboard("{Enter}");
-    const panel = screen.getByRole("dialog", { name: "Configure Main Basket" });
-    await waitFor(() => expect(within(panel).getByRole("textbox", { name: "New Main Basket name" })).toHaveFocus());
+    const panel = screen.getByRole("dialog", { name: "Request Main Basket" });
+    await waitFor(() => expect(within(panel).getByRole("textbox", { name: "Main Basket name" })).toHaveFocus());
     expect((await axe.run(panel, { rules: { "color-contrast": { enabled: false } } })).violations).toEqual([]);
     await user.keyboard("{Escape}"); expect(open).toHaveFocus(); expect(picture.files?.[0]).toBe(file); expect(writes).toHaveLength(0);
   });
@@ -456,10 +469,10 @@ describe("Procurement vendor profile", () => {
   it("blocks duplicate basket names and preserves a saved vendor name", async () => {
     start(); const user = userEvent.setup(); await screen.findByRole("textbox", { name: "Entity Name" });
     await user.click(screen.getByRole("button", { name: "Add Main Basket" }));
-    const panel = screen.getByRole("dialog", { name: "Configure Main Basket" });
+    const panel = screen.getByRole("dialog", { name: "Request Main Basket" });
     expect(within(panel).queryByRole("textbox", { name: "Vendor name" })).not.toBeInTheDocument();
-    await user.type(within(panel).getByRole("textbox", { name: "New Main Basket name" }), ` ${vendorBasket.name.toUpperCase()} `);
-    await user.click(within(panel).getByRole("button", { name: "Create configuration draft" }));
+    await user.type(within(panel).getByRole("textbox", { name: "Main Basket name" }), ` ${vendorBasket.name.toUpperCase()} `);
+    await user.click(within(panel).getByRole("button", { name: "Save draft" }));
     expect(within(panel).getByText("This Main Basket already exists. Select it in the vendor form.")).toBeVisible(); expect(writes).toHaveLength(0);
   });
 
@@ -468,27 +481,26 @@ describe("Procurement vendor profile", () => {
     server.use(http.post("/api/v1/procurement/vendor-basket-proposals", async ({ request }) => { requests.push(await request.json()); return HttpResponse.json({ error: { code: "TEMPORARY", message: "Draft service unavailable" } }, { status: 503 }); }));
     start(false); const user = userEvent.setup(); await screen.findByRole("textbox", { name: "Entity Name" });
     await user.click(screen.getByRole("button", { name: "Add Main Basket" }));
-    const panel = screen.getByRole("dialog", { name: "Configure Main Basket" });
+    const panel = screen.getByRole("dialog", { name: "Request Main Basket" });
     expect(within(panel).queryByRole("textbox", { name: "Vendor name" })).not.toBeInTheDocument();
-    await user.type(within(panel).getByRole("textbox", { name: "New Main Basket name" }), "Stone finishes");
-    await user.click(within(panel).getByRole("button", { name: "Create configuration draft" }));
+    fillBasketRequest(panel);
+    await user.click(within(panel).getByRole("button", { name: "Save draft" }));
     await screen.findByText(/Draft service unavailable/);
-    expect(within(panel).getByRole("textbox", { name: "New Main Basket name" })).toBeDisabled();
-    expect(requests[0]).toEqual({ vendorId: null, name: "Stone finishes", idempotencyKey: expect.any(String) });
-    await user.click(within(panel).getByRole("button", { name: "Retry draft creation" }));
+    expect(within(panel).getByRole("textbox", { name: "Main Basket name" })).toBeDisabled();
+    expect(requests[0]).toEqual({ vendorId: null, name: "Stone finishes", requestMode: "hierarchy_intake", intake: mainBasketIntake, idempotencyKey: expect.any(String) });
+    await user.click(within(panel).getByRole("button", { name: "Retry same action" }));
     await waitFor(() => expect(requests).toHaveLength(2)); expect(requests[1]).toEqual(requests[0]); expect(writes).toHaveLength(0);
   });
 
-  it("keeps request permission separate from permission to create Sub Baskets", async () => {
+  it("does not fall back to direct Sub Basket creation for Procurement without request permission", async () => {
     start(false, true, true, true, false);
     const user = userEvent.setup();
     await user.click(await mainChoice(vendorBasket.name));
     expect(screen.queryByRole("button", { name: "Add Main Basket" })).not.toBeInTheDocument();
-    const add = screen.getByRole("button", { name: "Add Sub Basket" });
-    await waitFor(() => expect(add).toBeEnabled());
-    await user.click(add);
-    expect(screen.getByRole("button", { name: "Save Sub-Basket" })).toBeInTheDocument();
-    expect(screen.queryByRole("dialog", { name: "Configure Sub-Basket" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add Sub Basket" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Save Sub-Basket" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Request Sub Basket" })).not.toBeInTheDocument();
+    expect(writes).toHaveLength(0);
   });
   it.each([false, true])("creates a Sub-Basket proposal without Configuration or vendor writes when direct classification permission is %s", async canCreateBasket => {
     const requests: Record<string, unknown>[] = [];
@@ -501,14 +513,15 @@ describe("Procurement vendor profile", () => {
     fireEvent.change(screen.getByRole("textbox", { name: "Position" }), { target: { value: "Preserved vendor change" } });
     const add = screen.getByRole("button", { name: "Add Sub Basket" }); await waitFor(() => expect(add).toBeEnabled());
     await user.click(add);
-    const panel = screen.getByRole("dialog", { name: "Configure Sub-Basket" });
+    const panel = screen.getByRole("dialog", { name: "Request Sub Basket" });
     expect(screen.queryByRole("button", { name: "Save Sub-Basket" })).not.toBeInTheDocument();
     expect(within(panel).queryByRole("textbox", { name: "Vendor name" })).not.toBeInTheDocument();
     expect(within(panel).getByText(vendorBasket.name)).toBeVisible();
-    await user.type(within(panel).getByRole("textbox", { name: "New Sub-Basket name" }), "Kitchen joinery");
-    await user.click(within(panel).getByRole("button", { name: "Create configuration draft" }));
+    expect(within(panel).queryByRole("textbox", { name: "Main Basket name" })).not.toBeInTheDocument();
+    fillBasketRequest(panel, false, "Kitchen joinery");
+    await user.click(within(panel).getByRole("button", { name: "Save draft" }));
     await screen.findByText(/Request setup is unavailable/);
-    expect(requests).toEqual([{ vendorId: stored.id, name: "Kitchen joinery", target: { kind: "new_sub_basket", basketId: vendorBasket.id }, idempotencyKey: expect.any(String) }]);
+    expect(requests).toEqual([{ vendorId: stored.id, name: "Kitchen joinery", requestMode: "hierarchy_intake", intake: { subBasket: { ...mainBasketIntake.subBasket, name: "Kitchen joinery" }, mainLines: mainBasketIntake.mainLines }, target: { kind: "new_sub_basket", basketId: vendorBasket.id }, idempotencyKey: expect.any(String) }]);
     expect(writes).toHaveLength(0);
     await user.keyboard("{Escape}");
     await user.click(screen.getByRole("button", { name: "Discard changes" }));
@@ -525,7 +538,7 @@ describe("Procurement vendor profile", () => {
     expect(add).toBeDisabled();
     await user.selectOptions(target, second.id); await waitFor(() => expect(add).toBeEnabled());
     await user.click(add);
-    const panel = screen.getByRole("dialog", { name: "Configure Sub-Basket" });
+    const panel = screen.getByRole("dialog", { name: "Request Sub Basket" });
     expect(within(panel).getByText("Painting")).toBeVisible();
     expect(writes).toHaveLength(0);
   });

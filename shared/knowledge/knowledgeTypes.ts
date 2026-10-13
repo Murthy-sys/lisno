@@ -212,6 +212,7 @@ export interface KnowledgeBasketQuality {
 
 /** Shared Sub Basket identity, retained by vendor classifications as well as items. */
 export interface KnowledgeSubBasket extends Omit<KnowledgeBasket, "description" | "status"> {
+  readonly description?: string | null;
   readonly basketId: string;
 }
 

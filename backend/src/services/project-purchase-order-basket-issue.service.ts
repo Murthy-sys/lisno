@@ -1,4 +1,5 @@
 import { notifyIssuedWorkCommitted } from "./issued-work-delivery.js";
+import { assertProjectWorkOrderIssueEligible } from "./project-work-order-eligibility.service.js";
 import { createHash, randomUUID } from "node:crypto";
 import mongoose, { type ClientSession } from "mongoose";
 import { z } from "zod";
@@ -22,7 +23,7 @@ import { UserModel } from "../models/User.js";
 import type { AuditService } from "./audit.service.js";
 import type { PublicUser } from "./auth.service.js";
 import { assertProposalFresh, resolveProcurementBasketAwardLineTerms } from "./procurement-basket-award.service.js";
-import { basketVendorScopeMatchesRevision, currentBasket } from "./procurement-basket-tender-support.service.js";
+import { currentBasketForVendorScope } from "./procurement-basket-tender-support.service.js";
 import { assertBasketVendorEligible } from "./procurement-basket-vendor-eligibility.service.js";
 import { assertPurchaseOrderAllocations, prepareProcurementAllocation } from "./procurement-vendor-allocation.service.js";
 import { assertProcurementProjectAccess, procurementItemSourceSnapshot } from "./procurement.service.js";
@@ -78,13 +79,20 @@ export function createProjectPurchaseOrderBasketIssueService(input: { audit: Aud
           proposal.bidDigest !== bid.bidDigest || proposal.bidId !== bid._id || proposal.vendorId !== award.vendorId)
           conflict("The award, BOQ or vendor quote changed. Refresh before issuing.");
         const source = await procurementItemSourceSnapshot(projectId, session, true);
-        if (source.estimateId !== boq.estimateSource.estimateId || source.estimateVersion !== boq.estimateSource.estimateVersion ||
-          source.estimateReviewRoundId !== boq.estimateSource.estimateReviewRoundId)
+        await assertProjectWorkOrderIssueEligible(projectId, session, source.estimateReviewRoundId ? {
+          estimateId: source.estimateId, estimateVersion: source.estimateVersion, estimateReviewRoundId: source.estimateReviewRoundId
+        } : undefined);
+        if (!source.preparationSource && (source.estimateId !== boq.estimateSource.estimateId ||
+          source.estimateVersion !== boq.estimateSource.estimateVersion || source.estimateReviewRoundId !== boq.estimateSource.estimateReviewRoundId))
           conflict("The approved estimate changed after the BOQ was sent.");
         const preparation = await buildProjectPurchaseOrderPreparation(projectId, session);
-        const basket = await currentBasket(projectId, basketId, session, String(boq.preparationDigest));
-        if (!basketVendorScopeMatchesRevision(basket, boq))
-          conflict("The frozen BOQ no longer matches the approved vendor-facing scope. Revise and resend it.");
+        const basket = await currentBasketForVendorScope(projectId, basketId, boq, session).catch(error => {
+          if (!source.preparationSource && error instanceof ApiError && error.status === 409) conflict(error.message);
+          throw error;
+        });
+        if (basket.estimateSource.estimateId !== source.estimateId || basket.estimateSource.estimateVersion !== source.estimateVersion ||
+          basket.estimateSource.estimateReviewRoundId !== source.estimateReviewRoundId)
+          conflict("The basket does not match the current approved estimate source.");
         if (!basket.boqReady)
           conflict(basket.automaticSubVendor
             ? "The saved Sub-vendor Configuration cannot price every included line. Refresh the basket."
@@ -186,6 +194,7 @@ export function createProjectPurchaseOrderBasketIssueService(input: { audit: Aud
           await ProjectProcurementItemModel.create([{ _id: itemId, projectId,
             estimateId: source.estimateId, estimateVersion: source.estimateVersion,
             estimateReviewRoundId: source.estimateReviewRoundId, sourceSectionId: sourceLine.sectionId,
+            ...(source.preparationSource ? { preparationSource: source.preparationSource } : {}),
             sourceLineItemKey: sourceLine.key, tenderAwardId: awardId, tenderBoqLineId: boqLine.id,
             itemName, itemNameNormalized: procurementItemIdentity(itemName), brand,
             brandNormalized: procurementItemIdentity(brand), uomId: uom._id, uomCode: uom.code, uomName: uom.name,
@@ -304,7 +313,7 @@ async function assertNoSourceOverlap(projectId: string, estimateId: string, esti
   if (await ProjectPurchaseOrderModel.exists({ projectId, status: { $ne: "cancelled" },
     "draftLines.procurementItemId": { $in: ids } }).session(session))
     conflict("A purchase order already uses an item in this main basket.");
-  const requests = await ProjectPurchaseOrderRequestModel.find({ projectId, status: { $in: ["pending_approval", "changes_requested"] } })
+  const requests = await ProjectPurchaseOrderRequestModel.find({ projectId, status: { $in: ["pending_approval", "changes_requested", "ready_to_issue"] } })
     .select({ submittedRevisionId: 1 }).session(session).lean();
   if (requests.length && await ProjectPurchaseOrderRequestRevisionModel.exists({ projectId,
     _id: { $in: requests.map(row => row.submittedRevisionId) }, "lines.procurementItemId": { $in: ids } }).session(session))

@@ -23,6 +23,8 @@ const receiptKey = { type: "string", minLength: 8, maxLength: 128 };
 const json = (name: string) => ({ required: true, content: { "application/json": { schema: ref(name) } } });
 
 export const PROJECT_PURCHASE_ORDER_SCHEMAS = {
+  ProjectPurchaseOrderIssueReadiness: object({ required: { type: "boolean" }, canIssue: { type: "boolean" }, blockers: { type: "array", items: { type: "string" } }, finalSource: { ...object({ estimateId: id, estimateVersion: version, estimateReviewRoundId: id }), nullable: true } }),
+  ProjectPurchaseOrderReconcile: object({ expectedVersion: version, idempotencyKey: { type: "string", minLength: 8, maxLength: 128 }, reason: { type: "string", minLength: 1, maxLength: 2000 }, acknowledgeScopeChanges: { type: "boolean", default: false } }, ["expectedVersion", "idempotencyKey", "reason"]),
   ProjectPurchaseOrderLineInput: object(line),
   ProjectPurchaseOrderDraftInput: object({ vendorId: id, lines: { type: "array", minItems: 1, maxItems: 100, items: ref("ProjectPurchaseOrderLineInput") }, terms: { type: "string", minLength: 1, maxLength: 4_000 }, idempotencyKey: receiptKey }),
   ProjectPurchaseOrderUpdateInput: object({ lines: { type: "array", minItems: 1, maxItems: 100, items: ref("ProjectPurchaseOrderLineInput") }, terms: { type: "string", minLength: 1, maxLength: 4_000 }, expectedVersion: version, idempotencyKey: receiptKey }),
@@ -37,13 +39,13 @@ export const PROJECT_PURCHASE_ORDER_SCHEMAS = {
     lines: { type: "array", items: ref("ProjectPurchaseOrderApprovedLine") }, totals }),
   ProjectPurchaseOrderDecision: object({ id, revisionId: id, revision: version, decision: { type: "string", enum: ["approve", "request_changes", "reject"] },
     actorId: id, reason: { type: "string", nullable: true }, budgetOverrideReason: { type: "string", nullable: true }, decidedAt: { type: "string", format: "date-time" } }),
-  ProjectPurchaseOrder: object({ id, orderNumber: id, projectId: id, projectRequestId: { ...id, nullable: true }, vendor: object({ id, code: id, name: id }),
-    status: { type: "string", enum: ["draft", "pending_approval", "changes_requested", "rejected", "approved", "cancelled"] },
+  ProjectPurchaseOrder: object({ scopeReviewRequired: { type: "boolean" }, issueReadiness: ref("ProjectPurchaseOrderIssueReadiness"), id, orderNumber: id, projectId: id, projectRequestId: { ...id, nullable: true }, vendor: object({ id, code: id, name: id }),
+    status: { type: "string", enum: ["draft", "pending_approval", "changes_requested", "rejected", "ready_to_issue", "approved", "cancelled"] },
     version, revision: { type: "integer", minimum: 0 }, estimateSource: object({ estimateId: id, estimateVersion: version, estimateReviewRoundId: { ...id, nullable: true } }),
     terms: { type: "string", nullable: true }, draftLines: { type: "array", items: ref("ProjectPurchaseOrderLine") }, draftTotals: totals,
     submittedRevisionId: { ...id, nullable: true }, approvedRevisionId: { ...id, nullable: true }, approvedNetPaise: { ...paise, nullable: true }, approvedGstPaise: { ...paise, nullable: true }, approvedTotalPaise: { ...paise, nullable: true },
     decisions: { type: "array", items: ref("ProjectPurchaseOrderDecision") }, revisions: { type: "array", items: ref("ProjectPurchaseOrderRevision") },
-    createdAt: { type: "string", format: "date-time" }, updatedAt: { type: "string", format: "date-time" } }),
+    createdAt: { type: "string", format: "date-time" }, updatedAt: { type: "string", format: "date-time" } }, ["id", "orderNumber", "projectId", "projectRequestId", "vendor", "status", "version", "revision", "estimateSource", "terms", "draftLines", "draftTotals", "submittedRevisionId", "approvedRevisionId", "approvedNetPaise", "approvedGstPaise", "approvedTotalPaise", "decisions", "revisions", "createdAt", "updatedAt"]),
   ProjectPurchaseOrderPage: object({ items: { type: "array", items: ref("ProjectPurchaseOrder") }, total: { type: "integer", minimum: 0 }, limit: { type: "integer", minimum: 1, maximum: 100 }, offset: { type: "integer", minimum: 0 } }),
   ProjectPurchaseOrderCommitments: object({ approvedEstimatePaise: { ...paise, description: "Approved included-line procurement budget before GST." }, committedPaise: { ...paise, description: "Approved PO net commitments before GST, distinct from posted ledger spend." }, committedGstPaise: paise, committedTotalPaise: paise, remainingPaise: { type: "integer", description: "Pre-GST budget less pre-GST commitment; may be negative after an audited override." } }),
   VendorPurchaseOrder: object({ id, orderNumber: id, projectId: id, vendor: object({ id, code: id, name: id }), revision: version,
@@ -57,6 +59,8 @@ export const PROJECT_PURCHASE_ORDER_QUERY_PARAMETERS = [
 ] as const;
 
 export const PROJECT_PURCHASE_ORDER_REQUESTS = {
+  "POST /procurement/projects/:projectId/purchase-orders/:orderId/issue": json("ProjectPurchaseOrderSubmitInput"),
+  "POST /procurement/projects/:projectId/purchase-orders/:orderId/reconcile": json("ProjectPurchaseOrderReconcile"),
   "POST /procurement/projects/:projectId/purchase-orders": json("ProjectPurchaseOrderDraftInput"),
   "PATCH /procurement/projects/:projectId/purchase-orders/:orderId": json("ProjectPurchaseOrderUpdateInput"),
   "POST /procurement/projects/:projectId/purchase-orders/:orderId/submit": json("ProjectPurchaseOrderSubmitInput"),
@@ -65,6 +69,8 @@ export const PROJECT_PURCHASE_ORDER_REQUESTS = {
   "POST /procurement/projects/:projectId/purchase-orders/:orderId/cancel": json("ProjectPurchaseOrderReasonInput")
 };
 export const PROJECT_PURCHASE_ORDER_RESPONSES = {
+  "POST /procurement/projects/:projectId/purchase-orders/:orderId/issue": "ProjectPurchaseOrder",
+  "POST /procurement/projects/:projectId/purchase-orders/:orderId/reconcile": "ProjectPurchaseOrder",
   "GET /procurement/projects/:projectId/purchase-orders": "ProjectPurchaseOrderPage",
   "GET /procurement/projects/:projectId/purchase-orders/:orderId": "ProjectPurchaseOrder",
   "POST /procurement/projects/:projectId/purchase-orders": "ProjectPurchaseOrder",

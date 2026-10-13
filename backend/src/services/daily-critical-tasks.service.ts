@@ -90,7 +90,7 @@ export function createDailyCriticalTasksService(options: {
         before = page.at(-1)!.sequence;
       }
       for (const task of context.sources.workflowTasks) {
-        if (task.projectId !== projectId || task.assigneeUserId !== actor.id || task.status === "completed" || !task.openedAt) continue;
+        if (task.preparationOnly === true || task.projectId !== projectId || task.assigneeUserId !== actor.id || task.status === "completed" || !task.openedAt) continue;
         const due = task.dueAt ? new Date(task.dueAt) : workflowTaskDueAt(task.kind, new Date(task.openedAt));
         if (!Number.isFinite(due.getTime()) || due.getTime() >= at.getTime()) continue;
         result.push({kind: "workflow_task", id: task.id, projectId, projectName, title: task.title ?? task.kind.replaceAll("_", " "),

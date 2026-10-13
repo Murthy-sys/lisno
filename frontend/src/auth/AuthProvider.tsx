@@ -18,6 +18,10 @@ import {
   parseAuthorizationSnapshot
 } from "./authorization";
 import {
+  acceptProjectInvitation as acceptProjectInvitationRequest,
+  type AcceptProjectInvitationInput
+} from "./projectClientInvitationsApi";
+import {
   captureLoginReviewSession,
   clearLoginReviewSession,
   establishLoginReviewSession,
@@ -57,11 +61,19 @@ interface AuthContextValue {
   sessionExpired: boolean;
   login(credentials: Credentials): Promise<PublicUser>;
   signupClient(input: ClientSignupInput): Promise<PublicUser>;
+  acceptProjectInvitation(input: AcceptProjectInvitationInput): Promise<string>;
   logout(): Promise<void>;
   restore(): Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
+
+export class ProjectInvitationSessionError extends Error {
+  constructor() {
+    super("Your invitation was accepted. Sign in to continue to your project.");
+    this.name = "ProjectInvitationSessionError";
+  }
+}
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
@@ -230,7 +242,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [clearAuthenticatedCache, commitAuthState, supersedeRestore]);
 
   const establishSession = useCallback(
-    async (path: string, body: Credentials | ClientSignupInput) => {
+    async <T extends AuthPayload,>(request: () => Promise<T>): Promise<T> => {
       const previousToken = tokenStorage.get();
       const previousReview = authStateRef.current.session?.reviewSession ?? captureLoginReviewSession();
       const generation = supersedeRestore();
@@ -244,7 +256,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       let controller: AbortController | null = null;
       let createdReview: LoginReviewSession | null = null;
       try {
-        const payload = await apiClient.post<AuthPayload>(path, body);
+        const payload = await request();
         if (!mountedRef.current || generationRef.current !== generation) {
           throw new DOMException("Authentication was superseded.", "AbortError");
         }
@@ -294,7 +306,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           status: "authenticated",
           session: { user: payload.user, authorization: nextAuthorization, reviewSession: createdReview }
         });
-        return payload.user;
+        return payload;
       } catch (error) {
         controller?.abort();
         const ownedToken = replacementToken ?? previousToken;
@@ -328,15 +340,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const login = useCallback(
-    (credentials: Credentials) => establishSession("/auth/login", credentials),
+    async (credentials: Credentials) =>
+      (await establishSession(() => apiClient.post<AuthPayload>("/auth/login", credentials))).user,
     [establishSession]
   );
 
   const signupClient = useCallback(
-    (input: ClientSignupInput) =>
-      establishSession("/auth/client-signup", input),
+    async (input: ClientSignupInput) =>
+      (await establishSession(() => apiClient.post<AuthPayload>("/auth/client-signup", input))).user,
     [establishSession]
   );
+
+  const acceptProjectInvitation = useCallback(async (input: AcceptProjectInvitationInput) => {
+    let accepted = false;
+    try {
+      const result = await establishSession(async () => {
+        const payload = await acceptProjectInvitationRequest(input);
+        accepted = true;
+        return payload;
+      });
+      return result.projectId;
+    } catch (error) {
+      // Account/project acceptance has committed even if session restoration fails.
+      if (accepted) throw new ProjectInvitationSessionError();
+      throw error;
+    }
+  }, [establishSession]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -420,6 +449,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       sessionExpired,
       login,
       signupClient,
+      acceptProjectInvitation,
       logout,
       restore
     }),
@@ -431,6 +461,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       sessionExpired,
       login,
       signupClient,
+      acceptProjectInvitation,
       logout,
       restore
     ]

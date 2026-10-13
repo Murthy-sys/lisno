@@ -1,0 +1,10 @@
+.procurement-source { padding: 1rem 0; border-block: 1px solid var(--border, #d9dcd6); margin-block: 1rem; overflow-wrap: anywhere; }
+.procurement-source h2 { font-size: 1.125rem; margin-block: .4rem; }
+.procurement-source p, .procurement-source__readiness p { margin-block: .5rem; }
+.procurement-source__readiness ul { padding-inline-start: 1.4rem; }
+.procurement-source__actions { display: flex; gap: .75rem; flex-wrap: wrap; margin-block-start: .75rem; }
+.procurement-source__actions > * { max-width: 100%; white-space: normal; }
+.procurement-source__check { display: flex; gap: .6rem; align-items: start; overflow-wrap: anywhere; }
+.procurement-source__check input { margin-top: .25rem; flex: 0 0 auto; }
+
+.procurement-source .eyebrow { color: var(--text-muted, #626c61); }

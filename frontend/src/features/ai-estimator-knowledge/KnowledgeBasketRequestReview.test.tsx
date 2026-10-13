@@ -19,6 +19,11 @@ vi.mock("../vendor-basket-proposals/ProposalWorkspace", () => ({
     <div role="dialog" aria-label="Full basket review"><p>{proposalId} · {scope}</p><button onClick={onClose}>Close review</button></div>
 }));
 
+vi.mock("../vendor-basket-proposals/ProposalIntakeWorkspace", () => ({
+  ProposalIntakeWorkspace: ({ proposalId, scope, onClose, onDecision }: { proposalId: string; scope: string; onClose: () => void; onDecision: (result: { status: string }) => void }) =>
+    <div role="dialog" aria-label="Compact basket review"><p>{proposalId} · {scope}</p><button onClick={() => onDecision({ status: "fulfilled" })}>Submit intake</button><button onClick={() => onDecision({ status: "rejected" })}>Send back intake</button><button onClick={onClose}>Close review</button></div>
+}));
+
 const request: VendorBasketRequest = {
   id: "basket-request-one",
   requesterId: "procurement-one",
@@ -79,6 +84,43 @@ beforeEach(() => {
 });
 
 describe("Super Admin Main Basket requests", () => {
+  it("routes a hierarchy intake to compact review and describes draft-only approval", async () => {
+    rows = [{ ...request, kind: "configuration_proposal", proposalId: "intake-one", requestMode: "hierarchy_intake", proposalCounts: { subBaskets: 1, mainLines: 2 } }];
+    const user = userEvent.setup(); renderWithQuery(<KnowledgeBasketRequestReview />);
+    await user.click(await screen.findByRole("button", { name: "Review request" }));
+    const dialog = screen.getByRole("dialog", { name: "Compact basket review" });
+    expect(dialog).toHaveTextContent("intake-one · admin");
+    expect(screen.queryByRole("dialog", { name: "Full basket review" })).not.toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "Submit intake" }));
+    expect(screen.getByText("Painting was approved. Main Lines are drafts for Super Admin to configure.")).toBeVisible();
+  });
+
+  it("opens an exact intake notification in compact review and reports send-back feedback", async () => {
+    server.use(http.get("/api/v1/admin/ai-estimator-knowledge/basket-requests/intake-notification", () => response({ ...request, id: "intake-notification", kind: "configuration_proposal", requestMode: "hierarchy_intake", proposalId: "intake-notification-proposal" })));
+    const user = userEvent.setup(); renderWithQuery(<KnowledgeBasketRequestReview requestId="intake-notification" />);
+    const dialog = await screen.findByRole("dialog", { name: "Compact basket review" });
+    expect(dialog).toHaveTextContent("intake-notification-proposal");
+    await user.click(within(dialog).getByRole("button", { name: "Send back intake" }));
+    expect(screen.getByText("Painting was sent back for correction.")).toBeVisible();
+  });
+
+  it("keeps new intake status labels separate from full configuration history", async () => {
+    rows = [
+      { ...request, id: "intake-approved", proposedName: "Approved intake", kind: "configuration_proposal", requestMode: "hierarchy_intake", proposalId: "proposal-approved", status: "fulfilled" },
+      { ...request, id: "intake-returned", proposedName: "Returned intake", kind: "configuration_proposal", requestMode: "hierarchy_intake", proposalId: "proposal-returned", status: "rejected", reason: "Clarify scope" },
+      { ...request, id: "legacy-rejected", proposedName: "Legacy full request", kind: "configuration_proposal", proposalId: "legacy-one", status: "rejected" }
+    ];
+    const user = userEvent.setup(); renderWithQuery(<KnowledgeBasketRequestReview />);
+    await user.click(screen.getByRole("button", { name: "All" }));
+    const approved = (await screen.findByText("Approved intake")).closest("li")!;
+    const returned = screen.getByText("Returned intake").closest("li")!;
+    const legacy = screen.getByText("Legacy full request").closest("li")!;
+    expect(approved).toHaveTextContent("Approved"); expect(returned).toHaveTextContent("Sent back");
+    expect(returned).toHaveTextContent("Reason: Clarify scope"); expect(legacy).toHaveTextContent("rejected");
+    expect(within(legacy).getByRole("button", { name: "View configuration" })).toBeVisible();
+    expect(within(returned).getByRole("button", { name: "View request" })).toBeVisible();
+  });
+
   it("opens the exact notification request beyond the first queue page", async () => {
     const exact = { ...request, id: "request-on-page-five", kind: "configuration_proposal", proposalId: "sub-proposal-five", target: { kind: "new_sub_basket", basketId: "parent-paint" }, targetParentName: "Painting", proposedName: "Wall coating" };
     server.use(http.get("/api/v1/admin/ai-estimator-knowledge/basket-requests/request-on-page-five", () => response(exact)));

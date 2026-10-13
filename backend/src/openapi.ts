@@ -1,4 +1,5 @@
 import { VENDOR_BASKET_REQUEST_NOTIFICATION_SCHEMAS, VENDOR_BASKET_REQUEST_NOTIFICATION_RESPONSES, VENDOR_BASKET_REQUEST_NOTIFICATION_QUERIES, VENDOR_BASKET_REQUEST_NOTIFICATION_BODIES } from "./openapi/vendor-basket-request-notifications.js";
+import { ESTIMATE_COLLABORATION_SCHEMAS, ESTIMATE_COLLABORATION_REQUESTS, ESTIMATE_COLLABORATION_RESPONSES } from "./openapi/estimate-collaboration.js";
 import { VENDOR_BASKET_PROPOSAL_SCHEMAS, VENDOR_BASKET_PROPOSAL_BODIES, VENDOR_BASKET_PROPOSAL_RESPONSES, VENDOR_BASKET_PROPOSAL_QUERIES } from "./openapi/vendor-basket-proposals.js";
 import { ASK_LISNO_SCHEMAS } from "./openapi/ask-lisno.js";
 import { VENDOR_ACCESS_SCHEMAS, VENDOR_ACCESS_REQUESTS, VENDOR_ACCESS_RESPONSES } from "./openapi/vendor-access.js";
@@ -132,6 +133,7 @@ const genericJsonRequestBody: OpenApiRequestBody = {
 };
 
 const requestBodiesByOperation: Readonly<Record<string, OpenApiRequestBody>> = {
+  ...ESTIMATE_COLLABORATION_REQUESTS,
   "POST /client/ask-lisno": jsonRequest("AskLisnoRequest"),
   "POST /estimates/:estimateId/design-plan-documents/prepare": jsonRequest("PlanDocumentPrepare"),
   ...CHAT_REQUEST_BODIES,
@@ -238,6 +240,7 @@ const operationsWithoutBodies = new Set<string>([
 ]);
 
 const responseSchemaByOperation: Readonly<Record<string, string>> = {
+  ...ESTIMATE_COLLABORATION_RESPONSES,
   "POST /client/ask-lisno": "AskLisnoResponse",
   "GET /estimation/catalogue": "EstimatorCataloguePage",
   "GET /estimation/catalogue/recommendations": "EstimatorCatalogueRecommendationRead",
@@ -390,7 +393,7 @@ const operationSummaries: Readonly<Record<string, string>> = {
   "POST /vendor-induction/inspect": "Inspect a vendor induction link",
   "POST /vendor-induction/submit": "Submit vendor induction answers",
   "POST /auth/login": "Sign in and issue a JWT",
-  "POST /auth/client-signup": "Create a Client account",
+  "POST /auth/client-signup": "Retired public Client signup",
   "POST /auth/password-reset/request": "Request password-reset instructions",
   "POST /auth/password-reset/inspect": "Inspect a password-reset link",
   "POST /auth/password-reset/complete": "Choose a new password",
@@ -959,7 +962,8 @@ addOperation(
   "POST",
   publicOperation("POST /auth/client-signup", {
     requestBody: requestBodiesByOperation["POST /auth/client-signup"],
-    responses: publicJsonResponses("AuthPayload", ["400", "401", "409", "429", "500"], "201")
+    description: "Client access now requires a project email invitation and verified acceptance. This compatibility endpoint rejects public signup without creating an account or linking projects.",
+    responses: { "403": { $ref: "#/components/responses/Forbidden" }, "429": { $ref: "#/components/responses/TooManyRequests" } }
   })
 );
 
@@ -1025,6 +1029,15 @@ addOperation(
   })
 );
 
+addOperation(paths, "/auth/project-invitations/inspect", "POST", publicOperation("POST /auth/project-invitations/inspect", {
+  tags: ["Invitations"], requestBody: requestBodiesByOperation["POST /auth/project-invitations/inspect"],
+  responses: publicJsonResponses(undefined, ["400", "404", "410", "429", "500"])
+}));
+addOperation(paths, "/auth/project-invitations/accept", "POST", publicOperation("POST /auth/project-invitations/accept", {
+  tags: ["Invitations"], requestBody: requestBodiesByOperation["POST /auth/project-invitations/accept"],
+  responses: publicJsonResponses(undefined, ["400", "403", "404", "409", "410", "429", "500"], "201")
+}));
+
 addOperation(paths, "/vendor-kpi/inspect", "POST", publicOperation("POST /vendor-kpi/inspect", {
   tags: ["Vendor KPI"],
   requestBody: requestBodiesByOperation["POST /vendor-kpi/inspect"],
@@ -1075,7 +1088,7 @@ export const openApiDocument: LisnoOpenApiDocument = Object.freeze({
   tags: [
     tag("Project messages", "Shared project conversations, selected participants, mentions, and live discussion priorities."),
     tag("Health", "API liveness."),
-    tag("Authentication", "Sign-in, Client signup, and current-session identity."),
+    tag("Authentication", "Sign-in, verified project invitation acceptance, and current-session identity."),
     tag("Invitations", "Staff invitation administration and public acceptance."),
     tag("Vendor KPI", "Staff vendor assessments and one-time vendor self-assessment links."),
     tag("Administration", "User and access administration."),
@@ -1573,6 +1586,7 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
   const id = { type: "string", minLength: 1 } as const;
   const dateTime = { type: "string", format: "date-time" } as const;
   return {
+    ...ESTIMATE_COLLABORATION_SCHEMAS,
     ...AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS,
     ...PROCUREMENT_VENDOR_SCHEMAS,
     ...VENDOR_KPI_SCHEMAS,
@@ -2618,6 +2632,9 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
       properties: {
         id,
         estimateId: id,
+        leadId: id,
+        estimationWorkflowVersion: { type: "integer", enum: [2] },
+        scopeReconciliation: { type: "object", required: ["required", "designScopeRevision", "approvedDesignScopeRevision"], properties: { required: { type: "boolean" }, designScopeRevision: { type: "integer", minimum: 1 }, approvedDesignScopeRevision: { type: "integer", minimum: 1, nullable: true } } },
         projectId: id,
         projectName: { type: "string" },
         clientName: { type: "string" },
@@ -2713,7 +2730,7 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
     FurnitureDimensionItem: { oneOf: [{ $ref: "#/components/schemas/FurniturePhysicalDimensionItem" }, { $ref: "#/components/schemas/FurnitureCountItem" }], description: "Immutable dimensional or point-count measurements; historic dimensions may omit measurementType." },
     FurnitureDimensions: { type: "object", additionalProperties: false, required: ["submissionEventId", "revision", "status", "items", "submittedAt"], properties: { submissionEventId: id, revision: { type: "integer", minimum: 1 }, status: { type: "string", enum: ["pending", "changes_requested", "approved"] }, items: { type: "array", minItems: 1, items: { $ref: "#/components/schemas/FurnitureDimensionItem" } }, submittedAt: dateTime, reviewedAt: dateTime, returnReason: { type: "string" } } },
     DesignWorkflowActionResult: { type: "object", additionalProperties: false, required: ["version"], properties: { version: { type: "integer", minimum: 1 } } },
-    DesignWorkflowPaymentConfirmations: { type: "array", items: { type: "object", additionalProperties: false, required: ["projectId", "projectName", "confirmedAt", "version", "status", "canConfirm"], properties: { projectId: id, projectName: { type: "string" }, confirmedAt: { type: "string", format: "date-time", nullable: true }, version: { type: "integer", minimum: 0 }, status: { type: "string", enum: ["awaiting_estimate_approval", "awaiting_payment", "received"] }, canConfirm: { type: "boolean" }, issue: { type: "string" } } } },
+    DesignWorkflowPaymentConfirmations: { type: "array", items: { type: "object", additionalProperties: false, required: ["projectId", "projectName", "confirmedAt", "version", "status", "canConfirm"], properties: { workflowVersion: { type: "integer", enum: [2] }, designStartedAt: { ...dateTime, nullable: true }, existingReceiptAt: { ...dateTime, nullable: true }, requiresAttestation: { type: "boolean" }, projectId: id, projectName: { type: "string" }, confirmedAt: { type: "string", format: "date-time", nullable: true }, version: { type: "integer", minimum: 0 }, status: { type: "string", enum: ["awaiting_estimate_approval", "awaiting_payment", "received"] }, canConfirm: { type: "boolean" }, issue: { type: "string" } } } },
     DesignWorkflow: {
   "type": "object",
   "additionalProperties": false,
@@ -2788,6 +2805,10 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
         "status"
       ],
       "properties": {
+        workflowVersion: { type: "integer", enum: [2] },
+        designStartedAt: { ...dateTime, nullable: true },
+        existingReceiptAt: { ...dateTime, nullable: true },
+        requiresAttestation: { type: "boolean" },
         "confirmedAt": {
           "type": "string",
           "format": "date-time",
@@ -3357,6 +3378,7 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
       type: "object",
       required: ["id", "projectId", "projectName", "estimateId", "kind", "title", "description", "assigneeRole", "assignedWorker", "sourceSectionId", "roomName", "status", "progress", "version", "openedAt", "updatedAt"],
       properties: {
+        preparationOnly: { type: "boolean", default: false, description: "Site assignment preparation; excluded from execution timing until final approval and payment." },
         id,
         projectId: id,
         projectName: { type: "string" },
@@ -3530,6 +3552,8 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
         estimateReviewRoundId: { type: "string", nullable: true },
         designPlanVersion: { type: "integer", minimum: 0 },
         currency: { type: "string", enum: [PROJECT_FINANCE_CURRENCY] },
+        baselinePhase: { type: "string", enum: ["pre", "post"] },
+        originalApprovedContractTotalPaise: { type: "integer", minimum: 0, description: "Original immutable pre-estimate approval total, retained when the effective final baseline changes." },
         approvedSubtotalPaise: {
           type: "integer",
           minimum: 0,

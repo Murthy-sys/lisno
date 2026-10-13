@@ -4,7 +4,8 @@ import type { ProposalChange, ProposalCreateInput, ProposalDecisionInput, Propos
   ProposalHierarchyNode, ProposalMetadata, ProposalMetadataInput, ProposalMutationResult, ProposalPage,
   ProposalPublicationSnapshot, ProposalQualityInput, ProposalReadiness, ProposalReferenceKind, ProposalResource,
   ProposalResourceKind, ProposalScope, ProposalSectionInput, ProposalSectionValue, ProposalSnapshot, ProposalStatus,
-  ProposalSubmitInput, ProposalSummary, ProposalVersionInput, ProposalTarget, ProposalMasterKind, ProposalMasterInput, ProposalMasterResource } from "../contracts/vendor-basket-proposal.js";
+  ProposalSubmitInput, ProposalSummary, ProposalVersionInput, ProposalTarget, ProposalMasterKind, ProposalMasterInput, ProposalMasterResource,
+  ProposalRequestMode, ProposalIntakeContent, ProposalIntakeInput } from "../contracts/vendor-basket-proposal.js";
 import { PROPOSAL_LIMITS } from "../contracts/vendor-basket-proposal.js";
 import { AI_ESTIMATOR_KNOWLEDGE_SECTION_KEYS, createKnowledgeContentDigest, normalizeKnowledgeIdentity, type KnowledgeSectionKey } from "../domain/ai-estimator-knowledge.js";
 import { deriveKnowledgeCompleteness } from "../domain/ai-estimator-knowledge-completeness.js";
@@ -41,6 +42,7 @@ import { assertProposalMasterAvailable, normalizeProposalMaster, proposalMasterR
 type Row = Record<string, unknown>;
 interface Manifest extends ProposalHead { resources: Array<{ id: string; kind: ProposalResourceKind; parentId: string | null; version: number; digest: string; bytes: number }> }
 interface StoredProposal {
+  requestMode?: ProposalRequestMode;
   targetKind?: "new_main_basket" | "new_sub_basket"; targetParentBasketId?: string | null; targetParentName?: string | null;
   _id: string; requesterId: string; vendorId: string | null; vendorName: string | null; basketId: string; version: number;
   schemaVersion: 1; creationKey: string; creationFingerprint: string; revisedFromId: string | null; requestId: string | null;
@@ -81,7 +83,7 @@ export function createVendorBasketProposalService(dependencies: Dependencies) {
     await dependencies.audit.appendInMongoTransaction({ actorId: actor.id,
       action: `vendor_basket_proposal_${action}`, entityType: "vendor_basket_proposal", entityId: proposal._id,
       occurredAt: now().toISOString(), newValues: { version: proposal.version, requestId: proposal.requestId, ...values,
-        targetKind: target.kind, targetParentBasketId: target.kind === "new_sub_basket" ? target.basketId : null } }, session);
+        requestMode: proposal.requestMode ?? "full_configuration", targetKind: target.kind, targetParentBasketId: target.kind === "new_sub_basket" ? target.basketId : null } }, session);
   }
 
   async function append(proposalId: string, resourceId: string, kind: ProposalResourceKind, parentId: string | null,
@@ -100,9 +102,15 @@ export function createVendorBasketProposalService(dependencies: Dependencies) {
     const inputVendorName = input.vendorName == null ? null : cleanName(input.vendorName);
     let vendorName = inputVendorName; const name = cleanName(input.name);
     const target = revised ? proposalTarget(revised.proposal) : normalizeTarget(input.target);
+    const requestMode = revised?.proposal.requestMode ?? input.requestMode ?? "full_configuration";
+    if (requestMode !== "hierarchy_intake" && requestMode !== "full_configuration") invalidIntake();
+    if (requestMode !== "hierarchy_intake" && input.intake !== undefined) invalidIntake();
+    const intake = requestMode === "hierarchy_intake" && !revised ? normalizeIntake(input.intake, target, true) : undefined;
+    if (intake && name !== (target.kind === "new_sub_basket" ? intake.subBasket.name : intake.basket!.name)) invalidIntake();
     checkKey(input.idempotencyKey);
     const fingerprint = createKnowledgeContentDigest({ vendorId: input.vendorId ?? null, vendorName: inputVendorName, name,
       ...(target.kind === "new_sub_basket" ? { target } : {}),
+      ...(requestMode === "hierarchy_intake" ? { requestMode, ...(intake ? { intake } : {}) } : {}),
       ...(revised ? { revisedFromId: revised.proposal._id, rejectedVersion: revised.proposal.version,
         rejectedRequestVersion: revised.request?.version } : {}) });
     const previous = await VendorBasketProposalModel.findOne({ requesterId: actor.id, creationKey: input.idempotencyKey }).session(session).lean().exec() as StoredProposal | null;
@@ -138,13 +146,19 @@ export function createVendorBasketProposalService(dependencies: Dependencies) {
     } else {
       resources = [await append(proposalId, basketId, "basket", null, parent
         ? { name: String(parent.name), description: parent.description ?? null, displayOrder: Number(parent.displayOrder) }
-        : { name, description: null, displayOrder: 0 }, 1, actor, session, headId)];
-      if (parent) resources.push(await append(proposalId, id("knowledge-sub-basket"), "sub_basket", basketId,
-        { name, description: null, displayOrder: 0 }, 1, actor, session, headId));
+        : { name, description: intake?.basket?.description ?? null, displayOrder: 0 }, 1, actor, session, headId)];
+      if (parent || intake) {
+        const subBasketId = id("knowledge-sub-basket");
+        resources.push(await append(proposalId, subBasketId, "sub_basket", basketId,
+          { name: intake?.subBasket.name ?? name, description: intake?.subBasket.description ?? null, displayOrder: 0 }, 1, actor, session, headId));
+        for (const [displayOrder, line] of (intake?.mainLines ?? []).entries()) resources.push(await append(proposalId, id("ai-knowledge-main-line"), "main_line", subBasketId,
+          { name: line.name, description: null, displayOrder }, 1, actor, session, headId));
+      }
     }
+    checkBounds(resources);
     const working = manifest(headId, 1, resources);
     const proposal: StoredProposal = { _id: proposalId, requesterId: actor.id, vendorId: input.vendorId ?? null, vendorName,
-      basketId, targetKind: target.kind, targetParentBasketId: target.kind === "new_sub_basket" ? target.basketId : null,
+      basketId, ...(requestMode === "hierarchy_intake" ? { requestMode } : {}), targetKind: target.kind, targetParentBasketId: target.kind === "new_sub_basket" ? target.basketId : null,
       targetParentName: revised?.proposal.targetParentName ?? (parent ? String(parent.name) : null), schemaVersion: 1, version: 1, creationKey: input.idempotencyKey, creationFingerprint: fingerprint,
       revisedFromId: revised?.proposal._id ?? null, requestId: null, working, submitted: null, review: null, approved: null,
       submissionKey: null, submissionFingerprint: null, submittedAt: null, decisionResult: null, createdAt, updatedAt: createdAt };
@@ -155,11 +169,13 @@ export function createVendorBasketProposalService(dependencies: Dependencies) {
   }
 
   async function mutate(actor: PublicUser, scope: ProposalScope, proposalId: string, input: ProposalVersionInput,
-    change: (loaded: Loaded, session: ClientSession) => Promise<{ resources: ProposalResource[]; resource: ProposalResource | null }>, saveTarget?: ProposalSaveValidationTarget): Promise<ProposalMutationResult> {
+    change: (loaded: Loaded, session: ClientSession) => Promise<{ resources: ProposalResource[]; resource: ProposalResource | null }>, saveTarget?: ProposalSaveValidationTarget,
+    requiredMode: ProposalRequestMode = "full_configuration"): Promise<ProposalMutationResult> {
     return transaction(async (session) => {
       await authorize(actor, scope, session, true);
       const loaded = await load(actor, scope, proposalId, {}, session);
       assertEditable(loaded, scope, input);
+      if ((loaded.proposal.requestMode ?? "full_configuration") !== requiredMode) throw new ApiError(409, "PROPOSAL_MODE_MISMATCH", "Use the editor for this request's saved mode.");
       const changed = await change(loaded, session);
       const head = manifest(loaded.head.id, loaded.head.version + 1, changed.resources);
       checkBounds(changed.resources);
@@ -251,6 +267,29 @@ export function createVendorBasketProposalService(dependencies: Dependencies) {
 
   return {
     create(actor: PublicUser, input: ProposalCreateInput) { return transaction((session) => createDraft(actor, input, session)); },
+    async saveIntake(actor: PublicUser, scope: ProposalScope, proposalId: string, input: ProposalIntakeInput): Promise<ProposalDetail> {
+      const result = await mutate(actor, scope, proposalId, input, async (loaded, session) => {
+        const intake = normalizeIntake(input.intake, proposalTarget(loaded.proposal));
+        const basket = requireResource(loaded, loaded.proposal.basketId, "basket");
+        const sub = loaded.resources.find((resource) => resource.kind === "sub_basket");
+        if (!sub || loaded.resources.some((resource) => !["basket", "sub_basket", "main_line"].includes(resource.kind))) corrupt();
+        if (isSubTarget(loaded.proposal) && !await AiEstimatorKnowledgeBasketModel.exists({ _id: loaded.proposal.basketId, status: "active" }).session(session)) {
+          throw new ApiError(409, "PARENT_BASKET_UNAVAILABLE", "The selected Main Basket is no longer active.");
+        }
+        const resources: ProposalResource[] = [];
+        for (const [previous, metadata] of [[basket, intake.basket], [sub, intake.subBasket]] as const) {
+          resources.push(metadata ? await append(proposalId, previous.resourceId, previous.kind, previous.parentId,
+            { ...metadata, displayOrder: (previous.payload as ProposalMetadata).displayOrder }, previous.version + 1, actor, session, loaded.head.id) : previous);
+        }
+        for (const [displayOrder, line] of intake.mainLines.entries()) {
+          const previous = line.resourceId ? requireResource(loaded, line.resourceId, "main_line") : null;
+          resources.push(await append(proposalId, previous?.resourceId ?? id("ai-knowledge-main-line"), "main_line", sub.resourceId,
+            { name: line.name, description: null, displayOrder }, (previous?.version ?? 0) + 1, actor, session, loaded.head.id));
+        }
+        return { resources, resource: null };
+      }, undefined, "hierarchy_intake");
+      return result.detail;
+    },
     async listMine(actor: PublicUser, options: PaginationInput & { status?: ProposalStatus }): Promise<ProposalPage<ProposalSummary>> {
       await authorize(actor, "procurement");
       // Join the canonical request decision state before filtering/paging; drafts have no queue record.
@@ -406,6 +445,7 @@ export function createVendorBasketProposalService(dependencies: Dependencies) {
         }
         const timestamp = now(); const requestId = id("vendor-basket-request");
         const request: Row = { _id: requestId, kind: "configuration_proposal", proposalId, proposalSchemaVersion: 1,
+          ...(loaded.proposal.requestMode === "hierarchy_intake" ? { requestMode: "hierarchy_intake" } : {}),
           submittedDigest: loaded.head.digest, proposalCounts: counts(loaded.resources), requesterId: actor.id,
           vendorId: loaded.proposal.vendorId, vendorKey, vendorName: loaded.proposal.vendorName, vendorNameNormalized,
           proposedName: entity.name, proposedNameNormalized, status: "pending", version: 1,
@@ -550,9 +590,44 @@ async function readBasketResource(proposalId: string, basketId: string, head: Ma
     payload: row.payload, digest: row.digest, savedById: row.savedById, savedAt: new Date(row.savedAt).toISOString() };
 }
 function publicHead(head: Manifest): ProposalHead { return { id: head.id, version: head.version, digest: head.digest }; }
+function intakeContent(loaded: Loaded): ProposalIntakeContent {
+  const basket = requireResource(loaded, loaded.proposal.basketId, "basket").payload as ProposalMetadata;
+  const sub = loaded.resources.find((resource) => resource.kind === "sub_basket")?.payload as ProposalMetadata | undefined;
+  if (!sub) corrupt();
+  return { ...(isSubTarget(loaded.proposal) ? {} : { basket: { name: basket.name, description: basket.description } }),
+    subBasket: { name: sub.name, description: sub.description },
+    mainLines: loaded.resources.filter((resource) => resource.kind === "main_line")
+      .sort((a, b) => (a.payload as ProposalMetadata).displayOrder - (b.payload as ProposalMetadata).displayOrder || a.resourceId.localeCompare(b.resourceId))
+      .map((resource) => ({ resourceId: resource.resourceId, name: (resource.payload as ProposalMetadata).name })) };
+}
+
+function invalidIntake(): never { throw new ApiError(400, "VALIDATION_ERROR", "Provide only the requested basket metadata and Main Line names."); }
+function intakeObject(value: unknown, keys: string[]): Row {
+  if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).some((key) => !keys.includes(key))) invalidIntake();
+  return value as Row;
+}
+function normalizeIntake(value: unknown, target: ProposalTarget, creating = false): ProposalIntakeContent {
+  const content = intakeObject(value, ["basket", "subBasket", "mainLines"]);
+  const metadata = (value: unknown) => {
+    const row = intakeObject(value, ["name", "description"]);
+    return { name: cleanName(row.name as string), description: cleanDescription(row.description as string | null)?.trim() ?? null };
+  };
+  if (target.kind === "new_sub_basket" ? content.basket !== undefined : content.basket === undefined) invalidIntake();
+  if (!Array.isArray(content.mainLines) || content.mainLines.length > PROPOSAL_LIMITS.mainLines) invalidIntake();
+  const names = new Set<string>(); const ids = new Set<string>();
+  const mainLines = content.mainLines.map((value) => {
+    const line = intakeObject(value, ["resourceId", "name"]); const name = cleanName(line.name as string);
+    if (line.resourceId !== undefined && (creating || typeof line.resourceId !== "string" || !/^[A-Za-z0-9:_-]{1,128}$/u.test(line.resourceId) || ids.has(line.resourceId))) invalidIntake();
+    if (names.has(normalizeKnowledgeIdentity(name))) throw new ApiError(409, "DUPLICATE_NAME", "Use a unique name for each Main Line.");
+    names.add(normalizeKnowledgeIdentity(name));
+    if (typeof line.resourceId === "string") ids.add(line.resourceId);
+    return { ...(typeof line.resourceId === "string" ? { resourceId: line.resourceId } : {}), name };
+  });
+  return { ...(target.kind === "new_main_basket" ? { basket: metadata(content.basket) } : {}), subBasket: metadata(content.subBasket), mainLines };
+}
 function summary(loaded: Loaded): ProposalSummary {
   const { proposal: p, request, resources } = loaded;
-  return { id: p._id, kind: "configuration_proposal", schemaVersion: 1, requesterId: p.requesterId,
+  return { id: p._id, kind: "configuration_proposal", requestMode: p.requestMode ?? "full_configuration", schemaVersion: 1, requesterId: p.requesterId,
     status: (request?.status ?? "draft") as ProposalStatus, version: p.version, requestId: p.requestId, requestVersion: numberOrNull(request?.version),
     vendorId: p.vendorId, vendorName: p.vendorName ?? null, basketId: p.basketId, target: proposalTarget(p), targetParentName: p.targetParentName ?? null,
     name: (proposedEntity(loaded).payload as ProposalMetadata).name, counts: counts(resources),
@@ -567,7 +642,9 @@ function detail(loaded: Loaded, scope: ProposalScope, snapshot: ProposalSnapshot
   const parentEditable = editable && !isSubTarget(loaded.proposal);
   return { ...summary(loaded), capabilities: { edit: editable,
     submit: current && scope === "procurement" && status === "draft", review: scope === "admin", decide: current && scope === "admin" && status === "pending",
-    revise: scope === "procurement" && status === "rejected", editParent: parentEditable, editQuality: parentEditable, manageSubBaskets: parentEditable }, head: publicHead(loaded.head),
+    revise: scope === "procurement" && status === "rejected", editParent: parentEditable,
+    editQuality: parentEditable && loaded.proposal.requestMode !== "hierarchy_intake", manageSubBaskets: parentEditable && loaded.proposal.requestMode !== "hierarchy_intake" }, head: publicHead(loaded.head),
+    ...(loaded.proposal.requestMode === "hierarchy_intake" ? { intake: intakeContent(loaded) } : {}),
     submittedHead: loaded.proposal.submitted ? publicHead(loaded.proposal.submitted) : null,
     approvedHead: loaded.proposal.approved ? publicHead(loaded.proposal.approved) : null,
     basket: requireResource(loaded, loaded.proposal.basketId, "basket") as ProposalResource<ProposalMetadata>,
@@ -606,7 +683,7 @@ function hierarchyNode(loaded: Loaded, row: ProposalResource, scope: ProposalSco
   return node;
 }
 function publicationSnapshot(loaded: Loaded): ProposalPublicationSnapshot {
-  return { proposalId: loaded.proposal._id, target: proposalTarget(loaded.proposal), basket: requireResource(loaded, loaded.proposal.basketId, "basket") as ProposalResource<ProposalMetadata>,
+  return { proposalId: loaded.proposal._id, requestMode: loaded.proposal.requestMode ?? "full_configuration", target: proposalTarget(loaded.proposal), basket: requireResource(loaded, loaded.proposal.basketId, "basket") as ProposalResource<ProposalMetadata>,
     subBaskets: loaded.resources.filter((row) => row.kind === "sub_basket") as ProposalResource<ProposalMetadata>[],
     mainLines: loaded.resources.filter((row) => row.kind === "main_line") as ProposalResource<ProposalMetadata>[],
     sections: loaded.resources.filter((row) => row.kind === "section") as ProposalResource<ProposalSectionValue>[],

@@ -26,7 +26,7 @@ import { ProjectPurchaseOrderRequestRevisionModel } from "../models/ProjectPurch
 import { allocateAiEstimatorKnowledgeDisplayOrder, createAiEstimatorKnowledgeMasterDisplayOrderScope } from "./ai-estimator-knowledge-display-order.service.js";
 import type { AuditService } from "./audit.service.js";
 import type { PublicUser } from "./auth.service.js";
-import { assertProcurementProjectAccess, requireProcurementActor, procurementItemSourceSnapshot } from "./procurement.service.js";
+import { assertProcurementProjectAccess, requireProcurementActor, procurementItemSourceSnapshot, procurementPreparationProjectAllowed } from "./procurement.service.js";
 import { requireProcurementVendorReader } from "./project-vendor-suggestions.service.js";
 import { prepareProcurementAllocation } from "./procurement-vendor-allocation.service.js";
 import { vendorActivation, vendorActivations } from "./vendor-readiness.service.js";
@@ -35,8 +35,8 @@ type Row = Record<string, any>;
 type Statuses = Map<string, ProcurementReferenceStatus>;
 type ReferenceStatuses = { uoms: Statuses; uomScales: Map<string, number>; vendors: Statuses };
 async function assertActiveProject(projectId: string, session: ClientSession): Promise<void> {
-  const project = await ProjectModel.findById(projectId).select({ status: 1 }).session(session).lean();
-  if (!project || project.status !== "active") throw new ApiError(409, "PROCUREMENT_PROJECT_NOT_ACTIVE", "Completed or paused projects cannot change procurement items.");
+  const project = await ProjectModel.findById(projectId).select({ status: 1, estimationWorkflowVersion: 1 }).session(session).lean();
+  if (!project || !procurementPreparationProjectAllowed(project)) throw new ApiError(409, "PROCUREMENT_PROJECT_NOT_ACTIVE", "Completed or paused projects cannot change procurement items.");
 }
 export interface ProjectProcurementService {
   list(actor: PublicUser, projectId: string, query: ProjectProcurementItemQuery): Promise<ProjectProcurementPage>;
@@ -112,7 +112,8 @@ export function createProjectProcurementService(input: { audit: AuditService; no
       return itemTransaction(actor, projectId, async (session) => {
         await assertActiveProject(projectId, session);
         const fields = validate(projectProcurementItemSchema, value);
-        const source = sourceForInput(await procurementItemSourceSnapshot(projectId, session, true), fields, true);
+        const snapshot = await procurementItemSourceSnapshot(projectId, session, true);
+        const source = sourceForInput(snapshot, fields, true);
         const uom = await activeReference(AiEstimatorKnowledgeUomModel, fields.uomId, "uomId", session);
         validatePlannedQuantity(fields.plannedOrderQuantityMilliUnits, uom.decimalScale, fields.pricePaise);
         const allocation = await prepareProcurementAllocation(fields, session);
@@ -120,6 +121,7 @@ export function createProjectProcurementService(input: { audit: AuditService; no
         const timestamp = now();
         const [document] = await ProjectProcurementItemModel.create([{
           _id: `procurement-item-${randomUUID()}`, projectId, ...storedFields(fields), ...source,
+          ...(snapshot.preparationSource ? { preparationSource: snapshot.preparationSource } : {}),
           ...referenceSnapshot("uom", uom), uomDecimalScale: Number(uom.decimalScale), ...referenceSnapshot("vendor", vendor),
           allocatedWorkPaise: allocation.allocatedWorkPaise, allocationTrackingVersion: allocation.allocationTrackingVersion,
           version: 1, createdById: actor.id, updatedById: actor.id,
@@ -147,20 +149,25 @@ export function createProjectProcurementService(input: { audit: AuditService; no
         await assertNoPendingProjectRequestReference(projectId, itemId, session);
         const existingSource = itemSource(current);
         let source = existingSource;
+        let preparationSource = current.preparationSource;
         if (existingSource || fields.estimateId !== undefined) {
           const requestedSource = fields.estimateId === undefined ? existingSource! : fields as SourceInput;
           const snapshot = await procurementItemSourceSnapshot(projectId, session, true);
-          if (existingSource && (requestedSource.estimateId !== existingSource.estimateId || requestedSource.estimateVersion !== existingSource.estimateVersion)) sourceConflict();
+          const reconciling = Boolean(snapshot.preparationSource && fields.estimateId !== undefined && existingSource &&
+            requestedSource.estimateId === existingSource.estimateId && requestedSource.estimateVersion !== existingSource.estimateVersion);
+          if (existingSource && !reconciling && (requestedSource.estimateId !== existingSource.estimateId || requestedSource.estimateVersion !== existingSource.estimateVersion)) sourceConflict();
+          if (reconciling) await assertNoActivePurchasingReference(projectId, itemId, session);
+          preparationSource = snapshot.preparationSource;
           const reassigning = Boolean(existingSource && requestedSource.sourceLineItemKey !== existingSource.sourceLineItemKey);
-          if (reassigning) {
+          if (reassigning && !reconciling) {
             const previousLine = snapshot.lineItems.find((line) => line.key === existingSource!.sourceLineItemKey);
             if (existingSource!.estimateReviewRoundId !== snapshot.estimateReviewRoundId ||
               !previousLine || previousLine.sectionId !== existingSource!.sourceSectionId ||
               approvedEstimateAmountPaiseIsActionable(previousLine.amountPaise)) sourceConflict();
           }
           source = sourceForInput(snapshot, requestedSource, !existingSource || reassigning);
-          if (existingSource && !reassigning && (source.estimateReviewRoundId !== existingSource.estimateReviewRoundId || source.sourceSectionId !== existingSource.sourceSectionId)) sourceConflict();
-          if (reassigning) await assertNoReassignmentReference(projectId, itemId, session);
+          if (existingSource && !reassigning && !reconciling && (source.estimateReviewRoundId !== existingSource.estimateReviewRoundId || source.sourceSectionId !== existingSource.sourceSectionId)) sourceConflict();
+          if (reassigning && !reconciling) await assertNoReassignmentReference(projectId, itemId, session);
         }
         const uom = fields.uomId === current.uomId ? null : await activeReference(AiEstimatorKnowledgeUomModel, fields.uomId, "uomId", session);
         const selectedUom = uom ?? await AiEstimatorKnowledgeUomModel.findById(fields.uomId).select({ decimalScale: 1 }).session(session).lean();
@@ -180,7 +187,7 @@ export function createProjectProcurementService(input: { audit: AuditService; no
         const updated = await ProjectProcurementItemModel.findOneAndUpdate({ _id: itemId, projectId, removedAt: null, version: fields.expectedVersion }, {
           $set: {
             ...storedFields(fields), plannedOrderQuantityMilliUnits: plannedQuantity,
-            ...(source ?? {}), ...(uom ? { ...referenceSnapshot("uom", uom), uomDecimalScale: Number(uom.decimalScale) } : {}),
+            ...(source ?? {}), ...(preparationSource ? { preparationSource } : {}), ...(uom ? { ...referenceSnapshot("uom", uom), uomDecimalScale: Number(uom.decimalScale) } : {}),
             ...(vendorChanged ? referenceSnapshot("vendor", vendor) : {}),
             allocatedWorkPaise: allocation.allocatedWorkPaise, allocationTrackingVersion: allocation.allocationTrackingVersion,
             updatedById: actor.id, updatedAt: timestamp
@@ -322,12 +329,25 @@ async function requireItem(projectId: string, id: string, session: ClientSession
   return row;
 }
 async function assertNoPendingProjectRequestReference(projectId: string, itemId: string, session: ClientSession): Promise<void> {
-  const request = await ProjectPurchaseOrderRequestModel.findOne({ projectId, status: "pending_approval" })
+  const request = await ProjectPurchaseOrderRequestModel.findOne({ projectId, status: { $in: ["pending_approval", "ready_to_issue"] } })
     .select({ _id: 1, submittedRevisionId: 1 }).session(session).lean();
   if (!request) return;
   if (await ProjectPurchaseOrderRequestRevisionModel.exists({ _id: request.submittedRevisionId,
     requestId: request._id, projectId, "lines.procurementItemId": itemId }).session(session)) {
     throw new ApiError(409, "PROCUREMENT_ITEM_REQUEST_PENDING", "This item is in a purchase order request awaiting Super Admin review. Request changes before editing it.");
+  }
+}
+async function assertNoActivePurchasingReference(projectId: string, itemId: string, session: ClientSession): Promise<void> {
+  if (await ProjectPurchaseOrderModel.exists({ projectId, status: { $ne: "cancelled" },
+    "draftLines.procurementItemId": itemId }).session(session)) {
+    throw new ApiError(409, "PROCUREMENT_ITEM_ORDER_REFERENCED", "Reconcile the existing purchase order before changing this item's estimate source.");
+  }
+  const requests = await ProjectPurchaseOrderRequestModel.find({ projectId,
+    status: { $in: ["pending_approval", "ready_to_issue", "changes_requested"] } })
+    .select({ submittedRevisionId: 1 }).session(session).lean();
+  if (requests.length && await ProjectPurchaseOrderRequestRevisionModel.exists({ projectId,
+    _id: { $in: requests.map(request => request.submittedRevisionId) }, "lines.procurementItemId": itemId }).session(session)) {
+    throw new ApiError(409, "PROCUREMENT_ITEM_REQUEST_PENDING", "Reconcile or reject the current purchase request before changing this item's estimate source.");
   }
 }
 async function assertNoReassignmentReference(projectId: string, itemId: string, session: ClientSession): Promise<void> {
@@ -376,7 +396,7 @@ function dto(row: Row, referenceStatus: ReferenceStatuses): ProjectProcurementIt
     catch { /* A historical malformed amount remains visible as incomplete. */ }
   }
   return {
-    id: String(row._id), projectId: row.projectId, estimateSource: itemSource(row), itemName: row.itemName, brand: row.brand,
+    id: String(row._id), projectId: row.projectId, estimateSource: itemSource(row), ...(row.preparationSource ? { preparationSource: row.preparationSource } : {}), itemName: row.itemName, brand: row.brand,
     uom: { id: row.uomId, code: row.uomCode, name: row.uomName, decimalScale, status: referenceStatus.uoms.get(row.uomId) ?? "unavailable" },
     vendor: row.vendorId ? { id: row.vendorId, code: row.vendorCode, name: row.vendorName, status: referenceStatus.vendors.get(row.vendorId) ?? "unavailable" } : null,
     pricePaise: row.pricePaise, plannedOrderQuantityMilliUnits: quantity, plannedLineNetPaise,

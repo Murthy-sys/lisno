@@ -1,3 +1,7 @@
+import { ProjectClientInvitationModel, ProjectInitiationReceiptModel } from "../src/models/ProjectClientInvitation.js";
+import { EstimateRequirementModel } from "../src/models/EstimateRequirement.js";
+import { EstimatePreparationSnapshotModel } from "../src/models/EstimatePreparationSnapshot.js";
+import { ProjectFinanceBaselineRevisionModel } from "../src/models/ProjectFinanceBaselineRevision.js";
 import { VendorBasketProposalModel } from "../src/models/VendorBasketProposal.js";
 import { VendorBasketProposalResourceModel } from "../src/models/VendorBasketProposalResource.js";
 import { VendorBasketRequestNotificationModel } from "../src/models/VendorBasketRequestNotification.js";
@@ -12,7 +16,7 @@ import { ExecutionChangeEventModel } from "../src/models/ExecutionChangeEvent.js
 import { ProcurementVendorCertificateUploadModel, ProcurementVendorCertificateCleanupModel } from "../src/models/ProcurementVendorCertificateUpload.js";
 import { ProcurementVendorSaveCommandModel } from "../src/models/ProcurementVendorSaveCommand.js";
 import { ProcurementVendorCityModel } from "../src/models/ProcurementVendorCity.js";
-import { ProcurementBasketEnquiryModel, ProcurementBasketBoqRevisionModel, ProcurementBasketInvitationModel,
+import { ProcurementBasketSourceReconciliationModel, ProcurementBasketEnquiryModel, ProcurementBasketBoqRevisionModel, ProcurementBasketInvitationModel,
   ProcurementBasketWhatsAppAccessModel, ProcurementBasketInvitationBatchModel, ProcurementBasketBidModel, ProcurementBasketCounterofferModel, ProcurementBasketAwardModel,
   ProcurementBasketAwardRevisionModel, ProcurementBasketAwardApprovalModel } from "../src/models/ProcurementBasketTender.js";
 import { ProcurementBasketInvoiceAssessmentModel,
@@ -574,7 +578,7 @@ describe("production server bootstrap", () => {
       events.push("project-procurement-index");
       return ProjectProcurementItemModel as never;
     });
-    const executionModels = [VendorAccessIntentModel, ProcurementVendorInvitationIntentModel, VendorExecutionStateModel, VendorExecutionEventModel,
+    const executionModels = [ProcurementBasketSourceReconciliationModel, ProjectClientInvitationModel, ProjectInitiationReceiptModel, EstimateRequirementModel, EstimatePreparationSnapshotModel, ProjectFinanceBaselineRevisionModel, VendorAccessIntentModel, ProcurementVendorInvitationIntentModel, VendorExecutionStateModel, VendorExecutionEventModel,
       VendorExecutionReviewModel, ExecutionChangeEventModel, ...executionDeliveryModels];
     for (const model of executionModels) vi.spyOn(model, "init").mockImplementation(async () => { events.push(model.modelName + "-index"); return model as never; });
     const chatModels = [ChatNotificationModel, ProjectChatAttachmentModel, ProjectChatMessageModel, ProjectChatEventModel, ProjectChatStateModel, ProjectChatReadStateModel, ProjectChatParticipantAssignmentModel, ProjectChatOperationModel, ProjectChatIssueHistoryModel, ...projectAssistantModels];
@@ -739,11 +743,12 @@ describe("production server bootstrap", () => {
 
     expect(events).toEqual([
       "connect",
+      "ProcurementBasketSourceReconciliation-index",
       "project-procurement-index",
       ...chatModels.map((model) => model.modelName + "-index"),
       "user-index",
       "invitation-index",
-      ...executionModels.map(model => model.modelName + "-index"),
+      ...executionModels.filter(model => model !== ProjectFinanceBaselineRevisionModel && model !== ProcurementBasketSourceReconciliationModel).map(model => model.modelName + "-index"),
       "password-reset-index",
       "estimate-client-review-indexes",
       "design-plan-review-index",
@@ -752,6 +757,7 @@ describe("production server bootstrap", () => {
       "daily-critical-task-receipt-index",
       "daily-critical-schedule-state-index",
       "project-finance-bucket-index",
+      "ProjectFinanceBaselineRevision-index",
       "finance-ledger-entry-index",
       "finance-entry-document-index",
       "procurement-receipt-cleanup-index",

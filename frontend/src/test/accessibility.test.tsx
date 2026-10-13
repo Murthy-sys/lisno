@@ -755,15 +755,21 @@ describe("accessibility smoke coverage", () => {
     await expectNoAxeViolations();
   });
 
-  it("keeps signup controls labelled, visible by keyboard, and free of accessibility violations", async () => {
-    renderApp(["/signup"]);
-    expect(screen.getByLabelText("Full name")).toBeVisible();
-    expect(screen.getByLabelText("Email address")).toHaveAttribute("type", "email");
-    const toggle = screen.getAllByRole("button", { name: "Show password" })[0];
-    toggle.focus();
-    await userEvent.keyboard("{Enter}");
-    expect(toggle).toHaveAttribute("aria-pressed", "true");
+  it("keeps invitation-only signup guidance accessible and existing account sign-in keyboard-operable", async () => {
+    const { container } = renderApp(["/signup"]);
+    expect(screen.getByRole("main")).toBeVisible();
+    expect(screen.getByRole("heading", { level: 1, name: "Join through your project invitation" })).toBeVisible();
+    expect(screen.getByText(/Open that invitation to create your account/)).toBeVisible();
+    expect(screen.getByText(/ask your Lisno contact to resend/)).toBeVisible();
+    expect(container.querySelector("form")).not.toBeInTheDocument();
+    expect(container.querySelector("input")).not.toBeInTheDocument();
+    const signIn = screen.getByRole("link", { name: "Sign in" });
+    expect(signIn).toHaveAttribute("href", "/login");
+    await userEvent.tab();
+    expect(signIn).toHaveFocus();
     await expectNoAxeViolations();
+    await userEvent.keyboard("{Enter}");
+    expect(await screen.findByRole("heading", { name: "Welcome to Lisno" })).toBeVisible();
   });
 
   it("keeps the Designer dashboard upload-only, labelled, and keyboard-accessible", async () => {

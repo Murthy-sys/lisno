@@ -12,7 +12,12 @@ const version = { expectedVersion: integer, expectedRequestVersion: integer };
 const metadata = { name, description: { type: "string", maxLength: 4000, nullable: true }, displayOrder: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER } };
 const head = object({ id, version: integer, digest: { type: "string" } });
 const target = { oneOf: [object({ kind: { type: "string", enum: ["new_main_basket"] } }), object({ kind: { type: "string", enum: ["new_sub_basket"] }, basketId: id })] };
+const requestMode = { type: "string", enum: ["hierarchy_intake", "full_configuration"], description: "Immutable authoring mode; absent historical values mean full_configuration." };
+const intakeMetadata = object({ name, description: metadata.description });
+const intakeContent = object({ basket: intakeMetadata, subBasket: intakeMetadata,
+  mainLines: { type: "array", maxItems: 100, items: object({ resourceId: id, name }, ["name"]) } }, ["subBasket", "mainLines"]);
 const summary = {
+  requestMode,
   target, targetParentName: { type: "string", nullable: true },
   id, kind: { type: "string", enum: ["configuration_proposal"] }, schemaVersion: { type: "integer", enum: [1] },
   requesterId: id, status: { type: "string", enum: ["draft", "pending", "fulfilled", "rejected"] },
@@ -52,7 +57,10 @@ export const VENDOR_BASKET_PROPOSAL_SCHEMAS = {
   VendorBasketProposalMasterInput: { description: "Use the UOM shape when masterKind is uoms (decimalScale required), or the Surface shape when masterKind is surfaces (decimalScale forbidden). Codes, lifecycle and ownership are server-managed.",
     oneOf: [object({ ...masterFields, decimalScale }, ["expectedVersion", "name", "decimalScale"]), object(masterFields, ["expectedVersion", "name"])] },
   VendorBasketProposalMasterPage: page(proposedMaster),
-  VendorBasketProposalCreate: object({ target, vendorId: nullableId, vendorName: { ...name, nullable: true }, name, idempotencyKey: key }, ["name", "idempotencyKey"]),
+  VendorBasketProposalCreate: { ...object({ target, vendorId: nullableId, vendorName: { ...name, nullable: true }, name, idempotencyKey: key, requestMode, intake: ref("VendorBasketProposalIntakeContent") }, ["name", "idempotencyKey"]),
+    description: "Hierarchy intake requires intake content. Top-level name matches the target basket name; existing-parent requests omit intake.basket. Create Main Lines omit resourceId. Full configuration forbids intake." },
+  VendorBasketProposalIntakeContent: intakeContent,
+  VendorBasketProposalIntakeInput: object({ ...version, intake: ref("VendorBasketProposalIntakeContent") }, ["expectedVersion", "intake"]),
   VendorBasketProposalMetadataInput: object({ ...version, ...metadata }, ["expectedVersion", "name"]),
   VendorBasketProposalVersionInput: object(version, ["expectedVersion"]),
   VendorBasketProposalSectionInput: object({ ...version, applicability: { type: "string", enum: ["configured", "not_applicable", "not_configured"] }, payload: resource.payload }, ["expectedVersion", "applicability", "payload"]),
@@ -65,8 +73,9 @@ export const VENDOR_BASKET_PROPOSAL_SCHEMAS = {
     parameters: { type: "array", items: { type: "object", additionalProperties: true } }, updatedAt: { ...timestamp, nullable: true } }),
   VendorBasketProposalResource: editorResource,
   VendorBasketProposalDetail: object({ ...summary, head, submittedHead: { ...head, nullable: true }, approvedHead: { ...head, nullable: true },
+    intake: ref("VendorBasketProposalIntakeContent"),
     basket: ref("VendorBasketProposalResource"), qualityResourceId: nullableId,
-    capabilities: object({ editParent: { type: "boolean" }, editQuality: { type: "boolean" }, manageSubBaskets: { type: "boolean" }, edit: { type: "boolean" }, submit: { type: "boolean" }, review: { type: "boolean" }, decide: { type: "boolean" }, revise: { type: "boolean" } }) }),
+    capabilities: object({ editParent: { type: "boolean" }, editQuality: { type: "boolean" }, manageSubBaskets: { type: "boolean" }, edit: { type: "boolean" }, submit: { type: "boolean" }, review: { type: "boolean" }, decide: { type: "boolean" }, revise: { type: "boolean" } }) }, [...Object.keys(summary), "head", "submittedHead", "approvedHead", "basket", "qualityResourceId", "capabilities"]),
   VendorBasketProposalPage: page(ref("VendorBasketProposalSummary")),
   VendorBasketProposalHierarchyPage: page(object({ ...resource, sections: { type: "object", additionalProperties: id }, completeness: { type: "object", additionalProperties: true }, editorItem: { type: "object", additionalProperties: true, description: "Canonical saved Configuration item projection for a Main Line." } }, [...Object.keys(resource), "sections"])),
   VendorBasketProposalReferencePage: page({ type: "object", additionalProperties: true, description: "Allowlisted reference fields needed by Configuration editors." }),
@@ -87,10 +96,10 @@ for (const operation of operations) {
   const [method, path] = operation.key.split(" ") as [string, string];
   if (method !== "GET") {
     const schema = /\/decision$/u.test(path) ? "DecisionInput" : /\/(submit|revise)$/u.test(path) ? "Command"
-      : /\/sections\/[^/]+$/u.test(path) ? "SectionInput" : /\/quality$/u.test(path) ? "QualityInput"
+      : /\/intake$/u.test(path) ? "IntakeInput" : /\/sections\/[^/]+$/u.test(path) ? "SectionInput" : /\/quality$/u.test(path) ? "QualityInput"
       : method === "DELETE" ? "VersionInput" : /\/masters\//u.test(path) ? "MasterInput" : path === "/procurement/vendor-basket-proposals" ? "Create" : "MetadataInput";
     VENDOR_BASKET_PROPOSAL_BODIES[operation.key] = { required: true, content: { "application/json": { schema: ref(`VendorBasketProposal${schema}`) } }, "x-lisno-schema-completeness": schema === "SectionInput" || schema === "QualityInput" ? "generic" : "exact" };
-    VENDOR_BASKET_PROPOSAL_RESPONSES[operation.key] = `VendorBasketProposal${schema === "DecisionInput" ? "Decision" : schema === "Command" || schema === "Create" ? "Detail" : "Mutation"}`;
+    VENDOR_BASKET_PROPOSAL_RESPONSES[operation.key] = `VendorBasketProposal${schema === "DecisionInput" ? "Decision" : schema === "Command" || schema === "Create" || schema === "IntakeInput" ? "Detail" : "Mutation"}`;
   } else {
     const suffix = path.split("/").at(-1);
     const type = suffix === ":masterKind" ? "MasterPage" : suffix === "inherited-quality" ? "InheritedQuality" : suffix === "mine" ? "Page" : suffix === "hierarchy" ? "HierarchyPage" : suffix === "references" ? "ReferencePage" : suffix === "changes" ? "Changes" : suffix === "readiness" ? "Readiness" : suffix === ":resourceId" ? "Resource" : "Detail";

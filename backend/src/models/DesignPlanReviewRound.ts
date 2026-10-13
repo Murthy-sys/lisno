@@ -31,6 +31,7 @@ const designPlanReviewRoundSchema = new Schema(
     projectId: { type: String, ref: "Project", required: true, immutable: true },
     leadId: { type: String, ref: "Lead", required: true, immutable: true },
     designPlanVersion: { type: Number, required: true, min: 1, immutable: true },
+    designScopeRevision: { type: Number, min: 1, immutable: true },
     planManifestHash: { type: String, default: null, immutable: true },
     planDocuments: { type: [{
       _id: false,

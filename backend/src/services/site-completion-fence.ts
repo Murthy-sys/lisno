@@ -6,7 +6,8 @@ import { SiteCompletionStateModel } from "../models/SiteCompletionState.js";
 export async function assertCompletionReviewAllowsOrderChanges(projectId: string, session: ClientSession): Promise<void> {
   // Both order writes and Site Manager submission write this project in their transactions.
   // A concurrent attempt must retry against the winning review/order snapshot.
-  const fence = await ProjectModel.updateOne({ _id: projectId, status: "active" },
+  const fence = await ProjectModel.updateOne({ _id: projectId,
+    $or: [{ status: "active" }, { status: "planning", estimationWorkflowVersion: 2 }] },
     { $inc: { siteCompletionFenceEpoch: 1 } }, { session, timestamps: false });
   if (fence.matchedCount !== 1) throw new ApiError(409, "PURCHASE_ORDER_PROJECT_NOT_ACTIVE",
     "Completed or paused projects cannot change purchase orders.");

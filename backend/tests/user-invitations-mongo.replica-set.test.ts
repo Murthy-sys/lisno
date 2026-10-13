@@ -19,7 +19,6 @@ import {
   type AuditService
 } from "../src/services/audit.service.js";
 import {
-  AccountExistsError,
   createAuthService,
   type PublicUser
 } from "../src/services/auth.service.js";
@@ -627,86 +626,27 @@ describe("user invitation Mongo replica-set races", () => {
     expect(JSON.stringify(fulfilled[0]!.value)).not.toMatch(/jwt|token|session|user/i);
   });
 
-  it("A2: Client signup versus accept creates one User and never links staff as Client", async () => {
+  it("A2: retired Client signup cannot race staff invitation acceptance or claim projects", async () => {
     const issuerId = "signup-race-super-admin";
-    await insertUser(issuerId, "super_admin", {
-      name: "Canonical Super Admin",
-      email: "signup-race-super-admin@example.test",
-      version: 3
-    });
-    await insertPendingInvitation("race-signup-accept", issuerId, {
-      tokenIssuerVersion: 3
-    });
-
-    const gate = gateTransactionMethod(
-      createMongoRepository(),
-      // Both callers now serialize on the authorization fence before the email lock.
-      "coordinateAuthorizationMutation",
-      2
-    );
-    const audit = createAuditService(gate.repository);
-    const invitations = createUserInvitationService({
-      repository: gate.repository,
-      audit,
-      mailer: immediateMailer(),
-      clock: () => new Date(NOW),
-      passwordHasher: async () => ACCEPTED_PASSWORD_HASH
-    });
-    const auth = createAuthService(
-      gate.repository,
-      {
-        jwtSecret: "task-eight-client-signup-race-secret-at-least-32-characters",
-        jwtExpiresInSeconds: 900
-      },
-      { auditService: audit, clock: () => new Date(NOW) }
-    );
-
-    const accept = invitations.accept({
-      rawToken: RAW_TOKEN,
-      password: ACCEPTED_PASSWORD
-    });
-    const signup = auth.signupClient(
-      {
-        name: "Race Invitee",
-        email: INVITEE_EMAIL,
-        mobile: "+91 90000 00000",
-        address: "Pune",
-        password: ACCEPTED_PASSWORD
-      },
-      { remoteAddress: "203.0.113.10" }
-    );
-
-    await gate.reached;
-    gate.release();
-    const settled = await Promise.allSettled([accept, signup]);
-    expect(settled.filter(({ status }) => status === "fulfilled")).toHaveLength(1);
-    const rejected = settled.find(({ status }) => status === "rejected");
-    expect(rejected?.status).toBe("rejected");
-    if (rejected?.status === "rejected") {
-      expect(
-        rejected.reason instanceof InvitationUnavailableError ||
-          rejected.reason instanceof AccountExistsError
-      ).toBe(true);
-    }
-
-    const users = await UserModel.find({ emailNormalized: INVITEE_EMAIL }).lean().exec();
+    await insertUser(issuerId, "super_admin", { email: "signup-race-super-admin@example.test", version: 3 });
+    await insertPendingInvitation("race-signup-accept", issuerId, { tokenIssuerVersion: 3 });
+    const repository = createMongoRepository();
+    const invitations = invitationService(repository);
+    const auth = createAuthService(repository, { jwtSecret: "retired-signup-test-secret-at-least-32-characters", jwtExpiresInSeconds: 900 });
+    const results = await Promise.allSettled([
+      invitations.accept({ rawToken: RAW_TOKEN, password: ACCEPTED_PASSWORD }),
+      auth.signupClient({ name: "Race Invitee", email: INVITEE_EMAIL, mobile: "+91 90000 00000", password: ACCEPTED_PASSWORD }, { remoteAddress: "203.0.113.10" })
+    ]);
+    expect(results[0]!.status).toBe("fulfilled");
+    expect(results[1]).toMatchObject({ status: "rejected", reason: { code: "CLIENT_INVITATION_REQUIRED" } });
+    const users = await UserModel.find({ emailNormalized: INVITEE_EMAIL }).lean();
     expect(users).toHaveLength(1);
-    expect(["client", "designer"]).toContain(users[0]!.role);
-    const project = await ProjectModel.findOne({
-      clientEmailNormalized: INVITEE_EMAIL
-    }).lean().exec();
-    if (users[0]!.role === "designer") {
-      expect(users[0]!.accountKind).toBe("standard");
-      expect(project?.clientId ?? null).toBeNull();
-      expect(
-        await ProjectAccessGrantModel.countDocuments({ userId: users[0]!._id })
-      ).toBe(0);
-    }
-    expect(await EmailCoordinationModel.countDocuments({ _id: INVITEE_EMAIL })).toBe(1);
-    expect(await UserModel.countDocuments({ role: "super_admin" })).toBe(1);
+    expect(users[0]).toMatchObject({ role: "designer", accountKind: "standard" });
+    expect(await ProjectAccessGrantModel.countDocuments({ userId: users[0]!._id })).toBe(0);
+    expect(await AuditEventModel.countDocuments({ action: "client_signed_up" })).toBe(0);
   });
 
-  it("A2 signup-first: a claimed email leaves the pending invitation revoke-only and publicly unavailable", async () => {
+  it("A2 existing-client: a claimed email leaves the pending invitation revoke-only and publicly unavailable", async () => {
     const issuerId = "signup-first-super-admin";
     const invitationId = "signup-first-invitation";
     await insertUser(issuerId, "super_admin", {
@@ -717,24 +657,9 @@ describe("user invitation Mongo replica-set races", () => {
       tokenIssuerVersion: 3
     });
     const repository = createMongoRepository();
-    const audit = createAuditService(repository);
-    const auth = createAuthService(
-      repository,
-      {
-        jwtSecret: "task-eight-signup-first-secret-at-least-32-characters",
-        jwtExpiresInSeconds: 900
-      },
-      { auditService: audit, clock: () => new Date(NOW) }
-    );
     const invitations = invitationService(repository);
 
-    await auth.signupClient({
-      name: "Race Invitee",
-      email: INVITEE_EMAIL,
-      mobile: "+91 90000 00000",
-      address: "Pune",
-      password: ACCEPTED_PASSWORD
-    }, { remoteAddress: "203.0.113.11" });
+    await insertUser("already-existing-client", "client", { email: INVITEE_EMAIL });
 
     const users = await UserModel.find({ emailNormalized: INVITEE_EMAIL }).lean().exec();
     expect(users).toHaveLength(1);
@@ -763,13 +688,7 @@ describe("user invitation Mongo replica-set races", () => {
       code: "INVITATION_UNAVAILABLE"
     });
     expect(await ProjectAccessGrantModel.countDocuments()).toBe(0);
-    await expectExactAudits([{
-      action: "client_signed_up",
-      actorId: users[0]!._id,
-      entityType: "user",
-      entityId: users[0]!._id,
-      newValues: { role: "client", email: INVITEE_EMAIL }
-    }], [RAW_TOKEN, ACCEPTED_PASSWORD]);
+    await expectExactAudits([], [RAW_TOKEN, ACCEPTED_PASSWORD]);
   });
 
   it("P1: project create versus invitation create serializes and leaves a revoke-only reservation", async () => {
@@ -2294,94 +2213,15 @@ describe("user invitation Mongo replica-set races", () => {
     }
   );
 
-  it("R1: two signup callers retry first authorization coordination and write one email identity", async () => {
-    const gate = gateFirstCoordinationByCaller("coordinateAuthorizationMutation", 2);
-    const services = gate.repositories.map((repository, index) =>
-      createAuthService(
-        repository,
-        {
-          jwtSecret: `task-eight-r1-caller-${index}-secret-at-least-32-characters`,
-          jwtExpiresInSeconds: 900
-        },
-        {
-          auditService: createAuditService(repository),
-          clock: () => new Date(NOW)
-        }
-      )
-    );
-    const signups = services.map((service, index) => service.signupClient({
-      name: `R1 Client ${index}`,
-      email: INVITEE_EMAIL,
-      mobile: "+91 90000 00000",
-      address: "Pune",
-      password: ACCEPTED_PASSWORD
-    }, { remoteAddress: `203.0.113.${20 + index}` }));
-
-    await gate.reached;
-    await replica.admin().command({
-      configureFailPoint: "failCommand",
-      mode: { times: 1 },
-      data: {
-        failCommands: ["update"],
-        errorCode: 11000,
-        errorExtraInfo: {
-          keyPattern: { _id: 1 },
-          keyValue: { _id: "authorization" }
-        }
-      }
-    });
-    let settled: PromiseSettledResult<Awaited<(typeof signups)[number]>>[];
-    try {
-      gate.release(0);
-      await signups[0];
-      gate.release(1);
-      settled = await Promise.allSettled(signups);
-    } finally {
-      await replica.admin().command({
-        configureFailPoint: "failCommand",
-        mode: "off"
-      });
-    }
-
-    const fulfilled = settled.filter(
-      (result): result is PromiseFulfilledResult<Awaited<(typeof signups)[number]>> =>
-        result.status === "fulfilled"
-    );
-    const rejected = settled.filter(
-      (result): result is PromiseRejectedResult => result.status === "rejected"
-    );
-    expect(fulfilled).toHaveLength(1);
-    expect(fulfilled[0]!.value.user).toMatchObject({
-      email: INVITEE_EMAIL,
-      role: "client"
-    });
-    expect(rejected).toHaveLength(1);
-    expect(rejected[0]!.reason).toBeInstanceOf(AccountExistsError);
-    expect(rejected[0]!.reason).toMatchObject({
-      name: "AccountExistsError",
-      message: "An account already exists for this email."
-    });
-    expect(String(rejected[0]!.reason)).not.toMatch(
-      /E11000|duplicate key|Mongo(?:Server|DB)?|write conflict|transaction/i
-    );
-    expect([...gate.attempts].sort()).toEqual([1, 2]);
-    const coordination = await EmailCoordinationModel.find({
-      _id: INVITEE_EMAIL
-    }).lean().exec();
-    expect(coordination).toEqual([expect.objectContaining({
-      _id: INVITEE_EMAIL,
-      revision: 1
-    })]);
-    const users = await UserModel.find({ emailNormalized: INVITEE_EMAIL }).lean().exec();
-    expect(users).toHaveLength(1);
-    expect(await ProjectAccessGrantModel.countDocuments()).toBe(0);
-    await expectExactAudits([{
-      action: "client_signed_up",
-      actorId: users[0]!._id,
-      entityType: "user",
-      entityId: users[0]!._id,
-      newValues: { role: "client", email: INVITEE_EMAIL }
-    }], [ACCEPTED_PASSWORD, ACCEPTED_PASSWORD_HASH]);
+  it("R1: concurrent retired signup callers perform no identity or coordination writes", async () => {
+    const repository = createMongoRepository();
+    const service = createAuthService(repository, { jwtSecret: "retired-signup-concurrent-secret-at-least-32-characters", jwtExpiresInSeconds: 900 });
+    const results = await Promise.allSettled([0, 1].map(index => service.signupClient({ name: `Client ${index}`, email: INVITEE_EMAIL, mobile: "+91 90000 00000", password: ACCEPTED_PASSWORD }, { remoteAddress: "203.0.113.20" })));
+    for (const result of results) expect(result).toMatchObject({ status: "rejected", reason: { code: "CLIENT_INVITATION_REQUIRED" } });
+    expect(await UserModel.countDocuments()).toBe(0);
+    expect(await EmailCoordinationModel.countDocuments()).toBe(0);
+    expect(await AuthorizationCoordinationModel.countDocuments()).toBe(0);
+    await expectExactAudits([], [ACCEPTED_PASSWORD]);
   });
 
   it("R2: two invitation callers collide on first AuthorizationCoordination use without duplicate effects", async () => {

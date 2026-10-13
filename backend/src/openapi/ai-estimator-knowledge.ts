@@ -1293,7 +1293,7 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
       }
     ]
   },
-  KnowledgeSubBasket: strictObject(["id", "basketId", "name", "displayOrder", "version", ...Object.keys(actorMetadata)], { id, basketId: id, name: masterProperties.name, displayOrder, version, ...actorMetadata }),
+  KnowledgeSubBasket: strictObject(["id", "basketId", "name", "displayOrder", "version", ...Object.keys(actorMetadata)], { id, basketId: id, name: masterProperties.name, description: { type: "string", maxLength: 4000, nullable: true }, displayOrder, version, ...actorMetadata }),
   KnowledgeSubBasketPage: pageSchema("KnowledgeSubBasket"),
   KnowledgeBasket: strictObject(
     ["id", "name", "description", "displayOrder", "status", "version", ...Object.keys(actorMetadata)],

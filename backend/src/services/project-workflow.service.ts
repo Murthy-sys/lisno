@@ -1,3 +1,7 @@
+import { isCollaborativeEstimate } from "../domain/estimation-lifecycle.js";
+import { fenceCollaborativeEstimate } from "./estimate-collaboration-policy.service.js";
+import { assertProjectWorkOrderIssueEligible } from "./project-work-order-eligibility.service.js";
+import { DesignWorkflowStateModel } from "../models/DesignWorkflowState.js";
 import type { PreparedPlanDocuments } from "../contracts/estimate-plan-document.js";
 import { createEstimatePlanDocumentService } from "./estimate-plan-document.service.js";
 import { randomUUID } from "node:crypto";
@@ -18,6 +22,7 @@ import {
   workflowTaskDueAt,
   WORKFLOW_TASK_SCHEDULE,
   type DesignPlanStatus,
+  type WorkflowTaskBlueprint,
   type ProjectWorkflowSectionAggregate,
   type ProjectWorkflowSectionTask
 } from "../domain/project-workflow.js";
@@ -48,7 +53,7 @@ import type { DesignPlanMailer } from "./design-plan-mailer.js";
 import { synchronizeEstimateDesignReviewState } from "./estimate-design-review-state.js";
 import { approvePlanTargetsForDrawingRevision } from "./estimate-plan-review.service.js";
 import type { OpenFinanceBucketInput } from "./project-finance.service.js";
-import { assertDesignWorkflowSubmissionAllowed } from "./design-workflow-state.service.js";
+import { assertDesignWorkflowSubmissionAllowed, reconcileWorkflowRoomScope } from "./design-workflow-state.service.js";
 
 type Row = Record<string, any>;
 type AssignableExecutionRole = WorkerRole | "procurement" | "site_manager";
@@ -61,6 +66,8 @@ const DOWNSTREAM_EXECUTION_TASK_KINDS = [
 ] as const;
 
 export interface DesignPlanTaskDto {
+  leadId?: string;
+  estimationWorkflowVersion?: 2;
   id: string;
   estimateId: string;
   projectId: string;
@@ -68,6 +75,7 @@ export interface DesignPlanTaskDto {
   clientName: string;
   status: DesignPlanStatus;
   designPlanVersion: number;
+  scopeReconciliation?: { required: boolean; designScopeRevision: number; approvedDesignScopeRevision: number | null };
   rooms: Array<Record<string, unknown>>;
   scopes: string[];
   selectedMainBasketIds: string[];
@@ -107,6 +115,7 @@ export interface ProjectWorkflowTaskDto {
   completionAuthority?: "legacy_staff" | "vendor_client";
   estimateId: string;
   kind: string;
+  preparationOnly?: boolean;
   title: string;
   description: string;
   assigneeRole: string;
@@ -159,6 +168,7 @@ export interface ProjectWorkflowSectionAssignmentDto {
 }
 
 export interface ProjectWorkflowService {
+  reconcileDesignScope(actor: PublicUser, projectId: string, expectedDesignPlanVersion: number, expectedScopeRevision: number): Promise<{ designPlanVersion: number; designScopeRevision: number }>;
   listAssignableDesigners(
     actor: PublicUser
   ): Promise<Array<{ id: string; name: string; email: string }>>;
@@ -265,6 +275,24 @@ export function createProjectWorkflowService(input: {
   const planDocuments = createEstimatePlanDocumentService({ storage: input.storage, now });
 
   const service: ProjectWorkflowService = {
+    async reconcileDesignScope(actor, projectId, expectedDesignPlanVersion, expectedScopeRevision) {
+      return withMongoTransaction(async session => {
+        const user = await UserModel.findOne({ _id: actor.id, role: actor.role, active: true }).session(session).lean();
+        if (!user || !["designer", "super_admin"].includes(actor.role)) forbidden();
+        const estimate = await EstimateModel.findOne({ projectId, "estimation.workflowVersion": 2 }).session(session).lean();
+        if (!estimate || actor.role === "designer" && estimate.designPlanDesignerId !== actor.id) notFound();
+        if (Number(estimate.designPlanVersion ?? 0) !== expectedDesignPlanVersion || estimate.estimation.designScopeRevision !== expectedScopeRevision) throw new ApiError(409, "DESIGN_SCOPE_CHANGED", "The design or estimate scope changed. Refresh before reconciling.");
+        await guardCollaborativeDesign(estimate, session);
+        const at = now();
+        await DesignPlanReviewRoundModel.updateMany({ estimateId: estimate._id, status: "pending" }, { $set: { status: "withdrawn", withdrawnAt: at, withdrawnById: actor.id, withdrawalReason: "Estimate scope changed; design reconciliation required." }, $inc: { version: 1 } }, { session });
+        const changed = await EstimateModel.updateOne({ _id: estimate._id, designPlanVersion: expectedDesignPlanVersion, "estimation.designScopeRevision": expectedScopeRevision, "estimation.editClosedAt": null }, { $set: { designPlanStatus: "changes_requested", designFrozenAt: null, designPlanSubmittedAt: null }, $inc: { designLifecycleVersion: 1 } }, { session });
+        requireMatched(changed, "The design changed before scope reconciliation could start.");
+        const affectedRoomIds = await reconcileWorkflowRoomScope(createMongoRepository(session), projectId, at.toISOString());
+        await ProjectWorkflowTaskModel.updateOne({ dedupeKey: `${String(estimate._id)}:design-plan-upload` }, { $set: { status: "open", completedAt: null }, $inc: { version: 1 } }, { session });
+        await input.audit.appendInMongoTransaction({ actorId: actor.id, action: "design_plan_scope_reconciled", entityType: "estimate", entityId: String(estimate._id), occurredAt: at.toISOString(), oldValues: { designPlanStatus: estimate.designPlanStatus, approvedScopeRevision: estimate.estimation.approvedDesignScopeRevision }, newValues: { designPlanStatus: "changes_requested", designScopeRevision: expectedScopeRevision, affectedRoomIds } }, session);
+        return { designPlanVersion: expectedDesignPlanVersion, designScopeRevision: expectedScopeRevision };
+      });
+    },
     async listAssignableDesigners(actor) {
       if (!(actor.role === "admin" || actor.role === "super_admin")) forbidden();
       const designers = await UserModel.find({ role: "designer", active: true })
@@ -356,6 +384,7 @@ export function createProjectWorkflowService(input: {
         ) {
           designPlanProjectLinkConflict();
         }
+        await guardCollaborativeDesign(estimate, session);
         const designPlanVersion = Number(estimate.designPlanVersion ?? 0);
 
         const estimateUpdated = await EstimateModel.updateOne(
@@ -511,6 +540,7 @@ export function createProjectWorkflowService(input: {
         designFrozenAt: { $in: [null] }
       }).session(session).lean();
       if (!estimate || actor.role !== "designer") forbidden();
+      await guardCollaborativeDesign(estimate, session);
       const [lead, project, uploads] = await Promise.all([
         LeadModel.findById(estimate.leadId).session(session).lean(),
         ProjectModel.findById(estimate.projectId).session(session).lean(),
@@ -578,6 +608,7 @@ export function createProjectWorkflowService(input: {
         projectId: String(project._id),
         leadId: String(lead._id),
         designPlanVersion,
+        ...(isCollaborativeEstimate(estimate) ? { designScopeRevision: estimate.estimation.designScopeRevision } : {}),
         recipientEmail: String(lead.clientEmail),
         clientName: String(lead.clientName),
         projectName: String(lead.projectName),
@@ -760,6 +791,7 @@ export function createProjectWorkflowService(input: {
         status: "pending"
       }).session(session).lean();
       if (!round) return;
+      await guardCollaborativeDesign(estimate, session, round);
       if (decision === "request_changes") {
         await transitionReviewRound(round, {
           status: "changes_requested",
@@ -983,6 +1015,7 @@ export function createProjectWorkflowService(input: {
         if (!estimate) {
           throw new ApiError(409, "DESIGN_PLAN_NOT_REVIEWABLE", "This Design plan is no longer awaiting review.");
         }
+        await guardCollaborativeDesign(estimate, session, round);
         const drawings = await currentDrawingRevisions(String(estimate._id), session);
         if (drawings.length === 0) {
           throw new ApiError(409, "DESIGN_PLAN_EMPTY", "A Design plan must contain at least one drawing.");
@@ -1465,7 +1498,7 @@ export function createProjectWorkflowService(input: {
     async listOperationalTasks(actor) {
       if (!isOperationalTaskRole(actor.role)) forbidden();
       const siteProjects = actor.role === "site_manager"
-        ? await ProjectWorkflowTaskModel.find({ kind: "site_execution", assigneeRole: "site_manager", assigneeUserId: actor.id }).select({ projectId: 1 }).lean()
+        ? await ProjectWorkflowTaskModel.find({ kind: "site_execution", preparationOnly: { $ne: true }, assigneeRole: "site_manager", assigneeUserId: actor.id }).select({ projectId: 1 }).lean()
         : [];
       const filter: Row = actor.role === "site_manager"
         ? { projectId: { $in: siteProjects.map((task) => task.projectId) }, $or: [
@@ -1475,7 +1508,7 @@ export function createProjectWorkflowService(input: {
         : actor.role === "procurement" || isWorkerRole(actor.role)
           ? { assigneeRole: actor.role, assigneeUserId: actor.id }
           : { assigneeRole: actor.role };
-      const tasks = await ProjectWorkflowTaskModel.find(filter)
+      const tasks = await ProjectWorkflowTaskModel.find({ ...filter, preparationOnly: { $ne: true } })
         .sort({ projectId: 1, kind: 1, status: 1, openedAt: -1, _id: 1 })
         .lean();
       const projects = await ProjectModel.find({
@@ -1507,6 +1540,10 @@ export function createProjectWorkflowService(input: {
         }).session(session).lean();
         if (!task) notFound();
 
+        if (task.preparationOnly === true) {
+          throw new ApiError(409, "WORK_ORDER_NOT_READY", "Site execution starts after final approval and initial payment.");
+        }
+
         const currentVersion = Number(task.version ?? 1);
         if (currentVersion !== expectedVersion) {
           throw new ApiError(
@@ -1535,6 +1572,10 @@ export function createProjectWorkflowService(input: {
           .session(session)
           .lean();
         if (!project) notFound();
+
+        if (task.kind === "site_execution") {
+          await assertProjectWorkOrderIssueEligible(String(task.projectId), session);
+        }
 
         if (project.status === "completed" && project.completionAuthority === "vendor_client") {
           throw new ApiError(409, "PROJECT_COMPLETED", "Completed projects do not accept further task updates.");
@@ -1862,6 +1903,8 @@ async function finalizeDesignApproval(input: {
     ): Promise<unknown>;
   };
 }) {
+  await guardCollaborativeDesign(input.estimate, input.session, input.round);
+  const collaborative = isCollaborativeEstimate(input.estimate);
   await transitionReviewRound(input.round, {
     status: "approved",
     decision: "approve",
@@ -1887,20 +1930,21 @@ async function finalizeDesignApproval(input: {
         designPlanApprovedAt: input.occurredAt,
         designPlanApprovedById: input.actorId,
         designPlanApprovalSource: input.source,
-        designFrozenAt: input.occurredAt
+        designFrozenAt: input.occurredAt,
+        ...(collaborative ? { "estimation.approvedDesignScopeRevision": input.estimate.estimation.designScopeRevision } : {})
       },
       $inc: { designLifecycleVersion: 1 }
     },
     { session: input.session }
   );
   requireMatched(estimateUpdated, "This Design plan changed before approval was recorded.");
-  await generateDownstreamTasks(
+  if (!collaborative) await generateDownstreamTasks(
     input.estimate,
     Number(input.round.designPlanVersion),
     input.occurredAt,
     input.session
   );
-  if (input.finance) {
+  if (input.finance && !collaborative) {
     await input.finance.open({
       projectId: String(input.estimate.projectId),
       designPlanVersion: Number(input.round.designPlanVersion),
@@ -1919,7 +1963,7 @@ async function finalizeDesignApproval(input: {
       }
     }, input.session);
   }
-  await ProjectModel.updateOne(
+  if (!collaborative) await ProjectModel.updateOne(
     { _id: input.estimate.projectId, status: "planning" },
     { $set: { status: "active", actualStartAt: input.occurredAt, updatedAt: input.occurredAt } },
     { session: input.session }
@@ -1928,7 +1972,7 @@ async function finalizeDesignApproval(input: {
     { _id: input.estimate.leadId, projectId: input.estimate.projectId },
     {
       $set: {
-        nextAction: "project kickoff",
+        nextAction: collaborative ? "Final estimate approval" : "project kickoff",
         nextActionAt: input.occurredAt
       }
     },
@@ -1956,7 +2000,8 @@ async function generateDownstreamTasks(
   session: mongoose.ClientSession
 ) {
   const estimateId = String(estimate._id);
-  const estimateVersion = approvedWorkflowEstimateVersion(estimate.version);
+  const estimateVersion = isCollaborativeEstimate(estimate) ? estimate.estimation.finalApproval?.estimateVersion : approvedWorkflowEstimateVersion(estimate.version);
+  if (!estimateVersion) throw new ApiError(409, "ESTIMATE_FINAL_APPROVAL_REQUIRED", "Final approval is required before execution tasks can be opened.");
   const lineItems = await approvedWorkflowLineSnapshots(estimate, session);
   const blueprints = projectWorkflowBlueprints({
     estimateId,
@@ -1985,6 +2030,9 @@ async function generateDownstreamTasks(
   });
   for (const blueprint of blueprints) {
     const { dueInDays: _dueInDays, plannedEffort, ...fields } = blueprint;
+    if (isCollaborativeEstimate(estimate) && blueprint.kind === "site_execution") {
+      if (await activatePreparationSiteTask(estimate, blueprint, designPlanVersion, openedAt, session)) continue;
+    }
     const legacyTradeDedupeKey = blueprint.kind === "trade_execution"
       ? legacyDedupeByLineItemKey.get(String(blueprint.sourceLineItemKey)) ?? null
       : null;
@@ -2019,6 +2067,57 @@ async function generateDownstreamTasks(
   }
 }
 
+async function activatePreparationSiteTask(
+  estimate: Row,
+  blueprint: WorkflowTaskBlueprint,
+  designPlanVersion: number,
+  openedAt: Date,
+  session: mongoose.ClientSession
+) {
+  const current = await ProjectWorkflowTaskModel.findOne({ dedupeKey: blueprint.dedupeKey }).session(session).lean();
+  if (!current) return false;
+  const projectId = String(estimate.projectId);
+  const estimateId = String(estimate._id);
+  const conflict = () => new ApiError(409, "WORKFLOW_TASK_ACTIVATION_CONFLICT", "The Site assignment task requires reconciliation before execution can start.");
+  if (current.projectId !== projectId || current.estimateId !== estimateId || current.kind !== "site_execution" || current.assigneeRole !== "site_manager") throw conflict();
+  if (current.preparationOnly !== true) {
+    if (current.designPlanVersion !== designPlanVersion) throw conflict();
+    return true;
+  }
+  if (current.status !== "open" || current.progress !== 0 || current.completedAt || current.dueAt || current.plannedEffort != null || !Number.isSafeInteger(designPlanVersion) || designPlanVersion < 1) throw conflict();
+  const activation = {
+    preparationOnly: false,
+    designPlanVersion,
+    title: blueprint.title,
+    description: blueprint.description,
+    openedAt,
+    dueAt: workflowTaskDueAt("site_execution", openedAt),
+    plannedEffort: blueprint.plannedEffort,
+    updatedAt: openedAt
+  };
+  await new ProjectWorkflowTaskModel({ ...current, ...activation, version: current.version + 1 }).validate();
+  // The source and phase remain schema-immutable for every ordinary write.
+  // This validated, versioned one-way payment transition is the sole exception.
+  const changed = await ProjectWorkflowTaskModel.collection.updateOne({
+    _id: current._id,
+    projectId,
+    estimateId,
+    dedupeKey: blueprint.dedupeKey,
+    kind: "site_execution",
+    assigneeRole: "site_manager",
+    preparationOnly: true,
+    designPlanVersion: current.designPlanVersion,
+    version: current.version,
+    status: "open",
+    progress: 0,
+    dueAt: null,
+    plannedEffort: null,
+    completedAt: null
+  }, { $set: activation, $inc: { version: 1 } }, { session });
+  if (changed.matchedCount !== 1) throw conflict();
+  return true;
+}
+
 function approvedWorkflowEstimateVersion(value: unknown): number {
   const currentVersion = Number(value);
   if (!Number.isSafeInteger(currentVersion) || currentVersion < 1) {
@@ -2046,6 +2145,7 @@ function operationalTaskDto(
     projectName,
     estimateId: String(task.estimateId),
     kind: String(task.kind),
+    ...(task.preparationOnly === true ? { preparationOnly: true } : {}),
     title: String(task.title),
     description: String(task.description ?? ""),
     assigneeRole: String(task.assigneeRole),
@@ -2109,6 +2209,13 @@ async function approvedWorkflowLineSnapshots(
   session: mongoose.ClientSession
 ): Promise<Row[]> {
   const estimateId = String(estimate._id);
+  if (isCollaborativeEstimate(estimate)) {
+    const reference = estimate.estimation.finalApproval;
+    if (!reference) sectionAssignmentConflict();
+    const round = await EstimateClientReviewRoundModel.findOne({ _id: reference.reviewRoundId, estimateId, projectId: estimate.projectId, estimateVersion: reference.estimateVersion, status: "approved", decision: "approve" }).session(session).lean();
+    if (!round || !Array.isArray(round.estimateSnapshot?.lineItems)) sectionAssignmentConflict();
+    return round.estimateSnapshot.lineItems as Row[];
+  }
   const approvedVersion = approvedWorkflowEstimateVersion(estimate.version);
   const liveLines = Array.isArray(estimate.lineItems) ? estimate.lineItems as Row[] : [];
   if (!liveLines.some((line) => line.source === "configuration")) return liveLines;
@@ -2134,7 +2241,7 @@ async function canonicalApprovedTradeSource(
     status: "client_approved",
     designPlanStatus: "approved"
   })
-    .select({ _id: 1, projectId: 1, version: 1, designPlanVersion: 1, lineItems: 1 })
+    .select({ _id: 1, projectId: 1, version: 1, designPlanVersion: 1, lineItems: 1, estimation: 1 })
     .limit(2)
     .session(session)
     .lean();
@@ -2336,6 +2443,8 @@ function isOperationalTaskRole(role: PublicUser["role"]): boolean {
 
 function taskDto(estimate: Row, project: Row, lead: Row): DesignPlanTaskDto {
   return {
+    leadId: String(lead._id),
+    ...(isCollaborativeEstimate(estimate) ? { estimationWorkflowVersion: 2 as const } : {}),
     id: `${String(estimate._id)}:design-plan-upload`,
     estimateId: String(estimate._id),
     projectId: String(project._id),
@@ -2343,6 +2452,7 @@ function taskDto(estimate: Row, project: Row, lead: Row): DesignPlanTaskDto {
     clientName: String(lead.clientName),
     status: String(estimate.designPlanStatus) as DesignPlanStatus,
     designPlanVersion: Number(estimate.designPlanVersion ?? 0),
+    ...(isCollaborativeEstimate(estimate) ? { scopeReconciliation: { required: estimate.estimation.approvedDesignScopeRevision != null && estimate.estimation.approvedDesignScopeRevision !== estimate.estimation.designScopeRevision, designScopeRevision: estimate.estimation.designScopeRevision, approvedDesignScopeRevision: estimate.estimation.approvedDesignScopeRevision } } : {}),
     rooms: (estimate.rooms ?? []) as Array<Record<string, unknown>>,
     scopes: (estimate.scopes ?? []).map(String),
     selectedMainBasketIds: (estimate.selectedMainBasketIds ?? []).map(String),
@@ -2495,7 +2605,8 @@ async function reviewCanBeDecided(round: Row, actor: PublicUser) {
   return Boolean(await EstimateModel.exists({
     _id: round.estimateId, projectId: round.projectId, status: "client_approved",
     designPlanStatus: "ready_for_client", designPlanVersion: round.designPlanVersion,
-    designFrozenAt: { $in: [null] }
+    designFrozenAt: { $in: [null] },
+    $or: [{ "estimation.workflowVersion": { $ne: 2 } }, { "estimation.designScopeRevision": round.designScopeRevision, "estimation.finalApproval": null }]
   }));
 }
 
@@ -2526,4 +2637,44 @@ function hasUnknownTransactionCommitResult(error: unknown): boolean {
     current = value.cause;
   }
   return false;
+}
+
+async function guardCollaborativeDesign(estimate: Row, session: mongoose.ClientSession, round?: Row) {
+  if (!isCollaborativeEstimate(estimate)) return;
+  if (!estimate.estimation.preApproval || estimate.estimation.editClosedAt || estimate.estimation.finalApproval) throw new ApiError(409, "ESTIMATE_EDIT_WINDOW_CLOSED", "Design changes require an open post-estimate revision.");
+  await fenceCollaborativeEstimate(estimate, session);
+  if (round && round.designScopeRevision !== estimate.estimation.designScopeRevision) throw new ApiError(409, "DESIGN_SCOPE_CHANGED", "The estimate scope changed. Reconcile the design and submit it again before approval.");
+}
+
+export async function ensureCollaborativePreparationTask(estimate: Row, occurredAt: Date, session: mongoose.ClientSession) {
+  if (!isCollaborativeEstimate(estimate) || !estimate.estimation.preApproval) return;
+  const estimateId = String(estimate._id);
+  const blueprints = projectWorkflowBlueprints({ estimateId, estimateVersion: estimate.estimation.preApproval.estimateVersion, lineItems: [] });
+  for (const { dueInDays: _dueInDays, ...blueprint } of blueprints) {
+    const preparationOnly = blueprint.kind === "site_execution";
+    await ProjectWorkflowTaskModel.updateOne({ dedupeKey: blueprint.dedupeKey }, { $setOnInsert: {
+      _id: `workflow-task-${randomUUID()}`, ...blueprint,
+      title: preparationOnly ? "Prepare Site supervision" : blueprint.kind === "finance" ? "Review provisional project budget" : blueprint.title,
+      description: "Prepare and review the approved pre-estimate. Execution and work orders require final approval and initial payment.",
+      projectId: String(estimate.projectId), estimateId, designPlanVersion: Number(estimate.designPlanVersion ?? 0),
+      assigneeUserId: null, status: "open", progress: 0, version: 1, openedAt: occurredAt,
+      preparationOnly,
+      dueAt: preparationOnly ? null : workflowTaskDueAt(blueprint.kind, occurredAt),
+      plannedEffort: preparationOnly ? null : blueprint.plannedEffort,
+      completedAt: null
+    } }, { upsert: true, session, runValidators: true });
+  }
+}
+
+export async function activateCollaborativeProjectWorkflow(projectId: string, actorId: string, occurredAt: Date, session: mongoose.ClientSession) {
+  const estimate = await EstimateModel.findOne({ projectId, "estimation.workflowVersion": 2 }).session(session).lean();
+  const final = estimate?.estimation?.finalApproval;
+  const payment = await DesignWorkflowStateModel.findById(projectId).session(session).lean();
+  if (!estimate || !final || estimate.designPlanStatus !== "approved" || estimate.estimation.approvedDesignScopeRevision !== final.designScopeRevision || final.designScopeRevision !== estimate.estimation.designScopeRevision || payment?.initialPaymentReviewRoundId !== final.reviewRoundId || payment.initialPaymentDesignReviewRoundId !== final.designReviewRoundId || !payment.initialPaymentAt) throw new ApiError(409, "PROJECT_EXECUTION_BLOCKED", "Final estimate, design and initial payment must match before execution starts.");
+  const executionOpenedAt = new Date(payment.initialPaymentAt);
+  if (!Number.isFinite(executionOpenedAt.getTime()) || executionOpenedAt > occurredAt) throw new ApiError(409, "PROJECT_EXECUTION_BLOCKED", "The initial payment date is invalid for execution activation.");
+  await fenceCollaborativeEstimate(estimate, session);
+  await generateDownstreamTasks(estimate, final.designPlanVersion, executionOpenedAt, session);
+  await ProjectModel.updateOne({ _id: projectId, status: "planning" }, { $set: { status: "active", actualStartAt: executionOpenedAt, updatedAt: occurredAt } }, { session });
+  await LeadModel.updateOne({ _id: estimate.leadId, projectId }, { $set: { nextAction: "project kickoff", nextActionAt: executionOpenedAt } }, { session });
 }

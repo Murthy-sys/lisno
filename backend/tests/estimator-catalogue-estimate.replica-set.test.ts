@@ -551,15 +551,15 @@ describe("estimator configured catalogue and estimate", { timeout: 30_000 }, () 
       .toEqual(["line-temp"]);
   });
 
-  it("authorizes only Estimator/Sales and Super Admin, including an active actor recheck", async () => {
+  it("authorizes internal estimating roles including Designer and rechecks active actors", async () => {
     const { server } = app();
-    for (const actor of ["estimator", "superAdmin"] as const) {
+    for (const actor of ["estimator", "designer", "superAdmin"] as const) {
       await request(server).get("/api/v1/estimation/catalogue").set(bearer(actor)).expect(200);
       await request(server).get("/api/v1/estimation/catalogue?includeReadyNonActive=true")
         .set(bearer(actor)).expect(200);
       expect(hasPermission(actors[actor].role, "estimation.catalogue.read")).toBe(true);
     }
-    for (const actor of ["procurement", "designer", "client"] as const) {
+    for (const actor of ["procurement", "client"] as const) {
       await request(server).get("/api/v1/estimation/catalogue").set(bearer(actor)).expect(403);
       await request(server).get("/api/v1/estimation/catalogue?includeReadyNonActive=true")
         .set(bearer(actor)).expect(403);

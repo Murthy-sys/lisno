@@ -1,3 +1,4 @@
+import { procurementPreparationProjectFilter } from "./procurement.service.js";
 import type { ClientSession } from "mongoose";
 import { ApiError } from "../middleware/errors.js";
 import { EstimateModel } from "../models/Estimate.js";
@@ -22,7 +23,7 @@ export async function resolveBasketProjectApprovers(projectId: string, estimateI
   requiredSlots: readonly string[], session: ClientSession, fence = false): Promise<BasketProjectApprovers> {
   if (fence) await createMongoRepository(session).coordinateAuthorizationMutation();
   const project = fence
-    ? await ProjectModel.findOneAndUpdate({ _id: projectId, status: "active" },
+    ? await ProjectModel.findOneAndUpdate({ _id: projectId, ...procurementPreparationProjectFilter() },
       { $inc: { purchaseOrderApprovalEpoch: 1 } }, { session, returnDocument: "after", timestamps: false }).lean() as Row | null
     : await ProjectModel.findById(projectId).session(session).lean() as Row | null;
   if (!project) throw new ApiError(409, "PROCUREMENT_BASKET_PROJECT_INACTIVE", "This project is not active.");

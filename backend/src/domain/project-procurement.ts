@@ -1,3 +1,4 @@
+import type { EstimationPreparationSource } from "./estimation-lifecycle.js";
 import { z } from "zod";
 import { AI_ESTIMATOR_KNOWLEDGE_MAX_SHORT_TEXT, normalizeKnowledgeIdentity } from "./ai-estimator-knowledge.js";
 import { MAX_FINANCE_AMOUNT_PAISE } from "./project-finance.js";
@@ -118,6 +119,7 @@ export interface ProjectProcurementItemDto {
   id: string;
   projectId: string;
   estimateSource: ProcurementEstimateSource | null;
+  preparationSource?: EstimationPreparationSource;
   itemName: string;
   brand: string;
   uom: ProcurementReferenceSnapshot;

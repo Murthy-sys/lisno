@@ -151,6 +151,10 @@ function estimateFixture(overrides: Record<string, unknown> = {}) {
 
 function estimateDocument(overrides: Record<string, unknown> = {}) {
   const document = estimateFixture(overrides);
+  Object.defineProperty(document, "set", {
+    value: vi.fn((fields: Record<string, unknown>) => Object.assign(document, fields)),
+    enumerable: false
+  });
   document.save = vi.fn(async () => document);
   document.toObject = () => Object.fromEntries(
     Object.entries(document).filter(([key]) => key !== "save" && key !== "toObject")
@@ -180,7 +184,7 @@ function immutableEstimateSnapshot(record: Record<string, any>) {
 
 function estimateDto(record: Record<string, any>) {
   const { _id, ...plain } = plainEstimateRecord(record);
-  return JSON.parse(JSON.stringify({ ...plain, id: _id }));
+  return JSON.parse(JSON.stringify({ selectedMainBasketClassifications: [], ...plain, id: _id }));
 }
 
 const CLIENT_REVIEW_SUMMARY = {
@@ -371,7 +375,7 @@ describe("lead and owner-estimate route characterizations", () => {
       "estimate-draft"
     );
     expect(response.body).toEqual({
-      data: { ...estimateDto(estimate), clientReview: CLIENT_REVIEW_SUMMARY }
+      data: { ...estimateDto(estimate), isIncomplete: false, clientReview: CLIENT_REVIEW_SUMMARY }
     });
     expect(JSON.stringify(response.body)).not.toMatch(
       /recipient|decisionNote|storageReference|filename|proof/i
@@ -641,6 +645,10 @@ describe("lead and owner-estimate route characterizations", () => {
     const { app, authorization } = setupLeadCharacterization({
       projectId: "project-admin-1"
     });
+    const findProject = vi.spyOn(ProjectModel, "findById").mockReturnValue(
+      query({ _id: "project-admin-1", status: "planning" }) as never
+    );
+    vi.spyOn(UserModel, "findOne").mockReturnValue(query({ _id: "user-estimator-sales", active: true, role: "estimator_sales" }) as never);
     const findEstimate = vi.spyOn(EstimateModel, "findOne");
     const modelSave = vi
       .spyOn(EstimateModel.prototype, "save")
@@ -676,6 +684,8 @@ describe("lead and owner-estimate route characterizations", () => {
     expect(plainEstimateRecord(conflictingDraft)).toEqual(conflictingBefore);
     expect(modelSave).toHaveBeenCalledOnce();
     expect(modelSave).toHaveBeenCalledWith({ session: mongoSession });
+    expect(findProject).toHaveBeenCalledTimes(3);
+    expect(findProject).toHaveBeenCalledWith("project-admin-1");
   });
 
   it("allows Super Admin global Lead reads and denies personal mutations before service entry", async () => {
@@ -901,6 +911,7 @@ describe("lead and owner-estimate route characterizations", () => {
     expect(response.body).toEqual({
       data: [{
         ...estimateDto(estimate),
+        isIncomplete: false,
         lead: {
           ownerId: "user-estimator-sales",
           clientName: "Rhea Kapoor",
@@ -939,7 +950,9 @@ describe("lead and owner-estimate route characterizations", () => {
     );
     const findEstimates = vi.spyOn(EstimateModel, "find").mockImplementation((filter) => {
       if (Object.keys(filter as object).length === 0) return query([draft]) as never;
-      const status = (filter as Record<string, any>).status;
+      const status = (filter as Record<string, any>).$or?.find(
+        (branch: Record<string, any>) => branch["estimation.workflowVersion"]?.$ne === 2
+      )?.status;
       if (status?.$in?.includes("pending_manager_assignment")) return query([pendingAssignment]) as never;
       if (status?.$in?.includes("sent_to_client")) return query([clientVisible]) as never;
       return query([]) as never;
@@ -964,7 +977,10 @@ describe("lead and owner-estimate route characterizations", () => {
 
     expect(findOne).toHaveBeenCalledWith({ leadId: "lead-aurora" });
     expect(findEstimates).toHaveBeenCalledWith({});
-    expect(findEstimates).toHaveBeenCalledWith({ status: { $in: ["pending_manager_assignment", "pending_designer_approval"] } });
+    expect(findEstimates).toHaveBeenCalledWith({ $or: [
+      { "estimation.workflowVersion": 2, "estimation.status": { $in: ["pending_manager_assignment", "pending_designer_approval"] } },
+      { "estimation.workflowVersion": { $ne: 2 }, status: { $in: ["pending_manager_assignment", "pending_designer_approval"] } }
+    ] });
     expect(findDesigners).toHaveBeenCalledWith({ role: "designer", active: true });
     expect(findLeads).toHaveBeenCalledWith({ _id: { $in: ["lead-aurora"] } });
     expect(queue.body.data).toHaveLength(1);
@@ -1098,6 +1114,7 @@ describe("lead and owner-estimate route characterizations", () => {
     const mongoSession = mockAuthorizationTransaction();
     mockNoClientReviewSummary();
     const { app, authorization, runInTransaction } = setupLeadCharacterization();
+    vi.spyOn(UserModel, "findOne").mockReturnValue(query({ _id: "user-estimator-sales", active: true, role: "estimator_sales" }) as never);
     const estimate = estimateDocument();
     const before = immutableEstimateSnapshot(estimate);
     const findEstimate = vi
@@ -1115,6 +1132,7 @@ describe("lead and owner-estimate route characterizations", () => {
     const expected = {
       ...before,
       propertyType: "villa",
+      bedroomCount: null,
       rooms: [],
       scopes: ["interiors"],
       lineItems: [{
@@ -1125,6 +1143,7 @@ describe("lead and owner-estimate route characterizations", () => {
         amountPaise: 100000
       }],
       selectedMainBasketIds: [],
+      selectedMainBasketClassifications: [],
       subtotal: 1000,
       subtotalPaise: 100000,
       gst: 180,
@@ -1149,6 +1168,9 @@ describe("lead and owner-estimate route characterizations", () => {
     const mongoSession = mockAuthorizationTransaction();
     mockNoClientReviewSummary();
     const { app, authorization, runInTransaction } = setupLeadCharacterization();
+    const findActor = vi.spyOn(UserModel, "findOne").mockReturnValue(
+      query({ _id: "user-estimator-sales", active: true, role: "estimator_sales" }) as never
+    );
     const estimate = estimateDocument({
       lineItems: [{ ...CHARACTERIZATION_ESTIMATE_BODY.lineItems[0], amount: 1000 }],
       subtotal: 1_500_001,
@@ -1199,8 +1221,9 @@ describe("lead and owner-estimate route characterizations", () => {
     expect(findEstimate).toHaveBeenCalledTimes(2);
     expect(findEstimate).toHaveBeenLastCalledWith({
       _id: estimate._id, ownerId: "user-estimator-sales", version: before.version,
-      status: "draft", total: { $gt: 1_500_000 }
+      "estimation.workflowVersion": { $ne: 2 }, status: "draft", total: { $gt: 1_500_000 }
     });
+    expect(findActor).toHaveBeenCalledWith({ _id: "user-estimator-sales", active: true });
     expect(estimate.save).toHaveBeenCalledOnce();
     expect(estimate.save).toHaveBeenCalledWith({ session: mongoSession });
     expect(AuthorizationCoordinationModel.updateOne).toHaveBeenCalledOnce();

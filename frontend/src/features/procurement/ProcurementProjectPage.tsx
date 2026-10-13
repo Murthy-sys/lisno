@@ -9,6 +9,7 @@ import { useAuth } from "../../auth/AuthProvider";
 import { hasFrontendPermission } from "../../auth/authorization";
 import { PageHeader } from "../../components/ui/PageHeader";
 import { PageState } from "../../components/ui/PageState";
+import { ProcurementEstimateSource } from "./ProcurementEstimateSource";
 import { ProcurementBasketWorkspace } from "./ProcurementBasketWorkspace";
 import {
   procurementError,
@@ -73,9 +74,10 @@ export function ProcurementProjectPage() {
         />
       ) : null}
       {canRead && !accessRevoked && visibleProject && hasFrontendPermission(auth.authorization, "execution.tracker.read") ? <p><Link to={`/projects/${encodeURIComponent(projectId)}/execution`}>View Main Line execution</Link></p> : null}
+      {canRead && !accessRevoked && visibleProject ? <ProcurementEstimateSource source={visibleProject.preparationSource} readiness={visibleProject.issueReadiness} stale={projectSourceStale} /> : null}
       {canRead && !accessRevoked && visibleProject ? <VendorAccessPanel projectId={projectId} /> : null}
       {canRead && !accessRevoked && visibleProject ? <ProcurementBasketWorkspace key={`basket-workspace-${projectId}`}
-        projectId={projectId} projectName={visibleProject.projectName} projectSourceStale={projectSourceStale}
+        projectId={projectId} projectName={visibleProject.projectName} projectSourceStale={projectSourceStale} issueReadiness={visibleProject.issueReadiness}
         currentEstimate={project ? { estimateId: project.estimateId, estimateVersion: project.estimateVersion } : undefined} /> : null}
     </section>
   );

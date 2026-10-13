@@ -23,6 +23,10 @@ const milestone = object({ id: { type: "string", enum: ["advance", "mobilisation
     items: { type: "string", enum: ["program_manager", "designer", "procurement", "finance_head"] } }
 }, ["id", "name", "basisPoints", "amountPaise"]);
 const source = object({ estimateId: id, estimateVersion: version, estimateReviewRoundId: { ...id, nullable: true } });
+const preparationSource = object({ estimateId: id, estimateVersion: version,
+  estimateReviewRoundId: { ...id, nullable: true }, workflowVersion: { type: "integer", enum: [2] },
+  phase: { type: "string", enum: ["pre", "post"] }, kind: { type: "string", enum: ["approved_pre", "released_post", "approved_final"] },
+  sourceSnapshotId: id, sourceDigest: digest });
 const json = (name: string) => ({ required: true, content: { "application/json": { schema: ref(name) } } });
 const basketRoot = "/procurement/projects/:projectId/baskets";
 const basketDetail = `${basketRoot}/:basketId`;
@@ -73,6 +77,9 @@ const basketLine = object({ sourceLineItemKey: id, roomId: { ...id, nullable: tr
   standardCost: { ...standardLineCost, nullable: true } });
 
 export const PROCUREMENT_BASKET_TENDER_SCHEMAS = {
+  ProcurementPreparationSource: preparationSource,
+  ProcurementBasketReconcileSource: object({ expectedVersion: version, expectedSourceSnapshotId: id,
+    reason: { type: "string", minLength: 3, maxLength: 2000 }, idempotencyKey: key }),
   ProcurementEstimateMode: estimateMode,
   ProcurementBasketModeSubset: object({ id, name: { type: "string" },
     sourceLineItemKeys: { type: "array", items: id }, ...modeMetrics }),
@@ -83,7 +90,8 @@ export const PROCUREMENT_BASKET_TENDER_SCHEMAS = {
     baskets: { type: "array", items: ref("ProcurementBasketSummary") },
     modeGroups: { type: "array", items: ref("ProcurementBasketModeGroup") } }),
   ProcurementBasketDetail: object({ ...basketSummary, projectId: id, estimateSource: source,
-    preparationDigest: digest, lines: { type: "array", items: basketLine } }),
+    preparationSource, preparationDigest: digest, lines: { type: "array", items: basketLine } },
+    [...Object.keys(basketSummary), "projectId", "estimateSource", "preparationDigest", "lines"]),
   ProcurementBasketBoqLineInput: object({ sourceLineItemKey: id,
     description: { type: "string", minLength: 1, maxLength: 2_000 }, quantityMilliUnits: quantity,
     scopeType: { type: "string", enum: ["supply", "execution", "supply_and_execution"] },
@@ -132,7 +140,9 @@ export const PROCUREMENT_BASKET_TENDER_SCHEMAS = {
   ProcurementBasketEnquiry: { type: "object", additionalProperties: true,
     required: ["id", "projectId", "mainBasketId", "version", "status", "boqRevisionId", "vendorScopeCurrent", "lines", "invitations", "bidCount", "awardId"],
     properties: { id, projectId: id, mainBasketId: id, version, status: { type: "string", enum: ["draft", "sent", "award_pending", "issued", "cancelled"] },
-      estimateSource: source, preparationDigest: digest, vendorScopeCurrent: { type: "boolean", nullable: true },
+      estimateSource: source, preparationSource,
+      sourceReconciliation: object({ id, preparationSource, unchangedLineKeys: { type: "array", items: id } }),
+      preparationDigest: digest, vendorScopeCurrent: { type: "boolean", nullable: true },
       boqRevisionId: { ...id, nullable: true }, boqDigest: { ...digest, nullable: true },
       lines: { type: "array", items: { type: "object", additionalProperties: true } },
       invitations: { type: "array", items: { type: "object", additionalProperties: true } },
@@ -239,6 +249,7 @@ export const PROCUREMENT_BASKET_TENDER_SCHEMAS = {
 export const PROCUREMENT_BASKET_TENDER_REQUESTS = {
   [`POST ${enquiryRoot}`]: json("ProcurementBasketEnquiryCreate"),
   [`PUT ${enquiryDetail}`]: json("ProcurementBasketEnquiryUpdate"),
+  [`POST ${enquiryDetail}/reconcile-source`]: json("ProcurementBasketReconcileSource"),
   [`POST ${enquiryDetail}/dispatch`]: json("ProcurementBasketDispatch"),
   [`POST ${enquiryDetail}/invitation-batches/preview`]: json("ProcurementBasketInvitationBatchPreviewInput"),
   [`POST ${enquiryDetail}/invitation-batches`]: json("ProcurementBasketInvitationBatchSubmitInput"),
@@ -264,6 +275,7 @@ export const PROCUREMENT_BASKET_TENDER_RESPONSES = {
   [`GET ${historyRoot}`]: "ProcurementBasketBoqHistoryPage",
   [`GET ${historyDetail}`]: "ProcurementBasketBoqHistoryDetail",
   [`PUT ${enquiryDetail}`]: "ProcurementBasketEnquiry",
+  [`POST ${enquiryDetail}/reconcile-source`]: "ProcurementBasketEnquiry",
   [`POST ${enquiryDetail}/dispatch`]: "ProcurementBasketEnquiry",
   [`POST ${enquiryDetail}/invitation-batches/preview`]: "ProcurementBasketInvitationBatchPreview",
   [`POST ${enquiryDetail}/invitation-batches`]: "ProcurementBasketInvitationBatchResult",

@@ -25,7 +25,7 @@ export interface AuthPayload {
 
 export type LeadStage = "new_lead" | "contacted" | "site_visit" | "design_meeting" | "estimate_in_progress" | "estimate_sent" | "negotiation" | "won" | "lost";
 export type LeadActivityType = "call" | "whatsapp" | "meeting" | "email" | "note";
-export interface Lead { id: string; projectId: string | null; ownerId: string; clientName: string; clientEmail: string; clientMobile: string; projectName: string; location: string; cityName?: string | null; cityKey?: string | null; propertyType: string; budgetMin: number | null; budgetMax: number | null; source: string; stage: LeadStage; nextAction: string; nextActionAt: string; builder: string | null; areaSqft: number | null; targetHandoverAt: string | null; notes: string | null; latestActivityAt: string | null; createdAt: string; updatedAt: string; }
+export interface Lead { estimationWorkflowVersion?: 2; id: string; projectId: string | null; ownerId: string; clientName: string; clientEmail: string; clientMobile: string; projectName: string; location: string; cityName?: string | null; cityKey?: string | null; propertyType: string; budgetMin: number | null; budgetMax: number | null; source: string; stage: LeadStage; nextAction: string; nextActionAt: string; builder: string | null; areaSqft: number | null; targetHandoverAt: string | null; notes: string | null; latestActivityAt: string | null; createdAt: string; updatedAt: string; }
 export interface LeadActivity { id: string; leadId: string; actorId: string; type: LeadActivityType; note: string; occurredAt: string; createdAt: string; }
 
 export interface ClientSignupInput {
@@ -129,6 +129,7 @@ export type TaskEventType =
   | "deadline_revised";
 
 export interface Project {
+  estimationWorkflowVersion?: 2;
   id: string;
   name: string;
   clientId: string | null;
@@ -268,7 +269,7 @@ export interface EstimateClientReviewSummary {
   deliveryStatus: "queued" | "sending" | "sent" | "failed" | "disabled";
   deliveryAttemptCount: number;
   deliveredAt: string | null;
-  status: "pending" | "approved" | "changes_requested";
+  status: "pending" | "approved" | "changes_requested" | "superseded";
 }
 
 export interface EstimateClientReviewSnapshot {
@@ -315,6 +316,7 @@ export interface EstimateClientReviewSnapshot {
 }
 
 export interface ClientPublishedEstimateReview {
+  phase?: "pre" | "post";
   id: string;
   version: number;
   estimateVersion: number;
@@ -376,6 +378,7 @@ export interface EstimateClientResponseDecisionResult {
 }
 
 export interface AdminProjectSummary {
+  estimationWorkflowVersion?: 2;
   id: string;
   name: string;
   status: ProjectStatus;
@@ -392,6 +395,8 @@ export interface AdminProjectSummary {
     nextActionAt: string;
   } | null;
   estimate: {
+    estimationPhase?: "pre" | "post";
+    finalEstimateApproved?: boolean;
     id: string;
     leadId: string;
     projectId: string | null;
@@ -431,6 +436,9 @@ export type DesignPlanStatus =
   | "approved";
 
 export interface DesignPlanTask {
+  leadId?: string;
+  estimationWorkflowVersion?: 2;
+  scopeReconciliation?: { required: boolean; designScopeRevision: number; approvedDesignScopeRevision: number | null };
   id: string;
   estimateId: string;
   projectId: string;
@@ -493,6 +501,7 @@ export interface DesignPlanReviewTask {
 }
 
 export interface ProjectWorkflowTask {
+  preparationOnly?: boolean;
   id: string;
   projectId: string;
   projectName: string;
@@ -556,6 +565,8 @@ export interface WorkerAssignmentOption {
 }
 
 export interface ProjectFinanceBucket {
+  baselinePhase?: "pre" | "post";
+  originalApprovedContractTotalPaise?: number;
   id: string;
   projectId: string;
   projectName: string;
@@ -685,7 +696,27 @@ export interface ProcurementEstimateSection {
   items: ProcurementEstimateItem[];
 }
 
+export interface EstimationPreparationSource {
+  workflowVersion: 2;
+  phase: "pre" | "post";
+  kind: "approved_pre" | "released_post" | "approved_final";
+  estimateId: string;
+  estimateVersion: number;
+  estimateReviewRoundId: string | null;
+  sourceSnapshotId: string;
+  sourceDigest: string;
+}
+
+export interface WorkOrderIssueReadiness {
+  required: boolean;
+  canIssue: boolean;
+  blockers: string[];
+  finalSource: { estimateId: string; estimateVersion: number; estimateReviewRoundId: string } | null;
+}
+
 export interface ProcurementProject {
+  preparationSource?: EstimationPreparationSource;
+  issueReadiness?: WorkOrderIssueReadiness;
   taskId: string;
   taskVersion: number;
   taskStatus: "open" | "in_progress" | "completed";

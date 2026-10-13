@@ -4,6 +4,9 @@ import mongoose, { type ClientSession } from "mongoose";
 
 import { approvedEstimateLineItemKey } from "../domain/estimate-line-item.js";
 import { configuredEstimateParentIsValid } from "../domain/estimate-client-review.js";
+import { currentEstimationApproval, isCollaborativeEstimate } from "../domain/estimation-lifecycle.js";
+import { ProjectFinanceBaselineRevisionModel } from "../models/ProjectFinanceBaselineRevision.js";
+import { assertProjectWorkOrderIssueEligible } from "./project-work-order-eligibility.service.js";
 import {
   projectWorkflowSectionLabel,
   workflowTaskDueAt,
@@ -45,6 +48,8 @@ export interface ProjectFinancePagination {
 }
 
 export interface ProjectFinanceBucketDto {
+  baselinePhase?: "pre" | "post";
+  originalApprovedContractTotalPaise?: number;
   id: string;
   projectId: string;
   projectName: string;
@@ -409,6 +414,7 @@ export async function readProjectFinanceExpenseActivity(
 }
 
 export interface EnsurePendingFinanceBucketInput {
+  workflowVersion?: 2;
   projectId: string;
   estimateId: string;
   estimateVersion: number;
@@ -881,6 +887,7 @@ export async function ensurePendingProjectFinanceBucket(
     totalPaise: input.approvedContractTotalPaise
   });
   const candidate = {
+    ...(input.workflowVersion === 2 ? { estimationWorkflowVersion: 2 } : {}),
     _id: `finance-bucket-${input.projectId}`,
     projectId: input.projectId,
     estimateId: input.estimateId,
@@ -910,7 +917,53 @@ export async function ensurePendingProjectFinanceBucket(
     bucket = created.toObject();
   }
   requireMatchingBaseline(bucket, candidate);
+  if (input.workflowVersion === 2 && input.estimateReviewRoundId) {
+    await storeFinanceBaselineRevision({ projectId: input.projectId, phase: "pre", estimateId: input.estimateId,
+      estimateVersion: input.estimateVersion, estimateReviewRoundId: input.estimateReviewRoundId, ...baseline,
+      approvedAt: input.occurredAt, approvedById: input.createdById }, session);
+  }
   return bucket;
+}
+
+/** Original approved fields remain immutable; this projection selects the final revision. */
+export function effectiveProjectFinanceBucket(bucket: Row): Row {
+  return bucket.effectiveBaseline ? { ...bucket, ...bucket.effectiveBaseline,
+    originalApprovedContractTotalPaise: bucket.originalApprovedContractTotalPaise ?? bucket.approvedContractTotalPaise } : bucket;
+}
+
+async function storeFinanceBaselineRevision(source: Row, session: ClientSession): Promise<Row> {
+  const { projectId, ...values } = source;
+  const revisionId = `finance-baseline-${projectId}-${values.estimateReviewRoundId}`;
+  const existing = await ProjectFinanceBaselineRevisionModel.findById(revisionId).session(session).lean();
+  const candidate = { ...values, revisionId };
+  if (existing) {
+    requireMatchingBaseline({ ...existing.source, projectId, currency: PROJECT_FINANCE_CURRENCY },
+      { ...candidate, projectId, currency: PROJECT_FINANCE_CURRENCY });
+    return existing.source;
+  }
+  const [created] = await ProjectFinanceBaselineRevisionModel.create([{ _id: revisionId, projectId, source: candidate }], { session });
+  if (!created) financeStateCorrupt();
+  return created.toObject().source;
+}
+
+/** Called in the immutable final approval transaction; it never opens spending. */
+export async function syncCollaborativeFinanceBaseline(estimateId: string, session: ClientSession): Promise<void> {
+  const estimate = await EstimateModel.findById(estimateId).session(session).lean();
+  if (!estimate || !isCollaborativeEstimate(estimate) || !estimate.estimation.finalApproval) financeSourceConflict("The final Estimate source is unavailable.");
+  const reference = estimate.estimation.finalApproval;
+  const rounds = await EstimateClientReviewRoundModel.find({ _id: reference.reviewRoundId, estimateId, projectId: estimate.projectId,
+    status: "approved", decision: "approve" }).session(session).lean();
+  const approval = financeApprovalLineage(estimate, rounds);
+  const bucket = await ProjectFinanceBucketModel.findOne({ projectId: estimate.projectId }).session(session).lean();
+  if (!bucket || bucket.status !== "pending_design" || bucket.directSpendPaise !== 0 || bucket.overheadPaise !== 0)
+    financeSourceConflict("The project budget cannot change after execution spending opens.");
+  const source = await storeFinanceBaselineRevision({ projectId: estimate.projectId, phase: "post", estimateId,
+    estimateVersion: approval.estimateVersion, estimateReviewRoundId: approval.estimateReviewRoundId,
+    ...approval.baseline, approvedAt: approval.occurredAt, approvedById: approval.createdById }, session);
+  if (bucket.effectiveBaseline?.revisionId === source.revisionId) return;
+  const result = await ProjectFinanceBucketModel.updateOne({ _id: bucket._id, version: bucket.version, status: "pending_design", effectiveBaseline: null },
+    { $set: { effectiveBaseline: source, estimationWorkflowVersion: 2 }, $inc: { version: 1 } }, { session, runValidators: true });
+  if (result.matchedCount !== 1) financeSourceConflict("The project budget changed before final approval.");
 }
 
 /** Activates the immutable budget when the Design plan is approved. */
@@ -963,6 +1016,7 @@ export async function openProjectFinanceBucket(
       "The approved project budget is missing."
     );
   }
+  if (current.estimationWorkflowVersion === 2) await assertProjectWorkOrderIssueEligible(input.projectId, session);
   if (
     current.status === "open" &&
     Number(current.designPlanVersion) === input.designPlanVersion
@@ -1126,6 +1180,7 @@ async function approvedFinanceEstimates(
       leadId: 1,
       projectId: 1,
       version: 1,
+      estimation: 1,
       subtotal: 1,
       gst: 1,
       total: 1,
@@ -1268,6 +1323,7 @@ function syntheticFinanceBucket(estimate: Row): Row {
 
 function financeBucketForRead(estimate: Row, materialized?: Row | null): Row {
   if (!materialized) return syntheticFinanceBucket(estimate);
+  materialized = effectiveProjectFinanceBucket(materialized);
   requireMatchingApprovedSource(materialized, estimate);
   const designApproval = approvedDesignApproval(estimate);
   if (!designApproval) return materialized;
@@ -1315,11 +1371,14 @@ export function financeApprovalLineage(
   if (!Number.isSafeInteger(currentVersion) || currentVersion < 1) {
     financeSourceConflict("The approved Estimate version is invalid.");
   }
-  const approvedVersion = currentVersion > 1 ? currentVersion - 1 : 1;
+  const reference = currentEstimationApproval(estimate);
+  if (isCollaborativeEstimate(estimate) && !reference) financeSourceConflict("The Estimate has no recorded approval source.");
+  const approvedVersion = reference?.estimateVersion ?? (currentVersion > 1 ? currentVersion - 1 : 1);
+  if (reference && approvedRounds.length === 0) financeSourceConflict("The immutable Estimate approval source is unavailable.");
 
   if (approvedRounds.length > 0) {
     const matching = approvedRounds.filter(
-      (round) => Number(round.estimateVersion) === approvedVersion
+      (round) => Number(round.estimateVersion) === approvedVersion && (!reference || String(round._id) === reference.reviewRoundId)
     );
     if (matching.length !== 1) {
       financeSourceConflict(
@@ -1388,6 +1447,7 @@ function financeDocumentMatchesLineage(
   bucket: Row,
   estimate: Row
 ): boolean {
+  bucket = effectiveProjectFinanceBucket(bucket);
   const documentReviewRoundId = document.estimateReviewRoundId == null
     ? null
     : String(document.estimateReviewRoundId);
@@ -1433,6 +1493,8 @@ function financeDocumentMatchesLineage(
 }
 
 export function financeDesignApproval(estimate: Row): FinanceDesignApproval | null {
+  // New-flow opening is an explicit payment-confirmation transaction.
+  if (isCollaborativeEstimate(estimate)) return null;
   if (estimate.designPlanStatus !== "approved") return null;
   const designPlanVersion = Number(estimate.designPlanVersion);
   const openedById = nonEmptyIdentifier(estimate.designPlanApprovedById);
@@ -1708,6 +1770,7 @@ function bucketDto(
   enrichment: FinanceEnrichment | undefined,
   observedAt: Date
 ): ProjectFinanceBucketDto {
+  bucket = effectiveProjectFinanceBucket(bucket);
   const resolvedEnrichment = enrichment ?? emptyEnrichment();
   const directSpendPaise = Number(bucket.directSpendPaise ?? 0);
   const classifiedSpendPaise = safePortfolioAdd(
@@ -1730,6 +1793,7 @@ function bucketDto(
   });
   const deadline = projectDeadline(project, observedAt);
   return {
+    ...(bucket.effectiveBaseline ? { baselinePhase: bucket.effectiveBaseline.phase, originalApprovedContractTotalPaise: Number(bucket.originalApprovedContractTotalPaise) } : bucket.estimationWorkflowVersion === 2 ? { baselinePhase: "pre" as const } : {}),
     id: String(bucket._id),
     projectId: String(bucket.projectId),
     projectName: String(project.name),
@@ -1826,6 +1890,7 @@ async function loadFinanceEnrichments(
   ]);
   const overdueTaskQuery = ProjectWorkflowTaskModel.find({
     projectId: { $in: uniqueIds },
+    preparationOnly: { $ne: true },
     status: { $in: ["open", "in_progress"] }
   }).select({ projectId: 1, kind: 1, openedAt: 1, dueAt: 1 }).lean();
   if (session) {
@@ -2099,6 +2164,7 @@ export function financeEntryDto(
 }
 
 function requireMatchingBaseline(bucket: Row, expected: Row): void {
+  bucket = effectiveProjectFinanceBucket(bucket);
   const keys = [
     "projectId",
     "estimateId",

@@ -109,6 +109,9 @@ const mutationMethods = new Set<keyof AppRepository>([
   "createWorkflowUom",
   "referenceWorkflowUoms",
   "coordinateClientEmail",
+  "saveProjectClientInvitation",
+  "linkProjectClient",
+  "createProjectInitiationReceipt",
   "createUserInvitation",
   "supersedeUserInvitation",
   "resendUserInvitation",
@@ -288,7 +291,7 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
       return clone(state.projectStatusEstimateEvidence?.find(row => row.projectId === projectId) ?? {
         projectId,
         estimates: (state.estimateSummaries ?? []).filter(row => row.projectId === projectId || state.leads.some(lead => lead.id === row.leadId && lead.projectId === projectId))
-          .map(row => ({ id: row.id, leadId: row.leadId, projectId: row.projectId, version: row.version, status: row.status, clientDecisionAt: row.clientDecisionAt })),
+          .map(row => ({ id: row.id, leadId: row.leadId, projectId: row.projectId, version: row.version, status: row.status, clientDecisionAt: row.clientDecisionAt, estimation: row.estimation })),
         rounds: [],
         financeSource: null
       });
@@ -331,6 +334,12 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
       if (estimates.length > 1) throw new RepositoryConflictError("The project's approved estimate source is ambiguous.");
       const estimate = estimates[0];
       if (!estimate) return null;
+      if (estimate.estimation?.workflowVersion === 2) {
+        const revision = estimate.estimation.designScopeRevision;
+        return { estimateId: estimate.id, estimateVersion: revision,
+          rooms: includeEstimateItems ? workflowEstimateRooms(estimate.id, revision, estimate.rooms ?? [], estimate.lineItems ?? [], { includeZeroValueItems, includeUnpricedItems: true })
+            : (estimate.rooms ?? []).map(room => ({ id: room.id, name: room.label, ...workflowEstimateRoomDimensions(room), estimateItems: [] })) };
+      }
       const estimateVersion = estimate.approvedBaseline?.estimateVersion ?? Math.max(1, estimate.version - 1);
       if (!Number.isSafeInteger(estimate.version) || estimate.version < 1 || estimateVersion !== Math.max(1, estimate.version - 1)) throw new RepositoryConflictError("The approved estimate version does not match its finance source.");
       if (!includeEstimateItems) return { estimateId: estimate.id, estimateVersion, rooms: (estimate.rooms ?? []).map((room) => ({ id: room.id, name: room.label, ...workflowEstimateRoomDimensions(room), estimateItems: [] })) };
@@ -348,6 +357,20 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
     async findDesignWorkflowState(projectId) {
       return clone(state.designWorkflowStates?.find((row) => row.projectId === projectId) ?? null);
     },
+    async findProjectEstimationContext(projectId, lock = false) {
+      const project = state.projects.find(row => row.id === projectId);
+      if (project?.estimationWorkflowVersion !== 2) return null;
+      const estimates = (state.estimateSummaries ?? []).filter(row => row.projectId === projectId);
+      if (estimates.length > 1) throw new RepositoryConflictError("The project estimate source is ambiguous.");
+      const estimate = estimates[0];
+      if (!estimate) return null;
+      const lifecycle = estimate.estimation;
+      if (lifecycle?.workflowVersion !== 2) throw new RepositoryConflictError("The project estimate lifecycle is unavailable.");
+      if (lock) project.estimationFenceEpoch = (project.estimationFenceEpoch ?? 0) + 1;
+      return clone({ estimateId: estimate.id, preApprovedAt: lifecycle.preApproval?.approvedAt ?? null,
+        designScopeRevision: lifecycle.designScopeRevision, approvedDesignScopeRevision: lifecycle.approvedDesignScopeRevision,
+        finalApproval: lifecycle.finalApproval });
+    },
     async saveDesignWorkflowState(projectId, expectedVersion, next) {
       const current = state.designWorkflowStates?.find((row) => row.projectId === projectId);
       if ((current?.version ?? 0) !== expectedVersion) throw new RepositoryConflictError("Design workflow changed.");
@@ -358,7 +381,20 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
       return clone(saved);
     },
     async listDesignWorkflowPaymentProjects() {
-      return clone(state.projects.filter((project) => project.designWorkflowStages?.length && !state.designWorkflowStates?.some((workflow) => workflow.projectId === project.id && workflow.initialPaymentAt)).sort(newestProjectFirst));
+      return clone(state.projects.filter((project) => project.designWorkflowStages?.length && !state.designWorkflowStates?.some((workflow) => workflow.projectId === project.id && workflow.initialPaymentAt && (project.estimationWorkflowVersion !== 2 || workflow.initialPaymentReviewRoundId))).sort(newestProjectFirst));
+    },
+    async activateCollaborativeExecution(projectId, actorId, occurredAt) {
+      const project = state.projects.find(row => row.id === projectId);
+      const actor = state.users.find(row => row.id === actorId && row.active && row.role === "super_admin");
+      const context = await implementation.findProjectEstimationContext(projectId, true);
+      const payment = await implementation.findDesignWorkflowState(projectId);
+      if (!project || !actor || !context?.finalApproval || !payment?.initialPaymentAt ||
+        payment.initialPaymentEstimateId !== context.estimateId || payment.initialPaymentEstimateVersion !== context.finalApproval.estimateVersion ||
+        payment.initialPaymentReviewRoundId !== context.finalApproval.reviewRoundId || payment.initialPaymentDesignReviewRoundId !== context.finalApproval.designReviewRoundId)
+        throw new RepositoryConflictError("Final estimate approval and matching payment are required for execution.");
+      project.status = "active";
+      project.actualStartAt ??= occurredAt;
+      project.updatedAt = occurredAt;
     },
     async runInTransaction(operation) {
       if (transactionContext.getStore()) {
@@ -394,6 +430,40 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
       } finally {
         releaseWrite();
       }
+    },
+
+    async findProjectClientInvitation(projectId) {
+      return clone(state.projectClientInvitations?.find(row => row.projectId === projectId) ?? null);
+    },
+    async findProjectClientInvitationByTokenHash(tokenHash) {
+      return clone(state.projectClientInvitations?.find(row => row.tokenHash === tokenHash && row.status === "pending") ?? null);
+    },
+    async findLatestProjectClientInvitationIssuedAt(emailNormalized) {
+      return state.projectClientInvitations?.filter(row => row.emailNormalized === emailNormalized).map(row => row.issuedAt).sort().at(-1) ?? null;
+    },
+    async saveProjectClientInvitation(record, expectedVersion) {
+      state.projectClientInvitations ??= [];
+      const current = state.projectClientInvitations.find(row => row.projectId === record.projectId);
+      if ((current?.version ?? 0) !== expectedVersion || record.version !== expectedVersion + 1 || current && (current.id !== record.id || current.emailNormalized !== record.emailNormalized || current.invitedById !== record.invitedById)) throw new RepositoryConflictError("Project invitation changed.");
+      if (record.tokenHash && state.projectClientInvitations.some(row => row.id !== record.id && row.tokenHash === record.tokenHash)) throw new RepositoryConflictError("Invitation token already exists.");
+      state.projectClientInvitations = state.projectClientInvitations.filter(row => row.projectId !== record.projectId);
+      state.projectClientInvitations.push(clone(record));
+      return clone(record);
+    },
+    async linkProjectClient(projectId, emailNormalized, clientId, updatedAt) {
+      const project = state.projects.find(row => row.id === projectId);
+      const user = state.users.find(row => row.id === clientId);
+      if (!project || project.clientId !== null || project.estimationWorkflowVersion !== 2 || normalizeEmail(project.clientEmail) !== emailNormalized || !user || !user.active || user.role !== "client" || user.emailNormalized !== emailNormalized) throw new RepositoryConflictError("Project invitation is no longer available.");
+      project.clientId = clientId;
+      project.updatedAt = updatedAt;
+    },
+    async findProjectInitiationReceipt(id) {
+      return clone(state.projectInitiationReceipts?.find(row => row.id === id) ?? null);
+    },
+    async createProjectInitiationReceipt(receipt) {
+      state.projectInitiationReceipts ??= [];
+      if (state.projectInitiationReceipts.some(row => row.id === receipt.id)) throw new RepositoryConflictError("Project initiation changed.");
+      state.projectInitiationReceipts.push(clone(receipt));
     },
 
     async coordinateClientEmail(emailNormalized) {

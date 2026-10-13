@@ -9,6 +9,7 @@ const vendorBasketRequestSchema = new Schema({
   targetParentBasketId: { type: String, default: null, immutable: true },
   targetParentName: { type: String, default: null, immutable: true },
   kind: { type: String, enum: ["configuration_proposal"], immutable: true },
+  requestMode: { type: String, enum: ["hierarchy_intake", "full_configuration"], immutable: true },
   proposalId: { type: String, immutable: true },
   proposalSchemaVersion: { type: Number, enum: [1], immutable: true },
   submittedDigest: { type: String, immutable: true },

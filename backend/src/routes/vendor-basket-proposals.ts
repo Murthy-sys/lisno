@@ -25,7 +25,13 @@ const validateMasterBody: RequestHandler = (request, response, next) =>
   validateBody(request.params.masterKind === "uoms" ? uomMasterSchema : surfaceMasterSchema)(request, response, next);
 const qualitySchema = z.object({ ...versions, parameters: z.array(z.unknown()).max(200) }).strict();
 const targetSchema = z.discriminatedUnion("kind", [z.object({ kind: z.literal("new_main_basket") }).strict(), z.object({ kind: z.literal("new_sub_basket"), basketId: stableId }).strict()]);
-const createSchema = z.object({ target: targetSchema.optional(), vendorId: stableId.nullable().optional(), vendorName: name.nullable().optional(), name, idempotencyKey }).strict();
+const intakeMetadata = z.object({ name, description: z.string().max(4000).nullable() }).strict();
+const intakeContent = z.object({ basket: intakeMetadata.optional(), subBasket: intakeMetadata,
+  mainLines: z.array(z.object({ resourceId: stableId.optional(), name }).strict()).max(100) }).strict();
+const intakeSchema = z.object({ ...versions, intake: intakeContent }).strict();
+const createSchema = z.object({ target: targetSchema.optional(), vendorId: stableId.nullable().optional(), vendorName: name.nullable().optional(), name, idempotencyKey,
+  requestMode: z.enum(["hierarchy_intake", "full_configuration"]).optional(), intake: intakeContent.optional() }).strict()
+  .refine((value) => (value.requestMode === "hierarchy_intake") === (value.intake !== undefined), { message: "Hierarchy intake requires its structured content.", path: ["intake"] });
 const submitSchema = z.object({ ...versions, idempotencyKey }).strict();
 const decisionSchema = z.object({ ...versions, expectedRequestVersion: expectedVersion, idempotencyKey,
   decision: z.enum(["approve", "reject"]), reason: z.string().trim().min(1).max(1000).nullable().optional() }).strict()
@@ -71,6 +77,7 @@ export function createVendorBasketProposalRouter(auth: AuthService, service: Ret
     register("get", `${base}/:proposalId/resources/:resourceId`, (r, q) => service.resource(r.authenticatedUser!, scope, proposal(r), String(r.params.resourceId), q), undefined, readQuery);
     register("get", `${base}/:proposalId/inherited-quality`, (r) => service.inheritedQuality(r.authenticatedUser!, scope, proposal(r)), undefined, z.object({}).strict());
     register("get", `${base}/:proposalId/readiness`, (r) => service.readiness(r.authenticatedUser!, scope, proposal(r)), undefined, z.object({}).strict());
+    register("put", `${base}/:proposalId/intake`, (r) => service.saveIntake(r.authenticatedUser!, scope, proposal(r), r.body), intakeSchema);
     register("patch", `${base}/:proposalId/basket`, (r) => service.saveBasket(r.authenticatedUser!, scope, proposal(r), r.body), metadataSchema);
     register("post", `${base}/:proposalId/sub-baskets`, (r) => service.addSubBasket(r.authenticatedUser!, scope, proposal(r), r.body), metadataSchema, undefined, true);
     register("patch", `${base}/:proposalId/sub-baskets/:subBasketId`, (r) => service.saveSubBasket(r.authenticatedUser!, scope, proposal(r), String(r.params.subBasketId), r.body), metadataSchema);

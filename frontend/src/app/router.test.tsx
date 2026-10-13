@@ -1157,111 +1157,48 @@ describe("registered permission routes", () => {
 });
 
 describe("protected role routing", () => {
-  it("focuses the signup heading after PUSH navigation from login", async () => {
+  it("focuses invitation-only signup guidance after PUSH navigation from login", async () => {
     const user = userEvent.setup();
     renderApp(["/login"]);
 
     await user.click(
-      await screen.findByRole("link", { name: "Create an account" })
+      await screen.findByRole("link", { name: "Join with an invitation" })
     );
 
     const heading = await screen.findByRole("heading", {
       level: 1,
-      name: "Create your client account"
+      name: "Join through your project invitation"
     });
     expect(heading).toHaveFocus();
     expect(heading).toHaveAttribute("tabindex", "-1");
   });
 
-  it("marks interactive signup focus after a failed attempt is retried", async () => {
-    let signupAttempts = 0;
-    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-      const url = apiRequestPath(input);
-      if (url === "/api/v1/auth/client-signup") {
-        signupAttempts += 1;
-        if (signupAttempts === 1) {
-          return Response.json(
-            {
-              error: {
-                code: "SERVER_ERROR",
-                message: "Please try again."
-              }
-            },
-            { status: 503 }
-          );
-        }
-        return Response.json(
-          {
-            data: {
-              token: "client-token",
-              user: {
-                id: "client-priya",
-                name: "Priya Shah",
-                email: "priya@example.com",
-                role: "client"
-              }
-            }
-          },
-          { status: 201 }
-        );
-      }
-      if (url === "/api/v1/auth/authorization") {
-        return Response.json({ data: authorizationFor("client") });
-      }
-      if (url === "/api/v1/client/latest-approved-versions") {
-        return Response.json({ data: [] });
-      }
-      if (url.startsWith("/api/v1/client/project-summaries")) {
-        return Response.json({
-          data: {
-            items: [],
-            pagination: { limit: 100, offset: 0, total: 0, hasMore: false }
-          }
-        });
-      }
-      if (url === "/api/v1/client/estimates") {
-        return Response.json({ data: [] });
-      }
-      throw new Error(`Unhandled request: ${url}`);
-    });
-    const { router } = renderApp(["/signup"]);
+  it("returns invitation-only signup visitors to sign-in without creating an account", async () => {
+    const request = vi.spyOn(globalThis, "fetch");
+    const { container, router } = renderApp(["/signup"]);
 
-    fireEvent.change(screen.getByLabelText("Full name"), {
-      target: { value: "Priya Shah" }
-    });
-    fireEvent.change(screen.getByLabelText("Email address"), {
-      target: { value: "priya@example.com" }
-    });
-    fireEvent.change(screen.getByLabelText("Mobile number"), {
-      target: { value: "+91 98765 43210" }
-    });
-    fireEvent.change(screen.getByLabelText("Password", { exact: true }), {
-      target: { value: "StrongPassword!23" }
-    });
-    fireEvent.change(screen.getByLabelText("Confirm password"), {
-      target: { value: "StrongPassword!23" }
-    });
+    expect(screen.getByRole("heading", {
+      level: 1,
+      name: "Join through your project invitation"
+    })).toBeVisible();
+    expect(screen.getByText(/Open that invitation to create your account/)).toBeVisible();
+    expect(container.querySelector("form")).not.toBeInTheDocument();
+    expect(container.querySelector("input")).not.toBeInTheDocument();
+    expect(tokenStorage.get()).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: "Create client account" }));
-    expect(await screen.findByRole("alert", { name: "Signup error" })).toBeVisible();
-    await waitFor(() => expect(router.state.location.state).toBeNull());
-    for (const [label, value] of [
-      ["Full name", "Priya Shah"],
-      ["Email address", "priya@example.com"],
-      ["Mobile number", "+91 98765 43210"],
-      ["Password", "StrongPassword!23"],
-      ["Confirm password", "StrongPassword!23"]
-    ] as const) {
-      expect(screen.getByLabelText(label, { exact: true })).toHaveValue(value);
-    }
-    fireEvent.click(screen.getByRole("button", { name: "Create client account" }));
+    await userEvent.click(screen.getByRole("link", { name: "Sign in" }));
 
     const heading = await screen.findByRole("heading", {
-      name: "Your design plans"
+      level: 1,
+      name: "From first sketch to final handoff."
     });
-    expect(signupAttempts).toBe(2);
-    expect(router.state.location.state).toEqual({ routeFocus: true });
-    expect(heading).toHaveFocus();
+    expect(router.state.location.pathname).toBe("/login");
+    expect(heading).toBeVisible();
+    expect(screen.getByLabelText("Email address")).toHaveFocus();
+    expect(request.mock.calls.filter(
+      ([input]) => apiRequestPath(input) === "/api/v1/auth/client-signup"
+    )).toHaveLength(0);
+    expect(tokenStorage.get()).toBeNull();
   });
 
   it.each([
@@ -1540,7 +1477,7 @@ describe("protected role routing", () => {
 
   it.each([
     ["/login", "From first sketch to final handoff."],
-    ["/signup", "Create your client account"],
+    ["/signup", "Join through your project invitation"],
     ["/", "From first sketch to final handoff."],
     ["/missing-route", "From first sketch to final handoff."]
   ])("settles %s with one main and one page heading", async (path, heading) => {

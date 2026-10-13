@@ -1,3 +1,4 @@
+import { estimationPreparationSourceSchema } from "./EstimationPreparationSource.js";
 import { MAX_FINANCE_AMOUNT_PAISE } from "../domain/project-finance.js";
 import { model, models, Schema } from "./mongoose.js";
 
@@ -15,6 +16,7 @@ const boqLineSchema = new Schema({
   subBasketId: { type: String, default: null }, subBasketName: { type: String, default: null },
   mainLineId: { type: String, default: null }, mainLineName: { type: String, default: null },
   approvedQuantity: requiredId, approvedUnit: requiredId,
+  specification: { type: String, default: undefined },
   approvedQuoteAmountPaise: { type: Number, default: null, min: 0, max: MAX_FINANCE_AMOUNT_PAISE,
     validate: (value: unknown) => value === null || Number.isSafeInteger(value) },
   description: { type: String, required: true, trim: true, minlength: 1, maxlength: 2_000 },
@@ -31,6 +33,7 @@ const enquirySchema = new Schema({
   version: { type: Number, required: true, min: 1, validate: Number.isSafeInteger },
   status: { type: String, required: true, enum: ["draft", "sent", "award_pending", "issued", "cancelled"] },
   estimateSource: { type: sourceSchema, required: true },
+  preparationSource: { type: estimationPreparationSourceSchema, default: undefined },
   preparationDigest: { type: String, required: true, match: /^[a-f0-9]{64}$/u },
   draftLines: { type: [boqLineSchema], required: true, validate: (value: unknown[]) => value.length > 0 && value.length <= 100 },
   currentBoqRevisionId: { type: String, default: null },
@@ -51,6 +54,7 @@ const revisionSchema = new Schema({
   revision: { type: Number, required: true, min: 1, validate: Number.isSafeInteger },
   basketName: { type: String, default: null },
   estimateSource: { type: sourceSchema, required: true },
+  preparationSource: { type: estimationPreparationSourceSchema, default: undefined },
   preparationDigest: { type: String, required: true, match: /^[a-f0-9]{64}$/u },
   digest: { type: String, required: true, match: /^[a-f0-9]{64}$/u },
   lines: { type: [boqLineSchema], required: true, validate: (value: unknown[]) => value.length > 0 && value.length <= 100, immutable: true },
@@ -178,6 +182,9 @@ const proposalSchema = new Schema({
   vendorId: requiredId, vendorName: requiredId, officialKpiScoreBps: basisPoints,
   officialKpiAssessmentId: requiredId,
   officialKpiAssessmentRevision: { type: Number, required: true, min: 1, validate: Number.isSafeInteger },
+  sourceReconciliationId: { type: String, default: undefined },
+  basketPreparationDigest: { type: String, default: undefined, match: /^[a-f0-9]{64}$/u },
+  preparationSource: { type: estimationPreparationSourceSchema, default: undefined },
   recommendedBidId: { type: String, default: null },
   comparisonDigest: { type: String, required: true, match: /^[a-f0-9]{64}$/u },
   nonRecommendedReason: { type: String, default: null, maxlength: 2_000 },
@@ -212,3 +219,20 @@ const approvalSchema = new Schema({ _id: requiredId, awardId: requiredId, propos
 approvalSchema.index({ awardId: 1, proposalRevisionId: 1, slot: 1 }, { unique: true });
 approvalSchema.index({ awardId: 1, proposalRevisionId: 1, actorId: 1 }, { unique: true });
 export const ProcurementBasketAwardApprovalModel = models.ProcurementBasketAwardApproval ?? model("ProcurementBasketAwardApproval", approvalSchema);
+
+const sourceReconciliationSchema = new Schema({
+  _id: { ...requiredId, immutable: true }, projectId: { ...requiredId, immutable: true },
+  mainBasketId: { ...requiredId, immutable: true }, enquiryId: { ...requiredId, immutable: true },
+  boqRevisionId: { ...requiredId, immutable: true }, boqDigest: { ...requiredId, immutable: true },
+  preparationSource: { type: estimationPreparationSourceSchema, required: true, immutable: true },
+  preparationDigest: { type: String, required: true, match: /^[a-f0-9]{64}$/u, immutable: true },
+  previousEstimateSource: { type: sourceSchema, required: true, immutable: true },
+  unchangedLineKeys: { type: [String], required: true, immutable: true },
+  reason: { type: String, required: true, minlength: 3, maxlength: 2000, immutable: true },
+  idempotencyKey: { ...requiredId, immutable: true }, requestDigest: { ...requiredId, immutable: true },
+  reconciledById: { ...requiredId, immutable: true }, reconciledAt: { type: Date, required: true, immutable: true }
+}, { collection: "procurementBasketSourceReconciliations", strict: "throw", versionKey: false, timestamps: false });
+sourceReconciliationSchema.index({ enquiryId: 1, idempotencyKey: 1 }, { unique: true });
+sourceReconciliationSchema.index({ enquiryId: 1, boqRevisionId: 1, "preparationSource.sourceSnapshotId": 1 }, { unique: true });
+export const ProcurementBasketSourceReconciliationModel = models.ProcurementBasketSourceReconciliation ??
+  model("ProcurementBasketSourceReconciliation", sourceReconciliationSchema);

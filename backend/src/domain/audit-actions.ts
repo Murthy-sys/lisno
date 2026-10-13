@@ -1,4 +1,19 @@
 export const EXISTING_AUDIT_ACTIONS = [
+  "final_estimate_approved",
+  "estimate_review_withdrawn",
+  "estimate_preparation_released",
+  "estimate_collaboration_enabled",
+  "project_client_invitation.created",
+  "project_client_invitation.resent",
+  "project_client_invitation.revoked",
+  "project_client_invitation.accepted",
+  "project_client_invitation.sent",
+  "project_client_invitation.delivery_failed",
+  "estimate_requirement.created",
+  "estimate_requirement.updated",
+  "estimate_requirement.withdrawn",
+  "estimate_requirement.resolved",
+
   "project_chat.assistant_routed",
   "project_chat.assistant_answered",
   "vendor_execution_updated",
@@ -251,6 +266,12 @@ export const IDENTITY_PROFILE_PHOTO_AUDIT_ACTIONS = [
 ] as const;
 
 export const AUDIT_ACTIONS = [
+  "project_purchase_order_issued",
+  "project_purchase_order_reconciled",
+  "project_purchase_order_request_issued",
+  "project_purchase_order_request_reconciled",
+  "procurement_basket_source_reconciled",
+  "design_plan_scope_reconciled",
   ...PROJECT_CHAT_AUDIT_ACTIONS,
   ...EXISTING_AUDIT_ACTIONS,
   ...PROMPT_1_AUDIT_ACTIONS,

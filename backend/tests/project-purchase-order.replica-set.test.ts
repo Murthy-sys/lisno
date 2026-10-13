@@ -1,3 +1,4 @@
+import { collaborativePurchasePreparation, collaborativePurchaseFinal, collaborativePurchasePayment } from "./helpers/collaborative-purchase-order.js";
 import mongoose, { type ClientSession } from "mongoose";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { AiEstimatorKnowledgeVendorModel } from "../src/models/AiEstimatorKnowledgeVendor.js";
@@ -640,5 +641,59 @@ describe("project final completion Mongo transactions", () => {
     expect(await ProjectCompletionDecisionModel.findById(completed.id).lean()).toMatchObject({
       approvedRevisionIds: [approved.approvedRevisionId], acceptedAssignmentIds: [], siteCompletionReviewId: submittedSite.review!.id });
     expect(await FinanceLedgerEntryModel.countDocuments()).toBe(0);
+  });
+});
+
+
+describe("collaborative individual purchase-order issuance", () => {
+  async function prepare() {
+    await collaborativePurchasePreparation("project-po-a", now);
+    const draft = await service.create(buyer, "project-po-a", { vendorId: "vendor-po", lines: [line], terms: "Retain original vendor quote", idempotencyKey: "collaborative-create" });
+    const submitted = await service.submit(buyer, "project-po-a", draft.id, { expectedVersion: draft.version, idempotencyKey: "collaborative-submit" });
+    return service.decide(admin, "project-po-a", draft.id, { expectedVersion: submitted.version, submittedRevisionId: submitted.submittedRevisionId!, decision: "approve", reason: null, budgetOverrideReason: null, idempotencyKey: "collaborative-approve" });
+  }
+  it("records internal approval before payment without commitments, vendor access or issued side effects", async () => {
+    const ready = await prepare();
+    expect(ready).toMatchObject({ status: "ready_to_issue", approvedRevisionId: null, approvedNetPaise: null, issueReadiness: { canIssue: false } });
+    expect(callback).not.toHaveBeenCalled(); expect(committed).not.toHaveBeenCalled();
+    expect(await VendorWorkAssignmentModel.countDocuments()).toBe(0);
+    expect(await service.commitments(buyer, "project-po-a")).toMatchObject({ committedPaise: 0 });
+    await expect(service.vendorRead(vendorActor, ready.id)).rejects.toMatchObject({ status: 404 });
+    await expect(service.issue(buyer, "project-po-a", ready.id, { expectedVersion: ready.version, idempotencyKey: "issue-too-early" })).rejects.toMatchObject({ code: "WORK_ORDER_NOT_READY" });
+    expect(await ProjectModel.findById("project-po-a").lean()).toMatchObject({ status: "planning", completionAuthority: "legacy_staff" });
+    const returned = await service.decide(admin, "project-po-a", ready.id, { expectedVersion: ready.version, submittedRevisionId: ready.submittedRevisionId!, decision: "request_changes", reason: "Revise prepared scope", budgetOverrideReason: null, idempotencyKey: "return-prepared-order" });
+    expect(returned.status).toBe("changes_requested");
+    expect(returned.decisions.map(entry => entry.decision)).toEqual(["approve", "request_changes"]);
+  });
+  it("requires final reconciliation and fresh approval, then issues once across concurrent retries", async () => {
+    const ready = await prepare();
+    const original = await ProjectPurchaseOrderRevisionModel.findById(ready.submittedRevisionId).lean();
+    await collaborativePurchaseFinal("project-po-a", now);
+    await collaborativePurchasePayment("project-po-a", now);
+    await expect(service.issue(buyer, "project-po-a", ready.id, { expectedVersion: ready.version, idempotencyKey: "issue-stale-source" })).rejects.toMatchObject({ code: "WORK_ORDER_SOURCE_RECONCILIATION_REQUIRED" });
+    const draft = await service.reconcile(buyer, "project-po-a", ready.id, { expectedVersion: ready.version, idempotencyKey: "reconcile-final-source", reason: "Reviewed final estimate against original vendor quote", acknowledgeScopeChanges: false });
+    expect(draft).toMatchObject({ status: "draft", submittedRevisionId: null, approvedRevisionId: null, estimateSource: { estimateVersion: 3, estimateReviewRoundId: "final-project-po-a" } });
+    expect(await ProjectPurchaseOrderRevisionModel.findById(ready.submittedRevisionId).lean()).toEqual(original);
+    const submitted = await service.submit(buyer, "project-po-a", draft.id, { expectedVersion: draft.version, idempotencyKey: "submit-final-source" });
+    const finalReady = await service.decide(admin, "project-po-a", draft.id, { expectedVersion: submitted.version, submittedRevisionId: submitted.submittedRevisionId!, decision: "approve", reason: null, budgetOverrideReason: null, idempotencyKey: "approve-final-source" });
+    expect(finalReady.status).toBe("ready_to_issue"); expect(callback).not.toHaveBeenCalled();
+    const issue = { expectedVersion: finalReady.version, idempotencyKey: "issue-final-source" };
+    const results = await Promise.all([service.issue(buyer, "project-po-a", draft.id, issue), service.issue(buyer, "project-po-a", draft.id, issue)]);
+    expect(results.every(row => row.status === "approved")).toBe(true); expect(callback).toHaveBeenCalledTimes(1);
+    expect(await service.commitments(buyer, "project-po-a")).toMatchObject({ committedPaise: 12_500 });
+    expect(await service.issue(buyer, "project-po-a", draft.id, issue)).toMatchObject({ approvedRevisionId: submitted.submittedRevisionId });
+    expect(callback).toHaveBeenCalledTimes(1);
+  });
+  it("requires an explicit draft save after physical-scope acknowledgement", async () => {
+    const ready = await prepare();
+    await collaborativePurchaseFinal("project-po-a", now, 2);
+    const fields = { expectedVersion: ready.version, idempotencyKey: "reconcile-quantity-change", reason: "Review increased final quantity", acknowledgeScopeChanges: false };
+    await expect(service.reconcile(buyer, "project-po-a", ready.id, fields)).rejects.toMatchObject({ code: "PURCHASE_ORDER_SCOPE_REVIEW_REQUIRED" });
+    const draft = await service.reconcile(buyer, "project-po-a", ready.id, { ...fields, acknowledgeScopeChanges: true });
+    expect(draft.scopeReviewRequired).toBe(true);
+    await expect(service.submit(buyer, "project-po-a", draft.id, { expectedVersion: draft.version, idempotencyKey: "submit-unreviewed-scope" })).rejects.toMatchObject({ code: "PURCHASE_ORDER_SCOPE_REVIEW_REQUIRED" });
+    const saved = await service.update(buyer, "project-po-a", draft.id, { expectedVersion: draft.version, idempotencyKey: "save-revised-commercial-terms", lines: [{ ...line, quantityMilliUnits: 2_500 }], terms: "Revised quantity confirmed with vendor" });
+    expect(saved.scopeReviewRequired).not.toBe(true);
+    expect((await service.submit(buyer, "project-po-a", saved.id, { expectedVersion: saved.version, idempotencyKey: "submit-reviewed-scope" })).status).toBe("pending_approval");
   });
 });

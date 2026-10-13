@@ -1,0 +1,18 @@
+.staff-estimate-flow { min-width: 0; padding: var(--space-5, 20px) 0; border-block: 1px solid var(--border-subtle, #d8dce3); overflow-wrap: anywhere; }
+.staff-estimate-flow h2, .staff-estimate-flow h3, .staff-estimate-flow p { margin: 0 0 var(--space-3, 12px); }
+.staff-estimate-flow__heading, .staff-estimate-flow__totals, .staff-estimate-flow__actions { display: flex; flex-wrap: wrap; align-items: start; gap: var(--space-4, 16px); }
+.staff-estimate-flow__heading { justify-content: space-between; }
+.staff-estimate-flow__totals { margin: 0; }
+.staff-estimate-flow__totals dt, .staff-estimate-flow__notice { color: var(--text-muted, #646c7d); font-size: var(--text-sm, 0.875rem); }
+.staff-estimate-flow__totals dd { margin: 4px 0 0; font-weight: 600; }
+.staff-estimate-flow__actions { align-items: center; }
+.staff-estimate-flow__actions button { white-space: normal; max-width: 100%; }
+.staff-estimate-workspace-tools { min-width: 0; }
+.staff-estimate-workspace-tools > summary { cursor: pointer; padding-block: 10px; font-weight: 600; overflow-wrap: anywhere; }
+.staff-estimate-requests { margin-top: var(--space-4, 16px); }
+.staff-estimate-requests > summary { cursor: pointer; font-weight: 600; padding-block: 12px; }
+.staff-estimate-request { padding-block: 16px; border-top: 1px solid var(--border-subtle, #d8dce3); }
+.staff-estimate-request__lines { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
+.staff-estimate-request__lines label { display: flex; align-items: start; gap: 10px; }
+.staff-estimate-request__lines input { flex: none; margin-top: 4px; }
+@media (max-width: 600px) { .staff-estimate-flow__heading { display: block; } .staff-estimate-flow__totals { margin-block: 12px; } }

@@ -4,6 +4,7 @@ import { emptyDesignWorkflowState, type WorkflowStageState } from "../src/domain
 import { deriveProjectStatus, type ProjectStatusInput } from "../src/domain/project-status.js";
 import { projectWorkflowBlueprints } from "../src/domain/project-workflow.js";
 import type { ProjectCompletionSummary } from "../src/domain/project-completion.js";
+import { newEstimationLifecycle } from "../src/domain/estimation-lifecycle.js";
 
 const AT = "2026-10-01T12:00:00.000Z";
 const BEFORE = "2026-09-30T12:00:00.000Z";
@@ -68,6 +69,60 @@ function furniture(input: ProjectStatusInput, state: WorkflowStageState) {
   input.workflow!.stages.existing_furniture_dimensions = { scopeEstimateId: "estimate-a", scopeEstimateVersion: 2, ...state };
 }
 const furnitureRoom = (id: string, status?: "pending" | "approved" | "changes_requested") => ({ id, name: `Room ${id}`, required: true, uploadedAt: status ? BEFORE : null, proceed: false, ...(status ? { dimensions: { submissionEventId: `submission-${id}`, revision: 1, status, submittedAt: BEFORE, items: [] } } : {}) });
+
+function collaborative(input = fixture()) {
+  approved(input);
+  input.project.estimationWorkflowVersion = 2;
+  input.project.status = "planning";
+  input.estimate!.version = 9;
+  input.estimate!.estimation = { ...newEstimationLifecycle(3), phase: "post", designScopeRevision: 3,
+    preApproval: { reviewRoundId: "pre-round", estimateVersion: 2, approvedAt: BEFORE } };
+  input.commercial.state = "pre_approved";
+  Object.assign(input.workflow!, { estimationWorkflowVersion: 2, designStartedAt: BEFORE, initialPaymentAt: null });
+  return input;
+}
+
+describe("collaborative project status responsibility", () => {
+  it("starts design during post-estimate edits without payment or a version-minus-one source", () => {
+    const input = collaborative();
+    const output = deriveProjectStatus(input);
+    expect(output).toMatchObject({ state: "active", currentStage: { key: "internal_kickoff" } });
+    expect(output.pendingActions.some(action => action.stageKey === "initial_payment")).toBe(false);
+  });
+
+  it("binds furniture to the physical scope revision and preserves its completed evidence", () => {
+    const input = fixture(); through(input, "furniture"); collaborative(input);
+    input.workflow!.stages.existing_furniture_dimensions!.scopeEstimateVersion = 3;
+    expect(deriveProjectStatus(input).state).toBe("active");
+    input.workflow!.stages.existing_furniture_dimensions!.scopeEstimateVersion = 2;
+    expect(deriveProjectStatus(input)).toMatchObject({ state: "unavailable", currentStage: { key: "existing_furniture_dimensions" } });
+  });
+
+  it.each(["draft", "sent_to_client"] as const)("shows the final %s responsibility before payment or execution", status => {
+    const input = collaborative(); readyDesign(input);
+    input.estimate!.estimation!.status = status;
+    input.estimate!.estimation!.approvedDesignScopeRevision = 3;
+    const result = deriveProjectStatus(input);
+    expect(result.pendingActions).toContainEqual(expect.objectContaining({ stageKey: status === "draft" ? "estimate_submission" : "estimate_approval", responsibleRole: status === "draft" ? "designer" : "client" }));
+    expect(result.pendingActions.some(action => ["initial_payment", "execution"].includes(action.stageKey))).toBe(false);
+  });
+
+  it("requires only Super Admin to attest a legacy receipt to the final approved revision", () => {
+    const input = collaborative(); readyDesign(input);
+    const lifecycle = input.estimate!.estimation!;
+    lifecycle.finalApproval = { reviewRoundId: "final-round", estimateVersion: 8, approvedAt: AT, requirementsVersion: 3, designReviewRoundId: "round-a", designPlanVersion: 2, designScopeRevision: 3 };
+    lifecycle.approvedDesignScopeRevision = 3; lifecycle.status = "client_approved"; lifecycle.editClosedAt = AT;
+    input.commercial = { state: "approved", estimateId: "estimate-a", estimateVersion: 8 };
+    input.workflow!.initialPaymentAt = BEFORE;
+    input.workflow!.initialPaymentEstimateId = "estimate-a";
+    input.workflow!.initialPaymentEstimateVersion = 2;
+    expect(deriveProjectStatus(input).pendingActions).toEqual([expect.objectContaining({ stageKey: "initial_payment", responsibleRole: "super_admin", people: [{ id: "super-a", name: "Super Admin", role: "super_admin" }] })]);
+    Object.assign(input.workflow!, { initialPaymentEstimateVersion: 8, initialPaymentReviewRoundId: "final-round", initialPaymentDesignReviewRoundId: "round-a" });
+    expect(deriveProjectStatus(input).pendingActions.some(action => action.stageKey === "initial_payment")).toBe(false);
+    input.design!.reviewRoundId = "foreign-design-round";
+    expect(deriveProjectStatus(input).state).toBe("unavailable");
+  });
+});
 
 describe("project status commercial responsibility", () => {
   it("shows assigned Sales before any estimate without leaking future work", () => {

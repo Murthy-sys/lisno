@@ -4,7 +4,7 @@ import { normalizeKnowledgeIdentity } from "../domain/ai-estimator-knowledge.js"
 import type { WorkflowEstimateRoomContext } from "../domain/workflow-estimate-items.js";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { CALENDAR_DAY_MS as DAY, DESIGN_WORKFLOW_ACTIONS, emptyDesignWorkflowState, WORKFLOW_STAGE_CLOCKS, workflowStageElapsedMs, workflowStageStartAt, workflowStagePrerequisiteBlockers, workflowIsPaused, workflowPausedMs, workflowSubmissionBlockers, workflowFurnitureRoomReady, type DesignWorkflowAction, type DesignWorkflowState, type WorkflowStageState, type StoredWorkflowMedia, type WorkflowRoom, type DesignWorkflowHistoryEvent } from "../domain/design-workflow-state.js";
+import { CALENDAR_DAY_MS as DAY, DESIGN_WORKFLOW_ACTIONS, emptyDesignWorkflowState, WORKFLOW_STAGE_CLOCKS, workflowStageElapsedMs, workflowStageStartAt, workflowDesignStartAt, workflowStagePrerequisiteBlockers, workflowIsPaused, workflowPausedMs, workflowSubmissionBlockers, workflowFurnitureRoomReady, type DesignWorkflowAction, type DesignWorkflowState, type WorkflowStageState, type StoredWorkflowMedia, type WorkflowRoom, type DesignWorkflowHistoryEvent } from "../domain/design-workflow-state.js";
 import type { DesignStageType, ProjectDesignWorkflowStage } from "../domain/design-workflow.js";
 import { sha256Hex, type StoredEstimateClientResponseProof } from "../domain/estimate-client-review.js";
 import { ApiError } from "../middleware/errors.js";
@@ -59,7 +59,7 @@ const KICKOFF_DOCUMENT_UNAVAILABLE = "The submitted Internal Kick off document i
 
 function submittedInternalKickoffEvent(state: DesignWorkflowState, projectId?: string, stageId?: string) {
   const completedAt = state.stages.internal_kickoff?.completedAt;
-  if (!projectId || state.projectId !== projectId || !stageId || !state.initialPaymentAt || !completedAt) return undefined;
+  if (!projectId || state.projectId !== projectId || !stageId || !workflowDesignStartAt(state) || !completedAt) return undefined;
   const matches = state.history.filter((event) => event.action === "internal_kickoff_complete" && event.stageId === stageId && event.at === completedAt && event.actorRole === "designer" && !event.onBehalfOfClient && event.proof);
   return matches.length === 1 ? matches[0] : undefined;
 }
@@ -78,10 +78,30 @@ async function paymentApprovalSource(repository: AppRepository, projectId: strin
   }
 }
 
-export async function projectInitialPayment(repository: AppRepository, projectId: string, state: DesignWorkflowState, canConfirm: boolean) {
-  if (state.initialPaymentAt) return { confirmedAt: state.initialPaymentAt, canConfirm: false, version: state.version, status: "received" as WorkflowPaymentStatus };
-  const { source, issue } = await paymentApprovalSource(repository, projectId);
-  return { confirmedAt: null, canConfirm: canConfirm && Boolean(source), version: state.version, status: (source ? "awaiting_payment" : "awaiting_estimate_approval") as WorkflowPaymentStatus, ...(issue ? { issue } : {}) };
+/** Hydrate the recorded pre-approval anchor without writing on reads or inventing a payment. */
+export async function hydrateDesignWorkflowState(repository: AppRepository, projectId: string, state: DesignWorkflowState, lock = false) {
+  const project = await repository.findProjectById(projectId);
+  if (project?.estimationWorkflowVersion !== 2) return state;
+  const context = await repository.findProjectEstimationContext(projectId, lock);
+  state.estimationWorkflowVersion = 2;
+  if (!state.designStartedAt && context?.preApprovedAt) state.designStartedAt = state.initialPaymentAt ?? context.preApprovedAt;
+  return state;
+}
+
+export async function projectInitialPayment(repository: AppRepository, projectId: string, state: DesignWorkflowState, canConfirm: boolean, actorRole?: string) {
+  const project = await repository.findProjectById(projectId);
+  const collaborative = project?.estimationWorkflowVersion === 2;
+  const lifecycle = collaborative ? await repository.findProjectEstimationContext(projectId) : null;
+  const exactReceipt = Boolean(lifecycle?.finalApproval && state.initialPaymentEstimateId === lifecycle.estimateId &&
+    state.initialPaymentEstimateVersion === lifecycle.finalApproval.estimateVersion && state.initialPaymentReviewRoundId === lifecycle.finalApproval.reviewRoundId &&
+    state.initialPaymentDesignReviewRoundId === lifecycle.finalApproval.designReviewRoundId);
+  const metadata = collaborative ? { workflowVersion: 2 as const, designStartedAt: state.designStartedAt ?? null,
+    existingReceiptAt: state.initialPaymentAt, requiresAttestation: Boolean(state.initialPaymentAt && !exactReceipt) } : {};
+  if (state.initialPaymentAt && (!collaborative || exactReceipt)) return { ...metadata, confirmedAt: state.initialPaymentAt, canConfirm: false, version: state.version, status: "received" as WorkflowPaymentStatus };
+  const { source, issue } = collaborative
+    ? lifecycle?.finalApproval ? { source: { estimateId: lifecycle.estimateId, estimateVersion: lifecycle.finalApproval.estimateVersion }, issue: undefined } : { source: null, issue: "Awaiting Client final estimate approval after design completion." }
+    : await paymentApprovalSource(repository, projectId);
+  return { ...metadata, confirmedAt: null, canConfirm: canConfirm && Boolean(source) && (!collaborative || actorRole === "super_admin"), version: state.version, status: (source ? "awaiting_payment" : "awaiting_estimate_approval") as WorkflowPaymentStatus, ...(issue ? { issue } : {}) };
 }
 
 export async function requireDesignWorkflowScope(repository: AppRepository, actor: PublicUser, projectId: string, allowFinance = false) {
@@ -101,7 +121,7 @@ export async function assertDesignWorkflowSubmissionAllowed(repository: AppRepos
   const project = await repository.findProjectById(projectId);
   if (!project) missing();
   if (!project.designWorkflowStages) return;
-  const state = await repository.findDesignWorkflowState(projectId) ?? emptyDesignWorkflowState(projectId);
+  const state = await hydrateDesignWorkflowState(repository, projectId, await repository.findDesignWorkflowState(projectId) ?? emptyDesignWorkflowState(projectId), options.lock ?? false);
   const reasons = workflowSubmissionBlockers(state, options.roomIds, options.phase);
   const furniture = state.stages.existing_furniture_dimensions;
   if (options.phase !== "upload" && furniture?.acceptedAt) {
@@ -118,7 +138,7 @@ export async function assertDesignWorkflowSubmissionAllowed(repository: AppRepos
   }
 }
 function allowed(state: DesignWorkflowState, action: Exclude<DesignWorkflowAction, "confirm_initial_payment">, at: number, actorId?: string): boolean {
-  if (!state.initialPaymentAt) return false;
+  if (!workflowDesignStartAt(state)) return false;
   const paused = workflowIsPaused(state);
   if (action === "measurement_access_restore") return paused;
   if (action !== "sales_calendar_accept" && !workflowStageStartAt(state, ACTIONS[action].type, at)) return false;
@@ -158,7 +178,7 @@ export function workflowAvailableActions(state: DesignWorkflowState, type: Desig
     let disabledReason: string | undefined;
     if (id === "internal_kickoff_complete") {
       if (state.stages.internal_kickoff?.completedAt) return [];
-      if (!state.initialPaymentAt) disabledReason = paymentBlockingReason(context);
+      if (!workflowDesignStartAt(state)) disabledReason = state.estimationWorkflowVersion === 2 ? "Awaiting Client pre-estimate approval before design starts." : paymentBlockingReason(context);
     } else if (!allowed(state, id as keyof typeof ACTIONS, at, actorId)) return [];
     if (id === "client_kickoff_complete" && !submittedInternalKickoffEvent(state, context?.projectId, context?.internalKickoffStageId)) disabledReason = KICKOFF_DOCUMENT_UNAVAILABLE;
     const label = id === "furniture_scope" && state.stages.existing_furniture_dimensions?.rooms ? "Edit furniture requirements" : id === "furniture_upload" && state.stages.existing_furniture_dimensions?.rooms?.some((room) => room.dimensions?.status === "changes_requested") ? "Resubmit returned dimensions" : definition.label;
@@ -247,7 +267,7 @@ export function createDesignWorkflowStateService(repository: AppRepository, audi
       return repository.runInTransaction(async tx => {
         await tx.coordinateAuthorizationMutation();
         const { capabilities } = await requireFurnitureUomScope(tx, actor, projectId);
-        const state = await tx.findDesignWorkflowState(projectId) ?? emptyDesignWorkflowState(projectId);
+        const state = await hydrateDesignWorkflowState(tx, projectId, await tx.findDesignWorkflowState(projectId) ?? emptyDesignWorkflowState(projectId), true);
         const declaringScope = capabilities.designer && allowed(state, "furniture_scope", clock().getTime(), actor.id);
         if (!declaringScope && !allowed(state, "furniture_upload", clock().getTime(), actor.id)) blocked(["Furniture requirements or dimensions must be awaiting your submission before adding a UOM."]);
         if (declaringScope) {
@@ -275,8 +295,8 @@ export function createDesignWorkflowStateService(repository: AppRepository, audi
       const user = await requireActor(repository, actor);
       if (user.role !== "finance_head" && user.role !== "super_admin") missing();
       const rows = await Promise.all((await repository.listDesignWorkflowPaymentProjects()).map(async (project) => {
-        const state = await repository.findDesignWorkflowState(project.id) ?? emptyDesignWorkflowState(project.id);
-        const payment = await projectInitialPayment(repository, project.id, state, true);
+        const state = await hydrateDesignWorkflowState(repository, project.id, await repository.findDesignWorkflowState(project.id) ?? emptyDesignWorkflowState(project.id));
+        const payment = await projectInitialPayment(repository, project.id, state, true, user.role);
         return payment.canConfirm ? { projectId: project.id, projectName: project.name, ...payment } : null;
       }));
       return rows.filter((row): row is NonNullable<typeof row> => row !== null);
@@ -284,7 +304,8 @@ export function createDesignWorkflowStateService(repository: AppRepository, audi
     async preflight(actor: PublicUser, projectId: string) { return requireDesignWorkflowScope(repository, actor, projectId, true); },
     async proof(actor: PublicUser, projectId: string, eventId: string) {
       const { project, capabilities } = await requireDesignWorkflowScope(repository, actor, projectId);
-      const state = await repository.findDesignWorkflowState(projectId);
+      const saved = await repository.findDesignWorkflowState(projectId);
+      const state = saved ? await hydrateDesignWorkflowState(repository, projectId, saved) : null;
       const event = state?.history.find((event) => event.id === eventId);
       if (!event?.proof) missing();
       if (actor.role === "client" && event.action === "internal_kickoff_complete" && submittedInternalKickoffEvent(state!, projectId, project.designWorkflowStages?.find((stage) => stage.type === "internal_kickoff")?.id)?.id !== eventId) missing();
@@ -310,7 +331,7 @@ export function createDesignWorkflowStateService(repository: AppRepository, audi
           await tx.coordinateAuthorizationMutation();
           const { project, capabilities } = await requireDesignWorkflowScope(tx, actor, projectId, true);
           if (!project.designWorkflowStages?.length) blocked(["This project does not have the configured design workflow."]);
-          const state = await tx.findDesignWorkflowState(projectId) ?? emptyDesignWorkflowState(projectId);
+          const state = await hydrateDesignWorkflowState(tx, projectId, await tx.findDesignWorkflowState(projectId) ?? emptyDesignWorkflowState(projectId), true);
           if (input.action === "space_planning_complete" && (actor.role !== "client" || project.clientId !== actor.id || capabilities.representative)) throw new ApiError(403, "FORBIDDEN", "Only the project Client can complete this stage.");
           const repeated = state.history.find((event) => event.idempotencyKey === input.idempotencyKey);
           if (repeated) {
@@ -326,14 +347,26 @@ export function createDesignWorkflowStateService(repository: AppRepository, audi
           const eventId = `workflow-event-${randomUUID()}`;
           if (input.action === "confirm_initial_payment") {
             checkData(input.data, []);
-            if (!capabilities.finance || !input.note) throw new ApiError(403, "PAYMENT_CONFIRMATION_NOT_ALLOWED", "Super Admin or Finance must record a payment receipt reference.");
-            if (input.stageId || state.initialPaymentAt) blocked(["The initial payment is already confirmed or this request names a stage."]);
-            const { source, issue } = await paymentApprovalSource(tx, projectId);
+            if (!capabilities.finance || project.estimationWorkflowVersion === 2 && actor.role !== "super_admin" || !input.note) throw new ApiError(403, "PAYMENT_CONFIRMATION_NOT_ALLOWED", "Super Admin or Finance must record a payment receipt reference.");
+            const lifecycle = project.estimationWorkflowVersion === 2 ? await tx.findProjectEstimationContext(projectId, true) : null;
+            const confirmedCurrentApproval = lifecycle?.finalApproval &&
+              state.initialPaymentEstimateId === lifecycle.estimateId &&
+              state.initialPaymentEstimateVersion === lifecycle.finalApproval.estimateVersion &&
+              state.initialPaymentReviewRoundId === lifecycle.finalApproval.reviewRoundId &&
+              state.initialPaymentDesignReviewRoundId === lifecycle.finalApproval.designReviewRoundId;
+            if (input.stageId || state.initialPaymentAt && (project.estimationWorkflowVersion !== 2 || confirmedCurrentApproval)) blocked(["The initial payment is already confirmed or this request names a stage."]);
+            if (project.estimationWorkflowVersion === 2 && !lifecycle?.finalApproval) blocked(["The Client must approve the final estimate after design completion before payment can be confirmed."]);
+            const { source, issue } = lifecycle?.finalApproval ? { source: { estimateId: lifecycle.estimateId, estimateVersion: lifecycle.finalApproval.estimateVersion }, issue: undefined } : await paymentApprovalSource(tx, projectId);
             if (!source) blocked([issue!]);
-            state.initialPaymentAt = timestamp;
+            const attestation = Boolean(state.initialPaymentAt);
+            state.initialPaymentAt ??= timestamp;
+            if (lifecycle?.finalApproval) {
+              state.initialPaymentReviewRoundId = lifecycle.finalApproval.reviewRoundId;
+              state.initialPaymentDesignReviewRoundId = lifecycle.finalApproval.designReviewRoundId;
+            }
             state.initialPaymentEstimateId = source.estimateId;
             state.initialPaymentEstimateVersion = source.estimateVersion;
-            recordedData = { estimateId: source.estimateId, estimateVersion: source.estimateVersion, confirmedAt: timestamp };
+            recordedData = { estimateId: source.estimateId, estimateVersion: source.estimateVersion, confirmedAt: state.initialPaymentAt, ...(lifecycle?.finalApproval ? { estimateReviewRoundId: lifecycle.finalApproval.reviewRoundId, designReviewRoundId: lifecycle.finalApproval.designReviewRoundId, attestation } : {}) };
             auditDetails = recordedData;
           } else {
             const definition = ACTIONS[input.action];
@@ -350,7 +383,7 @@ export function createDesignWorkflowStateService(repository: AppRepository, audi
             switch (input.action) {
               case "internal_kickoff_complete": {
                 checkData(input.data, ["meetingAt", "designHandoverAcknowledged"]);
-                if (input.data.designHandoverAcknowledged !== true) throw new ApiError(400, "KICKOFF_HANDOVER_REQUIRED", "Acknowledge that the design flow has been handed over to you after initial payment.");
+                if (input.data.designHandoverAcknowledged !== true) throw new ApiError(400, "KICKOFF_HANDOVER_REQUIRED", state.estimationWorkflowVersion === 2 ? "Acknowledge the design handover following pre-estimate approval." : "Acknowledge that the design flow has been handed over to you after initial payment.");
                 const designer = await requireActor(tx, actor);
                 recordedActorName = designer.name;
                 current.meetingAt = dateField(input.data, "meetingAt", at.getTime(), false);
@@ -389,6 +422,10 @@ export function createDesignWorkflowStateService(repository: AppRepository, audi
               case "measurement_complete": {
                 checkData(input.data, []);
                 if (!mediaFiles.length) throw new ApiError(400, "WORKFLOW_MEDIA_REQUIRED", "Upload at least one site photo or video.");
+                if (state.estimationWorkflowVersion === 2) {
+                  const source = await tx.findDesignWorkflowRoomContext(projectId, true);
+                  if (source) { current.scopeEstimateId = source.estimateId; current.scopeEstimateVersion = source.estimateVersion; current.scopeRoomFingerprints = workflowGeometryFingerprints(source); }
+                }
                 current.completedAt = timestamp; break;
               }
               case "furniture_scope": {
@@ -398,12 +435,12 @@ export function createDesignWorkflowStateService(repository: AppRepository, audi
                 const roomContext = await tx.findDesignWorkflowRoomContext(projectId, true);
                 if (!roomContext) blocked(["The project's approved estimate room source is unavailable."]);
                 const rooms = roomContext?.rooms ?? [];
-                if (roomContext) { current.scopeEstimateId = roomContext.estimateId; current.scopeEstimateVersion = roomContext.estimateVersion; }
+                if (roomContext) { current.scopeEstimateId = roomContext.estimateId; current.scopeEstimateVersion = roomContext.estimateVersion; if (state.estimationWorkflowVersion === 2) current.scopeRoomFingerprints = workflowRoomFingerprints(roomContext); }
                 if (!parsed.data.notApplicable && (new Set(parsed.data.rooms.map((room) => room.id)).size !== parsed.data.rooms.length || parsed.data.rooms.length !== rooms.length || parsed.data.rooms.some((room) => !rooms.some((saved) => saved.id === room.id)))) throw new ApiError(400, "INVALID_FURNITURE_ROOMS", "Declare applicability for each room in the approved estimate.");
                 if (parsed.data.rooms.some((room) => room.required && !rooms.find((saved) => saved.id === room.id)?.estimateItems.length)) throw new ApiError(400, "INVALID_FURNITURE_ROOMS", "A required room must contain selected items in the approved estimate. Correct the estimate or mark this room as not requiring furniture dimensions.");
                 const requiredRooms = parsed.data.rooms.filter(room => room.required);
                 const combined = parsed.data.dimensions !== undefined;
-                if (!combined && requiredRooms.length && furnitureRequirementsSubmission(state, stage.id).kind !== "legacy") blocked(["Include dimensions and a supporting document when replacing this furniture submission."]);
+                if (!combined && requiredRooms.length && !["legacy", "reconciled"].includes(furnitureRequirementsSubmission(state, stage.id).kind)) blocked(["Include dimensions and a supporting document when replacing this furniture submission."]);
                 let dimensionRooms: Awaited<ReturnType<typeof canonicalDimensionRooms>> = [];
                 if (combined) {
                   const dimensions = parsed.data.dimensions!;
@@ -411,9 +448,11 @@ export function createDesignWorkflowStateService(repository: AppRepository, audi
                   if (requiredRooms.length && !proof) throw new ApiError(400, "WORKFLOW_PROOF_REQUIRED", "Upload the supporting furniture dimensions document.");
                   dimensionRooms = await canonicalDimensionRooms(tx, roomContext!, dimensions);
                 }
+                const previousRooms = current.rooms ?? [];
                 const nextRooms = parsed.data.rooms.map(room => {
+                  const preserved = current.scopeReconciliation && !current.scopeReconciliation.affectedRoomIds.includes(room.id) ? previousRooms.find(saved => saved.id === room.id && saved.required === room.required) : undefined;
                   const submitted = dimensionRooms.find(entry => entry.roomId === room.id);
-                  return { ...room, name: rooms.find(saved => saved.id === room.id)!.name, uploadedAt: submitted ? timestamp : null, proceed: false,
+                  return { ...preserved, ...room, name: rooms.find(saved => saved.id === room.id)!.name, uploadedAt: submitted ? timestamp : preserved?.uploadedAt ?? null, proceed: false,
                     ...(submitted ? { dimensions: { submissionEventId: eventId, revision: nextFurnitureRevision(state, stage.id, room.id), status: "pending" as const, items: structuredClone(submitted.items), submittedAt: timestamp } } : {}) };
                 });
                 current.noExistingFurniture = Boolean(parsed.data.notApplicable);
@@ -547,6 +586,7 @@ export function createDesignWorkflowStateService(repository: AppRepository, audi
           state.history.push({ id: eventId, idempotencyKey: input.idempotencyKey, requestHash: hash, action: input.action, stageId: input.stageId ?? null, actorId: actor.id, actorName: recordedActorName, actorRole: actor.role, onBehalfOfClient, at: timestamp, note: input.note, data: recordedData, proof, ...(mediaFiles.length ? { mediaFiles } : {}) });
           attemptedWrite = true;
           const saved = await tx.saveDesignWorkflowState(projectId, state.version, state);
+          if (input.action === "confirm_initial_payment" && project.estimationWorkflowVersion === 2) await tx.activateCollaborativeExecution(projectId, actor.id, timestamp);
           await audit.append({ actorId: actor.id, action: "design_workflow_action_recorded", entityType: "design_workflow", entityId: projectId, occurredAt: timestamp, newValues: { action: input.action, stageId: input.stageId ?? null, eventId, onBehalfOfClient, proofAvailable: Boolean(proof), ...(mediaFiles.length ? { mediaCount: mediaFiles.length } : {}), version: saved.version, ...auditDetails }, reason: input.note || null }, tx);
           return { version: saved.version, replayed: false };
         });
@@ -586,9 +626,10 @@ function wallAt(state: DesignWorkflowState, startsAt: string | null, offset: num
 }
 type FurnitureReviewEvidence = { eventId: string; mediaId?: string; filename: string; mimeType: string; byteSize: number; source: "site_measurement" | "furniture_requirements" | "furniture_dimensions" };
 
-type FurnitureRequirementsSubmission = { kind: "legacy" } | { kind: "invalid" } | { kind: "combined"; event: DesignWorkflowHistoryEvent };
+type FurnitureRequirementsSubmission = { kind: "reconciled" } | { kind: "legacy" } | { kind: "invalid" } | { kind: "combined"; event: DesignWorkflowHistoryEvent };
 function furnitureRequirementsSubmission(state: DesignWorkflowState, stageId: string): FurnitureRequirementsSubmission {
   const current = state.stages.existing_furniture_dimensions;
+  if (current?.scopeReconciliation) return { kind: "reconciled" };
   const latest = state.history.filter(event => event.action === "furniture_scope" && event.stageId === stageId).at(-1);
   const pointer = current?.requirementsSubmissionEventId;
   const combined = pointer !== undefined || Boolean(latest && Object.hasOwn(latest.data ?? {}, "dimensions")) || Boolean(!current?.acceptedAt && current?.rooms?.some(room => room.dimensions));
@@ -622,6 +663,11 @@ function currentFurnitureSubmission(state: DesignWorkflowState, stageId: string,
   const matches = state.history.filter((event) => event.id === dimensions.submissionEventId);
   const event = matches.length === 1 ? matches[0] : undefined;
   if (event?.action === "furniture_scope") {
+    if (state.stages.existing_furniture_dimensions?.scopeReconciliation) {
+      const parsed = furnitureStoredScopeSchema.safeParse(event.data);
+      const entry = parsed.success ? parsed.data.dimensions.find(item => item.roomId === room.id) : undefined;
+      return event.stageId === stageId && event.actorRole === "designer" && !event.onBehalfOfClient && event.proof && event.at === dimensions.submittedAt && entry && JSON.stringify(entry.items) === JSON.stringify(dimensions.items) ? event : undefined;
+    }
     const bundle = furnitureRequirementsSubmission(state, stageId);
     return bundle.kind === "combined" && bundle.event.id === event.id ? event : undefined;
   }
@@ -699,7 +745,7 @@ export function projectOperationalStage(stage: ProjectDesignWorkflowStage, state
   const clock = WORKFLOW_STAGE_CLOCKS[stage.type];
   const legacyCompleted = Boolean(clock && current.completedAt && !current.timingBasis);
   const legacyStartDays = legacyCompleted && stage.type !== "internal_kickoff" ? 3 : 0;
-  const startsAt = legacyCompleted ? state.initialPaymentAt : workflowStageStartAt(state, stage.type, at);
+  const startsAt = legacyCompleted ? workflowDesignStartAt(state) : workflowStageStartAt(state, stage.type, at);
   const elapsed = workflowStageElapsedMs(state, startsAt, at);
   const paused = Boolean(startsAt) && workflowIsPaused(state) && !current.completedAt;
   const activeElapsed = clock ? Math.max(0, elapsed - legacyStartDays * DAY) : 0;
@@ -735,7 +781,7 @@ export function projectOperationalStage(stage: ProjectDesignWorkflowStage, state
   const showSubmittedDocument = stage.type === "client_kickoff" ? capabilities.client : stage.type === "internal_kickoff" && stage.id === submitted?.stageId && canReadProof;
   const submittedDocument = showSubmittedDocument && submitted?.proof ? { eventId: submitted.id, filename: submitted.proof.originalFilename, mimeType: submitted.proof.mimeType, uploadedAt: submitted.at } : undefined;
   const reasons: string[] = [];
-  if (!state.initialPaymentAt) reasons.push(paymentBlockingReason(context));
+  if (!workflowDesignStartAt(state)) reasons.push(state.estimationWorkflowVersion === 2 ? "Awaiting Client pre-estimate approval before design starts." : paymentBlockingReason(context));
   if (paused) reasons.push("Site access is unavailable. All workflow clocks are paused.");
   if (!current.completedAt && (stage.type !== "space_planning_tentative_look_feel" || spacePlanning || context?.spacePlanningIssue || stored.spacePlanningApproval)) reasons.push(...workflowStagePrerequisiteBlockers(state, stage.type));
   const completionReasons: string[] = [];
@@ -802,4 +848,54 @@ function unknownCommit(error: unknown): boolean {
     current = value.cause;
   }
   return false;
+}
+
+export function workflowRoomFingerprints(source: WorkflowEstimateRoomContext): Record<string, string> {
+  return Object.fromEntries(source.rooms.map(room => [room.id, sha256Hex(JSON.stringify({ name: room.name, dimensions: room.estimateDimensions ?? null, items: [...room.estimateItems].sort((a, b) => a.id.localeCompare(b.id)) }))]));
+}
+
+function workflowGeometryFingerprints(source: WorkflowEstimateRoomContext): Record<string, string> {
+  return Object.fromEntries(source.rooms.map(room => [room.id, sha256Hex(JSON.stringify({ name: room.name, dimensions: room.estimateDimensions ?? null }))]));
+}
+
+/** Reconcile the current room source while retaining immutable evidence and unaffected approvals. */
+export async function reconcileWorkflowRoomScope(repository: AppRepository, projectId: string, at: string): Promise<string[]> {
+  const state = await hydrateDesignWorkflowState(repository, projectId, await repository.findDesignWorkflowState(projectId) ?? emptyDesignWorkflowState(projectId), true);
+  if (state.estimationWorkflowVersion !== 2) return [];
+  const source = await repository.findDesignWorkflowRoomContext(projectId, true);
+  if (!source) blocked(["The saved estimate rooms are unavailable for reconciliation."]);
+  const fingerprints = workflowRoomFingerprints(source!);
+  const furniture = state.stages.existing_furniture_dimensions;
+  const affected = new Set<string>();
+  if (furniture?.scopeEstimateVersion !== undefined && furniture.scopeEstimateVersion !== source!.estimateVersion) {
+    const prior = furniture.scopeRoomFingerprints ?? {};
+    for (const roomId of new Set([...Object.keys(prior), ...Object.keys(fingerprints)])) if (prior[roomId] !== fingerprints[roomId]) affected.add(roomId);
+    const currentRooms = furniture.rooms ?? [];
+    const roomSetChanged = currentRooms.length !== source!.rooms.length || currentRooms.some(room => !fingerprints[room.id]);
+    furniture.scopeReconciliation = { at, previousRevision: furniture.scopeEstimateVersion, affectedRoomIds: [...affected] };
+    furniture.scopeEstimateVersion = source!.estimateVersion;
+    furniture.scopeRoomFingerprints = fingerprints;
+    furniture.rooms = source!.rooms.map(room => {
+      const priorRoom = currentRooms.find(saved => saved.id === room.id);
+      if (priorRoom && !affected.has(room.id)) return priorRoom;
+      const required = priorRoom?.required ?? room.estimateItems.length > 0;
+      return { ...priorRoom, id: room.id, name: room.name, required: required && room.estimateItems.length > 0, uploadedAt: priorRoom?.uploadedAt ?? null, proceed: false,
+        ...(priorRoom?.dimensions ? { dimensions: { ...priorRoom.dimensions, status: "changes_requested" as const, reviewedAt: at, returnReason: "Estimate scope changed; confirm dimensions for the revised items." } } : {}) };
+    });
+    if (affected.size) {
+      delete furniture.completedAt;
+      if (roomSetChanged || furniture.noExistingFurniture) { delete furniture.acceptedAt; delete furniture.requirementsSubmissionEventId; furniture.noExistingFurniture = false; }
+    }
+  }
+  const measurement = state.stages.site_measurement;
+  if (measurement?.scopeRoomFingerprints) {
+    const geometry = workflowGeometryFingerprints(source!);
+    if (JSON.stringify(measurement.scopeRoomFingerprints) !== JSON.stringify(geometry)) {
+      delete measurement.completedAt;
+      measurement.scopeReconciliation = { at, previousRevision: measurement.scopeEstimateVersion ?? 0, affectedRoomIds: [...new Set([...Object.keys(geometry), ...Object.keys(measurement.scopeRoomFingerprints)])].filter(id => geometry[id] !== measurement.scopeRoomFingerprints![id]) };
+    }
+  }
+  // Keep earlier space-planning evidence; its source check exposes stale confirmation until reapproved.
+  await repository.saveDesignWorkflowState(projectId, state.version, state);
+  return [...affected];
 }

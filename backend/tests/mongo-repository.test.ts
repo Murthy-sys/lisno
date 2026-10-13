@@ -1531,6 +1531,7 @@ describe("Mongo repository contracts", () => {
       total: 1,
       totalPaise: 1,
       clientDecisionAt: 1,
+      estimation: 1,
       designPlanStatus: 1,
       designPlanVersion: 1,
       designPlanDesignerId: 1,

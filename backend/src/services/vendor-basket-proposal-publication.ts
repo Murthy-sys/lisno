@@ -85,6 +85,7 @@ export async function validateProposalSnapshot(snapshot: ProposalPublicationSnap
       const duplicate = await AiEstimatorKnowledgeBasketModel.exists({ nameNormalized: normalizeKnowledgeIdentity(snapshot.basket.payload.name) }).session(session);
       if (duplicate && !options.forSave) findings.push(finding(basketId, "DUPLICATE_IDENTITY", "A Main Basket already uses this name. Rename the proposal before approval."));
     }
+    if (snapshot.requestMode === "hierarchy_intake") return findings;
     const byLine = new Map(snapshot.mainLines.map((line) => [line.resourceId, sectionsFor(snapshot, line.resourceId)]));
     // A draft must be repairable one resource at a time when several live
     // references become unavailable. Readiness and publication still inspect all.
@@ -170,6 +171,24 @@ export function validateProposalStructure(snapshot: ProposalPublicationSnapshot,
   }
   if ((snapshot.masters ?? []).some((master) => master.kind !== "uom" && master.kind !== "surface")) findings.push(finding(basketId, "INVALID_PROPOSAL_RESOURCE", "Unsupported proposed master kind."));
   const subTarget = snapshot.target?.kind === "new_sub_basket";
+  if (snapshot.requestMode === "hierarchy_intake") {
+    if (snapshot.subBaskets.length !== 1 || snapshot.sections.length || snapshot.quality || snapshot.masters?.length) {
+      findings.push(finding(basketId, "INVALID_INTAKE_CONTENT", "A hierarchy request contains one Sub Basket and Main Line names without Configuration content."));
+    }
+    for (const resource of [snapshot.basket, ...snapshot.subBaskets, ...snapshot.mainLines]) {
+      if (Object.keys(resource.payload).some((key) => !["name", "description", "displayOrder"].includes(key))
+        || (resource.payload.description !== null && (typeof resource.payload.description !== "string" || resource.payload.description.length > 4000))
+        || (resource.kind === "main_line" && resource.payload.description !== null)) {
+        findings.push(finding(resource.resourceId, "INVALID_INTAKE_CONTENT", "Only basket metadata and Main Line names can be requested."));
+      }
+    }
+    if (!forSave) {
+      if (!snapshot.mainLines.length) findings.push(finding(basketId, "PROPOSAL_HIERARCHY_REQUIRED", "Add at least one Main Line before submitting."));
+      for (const resource of [...(subTarget ? [] : [snapshot.basket]), ...snapshot.subBaskets]) {
+        if (typeof resource.payload.description !== "string" || !resource.payload.description.trim()) findings.push(finding(resource.resourceId, "DESCRIPTION_REQUIRED", "Enter a description before submitting.", `${resource.kind}.description`));
+      }
+    }
+  }
   if (subTarget && (snapshot.target!.kind !== "new_sub_basket" || snapshot.target!.basketId !== basketId || snapshot.subBaskets.length !== 1 || snapshot.quality !== null)) {
     findings.push(finding(basketId, "INVALID_PROPOSAL_TARGET", "A Sub-Basket proposal must contain exactly one child under its immutable existing Main Basket, without shared-quality edits."));
   }
@@ -294,7 +313,7 @@ export async function publishProposalSnapshot(input: PublishProposalSnapshotInpu
   if (subTarget) {
     const sub = snapshot.subBaskets[0]!;
     await createKnowledgeHierarchyInSession({ actorId, basketId, mainLineId: null,
-      input: { subBasketName: sub.payload.name }, newSubBasketId: sub.resourceId, requireNewSubBasket: true,
+      input: { subBasketName: sub.payload.name }, newSubBasketId: sub.resourceId, newSubBasketDescription: sub.payload.description, requireNewSubBasket: true,
       occurredAt, session, uuid: createId, audit });
   } else {
     const displayOrder = await allocateAiEstimatorKnowledgeDisplayOrder({ scope: "baskets", resourceModel: AiEstimatorKnowledgeBasketModel, resourceFilter: {}, session });
@@ -307,7 +326,7 @@ export async function publishProposalSnapshot(input: PublishProposalSnapshotInpu
     await audit.appendInMongoTransaction({ actorId, action: "ai_estimator_knowledge_basket_created", entityType: "ai_estimator_knowledge_basket", entityId: basketId, occurredAt: occurredAt.toISOString(), newValues: { sourceProposalId: snapshot.proposalId, displayOrder, status: "active", version: 1 } }, session);
     for (const sub of snapshot.subBaskets) {
       await observeExplicitAiEstimatorKnowledgeDisplayOrder({ scope: `sub-baskets:${basketId}`, resourceModel: AiEstimatorKnowledgeSubBasketModel, resourceFilter: { basketId }, displayOrder: sub.payload.displayOrder, session });
-      await AiEstimatorKnowledgeSubBasketModel.create([{ _id: sub.resourceId, basketId, name: sub.payload.name, nameNormalized: normalizeKnowledgeIdentity(sub.payload.name), displayOrder: sub.payload.displayOrder, version: 1, ...stamps }], { session });
+      await AiEstimatorKnowledgeSubBasketModel.create([{ _id: sub.resourceId, basketId, name: sub.payload.name, nameNormalized: normalizeKnowledgeIdentity(sub.payload.name), description: sub.payload.description, displayOrder: sub.payload.displayOrder, version: 1, ...stamps }], { session });
       await audit.appendInMongoTransaction({ actorId, action: "ai_estimator_knowledge_sub_basket_created", entityType: "ai_estimator_knowledge_sub_basket", entityId: sub.resourceId, occurredAt: occurredAt.toISOString(), newValues: { basketId, sourceProposalId: snapshot.proposalId, displayOrder: sub.payload.displayOrder, version: 1 } }, session);
     }
   }
@@ -324,6 +343,9 @@ export async function publishProposalSnapshot(input: PublishProposalSnapshotInpu
   if (subTarget) {
     const parent = await AiEstimatorKnowledgeBasketModel.findById(basketId).session(session).lean().exec();
     qualityRevisionId = (await readBasketQualityRevision(parent!, session))?._id ?? null;
+  }
+  if (snapshot.requestMode === "hierarchy_intake") {
+    return { basketId, subBasketIds: snapshot.subBaskets.map((sub) => sub.resourceId), mainLines, prices: [], sections: [], qualityRevisionId };
   }
   for (const line of mainLines) {
     const sections = sectionsFor(snapshot, line.mainLineId);

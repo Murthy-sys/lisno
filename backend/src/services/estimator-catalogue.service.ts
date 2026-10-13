@@ -291,7 +291,7 @@ export async function readEstimatorCatalogueRecommendations(
 }
 
 async function assertCatalogueReadActor(actor: PublicUser): Promise<void> {
-  if (actor.role !== "estimator_sales" && actor.role !== "super_admin") {
+  if (actor.role !== "estimator_sales" && actor.role !== "designer" && actor.role !== "super_admin") {
     throw new ApiError(403, "FORBIDDEN", "You are not authorized to read the estimator catalogue.");
   }
   const activeActor = await UserModel.exists({ _id: actor.id, role: actor.role, active: true });

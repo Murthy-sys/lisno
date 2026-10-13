@@ -10,6 +10,7 @@ import type { AdminProjectService } from "../services/admin-project.service.js";
 import type { AuthService } from "../services/auth.service.js";
 
 const initiationSchema = z.object({
+  initiationKey: z.string().regex(/^[A-Za-z0-9_-]{8,128}$/).optional(),
   clientName: z.string().trim().min(1),
   clientEmail: z.string().trim().email(),
   clientMobile: z.string().trim().min(1),

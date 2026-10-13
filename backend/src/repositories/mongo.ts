@@ -1,3 +1,8 @@
+import { ProjectClientInvitationModel, ProjectInitiationReceiptModel } from "../models/ProjectClientInvitation.js";
+import { activateCollaborativeProjectWorkflow } from "../services/project-workflow.service.js";
+import { openProjectFinanceBucket } from "../services/project-finance.service.js";
+import { currentEstimationApproval, isCollaborativeEstimate } from "../domain/estimation-lifecycle.js";
+import type { ProjectClientInvitationRecord } from "../domain/project-client-invitations.js";
 import { readProcurementVendorInvitationSource } from "../services/procurement-vendor-invitation-authority.js";
 import { readVendorWorkInvitationSource } from "../services/vendor-work-invitation-authority.js";
 import { workflowSpacePlanningSource, type WorkflowDesignPlanData } from "../domain/workflow-space-planning.js";
@@ -230,6 +235,7 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
         version: 1,
         status: 1,
         subtotal: 1,
+        estimation: 1,
         gst: 1,
         total: 1,
         subtotalPaise: 1,
@@ -350,6 +356,7 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
         projectId: document.projectId == null ? null : String(document.projectId),
         version: Number(document.version),
         status: String(document.status),
+        ...(document.estimation ? { estimation: document.estimation } : {}),
         subtotal: Number(document.subtotal),
         gst: Number(document.gst),
         total: Number(document.total),
@@ -537,12 +544,18 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       const bucketQuery = ProjectFinanceBucketModel.findOne({ projectId }).select({ estimateId: 1, estimateVersion: 1, estimateReviewRoundId: 1 });
       if (session) bucketQuery.session(session);
       const bucket = await bucketQuery.lean();
-      const query = EstimateModel.find({ projectId, status: "client_approved", ...(bucket ? { _id: bucket.estimateId } : {}) }).limit(2).select({ rooms: 1, version: 1, ...(includeEstimateItems ? { lineItems: 1 } : {}) });
+      const query = EstimateModel.find({ projectId, status: "client_approved", ...(bucket ? { _id: bucket.estimateId } : {}) }).limit(2).select({ rooms: 1, version: 1, estimation: 1, ...(includeEstimateItems ? { lineItems: 1 } : {}) });
       if (session) query.session(session);
       const estimates = await query.lean();
       if (estimates.length > 1 || bucket && estimates.length !== 1) throw new RepositoryConflictError("The project's approved estimate source is ambiguous or unavailable.");
       const estimate = estimates[0];
       if (!estimate) return null;
+      if (estimate.estimation?.workflowVersion === 2) {
+        const revision = Number(estimate.estimation.designScopeRevision);
+        return { estimateId: String(estimate._id), estimateVersion: revision,
+          rooms: includeEstimateItems ? workflowEstimateRooms(String(estimate._id), revision, estimate.rooms ?? [], estimate.lineItems ?? [], { includeZeroValueItems, includeUnpricedItems: true })
+            : (estimate.rooms ?? []).map((room: PlainDocument) => ({ id: String(room.id), name: String(room.label), ...workflowEstimateRoomDimensions(room), estimateItems: [] })) };
+      }
       const currentVersion = Number(estimate.version);
       const approvedVersion = currentVersion > 1 ? currentVersion - 1 : 1;
       if (!Number.isSafeInteger(currentVersion) || currentVersion < 1 || bucket && Number(bucket.estimateVersion) !== approvedVersion) throw new RepositoryConflictError("The approved estimate version does not match its finance source.");
@@ -577,6 +590,42 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       const { _id, ...state } = row;
       return state as unknown as DesignWorkflowState;
     },
+    async findProjectEstimationContext(projectId, lock = false) {
+      if (lock && !session) throw new Error("Estimation coordination requires a transaction.");
+      const projectQuery = ProjectModel.findById(projectId).select({ estimationWorkflowVersion: 1 });
+      if (session) projectQuery.session(session);
+      const project = await projectQuery.lean();
+      if (project?.estimationWorkflowVersion !== 2) return null;
+      const query = EstimateModel.find({ projectId }).limit(2).select({ estimation: 1 });
+      if (session) query.session(session);
+      const estimates = await query.lean();
+      if (estimates.length > 1) throw new RepositoryConflictError("The project estimate source is ambiguous.");
+      const estimate = estimates[0];
+      if (!estimate) return null;
+      const lifecycle = estimate.estimation;
+      if (lifecycle?.workflowVersion !== 2) throw new RepositoryConflictError("The project estimate lifecycle is unavailable.");
+      if (lifecycle.preApproval) {
+        const approvalQuery = EstimateClientReviewRoundModel.exists({ _id: lifecycle.preApproval.reviewRoundId,
+          estimateId: estimate._id, projectId, estimateVersion: lifecycle.preApproval.estimateVersion, status: "approved", decision: "approve" });
+        if (session) approvalQuery.session(session);
+        if (!await approvalQuery) throw new RepositoryConflictError("The project pre-approval source is unavailable.");
+      }
+      if (lock) {
+        const result = await ProjectModel.updateOne({ _id: projectId, estimationWorkflowVersion: 2 }, { $inc: { estimationFenceEpoch: 1 } }, { session, timestamps: false });
+        if (result.matchedCount !== 1) throw new RepositoryConflictError("The project estimate lifecycle changed.");
+      }
+      return { estimateId: String(estimate._id), preApprovedAt: lifecycle.preApproval?.approvedAt ?? null,
+        designScopeRevision: lifecycle.designScopeRevision, approvedDesignScopeRevision: lifecycle.approvedDesignScopeRevision,
+        finalApproval: lifecycle.finalApproval };
+    },
+    async activateCollaborativeExecution(projectId, actorId, occurredAt) {
+      if (!session) throw new Error("Activating execution requires a transaction.");
+      const context = await repository.findProjectEstimationContext(projectId, true);
+      if (!context?.finalApproval) throw new RepositoryConflictError("Final estimate approval is required for execution.");
+      await openProjectFinanceBucket({ projectId, designPlanVersion: context.finalApproval.designPlanVersion,
+        openedById: actorId, occurredAt: new Date(occurredAt) }, session);
+      await activateCollaborativeProjectWorkflow(projectId, actorId, new Date(occurredAt), session);
+    },
     async saveDesignWorkflowState(projectId, expectedVersion, state) {
       const saved = { ...state, projectId, version: expectedVersion + 1 };
       if (expectedVersion === 0) {
@@ -589,8 +638,11 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       return saved;
     },
     async listDesignWorkflowPaymentProjects() {
-      const confirmed = await DesignWorkflowStateModel.find({ initialPaymentAt: { $ne: null } }).select({ projectId: 1 }).lean();
-      return (await ProjectModel.find({ "designWorkflowStages.0": { $exists: true }, _id: { $nin: confirmed.map((row) => row.projectId) } }).sort({ createdAt: -1, _id: 1 }).lean()).map(mapProject);
+      const confirmed = await DesignWorkflowStateModel.find({ initialPaymentAt: { $ne: null } }).select({ projectId: 1, initialPaymentReviewRoundId: 1 }).lean();
+      return (await ProjectModel.find({ "designWorkflowStages.0": { $exists: true }, $or: [
+        { estimationWorkflowVersion: { $ne: 2 }, _id: { $nin: confirmed.map(row => row.projectId) } },
+        { estimationWorkflowVersion: 2, _id: { $nin: confirmed.filter(row => row.initialPaymentReviewRoundId).map(row => row.projectId) } }
+      ] }).sort({ createdAt: -1, _id: 1 }).lean()).map(mapProject);
     },
     async runInTransaction(operation) {
       if (session) return operation(repository);
@@ -625,6 +677,47 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
         }
       }
       throw new Error("MongoDB transaction retry limit was exhausted.");
+    },
+
+    async findProjectClientInvitation(projectId) {
+      const row = await ProjectClientInvitationModel.findOne({ projectId }).select("+tokenHash").session(session ?? null).lean();
+      return row ? mapProjectClientInvitation(row) : null;
+    },
+    async findProjectClientInvitationByTokenHash(tokenHash) {
+      const row = await ProjectClientInvitationModel.findOne({ tokenHash, status: "pending" }).select("+tokenHash").session(session ?? null).lean();
+      return row ? mapProjectClientInvitation(row) : null;
+    },
+    async findLatestProjectClientInvitationIssuedAt(emailNormalized) {
+      const row = await ProjectClientInvitationModel.findOne({ emailNormalized }).sort({ issuedAt: -1 }).session(session ?? null).lean();
+      return row?.issuedAt ?? null;
+    },
+    async saveProjectClientInvitation(record, expectedVersion) {
+      if (!session) throw new Error("Project invitation writes require a transaction.");
+      if (record.version !== expectedVersion + 1) throw new RepositoryConflictError("Project invitation changed.");
+      const { id, ...fields } = record;
+      if (expectedVersion === 0) {
+        await ProjectClientInvitationModel.create([{ _id: id, ...fields }], { session });
+      } else {
+        const result = await ProjectClientInvitationModel.updateOne({ _id: id, projectId: record.projectId, emailNormalized: record.emailNormalized, invitedById: record.invitedById, version: expectedVersion }, { $set: fields }, { session, runValidators: true });
+        if (result.matchedCount !== 1) throw new RepositoryConflictError("Project invitation changed.");
+      }
+      return record;
+    },
+    async linkProjectClient(projectId, emailNormalized, clientId, updatedAt) {
+      if (!session) throw new Error("Project client linking requires a transaction.");
+      const user = await UserModel.exists({ _id: clientId, active: true, role: "client", emailNormalized }).session(session);
+      if (!user) throw new RepositoryConflictError("Project invitation is no longer available.");
+      const result = await ProjectModel.updateOne({ _id: projectId, clientId: null, clientEmailNormalized: emailNormalized, estimationWorkflowVersion: 2 }, { $set: { clientId, updatedAt: new Date(updatedAt) } }, { session, runValidators: true });
+      if (result.matchedCount !== 1) throw new RepositoryConflictError("Project invitation is no longer available.");
+    },
+    async findProjectInitiationReceipt(id) {
+      const row = await ProjectInitiationReceiptModel.findById(id).session(session ?? null).lean();
+      return row ? { id: String(row._id), actorId: row.actorId, fingerprint: row.fingerprint, projectId: row.projectId } : null;
+    },
+    async createProjectInitiationReceipt(receipt) {
+      if (!session) throw new Error("Project initiation receipts require a transaction.");
+      const { id, ...fields } = receipt;
+      await ProjectInitiationReceiptModel.create([{ _id: id, ...fields }], { session });
     },
 
     async coordinateClientEmail(emailNormalized) {
@@ -2151,6 +2244,7 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       const periodEnd = date(periodEndAt);
       const query = ProjectWorkflowTaskModel.find({
         assigneeUserId: { $in: assigneeUserIds },
+        preparationOnly: { $ne: true },
         $or: [
           { openedAt: { $lte: periodEnd } },
           { completedAt: { $gte: periodStart, $lte: periodEnd } }
@@ -2159,7 +2253,10 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       if (limit !== undefined) query.limit(limit);
       const documents = await query.lean().exec();
       return documents
-        .map(mapWorkflowTaskToKpiRecord)
+        .flatMap((document) => {
+          const task = mapWorkflowTaskToKpiRecord(document);
+          return task ? [task] : [];
+        })
         .filter((task) =>
           new Date(task.plannedStartAt) <= periodEnd &&
           new Date(task.currentDeadlineAt) >= periodStart
@@ -3705,15 +3802,18 @@ function approvedAdminEstimateBaseline(
 ): AdminProjectApprovedEstimateBaseline | null {
   if (estimate.status !== "client_approved") return null;
   const currentVersion = Number(estimate.version);
-  const estimateVersion = Number.isSafeInteger(currentVersion) && currentVersion > 1
+  const reference = currentEstimationApproval(estimate);
+  if (isCollaborativeEstimate(estimate) && !reference) approvedBaselineConflict();
+  const estimateVersion = reference?.estimateVersion ?? (Number.isSafeInteger(currentVersion) && currentVersion > 1
     ? currentVersion - 1
-    : 1;
+    : 1);
   const approvedRounds = rounds.filter((round) =>
     round.status === "approved" && round.decision === "approve"
   );
+  if (reference && approvedRounds.length === 0) approvedBaselineConflict();
   if (approvedRounds.length > 0) {
     const matchingRounds = approvedRounds.filter(
-      (round) => Number(round.estimateVersion) === estimateVersion
+      (round) => Number(round.estimateVersion) === estimateVersion && (!reference || String(round._id) === reference.reviewRoundId)
     );
     if (matchingRounds.length !== 1) approvedBaselineConflict();
     const approvedRound = matchingRounds[0]!;
@@ -3970,6 +4070,11 @@ function mapProjectAccessGrant(document: PlainDocument): ProjectAccessGrantRecor
 function mapProject(document: PlainDocument): ProjectRecord {
   return {
     id: idOf(document),
+    ...(document.estimationWorkflowVersion === 2 ? {
+      estimationWorkflowVersion: 2 as const,
+      estimateRequirementsVersion: Number(document.estimateRequirementsVersion ?? 0),
+      estimationFenceEpoch: Number(document.estimationFenceEpoch ?? 0)
+    } : {}),
     ...(Array.isArray(document.designWorkflowStages) ? {
       designWorkflowStages: document.designWorkflowStages.map((stage: PlainDocument) => ({
         id: String(stage.id), type: stage.type, name: stage.name, order: stage.order
@@ -4115,7 +4220,8 @@ function mapTask(document: PlainDocument): TaskRecord {
  * carry no dueAt/plannedEffort, so both fall back to the standard turnaround
  * for the task kind rather than dropping the task from the report.
  */
-function mapWorkflowTaskToKpiRecord(document: PlainDocument): TaskRecord {
+function mapWorkflowTaskToKpiRecord(document: PlainDocument): TaskRecord | null {
+  if (document.preparationOnly === true) return null;
   const kind = String(document.kind) as ProjectWorkflowTaskKind;
   const openedAt = new Date(document.openedAt);
   const schedule = WORKFLOW_TASK_SCHEDULE[kind];
@@ -4446,4 +4552,9 @@ function sectionRevisionForMongo(input: DesignSectionRevisionRecord): PlainDocum
     reviewedAt: input.reviewedAt ? date(input.reviewedAt) : null,
     createdAt: date(input.createdAt)
   };
+}
+
+function mapProjectClientInvitation(row: PlainDocument): ProjectClientInvitationRecord {
+  const { _id, ...fields } = row;
+  return { ...fields, id: String(_id) } as ProjectClientInvitationRecord;
 }

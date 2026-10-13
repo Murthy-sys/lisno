@@ -1462,6 +1462,7 @@ export async function createKnowledgeHierarchyInSession(options: {
   /** Proposal publication must create its reviewed child, never reuse an existing identity. */
   readonly requireNewSubBasket?: boolean;
   readonly newSubBasketId?: string;
+  readonly newSubBasketDescription?: string | null;
 }): Promise<{ readonly subBasketId: string | null; readonly mainLineId: string | null }> {
   const { actorId, basketId, input, mainLineId, occurredAt, session, uuid, audit } = options;
   if ((mainLineId === null) !== (input.name === undefined)) {
@@ -1496,6 +1497,7 @@ export async function createKnowledgeHierarchyInSession(options: {
       });
       await AiEstimatorKnowledgeSubBasketModel.create([{
         _id: subBasketId, basketId, name: subBasketName, nameNormalized,
+        description: options.newSubBasketDescription ?? null,
         displayOrder: createdSubBasketOrder, version: 1,
         createdById: actorId, updatedById: actorId,
         createdAt: occurredAt, updatedAt: occurredAt

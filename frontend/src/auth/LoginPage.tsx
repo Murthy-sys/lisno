@@ -486,7 +486,7 @@ export function LoginPage() {
             </p>
 
             <p className="login-footer-text">
-              New to Lisno? <Link to="/signup">Create an account</Link>
+              New to Lisno? <Link to="/signup">Join with an invitation</Link>
             </p>
           </form>
         </div>

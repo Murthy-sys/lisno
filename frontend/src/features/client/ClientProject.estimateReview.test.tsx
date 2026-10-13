@@ -9,6 +9,7 @@ import { renderApp } from "../../test/render";
 import { estimateWorkflowKeys, type EstimateQueueItem } from "../estimates/estimateWorkflowApi";
 import { withPublishedReview } from "../estimates/clientEstimateReviewTestUtils";
 import { projectWorkflowKeys } from "../workflow/projectWorkflowApi";
+import type { EstimateRequirementsDetail } from "./estimateRequirementsApi";
 
 const client = { id: "client-1", name: "Review Client", email: "review@example.test", role: "client" as const };
 const project = { id: "project-villa", name: "Submitted Villa", clientId: client.id, status: "active", location: "Bengaluru", floors: [], progress: 0 };
@@ -23,14 +24,15 @@ function estimate(id = "estimate-villa", projectId: string | null = project.id):
   });
 }
 
-function installApi(rows: EstimateQueueItem[], options: { decisionStatus?: number; getError?: () => number | undefined; pending?: Promise<Response>; decisionPending?: Promise<void> } = {}) {
+function installApi(rows: EstimateQueueItem[], options: { requirements?: EstimateRequirementsDetail; decisionStatus?: number; getError?: () => number | undefined; pending?: Promise<Response>; decisionPending?: Promise<void> } = {}) {
   tokenStorage.set("client-token");
   const decisions: unknown[] = [];
   const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
     if (url.endsWith("/auth/me")) return Response.json({ data: client });
     if (url.endsWith("/auth/authorization")) return Response.json({ data: authorizationFor("client") });
-    if (url.endsWith(`/projects/${project.id}`)) return Response.json({ data: project });
+    if (url.endsWith(`/projects/${project.id}`)) return Response.json({ data: { ...project, ...(options.requirements ? { estimationWorkflowVersion: 2 } : {}) } });
+    if (url.endsWith(`/projects/${project.id}/estimate-requirements`) && options.requirements) return Response.json({ data: options.requirements });
     if (url.endsWith("/client/estimates")) {
       if (options.pending) return options.pending;
       const status = options.getError?.();
@@ -55,6 +57,71 @@ function installApi(rows: EstimateQueueItem[], options: { decisionStatus?: numbe
 }
 
 describe("Client project published estimate review", () => {
+  it("offers project requirements immediately after invited membership, before the first estimate exists", async () => {
+    installApi([], { requirements: {
+      projectId: project.id, requirementsVersion: 0, estimateVersion: null, phase: "pre", editingAllowed: true,
+      editingBlockReason: null, canResolve: false, requirements: [], mainBaskets: [{ id: "joinery", name: "Joinery" }],
+      rooms: [], indicativeTotalPaise: null, pricingComplete: false
+    } });
+    renderApp([`/client/projects/${project.id}`]);
+    await userEvent.click(await screen.findByRole("button", { name: "Add requirement" }));
+    expect(screen.getByRole("form", { name: "Add estimate requirement" })).toBeVisible();
+    expect(screen.getByText("Awaiting estimate")).toBeVisible();
+    expect(await screen.findByText(/No submitted estimate is linked/)).toBeVisible();
+  });
+
+  it("names the immutable pre-estimate phase on its approval action", async () => {
+    const selected = estimate(); selected.publishedReview!.phase = "pre";
+    installApi([selected]); renderApp([`/client/projects/${project.id}`]);
+    await userEvent.click(await screen.findByRole("button", { name: "Approve pre-estimate" }));
+    expect(screen.getByRole("dialog", { name: "Approve this pre-estimate?" })).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Confirm approval" }));
+    expect(await screen.findByText("Pre-estimate approved")).toBeVisible();
+  });
+
+  it("keeps a withdrawn submission visible as history without presenting a pending decision", async () => {
+    const selected = estimate(); selected.status = "draft";
+    selected.publishedReview = { ...selected.publishedReview!, phase: "pre", status: "superseded", canDecide: false };
+    installApi([selected]); renderApp([`/client/projects/${project.id}`]);
+    expect(await screen.findByText("Review withdrawn")).toBeVisible();
+    expect(screen.getByText("This submitted review was withdrawn")).toBeVisible();
+    expect(screen.queryByText("Awaiting your review")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Approve pre-estimate" })).not.toBeInTheDocument();
+  });
+
+  it("compares immutable pre/final snapshots and keeps unchanged final approval explicit", async () => {
+    const selected = estimate(); selected.publishedReview!.phase = "post";
+    selected.preApprovedReview = { reviewRoundId: "pre-round", estimateVersion: 1, snapshot: structuredClone(selected.publishedReview!.snapshot) };
+    selected.changesFromPre = { addedLineIds: [], removedLineIds: [], changedLineIds: [], scopeChanged: false, noChanges: true, beforeTotal: 885, afterTotal: 885 };
+    selected.total = 999999;
+    const { decisions } = installApi([selected]);
+    renderApp([`/client/projects/${project.id}`]);
+    expect(await screen.findByText("No changes from pre-estimate")).toBeVisible();
+    expect(screen.queryByText("₹9,99,999")).not.toBeInTheDocument();
+    expect(decisions).toEqual([]);
+    await userEvent.click(screen.getByRole("button", { name: "Approve final post-estimate" }));
+    expect(screen.getByRole("dialog", { name: "Approve this final post-estimate?" })).toHaveTextContent("Final approval closes estimate changes.");
+    await userEvent.click(screen.getByRole("button", { name: "Confirm approval" }));
+    expect(await screen.findByText("Final post-estimate approved")).toBeVisible();
+    expect(decisions).toHaveLength(1);
+  });
+
+  it("shows changed scope by stable line identity and hides final approval if its comparison source is missing", async () => {
+    const selected = estimate(); selected.publishedReview!.phase = "post";
+    const snapshot = selected.publishedReview!.snapshot;
+    snapshot.lineItems[0]!.id = "line-one";
+    selected.preApprovedReview = { reviewRoundId: "pre-round", estimateVersion: 1, snapshot: structuredClone(snapshot) };
+    selected.preApprovedReview.snapshot.lineItems[0]!.quantity = 1;
+    selected.changesFromPre = { addedLineIds: [], removedLineIds: [], changedLineIds: ["line-one"], scopeChanged: true, noChanges: false, beforeTotal: 800, afterTotal: 885 };
+    installApi([selected]); const { queryClient } = renderApp([`/client/projects/${project.id}`]);
+    expect(await screen.findByText(/Updated: Custom shelving · Living room · 2 unit/)).toBeVisible();
+    expect(screen.getByText(/Room or scope details have changed/)).toBeVisible();
+    selected.preApprovedReview = null;
+    await act(async () => { await queryClient.refetchQueries({ queryKey: estimateWorkflowKeys.client }); });
+    expect(await screen.findByText(/comparison with your approved pre-estimate is unavailable/)).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Approve final post-estimate" })).not.toBeInTheDocument();
+  });
+
   it("shows configured basket snapshots and paise without exposing opaque line IDs", async () => {
     const configured = estimate();
     configured.publishedReview!.snapshot.lineItems = [{

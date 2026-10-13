@@ -31,6 +31,60 @@ beforeEach(() => {
 });
 
 describe("DesignPaymentConfirmations", () => {
+  it("keeps final-estimate payment read-only for Finance even if cached capabilities are stale", () => {
+    setup({ ...projectWorkflow, initialPayment: { ...projectWorkflow.initialPayment!, workflowVersion: 2 } });
+    expect(screen.queryByRole("button", { name: "Mark initial payment received" })).not.toBeInTheDocument();
+    expect(screen.getByText(/Design starts after pre-estimate approval/)).toBeVisible();
+  });
+
+  it("lets Super Admin attest an existing receipt without implying another payment", async () => {
+    asSuperAdmin();
+    setup({ ...projectWorkflow, initialPayment: { ...projectWorkflow.initialPayment!, workflowVersion: 2,
+      requiresAttestation: true, existingReceiptAt: "2026-09-11T09:04:00.000Z" } });
+    expect(screen.getByRole("button", { name: "Confirm existing receipt" })).toBeDisabled();
+    expect(screen.getByText(/This does not record another payment/)).toBeVisible();
+    expect(screen.getByText("Confirm existing receipt against final estimate")).toBeVisible();
+    expect(await axe.run(screen.getByRole("region", { name: "Initial payment status" }), { rules: { "color-contrast": { enabled: false } } })).toHaveProperty("violations", []);
+  });
+
+  it.each([false, true])("records a v2 Super Admin confirmation with a verified reference, attestation=%s", async (requiresAttestation) => {
+    asSuperAdmin();
+    const post = vi.spyOn(apiClient, "post").mockResolvedValue({ version: 5 });
+    const user = userEvent.setup();
+    setup({ ...projectWorkflow, initialPayment: { ...projectWorkflow.initialPayment!, workflowVersion: 2, version: 4,
+      requiresAttestation, ...(requiresAttestation ? { existingReceiptAt: "2026-09-11T09:04:00.000Z" } : {}) } });
+    const label = requiresAttestation ? "Confirm existing receipt" : "Mark initial payment received";
+    expect(screen.getByRole("button", { name: label })).toBeDisabled();
+    await user.type(screen.getByRole("textbox", { name: "Payment reference / receipt note" }), "  Final estimate bank receipt REF-42.  ");
+    await user.click(screen.getByRole("button", { name: label }));
+    expect(await screen.findByText("Initial payment confirmed for the final estimate. Work orders can be issued when procurement checks are complete.")).toBeVisible();
+    expect(post).toHaveBeenCalledExactlyOnceWith("/projects/project-one/design-workflow/actions", {
+      action: "confirm_initial_payment", expectedVersion: 4,
+      note: "Final estimate bank receipt REF-42.", idempotencyKey: expect.any(String)
+    }, { showGlobalLoader: false });
+    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+    expect(screen.queryByText(/countdown has started/)).not.toBeInTheDocument();
+    if (!requiresAttestation) expect(document.querySelector("time")).not.toBeInTheDocument();
+  });
+
+  it("keeps the v2 Finance queue read-only while retaining legacy receipt confirmation", async () => {
+    server.use(http.get("/api/v1/design-workflow/payment-confirmations", () => HttpResponse.json({ data: [
+      { projectId: "project-v2", projectName: "Final Estimate Project", confirmedAt: null, version: 4, status: "awaiting_payment", canConfirm: true, workflowVersion: 2 },
+      { projectId: "project-one", projectName: "Legacy Project", confirmedAt: null, version: 0, status: "awaiting_payment", canConfirm: true }
+    ] })));
+    setup();
+    expect(await screen.findByRole("heading", { name: "Final Estimate Project" })).toBeVisible();
+    expect(screen.queryByRole("form", { name: "Record initial payment for Final Estimate Project" })).not.toBeInTheDocument();
+    expect(screen.getByRole("form", { name: "Record initial payment for Legacy Project" })).toBeVisible();
+  });
+
+  it("explains the final approval prerequisite separately from design start", () => {
+    asSuperAdmin();
+    setup({ ...projectWorkflow, initialPayment: { ...projectWorkflow.initialPayment!, workflowVersion: 2,
+      status: "awaiting_estimate_approval", canConfirm: false } });
+    expect(screen.getByText("Awaiting final estimate approval")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Mark initial payment received" })).not.toBeInTheDocument();
+  });
   it("does not request the queue without its operation permission", () => {
     vi.mocked(useAuth).mockReturnValue({ user: { id: "finance-1", role: "finance_head" }, authorization: authorizationFor("finance_head", []) } as ReturnType<typeof useAuth>);
     const get = vi.spyOn(apiClient, "get");

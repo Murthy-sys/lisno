@@ -26,9 +26,12 @@ import {
   type PurchaseOrderRequestQuote, type PreviewPurchaseOrderModeInput, type SavePurchaseOrderModeDecisionInput
 } from "./purchaseOrderApi";
 
+import { PreparedOrderActions } from "./PreparedOrderActions";
+import { ProcurementEstimateSource } from "./ProcurementEstimateSource";
+
 const statusLabel = {
   pending_approval: "Awaiting Super Admin", changes_requested: "Changes requested by Super Admin",
-  rejected: "Rejected", approved: "Approved"
+  rejected: "Rejected", ready_to_issue: "Approved for issue", approved: "Approved"
 } satisfies Record<ProjectPurchaseOrderRequest["status"], string>;
 
 type QuoteInput = Parameters<typeof quoteProjectPurchaseOrderRequest>[1];
@@ -192,7 +195,7 @@ export function ProjectPurchaseOrderRequestPanel({ projectId, projectName, canMa
   const canUseRecoveryFailure = preparation.isError && preparation.error instanceof ApiError &&
     preparation.error.code === "PROCUREMENT_ITEM_SOURCE_CONFLICT" && Boolean(currentEstimate) && !projectSourceStale;
   const latest = requests.data?.[0] ?? null;
-  const pending = requests.data?.find((request) => request.status === "pending_approval") ?? null;
+  const pending = requests.data?.find((request) => ["pending_approval", "ready_to_issue"].includes(request.status)) ?? null;
   const correction = requests.data?.find((request) => request.status === "changes_requested") ?? null;
   const allItems = source?.sections.flatMap((section) => section.items) ?? [];
   const items = unorderedItems(allItems);
@@ -652,9 +655,10 @@ export function ProjectPurchaseOrderRequestPanel({ projectId, projectName, canMa
           onRemove={(item, trigger) => openRemoveItem({ kind: "recovery", item }, trigger)} /> : null}
       </>
       : source ? <>
+        <ProcurementEstimateSource source={source.preparationSource} stale={preparation.isFetching} />
         {preparation.isFetching ? <p className="purchase-orders__hint" role="status">Refreshing preparation. Quote and send are paused.</p> : null}
         <dl className="purchase-orders__totals" aria-label="Project purchase order amounts">
-          <div><dt>Approved estimate, before GST</dt><dd>{formatPaise(source.approvedEstimatePaise)}</dd></div>
+          <div><dt>{source.preparationSource?.kind === "released_post" ? "Preparation estimate, before GST" : "Approved estimate, before GST"}</dt><dd>{formatPaise(source.approvedEstimatePaise)}</dd></div>
           <div><dt>Already committed, before GST</dt><dd>{formatPaise(source.committedPaise)}</dd></div>
           <div><dt>Remaining budget, before GST</dt><dd>{formatPaise(source.remainingPaise)}</dd></div>
           <div><dt>Prepared vendor net, before GST</dt><dd>{netPaise === null ? "Incomplete" : formatPaise(netPaise)}</dd></div>
@@ -728,8 +732,9 @@ export function ProjectPurchaseOrderRequestPanel({ projectId, projectName, canMa
       : latest ? <div className="purchase-orders__request-history">
         <div><span className={`purchase-orders__status purchase-orders__status--${latest.status}`}>{statusLabel[latest.status]}</span>
           <strong>{latest.requestNumber ?? "Project request"} · Revision {latest.revision}</strong>
-          <small>{latest.status === "pending_approval" ? "Pending with Super Admin" : latest.status === "changes_requested" ? "Pending with Procurement" : latest.status === "approved" ? "Vendor orders released" : "Decision recorded"}</small></div>
+          <small>{latest.status === "pending_approval" ? "Pending with Super Admin" : latest.status === "changes_requested" ? "Pending with Procurement" : latest.status === "approved" ? "Vendor orders released" : latest.status === "ready_to_issue" ? "Internally approved; vendor orders have not been issued" : "Decision recorded"}</small></div>
         <dl className="purchase-orders__request-amounts"><div><dt>Before GST</dt><dd>{formatPaise(latest.totals.netPaise)}</dd></div><div><dt>GST</dt><dd>{formatPaise(latest.totals.gstPaise)}</dd></div><div><dt>Total</dt><dd>{formatPaise(latest.totals.totalPaise)}</dd></div></dl>
+        <PreparedOrderActions source={latest} kind="request" canManage={canManage} disabled={projectSourceMismatch || preparation.isFetching || preparation.isError || requests.isFetching} reconcileAllowed={latest.approvedOrderIds?.length === 0} />
         <details><summary>Sections, vendors and decision history</summary>
           <div className="purchase-orders__request-history-detail">
             {latest.sectionTotals.map((section) => <p key={section.sectionId}><span>{section.label}</span><strong>{formatPaise(section.totals.netPaise)} before GST · {formatPaise(section.totals.gstPaise)} GST · {formatPaise(section.totals.totalPaise)} total</strong></p>)}
@@ -750,7 +755,7 @@ export function ProjectPurchaseOrderRequestPanel({ projectId, projectName, canMa
           </div> : null}
         </details>
       </div> : null}
-    {pending ? <InlineMessage tone="warning">This purchase order is waiting for Super Admin approval.</InlineMessage> : null}
+    {pending ? <InlineMessage tone="warning">{pending.status === "ready_to_issue" ? "This request is internally approved. Review release conditions above before issuing vendor orders." : "This purchase order is waiting for Super Admin approval."}</InlineMessage> : null}
     {correction?.decisions.length ? <InlineMessage tone="warning">{correction.decisions.at(-1)?.reason ?? "Super Admin requested changes to this order."}</InlineMessage> : null}
     {send.isError ? <InlineMessage tone="error">{procurementError(send.error, "The purchase order could not be sent. Your quote and entries are retained. Review and retry.")}</InlineMessage> : null}
     {canManage && !pending ? <div className="purchase-orders__actions purchase-orders__send-action"><Button busy={send.isPending}

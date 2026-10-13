@@ -229,6 +229,8 @@ describe("authorization policy", () => {
       if (role === "super_admin") continue;
       const historicalPermissions = ROLE_PERMISSIONS[role].filter(
         (permission) =>
+          !permission.startsWith("projects.client_invitation.") && !permission.startsWith("estimation.requirements.") && !["identity.project_invitation.accept", "estimation.review.withdraw", "estimation.preparation.release"].includes(permission) &&
+          !(role === "designer" && ["estimation.lead.read", "estimation.estimate.read", "estimation.estimate.save", "estimation.estimate.submit", "estimation.estimate.send_client"].includes(permission)) &&
           permission !== "ask_lisno.request" && !permission.startsWith("chat.") && !permission.startsWith("execution.") && !permission.startsWith("procurement.vendor_access.") &&
           permission !== "projects.status.read" &&
           !permission.startsWith("procurement.items.") && !permission.startsWith("procurement.vendors.") && !permission.startsWith("procurement.vendor_suggestions.") &&
@@ -268,9 +270,30 @@ describe("authorization policy", () => {
         permissionsForRows([...COMMON_ROWS, ...ADDITIONAL_ROWS[role]])
       );
     }
-    expect(PERMISSION_CODES).toHaveLength(186);
-    expect(new Set(PERMISSION_CODES).size).toBe(186);
+    expect(PERMISSION_CODES).toHaveLength(195);
+    expect(new Set(PERMISSION_CODES).size).toBe(195);
     expect(ROLE_PERMISSIONS.super_admin).toEqual(PERMISSION_CODES);
+  });
+
+  it("restricts estimate collaboration and project invitations to their participating roles", () => {
+    const grants = {
+      "projects.client_invitation.read": ["admin", "estimator_sales", "super_admin"],
+      "projects.client_invitation.manage": ["admin", "estimator_sales", "super_admin"],
+      "identity.project_invitation.accept": ["client", "super_admin"],
+      "estimation.requirements.read": ["client", "designer", "estimator_sales", "super_admin"],
+      "estimation.requirements.create": ["client", "super_admin"],
+      "estimation.requirements.update": ["client", "super_admin"],
+      "estimation.requirements.resolve": ["designer", "estimator_sales", "super_admin"],
+      "estimation.review.withdraw": ["designer", "estimator_sales", "super_admin"],
+      "estimation.preparation.release": ["designer", "estimator_sales", "super_admin"]
+    } as const;
+    for (const [permission, roles] of Object.entries(grants)) for (const role of ROLE_CODES) {
+      expect(hasPermission(role, permission), `${role}: ${permission}`).toBe((roles as readonly string[]).includes(role));
+    }
+    for (const permission of ["estimation.lead.read", "estimation.estimate.read", "estimation.estimate.save", "estimation.estimate.submit", "estimation.estimate.send_client", "estimation.catalogue.read"] as const) {
+      expect(hasPermission("designer", permission), permission).toBe(true);
+      expect(hasPermission("client", permission), permission).toBe(false);
+    }
   });
 
   it("grants private Ask Lisno to Clients and denies other non-admin roles", () => {

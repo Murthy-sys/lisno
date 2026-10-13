@@ -15,6 +15,7 @@ export interface ProcurementBasketLineDto {
   mainLineName: string | null;
   approvedQuantity: string;
   approvedUnit: string;
+  specification?: string;
   approvedAmountPaise: number | null;
   included: boolean;
   source: PurchaseOrderPreparationEstimateLine["source"];
@@ -62,6 +63,7 @@ export interface ProcurementBasketSummaryDto {
 export interface ProcurementBasketDetailDto extends ProcurementBasketSummaryDto {
   projectId: string;
   estimateSource: ProjectPurchaseOrderPreparationDto["estimateSource"];
+  preparationSource?: ProjectPurchaseOrderPreparationDto["preparationSource"];
   preparationDigest: string;
   lines: ProcurementBasketLineDto[];
 }
@@ -111,6 +113,7 @@ export function projectProcurementBaskets(preparation: ProjectPurchaseOrderPrepa
         subBasketId: line.subBasketId, subBasketName: line.subBasketName,
         mainLineId: line.mainLineId, mainLineName: line.mainLineName,
         approvedQuantity: line.quantity, approvedUnit: line.unit,
+        ...(line.specification === undefined ? {} : { specification: line.specification }),
         approvedAmountPaise: line.amountPaise, included: line.included, source: line.source, mode: line.mode,
         baseUnitRatePaise: projectBaseUnitRate(line, standardCost), standardCost,
         projectRate: line.projectRate ?? DEFAULT_PROCUREMENT_BASKET_PROJECT_RATE
@@ -122,13 +125,15 @@ export function projectProcurementBaskets(preparation: ProjectPurchaseOrderPrepa
     // Tender links stay pinned to this basket's approved source and selected mode lineage.
     const preparationDigest = createHash("sha256").update(JSON.stringify({
       projectId: preparation.projectId, mainBasketId: id, estimateSource: preparation.estimateSource,
+      ...(preparation.preparationSource ? { preparationSource: preparation.preparationSource } : {}),
       lines: group.lines.map(line => ({
         sourceLineItemKey: line.key, included: line.included, source: line.source,
         itemType: line.itemType ?? null, roomId: line.roomId, roomName: line.roomName,
         mainBasketId: line.mainBasketId, mainBasketName: line.mainBasketName,
         subBasketId: line.subBasketId, subBasketName: line.subBasketName,
         mainLineId: line.mainLineId, mainLineName: line.mainLineName,
-        approvedQuantity: line.quantity, approvedUnit: line.unit, approvedAmountPaise: line.amountPaise,
+        approvedQuantity: line.quantity, approvedUnit: line.unit,
+        ...(line.specification === undefined ? {} : { specification: line.specification }), approvedAmountPaise: line.amountPaise,
         ...(group.automaticSubVendor ? { standardPriceBasis: {
           projectRate: line.projectRate ?? DEFAULT_PROCUREMENT_BASKET_PROJECT_RATE,
           revisionId: line.mode?.revision?.id ?? null,
@@ -152,6 +157,7 @@ export function projectProcurementBaskets(preparation: ProjectPurchaseOrderPrepa
       id, name: group.name, classification: group.classification, automaticSubVendor: group.automaticSubVendor,
       boqReady, standardCost, projectId: preparation.projectId,
       estimateSource: preparation.estimateSource, preparationDigest,
+      ...(preparation.preparationSource ? { preparationSource: preparation.preparationSource } : {}),
       includedLineCount: included.length, readyLineCount: ready.length,
       approvedEstimatePaise: safeSum(included.map(line => line.amountPaise!)),
       baseCostPaise, adjustedCostPaise, workingTotalPaise, workingTotalComplete,

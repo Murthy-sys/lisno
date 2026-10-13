@@ -37,7 +37,7 @@ export function ProcurementProjectCard({ project, eagerImage }: ProcurementProje
           )}
           <span className="procurement-gallery-card__approval">
             <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="9" /><path d="m6 10 2.5 2.5L14 7" /></svg>
-            Design approved
+            {project.preparationSource ? project.preparationSource.kind === "approved_final" ? "Final estimate approved" : project.preparationSource.kind === "approved_pre" ? "Pre-estimate approved" : "Post-estimate preparation" : "Design approved"}
           </span>
           <span className="procurement-gallery-card__count" aria-label={`${itemCount} selected ${itemCount === 1 ? "item" : "items"}`}>
             <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="3" width="16" height="18" rx="1" /><path d="M8 8h8M8 12h8M8 16h5" /></svg>

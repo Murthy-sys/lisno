@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { model, models, Schema } from "./mongoose.js";
 import { DESIGN_PLAN_STATUSES } from "../domain/project-workflow.js";
+import { estimationLifecycleSchema } from "./EstimationLifecycle.js";
 
 const estimateLineSchema = new Schema({
   id: {
@@ -57,6 +58,7 @@ const estimateNotificationSchema = new Schema({
 }, { _id: false });
 
 const estimateSchema = new Schema({
+  estimation: { type: estimationLifecycleSchema, default: undefined },
   _id: { type: String, required: true }, leadId: { type: String, ref: "Lead", required: true, unique: true }, ownerId: { type: String, ref: "User", required: true },
   version: { type: Number, required: true, default: 1 },
   // Procurement source reads serialize with estimate changes without advancing business versions.

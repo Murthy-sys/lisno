@@ -197,6 +197,10 @@ import {
   type PasswordResetAsyncFailure
 } from "./services/password-reset.service.js";
 import { createUserInvitationService } from "./services/user-invitation.service.js";
+import { createProjectClientInvitationService } from "./services/project-client-invitation.service.js";
+import { createProjectClientInvitationsRouter } from "./routes/project-client-invitations.js";
+import { createEstimateRequirementsRouter } from "./routes/estimate-requirements.js";
+import { createEstimateCollaborationRouter } from "./routes/estimate-collaboration.js";
 import { systemClock, type Clock } from "./services/workflow.js";
 import { createLocalStorage } from "./storage/local-storage.js";
 import type { FileStorage } from "./storage/storage.js";
@@ -367,10 +371,14 @@ export function createApp(dependencies: AppDependencies) {
       ? { reportAsyncFailure: dependencies.passwordResetAsyncFailureReporter }
       : {})
   });
+  const projectClientInvitations = createProjectClientInvitationService({ repository, audit: auditService,
+    mailer: dependencies.invitationMailer ?? { deliveryKind: "disabled" }, clock, auth: authService,
+    allowDemoAccountExternalEmail: dependencies.allowDemoAccountExternalEmail });
   const adminProjectService = createAdminProjectService(
     repository,
     auditService,
-    clock
+    clock,
+    projectClientInvitations
   );
   const superAdminDashboardService = createSuperAdminDashboardService(
     repository,
@@ -606,6 +614,9 @@ export function createApp(dependencies: AppDependencies) {
   app.use(express.json({ limit: "300kb" }));
   app.use("/api/v1", healthRouter);
   app.use("/api/v1", createAuthRouter(authService, authRateLimit, profilePhotoService));
+  app.use("/api/v1", createProjectClientInvitationsRouter(authService, projectClientInvitations, (_req, _res, next) => next(), invitationDeliveryRateLimit));
+  app.use("/api/v1", createEstimateRequirementsRouter(authService, auditService));
+  app.use("/api/v1", createEstimateCollaborationRouter(authService, auditService));
   app.use("/api/v1", createProfilePhotosRouter(authService, profilePhotoService));
   app.use("/api/v1", createNotificationsRouter(authService, notifications, notificationStream));
   app.use("/api/v1", createDailyCriticalTasksRouter(authService, dailyCriticalTasks));
@@ -795,6 +806,9 @@ export function createApp(dependencies: AppDependencies) {
 }
 
 const publicInvitationPaths = [
+  "/api/v1/auth/project-invitations/inspect",
+  "/api/v1/auth/project-invitations/accept",
+  "/api/v1/auth/project-invitations/accept-existing",
   "/api/v1/auth/user-invitations/inspect",
   "/api/v1/auth/user-invitations/accept"
 ];
@@ -807,5 +821,6 @@ const publicPasswordResetPaths = [
 
 const noStore: RequestHandler = (_request, response, next) => {
   response.setHeader("Cache-Control", "no-store");
+  response.setHeader("Referrer-Policy", "no-referrer");
   next();
 };

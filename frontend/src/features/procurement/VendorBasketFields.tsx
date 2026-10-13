@@ -1,6 +1,7 @@
 import { useQueries, useQuery } from "@tanstack/react-query";
 import { Plus } from "lucide-react";
 import { useEffect, useId, useRef, useState, type FocusEvent, type KeyboardEvent } from "react";
+import { useAuth } from "../../auth/AuthProvider";
 import { Button } from "../../components/ui/Button";
 import { Checkbox, Field, Select } from "../../components/ui/Field";
 import { InlineMessage } from "../../components/ui/InlineMessage";
@@ -23,6 +24,8 @@ export function VendorBasketFields({ mainBasketIds, subBasketIds, original, erro
   onRequestSubmitted?: (proposal: ProposalDetail) => void; onOpenRequests?: () => void;
   onBusyChange: (busy: boolean) => void; onDraftChange: (dirty: boolean) => void; onCatalogBlockedChange: (blocked: boolean) => void;
 }) {
+  const { user } = useAuth();
+  const canCreateDirectly = canCreate && Boolean(user) && user?.role !== "procurement";
   function submitted(proposal: ProposalDetail) {
     setRequestOpen(false); setRequestParent(null); setRequestsOpen(false);
     onBusyChange(false); onDraftChange(false);
@@ -194,9 +197,9 @@ export function VendorBasketFields({ mainBasketIds, subBasketIds, original, erro
         {errors.subBasketIds ? <p className="ui-field__error" id={`${id}-sub-error`}>{errors.subBasketIds}</p> : null}
       </fieldset>
       </div>
-      {(canCreate || canRequestMainBasket) && !adding && !readOnly ? <div className="vendor-profile__basket-create">
+      {(canCreateDirectly || canRequestMainBasket) && !adding && !readOnly ? <div className="vendor-profile__basket-create">
         {selectedActiveMains.length > 1 ? <Field id={`${id}-create-parent`} label="Create under Main Basket">{(props) => <Select {...props} disabled={disabled} value={targetParentId} onChange={(event) => setCreateParentId(event.target.value)}><option value="">Choose Main Basket</option>{selectedActiveMains.map((basket) => <option key={basket.id} value={basket.id}>{basket.name}</option>)}</Select>}</Field> : null}
-        <Button variant="secondary" size="compact" disabled={disabled || !targetParentId || (canRequestMainBasket && (catalogBlocked || baskets.isFetching))} onClick={() => { setOpenPicker(null); if (canRequestMainBasket) setRequestParent({ id: targetParentId, name: mainName(targetParentId) }); else if (canCreate) setAdding({ kind: "sub", parentId: targetParentId }); }} leadingIcon={<Plus aria-hidden="true" />}>Add Sub Basket</Button>
+        <Button variant="secondary" size="compact" disabled={disabled || !targetParentId || (canRequestMainBasket && (catalogBlocked || baskets.isFetching))} onClick={() => { setOpenPicker(null); if (canRequestMainBasket) setRequestParent({ id: targetParentId, name: mainName(targetParentId) }); else if (canCreateDirectly) setAdding({ kind: "sub", parentId: targetParentId }); }} leadingIcon={<Plus aria-hidden="true" />}>Add Sub Basket</Button>
       </div> : null}
     </div>
     {hasCatalogError ? <InlineMessage tone="error" action={<Button variant="secondary" onClick={() => void retryCatalog()}>Retry baskets</Button>}>{catalogError} Your vendor entries are preserved.</InlineMessage> : showCatalogUtilities ? <Button variant="quiet" size="compact" disabled={disabled || baskets.isFetching || subQueries.some((query) => query.isFetching)} onClick={() => void retryCatalog()}>Refresh baskets</Button> : null}

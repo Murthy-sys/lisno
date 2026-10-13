@@ -1,3 +1,6 @@
+import { isCollaborativeEstimate } from "../domain/estimation-lifecycle.js";
+import { fenceCollaborativeEstimate } from "./estimate-collaboration-policy.service.js";
+import { requireEstimateClientMembership } from "./estimate-collaboration-policy.service.js";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 
 import mongoose from "mongoose";
@@ -2738,6 +2741,7 @@ export function createEstimateDesignService(input: CreateEstimateDesignServiceIn
     ) {
       throw estimateNotFound();
     }
+    await requireEstimateClientMembership(user, estimate, session);
     return { estimate, lead, clientId: user.id };
   }
 
@@ -4566,6 +4570,10 @@ async function guardDesignLifecycle(
   estimate: Record<string, any>,
   session: mongoose.ClientSession
 ) {
+  if (isCollaborativeEstimate(estimate)) {
+    if (estimate.estimation.editClosedAt || estimate.estimation.finalApproval) throw new ApiError(409, "ESTIMATE_EDIT_WINDOW_CLOSED", "The final estimate is approved; design changes are locked.");
+    await fenceCollaborativeEstimate(estimate, session);
+  }
   const expectedVersion = Number(estimate.designLifecycleVersion ?? 0);
   const postApprovalDesign = String(estimate.status) === "client_approved" &&
     ["assigned", "in_progress", "ready_for_client", "changes_requested"].includes(

@@ -16,6 +16,7 @@ let actor = "procurement-one";
 let permissions: PermissionCode[];
 vi.mock("../../auth/AuthProvider", () => ({ useAuth: () => ({ user: { id: actor, role: "procurement" }, authorization: authorizationFor("procurement", permissions) }) }));
 vi.mock("../vendor-basket-proposals/ProposalWorkspace", () => ({ ProposalWorkspace: ({ proposalId, onClose, onSubmitted }: { proposalId: string; onClose: () => void; onSubmitted: (proposal: ProposalDetail) => void }) => <section role="dialog" aria-label="Basket configuration"><p>{proposalId}</p><button onClick={onClose}>Close configuration</button><button onClick={() => onSubmitted(proposalFixture({ name: "Revised stone", status: "pending" }))}>Submit configuration</button></section> }));
+vi.mock("../vendor-basket-proposals/ProposalIntakeWorkspace", () => ({ ProposalIntakeWorkspace: ({ proposalId, scope, onClose, onSubmitted }: { proposalId: string; scope: string; onClose: () => void; onSubmitted: (proposal: ProposalDetail) => void }) => <section role="dialog" aria-label="Basket request"><p>{proposalId}</p><p>{scope}</p><button onClick={onClose}>Close request</button><button onClick={() => onSubmitted(proposalFixture({ name: "Revised request", requestMode: "hierarchy_intake", status: "pending" }))}>Submit request</button></section> }));
 vi.mock("../vendor-basket-proposals/OwnProposalList", () => ({ OwnProposalList: ({ draftsOnly, onClose, onSubmitted }: { draftsOnly: boolean; onClose: () => void; onSubmitted: (proposal: ProposalDetail) => void }) => <section role="dialog" aria-label="Saved drafts"><p>{draftsOnly ? "Only saved drafts" : "All proposals"}</p><button onClick={onClose}>Close drafts</button><button onClick={() => onSubmitted(proposalFixture({ name: "Draft stone", status: "pending" }))}>Submit draft</button></section> }));
 const row = (values: Partial<VendorBasketRequest> = {}): VendorBasketRequest => ({ id: "request-one", requesterId: actor, vendorId: null, vendorName: null, proposedName: "Stone finishes", status: "pending", version: 1, basketId: null, subBasketId: null, mainLineId: null, reason: null, createdAt: "2026-10-12T04:00:00.000Z", decidedAt: null, decidedById: null, kind: "configuration_proposal", proposalId: "proposal-one", ...values });
 let rows: VendorBasketRequest[];
@@ -67,6 +68,57 @@ it("opens configurations and saved drafts and closes them after confirmed submis
   await waitFor(() => expect(screen.getByRole("button", { name: "Refresh" })).toHaveFocus());
   await user.click(screen.getByRole("button", { name: "Saved drafts" })); expect(screen.getByText("Only saved drafts")).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Submit draft" })); expect(screen.queryByRole("dialog")).not.toBeInTheDocument(); expect(screen.getByText("Draft stone submitted to Super Admin.")).toBeVisible();
+});
+it("shows mode-aware decisions without relabelling historical configuration requests", async () => {
+  rows = [
+    row({ id: "intake-approved", proposedName: "Requested finishes", requestMode: "hierarchy_intake", status: "fulfilled" }),
+    row({ id: "intake-sent-back", proposedName: "Requested stone", requestMode: "hierarchy_intake", status: "rejected", reason: "Clarify the stone types." }),
+    row({ id: "full-approved", proposedName: "Configured finishes", requestMode: "full_configuration", status: "fulfilled" }),
+    row({ id: "old-rejected", proposedName: "Historical stone", status: "rejected" })
+  ]; total = rows.length;
+  const user = userEvent.setup(); const view = setup();
+  const table = await screen.findByRole("table", { name: "Your submitted basket requests and statuses" });
+  expect(within(table).getByRole("row", { name: /Requested finishes/ })).toHaveTextContent("Approved");
+  expect(within(table).getByRole("row", { name: /Requested finishes/ })).not.toHaveTextContent("active");
+  expect(within(table).getByRole("row", { name: /Requested stone/ })).toHaveTextContent("Sent back");
+  expect(within(table).getByRole("row", { name: /Configured finishes/ })).toHaveTextContent("Approved and active");
+  expect(within(table).getByRole("row", { name: /Historical stone/ })).toHaveTextContent("Rejected");
+  expect((await axe.run(view.container, { rules: { "color-contrast": { enabled: false } } })).violations).toEqual([]);
+  await user.selectOptions(screen.getByRole("combobox", { name: "Status" }), "rejected");
+  await waitFor(() => expect(requests.at(-1)?.get("status")).toBe("rejected"));
+  expect(screen.getByRole("option", { name: "Sent back / Rejected" })).toBeInTheDocument();
+});
+it.each(["pending", "rejected", "fulfilled"] as const)("opens %s intake requests in the compact workspace", async status => {
+  rows = [row({ requestMode: "hierarchy_intake", status })]; total = 1;
+  const user = userEvent.setup(); setup();
+  const open = await screen.findByRole("button", { name: "View request: Stone finishes" });
+  open.focus(); await user.keyboard("{Enter}");
+  const detail = screen.getByRole("dialog", { name: "Basket request" });
+  expect(detail).toHaveTextContent("proposal-one"); expect(detail).toHaveTextContent("procurement");
+  expect(screen.queryByRole("dialog", { name: "Basket configuration" })).not.toBeInTheDocument();
+  await user.click(within(detail).getByRole("button", { name: "Close request" }));
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+});
+it("refreshes submitted request history after a compact workspace resubmission", async () => {
+  rows = [row({ requestMode: "hierarchy_intake", status: "rejected" })]; total = 1;
+  const user = userEvent.setup(); setup();
+  await user.click(await screen.findByRole("button", { name: "View request: Stone finishes" }));
+  const before = requests.length;
+  await user.click(screen.getByRole("button", { name: "Submit request" }));
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  expect(screen.getByText("Revised request submitted to Super Admin.")).toBeVisible();
+  await waitFor(() => expect(requests.length).toBeGreaterThan(before));
+});
+it("keeps intake status and feedback visible when detailed proposal access is unavailable", async () => {
+  permissions = ["procurement.vendor_directory.read"];
+  rows = [row({ requestMode: "hierarchy_intake", status: "rejected", reason: "Clarify the stone types." })]; total = 1;
+  const user = userEvent.setup(); setup();
+  await user.click(await screen.findByRole("button", { name: "View request: Stone finishes" }));
+  const detail = screen.getByRole("dialog", { name: "Stone finishes" });
+  expect(within(detail).getByText("Sent back")).toBeVisible();
+  expect(within(detail).getByText("Clarify the stone types.")).toBeVisible();
+  expect(screen.queryByRole("dialog", { name: "Basket request" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Saved drafts" })).not.toBeInTheDocument();
 });
 it("clears private rows and detail on identity or permission change", async () => {
   const user = userEvent.setup(); const view = setup(); await user.click(await screen.findByRole("button", { name: "View request: Stone finishes" }));

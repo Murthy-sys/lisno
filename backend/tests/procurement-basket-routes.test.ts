@@ -16,7 +16,7 @@ function setup() {
       approvedEstimatePaise: 0, currentCostPaise: 0, currentCostComplete: true, unpricedLineCount: 0,
       committedNetPaise: 0, modeIssueCount: 0 }
   ] })) };
-  const enquiry = { history: vi.fn(async () => ({ enquiryId: "enquiry-a", currentBoqRevisionId: "boq-current",
+  const enquiry = { reconcileSource: vi.fn(async () => ({ id: "enquiry-a", version: 4 })), history: vi.fn(async () => ({ enquiryId: "enquiry-a", currentBoqRevisionId: "boq-current",
     revisions: [], nextBeforeRevision: null })),
     historyDetail: vi.fn(async () => ({ enquiryId: "enquiry-a", canAward: false,
       boq: { id: "boq-old", revision: 1, sentAt: "2026-10-05T00:00:00.000Z", digest: "a".repeat(64), lines: [] },
@@ -50,6 +50,19 @@ function setup() {
 }
 
 describe("basket tender HTTP boundaries", () => {
+  it("authorizes and strictly validates explicit final-source reconciliation", async () => {
+    const { app, enquiry } = setup();
+    const path = "/api/v1/procurement/projects/project-a/baskets/basket-a/enquiries/enquiry-a/reconcile-source";
+    const input = { expectedVersion: 3, expectedSourceSnapshotId: "final-round", reason: "Reviewed the final scope", idempotencyKey: "reconcile-001" };
+    await request(app).post(path).send(input).expect(401);
+    await request(app).post(path).set("Authorization", "Bearer client").send(input).expect(403);
+    await request(app).post(path).set("Authorization", "Bearer procurement").send({ ...input, price: 100 }).expect(400);
+    expect(enquiry.reconcileSource).not.toHaveBeenCalled();
+    await request(app).post(path).set("Authorization", "Bearer procurement").send(input).expect(200);
+    expect(enquiry.reconcileSource).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ role: "procurement" }),
+      "project-a", "basket-a", "enquiry-a", input);
+  });
+
   it("returns additive mode groups only through the current private authorized list route", async () => {
     const { app, basket, enquiry, award, issue } = setup();
     const path = "/api/v1/procurement/projects/project-a/baskets";

@@ -1,6 +1,7 @@
+import type { EstimationPreparationSource, WorkOrderIssueReadiness } from "../../api/types";
 import { apiClient } from "../../api/client";
 
-export type PurchaseOrderStatus = "draft" | "pending_approval" | "changes_requested" | "rejected" | "approved" | "cancelled";
+export type PurchaseOrderStatus = "draft" | "pending_approval" | "changes_requested" | "rejected" | "ready_to_issue" | "approved" | "cancelled";
 export type PurchaseOrderScope = "supply" | "execution" | "supply_and_execution";
 
 export interface PurchaseOrderLineInput {
@@ -43,10 +44,13 @@ export interface PurchaseOrderRevision {
 }
 
 export interface PurchaseOrder {
+  issueReadiness?: WorkOrderIssueReadiness;
+  scopeReviewRequired?: boolean;
   id: string;
   orderNumber: string;
   projectId: string;
   projectRequestId?: string | null;
+  tenderAwardId?: string | null;
   vendor: { id: string; code: string; name: string };
   status: PurchaseOrderStatus;
   version: number;
@@ -257,6 +261,7 @@ export interface PurchaseOrderPreparationSection {
   items: PurchaseOrderPreparationItem[];
 }
 export interface PurchaseOrderPreparation {
+  preparationSource?: EstimationPreparationSource;
   projectId: string;
   orderDefaults?: { targetDate: string | null; deliveryLocation: string | null };
   estimateSource: { estimateId: string; estimateVersion: number; estimateReviewRoundId: string | null };
@@ -329,11 +334,12 @@ export interface PurchaseOrderRequestModeSnapshot {
   actualNetMinusConfiguredCostPaise: number | null;
 }
 export interface ProjectPurchaseOrderRequest extends PurchaseOrderCommitments {
+  issueReadiness?: WorkOrderIssueReadiness;
   id: string;
   projectId: string;
   projectName: string;
   requestNumber: string;
-  status: "pending_approval" | "changes_requested" | "rejected" | "approved";
+  status: "pending_approval" | "changes_requested" | "rejected" | "ready_to_issue" | "approved";
   version: number;
   revision: number;
   submittedRevisionId: string;
@@ -473,4 +479,15 @@ export function amendPurchaseOrder(order: PurchaseOrder, reason: string, idempot
 }
 export function cancelPurchaseOrder(order: PurchaseOrder, reason: string, idempotencyKey: string) {
   return apiClient.post<PurchaseOrder>(`${orderPath(order.projectId, order.id)}/cancel`, { expectedVersion: order.version, reason, idempotencyKey });
+}
+
+export interface PreparedOrderCommand { expectedVersion: number; idempotencyKey: string }
+export interface PreparedOrderReconcileCommand extends PreparedOrderCommand { reason: string; acknowledgeScopeChanges?: boolean }
+export function issuePreparedOrder(projectId: string, id: string, kind: "order" | "request", input: PreparedOrderCommand) {
+  const root = kind === "order" ? orderPath(projectId, id) : `${requestPath(projectId)}/${encodeURIComponent(id)}`;
+  return apiClient.post<PurchaseOrder | ProjectPurchaseOrderRequest>(`${root}/issue`, input);
+}
+export function reconcilePreparedOrder(projectId: string, id: string, kind: "order" | "request", input: PreparedOrderReconcileCommand) {
+  const root = kind === "order" ? orderPath(projectId, id) : `${requestPath(projectId)}/${encodeURIComponent(id)}`;
+  return apiClient.post<PurchaseOrder | ProjectPurchaseOrderRequest>(`${root}/reconcile`, input);
 }

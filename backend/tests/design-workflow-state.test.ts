@@ -1,3 +1,4 @@
+import { newEstimationLifecycle } from "../src/domain/estimation-lifecycle.js";
 import express from "express";
 import request from "supertest";
 import { errorHandler } from "../src/middleware/errors.js";
@@ -14,7 +15,7 @@ import { demoSeedData } from "../src/seed/data.js";
 import { createAuditService } from "../src/services/audit.service.js";
 import type { PublicUser } from "../src/services/auth.service.js";
 import { createProjectService } from "../src/services/project.service.js";
-import { createDesignWorkflowStateService, projectOperationalStage } from "../src/services/design-workflow-state.service.js";
+import { createDesignWorkflowStateService, projectOperationalStage, hydrateDesignWorkflowState, reconcileWorkflowRoomScope, workflowRoomFingerprints } from "../src/services/design-workflow-state.service.js";
 import type { SeedData } from "../src/repositories/types.js";
 import type { WorkflowActionInput } from "../src/services/design-workflow-state.service.js";
 
@@ -1843,5 +1844,83 @@ describe("all selected items including zero estimate quantities", () => {
     expect(view.furnitureRooms![0]!.estimateItems).toHaveLength(2);
     await expect(submit(f)).rejects.toMatchObject({ code: "DESIGN_WORKFLOW_BLOCKED" });
     expect(await f.state()).toEqual(before);
+  });
+});
+
+
+describe("collaborative design prerequisite and clock", () => {
+  function collaborative(seed: SeedData) {
+    const project = seed.projects.find(row => row.id === "project-aurora-villa")!;
+    project.estimationWorkflowVersion = 2;
+    const estimate = seed.estimateSummaries!.find(row => row.projectId === project.id)!;
+    estimate.estimation = { ...newEstimationLifecycle(), phase: "post", preApproval: { reviewRoundId: "pre-review", estimateVersion: 3, approvedAt: new Date(BASE).toISOString() } };
+  }
+  it("runs design before payment from an immutable pre-approval anchor", async () => {
+    const f = setup(false, collaborative);
+    f.advance(2);
+    await f.finishInternal();
+    const saved = (await f.state())!;
+    expect(saved).toMatchObject({ estimationWorkflowVersion: 2, initialPaymentAt: null, designStartedAt: new Date(BASE).toISOString() });
+    expect(saved.stages.internal_kickoff?.completedAt).toBe(f.now().toISOString());
+    expect(workflowSubmissionBlockers(saved)).not.toContain("Super Admin must confirm Initial payment received after estimate approval.");
+    await f.act("designer", "client_kickoff_not_required");
+    expect((await f.state())!.designStartedAt).toBe(new Date(BASE).toISOString());
+  });
+  it("blocks design before pre-approval and payment before final approval", async () => {
+    const f = setup(false, seed => { collaborative(seed); seed.estimateSummaries!.find(row => row.id === "workflow-approved-estimate")!.estimation!.preApproval = null; });
+    await expect(f.finishInternal()).rejects.toMatchObject({ code: "DESIGN_WORKFLOW_BLOCKED" });
+    await expect(f.act("super_admin", "confirm_initial_payment", {}, null, "receipt")).rejects.toMatchObject({ code: "DESIGN_WORKFLOW_BLOCKED" });
+    await expect(f.act("finance_head", "confirm_initial_payment", {}, null, "receipt")).rejects.toMatchObject({ code: "PAYMENT_CONFIRMATION_NOT_ALLOWED" });
+    expect(await f.state()).toBeNull();
+  });
+  it("attests an existing receipt against the exact final source without changing its date", async () => {
+    const originalAt = new Date(BASE - 5 * DAY).toISOString();
+    const f = setup(false, seed => {
+      collaborative(seed);
+      const estimate = seed.estimateSummaries!.find(row => row.id === "workflow-approved-estimate")!;
+      Object.assign(estimate.estimation!, { status: "client_approved", editClosedAt: new Date(BASE).toISOString(),
+        finalApproval: { reviewRoundId: "final-review", estimateVersion: 9, approvedAt: new Date(BASE).toISOString(), requirementsVersion: 0,
+          designReviewRoundId: "final-design", designPlanVersion: 2, designScopeRevision: 1 } });
+      seed.designWorkflowStates = [{ ...emptyDesignWorkflowState("project-aurora-villa"), version: 1, initialPaymentAt: originalAt,
+        initialPaymentEstimateId: estimate.id, initialPaymentEstimateVersion: 3,
+        initialPaymentReviewRoundId: "old-review", initialPaymentDesignReviewRoundId: "old-design" }];
+    });
+    const projects = createProjectService(f.repository, createAuditService(f.repository), f.now);
+    expect((await projects.designWorkflow(f.users.super_admin!, f.project.id)).initialPayment).toMatchObject({
+      status: "awaiting_payment", requiresAttestation: true, existingReceiptAt: originalAt, canConfirm: true
+    });
+    await expect(f.act("finance_head", "confirm_initial_payment")).rejects.toMatchObject({ code: "PAYMENT_CONFIRMATION_NOT_ALLOWED" });
+    await f.act("super_admin", "confirm_initial_payment");
+    expect(await f.state()).toMatchObject({ initialPaymentAt: originalAt, initialPaymentEstimateVersion: 9,
+      initialPaymentReviewRoundId: "final-review", initialPaymentDesignReviewRoundId: "final-design",
+      history: [expect.objectContaining({ data: expect.objectContaining({ attestation: true }) })] });
+    expect((await projects.designWorkflow(f.users.super_admin!, f.project.id)).initialPayment).toMatchObject({ status: "received", canConfirm: false, requiresAttestation: false });
+    await expect(f.act("super_admin", "confirm_initial_payment")).rejects.toMatchObject({ code: "DESIGN_WORKFLOW_BLOCKED" });
+  });
+  it("retains a transitioned project's original payment-based clock", async () => {
+    const f = setup(false, seed => {
+      collaborative(seed);
+      seed.designWorkflowStates = [{ ...emptyDesignWorkflowState("project-aurora-villa"), version: 1, initialPaymentAt: new Date(BASE - 5 * DAY).toISOString() }];
+    });
+    const hydrated = await hydrateDesignWorkflowState(f.repository, f.project.id, (await f.state())!);
+    expect(hydrated.designStartedAt).toBe(new Date(BASE - 5 * DAY).toISOString());
+    await f.finishInternal();
+    expect((await f.state())!.designStartedAt).toBe(new Date(BASE - 5 * DAY).toISOString());
+  });
+  it("reconciles changed furniture rooms while retaining unaffected approval and all history", async () => {
+    const f = setup(false, collaborative);
+    const source = (await f.repository.findDesignWorkflowRoomContext(f.project.id, true))!;
+    const fingerprints = workflowRoomFingerprints(source);
+    const original = { ...emptyDesignWorkflowState(f.project.id), version: 1, estimationWorkflowVersion: 2 as const, designStartedAt: new Date(BASE).toISOString(), stages: { existing_furniture_dimensions: {
+      scopeEstimateId: source.estimateId, scopeEstimateVersion: source.estimateVersion - 1, scopeRoomFingerprints: { ...fingerprints, "room-bedroom": "previous-bedroom-scope" }, acceptedAt: new Date(BASE).toISOString(), completedAt: new Date(BASE).toISOString(), rooms: source.rooms.map(room => ({ id: room.id, name: room.name, required: true, uploadedAt: new Date(BASE).toISOString(), proceed: false, dimensions: { submissionEventId: `prior-${room.id}`, revision: 1, status: "approved" as const, items: [savedFurnitureItem(room.id)], submittedAt: new Date(BASE).toISOString(), reviewedAt: new Date(BASE).toISOString() } }))
+    } } };
+    await f.repository.saveDesignWorkflowState(f.project.id, 0, original);
+    const affected = await f.repository.runInTransaction(tx => reconcileWorkflowRoomScope(tx, f.project.id, new Date(BASE + DAY).toISOString()));
+    expect(affected).toEqual(["room-bedroom"]);
+    const saved = (await f.state())!;
+    expect(saved.stages.existing_furniture_dimensions!.rooms![0]).toEqual(original.stages.existing_furniture_dimensions.rooms[0]);
+    expect(saved.stages.existing_furniture_dimensions!.rooms![1]!.dimensions).toMatchObject({ status: "changes_requested", submissionEventId: "prior-room-bedroom", items: [savedFurnitureItem("room-bedroom")] });
+    expect(saved.history).toEqual(original.history);
+    expect(saved.stages.existing_furniture_dimensions!.completedAt).toBeUndefined();
   });
 });

@@ -1,0 +1,18 @@
+.proposal-intake.ui-drawer.ui-drawer--contextual { inline-size: min(760px, 100vw); width: min(760px, 100vw); max-inline-size: 100vw; }
+.proposal-intake__content { padding: 24px; min-inline-size: 0; }
+.proposal-intake__fields, .proposal-intake__fields > section { display: grid; gap: 16px; min-inline-size: 0; }
+.proposal-intake__fields > section + section { border-top: 1px solid var(--color-border); padding-top: 24px; margin-top: 8px; }
+.proposal-intake__fields h3, .proposal-intake__fields p { margin: 0; }
+.proposal-intake__fields p, .proposal-intake__parent, .proposal-intake__content strong { overflow-wrap: anywhere; }
+.proposal-intake__fields p { color: var(--color-text-muted); line-height: 1.6; }
+.proposal-intake__line { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 12px; }
+.proposal-intake__fields :is(input, textarea, .ui-field) { min-inline-size: 0; max-inline-size: 100%; }
+.proposal-intake__fields input[readonly], .proposal-intake__fields textarea[readonly] { background: var(--color-surface-muted); }
+.proposal-intake__actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 12px; padding-block: 20px 0; }
+.proposal-intake__toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding-bottom: 20px; }
+.proposal-intake__notice { padding-block: 12px; overflow-wrap: anywhere; }
+@media (max-width: 600px) {
+  .proposal-intake__content { padding: 16px; }
+  .proposal-intake__line { gap: 6px; }
+  .proposal-intake__actions > button { flex: 1 1 150px; }
+}

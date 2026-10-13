@@ -5,7 +5,7 @@ import { plannedOrderQuantityMatchesUom } from "../domain/project-procurement.js
 import { procurementBasketLineBoqReady, type ProcurementBasketDetailDto } from "../domain/procurement-basket-projection.js";
 import type { ProcurementBasketBoqLine, ProcurementBasketBoqLineInput } from "../domain/procurement-basket-tender.js";
 import { ApiError } from "../middleware/errors.js";
-import { ProcurementBasketBoqRevisionModel, ProcurementBasketEnquiryModel } from "../models/ProcurementBasketTender.js";
+import { ProcurementBasketBoqRevisionModel, ProcurementBasketEnquiryModel, ProcurementBasketSourceReconciliationModel } from "../models/ProcurementBasketTender.js";
 import { ProjectPurchaseOrderModel } from "../models/ProjectPurchaseOrder.js";
 import { ProjectPurchaseOrderRequestModel } from "../models/ProjectPurchaseOrderRequest.js";
 import { ProjectPurchaseOrderRequestRevisionModel } from "../models/ProjectPurchaseOrderRequestRevision.js";
@@ -54,11 +54,11 @@ export async function currentBasket(projectId: string, basketId: string, session
 }
 
 /** Compare only the approved scope shown to vendors. Internal mode and cost revisions do not alter a frozen BOQ. */
-export function basketVendorScopeMatchesRevision(basket: ProcurementBasketDetailDto, revision: TenderRow): boolean {
+export function basketVendorScopeMatchesRevision(basket: ProcurementBasketDetailDto, revision: TenderRow, compareSource = true): boolean {
   if (basket.projectId !== revision.projectId || basket.id !== revision.mainBasketId ||
-    basket.estimateSource.estimateId !== revision.estimateSource?.estimateId ||
+    (compareSource && (basket.estimateSource.estimateId !== revision.estimateSource?.estimateId ||
     basket.estimateSource.estimateVersion !== revision.estimateSource?.estimateVersion ||
-    (basket.estimateSource.estimateReviewRoundId ?? null) !== (revision.estimateSource?.estimateReviewRoundId ?? null) ||
+    (basket.estimateSource.estimateReviewRoundId ?? null) !== (revision.estimateSource?.estimateReviewRoundId ?? null))) ||
     (revision.basketName != null && basket.name !== revision.basketName)) return false;
   const included = basket.lines.filter(line => line.included && line.approvedAmountPaise !== null && line.approvedAmountPaise > 0);
   const frozen = revision.lines as ProcurementBasketBoqLine[];
@@ -79,6 +79,7 @@ export function basketVendorScopeMatchesRevision(basket: ProcurementBasketDetail
       current.roomId === line.roomId && current.roomName === line.roomName &&
       current.subBasketId === line.subBasketId && current.subBasketName === line.subBasketName &&
       current.mainLineId === line.mainLineId && current.mainLineName === line.mainLineName &&
+      (line.specification === undefined || current.specification === line.specification) &&
       current.approvedQuantity === line.approvedQuantity &&
       (line.approvedUnit == null || current.approvedUnit === line.approvedUnit) &&
       (line.approvedQuoteAmountPaise == null || current.approvedAmountPaise === line.approvedQuoteAmountPaise) &&
@@ -89,9 +90,26 @@ export function basketVendorScopeMatchesRevision(basket: ProcurementBasketDetail
 export async function currentBasketForVendorScope(projectId: string, basketId: string,
   revision: TenderRow, session: ClientSession): Promise<ProcurementBasketDetailDto> {
   const basket = await currentBasket(projectId, basketId, session);
-  if (!basketVendorScopeMatchesRevision(basket, revision))
-    tenderConflict("PROCUREMENT_BASKET_SOURCE_CHANGED", "The approved vendor-facing scope changed. Revise and resend this BOQ.");
+  await basketReconciliationForRevision(basket, revision, session);
   return basket;
+}
+
+
+/** A carried quote keeps its original BOQ provenance; this proof only binds its reuse to the current source. */
+export async function basketReconciliationForRevision(basket: ProcurementBasketDetailDto, revision: TenderRow,
+  session: ClientSession): Promise<TenderRow | null> {
+  if (basketVendorScopeMatchesRevision(basket, revision)) return null;
+  if (!basket.preparationSource || !basketVendorScopeMatchesRevision(basket, revision, false))
+    tenderConflict("PROCUREMENT_BASKET_SOURCE_CHANGED", "The vendor-facing scope changed. Revise and resend this BOQ.");
+  const reconciliation = await ProcurementBasketSourceReconciliationModel.findOne({
+    projectId: basket.projectId, mainBasketId: basket.id, enquiryId: revision.enquiryId,
+    boqRevisionId: revision._id, boqDigest: revision.digest,
+    "preparationSource.sourceSnapshotId": basket.preparationSource.sourceSnapshotId,
+    "preparationSource.sourceDigest": basket.preparationSource.sourceDigest
+  }).session(session).lean() as TenderRow | null;
+  if (!reconciliation)
+    tenderConflict("PROCUREMENT_BASKET_RECONCILIATION_REQUIRED", "Reconcile this prepared basket to the final estimate before reusing its quote.");
+  return reconciliation;
 }
 
 export function buildBasketBoqLines(basket: ProcurementBasketDetailDto, input: readonly ProcurementBasketBoqLineInput[],
@@ -135,6 +153,7 @@ export function buildBasketBoqLines(basket: ProcurementBasketDetailDto, input: r
       subBasketId: source.subBasketId, subBasketName: source.subBasketName,
       mainLineId: source.mainLineId, mainLineName: source.mainLineName,
       approvedQuantity: source.approvedQuantity, approvedUnit: source.approvedUnit,
+      ...(source.specification === undefined ? {} : { specification: source.specification }),
       approvedQuoteAmountPaise: source.approvedAmountPaise,
       uomId: mode.uom.id, uomCode: mode.uom.code, uomDecimalScale: mode.uom.decimalScale };
   });
@@ -173,7 +192,7 @@ export async function assertBasketSourceUnreserved(projectId: string, sourceKeys
     if (preparation.estimateLines.some(line => wanted.has(line.key) && line.itemIds.some(id => draftItemIds.has(id))))
       tenderConflict("PROCUREMENT_BASKET_SOURCE_RESERVED", "A selected source line is in an existing purchase order.");
   }
-  const requests = await ProjectPurchaseOrderRequestModel.find({ projectId, status: { $in: ["pending_approval", "changes_requested"] } })
+  const requests = await ProjectPurchaseOrderRequestModel.find({ projectId, status: { $in: ["pending_approval", "changes_requested", "ready_to_issue"] } })
     .select({ submittedRevisionId: 1 }).session(session).lean() as TenderRow[];
   if (requests.length) {
     const revisions = await ProjectPurchaseOrderRequestRevisionModel.find({ projectId,

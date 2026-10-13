@@ -4,6 +4,7 @@ interface EnabledInvitationMailer {
     roleLabel: string;
     rawToken: string;
     expiresAt: string;
+    purpose?: "project_client";
   }): Promise<void>;
 }
 

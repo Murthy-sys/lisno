@@ -64,7 +64,7 @@ export function FinanceProjectWorkflowControl({ projectId }: { projectId: string
 }
 
 export function ProjectWorkflowSnapshot({ project }: { project: AdminProjectSummary }) {
-  const executionOpen = project.estimate?.designPlanStatus === "approved";
+  const executionOpen = project.estimationWorkflowVersion === 2 ? project.estimate?.estimationPhase === "post" : project.estimate?.designPlanStatus === "approved";
   const tasksQuery = useQuery({
     queryKey: projectWorkflowKeys.projectTasks(project.id),
     queryFn: () => getAdminProjectWorkflowTasks(project.id),
@@ -105,13 +105,16 @@ function WorkflowSnapshot({
   tasksErrorMessage: string;
   onRetryTasks: () => void;
 }) {
-  const estimateApproved = project.estimate?.status === "client_approved";
+  const collaborative = project.estimationWorkflowVersion === 2;
+  const estimateApproved = collaborative ? project.estimate?.estimationPhase === "post" : project.estimate?.status === "client_approved";
   const designStatus = project.estimate?.designPlanStatus ?? "pending_assignment";
   const designerAssigned = Boolean(project.estimate?.designPlanDesigner) ||
     !["pending_assignment"].includes(designStatus);
   const designSubmitted = ["ready_for_client", "changes_requested", "approved"].includes(designStatus);
   const designApproved = designStatus === "approved";
-  const executionTasks = tasks.filter((task) => task.kind !== "design_plan_upload");
+  const preparationTasks = tasks.filter((task) => task.kind !== "design_plan_upload" && task.preparationOnly === true);
+  const executionTasks = tasks.filter((task) => task.kind !== "design_plan_upload" && task.preparationOnly !== true);
+  const executionEnabled = collaborative ? project.estimate?.finalEstimateApproved && project.status !== "planning" && executionTasks.length > 0 : designApproved;
   const tradeTasks = executionTasks.filter((task) => task.kind === "trade_execution");
   const completedTasks = executionTasks.filter((task) => task.status === "completed").length;
   const assignedTrades = tradeTasks.filter((task) => task.assignedWorker).length;
@@ -146,14 +149,16 @@ function WorkflowSnapshot({
           detail={`${project.name} · ${date.format(new Date(project.createdAt))}`}
         />
         <WorkflowStage
-          title="2. Estimate approved"
+          title={collaborative ? "2. Pre-estimate approved" : "2. Estimate approved"}
           tone={estimateApproved ? "success" : project.estimate ? "warning" : "neutral"}
           status={estimateApproved
             ? "Approved"
             : project.estimate
               ? formatWorkflowLabel(project.estimate.status)
               : "Not started"}
-          detail={project.estimate
+          detail={collaborative
+            ? estimateApproved ? "The Client approved the pre-estimate. Design and procurement preparation can proceed." : "Client pre-estimate approval is required before design and procurement preparation."
+            : project.estimate
             ? project.estimate.status === "client_approved"
               ? project.estimate.approvedBaseline
                 ? `${money.format(project.estimate.approvedBaseline.total)} approved commercial value`
@@ -191,19 +196,27 @@ function WorkflowSnapshot({
             ? "Approved by the Client, or by a Sales Manager with recorded proof."
             : "Execution remains locked until the design decision is approved."}
         />
+        {collaborative ? <WorkflowStage title="6. Final estimate approval" tone={project.estimate?.finalEstimateApproved ? "success" : "warning"}
+          status={project.estimate?.finalEstimateApproved ? "Approved" : "Awaiting final approval"}
+          detail={project.estimate?.finalEstimateApproved
+            ? project.estimate.approvedBaseline
+              ? `${money.format(project.estimate.approvedBaseline.total)} final approved commercial value. Super Admin confirms the initial payment before work-order issuance.`
+              : "Final approved commercial baseline unavailable. Super Admin confirms the initial payment before work-order issuance."
+            : "After design completion, the Client approves the final estimate. Super Admin then confirms the initial payment."} /> : null}
         <WorkflowStage
-          title="6. Execution queues"
-          tone={executionComplete ? "success" : designApproved ? "warning" : "neutral"}
-          status={executionComplete
+          title={collaborative ? "7. Execution queues" : "6. Execution queues"}
+          tone={executionComplete && executionEnabled ? "success" : executionEnabled ? "warning" : "neutral"}
+          status={executionComplete && executionEnabled
             ? "Complete"
-            : designApproved
+            : executionEnabled
               ? `${completedTasks} of ${executionTasks.length} tasks complete`
-              : "Waiting for design approval"}
-          detail={designApproved
+              : collaborative ? "Preparation in progress" : "Waiting for design approval"}
+          detail={executionEnabled
             ? `Procurement, Finance, Site Management, and approved trades · ${assignedTrades} of ${tradeTasks.length} trade tasks assigned`
-            : "Execution queues open after design approval."}
+            : collaborative ? "Procurement and assigned staff can prepare now. Work-order issuance requires final approval and Super Admin payment confirmation." : "Execution queues open after design approval."}
         >
-          {designApproved && !tasksLoading && !tasksError ? (
+          {preparationTasks.length > 0 && !tasksLoading && !tasksError ? <p>{preparationTasks.filter((task) => task.assignedWorker).length} of {preparationTasks.length} preparation tasks assigned. Assignments can be planned now; execution deadlines and effort tracking start only after Super Admin confirms the initial payment.</p> : null}
+          {executionEnabled && !tasksLoading && !tasksError ? (
             <ProgressBar value={progress} label={`Overall project execution: ${progress}% complete`} />
           ) : null}
         </WorkflowStage>

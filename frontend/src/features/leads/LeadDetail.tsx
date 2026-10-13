@@ -7,23 +7,27 @@ import { Field, Select } from "../../components/ui/Field";
 import { AsyncState } from "../../components/ui/AsyncState";
 import { ContactAndEstimateCard } from "./ContactAndEstimateCard";
 import { ProjectWorkflowPanel } from "../workflow/ProjectWorkflowPanel";
+import { ProjectClientInvitationStatus } from "../admin/ProjectClientInvitationStatus";
+import { StaffEstimateCollaboration } from "./StaffEstimateCollaboration";
+import { StaffEstimateRequirements } from "./StaffEstimateRequirements";
 import "../../styles/estimator-dashboard.css";
 import "./estimationProgress.css";
-import { getLead, leadKeys, updateLead } from "./leadsApi";
+import { getLead, getLeadEstimate, leadKeys, updateLead } from "./leadsApi";
 
 const labels: Record<LeadStage, string> = { new_lead: "New lead", contacted: "Contacted", site_visit: "Site visit", design_meeting: "Design meeting", estimate_in_progress: "Estimate in progress", estimate_sent: "Estimate sent", negotiation: "Negotiation", won: "Won", lost: "Lost" };
 const estimateStartedStages: LeadStage[] = ["estimate_in_progress", "estimate_sent", "negotiation", "won", "lost"];
-export function LeadDetail() {
+export function LeadDetail({ returnTo }: { returnTo?: string } = {}) {
   const { leadId = "" } = useParams();
-  return <LeadDetailContent key={leadId} leadId={leadId} />;
+  return <LeadDetailContent key={leadId} leadId={leadId} returnTo={returnTo} />;
 }
 
-function LeadDetailContent({ leadId }: { leadId: string }) {
+function LeadDetailContent({ leadId, returnTo }: { leadId: string; returnTo?: string }) {
   const navigate = useNavigate();
   const client = useQueryClient();
   const [summaryContainer, setSummaryContainer] = useState<HTMLDivElement | null>(null);
   const summaryRef = useCallback((element: HTMLDivElement | null) => setSummaryContainer(element), []);
   const lead = useQuery({ queryKey: leadKeys.detail(leadId), queryFn: () => getLead(leadId) });
+  const estimate = useQuery({ queryKey: leadKeys.estimate(leadId), queryFn: () => getLeadEstimate(leadId), enabled: lead.data?.estimationWorkflowVersion === 2 });
   const stage = useMutation({
     mutationFn: ({ value }: { value: LeadStage; openEstimate?: boolean }) => updateLead(leadId, { stage: value }),
     onSuccess: () => client.invalidateQueries({ queryKey: leadKeys.all })
@@ -35,7 +39,7 @@ function LeadDetailContent({ leadId }: { leadId: string }) {
   const openEstimate = () => {
     if (stage.isPending) return;
     const destination = `/estimator-sales/leads/${leadId}/estimate`;
-    if (estimateStarted) {
+    if (estimateStarted || returnTo) {
       navigate(destination);
       return;
     }
@@ -67,9 +71,9 @@ function LeadDetailContent({ leadId }: { leadId: string }) {
 
   return (
     <section className="lead-detail estimator-dashboard lead-detail--estimate-progress" aria-labelledby="lead-detail-title">
-      <Link to="/estimator-sales" className="lead-detail__back-link">
+      <Link to={returnTo ?? "/estimator-sales"} className="lead-detail__back-link">
         <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#D89A3E" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M19 12H5" /><path d="M12 19l-7-7 7-7" /></svg>
-        All leads
+        {returnTo ? "Back to design plans" : "All leads"}
       </Link>
       <header className="estimation-progress__header">
         <div className="estimation-progress__identity">
@@ -95,7 +99,7 @@ function LeadDetailContent({ leadId }: { leadId: string }) {
           {item.location ? <p className="estimation-progress__location">{item.location}</p> : null}
         </div>
         <div className="estimation-progress__header-controls">
-          {stageControl}
+          {returnTo ? <p>{labels[item.stage]}</p> : stageControl}
           {item.projectId ? <div ref={summaryRef} className="estimation-progress__critical" /> : null}
         </div>
       </header>
@@ -110,6 +114,11 @@ function LeadDetailContent({ leadId }: { leadId: string }) {
       ) : null}
       {stage.isError ? <p role="alert">The lead could not be updated. Try again.</p> : null}
       {content}
+      {item.estimationWorkflowVersion === 2 && item.projectId ? <>
+        {!returnTo ? <ProjectClientInvitationStatus projectId={item.projectId} /> : null}
+        {estimate.isPending ? <p role="status">Loading estimate workflow…</p> : estimate.isError ? <p role="alert">The estimate workflow could not be loaded. Open the estimate to retry.</p> : estimate.data ? <StaffEstimateCollaboration estimate={estimate.data} disabled={estimate.isFetching} /> : <p>Pre-estimation · Start the estimate and collect the client’s requirements.</p>}
+        <StaffEstimateRequirements projectId={item.projectId} estimate={estimate.data ?? null} disabled={estimate.isPending || estimate.isError || estimate.isFetching} />
+      </> : null}
       {workflow}
     </section>
   );

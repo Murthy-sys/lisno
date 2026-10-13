@@ -1,6 +1,7 @@
 import { apiClient, type PaginatedData } from "../../api/client";
 import type {
   DesignPlanStatus,
+  EstimateClientReviewSnapshot,
   EstimateClientReviewSummary,
   EstimateClientFeedback,
   Lead,
@@ -104,6 +105,19 @@ export interface EstimateDraftInput {
   lineItems: EstimateLineInput[];
 }
 export type EstimateStatus = "draft" | "pending_manager_assignment" | "pending_designer_approval" | "designer_changes_requested" | "ready_for_client" | "sent_to_client" | "client_changes_requested" | "client_approved";
+export interface EstimationLifecycle {
+  workflowVersion: 2;
+  phase: "pre" | "post";
+  status: EstimateStatus;
+  requirementsVersion: number;
+  editClosedAt: string | null;
+  preApproval: { reviewRoundId: string; estimateVersion: number; approvedAt: string } | null;
+  finalApproval: { reviewRoundId: string; estimateVersion: number; approvedAt: string; requirementsVersion: number; designReviewRoundId: string; designPlanVersion: number; designScopeRevision: number } | null;
+  designScopeRevision: number;
+  approvedDesignScopeRevision: number | null;
+  pendingReviewRoundId: string | null;
+  preparationSnapshotId: string | null;
+}
 export interface EstimateDraft extends Omit<EstimateDraftInput, "lineItems"> {
   id: string;
   version?: number;
@@ -122,6 +136,8 @@ export interface EstimateDraft extends Omit<EstimateDraftInput, "lineItems"> {
   clientFeedback?: EstimateClientFeedback | null;
   designPlanStatus?: DesignPlanStatus | null;
   designPlanVersion?: number;
+  estimation?: EstimationLifecycle | null;
+  preApprovedReview?: { reviewRoundId: string; estimateVersion: number; snapshot: EstimateClientReviewSnapshot } | null;
 }
 export interface SavedEstimate extends EstimateDraft {
   leadId: string;
@@ -131,8 +147,8 @@ export interface SavedEstimate extends EstimateDraft {
 export const getLeadEstimate = (id: string) => apiClient.get<EstimateDraft | null>(`/leads/${encodeURIComponent(id)}/estimate`);
 export const getSavedEstimates = () => apiClient.get<SavedEstimate[]>("/estimates");
 export const saveLeadEstimate = (id: string, input: EstimateDraftInput) => apiClient.put<EstimateDraft>(`/leads/${encodeURIComponent(id)}/estimate`, input);
-export const submitLeadEstimate = (id: string) => apiClient.post<EstimateDraft>(`/leads/${encodeURIComponent(id)}/estimate/submit`, {});
-export const sendEstimateToClient = (estimateId: string) => apiClient.post<EstimateDraft>(`/estimates/${encodeURIComponent(estimateId)}/send-client`, {});
+export const submitLeadEstimate = (id: string, expectedVersion?: number) => apiClient.post<EstimateDraft>(`/leads/${encodeURIComponent(id)}/estimate/submit`, expectedVersion === undefined ? {} : { expectedVersion });
+export const sendEstimateToClient = (estimateId: string, expectedVersion?: number) => apiClient.post<EstimateDraft>(`/estimates/${encodeURIComponent(estimateId)}/send-client`, expectedVersion === undefined ? {} : { expectedVersion });
 export const retryEstimateClientEmail = (
   estimateId: string,
   input: { roundId: string; version: number }

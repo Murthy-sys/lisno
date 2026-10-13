@@ -1,3 +1,4 @@
+import type { EstimationPreparationSource } from "../../api/types";
 import { apiClient } from "../../api/client";
 import type { PurchaseOrderModeResolution } from "./purchaseOrderApi";
 
@@ -117,6 +118,7 @@ export interface SavedBasketBaseRate {
 }
 
 export interface ProcurementBasketDetail extends ProcurementBasketSummary {
+  preparationSource?: EstimationPreparationSource;
   projectId: string;
   estimateSource: BasketEstimateSource;
   preparationDigest: string;
@@ -221,6 +223,8 @@ export interface BasketBoqLine extends BasketBoqLineInput {
 }
 export type BasketEnquiryStatus = "draft" | "sent" | "award_pending" | "issued" | "cancelled";
 export interface BasketEnquiry {
+  preparationSource?: EstimationPreparationSource;
+  sourceReconciliation?: { id: string; preparationSource: EstimationPreparationSource; unchangedLineKeys: string[] };
   id: string;
   projectId: string;
   mainBasketId: string;
@@ -618,4 +622,10 @@ export function inspectPublicVendorBoq(token: string) {
 }
 export function submitPublicVendorBoq(input: { token: string; idempotencyKey: string; lines: Array<{ boqLineId: string; unitPricePaise: number; gstBasisPoints: number }> }) {
   return apiClient.postPublic<VendorBoqReceipt>("/vendor-boq/submit", input, { cache: "no-store", referrerPolicy: "no-referrer", showGlobalLoader: false });
+}
+
+export function reconcileBasketEnquirySource(projectId: string, basketId: string, enquiryId: string, input: {
+  expectedVersion: number; expectedSourceSnapshotId: string; reason: string; idempotencyKey: string;
+}) {
+  return apiClient.post<BasketEnquiry>(`${enquiryPath(projectId, basketId, enquiryId)}/reconcile-source`, input);
 }

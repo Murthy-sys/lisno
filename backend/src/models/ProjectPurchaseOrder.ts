@@ -29,7 +29,7 @@ const decisionSchema = new Schema({
 }, { _id: false, strict: "throw" });
 
 const receiptSchema = new Schema({
-  kind: { type: String, required: true, enum: ["update", "submit", "amend", "cancel"] },
+  kind: { type: String, required: true, enum: ["update", "submit", "amend", "cancel", "issue", "reconcile"] },
   idempotencyKey: { type: String, required: true, maxlength: 128 },
   requestDigest: { type: String, required: true, match: /^[a-f0-9]{64}$/u },
   version: { type: Number, required: true, min: 1, validate: Number.isSafeInteger },
@@ -47,10 +47,10 @@ const schema = new Schema({
   vendorId: { type: String, required: true, immutable: true, ref: "AiEstimatorKnowledgeVendor" },
   vendorCode: { type: String, required: true },
   vendorName: { type: String, required: true },
-  estimateId: { type: String, required: true, immutable: true },
-  estimateVersion: { type: Number, required: true, min: 1, validate: Number.isSafeInteger, immutable: true },
-  estimateReviewRoundId: { type: String, default: null, immutable: true },
-  status: { type: String, required: true, enum: ["draft", "pending_approval", "changes_requested", "rejected", "approved", "cancelled"] },
+  estimateId: { type: String, required: true },
+  estimateVersion: { type: Number, required: true, min: 1, validate: Number.isSafeInteger },
+  estimateReviewRoundId: { type: String, default: null },
+  status: { type: String, required: true, enum: ["draft", "pending_approval", "changes_requested", "rejected", "ready_to_issue", "approved", "cancelled"] },
   version: { type: Number, required: true, min: 1, validate: Number.isSafeInteger },
   revision: { type: Number, required: true, min: 0, validate: Number.isSafeInteger },
   terms: { type: String, default: null, maxlength: 4_000 },
@@ -58,6 +58,7 @@ const schema = new Schema({
   draftNetPaise: amount,
   draftGstPaise: amount,
   draftTotalPaise: amount,
+  scopeReviewRequired: { type: Boolean, default: false },
   submittedRevisionId: { type: String, default: null },
   approvedRevisionId: { type: String, default: null },
   accessAuthorityEpoch: { type: Number, default: 0, min: 0, validate: Number.isSafeInteger },

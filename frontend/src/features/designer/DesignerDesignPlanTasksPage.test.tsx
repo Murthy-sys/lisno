@@ -991,3 +991,35 @@ describe("DesignerDesignPlanTasksPage", () => {
     expect(deleteRequests).toEqual(["upload-estimate-1"]);
   });
 });
+
+describe("Collaborative design estimate workflow", () => {
+  it("permits design uploads after pre-approval before payment and links the assigned post-estimate", async () => {
+    const workflow = uploadWorkflow("project-1");
+    workflow.initialPayment = { ...workflow.initialPayment!, workflowVersion: 2, designStartedAt: "2026-10-13T10:00:00Z", confirmedAt: null, canConfirm: false, status: "awaiting_estimate_approval" };
+    server.use(
+      http.get("/api/v1/designer/design-plan-tasks", () => HttpResponse.json({ data: [{ ...assignedTask, leadId: "lead-one", estimationWorkflowVersion: 2 }] })),
+      http.get("/api/v1/projects/project-1/design-workflow", () => HttpResponse.json({ data: workflow })),
+      http.get("/api/v1/estimates/estimate-1/design-uploads", () => HttpResponse.json({ data: emptyWorkspace() }))
+    );
+    renderPage();
+    expect(await screen.findByRole("link", { name: "Review and edit post-estimate" })).toHaveAttribute("href", "/estimator-sales/leads/lead-one/estimate");
+    expect(await screen.findByRole("heading", { name: "Upload design" })).toBeVisible();
+    expect(screen.getByText(/Design starts after pre-estimate approval/)).toBeVisible();
+  });
+
+  it("requires explicit scope reconciliation using exact design and scope versions", async () => {
+    const post = vi.fn(async ({ request }: { request: Request }) => {
+      expect(await request.json()).toEqual({ expectedDesignPlanVersion: 3, expectedScopeRevision: 5 });
+      return HttpResponse.json({ data: { designPlanVersion: 4, designScopeRevision: 5 } });
+    });
+    server.use(
+      http.get("/api/v1/designer/design-plan-tasks", () => HttpResponse.json({ data: [{ ...assignedTask, status: "approved", designPlanVersion: 3, leadId: "lead-one", estimationWorkflowVersion: 2, scopeReconciliation: { required: true, designScopeRevision: 5, approvedDesignScopeRevision: 4 } }] })),
+      http.get("/api/v1/estimates/estimate-1/design-uploads", () => HttpResponse.json({ data: emptyWorkspace() })),
+      http.post("/api/v1/projects/project-1/design-plan/reconcile-scope", post)
+    );
+    renderPage(); const user = userEvent.setup(); await user.click(await screen.findByRole("button", { name: "Reconcile design scope" }));
+    expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus(); expect(post).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Reopen design review" }));
+    await waitFor(() => expect(post).toHaveBeenCalledOnce());
+  });
+});

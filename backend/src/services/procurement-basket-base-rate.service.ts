@@ -1,3 +1,4 @@
+import { procurementPreparationProjectFilter } from "./procurement.service.js";
 import { createHash, randomUUID } from "node:crypto";
 import mongoose from "mongoose";
 import { procurementBasketBaseRateSaveSchema, type ProcurementBasketBaseRateSaveInput,
@@ -45,7 +46,7 @@ export function createProcurementBasketBaseRateService(input: { audit: AuditServ
             estimateReviewRoundId: source.estimateReviewRoundId };
           if (JSON.stringify(estimateSource) !== JSON.stringify(fields.expectedEstimateSource)) sourceConflict();
           // Share the project write fence with BOQ dispatch and work-order issue.
-          const project = await ProjectModel.findOneAndUpdate({ _id: projectId, status: "active" },
+          const project = await ProjectModel.findOneAndUpdate({ _id: projectId, ...procurementPreparationProjectFilter() },
             { $inc: { purchaseOrderApprovalEpoch: 1 } },
             { session, returnDocument: "after", runValidators: true, timestamps: false }).lean();
           if (!project) throw new ApiError(409, "PROCUREMENT_BASKET_PROJECT_INACTIVE", "This project is not active.");

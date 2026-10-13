@@ -1,3 +1,6 @@
+import { reconcileProcurementBasketSource, type ProcurementBasketReconciliationInput } from "./procurement-basket-reconciliation.service.js";
+import type { EstimationPreparationSource } from "../domain/estimation-lifecycle.js";
+import { procurementPreparationProjectFilter, procurementPreparationProjectAllowed } from "./procurement.service.js";
 import { randomBytes } from "node:crypto";
 import type { ClientSession } from "mongoose";
 import { procurementBasketDigest, calculateProcurementBasketBid,
@@ -17,7 +20,7 @@ import { AiEstimatorKnowledgeVendorModel } from "../models/AiEstimatorKnowledgeV
 import { ProjectModel } from "../models/Project.js";
 import { ProcurementBasketBidModel, ProcurementBasketBoqRevisionModel, ProcurementBasketCounterofferModel,
   ProcurementBasketEnquiryModel, ProcurementBasketInvitationModel, ProcurementBasketInvitationBatchModel,
-  ProcurementBasketWhatsAppAccessModel } from "../models/ProcurementBasketTender.js";
+  ProcurementBasketWhatsAppAccessModel, ProcurementBasketSourceReconciliationModel } from "../models/ProcurementBasketTender.js";
 import type { AuditService } from "./audit.service.js";
 import type { PublicUser } from "./auth.service.js";
 import { procurementItemSourceSnapshot } from "./procurement.service.js";
@@ -25,7 +28,7 @@ import type { ProcurementBasketBoqMailer } from "./procurement-basket-boq-mailer
 import { assertBasketVendorEligible, eligibleBasketVendors,
   type BasketVendorCandidate } from "./procurement-basket-vendor-eligibility.service.js";
 import { storedProcurementVendorProfile } from "./procurement-vendor-profile.js";
-import { assertBasketSourceUnreserved, basketVendorScopeMatchesRevision, buildBasketBoqLines,
+import { assertBasketSourceUnreserved, basketReconciliationForRevision, buildBasketBoqLines,
   currentBasket, currentBasketForVendorScope, getBasketEnquiry, getCurrentBoq,
   requireBasketBuyer, tenderConflict, tenderHash, tenderId, tenderIso, tenderLinkUnavailable, tenderTransaction,
   type TenderRow } from "./procurement-basket-tender-support.service.js";
@@ -55,8 +58,10 @@ export interface ProcurementBasketEnquiryDto {
   id: string; projectId: string; mainBasketId: string; version: number;
   status: "draft" | "sent" | "award_pending" | "issued" | "cancelled";
   estimateSource: { estimateId: string; estimateVersion: number; estimateReviewRoundId: string | null };
+  preparationSource?: EstimationPreparationSource;
   preparationDigest: string;
   vendorScopeCurrent: boolean | null;
+  sourceReconciliation?: { id: string; preparationSource: EstimationPreparationSource; unchangedLineKeys: string[] };
   boqRevisionId: string | null;
   boqRevision: number | null;
   boqDigest: string | null;
@@ -109,6 +114,7 @@ export interface ProcurementBasketBoqHistoryDetailDto {
 }
 
 export interface ProcurementBasketEnquiryService {
+  reconcileSource(actor: PublicUser, projectId: string, basketId: string, enquiryId: string, input: ProcurementBasketReconciliationInput): Promise<ProcurementBasketEnquiryDto>;
   list(actor: PublicUser, projectId: string, basketId: string): Promise<ProcurementBasketEnquiryDto[]>;
   get(actor: PublicUser, projectId: string, basketId: string, enquiryId: string): Promise<ProcurementBasketEnquiryDto>;
   history(actor: PublicUser, projectId: string, basketId: string, enquiryId: string,
@@ -266,6 +272,10 @@ export function createProcurementBasketEnquiryService({ audit, mailer,
     return enquiryDto(await getBasketEnquiry(projectId, basketId, enquiryId, session), session, now());
   });
   return {
+    async reconcileSource(actor, projectId, basketId, enquiryId, fields) {
+      await reconcileProcurementBasketSource(actor, projectId, basketId, enquiryId, fields, audit, now);
+      return get(actor, projectId, basketId, enquiryId);
+    },
     list(actor, projectId, basketId) {
       return tenderTransaction(async session => {
         await requireBasketBuyer(actor, projectId, session);
@@ -389,7 +399,7 @@ export function createProcurementBasketEnquiryService({ audit, mailer,
         const lines = buildBasketBoqLines(basket, input.lines);
         const enquiryId = tenderId("basket-enquiry");
         await ProcurementBasketEnquiryModel.create([{ _id: enquiryId, projectId, mainBasketId: basketId, version: 1,
-          status: "draft", estimateSource: basket.estimateSource, preparationDigest: basket.preparationDigest,
+          status: "draft", estimateSource: basket.estimateSource, ...(basket.preparationSource ? { preparationSource: basket.preparationSource } : {}), preparationDigest: basket.preparationDigest,
           draftLines: lines, currentBoqRevisionId: null, latestAwardId: null,
           createdById: actor.id, updatedById: actor.id, createIdempotencyKey: input.idempotencyKey,
           createRequestDigest: requestDigest,
@@ -420,7 +430,7 @@ export function createProcurementBasketEnquiryService({ audit, mailer,
         }
         const changed = await ProcurementBasketEnquiryModel.updateOne({ _id: enquiryId, version: input.expectedVersion,
           status: { $in: ["draft", "sent"] } }, { $set: { draftLines: lines, estimateSource: basket.estimateSource,
-            preparationDigest: basket.preparationDigest, currentBoqRevisionId: null, status: "draft", updatedById: actor.id,
+            preparationDigest: basket.preparationDigest, ...(basket.preparationSource ? { preparationSource: basket.preparationSource } : {}), currentBoqRevisionId: null, status: "draft", updatedById: actor.id,
             lastMutationKey: input.idempotencyKey, lastMutationDigest: requestDigest }, $inc: { version: 1 } }, { session });
         if (changed.modifiedCount !== 1) tenderConflict("PROCUREMENT_BASKET_VERSION_CONFLICT", "This enquiry changed. Reload before editing it.");
         await audit.appendInMongoTransaction({ actorId: actor.id, action: "procurement_basket_enquiry_updated",
@@ -446,7 +456,7 @@ export function createProcurementBasketEnquiryService({ audit, mailer,
         if (enquiry.currentBoqRevisionId)
           tenderConflict("PROCUREMENT_BASKET_BOQ_REVISION_EXISTS", "Resend a failed invitation or revise this BOQ before dispatching again.");
         // Serialize reservations for disjoint enquiries against the same project.
-        const projectFence = await ProjectModel.findOneAndUpdate({ _id: projectId, status: "active" },
+        const projectFence = await ProjectModel.findOneAndUpdate({ _id: projectId, ...procurementPreparationProjectFilter() },
           { $inc: { purchaseOrderApprovalEpoch: 1 } }, { session, returnDocument: "after", runValidators: true,
             timestamps: false }).lean();
         if (!projectFence) tenderConflict("PROCUREMENT_BASKET_PROJECT_INACTIVE", "This project is not active.");
@@ -468,10 +478,10 @@ export function createProcurementBasketEnquiryService({ audit, mailer,
         const revision = Number(previous?.revision ?? 0) + 1;
         const boqRevisionId = tenderId("basket-boq");
         const boqDigest = procurementBasketDigest({ projectId, basketId, enquiryId, revision,
-          estimateSource: basket.estimateSource, preparationDigest: basket.preparationDigest, lines });
+          estimateSource: basket.estimateSource, ...(basket.preparationSource ? { preparationSource: basket.preparationSource } : {}), preparationDigest: basket.preparationDigest, lines });
         const timestamp = now();
         await ProcurementBasketBoqRevisionModel.create([{ _id: boqRevisionId, enquiryId, projectId, mainBasketId: basketId,
-          revision, basketName: basket.name, estimateSource: basket.estimateSource, preparationDigest: basket.preparationDigest,
+          revision, basketName: basket.name, estimateSource: basket.estimateSource, ...(basket.preparationSource ? { preparationSource: basket.preparationSource } : {}), preparationDigest: basket.preparationDigest,
           digest: boqDigest, lines, sentAt: timestamp, sentById: actor.id, dispatchKey: input.idempotencyKey,
           dispatchRequestDigest: requestDigest }], { session });
         const deliveries: Delivery[] = [];
@@ -542,7 +552,7 @@ export function createProcurementBasketEnquiryService({ audit, mailer,
         if (actionable.length) {
           assertSentBasketReady(basket);
           await preflightInvitationDelivery(mailer);
-          const projectFence = await ProjectModel.findOneAndUpdate({ _id: projectId, status: "active" },
+          const projectFence = await ProjectModel.findOneAndUpdate({ _id: projectId, ...procurementPreparationProjectFilter() },
             { $inc: { purchaseOrderApprovalEpoch: 1 } }, { session, returnDocument: "after", runValidators: true,
               timestamps: false }).lean();
           if (!projectFence) tenderConflict("PROCUREMENT_BASKET_PROJECT_INACTIVE", "This project is not active.");
@@ -984,8 +994,8 @@ async function liveVendorLink(token: string, session: ClientSession, at: Date): 
   if (!enquiry || enquiry.status !== "sent" || enquiry.currentBoqRevisionId !== invitation.boqRevisionId) tenderLinkUnavailable();
   const revision = await ProcurementBasketBoqRevisionModel.findById(invitation.boqRevisionId).session(session).lean() as TenderRow | null;
   if (!revision || revision.enquiryId !== enquiry._id) tenderLinkUnavailable();
-  const project = await ProjectModel.findById(enquiry.projectId).select({ status: 1 }).session(session).lean() as TenderRow | null;
-  if (!project || project.status !== "active") tenderLinkUnavailable();
+  const project = await ProjectModel.findById(enquiry.projectId).select({ status: 1, estimationWorkflowVersion: 1 }).session(session).lean() as TenderRow | null;
+  if (!project || !procurementPreparationProjectAllowed(project)) tenderLinkUnavailable();
   try {
     await currentBasketForVendorScope(String(enquiry.projectId), String(enquiry.mainBasketId), revision, session);
     await assertBasketVendorEligible(String(invitation.vendorId), String(enquiry.projectId),
@@ -1029,7 +1039,8 @@ async function enquiryDto(row: TenderRow, session: ClientSession, at: Date,
   if (revision) {
     try {
       const basket = currentBasketSnapshot ?? await currentBasket(String(row.projectId), String(row.mainBasketId), session);
-      vendorScopeCurrent = basketVendorScopeMatchesRevision(basket, revision);
+      try { await basketReconciliationForRevision(basket, revision, session); vendorScopeCurrent = true; }
+      catch { vendorScopeCurrent = false; }
     } catch (error) {
       if (!(error instanceof ApiError) || ![404, 409].includes(error.status)) throw error;
       vendorScopeCurrent = false;
@@ -1041,8 +1052,13 @@ async function enquiryDto(row: TenderRow, session: ClientSession, at: Date,
     .select({ name: 1, code: 1 }).session(session).lean() as TenderRow[] : [];
   const vendorsById = new Map(vendors.map(vendor => [String(vendor._id), vendor]));
   const bids = revision ? await ProcurementBasketBidModel.countDocuments({ enquiryId: row._id, boqRevisionId: revision._id }).session(session) : 0;
+  const reconciliation = row.currentBoqRevisionId ? await ProcurementBasketSourceReconciliationModel.findOne({
+    enquiryId: row._id, boqRevisionId: row.currentBoqRevisionId }).sort({ reconciledAt: -1 }).session(session).lean() as TenderRow | null : null;
   return { id: String(row._id), projectId: String(row.projectId), mainBasketId: String(row.mainBasketId),
     version: Number(row.version), status: row.status, estimateSource: row.estimateSource,
+    ...(row.preparationSource ? { preparationSource: row.preparationSource } : {}),
+    ...(reconciliation ? { sourceReconciliation: { id: String(reconciliation._id), preparationSource: reconciliation.preparationSource,
+      unchangedLineKeys: reconciliation.unchangedLineKeys } } : {}),
     preparationDigest: String(row.preparationDigest), vendorScopeCurrent,
     boqRevisionId: revision ? String(revision._id) : null,
     boqRevision: revision ? Number(revision.revision) : null, boqDigest: revision ? String(revision.digest) : null,

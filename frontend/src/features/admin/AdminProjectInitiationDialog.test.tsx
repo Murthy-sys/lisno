@@ -134,6 +134,38 @@ async function fillForm(user: ReturnType<typeof userEvent.setup>, select = true)
 }
 
 describe("AdminProjectInitiationDialog", () => {
+  it("reuses its initiation key after an uncertain response and navigates after invitation delivery failure", async () => {
+    const requests: Array<Record<string, unknown>> = [];
+    const clientInvitation = {
+      projectId: createdProject.id, status: "delivery_failed", deliveryAvailable: true,
+      expectedVersion: 1, expiresAt: null, sentAt: null, acceptedAt: null,
+      availableActions: ["resend", "revoke"]
+    };
+    server.use(
+      http.get("/api/v1/admin/estimators", () => HttpResponse.json(estimatorPage())),
+      http.post("/api/v1/admin/projects", async ({ request }) => {
+        requests.push(await request.json() as Record<string, unknown>);
+        if (requests.length === 1) return HttpResponse.json({ error: { code: "UNAVAILABLE", message: "Please retry." } }, { status: 503 });
+        return HttpResponse.json({ data: { ...createdProject, clientInvitation } }, { status: 201 });
+      })
+    );
+    const onCreated = vi.fn();
+    const onClose = vi.fn();
+    const user = userEvent.setup();
+    renderDialog({ onCreated, onClose });
+    await fillForm(user);
+    await user.click(screen.getByRole("button", { name: "Initiate project" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Please retry.");
+    expect(onCreated).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Initiate project" }));
+    await waitFor(() => expect(onCreated).toHaveBeenCalledWith({ ...createdProject, clientInvitation }));
+    expect(onClose).toHaveBeenCalledOnce();
+    expect(requests).toHaveLength(2);
+    expect(requests[0]?.initiationKey).toEqual(expect.stringMatching(/^[A-Za-z0-9_-]{8,128}$/));
+    expect(requests[1]?.initiationKey).toBe(requests[0]?.initiationKey);
+    expect(await screen.findByText("Your project is ready. Check the client invitation status to send or retry the invitation.")).toBeVisible();
+  });
+
   it("renders exactly the approved required controls and excludes unsupported Lead fields", async () => {
     server.use(
       http.get("/api/v1/admin/estimators", () => HttpResponse.json(estimatorPage()))
@@ -250,6 +282,7 @@ describe("AdminProjectInitiationDialog", () => {
     expect(submit).toHaveAttribute("aria-busy", "true");
     expect(screen.getByRole("combobox", { name: "Source" })).toBeDisabled();
     expect(body).toEqual({
+      initiationKey: expect.any(String),
       clientName: "Asha Shah",
       clientEmail: "asha@example.com",
       clientMobile: "+91 90000 00000",
@@ -591,6 +624,7 @@ describe("AdminProjectInitiationDialog", () => {
     await user.click(screen.getByRole("button", { name: "Initiate project" }));
     await waitFor(() => expect(onCreated).toHaveBeenCalledWith(createdProject));
     expect(body).toEqual({
+      initiationKey: expect.any(String),
       clientName: "Asha Shah",
       clientEmail: "asha@example.com",
       clientMobile: "+91 90000 00000",

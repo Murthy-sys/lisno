@@ -5,6 +5,7 @@ import {
   PROJECT_FINANCE_TARGET_MARGIN_BPS
 } from "../domain/project-finance.js";
 import { model, models, Schema } from "./mongoose.js";
+import { financeBaselineSourceSchema } from "./ProjectFinanceBaselineRevision.js";
 
 const safeIntegerValidator = {
   validator: (value: unknown) => Number.isSafeInteger(value),
@@ -23,6 +24,8 @@ const moneyPath = (immutable = false) => ({
 const projectFinanceBucketSchema = new Schema(
   {
     _id: { type: String, required: true, immutable: true },
+    effectiveBaseline: { type: financeBaselineSourceSchema, default: null },
+    estimationWorkflowVersion: { type: Number, enum: [2] },
     projectId: {
       type: String,
       ref: "Project",

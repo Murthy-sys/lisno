@@ -1,3 +1,4 @@
+import { newEstimationLifecycle } from "../src/domain/estimation-lifecycle.js";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import {
@@ -506,7 +507,10 @@ describe("Estimate publication and delivery on a Mongo replica set", () => {
       nextActionAt: BASE_TIME.toISOString(), salesManagerId: ADMIN.id
     });
     const leadId = initiated.lead!.id;
-    await EstimateModel.updateOne({ _id: fixture.estimateId }, { $set: { leadId, projectId: initiated.id } });
+    await EstimateModel.updateOne({ _id: fixture.estimateId }, { $set: { leadId, projectId: initiated.id,
+      estimation: { ...newEstimationLifecycle(), status: estimateStatus } } });
+    // The publication fixture begins after this specific project invitation was accepted.
+    await ProjectModel.updateOne({ _id: initiated.id }, { $set: { clientId: CLIENT.id } });
     expect(await ProjectModel.findById(initiated.id).lean()).toMatchObject({ location: "", clientAddress: "" });
     expect(await LeadModel.findById(leadId).lean()).toMatchObject({ location: "", budgetMin: null, budgetMax: null });
 

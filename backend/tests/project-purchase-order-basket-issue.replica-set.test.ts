@@ -328,6 +328,65 @@ async function largeReviewers(): Promise<Array<{ id: "advance" | "mobilisation" 
 }
 
 describe("approved basket award issuance", () => {
+  it.each(["planning", "active"] as const)("requires explicit issue for a %s collaborative project despite the caller's automatic flag", async status => {
+    await ProjectModel.updateOne({ _id: "project-a" }, { $set: { estimationWorkflowVersion: 2, status } });
+    const onReadyToIssue = vi.fn(async () => undefined);
+    const service = createProcurementBasketAwardService({ audit, now: () => at, onReadyToIssue });
+    const { submitted, awardId, enquiryId } = await autoAward({ service });
+    expect(submitted).toMatchObject({ status: "pending_approvals", autoIssueOnApproval: false });
+    expect(await ProcurementBasketAwardModel.findById(awardId).lean()).toMatchObject({ autoIssueOnApproval: false });
+    const replay = await service.submit(buyer, "project-a", "basket-a", enquiryId, awardId,
+      { expectedVersion: submitted.version - 1, idempotencyKey: "auto-submit-award", autoIssueOnApproval: true });
+    expect(replay).toMatchObject({ version: submitted.version, autoIssueOnApproval: false });
+    const ready = await service.decide(buyer, awardId, { expectedVersion: submitted.version,
+      proposalRevisionId: submitted.proposalRevisionId, idempotencyKey: "collaborative-explicit-approval",
+      slot: "procurement", decision: "approve", reason: null });
+    expect(ready).toMatchObject({ status: "ready_to_issue", autoIssueOnApproval: false, issuedPurchaseOrderId: null, issueBlocker: null });
+    expect(onReadyToIssue).not.toHaveBeenCalled();
+    expect(await counts()).toEqual({ children: 0, orders: 0, revisions: 0, assignments: 0 });
+  });
+
+  it.each(["new_decision", "decision_replay"] as const)("suppresses an older automatic flag during a collaborative %s", async transition => {
+    const onReadyToIssue = vi.fn(async () => undefined);
+    const service = createProcurementBasketAwardService({ audit, now: () => at, onReadyToIssue });
+    const { submitted, awardId, enquiryId } = await autoAward({ service });
+    expect(submitted.autoIssueOnApproval).toBe(true);
+    const input = { expectedVersion: submitted.version, proposalRevisionId: submitted.proposalRevisionId,
+      idempotencyKey: "older-automatic-approval", slot: "procurement" as const, decision: "approve" as const, reason: null };
+    if (transition === "decision_replay") {
+      await service.decide(buyer, awardId, input);
+      expect(onReadyToIssue).toHaveBeenCalledTimes(1);
+      onReadyToIssue.mockClear();
+    }
+    await ProjectModel.updateOne({ _id: "project-a" }, { $set: { estimationWorkflowVersion: 2 } });
+    expect(await service.get(buyer, "project-a", "basket-a", enquiryId, awardId)).toMatchObject({ autoIssueOnApproval: false });
+    const ready = await service.decide(buyer, awardId, input);
+    expect(ready).toMatchObject({ status: "ready_to_issue", autoIssueOnApproval: false, issuedPurchaseOrderId: null });
+    expect(onReadyToIssue).not.toHaveBeenCalled();
+    expect(await ProcurementBasketAwardApprovalModel.countDocuments({ awardId })).toBe(1);
+    expect(await counts()).toEqual({ children: 0, orders: 0, revisions: 0, assignments: 0 });
+  });
+
+  it.each(["manual", "automatic"] as const)("blocks %s basket issue until collaborative final approval and payment", async trigger => {
+    const ready = await approvedAward();
+    await ProjectModel.updateOne({ _id: "project-a" }, { $set: { estimationWorkflowVersion: 2 } });
+    if (trigger === "manual") {
+      await expect(issue.issue(buyer, "project-a", "basket-a", ready.enquiryId, ready.awardId,
+        { expectedVersion: ready.awardVersion, idempotencyKey: "before-final-payment" }))
+        .rejects.toMatchObject({ status: 409, code: "WORK_ORDER_NOT_READY" });
+    } else {
+      const award = await ProcurementBasketAwardModel.findById(ready.awardId).lean();
+      const approval = await ProcurementBasketAwardApprovalModel.findOne({ awardId: ready.awardId,
+        proposalRevisionId: award!.currentProposalRevisionId, actorId: buyer.id }).lean();
+      await ProcurementBasketAwardModel.updateOne({ _id: ready.awardId }, { $set: { autoIssueOnApproval: true, submittedById: buyer.id } });
+      await expect(issue.issueAutomatically({ awardId: ready.awardId, proposalRevisionId: String(award!.currentProposalRevisionId),
+        expectedVersion: ready.awardVersion, triggeringApprovalId: String(approval!._id), triggeringApprovalActorId: buyer.id }))
+        .rejects.toMatchObject({ status: 409, code: "WORK_ORDER_NOT_READY" });
+    }
+    expect(await counts()).toEqual({ children: 0, orders: 0, revisions: 0, assignments: 0 });
+    expect(await ProcurementBasketAwardModel.findById(ready.awardId).lean()).toMatchObject({ status: "ready_to_issue" });
+  });
+
   it("directly issues a nonrecommended ₹141.60 award over budget with Procurement alone", async () => {
     useApprovedBudget(10_000, 1);
     await AiEstimatorKnowledgeVendorModel.collection.insertOne({ _id: "vendor-b", name: "Vendor B", code: "VENDOR-B",

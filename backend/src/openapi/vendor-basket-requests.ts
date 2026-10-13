@@ -12,7 +12,7 @@ const pageQuery = [
 export const VENDOR_BASKET_REQUEST_SCHEMAS = {
   KnowledgeVendorBasketRequest: { type: "object", additionalProperties: false,
     required: ["id", "requesterId", "vendorId", "vendorName", "proposedName", "status", "version", "basketId", "subBasketId", "mainLineId", "reason", "createdAt", "decidedAt", "decidedById"],
-    properties: { target: { oneOf: [
+    properties: { requestMode: { type: "string", enum: ["hierarchy_intake", "full_configuration"] }, target: { oneOf: [
         { type: "object", additionalProperties: false, required: ["kind"], properties: { kind: { type: "string", enum: ["new_main_basket"] } } },
         { type: "object", additionalProperties: false, required: ["kind", "basketId"], properties: { kind: { type: "string", enum: ["new_sub_basket"] }, basketId: id } }
       ] }, targetParentName: { type: "string", nullable: true }, kind: { type: "string", enum: ["configuration_proposal", "name_only"] }, proposalId: { ...id, nullable: true },

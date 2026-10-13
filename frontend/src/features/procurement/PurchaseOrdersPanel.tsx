@@ -19,6 +19,7 @@ import {
   getPurchaseOrderPreparation, listPurchaseOrders, purchaseOrderKeys, submitPurchaseOrder, updatePurchaseOrder,
   type PurchaseOrder, type PurchaseOrderLine, type PurchaseOrderLineInput, type PurchaseOrderScope
 } from "./purchaseOrderApi";
+import { PreparedOrderActions } from "./PreparedOrderActions";
 import "./purchaseOrders.css";
 
 interface EditableLine {
@@ -35,7 +36,7 @@ interface EditableLine {
 
 const statusLabel: Record<PurchaseOrder["status"], string> = {
   draft: "Draft", pending_approval: "Awaiting Super Admin", changes_requested: "Changes requested",
-  rejected: "Rejected", approved: "Approved", cancelled: "Cancelled"
+  rejected: "Rejected", ready_to_issue: "Approved for issue", approved: "Approved", cancelled: "Cancelled"
 };
 
 async function allProcurementItems(projectId: string): Promise<ProjectProcurementItem[]> {
@@ -123,7 +124,7 @@ export function PurchaseOrdersPanel({ projectId, projectName, projectSourceStale
   const queryClient = useQueryClient();
   const orders = useQuery({ queryKey: purchaseOrderKeys.project(projectId), queryFn: () => allPurchaseOrders(projectId), enabled: canRead });
   const requestHistory = useQuery({ queryKey: purchaseOrderKeys.requests(projectId), queryFn: () => allProjectRequests(projectId), enabled: canRead });
-  const activeProjectRequest = requestHistory.data?.some((request) => ["pending_approval", "changes_requested"].includes(request.status)) ?? false;
+  const activeProjectRequest = requestHistory.data?.some((request) => ["pending_approval", "changes_requested", "ready_to_issue"].includes(request.status)) ?? false;
   const commitments = useQuery({ queryKey: purchaseOrderKeys.commitments(projectId), queryFn: () => getPurchaseOrderCommitments(projectId), enabled: canRead });
   const preparation = useQuery({ queryKey: purchaseOrderKeys.preparation(projectId),
     queryFn: ({ signal }) => getPurchaseOrderPreparation(projectId, signal), enabled: canRead });
@@ -208,8 +209,10 @@ export function PurchaseOrdersPanel({ projectId, projectName, projectSourceStale
       {active.decisions.length ? <div className="purchase-orders__history"><h4>Decision history</h4>{active.decisions.map((decision) => <p key={decision.id}><strong>{decision.decision.replaceAll("_", " ")}</strong> · {new Date(decision.decidedAt).toLocaleDateString()}{decision.reason ? ` · ${decision.reason}` : ""}</p>)}</div> : null}
       {active.status === "pending_approval" ? <p className="purchase-orders__hint">Submitted to Super Admin. Editing is available after a change request.</p> : null}
       {active.status === "approved" ? <p className="purchase-orders__hint">Approved vendor work is now available to the linked vendor account.</p> : null}
+      {active.scopeReviewRequired ? <InlineMessage tone="warning">Estimate scope changed. Review quantities and terms, then save this draft before submitting.</InlineMessage> : null}
+      <PreparedOrderActions source={active} kind="order" canManage={canManage} disabled={vendorWritesPaused || orders.isFetching || orders.isError || editorDirty} reconcileAllowed={!active.projectRequestId && !active.tenderAwardId && !active.approvedRevisionId} />
       {activeSourceUnavailable ? <InlineMessage tone="error">An order line no longer matches a currently assigned procurement item. Refresh the project and resolve the assignment before submission.</InlineMessage> : null}
-      {canManage && ["draft", "changes_requested", "rejected"].includes(active.status) ? <div className="purchase-orders__actions"><Button busy={submit.isPending} disabled={Boolean(items.isPending || vendors.isPending || items.isError || vendors.isError || editorDirty || activeSourceUnavailable || vendorWritesPaused)} onClick={() => submit.mutate(active)}>Submit to Super Admin</Button>{editorDirty ? <span className="purchase-orders__hint">Save the draft before submitting.</span> : null}</div> : null}
+      {canManage && ["draft", "changes_requested", "rejected"].includes(active.status) ? <div className="purchase-orders__actions"><Button busy={submit.isPending} disabled={Boolean(items.isPending || vendors.isPending || items.isError || vendors.isError || editorDirty || active.scopeReviewRequired || activeSourceUnavailable || vendorWritesPaused)} onClick={() => submit.mutate(active)}>Submit to Super Admin</Button>{editorDirty ? <span className="purchase-orders__hint">Save the draft before submitting.</span> : null}</div> : null}
       {canManage && active.status === "approved" && !active.projectRequestId ? <ReasonAction label="Start amendment" onConfirm={(reason) => changeStatus.mutate({ order: active, action: "amend", reason })} busy={changeStatus.isPending} disabled={vendorWritesPaused} /> : null}
       {canCancel && ["draft", "pending_approval", "changes_requested", "rejected"].includes(active.status) && !active.approvedRevisionId ? <ReasonAction label="Cancel order" onConfirm={(reason) => changeStatus.mutate({ order: active, action: "cancel", reason })} busy={changeStatus.isPending} disabled={vendorWritesPaused} /> : null}
       {submit.isError ? <InlineMessage tone="error">{procurementError(submit.error, "Order submission failed. Refresh and review the latest version before retrying.")}</InlineMessage> : null}

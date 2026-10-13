@@ -1,3 +1,4 @@
+import type { EstimationPreparationSource } from "./estimation-lifecycle.js";
 import type { ProcurementReferenceStatus } from "./project-procurement.js";
 import type { PurchaseOrderModeResolution, PurchaseOrderModeStandardSuggestion } from "./project-purchase-order-mode.js";
 import type { ProcurementBasketProjectRate } from "./procurement-basket-base-rate.js";
@@ -54,6 +55,7 @@ export interface PurchaseOrderPreparationEstimateLine {
   subBasketName: string | null;
   mainLineId: string | null;
   mainLineName: string | null;
+  specification?: string;
   quantity: string;
   unit: string;
   amountPaise: number | null;
@@ -67,6 +69,7 @@ export interface ProjectPurchaseOrderPreparationDto {
   projectId: string;
   orderDefaults: { targetDate: string | null; deliveryLocation: string | null };
   estimateSource: { estimateId: string; estimateVersion: number; estimateReviewRoundId: string | null };
+  preparationSource?: EstimationPreparationSource;
   approvedEstimatePaise: number;
   committedPaise: number;
   committedGstPaise: number;

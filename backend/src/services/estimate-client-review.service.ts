@@ -1,3 +1,4 @@
+import { effectiveCommercialStatus } from "../domain/estimation-lifecycle.js";
 import type { EstimatePricingMode, EstimateRateSource } from "../domain/estimate-mode-pricing.js";
 import type mongoose from "mongoose";
 
@@ -80,6 +81,7 @@ export function createEstimateClientReviewService(input: {
       } },
       { $set: { clientLead: { $arrayElemAt: ["$leadRows", 0] } } },
       { $match: { "clientLead._id": { $exists: true } } },
+      ...(actor.role === "client" ? clientProjectMembershipStages("activeActor") : []),
       ...(actor.role === "client" ? [{ $match: { $expr: { $eq: [
         { $toLower: { $trim: { input: "$clientLead.clientEmail" } } }, normalizeEmail(actor.email)
       ] } } }] : []),
@@ -91,10 +93,16 @@ export function createEstimateClientReviewService(input: {
           { $sort: { sendGeneration: -1, _id: 1 } }, { $limit: 1 }
         ], as: "publishedRounds"
       } },
+      { $lookup: { from: EstimateClientReviewRoundModel.collection.name,
+        let: { preRoundId: "$estimation.preApproval.reviewRoundId", currentEstimateId: "$_id" },
+        pipeline: [{ $match: { $expr: { $and: [{ $eq: ["$_id", "$$preRoundId"] }, { $eq: ["$estimateId", "$$currentEstimateId"] }] }, status: "approved", decision: "approve" } }],
+        as: "preApprovedRounds"
+      } },
       { $sort: { updatedAt: -1, _id: 1 } }
     ]);
     return rows.flatMap((row) => {
-      const value = presentClientEstimate(actor, row, recordField(row, "clientLead"), arrayField(row, "publishedRounds")[0] ?? null);
+      const value = presentClientEstimate(actor, row, recordField(row, "clientLead"), arrayField(row, "publishedRounds")[0] ?? null, row.clientProject as Record<string, any> | undefined,
+        arrayField(row, "preApprovedRounds")[0] ?? null);
       return value ? [value] : [];
     });
   }
@@ -115,7 +123,7 @@ export function createEstimateClientReviewService(input: {
         occurredAt: isoField(round, "decidedAt"), reviewRoundId: stringField(round, "_id") };
     }
     const estimate = authorizedEstimate ?? await EstimateModel.findById(estimateId).lean() as Record<string, any> | null;
-    if (!estimate || !["client_changes_requested", "draft", "pending_manager_assignment", "pending_designer_approval", "designer_changes_requested", "ready_for_client"].includes(estimate.status)) return null;
+    if (!estimate || !["client_changes_requested", "draft", "pending_manager_assignment", "pending_designer_approval", "designer_changes_requested", "ready_for_client"].includes(effectiveCommercialStatus(estimate))) return null;
     const review = [...(estimate.reviews ?? [])].reverse().find((item: Record<string, unknown>) => item.action === "client_changes_requested");
     return review ? { note: String(review.note ?? ""), occurredAt: isoField(review, "occurredAt"), reviewRoundId: null } : null;
   }
@@ -359,7 +367,7 @@ export function createEstimateClientReviewService(input: {
         }
       },
       { $set: { latestRound: { $arrayElemAt: ["$latestRounds", 0] } } },
-      { $match: { $expr: { $eq: ["$latestRound._id", "$_id"] } } },
+      { $match: { $expr: { $or: [{ $eq: ["$latestRound._id", "$_id"] }, { $in: ["$phase", ["pre", "post"]] }] } } },
       {
         $project: {
           _id: 0,
@@ -438,9 +446,10 @@ export function createEstimateClientReviewService(input: {
     estimateId: string,
     roundId: string
   ): Promise<void> {
-    if (!["estimator_sales", "super_admin"].includes(actor.role)) notFound();
+    if (!["estimator_sales", "designer", "super_admin"].includes(actor.role)) notFound();
     const estimateMatch: Row = { _id: estimateId };
     if (actor.role === "estimator_sales") estimateMatch.ownerId = actor.id;
+    if (actor.role === "designer") Object.assign(estimateMatch, { "estimation.workflowVersion": 2, "estimation.phase": "post", designPlanDesignerId: actor.id });
     const rows = await aggregateRows(EstimateModel, [
       { $match: estimateMatch },
       ...activeActorStages(actor, "activeActor"),
@@ -479,9 +488,10 @@ export function createEstimateClientReviewService(input: {
     actor: PublicUser,
     estimateId: string
   ): Promise<void> {
-    if (!["estimator_sales", "super_admin"].includes(actor.role)) notFound();
+    if (!["estimator_sales", "designer", "super_admin"].includes(actor.role)) notFound();
     const match: Row = { _id: estimateId };
     if (actor.role === "estimator_sales") match.ownerId = actor.id;
+    if (actor.role === "designer") Object.assign(match, { "estimation.workflowVersion": 2, "estimation.phase": "post", designPlanDesignerId: actor.id });
     const rows = await aggregateRows(EstimateModel, [
       { $match: match },
       ...activeActorStages(actor, "activeActor"),
@@ -522,13 +532,15 @@ export function createEstimateClientReviewService(input: {
                 clientEmailNormalized: normalizeEmail(actor.email)
               }
             },
-            { $project: { _id: 1 } },
+            { $project: { _id: 1, projectId: 1 } },
             { $limit: 1 }
           ],
           as: "clientLeadRows"
         }
       },
       { $match: { "clientLeadRows.0": { $exists: true } } },
+      { $set: { clientLead: { $arrayElemAt: ["$clientLeadRows", 0] } } },
+      ...clientProjectMembershipStages("clientActor"),
       { $project: { _id: 1 } },
       { $limit: 1 }
     ]);
@@ -682,7 +694,7 @@ function clientLeadScopeStages(
               }
             }
           },
-          { $project: { _id: 1, clientEmailNormalized: 1 } },
+          { $project: { _id: 1, clientEmailNormalized: 1, projectId: 1 } },
           { $limit: 1 }
         ],
         as: "clientLeadRows"
@@ -702,7 +714,19 @@ function clientLeadScopeStages(
       }
     });
   }
+  stages.push(...clientProjectMembershipStages(clientAlias));
   return stages;
+}
+
+function clientProjectMembershipStages(clientAlias: string): Pipeline {
+  return [
+    { $lookup: { from: ProjectModel.collection.name, localField: "projectId", foreignField: "_id", as: "clientProjects" } },
+    { $set: { clientProject: { $arrayElemAt: ["$clientProjects", 0] } } },
+    { $match: { $expr: { $or: [
+      { $and: [{ $ne: [{ $ifNull: ["$clientProject.estimationWorkflowVersion", 0] }, 2] }, { $ne: [{ $ifNull: ["$estimation.workflowVersion", 0] }, 2] }, { $eq: [{ $ifNull: ["$phase", null] }, null] }] },
+      { $and: [{ $eq: ["$clientProject.estimationWorkflowVersion", 2] }, { $eq: ["$clientProject.clientId", `$${clientAlias}._id`] }, { $eq: ["$clientLead.projectId", "$projectId"] }] }
+    ] } } }
+  ];
 }
 
 function roundPresentationStages(includeDetail: boolean): Pipeline {
@@ -939,6 +963,9 @@ function mapSnapshot(row: Row): EstimateClientReviewSnapshot {
     projectName: stringField(row, "projectName"),
     location: stringField(row, "location"),
     propertyType: stringField(row, "propertyType"),
+    ...(Array.isArray(row.rooms) ? { rooms: row.rooms as Record<string, unknown>[] } : {}),
+    ...(Array.isArray(row.scopes) ? { scopes: row.scopes as string[] } : {}),
+    ...(row.bedroomCount === undefined ? {} : { bedroomCount: row.bedroomCount === null ? null : numberField(row, "bedroomCount") }),
     lineItems: arrayField(row, "lineItems").map((lineItem) => {
       const common = {
         ...(lineItem.id === undefined ? {} : { id: nullableStringField(lineItem, "id") }),

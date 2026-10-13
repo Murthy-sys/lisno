@@ -1,9 +1,12 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 
 import type { DesignPlanStatus, DesignPlanTask } from "../../api/types";
+import { ApiError } from "../../api/client";
+import { Button } from "../../components/ui/Button";
+import { Dialog } from "../../components/ui/Dialog";
 import { PageHeader } from "../../components/ui/PageHeader";
 import { PageState } from "../../components/ui/PageState";
 import { StatusBadge, type StatusTone } from "../../components/ui/StatusBadge";
@@ -22,12 +25,14 @@ import {
 import {
   getDesignerPlanTasks,
   getDesignWorkflow,
+  reconcileDesignPlanScope,
   type DesignWorkflowStage,
   type DesignWorkflowView,
   projectWorkflowKeys
 } from "../workflow/projectWorkflowApi";
 import { ProjectWorkflowPanel } from "../workflow/ProjectWorkflowPanel";
 import { currentProjectWorkflowStage, workflowStageNextStep, workflowStageStatus } from "../workflow/projectWorkflowSelectors";
+import { refreshEstimateCollaboration } from "../leads/estimateCollaborationQueries";
 
 const statusLabels: Record<DesignPlanStatus, string> = {
   pending_assignment: "Awaiting assignment",
@@ -57,7 +62,7 @@ function designAction(status: DesignPlanStatus) {
 }
 
 function stageAction(workflow: DesignWorkflowView, stage: DesignWorkflowStage | undefined, status: DesignPlanStatus, estimateId: string) {
-  if (workflow.initialPayment && !workflow.initialPayment.confirmedAt) {
+  if (workflow.initialPayment && workflow.initialPayment.workflowVersion !== 2 && !workflow.initialPayment.confirmedAt) {
     return workflow.initialPayment.status === "awaiting_estimate_approval" ? "Await estimate approval" : "Await initial payment confirmation";
   }
   if (!stage) {
@@ -128,7 +133,7 @@ export function DesignerDesignPlanTasksPage() {
   const atUploadStage = Boolean(uploadStage && currentStage?.id === uploadStage.id);
   const showDesignSection = Boolean(uploadStage && (atUploadStage || workflowStageStatus(uploadStage) === "completed"));
   const canWorkOnUploadStage = Boolean(atUploadStage && uploadOperational?.spacePlanning?.estimateId === task?.estimateId &&
-    savedWorkflow?.initialPayment?.confirmedAt && uploadOperational &&
+    (savedWorkflow?.initialPayment?.workflowVersion === 2 ? savedWorkflow.initialPayment.designStartedAt : savedWorkflow?.initialPayment?.confirmedAt) && uploadOperational &&
     ["in_progress", "in_review"].includes(uploadOperational.status) && uploadOperational.blockingReasons.length === 0 &&
     !["waiting", "paused"].includes(uploadOperational.timing.state) &&
     !workflow.isError && !workflow.isFetching && !tasks.isFetching);
@@ -226,6 +231,9 @@ export function DesignerDesignPlanTasksPage() {
                 <div><dt>Client</dt><dd>{task.clientName}</dd></div>
                 <div><dt>Next action</dt><dd>{nextAction}</dd></div>
               </dl>
+              {task.estimationWorkflowVersion === 2 && task.leadId ? <Link to={`/estimator-sales/leads/${encodeURIComponent(task.leadId)}/estimate`}>Review and edit post-estimate</Link> : null}
+              {task.estimationWorkflowVersion === 2 ? <p className="designer-plan-workspace__notice">Design starts after pre-estimate approval. Initial payment is confirmed after design and final estimate approval.</p> : null}
+              {task.scopeReconciliation?.required ? <DesignScopeReconciliation key={`${task.id}:${task.designPlanVersion}:${task.scopeReconciliation.designScopeRevision}`} task={task} /> : null}
             </Surface>
 
             <ProjectWorkflowPanel key={`workflow-${task.projectId}`} projectId={task.projectId} timelineContainer={timelineContainer} presentation="designer" />
@@ -265,6 +273,29 @@ export function DesignerDesignPlanTasksPage() {
       )}
     </section>
   );
+}
+
+function DesignScopeReconciliation({ task }: { task: DesignPlanTask }) {
+  const queryClient = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const [conflict, setConflict] = useState(false);
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const action = useMutation({
+    mutationFn: () => reconcileDesignPlanScope(task.projectId, { expectedDesignPlanVersion: task.designPlanVersion, expectedScopeRevision: task.scopeReconciliation!.designScopeRevision }),
+    onSuccess: async () => { setOpen(false); await refreshEstimateCollaboration(queryClient); },
+    onError: async (error) => {
+      if (error instanceof ApiError && [401, 403, 404, 409].includes(error.status)) { setConflict(true); await refreshEstimateCollaboration(queryClient); }
+    }
+  });
+  return <div className="designer-plan-workspace__notice"><p>The estimate scope changed after design approval. Reconcile the design with the new scope before the final estimate can be submitted.</p>
+    <Button ref={triggerRef} variant="secondary" onClick={() => { action.reset(); setConflict(false); setOpen(true); }}>Reconcile design scope</Button>
+    {open ? <Dialog title="Reconcile design with changed scope?" eyebrow="Design review" onClose={() => setOpen(false)} busy={action.isPending} initialFocusRef={cancelRef} returnFocusRef={triggerRef}>
+      <div className="ui-dialog__body"><p>This reopens the design for the current estimate scope. Existing uploads and approval history are retained. Review the affected design and submit it for client approval again.</p>
+        {action.isError ? <p role="alert">{action.error instanceof ApiError ? action.error.message : "The design scope could not be reconciled."}{conflict ? " Close this dialog and review the refreshed project before trying again." : ""}</p> : null}
+      </div><div className="ui-dialog__actions"><Button ref={cancelRef} variant="secondary" disabled={action.isPending} onClick={() => setOpen(false)}>Cancel</Button><Button busy={action.isPending} disabled={conflict} onClick={() => action.mutate()}>Reopen design review</Button></div>
+    </Dialog> : null}
+  </div>;
 }
 
 function normalizePlacementValue(value: string) {

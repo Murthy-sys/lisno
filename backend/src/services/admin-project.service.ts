@@ -1,5 +1,7 @@
+import type { ProjectClientInvitationService } from "./project-client-invitation.service.js";
+import type { ProjectClientInvitationSummary } from "../domain/project-client-invitations.js";
 import { createProjectDesignWorkflow } from "../domain/design-workflow.js";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import { normalizeEmail } from "../domain/email.js";
 import { confirmedCity } from "../domain/procurement-city.js";
@@ -19,6 +21,7 @@ import type { PublicUser } from "./auth.service.js";
 import { forbidden, requireActor, type Clock } from "./workflow.js";
 
 export interface InitiateAdminProjectInput {
+  initiationKey?: string;
   clientName: string;
   clientEmail: string;
   clientMobile: string;
@@ -47,13 +50,14 @@ export interface AdminProjectService {
   get(actor: PublicUser, projectId: string): Promise<AdminProjectSummary>;
   estimators(actor: PublicUser, search: string, pagination: PaginationInput): Promise<PageResult<EstimatorOption>>;
   salesManagers(actor: PublicUser, search: string, pagination: PaginationInput): Promise<PageResult<SalesManagerOption>>;
-  initiate(actor: PublicUser, input: InitiateAdminProjectInput): Promise<AdminProjectSummary>;
+  initiate(actor: PublicUser, input: InitiateAdminProjectInput): Promise<AdminProjectSummary & { clientInvitation?: ProjectClientInvitationSummary }>;
 }
 
 export function createAdminProjectService(
   repository: AppRepository,
   audit: AuditService,
-  clock: Clock
+  clock: Clock,
+  clientInvitations?: ProjectClientInvitationService
 ): AdminProjectService {
   const readActor = async (actor: PublicUser) => {
     const stored = await requireActor(repository, actor);
@@ -92,10 +96,27 @@ export function createAdminProjectService(
     },
 
     async initiate(actor, input) {
-      return repository.runInTransaction(async (transaction) => {
+      const { initiationKey, ...projectInput } = input;
+      if (initiationKey !== undefined && !/^[A-Za-z0-9_-]{8,128}$/.test(initiationKey)) validationError("initiationKey", "Use a valid initiation key.");
+      const receiptId = initiationKey ? createHash("sha256").update(`${actor.id}:${initiationKey}`).digest("hex") : null;
+      const fingerprint = createHash("sha256").update(JSON.stringify(Object.keys(projectInput).sort().map(key => [key, projectInput[key as keyof typeof projectInput]]))).digest("hex");
+      const summary = await repository.runInTransaction(async (transaction) => {
         await transaction.coordinateAuthorizationMutation();
         const initiator = await requireActor(transaction, actor);
         if (!["admin", "super_admin", "estimator_sales"].includes(initiator.role)) forbidden();
+        if (receiptId) {
+          const receipt = await transaction.findProjectInitiationReceipt(receiptId);
+          if (receipt) {
+            if (receipt.actorId !== initiator.id || receipt.fingerprint !== fingerprint) throw new ApiError(409, "INITIATION_KEY_REUSED", "This initiation key belongs to a different project request.");
+            const originalProject = await transaction.findProjectById(receipt.projectId);
+            const managerId = initiator.role === "estimator_sales" ? input.salesManagerId : initiator.id;
+            const manager = managerId ? await transaction.findUserById(managerId) : null;
+            if (!originalProject || !manager || !manager.active) notFound();
+            const existing = await transaction.findAdminProject(manager!, receipt.projectId);
+            if (!existing) notFound();
+            return existing!;
+          }
+        }
         const salesInitiated = initiator.role === "estimator_sales";
         if (salesInitiated && input.estimatorId !== undefined && input.estimatorId !== initiator.id) {
           validationError("estimatorId", "You can initiate a project only for yourself.");
@@ -135,7 +156,10 @@ export function createAdminProjectService(
           id: projectId,
           designWorkflowStages: createProjectDesignWorkflow(projectId),
           name: input.projectName,
-          clientId: existingClient?.id ?? null,
+          clientId: null,
+          estimationWorkflowVersion: 2,
+          estimateRequirementsVersion: 0,
+          estimationFenceEpoch: 0,
           clientName: input.clientName,
           clientEmail: input.clientEmail,
           clientEmailNormalized: emailNormalized,
@@ -234,8 +258,17 @@ export function createAdminProjectService(
         if (!summary) {
           throw new Error("The created Admin project could not be read in its transaction.");
         }
+        if (receiptId) await transaction.createProjectInitiationReceipt({ id: receiptId, actorId: initiator.id, fingerprint, projectId: createdProject.id });
         return summary;
       });
+      if (!clientInvitations) return summary;
+      try {
+        return { ...summary, clientInvitation: await clientInvitations.send(actor, summary.id) };
+      } catch {
+        // Project creation is durable independently of invitation delivery.
+        try { return { ...summary, clientInvitation: await clientInvitations.get(actor, summary.id) }; }
+        catch { return summary; }
+      }
     }
   };
 }

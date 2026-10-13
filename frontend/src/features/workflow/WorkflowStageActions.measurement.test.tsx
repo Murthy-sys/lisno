@@ -5,6 +5,12 @@ import axe from "axe-core";
 import { describe, expect, it, vi } from "vitest";
 
 import { ApiError, apiClient } from "../../api/client";
+import { adminProjectKeys } from "../admin/adminProjectsApi";
+import { clientKeys } from "../client/clientApi";
+import { designerKeys } from "../designer/designerApi";
+import { projectFinanceKeys } from "../finance/projectFinanceApi";
+import { estimateDesignKeys } from "../leads/estimateDesignApi";
+import { procurementKeys } from "../procurement/procurementApi";
 import { WorkflowStageActions } from "./WorkflowStageActions";
 import { downloadWorkflowActionMedia, projectWorkflowKeys, type DesignWorkflowStage, type DesignWorkflowView } from "./projectWorkflowApi";
 
@@ -57,8 +63,15 @@ describe("measurement photo and video uploads", () => {
     expect(body.get("data")).toBe("{}");
     expect(body.get("expectedVersion")).toBe("6");
     expect(body.get("stageId")).toBe("project-a:measurement");
-    expect(invalidate).toHaveBeenCalledWith({ queryKey: projectWorkflowKeys.all });
-    expect(invalidate).toHaveBeenCalledTimes(5);
+    expect(invalidate.mock.calls.map(([filters]) => filters?.queryKey)).toEqual(expect.arrayContaining([
+      projectWorkflowKeys.all,
+      designerKeys.all,
+      adminProjectKeys.all,
+      clientKeys.projects,
+      estimateDesignKeys.all,
+      procurementKeys.all,
+      projectFinanceKeys.all
+    ]));
   });
 
   it("requires a photo or video even when a sketch is attached", async () => {
