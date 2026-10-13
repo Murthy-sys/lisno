@@ -26,6 +26,7 @@ import type {
   EstimateClientResponseTaskDetail,
   EstimateClientResponseTaskListItem,
   EstimateClientReviewSummary,
+  Lead,
   UserInvitationItem,
   UserInvitationPage
 } from "../api/types";
@@ -790,6 +791,86 @@ describe("accessibility smoke coverage", () => {
   });
 
   it.each([
+    ["new_lead", "New lead", "Start estimate"],
+    ["estimate_sent", "Estimate sent", "Continue estimate"]
+  ] as const)("keeps the %s estimate landing labeled and keyboard accessible", async (stage, stageLabel, actionLabel) => {
+    const salesUser = userFor("estimator_sales");
+    const lead: Lead = {
+      id: `lead-accessible-${stage}`, projectId: `project-accessible-${stage}`, ownerId: salesUser.id,
+      clientName: "Accessible Client", clientEmail: "lead-client@example.com", clientMobile: "9000000041",
+      projectName: "Accessible Courtyard", propertyType: "3BHK", location: "Bengaluru", stage,
+      budgetMin: 1000000, budgetMax: 1500000, source: "Referral", nextAction: "Review room dimensions",
+      nextActionAt: "2026-10-14T10:00:00.000Z", createdAt: "2026-10-13T10:00:00.000Z", updatedAt: "2026-10-13T10:00:00.000Z",
+      builder: null, areaSqft: null, targetHandoverAt: null, notes: null, latestActivityAt: null
+    };
+    const writes: string[] = [];
+    tokenStorage.set("sales-token");
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (init?.method && init.method !== "GET") writes.push(url);
+      if (url === "/api/v1/auth/me") return Response.json({ data: salesUser });
+      if (url === "/api/v1/auth/authorization") return Response.json({ data: authorizationFor(salesUser.role) });
+      if (url === `/api/v1/leads/${lead.id}`) return Response.json({ data: lead });
+      if (url === `/api/v1/projects/${lead.projectId}/design-workflow`) return Response.json({ data: {
+        projectId: lead.projectId, projectName: lead.projectName, serverNow: "2026-10-13T10:00:00.000Z",
+        floors: [], estimateApprovalStatus: "awaiting_approval",
+        initialPayment: { confirmedAt: null, canConfirm: false, version: 0, status: "awaiting_estimate_approval" }
+      } });
+      if (url === `/api/v1/projects/${lead.projectId}/status`) return Response.json({ data: {
+        projectId: lead.projectId, projectName: lead.projectName, serverNow: "2026-10-13T10:00:00.000Z",
+        state: "no_pending", currentStage: null, pendingActions: []
+      } });
+      throw new Error(`Unhandled request: ${url}`);
+    });
+    const user = userEvent.setup();
+    renderApp([`/estimator-sales/leads/${lead.id}`]);
+    expect(await screen.findByRole("heading", { name: lead.projectName, level: 1 })).toBeVisible();
+    const contacts = screen.getByRole("list", { name: "Client contact details" });
+    expect(contacts).toHaveTextContent(lead.clientName);
+    const phone = within(contacts).getByRole("link", { name: lead.clientMobile });
+    const email = within(contacts).getByRole("link", { name: lead.clientEmail });
+    expect(phone).toHaveAttribute("href", `tel:${lead.clientMobile}`);
+    expect(email).toHaveAttribute("href", `mailto:${lead.clientEmail}`);
+    const stageControl = screen.getByRole("combobox", { name: "Lead stage" });
+    expect(stageControl.tagName).toBe("SELECT");
+    expect(stageControl).toHaveValue(stage);
+    expect(within(stageControl).getByRole("option", { selected: true })).toHaveTextContent(stageLabel);
+    expect(screen.getByText(stageLabel, { selector: "p" })).toBeVisible();
+
+    const estimate = screen.getByRole("region", { name: "Estimate" });
+    const steps = within(estimate).getByRole("list", { name: "Estimate steps" });
+    expect(steps.tagName).toBe("OL");
+    const stepItems = within(steps).getAllByRole("listitem");
+    expect(stepItems).toHaveLength(3);
+    ["Rooms & Dimensions", "Select Scope", "Generate Estimate"].forEach((label, index) => {
+      expect(stepItems[index]).toHaveTextContent(label);
+    });
+    expect(within(steps).queryByRole("button")).not.toBeInTheDocument();
+    expect(within(steps).queryByRole("link")).not.toBeInTheDocument();
+    expect(steps.querySelector("[tabindex], [aria-current]")).toBeNull();
+    const action = within(estimate).getByRole("button", { name: actionLabel });
+    expect(action).toBeEnabled();
+    expect(within(estimate).getAllByRole("button")).toHaveLength(1);
+    expect(screen.queryByRole("heading", { name: "Follow-ups" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Initial payment status" })).not.toBeInTheDocument();
+
+    screen.getByRole("link", { name: "All leads" }).focus();
+    await user.tab();
+    expect(phone).toHaveFocus();
+    await user.tab();
+    expect(email).toHaveFocus();
+    await user.tab();
+    expect(stageControl).toHaveFocus();
+    await user.tab();
+    expect(await screen.findByRole("button", { name: "Project status" })).toHaveFocus();
+    await user.tab();
+    expect(action).toHaveFocus();
+    expectEveryControlHasAnAccessibleName(screen.getByRole("main"));
+    await expectNoAxeViolations();
+    expect(writes).toEqual([]);
+  });
+
+  it.each([
     ["designer", "/designer", "Design workspace", "Workspace"],
     ["design_manager", "/manager", "Team delivery pulse", "Team"],
     ["design_head", "/head", "Organization delivery health", "Organization"],
@@ -913,23 +994,21 @@ describe("accessibility smoke coverage", () => {
       clientEmail: "asha@example.com",
       clientMobile: "+91 90000 00000",
       projectName: "Asha home",
-      location: "Pune",
+      cityName: "Pune",
       propertyType: "3BHK",
-      budgetMin: "800000",
-      budgetMax: "1200000",
-      nextAction: "Schedule site visit",
-      nextActionAt: "2026-08-25T10:30"
+      source: "Customer referral",
+      nextAction: "Schedule site visit"
     };
     fireEvent.change(within(dialog).getByLabelText(/^Client name/), { target: { value: values.clientName } });
     fireEvent.change(within(dialog).getByLabelText(/^Client email/), { target: { value: values.clientEmail } });
     fireEvent.change(within(dialog).getByLabelText(/^Mobile/), { target: { value: values.clientMobile } });
     fireEvent.change(within(dialog).getByLabelText(/^Project \/ property name/), { target: { value: values.projectName } });
-    fireEvent.change(within(dialog).getByLabelText(/^Location/), { target: { value: values.location } });
+    fireEvent.change(within(dialog).getByLabelText(/^Project city/), { target: { value: values.cityName } });
     fireEvent.change(within(dialog).getByLabelText(/^Property type/), { target: { value: values.propertyType } });
-    fireEvent.change(within(dialog).getByLabelText(/^Minimum budget/), { target: { value: values.budgetMin } });
-    fireEvent.change(within(dialog).getByLabelText(/^Maximum budget/), { target: { value: values.budgetMax } });
+    fireEvent.change(within(dialog).getByRole("combobox", { name: "Source" }), { target: { value: values.source } });
     fireEvent.change(within(dialog).getByLabelText(/^Next action\*/), { target: { value: values.nextAction } });
-    fireEvent.change(within(dialog).getByLabelText(/^Next action date/), { target: { value: values.nextActionAt } });
+    await user.click(within(dialog).getByRole("button", { name: "Next action date" }));
+    await user.click(within(dialog).getByRole("button", { name: "Today" }));
     await waitFor(() => expect(within(dialog).getByRole("button", { name: "Initiate project" })).toBeEnabled());
     await user.click(within(dialog).getByRole("button", { name: "Initiate project" }));
     const email = within(dialog).getByRole("textbox", { name: "Client email" });
@@ -1270,6 +1349,9 @@ describe("accessibility smoke coverage", () => {
     await user.click(trigger);
     let dialog = screen.getByRole("dialog", { name: "Request project access" });
     await waitFor(() => expect(within(dialog).getByRole("textbox", { name: "Project ID" })).toHaveFocus());
+    await user.tab({ shift: true });
+    // The scrollable body is keyboard reachable before the first form field.
+    expect(within(dialog).getByRole("textbox", { name: "Project ID" }).closest("form")?.parentElement).toHaveFocus();
     await user.tab({ shift: true });
     expect(within(dialog).getByRole("button", { name: "Close request project access" })).toHaveFocus();
     await user.tab({ shift: true });

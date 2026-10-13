@@ -71,6 +71,8 @@ const estimateSchema = new Schema({
     default: "draft"
   },
   propertyType: { type: String, required: true },
+  bedroomCount: { type: Number, cast: false, min: 1, max: 50,
+    validate: (value: unknown) => value == null || Number.isInteger(value) },
   rooms: { type: [Schema.Types.Mixed], required: true, default: [] }, scopes: { type: [String], required: true, default: [] },
   selectedMainBasketIds: { type: [String], required: true, default: [] },
   selectedMainBasketClassifications: { type: [selectedMainBasketClassificationSchema], default: undefined },

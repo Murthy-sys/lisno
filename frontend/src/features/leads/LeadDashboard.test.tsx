@@ -6,6 +6,9 @@ import type { Lead } from "../../api/types";
 import { tokenStorage } from "../../api/client";
 import { authorizationFor } from "../../test/authFixtures";
 import { renderApp } from "../../test/render";
+import { adminProjectKeys } from "../admin/adminProjectsApi";
+import { dashboardKeys } from "../admin/dashboard/superAdminDashboardApi";
+import { leadKeys } from "./leadsApi";
 
 const salesUser = {
   id: "sales-1",
@@ -129,6 +132,23 @@ const stageFilters = [
   ["won", "Won"],
   ["lost", "Lost"]
 ] as const;
+
+const salesManager = { id: "manager-1", name: "Meera Manager", email: "meera@example.com", title: "Sales Manager" };
+
+async function fillSalesInitiation(dialog: HTMLElement, user: ReturnType<typeof userEvent.setup>) {
+  for (const [label, value] of Object.entries({
+    "Client name": "Aurora Homes", "Client email": "aurora@example.com", Mobile: "9000000001",
+    "Project / property name": "Aurora Villa", "Project city": "Bengaluru", "Next action": "Site visit"
+  })) {
+    await user.type(within(dialog).getByLabelText(new RegExp(`^${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\*?$`)), value);
+  }
+  await user.selectOptions(within(dialog).getByRole("combobox", { name: "Property type" }), "3BHK");
+  await user.selectOptions(within(dialog).getByRole("combobox", { name: "Source" }), "Customer referral");
+  await user.click(within(dialog).getByRole("button", { name: "Next action date" }));
+  await user.click(within(dialog).getByRole("button", { name: "Today" }));
+  await user.click(within(dialog).getByRole("combobox", { name: "Sales Manager" }));
+  await user.click(await within(dialog).findByRole("option", { name: /Meera Manager/ }));
+}
 
 function mockDashboardReads(getLeads: (url: URL) => Lead[]) {
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
@@ -406,27 +426,35 @@ describe("LeadDashboard", () => {
     expect(screen.getByText("Assigned project leads appear here.")).toBeVisible();
   });
 
-  it("initiates from an empty sales pipeline and opens the created lead after refreshing the list", async () => {
+  it.each(["empty", "existing"] as const)("opens the returned new lead from an %s pipeline and keeps both list routes reopenable", async (pipeline) => {
     tokenStorage.set("sales-token");
-    const manager = { id: "manager-1", name: "Meera Manager", email: "meera@example.com", title: "Sales Manager" };
-    const createdLead = { ...leads[0]!, id: "lead-created", projectId: "project-created" };
+    const createdLead: Lead = {
+      ...leads[0]!, id: "lead-created", projectId: "project-created", stage: "new_lead", nextAction: "Site visit"
+    };
+    const existingLead: Lead = { ...leads[1]!, projectId: "project-existing" };
+    const existingItems = pipeline === "existing" ? [existingLead] : [];
     let initiated = false;
     let refreshed = false;
     let payload: Record<string, unknown> | undefined;
+    const writes: Array<{ url: string; method: string }> = [];
+    const detailReads: string[] = [];
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = String(input);
+      const method = init?.method ?? "GET";
+      if (method !== "GET") writes.push({ url, method });
       if (url === "/api/v1/auth/me") return Response.json({ data: salesUser });
       if (url === "/api/v1/auth/authorization") return Response.json({ data: authorizationFor(salesUser.role) });
       if (url.startsWith("/api/v1/leads?")) {
         if (initiated) refreshed = true;
+        const items = initiated ? [...existingItems, createdLead] : existingItems;
         return Response.json({ data: {
-          items: initiated ? [createdLead] : [],
-          pagination: { limit: 20, offset: 0, total: initiated ? 1 : 0, hasMore: false }
+          items,
+          pagination: { limit: 20, offset: 0, total: items.length, hasMore: false }
         } });
       }
       if (url === "/api/v1/estimates") return Response.json({ data: [] });
       if (url.startsWith("/api/v1/admin/sales-managers?")) return Response.json({ data: {
-        items: [manager], pagination: { limit: 20, offset: 0, total: 1, hasMore: false }
+        items: [salesManager], pagination: { limit: 20, offset: 0, total: 1, hasMore: false }
       } });
       if (url === "/api/v1/admin/projects" && init?.method === "POST") {
         payload = JSON.parse(String(init.body)) as Record<string, unknown>;
@@ -440,42 +468,127 @@ describe("LeadDashboard", () => {
           estimate: null, createdAt: "2026-09-09T10:00:00.000Z"
         } }, { status: 201 });
       }
-      if (url === "/api/v1/leads/lead-created") return Response.json({ data: createdLead });
-      if (url.startsWith("/api/v1/leads/lead-created/activities?")) return Response.json({ data: {
-        items: [], pagination: { limit: 50, offset: 0, total: 0, hasMore: false }
+      const detail = [createdLead, existingLead].find((item) => url === `/api/v1/leads/${item.id}`);
+      if (detail) {
+        detailReads.push(detail.id);
+        return Response.json({ data: detail });
+      }
+      if (url === "/api/v1/projects/project-created/design-workflow") return Response.json({ data: {
+        projectId: createdLead.projectId, projectName: createdLead.projectName, serverNow: "2026-10-13T10:00:00.000Z",
+        floors: [], estimateApprovalStatus: "awaiting_approval",
+        initialPayment: { confirmedAt: null, canConfirm: false, version: 0, status: "awaiting_estimate_approval" }
+      } });
+      if (url === "/api/v1/projects/project-created/status") return Response.json({ data: {
+        projectId: createdLead.projectId, projectName: createdLead.projectName, serverNow: "2026-10-13T10:00:00.000Z",
+        state: "no_pending", currentStage: null, pendingActions: []
       } });
       throw new Error(`Unhandled request: ${url}`);
     });
     const user = userEvent.setup();
-    const { router } = renderApp(["/estimator-sales"]);
-    expect(await screen.findByText("Initiate a project to create your first lead.")).toBeVisible();
+    const { router, queryClient } = renderApp(["/estimator-sales"]);
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+    if (pipeline === "empty") {
+      expect(await screen.findByText("Initiate a project to create your first lead.")).toBeVisible();
+    } else {
+      expect(await screen.findByRole("article", { name: existingLead.projectName })).toBeVisible();
+    }
     await user.click(screen.getByRole("button", { name: "Initiate project" }));
     const dialog = screen.getByRole("dialog", { name: "Initiate project" });
-    for (const [label, value] of Object.entries({
-      "Client name": "Aurora Homes", "Client email": "aurora@example.com", Mobile: "9000000001",
-      "Project / property name": "Aurora Villa", "Project city": "Bengaluru", "Next action": "Site visit"
-    })) {
-      await user.type(within(dialog).getByLabelText(new RegExp(`^${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\*?$`)), value);
-    }
-    await user.selectOptions(within(dialog).getByRole("combobox", { name: "Property type" }), "3BHK");
-    await user.selectOptions(within(dialog).getByRole("combobox", { name: "Source" }), "Customer referral");
-    await user.click(within(dialog).getByRole("button", { name: "Next action date" }));
-    await user.click(within(dialog).getByRole("button", { name: "Today" }));
-    await user.click(within(dialog).getByRole("combobox", { name: "Sales Manager" }));
-    await user.click(await within(dialog).findByRole("option", { name: /Meera Manager/ }));
+    await fillSalesInitiation(dialog, user);
     await user.click(within(dialog).getByRole("button", { name: "Initiate project" }));
     await waitFor(() => expect(router.state.location.pathname).toBe("/estimator-sales/leads/lead-created"));
-    expect(await screen.findByRole("heading", { name: "Aurora Homes" })).toBeVisible();
+    const expectCreatedLanding = async () => {
+      expect(await screen.findByRole("heading", { name: createdLead.projectName, level: 1 })).toBeVisible();
+      const contacts = screen.getByRole("list", { name: "Client contact details" });
+      expect(contacts).toHaveTextContent(createdLead.clientName);
+      expect(within(contacts).getByRole("link", { name: createdLead.clientEmail })).toHaveAttribute("href", `mailto:${createdLead.clientEmail}`);
+      expect(within(contacts).getByRole("link", { name: createdLead.clientMobile })).toHaveAttribute("href", `tel:${createdLead.clientMobile}`);
+      expect(screen.getByRole("combobox", { name: "Lead stage" })).toHaveValue("new_lead");
+      expect(screen.getByRole("option", { name: "New lead", selected: true })).toBeInTheDocument();
+      expect(screen.getByText("New lead", { selector: "p" })).toBeVisible();
+      const estimate = screen.getByRole("region", { name: "Estimate" });
+      expect(within(estimate).getByRole("button", { name: "Start estimate" })).toBeEnabled();
+      const steps = within(estimate).getByRole("list", { name: "Estimate steps" });
+      expect(within(steps).getAllByRole("listitem").map((step) => step.textContent?.replace(/^\d/, ""))).toEqual([
+        "Rooms & Dimensions", "Select Scope", "Generate Estimate"
+      ]);
+      expect(screen.queryByRole("heading", { name: createdLead.clientName })).not.toBeInTheDocument();
+      expect(screen.queryByRole("heading", { name: "Follow-ups" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("region", { name: "Initial payment status" })).not.toBeInTheDocument();
+      expect(screen.queryByText(/Configure rooms, dimensions and scope/)).not.toBeInTheDocument();
+    };
+    await expectCreatedLanding();
     expect(refreshed).toBe(true);
+    for (const queryKey of [adminProjectKeys.all, dashboardKeys.all, leadKeys.all]) {
+      expect(invalidate).toHaveBeenCalledWith({ queryKey });
+    }
     expect(payload).toMatchObject({ salesManagerId: "manager-1", projectName: "Aurora Villa", cityName: "Bengaluru", propertyType: "3BHK", source: "Customer referral" });
     expect(payload).not.toHaveProperty("location");
     expect(payload).not.toHaveProperty("budgetMin");
     expect(payload).not.toHaveProperty("budgetMax");
     expect(payload).not.toHaveProperty("estimatorId");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("link", { name: "All leads" }));
+    expect(await screen.findByRole("heading", { name: "Lead workspace" })).toBeVisible();
+    expect(router.state.location.pathname).toBe("/estimator-sales");
+    const createdRow = await screen.findByRole("article", { name: createdLead.projectName });
+    expect(within(createdRow).getByText("New lead")).toBeVisible();
+    if (pipeline === "existing") {
+      const existingRow = screen.getByRole("article", { name: existingLead.projectName });
+      expect(within(existingRow).getByText("Estimate sent")).toBeVisible();
+      expect(within(existingRow).getByRole("link", { name: "Open lead" })).toHaveAttribute("href", `/estimator-sales/leads/${existingLead.id}`);
+    }
+    await user.click(within(createdRow).getByRole("link", { name: "Open lead" }));
+    await expectCreatedLanding();
+    expect(router.state.location.pathname).toBe("/estimator-sales/leads/lead-created");
+    const navigation = screen.getByRole("navigation", { name: "Primary navigation" });
+    await user.click(within(navigation).getByRole("link", { name: "Leads & estimates" }));
+    expect(await screen.findByRole("heading", { name: "Lead workspace" })).toBeVisible();
+    expect(router.state.location.pathname).toBe("/estimator-sales");
+    expect(await screen.findByRole("article", { name: createdLead.projectName })).toBeVisible();
+    expect(detailReads.length).toBeGreaterThanOrEqual(2);
+    expect(new Set(detailReads)).toEqual(new Set([createdLead.id]));
+    expect(writes).toEqual([{ url: "/api/v1/admin/projects", method: "POST" }]);
   });
 
-  it("keeps list context and isolates a late response after reviewing another lead", async () => {
+  it("keeps the initiation form and list route when project creation fails", async () => {
+    tokenStorage.set("sales-token");
+    const writes: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (init?.method && init.method !== "GET") writes.push(url);
+      if (url === "/api/v1/auth/me") return Response.json({ data: salesUser });
+      if (url === "/api/v1/auth/authorization") return Response.json({ data: authorizationFor(salesUser.role) });
+      if (url.startsWith("/api/v1/leads?")) return Response.json({ data: {
+        items: [], pagination: { limit: 20, offset: 0, total: 0, hasMore: false }
+      } });
+      if (url === "/api/v1/estimates") return Response.json({ data: [] });
+      if (url.startsWith("/api/v1/admin/sales-managers?")) return Response.json({ data: {
+        items: [salesManager], pagination: { limit: 20, offset: 0, total: 1, hasMore: false }
+      } });
+      if (url === "/api/v1/admin/projects" && init?.method === "POST") return Response.json({
+        error: { code: "PROJECT_CREATION_FAILED", message: "Project creation is unavailable. Try again." }
+      }, { status: 503 });
+      throw new Error(`Unhandled request: ${url}`);
+    });
+    const user = userEvent.setup();
+    const { router, queryClient } = renderApp(["/estimator-sales"]);
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+    await user.click(await screen.findByRole("button", { name: "Initiate project" }));
+    const dialog = screen.getByRole("dialog", { name: "Initiate project" });
+    await fillSalesInitiation(dialog, user);
+    await user.click(within(dialog).getByRole("button", { name: "Initiate project" }));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("Project creation is unavailable. Try again.");
+    expect(within(dialog).getByRole("textbox", { name: "Project / property name" })).toHaveValue("Aurora Villa");
+    expect(within(dialog).getByRole("button", { name: "Initiate project" })).toBeEnabled();
+    expect(router.state.location.pathname).toBe("/estimator-sales");
+    expect(invalidate).not.toHaveBeenCalled();
+    expect(writes).toEqual(["/api/v1/admin/projects"]);
+    expect(screen.queryByRole("list", { name: "Estimate steps" })).not.toBeInTheDocument();
+  });
+
+  it("keeps quick-review history and list context while isolating a late response from another lead", async () => {
     tokenStorage.set("sales-token");
     let resolveFirst!: (response: Response) => void;
     const firstDetail = new Promise<Response>((resolve) => { resolveFirst = resolve; });
@@ -484,12 +597,20 @@ describe("LeadDashboard", () => {
       const url = String(input);
       requests.push(url);
       if (url === "/api/v1/auth/me") return Response.json({ data: salesUser });
-      if (url === "/api/v1/auth/authorization") return Response.json({ data: authorizationFor(salesUser.role) });
+      if (url === "/api/v1/auth/authorization") return Response.json({ data: authorizationFor(salesUser.role, [
+        ...authorizationFor(salesUser.role).permissions, "estimation.lead_activity.read"
+      ]) });
       if (url.startsWith("/api/v1/leads?")) return Response.json({ data: { items: leads, pagination: { limit: 20, offset: 0, total: 2, hasMore: false } } });
       if (url === "/api/v1/estimates") return Response.json({ data: savedEstimates });
       if (url === "/api/v1/leads/lead-draft") return firstDetail;
       if (url === "/api/v1/leads/lead-sent") return Response.json({ data: leads[1] });
-      if (url.includes("/activities?")) return Response.json({ data: { items: [], pagination: { limit: 50, offset: 0, total: 0, hasMore: false } } });
+      if (url.includes("/activities?")) return Response.json({ data: {
+        items: [{
+          id: url.includes("lead-sent") ? "activity-cedar" : "activity-aurora", type: "meeting",
+          note: url.includes("lead-sent") ? "Cedar client reviewed the kitchen scope." : "Aurora client requested a site visit.",
+          occurredAt: "2026-10-12T10:00:00.000Z"
+        }], pagination: { limit: 50, offset: 0, total: 1, hasMore: false }
+      } });
       throw new Error(`Unhandled request: ${url}`);
     });
     const user = userEvent.setup();
@@ -503,9 +624,12 @@ describe("LeadDashboard", () => {
     await user.click(screen.getByRole("button", { name: "Review Cedar Loft" }));
     const panel = screen.getByRole("dialog", { name: "Lead review" });
     expect(await within(panel).findByText("Cedar Homes")).toBeVisible();
+    const history = within(panel).getByRole("region", { name: "Recent follow-ups" });
+    expect(await within(history).findByText("Cedar client reviewed the kitchen scope.")).toBeVisible();
     resolveFirst(Response.json({ data: leads[0] }));
     await waitFor(() => expect(queryClient.getQueryData(["leads", "lead-draft"])).toMatchObject({ id: "lead-draft" }));
     await waitFor(() => expect(within(panel).queryByText("Aurora Homes")).not.toBeInTheDocument());
+    expect(within(history).queryByText("Aurora client requested a site visit.")).not.toBeInTheDocument();
     expect(within(panel).getByRole("link", { name: "Open lead workspace" })).toHaveAttribute("href", "/estimator-sales/leads/lead-sent");
     expect(requests).toContain("/api/v1/leads/lead-draft");
     expect(requests).toContain("/api/v1/leads/lead-sent");

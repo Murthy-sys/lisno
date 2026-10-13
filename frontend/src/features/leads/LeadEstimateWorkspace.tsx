@@ -2,7 +2,7 @@ import { ProjectChatNavigation } from "../messages";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useParams } from "react-router-dom";
-import { Armchair, Bath, Bed, BedDouble, BedSingle, Briefcase, Building2, ChefHat, DoorOpen, Hammer, Layers, Leaf, PanelTop, Paintbrush, Pencil, ShowerHead, Sofa, Utensils, Wrench, Zap } from "lucide-react";
+import { Armchair, Hammer, Layers, PanelTop, Paintbrush, Sofa, Wrench, Zap } from "lucide-react";
 
 import { ApiError } from "../../api/client";
 import type { EstimateClientReviewSummary } from "../../api/types";
@@ -23,49 +23,17 @@ import { EstimateClientFeedback } from "./EstimateClientFeedback";
 import { EstimatePlanChangeRequests } from "./EstimatePlanChangeRequests";
 import { PropertyTypeDropdown } from "./PropertyTypeDropdown";
 import { propertyTypes } from "./propertyTypes";
-import { RoomsMultiSelectDropdown, type RoomGroup, type RoomOption } from "./RoomsMultiSelectDropdown";
+import { RoomsMultiSelectDropdown } from "./RoomsMultiSelectDropdown";
+import { getEstimateRoomDefinitions, getRoomIcon, MAX_BEDROOM_COUNT, mergeSelectedRoomDefinitions, parseBedroomCount, requiresBedroomCount } from "./estimateRoomOptions";
 import { RoomDimensionsAccordion } from "./RoomDimensionsAccordion";
 import { getLead, getLeadEstimate, leadKeys, retryEstimateClientEmail, saveLeadEstimate, sendEstimateToClient, submitLeadEstimate, type ConfiguredEstimateLine, type EstimateClassification, type EstimateDraft, type EstimateDraftInput } from "./leadsApi";
 import "../../styles/estimator-dashboard.css";
 
-const roomDefinitions = [
-  { typeId: "living", label: "Living & Dining", icon: "🛋️", sqft: 300 },
-  { typeId: "master", label: "Master Bedroom", icon: "🛏️", sqft: 200 },
-  { typeId: "bedroom2", label: "Bedroom 2", icon: "🛏️", sqft: 150 },
-  { typeId: "bedroom3", label: "Bedroom 3", icon: "🛏️", sqft: 130 },
-  { typeId: "kitchen", label: "Kitchen", icon: "🍳", sqft: 120 },
-  { typeId: "bath_m", label: "Master Bathroom", icon: "🚿", sqft: 80 },
-  { typeId: "bath_c", label: "Common Bathroom", icon: "🚿", sqft: 60 },
-  { typeId: "balcony", label: "Balcony / Utility", icon: "🌿", sqft: 60 },
-  { typeId: "foyer", label: "Foyer / Entrance", icon: "🚪", sqft: 80 },
-  { typeId: "study", label: "Home Office/Study", icon: "💼", sqft: 120 },
-  { typeId: "custom", label: "Custom Room", icon: "✏️", sqft: 0 }
-] as const;
-const roomIcons: Record<string, typeof Sofa> = {
-  living: Sofa, master: BedDouble, bedroom2: Bed, bedroom3: BedSingle, kitchen: ChefHat,
-  bath_m: Bath, bath_c: ShowerHead, balcony: Leaf, foyer: DoorOpen, study: Briefcase, custom: Pencil
-};
 const scopeIcons: Record<string, typeof Sofa> = {
   FC: PanelTop, FL: Layers, CA: Hammer, PA: Paintbrush, EL: Zap, CV: Wrench, LF: Armchair
 };
-const roomSelectIcons: Record<string, typeof Sofa> = {
-  living: Sofa, master: Bed, bedroom2: Bed, bedroom3: Bed, kitchen: Utensils,
-  bath_m: ShowerHead, bath_c: Bath, balcony: Leaf, foyer: DoorOpen, study: Building2, custom: Pencil
-};
-const roomSelectGroups: Record<string, RoomGroup> = {
-  living: "Common Areas", kitchen: "Common Areas", balcony: "Common Areas", foyer: "Common Areas", study: "Common Areas",
-  master: "Bedrooms", bedroom2: "Bedrooms", bedroom3: "Bedrooms",
-  bath_m: "Bathrooms", bath_c: "Bathrooms",
-  custom: "Other"
-};
-const roomSelectOptions: RoomOption[] = roomDefinitions.map((definition) => ({
-  id: definition.typeId,
-  label: definition.label,
-  icon: roomSelectIcons[definition.typeId] ?? Pencil,
-  group: roomSelectGroups[definition.typeId] ?? "Other"
-}));
 function RoomIcon({ typeId }: { typeId: string }) {
-  const Icon = roomIcons[typeId] ?? Pencil;
+  const Icon = getRoomIcon(typeId);
   return <Icon size={16} aria-hidden="true" />;
 }
 function TabIcon({ tab }: { tab: EstimateTab }) {
@@ -247,6 +215,12 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
   });
   const [tab, setTab] = useState<EstimateTab>("configure");
   const [propertyType, setPropertyType] = useState("");
+  const [bedroomCountInput, setBedroomCountInput] = useState("");
+  const bedroomCountRef = useRef<HTMLInputElement>(null);
+  const effectivePropertyType = propertyType || lead.data?.propertyType || "";
+  const variableBedroomCount = requiresBedroomCount(effectivePropertyType);
+  const bedroomCount = variableBedroomCount ? parseBedroomCount(bedroomCountInput) : null;
+  const bedroomSetupRequired = draftEditable && variableBedroomCount && bedroomCount === null;
   const [rooms, setRooms] = useState<RoomDraft[]>([]);
   const [enabledSections, setEnabledSections] = useState<Set<string>>(() => new Set(["FC", "FL", "CA", "PA", "EL", "CV"]));
   const [selectedMainBasketIds, setSelectedMainBasketIds] = useState<Set<string>>(() => new Set());
@@ -288,6 +262,7 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
     hasHydratedSavedEstimate.current = true;
     if (!draft) {
       setPropertyType("");
+      setBedroomCountInput("");
       setRooms([]);
       setEnabledSections(new Set(["FC", "FL", "CA", "PA", "EL", "CV"]));
       setSelectedMainBasketIds(new Set());
@@ -300,6 +275,7 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
     }
     const restoredRooms = draft.rooms as RoomDraft[];
     setPropertyType(draft.propertyType);
+    setBedroomCountInput(requiresBedroomCount(draft.propertyType) && draft.bedroomCount != null ? String(draft.bedroomCount) : "");
     setRooms(restoredRooms);
     setEnabledSections(new Set(draft.scopes));
     const selectedIds = draft.selectedMainBasketIds ?? draft.lineItems.filter((line) => line.source === "configuration").map((line) => line.mainBasketId);
@@ -462,7 +438,8 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
     setPendingRecommendationSources([]);
   }, [activeRoomId, catalogue.dataUpdatedAt, editable, pendingRecommendationSources, recommendationSources, recommendationState, recommendationView, tab]);
   const draftInput = (): EstimateDraftInput => ({
-    propertyType: propertyType || lead.data?.propertyType || "",
+    propertyType: effectivePropertyType,
+    bedroomCount,
     rooms, scopes: lines.length ? Array.from(enabledSections) : [],
     selectedMainBasketIds: Array.from(selectedMainBasketIds),
     selectedMainBasketClassifications: Array.from(selectedMainBasketIds, (mainBasketId) => ({
@@ -571,6 +548,7 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
   };
   const save = useMutation({
     mutationFn: async () => {
+      if (bedroomSetupRequired) throw new Error("Configure the number of bedrooms before saving.");
       const input = draftInput();
       const lineState = configuredLines;
       return { estimate: await saveLeadEstimate(leadId, input), input, lineState };
@@ -593,6 +571,7 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
   const submit = useMutation({
     mutationFn: async () => {
       const submittedLeadId = leadId;
+      if (bedroomSetupRequired) throw new Error("Configure the number of bedrooms before saving.");
       const input = draftInput();
       const lineState = configuredLines;
       const draft = await saveLeadEstimate(submittedLeadId, input);
@@ -678,7 +657,18 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
   const leadItem = lead.data;
   const basketSearchTerm = basketSearch.trim().toLowerCase();
   const visibleBaskets = catalogue.data?.items.filter((basket) => basket.name.toLowerCase().includes(basketSearchTerm)) ?? [];
-  const basketSelectionDisabled = !editable || catalogue.isError || !catalogue.data;
+  const roomControlsDisabled = !editable || save.isPending || submit.isPending;
+  const basketSelectionDisabled = roomControlsDisabled || catalogue.isError || !catalogue.data;
+  const roomDefinitions = getEstimateRoomDefinitions(effectivePropertyType, bedroomCount);
+  const displayedRoomDefinitions = mergeSelectedRoomDefinitions(roomDefinitions, rooms);
+  const roomSelectOptions = displayedRoomDefinitions.map((definition) => ({ id: definition.typeId, label: definition.label, group: definition.group, icon: getRoomIcon(definition.typeId) }));
+  const hasRetainedRooms = displayedRoomDefinitions.some((definition) => definition.group === "Previously selected");
+  const roomIcons = Object.fromEntries(rooms.map((room) => [room.typeId, getRoomIcon(room.typeId)]));
+  const changePropertyType = (nextType: string) => {
+    if (roomControlsDisabled || submissionInFlight.current) return;
+    if (!requiresBedroomCount(nextType)) setBedroomCountInput("");
+    setPropertyType(nextType);
+  };
   const clearBasketSearch = () => {
     setBasketSearch("");
     basketSearchRef.current?.focus();
@@ -686,6 +676,7 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
 
   const selectedRoomTypeIds = Array.from(new Set(rooms.map((room) => room.typeId)));
   const handleRoomsChange = (nextTypeIds: string[]) => {
+    if (roomControlsDisabled || submissionInFlight.current) return;
     const nextSet = new Set(nextTypeIds);
     const currentSet = new Set(selectedRoomTypeIds);
     const added = nextTypeIds.filter((typeId) => !currentSet.has(typeId));
@@ -699,26 +690,30 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
     }
     setRooms((current) => {
       const remaining = current.filter((room) => !removed.includes(room.typeId));
-      const additions = added.map((typeId) => {
-        const definition = roomDefinitions.find((item) => item.typeId === typeId)!;
-        return { id: `${definition.typeId}-${Date.now()}`, typeId: definition.typeId, label: definition.label, icon: definition.icon, sqft: definition.sqft, length: null, width: null };
-      });
+      const additions = roomDefinitions.filter((definition) => added.includes(definition.typeId)).map((definition) => ({
+        id: `${definition.typeId}-${crypto.randomUUID()}`, typeId: definition.typeId, label: definition.label,
+        icon: "", sqft: definition.sqft, length: null, width: null
+      }));
       return [...remaining, ...additions];
     });
   };
   const removeRoom = (id: string) => {
+    if (roomControlsDisabled || submissionInFlight.current) return;
     const roomName = rooms.find((room) => room.id === id)?.label;
     setRooms((current) => current.filter((room) => room.id !== id));
     setConfiguredLines((current) => current.filter((line) => line.roomId !== id));
     if (roomName) setLines((current) => current.filter((line) => line.roomName !== roomName));
     if (activeRoomId === id) setActiveRoomId(rooms.find((room) => room.id !== id)?.id ?? "");
   };
-  const updateRoom = (id: string, change: Partial<RoomDraft>) => setRooms((current) => current.map((room) => {
-    if (room.id !== id) return room;
-    const next = { ...room, ...change };
-    if (next.length && next.width) next.sqft = Math.round(next.length * next.width);
-    return next;
-  }));
+  const updateRoom = (id: string, change: Partial<RoomDraft>) => {
+    if (roomControlsDisabled || submissionInFlight.current) return;
+    setRooms((current) => current.map((room) => {
+      if (room.id !== id) return room;
+      const next = { ...room, ...change };
+      if (next.length && next.width) next.sqft = Math.round(next.length * next.width);
+      return next;
+    }));
+  };
   const toggleMainBasket = (id: string) => {
     if (basketSelectionDisabled || submissionInFlight.current) return;
     if (selectedMainBasketIds.has(id)) {
@@ -749,7 +744,7 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
     cancelRecommendationOpening();
   };
   const buildLines = () => {
-    if (!catalogue.data || catalogue.isError || !editable || submissionInFlight.current || !rooms.length || !selectedMainBasketIds.size) return;
+    if (!catalogue.data || catalogue.isError || roomControlsDisabled || bedroomSetupRequired || submissionInFlight.current || !rooms.length || !selectedMainBasketIds.size) return;
     setCatalogueRequested(true);
     setConfiguredLines((previous) => buildConfiguredLines(catalogue.data, rooms, selectedMainBasketIds, previous));
     setActiveRoomId(rooms[0]?.id ?? "");
@@ -903,12 +898,22 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
     {tab === "configure" ? <>
       <section className="estimate-panel estimate-configure-details" aria-labelledby="estimate-project-details-title">
         <div className="estimate-configure-details__heading"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m3 10 9-7 9 7M5 9v12h14V9M9 21v-7h6v7" /></svg><h2 id="estimate-project-details-title">Project details</h2></div>
-        <div className="estimate-configure-details__fields">
-          <div className="estimate-configure-details__field" role="group" aria-labelledby="estimate-property-type-label"><span id="estimate-property-type-label">Property type</span><PropertyTypeDropdown options={propertyTypes} value={propertyType || leadItem.propertyType} onChange={setPropertyType} /></div>
-          <div className="estimate-configure-details__field" role="group" aria-labelledby="estimate-rooms-label"><span id="estimate-rooms-label">Rooms</span><RoomsMultiSelectDropdown options={roomSelectOptions} selected={selectedRoomTypeIds} onChange={handleRoomsChange} /></div>
+        <div className={`estimate-configure-details__fields${variableBedroomCount ? " estimate-configure-details__fields--with-bedroom-count" : ""}`}>
+          <div className="estimate-configure-details__field" role="group" aria-labelledby="estimate-property-type-label"><span id="estimate-property-type-label">Property type</span><PropertyTypeDropdown options={propertyTypes} value={effectivePropertyType} onChange={changePropertyType} disabled={roomControlsDisabled} /></div>
+          {variableBedroomCount ? <div className="estimate-configure-details__field">
+            <label htmlFor="estimate-bedroom-count">Number of bedrooms</label>
+            <input ref={bedroomCountRef} id="estimate-bedroom-count" className="estimate-bedroom-count" type="number" inputMode="numeric" min={1} max={MAX_BEDROOM_COUNT} step={1} required={draftEditable} value={bedroomCountInput} disabled={roomControlsDisabled}
+              placeholder={draftEditable ? "Enter bedroom count" : "Not specified"}
+              aria-invalid={bedroomSetupRequired || undefined} aria-describedby={`estimate-bedroom-count-hint${bedroomSetupRequired ? " estimate-bedroom-count-error" : ""}`}
+              onChange={(event) => { if (!roomControlsDisabled && !submissionInFlight.current) setBedroomCountInput(event.target.value); }} />
+            <p id="estimate-bedroom-count-hint" className="estimate-bedroom-count__hint">Controls the available bedrooms, balconies and bathrooms.</p>
+            {bedroomSetupRequired ? <p id="estimate-bedroom-count-error" className="estimate-bedroom-count__error">{bedroomCountInput ? `Enter a whole number from 1 to ${MAX_BEDROOM_COUNT}.` : "Enter the number of bedrooms to continue."}</p> : null}
+          </div> : null}
+          <div className="estimate-configure-details__field" role="group" aria-labelledby="estimate-rooms-label"><span id="estimate-rooms-label">Rooms</span><RoomsMultiSelectDropdown options={roomSelectOptions} selected={selectedRoomTypeIds} onChange={handleRoomsChange} disabled={roomControlsDisabled} /></div>
         </div>
+        {hasRetainedRooms ? <p className="estimate-retained-rooms-note">Previously selected rooms are kept with their dimensions and items. Remove them explicitly if they are no longer needed.</p> : null}
       </section>
-      {rooms.length ? <section className="estimate-configure-dimensions" aria-label="Room dimensions"><RoomDimensionsAccordion rooms={rooms.map((room) => ({ id: room.id, label: room.label, icon: roomIcons[room.typeId] ?? Pencil, length: room.length, width: room.width }))} onDimensionChange={updateRoom} onRemove={removeRoom} /></section> : null}
+      {rooms.length ? <section className="estimate-configure-dimensions" aria-label="Room dimensions"><RoomDimensionsAccordion rooms={rooms.map((room) => ({ id: room.id, label: room.label, icon: getRoomIcon(room.typeId), length: room.length, width: room.width }))} onDimensionChange={updateRoom} onRemove={removeRoom} disabled={roomControlsDisabled} /></section> : null}
       <section className="estimate-panel configured-estimate-chooser" aria-labelledby="estimate-main-baskets-title">
         <div className="configured-estimate-chooser__heading">
           <div><p className="eyebrow">Configuration</p><h2 id="estimate-main-baskets-title">Main Baskets</h2><p>Select the Main Baskets for this estimate. Available Main Lines and temporary items appear in the builder.</p></div>
@@ -931,9 +936,10 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
         {configuredMode && catalogue.data ? <div className="configured-estimate-chooser__list">{visibleBaskets.map((basket) => <MainBasketSelectionCard key={basket.id} basket={basket} selected={selectedMainBasketIds.has(basket.id)} disabled={basketSelectionDisabled} onToggle={() => toggleMainBasket(basket.id)} />)}</div> : null}
         {configuredMode && (catalogue.data?.items.length ?? 0) > 0 && basketSearchTerm && !visibleBaskets.length ? <p className="configured-estimate-chooser__state" role="status">No baskets match your search.</p> : null}
       </section>
-      {!configuredMode && lines.length ? <button type="button" className="button button--secondary estimate-continue" onClick={() => setTab("builder")}>Return to saved items</button> : null}
-      {configuredMode ? <ConfigureSelectionFooter count={selectedMainBasketIds.size} clearDisabled={basketSelectionDisabled || !selectedMainBasketIds.size} continueDisabled={basketSelectionDisabled || !rooms.length || !selectedMainBasketIds.size} onClear={clearMainBaskets} onContinue={buildLines} /> : null}
+      {(saved.data?.lineItems.length ?? 0) > 0 ? <button type="button" className="button button--secondary estimate-continue" onClick={() => setTab("builder")}>Return to saved items</button> : null}
+      {configuredMode ? <ConfigureSelectionFooter count={selectedMainBasketIds.size} clearDisabled={basketSelectionDisabled || !selectedMainBasketIds.size} continueDisabled={basketSelectionDisabled || bedroomSetupRequired || !rooms.length || !selectedMainBasketIds.size} onClear={clearMainBaskets} onContinue={buildLines} /> : null}
     </> : null}
+    {tab !== "configure" && bedroomSetupRequired ? <div className="estimate-bedroom-count-required" role="status"><p>Enter the number of bedrooms in Configure before saving or submitting this estimate. Your saved rooms and items are kept.</p><button type="button" className="button button--secondary" disabled={roomControlsDisabled} onClick={() => { setTab("configure"); requestAnimationFrame(() => bedroomCountRef.current?.focus()); }}>Configure bedrooms</button></div> : null}
     {tab === "builder" && configuredMode && catalogue.isError ? <div className="configured-estimate-refresh">
       {catalogue.isError ? <p role="alert">{catalogue.error instanceof ApiError && catalogue.error.status === 403 ? "You do not have permission to read the estimator catalogue." : catalogue.data ? "Available items could not be refreshed. The last loaded catalogue is shown. Try again." : "Available items could not be loaded. Try again."}</p> : null}
     </div> : null}
@@ -1037,7 +1043,7 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
     /></section> : null}
     {tab === "summary" ? <section className="estimate-panel estimate-summary"><h2>Estimate summary</h2>{rooms.map((room) => <div className="estimate-summary-row" key={room.id}><span><RoomIcon typeId={room.typeId} /> <strong>{room.label}</strong><small>{lines.filter((line) => line.roomName === room.label && line.included).length + configuredLines.filter((line) => line.roomId === room.id && line.included).length} selected items</small></span><strong>{roomTotalLabel(room.id)}</strong></div>)}{hasMissingRate ? <p role="status">Total incomplete: enter the selling rate for {incompleteConfiguredLines.length} selected items.</p> : null}{invalidSelectedAmountCount ? <p role="status">Total incomplete: correct the quantity or price for {invalidSelectedAmountCount} selected items.</p> : null}<div className="estimate-total-card"><span>Sub-total <strong>{totalLabel(totals.subtotal)}</strong></span><span>GST @ 18% <strong>{totalLabel(totals.gst)}</strong></span><span>Total (incl. GST) <strong>{totalLabel(totals.total)}</strong></span></div></section> : null}
     {tab === "proposal" ? <section className="estimate-panel estimate-proposal"><header><p className="eyebrow">Lisno interior proposal</p><h2>{leadItem.projectName}</h2><p>Prepared for {leadItem.clientName}</p></header>{rooms.map((room) => <article key={room.id}><h3><RoomIcon typeId={room.typeId} /> {room.label}</h3>{selectedLines.filter((line) => line.roomName === room.label).map((line) => <div key={line.id}><span>{catalogueRows.find((row) => row.id === line.catalogueId)?.description ?? line.catalogueId}<small>{line.specification} · {line.quantity} {line.unit}</small></span><strong>{money(Math.round(line.quantity * line.rate))}</strong></div>)}{selectedConfiguredLines.filter((line) => line.roomId === room.id).map((line) => <div key={line.key}><span>{line.mainLineName}<small>{line.mainBasketName}{line.subBasketName ? ` / ${line.subBasketName}` : ""} · {line.itemType === "temporary" ? "Temporary item" : "Main Line"} · {line.quantity} {line.uomName} · {parseSellingRate(line.rateInput).kind === "blank" ? "Rate required" : `₹${line.rateInput} per ${line.uomName}`}</small></span><strong>{configuredLineAmountPaise(line) === null ? "Incomplete" : moneyPaise(configuredLineAmountPaise(line) ?? 0)}</strong></div>)}</article>)}{hasMissingRate ? <p role="status">This proposal is incomplete until every selected item has a selling rate.</p> : null}{invalidSelectedAmountCount ? <p role="status">This proposal is incomplete until the highlighted quantities or prices are corrected.</p> : null}<div className="estimate-total-card"><span>Sub-total <strong>{totalLabel(totals.subtotal)}</strong></span><span>GST @ 18% <strong>{totalLabel(totals.gst)}</strong></span><span>Total (incl. GST) <strong>{totalLabel(totals.total)}</strong></span></div><p className="estimate-terms">Valid for 30 days. Rates subject to material market changes. Final scope on site measurement. GST as applicable.</p></section> : null}
-    {tab !== "configure" ? <footer className="estimate-workspace__footer"><div><strong>{hasIncompleteConfiguredTotal ? "Total incomplete" : `${money(totals.total)} total`}</strong><span>{includedItemCount} selected line {includedItemCount === 1 ? "item" : "items"} across {rooms.length} {rooms.length === 1 ? "room" : "rooms"} · {saved.data?.status?.replaceAll("_", " ") ?? "draft"}</span></div><div className="estimate-actions">{draftEditable ? <button type="button" className="button button--secondary" disabled={save.isPending || submit.isPending || hasInvalidInput || unavailableConfiguredLines.length > 0 || legacyIncompatibleConfiguredLines.length > 0 || estimateVersionConflict} onClick={() => save.mutate()}>{save.isPending ? "Saving…" : "Save draft"}</button> : null}{draftEditable ? <button type="button" className="button button--primary estimate-continue" disabled={!includedItemCount || hasInvalidInput || hasMissingRate || unavailableConfiguredLines.length > 0 || legacyIncompatibleConfiguredLines.length > 0 || save.isPending || submit.isPending || estimateVersionConflict} onClick={() => submit.mutate()}>{submit.isPending ? "Submitting…" : "Submit estimate"}</button> : null}{saved.data?.status === "ready_for_client" ? <button type="button" className="button button--primary" disabled={sendToClient.isPending} onClick={() => sendToClient.mutate()}>{sendToClient.isPending ? "Sending…" : "Send to client"}</button> : null}</div></footer> : null}
+    {tab !== "configure" ? <footer className="estimate-workspace__footer"><div><strong>{hasIncompleteConfiguredTotal ? "Total incomplete" : `${money(totals.total)} total`}</strong><span>{includedItemCount} selected line {includedItemCount === 1 ? "item" : "items"} across {rooms.length} {rooms.length === 1 ? "room" : "rooms"} · {saved.data?.status?.replaceAll("_", " ") ?? "draft"}</span></div><div className="estimate-actions">{draftEditable ? <button type="button" className="button button--secondary" disabled={bedroomSetupRequired || save.isPending || submit.isPending || hasInvalidInput || unavailableConfiguredLines.length > 0 || legacyIncompatibleConfiguredLines.length > 0 || estimateVersionConflict} onClick={() => save.mutate()}>{save.isPending ? "Saving…" : "Save draft"}</button> : null}{draftEditable ? <button type="button" className="button button--primary estimate-continue" disabled={bedroomSetupRequired || !includedItemCount || hasInvalidInput || hasMissingRate || unavailableConfiguredLines.length > 0 || legacyIncompatibleConfiguredLines.length > 0 || save.isPending || submit.isPending || estimateVersionConflict} onClick={() => submit.mutate()}>{submit.isPending ? "Submitting…" : "Submit estimate"}</button> : null}{saved.data?.status === "ready_for_client" ? <button type="button" className="button button--primary" disabled={sendToClient.isPending} onClick={() => sendToClient.mutate()}>{sendToClient.isPending ? "Sending…" : "Send to client"}</button> : null}</div></footer> : null}
     {invalidConfiguredLines.length ? <p className="estimate-notice estimate-notice--error" role="alert">Correct the highlighted rate or quantity before saving.</p> : null}
     {unavailableConfiguredLines.length ? <p className="estimate-notice estimate-notice--error" role="alert">A Main Line is no longer available in Configuration. Refresh available items or remove it before saving.</p> : null}
     {changedUomConfiguredLines.length ? <p className="estimate-notice estimate-notice--error" role="alert">Configuration changed a line's unit. Re-enter its quantity in the builder before saving.</p> : null}

@@ -2439,6 +2439,8 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
       required: ["propertyType", "rooms", "scopes", "lineItems"],
       properties: {
         propertyType: { type: "string", minLength: 1 },
+        bedroomCount: { type: "integer", minimum: 1, maximum: 50, nullable: true,
+          description: "Optional explicit bedroom count for Villa, Duplex, or Penthouse. Strings and fractions are rejected. Null clears the count. Omission preserves a saved count only for an unchanged variable property type; changing type without a supplied count clears it. Supported BHK types and Studio always store null. Legacy drafts may omit this field; counts are never inferred from selected rooms." },
         rooms: { type: "array", items: { type: "object", additionalProperties: true } },
         scopes: { type: "array", items: { type: "string" } },
         selectedMainBasketIds: { type: "array", uniqueItems: true, items: { type: "string" } },

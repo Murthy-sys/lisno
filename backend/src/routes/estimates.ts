@@ -80,6 +80,7 @@ const configuredEstimateLineSchema = z.object({
 const estimateLineSchema = z.union([configuredEstimateLineSchema, legacyEstimateLineSchema]);
 const estimateSchema = z.object({
   propertyType: z.string().trim().min(1), rooms: z.array(z.record(z.unknown())),
+  bedroomCount: z.number().int().min(1).max(50).nullable().optional(),
   scopes: z.array(z.string()), selectedMainBasketIds: z.array(stableIdSchema).optional(),
   selectedMainBasketClassifications: z.array(selectedMainBasketClassificationSchema).optional(),
   expectedVersion: z.number().int().positive().optional(),
@@ -209,6 +210,24 @@ function normalizeRecommendationOrigins(
     }
   } while (changed);
   return entries.map((entry) => entry.line);
+}
+
+const variableBedroomPropertyTypes = new Set(["villa", "duplex", "penthouse"]);
+const fixedBedroomPropertyTypes = new Set(["1bhk", "2bhk", "2.5bhk", "3bhk", "3.5bhk", "4bhk", "studio"]);
+
+function resolveBedroomCount(
+  propertyType: string,
+  suppliedCount: number | null | undefined,
+  previousPropertyType: string | undefined,
+  previousCount: number | null | undefined
+): number | null {
+  const normalize = (value: string) => value.toLowerCase().replace(/\s+/gu, "");
+  const nextType = normalize(propertyType);
+  if (fixedBedroomPropertyTypes.has(nextType)) return null;
+  if (suppliedCount !== undefined) return suppliedCount;
+  if (variableBedroomPropertyTypes.has(nextType) && previousPropertyType !== undefined &&
+    normalize(previousPropertyType) === nextType) return previousCount ?? null;
+  return null;
 }
 
 const assignmentSchema = z.object({ designerId: z.string().trim().min(1) }).strict();
@@ -464,6 +483,8 @@ export function createEstimatesRouter(
       } else if (estimate.projectId == null && leadProjectId !== null) {
         estimate.projectId = leadProjectId;
       }
+      estimate.bedroomCount = resolveBedroomCount(
+        req.body.propertyType, req.body.bedroomCount, estimate.propertyType, estimate.bedroomCount);
       estimate.propertyType = req.body.propertyType;
       estimate.rooms = req.body.rooms;
       estimate.scopes = req.body.scopes;

@@ -211,6 +211,21 @@ describe("OpenAPI and Swagger UI", () => {
     expect(schemas.ClientEstimateSnapshot).toHaveProperty("properties.lineItems.items.properties.pricingMode.enum", ["pmc", "sub_vendor", "in_house"]);
     expect(schemas.ClientEstimateSnapshot).toHaveProperty("properties.lineItems.items.properties.rateSource.enum", ["configuration", "manual"]);
   });
+  it("documents optional bedroom counts and keeps client-review snapshots unchanged", () => {
+    const schemas = componentSchemas();
+    expect(schemas.EstimateInput!.required).not.toContain("bedroomCount");
+    expect(schemas.EstimateInput).toHaveProperty("properties.bedroomCount", {
+      type: "integer", minimum: 1, maximum: 50, nullable: true,
+      description: expect.stringContaining("Omission preserves a saved count only for an unchanged variable property type")
+    });
+    expect(schemas.EstimateInput).toHaveProperty("additionalProperties", false);
+    expect(schemas.EstimateInput).not.toHaveProperty("properties.propertyType.enum");
+    expect(schemas.ClientEstimateSnapshot).not.toHaveProperty("properties.bedroomCount");
+    const paths = openApiDocument.paths as Record<string, Record<string, OpenApiObject>>;
+    expect(paths["/leads/{leadId}/estimate"]!.put!.requestBody)
+      .toHaveProperty("content.application/json.schema.$ref", "#/components/schemas/EstimateInput");
+  });
+
   it("documents the ready-item catalogue opt-in and mutable-source versions", () => {
     const paths = openApiDocument.paths as Record<string, Record<string, OpenApiObject>>;
     const catalogue = paths["/estimation/catalogue"]!.get!;

@@ -13,9 +13,11 @@ export type RoomDimensionItem = {
 export function RoomDimensionsAccordion({
   rooms,
   onDimensionChange,
-  onRemove
+  onRemove,
+  disabled = false
 }: {
   rooms: readonly RoomDimensionItem[];
+  disabled?: boolean;
   onDimensionChange: (id: string, change: { length?: number | null; width?: number | null }) => void;
   onRemove: (id: string) => void;
 }) {
@@ -73,7 +75,7 @@ export function RoomDimensionsAccordion({
                     </svg>
                   </button>
                 </h3>
-                <button type="button" className="room-dimensions__remove shrink-0 p-1 text-[var(--color-primary)]/60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-primary)]" aria-label={`Remove ${room.label} room`} onClick={() => onRemove(room.id)}>
+                <button type="button" className="room-dimensions__remove shrink-0 p-1 text-[var(--color-primary)]/60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-primary)]" aria-label={`Remove ${room.label} room`} disabled={disabled} onClick={() => { if (!disabled) onRemove(room.id); }}>
                   <svg aria-hidden="true" viewBox="0 0 16 16" width="16" height="16" fill="none">
                     <path d="M4 4 12 12M12 4 4 12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
                   </svg>
@@ -85,11 +87,12 @@ export function RoomDimensionsAccordion({
                   <label className="flex min-w-[min(100%,10rem)] flex-1 flex-col gap-1">
                     <span className="text-xs text-[var(--color-primary)]/60">Length (ft)</span>
                     <Input
+                      disabled={disabled}
                       type="number"
                       step="any"
                       aria-label={`${room.label} length`}
                       value={room.length ?? ""}
-                      onChange={(event) => onDimensionChange(room.id, { length: Number(event.target.value) || null })}
+                      onChange={(event) => { if (!disabled) onDimensionChange(room.id, { length: Number(event.target.value) || null }); }}
                       placeholder="L ft"
                       className="w-full rounded-md border border-[var(--color-primary)]/20 bg-[var(--color-bg)] px-2.5 py-1.5 text-sm text-[var(--color-primary)] shadow-none focus:border-[var(--color-primary)]"
                     />
@@ -98,11 +101,12 @@ export function RoomDimensionsAccordion({
                   <label className="flex min-w-[min(100%,10rem)] flex-1 flex-col gap-1">
                     <span className="text-xs text-[var(--color-primary)]/60">Width (ft)</span>
                     <Input
+                      disabled={disabled}
                       type="number"
                       step="any"
                       aria-label={`${room.label} width`}
                       value={room.width ?? ""}
-                      onChange={(event) => onDimensionChange(room.id, { width: Number(event.target.value) || null })}
+                      onChange={(event) => { if (!disabled) onDimensionChange(room.id, { width: Number(event.target.value) || null }); }}
                       placeholder="W ft"
                       className="w-full rounded-md border border-[var(--color-primary)]/20 bg-[var(--color-bg)] px-2.5 py-1.5 text-sm text-[var(--color-primary)] shadow-none focus:border-[var(--color-primary)]"
                     />

@@ -91,6 +91,36 @@ function containsTerm(title: string, term: string) {
   return ` ${title} `.includes(` ${term} `);
 }
 
+function mentionedRoomIds(title: string, rooms: EstimateMappingContext["rooms"]) {
+  const paddedTitle = ` ${title} `;
+  const mentions: Array<{ roomId: string; start: number; end: number }> = [];
+  for (const room of rooms) {
+    for (const term of room.terms) {
+      if (!term) continue;
+      const paddedTerm = ` ${term} `;
+      let index = paddedTitle.indexOf(paddedTerm);
+      while (index !== -1) {
+        mentions.push({ roomId: room.roomId, start: index + 1, end: index + 1 + term.length });
+        index = paddedTitle.indexOf(paddedTerm, index + 1);
+      }
+    }
+  }
+  mentions.sort((left, right) => left.start - right.start || right.end - left.end);
+  const roomIds = new Set<string>();
+  let coveringStart = -1;
+  let coveringEnd = -1;
+  for (const mention of mentions) {
+    // A bedroom prefix inside its balcony/bathroom label is not a separate mention.
+    // Equal spans still identify every matching room; separate occurrences stay independent.
+    if (mention.end <= coveringEnd &&
+      (mention.start > coveringStart || mention.end < coveringEnd)) continue;
+    roomIds.add(mention.roomId);
+    coveringStart = mention.start;
+    coveringEnd = mention.end;
+  }
+  return roomIds;
+}
+
 function roomTermsFor(label: string, explicitAliases: readonly string[]) {
   const normalized = normalizeMappingTerm(label);
   const terms = new Set(
@@ -209,9 +239,7 @@ export function autoMapDrawingTitle(title: string, context: EstimateMappingConte
   const itemMatches = context.candidates.filter((candidate) =>
     candidate.itemTerms.some((term) => containsTerm(normalized, term))
   );
-  const mentionedRooms = new Set(
-    context.rooms.filter((room) => room.terms.some((term) => containsTerm(normalized, term))).map((room) => room.roomId)
-  );
+  const mentionedRooms = mentionedRoomIds(normalized, context.rooms);
   const matches = itemMatches.filter((candidate) => mentionedRooms.size === 0 || mentionedRooms.has(candidate.roomId));
   const candidateKeys = matches.map(candidateKey).sort();
   if (matches.length !== 1) {

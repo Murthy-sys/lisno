@@ -1313,6 +1313,166 @@ describe("estimator configured catalogue and estimate", { timeout: 30_000 }, () 
   });
 });
 
+describe("estimate bedroom-count metadata", { timeout: 30_000 }, () => {
+  it("round-trips independent counts without requiring selected bedrooms or changing saved rooms and prices", async () => {
+    const { server } = app();
+    const path = "/api/v1/leads/lead-room-count/estimate";
+    const rooms = [
+      { id: "room-one", typeId: "living", label: "Living room", length: 12, width: 10, sqft: 120 },
+      { id: "saved-balcony", typeId: "balcony_bedroom5", label: "Bedroom 5 Balcony", length: 8, width: 4, sqft: 32 }
+    ];
+    const lines = [configuredLine(), {
+      catalogueId: "FC01", roomName: "Bedroom 5 Balcony", specification: "Gypsum",
+      unit: "sqft", rate: 95, quantity: 2, included: true
+    }];
+    const input = { ...estimateInput(lines), propertyType: "Villa", bedroomCount: 5, rooms };
+    const first = await request(server).put(path).set(bearer("estimator")).send(input).expect(200);
+    expect(first.body.data).toMatchObject({ propertyType: "Villa", bedroomCount: 5, rooms });
+    const original = await EstimateModel.findOne({ leadId: "lead-room-count" }).lean();
+    const otherPath = "/api/v1/leads/lead-other-room-count/estimate";
+    await request(server).put(otherPath).set(bearer("estimator"))
+      .send({ ...estimateInput([], []), propertyType: "Penthouse", bedroomCount: 9 }).expect(200);
+
+    const reduced = await request(server).put(path).set(bearer("estimator"))
+      .send({ ...input, bedroomCount: 2, expectedVersion: first.body.data.version }).expect(200);
+    expect(reduced.body.data).toMatchObject({ bedroomCount: 2, rooms,
+      subtotalPaise: first.body.data.subtotalPaise, gstPaise: first.body.data.gstPaise,
+      totalPaise: first.body.data.totalPaise, lineItems: first.body.data.lineItems });
+    const persisted = await EstimateModel.findOne({ leadId: "lead-room-count" }).lean();
+    expect(persisted).toMatchObject({ bedroomCount: 2, rooms, lineItems: original!.lineItems,
+      totalPaise: first.body.data.totalPaise });
+    const resumed = await request(server).get(path).set(bearer("estimator")).expect(200);
+    expect(resumed.body.data).toMatchObject({ bedroomCount: 2, rooms });
+    const other = await request(server).get(otherPath).set(bearer("estimator")).expect(200);
+    expect(other.body.data).toMatchObject({ propertyType: "Penthouse", bedroomCount: 9 });
+    const unauthorized = await request(server).get(path).set(bearer("otherEstimator")).expect(200);
+    expect(unauthorized.body.data).toBeNull();
+  });
+
+  it("accepts both count boundaries for every variable type", async () => {
+    const { server } = app();
+    for (const propertyType of ["Villa", "Duplex", "Penthouse"]) {
+      for (const bedroomCount of [1, 50]) {
+        const path = `/api/v1/leads/lead-${propertyType}-${bedroomCount}/estimate`;
+        await request(server).put(path).set(bearer("estimator"))
+          .send({ ...estimateInput([], []), propertyType, bedroomCount }).expect(200);
+        const read = await request(server).get(path).set(bearer("estimator")).expect(200);
+        expect(read.body.data).toMatchObject({ propertyType, bedroomCount });
+        expect(await EstimateModel.findOne({ leadId: `lead-${propertyType}-${bedroomCount}` }).lean())
+          .toMatchObject({ propertyType, bedroomCount });
+      }
+    }
+  });
+
+  it("rejects non-number, fractional and out-of-range counts without changing the saved draft", async () => {
+    const { server } = app();
+    const path = "/api/v1/leads/lead-invalid-room-count/estimate";
+    const input = { ...estimateInput([], []), propertyType: "Duplex", bedroomCount: 3 };
+    await request(server).put(path).set(bearer("estimator")).send(input).expect(200);
+    const before = await EstimateModel.findOne({ leadId: "lead-invalid-room-count" }).lean();
+    for (const bedroomCount of ["3", true, {}, [], 0, -1, 1.5, 51]) {
+      await request(server).put(path).set(bearer("estimator"))
+        .send({ ...input, bedroomCount }).expect(400);
+      expect(await EstimateModel.findOne({ leadId: "lead-invalid-room-count" }).lean()).toEqual(before);
+    }
+  });
+
+  it("validates the optional model field without coercing strings or requiring it on legacy documents", async () => {
+    const base = { _id: "estimate-model-room-count", leadId: "lead-model-room-count",
+      ownerId: "estimator", propertyType: "Villa" };
+    for (const bedroomCount of ["3", true, 0, -1, 1.5, 51]) {
+      const estimate = new EstimateModel({ ...base, bedroomCount });
+      await expect(estimate.validate()).rejects.toThrow(/bedroomCount/u);
+    }
+    for (const bedroomCount of [undefined, null, 1, 50]) {
+      await expect(new EstimateModel({ ...base, bedroomCount }).validate()).resolves.toBeUndefined();
+    }
+  });
+
+  it("preserves same-type omitted counts and clears explicit null or omitted type changes", async () => {
+    const { server } = app();
+    const path = "/api/v1/leads/lead-compatible-room-count/estimate";
+    const input = { ...estimateInput([], []), propertyType: "Villa" };
+    await request(server).put(path).set(bearer("estimator"))
+      .send({ ...input, bedroomCount: 5 }).expect(200);
+    const preserved = await request(server).put(path).set(bearer("estimator"))
+      .send({ ...input, propertyType: "  vILLA  " }).expect(200);
+    expect(preserved.body.data).toMatchObject({ propertyType: "vILLA", bedroomCount: 5 });
+    const changed = await request(server).put(path).set(bearer("estimator"))
+      .send({ ...input, propertyType: "Duplex" }).expect(200);
+    expect(changed.body.data).toMatchObject({ propertyType: "Duplex", bedroomCount: null });
+    await request(server).put(path).set(bearer("estimator"))
+      .send({ ...input, propertyType: "Penthouse", bedroomCount: 7 }).expect(200);
+    const cleared = await request(server).put(path).set(bearer("estimator"))
+      .send({ ...input, propertyType: "Penthouse", bedroomCount: null }).expect(200);
+    expect(cleared.body.data).toMatchObject({ propertyType: "Penthouse", bedroomCount: null });
+    expect(await EstimateModel.findOne({ leadId: "lead-compatible-room-count" }).lean())
+      .toMatchObject({ bedroomCount: null });
+  });
+
+  it("keeps old requests and historical property strings readable without inferring or writing a count on read", async () => {
+    const { server } = app();
+    for (const propertyType of ["Villa", "Historic courtyard"]) {
+      const leadId = propertyType === "Villa" ? "lead-old-villa" : "lead-historical-type";
+      const path = `/api/v1/leads/${leadId}/estimate`;
+      const rooms = [{ id: "saved-master", typeId: "master", label: "Master Bedroom", sqft: 200 }];
+      const saved = await request(server).put(path).set(bearer("estimator"))
+        .send({ ...estimateInput([], []), propertyType, rooms }).expect(200);
+      expect(saved.body.data).toMatchObject({ propertyType, bedroomCount: null, rooms });
+      // Reproduce a document saved before this optional field existed.
+      await EstimateModel.collection.updateOne({ leadId }, { $unset: { bedroomCount: "" } });
+      const before = await EstimateModel.collection.findOne({ leadId });
+      const read = await request(server).get(path).set(bearer("estimator")).expect(200);
+      expect(read.body.data).toMatchObject({ propertyType, rooms });
+      expect(read.body.data).not.toHaveProperty("bedroomCount");
+      expect(await EstimateModel.collection.findOne({ leadId })).toEqual(before);
+    }
+  });
+
+  it("stores null for every supported fixed type even when callers supply a count", async () => {
+    const { server } = app();
+    for (const propertyType of ["1BHK", "2BHK", "2.5BHK", "3BHK", "3.5BHK", "4BHK", "Studio", "2 BHK"]) {
+      const leadId = `lead-fixed-${propertyType.replace(/\s+/gu, "-")}`;
+      const path = `/api/v1/leads/${leadId}/estimate`;
+      const saved = await request(server).put(path).set(bearer("estimator"))
+        .send({ ...estimateInput([], []), propertyType, bedroomCount: 7 }).expect(200);
+      expect(saved.body.data).toMatchObject({ propertyType, bedroomCount: null });
+      expect(await EstimateModel.findOne({ leadId }).lean()).toMatchObject({ bedroomCount: null });
+    }
+    const path = "/api/v1/leads/lead-fixed-transition/estimate";
+    await request(server).put(path).set(bearer("estimator"))
+      .send({ ...estimateInput([], []), propertyType: "Villa", bedroomCount: 6 }).expect(200);
+    const changed = await request(server).put(path).set(bearer("estimator"))
+      .send({ ...estimateInput([], []), propertyType: "Studio" }).expect(200);
+    expect(changed.body.data).toMatchObject({ propertyType: "Studio", bedroomCount: null });
+  });
+
+  it("does not write count changes through configured version conflicts or locked saves", async () => {
+    const { server } = app();
+    const leadId = "lead-protected-room-count";
+    const path = `/api/v1/leads/${leadId}/estimate`;
+    const input = { ...estimateInput([configuredLine()]), propertyType: "Villa", bedroomCount: 5 };
+    const first = await request(server).put(path).set(bearer("estimator")).send(input).expect(200);
+    const second = await request(server).put(path).set(bearer("estimator"))
+      .send({ ...input, bedroomCount: 4, expectedVersion: first.body.data.version }).expect(200);
+    const saved = await EstimateModel.findOne({ leadId }).lean();
+    for (const expectedVersion of [undefined, first.body.data.version]) {
+      const rejected = await request(server).put(path).set(bearer("estimator"))
+        .send({ ...input, propertyType: "Penthouse", bedroomCount: 50, expectedVersion }).expect(409);
+      expect(rejected.body.error.code).toBe("ESTIMATE_VERSION_CONFLICT");
+      expect(await EstimateModel.findOne({ leadId }).lean()).toEqual(saved);
+    }
+    for (const status of ["pending_designer_approval", "client_approved"]) {
+      await EstimateModel.collection.updateOne({ leadId }, { $set: { status } });
+      const locked = await EstimateModel.findOne({ leadId }).lean();
+      const rejected = await request(server).put(path).set(bearer("estimator"))
+        .send({ ...input, bedroomCount: 12, expectedVersion: second.body.data.version }).expect(409);
+      expect(rejected.body.error.code).toBe("ESTIMATE_LOCKED");
+      expect(await EstimateModel.findOne({ leadId }).lean()).toEqual(locked);
+    }
+  });
+});
+
 async function seedConfiguration() {
   await AiEstimatorKnowledgeBasketModel.collection.insertMany([
     { _id: "basket-a", name: "Electrical", displayOrder: 1, status: "active" },

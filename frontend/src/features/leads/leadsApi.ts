@@ -95,6 +95,7 @@ export type EstimateLine = LegacyEstimateLine | ConfiguredEstimateLine;
 
 export interface EstimateDraftInput {
   propertyType: string;
+  bedroomCount?: number | null;
   rooms: Array<Record<string, unknown>>;
   scopes: string[];
   selectedMainBasketIds?: string[];

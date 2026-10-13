@@ -1,17 +1,20 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { Check, ChevronDown } from "lucide-react";
 
 export function PropertyTypeDropdown({
   options,
   value,
   onChange,
-  placeholder = "Select property type"
+  placeholder = "Select property type",
+  disabled = false
 }: {
   options: readonly string[];
   value: string;
   onChange: (value: string) => void;
   placeholder?: string;
+  disabled?: boolean;
 }) {
+  const listboxId = useId();
   const [open, setOpen] = useState(false);
   const [highlight, setHighlight] = useState(0);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -27,13 +30,17 @@ export function PropertyTypeDropdown({
     return () => document.removeEventListener("mousedown", onClick);
   }, [open, options, value]);
 
+  useEffect(() => { if (disabled) setOpen(false); }, [disabled]);
+
   const select = (option: string) => {
+    if (disabled || !option) return;
     onChange(option);
     setOpen(false);
     triggerRef.current?.focus();
   };
 
   const onKeyDown = (event: React.KeyboardEvent) => {
+    if (disabled) return;
     if (event.key === "Escape") { setOpen(false); return; }
     if (!open && (event.key === "ArrowDown" || event.key === "Enter" || event.key === " ")) {
       event.preventDefault();
@@ -47,12 +54,15 @@ export function PropertyTypeDropdown({
   };
 
   return (
-    <div ref={rootRef} className="relative w-full">
+    <div ref={rootRef} className="relative w-full" onKeyDown={(event) => { if (event.key === "Escape") { setOpen(false); triggerRef.current?.focus(); } }}>
       <button
         ref={triggerRef}
         type="button"
         onClick={() => setOpen((current) => !current)}
         onKeyDown={onKeyDown}
+        disabled={disabled}
+        aria-label={`Property type: ${value || placeholder}`}
+        aria-controls={open ? listboxId : undefined}
         aria-haspopup="listbox"
         aria-expanded={open}
         className={`flex w-full items-center justify-between gap-2 rounded-lg border bg-[var(--color-bg)] px-3.5 py-2.5 text-sm transition-colors focus-visible:ring-2 focus-visible:ring-[var(--color-primary)] ${open ? "border-[var(--color-primary)]" : "border-[var(--color-primary)]/20"}`}
@@ -68,6 +78,7 @@ export function PropertyTypeDropdown({
 
       {open ? (
         <ul
+          id={listboxId}
           role="listbox"
           aria-label="Property type"
           className="absolute z-20 mt-1.5 max-h-64 w-full overflow-auto rounded-lg border border-[var(--color-primary)]/20 bg-[var(--color-bg)] py-1 shadow-lg"
@@ -76,9 +87,10 @@ export function PropertyTypeDropdown({
             const active = option === value;
             const isHighlighted = index === highlight;
             return (
-              <li key={option}>
+              <li key={option} role="presentation">
                 <button
                   type="button"
+                  id={`${listboxId}-${index}`}
                   role="option"
                   aria-selected={active}
                   onMouseEnter={() => setHighlight(index)}
