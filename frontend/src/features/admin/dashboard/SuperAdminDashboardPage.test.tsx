@@ -169,7 +169,8 @@ describe("Super Admin dashboard page", () => {
     const get = installDashboardApi();
     renderDashboard();
     const region = await screen.findByRole("region", { name: "Initial payment confirmations" });
-    expect(region).toHaveTextContent("After estimate approval");
+    expect(region).toHaveTextContent("Super Admin confirms payment after final approval to enable work-order issuance.");
+    expect(region).toHaveTextContent("Earlier projects keep their existing payment workflow.");
     expect(await within(region).findByText("No projects are waiting for initial-payment confirmation.")).toBeVisible();
     const analyticsEnd = screen.getByRole("heading", { name: "Module summaries" });
     expect(analyticsEnd.compareDocumentPosition(region) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();

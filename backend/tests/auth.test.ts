@@ -522,236 +522,42 @@ describe("authentication API", () => {
   });
 });
 
-describe("client signup API", () => {
-  it.each([
-    ["omitted", undefined, null],
-    ["empty", "", null],
-    ["whitespace only", "   ", null],
-    ["provided", "  12 Garden Road, Bengaluru  ", "12 Garden Road, Bengaluru"]
-  ])("accepts an %s address and persists the normalized value", async (_label, address, expected) => {
+describe("retired client signup API", () => {
+  it.each(["new@example.test", "client@aurora.example", "ananya@lisno.example"])("requires a project invitation without disclosing account existence for %s", async email => {
     const repository = createMemoryRepository(structuredClone(demoSeedData));
-    const app = createApp({ repository, auth: { jwtSecret: JWT_SECRET, jwtExpiresInSeconds: 900 } });
-    const response = await request(app)
-      .post("/api/v1/auth/client-signup")
-      .send({ ...signupBody(), address });
-
-    expect(response.status).toBe(201);
-    expect(response.body.data.user.role).toBe("client");
-    expect(response.body.data.token).toEqual(expect.any(String));
-    expect(await repository.findUserByEmail("priya@example.com")).toMatchObject({ address: expected });
+    const users = await repository.listUsers();
+    const audits = await repository.listAuditEvents({});
+    const response = await request(createApp({ repository, auth: { jwtSecret: JWT_SECRET, jwtExpiresInSeconds: 900 } }))
+      .post("/api/v1/auth/client-signup").send(signupBody({ email }));
+    expect(response.status).toBe(403);
+    expect(response.body.error.code).toBe("CLIENT_INVITATION_REQUIRED");
+    expect(await repository.listUsers()).toEqual(users);
+    expect(await repository.listAuditEvents({})).toEqual(audits);
   });
 
-  it.each([null, 123, {}, []])("rejects a non-string address: %j", async (address) => {
-    const repository = createMemoryRepository(structuredClone(demoSeedData));
-    const app = createApp({ repository, auth: { jwtSecret: JWT_SECRET, jwtExpiresInSeconds: 900 } });
-    const response = await request(app)
-      .post("/api/v1/auth/client-signup")
-      .send({ ...signupBody(), address });
-
-    expect(response.status).toBe(400);
-    expect(response.body.error).toMatchObject({ code: "VALIDATION_ERROR", fields: { address: expect.any(String) } });
-    expect(await repository.findUserByEmail("priya@example.com")).toBeNull();
-  });
-
-  it("issues a fixed 24-hour token for client signup", async () => {
-    const response = await request(
-      createApp({
-        repository: createMemoryRepository(structuredClone(demoSeedData)),
-        auth: { jwtSecret: JWT_SECRET, jwtExpiresInSeconds: 86_400 }
-      })
-    )
-      .post("/api/v1/auth/client-signup")
-      .send(signupBody({ email: "fixed-expiry@example.com" }));
-
-    expect(response.status).toBe(201);
-    const timestamps = decodeTokenTimestamps(response.body.data.token as string);
-    expect(timestamps.exp - timestamps.iat).toBe(86_400);
-  });
-
-  it("creates an active client, claims every matching unclaimed project, and omits password fields", async () => {
+  it("never claims any matching unlinked project", async () => {
     const seed = structuredClone(demoSeedData);
-    seed.projects.push(
-      unclaimedProject("project-priya-home", "PRIYA@EXAMPLE.COM"),
-      unclaimedProject("project-priya-office", "priya@example.com"),
-      { ...unclaimedProject("project-priya-already-linked", "priya@example.com"), clientId: "user-client-aurora" }
-    );
+    seed.projects.push(unclaimedProject("project-unclaimed-one", "new@example.test"), unclaimedProject("project-unclaimed-two", "NEW@example.test"));
     const repository = createMemoryRepository(seed);
-    const response = await request(
-      createApp({ repository, auth: { jwtSecret: JWT_SECRET, jwtExpiresInSeconds: 900 } })
-    )
-      .post("/api/v1/auth/client-signup")
-      .send(signupBody({ email: "  Priya@Example.COM  " }));
-
-    expect(response.status).toBe(201);
-    expect(response.body.data.user.role).toBe("client");
-    expect(response.body.data.token).toEqual(expect.any(String));
-    expect(JSON.stringify(response.body)).not.toContain("password");
-    const stored = await repository.findUserByEmail("priya@example.com");
-    expect(stored).toMatchObject({ active: true, role: "client", email: "priya@example.com" });
-    expect(await bcrypt.compare("StrongPassword!23", stored!.passwordHash)).toBe(true);
-    const linkedProjects = await Promise.all([
-      repository.findProjectById("project-priya-home"),
-      repository.findProjectById("project-priya-office")
-    ]);
-    expect(linkedProjects.map(({ clientId }) => clientId)).toEqual([stored!.id, stored!.id]);
-    await expect(repository.findProjectById("project-priya-already-linked")).resolves.toMatchObject({ clientId: "user-client-aurora" });
-    expect(await repository.listAuditEvents({ actorId: stored!.id })).toEqual(expect.arrayContaining([
-      expect.objectContaining({ action: "client_signed_up", entityType: "user", entityId: stored!.id }),
-      expect.objectContaining({ action: "client_project_linked", entityType: "project", entityId: "project-priya-home" }),
-      expect.objectContaining({ action: "client_project_linked", entityType: "project", entityId: "project-priya-office" })
-    ]));
-
-    const app = createApp({
-      repository,
-      auth: { jwtSecret: JWT_SECRET, jwtExpiresInSeconds: 900 }
-    });
-    const login = await request(app).post("/api/v1/auth/login").send({
-      email: "PRIYA@example.com",
-      password: "StrongPassword!23"
-    });
-    const reload = await request(app)
-      .get("/api/v1/auth/me")
-      .set("Authorization", `Bearer ${login.body.data.token}`);
-
-    expect(login.status).toBe(200);
-    expect(reload.status).toBe(200);
-    expect(reload.body.data).toEqual(response.body.data.user);
+    await request(createApp({ repository, auth: { jwtSecret: JWT_SECRET, jwtExpiresInSeconds: 900 } }))
+      .post("/api/v1/auth/client-signup").send(signupBody({ email: "new@example.test" })).expect(403);
+    expect(await repository.findProjectById("project-unclaimed-one")).toMatchObject({ clientId: null });
+    expect(await repository.findProjectById("project-unclaimed-two")).toMatchObject({ clientId: null });
   });
 
-  it("rejects an email already used by either a client or internal role", async () => {
-    const app = createTestApp();
-    for (const email of ["client@aurora.example", "ananya@lisno.example"]) {
-      const response = await request(app).post("/api/v1/auth/client-signup").send(signupBody({ email }));
-      expect(response.status).toBe(409);
-      expect(response.body).toEqual({
-        error: { code: "ACCOUNT_EXISTS", message: "An account already exists for this email." }
-      });
-    }
-  });
-
-  it("validates confirmation and refuses unknown signup fields", async () => {
-    const response = await request(createTestApp())
-      .post("/api/v1/auth/client-signup")
+  it("continues to validate untrusted fields", async () => {
+    const response = await request(createTestApp()).post("/api/v1/auth/client-signup")
       .send({ ...signupBody({ passwordConfirmation: "DifferentPassword!23" }), role: "design_head" });
-
     expect(response.status).toBe(400);
-    expect(response.body).toEqual({
-      error: {
-        code: "VALIDATION_ERROR",
-        message: "Request validation failed.",
-        fields: {
-          role: "Unrecognized field: role.",
-          passwordConfirmation: "Passwords do not match."
-        }
-      }
-    });
+    expect(response.body.error.fields).toMatchObject({ role: expect.any(String), passwordConfirmation: expect.any(String) });
   });
 
-  it("rolls back the user and project claims when audit storage fails", async () => {
-    const seed = structuredClone(demoSeedData);
-    seed.projects.push(unclaimedProject("project-rollback", "rollback@example.com"));
-    const repository = createMemoryRepository(seed);
-    const response = await request(
-      createApp({ repository: failSignupAuditWrites(repository), auth: { jwtSecret: JWT_SECRET, jwtExpiresInSeconds: 900 } })
-    )
-      .post("/api/v1/auth/client-signup")
-      .send(signupBody({ email: "rollback@example.com" }));
-
-    expect(response.status).toBe(500);
-    await expect(repository.findUserByEmail("rollback@example.com")).resolves.toBeNull();
-    await expect(repository.findProjectById("project-rollback")).resolves.toMatchObject({ clientId: null });
-  });
-
-  it("allows only one concurrent signup for the same normalized email", async () => {
-    const repository = createMemoryRepository(structuredClone(demoSeedData));
-    const app = createApp({ repository, auth: { jwtSecret: JWT_SECRET, jwtExpiresInSeconds: 900 } });
-    const [first, second] = await Promise.all([
-      request(app).post("/api/v1/auth/client-signup").send(signupBody({ email: "duplicate@example.com" })),
-      request(app).post("/api/v1/auth/client-signup").send(signupBody({ email: "DUPLICATE@example.com" }))
-    ]);
-
-    expect([first.status, second.status].sort()).toEqual([201, 409]);
-    expect((await repository.listUsers()).filter((user) => user.emailNormalized === "duplicate@example.com")).toHaveLength(1);
-  });
-
-  it("links a project whose client lookup is forced to interleave with signup", async () => {
-    const base = createMemoryRepository(structuredClone(demoSeedData));
-    const interleaving = pauseUncoordinatedEmailLookup(
-      base,
-      "interleaved@example.com"
-    );
-    const app = createApp({
-      repository: interleaving.repository,
-      auth: { jwtSecret: JWT_SECRET, jwtExpiresInSeconds: 900 },
-      developmentDemoAuthorization: developmentDemoAuthentication()
-    });
-    const projectService = createProjectService(
-      interleaving.repository,
-      createAuditService(interleaving.repository),
-      () => new Date("2026-07-28T12:00:00.000Z")
-    );
-    const projectRequest = Promise.resolve(
-      projectService.create(
-        {
-          id: "user-designer-ananya",
-          name: "Ananya Rao",
-          email: "ananya@lisno.example",
-          role: "designer"
-        },
-        {
-          name: "Interleaved project",
-          clientName: "Interleaved Client",
-          clientEmail: " Interleaved@Example.COM ",
-          clientMobile: "+91 90000 00000",
-          clientAddress: "12 Interleave Road",
-          assignedDesignerIds: ["user-designer-ananya"],
-          managerId: "user-manager-aarav",
-          location: "Bengaluru",
-          plannedStartAt: "2026-08-01T09:00:00.000Z",
-          plannedEndAt: "2026-10-01T17:00:00.000Z"
-        }
-      )
-    );
-    const firstOperation = await Promise.race([
-      interleaving.observed.then(() => "lookup" as const),
-      projectRequest.then(() => "project" as const)
-    ]);
-
-    let signupResponse;
-    if (firstOperation === "lookup") {
-      signupResponse = await request(app)
-        .post("/api/v1/auth/client-signup")
-        .send(signupBody({ email: "interleaved@example.com" }));
-      interleaving.releaseLookup();
-    } else {
-      signupResponse = await request(app)
-        .post("/api/v1/auth/client-signup")
-        .send(signupBody({ email: "interleaved@example.com" }));
-    }
-    const projectResponse = await projectRequest;
-
-    expect(signupResponse.status).toBe(201);
-    expect(await base.findProjectById(projectResponse.id)).toMatchObject({
-      clientId: signupResponse.body.data.user.id,
-      clientEmailNormalized: "interleaved@example.com"
-    });
-  });
-
-  it("throttles login and signup attempts until the configured fixed window expires", async () => {
+  it("throttles login and retired signup attempts until the fixed window expires", async () => {
     let now = new Date("2026-07-28T00:00:00.000Z");
-    const app = createApp({
-      repository: createMemoryRepository(structuredClone(demoSeedData)),
-      auth: { jwtSecret: JWT_SECRET, jwtExpiresInSeconds: 900 },
-      clock: () => now,
-      authRateLimit: { windowMs: 15 * 60_000, maxAttempts: 2 }
-    });
+    const app = createApp({ repository: createMemoryRepository(structuredClone(demoSeedData)), auth: { jwtSecret: JWT_SECRET, jwtExpiresInSeconds: 900 }, clock: () => now, authRateLimit: { windowMs: 15 * 60_000, maxAttempts: 2 } });
     await request(app).post("/api/v1/auth/login").send({ email: "missing@example.com", password: "wrong" }).expect(401);
-    await request(app).post("/api/v1/auth/client-signup").send(signupBody({ email: "missing@example.com" })).expect(201);
-    const limited = await request(app).post("/api/v1/auth/login").send({ email: "missing@example.com", password: "wrong" });
-    expect(limited.status).toBe(429);
-    expect(limited.body).toEqual({
-      error: { code: "TOO_MANY_ATTEMPTS", message: "Please try again later." }
-    });
+    await request(app).post("/api/v1/auth/client-signup").send(signupBody({ email: "missing@example.com" })).expect(403);
+    await request(app).post("/api/v1/auth/login").send({ email: "missing@example.com", password: "wrong" }).expect(429);
     now = new Date("2026-07-28T00:15:00.000Z");
     await request(app).post("/api/v1/auth/login").send({ email: "missing@example.com", password: "wrong" }).expect(401);
   });
@@ -1029,13 +835,8 @@ describe("human authentication request boundary", () => {
       expect(login.body.error.code).toBe("INVALID_CREDENTIALS");
       expect(reload.status).toBe(401);
       expect(reload.body.error.code).toBe("INVALID_TOKEN");
-      expect(signup.status).toBe(401);
-      expect(signup.body).toEqual({
-        error: {
-          code: "INVALID_CREDENTIALS",
-          message: "Invalid email or password."
-        }
-      });
+      expect(signup.status).toBe(403);
+      expect(signup.body.error.code).toBe("CLIENT_INVITATION_REQUIRED");
     }
   );
 
@@ -1120,7 +921,7 @@ describe("human authentication request boundary", () => {
 
 describe("reserved Client signup boundary", () => {
   it.each(RESERVED_DEMO_IDENTITIES)(
-    "returns ACCOUNT_EXISTS without starting writes for $emailNormalized",
+    "requires invitation without starting writes for $emailNormalized",
     async ({ emailNormalized }) => {
       const repository = createMemoryRepository(structuredClone(demoSeedData));
       const runInTransaction = vi.spyOn(repository, "runInTransaction");
@@ -1138,11 +939,11 @@ describe("reserved Client signup boundary", () => {
         .post("/api/v1/auth/client-signup")
         .send(signupBody({ email: `  ${emailNormalized.toUpperCase()}  ` }));
 
-      expect(response.status).toBe(409);
+      expect(response.status).toBe(403);
       expect(response.body).toEqual({
         error: {
-          code: "ACCOUNT_EXISTS",
-          message: "An account already exists for this email."
+          code: "CLIENT_INVITATION_REQUIRED",
+          message: "Client accounts are created by accepting a project invitation. Existing clients can continue to sign in."
         }
       });
       expect(runInTransaction).not.toHaveBeenCalled();
@@ -1154,7 +955,7 @@ describe("reserved Client signup boundary", () => {
     }
   );
 
-  it("keeps reserved-email precedence over remote built-in-secret denial", async () => {
+  it("requires invitation for reserved identities without starting writes", async () => {
     const repository = createMemoryRepository(structuredClone(demoSeedData));
     const runInTransaction = vi.spyOn(repository, "runInTransaction");
     const createUser = vi.spyOn(repository, "createUser");
@@ -1173,8 +974,8 @@ describe("reserved Client signup boundary", () => {
       .post("/api/v1/auth/client-signup")
       .send(signupBody({ email: "  CLIENT@AURORA.EXAMPLE " }));
 
-    expect(response.status).toBe(409);
-    expect(response.body.error.code).toBe("ACCOUNT_EXISTS");
+    expect(response.status).toBe(403);
+    expect(response.body.error.code).toBe("CLIENT_INVITATION_REQUIRED");
     expect(runInTransaction).not.toHaveBeenCalled();
     expect(createUser).not.toHaveBeenCalled();
     expect(linkProjects).not.toHaveBeenCalled();

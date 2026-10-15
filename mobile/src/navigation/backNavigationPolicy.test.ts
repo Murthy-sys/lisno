@@ -24,6 +24,7 @@ const homeByRole: Record<Role, string> = {
   estimator_sales: "leads",
   designer: "projects",
   procurement: "work",
+  program_manager: "execution",
   finance_head: "work",
   site_manager: "work",
   worker_electrician: "work",
@@ -34,7 +35,8 @@ const homeByRole: Record<Role, string> = {
   worker_other: "work",
   design_manager: "team",
   design_head: "organization",
-  client: "projects"
+  client: "projects",
+  vendor: "vendor-work"
 };
 
 function session(
@@ -144,6 +146,12 @@ describe("mobile Back route state", () => {
 });
 
 describe("mobile Back home and fallback policy", () => {
+  it("returns a direct Ask Lisno link to Client Projects and pops to an observed originating screen", () => {
+    const assistant = feature("ask-lisno");
+    expect(resolveBackAction(stack([assistant]), session("client"), fence, new BackEntryOwnership())).toEqual({ kind: "replace", path: "/feature/projects" });
+    const routes = [feature("projects"), record("projects", "project-a"), assistant];
+    expect(resolveBackAction(stack(routes), session("client"), fence, observedHistory(routes))).toEqual({ kind: "pop", count: 1 });
+  });
   it("returns a direct vendor KPI detail to the role's vendor entry", () => {
     expect(resolveBackAction(stack([vendor()]), session("procurement"), fence, new BackEntryOwnership())).toEqual({ kind: "replace", path: "/feature/procurement-vendors" });
     expect(resolveBackAction(stack([vendor("vendor-a", "configuration")]), session("super_admin"), fence, new BackEntryOwnership())).toEqual({ kind: "replace", path: "/feature/configuration" });

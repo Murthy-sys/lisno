@@ -1,0 +1,19 @@
+import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { Text } from "react-native";
+import { Button, Field } from "../../ui/primitives";
+import { createIdempotencyKey } from "../finance/money";
+import { buildPolicyCommand } from "./executionModel";
+import type { ExecutionPolicy } from "./executionTypes";
+import { AccessLost, CommandFeedback, p, Panel, QueryState, ScopeMismatch, unavailable, useDeliveryCommand, useDeliveryGuard, type DeliveryContext } from "./executionNative";
+export function ExecutionPolicyPanel({ context: c, projectId }: { context: DeliveryContext; projectId: string }) {
+  const allowed = c.can("GET /projects/:projectId/execution-policy") && c.can("PUT /projects/:projectId/execution-policy");
+  const query = useQuery({ queryKey: c.key("policy", projectId), queryFn: ({ signal }) => c.execution.policy(projectId, signal), enabled: allowed && c.ready, retry: false });
+  const [draft, setDraft] = useState<ExecutionPolicy | null>(null); const [reason, setReason] = useState("");
+  const command = useDeliveryCommand(async () => { await Promise.all([query.refetch(), c.refresh()]); }); useDeliveryGuard(c, Boolean(draft || reason), command.locked);
+  if (!allowed || unavailable(query.error) || command.accessLost) return <AccessLost title="Reporting schedule unavailable" />;
+  const saved = !query.isError && query.data?.projectId === projectId ? query.data : null; const current = draft ?? saved;
+  const edit = (key: "timezone" | "reminderTime" | "deadlineTime" | "escalationTime" | "effectiveDate", value: string) => { if (current) setDraft({ ...current, [key]: value }); };
+  function submit() { if (!saved || !current || c.locked) return; try { const body = buildPolicyCommand(saved, current, reason, createIdempotencyKey()); void command.execute(async () => { const updated = await c.execution.savePolicy(projectId, body); if (updated.projectId !== projectId) throw new Error("The schedule response belongs to another project."); return updated; }, () => { setDraft(null); setReason(""); }); } catch (cause) { command.validation(cause instanceof Error ? cause.message : "Review the schedule."); } }
+  return <Panel title="Project reporting schedule"><QueryState title="Reporting schedule" query={query} />{query.data && !query.isError && !saved ? <ScopeMismatch /> : null}{saved && current ? <><Text style={p.copy}>Changes apply to future full reporting days. Recorded deadlines and missed reports remain in history.</Text><Field label="Timezone" value={current.timezone} editable={!c.locked} autoCapitalize="none" onChangeText={value => edit("timezone", value)} /><Field label="Daily reminder (HH:MM)" value={current.reminderTime} editable={!c.locked} maxLength={5} onChangeText={value => edit("reminderTime", value)} /><Field label="Daily update deadline (HH:MM)" value={current.deadlineTime} editable={!c.locked} maxLength={5} onChangeText={value => edit("deadlineTime", value)} /><Field label="Daily escalation (HH:MM)" value={current.escalationTime} editable={!c.locked} maxLength={5} onChangeText={value => edit("escalationTime", value)} /><Field label="Effective date (YYYY-MM-DD)" value={current.effectiveDate} editable={!c.locked} maxLength={10} onChangeText={value => edit("effectiveDate", value)} /><Field label="Reason for schedule change" value={reason} editable={!c.locked} multiline maxLength={2000} onChangeText={setReason} />{saved.version !== current.version ? <Text style={p.error}>The saved schedule changed. Discard your draft to load the current schedule.</Text> : null}<Button label="Save reporting schedule" disabled={c.locked || query.isFetching || saved.version !== current.version} onPress={submit} /><Button label="Discard schedule changes" variant="quiet" disabled={command.pending || command.uncertain} onPress={() => { setDraft(null); setReason(""); }} /></> : null}<CommandFeedback command={command} /></Panel>;
+}

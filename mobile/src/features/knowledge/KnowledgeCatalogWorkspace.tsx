@@ -6,6 +6,7 @@ import type { KnowledgeBasket, KnowledgeItemDetail, KnowledgeItemListItem, Knowl
 import type { AuthenticatedSession } from "../../contracts/session";
 import { Button, Field, StateView } from "../../ui/primitives";
 import { KnowledgeBasketDeletion, KnowledgeBasketEditor, KnowledgeCatalogManagement } from "./KnowledgeCatalogManagement";
+import { BasketRequestsReviewWorkspace } from "../vendor-requests/MyRequestsWorkspace";
 import { KnowledgeReusableValues } from "./KnowledgeReusableValues";
 import { KnowledgeItemWorkspace } from "./KnowledgeItemWorkspace";
 import { allKnowledgePages, useKnowledgeContext, type KnowledgeMobileContext } from "./knowledgeRuntime";
@@ -56,6 +57,7 @@ function KnowledgeCatalogContent({ session, context }: KnowledgeCatalogWorkspace
   const [createBasket, setCreateBasket] = useState(false);
   const [management, setManagement] = useState(false);
   const [reusable, setReusable] = useState(false);
+  const [reviewRequests, setReviewRequests] = useState(false);
   const params: KnowledgeListParams = { search: appliedSearch, ...Object.fromEntries(Object.entries(appliedFilters).filter(([, value]) => value)), limit: PAGE_SIZE, offset };
   const items = useQuery({ queryKey: context.key("catalog", params), queryFn: () => context.api.listKnowledgeItems(params), enabled: context.ready && context.canRead });
   const baskets = useQuery({ queryKey: context.key("baskets", "catalog"), queryFn: () => allKnowledgePages(page => context.api.listKnowledgeBaskets(page)), enabled: context.ready && context.canRead });
@@ -115,6 +117,7 @@ function KnowledgeCatalogContent({ session, context }: KnowledgeCatalogWorkspace
     setEditingItemId(null);
     void refreshRenamedCatalog();
   }
+  if (reviewRequests) return <BasketRequestsReviewWorkspace session={session} onBack={() => setReviewRequests(false)} />;
   if (selectedId) return <KnowledgeItemWorkspace session={session} mainLineId={selectedId} onBack={() => setSelectedId(null)} onOpenItem={setSelectedId} />;
   const apply = () => { setAppliedSearch(search.trim()); setAppliedFilters({ ...filters }); setOffset(0); setFilterOpen(false); };
   function openAction(action: KnowledgeCatalogAction) {
@@ -131,6 +134,7 @@ function KnowledgeCatalogContent({ session, context }: KnowledgeCatalogWorkspace
       canCreate={context.canCreate} onAction={openAction}
       onBack={back.onBack} backVisible={back.visible} backDisabled={back.disabled}
     />
+    <Button label="Review basket requests" variant="secondary" onPress={() => setReviewRequests(true)} />
     {filtered ? <Button label="Clear filters" variant="quiet" onPress={() => { setSearch(""); setAppliedSearch(""); setFilters(EMPTY_FILTERS); setAppliedFilters(EMPTY_FILTERS); setOffset(0); }} /> : null}
     {items.isPending ? <KnowledgeText>Loading configuration…</KnowledgeText> : null}
     {items.isError ? <StateView title="Configuration unavailable" message={catalogError(items.error)} actionLabel="Retry configuration" onAction={() => void items.refetch()} /> : null}

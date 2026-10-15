@@ -58,7 +58,7 @@ export type PurchaseOrderRequestSubmitInput = z.infer<typeof purchaseOrderReques
 export type PurchaseOrderRequestQuoteInput = z.infer<typeof purchaseOrderRequestQuoteSchema>;
 export type PurchaseOrderRequestDecisionInput = z.infer<typeof purchaseOrderRequestDecisionSchema>;
 export type PurchaseOrderRequestQuery = z.infer<typeof purchaseOrderRequestQuerySchema>;
-export type PurchaseOrderRequestStatus = "pending_approval" | "changes_requested" | "rejected" | "approved";
+export type PurchaseOrderRequestStatus = "pending_approval" | "changes_requested" | "rejected" | "ready_to_issue" | "approved";
 export type PurchaseOrderRequestTotals = { netPaise: number; gstPaise: number; totalPaise: number };
 export type PurchaseOrderRequestLine = ApprovedPurchaseOrderLine & {
   vendorId: string;

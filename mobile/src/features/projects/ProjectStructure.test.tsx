@@ -15,7 +15,7 @@ jest.mock("expo-router", () => ({ router: { push: (...args: unknown[]) => mockPu
 jest.mock("../../navigation/AdaptiveAppScaffold", () => {
   const React = jest.requireActual("react") as typeof import("react");
   const { View } = jest.requireActual("react-native") as typeof import("react-native");
-  return { ScaffoldContentBack: () => React.createElement(View, { testID: "content-back" }) };
+  return { useScaffoldNavigationGuard: () => null, useScaffoldNavigationBlocked: () => false, ScaffoldContentBack: () => React.createElement(View, { testID: "content-back" }) };
 });
 jest.mock("../design/DesignVersionWorkspace", () => {
   const React = jest.requireActual("react") as typeof import("react");
@@ -84,7 +84,7 @@ const ALL_TABS = ["Information", "Estimation", "Designs", "Documents", "Team", "
 /** A real authorization snapshot: operation gates and the messages feature are resolved by the production helpers. */
 function session(role: Role, permissions: readonly string[] = []): AuthenticatedSession {
   return {
-    user: { id: `session-${role}`, name: "Signed-in user", email: `${role}@example.test`, role },
+    user: { id: role === "designer" ? "user-designer-7" : `session-${role}`, name: "Signed-in user", email: `${role}@example.test`, role },
     authorization: { role, policyVersion: AUTHORIZATION_POLICY_VERSION, permissions: [...permissions] }
   } as AuthenticatedSession;
 }
@@ -173,7 +173,7 @@ function palmHierarchy(overrides: Record<string, unknown> = {}): Record<string, 
             id: "stage-concept",
             name: "Concept mood board",
             tasks: [
-              { id: "task-moodboard", title: "Prepare living room moodboard", status: "in_progress", progress: 40, version: 2, ownerId: "user-designer-7" },
+              { id: "task-moodboard", projectId: "project-palm", title: "Prepare living room moodboard", status: "in_progress", progress: 40, version: 2, ownerId: "user-designer-7" },
               { id: "task-palette", title: "Finalise colour palette", status: "not_started", progress: 0, ownerId: "user-designer-7" }
             ]
           }
@@ -208,7 +208,7 @@ function clientEstimates() {
     { id: "estimate-garden", projectId: "project-garden", status: "client_approved", designPlanStatus: "ready_for_client", total: 420000, lineItems: [], lead: { projectName: "Garden Court", location: "Thrissur" } },
     { id: "estimate-harbour", projectId: "project-harbour", status: "sent_to_client", designPlanStatus: null, total: 990000, lineItems: [], lead: { projectName: "Harbour House", location: "Kochi" } },
     { id: "estimate-pending", projectId: null, status: "sent_to_client", designPlanStatus: null, total: 760000, lineItems: [], lead: { projectName: "Unlinked home" } }
-  ];
+  ].map(estimate => ({ ...estimate, version: 1, publishedReview: { id: `round-${estimate.id}`, version: 1, estimateVersion: 1, sendGeneration: 1, status: estimate.status === "client_approved" ? "approved" : "pending", submittedAt: "2026-10-14T00:00:00Z", canDecide: true, snapshot: { projectName: estimate.lead.projectName, clientName: "Synthetic client", location: "Kerala", lineItems: [], total: estimate.total, subtotal: estimate.total, gst: 0 } } }));
 }
 
 function versionsPayload(items: readonly Record<string, unknown>[]) {
@@ -792,6 +792,7 @@ describe("ProjectStructure project detail page", () => {
       // Start a task edit, then leave the tab.
       await fireEvent.press(within(view.getByTestId("project-structure-panel")).getByRole("button", { name: "Update task" }));
       await fireEvent.changeText(view.getByLabelText("Progress percentage"), "65");
+      await fireEvent.press(view.getByRole("combobox", { name: "Task status" }));
       await fireEvent.press(view.getByRole("radio", { name: "in review" }));
 
       await openTab(view, "Information");
@@ -808,7 +809,7 @@ describe("ProjectStructure project detail page", () => {
       // Back on Tasks, the edit is exactly where it was left.
       await openTab(view, "Tasks");
       expect(view.getByLabelText("Progress percentage")).toHaveDisplayValue("65");
-      expect(view.getByRole("radio", { name: "in review" })).toBeSelected();
+      expect(within(view.getByRole("combobox", { name: "Task status" })).getByText("in review")).toBeTruthy();
       expect(view.getByRole("button", { name: "Save task" })).toBeTruthy();
       expect(view.queryByRole("button", { name: "Update task" })).toBeNull();
       expect(view.getAllByTestId(/^project-tab-panel-/, { includeHiddenElements: true }).map((panel) => panel.props.testID)).toEqual(["project-tab-panel-information", "project-tab-panel-tasks"]);
@@ -924,6 +925,20 @@ describe("ProjectStructure project detail page", () => {
   });
 
   describe("⋮ project actions menu", () => {
+    it("opens private Ask Lisno with the current project only for an authorized Client", async () => {
+      const view = await renderProject(gardenClientView(), session("client", ["ask_lisno.request"]));
+      await fireEvent.press(view.getByRole("button", { name: "More project actions" }));
+      await fireEvent.press(within(actionsMenu(view)).getByRole("menuitem", { name: "Ask Lisno" }));
+      expect(mockPush).toHaveBeenCalledWith({ pathname: "/feature/[featureId]", params: { featureId: "ask-lisno", projectId: "project-garden" } });
+      await view.unmount();
+      for (const activeSession of [session("client"), session("admin", ["ask_lisno.request"])]) {
+        const denied = await renderProject(gardenClientView(), activeSession);
+        await fireEvent.press(denied.getByRole("button", { name: "More project actions" }));
+        expect(within(actionsMenu(denied)).queryByRole("menuitem", { name: "Ask Lisno" })).toBeNull();
+        await denied.unmount();
+      }
+    });
+
     it("opens expanded, refreshes once and closes, and hides Project messages without the messages feature", async () => {
       setWindow(390);
       const onRefresh = jest.fn();

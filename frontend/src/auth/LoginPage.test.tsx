@@ -168,14 +168,14 @@ describe("LoginPage", () => {
     expect(screen.getByRole("button", { name: "Show password" })).toBeVisible();
   });
 
-  it("links prospective clients to the account signup form", async () => {
+  it("explains invitation access to prospective clients", async () => {
     renderApp(["/login"]);
 
-    const createAccount = screen.getByRole("link", { name: "Create an account" });
+    const createAccount = screen.getByRole("link", { name: "Join with an invitation" });
     expect(createAccount).toHaveAttribute("href", "/signup");
     await userEvent.click(createAccount);
 
-    expect(await screen.findByRole("heading", { name: "Create your client account" })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Join through your project invitation" })).toBeVisible();
   });
 
   it("links to the literal forgot-password route in keyboard order", () => {

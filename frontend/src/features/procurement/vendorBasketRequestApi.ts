@@ -1,9 +1,10 @@
-import type { ProposalTarget } from "../vendor-basket-proposals/proposalTypes";
+import type { ProposalRequestMode, ProposalTarget } from "../vendor-basket-proposals/proposalTypes";
 import { apiClient, type PaginatedData } from "../../api/client";
 
 export type VendorBasketRequestStatus = "pending" | "fulfilled" | "rejected";
 
 export interface VendorBasketRequest {
+  readonly requestMode?: ProposalRequestMode;
   readonly target?: ProposalTarget;
   readonly targetParentName?: string | null;
   kind?: "configuration_proposal" | "name_only";

@@ -1,3 +1,4 @@
+import { procurementBasketReconciliationSchema } from "../services/procurement-basket-reconciliation.service.js";
 import { Router, type RequestHandler } from "express";
 import { z } from "zod";
 import { procurementBasketAwardCreateSchema, procurementBasketAwardDecisionSchema, procurementBasketAwardPreviewSchema,
@@ -81,6 +82,11 @@ export function createProcurementBasketTenderRouter(auth: AuthService, basket: P
   router.put(enquiryDetail, authenticate(auth), requireOperation(`PUT ${enquiryDetail}`), privatePolicy,
     validateBody(procurementBasketEnquiryUpdateSchema), async (request, response, next) => {
       try { response.json({ data: await enquiry.update(request.authenticatedUser!, String(request.params.projectId),
+        String(request.params.basketId), String(request.params.enquiryId), request.body) }); } catch (error) { next(error); }
+    });
+  router.post(`${enquiryDetail}/reconcile-source`, authenticate(auth), requireOperation(`POST ${enquiryDetail}/reconcile-source`),
+    privatePolicy, validateBody(procurementBasketReconciliationSchema), async (request, response, next) => {
+      try { response.json({ data: await enquiry.reconcileSource(request.authenticatedUser!, String(request.params.projectId),
         String(request.params.basketId), String(request.params.enquiryId), request.body) }); } catch (error) { next(error); }
     });
   router.post(`${enquiryDetail}/dispatch`, authenticate(auth), requireOperation(`POST ${enquiryDetail}/dispatch`),

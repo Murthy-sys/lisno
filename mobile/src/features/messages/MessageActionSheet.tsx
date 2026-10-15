@@ -1,4 +1,4 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   KeyboardAvoidingView,
@@ -13,13 +13,17 @@ import {
 } from "react-native";
 
 import type { AuthenticatedSession } from "../../contracts/session";
-import { ApiError } from "../../core/http/apiClient";
+import { ApiError, ApiProtocolError } from "../../core/http/apiClient";
 import { useConfiguredRuntime } from "../../runtime/RuntimeProvider";
 import { colors, fonts, radii, spacing } from "../../ui/tokens";
-import { createClientMessageId, type PresentedMessage } from "./chatModel";
+import { Button, Field } from "../../ui/primitives";
+import { KnowledgeSelect } from "../knowledge/knowledgeUi";
+import { isChatDueDate } from "./chatDraftMetadata";
+import { requireChatParticipantPage, buildChatParticipantsPath } from "./chatParticipants";
+import { createClientMessageId, presentMessage, type PresentedMessage } from "./chatModel";
 import { chatQueryKeys } from "./chatQueryKeys";
 
-export type MessageIssueAction = "raise" | "escalate" | "resolve" | "reopen" | "lower" | "clear";
+export type MessageIssueAction = "raise" | "escalate" | "resolve" | "reopen" | "lower" | "clear" | "assign" | "reschedule";
 
 export interface MessageActionOption {
   readonly action: MessageIssueAction;
@@ -38,16 +42,18 @@ export function messageIssueActions(message: PresentedMessage): readonly Message
   if (message.capabilities.canResolve && message.issueStatus === "open") {
     actions.push({ action: "resolve", label: "Resolve issue" });
     if (message.priority === "critical") actions.push({ action: "lower", label: "Lower to important" });
-    actions.push({ action: "clear", label: "Clear priority", destructive: true });
+    if (!message.action) actions.push({ action: "clear", label: "Clear priority", destructive: true });
   }
   if (message.capabilities.canReopen && message.issueStatus === "resolved") {
     actions.push({ action: "reopen", label: "Reopen issue" });
   }
+  if ((message.capabilities.canAssign || message.capabilities.canAssignSelf) && message.priority !== "normal") actions.push({ action: "assign", label: "Change responsible person" });
+  if (message.action && message.capabilities.canReschedule) actions.push({ action: "reschedule", label: "Change due date" });
   return actions;
 }
 
 export function issueActionNeedsNote(action: MessageIssueAction): boolean {
-  return ["resolve", "reopen", "lower", "clear"].includes(action);
+  return ["resolve", "reopen", "lower", "clear", "reschedule"].includes(action);
 }
 
 function issueError(error: unknown): string {
@@ -88,10 +94,15 @@ export function MessageActionSheet({
     environmentId: context.environment.environment.id,
     userId: session.user.id
   }), [context.environment.environment.id, session.user.id]);
+  const ownerKey = `${scope.environmentId}:${context.environment.generation}:${context.session?.generation}:${session.user.id}:${projectId}`; const owner = useRef(ownerKey); owner.current = ownerKey;
+  useEffect(() => () => { owner.current = ""; }, []);
+  const latestMessage = useRef(message); latestMessage.current = message;
+  const [expectedVersion, setExpectedVersion] = useState(message?.version ?? 0); const [responsibleUserId, setResponsible] = useState(""); const [dueDate, setDueDate] = useState(""); const [needsRefresh, setNeedsRefresh] = useState(false);
   const [action, setAction] = useState<MessageIssueAction | null>(null);
   const [priority, setPriority] = useState<"important" | "critical">("important");
   const [note, setNote] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const participants = useQuery({ queryKey: chatQueryKeys.participants(scope, projectId), queryFn: async ({ signal }) => requireChatParticipantPage(await context.runtime.api.authenticated.get(buildChatParticipantsPath(projectId), { signal })), enabled: visible && action === "assign" && session.authorization.permissions.includes("chat.read"), retry: false });
   const attempt = useRef<{ payload: string; key: string } | null>(null);
   const replyAvailable = !readOnly && canReply && session.authorization.permissions.includes("chat.send");
   const canIssue = !readOnly && session.authorization.permissions.includes("chat.issue");
@@ -106,7 +117,7 @@ export function MessageActionSheet({
       setPriority("important");
       setNote("");
       setError(null);
-      attempt.current = null;
+      attempt.current = null; setNeedsRefresh(false);
     }
   }, [visible]);
 
@@ -118,51 +129,61 @@ export function MessageActionSheet({
 
   const mutation = useMutation({
     retry: false,
+    onMutate: () => ({ ownerKey }),
     mutationFn: async () => {
-      if (!message || !action || !issueActions.some((option) => option.action === action)) {
+      if (!message || expectedVersion !== message.version || needsRefresh || !action || !issueActions.some((option) => option.action === action)) {
         throw new Error("Choose an available issue action.");
       }
       if (issueActionNeedsNote(action) && !note.trim()) {
         throw new Error("Add a brief reason or resolution note.");
       }
+      if (action === "assign" && (participants.isError || participants.isFetching || !participants.data || responsibleUserId && !participants.data.items.some(person => person.id === responsibleUserId && (message.capabilities.canAssign || person.id === session.user.id)) || !responsibleUserId && (!message.capabilities.canAssign || Boolean(message.action)))) throw new Error("Choose a current responsible participant.");
+      if (action === "reschedule" && !isChatDueDate(dueDate)) throw new Error("Enter a valid due date.");
       const actionInput = {
         action,
-        expectedVersion: message.version,
+        expectedVersion,
+        ...(action === "assign" ? { responsibleUserId: responsibleUserId || null } : {}),
+        ...(action === "reschedule" ? { dueDate } : {}),
         ...(action === "raise" ? { priority } : {}),
         ...(issueActionNeedsNote(action) ? { note: note.trim() } : {})
       };
-      const fingerprint = JSON.stringify(actionInput);
+      const fingerprint = JSON.stringify({ projectId, messageId: message.id, ...actionInput });
       if (!attempt.current || attempt.current.payload !== fingerprint) {
         attempt.current = { payload: fingerprint, key: createClientMessageId() };
       }
-      return context.runtime.api.authenticated.patch(
+      const frozen = ownerKey; const value = await context.runtime.api.authenticated.patch(
         `/projects/${encodeURIComponent(projectId)}/chat/messages/${encodeURIComponent(message.id)}/issue`,
         { ...actionInput, idempotencyKey: attempt.current.key }
       );
+      const result = presentMessage(value);
+      if (!result || result.id !== message.id || result.projectId !== projectId || result.version <= expectedVersion) throw new ApiProtocolError();
+      return { result, ownerKey: frozen };
     },
-    onSuccess: async () => {
+    onSuccess: async (acknowledgement) => {
+      if (acknowledgement.ownerKey !== owner.current) return;
       attempt.current = null;
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: chatQueryKeys.project(scope, projectId) }),
         queryClient.invalidateQueries({ queryKey: chatQueryKeys.conversations(scope) })
-      ]);
-      await onRefresh();
-      onClose();
+      ]).catch(() => undefined);
+      await Promise.resolve(onRefresh()).catch(() => undefined);
+      if (owner.current === acknowledgement.ownerKey) onClose();
     },
-    onError: async (cause) => {
+    onError: async (cause, _variables, operation) => {
+      if (operation?.ownerKey !== owner.current) return;
       if (cause instanceof ApiError && cause.code !== "CHAT_CLOSED" && [401, 403, 404].includes(cause.status)) {
         setError("This conversation is unavailable.");
         await onDenied();
         return;
       }
       setError(issueError(cause));
-      if (cause instanceof ApiError && cause.status === 409) await onRefresh();
+      if (cause instanceof ApiError && cause.status === 409) { setNeedsRefresh(true); await onRefresh(); }
     }
   });
 
   if (!message) return null;
   const selectedOption = issueActions.find((option) => option.action === action);
-  const actionAvailable = Boolean(selectedOption);
+  const actionAvailable = Boolean(selectedOption) && !needsRefresh && expectedVersion === message.version;
   const dismiss = () => {
     if (mutation.isPending) return;
     if (action) {
@@ -192,6 +213,10 @@ export function MessageActionSheet({
               <Text accessibilityRole="header" style={styles.title}>{selectedOption?.label ?? "Message actions"}</Text>
               <Text numberOfLines={2} style={styles.preview}>{message.author}: {message.body || "Attachment"}</Text>
             </View>
+            {message.issueHistory?.length ? <View><Text style={styles.preview}>Recent issue history</Text>{message.issueHistory.map(event => <Text key={event.id} style={styles.preview}>{event.actor.name} · {event.action.replaceAll("_", " ")} · {event.occurredAt}{event.note ? `\n${event.note}` : ""}</Text>)}</View> : null}
+            {message.responsible ? <Text style={styles.preview}>Responsible: {message.responsible.name}{message.responsible.available ? "" : " (unavailable)"}</Text> : null}
+            {message.action ? <Text style={styles.preview}>{message.action.typeName} · Due {message.action.dueDate} · Original due {message.action.originalDueDate}</Text> : null}
+            {action && (needsRefresh || expectedVersion !== message.version) ? <Button label="Refresh and review issue changes" disabled={mutation.isPending} onPress={() => void Promise.resolve(onRefresh()).then(() => { setExpectedVersion(latestMessage.current?.version ?? 0); setNeedsRefresh(false); setError(null); }).catch(() => setError("The latest issue could not be loaded. Try refreshing again."))} /> : null}
             {error ? <Text accessibilityLiveRegion="assertive" style={styles.error}>{error}</Text> : null}
             {!action ? (
               <View style={styles.menu}>
@@ -214,7 +239,7 @@ export function MessageActionSheet({
                     key={option.action}
                     accessibilityRole="button"
                     onPress={() => {
-                      setAction(option.action);
+                      setAction(option.action); setExpectedVersion(message.version); setNeedsRefresh(false); setResponsible(message.capabilities.canAssign ? message.responsible?.id ?? "" : session.user.id); setDueDate(message.action?.dueDate ?? "");
                       setError(null);
                     }}
                     style={({ pressed }) => [styles.menuAction, pressed ? styles.pressed : null]}
@@ -245,6 +270,9 @@ export function MessageActionSheet({
                     ))}
                   </View>
                 ) : null}
+                {action === "assign" ? <KnowledgeSelect label="Responsible participant" value={responsibleUserId} placeholder={message.action ? "Choose participant" : "Unassigned"} allowEmpty={message.capabilities.canAssign && !message.action} options={(participants.data?.items ?? []).filter(person => message.capabilities.canAssign || person.id === session.user.id).map(person => ({ value: person.id, label: `${person.name} · ${person.role.replaceAll("_", " ")}` }))} disabled={mutation.isPending || participants.isFetching || participants.isError} onChange={setResponsible} /> : null}
+                {action === "assign" && participants.isError ? <Button label="Refresh issue participants" onPress={() => void participants.refetch()} /> : null}
+                {action === "reschedule" ? <Field label="New due date (YYYY-MM-DD)" value={dueDate} onChangeText={setDueDate} maxLength={10} editable={!mutation.isPending} /> : null}
                 {issueActionNeedsNote(action) ? (
                   <View style={styles.field}>
                     <Text style={styles.fieldLabel}>{action === "resolve" ? "Resolution note" : "Reason"}</Text>

@@ -350,7 +350,7 @@ function DrawingRow({ drawing, revision, workspace, planWorkspace, canReview, pl
         setError(null);
         try {
           const pageDocument = projectDrawingDocumentToPage(current.annotations, current.placement!.crop, current.placement!.page);
-          const preview = await previewClientPlanTargets(context.runtime, current.placement!.page.id, pageDocument);
+          const preview = await previewClientPlanTargets(context.runtime, current.placement!.page.id, pageDocument, current.placement!.page.reviewRoundId);
           if (!preview.targets.some((target) => target.drawingId === drawing.id)) {
             throw new DrawingSelectionError("The marks no longer overlap this drawing. Refresh and mark the current drawing again.");
           }
@@ -373,6 +373,7 @@ function DrawingRow({ drawing, revision, workspace, planWorkspace, canReview, pl
         return;
       }
       await action(() => submitClientPlanRequest(context.runtime, current.placement!.page.id, {
+        ...(current.placement!.page.reviewRoundId ? { reviewRoundId: current.placement!.page.reviewRoundId } : {}),
         version: current.preview!.pageRevisionNumber,
         summary,
         annotations: projectDrawingDocumentToPage(current.annotations, current.placement!.crop, current.placement!.page),

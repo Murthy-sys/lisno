@@ -82,6 +82,10 @@ export function deriveKnowledgeCompleteness(input: {
         }
       }
     }
+    // Design rules are opt-in; old revisions with no questionnaire add no warning or blocker.
+    if (sectionKey === "design" && (!section || !hasConfiguredContent(sectionKey, section.payload))) {
+      return { sectionKey, state: "not_applicable" as const, findings };
+    }
     if (
       section?.applicability === "not_applicable" ||
       AI_ESTIMATOR_KNOWLEDGE_UNCONFIGURABLE_SECTION_KEYS.has(sectionKey)

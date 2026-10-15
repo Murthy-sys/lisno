@@ -1,7 +1,11 @@
+import { assistantStateSchema, type ChatAssistantState } from "./chatAssistantModel";
 import { isRecord } from "../workspace/recordPresentation";
 import { isFrontendRole, type Role } from "../../contracts/authorization";
 
 export type PresentedPriority = "normal" | "important" | "critical";
+export interface ChatMention { readonly userId: string; readonly start: number; readonly end: number; }
+export interface ChatActionMetadata { readonly typeId: string; readonly typeName: string; readonly originalDueDate: string; readonly dueDate: string; }
+export type ChatMessageFilter = "all" | "mentions" | "critical" | "important" | "resolved";
 export type PresentedIssueStatus = "open" | "resolved" | null;
 
 export interface PresentedChatPerson {
@@ -31,6 +35,9 @@ export interface PresentedChatParticipant {
   readonly id: string;
   readonly name: string;
   readonly role: Role;
+  readonly removalVersion?: number;
+  readonly canRemove?: boolean;
+  readonly removalBlockedReason?: string;
   readonly sources: readonly PresentedChatParticipantSource[];
   readonly selection: {
     readonly id: string;
@@ -38,7 +45,10 @@ export interface PresentedChatParticipant {
   } | null;
 }
 
+export interface PresentedRemovedParticipant extends PresentedChatPerson { readonly removalVersion: number; readonly canRestore: boolean; }
 export interface PresentedChatParticipantPage {
+  readonly assistant?: { readonly kind: "service"; readonly id: "lisno-ai"; readonly name: "Lisno AI"; readonly available: boolean };
+  readonly removed?: readonly PresentedRemovedParticipant[];
   readonly items: readonly PresentedChatParticipant[];
   readonly setupWarnings: readonly string[];
 }
@@ -70,12 +80,18 @@ export interface PresentedIssueCapabilities {
   readonly canReopen: boolean;
   readonly canAssign: boolean;
   readonly canAssignSelf: boolean;
+  readonly canReschedule?: boolean;
 }
 
 export interface PresentedMessage {
   readonly id: string;
   readonly projectId: string;
   readonly body: string;
+  readonly assistant?: ChatAssistantState;
+  readonly issueHistory?: readonly { id: string; action: string; actor: PresentedChatPerson; occurredAt: string; note: string }[];
+  readonly mentions?: readonly ChatMention[];
+  readonly responsible?: (PresentedChatPerson & { readonly available: boolean }) | null;
+  readonly action?: ChatActionMetadata | null;
   /** Kept as a string for compatibility with the existing conversation screen. */
   readonly author: string;
   readonly authorId: string;
@@ -114,6 +130,7 @@ export interface PresentedChatCapabilities {
   readonly canSend: boolean;
   readonly canManageParticipants: boolean;
   readonly canManageIssues: boolean;
+  readonly canRenameProject?: boolean;
 }
 
 export interface PresentedChatSummary {
@@ -121,6 +138,7 @@ export interface PresentedChatSummary {
     readonly id: string;
     readonly name: string;
     readonly status: string;
+    readonly nameVersion?: number;
   };
   readonly counts: PresentedChatCounts;
   readonly participantCount: number;
@@ -222,7 +240,7 @@ function presentPerson(value: unknown): PresentedChatPerson | null {
   if (!isRecord(value)) return null;
   const id = nonEmptyString(value.id);
   const name = nonEmptyString(value.name);
-  const role = nonEmptyString(value.role);
+  const role = value.kind === "service" && id === "lisno-ai" && name === "Lisno AI" ? "service" : nonEmptyString(value.role);
   return id && name && role ? { id, name, role } : null;
 }
 
@@ -258,7 +276,8 @@ export function presentChatParticipant(value: unknown): PresentedChatParticipant
     selection = { id, version };
   }
 
-  return { ...person, sources, selection };
+  if (value.removalVersion !== undefined && naturalNumber(value.removalVersion) === null) return null;
+  return { ...person, sources, selection, ...(value.removalVersion !== undefined ? { removalVersion: value.removalVersion as number } : {}), ...(typeof value.canRemove === "boolean" ? { canRemove: value.canRemove } : {}), ...(typeof value.removalBlockedReason === "string" ? { removalBlockedReason: value.removalBlockedReason } : {}) };
 }
 
 export function presentChatParticipantPage(value: unknown): PresentedChatParticipantPage | null {
@@ -267,7 +286,23 @@ export function presentChatParticipantPage(value: unknown): PresentedChatPartici
   if (!items.every((item): item is PresentedChatParticipant => item !== null)) return null;
   const setupWarnings = value.setupWarnings.map(nonEmptyString);
   if (!setupWarnings.every((warning): warning is string => warning !== null)) return null;
-  return { items, setupWarnings };
+  const removed: PresentedRemovedParticipant[] = [];
+  if (value.removed !== undefined) {
+    if (!Array.isArray(value.removed)) return null;
+    for (const candidate of value.removed) {
+      const person = presentCanonicalPerson(candidate);
+      if (!person || !isRecord(candidate) || naturalNumber(candidate.removalVersion) === null || typeof candidate.canRestore !== "boolean") return null;
+      removed.push({ ...person, removalVersion: candidate.removalVersion as number, canRestore: candidate.canRestore });
+    }
+  }
+  if (new Set(items.map(item => item.id)).size !== items.length || removed.some(person => items.some(item => item.id === person.id))) return null;
+  let assistant: PresentedChatParticipantPage["assistant"];
+  if (value.assistant !== undefined) {
+    if (!isRecord(value.assistant) || value.assistant.kind !== "service" || value.assistant.id !== "lisno-ai" || value.assistant.name !== "Lisno AI" || typeof value.assistant.available !== "boolean") return null;
+    assistant = { kind: "service", id: "lisno-ai", name: "Lisno AI", available: value.assistant.available };
+  }
+  if (new Set(removed.map(person => person.id)).size !== removed.length) return null;
+  return { items, setupWarnings, ...(value.removed !== undefined ? { removed } : {}), ...(assistant ? { assistant } : {}) };
 }
 
 export function presentChatParticipantOptions(value: unknown): PresentedChatParticipantOptions | null {
@@ -299,7 +334,8 @@ function presentChatCapabilities(value: unknown): PresentedChatCapabilities | nu
   return {
     canSend: value.canSend,
     canManageParticipants: value.canManageParticipants,
-    canManageIssues: value.canManageIssues
+    canManageIssues: value.canManageIssues,
+    ...(typeof value.canRenameProject === "boolean" ? { canRenameProject: value.canRenameProject } : {})
   };
 }
 
@@ -317,7 +353,8 @@ function presentIssueCapabilities(value: unknown): PresentedIssueCapabilities | 
     canResolve: value.canResolve,
     canReopen: value.canReopen,
     canAssign: value.canAssign,
-    canAssignSelf: value.canAssignSelf
+    canAssignSelf: value.canAssignSelf,
+    ...(typeof value.canReschedule === "boolean" ? { canReschedule: value.canReschedule } : {})
   };
 }
 
@@ -344,7 +381,7 @@ function presentAttachment(value: unknown): PresentedAttachment | null {
   return { id, filename, mimeType, byteSize, kind, preview };
 }
 
-function presentMessage(value: unknown): PresentedMessage | null {
+export function presentMessage(value: unknown): PresentedMessage | null {
   if (!isRecord(value)) return null;
   const id = nonEmptyString(value.id);
   const projectId = nonEmptyString(value.projectId);
@@ -399,7 +436,39 @@ function presentMessage(value: unknown): PresentedMessage | null {
     };
   }
 
+  const assistant = value.assistant === undefined ? null : assistantStateSchema.safeParse(value.assistant);
+  if (assistant && !assistant.success) return null;
+  const issueHistory: NonNullable<PresentedMessage["issueHistory"]>[number][] = [];
+  if (value.issueHistory !== undefined) {
+    if (!Array.isArray(value.issueHistory)) return null;
+    for (const event of value.issueHistory) {
+      if (!isRecord(event) || !nonEmptyString(event.id) || !nonEmptyString(event.action) || !nonEmptyString(event.occurredAt) || typeof event.note !== "string") return null;
+      const actor = presentPerson(event.actor); if (!actor) return null;
+      issueHistory.push({ id: event.id as string, action: event.action as string, actor, occurredAt: event.occurredAt as string, note: event.note });
+    }
+  }
+  let action: ChatActionMetadata | null = null;
+  if (value.action != null) {
+    if (!isRecord(value.action) || !nonEmptyString(value.action.typeId) || !nonEmptyString(value.action.typeName) || typeof value.action.originalDueDate !== "string" || typeof value.action.dueDate !== "string") return null;
+    action = { typeId: value.action.typeId as string, typeName: value.action.typeName as string, originalDueDate: value.action.originalDueDate, dueDate: value.action.dueDate };
+  }
+  let responsible: PresentedMessage["responsible"] = null;
+  if (value.responsible != null) {
+    const person = presentPerson(value.responsible);
+    if (!person || !isRecord(value.responsible) || typeof value.responsible.available !== "boolean") return null;
+    responsible = { ...person, available: value.responsible.available };
+  }
+  const mentions: ChatMention[] = [];
+  if (value.mentions !== undefined) {
+    if (!Array.isArray(value.mentions)) return null;
+    for (const mention of value.mentions) {
+      if (!isRecord(mention) || !nonEmptyString(mention.userId) || naturalNumber(mention.start) === null || positiveNumber(mention.end) === null || (mention.end as number) <= (mention.start as number) || (mention.end as number) > value.body.length) return null;
+      mentions.push({ userId: mention.userId as string, start: mention.start as number, end: mention.end as number });
+    }
+  }
   return {
+    ...(assistant?.success ? { assistant: assistant.data } : {}), ...(value.issueHistory !== undefined ? { issueHistory } : {}),
+    ...(value.mentions !== undefined ? { mentions } : {}), ...(value.action !== undefined ? { action } : {}), ...(value.responsible !== undefined ? { responsible } : {}),
     id,
     projectId,
     body: value.body,
@@ -436,7 +505,7 @@ function presentSummary(value: unknown): PresentedChatSummary | null {
   ) return null;
 
   return {
-    project: { id: projectId, name: projectName, status: projectStatus },
+    project: { id: projectId, name: projectName, status: projectStatus, ...(naturalNumber(value.project.nameVersion) !== null ? { nameVersion: value.project.nameVersion as number } : {}) },
     counts,
     participantCount,
     cursor,
@@ -582,7 +651,10 @@ export function mergeMessagePages(
   for (const page of pages) {
     for (const message of page.items) {
       const existing = byId.get(message.id);
-      if (!existing || message.version >= existing.version) byId.set(message.id, message);
+      if (!existing || message.version > existing.version || message.version === existing.version && (
+        (message.assistant?.generation ?? 0) > (existing.assistant?.generation ?? 0) ||
+        (message.assistant?.generation ?? 0) === (existing.assistant?.generation ?? 0) && (message.assistant?.stateVersion ?? 0) >= (existing.assistant?.stateVersion ?? 0)
+      )) byId.set(message.id, message);
     }
   }
   return [...byId.values()].sort((left, right) =>

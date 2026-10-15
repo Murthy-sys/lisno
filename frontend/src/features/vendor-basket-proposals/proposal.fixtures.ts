@@ -2,6 +2,13 @@ import type { KnowledgeItemDetail, KnowledgeJsonObject, KnowledgeSectionKey } fr
 import type { ProposalDetail, ProposalHierarchyNode, ProposalResource, ProposalSectionValue } from "./proposalTypes";
 
 const time = "2026-10-11T09:00:00.000Z";
+export function intakeProposalFixture(overrides: Partial<ProposalDetail> = {}): ProposalDetail {
+  return proposalFixture({ requestMode: "hierarchy_intake", intake: {
+    basket: { name: "Stone finishes", description: "Natural stone surfaces" },
+    subBasket: { name: "Interior stone", description: "Indoor wall and floor finishes" },
+    mainLines: [{ resourceId: "line-proposal", name: "Stone installation" }]
+  }, ...overrides });
+}
 export function proposalFixture(overrides: Partial<ProposalDetail> = {}): ProposalDetail {
   return { id: "proposal-one", kind: "configuration_proposal", schemaVersion: 1, requesterId: "procurement-one", status: "draft", version: 1, requestId: null, requestVersion: null, vendorId: null, vendorName: "Synthetic Vendor", basketId: "basket-proposal", name: "Stone finishes", counts: { subBaskets: 1, mainLines: 1 }, createdAt: time, updatedAt: time, submittedAt: null, decidedAt: null, reason: null, revisedFromId: null, publishedBasketId: null, capabilities: { edit: true, submit: true, review: false, decide: false, revise: false }, head: { id: "author-head", version: 1, digest: "draft-digest" }, submittedHead: null, approvedHead: null,
     basket: { proposalId: "proposal-one", resourceId: "basket-proposal", kind: "basket", parentId: null, version: 1, headId: "author-head", payload: { name: "Stone finishes", description: null, displayOrder: 0 }, digest: "basket-digest", savedById: "procurement-one", savedAt: time }, qualityResourceId: null, ...overrides };

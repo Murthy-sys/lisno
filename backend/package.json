@@ -7,7 +7,7 @@
     "enabled": false
   },
   "scripts": {
-    "dev": "tsx src/development/run.ts",
+    "dev": "node ../scripts/local-chat.mjs --with-ocr",
     "dev:backend": "tsx watch src/dev.ts",
     "start": "node dist/server.js",
     "seed": "tsx src/seed/run.ts",

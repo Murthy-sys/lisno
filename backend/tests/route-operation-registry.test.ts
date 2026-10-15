@@ -1,3 +1,4 @@
+import { EXPECTED_ESTIMATE_COLLABORATION_OPERATIONS } from "./fixtures/estimate-collaboration-route-operations.js";
 import { EXPECTED_VENDOR_BASKET_PROPOSAL_OPERATIONS } from "./fixtures/vendor-basket-proposal-route-operations.js";
 import { EXPECTED_VENDOR_EXECUTION_OPERATIONS } from "./fixtures/vendor-execution-route-operations.js";
 import { EXPECTED_PROJECT_PROCUREMENT_OPERATIONS } from "./fixtures/project-procurement-route-operations.js";
@@ -40,6 +41,9 @@ import { EXPECTED_PROJECT_CHAT_OPERATIONS } from "./fixtures/project-chat-route-
 import { EXPECTED_PROFILE_PHOTO_OPERATIONS } from "./fixtures/profile-photo-route-operations.js";
 
 const EXPECTED_ALL_HUMAN_JWT_OPERATIONS = [
+  { key: "GET /projects/:projectId/design-requirements", permission: "projects.design_workflow.read", scope: { kind: "project", module: "projects" }, operationClass: "read", superAdminBehavior: "global_read", availability: "baseline" },
+  { key: "POST /projects/:projectId/design-requirements/actions", permission: "projects.design_requirements.act", scope: { kind: "project", module: "projects" }, operationClass: "personal", superAdminBehavior: "deny_personal", availability: "baseline" },
+  ...EXPECTED_ESTIMATE_COLLABORATION_OPERATIONS,
   ...EXPECTED_VENDOR_BASKET_PROPOSAL_OPERATIONS,
   { key: "POST /client/ask-lisno", permission: "ask_lisno.request", scope: { kind: "non_project", namespace: "identity" }, operationClass: "personal", superAdminBehavior: "deny_personal", availability: "baseline" },
   ...EXPECTED_VENDOR_EXECUTION_OPERATIONS,
@@ -245,9 +249,9 @@ describe("human JWT operation registry", () => {
     expect(HUMAN_JWT_OPERATION_LIST.filter(({ key }) => expected.some((row) => row.key === key))).toEqual(expected);
   });
 
-  it("matches all 415 normative operation rows", () => {
+  it("matches all 437 normative operation rows", () => {
     expect(Object.values(HUMAN_JWT_OPERATIONS).sort((a, b) => a.key.localeCompare(b.key))).toEqual([...EXPECTED_ALL_HUMAN_JWT_OPERATIONS].sort((a, b) => a.key.localeCompare(b.key)));
-    expect(Object.keys(HUMAN_JWT_OPERATIONS)).toHaveLength(415);
+    expect(Object.keys(HUMAN_JWT_OPERATIONS)).toHaveLength(437);
   });
 
   it("mounts rows 2 through 23 as exact router groups with one ordered marker pair", () => {
@@ -440,7 +444,7 @@ describe("human JWT operation registry", () => {
     expect(HUMAN_JWT_OPERATION_LIST.filter(({ key }) => EXPECTED_PROJECT_WORKFLOW_OPERATIONS.some((row) => row.key === key))).toEqual(EXPECTED_PROJECT_WORKFLOW_OPERATIONS);
     expect(
       HUMAN_JWT_OPERATION_LIST.filter(
-        ({ availability, key, permission }) => availability === "project_workflow" && !EXPECTED_VENDOR_EXECUTION_OPERATIONS.some((row) => row.key === key) && !permission.startsWith("procurement.items.") && !permission.startsWith("procurement.vendors.") && !permission.startsWith("procurement.vendor_suggestions.") && !EXPECTED_PROJECT_PROCUREMENT_FULFILLMENT_OPERATIONS.some((row) => row.key === key) && !EXPECTED_PROCUREMENT_BASKET_OPERATIONS.some((row) => row.key === key)
+        ({ availability, key, permission }) => availability === "project_workflow" && !EXPECTED_ESTIMATE_COLLABORATION_OPERATIONS.some(row => row.key === key) && !EXPECTED_VENDOR_EXECUTION_OPERATIONS.some((row) => row.key === key) && !permission.startsWith("procurement.items.") && !permission.startsWith("procurement.vendors.") && !permission.startsWith("procurement.vendor_suggestions.") && !EXPECTED_PROJECT_PROCUREMENT_FULFILLMENT_OPERATIONS.some((row) => row.key === key) && !EXPECTED_PROCUREMENT_BASKET_OPERATIONS.some((row) => row.key === key)
       )
     ).toEqual(EXPECTED_PROJECT_WORKFLOW_OPERATIONS);
   });
@@ -466,7 +470,7 @@ describe("human JWT operation registry", () => {
   });
 
   it("mounts all nineteen project-workflow operations across authenticated workflow routers", () => {
-    const expectedKeys = EXPECTED_PROJECT_WORKFLOW_OPERATIONS.map(({ key }) => key);
+    const expectedKeys = [...EXPECTED_PROJECT_WORKFLOW_OPERATIONS.map(({ key }) => key), "POST /projects/:projectId/design-plan/reconcile-scope"];
     const matches = mountedHumanRouters().filter((router) =>
       router.routes.some(({ key }) => expectedKeys.includes(key as never))
     );
@@ -551,7 +555,7 @@ describe("human JWT operation registry", () => {
     }
   });
 
-  it("mounts the exact 415-operation manifest with one ordered marker pair each", () => {
+  it("mounts the exact 437-operation manifest with one ordered marker pair each", () => {
     const expectedKeys = EXPECTED_ALL_HUMAN_JWT_OPERATIONS.map(
       ({ key }) => key
     ).sort();
@@ -561,8 +565,8 @@ describe("human JWT operation registry", () => {
     const mountedOperations = mountedRoutes.map(({ key }) => key);
 
     expect([...mountedOperations].sort()).toEqual(expectedKeys);
-    expect(expectedKeys).toHaveLength(415);
-    expect(new Set(expectedKeys).size).toBe(415);
+    expect(expectedKeys).toHaveLength(437);
+    expect(new Set(expectedKeys).size).toBe(437);
     expect(mountedOperations).toContain(
       "POST /execution/worker-assignments/override"
     );
@@ -609,9 +613,9 @@ describe("human JWT operation registry", () => {
     expect(() => assertTaskSixRouteMounts(routers)).toThrow();
   });
 
-  it("has 415 unique keys and exactly 185 routed permissions", () => {
-    expect(new Set(HUMAN_JWT_OPERATION_LIST.map(({ key }) => key)).size).toBe(415);
-    expect(new Set(HUMAN_JWT_OPERATION_LIST.map(({ permission }) => permission)).size).toBe(185);
+  it("has 437 unique keys and exactly 195 routed permissions", () => {
+    expect(new Set(HUMAN_JWT_OPERATION_LIST.map(({ key }) => key)).size).toBe(437);
+    expect(new Set(HUMAN_JWT_OPERATION_LIST.map(({ permission }) => permission)).size).toBe(195);
     expect(HUMAN_JWT_OPERATION_LIST.every(({ permission }) =>
       (PERMISSION_CODES as readonly string[]).includes(permission)
     )).toBe(true);
@@ -756,4 +760,12 @@ describe("human JWT operation registry", () => {
     app.use(errorHandler);
     await request(app).get("/context").expect(200, { key: "GET /auth/me" });
   });
+});
+
+
+it("keeps Design requirement review readable but denies Super Admin personal signoff", () => {
+  expect(HUMAN_JWT_OPERATIONS["GET /projects/:projectId/design-requirements"])
+    .toMatchObject({ permission: "projects.design_workflow.read", superAdminBehavior: "global_read", operationClass: "read" });
+  expect(HUMAN_JWT_OPERATIONS["POST /projects/:projectId/design-requirements/actions"])
+    .toMatchObject({ permission: "projects.design_requirements.act", superAdminBehavior: "deny_personal", operationClass: "personal" });
 });

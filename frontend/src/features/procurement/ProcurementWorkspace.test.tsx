@@ -8,12 +8,14 @@ import { AUTHORIZATION_POLICY_VERSION } from "../../api/authorization-contract";
 import { tokenStorage } from "../../api/client";
 import type {
   FinanceLedgerEntry,
-  ProcurementProject
+  ProcurementProject,
+  Project
 } from "../../api/types";
 import { renderApp } from "../../test/render";
 import { server } from "../../test/server";
 import { qaEmptyModeGroups } from "../../test/fixtures/enterpriseProcurementData";
 import { procurementKeys } from "./procurementApi";
+import { projectReadKeys } from "../projects/projectReadQueries";
 import {
   procurementProjectsIntegrityError,
   procurementReceiptError,
@@ -150,7 +152,14 @@ const procurementProject: ProcurementProject = {
   ]
 };
 
-function installProcurementSession(projects: ProcurementProject[] = [procurementProject]) {
+const assignedProject: Project = {
+  id: "project-unestimated", name: "Cedar planning", clientId: "client-cedar", clientName: "Cedar client", clientEmail: "cedar@example.test", clientMobile: "", clientAddress: "",
+  initiatingDesignerId: null, assignedEstimatorId: null, assignedDesignerIds: [], managerId: null,
+  status: "planning", location: "Chennai", plannedStartAt: "2026-11-01T00:00:00Z", plannedEndAt: "2027-01-01T00:00:00Z", actualStartAt: null, actualEndAt: null,
+  createdAt: "2026-10-13T00:00:00Z", updatedAt: "2026-10-13T00:00:00Z"
+};
+
+function installProcurementSession(projects: ProcurementProject[] = [procurementProject], assigned?: Project[]) {
   tokenStorage.set("procurement-token");
   server.use(
     http.get("/api/v1/auth/me", () => HttpResponse.json({
@@ -166,6 +175,7 @@ function installProcurementSession(projects: ProcurementProject[] = [procurement
         role: "procurement",
         policyVersion: AUTHORIZATION_POLICY_VERSION,
         permissions: [
+          ...(assigned ? ["projects.list", "projects.read", "projects.design_workflow.read"] : []),
           "identity.self.read",
           "identity.authorization.read",
           "workflow.tasks.read",
@@ -181,6 +191,12 @@ function installProcurementSession(projects: ProcurementProject[] = [procurement
       }
     })),
     http.get("/api/v1/procurement/projects", () => HttpResponse.json({ data: projects })),
+    http.get("/api/v1/projects", () => HttpResponse.json({ data: { items: assigned ?? [], pagination: { limit: 100, offset: 0, total: assigned?.length ?? 0, hasMore: false } } })),
+    http.get("/api/v1/projects/:projectId", ({ params }) => {
+      const project = assigned?.find((candidate) => candidate.id === params.projectId);
+      return project ? HttpResponse.json({ data: { ...project, floors: [] } }) : HttpResponse.json({ error: { code: "NOT_FOUND", message: "Project details unavailable." } }, { status: 404 });
+    }),
+    http.get("/api/v1/projects/:projectId/design-workflow", ({ params }) => HttpResponse.json({ data: { projectId: params.projectId, projectName: "Cedar planning", serverNow: "2026-10-13T09:00:00Z", estimateApprovalStatus: "awaiting_approval", floors: [], projectStages: [] } })),
     http.get("/api/v1/procurement/projects/:projectId/items", () => HttpResponse.json({ data: { items: [], total: 0, limit: 20, offset: 0 } })),
     http.get("/api/v1/procurement/projects/project-one/baskets", () => HttpResponse.json({ data: {
       projectId: "project-one", estimateSource: { estimateId: "estimate-one", estimateVersion: 4, estimateReviewRoundId: null },
@@ -223,6 +239,36 @@ async function expectNoAxeViolations() {
 }
 
 describe("ProcurementWorkspace", () => {
+  it("lists mixed assigned and prepared projects with truthful financial scope and keyboard navigation", async () => {
+    installProcurementSession([procurementProject], [assignedProject, { ...assignedProject, id: "project-one", name: "Aurora Villa" }]);
+    const user = userEvent.setup();
+    renderApp(["/home"]);
+    const assigned = await screen.findByRole("article", { name: "Cedar planning" });
+    expect(within(assigned).getByText("Awaiting procurement preparation")).toBeVisible();
+    expect(within(assigned).queryByText(/₹|Estimate v|Selected estimate value/)).not.toBeInTheDocument();
+    const summary = screen.getByRole("region", { name: "Procurement portfolio summary" });
+    expect(within(summary).getByText("2")).toBeVisible();
+    expect(within(summary).getByText("₹3,750.00")).toBeVisible();
+    expect(summary).toHaveTextContent("Selected value includes only projects with available procurement preparation.");
+    expect(screen.getAllByRole("article", { name: "Aurora Villa" })).toHaveLength(1);
+    await user.selectOptions(screen.getByRole("combobox", { name: "Project status" }), "awaiting_preparation");
+    expect(screen.queryByRole("article", { name: "Aurora Villa" })).not.toBeInTheDocument();
+    const link = within(assigned).getByRole("link", { name: "View project details for Cedar planning" });
+    link.focus();
+    await user.keyboard("{Enter}");
+    expect(await screen.findByRole("heading", { level: 1, name: "Cedar planning" })).toBeVisible();
+  });
+
+  it("shows assigned project links if the optional preparation list fails without displaying portfolio amounts", async () => {
+    installProcurementSession([], [assignedProject]);
+    server.use(http.get("/api/v1/procurement/projects", () => HttpResponse.json({ error: { code: "UNAVAILABLE", message: "Preparation unavailable." } }, { status: 503 })));
+    renderApp(["/home"]);
+    const row = await screen.findByRole("article", { name: "Cedar planning" });
+    expect(within(row).getByText("Preparation status unavailable")).toBeVisible();
+    expect(screen.queryByRole("region", { name: "Procurement portfolio summary" })).not.toBeInTheDocument();
+    expect(within(row).queryByText(/₹|Estimate v/)).not.toBeInTheDocument();
+  });
+
   it("lists Design-approved projects as cards that open the project page", async () => {
     installProcurementSession();
     const user = userEvent.setup();
@@ -230,7 +276,7 @@ describe("ProcurementWorkspace", () => {
     const { router } = renderApp(["/home"]);
 
     const workspace = await screen.findByRole("region", { name: "Procurement" });
-    const list = await within(workspace).findByRole("list", { name: "Design-approved projects" });
+    const list = await within(workspace).findByRole("list", { name: "Projects with procurement preparation" });
     const row = within(list).getByRole("article", { name: "Aurora Villa" });
     expect(within(row).getByRole("heading", { name: "Aurora Villa" })).toBeVisible();
     expect(within(row).getByText("2 selected Estimate sections")).toBeVisible();
@@ -274,7 +320,7 @@ describe("ProcurementWorkspace", () => {
   it("renders empty and retryable error states without exposing stale projects", async () => {
     installProcurementSession([]);
     const { unmount } = renderApp(["/home"]);
-    expect(await screen.findByText(/automatically after their Design plan is approved/i)).toBeVisible();
+    expect(await screen.findByText(/Projects appear when you are assigned/i)).toBeVisible();
     expect(screen.queryByRole("heading", { name: "Procurement items" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Add item" })).not.toBeInTheDocument();
     unmount();
@@ -291,6 +337,47 @@ describe("ProcurementWorkspace", () => {
 });
 
 describe("ProcurementProjectPage", () => {
+  it("shows assigned metadata before preparation without inventing an estimate or mounting procurement controls", async () => {
+    installProcurementSession([], [assignedProject]);
+    renderApp(["/procurement/projects/project-unestimated"]);
+    expect(await screen.findByRole("heading", { level: 1, name: "Cedar planning" })).toBeVisible();
+    const details = screen.getByRole("region", { name: "Project details" });
+    expect(within(details).getByText("Cedar client")).toBeVisible();
+    expect(within(details).getByText("Chennai")).toBeVisible();
+    expect(await screen.findByText(/Procurement preparation is not available yet/)).toBeVisible();
+    expect(screen.queryByRole("region", { name: "Project baskets" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Estimate v|₹|Current estimate/)).not.toBeInTheDocument();
+    await expectNoAxeViolations();
+  });
+
+  it("keeps successful assigned metadata when the independent preparation request fails", async () => {
+    installProcurementSession([], [assignedProject]);
+    server.use(http.get("/api/v1/procurement/projects", () => HttpResponse.json({ error: { code: "UNAVAILABLE", message: "Preparation could not be loaded." } }, { status: 503 })));
+    renderApp(["/procurement/projects/project-unestimated"]);
+    expect(await screen.findByRole("region", { name: "Project details" })).toHaveTextContent("Cedar client");
+    expect(await screen.findByText("Preparation could not be loaded.")).toBeVisible();
+    expect(screen.queryByRole("region", { name: "Project baskets" })).not.toBeInTheDocument();
+  });
+
+  it("preserves genuine preparation access when generic metadata is not authorized", async () => {
+    installProcurementSession([procurementProject], []);
+    renderApp(["/procurement/projects/project-one"]);
+    expect(await screen.findByRole("region", { name: "Project baskets" })).toBeVisible();
+    expect(screen.getByRole("heading", { level: 1, name: "Aurora Villa" })).toBeVisible();
+    expect(await screen.findByText("Project details unavailable.")).toBeVisible();
+    expect(screen.queryByRole("region", { name: "Project details" })).not.toBeInTheDocument();
+  });
+
+  it("removes generic metadata after assignment revocation without retaining the old name", async () => {
+    installProcurementSession([], [assignedProject]);
+    const { queryClient } = renderApp(["/procurement/projects/project-unestimated"]);
+    expect(await screen.findByRole("heading", { level: 1, name: "Cedar planning" })).toBeVisible();
+    server.use(http.get("/api/v1/projects/project-unestimated", () => HttpResponse.json({ error: { code: "NOT_FOUND", message: "Assignment no longer available." } }, { status: 404 })));
+    await act(async () => { await queryClient.invalidateQueries({ queryKey: projectReadKeys.all }); });
+    await waitFor(() => expect(screen.queryByRole("heading", { level: 1, name: "Cedar planning" })).not.toBeInTheDocument());
+    expect(screen.queryByRole("region", { name: "Project details" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Cedar client")).not.toBeInTheDocument();
+  });
   it("hides retained project details if access is revoked during refresh", async () => {
     installProcurementSession();
     const { queryClient } = renderApp(["/procurement/projects/project-one"]);

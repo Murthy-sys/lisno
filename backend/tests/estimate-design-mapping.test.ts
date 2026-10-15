@@ -69,6 +69,81 @@ describe("estimate design mapping", () => {
     });
   });
 
+  describe.each(["configuration", "legacy"] as const)("numbered bedroom accessories with %s items", (source) => {
+    const accessoryContext = (accessory: "Balcony" | "Bathroom", accessoryIncluded = true) => {
+      const rooms = [
+        { id: "room-bedroom-1", label: "Bedroom 1" },
+        { id: "room-accessory-1", label: `Bedroom 1 ${accessory}` }
+      ];
+      return mappingContextForEstimate({
+        rooms, scopes: ["FC"], lineItems: rooms.map((room, index) => source === "configuration" ? {
+          source, roomId: room.id, roomName: room.label,
+          catalogueId: "ceiling-main-line", mainLineId: "ceiling-main-line", mainLineName: "Ceiling",
+          mainBasketId: "ceiling-basket", subBasketId: "ceiling-sub-basket", subBasketName: "Ceilings",
+          included: index === 0 || accessoryIncluded
+        } : {
+          catalogueId: "FC01", roomName: room.label, specification: "Gypsum",
+          included: index === 0 || accessoryIncluded
+        })
+      });
+    };
+
+    it.each(["Balcony", "Bathroom"] as const)("keeps a %s title absent when only its parent bedroom has the item", (accessory) => {
+      const context = accessoryContext(accessory, false);
+      expect(context.invalidIncludedItems).toEqual([]);
+      expect(autoMapDrawingTitle(`Bedroom 1 ${accessory} False Ceiling`, context)).toEqual({
+        mapping: { roomId: null, scopeSectionId: null, catalogueId: null, mappingStatus: "misc" },
+        reason: "absent", candidateKeys: []
+      });
+    });
+
+    it.each(["Balcony", "Bathroom"] as const)("maps an explicit %s title to its own item when both rooms have it", (accessory) => {
+      const context = accessoryContext(accessory);
+      const catalogueId = source === "configuration" ? "ceiling-main-line" : "FC01";
+      const scopeSectionId = source === "configuration" ? "ceiling-basket" : "FC";
+      expect(context.invalidIncludedItems).toEqual([]);
+      expect(autoMapDrawingTitle(`Bedroom 1 ${accessory} False Ceiling`, context)).toEqual({
+        mapping: { roomId: "room-accessory-1", scopeSectionId, catalogueId, mappingStatus: "auto_mapped" },
+        reason: "unique", candidateKeys: [`room-accessory-1\u0000${catalogueId}`]
+      });
+      expect(autoMapDrawingTitle("Bedroom 1 False Ceiling", context).mapping)
+        .toMatchObject({ roomId: "room-bedroom-1", scopeSectionId, catalogueId, mappingStatus: "auto_mapped" });
+    });
+
+    it.each([
+      "Bedroom 1 Balcony and Bedroom 1 False Ceiling",
+      "Bedroom 1 and Bedroom 1 Balcony False Ceiling",
+      "BR 1 and Bedroom 1 Balcony False Ceiling"
+    ])("preserves separate bedroom mentions in %s", (title) => {
+      const catalogueId = source === "configuration" ? "ceiling-main-line" : "FC01";
+      expect(autoMapDrawingTitle(title, accessoryContext("Balcony"))).toEqual({
+        mapping: { roomId: null, scopeSectionId: null, catalogueId: null, mappingStatus: "misc" },
+        reason: "ambiguous", candidateKeys: [
+          `room-accessory-1\u0000${catalogueId}`, `room-bedroom-1\u0000${catalogueId}`
+        ]
+      });
+    });
+  });
+
+  it("keeps identical room labels ambiguous when both configured room identities contain the item", () => {
+    const rooms = [
+      { id: "room-balcony-a", label: "Bedroom 1 Balcony" },
+      { id: "room-balcony-b", label: "Bedroom 1 Balcony" }
+    ];
+    const context = mappingContextForEstimate({
+      rooms, lineItems: rooms.map((room) => ({
+        source: "configuration", roomId: room.id, roomName: room.label,
+        catalogueId: "ceiling-main-line", mainLineId: "ceiling-main-line", mainLineName: "Ceiling",
+        mainBasketId: "ceiling-basket", subBasketId: "ceiling-sub-basket", subBasketName: "Ceilings", included: true
+      }))
+    });
+    expect(context.invalidIncludedItems).toEqual([]);
+    expect(autoMapDrawingTitle("Bedroom 1 Balcony Ceiling", context)).toEqual({
+      mapping: { roomId: null, scopeSectionId: null, catalogueId: null, mappingStatus: "misc" },
+      reason: "ambiguous", candidateKeys: ["room-balcony-a\u0000ceiling-main-line", "room-balcony-b\u0000ceiling-main-line"]
+    });
+  });
+
   it.each([
     ["MBR - WARDROBE", "Master Bedroom", "CA02"],
     ["PBR STUDY", "Parents Bedroom", "CA06"],

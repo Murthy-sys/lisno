@@ -22,6 +22,7 @@ import { KnowledgeVendorEditor } from "../knowledge/KnowledgeVendorEditor";
 import { useKnowledgeContext } from "../knowledge/knowledgeRuntime";
 import { useProcurementVendorContext } from "../knowledge/vendorRuntime";
 import { formatVendorKpiScore, scoreRows } from "./vendorKpiPresentation";
+import { VendorLoginAccessPanel } from "./VendorLoginAccessPanel";
 import { VendorInductionStaffSection, VendorActivationSummary } from "./VendorInductionStaffSection";
 
 const denied = (error: unknown) => error instanceof ApiError && (error.status === 401 || error.status === 403);
@@ -117,6 +118,7 @@ export function VendorKpiStaffScreen({ session, vendorId }: { readonly session: 
     {query.isRefetching ? <Text accessibilityLiveRegion="polite" style={styles.meta}>Updating Vendor KPI…</Text> : null}
     {edit.isError ? <StateView tone="error" title="Vendor profile unavailable" message="The vendor profile could not be loaded. Retry from this page." actionLabel="Retry profile" onAction={() => edit.mutate()} /> : null}
     {canReadInduction ? induction.isPending ? <StateView title="Checking vendor availability" message="Loading activation requirements…" /> : induction.isError && !induction.data ? <StateView tone="error" title="Availability unavailable" message="Refresh to see the latest activation requirements." actionLabel="Retry availability" onAction={() => void induction.refetch()} /> : induction.data ? <VendorActivationSummary activation={induction.data.activation} onOpenInduction={() => setSection("induction")} /> : null : null}
+    <VendorLoginAccessPanel key={vendorId} vendorId={vendorId} session={session} />
     <View style={styles.summary}>
       <Metric label="Official Vendor KPI" value={formatVendorKpiScore(detail.officialScoreBps)} />
       <Metric label="Vendor self rating" value={formatVendorKpiScore(detail.selfAssessment?.averageScoreBps ?? null)} />

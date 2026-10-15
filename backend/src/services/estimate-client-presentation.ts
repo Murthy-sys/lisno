@@ -1,9 +1,11 @@
+import { effectiveCommercialStatus, isCollaborativeEstimate } from "../domain/estimation-lifecycle.js";
 import { ESTIMATE_PRICING_MODES, ESTIMATE_RATE_SOURCES, estimatePricingMetadataIsValid } from "../domain/estimate-mode-pricing.js";
 import { z } from "zod";
 
 import { configuredEstimateParentIsValid, type ClientPublishedEstimateReview } from "../domain/estimate-client-review.js";
 import { normalizeEmail } from "../domain/email.js";
 import type { PublicUser } from "./auth.service.js";
+import { isDeepStrictEqual } from "node:util";
 
 type Row = Record<string, any>;
 const money = z.number().finite().nonnegative();
@@ -17,6 +19,7 @@ const legacyLine = z.object({ ...commonLine, source: z.literal("legacy").optiona
 const configuredLine = z.object({
   ...commonLine, rate: money.nullable(), amount: money.nullable(),
   source: z.literal("configuration"), specification: z.null(),
+  estimateNotes: z.array(z.string().max(4000)).max(4).optional(),
   itemType: z.enum(["main_line", "temporary"]).optional(),
   classification: z.enum(["standard", "special"]).optional(),
   pricingMode: z.enum(ESTIMATE_PRICING_MODES).optional(),
@@ -31,6 +34,7 @@ const configuredLine = z.object({
 }).refine((line) => configuredEstimateParentIsValid(line) && estimatePricingMetadataIsValid(line) && line.catalogueId === line.mainLineId &&
   (!line.included || line.ratePaise !== null && line.amountPaise !== null));
 const snapshotSchema = z.object({
+  rooms: z.array(z.record(z.unknown())).optional(), bedroomCount: z.number().int().nullable().optional(), scopes: z.array(z.string()).optional(),
   clientName: z.string().min(1), projectName: z.string().min(1),
   location: z.string(), propertyType: z.string().min(1),
   lineItems: z.array(z.union([configuredLine, legacyLine])).min(1),
@@ -68,8 +72,14 @@ export function presentClientEstimate(
   actor: PublicUser,
   estimate: Row,
   lead: Row,
-  round: Row | null
+  round: Row | null,
+  project?: Row | null,
+  preRound?: Row | null
 ): Row | null {
+  const collaborative = isCollaborativeEstimate(estimate);
+  if ((collaborative || project?.estimationWorkflowVersion === 2) && actor.role !== "super_admin" &&
+      (!project || project.clientId !== actor.id || String(project._id ?? project.id) !== estimate.projectId || lead.projectId !== estimate.projectId)) return null;
+  estimate = { ...estimate, status: effectiveCommercialStatus(estimate) };
   const email = normalizeEmail(actor.email);
   if (actor.role !== "super_admin" && (
     normalizeEmail(String(lead.clientEmail ?? "")) !== email ||
@@ -95,7 +105,10 @@ export function presentClientEstimate(
   );
   const roundStateMatches = round && (
     pendingRoundReadable ||
-    (round.status === "approved" && estimate.status === "client_approved" && round.decision === "approve" && round.estimateVersion + 1 === version) ||
+    (round.status === "approved" && round.decision === "approve" && (collaborative
+      ? [estimate.estimation.preApproval?.reviewRoundId, estimate.estimation.finalApproval?.reviewRoundId].includes(String(round._id ?? round.id))
+      : estimate.status === "client_approved" && round.estimateVersion + 1 === version)) ||
+    (collaborative && round.status === "superseded" && round.estimateVersion < version) ||
     (round.status === "changes_requested" && round.decision === "request_changes" &&
       (estimate.status === "client_changes_requested" || salesRevision) &&
       round.estimateVersion < version)
@@ -123,21 +136,31 @@ export function presentClientEstimate(
     })) ?? []
   } : null;
   const publishedReview: ClientPublishedEstimateReview | null = snapshot && round ? {
+    ...(collaborative ? { phase: round.phase, requirementsVersion: round.requirementsVersion } : {}),
     id: String(round._id ?? round.id), version: round.version,
     estimateVersion: round.estimateVersion, sendGeneration: round.sendGeneration,
     status: round.status, submittedAt: submittedAt!, snapshot,
     decisionNote: typeof round.decisionNote === "string" ? round.decisionNote : null,
     decidedAt: timestamp(round.decidedAt),
     canDecide: actor.role === "client" && round.status === "pending" && estimate.status === "sent_to_client" &&
-      round.estimateVersion === version && estimate.designFrozenAt == null
+      round.estimateVersion === version && (collaborative ? !estimate.estimation.editClosedAt && estimate.estimation.pendingReviewRoundId === String(round._id ?? round.id) : estimate.designFrozenAt == null)
   } : null;
   const stableDrawingMetadata = snapshot && (
     ["sent_to_client", "client_approved"].includes(estimate.status) ||
     (estimate.status === "client_changes_requested" && round?.status === "pending" && round.estimateVersion === version)
   );
+  const preSnapshot = snapshotSchema.safeParse(preRound?.estimateSnapshot);
+  const preApprovedReview = collaborative && preRound && preSnapshot.success && preRound.status === "approved" &&
+    preRound.decision === "approve" && String(preRound._id ?? preRound.id) === estimate.estimation.preApproval?.reviewRoundId &&
+    preRound.estimateVersion === estimate.estimation.preApproval?.estimateVersion &&
+    preRound.projectId === projectId && String(preRound.estimateId) === String(estimate._id ?? estimate.id)
+    ? { reviewRoundId: String(preRound._id ?? preRound.id), estimateVersion: preRound.estimateVersion, snapshot: preSnapshot.data }
+    : null;
   return {
     id: String(estimate._id ?? estimate.id), leadId: String(estimate.leadId), projectId,
     ownerId: estimate.ownerId, version, status: estimate.status,
+    ...(collaborative ? { estimation: estimate.estimation, preApprovedReview,
+      changesFromPre: preApprovedReview && snapshot ? comparePublishedEstimateSnapshots(preApprovedReview.snapshot, snapshot) : null } : {}),
     propertyType: snapshot?.propertyType ?? "", lineItems: snapshot?.lineItems ?? [],
     subtotal: snapshot?.subtotal ?? 0, gst: snapshot?.gst ?? 0, total: snapshot?.total ?? 0,
     subtotalPaise: snapshot?.subtotalPaise ?? null,
@@ -145,8 +168,9 @@ export function presentClientEstimate(
     totalPaise: snapshot?.totalPaise ?? null,
     selectedMainBasketIds: stableDrawingMetadata ? snapshot?.selectedMainBasketIds ?? [] : [],
     selectedMainBasketClassifications: stableDrawingMetadata ? snapshot?.selectedMainBasketClassifications ?? [] : [],
-    rooms: stableDrawingMetadata ? estimate.rooms ?? [] : [],
-    scopes: stableDrawingMetadata ? estimate.scopes ?? [] : [],
+    rooms: collaborative ? snapshot?.rooms ?? [] : stableDrawingMetadata ? estimate.rooms ?? [] : [],
+    scopes: collaborative ? snapshot?.scopes ?? [] : stableDrawingMetadata ? estimate.scopes ?? [] : [],
+    bedroomCount: snapshot?.bedroomCount ?? null,
     approvalRequired: estimate.approvalRequired ?? false,
     assignedManagerId: estimate.assignedManagerId ?? null,
     assignedDesignerId: estimate.assignedDesignerId ?? null,
@@ -172,4 +196,19 @@ export function presentClientEstimate(
     },
     publishedReview, reviewSourceIssue
   };
+}
+
+export function comparePublishedEstimateSnapshots(before: Row, after: Row) {
+  const previous = new Map<string, Row>((before.lineItems ?? []).filter((line: Row) => line.included).map((line: Row) => [String(line.id), line]));
+  const current = new Map<string, Row>((after.lineItems ?? []).filter((line: Row) => line.included).map((line: Row) => [String(line.id), line]));
+  const addedLineIds = [...current.keys()].filter((id) => !previous.has(id));
+  const removedLineIds = [...previous.keys()].filter((id) => !current.has(id));
+  const fields = ["roomId", "roomName", "specification", "mainLineName", "mainBasketId", "unit", "quantity", "rate", "amount", "estimateNotes"];
+  const changedLineIds = [...current.keys()].filter((id) => previous.has(id) && fields.some((field) =>
+    !isDeepStrictEqual(previous.get(id)![field] ?? null, current.get(id)![field] ?? null)));
+  const scopeChanged = ["propertyType", "bedroomCount", "rooms", "scopes", "selectedMainBasketIds"].some((field) =>
+    !isDeepStrictEqual(before[field] ?? null, after[field] ?? null));
+  return { addedLineIds, removedLineIds, changedLineIds, scopeChanged,
+    noChanges: !addedLineIds.length && !removedLineIds.length && !changedLineIds.length && !scopeChanged && before.total === after.total,
+    beforeTotal: before.total, afterTotal: after.total };
 }

@@ -45,6 +45,22 @@ describe("India-time internal chat schedule", () => {
 });
 
 describe("daily critical tasks", () => {
+  it("preserves site preparation membership without starting execution deadlines", async () => {
+    const f = createChatFixture();
+    const task = { ...f.workflowTasks[0]!, id: "site-preparation-a", kind: "site_execution" as const,
+      assigneeRole: "site_manager" as const, assigneeUserId: "site-a", preparationOnly: true, status: "open",
+      sourceSectionId: null, sourceLineItemKey: null,
+      title: "Prepare Site supervision", openedAt: "2026-09-01T00:00:00.000Z", dueAt: null as string | null };
+    f.workflowTasks.push(task);
+    const digest = createDailyCriticalTasksService({ chatRepository: f.chatRepository, clock: f.clock });
+    f.advance(90 * 60_000);
+    expect((await f.service.participants(f.actor("site-a"), "a")).items.some(person => person.id === "site-a")).toBe(true);
+    expect((await digest.get(f.actor("site-a")))?.items).toEqual([]);
+    task.preparationOnly = false;
+    task.dueAt = "2026-09-15T00:00:00.000Z";
+    expect((await digest.get(f.actor("site-a")))?.items).toContainEqual(expect.objectContaining({ kind: "workflow_task", id: task.id }));
+  });
+
   it("backfills the first missed 17:00 delivery after a scheduler outage and restart", async () => {
     const f = createChatFixture();
     const firstProcess = createDailyCriticalTasksService({chatRepository: f.chatRepository, clock: f.clock});

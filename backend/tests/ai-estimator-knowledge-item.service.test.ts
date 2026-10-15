@@ -69,6 +69,98 @@ afterAll(async () => {
 });
 
 describe("AI estimator knowledge item service", () => {
+  it("reads legacy Design defaults and lazily saves with section and aggregate CAS", async () => {
+    const { service, appendAudit } = createService();
+    const item = await service.createMainLine(ACTOR, "basket-carpentry", { name: "Legacy Design fixture" });
+    await AiEstimatorKnowledgeSectionModel.deleteOne({ revisionId: item.draftRevisionId, sectionKey: "design" });
+    const legacy = await service.getSection(ACTOR, item.id, item.draftRevisionId!, "design");
+    expect(legacy).toMatchObject({ version: 1, applicability: "not_configured", payload: { itemNature: "standard", answers: { stockCheck: false } } });
+    expect(await AiEstimatorKnowledgeSectionModel.countDocuments({ revisionId: item.draftRevisionId, sectionKey: "design" })).toBe(0);
+    const input = { expectedVersion: 1, expectedAggregateVersion: item.version, applicability: "configured" as const,
+      payload: { itemNature: "custom", answers: { stockCheck: true, vendorPreDiscussed: true, designerPoApproval: true },
+        discussedVendorId: "vendor-local", details: { vendorPreDiscussed: "Sample discussion only", maintenanceAccess: "Allow servicing access." },
+        poApprovalChecklist: [{ id: "confirm-sample", text: "Confirm the sample." }] } };
+    const saved = await service.updateSection(ACTOR, item.id, item.draftRevisionId!, "design", input);
+    expect(saved).toMatchObject({ version: 2, aggregateVersion: item.version + 1, payload: { answers: { stockCheck: true, designerVendorSelection: true }, discussedVendorId: "vendor-local" } });
+    expect(appendAudit).toHaveBeenLastCalledWith(expect.objectContaining({ action: "ai_estimator_knowledge_section_updated" }), expect.anything());
+    expect((await AiEstimatorKnowledgeVendorModel.findById("vendor-local").lean())?.dependencyEpoch).toBeGreaterThan(0);
+    await expect(service.updateSection(ACTOR, item.id, item.draftRevisionId!, "design", input)).rejects.toMatchObject({ code: "VERSION_CONFLICT" });
+    expect(await AiEstimatorKnowledgeSectionModel.countDocuments({ revisionId: item.draftRevisionId, sectionKey: "design" })).toBe(1);
+    expect((await service.getItem(ACTOR, item.id)).estimationVisibility).toBe("internal");
+  });
+
+  it("serializes concurrent first Design saves without duplicate sections or lost answers", async () => {
+    const { service, appendAudit } = createService();
+    const item = await service.createMainLine(ACTOR, "basket-carpentry", { name: "Concurrent Design fixture" });
+    await AiEstimatorKnowledgeSectionModel.deleteOne({ revisionId: item.draftRevisionId, sectionKey: "design" });
+    appendAudit.mockClear();
+    const outcomes = await Promise.allSettled([true, false].map((stockCheck) => service.updateSection(ACTOR, item.id, item.draftRevisionId!, "design", {
+      expectedVersion: 1, expectedAggregateVersion: item.version, applicability: "configured", payload: { answers: { stockCheck } }
+    })));
+    expect(outcomes.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(outcomes.filter((result) => result.status === "rejected")).toEqual([expect.objectContaining({ reason: expect.objectContaining({ code: "VERSION_CONFLICT" }) })]);
+    const sections = await AiEstimatorKnowledgeSectionModel.find({ revisionId: item.draftRevisionId, sectionKey: "design" }).lean();
+    expect(sections).toHaveLength(1);
+    expect(sections[0]!.version).toBe(2);
+    const winner = outcomes.find((result) => result.status === "fulfilled")!;
+    if (winner.status === "fulfilled") expect(sections[0]!.payload).toEqual(winner.value.payload);
+    expect(appendAudit).toHaveBeenCalledTimes(1);
+  });
+
+  it("rolls back a missing Design vendor and refuses edits to immutable Design history", async () => {
+    const { service, appendAudit } = createService();
+    const item = await service.createMainLine(ACTOR, "basket-carpentry", { name: "Invalid Design fixture", itemType: "temporary" });
+    await AiEstimatorKnowledgeSectionModel.deleteOne({ revisionId: item.draftRevisionId, sectionKey: "design" });
+    appendAudit.mockClear();
+    await expect(service.updateSection(ACTOR, item.id, item.draftRevisionId!, "design", {
+      expectedVersion: 1, expectedAggregateVersion: item.version, applicability: "configured",
+      payload: { answers: { vendorPreDiscussed: true }, discussedVendorId: "missing-vendor", details: { vendorPreDiscussed: "Discussion" } }
+    })).rejects.toMatchObject({ code: "DESIGN_VENDOR_UNAVAILABLE" });
+    expect(await AiEstimatorKnowledgeSectionModel.countDocuments({ revisionId: item.draftRevisionId, sectionKey: "design" })).toBe(0);
+    expect(appendAudit).not.toHaveBeenCalled();
+    await AiEstimatorKnowledgeRevisionModel.updateOne({ _id: item.draftRevisionId }, { $set: { status: "active" } });
+    await expect(service.updateSection(ACTOR, item.id, item.draftRevisionId!, "design", {
+      expectedVersion: 1, expectedAggregateVersion: item.version, applicability: "configured", payload: {}
+    })).rejects.toMatchObject({ code: "KNOWLEDGE_REVISION_IMMUTABLE" });
+  });
+
+  it("defaults and duplicates Main Lines to Internal, with CAS and audit for visibility-only updates", async () => {
+    const { service, appendAudit } = createService();
+    const item = await service.createMainLine(ACTOR, "basket-carpentry", { name: "Client-selectable fixture" });
+    expect(item.estimationVisibility).toBe("internal");
+    const revisionBefore = await AiEstimatorKnowledgeRevisionModel.findById(item.draftRevisionId).lean();
+    const external = await service.updateMainLine(ACTOR, item.id, { expectedVersion: 1, estimationVisibility: "external" });
+    expect(external).toMatchObject({ estimationVisibility: "external", version: 2 });
+    expect(appendAudit).toHaveBeenLastCalledWith(expect.objectContaining({
+      action: "ai_estimator_knowledge_main_line_updated",
+      oldValues: { version: 1, estimationVisibility: "internal" },
+      newValues: { version: 2, estimationVisibility: "external" }
+    }), expect.anything());
+    await expect(service.updateMainLine(ACTOR, item.id, { expectedVersion: 1, estimationVisibility: "internal" }))
+      .rejects.toMatchObject({ code: "VERSION_CONFLICT" });
+    expect(await AiEstimatorKnowledgeRevisionModel.findById(item.draftRevisionId).lean()).toEqual(revisionBefore);
+    expect((await service.listMainLines(ACTOR, "basket-carpentry", {}, { limit: 10, offset: 0 })).items[0])
+      .toMatchObject({ estimationVisibility: "external" });
+    expect((await service.duplicate(ACTOR, item.id, { expectedVersion: 2, name: "Safe copy" })).estimationVisibility).toBe("internal");
+    await AiEstimatorKnowledgeMainLineModel.collection.updateOne({ _id: item.id as never }, { $unset: { estimationVisibility: "" } });
+    expect((await service.getItem(ACTOR, item.id)).estimationVisibility).toBe("internal");
+  });
+
+  it("rejects external temporary items and invalid visibility values without writes", async () => {
+    const { service, appendAudit } = createService();
+    const item = await service.createMainLine(ACTOR, "basket-carpentry", { name: "Temporary visibility fixture", itemType: "temporary" });
+    appendAudit.mockClear();
+    await expect(service.updateMainLine(ACTOR, item.id, { expectedVersion: 1, estimationVisibility: "external" }))
+      .rejects.toMatchObject({ status: 400 });
+    await expect(service.updateMainLine(ACTOR, item.id, { expectedVersion: 1, estimationVisibility: "public" as "external" }))
+      .rejects.toMatchObject({ status: 400 });
+    expect((await service.getItem(ACTOR, item.id))).toMatchObject({ version: 1, estimationVisibility: "internal" });
+    expect(appendAudit).not.toHaveBeenCalled();
+    await AiEstimatorKnowledgeMainLineModel.updateOne({ _id: item.id }, { $set: { status: "archived" } });
+    await expect(service.updateMainLine(ACTOR, item.id, { expectedVersion: 1, estimationVisibility: "internal" }))
+      .rejects.toMatchObject({ status: 404 });
+  });
+
   it.each(["main_line", "temporary"] as const)(
     "reprojects legacy %s completeness on reads without rewriting its revision",
     async (itemType) => {
@@ -1828,7 +1920,7 @@ describe("AI estimator knowledge item service", () => {
     expect(await AiEstimatorKnowledgeSectionModel.countDocuments({
       mainLineId: created.mainLineId,
       revisionId: created.draftRevisionId
-    })).toBe(8);
+    })).toBe(9);
     expect(appendAudit).toHaveBeenCalledTimes(1);
 
     await service.updateMainLine(ACTOR, created.mainLineId, {

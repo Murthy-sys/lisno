@@ -17,6 +17,7 @@ export interface EstimationCatalogueMainLine {
   subBasketId: string;
   itemType?: "main_line";
   name: string;
+  estimateNotes?: string[];
   displayOrder: number;
   revisionId: string;
   itemStatus?: "draft" | "active" | "inactive";

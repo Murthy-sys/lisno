@@ -32,6 +32,9 @@ const projectSchema = new Schema(
       enum: ["planning", "active", "on_hold", "completed"],
       required: true
     },
+    estimationWorkflowVersion: { type: Number, enum: [2], default: undefined },
+    estimateRequirementsVersion: { type: Number, min: 0, default: 0, validate: Number.isSafeInteger },
+    estimationFenceEpoch: { type: Number, min: 0, default: 0, validate: Number.isSafeInteger },
     completionAuthority: {
       type: String,
       enum: ["legacy_staff", "vendor_client"],

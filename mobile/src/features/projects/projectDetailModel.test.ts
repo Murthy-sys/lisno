@@ -170,6 +170,7 @@ describe("presentProjectDetail", () => {
   it("presents an approved admin project from the immutable approved baseline", () => {
     expect(present(adminProject(), "admin")).toEqual({
       kind: "admin",
+      leadId: "lead-internal-1",
       id: "project-admin-1",
       name: "Lakeside Villa",
       subtitle: "Client, property and budget details",

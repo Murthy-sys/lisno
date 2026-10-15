@@ -115,9 +115,10 @@ function modelMatches(
   }
   for (const [key, expected] of Object.entries(filter)) {
     if (key === "$or") continue;
-    const actual = record[key];
+    const actual = key.split(".").reduce((value, part) => value?.[part], record);
     if (expected === null && actual == null) continue;
     if (expected && typeof expected === "object" && !(expected instanceof Date)) {
+      if ("$ne" in expected && actual === expected.$ne) return false;
       if ("$in" in expected && !expected.$in.includes(actual)) return false;
       if ("$gt" in expected && !(new Date(actual) > expected.$gt)) return false;
       if ("$size" in expected && (!Array.isArray(actual) || actual.length !== expected.$size)) return false;
@@ -510,7 +511,7 @@ function setupEstimateDrawingJourneyModels() {
 
 function plainRecord(record: Record<string, any>) {
   return Object.fromEntries(
-    Object.entries(record).filter(([key]) => key !== "save" && key !== "toObject")
+    Object.entries(record).filter(([, value]) => typeof value !== "function")
   );
 }
 
@@ -583,6 +584,7 @@ function setupWorkflowCharacterization(
     };
     record.reviews = [...(overrides.reviews ?? record.reviews)];
     record.notifications = [...(overrides.notifications ?? record.notifications)];
+    record.set = (values: Record<string, unknown>) => Object.assign(record, values);
     record.save = vi.fn(async () => record);
     record.toObject = () => plainRecord(record);
     return record;
@@ -655,11 +657,12 @@ describe("complete cross-role journey", () => {
     expect(response.body).toEqual({
       data: [{
         ...estimateResponseDto(fixture.estimate),
+        selectedMainBasketClassifications: [],
         lead: JSON.parse(JSON.stringify(fixture.lead))
       }]
     });
     expect(EstimateModel.find).toHaveBeenCalledOnce();
-    expect(EstimateModel.find).toHaveBeenCalledWith({ status: "pending_manager_assignment" });
+    expect(EstimateModel.find).toHaveBeenCalledWith({ $or: [{ "estimation.workflowVersion": 2, "estimation.status": "pending_manager_assignment" }, { "estimation.workflowVersion": { $ne: 2 }, status: "pending_manager_assignment" }] });
     expect(LeadModel.find).toHaveBeenCalledOnce();
     expectNoWorkflowWrites(fixture);
   });
@@ -720,6 +723,7 @@ describe("complete cross-role journey", () => {
     };
     const expectedResponse = {
       ...estimateResponseDto(before),
+      selectedMainBasketClassifications: [],
       assignedManagerId: "user-manager-aarav",
       assignedDesignerId: "user-designer-ananya",
       status: "pending_designer_approval",
@@ -1153,8 +1157,10 @@ describe("complete cross-role journey", () => {
     });
   });
 
-  it("links every unclaimed mixed-case client project through legacy upload, review, and revision history", async () => {
-    const repository = createMemoryRepository(structuredClone(demoSeedData));
+  it("preserves established mixed-case client memberships through legacy upload, review, and revision history", async () => {
+    const seed = structuredClone(demoSeedData);
+    seed.users.push({ ...seed.users.find(user => user.role === "client")!, id: "journey-established-client", email: "journey.client@example.com", emailNormalized: "journey.client@example.com", accountKind: "standard" });
+    const repository = createMemoryRepository(seed);
     const storage = new JourneyStorage();
     const app = createApp({
       repository,
@@ -1217,7 +1223,7 @@ describe("complete cross-role journey", () => {
       );
       expect(project).toMatchObject({
         name,
-        clientId: null,
+        clientId: "journey-established-client",
         clientEmail: clientEmail.trim(),
         clientEmailNormalized: "journey.client@example.com",
         managerId
@@ -1347,18 +1353,8 @@ describe("complete cross-role journey", () => {
       .expect(404);
     expect(submitted.body.error.code).toBe("NOT_FOUND");
 
-    const signup = await request(app)
-      .post("/api/v1/auth/client-signup")
-      .send({
-        name: "Journey Client",
-        email: "journey.client@example.com",
-        mobile: "+91 91234 56789",
-        address: "42 Linking Lane, Bengaluru",
-        password: "StrongPassword!23",
-        passwordConfirmation: "StrongPassword!23"
-      })
-      .expect(201);
-    const client = `Bearer ${signup.body.data.token}`;
+    const clientLogin = await request(app).post("/api/v1/auth/login").send({ email: "journey.client@example.com", password }).expect(200);
+    const client = `Bearer ${clientLogin.body.data.token}`;
 
     const projects = await request(app)
       .get("/api/v1/projects?limit=20&offset=0")
@@ -1483,54 +1479,33 @@ describe("complete cross-role journey", () => {
       .expect(200)
       .expect("Content-Type", /png/);
     expect(await repository.findProjectById(residence.id)).toMatchObject({
-      clientId: signup.body.data.user.id,
+      clientId: clientLogin.body.data.user.id,
       clientEmailNormalized: "journey.client@example.com"
     });
     expect(await repository.findProjectById(studio.id)).toMatchObject({
-      clientId: signup.body.data.user.id,
+      clientId: clientLogin.body.data.user.id,
       clientEmailNormalized: "journey.client@example.com"
     });
     expect(await repository.findProjectById(legacyResidence.id)).toMatchObject({
-      clientId: signup.body.data.user.id,
+      clientId: clientLogin.body.data.user.id,
       clientEmailNormalized: "journey.client@example.com"
     });
   });
 
-  it("lets a newly registered client access projects claimed by email", async () => {
+  it("lets a newly invited client access only the accepted project", async () => {
     const seed = structuredClone(demoSeedData);
-    const claimedProject = {
-      ...seed.projects[0],
-      id: "project-new-client-home",
-      name: "New Client Home",
-      clientId: null,
-      clientEmail: "new-client@example.com",
-      clientEmailNormalized: "new-client@example.com"
-    };
-    seed.projects.push(claimedProject);
-    const app = createApp({
-      repository: createMemoryRepository(seed),
-      storage: new JourneyStorage(),
-      auth: { jwtSecret: "journey-secret-that-is-at-least-thirty-two-characters", jwtExpiresInSeconds: 900 },
-      clock: () => new Date("2026-07-28T12:00:00.000Z")
-    });
-
-    const signup = await request(app).post("/api/v1/auth/client-signup").send({
-      name: "New Client",
-      email: "NEW-CLIENT@example.com",
-      mobile: "+91 91234 56789",
-      address: "42 Linking Lane, Bengaluru",
-      password: "StrongPassword!23",
-      passwordConfirmation: "StrongPassword!23"
-    });
-
-    expect(signup.status).toBe(201);
-    const projects = await request(app)
-      .get("/api/v1/projects?limit=20&offset=0")
-      .set("Authorization", `Bearer ${signup.body.data.token}`);
-    expect(projects.status).toBe(200);
-    expect(projects.body.data.items).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: "project-new-client-home", name: "New Client Home" })
-    ]));
+    seed.projects.push(...["home", "unaccepted"].map(suffix => ({ ...seed.projects[0]!, id: `project-new-client-${suffix}`, name: `New Client ${suffix}`, clientId: null, estimationWorkflowVersion: 2 as const, status: "planning" as const, clientEmail: "new-client@example.com", clientEmailNormalized: "new-client@example.com" })));
+    const repository = createMemoryRepository(seed);
+    let invitationToken = "";
+    const app = createApp({ repository, storage: new JourneyStorage(), invitationMailer: { deliveryKind: "local_test", async sendInvitation(input) { invitationToken = input.rawToken; } }, auth: { jwtSecret: "journey-secret-that-is-at-least-thirty-two-characters", jwtExpiresInSeconds: 900 }, clock: () => new Date("2026-07-28T12:00:00.000Z") });
+    const superAdmin = seed.users.find(user => user.role === "super_admin")!;
+    const staff = await request(app).post("/api/v1/auth/login").send({ email: superAdmin.email, password }).expect(200);
+    await request(app).post("/api/v1/projects/project-new-client-home/client-invitation").set("Authorization", `Bearer ${staff.body.data.token}`).send({}).expect(200);
+    const joined = await request(app).post("/api/v1/auth/project-invitations/accept").send({ token: invitationToken, password: "StrongPassword!23", passwordConfirmation: "StrongPassword!23" }).expect(201);
+    expect(joined.headers["cache-control"]).toBe("no-store");
+    const projects = await request(app).get("/api/v1/projects?limit=20&offset=0").set("Authorization", `Bearer ${joined.body.data.token}`).expect(200);
+    expect(projects.body.data.items.map((project: { id: string }) => project.id)).toEqual(["project-new-client-home"]);
+    expect(await repository.findProjectById("project-new-client-unaccepted")).toMatchObject({ clientId: null });
   });
 
   it("preserves approved sections while a rejected section is replaced and approved", async () => {

@@ -168,17 +168,27 @@ export class SessionManager {
   }
 
   async login(credentials: LoginCredentials): Promise<PublicUser> {
+    return this.authenticate("/auth/login", credentials);
+  }
+
+  async acceptProjectInvitation(input: { readonly token: string; readonly password: string; readonly passwordConfirmation: string }, projectId: string): Promise<PublicUser> {
+    return this.authenticate("/auth/project-invitations/accept", input, projectId);
+  }
+
+  private async authenticate(path: "/auth/login" | "/auth/project-invitations/accept", input: unknown, expectedProjectId?: string): Promise<PublicUser> {
     const generation = this.beginTransition("restoring");
     const fence = this.fence(generation);
     const environment = this.dependencies.getEnvironmentSnapshot();
 
     try {
       const rawPayload = await this.dependencies.apiClient.public.post<unknown>(
-        "/auth/login",
-        credentials
+        path,
+        input
       );
-      const payload = parseAuthPayload(rawPayload);
+      const invitation = expectedProjectId && typeof rawPayload === "object" && rawPayload !== null && "projectId" in rawPayload ? rawPayload : null;
+      const payload = invitation ? parseAuthPayload(Object.fromEntries(Object.entries(invitation).filter(([key]) => key !== "projectId"))) : parseAuthPayload(rawPayload);
       if (!payload) throw new InvalidSessionPayloadError();
+      if (expectedProjectId && (payload.user.role !== "client" || typeof rawPayload !== "object" || rawPayload === null || !("projectId" in rawPayload) || rawPayload.projectId !== expectedProjectId)) throw new InvalidSessionPayloadError();
       this.assertCurrent(generation);
       this.dependencies.tokenState.setPending(
         payload.token,

@@ -381,7 +381,7 @@ describe("Knowledge Base index page", () => {
 
     const notice = await screen.findByRole("region", { name: "Knowledge base isolation notice" });
     expect(notice).toHaveTextContent(
-      "Knowledge-base changes do not modify current estimates or the existing Sales estimate builder."
+      "Configuration updates apply to current selections. Published estimates and approvals keep their recorded values."
     );
     const dismiss = within(notice).getByRole("button", { name: "Dismiss notice" });
     expect(dismiss).toHaveAttribute("title", "Dismiss notice");
@@ -400,7 +400,7 @@ describe("Knowledge Base index page", () => {
 
     const notice = screen.getByRole("region", { name: "Knowledge base isolation notice" });
     expect(notice).toHaveTextContent(
-      "Knowledge-base changes do not modify current estimates or the existing Sales estimate builder."
+      "Configuration updates apply to current selections. Published estimates and approvals keep their recorded values."
     );
     expect(within(notice).queryByRole("button")).not.toBeInTheDocument();
     expect(notice.querySelector(".ui-inline-message__action")).toBeNull();

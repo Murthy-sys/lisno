@@ -174,7 +174,7 @@ function ApprovedDesignFiles({ projectId, session }: { readonly projectId: strin
   const loadingMoreRef = useRef(false);
   // Same key and URL as DesignVersionWorkspace, so the cache and `design-workflow-changed` invalidation are shared.
   const query = useQuery({
-    queryKey: privateQueryKey(scope, "design", "project", projectId),
+    queryKey: privateQueryKey(scope, "design", "project", projectId, "documents"),
     queryFn: ({ signal }) => context.runtime.api.authenticated.get<unknown>(`/projects/${encodeURIComponent(projectId)}/design-versions?limit=30&offset=0`, { signal }),
     enabled: canPerformOperation(session, "GET /projects/:projectId/design-versions")
   });

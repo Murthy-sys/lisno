@@ -2,7 +2,12 @@ import type { AssistantGeneratedResult, AssistantReadSources, AssistantFactBundl
 import type { AskLisnoResolution } from "../contracts/ask-lisno.js";
 
 export interface AssistantProviderContext {
+  surface?: "private" | "project_messages";
+  /** Server-only identifying text to replace before the private service boundary. */
+  sensitiveTerms?: readonly string[];
   messages: Array<{id: string; body: string; hasAttachments?: boolean}>;
+  /** Coalesced question fragments that must survive optional history trimming. */
+  requiredMessageIds?: readonly string[];
   sources: AssistantReadSources;
   /** Only private Ask Lisno requests provide these allowlisted account facts. */
   profile?: () => Promise<AssistantFactBundle>;

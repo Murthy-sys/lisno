@@ -1,3 +1,4 @@
+import { estimationPreparationSourceSchema } from "./EstimationPreparationSource.js";
 import { MAX_FINANCE_AMOUNT_PAISE } from "../domain/project-finance.js";
 import { storedProcurementSource } from "../domain/project-procurement.js";
 import { model, models, Schema } from "./mongoose.js";
@@ -18,6 +19,7 @@ const schema = new Schema({
   estimateId: { type: String, default: null, maxlength: 500 },
   estimateVersion: { type: Number, default: null, min: 1, max: Number.MAX_SAFE_INTEGER, validate: (value: number | null) => value === null || Number.isSafeInteger(value) },
   estimateReviewRoundId: { type: String, default: null, maxlength: 500 },
+  preparationSource: { type: estimationPreparationSourceSchema, default: undefined },
   sourceSectionId: { type: String, default: null, maxlength: 500 },
   sourceLineItemKey: { type: String, default: null, maxlength: 500 },
   tenderAwardId: { type: String, default: null, immutable: true },

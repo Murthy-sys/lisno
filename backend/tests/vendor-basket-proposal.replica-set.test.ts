@@ -5,7 +5,7 @@ import { basketQualityDigest } from "../src/services/ai-estimator-knowledge-bask
 import { PENDING_REQUEST_INDEXES, PENDING_REQUEST_FILTER } from "../src/services/vendor-basket-request-indexes.js";
 import request from "supertest";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ProposalDetail, ProposalSectionValue } from "../src/contracts/vendor-basket-proposal.js";
+import type { ProposalCreateInput, ProposalDetail, ProposalIntakeContent, ProposalSectionValue } from "../src/contracts/vendor-basket-proposal.js";
 import { errorHandler } from "../src/middleware/errors.js";
 import { VendorBasketProposalModel } from "../src/models/VendorBasketProposal.js";
 import { VendorBasketProposalResourceModel } from "../src/models/VendorBasketProposalResource.js";
@@ -62,6 +62,23 @@ beforeEach(async () => {
 });
 
 describe("vendor-independent basket proposals", { timeout: 45_000 }, () => {
+  it("keeps proposal Design rules admin-only, including direct resource reads", async () => {
+    const { service } = fixture(); const draft = await prepare(service, "new_main_basket");
+    const requesterHierarchy = await service.hierarchy(AUTHOR, "procurement", draft.id, paging);
+    const line = requesterHierarchy.items.find((row) => row.kind === "main_line")!;
+    expect(line.sections).not.toHaveProperty("design");
+    await expect(service.saveSection(AUTHOR, "procurement", draft.id, line.resourceId, "design", {
+      expectedVersion: draft.version, applicability: "configured", payload: { answers: { stockCheck: true } }
+    })).rejects.toMatchObject({ status: 403 });
+    const submitted = await service.submit(AUTHOR, draft.id, { expectedVersion: draft.version, idempotencyKey: "design-submit" });
+    const saved = await service.saveSection(ADMIN, "admin", draft.id, line.resourceId, "design", {
+      expectedVersion: submitted.version, expectedRequestVersion: submitted.requestVersion!, applicability: "configured",
+      payload: { answers: { stockCheck: true }, details: { tradeCoordination: "PRIVATE DESIGN NOTES" } }
+    });
+    expect((await service.resource(ADMIN, "admin", draft.id, saved.resource!.resourceId)).payload).toMatchObject({ payload: { answers: { stockCheck: true } } });
+    await expect(service.resource(AUTHOR, "procurement", draft.id, saved.resource!.resourceId)).rejects.toMatchObject({ status: 404 });
+    expect(JSON.stringify(await service.hierarchy(AUTHOR, "procurement", draft.id, paging))).not.toContain("PRIVATE DESIGN NOTES");
+  });
   async function prepare(service: ReturnType<typeof createVendorBasketProposalService>, kind: "new_main_basket" | "new_sub_basket", actor = AUTHOR, key = "vendorless-draft") {
     const target = kind === "new_sub_basket" ? { kind, basketId: "vendorless-parent" } : { kind };
     let detail = await service.create(actor, { name: "Vendorless finishes", target, idempotencyKey: key });
@@ -160,6 +177,215 @@ describe("vendor-independent basket proposals", { timeout: 45_000 }, () => {
 });
 afterAll(async () => { await replica?.stop(); });
 afterEach(() => vi.restoreAllMocks());
+
+describe("hierarchy intake requests", { timeout: 45_000 }, () => {
+  const content = (): ProposalIntakeContent => ({ basket: { name: "Requested finishes", description: "Interior finishes for the vendor" },
+    subBasket: { name: "Wall preparation", description: "Prepare walls before applying finishes" },
+    mainLines: [{ name: "Wall sanding" }, { name: "Wall primer" }] });
+  const create = (key = "intake-create-main"): ProposalCreateInput => ({ name: "Requested finishes", requestMode: "hierarchy_intake", intake: content(), idempotencyKey: key });
+  const approve = (detail: ProposalDetail) => ({ decision: "approve" as const, expectedVersion: detail.version,
+    expectedRequestVersion: detail.requestVersion!, idempotencyKey: `approve-${detail.id}` });
+  const submit = (service: ReturnType<typeof createVendorBasketProposalService>, detail: ProposalDetail) => service.submit(AUTHOR, detail.id,
+    { expectedVersion: detail.version, idempotencyKey: `submit-${detail.id}` });
+  async function parent(id = "intake-existing-parent", name = "Existing finishes") {
+    await AiEstimatorKnowledgeBasketModel.create({ _id: id, name, description: "Preserve this parent", status: "active", displayOrder: 5,
+      version: 1, createdById: ADMIN.id, updatedById: ADMIN.id });
+    return { kind: "new_sub_basket" as const, basketId: id };
+  }
+
+  it("publishes descriptions and unpriced draft Main Lines exactly once after a frozen review edit", async () => {
+    const { service, legacy } = fixture(); const draft = await service.create(AUTHOR, create());
+    expect(draft).toMatchObject({ requestMode: "hierarchy_intake", counts: { subBaskets: 1, mainLines: 2 }, capabilities: { editQuality: false, manageSubBaskets: false } });
+    expect(draft.intake!.mainLines.every((line) => Boolean(line.resourceId))).toBe(true);
+    expect(await service.create(AUTHOR, create())).toEqual(draft);
+    expect((await service.readiness(AUTHOR, "procurement", draft.id)).ready).toBe(true);
+    const pending = await submit(service, draft);
+    const reviewed = await service.saveIntake(ADMIN, "admin", draft.id, { expectedVersion: pending.version, expectedRequestVersion: pending.requestVersion!,
+      intake: { ...pending.intake!, basket: { ...pending.intake!.basket!, description: "Reviewed finishes" },
+        subBasket: { ...pending.intake!.subBasket, description: "Reviewed preparation" }, mainLines: [pending.intake!.mainLines[0]!, { name: "Reviewed primer" }] } });
+    expect((await service.get(AUTHOR, "procurement", draft.id)).intake).toEqual(pending.intake);
+    expect((await service.get(ADMIN, "admin", draft.id, { snapshot: "submitted" })).head).toEqual(pending.submittedHead);
+    expect((await legacy.listMine(AUTHOR, paging)).items[0]).toMatchObject({ requestMode: "hierarchy_intake" });
+    const decisions = await Promise.all([service.decide(ADMIN, draft.id, approve(reviewed)), service.decide(ADMIN, draft.id, approve(reviewed))]);
+    expect(decisions[0]).toEqual(decisions[1]);
+    expect(decisions[0]!.published).toMatchObject({ prices: [], sections: [], qualityRevisionId: null });
+    expect(await AiEstimatorKnowledgeBasketModel.findById(draft.basketId).lean()).toMatchObject({ description: "Reviewed finishes", status: "active" });
+    const sub = await AiEstimatorKnowledgeSubBasketModel.findOne({ basketId: draft.basketId }).lean();
+    expect(sub).toMatchObject({ description: "Reviewed preparation" });
+    const references = createAiEstimatorKnowledgeReferenceService({ audit: fixture().audit });
+    expect((await references.listSubBaskets(ADMIN, draft.basketId, {}, paging)).items[0]).toMatchObject({ description: "Reviewed preparation" });
+    const lines = await AiEstimatorKnowledgeMainLineModel.find({ basketId: draft.basketId }).lean();
+    expect(lines).toHaveLength(2);
+    expect(lines.map((line) => line.name).sort()).toEqual(["Reviewed primer", "Wall sanding"]);
+    for (const line of lines) expect(line).toMatchObject({ status: "draft", activeRevisionId: null, draftRevisionId: expect.any(String) });
+    expect(await AiEstimatorKnowledgeRevisionModel.countDocuments({ status: "active" })).toBe(0);
+    expect(await AiEstimatorKnowledgePriceVersionModel.countDocuments()).toBe(0);
+    const sections = await AiEstimatorKnowledgeSectionModel.find().lean();
+    expect(sections).toHaveLength(18);
+    for (const section of sections) {
+      expect(section.applicability).toBe("not_configured");
+      expect(section.payload ?? {}).toEqual({});
+    }
+    expect(await VendorBasketRequestNotificationModel.countDocuments()).toBe(1);
+    expect((await service.get(AUTHOR, "procurement", draft.id, { snapshot: "approved" })).intake).toEqual(reviewed.intake);
+  });
+
+  it("keeps existing parent and sibling metadata and quality intact across unequal parent approvals", async () => {
+    const { service } = fixture();
+    for (const [index, name] of ["Existing finishes", "Different electrical"].entries()) {
+      const target = await parent(`intake-parent-${index}`, name);
+      const qualityId = `intake-existing-quality-${index}`;
+      await AiEstimatorKnowledgeBasketQualityRevisionModel.create({ _id: qualityId, basketId: target.basketId, revisionNumber: 1,
+        contentDigest: basketQualityDigest(target.basketId, []), parameters: [], createdById: ADMIN.id, createdAt: new Date() });
+      await AiEstimatorKnowledgeBasketModel.updateOne({ _id: target.basketId }, { $set: { qualityRevisionId: qualityId } });
+      const qualityBefore = await AiEstimatorKnowledgeBasketQualityRevisionModel.findById(qualityId).lean();
+      await AiEstimatorKnowledgeSubBasketModel.create({ _id: `sibling-${index}`, basketId: target.basketId, name: `Existing child ${index}`, description: `Keep child ${index}`,
+        displayOrder: 0, version: 1, createdById: ADMIN.id, updatedById: ADMIN.id });
+      const before = await AiEstimatorKnowledgeBasketModel.findById(target.basketId).lean();
+      const { basket: _basket, ...intake } = content();
+      const draft = await service.create(AUTHOR, { ...create(`intake-sub-${index}`), name: intake.subBasket.name, target, intake });
+      expect(draft.intake).not.toHaveProperty("basket");
+      expect(draft.basket.payload.name).toBe(name);
+      await expect(service.saveIntake(AUTHOR, "procurement", draft.id, { expectedVersion: draft.version, intake: content() })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+      const pending = await submit(service, draft);
+      expect((await service.decide(ADMIN, draft.id, approve(pending))).published!.qualityRevisionId).toBe(qualityId);
+      expect(await AiEstimatorKnowledgeBasketQualityRevisionModel.findById(qualityId).lean()).toEqual(qualityBefore);
+      const after = await AiEstimatorKnowledgeBasketModel.findById(target.basketId).lean();
+      expect(after).toMatchObject({ name: before!.name, description: before!.description, status: before!.status, version: before!.version, qualityRevisionId: before!.qualityRevisionId });
+      expect(await AiEstimatorKnowledgeSubBasketModel.findById(`sibling-${index}`).lean()).toMatchObject({ description: `Keep child ${index}`, version: 1 });
+      expect(await AiEstimatorKnowledgeSubBasketModel.findOne({ basketId: target.basketId, name: intake.subBasket.name }).lean()).toMatchObject({ description: intake.subBasket.description });
+      expect(await AiEstimatorKnowledgeMainLineModel.countDocuments({ basketId: target.basketId, status: "draft" })).toBe(2);
+    }
+  });
+
+  it("saves incomplete drafts atomically, preserves IDs on rename, removes omitted lines and gates submission", async () => {
+    const { service } = fixture(); const input = create(); input.intake = { ...content(), basket: { name: input.name, description: "" }, subBasket: { name: "Preparation", description: null }, mainLines: [] };
+    let draft = await service.create(AUTHOR, input);
+    expect((await service.readiness(AUTHOR, "procurement", draft.id)).findings.map((finding) => finding.code)).toContain("DESCRIPTION_REQUIRED");
+    await expect(submit(service, draft)).rejects.toMatchObject({ code: "PROPOSAL_NOT_READY" });
+    draft = await service.saveIntake(AUTHOR, "procurement", draft.id, { expectedVersion: draft.version, intake: content() });
+    const existingId = draft.intake!.mainLines[0]!.resourceId;
+    const before = draft;
+    draft = await service.saveIntake(AUTHOR, "procurement", draft.id, { expectedVersion: draft.version, intake: { ...draft.intake!, mainLines: [{ resourceId: existingId, name: "Renamed sanding" }] } });
+    expect(draft.intake!.mainLines).toEqual([{ resourceId: existingId, name: "Renamed sanding" }]);
+    await expect(service.saveIntake(AUTHOR, "procurement", draft.id, { expectedVersion: before.version, intake: before.intake! })).rejects.toMatchObject({ code: "VERSION_CONFLICT" });
+    await expect(service.saveIntake(AUTHOR, "procurement", draft.id, { expectedVersion: draft.version, intake: { ...draft.intake!, mainLines: [{ resourceId: "foreign-line", name: "Foreign" }] } })).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect((await service.get(AUTHOR, "procurement", draft.id)).head).toEqual(draft.head);
+    expect(await VendorBasketRequestModel.countDocuments()).toBe(0);
+  });
+
+  it("keeps intake mode through send back and linked revision without copying review-only corrections", async () => {
+    const { service } = fixture(); const draft = await service.create(AUTHOR, create()); const pending = await submit(service, draft);
+    const reviewed = await service.saveIntake(ADMIN, "admin", draft.id, { expectedVersion: pending.version, expectedRequestVersion: pending.requestVersion!, intake: { ...pending.intake!, subBasket: { name: "Reviewer alternative", description: "Review copy" } } });
+    await expect(service.decide(ADMIN, draft.id, { ...approve(reviewed), decision: "reject" })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    await service.decide(ADMIN, draft.id, { ...approve(reviewed), decision: "reject", reason: "Clarify required finishes" });
+    const rejected = await service.get(AUTHOR, "procurement", draft.id);
+    const command = { expectedVersion: rejected.version, expectedRequestVersion: rejected.requestVersion!, idempotencyKey: "revise-intake" };
+    const revised = await service.revise(AUTHOR, draft.id, command);
+    expect(revised).toMatchObject({ requestMode: "hierarchy_intake", revisedFromId: draft.id, status: "draft", intake: { subBasket: content().subBasket } });
+    expect(revised.intake!.mainLines[0]!.resourceId).not.toBe(draft.intake!.mainLines[0]!.resourceId);
+    expect(await service.revise(AUTHOR, draft.id, command)).toEqual(revised);
+    await submit(service, revised);
+    expect(await VendorBasketRequestModel.countDocuments({ requestMode: "hierarchy_intake", status: "rejected" })).toBe(1);
+    expect(await VendorBasketRequestModel.countDocuments({ requestMode: "hierarchy_intake", status: "pending" })).toBe(1);
+  });
+
+  it("rejects Configuration content through every old writer and rejects cross-mode atomic saves", async () => {
+    const { service } = fixture(); const draft = await service.create(AUTHOR, create()); const version = { expectedVersion: draft.version };
+    const hierarchy = await service.hierarchy(AUTHOR, "procurement", draft.id, paging);
+    const sub = hierarchy.items.find((node) => node.kind === "sub_basket")!.resourceId; const line = draft.intake!.mainLines[0]!.resourceId!;
+    const writes = [
+      () => service.saveBasket(AUTHOR, "procurement", draft.id, { ...version, name: "Injected" }),
+      () => service.addSubBasket(AUTHOR, "procurement", draft.id, { ...version, name: "Injected" }),
+      () => service.saveSubBasket(AUTHOR, "procurement", draft.id, sub, { ...version, name: "Injected" }),
+      () => service.removeSubBasket(AUTHOR, "procurement", draft.id, sub, version),
+      () => service.addMainLine(AUTHOR, "procurement", draft.id, sub, { ...version, name: "Injected" }),
+      () => service.saveMainLine(AUTHOR, "procurement", draft.id, line, { ...version, name: "Injected" }),
+      () => service.removeMainLine(AUTHOR, "procurement", draft.id, line, version),
+      () => service.saveSection(AUTHOR, "procurement", draft.id, line, "pricing", { ...version, applicability: "configured", payload: { priceEntries: [] } }),
+      () => service.saveQuality(AUTHOR, "procurement", draft.id, { ...version, parameters: [] }),
+      () => service.addMaster(AUTHOR, "procurement", draft.id, "uoms", { ...version, name: "Injected", decimalScale: 0 }),
+      () => service.saveMaster(AUTHOR, "procurement", draft.id, "uoms", "master", { ...version, name: "Injected", decimalScale: 0 }),
+      () => service.removeMaster(AUTHOR, "procurement", draft.id, "uoms", "master", version)
+    ];
+    for (const write of writes) await expect(write()).rejects.toMatchObject({ code: "PROPOSAL_MODE_MISMATCH" });
+    expect((await service.get(AUTHOR, "procurement", draft.id)).head).toEqual(draft.head);
+    const old = await service.create(AUTHOR, { name: "Full proposal", idempotencyKey: "create-full-proposal" });
+    await expect(service.saveIntake(AUTHOR, "procurement", old.id, { expectedVersion: old.version, intake: content() })).rejects.toMatchObject({ code: "PROPOSAL_MODE_MISMATCH" });
+  });
+
+  it("enforces current identity, private ownership and pending immutability for atomic intake updates", async () => {
+    const { service } = fixture(); const draft = await service.create(AUTHOR, create()); const save = { expectedVersion: draft.version, intake: draft.intake! };
+    await expect(service.get(OTHER, "procurement", draft.id)).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await expect(service.saveIntake(OTHER, "procurement", draft.id, save)).rejects.toMatchObject({ code: "NOT_FOUND" });
+    await UserModel.updateOne({ _id: AUTHOR.id }, { $set: { active: false } });
+    await expect(service.saveIntake(AUTHOR, "procurement", draft.id, save)).rejects.toMatchObject({ status: 401 });
+    await UserModel.updateOne({ _id: AUTHOR.id }, { $set: { active: true } });
+    const pending = await submit(service, draft);
+    await expect(service.saveIntake(AUTHOR, "procurement", draft.id, { ...save, expectedVersion: pending.version })).rejects.toMatchObject({ code: "PROPOSAL_SUBMITTED" });
+    await expect(service.saveIntake(ADMIN, "admin", draft.id, { ...save, expectedVersion: pending.version, expectedRequestVersion: 99 })).rejects.toMatchObject({ code: "VERSION_CONFLICT" });
+    await UserModel.updateOne({ _id: ADMIN.id }, { $set: { active: false } });
+    await expect(service.decide(ADMIN, draft.id, approve(pending))).rejects.toMatchObject({ status: 401 });
+    expect(await AiEstimatorKnowledgeMainLineModel.countDocuments()).toBe(0);
+  });
+
+  it("keeps publication atomic when its final audit fails and allows a safe retry", async () => {
+    const { service, audit } = fixture(); const draft = await service.create(AUTHOR, create()); const pending = await submit(service, draft);
+    const failing = fixture({ appendInMongoTransaction: async (event, session) => {
+      if (event.action === "vendor_basket_proposal_decided") throw new Error("intake publication fixture failure");
+      return audit.appendInMongoTransaction(event, session);
+    } }).service;
+    await expect(failing.decide(ADMIN, draft.id, approve(pending))).rejects.toThrow("intake publication fixture failure");
+    expect(await AiEstimatorKnowledgeBasketModel.countDocuments()).toBe(0);
+    expect(await AiEstimatorKnowledgeSubBasketModel.countDocuments()).toBe(0);
+    expect(await AiEstimatorKnowledgeMainLineModel.countDocuments()).toBe(0);
+    expect(await AiEstimatorKnowledgeRevisionModel.countDocuments()).toBe(0);
+    expect(await AiEstimatorKnowledgeSectionModel.countDocuments()).toBe(0);
+    expect((await service.get(ADMIN, "admin", draft.id)).head).toMatchObject({ digest: pending.head.digest, version: pending.head.version });
+    expect((await service.decide(ADMIN, draft.id, approve(pending))).status).toBe("fulfilled");
+  });
+
+  it("rejects inactive parents and duplicate names without changing a pending request", async () => {
+    const { service } = fixture(); const target = await parent(); const { basket: _basket, ...intake } = content();
+    const draft = await service.create(AUTHOR, { ...create(), name: intake.subBasket.name, target, intake }); const pending = await submit(service, draft);
+    await AiEstimatorKnowledgeBasketModel.updateOne({ _id: target.basketId }, { $set: { status: "inactive" } });
+    await expect(service.decide(ADMIN, draft.id, approve(pending))).rejects.toMatchObject({ code: "PROPOSAL_NOT_READY" });
+    await expect(service.create(AUTHOR, { ...create("inactive-create"), name: intake.subBasket.name, target, intake })).rejects.toMatchObject({ code: "PARENT_BASKET_UNAVAILABLE" });
+    await AiEstimatorKnowledgeBasketModel.updateOne({ _id: target.basketId }, { $set: { status: "active" } });
+    await AiEstimatorKnowledgeSubBasketModel.create({ _id: "collision-child", basketId: target.basketId, name: intake.subBasket.name, displayOrder: 0, version: 1, createdById: ADMIN.id, updatedById: ADMIN.id });
+    await expect(service.decide(ADMIN, draft.id, approve(pending))).rejects.toMatchObject({ code: "DUPLICATE_IDENTITY" });
+    expect((await service.get(ADMIN, "admin", draft.id)).status).toBe("pending");
+    expect(await AiEstimatorKnowledgeMainLineModel.countDocuments()).toBe(0);
+  });
+
+  it("strictly validates intake payloads and mode at the HTTP boundary", async () => {
+    const { service } = fixture(); const actors: Record<string, PublicUser> = { author: AUTHOR, admin: ADMIN, other: OTHER };
+    const app = express(); app.use(express.json()); app.use("/api/v1", createVendorBasketProposalRouter({ authenticate: async (token: string) => actors[token] } as AuthService, service)); app.use(errorHandler);
+    const base = "/api/v1/procurement/vendor-basket-proposals";
+    for (const invalid of [
+      { ...create(), intake: undefined }, { ...create(), requestMode: undefined }, { ...create(), requestMode: "full_configuration" },
+      { ...create(), name: "Different top name" }, { ...create(), intake: { ...content(), subBasket: { name: "No description" } } },
+      { ...create(), intake: { ...content(), mainLines: [{ name: "Line", rate: 100 }] } },
+      { ...create(), intake: { ...content(), mainLines: [{ name: "Line", resourceId: "injected-id" }] } },
+      { ...create(), intake: { ...content(), mainLines: [{ name: " ".repeat(2) }] } },
+      { ...create(), intake: { ...content(), basket: { ...content().basket, description: "x".repeat(4001) } } }
+    ]) await request(app).post(base).set("Authorization", "Bearer author").send(invalid).expect(400);
+    const response = await request(app).post(base).set("Authorization", "Bearer author").send(create()).expect(201);
+    const draft = response.body.data as ProposalDetail; const path = `${base}/${draft.id}/intake`;
+    const saved = await request(app).put(path).set("Authorization", "Bearer author").send({ expectedVersion: draft.version, intake: draft.intake }).expect(200);
+    expect(saved.body.data).toMatchObject({ id: draft.id, version: 2, requestMode: "hierarchy_intake" });
+    expect(saved.headers["cache-control"]).toBe("private, no-store");
+    await request(app).put(path).set("Authorization", "Bearer other").send({ expectedVersion: 2, intake: draft.intake }).expect(404);
+    await request(app).put(path).set("Authorization", "Bearer admin").send({ expectedVersion: 2, intake: draft.intake }).expect(403);
+    await request(app).put(path).set("Authorization", "Bearer author").send({ expectedVersion: 2, requestMode: "full_configuration", intake: draft.intake }).expect(400);
+    await request(app).put(path).set("Authorization", "Bearer author").send({ expectedVersion: 2, intake: { ...draft.intake, quality: [] } }).expect(400);
+    const pending = await service.submit(AUTHOR, draft.id, { expectedVersion: 2, idempotencyKey: "http-intake-submit" });
+    const reviewPath = `/api/v1/admin/ai-estimator-knowledge/basket-proposals/${draft.id}/intake`;
+    await request(app).put(reviewPath).set("Authorization", "Bearer admin").send({ expectedVersion: pending.version, expectedRequestVersion: pending.requestVersion, intake: pending.intake }).expect(200);
+    await request(app).put(reviewPath).set("Authorization", "Bearer author").send({ expectedVersion: pending.version, expectedRequestVersion: pending.requestVersion, intake: pending.intake }).expect(403);
+  });
+});
+
 function fixture(audit: Pick<AuditService, "appendInMongoTransaction"> = createAuditService(createMemoryRepository())) {
   return { service: createVendorBasketProposalService({ audit }), legacy: createVendorBasketRequestService({ audit }), audit };
 }
@@ -248,7 +474,7 @@ describe("isolated full basket proposals", { timeout: 45_000 }, () => {
     expect(await service.decide(ADMIN, detail.id, command)).toEqual(result);
     expect(await AiEstimatorKnowledgeBasketModel.countDocuments()).toBe(1);
     expect(await AiEstimatorKnowledgeMainLineModel.findById(lineId).lean()).toMatchObject({ status: "active", draftRevisionId: null, activeRevisionId: result.published!.mainLines[0]!.revisionId });
-    expect(await AiEstimatorKnowledgeSectionModel.countDocuments()).toBe(8);
+    expect(await AiEstimatorKnowledgeSectionModel.countDocuments()).toBe(9);
     expect((await service.get(AUTHOR, "procurement", detail.id)).publishedBasketId).toBe(detail.basketId);
     const related = await service.references(AUTHOR, "procurement", { ...paging, kind: "main-lines", ids: [lineId] });
     expect(related.items[0]).toMatchObject({ mainLineId: lineId, subBasketId: subId, basketId: detail.basketId, uomId: UOM,

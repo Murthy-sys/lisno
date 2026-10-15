@@ -21,6 +21,7 @@ import { AuthRouteState } from "../auth/AuthRouteState";
 import { useAuth } from "../auth/AuthProvider";
 import { LoginPage } from "../auth/LoginPage";
 import { InvitationAcceptancePage } from "../auth/InvitationAcceptancePage";
+import { ProjectInvitationAcceptancePage } from "../auth/ProjectInvitationAcceptancePage";
 import { ForgotPasswordPage } from "../auth/ForgotPasswordPage";
 import { PasswordResetPage } from "../auth/PasswordResetPage";
 import { PermissionRoute } from "../auth/PermissionRoute";
@@ -245,6 +246,12 @@ function ExecutionPortfolioRoute() {
   return user?.role === "site_manager" ? <Navigate to="/home" replace /> : <ExecutionPortfolioPage />;
 }
 
+function LeadEstimateRoute({ editor = false }: { editor?: boolean }) {
+  const { user } = useAuth();
+  const returnTo = user?.role === "designer" ? "/designer/design-plans" : undefined;
+  return editor ? <LeadEstimateWorkspace returnTo={returnTo} /> : <LeadDetail returnTo={returnTo} />;
+}
+
 function ProjectExecutionRoute() {
   const { user } = useAuth();
   const { projectId } = useParams();
@@ -401,6 +408,7 @@ export function AppRoutes() {
       <Route path="/vendor-induction" element={<VendorInductionPublicPage />} />
       <Route path="/vendor-boq" element={<VendorBoqPublicPage />} />
       <Route path="/accept-invitation" element={<InvitationAcceptancePage />} />
+      <Route path="/accept-project-invitation" element={<ProjectInvitationAcceptancePage />} />
       <Route path="/" element={<HomeRedirect />} />
       <Route
         element={
@@ -492,14 +500,14 @@ export function AppRoutes() {
           path="/estimator-sales/leads/:leadId"
           element={registeredElement(
             "/estimator-sales/leads/:leadId",
-            <LeadDetail />
+            <LeadEstimateRoute />
           )}
         />
         <Route
           path="/estimator-sales/leads/:leadId/estimate"
           element={registeredElement(
             "/estimator-sales/leads/:leadId/estimate",
-            <LeadEstimateWorkspace />
+            <LeadEstimateRoute editor />
           )}
         />
         <Route

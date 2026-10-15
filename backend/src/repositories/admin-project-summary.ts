@@ -29,6 +29,7 @@ export function adminProjectSummary(
     ? null
     : users.find((candidate) => candidate.id === estimate.designPlanDesignerId) ?? null;
   return {
+    ...(project.estimationWorkflowVersion === 2 ? { estimationWorkflowVersion: 2 as const } : {}),
     id: project.id,
     name: project.name,
     status: project.status,
@@ -61,6 +62,8 @@ export function adminProjectSummary(
           projectLinkSource: estimateResolution!.projectLinkSource,
           version: estimate.version,
           status: estimate.status,
+          ...(estimate.estimation?.workflowVersion === 2 ? { estimationPhase: estimate.estimation.phase,
+            finalEstimateApproved: Boolean(estimate.estimation.finalApproval) } : {}),
           subtotal: estimate.subtotal,
           gst: estimate.gst,
           total: estimate.total,

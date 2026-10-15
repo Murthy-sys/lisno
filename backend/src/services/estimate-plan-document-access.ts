@@ -4,6 +4,7 @@ import { DesignPlanReviewRoundModel } from "../models/DesignPlanReviewRound.js";
 import { EstimateModel } from "../models/Estimate.js";
 import { LeadModel } from "../models/Lead.js";
 import type { PublicUser } from "./auth.service.js";
+import { requireEstimateClientMembership } from "./estimate-collaboration-policy.service.js";
 
 export async function requirePlanDocumentStaff(user: PublicUser, estimateId: string, edit = false) {
   const estimate = await EstimateModel.findById(estimateId).lean();
@@ -29,6 +30,7 @@ export async function requirePlanDocumentClientRound(user: PublicUser, estimateI
   if (!estimate) throw planDocumentNotFound();
   const lead = await LeadModel.findById(estimate.leadId).lean();
   if (!lead || (user.role !== "super_admin" && normalizeEmail(String(lead.clientEmail)) !== normalizeEmail(user.email))) throw planDocumentNotFound();
+  if (user.role === "client") await requireEstimateClientMembership(user, estimate);
   const round = await DesignPlanReviewRoundModel.findOne({
     estimateId,
     ...(roundId ? { _id: roundId } : {}),

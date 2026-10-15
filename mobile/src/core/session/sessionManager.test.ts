@@ -114,6 +114,27 @@ function authenticatedRoutes(overrides?: {
 }
 
 describe("SessionManager", () => {
+  it("accepts a project invitation only after validating the Client session and project identity", async () => {
+    const client = { ...user, role: "client" };
+    const fetchMock = jest.fn(async (input: RequestInfo | URL) => {
+      const path = new URL(String(input)).pathname;
+      if (path.endsWith("/auth/project-invitations/accept")) return json({ token: "invitation-session", user: client, projectId: "project-a" });
+      if (path.endsWith("/auth/me")) return json(client);
+      return json({ ...authorization, role: "client" });
+    });
+    const harness = createHarness(fetchMock);
+    await expect(harness.manager.acceptProjectInvitation({ token: "synthetic-invite", password: "synthetic-password", passwordConfirmation: "synthetic-password" }, "project-a")).resolves.toEqual(client);
+    expect(harness.tokenState.getRequestToken()?.accepted).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("rejects a mismatched project invitation without retaining its credentials", async () => {
+    const harness = createHarness(jest.fn(async () => json({ token: "invitation-session", user: { ...user, role: "client" }, projectId: "other-project" })));
+    await expect(harness.manager.acceptProjectInvitation({ token: "synthetic-invite", password: "synthetic-password", passwordConfirmation: "synthetic-password" }, "project-a")).rejects.toThrow();
+    expect(harness.storage.values.size).toBe(0);
+    expect(harness.tokenState.getRequestToken()).toBeNull();
+  });
+
   it("restores only after both the user and authorization snapshot validate", async () => {
     const harness = createHarness(authenticatedRoutes(), "stored-token");
 

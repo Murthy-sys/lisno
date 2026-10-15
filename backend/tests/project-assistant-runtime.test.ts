@@ -1,12 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import type { AssistantGeneratedResult, AssistantReadSources } from "../src/contracts/project-chat-assistant.js";
-import { createGeminiAssistantProvider } from "../src/services/project-assistant-gemini.js";
 import { AssistantFailure, assistantEligibleAt } from "../src/domain/project-chat-assistant.js";
 import { createProjectAssistantRuntime, type AssistantRuntimeOptions } from "../src/services/project-assistant-runtime.js";
 import { createChatFixture, chatSend } from "./helpers/project-chat.js";
 import type { ChatSendInput } from "../src/contracts/project-chat.js";
-const result: AssistantGeneratedResult = {kind: "no_answer", facts: [], candidates: [], missingInputs: [], commercial: null, freshness: []};
+const result: AssistantGeneratedResult = {disclosurePolicy: "project-publication-v1", projectPricing: null, kind: "no_answer", facts: [], candidates: [], missingInputs: [], commercial: null, freshness: []};
 const readSources = (): AssistantReadSources => ({status: async () => ({facts: [], freshness: []}), execution: async () => ({facts: [], freshness: []}), searchCatalogue: async () => [], recommendations: async () => ({rules: [], freshness: []}), preview: async () => { throw new Error("unused"); }, revalidate: async () => true});
 async function fixture(overrides: Partial<AssistantRuntimeOptions> = {}) {
   const f = createChatFixture(), published: string[] = [];
@@ -22,16 +21,19 @@ async function fixture(overrides: Partial<AssistantRuntimeOptions> = {}) {
   return {...f, runtime, enqueue, saved, options, published};
 }
 describe("assistant timing and durable lifecycle", () => {
-  it.each([false, true])("uses Gemini only after two minutes and suppresses it after a human reply: %s", async humanReplied => {
-    const transport = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json({
-      candidates: [{finishReason: "STOP", content: {role: "model", parts: [{text: JSON.stringify({kind: "no_answer", factIds: [], candidateIds: [], previewId: null, clarificationCodes: [], narrative: [{text: "Hello! How can I help?", factIds: []}]})}]}}],
-      usageMetadata: {promptTokenCount: 10, candidatesTokenCount: 8, thoughtsTokenCount: 2, totalTokenCount: 20}
-    }));
-    const provider = createGeminiAssistantProvider({apiKey: "synthetic-gemini-key", model: "gemini-3.8-flash", fetch: transport});
+  it.each([false, true])("uses the configured provider only after two minutes and suppresses it after a human reply: %s", async humanReplied => {
+    const generate = vi.fn<AssistantRuntimeOptions["provider"]["generate"]>(async context => {
+      expect(context.surface).toBe("project_messages");
+      expect(context.projectAvailable).toBe(true);
+      const receipt = await context.reserveAttempt(200);
+      await context.settleAttempt(receipt, {inputTokens: 10, outputTokens: 10});
+      return {...result, narrative: [{text: "Hello! How can I help?", factIds: []}]};
+    });
+    const provider = {generate};
     const f = await fixture({provider}), {run, message} = await f.enqueue("Hello");
     f.advance(119_999);
     expect(await f.runtime.runOnce()).toBe(false);
-    expect(transport).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
     if (humanReplied) {
       const reply = await f.service.send(f.actor("manager-a"), "a", chatSend("Hello, how can I help?", {replyToId: message.id}));
       await f.chatRepository.mutate(tx => f.runtime.cancelAfterHumanReply(tx, reply));
@@ -39,12 +41,11 @@ describe("assistant timing and durable lifecycle", () => {
     f.advance(1);
     await f.runtime.runOnce();
     if (humanReplied) {
-      expect(transport).not.toHaveBeenCalled();
+      expect(generate).not.toHaveBeenCalled();
       expect(f.published).toEqual([]);
       expect(await f.saved(run.id)).toMatchObject({status: "suppressed"});
     } else {
-      expect(transport).toHaveBeenCalledTimes(1);
-      expect(transport.mock.calls[0][0]).toBe("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent");
+      expect(generate).toHaveBeenCalledTimes(1);
       expect(f.published).toEqual([run.id]);
       expect(await f.saved(run.id)).toMatchObject({status: "no_answer", providerAttempts: 1});
       expect(await f.chatRepository.snapshot(tx => tx.assistant.counter(`tokens:${f.clock().toISOString().slice(0,10)}`))).toMatchObject({value: 20});
@@ -66,6 +67,82 @@ describe("assistant timing and durable lifecycle", () => {
     const next = createProjectAssistantRuntime(f.options);
     expect((await f.chatRepository.mutate(tx => next.enqueueAssistant(tx, input)))?.id).toBe(run.id);
     expect(await next.runOnce()).toBe(false); expect(f.published).toEqual([run.id]);
+  });
+  it("personalizes the published result once for the fresh initiating Client, never a viewing staff member", async () => {
+    const published: AssistantGeneratedResult[] = [];
+    let accountName = "Oldname Example";
+    const f = await fixture({
+      provider: {async generate() {
+        accountName = "Murthy Example";
+        return {...result, narrative: [{text: "Hello! I can help with your project's progress, timelines, and published estimates. What would you like to know?", factIds: []}]};
+      }},
+      publish: async (_tx, _run, generated) => {published.push(generated); return {messageId: randomUUID(), resultId: randomUUID()};}
+    });
+    const mutate = f.chatRepository.mutate.bind(f.chatRepository);
+    vi.spyOn(f.chatRepository, "mutate").mockImplementation(operation => mutate(tx => operation({...tx, app: {...tx.app,
+      findUserById: async id => {const user = await tx.app.findUserById(id); return user ? {...user, name: id === "client-a" ? accountName : "Priya Viewer"} : user;}
+    }})));
+    const {run} = await f.enqueue("Hi"); f.advance(120_000);
+    expect(await f.runtime.runOnce()).toBe(true);
+    expect(published).toHaveLength(1);
+    const saved = await f.saved(run.id);
+    const stored = await f.chatRepository.snapshot(tx => tx.assistant.result("a", saved!.resultId!));
+    expect(stored?.narrative).toEqual(published[0]!.narrative);
+    expect(stored?.narrative?.[0]?.text).toBe("Hello, Murthy! I can help with your project's progress, timelines, and published estimates. What would you like to know?");
+    expect(JSON.stringify(stored?.narrative)).not.toMatch(/Priya|Oldname|Viewer|Example/);
+    expect(await createProjectAssistantRuntime(f.options).runOnce()).toBe(false);
+    expect(published).toHaveLength(1);
+  });
+  it("keeps required fragment lineage and all grounded paragraphs when adding a concern acknowledgment", async () => {
+    const generated: AssistantGeneratedResult = {...result, kind: "status", facts: [
+      {id: "a-status", label: "Status", value: "Active", source: {id: "a", label: "Project", href: null}},
+      {id: "a-timeline", label: "Planned completion", value: "2026-12-31", source: {id: "a", label: "Project", href: null}}
+    ], narrative: [{text: "Status: Active", factIds: ["a-status"]}, {text: "Planned completion: 2026-12-31", factIds: ["a-timeline"]}]};
+    const provider = {generate: vi.fn(async () => generated)};
+    const published: AssistantGeneratedResult[] = [];
+    const f = await fixture({provider, publish: async (_tx, _run, value) => {published.push(value); return {messageId: randomUUID(), resultId: randomUUID()};}});
+    const first = await f.enqueue("I'm worried, show my project status"); f.advance(1_000);
+    const second = await f.enqueue("Show my project timeline", {}, {replyToId: first.message.id});
+    f.advance(120_000); await f.runtime.runOnce();
+    expect(vi.mocked(f.options.provider.generate).mock.calls[0]![0].requiredMessageIds).toEqual([first.message.id, second.message.id]);
+    expect(published).toHaveLength(1);
+    expect(published[0]!.narrative).toEqual([{text: "I hear your concern, Client.", factIds: []}, ...generated.narrative!]);
+    expect(published[0]!.facts).toEqual(generated.facts);
+    expect(published[0]!.freshness).toEqual(generated.freshness);
+  });
+  it("does not publish an older concern acknowledgment after an explicit correction in a required fragment", async () => {
+    const generated: AssistantGeneratedResult = {...result, kind: "clarification", missingInputs: ["Could you clarify what you would like to know?"]};
+    const provider = {generate: vi.fn(async () => generated)};
+    const published: AssistantGeneratedResult[] = [];
+    const f = await fixture({provider, publish: async (_tx, _run, value) => {published.push(value); return {messageId: randomUUID(), resultId: randomUUID()};}});
+    const first = await f.enqueue("I'm worried, show my project status"); f.advance(1_000);
+    const second = await f.enqueue("I'm not worried, show my project timeline", {}, {replyToId: first.message.id});
+    f.advance(120_000); await f.runtime.runOnce();
+    expect(vi.mocked(f.options.provider.generate).mock.calls[0]![0].requiredMessageIds).toEqual([first.message.id, second.message.id]);
+    expect(published).toEqual([generated]);
+    const saved = await f.saved(second.run.id);
+    const stored = await f.chatRepository.snapshot(tx => tx.assistant.result("a", saved!.resultId!));
+    expect(stored?.narrative).toBeUndefined();
+    expect(stored?.missingInputs).toEqual(generated.missingInputs);
+  });
+  it("omits personalization when the source author's identity is ambiguous at publication", async () => {
+    const generated = {...result, narrative: [{text: "Hello! I can help with your project's progress, timelines, and published estimates. What would you like to know?", factIds: []}]};
+    const f = await fixture();
+    const {run} = await f.enqueue("Hi");
+    let ambiguous = false;
+    const mutate = f.chatRepository.mutate.bind(f.chatRepository);
+    vi.spyOn(f.chatRepository, "mutate").mockImplementation(operation => mutate(tx => operation({...tx,
+      message: async (projectId, id) => {const message = await tx.message(projectId, id); return message && ambiguous ? {...message, author: {...message.author, id: "client-b"}} : message;}
+    })));
+    f.options.provider.generate = async () => {
+      // The real authorization service rejects this; presentation also refuses attribution.
+      ambiguous = true;
+      return generated;
+    };
+    f.advance(120_000); await f.runtime.runOnce();
+    const saved = await f.saved(run.id);
+    const stored = await f.chatRepository.snapshot(tx => tx.assistant.result("a", saved!.resultId!));
+    expect(stored?.narrative).toEqual(generated.narrative);
   });
   it("expedites the existing generation on an explicit request and fences request replay", async () => {
     const f = await fixture(), {run, input} = await f.enqueue(undefined, {hasOwner: true});
@@ -198,9 +275,12 @@ describe("assistant timing and durable lifecycle", () => {
   });
   it("does not send staff text or assistant history to the provider", async () => {
     const f = await fixture(); await f.service.send(f.actor("manager-a"), "a", chatSend("Private margin 27%"));
-    await f.enqueue(); f.advance(120_000); await f.runtime.runOnce();
+    const optional = await f.service.send(f.actor("client-a"), "a", chatSend("An earlier project question"));
+    const latest = await f.enqueue(); f.advance(120_000); await f.runtime.runOnce();
     const context = vi.mocked(f.options.provider.generate).mock.calls[0][0];
     expect(JSON.stringify(context.messages)).not.toContain("Private margin");
+    expect(context.messages.map(message => message.id)).toEqual([optional.id, latest.message.id]);
+    expect(context.requiredMessageIds).toEqual([latest.message.id]);
   });
   it("disables generation without affecting human chat", async () => {
     const f = await fixture({enabled: false}), {run} = await f.enqueue();
@@ -214,8 +294,10 @@ describe("assistant timing and durable lifecycle", () => {
     expect(next.run.coalescedSources).toEqual([{runId: first.run.id, messageId: first.message.id, messageVersion: 1, messageSequence: first.message.sequence}]);
     expect(await f.saved(first.run.id)).toMatchObject({status: "suppressed", failureCode: "ASSISTANT_COALESCED"});
     expect(await f.runtime.runOnce()).toBe(false); f.advance(119_999); expect(await f.runtime.runOnce()).toBe(false); f.advance(1); await f.runtime.runOnce();
-    const messages = vi.mocked(f.options.provider.generate).mock.calls[0][0].messages;
+    const context = vi.mocked(f.options.provider.generate).mock.calls[0][0];
+    const messages = context.messages;
     expect(messages).toEqual([{id: first.message.id, body: "Can I add a false ceiling?"}, {id: next.message.id, body: "100 sq-ft in Hall"}]);
+    expect(context.requiredMessageIds).toEqual([first.message.id, next.message.id]);
     expect(f.published).toEqual([next.run.id]);
   });
   it.each(["Thanks!", "Hi", "Hello", "Great", "Fine", "Cool", "Yes", "No", "Okay", "Got it"])("keeps a linked %s separate so the unanswered question is still answered", async body => {

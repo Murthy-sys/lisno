@@ -169,6 +169,7 @@ const mainLineCreateSchema = z
 
 const mainLineUpdateSchema = z
   .object({
+    estimationVisibility: z.enum(["internal", "external"]).optional(),
     expectedVersion: expectedVersionSchema,
     name: shortTextSchema.optional(),
     description: z.string().trim().min(1).max(4_000).nullable().optional(),

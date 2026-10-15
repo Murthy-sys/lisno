@@ -1,3 +1,4 @@
+import type { WorkOrderIssueReadiness } from "../../api/types";
 import { useQuery } from "@tanstack/react-query";
 
 import { PageState } from "../../components/ui/PageState";
@@ -6,7 +7,8 @@ import { ProcurementBasketScopePanel } from "./ProcurementBasketScopePanel";
 import { getProcurementBasket, procurementBasketKeys, type ProcurementBasketSummary } from "./procurementBasketApi";
 import { procurementError } from "./procurementPresentation";
 
-export function ProcurementBasketDetailView({ projectId, projectName, basket, frozen }: {
+export function ProcurementBasketDetailView({ projectId, projectName, basket, frozen, issueReadiness }: {
+  issueReadiness?: WorkOrderIssueReadiness;
   projectId: string;
   projectName: string;
   basket: ProcurementBasketSummary;
@@ -22,6 +24,6 @@ export function ProcurementBasketDetailView({ projectId, projectName, basket, fr
   return <div className="procurement-basket__detail">
     {busy ? <p className="procurement-basket__stale" role="status">Refreshing approved source. Changes are paused until it is current.</p> : null}
     <ProcurementBasketScopePanel projectId={projectId} projectName={projectName} basket={current} frozen={busy} />
-    <ProcurementBasketEnquiry projectId={projectId} projectName={projectName} basket={current} frozen={busy} />
+    <ProcurementBasketEnquiry projectId={projectId} projectName={projectName} basket={current} frozen={busy} issueReadiness={issueReadiness} />
   </div>;
 }

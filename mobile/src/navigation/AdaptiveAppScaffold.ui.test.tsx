@@ -4,7 +4,7 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 import { AUTHORIZATION_POLICY_VERSION, type PermissionCode, type Role } from "../contracts/authorization";
 import { useConfiguredRuntime } from "../runtime/RuntimeProvider";
 import { chrome } from "../ui/tokens";
-import { AdaptiveAppScaffold, ScaffoldContentBack, useScaffoldNavigationGuard } from "./AdaptiveAppScaffold";
+import { AdaptiveAppScaffold, ScaffoldContentBack, useScaffoldContentBack, useScaffoldNavigationGuard } from "./AdaptiveAppScaffold";
 import type { FeatureId } from "./registry";
 
 const mockReplace = jest.fn();
@@ -50,18 +50,23 @@ function configureRole(role: Role, permissions: readonly PermissionCode[], name 
   } as unknown as ReturnType<typeof useConfiguredRuntime>);
 }
 
-function PendingSendControl() {
+function PendingSendControl({ label = "pending send" }: { label?: string }) {
   const guard = useScaffoldNavigationGuard();
   return (
     <View>
-      <Pressable accessibilityLabel="Start pending send" accessibilityRole="button" onPress={() => guard?.setBlocked(true)}>
-        <Text>Start pending send</Text>
+      <Pressable accessibilityLabel={`Start ${label}`} accessibilityRole="button" onPress={() => guard?.setBlocked(true)}>
+        <Text>Start {label}</Text>
       </Pressable>
-      <Pressable accessibilityLabel="Finish pending send" accessibilityRole="button" onPress={() => guard?.setBlocked(false)}>
-        <Text>Finish pending send</Text>
+      <Pressable accessibilityLabel={`Finish ${label}`} accessibilityRole="button" onPress={() => guard?.setBlocked(false)}>
+        <Text>Finish {label}</Text>
       </Pressable>
     </View>
   );
+}
+
+function ConversationHeader() {
+  const back = useScaffoldContentBack();
+  return back?.visible ? <Pressable accessibilityRole="button" accessibilityLabel="Back" accessibilityState={{ disabled: back.disabled }} disabled={back.disabled} onPress={back.onBack}><Text>Conversation Back</Text></Pressable> : null;
 }
 
 type HostNode = { readonly type?: unknown; readonly props: Record<string, unknown>; readonly children?: readonly unknown[] };
@@ -112,6 +117,36 @@ describe("AdaptiveAppScaffold navigation", () => {
     expect(view.queryByTestId("scaffold-rail-chrome")).toBeNull();
   });
 
+  it.each([320, 390, 844, 1024])("gives the dedicated conversation one content Back and one inset owner at width %i", async width => {
+    configureRole("client", ["projects.list", "chat.read"]);
+    const dimensions = jest.spyOn(jest.requireActual<typeof import("react-native")>("react-native"), "useWindowDimensions").mockReturnValue({ width, height: 648, scale: 2, fontScale: 1 });
+    try {
+      const view = await render(<AdaptiveAppScaffold activeFeature="ask-lisno" presentation="conversation"><ConversationHeader /><Text>Private conversation</Text></AdaptiveAppScaffold>);
+      expect(view.queryByTestId("scaffold-top-chrome")).toBeNull();
+      expect(view.queryByTestId("scaffold-bottom-chrome")).toBeNull();
+      expect(view.queryByTestId("scaffold-rail-chrome")).toBeNull();
+      expect(view.queryByRole("tablist")).toBeNull();
+      expect(view.getByTestId("scaffold-body-inset").props.edges).toEqual(["top", "right", "bottom", "left"]);
+      expect(view.getByTestId("scaffold-content-inset").props.edges).toEqual([]);
+      expect(view.getByTestId("status-bar-dark")).toBeTruthy();
+      expect(view.getAllByRole("button", { name: "Back" })).toHaveLength(1);
+      await fireEvent.press(view.getByRole("button", { name: "Back" }));
+      expect(mockBack).toHaveBeenCalledTimes(1);
+    } finally { dimensions.mockRestore(); }
+  });
+
+  it("keeps a conversation header connected to the existing navigation guard", async () => {
+    configureRole("client", ["projects.list", "chat.read"]);
+    const view = await render(<AdaptiveAppScaffold activeFeature="ask-lisno" presentation="conversation"><ConversationHeader /><PendingSendControl /></AdaptiveAppScaffold>);
+    await fireEvent.press(view.getByRole("button", { name: "Start pending send" }));
+    await waitFor(() => expect(view.getByRole("button", { name: "Back" }).props.accessibilityState.disabled).toBe(true));
+    await fireEvent.press(view.getByRole("button", { name: "Back" }));
+    expect(mockBack).not.toHaveBeenCalled();
+    await fireEvent.press(view.getByRole("button", { name: "Finish pending send" }));
+    await fireEvent.press(view.getByRole("button", { name: "Back" }));
+    expect(mockBack).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps only the Lisno wordmark and notifications in a tightened top bar", async () => {
     configureRole("super_admin", ["admin.dashboard.read"], "Meera Priya Nair");
     const view = await render(<AdaptiveAppScaffold activeFeature="dashboard"><Text>Dashboard content</Text></AdaptiveAppScaffold>);
@@ -128,9 +163,9 @@ describe("AdaptiveAppScaffold navigation", () => {
     expect(bars).toHaveLength(1);
   });
 
-  it("shows the signed-in user's initials in the Profile tab and opens the profile menu instead of navigating", async () => {
-    configureRole("super_admin", ["admin.dashboard.read", "projects.list", "chat.read"], "Meera Priya Nair");
-    const view = await render(<AdaptiveAppScaffold activeFeature="dashboard" navigationRailBreakpoint={2000}><Text>Dashboard content</Text></AdaptiveAppScaffold>);
+  it.each(["super_admin", "procurement"] as const)("shows %s initials in the Profile tab and opens the profile menu instead of navigating", async (role) => {
+    configureRole(role, role === "procurement" ? ["workflow.tasks.read", "procurement.workspace.read", "chat.read"] : ["admin.dashboard.read", "projects.list", "chat.read"], "Meera Priya Nair");
+    const view = await render(<AdaptiveAppScaffold activeFeature={role === "procurement" ? "work" : "dashboard"} navigationRailBreakpoint={2000}><Text>Dashboard content</Text></AdaptiveAppScaffold>);
     const profileTab = view.getByRole("tab", { name: "Profile" });
     expect(within(profileTab).getByText("MN", { includeHiddenElements: true })).toBeTruthy();
     expect(StyleSheet.flatten(profileTab.props.style).width).toBe(44);
@@ -415,6 +450,16 @@ describe("AdaptiveAppScaffold navigation", () => {
     expect(mockReplace).toHaveBeenLastCalledWith("/feature/projects");
   });
 
+  it("keeps navigation blocked until every independent pending editor releases its own guard", async () => {
+    const view = await render(<AdaptiveAppScaffold activeFeature="messages"><PendingSendControl label="first edit" /><PendingSendControl label="second edit" /></AdaptiveAppScaffold>);
+    await fireEvent.press(view.getByRole("button", { name: "Start first edit" }));
+    await fireEvent.press(view.getByRole("button", { name: "Start second edit" }));
+    await fireEvent.press(view.getByRole("button", { name: "Finish first edit" }));
+    expect(view.getByRole("button", { name: "Open notifications" }).props.accessibilityState.disabled).toBe(true);
+    await view.rerender(<AdaptiveAppScaffold activeFeature="messages"><PendingSendControl label="first edit" /></AdaptiveAppScaffold>);
+    await waitFor(() => expect(view.getByRole("button", { name: "Open notifications" }).props.accessibilityState.disabled).toBe(false));
+  });
+
   it("retains Back above loading and unavailable content without another header", async () => {
     const view = await render(<AdaptiveAppScaffold activeFeature="projects"><Text>Loading project</Text></AdaptiveAppScaffold>);
     expect(view.getAllByRole("button", { name: "Back" })).toHaveLength(1);
@@ -465,22 +510,83 @@ describe("AdaptiveAppScaffold navigation", () => {
   it("keeps Procurement selected for a direct Vendors link and expands authorized tablet children", async () => {
     configureRole("procurement", ["workflow.tasks.read", "procurement.workspace.read", "procurement.vendor_directory.read"]);
     const view = await render(<AdaptiveAppScaffold activeFeature="procurement-vendors" navigationRailBreakpoint={1}><Text>Vendor content</Text></AdaptiveAppScaffold>);
-    const parent = view.getByRole("tab", { name: "Procurement" });
+    const parent = view.getByRole("button", { name: "Procurement" });
     expect(parent.props.accessibilityState).toMatchObject({ selected: true, expanded: true });
     expect(view.getByRole("button", { name: "Procurement Vendors" }).props.accessibilityState.selected).toBe(true);
-    expect(view.getByRole("button", { name: "Procurement Dashboard" }).props.accessibilityState.selected).toBe(false);
-    await fireEvent.press(view.getByRole("button", { name: "Procurement Dashboard" }));
+    expect(view.getByRole("button", { name: "Procurement Projects" }).props.accessibilityState.selected).toBe(false);
+    await fireEvent.press(view.getByRole("button", { name: "Procurement Projects" }));
     expect(mockPush).toHaveBeenLastCalledWith("/feature/procurement");
     await fireEvent.press(parent);
-    expect(view.getByRole("tab", { name: "Procurement" }).props.accessibilityState.expanded).toBe(false);
+    expect(view.getByRole("button", { name: "Procurement" }).props.accessibilityState.expanded).toBe(false);
     expect(view.queryByRole("button", { name: "Procurement Vendors" })).toBeNull();
   });
 
-  it("shows just Vendors in the Procurement rail when Dashboard permission is missing", async () => {
+  it("shows Vendors and requests in the Procurement rail when Dashboard permission is missing", async () => {
     configureRole("procurement", ["workflow.tasks.read", "procurement.vendor_directory.read"]);
     const view = await render(<AdaptiveAppScaffold activeFeature="procurement-vendors" navigationRailBreakpoint={1}><Text>Vendor content</Text></AdaptiveAppScaffold>);
-    expect(view.getByRole("tab", { name: "Procurement" }).props.accessibilityState.selected).toBe(true);
+    expect(view.getByRole("button", { name: "Procurement" }).props.accessibilityState.selected).toBe(true);
     expect(view.getByRole("button", { name: "Procurement Vendors" })).toBeTruthy();
-    expect(view.queryByRole("button", { name: "Procurement Dashboard" })).toBeNull();
+    expect(view.queryByRole("button", { name: "Procurement Projects" })).toBeNull();
   });
+  it("opens the matching mobile drawer, navigates to requests and closes it", async () => {
+    configureRole("procurement", ["workflow.tasks.read", "procurement.workspace.read", "procurement.vendor_directory.read", "execution.tracker.read", "chat.read", "procurement.work_order_approval.read", "access_request.self.read"]);
+    const view = await render(<AdaptiveAppScaffold activeFeature="procurement" navigationRailBreakpoint={2000}><Text>Project content</Text></AdaptiveAppScaffold>);
+    expect(view.getByTestId("procurement-top-bar")).toBeTruthy();
+    const dock = within(view.getByTestId("scaffold-bottom-chrome"));
+    expect(dock.getAllByRole("tab").map(tab => tab.props.accessibilityLabel)).toEqual(["Home", "Procurement", "Messages", "Profile", "More"]);
+    expect(within(dock.getByRole("tab", { name: "Profile" })).getByText("AR", { includeHiddenElements: true })).toBeTruthy();
+    await fireEvent.press(dock.getByRole("tab", { name: "More" }));
+    expect(mockReplace).toHaveBeenLastCalledWith("/more");
+    expect(view.queryByTestId("procurement-navigation-drawer")).toBeNull();
+    await fireEvent.press(view.getByRole("button", { name: "Open navigation" }));
+    const drawer = within(view.getByTestId("procurement-navigation-drawer"));
+    expect(drawer.getByRole("button", { name: "Execution" })).toBeTruthy();
+    expect(drawer.getByRole("button", { name: "Project messages" })).toBeTruthy();
+    expect(drawer.getByRole("button", { name: "Work order approvals" })).toBeTruthy();
+    expect(drawer.getByRole("button", { name: "My access requests" })).toBeTruthy();
+    await fireEvent.press(drawer.getByRole("button", { name: "Procurement All my requests" }));
+    expect(mockPush).toHaveBeenLastCalledWith("/feature/my-requests");
+    expect(view.queryByTestId("procurement-navigation-drawer")).toBeNull();
+  });
+
+  it("keeps drawer, bottom tabs and rail routes blocked while a form owns navigation", async () => {
+    configureRole("procurement", ["workflow.tasks.read", "procurement.workspace.read", "procurement.vendor_directory.read", "chat.read"]);
+    const view = await render(<AdaptiveAppScaffold activeFeature="procurement" navigationRailBreakpoint={2000}><PendingSendControl /></AdaptiveAppScaffold>);
+    await fireEvent.press(view.getByRole("button", { name: "Start pending send" }));
+    expect(view.getByRole("button", { name: "Open navigation" })).toBeDisabled();
+    await fireEvent.press(view.getByRole("tab", { name: "More" }));
+    expect(view.queryByTestId("procurement-navigation-drawer")).toBeNull();
+    await view.rerender(<AdaptiveAppScaffold activeFeature="procurement" navigationRailBreakpoint={1}><PendingSendControl /></AdaptiveAppScaffold>);
+    expect(view.getByRole("button", { name: "Procurement Vendors" })).toBeDisabled();
+    expect(view.getByRole("button", { name: "Profile" })).toBeDisabled();
+    expect(view.getByRole("button", { name: "More tools" })).toBeDisabled();
+    await fireEvent.press(view.getByRole("button", { name: "Procurement Vendors" }));
+    expect(mockPush).not.toHaveBeenCalled();
+    await fireEvent.press(view.getByRole("button", { name: "Finish pending send" }));
+    await fireEvent.press(view.getByRole("button", { name: "Procurement Vendors" }));
+    expect(mockPush).toHaveBeenLastCalledWith("/feature/procurement-vendors");
+  });
+
+  it("closes the mobile menu without navigation using its close action", async () => {
+    configureRole("procurement", ["workflow.tasks.read", "procurement.workspace.read"]);
+    const view = await render(<AdaptiveAppScaffold activeFeature="procurement" navigationRailBreakpoint={2000}><Text>Content</Text></AdaptiveAppScaffold>);
+    await fireEvent.press(view.getByRole("button", { name: "Open navigation" }));
+    await fireEvent.press(view.getByRole("button", { name: "Close navigation" }));
+    expect(view.queryByTestId("procurement-navigation-drawer")).toBeNull();
+    expect(mockPush).not.toHaveBeenCalled();
+  });
+
+  it("restores accessible content when an open phone drawer changes to a tablet rail", async () => {
+    configureRole("procurement", ["workflow.tasks.read", "procurement.workspace.read"]);
+    const view = await render(<AdaptiveAppScaffold activeFeature="procurement" navigationRailBreakpoint={2000}><Text>Project content</Text></AdaptiveAppScaffold>);
+    await fireEvent.press(view.getByRole("button", { name: "Open navigation" }));
+    expect(view.getByTestId("procurement-navigation-drawer")).toBeTruthy();
+    await view.rerender(<AdaptiveAppScaffold activeFeature="procurement" navigationRailBreakpoint={1}><Text>Project content</Text></AdaptiveAppScaffold>);
+    expect(view.queryByTestId("procurement-navigation-drawer")).toBeNull();
+    expect(view.getByTestId("scaffold-body-inset").props.importantForAccessibility).toBe("auto");
+    expect(view.getByTestId("scaffold-body-inset").props.accessibilityElementsHidden).toBe(false);
+    expect(view.getByRole("button", { name: "Procurement Projects" })).toBeTruthy();
+    expect(view.getByText("Project content")).toBeTruthy();
+  });
+
 });

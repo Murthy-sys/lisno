@@ -1,10 +1,24 @@
 import { apiClient } from "../../api/client";
-import type { ClientPublishedEstimateReview } from "../../api/types";
+import type { ClientPublishedEstimateReview, EstimateClientReviewSnapshot } from "../../api/types";
 import type { EstimateDraft } from "../leads/leadsApi";
 
 export interface EstimateQueueItem extends EstimateDraft {
   version?: number;
   publishedReview?: ClientPublishedEstimateReview | null;
+  preApprovedReview?: {
+    reviewRoundId: string;
+    estimateVersion: number;
+    snapshot: EstimateClientReviewSnapshot;
+  } | null;
+  changesFromPre?: {
+    addedLineIds: string[];
+    removedLineIds: string[];
+    changedLineIds: string[];
+    scopeChanged: boolean;
+    noChanges: boolean;
+    beforeTotal: number;
+    afterTotal: number;
+  } | null;
   reviewSourceIssue?: "missing_snapshot" | "source_conflict" | null;
   lead: {
     _id: string;
@@ -57,3 +71,16 @@ export const decideEstimateAsClient = (
 );
 export const downloadClientEstimatePdf = (estimateId: string, roundId: string) =>
   apiClient.getBlob(`/client/estimates/${encodeURIComponent(estimateId)}/pdf?roundId=${encodeURIComponent(roundId)}`);
+
+export const enableEstimateCollaboration = (estimateId: string, expectedVersion: number) =>
+  apiClient.post<EstimateDraft>(`/estimates/${encodeURIComponent(estimateId)}/enable-collaboration`, { expectedVersion });
+export const withdrawEstimateReview = (estimateId: string, input: {
+  expectedVersion: number; reviewRoundId: string; reviewRoundVersion: number; reason: string;
+}) => apiClient.post<EstimateDraft>(`/estimates/${encodeURIComponent(estimateId)}/withdraw-review`, input);
+export interface EstimatePreparationSource {
+  estimateId: string; estimateVersion: number; estimateReviewRoundId: string | null;
+  workflowVersion: 2; phase: "pre" | "post"; kind: "approved_pre" | "released_post" | "approved_final";
+  sourceSnapshotId: string; sourceDigest: string;
+}
+export const releaseEstimatePreparation = (estimateId: string, expectedVersion: number) =>
+  apiClient.post<EstimatePreparationSource>(`/estimates/${encodeURIComponent(estimateId)}/preparation-snapshots`, { expectedVersion });

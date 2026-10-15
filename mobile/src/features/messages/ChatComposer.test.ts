@@ -8,6 +8,7 @@ import {
 } from "@testing-library/react-native";
 import { Linking } from "react-native";
 
+import { AUTHORIZATION_POLICY_VERSION } from "../../contracts/authorization";
 import type { AuthenticatedSession } from "../../contracts/session";
 import { ApiError } from "../../core/http/apiClient";
 import {
@@ -131,7 +132,7 @@ function stagedAttachment(
   };
 }
 
-const apiGet = jest.fn(async () => attachmentPolicy);
+const apiGet = jest.fn(async (_path?: string): Promise<unknown> => attachmentPolicy);
 const apiPost = jest.fn();
 const apiDelete = jest.fn(async () => undefined);
 const startRecording = jest.fn(async () => undefined);
@@ -169,7 +170,7 @@ function configuredRuntime() {
     configured: true,
     booted: true,
     runtime: {
-      api: { authenticated: { get: apiGet, post: apiPost, delete: apiDelete } },
+      api: { authenticated: { get: apiGet, post: apiPost, delete: apiDelete, put: jest.fn(async () => ({ sequence: 1, typing: true, expiresAt: null })) } },
       transfers: { upload: uploadAttachment },
       audio: {
         startRecording,
@@ -1064,4 +1065,18 @@ describe("chat composer submission", () => {
     await view.unmount();
     expect(apiDelete).not.toHaveBeenCalledWith("/projects/project-a/chat/attachments/attachment-a");
   });
+});
+
+
+describe("structured message metadata", () => {
+ it("sends structured mentions and a tracked action with current participant IDs and a date", async () => {
+  const currentSession = { ...session, authorization: { ...session.authorization, policyVersion: AUTHORIZATION_POLICY_VERSION, permissions: ["chat.send", "chat.read"] } } as AuthenticatedSession;
+  apiGet.mockImplementation(async path => path?.endsWith("/participants") ? { items: [{ id: "designer-one", name: "Mira", role: "designer", sources: [], selection: null }], setupWarnings: [] } : path?.endsWith("/action-types") ? { items: [{ id: "type-one", name: "Design approval", priority: "important", builtIn: true }], canCreate: false } : attachmentPolicy);
+  apiPost.mockResolvedValue({ id: "sent-one" }); const view = await render(composerHarness({ session: currentSession }).element());
+  await fireEvent.press(view.getByRole("button", { name: "Mentions and actions" })); await waitFor(() => expect(view.getByRole("combobox", { name: "Mention participant" })).not.toBeDisabled());
+  await fireEvent.press(view.getByRole("combobox", { name: "Mention participant" })); await fireEvent.press(await view.findByRole("radio", { name: "Mira · designer" })); expect(view.getByLabelText("Message the project team").props.value).toBe("@Mira ");
+  await fireEvent.press(view.getByRole("button", { name: "Mentions and actions" })); await fireEvent.press(view.getByRole("combobox", { name: "Tracked action" })); await fireEvent.press(await view.findByRole("radio", { name: "Design approval" }));
+  await fireEvent.press(view.getByRole("combobox", { name: "Responsible participant" })); await fireEvent.press(await view.findByRole("radio", { name: "Mira · designer" })); await fireEvent.changeText(view.getByLabelText("Action due date (YYYY-MM-DD)"), "2026-10-20"); await fireEvent.press(view.getByRole("button", { name: "Done with message options" }));
+  await fireEvent.press(view.getByRole("button", { name: "Send message" })); await waitFor(() => expect(apiPost).toHaveBeenCalledWith("/projects/project-a/chat/messages", expect.objectContaining({ body: "@Mira", mentions: [{ userId: "designer-one", start: 0, end: 5 }], responsibleUserId: "designer-one", priority: "important", action: { typeId: "type-one", dueDate: "2026-10-20" } })));
+ });
 });

@@ -455,6 +455,8 @@ describe("basket bid comparison and award", () => {
   });
 
   it.each([
+    { label: "collaborative low-value award", start: "new", failure: "none", gross: 14160, extraSlot: false },
+    { label: "collaborative blocked award", start: "new", failure: "none", gross: 14160, extraSlot: false },
     { label: "new low-value award", start: "new", failure: "none", gross: 14160, extraSlot: false },
     { label: "new low-value overbudget award", start: "new", failure: "none", gross: 14160, extraSlot: false },
     { label: "saved draft", start: "draft", failure: "none", gross: 14160, extraSlot: false },
@@ -465,6 +467,8 @@ describe("basket bid comparison and award", () => {
     { label: "exactly ₹50,000", start: "new", failure: "none", gross: 5000000, extraSlot: false },
     { label: "low-value award requiring budget override", start: "new", failure: "none", gross: 14160, extraSlot: true }
   ])("completes the correct action for $label", async ({ label, start, failure, gross, extraSlot }) => {
+    const collaborative = label.startsWith("collaborative");
+    const blocked = label.includes("blocked");
     const selectedBid = { ...rows[1]!, quoteNetPaise: gross, quoteGstPaise: 0, quoteGrossPaise: gross,
       lines: [{ ...line, unitPricePaise: gross / 2, netPaise: gross, totalPaise: gross }] };
     const paymentRows = milestones.map((row) => ({ ...row, amountPaise: Math.round(gross * row.basisPoints / 10000),
@@ -507,15 +511,15 @@ describe("basket bid comparison and award", () => {
       }),
       http.post("/api/v1/procurement/projects/project-one/baskets/basket-one/enquiries/enquiry-one/awards/award-one/submit", async ({ request }) => {
         submits.push(await request.json() as Record<string, unknown>);
-        savedAward = { ...savedAward!, status: "pending_approvals", version: savedAward!.version + 1, autoIssueOnApproval: true };
+        savedAward = { ...savedAward!, status: "pending_approvals", version: savedAward!.version + 1, autoIssueOnApproval: !collaborative };
         return HttpResponse.json({ data: savedAward });
       }),
       http.post("/api/v1/work-order-approvals/award-one/decision", async ({ request }) => {
         decisions.push(await request.json() as Record<string, unknown>);
         if (failure === "decision" && decisions.length === 1)
           return HttpResponse.json({ error: { code: "TEMPORARY_FAILURE", message: "Approval service unavailable. Please retry." } }, { status: 503 });
-        savedAward = { ...savedAward!, version: savedAward!.version + 1, status: start === "legacy" ? "ready_to_issue" : "issued",
-          issuedPurchaseOrderId: start === "legacy" ? null : "order-one", approvals: [{ slot: "procurement", actorId: "buyer-one",
+        savedAward = { ...savedAward!, version: savedAward!.version + 1, status: start === "legacy" || collaborative ? "ready_to_issue" : "issued",
+          issuedPurchaseOrderId: start === "legacy" || collaborative ? null : "order-one", approvals: [{ slot: "procurement", actorId: "buyer-one",
             decision: "approve", reason: null, decidedAt: "2026-10-06T00:00:00Z" }] };
         return failure === "lost" ? HttpResponse.error() : HttpResponse.json({ data: savedAward });
       }),
@@ -527,16 +531,24 @@ describe("basket bid comparison and award", () => {
     );
     const user = userEvent.setup();
     renderWithQuery(<ProcurementBasketComparison projectId="project-one" basketId="basket-one" enquiry={enquiry}
-      frozen={false} afterChange={async () => {}} />);
+      frozen={false} collaborative={collaborative} issueReadiness={collaborative ? { required: true, canIssue: !blocked, blockers: blocked ? ["Initial payment must be confirmed."] : [], finalSource: null } : undefined} afterChange={async () => {}} />);
     await user.click(await screen.findByRole("button", { name: start === "new" ? "Award" : "Review saved award" }));
     const drawer = await screen.findByRole("dialog", { name: "Award vendor" });
     expect(within(drawer).queryByLabelText(/Reason for/u)).not.toBeInTheDocument();
     expect(within(drawer).queryByText(/Frozen quotation/u)).not.toBeInTheDocument();
     const direct = gross < 5000000 && !extraSlot;
-    const action = within(drawer).getByRole("button", { name: direct ? "Issue work order & lock payment" : "Send for approvals" });
+    const action = within(drawer).getByRole("button", { name: collaborative ? "Submit for internal approval" : direct ? "Issue work order & lock payment" : "Send for approvals" });
     await waitFor(() => expect(action).toBeEnabled());
     if (extraSlot) expect(within(drawer).getByText(/Super Admin budget override approval is required/u)).toBeVisible();
     await user.click(action);
+    if (collaborative) {
+      const issue = await within(drawer).findByRole("button", { name: "Issue approved work order" });
+      expect(issues).toHaveLength(0); expect(submits[0]).toMatchObject({ autoIssueOnApproval: false });
+      expect(decisions).toHaveLength(1);
+      if (blocked) { expect(issue).toBeDisabled(); expect(within(drawer).getByText("Initial payment must be confirmed.")).toBeVisible(); }
+      else { await waitFor(() => expect(issue).toBeEnabled()); await user.click(issue); await waitFor(() => expect(issues).toHaveLength(1)); expect(issues[0]).toMatchObject({ expectedVersion: 3 }); }
+      return;
+    }
     if (failure === "decision") {
       expect(await within(drawer).findByText("Approval service unavailable. Please retry.")).toBeVisible();
       const retry = within(drawer).getByRole("button", { name: "Issue work order & lock payment" });

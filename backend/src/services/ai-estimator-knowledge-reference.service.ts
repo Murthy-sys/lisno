@@ -131,6 +131,7 @@ export interface AiEstimatorKnowledgeBasketDto {
 
 export interface AiEstimatorKnowledgeSubBasketDto extends Omit<AiEstimatorKnowledgeBasketDto, "description" | "status"> {
   readonly basketId: string;
+  readonly description?: string | null;
 }
 
 export interface AiEstimatorKnowledgeUpdateSubBasketInput {
@@ -1870,7 +1871,7 @@ async function requireNoMasterReferences(masterType: AiEstimatorKnowledgeMasterT
 }
 
 function subBasketDto(row: Row): AiEstimatorKnowledgeSubBasketDto {
-  const { description: _description, status: _status, ...base } = basketDto(row);
+  const { status: _status, ...base } = basketDto(row);
   return { ...base, basketId: String(row.basketId) };
 }
 

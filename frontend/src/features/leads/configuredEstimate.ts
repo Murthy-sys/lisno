@@ -23,6 +23,7 @@ export interface ConfiguredLineDraft {
   mainLineId: string;
   recommendationSourceMainLineIds?: string[];
   mainLineName: string;
+  estimateNotes?: string[];
   revisionId: string;
   itemStatus?: "draft" | "active" | "inactive";
   revisionStatus?: "draft" | "active";
@@ -165,6 +166,7 @@ export function restoreConfiguredLine(line: ConfiguredEstimateLine): ConfiguredL
     mainLineId: line.mainLineId,
     recommendationSourceMainLineIds: line.recommendationSourceMainLineIds,
     mainLineName: line.mainLineName,
+    estimateNotes: line.estimateNotes,
     revisionId: line.revisionId,
     sourceItemStatus: line.sourceItemStatus,
     sourceRevisionStatus: line.sourceRevisionStatus,
@@ -203,6 +205,7 @@ function newLine(
     subBasketName: subBasket?.name ?? null,
     mainLineId: mainLine.mainLineId,
     mainLineName: mainLine.name,
+    estimateNotes: mainLine.estimateNotes,
     revisionId: mainLine.revisionId,
     itemStatus: mainLine.itemStatus,
     revisionStatus: mainLine.revisionStatus,

@@ -2,8 +2,8 @@ import type { WorkflowSpacePlanningSource } from "../domain/workflow-space-plann
 import type { WorkflowEstimateRoom } from "../domain/workflow-estimate-items.js";
 import { RepositoryConflictError } from "../repositories/types.js";
 import { instructionsForStage, type DesignStageInstructions } from "../domain/design-workflow-instructions.js";
-import { emptyDesignWorkflowState, workflowStageStartAt, workflowIsPaused } from "../domain/design-workflow-state.js";
-import { projectInitialPayment, projectOperationalStage, requireDesignWorkflowScope } from "./design-workflow-state.service.js";
+import { emptyDesignWorkflowState, workflowStageStartAt, workflowIsPaused, workflowDesignStartAt } from "../domain/design-workflow-state.js";
+import { projectInitialPayment, projectOperationalStage, requireDesignWorkflowReadScope, hydrateDesignWorkflowState } from "./design-workflow-state.service.js";
 import { createProjectDesignWorkflow } from "../domain/design-workflow.js";
 import { randomUUID } from "node:crypto";
 
@@ -31,6 +31,7 @@ import type { AuditService } from "./audit.service.js";
 import {
   forbidden,
   requireProjectOperationAccess,
+  requireProjectReadAccess,
   requireActor,
   requireUser,
   type Clock
@@ -81,6 +82,7 @@ export type DerivedProject = ProjectRecord & { progress: number };
 
 export type ClientProject = Pick<
   DerivedProject,
+  | "estimationWorkflowVersion"
   | "id"
   | "name"
   | "status"
@@ -205,7 +207,7 @@ export function createProjectService(
 ): ProjectService {
   return {
     async designWorkflow(actor, projectId) {
-      const { capabilities } = await requireDesignWorkflowScope(repository, actor, projectId).catch((error: unknown) => {
+      const { capabilities } = await requireDesignWorkflowReadScope(repository, actor, projectId).catch((error: unknown) => {
         if (error instanceof ApiError && error.status === 401) throw new ApiError(404, "NOT_FOUND", "The requested resource was not found.");
         throw error;
       });
@@ -255,7 +257,7 @@ export function createProjectService(
         };
       };
       const savedStages = hierarchy.designWorkflowStages;
-      const operationalState = savedStages ? await repository.findDesignWorkflowState(projectId) ?? emptyDesignWorkflowState(projectId) : null;
+      const operationalState = savedStages ? await hydrateDesignWorkflowState(repository, projectId, await repository.findDesignWorkflowState(projectId) ?? emptyDesignWorkflowState(projectId)) : null;
       let estimateApprovalStatus: DesignWorkflowDto["estimateApprovalStatus"];
       try {
         estimateApprovalStatus = await repository.findDesignWorkflowRoomContext(projectId) ? "approved" : "awaiting_approval";
@@ -263,7 +265,7 @@ export function createProjectService(
         if (!(error instanceof RepositoryConflictError)) throw error;
         estimateApprovalStatus = "source_issue";
       }
-      const initialPayment = operationalState ? await projectInitialPayment(repository, projectId, operationalState, capabilities.finance) : undefined;
+      const initialPayment = operationalState ? await projectInitialPayment(repository, projectId, operationalState, capabilities.finance, actor.role) : undefined;
       const measurementDesigners = savedStages && capabilities.designer ? (await Promise.all(hierarchy.assignedDesignerIds.map((id) => repository.findUserById(id)))).flatMap((user) => user?.active && user.role === "designer" ? [{ id: user.id, name: user.name }] : []) : undefined;
       const measurementAssigneeId = operationalState?.stages.site_measurement?.assignedDesignerId;
       const measurementAssigneeName = measurementAssigneeId ? (await repository.findUserById(measurementAssigneeId))?.name : undefined;
@@ -287,7 +289,7 @@ export function createProjectService(
         }
       }
       const notices: Array<{ id: string; stageId: string; message: string }> = [];
-      if (operationalState?.initialPaymentAt && capabilities.client && savedStages) {
+      if (operationalState && workflowDesignStartAt(operationalState) && capabilities.client && savedStages) {
         const addNotice = (type: DesignStageType, key: string, message: string) => {
           const stage = savedStages.find((stage) => stage.type === type);
           if (stage) notices.push({ id: `${projectId}:${key}`, stageId: stage.id, message });
@@ -361,11 +363,10 @@ export function createProjectService(
 
     async list(actor, pagination) {
       const user = await requireActor(repository, actor);
-      const page = await repository.pageProjectsForUserInModule(
-        user,
-        currentProjectModule(),
-        pagination
-      );
+      const module = currentProjectModule();
+      const page = user.role === "procurement" || user.role === "program_manager"
+        ? await repository.pageProjectsForUserRead(user, pagination)
+        : await repository.pageProjectsForUserInModule(user, module, pagination);
       const tasks = await repository.listTasksForProjectIds(
         page.items.map((project) => project.id)
       );
@@ -507,7 +508,7 @@ export function createProjectService(
     },
 
     async get(actor, projectId) {
-      await requireProjectOperationAccess(repository, actor, projectId);
+      await requireProjectReadAccess(repository, actor, projectId);
       const hierarchy = await repository.getProjectHierarchy(projectId);
       if (!hierarchy) {
         throw new ApiError(404, "NOT_FOUND", "The requested resource was not found.");
@@ -758,6 +759,7 @@ export function createProjectService(
 
 function toClientProject(project: DerivedProject): ClientProject {
   return {
+    ...(project.estimationWorkflowVersion === 2 ? { estimationWorkflowVersion: 2 as const } : {}),
     id: project.id,
     name: project.name,
     status: project.status,

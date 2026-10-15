@@ -202,7 +202,8 @@ describe("ProjectDocuments", () => {
     });
 
     it("lists only approved versions using the shared design query URL and key", async () => {
-      mockGet.mockResolvedValue(MIXED_VERSIONS);
+      const version = { id: "version-3", projectId: "project-lakeside", floorId: "floor-a", stageId: "stage-a", taskId: null, versionNumber: 3, originalFilename: "living-room.pdf", mimeType: "application/pdf", sizeBytes: 100, uploaderId: "designer-a", uploadedAt: "2026-10-14T00:00:00Z", approvalStatus: "approved", reviewerId: "client-a", approvedAt: "2026-10-14T00:00:00Z", clientVisible: true, createdAt: "2026-10-14T00:00:00Z", updatedAt: "2026-10-14T00:00:00Z", extractionStatus: null };
+      mockGet.mockImplementation(async (path: string) => path.includes("limit=100") ? { items: [version], pagination: { limit: 100, offset: 0, total: 1, hasMore: false } } : MIXED_VERSIONS);
       const staff = session("designer", [READ_DESIGNS]);
       const { view, client } = await renderWith(<ProjectDocuments projectId="project-lakeside" estimate={null} session={staff} />);
 
@@ -210,7 +211,7 @@ describe("ProjectDocuments", () => {
       expect(view.getByRole("header", { name: "Approved design files" })).toBeTruthy();
       expect(mockGet).toHaveBeenCalledTimes(1);
       expect(mockGet).toHaveBeenCalledWith(DESIGN_URL, { signal: expect.anything() });
-      expect(client.getQueryData(privateQueryKey({ environmentId: "env-test", userId: staff.user.id }, "design", "project", "project-lakeside"))).toBe(MIXED_VERSIONS);
+      expect(client.getQueryData(privateQueryKey({ environmentId: "env-test", userId: staff.user.id }, "design", "project", "project-lakeside", "documents"))).toBe(MIXED_VERSIONS);
 
       expect(view.getByLabelText("living-room.pdf, Version 3, Approved 05 Sep 2026")).toBeTruthy();
       expect(view.getByText("Version 3")).toBeTruthy();
@@ -370,7 +371,7 @@ describe("ProjectDocuments", () => {
     it("reads a cache seeded under the design workspace key without fetching", async () => {
       const staff = session("designer", [READ_DESIGNS], "user-designer-42");
       const client = makeClient(30_000);
-      client.setQueryData(privateQueryKey({ environmentId: "env-test", userId: "user-designer-42" }, "design", "project", "project-lakeside"), versionsPayload([
+      client.setQueryData(privateQueryKey({ environmentId: "env-test", userId: "user-designer-42" }, "design", "project", "project-lakeside", "documents"), versionsPayload([
         { id: "version-11", versionNumber: 11, originalFilename: "seeded-elevation.pdf", approvalStatus: "approved", approvedAt: "2026-01-02T00:00:00.000Z" }
       ]));
       const { view } = await renderWith(<ProjectDocuments projectId="project-lakeside" estimate={null} session={staff} />, client);
@@ -379,8 +380,9 @@ describe("ProjectDocuments", () => {
       expect(mockGet).not.toHaveBeenCalled();
     });
 
-    it("shares one request with DesignVersionWorkspace for the same project", async () => {
-      mockGet.mockResolvedValue(MIXED_VERSIONS);
+    it("keeps scoped document paging separate from the validated complete Design workspace", async () => {
+      const version = { id: "version-3", projectId: "project-lakeside", floorId: "floor-a", stageId: "stage-a", taskId: null, versionNumber: 3, originalFilename: "living-room.pdf", mimeType: "application/pdf", sizeBytes: 100, uploaderId: "designer-a", uploadedAt: "2026-10-14T00:00:00Z", approvalStatus: "approved", reviewerId: "client-a", approvedAt: "2026-10-14T00:00:00Z", clientVisible: true, createdAt: "2026-10-14T00:00:00Z", updatedAt: "2026-10-14T00:00:00Z", extractionStatus: null };
+      mockGet.mockImplementation(async (path: string) => path.includes("limit=100") ? { items: [version], pagination: { limit: 100, offset: 0, total: 1, hasMore: false } } : MIXED_VERSIONS);
       const staff = session("designer", [READ_DESIGNS]);
       const { view } = await renderWith(
         <View>
@@ -389,9 +391,10 @@ describe("ProjectDocuments", () => {
         </View>
       );
 
-      expect(await view.findByText("Design versions")).toBeTruthy();
-      expect(view.getAllByText("living-room.pdf").length).toBeGreaterThanOrEqual(2);
-      expect(mockGet).toHaveBeenCalledTimes(1);
+      expect(await view.findByText("Task Design versions")).toBeTruthy();
+      await waitFor(() => expect(view.getAllByText(/living-room.pdf/).length).toBeGreaterThanOrEqual(2));
+      expect(mockGet).toHaveBeenCalledTimes(2);
+      expect(mockGet).toHaveBeenCalledWith("/projects/project-lakeside/design-versions?limit=100&offset=0", { signal: expect.anything() });
       expect(mockGet).toHaveBeenCalledWith(DESIGN_URL, { signal: expect.anything() });
     });
   });

@@ -9,7 +9,7 @@ import { ApiError } from "../../core/http/apiClient";
 import { useInvalidateEvent } from "../../core/query/useInvalidation";
 import { useConfiguredRuntime } from "../../runtime/RuntimeProvider";
 import { ClientDrawingReview } from "./ClientDrawingReview";
-import type { ClientDrawingWorkspace, ClientEstimate, ClientPlanWorkspace } from "./clientReviewModel";
+import { parseClientEstimates, type ClientDrawingWorkspace, type ClientEstimate, type ClientPlanWorkspace } from "./clientReviewModel";
 
 jest.mock("../../runtime/RuntimeProvider", () => ({ useConfiguredRuntime: jest.fn() }));
 jest.mock("../../core/query/useInvalidation", () => ({ useInvalidateEvent: jest.fn() }));
@@ -69,10 +69,10 @@ function session(grants: readonly string[] = permissions): AuthenticatedSession 
 }
 
 function estimate(designPlanStatus: string | null = null): ClientEstimate {
-  return {
+  return parseClientEstimates([{
     id: "estimate-a", projectId: null, status: "sent_to_client", designPlanStatus,
     total: 200_000, lineItems: [], lead: { projectName: "Project A" }
-  } as ClientEstimate;
+  }])[0]!;
 }
 
 const page = {

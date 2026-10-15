@@ -1,3 +1,5 @@
+import type { DesignWorkflowActionId } from "./workflowTypes";
+
 export const NATIVE_WORKFLOW_ACTIONS = Object.freeze([
   "internal_kickoff_complete",
   "sales_calendar_accept",
@@ -10,6 +12,13 @@ export const NATIVE_WORKFLOW_ACTIONS = Object.freeze([
   "measurement_assign",
   "measurement_access_block",
   "measurement_access_restore",
+  "measurement_complete",
+  "furniture_scope",
+  "furniture_upload",
+  "furniture_accept",
+  "furniture_scope_return",
+  "furniture_dimensions_approve",
+  "furniture_dimensions_return",
   "space_planning_complete"
 ] as const);
 
@@ -19,15 +28,15 @@ export function isNativeWorkflowAction(value: unknown): value is NativeWorkflowA
   return typeof value === "string" && (NATIVE_WORKFLOW_ACTIONS as readonly string[]).includes(value);
 }
 
-export function workflowActionNeedsNote(action: NativeWorkflowAction): boolean {
-  return action === "client_kickoff_not_required" || action === "measurement_access_block";
+export function workflowActionNeedsNote(action: DesignWorkflowActionId): boolean {
+  return action === "client_kickoff_not_required" || action === "measurement_access_block" || action === "furniture_scope_return" || action === "furniture_dimensions_return";
 }
 
-export function workflowActionNeedsDate(action: NativeWorkflowAction): boolean {
+export function workflowActionNeedsDate(action: DesignWorkflowActionId): boolean {
   return action === "internal_kickoff_complete" || action === "client_kickoff_request" || action === "client_kickoff_schedule";
 }
 
-export function actionDateData(action: NativeWorkflowAction, value: string): Record<string, unknown> | null {
+export function actionDateData(action: DesignWorkflowActionId, value: string): Record<string, unknown> | null {
   if (!workflowActionNeedsDate(action)) return {};
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return null;

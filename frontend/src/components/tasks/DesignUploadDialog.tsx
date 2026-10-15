@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient, type QueryKey } from "@tanstack/react-query";
 
 import { ApiError, apiClient } from "../../api/client";
 import type { DesignVersion, TaskRecord } from "../../api/types";
@@ -12,10 +12,12 @@ import "./taskPanels.css";
 
 export function DesignUploadDialog({
   task,
+  projectQueryKey,
   onClose,
   onUploaded
 }: {
   task: TaskRecord;
+  projectQueryKey?: QueryKey;
   onClose: () => void;
   onUploaded: (version: DesignVersion) => void;
 }) {
@@ -43,7 +45,7 @@ export function DesignUploadDialog({
     onSuccess: async (version) => {
       await Promise.all([
         queryClient.invalidateQueries({
-          queryKey: designerKeys.project(task.projectId),
+          queryKey: projectQueryKey ?? designerKeys.project(task.projectId),
           exact: true
         }),
         queryClient.invalidateQueries({

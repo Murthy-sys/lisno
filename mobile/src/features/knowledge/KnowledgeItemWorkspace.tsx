@@ -10,7 +10,7 @@ import { StateView } from "../../ui/primitives";
 import { colors, fonts } from "../../ui/tokens";
 import { KNOWLEDGE_MASTER_TYPES, type KnowledgeItemDetail, type KnowledgeJsonObject, type KnowledgeMaster, type KnowledgeMasterType, type KnowledgeSectionEnvelope } from "../../../../shared/knowledge/knowledgeTypes";
 import { KNOWLEDGE_WORKSPACE_SECTION_LABELS, formatKnowledgeDateTime } from "../../../../shared/knowledge/knowledgePresentation";
-import { KNOWLEDGE_WORKSPACE_SECTION_KEYS, countConfiguredWorkspaceTabs, type KnowledgeWorkspaceSectionKey } from "../../../../shared/knowledge/knowledgeWorkspaceSections";
+import { KNOWLEDGE_WORKSPACE_SECTION_KEYS, countConfiguredWorkspaceTabs } from "../../../../shared/knowledge/knowledgeWorkspaceSections";
 import { validateKnowledgeSection } from "../../../../shared/knowledge/knowledgeSectionValidation";
 import { modeCalculationsIssues } from "../../../../shared/knowledge/knowledgeModeCalculation";
 import { modeDescriptionIssues } from "../../../../shared/knowledge/knowledgeModeDescription";
@@ -22,6 +22,7 @@ import { KnowledgeOverviewEditor } from "./KnowledgeOverviewEditor";
 import { KnowledgeModeEditor } from "./KnowledgeModeEditor";
 import { KnowledgeRecommendationsEditor } from "./KnowledgeRecommendationsEditor";
 import { KnowledgeQualityEditor } from "./KnowledgeQualityEditor";
+import { KnowledgeDesignEditor, type KnowledgeDesignSaveHandle } from "./KnowledgeDesignEditor";
 import type { KnowledgeSaveHandle } from "./knowledgeEditorContracts";
 import { allKnowledgePages, useKnowledgeContext, type KnowledgeMobileContext } from "./knowledgeRuntime";
 import { changedPayloadFields, MOBILE_SECTION_KEYS, rebaseKnowledgeDraft, saveKnowledgeDrafts, type KnowledgeDrafts, type MobileSectionKey } from "./knowledgeWorkspaceDraft";
@@ -39,10 +40,18 @@ export function KnowledgeItemWorkspace(props: Props) {
   return <KnowledgeDetailProvider><Workspace key={`${context.scopeKey}:${props.mainLineId}`} {...props} context={context} /></KnowledgeDetailProvider>;
 }
 
+export function KnowledgeItemWorkspaceWithContext(props: Omit<Props, "session"> & { readonly context: KnowledgeMobileContext }) {
+  return <KnowledgeDetailProvider><Workspace key={`${props.context.scopeKey}:${props.mainLineId}`} {...props} /></KnowledgeDetailProvider>;
+}
+
+const WORKSPACE_TABS = [...KNOWLEDGE_WORKSPACE_SECTION_KEYS, "design", "basket-closure-priority"] as const;
+type WorkspaceTab = typeof WORKSPACE_TABS[number];
+const WORKSPACE_LABELS: Record<WorkspaceTab, string> = { ...KNOWLEDGE_WORKSPACE_SECTION_LABELS, design: "Design", "basket-closure-priority": "Basket closure priority" };
+
 type Command = "revision" | "duplicate" | "activate" | "deactivate" | "delete" | "rename";
 interface Conflict { readonly key: MobileSectionKey; readonly remote: KnowledgeSectionEnvelope; readonly item: KnowledgeItemDetail }
 
-function Workspace({ mainLineId, onBack, onOpenItem, context }: Props & { readonly context: KnowledgeMobileContext }) {
+function Workspace({ mainLineId, onBack, onOpenItem, context }: Omit<Props, "session"> & { readonly context: KnowledgeMobileContext }) {
   const client = useQueryClient();
   const scroll = useRef<ScrollView>(null);
   const headerEnd = useRef(0);
@@ -50,7 +59,7 @@ function Workspace({ mainLineId, onBack, onOpenItem, context }: Props & { readon
   const navigation = useScaffoldNavigationGuard();
   const [showActions, setShowActions] = useState(false);
   const [showChecks, setShowChecks] = useState(false);
-  const [active, setActive] = useState<KnowledgeWorkspaceSectionKey>("overview");
+  const [active, setActive] = useState<WorkspaceTab>("overview");
   const [selectedRevision, setSelectedRevision] = useState("");
   const [drafts, setDrafts] = useState<KnowledgeDrafts>({});
   const draftsRef = useRef(drafts); draftsRef.current = drafts;
@@ -60,6 +69,10 @@ function Workspace({ mainLineId, onBack, onOpenItem, context }: Props & { readon
   const [editorBusy, setEditorBusy] = useState(false);
   const [editorGeneration, setEditorGeneration] = useState(0);
   const [qualityDirty, setQualityDirty] = useState(false);
+  const [designDirty, setDesignDirty] = useState(false);
+  const [designBusy, setDesignBusy] = useState(false);
+  const [designUnknown, setDesignUnknown] = useState(false);
+  const designRef = useRef<KnowledgeDesignSaveHandle>(null);
   const [qualityBusy, setQualityBusy] = useState(false);
   const qualityRef = useRef<KnowledgeSaveHandle>(null);
   const [editorValid, setEditorValid] = useState(true);
@@ -96,12 +109,13 @@ function Workspace({ mainLineId, onBack, onOpenItem, context }: Props & { readon
     return [key, envelope?.mainLineId === mainLineId && envelope.revisionId === revisionId && envelope.sectionKey === key ? envelope : undefined];
   })) as Partial<Record<MobileSectionKey, KnowledgeSectionEnvelope>>;
   const editable = Boolean(item && revision?.status === "draft" && item.status !== "archived" && context.canUpdate && item.allowedActions.includes("update_section"));
-  const dirty = Object.keys(drafts).length > 0 || qualityDirty;
-  const locked = busy || qualityBusy || editorBusy;
+  const unknownSave = designUnknown || context.saveOutcomeUnknown === true;
+  const dirty = Object.keys(drafts).length > 0 || qualityDirty || designDirty || unknownSave;
+  const locked = busy || qualityBusy || editorBusy || designBusy;
 
   useEffect(() => { navigation?.setBlocked(dirty || locked); return () => navigation?.setBlocked(false); }, [navigation, dirty, locked]);
   function requestNavigation(next: () => void) {
-    if (busyRef.current || qualityBusy || editorBusy) return;
+    if (busyRef.current || qualityBusy || editorBusy || designBusy) return;
     if (dirty) setPendingNavigation(() => next); else { setError(""); next(); }
   }
   useBackInterceptor(() => {
@@ -120,12 +134,17 @@ function Workspace({ mainLineId, onBack, onOpenItem, context }: Props & { readon
     if (!Object.keys(next).length) aggregateBase.current = null;
     draftsRef.current = next; setDrafts(next); setNotice(""); setError("");
   }
-  function discard() {
+  function discard(): boolean {
+    if (unknownSave || (designRef.current && !designRef.current.discard())) return false;
+    setDesignDirty(false);
     draftsRef.current = {}; setDrafts({}); aggregateBase.current = null;
     qualityRef.current?.discard(); setQualityDirty(false); setError(""); setConflict(null); setEditorValid(true); setEditorGeneration(value => value + 1);
+    return true;
   }
   async function save(): Promise<boolean> {
     if (active === "quality") return qualityRef.current?.save() ?? false;
+    if (active === "design") return designRef.current?.save() ?? false;
+    if (active === "basket-closure-priority") return true;
     if (!item || !editable || busyRef.current || editorBusy || conflict || !revisionId) return false;
     const current = draftsRef.current;
     if (!Object.keys(current).length) return true;
@@ -202,13 +221,13 @@ function Workspace({ mainLineId, onBack, onOpenItem, context }: Props & { readon
   if (!context.canRead) return <StateView title="Configuration unavailable" message="Your current access does not allow this Configuration workspace." tone="denied" />;
   if (!item && detailQuery.isPending) return <BrandLoader label="Loading Configuration" tone="dark" />;
   if (!item || (detailQuery.error instanceof ApiError && [401, 403, 404].includes(detailQuery.error.status))) return <StateView title="Configuration unavailable" message="This item could not be loaded." actionLabel="Retry" onAction={() => void detailQuery.refetch()} />;
-  const tabKeys = KNOWLEDGE_WORKSPACE_SECTION_KEYS;
-  const keys = active === "mode" ? ["advanced", "pricing"] as const : active === "quality" ? [] : [active];
+  const tabKeys = WORKSPACE_TABS.filter(key => key !== "design" || context.showDesign !== false);
+  const keys = active === "mode" ? ["advanced", "pricing"] as const : active === "quality" || active === "design" || active === "basket-closure-priority" ? [] : [active];
   const loading = keys.some(key => sectionQueries[MOBILE_SECTION_KEYS.indexOf(key)]?.isPending);
   const failed = keys.some(key => sectionQueries[MOBILE_SECTION_KEYS.indexOf(key)]?.isError);
   const sectionPayload = (key: MobileSectionKey) => drafts[key]?.payload ?? saved[key]?.payload ?? {};
   const recommendationsQuery = sectionQueries[MOBILE_SECTION_KEYS.indexOf("recommendations")];
-  const editorProps = { item, context, masters, catalogsReady, readOnly: !editable || locked, onValidityChange: setEditorValid, onBusyChange: setEditorBusy };
+  const editorProps = { item, context, masters, catalogsReady, readOnly: !editable || locked || unknownSave, onValidityChange: setEditorValid, onBusyChange: setEditorBusy };
   const summary = projectKnowledgeSavedSummary({ sections: Object.fromEntries(MOBILE_SECTION_KEYS.filter(key => saved[key]).map(key => [key, saved[key]!.payload])), ...(qualityQuery.data ? { quality: qualityQuery.data } : {}), masters, baskets: basketQuery.data ?? [], items: relatedQuery.data ?? [], subBaskets: subBasketsQuery.data ?? [] });
   const modeSections = [["advanced", "Mode"], ["pricing", "Specifications"]] as const;
   const modeUnavailable = modeSections.some(([section]) => {
@@ -222,7 +241,8 @@ function Workspace({ mainLineId, onBack, onOpenItem, context }: Props & { readon
   });
   const modeDetailDescription = additionalModeValues > 0 ? `Mode details, ${additionalModeValues} more saved values` : "full Mode details";
   const modeDetailText = additionalModeValues > 0 ? `Mode details · ${additionalModeValues} more saved values` : "full Mode details";
-  const canSave = active === "quality" ? context.canUpdate && item.status !== "archived" : editable;
+  const canSave = active === "basket-closure-priority" ? false : active === "quality" ? context.canUpdate && !context.readOnlyQuality && item.status !== "archived" : editable;
+  const vendorQuery = masterQueries[KNOWLEDGE_MASTER_TYPES.indexOf("vendors")];
   const hasActions = context.canCreate && item.allowedActions.some(action => ["create_revision", "duplicate"].includes(action)) || context.canLifecycle && item.allowedActions.some(action => ["review_and_activate", "deactivate", "archive"].includes(action));
   const findings = [...item.blockers, ...item.warnings];
   const tabProgress = countConfiguredWorkspaceTabs(item.completeness.sections);
@@ -254,15 +274,18 @@ function Workspace({ mainLineId, onBack, onOpenItem, context }: Props & { readon
       {showChecks ? <View style={detail.findings}>{item.blockers.map((finding, index) => <KnowledgeText key={`blocker-${index}`} error>{friendlyFinding(finding.message)}</KnowledgeText>)}{item.warnings.map((finding, index) => <KnowledgeText key={`warning-${index}`}>{friendlyFinding(finding.message)}</KnowledgeText>)}<KnowledgeText>Knowledge-base changes do not modify current estimates or the existing Sales estimate builder.</KnowledgeText></View> : null}
     </View>
     {detailQuery.isError ? <KnowledgeCard><KnowledgeText error>The latest item could not be refreshed. Cached content and your edits are retained.</KnowledgeText><Button label="Retry item refresh" variant="secondary" onPress={() => void detailQuery.refetch()} /></KnowledgeCard> : null}
+    {context.saveOutcomeUnknown ? <KnowledgeText error>A configuration save is unconfirmed. Retry Save changes before leaving.</KnowledgeText> : null}
     {error ? <KnowledgeText error>{error}</KnowledgeText> : null}{notice ? <KnowledgeText>{notice}</KnowledgeText> : null}
     {historyQuery.isError ? <Button label="Retry revision history" variant="secondary" onPress={() => void historyQuery.refetch()} /> : null}
     </View>
-    <View style={detail.tabDock}><View accessibilityRole="tablist" style={detail.tabs}>{tabKeys.map(key => <Pressable key={key} accessibilityRole="tab" accessibilityLabel={KNOWLEDGE_WORKSPACE_SECTION_LABELS[key]} accessibilityState={{ selected: active === key, disabled: locked }} disabled={locked} onPress={() => requestNavigation(() => { setActive(key); setEditorValid(true); scroll.current?.scrollTo({ y: Math.min(scrollOffset.current, headerEnd.current), animated: false }); })} style={[detail.tab, { flex: key === "recommendations" ? 1.8 : key === "quality" ? 1.35 : 1 }, active === key && detail.activeTab]}><Text style={[detail.tabText, active === key && detail.activeTabText]}>{MOBILE_TAB_LABELS[key]}</Text></Pressable>)}</View></View>
-    {!editable && active !== "quality" ? <KnowledgeText>This revision is read-only. Create a Draft revision to edit Configuration.</KnowledgeText> : null}
-    {!catalogsReady ? <View style={styles.stack}><KnowledgeText>Reusable values are {masterQueries.some(query => query.isError) ? "unavailable" : "loading"}. Saved selections are retained.</KnowledgeText>{masterQueries.some(query => query.isError) ? <Button label="Retry reusable values" variant="secondary" onPress={() => { masterQueries.forEach(query => void query.refetch()); }} /> : null}</View> : null}
-    {active === "quality" ? <KnowledgeQualityEditor key={`${mainLineId}:${revisionId}`} ref={qualityRef} embedded item={item} context={context} revisionId={revisionId} onDirtyChange={setQualityDirty} onBusyChange={setQualityBusy} />
+    <View style={detail.tabDock}><ScrollView testID="knowledge-section-tabs" horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={detail.tabs}><View accessibilityRole="tablist" style={detail.tabs}>{tabKeys.map(key => <Pressable key={key} accessibilityRole="tab" accessibilityLabel={WORKSPACE_LABELS[key]} accessibilityState={{ selected: active === key, disabled: locked }} disabled={locked} onPress={() => requestNavigation(() => { setActive(key); setEditorValid(true); scroll.current?.scrollTo({ y: Math.min(scrollOffset.current, headerEnd.current), animated: false }); })} style={[detail.tab, active === key && detail.activeTab]}><Text style={[detail.tabText, active === key && detail.activeTabText]}>{MOBILE_TAB_LABELS[key]}</Text></Pressable>)}</View></ScrollView></View>
+    {!editable && active !== "quality" && active !== "design" && active !== "basket-closure-priority" ? <KnowledgeText>This revision is read-only. Create a Draft revision to edit Configuration.</KnowledgeText> : null}
+    {!catalogsReady && active !== "design" && active !== "basket-closure-priority" ? <View style={styles.stack}><KnowledgeText>Reusable values are {masterQueries.some(query => query.isError) ? "unavailable" : "loading"}. Saved selections are retained.</KnowledgeText>{masterQueries.some(query => query.isError) ? <Button label="Retry reusable values" variant="secondary" onPress={() => { masterQueries.forEach(query => void query.refetch()); }} /> : null}</View> : null}
+    {active === "basket-closure-priority" ? <KnowledgeCard title="Basket closure priority"><KnowledgeText>No configuration options are available in this section yet.</KnowledgeText></KnowledgeCard>
+      : active === "design" ? revisionId ? <KnowledgeDesignEditor key={`${mainLineId}:${revisionId}`} ref={designRef} item={item} revisionId={revisionId} editable={editable && !detailQuery.isError} context={context} vendors={masters.vendors ?? []} vendorStatus={vendorQuery?.isError ? "error" : vendorQuery?.isSuccess ? "ready" : "loading"} onRetryVendors={() => void vendorQuery?.refetch()} onDirtyChange={setDesignDirty} onBusyChange={setDesignBusy} onUnknownChange={setDesignUnknown} /> : <KnowledgeText>Create a draft revision to configure Design rules.</KnowledgeText>
+      : active === "quality" ? <KnowledgeQualityEditor key={`${mainLineId}:${revisionId}`} ref={qualityRef} embedded item={item} context={context} revisionId={revisionId} onDirtyChange={setQualityDirty} onBusyChange={setQualityBusy} />
       : !revisionId ? <KnowledgeText>No revision is available.</KnowledgeText>
-        : loading ? <BrandLoader label={`Loading ${KNOWLEDGE_WORKSPACE_SECTION_LABELS[active]}`} tone="dark" />
+        : loading ? <BrandLoader label={`Loading ${WORKSPACE_LABELS[active]}`} tone="dark" />
           : failed ? <StateView title="Section could not be loaded" message="Your saved configuration is retained. Retry before editing." actionLabel="Retry section" onAction={() => { keys.forEach(key => void sectionQueries[MOBILE_SECTION_KEYS.indexOf(key)]?.refetch()); }} />
             : active === "overview" ? <KnowledgeOverviewEditor key={`${revisionId}:${editorGeneration}`} {...editorProps} payload={sectionPayload("overview")} onChange={value => change("overview", value)} />
               : active === "mode" ? <KnowledgeModeEditor key={`${revisionId}:${editorGeneration}`} {...editorProps} payload={sectionPayload("advanced")} onChange={value => change("advanced", value)} pricingPayload={sectionPayload("pricing")} onPricingChange={value => change("pricing", value)} overviewPayload={saved.overview?.payload ?? {}} referencedSpecificationIds={saved.pricing?.referenceState?.specificationIds ?? []} />
@@ -310,7 +333,7 @@ function Workspace({ mainLineId, onBack, onOpenItem, context }: Props & { readon
       {revisions.map(value => <View key={value.id} style={styles.card}><KnowledgeText>Revision {value.revisionNumber} · {value.status}</KnowledgeText><KnowledgeText>Updated {formatKnowledgeDateTime(value.updatedAt)} · {value.completeness.percentage}% complete</KnowledgeText><Button label={`View revision ${value.revisionNumber}`} variant="quiet" disabled={locked || revisionId === value.id} onPress={() => requestNavigation(() => setSelectedRevision(value.id))} /></View>)}
       {!historyQuery.isPending && !historyQuery.isError && !revisions.length ? <KnowledgeText>No revision history is available.</KnowledgeText> : null}
     </KnowledgeDisclosure>
-    {pendingNavigation ? <KnowledgeModal title="Unsaved Configuration changes" busy={locked} onClose={() => setPendingNavigation(null)}><KnowledgeText>Save your changes before leaving, or discard them.</KnowledgeText>{Object.entries(drafts).map(([key, draft]) => <KnowledgeText key={key}>{key === "advanced" ? "Mode" : key === "pricing" ? "Specifications" : key === "overview" ? "Overview" : "Recommendations"}: unsaved changes</KnowledgeText>)}{qualityDirty ? <KnowledgeText>Shared Main Basket Quality checklist changed.</KnowledgeText> : null}<Button label="Save and continue" loading={locked} onPress={() => void continueAfterSave()} /><Button label="Discard and continue" variant="danger" disabled={locked} onPress={() => { const next = pendingNavigation; discard(); setPendingNavigation(null); next(); }} /><Button label="Stay" variant="quiet" disabled={locked} onPress={() => setPendingNavigation(null)} />{error ? <KnowledgeText error>{error}</KnowledgeText> : null}</KnowledgeModal> : null}
+    {pendingNavigation ? <KnowledgeModal title="Unsaved Configuration changes" busy={locked} onClose={() => setPendingNavigation(null)}><KnowledgeText>{designUnknown ? "A Design save is unconfirmed. Stay here and load current rules before leaving." : context.saveOutcomeUnknown ? "A configuration save is unconfirmed. Retry the same save before leaving." : "Save your changes before leaving, or discard them."}</KnowledgeText>{Object.entries(drafts).map(([key, draft]) => <KnowledgeText key={key}>{key === "advanced" ? "Mode" : key === "pricing" ? "Specifications" : key === "overview" ? "Overview" : "Recommendations"}: unsaved changes</KnowledgeText>)}{qualityDirty ? <KnowledgeText>Shared Main Basket Quality checklist changed.</KnowledgeText> : null}{designDirty ? <KnowledgeText>Design requirements changed.</KnowledgeText> : null}<Button label="Save and continue" loading={locked} onPress={() => void continueAfterSave()} /><Button label="Discard and continue" variant="danger" disabled={locked || unknownSave} onPress={() => { const next = pendingNavigation; if (!discard()) return; setPendingNavigation(null); next(); }} /><Button label="Stay" variant="quiet" disabled={locked} onPress={() => setPendingNavigation(null)} />{error ? <KnowledgeText error>{error}</KnowledgeText> : null}</KnowledgeModal> : null}
     {conflict ? <KnowledgeCard title="Review newer configuration"><KnowledgeText>The saved section is now version {conflict.remote.version}. Review your changes and choose whether to keep them on the latest version.</KnowledgeText>{["Latest saved values", "Your retained values"].map((label, index) => {
       const payload = index === 0 ? conflict.remote.payload : drafts[conflict.key]?.payload ?? {};
       const projection = projectKnowledgeSavedSummary({ sections: { [conflict.key]: payload }, masters, baskets: basketQuery.data ?? [], items: relatedQuery.data ?? [], subBaskets: subBasketsQuery.data ?? [] });
@@ -332,12 +355,12 @@ function Workspace({ mainLineId, onBack, onOpenItem, context }: Props & { readon
     <View style={detail.footer}>
       <View style={{ flex: 1 }}><Text style={detail.footerText}>{dirty ? "Unsaved changes" : "Saved configuration"}</Text><Text style={detail.updated}>Updated {formatKnowledgeDateTime(item.updatedAt)}</Text></View>
       {dirty ? <IconButton label="Discard changes" icon="close" disabled={locked} onPress={() => setPendingNavigation(() => () => undefined)} /> : null}
-      {canSave ? <Pressable accessibilityRole="button" accessibilityLabel={`Save ${KNOWLEDGE_WORKSPACE_SECTION_LABELS[active]}`} accessibilityState={{ disabled: !dirty || loading || Boolean(conflict) || locked, busy: locked }} disabled={!dirty || loading || Boolean(conflict) || locked} onPress={() => void save()} style={[detail.save, (!dirty || loading || Boolean(conflict) || locked) && { opacity: .5 }]}><Text style={detail.saveText}>{locked ? "Saving…" : "Save changes"}</Text></Pressable> : null}
+      {canSave ? <Pressable accessibilityRole="button" accessibilityLabel={`Save ${WORKSPACE_LABELS[active]}`} accessibilityState={{ disabled: !dirty || loading || Boolean(conflict) || locked, busy: locked }} disabled={!dirty || loading || Boolean(conflict) || locked} onPress={() => void save()} style={[detail.save, (!dirty || loading || Boolean(conflict) || locked) && { opacity: .5 }]}><Text style={detail.saveText}>{locked ? "Saving…" : "Save changes"}</Text></Pressable> : null}
     </View>
   </View>;
 }
 
-const MOBILE_TAB_LABELS: Record<KnowledgeWorkspaceSectionKey, string> = { overview: "Overview", mode: "Mode", recommendations: "Recommendations\n& Exclusions", quality: "Quality\nParameters" };
+const MOBILE_TAB_LABELS: Record<WorkspaceTab, string> = { overview: "Overview", mode: "Mode", recommendations: "Recommendations\n& Exclusions", quality: "Quality\nParameters", design: "Design", "basket-closure-priority": "Basket closure\npriority" };
 function friendlyFinding(message: string) {
   return message.replace(/\buomId\b/g, "Unit of measure").replace(/\bquantity-margin\b/g, "Quantity and margin").replace(/\boverview\b/g, "Overview").replace(/\brecommendations\b/g, "Recommendations").replace(/\badvanced\b/g, "Mode");
 }
@@ -370,7 +393,7 @@ const detail = StyleSheet.create({
   checksToggle: { minHeight: 44, flexDirection: "row", alignItems: "center", gap: 4, paddingLeft: 2 },
   tabDock: { backgroundColor: colors.canvas, marginHorizontal: -12, paddingHorizontal: 12 },
   tabs: { flexDirection: "row", alignItems: "stretch", paddingBottom: 4 },
-  tab: { minHeight: 48, justifyContent: "center", alignItems: "center", paddingVertical: 7, borderBottomWidth: 2, borderColor: "transparent" },
+  tab: { minHeight: 48, minWidth: 78, paddingHorizontal: 12, justifyContent: "center", alignItems: "center", paddingVertical: 7, borderBottomWidth: 2, borderColor: "transparent" },
   activeTab: { borderColor: colors.primary },
   tabText: { fontFamily: fonts.medium, fontSize: 11, lineHeight: 16, color: colors.inkMuted, textAlign: "center" },
   activeTabText: { color: colors.ink, fontFamily: fonts.semibold },

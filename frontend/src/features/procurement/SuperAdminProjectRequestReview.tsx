@@ -1,3 +1,5 @@
+import { WorkOrderReadiness } from "./ProcurementEstimateSource";
+import { refreshProcurementLifecycle } from "./procurementLifecycleQueries";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRef, useState, type FormEvent } from "react";
 
@@ -147,7 +149,8 @@ export function SuperAdminProjectRequestReview() {
       queueHeadingRef.current?.focus();
       reviewOpenerRef.current = null;
       setSelectedId(null); setPendingKey(null); setReason(""); setOverrideReason(""); setError("");
-      setNotice(`${request.projectName} request ${decision === "approve" ? "approved" : decision === "reject" ? "rejected" : "returned for changes"}.`);
+      await refreshProcurementLifecycle(client);
+      setNotice(request.status === "ready_to_issue" ? `${request.projectName} request internally approved. Vendor orders remain unissued until Procurement confirms release.` : `${request.projectName} request ${decision === "approve" ? "approved" : decision === "reject" ? "rejected" : "returned for changes"}.`);
       await Promise.all([
         client.invalidateQueries({ queryKey: purchaseOrderKeys.pendingRequests }),
         client.invalidateQueries({ queryKey: purchaseOrderKeys.requests(request.projectId) }),
@@ -163,6 +166,7 @@ export function SuperAdminProjectRequestReview() {
   });
   function submit(event: FormEvent) {
     event.preventDefault();
+    if (selected?.status === "ready_to_issue" && decision === "approve") return setError("This preparation is already internally approved. Procurement must issue it after release conditions are met.");
     if (!selected || !revision) return setError("The submitted revision is unavailable. Refresh this queue.");
     if (decision === "approve" && exceedsBudget && !overrideReason.trim()) return setError("Explain the budget override before approving.");
     if (decision === "approve" && hasRecoveredModes && reason.trim().length < 10) return setError("Explain why you approve using the unverified saved Configuration values (at least 10 characters).");
@@ -183,7 +187,7 @@ export function SuperAdminProjectRequestReview() {
 
   return <section className="purchase-orders__project-queue" aria-labelledby="project-purchase-order-queue-title">
     <header><div><p className="eyebrow">Project approval queue</p><h2 id="project-purchase-order-queue-title" ref={queueHeadingRef} tabIndex={-1}>Project purchase order requests</h2>
-      <p>One decision releases every vendor order in this project package.</p></div>
+      <p>Review the entire project package. Collaborative projects require final client approval, initial payment and explicit issue after internal approval.</p></div>
       {requests.isFetching && !requests.isPending ? <span className="purchase-orders__hint" role="status">Refreshing…</span> : null}</header>
     {notice ? <p role="status" className="purchase-orders__notice">{notice}</p> : null}
     {requests.isPending ? <PageState state="loading" message="Loading project purchase order requests…" />
@@ -194,8 +198,8 @@ export function SuperAdminProjectRequestReview() {
           const submittedRevision = request.revisions.find((item) => item.id === request.submittedRevisionId);
           return <li key={request.id}><button type="button" className="purchase-orders__row"
           aria-current={selectedId === request.id ? "true" : undefined}
-          onClick={(event) => { reviewOpenerRef.current = event.currentTarget; setSelectedId(request.id); setDecision("approve"); setReason(""); setOverrideReason(""); setError(""); }}>
-          <span className="purchase-orders__queue-identity"><strong>{request.projectName}</strong><small>{request.requestNumber ?? "Project request"} · Revision {request.revision}</small></span>
+          onClick={(event) => { reviewOpenerRef.current = event.currentTarget; setSelectedId(request.id); setDecision(request.status === "ready_to_issue" ? "request_changes" : "approve"); setReason(""); setOverrideReason(""); setError(""); }}>
+          <span className="purchase-orders__queue-identity"><strong>{request.projectName}</strong><small>{request.requestNumber ?? "Project request"} · Revision {request.revision}</small>{request.status === "ready_to_issue" ? <small>Internally approved, awaiting issue</small> : null}</span>
           <span className="purchase-orders__queue-scope"><small className="purchase-orders__field-label">Scope</small>{submittedRevision ? <>{submittedRevision.sectionTotals.length} estimate section{submittedRevision.sectionTotals.length === 1 ? "" : "s"} · {submittedRevision.vendorTotals.length} vendor{submittedRevision.vendorTotals.length === 1 ? "" : "s"}</> : "Unavailable"}</span>
           <span className="purchase-orders__queue-amount"><small className="purchase-orders__field-label">Submitted total</small>{submittedRevision ? formatPaise(submittedRevision.totals.totalPaise) : "Unavailable"}</span>
         </button></li>;
@@ -244,8 +248,9 @@ export function SuperAdminProjectRequestReview() {
           </details>)}
         </div>
       </>}
+      <WorkOrderReadiness readiness={selected.issueReadiness} />
       <fieldset className="purchase-orders__choice"><legend>Decision for the entire project request</legend>
-        <label><input type="radio" name="project-purchase-order-decision" checked={decision === "approve"} onChange={() => setDecision("approve")} /> Approve all vendor orders</label>
+        <label><input type="radio" name="project-purchase-order-decision" disabled={selected.status === "ready_to_issue"} checked={decision === "approve"} onChange={() => setDecision("approve")} /> Approve all vendor orders</label>
         <label><input type="radio" name="project-purchase-order-decision" checked={decision === "request_changes"} onChange={() => setDecision("request_changes")} /> Request changes</label>
         <label><input type="radio" name="project-purchase-order-decision" checked={decision === "reject"} onChange={() => setDecision("reject")} /> Reject request</label>
       </fieldset>

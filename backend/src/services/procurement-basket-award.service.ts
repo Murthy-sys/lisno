@@ -1,3 +1,5 @@
+import { assertDesignRequirementsPoAllowed } from "./design-requirements.service.js";
+import { procurementPreparationProjectFilter, procurementPreparationProjectAllowed } from "./procurement.service.js";
 import type { ClientSession, PipelineStage } from "mongoose";
 import { averageProcurementBasketBidNetPaise, compareProcurementBasketBids, procurementBasketDigest, procurementBasketPaymentSchedule,
   requiredProcurementBasketApprovalSlots, withProcurementBasketMilestoneReviewers,
@@ -21,7 +23,7 @@ import { VENDOR_KPI_RUBRIC_VERSION } from "../domain/vendor-kpi.js";
 import type { AuditService } from "./audit.service.js";
 import type { PublicUser } from "./auth.service.js";
 import { assertBasketVendorEligible } from "./procurement-basket-vendor-eligibility.service.js";
-import { assertBasketSourceUnreserved, basketVendorScopeMatchesRevision, currentBasket, getBasketEnquiry, getCurrentBoq,
+import { assertBasketSourceUnreserved, basketReconciliationForRevision, currentBasketForVendorScope, currentBasket, getBasketEnquiry, getCurrentBoq,
   requireBasketBuyer, tenderConflict, tenderId, tenderIso, tenderTransaction, type TenderRow }
   from "./procurement-basket-tender-support.service.js";
 import { buildProjectPurchaseOrderPreparation } from "./project-purchase-order-preparation.service.js";
@@ -297,11 +299,12 @@ export function createProcurementBasketAwardService({ audit, now = () => new Dat
           tenderConflict("PROCUREMENT_BASKET_ENQUIRY_STATE", "This enquiry is not open for award submission.");
         // Share the project write fence with Base amount edits and BOQ dispatch.
         // A concurrent edit must not commit against a submitted award snapshot.
-        const project = await ProjectModel.findOneAndUpdate({ _id: projectId, status: "active" },
+        const project = await ProjectModel.findOneAndUpdate({ _id: projectId, ...procurementPreparationProjectFilter() },
           { $inc: { purchaseOrderApprovalEpoch: 1 } }, { session, returnDocument: "after",
             runValidators: true, timestamps: false }).lean() as TenderRow | null;
         if (!project) tenderConflict("PROCUREMENT_BASKET_PROJECT_INACTIVE", "This project is not active.");
         await assertProposalFresh(award, proposal, session);
+        await assertAwardDesignRequirements(award, session);
         if (proposal.requiredSlots.includes("finance_head")) {
           const financeTask = await ProjectWorkflowTaskModel.exists({ projectId, kind: "finance",
             assigneeRole: "finance_head" }).session(session);
@@ -310,9 +313,11 @@ export function createProcurementBasketAwardService({ audit, now = () => new Dat
             tenderConflict("PROCUREMENT_BASKET_FINANCE_REVIEWER_REQUIRED",
               "Assign an active Finance reviewer to this project before submitting the work order.");
         }
+        const autoIssueOnApproval = project.estimationWorkflowVersion !== 2 &&
+          proposal.preparationSource?.workflowVersion !== 2 && input.autoIssueOnApproval === true;
         const changed = await ProcurementBasketAwardModel.updateOne({ _id: awardId, version: input.expectedVersion,
           status: "draft" }, { $set: { status: "pending_approvals", updatedById: actor.id,
-            autoIssueOnApproval: input.autoIssueOnApproval === true, submittedById: actor.id, issueBlocker: null,
+            autoIssueOnApproval, submittedById: actor.id, issueBlocker: null,
             lastMutationKey: input.idempotencyKey, lastMutationDigest: proposal.proposalDigest,
             lastRequestDigest: submitRequestDigest, submitIdempotencyKey: input.idempotencyKey,
             submitRequestDigest }, $inc: { version: 1 } }, { session });
@@ -324,7 +329,8 @@ export function createProcurementBasketAwardService({ audit, now = () => new Dat
           tenderConflict("PROCUREMENT_BASKET_VERSION_CONFLICT", "This enquiry changed before award submission.");
         await audit.appendInMongoTransaction({ actorId: actor.id, action: "procurement_basket_award_submitted",
           entityType: "procurement_basket_award", entityId: awardId, occurredAt: now().toISOString(),
-          newValues: { projectId, enquiryId, proposalRevisionId: proposal._id, requiredSlots: proposal.requiredSlots } }, session);
+          newValues: { projectId, enquiryId, proposalRevisionId: proposal._id, requiredSlots: proposal.requiredSlots,
+            autoIssueOnApproval } }, session);
       });
       return get(actor, projectId, basketId, enquiryId, awardId);
     },
@@ -419,6 +425,7 @@ export function createProcurementBasketAwardService({ audit, now = () => new Dat
         const approvers = await proposalApprovers(award, proposal, session, true);
         if (actorSlot(actor, approvers, proposal) !== input.slot ||
           !proposal.requiredSlots.includes(input.slot)) throw new ApiError(403, "FORBIDDEN", "You cannot approve this work order slot.");
+        const autoIssueOnApproval = await automaticIssueEnabled(award, proposal, session);
         const replay = await ProcurementBasketAwardApprovalModel.findOne({ awardId,
           proposalRevisionId: input.proposalRevisionId, actorId: actor.id, idempotencyKey: input.idempotencyKey })
           .session(session).lean() as TenderRow | null;
@@ -426,7 +433,7 @@ export function createProcurementBasketAwardService({ audit, now = () => new Dat
           if (replay.slot !== input.slot || replay.decision !== input.decision || (replay.reason ?? null) !== (input.reason ?? null))
             tenderConflict("PROCUREMENT_BASKET_IDEMPOTENCY_CONFLICT", "This decision key was reused with different details.");
           return { projectId: String(award.projectId), basketId: String(award.mainBasketId), enquiryId: String(award.enquiryId),
-            autoIssueOnApproval: award.autoIssueOnApproval === true && award.status === "ready_to_issue" &&
+            autoIssueOnApproval: autoIssueOnApproval && award.status === "ready_to_issue" &&
               String(proposal._id) === input.proposalRevisionId,
             proposalRevisionId: String(proposal._id), expectedVersion: Number(award.version),
             triggeringApprovalId: String(replay._id) };
@@ -435,6 +442,7 @@ export function createProcurementBasketAwardService({ audit, now = () => new Dat
           String(proposal._id) !== input.proposalRevisionId)
           tenderConflict("PROCUREMENT_BASKET_AWARD_VERSION_CONFLICT", "This award changed. Reload before deciding.");
         await assertProposalFresh(award, proposal, session);
+        if (input.decision === "approve") await assertAwardDesignRequirements(award, session);
         const prior = await ProcurementBasketAwardApprovalModel.find({ awardId, proposalRevisionId: proposal._id })
           .session(session).lean() as TenderRow[];
         if (prior.some(row => row.slot === input.slot || row.actorId === actor.id))
@@ -451,7 +459,7 @@ export function createProcurementBasketAwardService({ audit, now = () => new Dat
           ? "ready_to_issue" : "pending_approvals";
         const changed = await ProcurementBasketAwardModel.updateOne({ _id: awardId, version: input.expectedVersion,
           status: "pending_approvals", currentProposalRevisionId: proposal._id },
-        { $set: { status, updatedById: actor.id, lastMutationKey: input.idempotencyKey,
+        { $set: { status, autoIssueOnApproval, updatedById: actor.id, lastMutationKey: input.idempotencyKey,
           lastMutationDigest: proposal.proposalDigest, lastRequestDigest: procurementBasketDigest(input) }, $inc: { version: 1 } }, { session });
         if (changed.modifiedCount !== 1) tenderConflict("PROCUREMENT_BASKET_AWARD_VERSION_CONFLICT", "This award changed before the decision was recorded.");
         if (status === "rejected") {
@@ -466,7 +474,7 @@ export function createProcurementBasketAwardService({ audit, now = () => new Dat
           newValues: { projectId: award.projectId, proposalRevisionId: proposal._id, slot: input.slot,
             decision: input.decision, status }, reason: input.reason ?? null }, session);
         return { projectId: String(award.projectId), basketId: String(award.mainBasketId), enquiryId: String(award.enquiryId),
-          autoIssueOnApproval: award.autoIssueOnApproval === true && status === "ready_to_issue",
+          autoIssueOnApproval: autoIssueOnApproval && status === "ready_to_issue",
           proposalRevisionId: String(proposal._id), expectedVersion: input.expectedVersion + 1,
           triggeringApprovalId: approvalId };
       });
@@ -498,8 +506,12 @@ interface InternalComparison extends ProcurementBasketComparisonDto { revision: 
 async function readComparison(enquiry: TenderRow, session: ClientSession,
   requireCurrentSource = true): Promise<InternalComparison> {
   const revision = await getCurrentBoq(enquiry, session);
-  if (requireCurrentSource)
-    await currentBasket(String(enquiry.projectId), String(enquiry.mainBasketId), session, revision.preparationDigest);
+  if (requireCurrentSource) {
+    const basket = await currentBasketForVendorScope(String(enquiry.projectId), String(enquiry.mainBasketId), revision, session);
+    const reconciliation = await basketReconciliationForRevision(basket, revision, session);
+    if (!reconciliation && basket.preparationDigest !== revision.preparationDigest)
+      tenderConflict("PROCUREMENT_BASKET_SOURCE_CHANGED", "The purchase preparation changed. Refresh this basket.");
+  }
   const historyLimit = 100;
   const bidFilter = { enquiryId: enquiry._id, boqRevisionId: revision._id };
   const latestRows = await ProcurementBasketBidModel.aggregate([
@@ -592,9 +604,11 @@ async function readComparison(enquiry: TenderRow, session: ClientSession,
 async function prepareAward(enquiry: TenderRow, bidId: string, advanceBasisPoints: number, designerId: string | null,
   session: ClientSession, milestoneReviewers?: ProcurementBasketMilestoneReviewersInput, fence = false): Promise<{ comparison: InternalComparison; bid: TenderRow; preview: ProcurementBasketAwardPreviewDto;
     project: TenderRow; preparation: Awaited<ReturnType<typeof buildProjectPurchaseOrderPreparation>>;
-    selectedDesignerId: string | null; kpiAssessment: TenderRow }> {
+    selectedDesignerId: string | null; kpiAssessment: TenderRow; sourceReconciliation: TenderRow | null; basketPreparationDigest: string }> {
   if (!["sent", "award_pending"].includes(enquiry.status)) tenderConflict("PROCUREMENT_BASKET_ENQUIRY_STATE", "This enquiry is not open for an award.");
   const comparison = await readComparison(enquiry, session);
+  if (fence) await assertDesignRequirementsPoAllowed(String(enquiry.projectId),
+    (comparison.revision.lines as ProcurementBasketBoqLine[]).map(line => line.sourceLineItemKey), session);
   const row = comparison.rows.find(item => item.bidId === bidId);
   if (!row || !row.eligible || row.comparisonScoreBps === null)
     tenderConflict("PROCUREMENT_BASKET_BID_INELIGIBLE", "Choose a complete current bid from an eligible vendor.");
@@ -611,13 +625,11 @@ async function prepareAward(enquiry: TenderRow, bidId: string, advanceBasisPoint
     tenderConflict("PROCUREMENT_BASKET_KPI_CHANGED", "The vendor's official KPI changed. Refresh the comparison.");
   await assertBasketSourceUnreserved(String(enquiry.projectId),
     (comparison.revision.lines as ProcurementBasketBoqLine[]).map(line => line.sourceLineItemKey), session, String(enquiry._id));
-  const basket = await currentBasket(String(enquiry.projectId), String(enquiry.mainBasketId), session,
-    String(comparison.revision.preparationDigest));
-  if (!basketVendorScopeMatchesRevision(basket, comparison.revision))
-    tenderConflict("PROCUREMENT_BASKET_SOURCE_CHANGED", "The approved vendor-facing scope changed. Revise and resend this BOQ.");
+  const basket = await currentBasketForVendorScope(String(enquiry.projectId), String(enquiry.mainBasketId), comparison.revision, session);
+  const sourceReconciliation = await basketReconciliationForRevision(basket, comparison.revision, session);
   const preparation = await buildProjectPurchaseOrderPreparation(String(enquiry.projectId), session);
   const project = await ProjectModel.findById(enquiry.projectId).session(session).lean() as TenderRow | null;
-  if (!project || project.status !== "active") tenderConflict("PROCUREMENT_BASKET_PROJECT_INACTIVE", "This project is not active.");
+  if (!project || !procurementPreparationProjectAllowed(project)) tenderConflict("PROCUREMENT_BASKET_PROJECT_INACTIVE", "This project is not active.");
   const gross = Number(bid.totals.totalPaise);
   const budgetOverrideRequired = gross >= PROCUREMENT_BASKET_APPROVAL_THRESHOLD_GROSS_PAISE &&
     BigInt(preparation.committedPaise) + BigInt(bid.totals.netPaise) > BigInt(preparation.approvedEstimatePaise);
@@ -641,7 +653,7 @@ async function prepareAward(enquiry: TenderRow, bidId: string, advanceBasisPoint
     budgetOverrideRequired, recommendedBidId: comparison.recommendedBidId,
     ...approvers, designerOptions: approvers.assignedDesigner ? [approvers.assignedDesigner] : [],
     programManagerId: approvers.assignedSiteManager?.id ?? null, lines: row.lines };
-  return { comparison, bid, preview, project, preparation,
+  return { comparison, bid, preview, project, preparation, sourceReconciliation, basketPreparationDigest: basket.preparationDigest,
     selectedDesignerId: requiredSlots.includes("designer") ? approvers.assignedDesigner?.id ?? null : null, kpiAssessment };
 }
 
@@ -657,6 +669,8 @@ function proposalRecord(awardId: string, enquiry: TenderRow,
     vendorName: preview.vendorName, officialKpiScoreBps: comparison.rows.find(row => row.bidId === bid._id)!.officialKpiScoreBps!,
     officialKpiAssessmentId: String(calculation.kpiAssessment._id),
     officialKpiAssessmentRevision: Number(calculation.kpiAssessment.revision),
+    ...(preparation.preparationSource ? { preparationSource: preparation.preparationSource,
+      sourceReconciliationId: calculation.sourceReconciliation?._id ?? null, basketPreparationDigest: calculation.basketPreparationDigest } : {}),
     recommendedBidId: comparison.recommendedBidId, comparisonDigest: comparison.comparisonDigest,
     nonRecommendedReason, totals: preview.totals, approvedEstimatePaise: preparation.approvedEstimatePaise,
     committedNetPaise: preparation.committedPaise,
@@ -777,7 +791,7 @@ async function awardDto(award: TenderRow, session: ClientSession): Promise<Procu
   return { id: String(award._id), enquiryId: String(award.enquiryId), projectId: String(award.projectId),
     mainBasketId: String(award.mainBasketId), version: Number(award.version), status: award.status,
     requiresRevision: Boolean(award.requiresRevision),
-    autoIssueOnApproval: award.autoIssueOnApproval === true,
+    autoIssueOnApproval: await automaticIssueEnabled(award, proposal, session),
     issueBlocker: award.issueBlocker ? { code: String(award.issueBlocker.code),
       message: String(award.issueBlocker.message) } : null,
     vendorId: String(award.vendorId), bidId: String(award.bidId), proposalRevisionId: String(proposal._id),
@@ -806,6 +820,14 @@ async function awardDto(award: TenderRow, session: ClientSession): Promise<Procu
       decision: row.decision, reason: row.reason ?? null, decidedAt: tenderIso(row.decidedAt) })), lines };
 }
 
+async function automaticIssueEnabled(award: TenderRow, proposal: TenderRow, session: ClientSession): Promise<boolean> {
+  if (award.autoIssueOnApproval !== true || proposal.preparationSource?.workflowVersion === 2) return false;
+  const project = await ProjectModel.findById(award.projectId).select({ estimationWorkflowVersion: 1 }).session(session).lean();
+  // Recheck the current project on decision replays too: an older stored true
+  // flag cannot turn collaborative internal approval into automatic issuance.
+  return Boolean(project && project.estimationWorkflowVersion !== 2);
+}
+
 export async function assertProposalFresh(award: TenderRow, proposal: TenderRow, session: ClientSession): Promise<void> {
   const enquiry = await getBasketEnquiry(String(award.projectId), String(award.mainBasketId), String(award.enquiryId), session);
   const current = await prepareAward(enquiry, String(proposal.bidId), Number(proposal.advanceBasisPoints),
@@ -819,7 +841,12 @@ export async function assertProposalFresh(award: TenderRow, proposal: TenderRow,
   const retainedBudgetOverride = Number(current.bid.totals.totalPaise) < PROCUREMENT_BASKET_APPROVAL_THRESHOLD_GROSS_PAISE &&
     proposal.budgetOverrideRequired === true && (proposal.requiredSlots as string[]).includes("budget_override") &&
     BigInt(current.preparation.committedPaise) + BigInt(current.bid.totals.netPaise) > BigInt(current.preparation.approvedEstimatePaise);
-  if (current.comparison.boqRevisionId !== String(proposal.boqRevisionId) ||
+  if ((current.preparation.preparationSource && (
+      proposal.basketPreparationDigest !== current.basketPreparationDigest ||
+      proposal.preparationSource?.sourceSnapshotId !== current.preparation.preparationSource.sourceSnapshotId ||
+      proposal.preparationSource?.sourceDigest !== current.preparation.preparationSource.sourceDigest ||
+      (proposal.sourceReconciliationId ?? null) !== (current.sourceReconciliation?._id ?? null))) ||
+    current.comparison.boqRevisionId !== String(proposal.boqRevisionId) ||
     current.comparison.comparisonDigest !== proposal.comparisonDigest ||
     String(current.bid.bidDigest) !== proposal.bidDigest ||
     String(current.kpiAssessment._id) !== String(proposal.officialKpiAssessmentId) ||
@@ -864,4 +891,12 @@ function reviewerSlot(role: PublicUser["role"]): string | null {
     case "super_admin": return "budget_override";
     default: return null;
   }
+}
+
+async function assertAwardDesignRequirements(award: TenderRow, session: ClientSession): Promise<void> {
+  const boq = await ProcurementBasketBoqRevisionModel.findOne({ _id: award.boqRevisionId,
+    projectId: award.projectId, enquiryId: award.enquiryId }).session(session).lean() as TenderRow | null;
+  if (!boq) tenderConflict("PROCUREMENT_BASKET_BOQ_UNAVAILABLE", "The award's source BOQ is unavailable.");
+  await assertDesignRequirementsPoAllowed(String(award.projectId),
+    (boq.lines as ProcurementBasketBoqLine[]).map(line => line.sourceLineItemKey), session);
 }

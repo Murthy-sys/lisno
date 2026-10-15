@@ -85,7 +85,7 @@ describe("estimate client response API contracts", () => {
     expectTypeOf(detail).toMatchTypeOf<EstimateClientResponseTaskDetail>();
     expectTypeOf<EstimateClientResponseDecisionResult>().toMatchTypeOf<{
       estimate: { id: string; status: string; version: number; projectId: string | null };
-      clientReview: { id: string; status: "pending" | "approved" | "changes_requested" };
+      clientReview: { id: string; status: "pending" | "approved" | "changes_requested" | "superseded" };
     }>();
 
     const forbiddenFields = [

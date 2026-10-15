@@ -106,6 +106,15 @@ function createManager(native = createAdapter()) {
 }
 
 describe("native authenticated transfers", () => {
+  it("sends all workflow evidence in one authenticated, size-checked submission", async () => {
+    const harness = createManager();
+    await harness.manager.upload({ path: "/projects/project-a/design-workflow/actions", fileUri: "file:///private/site.jpg", fileName: "site.jpg", mimeType: "image/jpeg", fieldName: "mediaFiles", additionalFiles: [{ fileUri: "file:///private/sketch.pdf", fileName: "sketch.pdf", mimeType: "application/pdf", fieldName: "file" }], maxBytes: 25, parameters: { expectedVersion: "4", idempotencyKey: "same-submission" } }).result;
+    expect(harness.native.uploads).toHaveLength(1);
+    expect(harness.native.uploads[0]).toMatchObject({ fieldName: "mediaFiles", additionalFiles: [{ fieldName: "file", fileUri: "file:///private/sketch.pdf" }], parameters: { expectedVersion: "4", idempotencyKey: "same-submission" } });
+    await expect(harness.manager.upload({ path: "/upload", fileUri: "file:///one", fileName: "one.jpg", mimeType: "image/jpeg", additionalFiles: [{ fileUri: "file:///two", fileName: "two.jpg", mimeType: "image/jpeg", fieldName: "mediaFiles" }], maxBytes: 15 }).result).rejects.toBeInstanceOf(TransferSizeError);
+    expect(harness.native.uploads).toHaveLength(1);
+  });
+
   it("fences resource credentials by environment and session generations", () => {
     let environmentGeneration = 2;
     const provider = createAuthenticatedResourceProvider({

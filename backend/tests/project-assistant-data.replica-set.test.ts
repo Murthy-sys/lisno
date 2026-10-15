@@ -21,6 +21,7 @@ import { SiteCompletionReviewModel } from "../src/models/SiteCompletionReview.js
 import { ProjectPurchaseOrderModel } from "../src/models/ProjectPurchaseOrder.js";
 import { ProjectPurchaseOrderRevisionModel } from "../src/models/ProjectPurchaseOrderRevision.js";
 import { createAssistantReadSources } from "../src/services/project-assistant-sources.js";
+import { newEstimationLifecycle } from "../src/domain/estimation-lifecycle.js";
 import { readAssistantLines, readAssistantRecommendations, searchAssistantCatalogue } from "../src/services/project-assistant-catalogue.js";
 
 let replica: Awaited<ReturnType<typeof startMongoReplicaSet>>;
@@ -61,6 +62,51 @@ async function fixture() {
 }
 
 describe("assistant Mongo catalogue and approved scope", () => {
+  it("keeps the pinned pre-approved source readable while the collaborative working copy and later review change", async () => {
+    const f = await fixture();
+    await ProjectModel.collection.updateOne({ _id: "a" }, { $set: { estimationWorkflowVersion: 2 } });
+    await EstimateClientReviewRoundModel.collection.updateOne({ _id: "review-a" }, { $set: {
+      phase: "pre", requirementsVersion: 0, "estimateSnapshot.rooms": [{ id: "room-a", label: "Approved hall" }]
+    } });
+    await EstimateClientReviewRoundModel.collection.insertOne({ _id: "pending-post", estimateId: "estimate-a",
+      leadId: "lead-a", projectId: "a", estimateVersion: 9, version: 1, sendGeneration: 2, status: "pending",
+      phase: "post", createdAt: new Date(CHAT_NOW) } as never);
+    await EstimateModel.collection.updateOne({ _id: "estimate-a" }, { $set: { version: 9,
+      rooms: [{ id: "private-draft-room", label: "Unapproved draft room" }], totalPaise: 999999,
+      estimation: { ...newEstimationLifecycle(), phase: "post", status: "sent_to_client", pendingReviewRoundId: "pending-post",
+        preApproval: { reviewRoundId: "review-a", estimateVersion: 3, approvedAt: CHAT_NOW } }
+    } });
+    const result = await f.sources.preview(structuredClone(request) as any);
+    expect(result.restricted.approvedBaselinePaise).toBe(2360);
+    const status = await f.sources.status();
+    expect(status.facts).toContainEqual(expect.objectContaining({ id: "room:room-a" }));
+    expect(status.facts.some(row => row.id === "room:private-draft-room")).toBe(false);
+    await ProjectModel.collection.updateOne({ _id: "a" }, { $set: { clientId: "client-b" } });
+    await expect(f.sources.preview(structuredClone(request) as any)).rejects.toMatchObject({ status: 404 });
+  });
+
+  it("uses the exact final collaborative approval when both immutable pre and final rounds exist", async () => {
+    const f = await fixture();
+    const pre = (await EstimateClientReviewRoundModel.findById("review-a").lean())!;
+    const finalAt = new Date(new Date(CHAT_NOW).getTime() + 60_000);
+    await ProjectModel.collection.updateOne({ _id: "a" }, { $set: { estimationWorkflowVersion: 2 } });
+    await EstimateClientReviewRoundModel.collection.insertOne({ ...pre, _id: "final-review", estimateVersion: 8,
+      sendGeneration: 2, phase: "post", decidedAt: finalAt,
+      estimateSnapshot: { ...pre.estimateSnapshot, subtotal: 40, gst: 7.2, total: 47.2,
+        subtotalPaise: 4000, gstPaise: 720, totalPaise: 4720,
+        lineItems: pre.estimateSnapshot.lineItems.map((line: any) => ({ ...line, quantity: 4, amount: 40, amountPaise: 4000 })) } } as never);
+    await EstimateModel.collection.updateOne({ _id: "estimate-a" }, { $set: { version: 9, clientDecisionAt: finalAt,
+      estimation: { ...newEstimationLifecycle(), phase: "post", status: "client_approved", editClosedAt: finalAt,
+        preApproval: { reviewRoundId: "review-a", estimateVersion: 3, approvedAt: CHAT_NOW },
+        finalApproval: { reviewRoundId: "final-review", estimateVersion: 8, approvedAt: finalAt,
+          requirementsVersion: 0, designReviewRoundId: "approved-design", designPlanVersion: 3, designScopeRevision: 1 } }
+    } });
+    const result = await f.sources.preview(structuredClone(request) as any);
+    expect(result.restricted.approvedBaselinePaise).toBe(4720);
+    await EstimateModel.collection.updateOne({ _id: "estimate-a" }, { $set: { "estimation.finalApproval.estimateVersion": 7 } });
+    expect((await f.sources.preview(structuredClone(request) as any)).restricted.approvedBaselinePaise).toBeNull();
+  });
+
   it("reads the latest saved draft, disambiguates names by stable IDs and never returns costs", async () => {
     const f = await fixture();
     const candidates = await f.sources.searchCatalogue({ query: "False ceiling", limit: 8 });

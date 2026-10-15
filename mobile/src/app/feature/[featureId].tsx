@@ -6,7 +6,7 @@ import { resolveAuthorizedFeature } from "../../navigation/registry";
 import { useRuntime } from "../../runtime/RuntimeProvider";
 
 export default function FeatureRoute() {
-  const params = useLocalSearchParams<{ featureId?: string | string[] }>();
+  const params = useLocalSearchParams<{ featureId?: string | string[]; projectId?: string | string[] }>();
   const featureId = typeof params.featureId === "string" ? params.featureId : "";
   const context = useRuntime();
   if (!context.configured || context.session.status !== "authenticated" || !context.session.session) return <Redirect href="/" />;
@@ -16,10 +16,11 @@ export default function FeatureRoute() {
   return (
     <AdaptiveAppScaffold
       activeFeature={destination.id}
+      presentation={destination.id === "ask-lisno" ? "conversation" : "standard"}
       backPlacement={(destination.id === "projects" || destination.id === "configuration") ? "content" : "scaffold"}
       {...(destination.id === "messages" ? { navigationRailBreakpoint: 840 } : {})}
     >
-      <FeatureWorkspace destination={destination} session={context.session.session} />
+      <FeatureWorkspace destination={destination} session={context.session.session} {...(typeof params.projectId === "string" && params.projectId.trim() ? { initialProjectId: params.projectId.trim() } : {})} />
     </AdaptiveAppScaffold>
   );
 }

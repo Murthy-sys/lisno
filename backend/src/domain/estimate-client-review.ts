@@ -11,7 +11,8 @@ export const ESTIMATE_DELIVERY_STATUSES = [
 export const ESTIMATE_CLIENT_REVIEW_STATUSES = [
   "pending",
   "approved",
-  "changes_requested"
+  "changes_requested",
+  "superseded"
 ] as const;
 export const ESTIMATE_CLIENT_DECISIONS = ["approve", "request_changes"] as const;
 export const ESTIMATE_CLIENT_DECISION_SOURCES = [
@@ -59,6 +60,9 @@ export function configuredEstimateParentIsValid(line: {
 }
 
 export interface EstimateClientReviewSnapshot {
+  rooms?: readonly Record<string, unknown>[];
+  bedroomCount?: number | null;
+  scopes?: readonly string[];
   clientName: string;
   projectName: string;
   location: string;
@@ -96,6 +100,7 @@ export interface EstimateClientReviewSnapshot {
     subBasketName?: string | null;
     mainLineName?: string;
     uomName?: string;
+    estimateNotes?: readonly string[];
   }[];
   subtotal: number;
   gst: number;
@@ -109,6 +114,8 @@ export interface EstimateClientReviewSnapshot {
 
 /** Client-facing projection of the immutable proposal submitted for review. */
 export interface ClientPublishedEstimateReview {
+  phase?: "pre" | "post";
+  requirementsVersion?: number;
   id: string;
   version: number;
   estimateVersion: number;
@@ -128,6 +135,11 @@ export interface EstimateClientFeedback {
 }
 
 export interface EstimateClientReviewRoundRecord {
+  phase?: "pre" | "post";
+  requirementsVersion?: number;
+  designReviewRoundId?: string | null;
+  designPlanVersion?: number | null;
+  designScopeRevision?: number | null;
   id: string;
   estimateId: string;
   leadId: string;

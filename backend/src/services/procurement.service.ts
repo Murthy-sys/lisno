@@ -1,3 +1,7 @@
+import { isCollaborativeEstimate, type EstimationPreparationSource } from "../domain/estimation-lifecycle.js";
+import { resolveEstimationPreparationSource } from "./estimate-collaboration.service.js";
+import { projectWorkOrderIssueReadiness, assertProjectWorkOrderIssueEligible } from "./project-work-order-eligibility.service.js";
+import { fenceCollaborativeEstimate } from "./estimate-collaboration-policy.service.js";
 import { createHash, randomUUID } from "node:crypto";
 
 import mongoose, { type ClientSession } from "mongoose";
@@ -41,6 +45,7 @@ import type { AuditService } from "./audit.service.js";
 import type { PublicUser } from "./auth.service.js";
 import {
   financeEntryDto,
+  effectiveProjectFinanceBucket,
   financeApprovalLineage,
   financeDesignApproval,
   openProjectFinanceBucket,
@@ -94,6 +99,8 @@ export interface ProcurementSectionDto {
 }
 
 export interface ProcurementProjectDto {
+  preparationSource?: EstimationPreparationSource;
+  issueReadiness?: Awaited<ReturnType<typeof projectWorkOrderIssueReadiness>>;
   taskId: string;
   taskVersion: number;
   taskStatus: string;
@@ -168,7 +175,7 @@ export async function readProcurementDashboardApprovalRounds(
       {
         $set: {
           approvedEstimateVersion: {
-            $cond: [{ $gt: ["$version", 1] }, { $subtract: ["$version", 1] }, 1]
+            $cond: [{ $eq: ["$estimation.workflowVersion", 2] }, { $ifNull: ["$estimation.finalApproval.estimateVersion", "$estimation.preApproval.estimateVersion"] }, { $cond: [{ $gt: ["$version", 1] }, { $subtract: ["$version", 1] }, 1] }]
           }
         }
       },
@@ -186,7 +193,8 @@ export async function readProcurementDashboardApprovalRounds(
       {
         $lookup: {
           from: EstimateClientReviewRoundModel.collection.name,
-          let: { estimateId: "$_id", approvedEstimateVersion: "$approvedEstimateVersion" },
+          let: { estimateId: "$_id", approvedEstimateVersion: "$approvedEstimateVersion", workflowVersion: "$estimation.workflowVersion",
+            approvedRoundId: { $ifNull: ["$estimation.finalApproval.reviewRoundId", "$estimation.preApproval.reviewRoundId"] } },
           pipeline: [
             {
               $match: {
@@ -195,7 +203,8 @@ export async function readProcurementDashboardApprovalRounds(
                 $expr: {
                   $and: [
                     { $eq: ["$estimateId", "$$estimateId"] },
-                    { $eq: ["$estimateVersion", "$$approvedEstimateVersion"] }
+                    { $eq: ["$estimateVersion", "$$approvedEstimateVersion"] },
+                    { $or: [{ $ne: ["$$workflowVersion", 2] }, { $eq: ["$_id", "$$approvedRoundId"] }] }
                   ]
                 }
               }
@@ -255,7 +264,7 @@ export async function readProcurementDashboardApprovalRounds(
 export async function readProcurementDashboardPortfolioReport(): Promise<ProcurementDashboardPortfolioReport> {
   return procurementSnapshotRead(async (session) => {
     const [result] = await EstimateModel.aggregate<Row>([
-      { $match: { status: "client_approved", designPlanStatus: "approved", projectId: { $type: "string", $ne: "" } } },
+      { $match: { ...procurementEstimateEligibilityFilter(), projectId: { $type: "string", $ne: "" } } },
       {
         $setWindowFields: {
           partitionBy: "$projectId",
@@ -277,7 +286,7 @@ export async function readProcurementDashboardPortfolioReport(): Promise<Procure
       },
       {
         $set: {
-          approvedVersion: { $cond: [{ $gt: ["$version", 1] }, { $subtract: ["$version", 1] }, 1] },
+          approvedVersion: { $cond: [{ $eq: ["$estimation.workflowVersion", 2] }, { $ifNull: ["$estimation.finalApproval.estimateVersion", "$estimation.preApproval.estimateVersion"] }, { $cond: [{ $gt: ["$version", 1] }, { $subtract: ["$version", 1] }, 1] } ] },
           legacyApprovals: {
             $filter: {
               input: { $ifNull: ["$reviews", []] },
@@ -299,7 +308,9 @@ export async function readProcurementDashboardPortfolioReport(): Promise<Procure
             $filter: {
               input: "$approvedRounds",
               as: "round",
-              cond: { $eq: ["$$round.estimateVersion", "$approvedVersion"] }
+              cond: { $and: [{ $eq: ["$$round.estimateVersion", "$approvedVersion"] },
+                { $or: [{ $ne: ["$estimation.workflowVersion", 2] }, { $eq: ["$$round._id",
+                  { $ifNull: ["$estimation.finalApproval.reviewRoundId", "$estimation.preApproval.reviewRoundId"] }] }] }] }
             }
           }
         }
@@ -332,10 +343,12 @@ export async function readProcurementDashboardPortfolioReport(): Promise<Procure
                   { $eq: [{ $size: "$legacyApprovals" }, 1] }
                 ]
               },
-              { $gt: ["$designPlanVersion", 0] },
-              { $eq: [{ $type: "$designPlanApprovedAt" }, "date"] },
-              { $eq: [{ $type: "$designPlanApprovedById" }, "string"] },
-              { $in: ["$designPlanApprovalSource", ["client_portal", "admin_proof"]] }
+              { $or: [{ $eq: ["$estimation.workflowVersion", 2] }, { $and: [
+                { $gt: ["$designPlanVersion", 0] },
+                { $eq: [{ $type: "$designPlanApprovedAt" }, "date"] },
+                { $eq: [{ $type: "$designPlanApprovedById" }, "string"] },
+                { $in: ["$designPlanApprovalSource", ["client_portal", "admin_proof"]] }
+              ] }] }
             ]
           },
           approvalSnapshot: {
@@ -418,6 +431,7 @@ export async function readProcurementDashboardPortfolioReport(): Promise<Procure
             },
             { $lookup: { from: ProjectFinanceBucketModel.collection.name, localField: "projectId", foreignField: "projectId", as: "buckets" } },
             { $set: { bucket: { $arrayElemAt: ["$buckets", 0] } } },
+            { $set: { bucket: { $mergeObjects: ["$bucket", { $ifNull: ["$bucket.effectiveBaseline", {}] }] } } },
             {
               $set: {
                 bucketValid: {
@@ -428,7 +442,8 @@ export async function readProcurementDashboardPortfolioReport(): Promise<Procure
                         { $eq: [{ $size: "$buckets" }, 1] },
                         { $eq: ["$bucket.estimateId", "$_id"] }, { $eq: ["$bucket.estimateVersion", "$approvedVersion"] },
                         { $eq: [{ $ifNull: ["$bucket.estimateReviewRoundId", null] }, "$approvalRoundId"] },
-                        { $eq: ["$bucket.designPlanVersion", "$designPlanVersion"] },
+                        { $eq: ["$bucket.designPlanVersion", { $cond: [{ $eq: ["$estimation.workflowVersion", 2] },
+                          { $cond: [{ $eq: ["$bucket.status", "pending_design"] }, 0, { $ifNull: ["$estimation.finalApproval.designPlanVersion", 0] }] }, "$designPlanVersion"] }] },
                         { $eq: ["$bucket.approvedSubtotalPaise", "$approvedSubtotalPaise"] },
                         { $eq: ["$bucket.approvedGstPaise", "$approvedGstPaise"] },
                         { $eq: ["$bucket.approvedContractTotalPaise", "$approvedContractTotalPaise"] }
@@ -447,6 +462,7 @@ export async function readProcurementDashboardPortfolioReport(): Promise<Procure
                 taskStatus: { $first: { $ifNull: [{ $arrayElemAt: ["$tasks.status", 0] }, "open"] } },
                 taskProgress: { $first: { $ifNull: [{ $arrayElemAt: ["$tasks.progress", 0] }, 0] } },
                 estimateId: { $first: "$_id" },
+                estimationWorkflowVersion: { $first: "$estimation.workflowVersion" },
                 designPlanVersion: { $first: "$designPlanVersion" },
                 bucket: { $first: "$bucket" },
                 approvedLineages: { $push: { sectionId: "$sourceSectionId", lineItemKey: "$sourceLineItemKey" } },
@@ -517,7 +533,7 @@ export async function readProcurementDashboardPortfolioReport(): Promise<Procure
                             {
                               $or: [
                                 { $ne: [{ $arrayElemAt: ["$tasks.estimateId", 0] }, "$estimateId"] },
-                                { $ne: [{ $arrayElemAt: ["$tasks.designPlanVersion", 0] }, "$designPlanVersion"] },
+                                { $and: [{ $ne: ["$estimationWorkflowVersion", 2] }, { $ne: [{ $arrayElemAt: ["$tasks.designPlanVersion", 0] }, "$designPlanVersion"] }] },
                                 { $ne: [{ $arrayElemAt: ["$tasks.assigneeRole", 0] }, "procurement"] },
                                 { $not: [{ $in: ["$taskStatus", ["open", "in_progress", "completed"]] }] },
                                 { $not: [{ $isNumber: "$taskProgress" }] },
@@ -590,8 +606,7 @@ export function procurementDashboardProjection(input: {
 }): ProcurementDashboardProjection {
   const projectId = requiredStoredText(input.project._id);
   if (
-    input.estimate.status !== "client_approved" ||
-    input.estimate.designPlanStatus !== "approved" ||
+    !procurementEstimateEligible(input.estimate) ||
     requiredStoredText(input.estimate.projectId) !== projectId
   ) procurementLineageConflict();
   const snapshot = approvedProcurementSnapshotFromRows(
@@ -604,7 +619,7 @@ export function procurementDashboardProjection(input: {
       input.task.assigneeRole !== "procurement" ||
       String(input.task.projectId) !== projectId ||
       String(input.task.estimateId) !== snapshot.estimateId ||
-      Number(input.task.designPlanVersion) !== snapshot.designPlanVersion
+      (!isCollaborativeEstimate(input.estimate) && Number(input.task.designPlanVersion) !== snapshot.designPlanVersion)
     )
   ) procurementLineageConflict();
   const task = input.task ?? syntheticProcurementTask(input.estimate, projectId);
@@ -618,7 +633,7 @@ export function procurementDashboardProjection(input: {
     taskProgress < 0 ||
     taskProgress > 100
   ) procurementLineageConflict();
-  if (input.bucket) requireMatchingBucketLineage(input.bucket, snapshot);
+  if (input.bucket) requireMatchingBucketLineage(input.bucket, procurementReadBaselineSnapshot(input.bucket, snapshot));
   const approvedLineByKey = new Map(snapshot.lineItems.map((line) => [line.key, line]));
   let approvedAmountPaise = 0;
   for (const line of snapshot.lineItems) {
@@ -684,12 +699,13 @@ export interface ProcurementService {
 }
 
 export interface ApprovedProcurementSnapshot {
+  preparationSource?: EstimationPreparationSource;
   estimateId: string;
   estimateVersion: number;
   estimateReviewRoundId: string | null;
   designPlanVersion: number;
-  designPlanApprovedAt: Date;
-  designPlanApprovedById: string;
+  designPlanApprovedAt: Date | null;
+  designPlanApprovedById: string | null;
   subtotalRupees: number;
   gstRupees: number;
   totalRupees: number;
@@ -809,8 +825,7 @@ export function createProcurementService(input: {
       return procurementSnapshotRead(async (session) => {
         await requireProcurementActor(actor, session);
         const estimates = await EstimateModel.find({
-          status: "client_approved",
-          designPlanStatus: "approved",
+          ...procurementEstimateEligibilityFilter(),
           projectId: { $nin: [null, ""] }
         })
           .sort({ designPlanApprovedAt: -1, _id: 1 })
@@ -1246,7 +1261,14 @@ async function procurementProjectDto(
   const bucket = await ProjectFinanceBucketModel.findOne({
     projectId: String(project._id)
   }).session(session).lean();
-  if (bucket) requireMatchingBucketLineage(bucket, snapshot);
+  if (bucket) {
+    if (snapshot.preparationSource && snapshot.preparationSource.kind !== "approved_final") {
+      if (String(bucket.estimateId) !== snapshot.estimateId || bucket.status !== "pending_design" ||
+        Number(bucket.directSpendPaise) !== 0 || Number(bucket.overheadPaise) !== 0 || Number(bucket.designPlanVersion) !== 0)
+        procurementLineageConflict();
+      if (snapshot.preparationSource.kind === "approved_pre") requireMatchingBucketLineage(bucket, { ...snapshot, designPlanVersion: 0 });
+    } else requireMatchingBucketLineage(bucket, procurementReadBaselineSnapshot(bucket, snapshot));
+  }
   const entries = bucket
     ? await FinanceLedgerEntryModel.find({
         bucketId: String(bucket._id),
@@ -1366,6 +1388,7 @@ async function procurementProjectDto(
     clientName: typeof project.clientName === "string" ? project.clientName.trim() || null : null,
     estimateId: snapshot.estimateId,
     estimateVersion: snapshot.estimateVersion,
+    ...(snapshot.preparationSource ? { preparationSource: snapshot.preparationSource, issueReadiness: await projectWorkOrderIssueReadiness(String(project._id), session) } : {}),
     sections
   };
 }
@@ -1377,8 +1400,7 @@ async function resolveProcurementProject(
   if (!projectId.trim()) notFound();
   const estimates = await EstimateModel.find({
     projectId,
-    status: "client_approved",
-    designPlanStatus: "approved"
+    ...procurementEstimateEligibilityFilter()
   }).limit(2).session(session).lean();
   if (estimates.length === 0) notFound();
   if (estimates.length !== 1) procurementLineageConflict();
@@ -1404,13 +1426,12 @@ async function resolveProcurementProjectFromEstimate(
 ): Promise<ResolvedProcurementProject> {
   const projectId = requiredStoredText(estimate.projectId);
   const project = await ProjectModel.findById(projectId)
-    .select({ _id: 1, name: 1, clientName: 1 })
+    .select({ _id: 1, name: 1, clientName: 1, estimationWorkflowVersion: 1 })
     .session(session)
     .lean();
   if (!project) notFound();
   if (
-    estimate.status !== "client_approved" ||
-    estimate.designPlanStatus !== "approved"
+    !procurementEstimateEligible(estimate)
   ) notFound();
   if (
     storedTask && (
@@ -1418,7 +1439,7 @@ async function resolveProcurementProjectFromEstimate(
       storedTask.assigneeRole !== "procurement" ||
       String(storedTask.projectId) !== projectId ||
       String(storedTask.estimateId) !== String(estimate._id) ||
-      Number(storedTask.designPlanVersion) !== Number(estimate.designPlanVersion)
+      (!isCollaborativeEstimate(estimate) && Number(storedTask.designPlanVersion) !== Number(estimate.designPlanVersion))
     )
   ) {
     procurementLineageConflict();
@@ -1435,6 +1456,10 @@ async function approvedProcurementSnapshot(
   estimate: Row,
   session: ClientSession
 ): Promise<ApprovedProcurementSnapshot> {
+  if (isCollaborativeEstimate(estimate)) {
+    const frozen = await resolveEstimationPreparationSource(estimate, session);
+    return collaborativeProcurementSnapshot(estimate, frozen);
+  }
   const approvedRounds = await EstimateClientReviewRoundModel.find({
     estimateId: String(estimate._id),
     status: "approved",
@@ -1447,10 +1472,24 @@ export function approvedProcurementSnapshotFromRows(
   estimate: Row,
   approvedRounds: readonly Row[]
 ): ApprovedProcurementSnapshot {
+  const normalizedRounds = approvedRounds.map(round => ({ ...round, _id: round._id ?? round.id }));
+  if (isCollaborativeEstimate(estimate)) {
+    const approval = financeApprovalLineage(estimate, normalizedRounds);
+    const ref = estimate.estimation.finalApproval ?? estimate.estimation.preApproval;
+    if (!ref || !approval.estimateReviewRoundId) procurementLineageConflict();
+    return collaborativeProcurementSnapshot(estimate, { source: {
+      estimateId: String(estimate._id), estimateVersion: approval.estimateVersion,
+      estimateReviewRoundId: approval.estimateReviewRoundId, workflowVersion: 2,
+      phase: estimate.estimation.finalApproval ? "post" : "pre",
+      kind: estimate.estimation.finalApproval ? "approved_final" : "approved_pre",
+      sourceSnapshotId: approval.estimateReviewRoundId,
+      sourceDigest: createHash("sha256").update(JSON.stringify(approval.snapshot)).digest("hex")
+    }, snapshot: approval.snapshot as import("../domain/estimate-client-review.js").EstimateClientReviewSnapshot });
+  }
   let approval: ReturnType<typeof financeApprovalLineage>;
   let designApproval: NonNullable<ReturnType<typeof financeDesignApproval>>;
   try {
-    approval = financeApprovalLineage(estimate, approvedRounds);
+    approval = financeApprovalLineage(estimate, normalizedRounds);
     const resolvedDesignApproval = financeDesignApproval(estimate);
     if (!resolvedDesignApproval) procurementLineageConflict();
     designApproval = resolvedDesignApproval;
@@ -1509,7 +1548,7 @@ function approvedMainBasketClassifications(snapshot: Row): Record<string, "stand
 }
 
 function syntheticProcurementTask(estimate: Row, projectId: string): Row {
-  const approvedAt = validDate(estimate.designPlanApprovedAt);
+  const approvedAt = validDate(isCollaborativeEstimate(estimate) ? estimate.estimation.preApproval?.approvedAt : estimate.designPlanApprovedAt);
   return {
     _id: `approved-procurement:${String(estimate._id)}`,
     projectId,
@@ -1621,9 +1660,14 @@ async function requireOpenMatchingBucket(
   resolved: ResolvedProcurementProject,
   session: ClientSession
 ): Promise<Row> {
+  if (resolved.snapshot.preparationSource) await assertProjectWorkOrderIssueEligible(String(resolved.project._id), session, resolved.snapshot.estimateReviewRoundId ? {
+    estimateId: resolved.snapshot.estimateId, estimateVersion: resolved.snapshot.estimateVersion, estimateReviewRoundId: resolved.snapshot.estimateReviewRoundId } : undefined);
+  if (!resolved.snapshot.designPlanApprovedAt || !resolved.snapshot.designPlanApprovedById) throw new ApiError(409, "FINANCE_BUCKET_NOT_OPEN", "Spending is unavailable during procurement preparation.");
   let bucket = await ProjectFinanceBucketModel.findOne({
     projectId: String(resolved.project._id)
   }).session(session).lean();
+  if (!bucket && resolved.snapshot.preparationSource)
+    throw new ApiError(409, "FINANCE_BUCKET_MISSING", "The confirmed final finance baseline is unavailable.");
   if (!bucket) {
     bucket = await openProjectFinanceBucket({
       projectId: String(resolved.project._id),
@@ -1643,6 +1687,7 @@ async function requireOpenMatchingBucket(
       }
     }, session);
   }
+  bucket = effectiveProjectFinanceBucket(bucket);
   requireMatchingBucketLineage(bucket, resolved.snapshot);
   if (bucket.status !== "open") {
     throw new ApiError(
@@ -1672,10 +1717,19 @@ async function requireMatchingBucket(
   return bucket;
 }
 
+function procurementReadBaselineSnapshot(bucket: Row, snapshot: ApprovedProcurementSnapshot): ApprovedProcurementSnapshot {
+  if (!snapshot.preparationSource || bucket.status !== "pending_design") return snapshot;
+  if (Number(bucket.directSpendPaise) !== 0 || Number(bucket.overheadPaise) !== 0 || Number(bucket.designPlanVersion) !== 0)
+    procurementLineageConflict();
+  // Final approval updates the commercial baseline before payment opens spending.
+  return { ...snapshot, designPlanVersion: 0 };
+}
+
 function requireMatchingBucketLineage(
   bucket: Row,
   snapshot: ApprovedProcurementSnapshot
 ): void {
+  bucket = effectiveProjectFinanceBucket(bucket);
   let baseline: ReturnType<typeof projectFinanceBaseline>;
   try {
     baseline = projectFinanceBaseline({
@@ -1882,8 +1936,13 @@ export async function procurementItemSourceSnapshot(projectId: string, session: 
   if (!session.inTransaction()) throw new Error("Procurement source resolution requires an active transaction.");
   const resolved = await resolveProcurementProject(projectId, session);
   if (forWrite) {
+    if (resolved.snapshot.preparationSource) {
+      const estimate = await EstimateModel.findById(resolved.snapshot.estimateId).session(session).lean();
+      if (!estimate) procurementLineageConflict();
+      await fenceCollaborativeEstimate(estimate, session);
+    }
     const locked = await EstimateModel.updateOne({
-      _id: resolved.snapshot.estimateId, projectId, status: "client_approved", designPlanStatus: "approved"
+      _id: resolved.snapshot.estimateId, projectId, ...procurementEstimateEligibilityFilter()
     }, { $inc: { procurementSourceEpoch: 1 } }, { session, timestamps: false, runValidators: true });
     if (locked.matchedCount !== 1) procurementLineageConflict();
   }
@@ -2526,4 +2585,37 @@ function financeStateCorrupt(): never {
     "FINANCE_STATE_INVALID",
     "The stored project finance state is invalid."
   );
+}
+
+export function procurementPreparationProjectFilter(): Row {
+  return { $or: [{ status: "active" }, { status: "planning", estimationWorkflowVersion: 2 }] };
+}
+export function procurementPreparationProjectAllowed(project: Row | null): boolean {
+  return !!project && (project.status === "active" || project.status === "planning" && project.estimationWorkflowVersion === 2);
+}
+function procurementEstimateEligibilityFilter(): Row {
+  return { status: "client_approved", $or: [{ "estimation.workflowVersion": 2, "estimation.preApproval.reviewRoundId": { $type: "string" } },
+    { "estimation.workflowVersion": { $ne: 2 }, designPlanStatus: "approved" }] };
+}
+function procurementEstimateEligible(estimate: Row): boolean {
+  return estimate.status === "client_approved" && (isCollaborativeEstimate(estimate)
+    ? !!estimate.estimation.preApproval : estimate.designPlanStatus === "approved");
+}
+function collaborativeProcurementSnapshot(estimate: Row, frozen: Awaited<ReturnType<typeof resolveEstimationPreparationSource>>): ApprovedProcurementSnapshot {
+  const snapshot = frozen.snapshot;
+  const baseline = projectFinanceBaseline({ subtotalRupees: snapshot.subtotal, gstRupees: snapshot.gst, totalRupees: snapshot.total,
+    subtotalPaise: snapshot.subtotalPaise, gstPaise: snapshot.gstPaise, totalPaise: snapshot.totalPaise });
+  const allLineItems = approvedSnapshotLines(snapshot.lineItems, String(estimate._id), frozen.source.estimateVersion);
+  const design = estimate.designPlanStatus === "approved" && Number.isSafeInteger(estimate.designPlanVersion) &&
+    estimate.designPlanVersion > 0 && estimate.designPlanApprovedAt && estimate.designPlanApprovedById
+    ? { designPlanVersion: Number(estimate.designPlanVersion), occurredAt: validDate(estimate.designPlanApprovedAt),
+      openedById: requiredStoredText(estimate.designPlanApprovedById) } : null;
+  return { preparationSource: frozen.source, estimateId: frozen.source.estimateId, estimateVersion: frozen.source.estimateVersion,
+    estimateReviewRoundId: frozen.source.estimateReviewRoundId, designPlanVersion: design?.designPlanVersion ?? 0,
+    designPlanApprovedAt: design?.occurredAt ?? null, designPlanApprovedById: design?.openedById ?? null,
+    subtotalRupees: baseline.approvedSubtotalPaise / 100, gstRupees: baseline.approvedGstPaise / 100,
+    totalRupees: baseline.approvedContractTotalPaise / 100, subtotalPaise: baseline.approvedSubtotalPaise,
+    gstPaise: baseline.approvedGstPaise, totalPaise: baseline.approvedContractTotalPaise,
+    allLineItems, lineItems: allLineItems.filter((line): line is ApprovedProcurementLine => line.included && line.amountPaise !== null),
+    mainBasketClassifications: approvedMainBasketClassifications(snapshot) };
 }

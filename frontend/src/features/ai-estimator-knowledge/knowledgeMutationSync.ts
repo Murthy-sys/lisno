@@ -1,6 +1,9 @@
 import type { QueryClient } from "@tanstack/react-query";
 
+import { projectDesignRequirementsKeys } from "../workflow/projectDesignRequirementsApi";
+import { projectWorkflowKeys } from "../workflow/projectWorkflowApi";
 import { knowledgeQueryKeys } from "./knowledgeQueryKeys";
+import { estimateRequirementsKeys } from "../client/estimateRequirementsApi";
 import { estimationCatalogueKeys } from "../leads/estimationCatalogueApi";
 import { projectProcurementKeys } from "../procurement/projectProcurementApi";
 import { procurementBasketKeys } from "../procurement/procurementBasketApi";
@@ -228,6 +231,7 @@ export async function refreshKnowledgeSubBasketCatalog(
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.histories() }, { throwOnError: true }),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.activationReviews() }, { throwOnError: true }),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.contexts() }, { throwOnError: true }),
+    queryClient.invalidateQueries({ queryKey: estimateRequirementsKeys.all }),
     queryClient.invalidateQueries({ queryKey: estimationCatalogueKeys.all }, { throwOnError: true }),
     queryClient.invalidateQueries({ queryKey: procurementBasketKeys.lists() }),
     queryClient.invalidateQueries({ queryKey: procurementBasketKeys.details() })
@@ -248,6 +252,7 @@ export async function refreshKnowledgeMainLineCatalog(queryClient: QueryClient):
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.histories() }, { throwOnError: true }),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.activationReviews() }, { throwOnError: true }),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.contexts() }, { throwOnError: true }),
+    queryClient.invalidateQueries({ queryKey: estimateRequirementsKeys.all }, { throwOnError: true }),
     queryClient.invalidateQueries({ queryKey: estimationCatalogueKeys.all }, { throwOnError: true }),
     queryClient.invalidateQueries({ queryKey: procurementBasketKeys.lists() }),
     queryClient.invalidateQueries({ queryKey: procurementBasketKeys.details() })
@@ -322,7 +327,10 @@ export async function syncKnowledgeBasketMutation(
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.subBasketDeletionImpacts(basket.id) }, { throwOnError: true }),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.mainLineLists() }, { throwOnError: true }),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.contexts() }, { throwOnError: true }),
+    queryClient.invalidateQueries({ queryKey: estimateRequirementsKeys.all }),
     queryClient.invalidateQueries({ queryKey: estimationCatalogueKeys.all }),
+    queryClient.invalidateQueries({ queryKey: projectDesignRequirementsKeys.all }),
+    queryClient.invalidateQueries({ queryKey: projectWorkflowKeys.all }),
     queryClient.invalidateQueries({ queryKey: procurementBasketKeys.lists() }),
     queryClient.invalidateQueries({ queryKey: procurementBasketKeys.details() })
   ]);
@@ -437,7 +445,10 @@ export async function invalidateKnowledgeSectionMutation(
       queryKey: knowledgeQueryKeys.activationReviews()
     }),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.contexts() }),
+    queryClient.invalidateQueries({ queryKey: estimateRequirementsKeys.all }),
     queryClient.invalidateQueries({ queryKey: estimationCatalogueKeys.all }),
+    queryClient.invalidateQueries({ queryKey: projectDesignRequirementsKeys.all }),
+    queryClient.invalidateQueries({ queryKey: projectWorkflowKeys.all }),
     queryClient.invalidateQueries({ queryKey: procurementBasketKeys.lists() }),
     queryClient.invalidateQueries({ queryKey: procurementBasketKeys.details() })
   ]);
@@ -492,7 +503,10 @@ export async function syncKnowledgeBasketDeletion(
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.mainLineLists() }, { throwOnError: true }),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.items() }, { throwOnError: true }),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.contexts() }, { throwOnError: true }),
+    queryClient.invalidateQueries({ queryKey: estimateRequirementsKeys.all }),
     queryClient.invalidateQueries({ queryKey: estimationCatalogueKeys.all }),
+    queryClient.invalidateQueries({ queryKey: projectDesignRequirementsKeys.all }),
+    queryClient.invalidateQueries({ queryKey: projectWorkflowKeys.all }),
     queryClient.invalidateQueries({ queryKey: procurementBasketKeys.lists() }),
     queryClient.invalidateQueries({ queryKey: procurementBasketKeys.details() })
   ]);
@@ -533,6 +547,7 @@ export async function syncKnowledgeMainLineDeletion(
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.histories() }, refreshOptions),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.activationReviews() }, refreshOptions),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.contexts() }, refreshOptions),
+    queryClient.invalidateQueries({ queryKey: estimateRequirementsKeys.all }, refreshOptions),
     queryClient.invalidateQueries({ queryKey: estimationCatalogueKeys.all }, refreshOptions),
     queryClient.invalidateQueries({ queryKey: procurementBasketKeys.lists() }, refreshOptions),
     queryClient.invalidateQueries({ queryKey: procurementBasketKeys.details() }, refreshOptions),
@@ -573,7 +588,10 @@ export async function syncKnowledgeLifecycleMutation(
       queryKey: knowledgeQueryKeys.activationReviews()
     }),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.contexts() }),
+    queryClient.invalidateQueries({ queryKey: estimateRequirementsKeys.all }),
     queryClient.invalidateQueries({ queryKey: estimationCatalogueKeys.all }),
+    queryClient.invalidateQueries({ queryKey: projectDesignRequirementsKeys.all }),
+    queryClient.invalidateQueries({ queryKey: projectWorkflowKeys.all }),
     queryClient.invalidateQueries({ queryKey: procurementBasketKeys.lists() }),
     queryClient.invalidateQueries({ queryKey: procurementBasketKeys.details() })
   ]);
@@ -588,7 +606,10 @@ export async function syncKnowledgeMasterMutation(
 
   await Promise.allSettled([
     ...(masterType === "uoms" || masterType === "modes" ? [
+      queryClient.invalidateQueries({ queryKey: estimateRequirementsKeys.all }),
       queryClient.invalidateQueries({ queryKey: estimationCatalogueKeys.all }),
+    queryClient.invalidateQueries({ queryKey: projectDesignRequirementsKeys.all }),
+    queryClient.invalidateQueries({ queryKey: projectWorkflowKeys.all }),
       queryClient.invalidateQueries({ queryKey: procurementBasketKeys.lists() }),
       queryClient.invalidateQueries({ queryKey: procurementBasketKeys.details() })
     ] : []),

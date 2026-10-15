@@ -1,3 +1,4 @@
+export type { DesignRules, DesignRuleKey } from "../domain/main-line-design-rules.js";
 import type {
   KnowledgeAvailabilityState,
   KnowledgeCompletenessState,
@@ -123,6 +124,7 @@ export interface KnowledgeTemporaryMainLineReference {
 }
 
 export interface KnowledgeItemListItem extends KnowledgeVersionedResource {
+  estimationVisibility: "internal" | "external";
   itemType?: "main_line" | "temporary";
   /** Temporary catalog placeholders remain unresolved regardless of lifecycle or section completeness. */
   completionRequired: boolean;

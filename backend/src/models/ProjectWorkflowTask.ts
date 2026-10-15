@@ -12,6 +12,9 @@ const projectWorkflowTaskSchema = new Schema(
     projectId: { type: String, ref: "Project", required: true, immutable: true },
     estimateId: { type: String, ref: "Estimate", required: true, immutable: true },
     designPlanVersion: { type: Number, required: true, min: 0, immutable: true },
+    // Only the validated payment activation may turn an assignment placeholder
+    // into execution; ordinary task updates cannot change its phase or source.
+    preparationOnly: { type: Boolean, default: false, immutable: true },
     kind: {
       type: String,
       enum: PROJECT_WORKFLOW_TASK_KINDS,
@@ -43,7 +46,8 @@ const projectWorkflowTaskSchema = new Schema(
     /*
      * Both feed the shared KPI. They default to null so rows created before
      * the KPI rollout still read; the KPI derives a fallback deadline from
-     * openedAt and the task kind for those.
+     * openedAt and the task kind for those. Preparation-only assignment rows
+     * are excluded from KPI entirely, so they never receive that fallback.
      */
     dueAt: { type: Date, default: null },
     plannedEffort: { type: Number, default: null, min: 0 },

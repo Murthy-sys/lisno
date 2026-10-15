@@ -27,6 +27,7 @@ export function DailyCriticalTasksPrompt() {
 
 function SessionCriticalTasksPrompt({ sessionId, userId, stillEligible }: { sessionId: string; userId: string; stillEligible: () => boolean }) {
   const queryClient = useQueryClient();
+  const role = useAuth().user?.role;
   const session = useMemo<LoginReviewSession>(() => ({ id: sessionId, userId }), [sessionId, userId]);
   const key = useMemo(() => ["daily-critical-tasks", "current", userId, sessionId] as const, [userId, sessionId]);
   const [review, setReview] = useState<{ data: CurrentCriticalTaskReview; automatic: boolean } | null>(null);
@@ -142,7 +143,7 @@ function SessionCriticalTasksPrompt({ sessionId, userId, stillEligible }: { sess
     {review && list ? <Dialog title="Daily critical tasks" eyebrow="Current task review" description={`Your open critical actions and overdue assigned tasks. Checked ${checkedAt}. Reviewing this list does not complete these tasks.`} role={review.automatic || requiresAcknowledgment ? "alertdialog" : "dialog"} showCloseButton={!requiresAcknowledgment} busy={acknowledging} onClose={close} returnFocusRef={triggerRef}>
       <div className="daily-critical-tasks ui-dialog__form">
         <div className="ui-dialog__body">
-          {list.items.length ? <ol className="daily-critical-tasks__list">{list.items.map(item => <li key={`${item.kind}:${item.id}`}><span className="daily-critical-tasks__kind">{item.kind === "chat_action" ? "Critical chat action" : "Overdue workflow task"}</span><strong>{item.title}</strong><span>{item.projectName}</span><TaskDue item={item} />{item.kind === "chat_action" ? <Link to={`/projects/${encodeURIComponent(item.projectId)}/messages?message=${encodeURIComponent(item.messageId)}`}>Open conversation</Link> : null}</li>)}</ol>
+          {list.items.length ? <ol className="daily-critical-tasks__list">{list.items.map(item => <li key={`${item.kind}:${item.id}`}><span className="daily-critical-tasks__kind">{item.kind === "chat_action" ? "Critical chat action" : item.kind === "design_requirement" ? item.category === "stock" ? "Critical supply check" : "Design requirement" : "Overdue workflow task"}</span><strong>{item.title}</strong><span>{item.projectName}</span><TaskDue item={item} />{item.kind === "chat_action" ? <Link to={`/projects/${encodeURIComponent(item.projectId)}/messages?message=${encodeURIComponent(item.messageId)}`}>Open conversation</Link> : item.kind === "design_requirement" && (role === "designer" || role === "procurement") ? <Link to={`/${role}/projects/${encodeURIComponent(item.projectId)}#design-requirements`}>Open design checklist</Link> : null}</li>)}</ol>
             : <p role="status">No open critical chat actions or overdue assigned workflow tasks right now.</p>}
           {ackError ? <p role="alert">{chatErrorMessage(ackError)} Please try again.</p> : null}
         </div>
@@ -154,5 +155,6 @@ function SessionCriticalTasksPrompt({ sessionId, userId, stillEligible }: { sess
 
 function TaskDue({ item }: { item: DailyCriticalTaskItem }) {
   const due = item.kind === "chat_action" ? item.dueDate : item.dueAt;
+  if (!due) return <span>{item.kind === "design_requirement" && item.category === "stock" ? "Deadline starts after initial payment confirmation" : item.kind === "design_requirement" && item.category === "po_approval" ? "Required before raising a purchase order" : "Required before design submission"}</span>;
   return <span>Due <time dateTime={due}>{item.kind === "chat_action" ? due : new Date(due).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", dateStyle: "medium", timeStyle: "short" })}</time></span>;
 }

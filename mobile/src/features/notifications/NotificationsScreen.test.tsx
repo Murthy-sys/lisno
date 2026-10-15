@@ -107,8 +107,8 @@ describe("NotificationsScreen", () => {
     const { put } = setup();
     const { invalidateSpy } = await renderScreen(screenFor([unreadToday]));
     await fireEvent.press(screen.getByRole("button", { name: /^Unread, Villa Aurora/u }));
-    expect(put).toHaveBeenCalledWith("/notifications/n-today/read");
-    expect(mockPush).toHaveBeenCalledWith({ pathname: "/record/[featureId]/[recordId]", params: { featureId: "messages", recordId: "p-villa" } });
+    expect(put).toHaveBeenCalledWith("/notifications/n-today/read", {});
+    expect(mockPush).toHaveBeenCalledWith({ pathname: "/record/[featureId]/[recordId]", params: { featureId: "messages", recordId: "p-villa", message: "m-1" } });
     await waitFor(() => expect(invalidateSpy).toHaveBeenCalled());
   });
 
@@ -117,15 +117,15 @@ describe("NotificationsScreen", () => {
     await renderScreen(screenFor([readYesterday]));
     await fireEvent.press(screen.getByRole("button", { name: /^Harbour Office/u }));
     expect(put).not.toHaveBeenCalled();
-    expect(mockPush).toHaveBeenCalledWith({ pathname: "/record/[featureId]/[recordId]", params: { featureId: "messages", recordId: "p-office" } });
+    expect(mockPush).toHaveBeenCalledWith({ pathname: "/record/[featureId]/[recordId]", params: { featureId: "messages", recordId: "p-office", message: "m-1" } });
   });
 
-  it("still navigates when marking read fails and does not treat it as success", async () => {
+  it("keeps the unread notification visible when marking read fails", async () => {
     const { put } = setup();
     put.mockRejectedValueOnce(new Error("offline"));
     const { invalidateSpy } = await renderScreen(screenFor([unreadToday]));
     await fireEvent.press(screen.getByRole("button", { name: /^Unread, Villa Aurora/u }));
-    expect(mockPush).toHaveBeenCalledTimes(1);
+    expect(mockPush).not.toHaveBeenCalled();
     await waitFor(() => expect(put).toHaveBeenCalledTimes(1));
     expect(invalidateSpy).not.toHaveBeenCalled();
     expect(screen.getByTestId("notification-unread-dot-n-today")).toBeTruthy();
@@ -160,4 +160,15 @@ describe("NotificationsScreen", () => {
     expect(screen.getByText(longName)).toBeTruthy();
     expect(screen.getByText("Yesterday, 6:15 PM")).toBeTruthy();
   });
+});
+
+it("uses the captured routing version and refuses stale acknowledgments", async () => {
+  const { put } = setup(); const onRefresh = jest.fn();
+  const routed = { ...unreadToday, type: "chat.assistant.route", routing: { priority: "critical", messageVersion: 4, lastAlertAt: unreadToday.createdAt } };
+  put.mockResolvedValueOnce({ ...routed, routing: { ...routed.routing, messageVersion: 5 }, readAt: null });
+  await renderScreen(screenFor([routed], { onRefresh }));
+  await fireEvent.press(screen.getByRole("button", { name: /^Unread, Villa Aurora/u }));
+  await screen.findByText("This request changed. Refresh notifications and open the current request.");
+  expect(put).toHaveBeenCalledWith("/notifications/n-today/read", { routingMessageVersion: 4 });
+  expect(mockPush).not.toHaveBeenCalled(); expect(onRefresh).toHaveBeenCalled();
 });

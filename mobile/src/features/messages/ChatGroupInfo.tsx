@@ -24,6 +24,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import { ChatParticipantManagement } from "./ChatManagement";
 import { ROLE_LABELS } from "../../contracts/authorization";
 import type { AuthenticatedSession } from "../../contracts/session";
 import { ApiError, ApiProtocolError } from "../../core/http/apiClient";
@@ -80,6 +81,7 @@ export interface ChatGroupInfoProps {
   readonly onDenied: () => Promise<void> | void;
   readonly onParticipantsChanged: (page: PresentedChatParticipantPage) => Promise<void> | void;
   readonly onParticipantAdded: (name: string) => Promise<void> | void;
+  readonly onBusyChange?: ((busy: boolean) => void) | undefined;
   readonly onRestoreFocus?: (() => void) | undefined;
 }
 
@@ -109,7 +111,8 @@ export const ChatGroupInfo = forwardRef<ChatGroupInfoHandle, ChatGroupInfoProps>
   onDenied,
   onParticipantsChanged,
   onParticipantAdded,
-  onRestoreFocus
+  onRestoreFocus,
+  onBusyChange
 }, ref) {
   const context = useConfiguredRuntime();
   const queryClient = useQueryClient();
@@ -127,6 +130,7 @@ export const ChatGroupInfo = forwardRef<ChatGroupInfoHandle, ChatGroupInfoProps>
     [projectId, scope]
   );
 
+  const [managing, setManaging] = useState(false);
   const [adding, setAdding] = useState(false);
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -136,6 +140,7 @@ export const ChatGroupInfo = forwardRef<ChatGroupInfoHandle, ChatGroupInfoProps>
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [accessDenied, setAccessDenied] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  useEffect(() => { onBusyChange?.(submitting || managing); return () => onBusyChange?.(false); }, [submitting, managing, onBusyChange]);
   const closeButton = useRef<View>(null);
   const searchInput = useRef<TextInput>(null);
   const focusRequest = useRef<number | null>(null);
@@ -380,7 +385,7 @@ export const ChatGroupInfo = forwardRef<ChatGroupInfoHandle, ChatGroupInfoProps>
   }, [optionPrefix, queryClient, resetAdd, scheduleFocus]);
 
   const dismissTransientState = useCallback(() => {
-    if (pendingRef.current) return true;
+    if (pendingRef.current || managing) return true;
     if (adding) {
       closeAdd();
       return true;
@@ -390,7 +395,7 @@ export const ChatGroupInfo = forwardRef<ChatGroupInfoHandle, ChatGroupInfoProps>
       return true;
     }
     return false;
-  }, [adding, closeAdd, onRequestClose, visible]);
+  }, [adding, closeAdd, onRequestClose, visible, managing]);
 
   useImperativeHandle(ref, () => ({
     hasTransientState: () => visible || pendingRef.current,
@@ -419,8 +424,8 @@ export const ChatGroupInfo = forwardRef<ChatGroupInfoHandle, ChatGroupInfoProps>
         <Pressable
           accessibilityLabel={closeLabel}
           accessibilityRole="button"
-          accessibilityState={{ disabled: submitting }}
-          disabled={submitting}
+          accessibilityState={{ disabled: submitting || managing }}
+          disabled={submitting || managing}
           onPress={dismissTransientState}
           ref={closeButton}
           style={({ pressed }) => [styles.headerButton, pressed ? styles.pressed : null]}
@@ -629,6 +634,7 @@ export const ChatGroupInfo = forwardRef<ChatGroupInfoHandle, ChatGroupInfoProps>
               {participants.data?.setupWarnings.map((warning, index) => (
                 <Text accessibilityLiveRegion="polite" key={`${index}-${warning}`} style={styles.warning}>{warning}</Text>
               ))}
+              {participants.data?.assistant ? <View accessibilityLabel="Project AI assistant" style={styles.participantRow}><View style={styles.rowCopy}><Text style={styles.rowName}>Lisno AI</Text><Text style={styles.rowRole}>Project assistant{participants.data.assistant.available ? "" : " · Currently unavailable"}</Text></View></View> : null}
               {participants.data?.items.length ? (
                 <View accessibilityLabel="Participants" style={styles.participantList}>
                   {participants.data.items.map((person) => <ParticipantRow key={person.id} participant={person} />)}
@@ -636,6 +642,7 @@ export const ChatGroupInfo = forwardRef<ChatGroupInfoHandle, ChatGroupInfoProps>
               ) : (
                 <Text accessibilityLiveRegion="polite" style={styles.emptyParticipants}>No participants are currently available.</Text>
               )}
+              {canManage && participants.data ? <ChatParticipantManagement key={ownerKey} projectId={projectId} session={session} page={participants.data} disabled={participants.isFetching || participants.isError || submitting} onChanged={onParticipantsChanged} onRefresh={() => participants.refetch({ throwOnError: true })} onDenied={() => void denyAccess()} onBusy={setManaging} /> : null}
             </View>
           )}
         </ScrollView>

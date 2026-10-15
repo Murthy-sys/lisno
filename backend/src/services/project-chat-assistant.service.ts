@@ -2,7 +2,8 @@ import { ProjectModel } from "../models/Project.js";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { ChatActor, ChatPerson } from "../contracts/project-chat.js";
-import { LISNO_AI, type AssistantReadScope, type AssistantReadSources, type ChatAssistantResult } from "../contracts/project-chat-assistant.js";
+import { ASSISTANT_DISCLOSURE_POLICY, LISNO_AI, type AssistantReadScope, type AssistantReadSources, type ChatAssistantResult } from "../contracts/project-chat-assistant.js";
+import { hasCurrentAssistantDisclosure } from "../contracts/assistant-project-pricing.js";
 import { hasPermission } from "../domain/authorization.js";
 import { assistantTerminal } from "../domain/project-chat-assistant.js";
 import { resolveChatMembership } from "../domain/project-chat-membership.js";
@@ -122,11 +123,11 @@ export function createProjectChatAssistantService(options: ProjectChatAssistantO
       const handoff = topic && routingQuestion ? await route(tx, context.sources, routingQuestion, checkedAt, topic) : null;
       const id = `chat-message-${randomUUID()}`, resultId = `assistant-result-${randomUUID()}`;
       // Prices and answers are returned only through the authenticated structured-result reader.
-      const sourceFreeReply = Boolean(generated.narrative?.length) && !generated.facts.length && !generated.candidates.length && !generated.commercial && !generated.missingInputs.length && generated.kind !== "clarification";
+      const sourceFreeReply = Boolean(generated.narrative?.length) && !generated.facts.length && !generated.candidates.length && !generated.commercial && !generated.projectPricing && !generated.missingInputs.length && generated.kind !== "clarification";
       const body = sourceFreeReply ? "Lisno AI replied to your message."
         : generated.kind === "no_answer" ? "I could not verify an answer from the available project information. Please ask the project team."
         : generated.kind === "clarification" ? "I need a few details to check this request."
-        : generated.commercial ? "I checked the available Configuration items for this request. Any price preview is approximate and requires staff confirmation."
+        : generated.projectPricing ? "I checked the available customer estimate for this project."
         : generated.facts.length ? "I checked the available project information for this request."
         : "Lisno AI replied to your message.";
       const sequence = await tx.allocate(run.projectId, checkedAt);
@@ -188,6 +189,12 @@ export function createProjectChatAssistantService(options: ProjectChatAssistantO
         if (!run || run.projectId !== projectId || context.sources.project.clientId !== run.clientId) chatNotFound();
         const message = await tx.message(projectId, result.messageId);
         if (!message || message.assistantRunId !== run.id || message.author.kind !== "service") chatNotFound();
+        if (!hasCurrentAssistantDisclosure(result)) return {
+          id: result.id, projectId, messageId: result.messageId, checkedAt: result.checkedAt,
+          kind: "no_answer", disclosurePolicy: ASSISTANT_DISCLOSURE_POLICY, facts: [], candidates: [],
+          missingInputs: ["Please ask again to check current project information."], commercial: null, projectPricing: null,
+          stale: true, commercialAccess: "none"
+        };
         const commercialAllowed = actor.role === "client" && actor.id === context.sources.project.clientId ||
           actor.role === "super_admin" && await tx.app.countActiveUsersByRole("super_admin") === 1 ||
           actor.role === "estimator_sales" && hasPermission(actor.role, "estimation.estimate.read") && (
@@ -195,8 +202,9 @@ export function createProjectChatAssistantService(options: ProjectChatAssistantO
             context.sources.leads.some(lead => lead.ownerId === actor.id && lead.projectId === projectId));
         const stale = !(await reads(run, tx).revalidate(result.freshness));
         const {freshness: _freshness, runId: _runId, ...publicResult} = result;
-        return {...publicResult, ...(stale ? {narrative: undefined} : {}), stale, commercial: commercialAllowed ? result.commercial : null,
-          commercialAccess: result.commercial ? commercialAllowed ? "allowed" : "restricted" : "none"};
+        return {...publicResult, ...(stale ? {narrative: undefined, facts: [], missingInputs: []} : {}), stale,
+          commercial: null, candidates: [], projectPricing: commercialAllowed && !stale ? result.projectPricing ?? null : null,
+          commercialAccess: result.projectPricing ? commercialAllowed ? "allowed" : "restricted" : "none"};
       });
     }
   };

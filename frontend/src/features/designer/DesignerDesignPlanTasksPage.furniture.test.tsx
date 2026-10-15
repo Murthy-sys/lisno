@@ -54,7 +54,7 @@ function furnitureWorkflow(): DesignWorkflowView {
   };
 }
 
-type DimensionInput = { roomId: string; items: { estimateItemId: string; length: number; width: number; height: number; uomId: string }[] };
+type DimensionInput = { roomId: string; items: { estimateItemId: string; length: number; width: number; uomId: string }[] };
 function declare(workflow: DesignWorkflowView, notApplicable: boolean, dimensions?: DimensionInput[]) {
   const stage = workflow.projectStages![0]!;
   const op = stage.operational!;
@@ -118,7 +118,6 @@ describe("Designer furniture requirements progress", () => {
         const group = within(screen.getByRole("group", { name: `${room} dimensions` }));
         await user.type(group.getByRole("spinbutton", { name: "Length" }), "2100");
         await user.type(group.getByRole("spinbutton", { name: "Width" }), "900");
-        await user.type(group.getByRole("spinbutton", { name: "Height" }), "850");
         await user.selectOptions(group.getByRole("combobox", { name: "UOM" }), "uom-mm");
       }
       await user.upload(screen.getByLabelText(/Furniture dimensions document/), new File(["dimensions"], "furniture.pdf", { type: "application/pdf" }));
@@ -133,7 +132,7 @@ describe("Designer furniture requirements progress", () => {
     expect(submissions).toHaveLength(1);
     expect(submissions[0]).toMatchObject({ action: "furniture_scope", expectedVersion: 6, data: noFurniture ? { rooms: [], notApplicable: true } : {
       notApplicable: false, rooms: [{ id: "room-living", required: true }, { id: "room-study", required: true }, { id: "room-bedroom", required: false }],
-      dimensions: ["room-living", "room-study"].map((roomId) => ({ roomId, items: [{ estimateItemId: `item-${roomId}`, length: 2100, width: 900, height: 850, uomId: "uom-mm" }] }))
+      dimensions: ["room-living", "room-study"].map((roomId) => ({ roomId, items: [{ estimateItemId: `item-${roomId}`, length: 2100, width: 900, uomId: "uom-mm" }] }))
     } });
 
     await user.click(screen.getByRole("button", { name: editLabel }));

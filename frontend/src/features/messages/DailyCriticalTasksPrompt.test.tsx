@@ -60,6 +60,14 @@ beforeEach(() => {
 });
 
 describe("critical task review once per login", () => {
+  it.each(["designer", "procurement"])("links a %s to source-linked Design requirements without inventing a due date", async role => {
+    auth.user.role = role;
+    vi.mocked(projectChatApi.currentCriticalTaskReview).mockResolvedValue({ ...list, items: [{ kind: "design_requirement", id: "design-one", projectId: "project-a", projectName: "Project A", title: "Check finish stock", dueAt: null, status: "pending", category: "stock" }] });
+    renderPrompt();
+    expect(await screen.findByRole("link", { name: "Open design checklist" })).toHaveAttribute("href", `/${role}/projects/project-a#design-requirements`);
+    expect(screen.getByText("Deadline starts after initial payment confirmation")).toBeVisible();
+    expect(screen.queryByText("Overdue workflow task")).not.toBeInTheDocument();
+  });
   it.each(["vendor", "program_manager"])("does not read staff endpoints for a %s without chat permission", role => {
     auth.user.role = role; auth.authorization.permissions = []; renderPrompt();
     expect(screen.getByRole("button", { name: "Refresh chat schedule" })).toBeDisabled();

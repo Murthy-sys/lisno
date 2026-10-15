@@ -2,12 +2,17 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { Role, AuthorizationSnapshot } from "../../api/authorization-contract";
+import { authorizationFor } from "../../test/authFixtures";
 import { server } from "../../test/server";
 import { ProjectWorkflowPanel } from "./ProjectWorkflowPanel";
 import { projectWorkflowKeys, type DesignWorkflowView } from "./projectWorkflowApi";
 
 vi.mock("./ProjectClientActions", () => ({ ProjectClientActions: () => null }));
+const authState = vi.hoisted(() => ({ user: { id: "viewer-one", role: "client" as Role }, authorization: null as AuthorizationSnapshot | null }));
+vi.mock("../../auth/AuthProvider", () => ({ useAuth: () => authState }));
+beforeEach(() => { server.use(http.get("/api/v1/projects/project-ui/design-requirements", () => HttpResponse.json({ data: { version: 0, sourceToken: "empty", entries: [], blockers: [], canReadInternal: false } }))); authState.user = { id: "viewer-one", role: "client" }; authState.authorization = authorizationFor("client", ["projects.design_workflow.read"]); });
 vi.mock("../finance/DesignPaymentConfirmations", () => ({ ProjectInitialPaymentStatus: () => <section aria-label="Initial payment status">Initial payment kept</section> }));
 
 const workflow: DesignWorkflowView = {
@@ -28,6 +33,55 @@ function setup(presentation: "full" | "client" | "designer" = "full", timelineCo
 }
 
 describe("ProjectWorkflowPanel", () => {
+  it.each(["designer", "procurement", "program_manager"] as const)("shows pending and source-issue progress for %s without mounting actions", async (role) => {
+    authState.user.role = role;
+    let status: DesignWorkflowView["estimateApprovalStatus"] = "awaiting_approval";
+    server.use(http.get("/api/v1/projects/project-ui/design-workflow", () => HttpResponse.json({ data: { ...workflow, estimateApprovalStatus: status } })));
+    const client = setup("full");
+    expect(await screen.findByRole("heading", { name: "Project progress" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Key Collection — In progress" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Confirm keys handed over" })).not.toBeInTheDocument();
+    expect(screen.getByText("Estimate approval is pending. Project progress is available for review.")).toBeVisible();
+    status = "source_issue";
+    await act(async () => { await client.invalidateQueries({ queryKey: projectWorkflowKeys.designWorkflow("project-ui") }); });
+    expect(await screen.findByText(/The estimate source needs attention/)).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Project progress" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Confirm keys handed over" })).not.toBeInTheDocument();
+  });
+
+  it.each(["procurement", "program_manager"] as const)("keeps %s as a read-only observer even for an approved estimate", async (role) => {
+    authState.user.role = role;
+    server.use(http.get("/api/v1/projects/project-ui/design-workflow", () => HttpResponse.json({ data: workflow })));
+    setup();
+    expect(await screen.findByRole("heading", { name: "Project progress" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Confirm keys handed over" })).not.toBeInTheDocument();
+  });
+
+  it.each([403, 404])("removes retained workflow and notices after access returns %s", async (status) => {
+    authState.user.role = "designer";
+    server.use(http.get("/api/v1/projects/project-ui/design-workflow", () => HttpResponse.json({ data: workflow })));
+    const client = setup();
+    expect(await screen.findByRole("heading", { name: "Project progress" })).toBeVisible();
+    server.use(http.get("/api/v1/projects/project-ui/design-workflow", () => HttpResponse.json({ error: { code: "DENIED", message: "Unavailable" } }, { status })));
+    await act(async () => { await client.invalidateQueries({ queryKey: projectWorkflowKeys.designWorkflow("project-ui") }); });
+    await waitFor(() => expect(screen.queryByRole("heading", { name: "Project progress" })).not.toBeInTheDocument());
+    expect(screen.queryByRole("region", { name: "Project notifications" })).not.toBeInTheDocument();
+  });
+
+  it("does not reuse another actor's progress while the next identity is denied", async () => {
+    authState.user.role = "designer";
+    server.use(http.get("/api/v1/projects/project-ui/design-workflow", () => HttpResponse.json({ data: workflow })));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+    const content = () => <QueryClientProvider client={client}><ProjectWorkflowPanel projectId="project-ui" /></QueryClientProvider>;
+    const view = render(content());
+    expect(await screen.findByRole("heading", { name: "Project progress" })).toBeVisible();
+    authState.user = { id: "viewer-two", role: "designer" };
+    server.use(http.get("/api/v1/projects/project-ui/design-workflow", () => HttpResponse.json({ error: { code: "DENIED", message: "Unavailable" } }, { status: 404 })));
+    view.rerender(content());
+    expect(screen.queryByRole("heading", { name: "Project progress" })).not.toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Project stages could not be refreshed");
+  });
+
   it.each(["awaiting_approval", "source_issue", undefined, "unknown"] as const)("hides every stage for approval status %s while retaining other project content", async (status) => {
     server.use(http.get("/api/v1/projects/project-ui/design-workflow", () => HttpResponse.json({ data: {
       ...workflow,
@@ -45,7 +99,8 @@ describe("ProjectWorkflowPanel", () => {
   it("does not show a different project's approved workflow", async () => {
     server.use(http.get("/api/v1/projects/project-ui/design-workflow", () => HttpResponse.json({ data: { ...workflow, projectId: "project-other" } })));
     setup();
-    expect(await screen.findByRole("region", { name: "Project notifications" })).toBeVisible();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Project stages could not be refreshed");
+    expect(screen.queryByRole("region", { name: "Project notifications" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Project progress" })).not.toBeInTheDocument();
   });
 
@@ -56,7 +111,7 @@ describe("ProjectWorkflowPanel", () => {
     document.body.append(portal);
     try {
       const client = setup(presentation, portal);
-      await waitFor(() => expect(client.getQueryState(projectWorkflowKeys.designWorkflow("project-ui"))?.status).toBe("success"));
+      await waitFor(() => expect(client.getQueryState([...projectWorkflowKeys.designWorkflow("project-ui"), "viewer-one", "client"])?.status).toBe("success"));
       expect(within(portal).queryByRole("button", { name: "Key Collection — In progress" })).not.toBeInTheDocument();
       approvalStatus = "approved";
       await act(async () => { await client.invalidateQueries({ queryKey: projectWorkflowKeys.designWorkflow("project-ui") }); });

@@ -1,3 +1,4 @@
+import { router } from "expo-router";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useRef, useState, type RefObject } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
@@ -11,6 +12,7 @@ import { canPerformOperation } from "../../core/session/operationCapabilities";
 import { useConfiguredRuntime } from "../../runtime/RuntimeProvider";
 import { Button, Field } from "../../ui/primitives";
 import { colors, fonts, radii, spacing } from "../../ui/tokens";
+import { createIdempotencyKey } from "../finance/money";
 import { splitStableIds, validBudgetRange, validSchedule } from "./projectCreateModel";
 import { ProjectCreationModal } from "./ProjectCreationModal";
 
@@ -146,6 +148,12 @@ export function AdminProjectInitiate({ session }: { readonly session: Authentica
   const [projectName, setProjectName] = useState("");
   const [location, setLocation] = useState("");
   const [propertyType, setPropertyType] = useState("");
+  const [showTypes, setShowTypes] = useState(false);
+  const [cityName, setCityName] = useState("");
+  const [source, setSource] = useState("");
+  const initiationKey = useRef(createIdempotencyKey());
+  const submittedPayload = useRef<Record<string, unknown> | null>(null);
+  const [unknownResult, setUnknownResult] = useState(false);
   const [budgetMin, setBudgetMin] = useState("");
   const [budgetMax, setBudgetMax] = useState("");
   const [nextAction, setNextAction] = useState("");
@@ -153,11 +161,24 @@ export function AdminProjectInitiate({ session }: { readonly session: Authentica
   const [error, setError] = useState<string | null>(null);
   const mutation = useMutation({
     mutationFn: async () => {
-      if (!clientName.trim() || !clientEmail.trim() || !clientMobile.trim() || !projectName.trim() || !location.trim() || !propertyType.trim() || !nextAction.trim() || !assignee || !validBudgetRange(budgetMin, budgetMax) || Number.isNaN(new Date(nextActionAt).getTime())) throw new Error("Complete every field, choose an active assignee, enter a valid budget range and next-action time.");
-      return context.runtime.api.authenticated.post("/admin/projects", { clientName: clientName.trim(), clientEmail: clientEmail.trim(), clientMobile: clientMobile.trim(), projectName: projectName.trim(), location: location.trim(), propertyType: propertyType.trim(), budgetMin: Number(budgetMin), budgetMax: Number(budgetMax), nextAction: nextAction.trim(), nextActionAt: new Date(nextActionAt).toISOString(), ...(salesManagerMode ? { salesManagerId: assignee.id } : { estimatorId: assignee.id }) });
+      if (submittedPayload.current && unknownResult) return context.runtime.api.authenticated.post<{ id: string; lead?: { id: string } }>("/admin/projects", submittedPayload.current);
+      if (!clientName.trim() || !clientEmail.trim() || !clientMobile.trim() || !projectName.trim() || !propertyType.trim() || !nextAction.trim() || !assignee || !validBudgetRange(budgetMin, budgetMax) || Number.isNaN(new Date(nextActionAt).getTime())) throw new Error("Complete every field, choose an active assignee, enter a valid budget range and next-action time.");
+      const payload = { initiationKey: initiationKey.current, ...(cityName.trim() ? { cityName: cityName.trim() } : {}), ...(source.trim() ? { source: source.trim() } : {}), clientName: clientName.trim(), clientEmail: clientEmail.trim(), clientMobile: clientMobile.trim(), projectName: projectName.trim(), ...(location.trim() ? { location: location.trim() } : {}), propertyType: propertyType.trim(), budgetMin: Number(budgetMin), budgetMax: Number(budgetMax), nextAction: nextAction.trim(), nextActionAt: new Date(nextActionAt).toISOString(), ...(salesManagerMode ? { salesManagerId: assignee.id } : { estimatorId: assignee.id }) };
+      submittedPayload.current = payload;
+      return context.runtime.api.authenticated.post<{ id: string; lead?: { id: string } }>("/admin/projects", payload);
     },
-    onSuccess: async () => { setOpen(false); await invalidate("project-initiated"); },
-    onError: (cause) => setError(cause instanceof Error ? cause.message : failure(cause)),
+    onSuccess: async (project) => {
+      submittedPayload.current = null; setUnknownResult(false); initiationKey.current = createIdempotencyKey(); setOpen(false);
+      await invalidate("project-initiated");
+      if (project?.lead?.id && canPerformOperation(session, "GET /leads/:leadId/estimate")) router.push({ pathname: "/staff-estimate/[leadId]", params: { leadId: project.lead.id, from: session.user.role === "estimator_sales" ? "leads" : "projects" } });
+      else if (project?.id) router.push({ pathname: "/record/[featureId]/[recordId]", params: { featureId: "projects", recordId: project.id, tab: "estimation" } });
+    },
+    onError: (cause) => {
+      const uncertain = submittedPayload.current !== null && (!(cause instanceof ApiError) || cause.status >= 500 || cause.status === 408);
+      setUnknownResult(uncertain);
+      if (!uncertain) { submittedPayload.current = null; initiationKey.current = createIdempotencyKey(); }
+      setError(uncertain ? "The result could not be confirmed. Retry the saved project submission to recover it without creating a duplicate." : cause instanceof Error ? cause.message : failure(cause));
+    },
     onSettled: () => { submitting.current = false; }
   });
   const close = () => { if (!submitting.current) setOpen(false); };
@@ -176,21 +197,25 @@ export function AdminProjectInitiate({ session }: { readonly session: Authentica
         {error ? <Text accessibilityLiveRegion="assertive" style={styles.error}>{error}</Text> : null}
         <View style={styles.actions}>
           <View style={styles.action}><Button label="Cancel" variant="quiet" disabled={mutation.isPending} onPress={close} /></View>
-          <View style={styles.action}><Button label="Initiate" loading={mutation.isPending} onPress={submit} /></View>
+          <View style={styles.action}><Button label={unknownResult ? "Retry saved submission" : "Initiate"} loading={mutation.isPending} onPress={submit} /></View>
         </View>
         </>
       }>
-        <Field label="Project / property name" value={projectName} onChangeText={setProjectName} editable={!mutation.isPending} />
-        <Field label="Property type" value={propertyType} onChangeText={setPropertyType} editable={!mutation.isPending} />
-        <Field label="Location" value={location} onChangeText={setLocation} editable={!mutation.isPending} />
-        <Field label="Client name" value={clientName} onChangeText={setClientName} editable={!mutation.isPending} />
-        <Field label="Client email" value={clientEmail} onChangeText={setClientEmail} autoCapitalize="none" keyboardType="email-address" editable={!mutation.isPending} />
-        <Field label="Client mobile" value={clientMobile} onChangeText={setClientMobile} keyboardType="phone-pad" editable={!mutation.isPending} />
-        <Field label="Minimum budget" value={budgetMin} onChangeText={setBudgetMin} keyboardType="decimal-pad" editable={!mutation.isPending} />
-        <Field label="Maximum budget" value={budgetMax} onChangeText={setBudgetMax} keyboardType="decimal-pad" editable={!mutation.isPending} />
-        <Field label="Next action" value={nextAction} onChangeText={setNextAction} editable={!mutation.isPending} />
-        <Field label="Next action time (ISO 8601)" value={nextActionAt} onChangeText={setNextActionAt} editable={!mutation.isPending} />
-        <OptionPicker path={salesManagerMode ? "/admin/sales-managers" : "/admin/estimators"} label={salesManagerMode ? "Sales Manager" : "Sales user"} selected={assignee} onSelect={setAssignee} disabled={mutation.isPending} />
+        <Field label="Project / property name" value={projectName} onChangeText={setProjectName} editable={!mutation.isPending && !unknownResult} />
+        <Field label="Property type" value={propertyType} onChangeText={setPropertyType} editable={!mutation.isPending && !unknownResult} />
+        <Button label={showTypes ? "Hide property types" : "Choose property type"} variant="quiet" disabled={mutation.isPending || unknownResult} onPress={() => setShowTypes(!showTypes)} />
+        {showTypes ? <View accessibilityRole="radiogroup" style={styles.options}>{["1BHK", "2BHK", "2.5BHK", "3BHK", "3.5BHK", "4BHK", "Villa", "Penthouse", "Studio", "Duplex"].map((type) => <Pressable key={type} accessibilityRole="radio" accessibilityLabel={type} accessibilityState={{ selected: propertyType === type }} onPress={() => { setPropertyType(type); setShowTypes(false); }} style={[styles.option, propertyType === type ? styles.optionSelected : null]}><Text style={[styles.optionTitle, propertyType === type ? styles.optionTitleSelected : null]}>{type}</Text></Pressable>)}</View> : null}
+        <Field label="Project city (optional)" value={cityName} onChangeText={setCityName} editable={!mutation.isPending && !unknownResult} />
+        <Field label="Source (optional)" value={source} onChangeText={setSource} maxLength={200} editable={!mutation.isPending && !unknownResult} />
+        <Field label="Location" value={location} onChangeText={setLocation} editable={!mutation.isPending && !unknownResult} />
+        <Field label="Client name" value={clientName} onChangeText={setClientName} editable={!mutation.isPending && !unknownResult} />
+        <Field label="Client email" value={clientEmail} onChangeText={setClientEmail} autoCapitalize="none" keyboardType="email-address" editable={!mutation.isPending && !unknownResult} />
+        <Field label="Client mobile" value={clientMobile} onChangeText={setClientMobile} keyboardType="phone-pad" editable={!mutation.isPending && !unknownResult} />
+        <Field label="Minimum budget" value={budgetMin} onChangeText={setBudgetMin} keyboardType="decimal-pad" editable={!mutation.isPending && !unknownResult} />
+        <Field label="Maximum budget" value={budgetMax} onChangeText={setBudgetMax} keyboardType="decimal-pad" editable={!mutation.isPending && !unknownResult} />
+        <Field label="Next action" value={nextAction} onChangeText={setNextAction} editable={!mutation.isPending && !unknownResult} />
+        <Field label="Next action time (ISO 8601)" value={nextActionAt} onChangeText={setNextActionAt} editable={!mutation.isPending && !unknownResult} />
+        <OptionPicker path={salesManagerMode ? "/admin/sales-managers" : "/admin/estimators"} label={salesManagerMode ? "Sales Manager" : "Sales user"} selected={assignee} onSelect={setAssignee} disabled={mutation.isPending || unknownResult} />
       </ProjectCreationModal>
     </>
   );

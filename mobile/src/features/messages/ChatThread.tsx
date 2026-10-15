@@ -1,3 +1,4 @@
+import { useIsFocused } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import {
   AccessibilityInfo,
@@ -18,20 +19,23 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import type { AuthenticatedSession } from "../../contracts/session";
 import { useBackInterceptor, useScreenBack } from "../../navigation/useScreenBack";
 import { BrandLoader } from "../../ui/brand";
-import { StateView } from "../../ui/primitives";
+import { Button, Field, StateView } from "../../ui/primitives";
 import { colors, fonts, radii, spacing } from "../../ui/tokens";
 import { ChatComposer, type ChatComposerHandle } from "./ChatComposer";
 import { ChatGroupInfo, type ChatGroupInfoHandle } from "./ChatGroupInfo";
 import { ChatTimeline } from "./ChatTimeline";
 import { MessageActionSheet } from "./MessageActionSheet";
-import { projectInitials, type PresentedChatParticipantPage, type PresentedMessage } from "./chatModel";
+import { projectInitials, type ChatMessageFilter, type PresentedChatParticipantPage, type PresentedMessage } from "./chatModel";
 import { useChatThread } from "./useChatThread";
 import { useChatAvailability } from "./useChatAvailability";
 import { useScaffoldNavigationGuard } from "../../navigation/AdaptiveAppScaffold";
+import { ChatProjectNameDialog } from "./ChatManagement";
+import { canPerformOperation } from "../../core/session/operationCapabilities";
 import { ChatIcon } from "./ChatIcon";
 import { chatColors } from "./chatTheme";
 
 export interface ChatThreadProps {
+  readonly initialMessageId?: string | null | undefined;
   readonly projectId: string;
   readonly session: AuthenticatedSession;
   readonly onBack?: (() => void) | undefined;
@@ -44,16 +48,22 @@ interface OwnedReplyTarget {
   readonly message: PresentedMessage;
 }
 
-export function ChatThread({ projectId, session, onBack, onSendingChange, compact: compactOverride }: ChatThreadProps) {
+export function ChatThread({ initialMessageId = null, projectId, session, onBack, onSendingChange, compact: compactOverride }: ChatThreadProps) {
+  const focused = useIsFocused();
   const { width } = useWindowDimensions();
   const compact = compactOverride ?? width < 600;
-  const thread = useChatThread(projectId, session);
+  const [filter, setFilter] = useState<ChatMessageFilter>("all"); const [messageSearch, setMessageSearch] = useState(""); const [toolsOpen, setToolsOpen] = useState(false); const [targetMessageId, setTargetMessageId] = useState(initialMessageId);
+  useEffect(() => setTargetMessageId(initialMessageId), [initialMessageId]);
+  const thread = useChatThread(projectId, session, { filter, around: targetMessageId, active: focused });
   const availability = useChatAvailability(session);
   const navigationGuard = useScaffoldNavigationGuard();
   const screenBack = useScreenBack();
   const [replyTarget, setReplyTarget] = useState<OwnedReplyTarget | null>(null);
   const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null);
-  const [sending, setSending] = useState(false);
+  const [composerSending, setComposerSending] = useState(false);
+  const [managementBusy, setManagementBusy] = useState(false);
+  const sending = composerSending || managementBusy;
+  const [renameOpen, setRenameOpen] = useState(false);
   const [scheduleBridge, setScheduleBridge] = useState(false);
   const [composerOverlayOpen, setComposerOverlayOpen] = useState(false);
   const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
@@ -93,6 +103,7 @@ export function ChatThread({ projectId, session, onBack, onSendingChange, compac
     setReplyTarget(null);
     setSelectedMessageId(null);
     setHeaderMenuOpen(false);
+    setRenameOpen(false);
     setGroupInfoOpen(false);
     setParticipantAnnouncement(null);
   }, [thread.ownerKey]);
@@ -130,8 +141,8 @@ export function ChatThread({ projectId, session, onBack, onSendingChange, compac
   }, [participantAnnouncement]);
 
   useEffect(() => {
-    thread.setReadActive(appActive && !selectedMessageId && !composerOverlayOpen && !headerMenuOpen && !groupInfoOpen);
-  }, [appActive, composerOverlayOpen, groupInfoOpen, headerMenuOpen, selectedMessageId, thread.setReadActive]);
+    thread.setReadActive(focused && appActive && !messageSearch.trim() && filter === "all" && !selectedMessageId && !composerOverlayOpen && !headerMenuOpen && !groupInfoOpen && !renameOpen);
+  }, [focused, appActive, messageSearch, filter, renameOpen, composerOverlayOpen, groupInfoOpen, headerMenuOpen, selectedMessageId, thread.setReadActive]);
 
   useEffect(() => {
     navigationGuard?.setBlocked(sending);
@@ -145,6 +156,7 @@ export function ChatThread({ projectId, session, onBack, onSendingChange, compac
   const handleBack = useCallback(() => {
     if (groupInfo.current?.dismissTransientState()) return true;
     if (sending) return true;
+    if (renameOpen) { setRenameOpen(false); return true; }
     if (headerMenuOpen) {
       setHeaderMenuOpen(false);
       return true;
@@ -161,7 +173,7 @@ export function ChatThread({ projectId, session, onBack, onSendingChange, compac
       return true;
     }
     return false;
-  }, [clearReply, headerMenuOpen, onBack, reply, selectedMessage, sending]);
+  }, [clearReply, headerMenuOpen, onBack, reply, selectedMessage, sending, renameOpen]);
 
   useBackInterceptor(handleBack);
 
@@ -261,9 +273,20 @@ export function ChatThread({ projectId, session, onBack, onSendingChange, compac
             <Text accessibilityLiveRegion="polite" style={styles.readWarningText}>{thread.readError}</Text>
           </Pressable>
         ) : null}
+        {toolsOpen ? <View style={{ padding: spacing.sm, gap: spacing.xs, backgroundColor: colors.canvas }}>
+          <Field label="Search loaded messages" value={messageSearch} onChangeText={setMessageSearch} maxLength={100} />
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: spacing.xs }}>{(["all", "mentions", "critical", "important", "resolved"] as const).map(value => <Pressable key={value} accessibilityRole="radio" accessibilityLabel={`${value} messages`} accessibilityState={{ checked: filter === value, disabled: sending }} disabled={sending} onPress={() => { setFilter(value); setTargetMessageId(null); }} style={{ padding: spacing.sm, borderWidth: 1, borderColor: filter === value ? chatColors.green : colors.border }}><Text style={{ color: colors.ink, fontFamily: fonts.medium }}>{value}</Text></Pressable>)}</View>
+          {messageSearch.trim() && thread.hasOlderHistory ? <Button label="Search earlier loaded history" loading={thread.loadingOlder} onPress={() => void thread.loadOlder()} /> : null}
+          <Text style={{ color: colors.inkMuted }}>Search covers the loaded history. Load earlier messages to search further.</Text>
+          <Button label="Close message search" variant="quiet" onPress={() => { setToolsOpen(false); setMessageSearch(""); setFilter("all"); }} />
+        </View> : null}
+        {targetMessageId ? <View style={{ padding: spacing.sm }}><Text accessibilityLiveRegion="polite" style={{ color: colors.inkMuted }}>{thread.messages.some(message => message.id === targetMessageId) ? "Showing the linked message and nearby history." : thread.loading ? "Loading linked message…" : "The linked message is unavailable in this conversation."}</Text><Button label="Go to latest messages" variant="quiet" disabled={sending} onPress={() => { setTargetMessageId(null); setFilter("all"); setMessageSearch(""); }} /></View> : null}
+        {thread.hasNewerHistory ? <Button label="Load newer messages" loading={thread.loadingNewer ?? false} onPress={() => void thread.loadNewer?.()} /> : null}
+        {thread.typing?.length ? <Text accessibilityLiveRegion="polite" style={{ paddingHorizontal: spacing.md, color: colors.inkMuted, fontFamily: fonts.regular }}>{thread.typing.slice(0, 3).map(person => person.name).join(", ")}{thread.typing.length > 3 ? " and others" : ""} {thread.typing.length === 1 ? "is" : "are"} typing…</Text> : null}
         <ChatTimeline
-          key={thread.ownerKey}
-          messages={thread.messages}
+          key={`${thread.ownerKey}:${filter}:${targetMessageId ?? "latest"}`}
+          targetMessageId={targetMessageId}
+          messages={messageSearch.trim() ? thread.messages.filter(message => `${message.body} ${message.author}`.toLocaleLowerCase().includes(messageSearch.trim().toLocaleLowerCase())) : thread.messages}
           currentUserId={session.user.id}
           lastReadSequence={summary?.lastReadSequence ?? 0}
           compact={compact}
@@ -304,7 +327,7 @@ export function ChatThread({ projectId, session, onBack, onSendingChange, compac
               await thread.refresh();
               thread.clearNewMessages();
             }}
-            onSendingChange={setSending}
+            onSendingChange={setComposerSending}
             onOverlayChange={setComposerOverlayOpen}
           />
           </>
@@ -343,12 +366,16 @@ export function ChatThread({ projectId, session, onBack, onSendingChange, compac
             AccessibilityInfo.announceForAccessibility(announcement);
           }}
           onRestoreFocus={restoreHeaderFocus}
+          onBusyChange={setManagementBusy}
         />
+        {renameOpen && summary ? <ChatProjectNameDialog summary={summary} session={session} onClose={() => setRenameOpen(false)} onRefresh={thread.refresh} onDenied={() => { setRenameOpen(false); void thread.revokeAccess(); }} onBusy={setManagementBusy} /> : null}
         <Modal animationType="fade" onRequestClose={() => setHeaderMenuOpen(false)} transparent visible={headerMenuOpen}>
           <View style={styles.menuOverlay}>
             <Pressable accessibilityLabel="Close conversation options" accessibilityRole="button" onPress={() => setHeaderMenuOpen(false)} style={styles.menuBackdrop} />
             <View accessibilityViewIsModal style={styles.menuSheet}>
               <Text accessibilityRole="header" style={styles.menuTitle}>Conversation options</Text>
+              {availability.writable && summary?.capabilities.canRenameProject && canPerformOperation(session, "PATCH /projects/:projectId/chat/project-name") ? <Button label="Edit project name" variant="quiet" onPress={() => { setHeaderMenuOpen(false); setRenameOpen(true); }} /> : null}
+              <Button label="Find messages" variant="quiet" onPress={() => { setHeaderMenuOpen(false); setToolsOpen(true); }} />
               <Pressable
                 accessibilityLabel="Group info"
                 accessibilityRole="button"

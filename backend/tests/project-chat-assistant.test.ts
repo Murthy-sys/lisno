@@ -5,9 +5,9 @@ import { createProjectChatService } from "../src/services/project-chat.service.j
 import { createNotificationEmailDispatcher } from "../src/services/notification-email-dispatcher.js";
 import { createNotificationService } from "../src/services/notifications.service.js";
 import { createChatFixture, chatSend } from "./helpers/project-chat.js";
+import { customerEstimatePricing } from "./helpers/assistant-pricing.js";
 
-const generated: AssistantGeneratedResult = {kind: "price", narrative: [{text: "Your project is in execution. You can review the approximate addition below.", factIds: ["stage"]}], facts: [{id: "stage", label: "Project stage", value: "Execution", source: {id: "a", label: "Project status", href: null}}], candidates: [], missingInputs: [], freshness: [],
-  commercial: {currency: "INR", policy: "configuration-selling-v1", state: "complete", lines: [], subtotalPaise: 23000, gstRateBps: 1800, gstPaise: 4140, totalPaise: 27140, optionalSubtotalPaise: null, approvedBaselinePaise: 1234567, hypotheticalTotalPaise: 1261707, assumptions: ["Extra scope only"], missingInputs: []}};
+const generated: AssistantGeneratedResult = {disclosurePolicy: "project-publication-v1", projectPricing: customerEstimatePricing(), kind: "price", narrative: [{text: "Your project is in execution.", factIds: ["stage"]}], facts: [{id: "stage", label: "Project stage", value: "Execution", source: {id: "a", label: "Project status", href: null}}], candidates: [], missingInputs: [], freshness: [], commercial: null};
 function fixture(enabled = true) {
   const f = createChatFixture();
   let fresh = true;
@@ -23,6 +23,35 @@ function fixture(enabled = true) {
 }
 
 describe("project chat assistant integration", () => {
+  it("withholds unclassified stored content from every permitted viewer", async () => {
+    const f = fixture();
+    const question = await f.service.send(f.actor("client-a"), "a", chatSend("What is my estimate?"));
+    await f.assistant.request(f.actor("client-a"), "a", question.id, {expectedVersion: 1, idempotencyKey: "legacy-result-read"});
+    await f.assistant.runtime.runOnce();
+    const run = await f.chatRepository.snapshot(tx => tx.assistant.latestRun("a", question.id));
+    const original = f.chatRepository.snapshot.bind(f.chatRepository);
+    vi.spyOn(f.chatRepository, "snapshot").mockImplementation(callback => original(tx => callback({...tx, assistant: {...tx.assistant,
+      result: async (projectId, resultId) => {
+        const stored = await tx.assistant.result(projectId, resultId);
+        return stored ? {...stored, disclosurePolicy: undefined, narrative: [{text: "legacy private sentinel", factIds: []}]} : null;
+      }
+    }})));
+    for (const viewer of ["client-a", "sales-a", "super", "electric-a"]) {
+      const result = await f.assistant.result(f.actor(viewer), "a", run!.resultId!);
+      expect(result).toMatchObject({kind: "no_answer", stale: true, commercial: null, projectPricing: null, facts: [], candidates: [], commercialAccess: "none"});
+      expect(JSON.stringify(result)).not.toMatch(/27140|legacy private sentinel|ratePaise/);
+    }
+  });
+  it("refuses an old in-flight provider result before publishing", async () => {
+    const f = fixture();
+    f.generate.mockResolvedValueOnce({...generated, disclosurePolicy: undefined});
+    const question = await f.service.send(f.actor("client-a"), "a", chatSend("My estimate"));
+    await f.assistant.request(f.actor("client-a"), "a", question.id, {expectedVersion: 1, idempotencyKey: "old-provider-answer"});
+    await f.assistant.runtime.runOnce();
+    const run = await f.chatRepository.snapshot(tx => tx.assistant.latestRun("a", question.id));
+    expect(run).toMatchObject({status: "failed", failureCode: "ASSISTANT_DISCLOSURE_INVALID", resultId: null});
+    expect((await f.service.messages(f.actor("client-a"), "a", {})).items).toHaveLength(1);
+  });
   it("adds a service participant without creating a human role, selectable user or human count", async () => {
     const f = fixture();
     const before = await createChatFixture().service.summary(f.actor("client-a"), "a");
@@ -100,12 +129,12 @@ describe("project chat assistant integration", () => {
     expect(Object.values(answer.capabilities).every(value => value === false)).toBe(true);
     expect(JSON.stringify(messages)).not.toMatch(/27140|1234567|subtotalPaise|commercial|assistantRunId/);
     const price = await f.assistant.result(f.actor("client-a"), "a", answer.assistant!.resultId!);
-    expect(price).toMatchObject({commercialAccess: "allowed", stale: false, commercial: {totalPaise: 27140}});
+    expect(price).toMatchObject({commercialAccess: "allowed", stale: false, commercial: null, projectPricing: {totalPaise: 27140}});
     expect(price.narrative).toEqual(generated.narrative);
     expect(JSON.stringify(messages)).not.toContain(generated.narrative![0]!.text);
     expect((await f.assistant.result(f.actor("sales-a"), "a", price.id)).commercialAccess).toBe("allowed");
     const worker = await f.assistant.result(f.actor("electric-a"), "a", price.id);
-    expect(worker).toMatchObject({commercialAccess: "restricted", commercial: null, facts: generated.facts});
+    expect(worker).toMatchObject({commercialAccess: "restricted", commercial: null, projectPricing: null, facts: generated.facts});
     expect(JSON.stringify(worker)).not.toMatch(/27140|1234567|freshness/);
     await expect(f.assistant.result(f.actor("client-b"), "b", price.id)).rejects.toMatchObject({status: 404});
     await expect(f.service.issue(f.actor("super"), "a", answer.id, {action: "raise", priority: "critical", expectedVersion: 1, idempotencyKey: "raise-service"})).rejects.toMatchObject({status: 403});
@@ -116,6 +145,8 @@ describe("project chat assistant integration", () => {
     const staleAnswer = await f.assistant.result(f.actor("client-a"), "a", price.id);
     expect(staleAnswer.stale).toBe(true);
     expect(staleAnswer.narrative).toBeUndefined();
+    expect(staleAnswer.projectPricing).toBeNull();
+    expect(staleAnswer.facts).toEqual([]);
   });
   it("denies another person's explicit request and stops automatic answers after a human reply", async () => {
     const f = fixture();
@@ -131,7 +162,7 @@ describe("project chat assistant integration", () => {
   });
   it.each(["Hi", "Thank you!", "Okay", "Yes", "No", "What is the progress?"])("queues ordinary Client text without additional alerts: %s", async body => {
     const f = fixture();
-    f.generate.mockResolvedValueOnce({kind: "no_answer", narrative: [{text: "Hello! How can I help with your project?", factIds: []}], facts: [], candidates: [], missingInputs: [], commercial: null, freshness: []});
+    f.generate.mockResolvedValueOnce({disclosurePolicy: "project-publication-v1", projectPricing: null, kind: "no_answer", narrative: [{text: "Hello! How can I help with your project?", factIds: []}], facts: [], candidates: [], missingInputs: [], commercial: null, freshness: []});
     const message = await f.service.send(f.actor("client-a"), "a", chatSend(body));
     expect(message.assistant?.status).toBe("waiting_for_human");
     f.advance(119_999); expect(await f.assistant.runtime.runOnce()).toBe(false);
@@ -179,7 +210,7 @@ describe("project chat assistant integration", () => {
     const sent = await humanOnly.send(f.actor("client-a"), "a", chatSend("Hello"));
     const attachmentMessageId = "synthetic-attachment-message";
     const reply = body ? "Here is the latest verified information." : "Hello! Please describe what you would like help with in text; I cannot read this attachment.";
-    f.generate.mockResolvedValueOnce({kind: body ? "status" : "clarification", narrative: [{text: reply, factIds: []}], facts: [], candidates: [], missingInputs: [], commercial: null, freshness: []});
+    f.generate.mockResolvedValueOnce({disclosurePolicy: "project-publication-v1", projectPricing: null, kind: body ? "status" : "clarification", narrative: [{text: reply, factIds: []}], facts: [], candidates: [], missingInputs: [], commercial: null, freshness: []});
     await f.chatRepository.mutate(async tx => {
       const stored = (await tx.message("a", sent.id))!;
       const message = {...stored, id: attachmentMessageId, clientMessageId: attachmentMessageId, sequence: await tx.allocate("a", f.clock().toISOString()), body, attachments: [{id: "opaque-image", kind: "image" as const, filename: "private-client-photo.jpg", mimeType: "image/jpeg", byteSize: 100, preview: null}]};

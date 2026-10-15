@@ -6,6 +6,8 @@ import { hasFrontendPermission } from "../../auth/authorization";
 import { PageState } from "../../components/ui/PageState";
 import { formatPaise } from "../finance/ProjectFinancePanel";
 import { ProcurementProjectCard } from "./ProcurementProjectCard";
+import { AssignedProcurementProjectCard } from "./AssignedProcurementProjectCard";
+import { useAssignedProjects } from "../projects/projectReadQueries";
 import {
   procurementError,
   procurementPortfolioSelectedTotal,
@@ -13,17 +15,21 @@ import {
 } from "./procurementPresentation";
 import "./procurementProjectGallery.css";
 
-type ProjectStatusFilter = "all" | ProcurementProject["taskStatus"];
+type ProjectStatusFilter = "all" | "awaiting_preparation" | ProcurementProject["taskStatus"];
 
 export function ProcurementWorkspace() {
   const auth = useAuth();
   const canRead = hasFrontendPermission(auth.authorization, "procurement.workspace.read");
   const { query, integrityError, projects } = useProcurementProjects(canRead);
+  const assigned = useAssignedProjects(canRead);
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState<ProjectStatusFilter>("all");
   const searchInput = useRef<HTMLInputElement>(null);
   const available = canRead && !query.isPending && !query.isError && !integrityError && projects !== null;
   const normalizedSearch = search.trim().toLocaleLowerCase();
+  const additionalProjects = (assigned.projects ?? []).filter((project) => !available || !projects.some((prepared) => prepared.projectId === project.id));
+  const additionalFiltered = additionalProjects.filter((project) => project.name.toLocaleLowerCase().includes(normalizedSearch) && (status === "all" || (status === "awaiting_preparation" && available)));
+  const totalProjects = (available ? projects.length : 0) + additionalProjects.length;
   const filtered = available ? projects.filter((project) =>
     project.projectName.toLocaleLowerCase().includes(normalizedSearch) &&
     (status === "all" || project.taskStatus === status)
@@ -47,9 +53,9 @@ export function ProcurementWorkspace() {
         <div className="procurement-gallery__heading">
           <p className="eyebrow">Project procurement</p>
           <h2 id="procurement-workspace-title">Procurement</h2>
-          <p>Open a project to view estimate budgets and manage procurement items.</p>
+          <p>View assigned project details and manage procurement when preparation is available.</p>
         </div>
-        {available ? (
+        {available || assigned.projects ? (
           <div className="procurement-gallery__controls">
             <div className="procurement-gallery__search">
               <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5" /><path d="m15.5 15.5 5 5" /></svg>
@@ -72,6 +78,7 @@ export function ProcurementWorkspace() {
               <option value="open">Open</option>
               <option value="in_progress">In progress</option>
               <option value="completed">Completed</option>
+              <option value="awaiting_preparation">Awaiting preparation</option>
             </select>
           </div>
         ) : null}
@@ -98,7 +105,7 @@ export function ProcurementWorkspace() {
           <div className="procurement-gallery__caption">
             <span>Representative interiors</span>
             <span role="status" aria-live="polite" aria-atomic="true">
-              {filtering ? `${filtered.length} of ${projects.length} projects` : `${projects.length} ${projects.length === 1 ? "project" : "projects"}`}
+              {filtering ? `${filtered.length + additionalFiltered.length} of ${totalProjects} projects` : `${totalProjects} ${totalProjects === 1 ? "project" : "projects"}`}
             </span>
           </div>
           <section className="procurement-gallery__summary" aria-label="Procurement portfolio summary" aria-describedby="procurement-gallery-summary-scope" aria-busy={query.isFetching || undefined}>
@@ -110,7 +117,7 @@ export function ProcurementWorkspace() {
                   </span>
                   <span>Total projects</span>
                 </dt>
-                <dd>{projects.length}</dd>
+                <dd>{totalProjects}</dd>
               </div>
               <div className="procurement-gallery__summary-panel procurement-gallery__summary-panel--value">
                 <dt>
@@ -120,15 +127,15 @@ export function ProcurementWorkspace() {
                 <dd>{selectedTotal === null ? "Unavailable" : formatPaise(selectedTotal)}</dd>
               </div>
             </dl>
-            <p id="procurement-gallery-summary-scope">Totals include all projects in this workspace.</p>
+            <p id="procurement-gallery-summary-scope">{additionalProjects.length ? "Project count includes assigned projects. Selected value includes only projects with available procurement preparation." : "Totals include all projects with available procurement preparation."}</p>
             {selectedTotal === null ? <p className="procurement-gallery__summary-error">The total selected value exceeds the supported amount range. Individual project values remain available.</p> : null}
           </section>
-          {projects.length === 0 ? (
-            <PageState state="empty" message="Projects will appear here automatically after their Design plan is approved." />
-          ) : filtered.length === 0 ? (
+          {totalProjects === 0 ? (
+            <PageState state="empty" message="Projects appear when you are assigned or procurement preparation becomes available." />
+          ) : filtered.length + additionalFiltered.length === 0 ? (
             <PageState state="empty" message="No projects match your search and status filters." action={{ label: "Reset filters", onAction: resetFilters }} />
           ) : (
-            <ul className="procurement-gallery__projects" aria-label="Design-approved projects" aria-busy={query.isFetching || undefined}>
+            <ul className="procurement-gallery__projects" aria-label="Projects with procurement preparation" aria-busy={query.isFetching || undefined}>
               {filtered.map((project, index) => (
                 <li key={project.projectId}>
                   <ProcurementProjectCard project={project} eagerImage={index < 3} />
@@ -138,6 +145,14 @@ export function ProcurementWorkspace() {
           )}
         </>
       ) : null}
+      {assigned.canRead && assigned.query.isPending ? <PageState state="loading" message="Loading assigned project details…" /> : null}
+      {assigned.canRead && assigned.query.isError ? <PageState state="error" message="Assigned project details could not be loaded. Available procurement preparation is shown separately." action={{ label: "Retry assigned projects", onAction: () => void assigned.query.refetch() }} /> : null}
+      {canRead && additionalFiltered.length ? <section aria-label="Assigned project details">
+        <h3>Assigned projects</h3>
+        <ul className="procurement-gallery__projects" aria-label="Assigned projects awaiting preparation">
+          {additionalFiltered.map((project) => <li key={project.id}><AssignedProcurementProjectCard project={project} preparationKnown={available} /></li>)}
+        </ul>
+      </section> : null}
     </section>
   );
 }

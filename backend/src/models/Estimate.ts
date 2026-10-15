@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { model, models, Schema } from "./mongoose.js";
 import { DESIGN_PLAN_STATUSES } from "../domain/project-workflow.js";
+import { estimationLifecycleSchema } from "./EstimationLifecycle.js";
 
 const estimateLineSchema = new Schema({
   id: {
@@ -28,6 +29,9 @@ const estimateLineSchema = new Schema({
   uomDecimalScale: { type: Number, default: null },
   mainBasketName: { type: String, default: null }, subBasketName: { type: String, default: null },
   mainLineName: { type: String, default: null }, uomName: { type: String, default: null },
+  designRules: { type: Schema.Types.Mixed, default: undefined },
+  designRulesDigest: { type: String, default: undefined },
+  estimateNotes: { type: [String], default: undefined },
   specification: { type: String, default: null },
   unit: { type: String, required: true }, rate: { type: Number, default: null },
   ratePaise: { type: Number, default: null },
@@ -57,6 +61,7 @@ const estimateNotificationSchema = new Schema({
 }, { _id: false });
 
 const estimateSchema = new Schema({
+  estimation: { type: estimationLifecycleSchema, default: undefined },
   _id: { type: String, required: true }, leadId: { type: String, ref: "Lead", required: true, unique: true }, ownerId: { type: String, ref: "User", required: true },
   version: { type: Number, required: true, default: 1 },
   // Procurement source reads serialize with estimate changes without advancing business versions.
@@ -71,6 +76,8 @@ const estimateSchema = new Schema({
     default: "draft"
   },
   propertyType: { type: String, required: true },
+  bedroomCount: { type: Number, cast: false, min: 1, max: 50,
+    validate: (value: unknown) => value == null || Number.isInteger(value) },
   rooms: { type: [Schema.Types.Mixed], required: true, default: [] }, scopes: { type: [String], required: true, default: [] },
   selectedMainBasketIds: { type: [String], required: true, default: [] },
   selectedMainBasketClassifications: { type: [selectedMainBasketClassificationSchema], default: undefined },

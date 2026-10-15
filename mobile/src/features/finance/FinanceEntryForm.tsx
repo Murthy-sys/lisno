@@ -10,14 +10,16 @@ import { useConfiguredRuntime } from "../../runtime/RuntimeProvider";
 import { Button, Field, StateView } from "../../ui/primitives";
 import { colors, fonts, radii, spacing } from "../../ui/tokens";
 import { extractRecords, recordId, recordSubtitle, recordTitle } from "../workspace/recordPresentation";
-import { createIdempotencyKey, parseInrToPaise } from "./money";
+import { createIdempotencyKey, dateOnlyIso, parseInrToPaise } from "./money";
+
+import { useDraftGuard, type NativeContext } from "../admin/nativeWorkspace";
 
 type EntryType = "direct_spend" | "overhead";
 type ExpenseClass = "employee_payment" | "other";
 
-function Choice<T extends string>({ label, value, selected, onSelect }: { readonly label: string; readonly value: T; readonly selected: boolean; readonly onSelect: (value: T) => void }) {
+function Choice<T extends string>({ label, value, selected, onSelect, disabled = false }: { readonly disabled?: boolean; readonly label: string; readonly value: T; readonly selected: boolean; readonly onSelect: (value: T) => void }) {
   return (
-    <Pressable accessibilityRole="radio" accessibilityState={{ selected }} onPress={() => onSelect(value)} style={[styles.choice, selected ? styles.choiceSelected : null]}>
+    <Pressable accessibilityRole="radio" accessibilityState={{ checked: selected, disabled }} disabled={disabled} onPress={() => onSelect(value)} style={[styles.choice, selected ? styles.choiceSelected : null]}>
       <Text style={[styles.choiceText, selected ? styles.choiceTextSelected : null]}>{label}</Text>
     </Pressable>
   );
@@ -27,12 +29,14 @@ function today(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-export function FinanceWorkspace({ projectId, session }: { readonly projectId: string; readonly session: AuthenticatedSession }) {
+export function FinanceWorkspace({ projectId, session, hideLedger = false, navigationContext }: { readonly projectId: string; readonly session: AuthenticatedSession; readonly hideLedger?: boolean; readonly navigationContext?: NativeContext }) {
   const context = useConfiguredRuntime();
   const invalidate = useInvalidateEvent();
   const canRead = session.authorization.permissions.includes("finance.entry.read");
   const canCreate = session.authorization.permissions.includes("finance.entry.create");
   const [open, setOpen] = useState(false);
+  const [unknown, setUnknown] = useState(false);
+  const [accessLost, setAccessLost] = useState(false);
   const [type, setType] = useState<EntryType>("direct_spend");
   const [expenseClass, setExpenseClass] = useState<ExpenseClass>("employee_payment");
   const [category, setCategory] = useState("");
@@ -47,7 +51,7 @@ export function FinanceWorkspace({ projectId, session }: { readonly projectId: s
   const entries = useQuery({
     queryKey: privateQueryKey({ environmentId: context.environment.environment.id, userId: session.user.id }, "finance-ledger", projectId),
     queryFn: ({ signal }) => context.runtime.api.authenticated.get<unknown>(entriesEndpoint, { signal }),
-    enabled: canRead
+    enabled: canRead && !hideLedger
   });
 
   const resetRequestIdentity = () => {
@@ -61,7 +65,7 @@ export function FinanceWorkspace({ projectId, session }: { readonly projectId: s
       if (!category.trim() || !description.trim() || amountPaise === null) {
         throw new Error("VALIDATION");
       }
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(incurredAt) || Number.isNaN(Date.parse(`${incurredAt}T00:00:00.000Z`))) {
+      if (!dateOnlyIso(incurredAt)) {
         throw new Error("DATE_VALIDATION");
       }
       const base = {
@@ -73,10 +77,12 @@ export function FinanceWorkspace({ projectId, session }: { readonly projectId: s
     },
     onSuccess: async () => {
       idempotencyKey.current = createIdempotencyKey();
-      setOpen(false); setCategory(""); setAmount(""); setDescription(""); setVendor(""); setReference(""); setValidation(null);
-      await invalidate("finance-entry-changed");
+      setUnknown(false); setOpen(false); setCategory(""); setAmount(""); setDescription(""); setVendor(""); setReference(""); setValidation(null);
+      await invalidate("finance-entry-changed").catch(() => setValidation("Cost recorded. Refresh to load the latest ledger."));
     },
     onError: (cause) => {
+      if (cause instanceof ApiError && [401, 403].includes(cause.status)) setAccessLost(true);
+      if (!(cause instanceof ApiError) && !(cause instanceof Error && ["VALIDATION", "DATE_VALIDATION"].includes(cause.message)) || cause instanceof ApiError && (cause.status >= 500 || cause.status === 408)) setUnknown(true);
       if (cause instanceof Error && cause.message === "VALIDATION") setValidation("Enter a category, description, and positive INR amount with up to two decimal places.");
       else if (cause instanceof Error && cause.message === "DATE_VALIDATION") setValidation("Enter the incurred date as YYYY-MM-DD.");
       else if (cause instanceof ApiError && cause.status === 409) setValidation("This entry may already have been recorded. Refresh the ledger before retrying with the same request identity.");
@@ -84,7 +90,10 @@ export function FinanceWorkspace({ projectId, session }: { readonly projectId: s
     }
   });
 
-  const ledger = extractRecords(entries.data);
+  const locked = unknown || mutation.isPending;
+  const close = useDraftGuard(open && Boolean(category || amount || description || vendor || reference), locked, navigationContext);
+  const ledger = hideLedger || entries.isError ? [] : extractRecords(entries.data);
+  if (accessLost) return <StateView tone="denied" title="Project cost access changed" message="This cost form is no longer available to your account." />;
   return (
     <View style={styles.section}>
       <View style={styles.sectionHeading}>
@@ -96,31 +105,31 @@ export function FinanceWorkspace({ projectId, session }: { readonly projectId: s
         <View style={styles.form}>
           <Text accessibilityRole="header" style={styles.formTitle}>Record project cost</Text>
           <View accessibilityRole="radiogroup" style={styles.choices}>
-            <Choice label="Direct spending" value="direct_spend" selected={type === "direct_spend"} onSelect={(value) => { setType(value); resetRequestIdentity(); }} />
-            <Choice label="Overhead" value="overhead" selected={type === "overhead"} onSelect={(value) => { setType(value); resetRequestIdentity(); }} />
+            <Choice disabled={locked} label="Direct spending" value="direct_spend" selected={type === "direct_spend"} onSelect={(value) => { setType(value); resetRequestIdentity(); }} />
+            <Choice disabled={locked} label="Overhead" value="overhead" selected={type === "overhead"} onSelect={(value) => { setType(value); resetRequestIdentity(); }} />
           </View>
           {type === "direct_spend" ? (
             <View accessibilityRole="radiogroup" style={styles.choices}>
-              <Choice label="Employee payment" value="employee_payment" selected={expenseClass === "employee_payment"} onSelect={(value) => { setExpenseClass(value); resetRequestIdentity(); }} />
-              <Choice label="Other expense" value="other" selected={expenseClass === "other"} onSelect={(value) => { setExpenseClass(value); resetRequestIdentity(); }} />
+              <Choice disabled={locked} label="Employee payment" value="employee_payment" selected={expenseClass === "employee_payment"} onSelect={(value) => { setExpenseClass(value); resetRequestIdentity(); }} />
+              <Choice disabled={locked} label="Other expense" value="other" selected={expenseClass === "other"} onSelect={(value) => { setExpenseClass(value); resetRequestIdentity(); }} />
             </View>
           ) : null}
-          <Field label="Category" value={category} onChangeText={(value) => { setCategory(value); resetRequestIdentity(); }} />
-          <Field label="Amount (INR)" value={amount} onChangeText={(value) => { setAmount(value); resetRequestIdentity(); }} keyboardType="decimal-pad" />
-          <Field label="Incurred date (YYYY-MM-DD)" value={incurredAt} onChangeText={(value) => { setIncurredAt(value); resetRequestIdentity(); }} autoCapitalize="none" />
-          <Field label="Description" value={description} onChangeText={(value) => { setDescription(value); resetRequestIdentity(); }} multiline />
-          <Field label="Vendor (optional)" value={vendor} onChangeText={(value) => { setVendor(value); resetRequestIdentity(); }} />
-          <Field label="Reference (optional)" value={reference} onChangeText={(value) => { setReference(value); resetRequestIdentity(); }} />
+          <Field editable={!locked} label="Category" value={category} onChangeText={(value) => { setCategory(value); resetRequestIdentity(); }} />
+          <Field editable={!locked} label="Amount (INR)" value={amount} onChangeText={(value) => { setAmount(value); resetRequestIdentity(); }} keyboardType="decimal-pad" />
+          <Field editable={!locked} label="Incurred date (YYYY-MM-DD)" value={incurredAt} onChangeText={(value) => { setIncurredAt(value); resetRequestIdentity(); }} autoCapitalize="none" />
+          <Field editable={!locked} label="Description" value={description} onChangeText={(value) => { setDescription(value); resetRequestIdentity(); }} multiline />
+          <Field editable={!locked} label="Vendor (optional)" value={vendor} onChangeText={(value) => { setVendor(value); resetRequestIdentity(); }} />
+          <Field editable={!locked} label="Reference (optional)" value={reference} onChangeText={(value) => { setReference(value); resetRequestIdentity(); }} />
           {validation ? <Text accessibilityLiveRegion="assertive" style={styles.error}>{validation}</Text> : null}
           <View style={styles.actions}>
-            <View style={styles.action}><Button label="Cancel" variant="quiet" disabled={mutation.isPending} onPress={() => { setOpen(false); setValidation(null); }} /></View>
-            <View style={styles.action}><Button label="Record cost" loading={mutation.isPending} onPress={() => mutation.mutate()} /></View>
+            <View style={styles.action}><Button label="Cancel" variant="quiet" disabled={locked} onPress={() => close(() => { setOpen(false); setValidation(null); })} /></View>
+            <View style={styles.action}><Button label={unknown ? "Retry same cost" : "Record cost"} loading={mutation.isPending} onPress={() => mutation.mutate()} /></View>
           </View>
         </View>
       ) : null}
-      {canRead && entries.isPending ? <Text style={styles.copy}>Loading ledger…</Text> : null}
-      {canRead && entries.isError ? <StateView tone="error" title="Ledger unavailable" message="Project totals remain visible, but ledger entries could not be loaded." actionLabel="Retry" onAction={() => void entries.refetch()} /> : null}
-      {canRead && !entries.isPending && !entries.isError && ledger.length === 0 ? <Text style={styles.copy}>No project costs have been recorded.</Text> : null}
+      {!hideLedger && canRead && entries.isPending ? <Text style={styles.copy}>Loading ledger…</Text> : null}
+      {!hideLedger && canRead && entries.isError ? <StateView tone="error" title="Ledger unavailable" message="Project totals remain visible, but ledger entries could not be loaded." actionLabel="Retry" onAction={() => void entries.refetch()} /> : null}
+      {!hideLedger && canRead && !entries.isPending && !entries.isError && ledger.length === 0 ? <Text style={styles.copy}>No project costs have been recorded.</Text> : null}
       {ledger.map((entry, index) => <View key={recordId(entry) ?? `ledger-${index}`} style={styles.entry}><Text style={styles.entryTitle}>{recordTitle(entry, index)}</Text>{recordSubtitle(entry) ? <Text style={styles.copy}>{recordSubtitle(entry)}</Text> : null}</View>)}
     </View>
   );

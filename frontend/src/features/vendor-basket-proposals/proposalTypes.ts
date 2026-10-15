@@ -2,6 +2,14 @@ import type { KnowledgeSectionApplicability, KnowledgeSectionKey, KnowledgeCompl
 
 export type ProposalTarget = { kind: "new_main_basket" } | { kind: "new_sub_basket"; basketId: string };
 
+export type ProposalRequestMode = "hierarchy_intake" | "full_configuration";
+export interface ProposalIntakeContent {
+  basket?: { name: string; description: string | null };
+  subBasket: { name: string; description: string | null };
+  mainLines: Array<{ resourceId?: string; name: string }>;
+}
+export interface ProposalIntakeInput extends ProposalVersionInput { intake: ProposalIntakeContent }
+
 export type ProposalStatus = "draft" | "pending" | "fulfilled" | "rejected";
 export type ProposalSnapshot = "current" | "submitted" | "approved";
 export type ProposalScope = "procurement" | "admin";
@@ -20,13 +28,14 @@ export interface ProposalMasterValue {
 }
 export type ProposalMasterResource = ProposalResource<ProposalMasterValue> & { kind: "uom" | "surface" };
 export interface ProposalPublishedMaster { kind: ProposalMasterKind; resourceId: string; masterId: string }
-export interface ProposalCreateInput { vendorId?: string | null; vendorName?: string | null; name: string; idempotencyKey: string; target?: ProposalTarget }
+export interface ProposalCreateInput { vendorId?: string | null; vendorName?: string | null; name: string; idempotencyKey: string; target?: ProposalTarget; requestMode?: ProposalRequestMode; intake?: ProposalIntakeContent }
 export interface ProposalMetadataInput extends ProposalVersionInput { name: string; description?: string | null; displayOrder?: number }
 export interface ProposalSectionInput extends ProposalVersionInput { applicability: KnowledgeSectionApplicability; payload: Record<string, unknown> }
 export interface ProposalQualityInput extends ProposalVersionInput { parameters: unknown[] }
 export interface ProposalSubmitInput extends ProposalVersionInput { idempotencyKey: string }
 export interface ProposalDecisionInput extends ProposalSubmitInput { expectedRequestVersion: number; decision: "approve" | "reject"; reason?: string | null }
 export interface ProposalSummary {
+  requestMode?: ProposalRequestMode;
   /** Absent only in older API responses; defaults to new_main_basket. */
   target?: ProposalTarget; targetParentName?: string | null;
   id: string; kind: "configuration_proposal"; schemaVersion: 1; requesterId: string;
@@ -38,6 +47,7 @@ export interface ProposalSummary {
 }
 export interface ProposalHead { id: string; version: number; digest: string }
 export interface ProposalDetail extends ProposalSummary {
+  intake?: ProposalIntakeContent;
   capabilities: { edit: boolean; submit: boolean; review: boolean; decide: boolean; revise: boolean; editParent?: boolean; editQuality?: boolean; manageSubBaskets?: boolean };
   head: ProposalHead; submittedHead: ProposalHead | null; approvedHead: ProposalHead | null;
   basket: ProposalResource<ProposalMetadata>; qualityResourceId: string | null;

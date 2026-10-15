@@ -7,7 +7,7 @@ import { describe, expect, it, vi } from "vitest";
 import { KnowledgeUnsavedChangesDialog } from "./KnowledgeUnsavedChangesDialog";
 import { useUnsavedKnowledgeGuard } from "./useUnsavedKnowledgeGuard";
 
-function GuardHarness({ onSave }: { readonly onSave: () => Promise<boolean> }) {
+function GuardHarness({ onSave, canDiscard = true }: { readonly onSave: () => Promise<boolean>; readonly canDiscard?: boolean }) {
   const [dirty, setDirty] = useState(true);
   const [destination, setDestination] = useState("editing");
   const guard = useUnsavedKnowledgeGuard({
@@ -17,7 +17,10 @@ function GuardHarness({ onSave }: { readonly onSave: () => Promise<boolean> }) {
       if (saved) setDirty(false);
       return saved;
     },
-    onDiscard: () => setDirty(false)
+    onDiscard: () => {
+      if (!canDiscard) return false;
+      setDirty(false);
+    }
   });
 
   return (
@@ -43,6 +46,20 @@ function GuardHarness({ onSave }: { readonly onSave: () => Promise<boolean> }) {
 }
 
 describe("useUnsavedKnowledgeGuard", () => {
+  it("keeps navigation blocked when a section refuses to discard an uncertain save", async () => {
+    const user = userEvent.setup();
+    render(<GuardHarness onSave={vi.fn().mockResolvedValue(false)} canDiscard={false} />);
+    await user.click(screen.getByRole("button", { name: "Open pricing" }));
+    await user.click(screen.getByRole("button", { name: "Discard changes" }));
+    expect(screen.getByRole("alertdialog")).toBeVisible();
+    expect(screen.getByRole("alert")).toHaveTextContent("Changes cannot be discarded yet");
+    expect(screen.getByText("editing")).toBeVisible();
+    expect(screen.queryByText("pricing")).not.toBeInTheDocument();
+    const event = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(true);
+  });
+
   it("blocks router Link navigation and restores focus when the user stays", async () => {
     const user = userEvent.setup();
     function RoutedHarness() {

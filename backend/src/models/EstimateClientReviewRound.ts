@@ -50,6 +50,7 @@ const estimateClientReviewLineItemSchema = new Schema(
     catalogueId: { type: String, required: true, immutable: true },
     roomId: { type: String, default: undefined, immutable: true },
     roomName: { type: String, required: true, immutable: true },
+    estimateNotes: { type: [String], default: undefined, immutable: true },
     specification: { type: String, default: null, immutable: true },
     unit: { type: String, required: true, immutable: true },
     rate: { type: Number, default: null, immutable: true },
@@ -135,6 +136,9 @@ const selectedMainBasketClassificationSchema = new Schema({
 
 const estimateClientReviewSnapshotSchema = new Schema(
   {
+    rooms: { type: [Schema.Types.Mixed], default: undefined, immutable: true },
+    bedroomCount: { type: Number, default: undefined, immutable: true },
+    scopes: { type: [String], default: undefined, immutable: true },
     clientName: { type: String, required: true, immutable: true },
     projectName: { type: String, required: true, immutable: true },
     location: { type: String, immutable: true },
@@ -189,6 +193,11 @@ estimateClientReviewSnapshotSchema.pre("validate", function validateFrozenTotals
 
 const estimateClientReviewRoundSchema = new Schema(
   {
+    phase: { type: String, enum: ["pre", "post"], default: undefined, immutable: true },
+    requirementsVersion: { type: Number, default: undefined, immutable: true, min: 0, validate: optionalSafeIntegerValidator },
+    designReviewRoundId: { type: String, default: null, immutable: true },
+    designPlanVersion: { type: Number, default: null, immutable: true },
+    designScopeRevision: { type: Number, default: null, immutable: true },
     _id: { type: String, required: true, immutable: true },
     estimateId: { type: String, ref: "Estimate", required: true, immutable: true },
     leadId: { type: String, ref: "Lead", required: true, immutable: true },
@@ -355,6 +364,12 @@ function decisionStateError(input: Record<string, unknown>) {
     )
       ? "Pending review rounds cannot contain decision metadata."
       : null;
+  }
+
+  if (status === "superseded") {
+    return decision === null && decisionSource === null && typeof decisionNote === "string" &&
+      decisionNote.trim().length > 0 && typeof decidedById === "string" && decidedById.length > 0 && isDate(decidedAt)
+      ? null : "Superseded review rounds require withdrawal metadata without a client decision.";
   }
 
   const expectedDecision = status === "approved" ? "approve" : "request_changes";

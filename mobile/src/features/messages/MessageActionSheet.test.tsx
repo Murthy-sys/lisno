@@ -73,7 +73,7 @@ describe("message issue actions", () => {
       environment: { environment: { id: "remote:https://api.example.test" } },
       runtime: { api: { authenticated: { patch } } }
     } as unknown as ReturnType<typeof useConfiguredRuntime>);
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false, gcTime: Infinity } } });
     const refresh = jest.fn(async () => undefined);
     const close = jest.fn();
     const component = (value: PresentedMessage) => (
@@ -124,7 +124,7 @@ describe("message issue actions", () => {
       environment: { environment: { id: "remote:https://api.example.test" } },
       runtime: { api: { authenticated: { patch } } }
     } as unknown as ReturnType<typeof useConfiguredRuntime>);
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false, gcTime: Infinity } } });
     const onDenied = jest.fn(async () => undefined);
     const view = await render(
       <QueryClientProvider client={client}>
@@ -170,7 +170,7 @@ describe("MessageActionSheet reply authorization", () => {
     readonly onReply?: jest.Mock;
     readonly onClose?: jest.Mock;
   }) {
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false, gcTime: Infinity } } });
     const value = message();
     const view = await render(
       <QueryClientProvider client={client}>
@@ -222,5 +222,26 @@ describe("MessageActionSheet reply authorization", () => {
 
     await result.view.unmount();
     result.client.clear();
+  });
+});
+
+
+describe("tracked action updates", () => {
+  it("requires a reason, preserves the original deadline and sends the reviewed message version", async () => {
+    const current = message({ priority: "important", issueStatus: "open", version: 7, action: { typeId: "type-a", typeName: "Design approval", dueDate: "2026-10-15", originalDueDate: "2026-10-15" }, capabilities: { canRaise: false, canResolve: true, canReopen: false, canAssign: true, canAssignSelf: false, canReschedule: true } });
+    const patch = jest.fn(async () => ({ ...current, author: current.authorIdentity, version: 8, action: { ...current.action, dueDate: "2026-10-20" } }));
+    useRuntimeMock.mockReturnValue({ environment: { environment: { id: "test-env" }, generation: 1 }, session: { generation: 1 }, runtime: { api: { authenticated: { patch } } } } as unknown as ReturnType<typeof useConfiguredRuntime>);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false, gcTime: Infinity } } }); const close = jest.fn();
+    const view = await render(<QueryClientProvider client={client}><MessageActionSheet projectId="project-a" message={current} session={session} canReply={false} visible onClose={close} onReply={jest.fn()} onRefresh={jest.fn()} onDenied={jest.fn()} /></QueryClientProvider>);
+    expect(view.queryByText("Clear priority")).toBeNull(); await fireEvent.press(view.getByText("Change due date")); await fireEvent.changeText(view.getByLabelText("New due date (YYYY-MM-DD)"), "2026-10-20"); await fireEvent.press(view.getByText("Save update")); expect(patch).not.toHaveBeenCalled(); await fireEvent.changeText(view.getByLabelText("Reason"), "Client needs more review time"); await fireEvent.press(view.getByText("Save update")); await waitFor(() => expect(close).toHaveBeenCalledTimes(1));
+    expect(patch).toHaveBeenCalledWith("/projects/project-a/chat/messages/message-a/issue", { action: "reschedule", expectedVersion: 7, dueDate: "2026-10-20", note: "Client needs more review time", idempotencyKey: expect.any(String) }); await view.unmount(); client.clear();
+  });
+  it("offers only the current actor for personal self-assignment", async () => {
+    const current = message({ priority: "critical", issueStatus: "open", capabilities: { canRaise: false, canResolve: false, canReopen: false, canAssign: false, canAssignSelf: true } });
+    const get = jest.fn(async () => ({ items: [{ id: "user-me", name: "Me", role: "admin", sources: [], selection: null }, { id: "other-user", name: "Another designer", role: "designer", sources: [], selection: null }], setupWarnings: [] })); const patch = jest.fn(async () => ({ ...current, author: current.authorIdentity, version: 2, responsible: { id: "user-me", name: "Me", role: "admin", available: true } }));
+    useRuntimeMock.mockReturnValue({ environment: { environment: { id: "test-env" }, generation: 1 }, session: { generation: 1 }, runtime: { api: { authenticated: { get, patch } } } } as unknown as ReturnType<typeof useConfiguredRuntime>);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false, gcTime: Infinity } } }); const close = jest.fn(); const reader = sessionWithPermissions(["chat.read", "chat.issue"]);
+    const view = await render(<QueryClientProvider client={client}><MessageActionSheet projectId="project-a" message={current} session={reader} canReply={false} visible onClose={close} onReply={jest.fn()} onRefresh={jest.fn()} onDenied={jest.fn()} /></QueryClientProvider>);
+    await fireEvent.press(view.getByText("Change responsible person")); await waitFor(() => expect(get).toHaveBeenCalled()); await fireEvent.press(view.getByLabelText("Responsible participant")); await waitFor(() => expect(view.getByText("Me · admin")).toBeTruthy()); expect(view.queryByText("Another designer · designer")).toBeNull(); await fireEvent.press(view.getByText("Me · admin")); await fireEvent.press(view.getByText("Save update")); await waitFor(() => expect(close).toHaveBeenCalledTimes(1)); expect(patch).toHaveBeenCalledWith("/projects/project-a/chat/messages/message-a/issue", expect.objectContaining({ action: "assign", responsibleUserId: "user-me", expectedVersion: 1 })); await view.unmount(); client.clear();
   });
 });

@@ -62,6 +62,7 @@ export interface ProjectDetailEstimate {
 }
 
 export interface ProjectDetailPresentation {
+  readonly leadId?: string | null;
   readonly kind: ProjectDetailKind;
   readonly id: string | null;
   readonly name: string;
@@ -278,6 +279,7 @@ function presentAdmin(project: Record<string, unknown>, header: ProjectHeader): 
 
   return {
     kind: "admin",
+    leadId: presentText(lead?.id) ?? presentText(estimate?.leadId),
     ...header,
     subtitle: SUBTITLES.admin,
     status,

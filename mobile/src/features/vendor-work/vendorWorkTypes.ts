@@ -1,0 +1,53 @@
+// Mirrored from the current web API contract.
+export type VendorWorkStatus = "awaiting_vendor_access" | "ready" | "in_progress" | "submitted_for_client" | "changes_requested" | "client_approved" | "superseded";
+
+export interface VendorWorkTask {
+  id: string;
+  projectId: string;
+  vendorId: string;
+  orderId: string;
+  orderRevision: number;
+  lineId: string;
+  sourceSectionId: string;
+  sourceLineItemKey: string;
+  sectionLabel: string;
+  roomName: string;
+  itemName: string;
+  scopeType: "supply" | "execution" | "supply_and_execution" | null;
+  description: string;
+  targetDate: string | null;
+  deliveryLocation: string | null;
+  status: VendorWorkStatus;
+  version: number;
+  progress: number;
+  displayProgress: number;
+  progressSource: "vendor" | "site_manager";
+  currentRound: number;
+  note: string;
+  requestedChangeReason: string | null;
+  imageCount: number;
+  submittedAt: string | null;
+  acceptedAt: string | null;
+}
+
+export interface VendorWorkReview {
+  id: string;
+  projectId: string;
+  assignmentId: string;
+  round: number;
+  status: "pending" | "approved" | "changes_requested";
+  version: number;
+  sectionLabel: string;
+  roomName: string;
+  itemName: string;
+  scopeType: VendorWorkTask["scopeType"];
+  description: string;
+  sourceSectionId: string;
+  note: string;
+  progress: number;
+  submittedAt: string;
+  imageIds: string[];
+  decision: { decision: "approve" | "request_changes"; reason: string | null; decidedAt: string } | null;
+}
+
+export interface VendorWorkPageData { items: VendorWorkTask[]; total: number; limit: number; offset: number }

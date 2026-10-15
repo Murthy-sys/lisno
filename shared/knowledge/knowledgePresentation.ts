@@ -13,6 +13,7 @@ export const KNOWLEDGE_SECTION_LABELS = {
   scope: "Scope",
   recommendations: "Recommendation & Exclusions",
   quality: "Quality Parameter",
+  design: "Design",
   execution: "Execution",
   advanced: "Advanced"
 } as const satisfies Readonly<Record<KnowledgeSectionKey, string>>;

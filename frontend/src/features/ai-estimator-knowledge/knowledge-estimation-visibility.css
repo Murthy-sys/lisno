@@ -1,0 +1,10 @@
+.knowledge-estimation-visibility { display: grid; gap: var(--space-4); }
+.knowledge-estimation-visibility fieldset { margin: 0; padding: 0; border: 0; display: grid; gap: var(--space-3); min-width: 0; }
+.knowledge-estimation-visibility legend { padding: 0; margin-block-end: var(--space-3); font-weight: 600; }
+.knowledge-estimation-visibility label { display: flex; align-items: flex-start; gap: var(--space-3); padding-block: var(--space-2); cursor: pointer; }
+.knowledge-estimation-visibility label > span { display: grid; gap: var(--space-1); }
+.knowledge-estimation-visibility label span span, .knowledge-estimation-visibility > p { color: var(--color-text-muted); }
+.knowledge-estimation-visibility input { margin-block-start: 0.2rem; accent-color: var(--color-primary); }
+.knowledge-estimation-visibility input:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
+.knowledge-estimation-visibility p { margin: 0; overflow-wrap: anywhere; }
+.knowledge-estimation-visibility .ui-button { white-space: normal; }

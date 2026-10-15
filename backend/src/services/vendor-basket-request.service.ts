@@ -239,6 +239,7 @@ export function vendorBasketRequestDto(row: RequestRow): VendorBasketRequestDto 
   return { target: row.targetKind === "new_sub_basket" ? { kind: "new_sub_basket", basketId: String(row.targetParentBasketId) } : { kind: "new_main_basket" },
     targetParentName: row.targetParentName == null ? null : String(row.targetParentName), id: String(row._id), requesterId: String(row.requesterId),
     ...(row.kind === "configuration_proposal" ? { kind: "configuration_proposal" as const,
+      requestMode: row.requestMode === "hierarchy_intake" ? "hierarchy_intake" as const : "full_configuration" as const,
       proposalId: String(row.proposalId), proposalCounts: row.proposalCounts as { subBaskets: number; mainLines: number } } : {}),
     vendorId: row.vendorId == null ? null : String(row.vendorId), vendorName: row.vendorName == null ? null : String(row.vendorName),
     proposedName: String(row.proposedName), status: row.status as VendorBasketRequestStatus,

@@ -62,6 +62,14 @@ export function createLeadService(repository: AppRepository, audit: AuditService
   };
   const findLeadForReader = async (actor: PublicUser, id: string) => {
     await requireActor(repository, actor);
+    if (actor.role === "designer") {
+      const lead = await repository.findLeadById(id);
+      const project = lead?.projectId ? await repository.findProjectById(lead.projectId) : null;
+      const context = project?.estimationWorkflowVersion === 2 ? await repository.findProjectEstimationContext(project.id) : null;
+      if (!lead || !project?.assignedDesignerIds.includes(actor.id) || !context?.preApprovedAt)
+        throw new ApiError(404, "NOT_FOUND", "The requested resource was not found.");
+      return lead;
+    }
     if (actor.role !== "super_admin") return owned(actor, id);
     const lead = await repository.findLeadById(id);
     if (!lead) throw new ApiError(404, "NOT_FOUND", "The requested resource was not found.");
@@ -74,7 +82,11 @@ export function createLeadService(repository: AppRepository, audit: AuditService
       if (actor.role !== "estimator_sales") forbidden();
       return repository.pageLeadsForOwner(actor.id, filters, pagination);
     },
-    async get(actor, leadId) { return findLeadForReader(actor, leadId); },
+    async get(actor, leadId) {
+      const lead = await findLeadForReader(actor, leadId);
+      const project = lead.projectId ? await repository.findProjectById(lead.projectId) : null;
+      return { ...lead, ...(project?.estimationWorkflowVersion === 2 ? { estimationWorkflowVersion: 2 as const } : {}) };
+    },
     async create(actor, input) {
       await requireEstimator(repository, actor);
       const now = clock().toISOString();

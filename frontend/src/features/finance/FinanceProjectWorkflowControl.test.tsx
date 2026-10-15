@@ -11,7 +11,8 @@ import type {
   ProjectWorkflowTask,
   Role
 } from "../../api/types";
-import { renderApp } from "../../test/render";
+import { ProjectWorkflowSnapshot } from "./FinanceProjectWorkflowControl";
+import { renderWithQuery, renderApp } from "../../test/render";
 import { server } from "../../test/server";
 
 vi.mock("./ProjectFinancePanel", async (importOriginal) => ({
@@ -231,6 +232,7 @@ describe("Finance project workflow control", () => {
     expect(await screen.findByRole("heading", { name: "Entire project workflow" })).toBeVisible();
     const estimateStage = screen.getByRole("heading", { name: "2. Estimate approved" }).closest("section")!;
     expect(estimateStage).toHaveTextContent("Approved");
+    expect(estimateStage).toHaveTextContent("₹11,80,000 approved commercial value");
     const assignmentStage = screen.getByRole("heading", { name: "3. Designer assigned" }).closest("section")!;
     expect(assignmentStage).toHaveTextContent("Ananya Designer · ananya@example.com");
     const submissionStage = screen.getByRole("heading", { name: "4. Design uploaded and submitted to Client" }).closest("section")!;
@@ -309,5 +311,55 @@ describe("Finance project workflow control", () => {
     expect(adminTaskRequest).not.toHaveBeenCalled();
     expect(adminSectionRequest).not.toHaveBeenCalled();
     expect(adminWorkerRequest).not.toHaveBeenCalled();
+  });
+});
+
+
+describe("Collaborative project preparation snapshot", () => {
+  it("loads post-estimate preparation during draft review and keeps preparation progress out of execution", async () => {
+    const request = vi.fn(() => HttpResponse.json({ data: workflowTasks.map((task) => ({ ...task, preparationOnly: true, progress: 100, status: "completed" })) }));
+    server.use(http.get("/api/v1/admin/projects/project-one/workflow-tasks", request));
+    renderWithQuery(<ProjectWorkflowSnapshot project={{ ...project, estimationWorkflowVersion: 2,
+      estimate: { ...project.estimate!, status: "draft", estimationPhase: "post", finalEstimateApproved: true } }} />);
+    const stage = screen.getByRole("heading", { name: "7. Execution queues" }).closest("section")!;
+    expect(await within(stage).findByText(/1 of 3 preparation tasks assigned/)).toBeVisible();
+    expect(stage).toHaveTextContent("execution deadlines and effort tracking start only after Super Admin confirms the initial payment");
+    expect(stage).toHaveTextContent("Preparation in progress");
+    expect(within(stage).queryByRole("progressbar")).not.toBeInTheDocument();
+    expect(within(stage).queryByText("Complete", { exact: true })).not.toBeInTheDocument();
+    const preApproval = screen.getByRole("heading", { name: "2. Pre-estimate approved" }).closest("section")!;
+    expect(preApproval).toHaveTextContent("Approved"); expect(request).toHaveBeenCalledOnce();
+  });
+
+  it("keeps unequal pre and final amounts out of the pre-approval stage and labels only the approved final baseline", async () => {
+    server.use(http.get("/api/v1/admin/projects/project-one/workflow-tasks", () => HttpResponse.json({ data: [] })));
+    const preProject: AdminProjectSummary = { ...project, estimationWorkflowVersion: 2,
+      estimate: { ...project.estimate!, estimationPhase: "post", finalEstimateApproved: false } };
+    const first = renderWithQuery(<ProjectWorkflowSnapshot project={preProject} />);
+    const preStageBefore = screen.getByRole("heading", { name: "2. Pre-estimate approved" }).closest("section")!;
+    expect(preStageBefore).toHaveTextContent("The Client approved the pre-estimate.");
+    expect(preStageBefore).not.toHaveTextContent("₹");
+    expect(screen.getByRole("heading", { name: "6. Final estimate approval" }).closest("section")).not.toHaveTextContent("₹");
+    await waitFor(() => expect(screen.queryByText("Loading execution and worker status…")).not.toBeInTheDocument());
+    first.unmount();
+
+    renderWithQuery(<ProjectWorkflowSnapshot project={{ ...preProject, estimate: { ...preProject.estimate!,
+      finalEstimateApproved: true, total: 1_770_000, approvedBaseline: { ...preProject.estimate!.approvedBaseline!,
+        estimateVersion: 8, reviewRoundId: "final-review", subtotal: 1_500_000, gst: 270_000, total: 1_770_000 } } }} />);
+    const preStageAfter = screen.getByRole("heading", { name: "2. Pre-estimate approved" }).closest("section")!;
+    const finalStage = screen.getByRole("heading", { name: "6. Final estimate approval" }).closest("section")!;
+    expect(preStageAfter).toHaveTextContent("The Client approved the pre-estimate.");
+    expect(preStageAfter).not.toHaveTextContent("₹");
+    expect(finalStage).toHaveTextContent("₹17,70,000 final approved commercial value");
+    expect(screen.queryByText(/₹11,80,000/)).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText("Loading execution and worker status…")).not.toBeInTheDocument());
+  });
+
+  it("shows execution progress only after tasks leave preparation", async () => {
+    server.use(http.get("/api/v1/admin/projects/project-one/workflow-tasks", () => HttpResponse.json({ data: workflowTasks })));
+    renderWithQuery(<ProjectWorkflowSnapshot project={{ ...project, estimationWorkflowVersion: 2,
+      estimate: { ...project.estimate!, estimationPhase: "post", finalEstimateApproved: true } }} />);
+    expect(await screen.findByRole("progressbar", { name: "Overall project execution: 25% complete" })).toBeVisible();
+    expect(screen.queryByText(/preparation tasks assigned/)).not.toBeInTheDocument();
   });
 });

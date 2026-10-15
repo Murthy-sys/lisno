@@ -37,6 +37,8 @@ export interface WorkflowStageState {
   requirementsSubmissionEventId?: string;
   scopeEstimateId?: string;
   scopeEstimateVersion?: number;
+  scopeRoomFingerprints?: Record<string, string>;
+  scopeReconciliation?: { at: string; previousRevision: number; affectedRoomIds: string[] };
   scopeReturn?: { reason: string; at: string };
   rooms?: WorkflowRoom[];
 }
@@ -77,8 +79,12 @@ export interface DesignWorkflowState {
   projectId: string;
   version: number;
   initialPaymentAt: string | null;
+  estimationWorkflowVersion?: 2;
+  designStartedAt?: string;
   initialPaymentEstimateId?: string;
   initialPaymentEstimateVersion?: number;
+  initialPaymentReviewRoundId?: string;
+  initialPaymentDesignReviewRoundId?: string;
   stages: Partial<Record<DesignStageType, WorkflowStageState>>;
   pauses: Array<{ startedAt: string; endedAt: string | null }>;
   history: DesignWorkflowHistoryEvent[];
@@ -90,8 +96,12 @@ export function emptyDesignWorkflowState(projectId: string): DesignWorkflowState
 export function workflowPausedMs(state: DesignWorkflowState, at: number, from = Number.NEGATIVE_INFINITY): number {
   return state.pauses.reduce((sum, pause) => sum + Math.max(0, Math.min(at, pause.endedAt ? Date.parse(pause.endedAt) : at) - Math.max(from, Date.parse(pause.startedAt))), 0);
 }
+export function workflowDesignStartAt(state: DesignWorkflowState): string | null {
+  return state.estimationWorkflowVersion === 2 ? state.designStartedAt ?? null : state.initialPaymentAt;
+}
 export function workflowElapsedMs(state: DesignWorkflowState, at: number): number {
-  return state.initialPaymentAt ? Math.max(0, at - Date.parse(state.initialPaymentAt) - workflowPausedMs(state, at)) : 0;
+  const startedAt = workflowDesignStartAt(state);
+  return startedAt ? Math.max(0, at - Date.parse(startedAt) - workflowPausedMs(state, at)) : 0;
 }
 export function workflowIsPaused(state: DesignWorkflowState): boolean {
   return state.pauses.some((pause) => pause.endedAt === null);
@@ -114,8 +124,9 @@ const precedingStages: Partial<Record<DesignStageType, DesignStageType[]>> = {
 /** Derive activation from immutable confirmations; never invent a start after a legacy completion. */
 export function workflowStageStartAt(state: DesignWorkflowState, type: DesignStageType, at: number): string | null {
   const predecessors = precedingStages[type];
-  if (!state.initialPaymentAt || !predecessors) return null;
-  const times = [Date.parse(state.initialPaymentAt)];
+  const startedAt = workflowDesignStartAt(state);
+  if (!startedAt || !predecessors) return null;
+  const times = [Date.parse(startedAt)];
   for (const predecessor of predecessors) {
     const stage = state.stages[predecessor];
     if (!stage?.completedAt) return null;
@@ -149,7 +160,7 @@ export function workflowStagePrerequisiteBlockers(state: DesignWorkflowState, ty
 }
 export function workflowSubmissionBlockers(state: DesignWorkflowState, roomIds?: string[], phase: "upload" | "submission" = "submission"): string[] {
   const blockers: string[] = [];
-  if (!state.initialPaymentAt) blockers.push("Super Admin must confirm Initial payment received after estimate approval.");
+  if (!workflowDesignStartAt(state)) blockers.push(state.estimationWorkflowVersion === 2 ? "The Client must approve the pre-estimate before design starts." : "Super Admin must confirm Initial payment received after estimate approval.");
   if (workflowIsPaused(state)) blockers.push("The Client has blocked site access. Restore access to resume the workflow.");
   if (!state.stages.internal_kickoff?.completedAt) blockers.push("Complete Internal Kick off with its signed checklist.");
   if (!state.stages.client_kickoff?.completedAt) blockers.push("Complete Client Kick off or mark it not necessary.");

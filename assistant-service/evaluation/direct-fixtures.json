@@ -1,0 +1,530 @@
+[
+  {
+    "name": "greeting",
+    "request": {
+      "protocolVersion": 1,
+      "requestId": "greeting",
+      "step": 0,
+      "surface": "private",
+      "remainingMs": 5000,
+      "projectAvailable": true,
+      "messages": [
+        {
+          "id": "m0",
+          "body": "Hello"
+        }
+      ],
+      "allowedTools": [
+        "resolve_project",
+        "client_profile",
+        "project_status",
+        "project_execution",
+        "project_estimate"
+      ],
+      "toolResults": []
+    },
+    "response": {
+      "protocolVersion": 1,
+      "requestId": "greeting",
+      "step": 0,
+      "route": "deterministic",
+      "usage": {
+        "inputTokens": 0,
+        "outputTokens": 0
+      },
+      "result": {
+        "type": "final",
+        "kind": "no_answer",
+        "factIds": [],
+        "projectEstimateRef": null,
+        "narrative": [
+          {
+            "text": "Hello! I can help with your project's progress, timelines, and published estimates. What would you like to know?",
+            "factIds": []
+          }
+        ],
+        "clarificationCodes": []
+      }
+    }
+  },
+  {
+    "name": "thanks-after-cost",
+    "request": {
+      "protocolVersion": 1,
+      "requestId": "thanks-after-cost",
+      "step": 0,
+      "surface": "private",
+      "remainingMs": 5000,
+      "projectAvailable": true,
+      "messages": [
+        {
+          "id": "m0",
+          "body": "My project cost?"
+        },
+        {
+          "id": "m1",
+          "body": "Thanks"
+        }
+      ],
+      "allowedTools": [
+        "resolve_project",
+        "client_profile",
+        "project_status",
+        "project_execution",
+        "project_estimate"
+      ],
+      "toolResults": []
+    },
+    "response": {
+      "protocolVersion": 1,
+      "requestId": "thanks-after-cost",
+      "step": 0,
+      "route": "deterministic",
+      "usage": {
+        "inputTokens": 0,
+        "outputTokens": 0
+      },
+      "result": {
+        "type": "final",
+        "kind": "no_answer",
+        "factIds": [],
+        "projectEstimateRef": null,
+        "narrative": [
+          {
+            "text": "You're welcome. I can help with your project details and published estimates.",
+            "factIds": []
+          }
+        ],
+        "clarificationCodes": []
+      }
+    }
+  },
+  {
+    "name": "emotion",
+    "request": {
+      "protocolVersion": 1,
+      "requestId": "emotion",
+      "step": 0,
+      "surface": "private",
+      "remainingMs": 5000,
+      "projectAvailable": true,
+      "messages": [
+        {
+          "id": "m0",
+          "body": "I am upset"
+        }
+      ],
+      "allowedTools": [
+        "resolve_project",
+        "client_profile",
+        "project_status",
+        "project_execution",
+        "project_estimate"
+      ],
+      "toolResults": []
+    },
+    "response": {
+      "protocolVersion": 1,
+      "requestId": "emotion",
+      "step": 0,
+      "route": "deterministic",
+      "usage": {
+        "inputTokens": 0,
+        "outputTokens": 0
+      },
+      "result": {
+        "type": "final",
+        "kind": "no_answer",
+        "factIds": [],
+        "projectEstimateRef": null,
+        "narrative": [
+          {
+            "text": "I'm sorry this has been frustrating. Tell me what happened with your project so I can help.",
+            "factIds": []
+          }
+        ],
+        "clarificationCodes": []
+      }
+    }
+  },
+  {
+    "name": "namaste",
+    "request": {
+      "protocolVersion": 1,
+      "requestId": "namaste",
+      "step": 0,
+      "surface": "private",
+      "remainingMs": 5000,
+      "projectAvailable": true,
+      "messages": [
+        {
+          "id": "m0",
+          "body": "Namaste"
+        }
+      ],
+      "allowedTools": [
+        "resolve_project",
+        "client_profile",
+        "project_status",
+        "project_execution",
+        "project_estimate"
+      ],
+      "toolResults": []
+    },
+    "response": {
+      "protocolVersion": 1,
+      "requestId": "namaste",
+      "step": 0,
+      "route": "deterministic",
+      "usage": {
+        "inputTokens": 0,
+        "outputTokens": 0
+      },
+      "result": {
+        "type": "final",
+        "kind": "no_answer",
+        "factIds": [],
+        "projectEstimateRef": null,
+        "narrative": [
+          {
+            "text": "Hello! I can help with your project's progress, timelines, and published estimates. What would you like to know?",
+            "factIds": []
+          }
+        ],
+        "clarificationCodes": []
+      }
+    }
+  },
+  {
+    "name": "namaskaram",
+    "request": {
+      "protocolVersion": 1,
+      "requestId": "namaskaram",
+      "step": 0,
+      "surface": "private",
+      "remainingMs": 5000,
+      "projectAvailable": true,
+      "messages": [
+        {
+          "id": "m0",
+          "body": "Namaskaram"
+        }
+      ],
+      "allowedTools": [
+        "resolve_project",
+        "client_profile",
+        "project_status",
+        "project_execution",
+        "project_estimate"
+      ],
+      "toolResults": []
+    },
+    "response": {
+      "protocolVersion": 1,
+      "requestId": "namaskaram",
+      "step": 0,
+      "route": "deterministic",
+      "usage": {
+        "inputTokens": 0,
+        "outputTokens": 0
+      },
+      "result": {
+        "type": "final",
+        "kind": "no_answer",
+        "factIds": [],
+        "projectEstimateRef": null,
+        "narrative": [
+          {
+            "text": "Hello! I can help with your project's progress, timelines, and published estimates. What would you like to know?",
+            "factIds": []
+          }
+        ],
+        "clarificationCodes": []
+      }
+    }
+  },
+  {
+    "name": "unhappy",
+    "request": {
+      "protocolVersion": 1,
+      "requestId": "unhappy",
+      "step": 0,
+      "surface": "private",
+      "remainingMs": 5000,
+      "projectAvailable": true,
+      "messages": [
+        {
+          "id": "m0",
+          "body": "I am unhappy"
+        }
+      ],
+      "allowedTools": [
+        "resolve_project",
+        "client_profile",
+        "project_status",
+        "project_execution",
+        "project_estimate"
+      ],
+      "toolResults": []
+    },
+    "response": {
+      "protocolVersion": 1,
+      "requestId": "unhappy",
+      "step": 0,
+      "route": "deterministic",
+      "usage": {
+        "inputTokens": 0,
+        "outputTokens": 0
+      },
+      "result": {
+        "type": "final",
+        "kind": "no_answer",
+        "factIds": [],
+        "projectEstimateRef": null,
+        "narrative": [
+          {
+            "text": "I'm sorry this has been frustrating. Tell me what happened with your project so I can help.",
+            "factIds": []
+          }
+        ],
+        "clarificationCodes": []
+      }
+    }
+  },
+  {
+    "name": "thanks-lisno",
+    "request": {
+      "protocolVersion": 1,
+      "requestId": "thanks-lisno",
+      "step": 0,
+      "surface": "private",
+      "remainingMs": 5000,
+      "projectAvailable": true,
+      "messages": [
+        {
+          "id": "m0",
+          "body": "Thanks Lisno"
+        }
+      ],
+      "allowedTools": [
+        "resolve_project",
+        "client_profile",
+        "project_status",
+        "project_execution",
+        "project_estimate"
+      ],
+      "toolResults": []
+    },
+    "response": {
+      "protocolVersion": 1,
+      "requestId": "thanks-lisno",
+      "step": 0,
+      "route": "deterministic",
+      "usage": {
+        "inputTokens": 0,
+        "outputTokens": 0
+      },
+      "result": {
+        "type": "final",
+        "kind": "no_answer",
+        "factIds": [],
+        "projectEstimateRef": null,
+        "narrative": [
+          {
+            "text": "You're welcome. I can help with your project details and published estimates.",
+            "factIds": []
+          }
+        ],
+        "clarificationCodes": []
+      }
+    }
+  },
+  {
+    "name": "morning-lisno",
+    "request": {
+      "protocolVersion": 1,
+      "requestId": "morning-lisno",
+      "step": 0,
+      "surface": "private",
+      "remainingMs": 5000,
+      "projectAvailable": true,
+      "messages": [
+        {
+          "id": "m0",
+          "body": "Good morning Lisno"
+        }
+      ],
+      "allowedTools": [
+        "resolve_project",
+        "client_profile",
+        "project_status",
+        "project_execution",
+        "project_estimate"
+      ],
+      "toolResults": []
+    },
+    "response": {
+      "protocolVersion": 1,
+      "requestId": "morning-lisno",
+      "step": 0,
+      "route": "deterministic",
+      "usage": {
+        "inputTokens": 0,
+        "outputTokens": 0
+      },
+      "result": {
+        "type": "final",
+        "kind": "no_answer",
+        "factIds": [],
+        "projectEstimateRef": null,
+        "narrative": [
+          {
+            "text": "Hello! I can help with your project's progress, timelines, and published estimates. What would you like to know?",
+            "factIds": []
+          }
+        ],
+        "clarificationCodes": []
+      }
+    }
+  },
+  {
+    "name": "compact-morning",
+    "request": {
+      "protocolVersion": 1,
+      "requestId": "compact-morning",
+      "step": 0,
+      "surface": "private",
+      "remainingMs": 5000,
+      "projectAvailable": true,
+      "messages": [
+        {
+          "id": "m0",
+          "body": "GoodmorningLisno"
+        }
+      ],
+      "allowedTools": [
+        "resolve_project",
+        "client_profile",
+        "project_status",
+        "project_execution",
+        "project_estimate"
+      ],
+      "toolResults": []
+    },
+    "response": {
+      "protocolVersion": 1,
+      "requestId": "compact-morning",
+      "step": 0,
+      "route": "deterministic",
+      "usage": {
+        "inputTokens": 0,
+        "outputTokens": 0
+      },
+      "result": {
+        "type": "final",
+        "kind": "no_answer",
+        "factIds": [],
+        "projectEstimateRef": null,
+        "narrative": [
+          {
+            "text": "Hello! I can help with your project's progress, timelines, and published estimates. What would you like to know?",
+            "factIds": []
+          }
+        ],
+        "clarificationCodes": []
+      }
+    }
+  },
+  {
+    "name": "mixed-price",
+    "request": {
+      "protocolVersion": 1,
+      "requestId": "mixed-price",
+      "step": 0,
+      "surface": "private",
+      "remainingMs": 5000,
+      "projectAvailable": true,
+      "messages": [
+        {
+          "id": "m0",
+          "body": "Hi, what is my project cost?"
+        }
+      ],
+      "allowedTools": [
+        "resolve_project",
+        "client_profile",
+        "project_status",
+        "project_execution",
+        "project_estimate"
+      ],
+      "toolResults": []
+    },
+    "response": {
+      "protocolVersion": 1,
+      "requestId": "mixed-price",
+      "step": 0,
+      "route": "deterministic",
+      "usage": {
+        "inputTokens": 0,
+        "outputTokens": 0
+      },
+      "result": {
+        "type": "tools",
+        "calls": [
+          {
+            "id": "s0_0",
+            "name": "project_estimate",
+            "args": {
+              "basis": "current"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "mixed-progress",
+    "request": {
+      "protocolVersion": 1,
+      "requestId": "mixed-progress",
+      "step": 0,
+      "surface": "private",
+      "remainingMs": 5000,
+      "projectAvailable": true,
+      "messages": [
+        {
+          "id": "m0",
+          "body": "Thanks, show project progress"
+        }
+      ],
+      "allowedTools": [
+        "resolve_project",
+        "client_profile",
+        "project_status",
+        "project_execution",
+        "project_estimate"
+      ],
+      "toolResults": []
+    },
+    "response": {
+      "protocolVersion": 1,
+      "requestId": "mixed-progress",
+      "step": 0,
+      "route": "deterministic",
+      "usage": {
+        "inputTokens": 0,
+        "outputTokens": 0
+      },
+      "result": {
+        "type": "tools",
+        "calls": [
+          {
+            "id": "s0_0",
+            "name": "project_status",
+            "args": {}
+          }
+        ]
+      }
+    }
+  }
+]

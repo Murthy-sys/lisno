@@ -82,7 +82,7 @@ export function workflowEstimateRoomDimensions(room: { length?: unknown; width?:
     : {};
 }
 
-export function workflowEstimateRooms(estimateId: string, estimateVersion: number, rooms: Array<{ id: string; label: string; length?: unknown; width?: unknown }>, lines: WorkflowEstimateLine[], options: { includeZeroValueItems?: boolean } = {}): WorkflowEstimateRoom[] {
+export function workflowEstimateRooms(estimateId: string, estimateVersion: number, rooms: Array<{ id: string; label: string; length?: unknown; width?: unknown }>, lines: WorkflowEstimateLine[], options: { includeZeroValueItems?: boolean; includeUnpricedItems?: boolean } = {}): WorkflowEstimateRoom[] {
   if (rooms.some((room) => !room || typeof room.id !== "string" || typeof room.label !== "string")) throw new WorkflowEstimateSourceError("The approved estimate has invalid room details.");
   const result: WorkflowEstimateRoom[] = rooms.map((room) => ({
     id: room.id,
@@ -114,7 +114,7 @@ export function workflowEstimateRooms(estimateId: string, estimateVersion: numbe
       ? [line.subBasketName ?? line.mainBasketName, line.mainLineName].join(" · ")
       : estimatePdfCatalogue.get(catalogueId.toUpperCase())?.description ?? (line.specification?.trim() ? `${catalogueId} — ${line.specification.trim()}` : catalogueId);
     let actionable: boolean;
-    try { actionable = approvedEstimateLineIsActionable(line); }
+    try { actionable = options.includeUnpricedItems && (line.source === "configuration" ? line.amountPaise == null : line.amount == null) ? true : approvedEstimateLineIsActionable(line); }
     catch { throw new WorkflowEstimateSourceError("The approved estimate has an invalid selected item amount."); }
     if (!actionable && !options.includeZeroValueItems) return;
     matching[0]!.estimateItems.push({ id, name, catalogueId, specification: line.specification ?? "", quantity: line.quantity, uom: line.unit, measurementType: workflowItemMeasurementType(line.unit) });

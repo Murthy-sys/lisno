@@ -8,7 +8,8 @@ import { pickDocument, releaseSelectedAsset, TransferHttpError, type SelectedAss
 import { useConfiguredRuntime } from "../../runtime/RuntimeProvider";
 import { Button, Field, StateView } from "../../ui/primitives";
 import { createIdempotencyKey } from "../finance/money";
-import { KnowledgeVendorBasketChoices, KnowledgeVendorBasketCreator, type VendorBasketGroup } from "./KnowledgeVendorBasketControls";
+import { KnowledgeVendorBasketChoices, type VendorBasketGroup } from "./KnowledgeVendorBasketControls";
+import { CreateBasketRequestPanel } from "../vendor-requests/CreateBasketRequestPanel";
 import { KnowledgeVendorBaseline } from "./KnowledgeVendorBaseline";
 import { allKnowledgePages } from "./knowledgeRuntime";
 import type { VendorMobileContext } from "./vendorRuntime";
@@ -54,10 +55,12 @@ function VendorForm({ context, initial, accessError, onClose, onSaved }: { reado
   const [recovery, setRecovery] = useState(false);
   const [partial, setPartial] = useState(false);
   const [conflict, setConflict] = useState(false);
+  const [requestNotice, setRequestNotice] = useState("");
+  const requestSession = runtime.session?.session;
+  const canRequestBasket = requestSession?.user.role === "procurement" && requestSession.authorization.permissions.includes("procurement.vendor_basket_proposal.create");
   const [basketEditor, setBasketEditor] = useState<"main" | "sub" | null>(null);
   const [subCreationParentId, setSubCreationParentId] = useState("");
   const [prunedChildren, setPrunedChildren] = useState(0);
-  const [catalogRefreshWarning, setCatalogRefreshWarning] = useState("");
   const [baselineOpen, setBaselineOpen] = useState(false);
   const mounted = useRef(true);
   const controller = useRef(new AbortController());
@@ -193,28 +196,6 @@ function VendorForm({ context, initial, accessError, onClose, onSaved }: { reado
     change("subBasketIds", draft.subBasketIds.includes(id) ? draft.subBasketIds.filter(value => value !== id) : [...draft.subBasketIds, id].sort());
     setPrunedChildren(0);
   }
-  function createdBasket(created: KnowledgeBasket | KnowledgeSubBasket) {
-    if ("basketId" in created) {
-      if (!subCreationParent || created.basketId !== subCreationParent.id) { setErrors({ subBasketIds: "The new Sub Basket parent could not be confirmed. Refresh the catalog." }); return; }
-      queryClient.setQueryData<readonly KnowledgeSubBasket[]>(context.key("vendor-sub-baskets", created.basketId), previous => previous ? [...previous.filter(value => value.id !== created.id), created] : previous);
-      change("subBasketIds", [...draft.subBasketIds, created.id].sort());
-      void queryClient.invalidateQueries({ queryKey: context.key("vendor-sub-baskets", created.basketId) });
-    } else {
-      queryClient.setQueryData<readonly KnowledgeBasket[]>(context.key("baskets", "vendor"), previous => previous ? [...previous.filter(value => value.id !== created.id), created] : previous);
-      change("mainBasketIds", [...draft.mainBasketIds, created.id].sort());
-      setSubCreationParentId(created.id);
-      void baskets.refetch();
-    }
-    setPrunedChildren(0);
-    setBasketEditor(null);
-    refreshAfterBasketCreate();
-  }
-  function refreshAfterBasketCreate() {
-    setCatalogRefreshWarning("");
-    void Promise.resolve().then(() => context.refresh()).catch(() => {
-        if (mounted.current) setCatalogRefreshWarning("Basket created and selected. Other vendor lists could not refresh.");
-    });
-  }
   async function chooseFile(kind: "certificate" | "photo") {
     if (blocked || !policy.data || fileOperation.current) return;
     fileOperation.current = true;
@@ -296,7 +277,6 @@ function VendorForm({ context, initial, accessError, onClose, onSaved }: { reado
       {errors.currentAddressVerifiedPhysically ? <KnowledgeText error>{errors.currentAddressVerifiedPhysically}</KnowledgeText> : null}
     </KnowledgeCard>
     <KnowledgeCard title="Procurement classification">
-      {catalogRefreshWarning ? <><KnowledgeText error>{catalogRefreshWarning}</KnowledgeText><Button label="Retry catalog refresh" variant="secondary" onPress={refreshAfterBasketCreate} /></> : null}
       {!catalogsReady ? <KnowledgeText error={baskets.isError || subQueries.some(query => query.isError)}>{baskets.isError || subQueries.some(query => query.isError) ? "Some classification choices could not be loaded. Saved selections are preserved." : "Loading classification choices…"}</KnowledgeText> : null}
       <KnowledgeVendorBasketChoices label="Main Baskets" selectedIds={draft.mainBasketIds} groups={mainGroups} disabled={blocked || !baskets.isSuccess} readOnly={readOnly} onToggle={toggleMainBasket} />
       {prunedChildren ? <KnowledgeText>{prunedChildren} selected Sub Basket{prunedChildren === 1 ? " was" : "s were"} removed with its Main Basket. Review before saving.</KnowledgeText> : null}
@@ -304,7 +284,7 @@ function VendorForm({ context, initial, accessError, onClose, onSaved }: { reado
       <KnowledgeVendorBasketChoices label="Sub Baskets" selectedIds={draft.subBasketIds} groups={subGroups} disabled={blocked || !catalogsReady} readOnly={readOnly} onToggle={toggleSubBasket} />
       {errors.subBasketIds ? <KnowledgeText error>{errors.subBasketIds}</KnowledgeText> : null}
       {(baskets.isError || subQueries.some(query => query.isError)) ? <Button label="Retry classification" onPress={() => { void baskets.refetch(); void Promise.all(subQueries.map(query => query.refetch())); }} /> : null}
-      {context.canCreateClassification && !readOnly ? <View style={s.stack}>
+      {canRequestBasket && !readOnly ? <View style={s.stack}>
         <Button label="Add main basket" variant="secondary" disabled={blocked || !baskets.isSuccess} onPress={() => setBasketEditor("main")} />
         {activeSelectedParents.length > 1 ? <KnowledgeSelect label="Main Basket for new Sub Basket" value={subCreationParent?.id ?? ""} disabled={blocked} placeholder="Choose a selected Main Basket" options={activeSelectedParents.map(value => ({ value: value.id, label: value.name }))} onChange={setSubCreationParentId} /> : activeSelectedParents.length === 1 ? <KnowledgeText>New Sub Basket parent: {activeSelectedParents[0]!.name}</KnowledgeText> : null}
         <Button label="Add sub-basket" variant="secondary" disabled={blocked || !subCreationParent || !catalogsReady} onPress={() => setBasketEditor("sub")} />
@@ -321,6 +301,7 @@ function VendorForm({ context, initial, accessError, onClose, onSaved }: { reado
     {!readOnly ? <Button label={base ? "Save vendor changes" : "Save vendor"} disabled={blocked} loading={save.isPending} onPress={submit} /> : null}
     {base ? <Button label="Review missing historical allocations" variant="secondary" disabled={busy || dirty || recovery || partial || accessError} onPress={() => setBaselineOpen(true)} /> : null}
     {baselineOpen && base ? <KnowledgeVendorBaseline context={context} vendorId={base.id} canUpdate={context.canCorrectBaseline && base.status !== "archived"} onClose={() => setBaselineOpen(false)} onAccessLost={() => setAccessRevoked(true)} /> : null}
-    {basketEditor ? <KnowledgeVendorBasketCreator context={context} {...(basketEditor === "sub" && subCreationParent ? { parent: subCreationParent } : {})} onClose={() => setBasketEditor(null)} onSaved={createdBasket} onAccessLost={() => setAccessRevoked(true)} /> : null}
+    {requestNotice ? <KnowledgeText>{requestNotice}</KnowledgeText> : null}
+    {basketEditor && requestSession ? <CreateBasketRequestPanel session={requestSession} {...(base ? { vendorId: base.id } : {})} activeBasketNames={(baskets.data ?? []).filter(basket => basket.status === "active").map(basket => basket.name)} {...(basketEditor === "sub" && subCreationParent ? { parent: subCreationParent } : {})} onClose={() => setBasketEditor(null)} onSaved={proposal => { setBasketEditor(null); setRequestNotice(proposal.status === "pending" ? "Request sent to Super Admin. Follow its status in My Requests." : "Draft saved. Continue it from My Requests."); }} /> : null}
   </KnowledgeModal>;
 }

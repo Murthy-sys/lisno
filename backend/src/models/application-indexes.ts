@@ -1,3 +1,7 @@
+import { ProjectClientInvitationModel, ProjectInitiationReceiptModel } from "./ProjectClientInvitation.js";
+import { EstimateRequirementModel } from "./EstimateRequirement.js";
+import { EstimatePreparationSnapshotModel } from "./EstimatePreparationSnapshot.js";
+import { ProjectFinanceBaselineRevisionModel } from "./ProjectFinanceBaselineRevision.js";
 import { VendorBasketRequestNotificationModel } from "./VendorBasketRequestNotification.js";
 import { VendorBasketProposalModel } from "./VendorBasketProposal.js";
 import { VendorBasketProposalResourceModel } from "./VendorBasketProposalResource.js";
@@ -14,7 +18,7 @@ import { ExecutionChangeEventModel } from "./ExecutionChangeEvent.js";
 import { ProcurementVendorCertificateUploadModel, ProcurementVendorCertificateCleanupModel } from "./ProcurementVendorCertificateUpload.js";
 import { ProcurementVendorSaveCommandModel } from "./ProcurementVendorSaveCommand.js";
 import { ProcurementVendorCityModel } from "./ProcurementVendorCity.js";
-import { ProcurementBasketEnquiryModel, ProcurementBasketBoqRevisionModel, ProcurementBasketInvitationModel,
+import { ProcurementBasketSourceReconciliationModel, ProcurementBasketEnquiryModel, ProcurementBasketBoqRevisionModel, ProcurementBasketInvitationModel,
   ProcurementBasketWhatsAppAccessModel,
   ProcurementBasketBidModel, ProcurementBasketCounterofferModel, ProcurementBasketInvitationBatchModel, ProcurementBasketAwardModel,
   ProcurementBasketAwardRevisionModel, ProcurementBasketAwardApprovalModel } from "./ProcurementBasketTender.js";
@@ -59,6 +63,7 @@ import { VendorKpiRequestModel } from "./VendorKpiRequest.js";
 import { VendorInductionDraftModel, VendorInductionQuestionnaireModel, VendorInductionRequestModel, VendorInductionSubmissionModel, VendorInductionReviewModel } from "./VendorInduction.js";
 
 export async function initializeApplicationIndexes(): Promise<void> {
+  await ProcurementBasketSourceReconciliationModel.init();
   await ProjectProcurementItemModel.init();
   await ChatNotificationModel.init();
   await ProjectChatAttachmentModel.init();
@@ -66,6 +71,10 @@ export async function initializeApplicationIndexes(): Promise<void> {
   for (const model of projectAssistantModels) await model.init();
   await UserModel.init();
   await UserInvitationModel.init();
+  await ProjectClientInvitationModel.init();
+  await ProjectInitiationReceiptModel.init();
+  await EstimateRequirementModel.init();
+  await EstimatePreparationSnapshotModel.init();
   await VendorAccessIntentModel.init();
   await ProcurementVendorInvitationIntentModel.init();
   await VendorExecutionStateModel.init();
@@ -82,6 +91,7 @@ export async function initializeApplicationIndexes(): Promise<void> {
   await DailyCriticalTaskReceiptModel.init();
   await DailyCriticalScheduleStateModel.init();
   await ProjectFinanceBucketModel.init();
+  await ProjectFinanceBaselineRevisionModel.init();
   await FinanceLedgerEntryModel.init();
   await FinanceEntryDocumentModel.init();
   await ProcurementReceiptCleanupJobModel.init();

@@ -1,3 +1,5 @@
+import type { WorkOrderIssueReadiness } from "../../api/types";
+import { BasketSourceReconciliation } from "./BasketSourceReconciliation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useId, useRef, useState } from "react";
 import { Link } from "react-router-dom";
@@ -441,8 +443,8 @@ function unreadyBasketReason(basket: ProcurementBasketDetail): string {
   return `${name(lines[0]!)}: Review the current Configuration revision and unit before sending bid invitations.`;
 }
 
-export function ProcurementBasketEnquiry({ projectId, projectName, basket, frozen }: {
-  projectId: string; projectName: string; basket: ProcurementBasketDetail; frozen: boolean;
+export function ProcurementBasketEnquiry({ projectId, projectName, basket, frozen, issueReadiness }: {
+  projectId: string; projectName: string; basket: ProcurementBasketDetail; frozen: boolean; issueReadiness?: WorkOrderIssueReadiness;
 }) {
   const queryClient = useQueryClient();
   const stageId = useId();
@@ -453,7 +455,8 @@ export function ProcurementBasketEnquiry({ projectId, projectName, basket, froze
   const earlierEnquiries = enquiries.data?.filter((item) => item.id !== enquiry?.id) ?? [];
   const [revisionRequested, setRevisionRequested] = useState(false);
   const sourceChanged = Boolean(preparation.data && (preparation.data.estimateSource.estimateId !== basket.estimateSource.estimateId || preparation.data.estimateSource.estimateVersion !== basket.estimateSource.estimateVersion));
-  const staleSentBoq = enquiry?.status === "sent" && enquiry.preparationDigest !== basket.preparationDigest;
+  const reconciledSource = Boolean(enquiry?.sourceReconciliation && enquiry.sourceReconciliation.preparationSource.sourceSnapshotId === basket.preparationSource?.sourceSnapshotId && enquiry.vendorScopeCurrent === true);
+  const staleSentBoq = enquiry?.status === "sent" && enquiry.preparationDigest !== basket.preparationDigest && !reconciledSource;
   const paused = frozen || preparation.isFetching || preparation.isError || sourceChanged || enquiries.isFetching;
   const stage = staleSentBoq ? 0 : enquiry?.status === "issued" ? 3 : enquiry?.status === "award_pending" || enquiry?.status === "sent" && enquiry.bidCount > 0 ? 2 : enquiry?.status === "sent" ? 1 : 0;
   const hasDelivery = Boolean(enquiry?.invitations.length);
@@ -491,6 +494,7 @@ export function ProcurementBasketEnquiry({ projectId, projectName, basket, froze
       <nav className="procurement-basket__stages" aria-label="Vendor enquiry progress"><ol>{["Enquiry", "Bids", "Comparison", "Awarded"].map((label, index) => <li key={label} data-state={index === stage ? "current" : index < stage ? "complete" : "upcoming"}><button type="button" aria-current={index === stage ? "step" : undefined} disabled={!stageAvailable[index]} onClick={() => goToStage(index)}><span aria-hidden="true">{index + 1}</span><strong>{label}</strong></button></li>)}</ol></nav>
       {sourceChanged ? <p role="alert" className="procurement-basket__error">The approved estimate changed. Refresh the basket before editing this enquiry. <button type="button" onClick={() => void refresh()}>Refresh basket</button></p> : null}
       {preparation.isError ? <p role="alert" className="procurement-basket__error">{procurementError(preparation.error, "The approved estimate could not be checked.")} <button type="button" onClick={() => void preparation.refetch()}>Retry estimate check</button></p> : preparation.isPending ? <p role="status" className="procurement-basket__directory-status">Checking the current approved estimate…</p> : null}
+      {enquiry ? <BasketSourceReconciliation enquiry={enquiry} target={basket.preparationSource} disabled={paused} /> : null}
       <div id={stageTargets[0]} className="procurement-basket__stage-content" tabIndex={-1}>
         {enquiry?.boqRevisionId && (enquiry.status === "sent" || enquiry.status === "draft") ? <details className="procurement-basket__revision"><summary>{enquiry.status === "draft" ? "Revise saved BOQ" : "Revise sent BOQ"}</summary><section className="procurement-basket__notice procurement-basket__section-head" aria-label="Sent BOQ revision"><p>{enquiry.status === "draft"
           ? "The saved BOQ has undelivered invitations. Retry them below, or revise and resend the BOQ."
@@ -504,7 +508,7 @@ export function ProcurementBasketEnquiry({ projectId, projectName, basket, froze
       {enquiry && hasDelivery ? <div id={stageTargets[1]} className="procurement-basket__stage-content" tabIndex={-1}><details className="procurement-basket__delivery"><summary>Invitation status and WhatsApp</summary><BasketInvitationDelivery projectId={projectId} basketId={basket.id} enquiry={enquiry} frozen={paused || enquiry.vendorScopeCurrent === false} readinessReason={readinessReason} afterResend={refresh} /></details></div> : null}
       {enquiry && hasComparison ? <div id={stageTargets[2]} className="procurement-basket__stage-content" tabIndex={-1}>
         {staleSentBoq ? <p role="status" className="procurement-basket__notice">These responses belong to the previous frozen BOQ. Revise and resend before awarding.</p> : null}
-        <ProcurementBasketComparison projectId={projectId} basketId={basket.id} enquiry={enquiry} frozen={paused || staleSentBoq} invitationBlocker={readinessReason} afterChange={refresh} />
+        <ProcurementBasketComparison projectId={projectId} basketId={basket.id} enquiry={enquiry} frozen={paused || staleSentBoq} collaborative={Boolean(basket.preparationSource)} issueReadiness={issueReadiness} invitationBlocker={readinessReason} afterChange={refresh} />
       </div> : null}
       </div>
       {enquiry?.status === "issued" ? <div id={stageTargets[3]} className="procurement-basket__stage-content procurement-basket__issued-stage" tabIndex={-1}><ProcurementBasketMonitor projectId={projectId} basketId={basket.id} enquiry={enquiry} /></div> : null}

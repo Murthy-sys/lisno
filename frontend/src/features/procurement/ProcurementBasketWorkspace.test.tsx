@@ -996,6 +996,20 @@ describe("Procurement basket workspace", () => {
     expect(results).toHaveTextContent("Email sent");
   });
 
+  it("uses explicit final-source reconciliation to retain unchanged vendor bids despite the original digest", async () => {
+    const finalSource = { workflowVersion: 2 as const, phase: "post" as const, kind: "approved_final" as const,
+      ...source, sourceSnapshotId: "final-snapshot", sourceDigest: "final-digest" };
+    install({ ...draftEnquiry, status: "sent", boqRevisionId: "revision-one", boqRevision: 1, boqDigest: digest,
+      preparationDigest: "original-digest", vendorScopeCurrent: true, bidCount: 1,
+      sourceReconciliation: { id: "reconciliation-one", preparationSource: finalSource, unchangedLineKeys: ["room-one:paint-one"] } });
+    server.use(http.get("/api/v1/procurement/projects/project-one/baskets/basket-painting", () => HttpResponse.json({ data: { ...detail, preparationSource: finalSource } })));
+    const user = userEvent.setup(); renderWorkspace();
+    await user.click((await screen.findAllByRole("button", { name: /Open Painting in /i }))[0]!);
+    expect(await screen.findByText("Enquiry reconciled with the final estimate")).toBeVisible();
+    expect(screen.queryByText(/These responses belong to the previous frozen BOQ/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Reconcile enquiry with final estimate" })).not.toBeInTheDocument();
+  });
+
   it("pauses a stale BOQ send until the current revision is loaded", async () => {
     const { dispatches, setEnquiry } = install(draftEnquiry);
     let client!: QueryClient;

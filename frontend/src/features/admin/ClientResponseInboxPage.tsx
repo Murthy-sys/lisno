@@ -46,6 +46,7 @@ const statusPresentation: Record<
   EstimateClientResponseTaskListItem["status"],
   { label: string; tone: StatusTone }
 > = {
+  superseded: { label: "Withdrawn", tone: "neutral" },
   pending: { label: "Pending", tone: "warning" },
   approved: { label: "Approved", tone: "success" },
   changes_requested: { label: "Changes requested", tone: "danger" }

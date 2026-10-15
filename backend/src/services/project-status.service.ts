@@ -14,6 +14,10 @@ import type { Clock } from "./workflow.js";
 import { projectStatusWorkflowEvidence } from "./design-workflow-state.service.js";
 import { readProjectCompletionSummary } from "./project-completion.service.js";
 import type { ClientSession } from "mongoose";
+import { isDeepStrictEqual } from "node:util";
+import { emptyDesignWorkflowState } from "../domain/design-workflow-state.js";
+import { ESTIMATION_STATUSES, isCollaborativeEstimate, type EstimationApprovalReference } from "../domain/estimation-lifecycle.js";
+import { hydrateDesignWorkflowState } from "./design-workflow-state.service.js";
 
 export interface ProjectStatusService {
   get(actor: ChatActor, projectId: string): Promise<ProjectStatusSummary>;
@@ -57,6 +61,51 @@ function commercialSource(sources: ChatSources, evidence: ProjectStatusEstimateE
   const latest = rounds[0];
   const row = evidence.estimates.find(item => item.id === estimate.id)!;
   const commercial: ProjectStatusInput["commercial"] = { state: "none", estimateId: estimate.id, estimateVersion: estimate.version };
+  if (sources.project.estimationWorkflowVersion === 2 || isCollaborativeEstimate(estimate)) {
+    const lifecycle = estimate.estimation;
+    if (sources.project.estimationWorkflowVersion !== 2 || !lifecycle || !isCollaborativeEstimate(estimate) ||
+        !isDeepStrictEqual(lifecycle, row.estimation) || estimate.projectId !== projectId ||
+        !ESTIMATION_STATUSES.includes(lifecycle.status) || !positiveInteger(lifecycle.designScopeRevision) ||
+        !Number.isSafeInteger(lifecycle.requirementsVersion) || lifecycle.requirementsVersion < 0 ||
+        lifecycle.phase !== (lifecycle.preApproval ? "post" : "pre")) return conflict(estimate);
+    const approvedRound = (reference: EstimationApprovalReference) => rounds.find(round =>
+      round.id === reference.reviewRoundId && round.projectId === projectId && round.estimateVersion === reference.estimateVersion &&
+      positiveInteger(reference.estimateVersion) && round.estimateVersion < estimate.version &&
+      round.status === "approved" && round.decision === "approve" && validDate(round.decidedAt) &&
+      round.decidedAt === reference.approvedAt && Boolean(round.decidedById) && (
+        round.decisionSource === "client_portal" && round.decidedById === sources.project.clientId ||
+        round.decisionSource === "admin_proof" && round.proofValid));
+    const pre = lifecycle.preApproval ? approvedRound(lifecycle.preApproval) : null;
+    const final = lifecycle.finalApproval ? approvedRound(lifecycle.finalApproval) : null;
+    if (lifecycle.preApproval && (!pre || pre.phase && pre.phase !== "pre") ||
+        lifecycle.finalApproval && (!pre || !final || final.id === pre.id || final.phase !== "post" ||
+          final.estimateVersion <= pre.estimateVersion || final.decidedAt !== row.clientDecisionAt ||
+          final.designReviewRoundId !== lifecycle.finalApproval.designReviewRoundId ||
+          final.designPlanVersion !== lifecycle.finalApproval.designPlanVersion || final.designPlanVersion !== estimate.designPlanVersion ||
+          final.designScopeRevision !== lifecycle.designScopeRevision || final.designScopeRevision !== lifecycle.approvedDesignScopeRevision ||
+          final.designScopeRevision !== lifecycle.finalApproval.designScopeRevision || final.requirementsVersion !== lifecycle.requirementsVersion ||
+          final.requirementsVersion !== lifecycle.finalApproval.requirementsVersion || estimate.designPlanStatus !== "approved" ||
+          lifecycle.editClosedAt !== lifecycle.finalApproval.approvedAt || lifecycle.status !== "client_approved") ||
+        !lifecycle.finalApproval && lifecycle.editClosedAt ||
+        rounds.some(round => round.status === "approved" && round.id !== pre?.id && round.id !== final?.id)) return conflict(estimate);
+    const pending = lifecycle.pendingReviewRoundId ? rounds.find(round => round.id === lifecycle.pendingReviewRoundId) : null;
+    if (lifecycle.status === "sent_to_client" ? !pending || pending.id !== latest?.id || pending.status !== "pending" ||
+        pending.phase !== lifecycle.phase || pending.estimateVersion !== estimate.version ||
+        pending.decision || pending.decidedAt || pending.decidedById || pending.decisionSource ||
+        pending.requirementsVersion !== lifecycle.requirementsVersion || lifecycle.phase === "post" && (
+          estimate.designPlanStatus !== "approved" || !positiveInteger(pending.designPlanVersion ?? 0) ||
+          pending.designPlanVersion !== estimate.designPlanVersion || !pending.designReviewRoundId ||
+          pending.designScopeRevision !== lifecycle.designScopeRevision || pending.designScopeRevision !== lifecycle.approvedDesignScopeRevision)
+        : Boolean(pending || lifecycle.pendingReviewRoundId)) return conflict(estimate);
+    if (pre ? estimate.status !== "client_approved" : estimate.status !== lifecycle.status || lifecycle.finalApproval || evidence.financeSource) return conflict(estimate);
+    if (!final && lifecycle.status === "client_approved") return conflict(estimate);
+    const reference = lifecycle.finalApproval ?? lifecycle.preApproval;
+    if (reference && evidence.financeSource && (evidence.financeSource.estimateId !== estimate.id ||
+      evidence.financeSource.estimateVersion !== reference.estimateVersion || evidence.financeSource.reviewRoundId !== reference.reviewRoundId)) return conflict(estimate);
+    commercial.state = final ? "approved" : pre ? "pre_approved" : pending ? "pending" : "none";
+    commercial.estimateVersion = reference?.estimateVersion ?? estimate.version;
+    return { estimate, commercial };
+  }
   if (estimate.status === "sent_to_client") {
     if (!latest || latest.status !== "pending" || latest.estimateVersion !== estimate.version || latest.decision || latest.decisionSource || latest.decidedById || latest.decidedAt || evidence.financeSource) return conflict(estimate);
     commercial.state = "pending";
@@ -107,16 +156,18 @@ export function createProjectStatusService(options: {
           workflow: null, design: null, tasks: sources.workflowTasks, serverNow: clock().toISOString(), issues: {},
           execution: { completion: null, hasApprovedOrder: execution.hasApprovedOrder,
             procurementOwnerIds: execution.procurementOwnerIds, pendingVendorUserIds: execution.pendingVendorUserIds,
-            hasCurrentProcurementItems: Boolean(selected.commercial.state === "approved" && execution.procurementSources?.some(source =>
+            hasCurrentProcurementItems: Boolean(["approved", "pre_approved"].includes(selected.commercial.state) && execution.procurementSources?.some(source =>
               source.estimateId === selected.commercial.estimateId && source.estimateVersion === selected.commercial.estimateVersion &&
               source.estimateReviewRoundId === estimateEvidence.financeSource?.reviewRoundId)) }
         };
-        if (selected.commercial.state === "approved") {
+        if (selected.commercial.state === "approved" || selected.commercial.state === "pre_approved") {
           input.workflow = await tx.app.findDesignWorkflowState(projectId);
-          if (input.workflow) Object.assign(input.issues!, projectStatusWorkflowEvidence(input.workflow, sources.project.designWorkflowStages ?? []));
           try {
+            if (isCollaborativeEstimate(selected.estimate ?? {})) input.workflow = await hydrateDesignWorkflowState(tx.app, projectId, input.workflow ?? emptyDesignWorkflowState(projectId));
+            if (input.workflow) Object.assign(input.issues!, projectStatusWorkflowEvidence(input.workflow, sources.project.designWorkflowStages ?? []));
             const rooms = await tx.app.findDesignWorkflowRoomContext(projectId, true);
-            if (!rooms || rooms.estimateId !== selected.estimate?.id || rooms.estimateVersion !== selected.commercial.estimateVersion) input.commercial.state = "conflict";
+            const scopeVersion = selected.estimate?.estimation?.workflowVersion === 2 ? selected.estimate.estimation.designScopeRevision : selected.commercial.estimateVersion;
+            if (!rooms || rooms.estimateId !== selected.estimate?.id || rooms.estimateVersion !== scopeVersion) input.commercial.state = "conflict";
             const furniture = input.workflow?.stages.existing_furniture_dimensions;
             if (furniture?.requirementsSubmissionEventId && rooms && !furniture.noExistingFurniture && (
               furniture.rooms?.length !== rooms.rooms.length || furniture.rooms?.some(room => !rooms.rooms.some(source => source.id === room.id))
@@ -125,17 +176,24 @@ export function createProjectStatusService(options: {
             if (!(error instanceof RepositoryConflictError)) throw error;
             input.commercial.state = "conflict";
           }
-          if (input.commercial.state === "approved") {
+          if (input.commercial.state === "approved" || input.commercial.state === "pre_approved") {
             try {
               input.design = await tx.app.findDesignWorkflowSpacePlanningSource(projectId);
               if (input.design && (input.design.estimateId !== selected.estimate?.id || input.design.designPlanVersion !== selected.estimate?.designPlanVersion ||
                 input.design.sourceIssue === "source_conflict")) input.issues!.design = true;
+              const pendingId = selected.estimate?.estimation?.phase === "post" ? selected.estimate.estimation.pendingReviewRoundId : null;
+              const pending = pendingId ? estimateEvidence.rounds.find(round => round.id === pendingId) : null;
+              if (pending && (!input.design?.readyForCompletion || pending.designReviewRoundId !== input.design.reviewRoundId)) input.commercial.state = "conflict";
             } catch (error) {
               if (!(error instanceof RepositoryConflictError)) throw error;
               input.issues!.design = true;
             }
           }
-          if (input.commercial.state === "approved" && sources.project.completionAuthority === "vendor_client" &&
+          const final = selected.estimate?.estimation?.finalApproval;
+          const executionReleased = !isCollaborativeEstimate(selected.estimate ?? {}) || Boolean(final && input.workflow?.initialPaymentAt &&
+            input.workflow.initialPaymentEstimateId === selected.estimate?.id && input.workflow.initialPaymentEstimateVersion === final.estimateVersion &&
+            input.workflow.initialPaymentReviewRoundId === final.reviewRoundId && input.workflow.initialPaymentDesignReviewRoundId === final.designReviewRoundId);
+          if (executionReleased && input.commercial.state === "approved" && sources.project.completionAuthority === "vendor_client" &&
               selected.estimate?.designPlanStatus === "approved" && input.design?.readyForCompletion) {
             try {
               input.execution!.completion = await completionSummary(projectId, tx.session);
@@ -160,6 +218,7 @@ export function createProjectStatusService(options: {
           if (!user.vendorId || !execution.people.some(person => person.id === actor.id && person.role === "vendor" && person.vendorId === user.vendorId) ||
             !execution.vendorMemberIds.includes(actor.id)) chatNotFound();
         } else if (!membership.participants.some(person => person.id === actor.id) &&
+            !(actor.role === "program_manager" && sources.project.programManagerId === user.id) &&
             !execution.people.some(person => person.id === actor.id && person.role === "procurement" && actor.role === "procurement")) {
           chatNotFound();
         }

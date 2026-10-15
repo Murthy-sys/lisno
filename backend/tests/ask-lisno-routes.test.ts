@@ -7,6 +7,8 @@ import { errorHandler } from "../src/middleware/errors.js";
 import { createAskLisnoRouter } from "../src/routes/ask-lisno.js";
 import { createAskLisnoService } from "../src/services/ask-lisno.service.js";
 import { createAuthService } from "../src/services/auth.service.js";
+import type { AssistantProvider } from "../src/services/project-assistant-provider.js";
+import { createPythonAssistantProvider } from "../src/services/project-assistant-python.js";
 import { createChatFixture } from "./helpers/project-chat.js";
 
 const secret = "synthetic-private-assistant-http-tests-secret-long";
@@ -14,7 +16,7 @@ const path = "/api/v1/client/ask-lisno";
 const question = { projectId: "a", message: "When will my project finish?", history: [] };
 const fact = { id: "project-status", label: "Status", value: "Active", source: { id: "a", label: "Project a", href: "/client/projects/a" } };
 
-async function fixture(enabled = true) {
+async function fixture(enabled = true, provider?: AssistantProvider) {
   const f = createChatFixture();
   await f.repository.createUser({ id: "vendor-a", name: "Synthetic Vendor", email: "vendor-a@chat.test", passwordHash: "unused", role: "vendor", vendorId: "vendor-record-a" });
   const sources: AssistantReadSources = {
@@ -25,8 +27,8 @@ async function fixture(enabled = true) {
     preview: async () => { throw new Error("unused"); },
     revalidate: async () => true
   };
-  const generate = vi.fn(async (): Promise<AssistantGeneratedResult> => ({ kind: "status", facts: [fact], candidates: [], missingInputs: [], commercial: null, freshness: [] }));
-  const service = createAskLisnoService({ chatRepository: f.chatRepository, clock: f.clock, enabled, provider: { generate }, readSources: () => sources });
+  const generate = vi.fn(async (): Promise<AssistantGeneratedResult> => ({ disclosurePolicy: "project-publication-v1", projectPricing: null, kind: "status", facts: [fact], candidates: [], missingInputs: [], commercial: null, freshness: [] }));
+  const service = createAskLisnoService({ chatRepository: f.chatRepository, clock: f.clock, enabled, provider: provider ?? { generate }, readSources: () => sources });
   const auth = createAuthService(f.repository, { jwtSecret: secret, jwtExpiresInSeconds: 3600 }, { clock: f.clock });
   const app = express();
   app.use(express.json());
@@ -37,6 +39,37 @@ async function fixture(enabled = true) {
 }
 
 describe("Ask Lisno private HTTP boundary", () => {
+  it("answers greetings and owned project lists without configured Python service", async () => {
+    const f = await fixture(true, createPythonAssistantProvider());
+    const hello = await request(f.app).post(path).auth(f.token("client-a"), {type: "bearer"}).send({projectId: null, message: "Hi", history: []});
+    expect(hello.status).toBe(200);
+    expect(hello.headers["cache-control"]).toBe("no-store");
+    expect(hello.body.data.answer.narrative[0].text).toContain("Hello, Client!");
+    expect(hello.body.data.answer.projectPricing).toBeNull();
+    const projects = await request(f.app).post(path).auth(f.token("client-a"), {type: "bearer"}).send({projectId: null, message: "Show my projects", history: []});
+    expect(projects.status).toBe(200);
+    expect(projects.body.data.projectList.items.map((item: {id: string}) => item.id)).toEqual(["a"]);
+    expect((await f.service.messages(f.actor("client-a"), "a", {})).items).toEqual([]);
+  });
+
+  it("keeps direct replies behind session, project ownership and explicit enablement checks", async () => {
+    const f = await fixture(true, createPythonAssistantProvider());
+    const body = {projectId: null, message: "Hi", history: []};
+    expect((await request(f.app).post(path).send(body)).status).toBe(401);
+    expect((await request(f.app).post(path).auth(f.token("client-a", 2), {type: "bearer"}).send(body)).status).toBe(401);
+    expect((await request(f.app).post(path).auth(f.token("client-b"), {type: "bearer"}).send({...body, projectId: "a"})).status).toBe(404);
+    const disabled = await fixture(false, createPythonAssistantProvider());
+    expect((await request(disabled.app).post(path).auth(disabled.token("client-a"), {type: "bearer"}).send(body)).status).toBe(503);
+  });
+
+  it("keeps a mixed greeting and business request unavailable until Python is configured", async () => {
+    const f = await fixture(true, createPythonAssistantProvider());
+    const response = await request(f.app).post(path).auth(f.token("client-a"), {type: "bearer"}).send({message: "Hi, what is my project status?", projectId: "a", history: []});
+    expect(response.status).toBe(503);
+    expect(response.body.error.code).toBe("ASSISTANT_UNAVAILABLE");
+    expect((await f.service.messages(f.actor("client-a"), "a", {})).items).toEqual([]);
+  });
+
   it("requires authentication and a current Client session", async () => {
     const f = await fixture();
     expect((await request(f.app).post(path).send(question)).status).toBe(401);

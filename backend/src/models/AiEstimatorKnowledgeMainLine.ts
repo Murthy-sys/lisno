@@ -11,6 +11,7 @@ const mainLineSchema = new Schema(
     _id: { type: String, required: true, immutable: true },
     basketId: { type: String, ref: "AiEstimatorKnowledgeBasket", required: true, immutable: true },
     itemType: { type: String, enum: ["main_line", "temporary"], default: "main_line", immutable: true },
+    estimationVisibility: { type: String, enum: ["internal", "external"], default: "internal", required: true },
     subBasketId: { type: String, ref: "AiEstimatorKnowledgeSubBasket", default: null, immutable: true },
     name: { type: String, required: true, minlength: 1, maxlength: AI_ESTIMATOR_KNOWLEDGE_MAX_SHORT_TEXT },
     nameNormalized: { type: String, required: true, maxlength: AI_ESTIMATOR_KNOWLEDGE_MAX_SHORT_TEXT },

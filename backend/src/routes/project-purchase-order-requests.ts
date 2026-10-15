@@ -1,3 +1,4 @@
+import { purchaseOrderIssueSchema, purchaseOrderReconcileSchema } from "../domain/project-purchase-order.js";
 import { Router } from "express";
 import { purchaseOrderRequestDecisionSchema, purchaseOrderRequestQuerySchema, purchaseOrderRequestQuoteSchema, purchaseOrderRequestSubmitSchema } from "../domain/project-purchase-order-request.js";
 import { authenticate } from "../middleware/auth.js";
@@ -33,5 +34,11 @@ export function createProjectPurchaseOrderRequestRouter(auth: AuthService, servi
     requireOperation("POST /admin/purchase-order-requests/:requestId/decision"), validateBody(purchaseOrderRequestDecisionSchema), async (request, response, next) => {
       try { response.json({ data: await service.decide(request.authenticatedUser!, String(request.params.requestId), request.body) }); } catch (error) { next(error); }
     });
+  router.post("/procurement/projects/:projectId/purchase-order-requests/:requestId/issue", protectedRoute, requireOperation("POST /procurement/projects/:projectId/purchase-order-requests/:requestId/issue"), validateBody(purchaseOrderIssueSchema), async (request, response, next) => {
+    try { response.json({ data: await service.issue(request.authenticatedUser!, String(request.params.projectId), String(request.params.requestId), request.body) }); } catch (error) { next(error); }
+  });
+  router.post("/procurement/projects/:projectId/purchase-order-requests/:requestId/reconcile", protectedRoute, requireOperation("POST /procurement/projects/:projectId/purchase-order-requests/:requestId/reconcile"), validateBody(purchaseOrderReconcileSchema), async (request, response, next) => {
+    try { response.json({ data: await service.reconcile(request.authenticatedUser!, String(request.params.projectId), String(request.params.requestId), request.body) }); } catch (error) { next(error); }
+  });
   return router;
 }

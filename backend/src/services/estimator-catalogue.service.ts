@@ -1,3 +1,4 @@
+import { normalizeDesignRules, validateDesignRules, designRulesDigest, designRuleEstimateNotes, type DesignRules } from "../domain/main-line-design-rules.js";
 import type mongoose from "mongoose";
 
 import { estimateModeBaseRatesPaise, type EstimateModeBaseRatesPaise } from "../domain/estimate-mode-pricing.js";
@@ -22,6 +23,9 @@ export interface EstimatorCatalogueLine {
   itemType: "main_line" | "temporary";
   name: string;
   displayOrder: number;
+  designRules: DesignRules;
+  designRulesDigest: string;
+  estimateNotes: string[];
   revisionId: string;
   itemStatus: "draft" | "active" | "inactive";
   revisionStatus: "draft" | "active";
@@ -291,7 +295,7 @@ export async function readEstimatorCatalogueRecommendations(
 }
 
 async function assertCatalogueReadActor(actor: PublicUser): Promise<void> {
-  if (actor.role !== "estimator_sales" && actor.role !== "super_admin") {
+  if (actor.role !== "estimator_sales" && actor.role !== "designer" && actor.role !== "super_admin") {
     throw new ApiError(403, "FORBIDDEN", "You are not authorized to read the estimator catalogue.");
   }
   const activeActor = await UserModel.exists({ _id: actor.id, role: actor.role, active: true });
@@ -398,6 +402,54 @@ export async function resolveEstimatorCatalogueLines(
   return resolved;
 }
 
+export interface CurrentMainLineDesignRules {
+  mainLineId: string;
+  name: string;
+  itemVersion: number;
+  revisionId: string;
+  revisionVersion: number;
+  designRules: DesignRules;
+  designRulesDigest: string;
+}
+
+/** Workflow obligations resolve independently of pricing/UOM readiness. */
+export async function resolveCurrentMainLineDesignRules(
+  mainLineIds: readonly string[], session?: mongoose.ClientSession
+): Promise<Map<string, CurrentMainLineDesignRules>> {
+  const result = new Map<string, CurrentMainLineDesignRules>();
+  if (!mainLineIds.length) return result;
+  const lineQuery = AiEstimatorKnowledgeMainLineModel.find({ _id: { $in: [...new Set(mainLineIds)] } })
+    .select({ _id: 1, name: 1, status: 1, version: 1, activeRevisionId: 1, draftRevisionId: 1 });
+  if (session) lineQuery.session(session);
+  const lines = await lineQuery.lean().exec();
+  const revisionIds = lines.flatMap((line) => { const source = selectCurrentMainLineRevision(line); return source ? [source.id] : []; });
+  const revisionQuery = AiEstimatorKnowledgeRevisionModel.find({ _id: { $in: revisionIds } })
+    .select({ _id: 1, mainLineId: 1, version: 1, status: 1 });
+  const sectionQuery = AiEstimatorKnowledgeSectionModel.find({ revisionId: { $in: revisionIds }, sectionKey: "design" })
+    .select({ revisionId: 1, mainLineId: 1, payload: 1 });
+  if (session) { revisionQuery.session(session); sectionQuery.session(session); }
+  const revisions = await revisionQuery.lean().exec();
+  const sections = await sectionQuery.lean().exec();
+  const revisionById = new Map(revisions.map((row) => [String(row._id), row]));
+  const sectionByRevisionId = new Map(sections.map((row) => [String(row.revisionId), row]));
+  for (const line of lines) {
+    const id = String(line._id);
+    const source = selectCurrentMainLineRevision(line);
+    const revision = source ? revisionById.get(source.id) : undefined;
+    const design = source ? sectionByRevisionId.get(source.id) : undefined;
+    if (!source || !revision || String(revision.mainLineId) !== id || revision.status !== source.status ||
+      !Number.isSafeInteger(revision.version) || revision.version < 1 ||
+      !Number.isSafeInteger(line.version) || line.version < 1 ||
+      design && (String(design.mainLineId) !== id || validateDesignRules(design.payload).length)) {
+      throw new ApiError(409, "ESTIMATE_DESIGN_RULES_UNAVAILABLE", "Current Main Line Design rules need correction before continuing.");
+    }
+    const rules = normalizeDesignRules(design?.payload);
+    result.set(id, { mainLineId: id, name: String(line.name), itemVersion: Number(line.version),
+      revisionId: source.id, revisionVersion: Number(revision.version), designRules: rules, designRulesDigest: designRulesDigest(rules) });
+  }
+  return result;
+}
+
 async function projectLines(
   rawLines: readonly {
     _id: unknown; basketId: unknown; subBasketId?: unknown; name: unknown;
@@ -427,11 +479,15 @@ async function projectLines(
     "payload.modeCalculations.in_house_labor": 1,
     "payload.modeCalculations.in_house_material": 1,
     "payload.modeCalculations.in_house.baseRatePaise": 1 });
-  if (session) { revisionQuery.session(session); overviewQuery.session(session); advancedQuery.session(session); }
+  const designQuery = AiEstimatorKnowledgeSectionModel.find({ revisionId: { $in: revisionIds }, sectionKey: "design" })
+    .select({ revisionId: 1, mainLineId: 1, payload: 1 });
+  if (session) { revisionQuery.session(session); overviewQuery.session(session); advancedQuery.session(session); designQuery.session(session); }
   // Keep reads sequential when this resolver runs inside an estimate-save transaction.
   const revisions = await revisionQuery.lean().exec();
   const overviews = await overviewQuery.lean().exec();
   const advancedSections = await advancedQuery.lean().exec();
+  const designSections = await designQuery.lean().exec();
+  const designByRevision = new Map(designSections.map((section) => [String(section.revisionId), section]));
   const revisionById = new Map(revisions.map((revision) => [String(revision._id), revision]));
   const uomIdByRevision = new Map<string, string>();
   const modeBasesByRevision = new Map<string, EstimateModeBaseRatesPaise>();
@@ -469,7 +525,12 @@ async function projectLines(
       typeof uom.code !== "string" || !uom.code ||
       typeof uom.name !== "string" || !uom.name ||
       !Number.isSafeInteger(uom.decimalScale) || Number(uom.decimalScale) < 0 || Number(uom.decimalScale) > 3) continue;
+    const design = designByRevision.get(revisionId);
+    // Malformed current rules must fail closed, never silently remove obligations.
+    if (design && (String(design.mainLineId) !== id || validateDesignRules(design.payload).length > 0)) continue;
+    const designRules = normalizeDesignRules(design?.payload);
     projected.set(id, {
+      designRules, designRulesDigest: designRulesDigest(designRules), estimateNotes: designRuleEstimateNotes(designRules),
       id, mainLineId: id, basketId: String(raw.basketId),
       subBasketId: raw.subBasketId ? String(raw.subBasketId) : null,
       itemType: raw.itemType === "temporary" ? "temporary" : "main_line",

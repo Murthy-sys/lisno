@@ -1,3 +1,7 @@
+import * as designRequirements from "../src/services/design-requirements.service.js";
+import { ProjectPurchaseOrderModeDecisionModel } from "../src/models/ProjectPurchaseOrderModeDecision.js";
+import { ProcurementBasketBaseRateModel } from "../src/models/ProcurementBasketBaseRate.js";
+import { procurementItemSourceSnapshot } from "../src/services/procurement.service.js";
 import mongoose from "mongoose";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProcurementBasketDetailDto } from "../src/domain/procurement-basket-projection.js";
@@ -13,7 +17,7 @@ import { ProcurementBasketAwardApprovalModel, ProcurementBasketAwardModel, Procu
   ProcurementBasketBidModel, ProcurementBasketBoqRevisionModel, ProcurementBasketCounterofferModel,
   ProcurementBasketEnquiryModel, ProcurementBasketInvitationModel,
   ProcurementBasketInvitationBatchModel,
-  ProcurementBasketWhatsAppAccessModel } from "../src/models/ProcurementBasketTender.js";
+  ProcurementBasketWhatsAppAccessModel, ProcurementBasketSourceReconciliationModel } from "../src/models/ProcurementBasketTender.js";
 import { EstimateModel } from "../src/models/Estimate.js";
 import { ProjectModel } from "../src/models/Project.js";
 import { ProjectWorkflowTaskModel } from "../src/models/ProjectWorkflowTask.js";
@@ -109,16 +113,20 @@ beforeAll(async () => {
   replica = await startMongoReplicaSet("procurement-basket-tender-tests");
   await Promise.all([ProjectModel, UserModel, AiEstimatorKnowledgeBasketModel, AiEstimatorKnowledgeSubBasketModel,
     AiEstimatorKnowledgeUomModel, AiEstimatorKnowledgeMainLineModel, AiEstimatorKnowledgeVendorModel, VendorKpiAssessmentModel,
-    ProjectWorkflowTaskModel,
+    ProjectWorkflowTaskModel, ProjectPurchaseOrderModeDecisionModel, ProcurementBasketBaseRateModel,
     ProcurementBasketEnquiryModel, ProcurementBasketBoqRevisionModel, ProcurementBasketInvitationModel,
-    ProcurementBasketWhatsAppAccessModel,
+    ProcurementBasketWhatsAppAccessModel, ProcurementBasketSourceReconciliationModel,
     ProcurementBasketBidModel, ProcurementBasketCounterofferModel, ProcurementBasketInvitationBatchModel, ProcurementBasketAwardModel,
     ProcurementBasketAwardRevisionModel, ProcurementBasketAwardApprovalModel].map(model => model.syncIndexes()));
 }, 120_000);
 beforeEach(async () => {
   await replica.clear(); sent.length = 0; mailer.sendRequest.mockClear();
+  delete basket.preparationSource; delete prep.preparationSource;
+  basket.estimateSource = { estimateId: "estimate-a", estimateVersion: 1, estimateReviewRoundId: "round-a" };
+  prep.estimateSource = basket.estimateSource;
   basket.preparationDigest = digest;
   basket.lines = [firstLine];
+  delete firstLine.specification;
   firstLine.mainLineName = "Two coats of interior paint";
   basket.includedLineCount = 1;
   basket.classification = "special";
@@ -214,6 +222,88 @@ async function assignedAwardDraft() {
 }
 
 describe("procurement basket tender transaction flow", () => {
+  it("permits vendor preparation and assigned approvals in a planning collaboration project", async () => {
+    await ProjectModel.updateOne({ _id: "project-a" }, { $set: { status: "planning", estimationWorkflowVersion: 2 } });
+    const { enquiry, award } = await assignedAwardDraft();
+    const submitted = await awards.submit(buyer, "project-a", "basket-a", enquiry.id, award.id,
+      { expectedVersion: award.version, idempotencyKey: "planning-project-submit" });
+    expect(submitted.status).toBe("pending_approvals");
+    expect(await ProcurementBasketBoqRevisionModel.countDocuments()).toBe(1);
+  });
+
+  it("explicitly reconciles an unchanged frozen BOQ while retaining bids and requiring a new proposal", async () => {
+    const { enquiry, award } = await assignedAwardDraft();
+    const originalBoq = await ProcurementBasketBoqRevisionModel.findById(enquiry.boqRevisionId).lean();
+    const originalBids = await ProcurementBasketBidModel.find({ enquiryId: enquiry.id }).lean();
+    const originalProposal = await ProcurementBasketAwardRevisionModel.findById(award.proposalRevisionId).lean();
+    await ProjectPurchaseOrderModeDecisionModel.create({ _id: "prior-mode", projectId: "project-a", ...basket.estimateSource,
+      sourceLineItemKey: "line-a", mainLineId: "main-a", revisionId: "revision-a", revisionDigest: digest,
+      mode: "pmc", quantity: "10", discountBps: 0, markupBasis: "starting", version: 2, createdById: buyer.id, updatedById: buyer.id });
+    await ProcurementBasketBaseRateModel.create({ _id: "prior-base-rate", projectId: "project-a", ...basket.estimateSource,
+      mainBasketId: "basket-a", sourceLineItemKey: "line-a", overridePaise: 12345, version: 2, createdById: buyer.id, updatedById: buyer.id });
+    const originalMode = await ProjectPurchaseOrderModeDecisionModel.findById("prior-mode").lean();
+    const originalRate = await ProcurementBasketBaseRateModel.findById("prior-base-rate").lean();
+    useFinalPreparationSource();
+    await expect(awards.preview(buyer, "project-a", "basket-a", enquiry.id,
+      { bidId: award.bidId, advanceBasisPoints: 2000 })).rejects.toMatchObject({ code: "PROCUREMENT_BASKET_RECONCILIATION_REQUIRED" });
+    const current = await enquiries.get(buyer, "project-a", "basket-a", enquiry.id);
+    mockFinalSourceOnce();
+    const fields = { expectedVersion: current.version, expectedSourceSnapshotId: "final-source", reason: "Scope is unchanged after final approval",
+      idempotencyKey: "reconcile-final-001" };
+    const reconciled = await enquiries.reconcileSource(buyer, "project-a", "basket-a", enquiry.id, fields);
+    expect(reconciled).toMatchObject({ vendorScopeCurrent: true, sourceReconciliation: {
+      preparationSource: { kind: "approved_final", sourceSnapshotId: "final-source" }, unchangedLineKeys: ["line-a"] } });
+    expect(await enquiries.reconcileSource(buyer, "project-a", "basket-a", enquiry.id, fields)).toEqual(reconciled);
+    expect(await ProcurementBasketSourceReconciliationModel.countDocuments()).toBe(1);
+    expect(await ProjectPurchaseOrderModeDecisionModel.findById("prior-mode").lean()).toEqual(originalMode);
+    expect(await ProcurementBasketBaseRateModel.findById("prior-base-rate").lean()).toEqual(originalRate);
+    expect(await ProjectPurchaseOrderModeDecisionModel.findOne({ estimateVersion: 5 }).lean()).toMatchObject({
+      mode: "pmc", quantity: "10", sourceLineItemKey: "line-a", estimateReviewRoundId: "final-source", version: 1 });
+    expect(await ProcurementBasketBaseRateModel.findOne({ estimateVersion: 5 }).lean()).toMatchObject({
+      overridePaise: 12345, sourceLineItemKey: "line-a", estimateReviewRoundId: "final-source", version: 1 });
+    expect(await ProcurementBasketBoqRevisionModel.findById(enquiry.boqRevisionId).lean()).toEqual(originalBoq);
+    expect(await ProcurementBasketBidModel.find({ enquiryId: enquiry.id }).lean()).toEqual(originalBids);
+    expect(await ProcurementBasketAwardRevisionModel.findById(award.proposalRevisionId).lean()).toEqual(originalProposal);
+    const returned = await awards.get(buyer, "project-a", "basket-a", enquiry.id, award.id);
+    expect(returned).toMatchObject({ status: "draft", requiresRevision: true });
+    await expect(awards.submit(buyer, "project-a", "basket-a", enquiry.id, award.id,
+      { expectedVersion: returned.version, idempotencyKey: "old-proposal-submit" })).rejects.toMatchObject({ status: 409 });
+    const revised = await awards.update(buyer, "project-a", "basket-a", enquiry.id, award.id,
+      { expectedVersion: returned.version, idempotencyKey: "reconciled-proposal", bidId: award.bidId,
+        advanceBasisPoints: 2000, milestoneReviewers: fullReviewers, nonRecommendedReason: null });
+    expect(revised.proposalRevisionId).not.toBe(award.proposalRevisionId);
+    expect(revised.approvals).toEqual([]);
+    expect(await ProcurementBasketAwardRevisionModel.findById(revised.proposalRevisionId).lean()).toMatchObject({
+      preparationSource: { sourceSnapshotId: "final-source" }, sourceReconciliationId: reconciled.sourceReconciliation!.id });
+  });
+
+  it("serializes competing final reconciliations without duplicating source proof", async () => {
+    const enquiry = await sentEnquiry();
+    useFinalPreparationSource(); mockFinalSourceOnce(); mockFinalSourceOnce();
+    const fields = { expectedVersion: enquiry.version, expectedSourceSnapshotId: "final-source", reason: "Reviewed unchanged final scope" };
+    const results = await Promise.allSettled(["reconcile-race-one", "reconcile-race-two"].map(idempotencyKey =>
+      enquiries.reconcileSource(buyer, "project-a", "basket-a", enquiry.id, { ...fields, idempotencyKey })));
+    expect(results.filter(result => result.status === "fulfilled")).toHaveLength(1);
+    expect(results.filter(result => result.status === "rejected")).toHaveLength(1);
+    expect(await ProcurementBasketSourceReconciliationModel.countDocuments()).toBe(1);
+    expect(await ProcurementBasketBoqRevisionModel.countDocuments()).toBe(1);
+  });
+
+  it.each(["mainLineName", "specification"] as const)("rejects changed vendor-facing %s and rolls back reconciliation", async field => {
+    firstLine.specification = "Weather resistant coating";
+    const enquiry = await sentEnquiry();
+    const original = await ProcurementBasketBoqRevisionModel.findById(enquiry.boqRevisionId).lean();
+    useFinalPreparationSource();
+    firstLine[field] = "Changed final specification";
+    mockFinalSourceOnce();
+    await expect(enquiries.reconcileSource(buyer, "project-a", "basket-a", enquiry.id, {
+      expectedVersion: enquiry.version, expectedSourceSnapshotId: "final-source", reason: "Check changed scope",
+      idempotencyKey: "changed-final-scope" })).rejects.toMatchObject({ code: "PROCUREMENT_BASKET_SCOPE_RECONCILIATION_REQUIRED" });
+    expect(await ProcurementBasketSourceReconciliationModel.countDocuments()).toBe(0);
+    expect(await ProcurementBasketBoqRevisionModel.findById(enquiry.boqRevisionId).lean()).toEqual(original);
+    expect(await ProcurementBasketEnquiryModel.findById(enquiry.id).lean()).toMatchObject({ version: enquiry.version });
+  });
+
   it("routes only assigned Site Manager and Designer queues before the page limit and denies other-project decisions", async () => {
     const { enquiry, award } = await assignedAwardDraft();
     const submitted = await awards.submit(buyer, "project-a", "basket-a", enquiry.id, award.id,
@@ -1672,4 +1762,47 @@ describe("procurement basket tender transaction flow", () => {
     expect(await ProcurementBasketAwardApprovalModel.countDocuments({ awardId: award.id })).toBe(1);
     expect((await ProcurementBasketAwardModel.findById(award.id).lean())?.status).toBe("ready_to_issue");
   });
+});
+
+function useFinalPreparationSource() {
+  basket.estimateSource = { estimateId: "estimate-a", estimateVersion: 5, estimateReviewRoundId: "final-source" };
+  basket.preparationSource = { ...basket.estimateSource, workflowVersion: 2, phase: "post", kind: "approved_final",
+    sourceSnapshotId: "final-source", sourceDigest: "f".repeat(64) };
+  basket.preparationDigest = "c".repeat(64);
+  prep.estimateSource = basket.estimateSource; prep.preparationSource = basket.preparationSource;
+}
+function mockFinalSourceOnce() {
+  vi.mocked(procurementItemSourceSnapshot).mockResolvedValueOnce({ ...basket.estimateSource,
+    preparationSource: basket.preparationSource, lineItems: [{ key: "line-a", sectionId: "basket-a" }], allLineItems: [] } as any);
+}
+
+
+it("requires Designer checklist readiness even for small awards but permits enquiry and preview preparation", async () => {
+  const guard = vi.spyOn(designRequirements, "assertDesignRequirementsPoAllowed");
+  const deny = () => guard.mockRejectedValueOnce(new ApiError(409, "DESIGN_REQUIREMENTS_PO_BLOCKED", "Designer checklist is incomplete."));
+  try {
+    const enquiry = await sentEnquiry(["vendor-a"]);
+    const token = sent[0]!.rawToken;
+    const boq = await enquiries.inspectVendorBoq(token);
+    const bid = await enquiries.submitVendorBid({ token, idempotencyKey: "design-small-bid",
+      lines: [{ boqLineId: boq.lines[0]!.id, unitPricePaise: 1_000, gstBasisPoints: 0 }] });
+    const current = await enquiries.get(buyer, "project-a", "basket-a", enquiry.id);
+    const preview = await awards.preview(buyer, "project-a", "basket-a", enquiry.id,
+      { bidId: bid.bidId, advanceBasisPoints: 2_000 });
+    expect(preview.requiredSlots).toEqual(["procurement"]);
+    expect(guard).not.toHaveBeenCalled();
+    const input = { expectedVersion: current.version, idempotencyKey: "design-small-award", bidId: bid.bidId,
+      advanceBasisPoints: 2_000, milestoneReviewers: procurementReviewers };
+    deny();
+    await expect(awards.create(buyer, "project-a", "basket-a", enquiry.id, input))
+      .rejects.toMatchObject({ code: "DESIGN_REQUIREMENTS_PO_BLOCKED" });
+    expect(await ProcurementBasketAwardModel.countDocuments()).toBe(0);
+    expect(guard.mock.calls[0]?.slice(0, 2)).toEqual(["project-a", ["line-a"]]);
+    const award = await awards.create(buyer, "project-a", "basket-a", enquiry.id, input);
+    deny();
+    const submission = { expectedVersion: award.version, idempotencyKey: "design-small-submit" };
+    await expect(awards.submit(buyer, "project-a", "basket-a", enquiry.id, award.id, submission))
+      .rejects.toMatchObject({ code: "DESIGN_REQUIREMENTS_PO_BLOCKED" });
+    expect((await ProcurementBasketAwardModel.findById(award.id).lean())?.status).toBe("draft");
+  } finally { guard.mockRestore(); }
 });

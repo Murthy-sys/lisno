@@ -1,3 +1,5 @@
+import { router } from "expo-router";
+import { Button } from "../../ui/primitives";
 import { useEffect, useState, type ReactNode } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
@@ -5,10 +7,19 @@ import type { AuthenticatedSession } from "../../contracts/session";
 import { canPerformOperation } from "../../core/session/operationCapabilities";
 import { colors, fonts } from "../../ui/tokens";
 import { DesignVersionWorkspace } from "../design/DesignVersionWorkspace";
+import { ProjectDesignRequirementsPanel } from "../workflows/ProjectDesignRequirementsPanel";
+import { DesignPlanAssignment } from "../design-plans/DesignPlanAssignment";
+import { ProjectStatusControl } from "../tasks/ProjectStatusControl";
+import { ProjectActivityPanel } from "./ProjectActivityPanel";
+import { ProjectDeliveryPanel } from "../completion";
+import { ProjectAdministrationPanel } from "../admin/ProjectAdministrationPanel";
+import { ProjectFinanceWorkspace } from "../finance/FinanceWorkspace";
 import { WorkflowWorkspace } from "../workflows/WorkflowWorkspace";
 import { ClientProjectDesignPanel } from "./ClientProjectDesignPanel";
 import { ClientProjectDocuments } from "./ClientProjectDocuments";
 import { ClientProjectEstimatePanel } from "./ClientProjectEstimatePanel";
+import { ProcurementProjectWorkspace } from "../procurement/ProcurementProjectWorkspace";
+import { ProjectClientInvitationPanel } from "./ProjectClientInvitationPanel";
 import { ProjectDetailHeader } from "./ProjectDetailHeader";
 import { ProjectDetailSections, ProjectEstimatePanel, ProjectTeamPanel } from "./ProjectDetailOverview";
 import { ProjectSummaryCard, ProjectValueCard } from "./ProjectDetailSummary";
@@ -17,15 +28,19 @@ import { ProjectDetailGlyph, type ProjectDetailGlyphName } from "./projectDetail
 import type { ProjectDetailPresentation } from "./projectDetailModel";
 import { projectDetailTheme } from "./projectDetailTheme";
 
-export type ProjectTabKey = "information" | "estimation" | "designs" | "documents" | "team" | "tasks";
+export type ProjectTabKey = "information" | "estimation" | "designs" | "documents" | "team" | "tasks" | "procurement" | "execution" | "finance" | "activity";
 
 const TABS: readonly { readonly key: ProjectTabKey; readonly label: string; readonly glyph: ProjectDetailGlyphName }[] = [
   { key: "information", label: "Information", glyph: "document" },
   { key: "estimation", label: "Estimation", glyph: "calculator" },
   { key: "designs", label: "Designs", glyph: "image" },
   { key: "documents", label: "Documents", glyph: "file" },
+  { key: "procurement", label: "Procurement", glyph: "list" },
+  { key: "execution", label: "Execution", glyph: "list" },
+  { key: "finance", label: "Finance", glyph: "calculator" },
   { key: "team", label: "Team", glyph: "users" },
-  { key: "tasks", label: "Tasks", glyph: "list" }
+  { key: "tasks", label: "Tasks", glyph: "list" },
+  { key: "activity", label: "Activity", glyph: "list" }
 ];
 
 const DEFAULT_TAB: ProjectTabKey = "information";
@@ -53,11 +68,15 @@ export function visibleProjectTabs(detail: ProjectDetailPresentation, session: A
   const canReadClientPdf = canReadClientEstimates && canPerformOperation(session, "GET /client/estimates/:estimateId/pdf");
   const visible: Record<ProjectTabKey, boolean> = {
     information: true,
-    estimation: (detail.kind === "admin" && detail.estimate !== null) || (hasProject && canReadClientEstimates),
+    estimation: (detail.kind === "admin" && (detail.estimate !== null || Boolean(detail.leadId))) || (hasProject && canReadClientEstimates),
     designs: hasProject && (isClient ? canReadClientEstimateDesign || canReadClientSections || canReadWorkflow : canReadDesigns || canReadWorkflow),
     documents: hasProject && (canReadDesigns || canExportEstimate || canReadClientPdf),
-    team: detail.people.length > 0,
-    tasks: true
+    procurement: hasProject && (["GET /procurement/projects/:projectId/baskets", "GET /procurement/projects/:projectId/items", "GET /procurement/projects/:projectId/vendor-suggestions"] as const).some((operation) => canPerformOperation(session, operation)),
+    execution: hasProject && (["GET /projects/:projectId/execution", "GET /projects/:projectId/site-completion", "GET /clients/projects/:projectId/site-completion", "GET /admin/projects/:projectId/completion"] as const).some((operation) => canPerformOperation(session, operation)),
+    finance: hasProject && canPerformOperation(session, "GET /finance/projects/:projectId"),
+    team: detail.people.length > 0 || hasProject && (["GET /admin/projects/:projectId/procurement-identity", "GET /admin/projects/:projectId/workflow-tasks", "POST /admin/projects/:projectId/design-assignment"] as const).some(operation => canPerformOperation(session, operation)),
+    tasks: true,
+    activity: hasProject && canPerformOperation(session, "GET /projects/:projectId/activity")
   };
   return TABS.filter((tab) => visible[tab.key]).map((tab) => tab.key);
 }
@@ -86,12 +105,13 @@ function TabStrip({ tabs, selected, onSelect }: { readonly tabs: readonly Projec
  * Header, summary and value cards, then tabbed panels. A panel mounts on its first visit and stays
  * mounted while hidden, so in-progress task and design edits survive switching tabs.
  */
-export function ProjectDetailPage({ detail, session, onRefresh, tasksPanel, initialTab }: {
+export function ProjectDetailPage({ detail, session, onRefresh, tasksPanel, initialTab, designAssignment }: {
   readonly detail: ProjectDetailPresentation;
   readonly session: AuthenticatedSession;
   readonly onRefresh: () => void;
   readonly tasksPanel: ReactNode;
   readonly initialTab?: string | undefined;
+  readonly designAssignment?: { estimateStatus: string | null; designPlanStatus: string | null; assignedDesignerId: string | null };
 }) {
   const tabs = visibleProjectTabs(detail, session);
   const requestedTab = TABS.find((tab) => tab.key === initialTab)?.key ?? DEFAULT_TAB;
@@ -120,21 +140,26 @@ export function ProjectDetailPage({ detail, session, onRefresh, tasksPanel, init
 
   const panel = (key: ProjectTabKey): ReactNode => {
     switch (key) {
-      case "information": return <ProjectDetailSections sections={detail.sections} />;
-      case "estimation": return detail.kind === "client" && detail.id ? <ClientProjectEstimatePanel projectId={detail.id} session={session} /> : detail.estimate ? <ProjectEstimatePanel estimate={detail.estimate} /> : null;
+      case "information": return <View style={styles.stack}><ProjectDetailSections sections={detail.sections} />{detail.id ? <><ProjectStatusControl projectId={detail.id} session={session} /><ProjectClientInvitationPanel projectId={detail.id} session={session} /></> : null}</View>;
+      case "estimation": return detail.kind === "client" && detail.id ? <ClientProjectEstimatePanel projectId={detail.id} session={session} /> : <View style={styles.stack}>{detail.estimate ? <ProjectEstimatePanel estimate={detail.estimate} /> : null}{detail.leadId && canPerformOperation(session, "GET /leads/:leadId/estimate") ? <Button label={detail.estimate ? "Continue estimate" : "Start estimate"} onPress={() => router.push({ pathname: "/staff-estimate/[leadId]", params: { leadId: detail.leadId!, from: "projects" } })} /> : null}</View>;
       case "designs": return detail.id ? (
         <View style={styles.stack}>
           {detail.kind === "client"
             ? <ClientProjectDesignPanel projectId={detail.id} session={session} />
             : <DesignVersionWorkspace projectId={detail.id} session={session} />}
           <WorkflowWorkspace projectId={detail.id} session={session} />
+          <ProjectDesignRequirementsPanel projectId={detail.id} session={session} />
         </View>
       ) : null;
       case "documents": return detail.id ? detail.kind === "client"
         ? <ClientProjectDocuments projectId={detail.id} session={session} />
         : <ProjectDocuments projectId={detail.id} estimate={estimateDocument(detail)} session={session} /> : null;
-      case "team": return <ProjectTeamPanel people={detail.people} />;
+      case "procurement": return detail.id ? <ProcurementProjectWorkspace projectId={detail.id} session={session} embedded /> : null;
+      case "execution": return detail.id ? <ProjectDeliveryPanel projectId={detail.id} session={session} /> : null;
+      case "finance": return detail.id ? <ProjectFinanceWorkspace projectId={detail.id} session={session} /> : null;
+      case "team": return <View style={styles.stack}><ProjectTeamPanel people={detail.people} />{detail.id && detail.kind !== "client" ? <><ProjectAdministrationPanel projectId={detail.id} session={session} /><DesignPlanAssignment projectId={detail.id} session={session} {...designAssignment} onChanged={onRefresh} /></> : null}</View>;
       case "tasks": return tasksPanel;
+      case "activity": return detail.id ? <ProjectActivityPanel projectId={detail.id} session={session} /> : null;
     }
   };
 

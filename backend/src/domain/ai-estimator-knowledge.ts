@@ -43,7 +43,8 @@ export const AI_ESTIMATOR_KNOWLEDGE_SECTION_KEYS = [
   "recommendations",
   "quality",
   "execution",
-  "advanced"
+  "advanced",
+  "design"
 ] as const;
 
 export const AI_ESTIMATOR_KNOWLEDGE_SECTION_APPLICABILITY = [

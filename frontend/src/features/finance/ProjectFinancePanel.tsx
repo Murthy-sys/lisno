@@ -148,11 +148,12 @@ export function ProjectFinancePanel({
           <div className="project-finance-panel__details">
             <dl>
               <div><dt>Client-approved value (incl. GST)</dt><dd>{formatPaise(trustedBucket.approvedContractTotalPaise)}</dd></div>
+              {trustedBucket.baselinePhase === "post" && trustedBucket.originalApprovedContractTotalPaise !== undefined ? <div><dt>Original pre-estimate value (incl. GST)</dt><dd>{formatPaise(trustedBucket.originalApprovedContractTotalPaise)}</dd></div> : null}
               <div><dt>GST included (18%)</dt><dd>{formatPaise(trustedBucket.approvedGstPaise)}</dd></div>
               <div><dt>Net approved revenue (excl. GST)</dt><dd>{formatPaise(trustedBucket.approvedSubtotalPaise)}</dd></div>
               <div><dt>Profit margin policy</dt><dd>{formatBps(trustedBucket.targetMarginBps)}</dd></div>
               <div><dt>Cost budget consumed</dt><dd>{formatPercentage(trustedBucket.recordedCostPaise, trustedBucket.costBudgetPaise)}</dd></div>
-              <div><dt>Approved estimate baseline</dt><dd>Version {trustedBucket.estimateVersion}</dd></div>
+              <div><dt>Approved estimate baseline</dt><dd>{trustedBucket.baselinePhase === "post" ? "Final estimate · " : trustedBucket.baselinePhase === "pre" ? "Pre-estimate · " : ""}Version {trustedBucket.estimateVersion}</dd></div>
               <div><dt>Design plan baseline</dt><dd>Version {trustedBucket.designPlanVersion}</dd></div>
               <div><dt>Project deadline</dt><dd>{date.format(new Date(trustedBucket.deadlineAt))}</dd></div>
               <div><dt>Schedule position</dt><dd>{deadlineLabel(trustedBucket)}</dd></div>

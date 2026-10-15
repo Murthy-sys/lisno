@@ -8,6 +8,7 @@ export const KNOWLEDGE_SECTION_KEYS = [
   "scope",
   "recommendations",
   "quality",
+  "design",
   "execution",
   "advanced"
 ] as const;
@@ -25,6 +26,7 @@ export const KNOWLEDGE_MASTER_TYPES = [
 
 export type KnowledgeMasterType = (typeof KNOWLEDGE_MASTER_TYPES)[number];
 export type KnowledgeItemStatus = "draft" | "active" | "inactive" | "archived";
+export type KnowledgeEstimationVisibility = "internal" | "external";
 export type KnowledgeRevisionStatus = "draft" | "active" | "superseded";
 export type KnowledgeMasterStatus = "active" | "inactive" | "archived";
 export type KnowledgePrioritySemanticTier =
@@ -212,6 +214,7 @@ export interface KnowledgeBasketQuality {
 
 /** Shared Sub Basket identity, retained by vendor classifications as well as items. */
 export interface KnowledgeSubBasket extends Omit<KnowledgeBasket, "description" | "status"> {
+  readonly description?: string | null;
   readonly basketId: string;
 }
 
@@ -264,6 +267,8 @@ export interface KnowledgePermanentDeleteBasketResult {
 }
 
 export interface KnowledgeMainLine extends KnowledgeVersionedResource {
+  /** Absent on older responses; treat as Internal. */
+  readonly estimationVisibility?: KnowledgeEstimationVisibility;
   readonly itemType?: "main_line" | "temporary";
   readonly completionRequired: boolean;
   readonly subBasketId?: string | null;
@@ -290,6 +295,8 @@ export interface KnowledgeTemporaryMainLineReference {
 }
 
 export interface KnowledgeItemListItem extends KnowledgeVersionedResource {
+  /** Current selection visibility, independent of published quotation history. */
+  readonly estimationVisibility?: KnowledgeEstimationVisibility;
   readonly linkedMainLines?: readonly KnowledgeTemporaryMainLineReference[];
   readonly itemType?: "main_line" | "temporary";
   readonly completionRequired: boolean;

@@ -27,8 +27,8 @@ export function KnowledgeSafetyNotice({ onDismiss }: KnowledgeSafetyNoticeProps 
         ) : undefined
       }
     >
-      Knowledge-base changes do not modify current estimates or the existing
-      Sales estimate builder.
+      Configuration updates apply to current selections. Published estimates and
+      approvals keep their recorded values.
     </NoticeBanner>
   );
 }

@@ -1,14 +1,15 @@
 import { ApiError } from "../../api/client";
 import type { KnowledgeSectionKey } from "../ai-estimator-knowledge/knowledgeTypes";
-import type { ProposalChange, ProposalHierarchyNode, ProposalResource, ProposalStatus } from "./proposalTypes";
+import type { ProposalChange, ProposalHierarchyNode, ProposalResource, ProposalRequestMode, ProposalStatus } from "./proposalTypes";
 
 export const proposalStatusLabels: Record<ProposalStatus, string> = { draft: "Draft", pending: "Awaiting Super Admin", fulfilled: "Approved and active", rejected: "Rejected" };
+export const proposalStatusLabel = (status: ProposalStatus, mode?: ProposalRequestMode) => mode === "hierarchy_intake" && status === "fulfilled" ? "Approved" : mode === "hierarchy_intake" && status === "rejected" ? "Sent back" : proposalStatusLabels[status];
 export const proposalDenied = (error: unknown) => error instanceof ApiError && (error.status === 401 || error.status === 403 || error.status === 404);
 export const proposalUncertain = (error: unknown) => !(error instanceof ApiError) || error.status >= 500 || error.status === 408;
 export const proposalError = (error: unknown) => error instanceof Error ? error.message : "The request could not be completed. Your entries are preserved.";
 
 const sectionLabels: Record<KnowledgeSectionKey, string> = {
-  overview: "Overview", advanced: "Mode settings", pricing: "Mode pricing",
+  design: "Design", overview: "Overview", advanced: "Mode settings", pricing: "Mode pricing",
   recommendations: "Recommendations", quality: "Quality parameters", scope: "Scope",
   "quantity-margin": "Quantity and margin", execution: "Execution"
 };

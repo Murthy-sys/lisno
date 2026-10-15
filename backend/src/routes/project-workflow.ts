@@ -80,6 +80,14 @@ export function createProjectWorkflowRouter(
   const router = Router();
   const protectedRoute = authenticate(auth);
 
+  router.post("/projects/:projectId/design-plan/reconcile-scope", protectedRoute,
+    requireOperation("POST /projects/:projectId/design-plan/reconcile-scope"),
+    validateBody(z.object({ expectedDesignPlanVersion: z.number().int().nonnegative(), expectedScopeRevision: z.number().int().positive() }).strict()),
+    async (request, response, next) => {
+      try { response.json({ data: await service.reconcileDesignScope(request.authenticatedUser!, String(request.params.projectId), request.body.expectedDesignPlanVersion, request.body.expectedScopeRevision) }); }
+      catch (error) { next(error); }
+    });
+
   router.get(
     "/admin/designers",
     protectedRoute,

@@ -36,6 +36,18 @@ const expectedRoles = [
   "vendor"
 ] as const;
 
+const estimateCollaborationPermissions = [
+  "projects.client_invitation.read",
+  "projects.client_invitation.manage",
+  "identity.project_invitation.accept",
+  "estimation.requirements.read",
+  "estimation.requirements.create",
+  "estimation.requirements.update",
+  "estimation.requirements.resolve",
+  "estimation.review.withdraw",
+  "estimation.preparation.release"
+] as const;
+
 const invitationPermissions = [
   "identity.user_invitations.read",
   "identity.user_invitations.create",
@@ -89,14 +101,14 @@ describe("frontend authorization contract", () => {
       "execution"
     ]);
     expect(AUTHORIZATION_POLICY_VERSION).toBe(
-      "2026-10-11.vendor-basket-proposals.v1"
+      "2026-10-14.main-line-design-rules.v1"
     );
   });
 
-  it("publishes all 186 unique permissions in canonical order", () => {
-    expect(PERMISSION_CODES).toHaveLength(186);
-    expect(new Set(PERMISSION_CODES)).toHaveLength(186);
-    expect(PERMISSION_CODES.slice(0, 12)).toEqual(["ask_lisno.request", "chat.assistant.read", "chat.assistant.request", "procurement.vendor_access.read", "procurement.vendor_access.manage", "execution.tracker.read", "execution.work.update", "execution.staff.manage", "execution.verify", "execution.policy.manage", "execution.notifications.read", "execution.access.retry"]);
+  it("publishes all 196 unique permissions in canonical order", () => {
+    expect(PERMISSION_CODES).toHaveLength(196);
+    expect(new Set(PERMISSION_CODES)).toHaveLength(196);
+    expect(PERMISSION_CODES.slice(0, 21)).toEqual([...estimateCollaborationPermissions, "ask_lisno.request", "chat.assistant.read", "chat.assistant.request", "procurement.vendor_access.read", "procurement.vendor_access.manage", "execution.tracker.read", "execution.work.update", "execution.staff.manage", "execution.verify", "execution.policy.manage", "execution.notifications.read", "execution.access.retry"]);
     expect(PERMISSION_CODES).toContain("chat.action_types.manage");
     expect(PERMISSION_CODES).toContain("chat.project_name.manage");
     expect(PERMISSION_CODES).toContain("estimation.design_upload.delete");
@@ -187,8 +199,8 @@ describe("frontend authorization contract", () => {
     ).toEqual(projectFinancePermissions);
   });
 
-  it("keeps the protected frontend registry at exactly 45 routes", () => {
-    expect(ROUTE_REGISTRY).toHaveLength(45);
+  it("keeps the protected frontend registry at exactly 46 routes", () => {
+    expect(ROUTE_REGISTRY).toHaveLength(46);
     expect(ROUTE_REGISTRY.map(({ path }) => path)).toEqual(
       expect.arrayContaining([
         "/execution", "/projects/:projectId/execution",
@@ -201,6 +213,7 @@ describe("frontend authorization contract", () => {
         "/admin/configuration/estimation/reusable-values",
         "/admin/procurement/vendors",
         "/admin/procurement/vendors/:vendorId",
+        "/procurement/requests",
         "/procurement/vendors",
         "/procurement/vendors/:vendorId",
         "/procurement/projects/:projectId",
@@ -211,6 +224,9 @@ describe("frontend authorization contract", () => {
     );
     expect(ROUTE_REGISTRY.map(({ path }) => path)).not.toContain(
       "/accept-invitation"
+    );
+    expect(ROUTE_REGISTRY.map(({ path }) => path)).not.toContain(
+      "/accept-project-invitation"
     );
   });
 

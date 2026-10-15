@@ -47,6 +47,7 @@ export const purchaseOrderUpdateSchema = purchaseOrderDraftFields.omit({ vendorI
 });
 
 export const purchaseOrderSubmitSchema = z.object({ expectedVersion: version, idempotencyKey }).strict();
+export const purchaseOrderIssueSchema = purchaseOrderSubmitSchema;
 export const purchaseOrderDecisionSchema = z.object({
   expectedVersion: version,
   submittedRevisionId: id,
@@ -59,6 +60,8 @@ export const purchaseOrderDecisionSchema = z.object({
 });
 export const purchaseOrderAmendSchema = z.object({ expectedVersion: version, idempotencyKey, reason: text(2_000) }).strict();
 export const purchaseOrderCancelSchema = purchaseOrderAmendSchema;
+export const purchaseOrderReconcileSchema = purchaseOrderAmendSchema.extend({ acknowledgeScopeChanges: z.boolean().default(false) });
+export type PurchaseOrderReconcileInput = z.infer<typeof purchaseOrderReconcileSchema>;
 export const purchaseOrderQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(20),
   offset: z.coerce.number().int().min(0).max(Number.MAX_SAFE_INTEGER).default(0)
@@ -69,9 +72,10 @@ export type PurchaseOrderDraftInput = z.infer<typeof purchaseOrderDraftSchema>;
 export type PurchaseOrderUpdateInput = z.infer<typeof purchaseOrderUpdateSchema>;
 export type PurchaseOrderSubmitInput = z.infer<typeof purchaseOrderSubmitSchema>;
 export type PurchaseOrderDecisionInput = z.infer<typeof purchaseOrderDecisionSchema>;
+export type PurchaseOrderIssueInput = z.infer<typeof purchaseOrderIssueSchema>;
 export type PurchaseOrderAmendInput = z.infer<typeof purchaseOrderAmendSchema>;
 export type PurchaseOrderQuery = z.infer<typeof purchaseOrderQuerySchema>;
-export type PurchaseOrderStatus = "draft" | "pending_approval" | "changes_requested" | "rejected" | "approved" | "cancelled";
+export type PurchaseOrderStatus = "draft" | "pending_approval" | "changes_requested" | "rejected" | "ready_to_issue" | "approved" | "cancelled";
 
 export interface ApprovedPurchaseOrderLine extends Omit<PurchaseOrderLineInput, "scopeType" | "targetDate" | "deliveryLocation"> {
   scopeType?: PurchaseOrderLineInput["scopeType"];

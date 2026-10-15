@@ -4,7 +4,7 @@ import { UNSAFE_DataRouterContext, useBlocker, type Blocker } from "react-router
 export interface UnsavedKnowledgeGuardOptions {
   readonly hasUnsavedChanges: boolean;
   readonly onSave: () => Promise<boolean>;
-  readonly onDiscard: () => void;
+  readonly onDiscard: () => void | boolean;
 }
 
 export interface UnsavedKnowledgeGuard {
@@ -83,7 +83,10 @@ export function useUnsavedKnowledgeGuard({
   }, [finishNavigation, onSave]);
 
   const discardAndContinue = useCallback(() => {
-    onDiscard();
+    if (onDiscard() === false) {
+      setError("Changes cannot be discarded yet. Stay here and verify the current saved state.");
+      return;
+    }
     finishNavigation();
   }, [finishNavigation, onDiscard]);
 

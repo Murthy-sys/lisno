@@ -1,3 +1,4 @@
+import type { WorkOrderIssueReadiness } from "../../api/types";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { useSearchParams } from "react-router-dom";
@@ -9,7 +10,8 @@ import { getProcurementBaskets, hasValidProcurementModeGroups, procurementBasket
 import { procurementError } from "./procurementPresentation";
 import "./procurementBasket.css";
 
-export function ProcurementBasketWorkspace({ projectId, projectName, projectSourceStale, currentEstimate }: {
+export function ProcurementBasketWorkspace({ projectId, projectName, projectSourceStale, currentEstimate, issueReadiness }: {
+  issueReadiness?: WorkOrderIssueReadiness;
   projectId: string;
   projectName: string;
   projectSourceStale: boolean;
@@ -43,7 +45,7 @@ export function ProcurementBasketWorkspace({ projectId, projectName, projectSour
         : <PageState state="error" message="Approved estimate mode groups are unavailable. Refresh baskets to load the current grouping." action={{ label: "Refresh baskets", onAction: () => void list.refetch() }} />}
     </> : !selectedBasket ? <PageState state="empty" message="This main basket is no longer in the approved estimate." action={{ label: "Back to baskets", onAction: () => selectBasket(null) }} /> : <>
       <button className="procurement-basket__back" type="button" onClick={() => selectBasket(null)}>← Back to main baskets</button>
-      <ProcurementBasketDetailView key={`${projectId}:${selectedBasket.id}`} projectId={projectId} projectName={projectName} basket={selectedBasket} frozen={frozen} />
+      <ProcurementBasketDetailView key={`${projectId}:${selectedBasket.id}`} projectId={projectId} projectName={projectName} basket={selectedBasket} frozen={frozen} issueReadiness={issueReadiness} />
     </>}
   </section>;
 }

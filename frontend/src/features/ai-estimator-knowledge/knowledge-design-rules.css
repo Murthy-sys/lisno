@@ -1,0 +1,14 @@
+.knowledge-design-rules { margin-top: 1.25rem; }
+.knowledge-design-rules fieldset { min-inline-size: 0; border: 0; padding: 0; margin: 0; }
+.knowledge-design-rules legend { font-weight: 600; line-height: 1.5; padding: 0; }
+.design-rule-nature label, .design-rule-options label { display: inline-flex; align-items: center; gap: .5rem; padding-block: .5rem; margin-right: 1.5rem; cursor: pointer; }
+.design-rule-nature input, .design-rule-options input { inline-size: 1.1rem; block-size: 1.1rem; accent-color: var(--color-primary, #3e4c32); }
+.design-rule-list { margin-top: 1rem; }
+.design-rule { padding-block: 1.25rem; border-top: 1px solid var(--color-border, #d5d8d0); }
+.design-rule p { margin: .25rem 0 .75rem; color: var(--color-text-muted, #626b78); line-height: 1.5; }
+.design-rule-number { font-variant-numeric: tabular-nums; }
+.design-rule-details { display: grid; gap: 1rem; max-inline-size: 52rem; }
+.design-rule-details ol { padding-inline-start: 1.5rem; }
+.design-rule-details li { margin-block: .75rem; }
+.design-rule-save { padding-top: 1rem; border-top: 1px solid var(--color-border, #d5d8d0); }
+@media (max-width: 600px) { .design-rule legend { font-size: .95rem; } .design-rule-details { max-inline-size: 100%; } }

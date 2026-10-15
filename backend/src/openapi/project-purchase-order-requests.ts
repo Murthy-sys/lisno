@@ -147,21 +147,21 @@ export const PROJECT_PURCHASE_ORDER_REQUEST_SCHEMAS = {
     mainBasketId: { ...id, nullable: true }, mainBasketName: { type: "string", nullable: true },
     subBasketId: { ...id, nullable: true }, subBasketName: { type: "string", nullable: true },
     mainLineId: { ...id, nullable: true }, mainLineName: { type: "string", nullable: true },
-    quantity: { type: "string" }, unit: { type: "string" }, amountPaise: { ...paise, nullable: true },
+    specification: { type: "string" }, quantity: { type: "string" }, unit: { type: "string" }, amountPaise: { ...paise, nullable: true },
     itemIds: { type: "array", items: id }, mode: { ...ref("ProjectPurchaseOrderModeResolution"), nullable: true },
     projectRate: object({ version: { type: "integer", minimum: 0 },
       overridePaise: { ...paise, nullable: true } }),
     standardSuggestion: { ...object({ preview: { ...ref("ProjectPurchaseOrderModeStandardCostPreview"), nullable: true },
       issues: { type: "array", items: ref("ProjectPurchaseOrderModeIssue") } }), nullable: true }
   }, ["key", "included", "source", "estimateMode", "mainBasketClassification", "mainBasketClassificationExplicit", "roomId", "roomName", "mainBasketId", "mainBasketName", "subBasketId", "subBasketName", "mainLineId", "mainLineName", "quantity", "unit", "amountPaise", "itemIds", "mode", "projectRate"]),
-  ProjectPurchaseOrderPreparation: object({ projectId: id, estimateSource: source, approvedEstimatePaise: paise,
+  ProjectPurchaseOrderPreparation: object({ preparationSource: ref("ProcurementPreparationSource"), projectId: id, estimateSource: source, approvedEstimatePaise: paise,
     committedPaise: paise, committedGstPaise: paise, committedTotalPaise: paise,
     remainingPaise: { type: "integer" },
     orderDefaults: object({ targetDate: { type: "string", format: "date", nullable: true }, deliveryLocation: { type: "string", nullable: true } }),
     estimateLines: { type: "array", items: ref("ProjectPurchaseOrderPreparationEstimateLine") },
     sections: { type: "array", items: ref("ProjectPurchaseOrderPreparationSection") },
     netPaise: { ...paise, nullable: true }, itemCount: { type: "integer", minimum: 0 },
-    readyItemCount: { type: "integer", minimum: 0 }, blockers: { type: "array", items: ref("ProjectPurchaseOrderPreparationBlocker") }, digest }),
+    readyItemCount: { type: "integer", minimum: 0 }, blockers: { type: "array", items: ref("ProjectPurchaseOrderPreparationBlocker") }, digest }, ["projectId", "estimateSource", "approvedEstimatePaise", "committedPaise", "committedGstPaise", "committedTotalPaise", "remainingPaise", "orderDefaults", "estimateLines", "sections", "netPaise", "itemCount", "readyItemCount", "blockers", "digest"]),
   ProjectPurchaseOrderRequestLineInput: object({ procurementItemId: id, expectedVersion: version,
     gstBasisPoints: { type: "integer", minimum: 0, maximum: 10_000 },
     scopeType: { type: "string", enum: ["supply", "execution", "supply_and_execution"] },
@@ -221,7 +221,7 @@ export const PROJECT_PURCHASE_ORDER_REQUEST_SCHEMAS = {
       lines: { type: "array", items: { type: "object" } }, totals: ref("ProjectPurchaseOrderRequestTotals") } },
   ProjectPurchaseOrderRequest: { type: "object", additionalProperties: true,
     required: ["id", "projectId", "projectName", "requestNumber", "status", "version", "submittedRevisionId", "approvedEstimatePaise", "committedPaise", "committedGstPaise", "committedTotalPaise", "remainingPaise", "revisions", "totals", "sectionTotals", "vendorTotals"],
-    properties: { id, projectId: id, projectName: { type: "string" }, requestNumber: { type: "string" }, status: { type: "string", enum: ["pending_approval", "changes_requested", "rejected", "approved"] },
+    properties: { issueReadiness: ref("ProjectPurchaseOrderIssueReadiness"), id, projectId: id, projectName: { type: "string" }, requestNumber: { type: "string" }, status: { type: "string", enum: ["pending_approval", "changes_requested", "rejected", "ready_to_issue", "approved"] },
       version, revision: version, submittedRevisionId: id, estimateSource: source,
       approvedEstimatePaise: paise, committedPaise: paise, committedGstPaise: paise,
       committedTotalPaise: paise, remainingPaise: { type: "integer" },
@@ -235,6 +235,8 @@ export const PROJECT_PURCHASE_ORDER_REQUEST_SCHEMAS = {
 };
 
 export const PROJECT_PURCHASE_ORDER_REQUEST_REQUESTS = {
+  "POST /procurement/projects/:projectId/purchase-order-requests/:requestId/issue": json("ProjectPurchaseOrderSubmitInput"),
+  "POST /procurement/projects/:projectId/purchase-order-requests/:requestId/reconcile": json("ProjectPurchaseOrderReconcile"),
   "POST /procurement/projects/:projectId/purchase-order-mode-decisions": json("ProjectPurchaseOrderModeDecisionSave"),
   "POST /procurement/projects/:projectId/purchase-order-mode-previews": json("ProjectPurchaseOrderModePreviewInput"),
   "POST /procurement/projects/:projectId/purchase-order-requests/quote": json("ProjectPurchaseOrderRequestQuoteInput"),
@@ -242,6 +244,8 @@ export const PROJECT_PURCHASE_ORDER_REQUEST_REQUESTS = {
   "POST /admin/purchase-order-requests/:requestId/decision": json("ProjectPurchaseOrderRequestDecision")
 };
 export const PROJECT_PURCHASE_ORDER_REQUEST_RESPONSES = {
+  "POST /procurement/projects/:projectId/purchase-order-requests/:requestId/issue": "ProjectPurchaseOrderRequest",
+  "POST /procurement/projects/:projectId/purchase-order-requests/:requestId/reconcile": "ProjectPurchaseOrderRequest",
   "POST /procurement/projects/:projectId/purchase-order-mode-decisions": "ProjectPurchaseOrderModeDecision",
   "POST /procurement/projects/:projectId/purchase-order-mode-previews": "ProjectPurchaseOrderModeDraftPreview",
   "POST /procurement/projects/:projectId/purchase-order-requests/quote": "ProjectPurchaseOrderRequestQuote",

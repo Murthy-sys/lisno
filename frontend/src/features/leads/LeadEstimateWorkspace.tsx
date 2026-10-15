@@ -2,12 +2,13 @@ import { ProjectChatNavigation } from "../messages";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useParams } from "react-router-dom";
-import { Armchair, Bath, Bed, BedDouble, BedSingle, Briefcase, Building2, ChefHat, DoorOpen, Hammer, Layers, Leaf, PanelTop, Paintbrush, Pencil, ShowerHead, Sofa, Utensils, Wrench, Zap } from "lucide-react";
+import { Armchair, Hammer, Layers, PanelTop, Paintbrush, Sofa, Wrench, Zap } from "lucide-react";
 
 import { ApiError } from "../../api/client";
 import type { EstimateClientReviewSummary } from "../../api/types";
 import { AsyncState } from "../../components/ui/AsyncState";
 import { clientKeys } from "../client/clientApi";
+import { estimateRequirementsKeys, getEstimateRequirements } from "../client/estimateRequirementsApi";
 import { estimateWorkflowKeys } from "../estimates/estimateWorkflowApi";
 import { projectWorkflowKeys } from "../workflow/projectWorkflowApi";
 import { calculateEstimateTotals, resolveRate } from "./estimateEngine";
@@ -23,49 +24,20 @@ import { EstimateClientFeedback } from "./EstimateClientFeedback";
 import { EstimatePlanChangeRequests } from "./EstimatePlanChangeRequests";
 import { PropertyTypeDropdown } from "./PropertyTypeDropdown";
 import { propertyTypes } from "./propertyTypes";
-import { RoomsMultiSelectDropdown, type RoomGroup, type RoomOption } from "./RoomsMultiSelectDropdown";
+import { RoomsMultiSelectDropdown } from "./RoomsMultiSelectDropdown";
+import { getEstimateRoomDefinitions, getRoomIcon, MAX_BEDROOM_COUNT, mergeSelectedRoomDefinitions, parseBedroomCount, requiresBedroomCount } from "./estimateRoomOptions";
 import { RoomDimensionsAccordion } from "./RoomDimensionsAccordion";
+import { StaffEstimateCollaboration } from "./StaffEstimateCollaboration";
+import { StaffEstimateRequirements } from "./StaffEstimateRequirements";
+import { refreshEstimateCollaboration } from "./estimateCollaborationQueries";
 import { getLead, getLeadEstimate, leadKeys, retryEstimateClientEmail, saveLeadEstimate, sendEstimateToClient, submitLeadEstimate, type ConfiguredEstimateLine, type EstimateClassification, type EstimateDraft, type EstimateDraftInput } from "./leadsApi";
 import "../../styles/estimator-dashboard.css";
 
-const roomDefinitions = [
-  { typeId: "living", label: "Living & Dining", icon: "🛋️", sqft: 300 },
-  { typeId: "master", label: "Master Bedroom", icon: "🛏️", sqft: 200 },
-  { typeId: "bedroom2", label: "Bedroom 2", icon: "🛏️", sqft: 150 },
-  { typeId: "bedroom3", label: "Bedroom 3", icon: "🛏️", sqft: 130 },
-  { typeId: "kitchen", label: "Kitchen", icon: "🍳", sqft: 120 },
-  { typeId: "bath_m", label: "Master Bathroom", icon: "🚿", sqft: 80 },
-  { typeId: "bath_c", label: "Common Bathroom", icon: "🚿", sqft: 60 },
-  { typeId: "balcony", label: "Balcony / Utility", icon: "🌿", sqft: 60 },
-  { typeId: "foyer", label: "Foyer / Entrance", icon: "🚪", sqft: 80 },
-  { typeId: "study", label: "Home Office/Study", icon: "💼", sqft: 120 },
-  { typeId: "custom", label: "Custom Room", icon: "✏️", sqft: 0 }
-] as const;
-const roomIcons: Record<string, typeof Sofa> = {
-  living: Sofa, master: BedDouble, bedroom2: Bed, bedroom3: BedSingle, kitchen: ChefHat,
-  bath_m: Bath, bath_c: ShowerHead, balcony: Leaf, foyer: DoorOpen, study: Briefcase, custom: Pencil
-};
 const scopeIcons: Record<string, typeof Sofa> = {
   FC: PanelTop, FL: Layers, CA: Hammer, PA: Paintbrush, EL: Zap, CV: Wrench, LF: Armchair
 };
-const roomSelectIcons: Record<string, typeof Sofa> = {
-  living: Sofa, master: Bed, bedroom2: Bed, bedroom3: Bed, kitchen: Utensils,
-  bath_m: ShowerHead, bath_c: Bath, balcony: Leaf, foyer: DoorOpen, study: Building2, custom: Pencil
-};
-const roomSelectGroups: Record<string, RoomGroup> = {
-  living: "Common Areas", kitchen: "Common Areas", balcony: "Common Areas", foyer: "Common Areas", study: "Common Areas",
-  master: "Bedrooms", bedroom2: "Bedrooms", bedroom3: "Bedrooms",
-  bath_m: "Bathrooms", bath_c: "Bathrooms",
-  custom: "Other"
-};
-const roomSelectOptions: RoomOption[] = roomDefinitions.map((definition) => ({
-  id: definition.typeId,
-  label: definition.label,
-  icon: roomSelectIcons[definition.typeId] ?? Pencil,
-  group: roomSelectGroups[definition.typeId] ?? "Other"
-}));
 function RoomIcon({ typeId }: { typeId: string }) {
-  const Icon = roomIcons[typeId] ?? Pencil;
+  const Icon = getRoomIcon(typeId);
   return <Icon size={16} aria-hidden="true" />;
 }
 function TabIcon({ tab }: { tab: EstimateTab }) {
@@ -220,12 +192,12 @@ function ConfigureSelectionFooter({ count, clearDisabled, continueDisabled, onCl
   </div>;
 }
 
-export function LeadEstimateWorkspace() {
+export function LeadEstimateWorkspace({ returnTo }: { returnTo?: string } = {}) {
   const { leadId = "" } = useParams();
-  return <LeadEstimateWorkspaceForLead key={leadId} leadId={leadId} />;
+  return <LeadEstimateWorkspaceForLead key={leadId} leadId={leadId} returnTo={returnTo} />;
 }
 
-function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
+function LeadEstimateWorkspaceForLead({ leadId, returnTo }: { leadId: string; returnTo?: string }) {
   const queryClient = useQueryClient();
   const lead = useQuery({ queryKey: leadKeys.detail(leadId), queryFn: () => getLead(leadId) });
   const saved = useQuery({ queryKey: leadKeys.estimate(leadId), queryFn: () => getLeadEstimate(leadId), retry: false,
@@ -235,8 +207,13 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
   const submissionInFlight = useRef(false);
   const hasConfiguredSaved = Boolean(saved.data?.lineItems.some((line) => line.source === "configuration") || saved.data?.selectedMainBasketIds?.length);
   const configuredMode = !saved.data || hasConfiguredSaved || catalogueRequested;
-  const draftEditable = !saved.data || ["draft", "designer_changes_requested", "client_changes_requested"].includes(saved.data.status);
-  const editable = draftEditable && !submissionLocked;
+  const lifecycle = saved.data?.estimation;
+  const collaborative = lifecycle?.workflowVersion === 2 || lead.data?.estimationWorkflowVersion === 2;
+  const requirements = useQuery({ queryKey: estimateRequirementsKeys.detail(lead.data?.projectId ?? ""),
+    queryFn: () => getEstimateRequirements(lead.data!.projectId!), enabled: collaborative && Boolean(lead.data?.projectId) });
+  const draftEditable = !lifecycle?.editClosedAt && !lifecycle?.finalApproval && (!saved.data || ["draft", "designer_changes_requested", "client_changes_requested"].includes(lifecycle?.status ?? saved.data.status));
+  const editable = draftEditable && !submissionLocked && !saved.isError;
+  const workingVersion = useRef<number | undefined>(undefined);
   const catalogue = useQuery({
     queryKey: estimationCatalogueKeys.ready,
     queryFn: () => getEstimationCatalogue({ includeReadyNonActive: true }),
@@ -247,6 +224,12 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
   });
   const [tab, setTab] = useState<EstimateTab>("configure");
   const [propertyType, setPropertyType] = useState("");
+  const [bedroomCountInput, setBedroomCountInput] = useState("");
+  const bedroomCountRef = useRef<HTMLInputElement>(null);
+  const effectivePropertyType = propertyType || lead.data?.propertyType || "";
+  const variableBedroomCount = requiresBedroomCount(effectivePropertyType);
+  const bedroomCount = variableBedroomCount ? parseBedroomCount(bedroomCountInput) : null;
+  const bedroomSetupRequired = draftEditable && variableBedroomCount && bedroomCount === null;
   const [rooms, setRooms] = useState<RoomDraft[]>([]);
   const [enabledSections, setEnabledSections] = useState<Set<string>>(() => new Set(["FC", "FL", "CA", "PA", "EL", "CV"]));
   const [selectedMainBasketIds, setSelectedMainBasketIds] = useState<Set<string>>(() => new Set());
@@ -285,9 +268,11 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
   };
 
   const hydrateEstimate = (draft: EstimateDraft | null, preserveView = false) => {
+    workingVersion.current = draft?.version;
     hasHydratedSavedEstimate.current = true;
     if (!draft) {
       setPropertyType("");
+      setBedroomCountInput("");
       setRooms([]);
       setEnabledSections(new Set(["FC", "FL", "CA", "PA", "EL", "CV"]));
       setSelectedMainBasketIds(new Set());
@@ -300,6 +285,7 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
     }
     const restoredRooms = draft.rooms as RoomDraft[];
     setPropertyType(draft.propertyType);
+    setBedroomCountInput(requiresBedroomCount(draft.propertyType) && draft.bedroomCount != null ? String(draft.bedroomCount) : "");
     setRooms(restoredRooms);
     setEnabledSections(new Set(draft.scopes));
     const selectedIds = draft.selectedMainBasketIds ?? draft.lineItems.filter((line) => line.source === "configuration").map((line) => line.mainBasketId);
@@ -462,13 +448,14 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
     setPendingRecommendationSources([]);
   }, [activeRoomId, catalogue.dataUpdatedAt, editable, pendingRecommendationSources, recommendationSources, recommendationState, recommendationView, tab]);
   const draftInput = (): EstimateDraftInput => ({
-    propertyType: propertyType || lead.data?.propertyType || "",
+    propertyType: effectivePropertyType,
+    bedroomCount,
     rooms, scopes: lines.length ? Array.from(enabledSections) : [],
     selectedMainBasketIds: Array.from(selectedMainBasketIds),
     selectedMainBasketClassifications: Array.from(selectedMainBasketIds, (mainBasketId) => ({
       mainBasketId, classification: mainBasketClassifications.get(mainBasketId) ?? "standard"
     })),
-    ...(configuredMode && typeof saved.data?.version === "number" ? { expectedVersion: saved.data.version } : {}),
+    ...(typeof workingVersion.current === "number" ? { expectedVersion: workingVersion.current } : {}),
     lineItems: [
       ...lines.map(({ catalogueId, roomName, specification, unit, rate, quantity, included }) => ({ source: "legacy" as const, catalogueId, roomName, specification, unit, rate, quantity, included })),
       ...configuredLines.filter((line) => line.included || line.persistedId).map((line) => ({
@@ -490,6 +477,7 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
     ]
   });
   const refreshSubmittedEstimate = (estimate: EstimateDraft, submittedLeadId: string) => {
+    if (estimate.estimation) void refreshEstimateCollaboration(queryClient);
     if (submittedLeadId === leadId) {
       cancelRecommendationOpening();
       skipSavedHydrationFor.current = null;
@@ -515,6 +503,7 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
       ...estimate, clientFeedback: estimate.clientFeedback === undefined ? current?.clientFeedback : estimate.clientFeedback
     }));
     if (submittedLeadId !== leadId) return;
+    workingVersion.current = estimate.version;
     skipSavedHydrationFor.current = cached ?? null;
     const savedLines = new Map(estimate.lineItems
       .filter((line): line is ConfiguredEstimateLine => line.source === "configuration")
@@ -571,6 +560,7 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
   };
   const save = useMutation({
     mutationFn: async () => {
+      if (bedroomSetupRequired) throw new Error("Configure the number of bedrooms before saving.");
       const input = draftInput();
       const lineState = configuredLines;
       return { estimate: await saveLeadEstimate(leadId, input), input, lineState };
@@ -588,16 +578,18 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
         queryClient.invalidateQueries({ queryKey: [...leadKeys.all, "saved-estimates"] }),
         queryClient.invalidateQueries({ queryKey: leadKeys.detail(leadId), exact: true })
       ]);
+      if (estimate.estimation) void refreshEstimateCollaboration(queryClient);
     }
   });
   const submit = useMutation({
     mutationFn: async () => {
       const submittedLeadId = leadId;
+      if (bedroomSetupRequired) throw new Error("Configure the number of bedrooms before saving.");
       const input = draftInput();
       const lineState = configuredLines;
       const draft = await saveLeadEstimate(submittedLeadId, input);
       rememberDraftSave(draft, submittedLeadId, input, lineState);
-      return { estimate: await submitLeadEstimate(submittedLeadId), submittedLeadId };
+      return { estimate: await submitLeadEstimate(submittedLeadId, draft.estimation ? draft.version : undefined), submittedLeadId };
     },
     onMutate: () => {
       submissionInFlight.current = true;
@@ -620,7 +612,7 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
   const sendToClient = useMutation({
     mutationFn: async () => {
       const submittedLeadId = leadId;
-      return { estimate: await sendEstimateToClient(saved.data!.id), submittedLeadId };
+      return { estimate: await sendEstimateToClient(saved.data!.id, saved.data!.estimation ? saved.data!.version : undefined), submittedLeadId };
     },
     onSuccess: ({ estimate, submittedLeadId }) => {
       if (leadId === submittedLeadId) setNotice(publicationNotice(
@@ -678,7 +670,18 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
   const leadItem = lead.data;
   const basketSearchTerm = basketSearch.trim().toLowerCase();
   const visibleBaskets = catalogue.data?.items.filter((basket) => basket.name.toLowerCase().includes(basketSearchTerm)) ?? [];
-  const basketSelectionDisabled = !editable || catalogue.isError || !catalogue.data;
+  const roomControlsDisabled = !editable || save.isPending || submit.isPending;
+  const basketSelectionDisabled = roomControlsDisabled || catalogue.isError || !catalogue.data;
+  const roomDefinitions = getEstimateRoomDefinitions(effectivePropertyType, bedroomCount);
+  const displayedRoomDefinitions = mergeSelectedRoomDefinitions(roomDefinitions, rooms);
+  const roomSelectOptions = displayedRoomDefinitions.map((definition) => ({ id: definition.typeId, label: definition.label, group: definition.group, icon: getRoomIcon(definition.typeId) }));
+  const hasRetainedRooms = displayedRoomDefinitions.some((definition) => definition.group === "Previously selected");
+  const roomIcons = Object.fromEntries(rooms.map((room) => [room.typeId, getRoomIcon(room.typeId)]));
+  const changePropertyType = (nextType: string) => {
+    if (roomControlsDisabled || submissionInFlight.current) return;
+    if (!requiresBedroomCount(nextType)) setBedroomCountInput("");
+    setPropertyType(nextType);
+  };
   const clearBasketSearch = () => {
     setBasketSearch("");
     basketSearchRef.current?.focus();
@@ -686,6 +689,7 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
 
   const selectedRoomTypeIds = Array.from(new Set(rooms.map((room) => room.typeId)));
   const handleRoomsChange = (nextTypeIds: string[]) => {
+    if (roomControlsDisabled || submissionInFlight.current) return;
     const nextSet = new Set(nextTypeIds);
     const currentSet = new Set(selectedRoomTypeIds);
     const added = nextTypeIds.filter((typeId) => !currentSet.has(typeId));
@@ -699,26 +703,30 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
     }
     setRooms((current) => {
       const remaining = current.filter((room) => !removed.includes(room.typeId));
-      const additions = added.map((typeId) => {
-        const definition = roomDefinitions.find((item) => item.typeId === typeId)!;
-        return { id: `${definition.typeId}-${Date.now()}`, typeId: definition.typeId, label: definition.label, icon: definition.icon, sqft: definition.sqft, length: null, width: null };
-      });
+      const additions = roomDefinitions.filter((definition) => added.includes(definition.typeId)).map((definition) => ({
+        id: `${definition.typeId}-${crypto.randomUUID()}`, typeId: definition.typeId, label: definition.label,
+        icon: "", sqft: definition.sqft, length: null, width: null
+      }));
       return [...remaining, ...additions];
     });
   };
   const removeRoom = (id: string) => {
+    if (roomControlsDisabled || submissionInFlight.current) return;
     const roomName = rooms.find((room) => room.id === id)?.label;
     setRooms((current) => current.filter((room) => room.id !== id));
     setConfiguredLines((current) => current.filter((line) => line.roomId !== id));
     if (roomName) setLines((current) => current.filter((line) => line.roomName !== roomName));
     if (activeRoomId === id) setActiveRoomId(rooms.find((room) => room.id !== id)?.id ?? "");
   };
-  const updateRoom = (id: string, change: Partial<RoomDraft>) => setRooms((current) => current.map((room) => {
-    if (room.id !== id) return room;
-    const next = { ...room, ...change };
-    if (next.length && next.width) next.sqft = Math.round(next.length * next.width);
-    return next;
-  }));
+  const updateRoom = (id: string, change: Partial<RoomDraft>) => {
+    if (roomControlsDisabled || submissionInFlight.current) return;
+    setRooms((current) => current.map((room) => {
+      if (room.id !== id) return room;
+      const next = { ...room, ...change };
+      if (next.length && next.width) next.sqft = Math.round(next.length * next.width);
+      return next;
+    }));
+  };
   const toggleMainBasket = (id: string) => {
     if (basketSelectionDisabled || submissionInFlight.current) return;
     if (selectedMainBasketIds.has(id)) {
@@ -749,7 +757,7 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
     cancelRecommendationOpening();
   };
   const buildLines = () => {
-    if (!catalogue.data || catalogue.isError || !editable || submissionInFlight.current || !rooms.length || !selectedMainBasketIds.size) return;
+    if (!catalogue.data || catalogue.isError || roomControlsDisabled || bedroomSetupRequired || submissionInFlight.current || !rooms.length || !selectedMainBasketIds.size) return;
     setCatalogueRequested(true);
     setConfiguredLines((previous) => buildConfiguredLines(catalogue.data, rooms, selectedMainBasketIds, previous));
     setActiveRoomId(rooms[0]?.id ?? "");
@@ -866,9 +874,16 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
   const hasInvalidInput = invalidConfiguredLines.length > 0 || changedUomConfiguredLines.length > 0;
   const hasMissingRate = incompleteConfiguredLines.length > 0;
   const totalLabel = (value: number) => hasIncompleteConfiguredTotal ? "Incomplete" : money(value);
-  const estimateVersionConflict = [save.error, submit.error].some((error) =>
-    error instanceof ApiError && error.code === "ESTIMATE_VERSION_CONFLICT"
+  const estimateVersionConflict = (workingVersion.current !== undefined && saved.data?.version !== undefined && workingVersion.current !== saved.data.version) || [save.error, submit.error].some((error) =>
+    error instanceof ApiError && ["ESTIMATE_VERSION_CONFLICT", "ESTIMATE_SOURCE_CONFLICT"].includes(error.code)
   );
+  const publicationBlocked = collaborative && (requirements.isPending || requirements.isError || requirements.isFetching || !requirements.data || requirements.data.requirements.some((request) => request.status === "open") ||
+    (lifecycle?.phase === "post" && (saved.data?.designPlanStatus !== "approved" || lifecycle.approvedDesignScopeRevision !== lifecycle.designScopeRevision)));
+  const advanceWorkingVersion = (before: number, after: number) => {
+    // These commands only change workflow/request metadata. Never rebase over an unrelated save.
+    if (workingVersion.current === before && after === before + 1) workingVersion.current = after;
+    setNotice("");
+  };
   const reloadSavedEstimate = async () => {
     const result = await saved.refetch();
     if (result.isSuccess) {
@@ -893,9 +908,15 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
   </div> : null;
 
   return <section className={`estimate-workspace estimator-dashboard${tab === "configure" ? " estimate-workspace--configure-view" : " estimate-workspace--item-view"}`} aria-labelledby="estimate-title">
-    {tab === "configure" ? <Link to={`/estimator-sales/leads/${leadId}`} className="estimate-workspace__back lead-detail__back-link"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#D89A3E" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5" /><path d="M12 19l-7-7 7-7" /></svg>Back to {leadItem.clientName}</Link> : <button type="button" disabled={submissionLocked} onClick={() => setTab("configure")} className="estimate-workspace__back lead-detail__back-link"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#D89A3E" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5" /><path d="M12 19l-7-7 7-7" /></svg>Back to {leadItem.clientName}</button>}
+    {tab === "configure" ? <Link to={returnTo ?? `/estimator-sales/leads/${leadId}`} className="estimate-workspace__back lead-detail__back-link"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#D89A3E" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5" /><path d="M12 19l-7-7 7-7" /></svg>{returnTo ? "Back to design plans" : `Back to ${leadItem.clientName}`}</Link> : <button type="button" disabled={submissionLocked} onClick={() => setTab("configure")} className="estimate-workspace__back lead-detail__back-link"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#D89A3E" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5" /><path d="M12 19l-7-7 7-7" /></svg>Back to {leadItem.clientName}</button>}
     <header className="estimate-workspace__header"><div className="estimate-workspace__title"><p className="eyebrow">Estimate draft · {leadItem.clientName}</p><h1 id="estimate-title">{tab === "configure" ? "Configure estimate" : "Select estimate items"}</h1><p>{leadItem.projectName} · {leadItem.location}</p></div>{tab !== "configure" && !boundedBuilder ? projectNavigation : null}<div className="estimate-workspace__summary"><strong>{totalLabel(totals.total)}</strong><span>Total including GST</span>{tab !== "configure" ? <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="1" /><path d="M8 6h8v3H8zM8 13h2m4 0h2m-8 4h2m4 0h2" /></svg> : null}</div></header>
     {tab === "configure" ? projectNavigation : null}
+    {collaborative ? <details className="staff-estimate-workspace-tools" open={tab !== "builder" || undefined}><summary>{lifecycle?.phase === "post" ? "Post-estimation" : "Pre-estimation"} workflow and client requirements{requirements.data ? ` · ${requirements.data.requirements.filter((request) => request.status === "open").length} open` : ""}</summary>
+      {saved.data ? <StaffEstimateCollaboration estimate={saved.data} disabled={saved.isFetching || saved.isError || save.isPending || submit.isPending || estimateVersionConflict} onVersionAdvance={advanceWorkingVersion} /> : <p className="estimate-notice">Save your first estimate, then resolve client requirements before submission.</p>}
+    {collaborative && leadItem.projectId ? <StaffEstimateRequirements projectId={leadItem.projectId} estimate={saved.data ?? null} disabled={save.isPending || submit.isPending || saved.isFetching || saved.isError || estimateVersionConflict} onVersionAdvance={advanceWorkingVersion} /> : null}
+    </details> : saved.data ? <StaffEstimateCollaboration estimate={saved.data} disabled={saved.isFetching || saved.isError || save.isPending || submit.isPending || estimateVersionConflict} onVersionAdvance={advanceWorkingVersion} /> : null}
+    {publicationBlocked ? <p className="estimate-notice" role="status">Submission is unavailable until client requests are resolved and the current design scope is approved for post-estimation.</p> : null}
+    {saved.isRefetchError ? <p role="alert">The saved estimate could not be refreshed. Your local edits are preserved; refresh before continuing.</p> : null}
     {saved.data?.clientReview ? <EstimateDeliveryStatus review={saved.data.clientReview} retrying={retryEmail.isPending} onRetry={() => retryEmail.mutate()} /> : null}
     {saved.data?.clientFeedback ? <EstimateClientFeedback feedback={saved.data.clientFeedback} editable={editable} refreshing={saved.isFetching} refreshFailed={saved.isRefetchError} onRefresh={() => void saved.refetch()} /> : null}
     {saved.data?.status === "client_changes_requested" ? <EstimatePlanChangeRequests estimateId={saved.data.id} /> : null}
@@ -903,12 +924,22 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
     {tab === "configure" ? <>
       <section className="estimate-panel estimate-configure-details" aria-labelledby="estimate-project-details-title">
         <div className="estimate-configure-details__heading"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m3 10 9-7 9 7M5 9v12h14V9M9 21v-7h6v7" /></svg><h2 id="estimate-project-details-title">Project details</h2></div>
-        <div className="estimate-configure-details__fields">
-          <div className="estimate-configure-details__field" role="group" aria-labelledby="estimate-property-type-label"><span id="estimate-property-type-label">Property type</span><PropertyTypeDropdown options={propertyTypes} value={propertyType || leadItem.propertyType} onChange={setPropertyType} /></div>
-          <div className="estimate-configure-details__field" role="group" aria-labelledby="estimate-rooms-label"><span id="estimate-rooms-label">Rooms</span><RoomsMultiSelectDropdown options={roomSelectOptions} selected={selectedRoomTypeIds} onChange={handleRoomsChange} /></div>
+        <div className={`estimate-configure-details__fields${variableBedroomCount ? " estimate-configure-details__fields--with-bedroom-count" : ""}`}>
+          <div className="estimate-configure-details__field" role="group" aria-labelledby="estimate-property-type-label"><span id="estimate-property-type-label">Property type</span><PropertyTypeDropdown options={propertyTypes} value={effectivePropertyType} onChange={changePropertyType} disabled={roomControlsDisabled} /></div>
+          {variableBedroomCount ? <div className="estimate-configure-details__field">
+            <label htmlFor="estimate-bedroom-count">Number of bedrooms</label>
+            <input ref={bedroomCountRef} id="estimate-bedroom-count" className="estimate-bedroom-count" type="number" inputMode="numeric" min={1} max={MAX_BEDROOM_COUNT} step={1} required={draftEditable} value={bedroomCountInput} disabled={roomControlsDisabled}
+              placeholder={draftEditable ? "Enter bedroom count" : "Not specified"}
+              aria-invalid={bedroomSetupRequired || undefined} aria-describedby={`estimate-bedroom-count-hint${bedroomSetupRequired ? " estimate-bedroom-count-error" : ""}`}
+              onChange={(event) => { if (!roomControlsDisabled && !submissionInFlight.current) setBedroomCountInput(event.target.value); }} />
+            <p id="estimate-bedroom-count-hint" className="estimate-bedroom-count__hint">Controls the available bedrooms, balconies and bathrooms.</p>
+            {bedroomSetupRequired ? <p id="estimate-bedroom-count-error" className="estimate-bedroom-count__error">{bedroomCountInput ? `Enter a whole number from 1 to ${MAX_BEDROOM_COUNT}.` : "Enter the number of bedrooms to continue."}</p> : null}
+          </div> : null}
+          <div className="estimate-configure-details__field" role="group" aria-labelledby="estimate-rooms-label"><span id="estimate-rooms-label">Rooms</span><RoomsMultiSelectDropdown options={roomSelectOptions} selected={selectedRoomTypeIds} onChange={handleRoomsChange} disabled={roomControlsDisabled} /></div>
         </div>
+        {hasRetainedRooms ? <p className="estimate-retained-rooms-note">Previously selected rooms are kept with their dimensions and items. Remove them explicitly if they are no longer needed.</p> : null}
       </section>
-      {rooms.length ? <section className="estimate-configure-dimensions" aria-label="Room dimensions"><RoomDimensionsAccordion rooms={rooms.map((room) => ({ id: room.id, label: room.label, icon: roomIcons[room.typeId] ?? Pencil, length: room.length, width: room.width }))} onDimensionChange={updateRoom} onRemove={removeRoom} /></section> : null}
+      {rooms.length ? <section className="estimate-configure-dimensions" aria-label="Room dimensions"><RoomDimensionsAccordion rooms={rooms.map((room) => ({ id: room.id, label: room.label, icon: getRoomIcon(room.typeId), length: room.length, width: room.width }))} onDimensionChange={updateRoom} onRemove={removeRoom} disabled={roomControlsDisabled} /></section> : null}
       <section className="estimate-panel configured-estimate-chooser" aria-labelledby="estimate-main-baskets-title">
         <div className="configured-estimate-chooser__heading">
           <div><p className="eyebrow">Configuration</p><h2 id="estimate-main-baskets-title">Main Baskets</h2><p>Select the Main Baskets for this estimate. Available Main Lines and temporary items appear in the builder.</p></div>
@@ -931,9 +962,10 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
         {configuredMode && catalogue.data ? <div className="configured-estimate-chooser__list">{visibleBaskets.map((basket) => <MainBasketSelectionCard key={basket.id} basket={basket} selected={selectedMainBasketIds.has(basket.id)} disabled={basketSelectionDisabled} onToggle={() => toggleMainBasket(basket.id)} />)}</div> : null}
         {configuredMode && (catalogue.data?.items.length ?? 0) > 0 && basketSearchTerm && !visibleBaskets.length ? <p className="configured-estimate-chooser__state" role="status">No baskets match your search.</p> : null}
       </section>
-      {!configuredMode && lines.length ? <button type="button" className="button button--secondary estimate-continue" onClick={() => setTab("builder")}>Return to saved items</button> : null}
-      {configuredMode ? <ConfigureSelectionFooter count={selectedMainBasketIds.size} clearDisabled={basketSelectionDisabled || !selectedMainBasketIds.size} continueDisabled={basketSelectionDisabled || !rooms.length || !selectedMainBasketIds.size} onClear={clearMainBaskets} onContinue={buildLines} /> : null}
+      {(saved.data?.lineItems.length ?? 0) > 0 ? <button type="button" className="button button--secondary estimate-continue" onClick={() => setTab("builder")}>Return to saved items</button> : null}
+      {configuredMode ? <ConfigureSelectionFooter count={selectedMainBasketIds.size} clearDisabled={basketSelectionDisabled || !selectedMainBasketIds.size} continueDisabled={basketSelectionDisabled || bedroomSetupRequired || !rooms.length || !selectedMainBasketIds.size} onClear={clearMainBaskets} onContinue={buildLines} /> : null}
     </> : null}
+    {tab !== "configure" && bedroomSetupRequired ? <div className="estimate-bedroom-count-required" role="status"><p>Enter the number of bedrooms in Configure before saving or submitting this estimate. Your saved rooms and items are kept.</p><button type="button" className="button button--secondary" disabled={roomControlsDisabled} onClick={() => { setTab("configure"); requestAnimationFrame(() => bedroomCountRef.current?.focus()); }}>Configure bedrooms</button></div> : null}
     {tab === "builder" && configuredMode && catalogue.isError ? <div className="configured-estimate-refresh">
       {catalogue.isError ? <p role="alert">{catalogue.error instanceof ApiError && catalogue.error.status === 403 ? "You do not have permission to read the estimator catalogue." : catalogue.data ? "Available items could not be refreshed. The last loaded catalogue is shown. Try again." : "Available items could not be loaded. Try again."}</p> : null}
     </div> : null}
@@ -1037,11 +1069,11 @@ function LeadEstimateWorkspaceForLead({ leadId }: { leadId: string }) {
     /></section> : null}
     {tab === "summary" ? <section className="estimate-panel estimate-summary"><h2>Estimate summary</h2>{rooms.map((room) => <div className="estimate-summary-row" key={room.id}><span><RoomIcon typeId={room.typeId} /> <strong>{room.label}</strong><small>{lines.filter((line) => line.roomName === room.label && line.included).length + configuredLines.filter((line) => line.roomId === room.id && line.included).length} selected items</small></span><strong>{roomTotalLabel(room.id)}</strong></div>)}{hasMissingRate ? <p role="status">Total incomplete: enter the selling rate for {incompleteConfiguredLines.length} selected items.</p> : null}{invalidSelectedAmountCount ? <p role="status">Total incomplete: correct the quantity or price for {invalidSelectedAmountCount} selected items.</p> : null}<div className="estimate-total-card"><span>Sub-total <strong>{totalLabel(totals.subtotal)}</strong></span><span>GST @ 18% <strong>{totalLabel(totals.gst)}</strong></span><span>Total (incl. GST) <strong>{totalLabel(totals.total)}</strong></span></div></section> : null}
     {tab === "proposal" ? <section className="estimate-panel estimate-proposal"><header><p className="eyebrow">Lisno interior proposal</p><h2>{leadItem.projectName}</h2><p>Prepared for {leadItem.clientName}</p></header>{rooms.map((room) => <article key={room.id}><h3><RoomIcon typeId={room.typeId} /> {room.label}</h3>{selectedLines.filter((line) => line.roomName === room.label).map((line) => <div key={line.id}><span>{catalogueRows.find((row) => row.id === line.catalogueId)?.description ?? line.catalogueId}<small>{line.specification} · {line.quantity} {line.unit}</small></span><strong>{money(Math.round(line.quantity * line.rate))}</strong></div>)}{selectedConfiguredLines.filter((line) => line.roomId === room.id).map((line) => <div key={line.key}><span>{line.mainLineName}<small>{line.mainBasketName}{line.subBasketName ? ` / ${line.subBasketName}` : ""} · {line.itemType === "temporary" ? "Temporary item" : "Main Line"} · {line.quantity} {line.uomName} · {parseSellingRate(line.rateInput).kind === "blank" ? "Rate required" : `₹${line.rateInput} per ${line.uomName}`}</small></span><strong>{configuredLineAmountPaise(line) === null ? "Incomplete" : moneyPaise(configuredLineAmountPaise(line) ?? 0)}</strong></div>)}</article>)}{hasMissingRate ? <p role="status">This proposal is incomplete until every selected item has a selling rate.</p> : null}{invalidSelectedAmountCount ? <p role="status">This proposal is incomplete until the highlighted quantities or prices are corrected.</p> : null}<div className="estimate-total-card"><span>Sub-total <strong>{totalLabel(totals.subtotal)}</strong></span><span>GST @ 18% <strong>{totalLabel(totals.gst)}</strong></span><span>Total (incl. GST) <strong>{totalLabel(totals.total)}</strong></span></div><p className="estimate-terms">Valid for 30 days. Rates subject to material market changes. Final scope on site measurement. GST as applicable.</p></section> : null}
-    {tab !== "configure" ? <footer className="estimate-workspace__footer"><div><strong>{hasIncompleteConfiguredTotal ? "Total incomplete" : `${money(totals.total)} total`}</strong><span>{includedItemCount} selected line {includedItemCount === 1 ? "item" : "items"} across {rooms.length} {rooms.length === 1 ? "room" : "rooms"} · {saved.data?.status?.replaceAll("_", " ") ?? "draft"}</span></div><div className="estimate-actions">{draftEditable ? <button type="button" className="button button--secondary" disabled={save.isPending || submit.isPending || hasInvalidInput || unavailableConfiguredLines.length > 0 || legacyIncompatibleConfiguredLines.length > 0 || estimateVersionConflict} onClick={() => save.mutate()}>{save.isPending ? "Saving…" : "Save draft"}</button> : null}{draftEditable ? <button type="button" className="button button--primary estimate-continue" disabled={!includedItemCount || hasInvalidInput || hasMissingRate || unavailableConfiguredLines.length > 0 || legacyIncompatibleConfiguredLines.length > 0 || save.isPending || submit.isPending || estimateVersionConflict} onClick={() => submit.mutate()}>{submit.isPending ? "Submitting…" : "Submit estimate"}</button> : null}{saved.data?.status === "ready_for_client" ? <button type="button" className="button button--primary" disabled={sendToClient.isPending} onClick={() => sendToClient.mutate()}>{sendToClient.isPending ? "Sending…" : "Send to client"}</button> : null}</div></footer> : null}
+    {tab !== "configure" ? <footer className="estimate-workspace__footer"><div><strong>{hasIncompleteConfiguredTotal ? "Total incomplete" : `${money(totals.total)} total`}</strong><span>{includedItemCount} selected line {includedItemCount === 1 ? "item" : "items"} across {rooms.length} {rooms.length === 1 ? "room" : "rooms"} · {saved.data?.status?.replaceAll("_", " ") ?? "draft"}</span></div><div className="estimate-actions">{draftEditable ? <button type="button" className="button button--secondary" disabled={!editable || bedroomSetupRequired || save.isPending || submit.isPending || hasInvalidInput || unavailableConfiguredLines.length > 0 || legacyIncompatibleConfiguredLines.length > 0 || estimateVersionConflict} onClick={() => save.mutate()}>{save.isPending ? "Saving…" : "Save draft"}</button> : null}{draftEditable ? <button type="button" className="button button--primary estimate-continue" disabled={!editable || publicationBlocked || bedroomSetupRequired || !includedItemCount || hasInvalidInput || hasMissingRate || unavailableConfiguredLines.length > 0 || legacyIncompatibleConfiguredLines.length > 0 || save.isPending || submit.isPending || estimateVersionConflict} onClick={() => submit.mutate()}>{submit.isPending ? "Submitting…" : lifecycle?.phase === "post" ? "Submit final estimate" : collaborative ? "Submit pre-estimate" : "Submit estimate"}</button> : null}{saved.data?.status === "ready_for_client" ? <button type="button" className="button button--primary" disabled={sendToClient.isPending || publicationBlocked || saved.isError} onClick={() => sendToClient.mutate()}>{sendToClient.isPending ? "Sending…" : "Send to client"}</button> : null}</div></footer> : null}
     {invalidConfiguredLines.length ? <p className="estimate-notice estimate-notice--error" role="alert">Correct the highlighted rate or quantity before saving.</p> : null}
     {unavailableConfiguredLines.length ? <p className="estimate-notice estimate-notice--error" role="alert">A Main Line is no longer available in Configuration. Refresh available items or remove it before saving.</p> : null}
     {changedUomConfiguredLines.length ? <p className="estimate-notice estimate-notice--error" role="alert">Configuration changed a line's unit. Re-enter its quantity in the builder before saving.</p> : null}
     {legacyIncompatibleConfiguredLines.length ? <p className="estimate-notice estimate-notice--error" role="alert">{catalogue.data?.readyNonActiveSupported === false ? "This catalogue service cannot save temporary items yet. Keep this estimate open and refresh after the service is updated." : "Refresh available items before saving temporary items in this estimate."}</p> : null}
-    {estimateVersionConflict ? <div className="estimate-notice estimate-notice--error" role="alert"><p>This estimate changed elsewhere. Reload the latest saved estimate before editing it again.</p><button type="button" className="button button--secondary" onClick={() => void reloadSavedEstimate()}>Reload saved estimate (discard edits)</button></div> : [save.error, submit.error].some((error) => error instanceof ApiError && ["ESTIMATE_CATALOGUE_CHANGED", "ESTIMATE_UOM_CHANGED", "ESTIMATE_CONFIGURATION_UNAVAILABLE", "ESTIMATE_CONFIGURATION_CHANGED"].includes(error.code)) ? <div className="estimate-notice estimate-notice--error" role="alert"><p>Configuration changed since you opened this estimate. Refresh available items and check the selected lines before saving.</p><button type="button" className="button button--secondary" onClick={() => void refreshAvailableItems()}>Refresh catalogue</button></div> : save.isError || submit.isError || sendToClient.isError ? <p className="estimate-notice estimate-notice--error" role="alert">The estimate action could not be completed. Check the current workflow state and try again.</p> : null}{retryError ? <p className="estimate-notice estimate-notice--error" role="alert">{retryError}</p> : null}{notice ? <p className="estimate-notice" role="status">{notice}</p> : null}
+    {estimateVersionConflict ? <div className="estimate-notice estimate-notice--error" role="alert"><p>This estimate changed elsewhere. Reload the latest saved estimate before editing it again.</p><p>Your local edits are preserved. Review or copy them before reloading.</p><button type="button" className="button button--secondary" onClick={() => void reloadSavedEstimate()}>Reload saved estimate (discard edits)</button></div> : [save.error, submit.error].some((error) => error instanceof ApiError && ["ESTIMATE_CATALOGUE_CHANGED", "ESTIMATE_UOM_CHANGED", "ESTIMATE_CONFIGURATION_UNAVAILABLE", "ESTIMATE_CONFIGURATION_CHANGED"].includes(error.code)) ? <div className="estimate-notice estimate-notice--error" role="alert"><p>Configuration changed since you opened this estimate. Refresh available items and check the selected lines before saving.</p><button type="button" className="button button--secondary" onClick={() => void refreshAvailableItems()}>Refresh catalogue</button></div> : save.isError || submit.isError || sendToClient.isError ? <p className="estimate-notice estimate-notice--error" role="alert"><span>The estimate action could not be completed. Check the current workflow state and try again.</span>{[save.error, submit.error, sendToClient.error].find((error): error is ApiError => error instanceof ApiError)?.message ? <span> {[save.error, submit.error, sendToClient.error].find((error): error is ApiError => error instanceof ApiError)!.message}</span> : null}</p> : null}{retryError ? <p className="estimate-notice estimate-notice--error" role="alert">{retryError}</p> : null}{notice ? <p className="estimate-notice" role="status">{notice}</p> : null}
   </section>;
 }

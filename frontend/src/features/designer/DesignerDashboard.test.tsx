@@ -199,6 +199,7 @@ function installDashboardApi(options?: {
   kpiHasMore?: boolean;
   missingProjectAggregates?: boolean;
   reverseDesignTasks?: boolean;
+  unestimated?: boolean;
 }) {
   let projectRequests = 0;
   const mainKpiRequests: string[] = [];
@@ -211,7 +212,7 @@ function installDashboardApi(options?: {
       const tasks = options?.reverseDesignTasks
         ? [...designPlanTasks].reverse()
         : designPlanTasks;
-      return response(options?.empty ? [] : tasks);
+      return response(options?.empty || options?.unestimated ? [] : tasks);
     }
     if (url.startsWith("/api/v1/projects?")) {
       projectRequests += 1;
@@ -340,6 +341,18 @@ function installDashboardApi(options?: {
 }
 
 describe("DesignerDashboard", () => {
+  it("opens assigned projects before an approved estimate has created any design task", async () => {
+    tokenStorage.set("designer-token");
+    installDashboardApi({ unestimated: true });
+    renderApp(["/designer"]);
+    const row = await screen.findByRole("article", { name: "Aurora Villa" });
+    expect(within(row).getByText("Design task not available yet")).toBeVisible();
+    expect(within(row).getByRole("link", { name: "View project details for Aurora Villa" })).toHaveAttribute("href", "/designer/projects/project-aurora-villa");
+    expect(within(row).queryByRole("link", { name: /Upload design|Continue design|View images/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("article", { name: "Aurora Studio" })).toBeVisible();
+    expect(screen.queryByText("No design projects assigned")).not.toBeInTheDocument();
+  });
+
   it("shows one upload action, compact KPIs, assigned design rows, risk, and activity", async () => {
     tokenStorage.set("valid-token");
     installDashboardApi();
@@ -407,7 +420,7 @@ describe("DesignerDashboard", () => {
     expect(await screen.findByText("No design projects assigned")).toBeVisible();
     expect(
       screen.getByText(
-        "Approved estimates will appear after a Sales Manager or Super Admin assigns you."
+        "Projects will appear here when you are assigned, including projects awaiting estimate approval."
       )
     ).toBeVisible();
     expect(screen.queryByRole("button", { name: /create project/i }))

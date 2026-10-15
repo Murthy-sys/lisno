@@ -60,3 +60,42 @@ describe("proposal structural safety ceilings", () => {
     expect(validateProposalStructure(value)).toEqual([expect.objectContaining({ resourceId: "bounds-basket", message: expect.stringContaining("2,000 saved prices") })]);
   });
 });
+
+describe("hierarchy intake structural boundary", () => {
+  function intake(): ProposalPublicationSnapshot {
+    const value = snapshot(1); value.requestMode = "hierarchy_intake"; value.sections = [];
+    value.basket.payload.description = "Requested basket";
+    value.subBaskets[0]!.payload.description = "Requested child";
+    return value;
+  }
+  it("requires descriptions and a Main Line before submission but permits an incomplete saved draft", () => {
+    expect(validateProposalStructure(intake())).toEqual([]);
+    const value = intake(); value.basket.payload.description = null; value.subBaskets[0]!.payload.description = " "; value.mainLines = [];
+    expect(validateProposalStructure(value, true)).toEqual([]);
+    const codes = validateProposalStructure(value).map((finding) => finding.code);
+    expect(codes.filter((code) => code === "DESCRIPTION_REQUIRED")).toHaveLength(2);
+    expect(codes).toContain("PROPOSAL_HIERARCHY_REQUIRED");
+  });
+  it("rejects hidden Configuration payloads, extra children, quality and proposed masters", () => {
+    const attempts: Array<(value: ProposalPublicationSnapshot) => void> = [
+      (value) => { value.sections = snapshot(1).sections; },
+      (value) => { value.quality = resource("quality", "quality", "bounds-basket", { parameters: [] }); },
+      (value) => { value.subBaskets.push(resource("sub_basket", "another-sub", "bounds-basket", { name: "Other", description: "Other", displayOrder: 1 })); },
+      (value) => { Object.assign(value.mainLines[0]!.payload, { uomId: "unit", ratePaise: 100 }); },
+      (value) => { value.mainLines[0]!.payload.description = "Hidden technical details"; },
+      (value) => { value.masters = [{ ...resource("surface", "private-surface", null, { name: "Surface", code: "SURFACE", description: null }), kind: "surface" }]; }
+    ];
+    for (const mutate of attempts) {
+      const value = intake(); mutate(value);
+      expect(validateProposalStructure(value)).toContainEqual(expect.objectContaining({ code: "INVALID_INTAKE_CONTENT" }));
+    }
+  });
+  it("keeps full proposals on their established structure rules and requires intake lines for existing parents", () => {
+    const value = snapshot(0); value.target = { kind: "new_sub_basket", basketId: "bounds-basket" };
+    expect(validateProposalStructure(value)).toEqual([]);
+    value.requestMode = "hierarchy_intake"; value.subBaskets[0]!.payload.description = "New child";
+    expect(validateProposalStructure(value).map((finding) => finding.code)).toContain("PROPOSAL_HIERARCHY_REQUIRED");
+    value.mainLines = snapshot(1).mainLines;
+    expect(validateProposalStructure(value)).toEqual([]);
+  });
+});

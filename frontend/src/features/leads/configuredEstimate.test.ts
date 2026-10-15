@@ -12,6 +12,16 @@ const catalogue: EstimationCatalogue = {
 };
 
 describe("configured estimate line state", () => {
+  it("refreshes customer notes in editable scope while retaining submitted notes", () => {
+    const current = structuredClone(catalogue);
+    current.items[0]!.subBaskets[0]!.mainLines[0]!.estimateNotes = ["Maintain removable access"];
+    const rooms = [{ id: "room-a", label: "Bedroom" }], selected = new Set(["basket-a"]);
+    const draft = buildConfiguredLines(current, rooms, selected, [])[0]!;
+    expect(draft.estimateNotes).toEqual(["Maintain removable access"]);
+    const saved = { ...draft, persistedId: "line-saved", estimateNotes: ["Original agreed access"] };
+    expect(buildConfiguredLines(current, rooms, selected, [saved])[0]?.estimateNotes).toEqual(["Maintain removable access"]);
+    expect(buildConfiguredLines(current, rooms, selected, [saved], true)[0]?.estimateNotes).toEqual(["Original agreed access"]);
+  });
   it("removes recommendation-only descendants but retains shared, manual, and other-room lines", () => {
     const source = buildConfiguredLines(catalogue, [{ id: "room-a", label: "Bedroom" }], new Set(["basket-a"]), [])[0]!;
     const line = (roomId: string, mainLineId: string, sources?: string[]) => ({

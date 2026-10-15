@@ -65,7 +65,7 @@ export function createProjectPurchaseOrderModeDecisionService(input: { audit: Au
         const existing = await ProjectPurchaseOrderModeDecisionModel.findOne(decisionKey(projectId, source, line.key))
           .session(session).lean().exec() as Row | null;
         if (fields.expectedVersion !== (existing?.version ?? 0)) versionConflict();
-        const pending = await ProjectPurchaseOrderRequestModel.exists({ projectId, status: "pending_approval" }).session(session);
+        const pending = await ProjectPurchaseOrderRequestModel.exists({ projectId, status: { $in: ["pending_approval", "ready_to_issue"] } }).session(session);
         if (pending) throw new ApiError(409, "PURCHASE_ORDER_MODE_REQUEST_PENDING", "A submitted purchase order request must be decided before editing mode choices.");
         const proposed: PurchaseOrderModeProposal = { mode: fields.mode, quantity: fields.quantity,
           discountBps: fields.discountBps, markupBasis: fields.markupBasis, exceptionReason: null,
@@ -110,7 +110,7 @@ export function createProjectPurchaseOrderModeDecisionService(input: { audit: Au
         if (!line || !line.included || line.amountPaise === null || line.amountPaise <= 0) {
           throw new ApiError(409, "PURCHASE_ORDER_MODE_SOURCE_CONFLICT", "Select a current included approved estimate line with a positive amount.");
         }
-        const pending = await ProjectPurchaseOrderRequestModel.exists({ projectId, status: "pending_approval" }).session(session);
+        const pending = await ProjectPurchaseOrderRequestModel.exists({ projectId, status: { $in: ["pending_approval", "ready_to_issue"] } }).session(session);
         if (pending) throw new ApiError(409, "PURCHASE_ORDER_MODE_REQUEST_PENDING", "A submitted purchase order request must be decided before editing mode choices.");
         const existing = await ProjectPurchaseOrderModeDecisionModel.findOne(decisionKey(projectId, source, line.key))
           .session(session).lean().exec() as Row | null;

@@ -329,6 +329,11 @@ describe("AI estimator knowledge models", () => {
     });
     await line.validate();
     expect(line.nameNormalized).toBe("plain false ceiling");
+    expect(line.estimationVisibility).toBe("internal");
+    line.estimationVisibility = "external";
+    await line.validate();
+    line.estimationVisibility = "public";
+    await expect(line.validate()).rejects.toMatchObject({ errors: { estimationVisibility: expect.anything() } });
     expect(AiEstimatorKnowledgeMainLineModel.schema.indexes()).toContainEqual([
       { basketId: 1, nameNormalized: 1 },
       expect.objectContaining({ unique: true })

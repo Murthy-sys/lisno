@@ -3,8 +3,9 @@ import { actionDateData, isNativeWorkflowAction, workflowActionNeedsNote } from 
 describe("native workflow actions", () => {
   it("only enables actions with complete native contracts", () => {
     expect(isNativeWorkflowAction("keys_received")).toBe(true);
-    expect(isNativeWorkflowAction("measurement_complete")).toBe(false);
-    expect(isNativeWorkflowAction("furniture_upload")).toBe(false);
+    expect(isNativeWorkflowAction("unrecognized_action")).toBe(false);
+    expect(isNativeWorkflowAction("measurement_complete")).toBe(true);
+    expect(isNativeWorkflowAction("furniture_upload")).toBe(true);
   });
 
   it("builds the exact date fields and note requirements", () => {

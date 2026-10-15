@@ -3,6 +3,7 @@ import { model, models, Schema } from "./mongoose.js";
 const schema = new Schema({
   _id: { type: String, required: true, immutable: true },
   requesterId: { type: String, required: true, immutable: true },
+  requestMode: { type: String, enum: ["hierarchy_intake", "full_configuration"], immutable: true },
   vendorId: { type: String, default: null, immutable: true },
   vendorName: { type: String, default: null, minlength: 1, maxlength: 240, immutable: true },
   targetKind: { type: String, enum: ["new_main_basket", "new_sub_basket"], default: "new_main_basket", immutable: true },

@@ -1,6 +1,7 @@
 import type { ClientSession } from "mongoose";
 import type { AssistantCatalogueCandidate, AssistantFact, AssistantFactBundle, AssistantReadScope, AssistantReadSources, AssistantSourceVersion } from "../contracts/project-chat-assistant.js";
 import type { ProjectStatusSummary } from "../contracts/project-status.js";
+import { currentEstimationApproval, isCollaborativeEstimate } from "../domain/estimation-lifecycle.js";
 import { approvedEstimateLineItemKey } from "../domain/estimate-line-item.js";
 import { ApiError } from "../middleware/errors.js";
 import { EstimateModel } from "../models/Estimate.js";
@@ -22,10 +23,12 @@ import { boundedAssistantIds, readAssistantLines, readAssistantRecommendations, 
 import { calculateAssistantAddition, type AssistantApprovedScope } from "./project-assistant-pricing.js";
 import { createProjectStatusService } from "./project-status.service.js";
 import type { Clock } from "./workflow.js";
+import { readAssistantProjectEstimate } from "./project-assistant-estimate.js";
 
 type Row = Record<string, any>;
 interface ApprovedRead { scope: AssistantApprovedScope; freshness: AssistantSourceVersion[]; estimateId: string | null; estimateVersion: number | null; roundId: string | null; sourceKeys: string[] }
 export interface AssistantSourceReaders {
+  projectEstimate?: typeof readAssistantProjectEstimate;
   status(context: AssistantContext, transaction?: ChatTransaction): Promise<ProjectStatusSummary>;
   execution(context: AssistantContext, transaction?: ChatTransaction): Promise<AssistantFactBundle>;
   approved(context: AssistantContext, transaction?: ChatTransaction): Promise<{ scope: AssistantApprovedScope; freshness: AssistantSourceVersion[] }>;
@@ -60,24 +63,31 @@ async function readApproved(context: AssistantContext, tx?: ChatTransaction): Pr
   const rounds = await EstimateClientReviewRoundModel.find({ estimateId: selected.id, status: "approved", decision: "approve" }).session(tx.session).lean().exec() as Row[];
   const evidence = await tx.app.findProjectStatusEstimateEvidence(projectId);
   const witness = { estimate, lead, rounds, evidence };
-  if (rounds.length !== 1) return finish(unavailable, witness);
-  const round = rounds[0]!;
+  const collaborative = isCollaborativeEstimate(estimate);
+  const approvedReference = currentEstimationApproval(estimate);
+  const matchingRounds = collaborative ? rounds.filter(round => String(round._id) === approvedReference?.reviewRoundId && round.estimateVersion === approvedReference.estimateVersion) : rounds;
+  if (matchingRounds.length !== 1) return finish(unavailable, witness);
+  const round = matchingRounds[0]!;
+  const approvedVersion = collaborative ? approvedReference!.estimateVersion : estimate.version - 1;
+  const approvedAt = collaborative ? validDate(approvedReference!.approvedAt) : validDate(estimate.clientDecisionAt);
   const evidenceRound = evidence.rounds.find(row => row.id === String(round._id));
   if (evidence.projectId !== projectId || !evidenceRound || evidenceRound.estimateId !== selected.id || evidenceRound.leadId !== selected.leadId ||
-    evidenceRound.projectId && evidenceRound.projectId !== projectId || evidenceRound?.estimateVersion !== estimate.version - 1 ||
-    evidenceRound?.decidedAt !== validDate(estimate.clientDecisionAt) ||
-    evidence.rounds.some(row => row.estimateId === selected.id && row.sendGeneration > round.sendGeneration) ||
-    evidence.financeSource && (evidence.financeSource.estimateId !== selected.id || evidence.financeSource.estimateVersion !== estimate.version - 1 || evidence.financeSource.reviewRoundId !== String(round._id)) ||
+    evidenceRound.projectId && evidenceRound.projectId !== projectId || evidenceRound?.estimateVersion !== approvedVersion ||
+    evidenceRound?.decidedAt !== approvedAt ||
+    !collaborative && evidence.rounds.some(row => row.estimateId === selected.id && row.sendGeneration > round.sendGeneration) ||
+    evidence.financeSource && (evidence.financeSource.estimateId !== selected.id || evidence.financeSource.estimateVersion !== approvedVersion || evidence.financeSource.reviewRoundId !== String(round._id)) ||
     round.decisionSource === "client_portal" && round.decidedById !== context.user.id ||
     round.decisionSource === "admin_proof" && !evidenceRound.proofValid) return finish(unavailable, witness);
-  const presented = presentClientEstimate(toPublicUser(context.user), estimate, { ...lead, _id: lead.id }, round);
+  const presented = presentClientEstimate(toPublicUser(context.user), estimate, { ...lead, _id: lead.id }, round, context.sources.project);
   if (!presented?.publishedReview || presented.reviewSourceIssue !== null || presented.projectId !== projectId) return finish(unavailable, witness);
   try {
     const approval = financeApprovalLineage(estimate, rounds);
     if (!approval.immutable || approval.estimateReviewRoundId !== String(round._id)) return finish(unavailable, witness);
     const lines = presented.publishedReview.snapshot.lineItems as Row[];
     const configured = lines.filter(line => line.source === "configuration");
-    const allRooms = new Map(rooms.map((room: { id: string; name: string }) => [room.id, room]));
+    const approvedRooms = collaborative ? (presented.publishedReview.snapshot.rooms ?? []).flatMap((room: Row) =>
+      typeof room?.id === "string" && typeof (room.name ?? room.label) === "string" ? [{ id: room.id, name: room.name ?? room.label }] : []) : rooms;
+    const allRooms = new Map<string, { id: string; name: string }>(approvedRooms.map((room: { id: string; name: string }) => [room.id, room]));
     for (const line of configured) allRooms.set(line.roomId, { id: line.roomId, name: line.roomName });
     return finish({ state: "approved", totalPaise: approval.baseline.approvedContractTotalPaise, rooms: [...allRooms.values()],
       lines: configured.map(line => ({ mainLineId: line.mainLineId, roomId: line.roomId, included: line.included,
@@ -210,7 +220,7 @@ export function createAssistantReadSources(options: {
   const snapshot = <T>(read: (tx: ChatTransaction) => Promise<T>) => options.transaction ? read(options.transaction) : options.chatRepository.snapshot(read);
   const readers: AssistantSourceReaders = {
     status: (context, tx) => createProjectStatusService({ repository: tx!.app, chatRepository: options.chatRepository, clock: options.clock }).getForClientScope(scope, tx),
-    execution: readExecution, approved: readApproved, lines: readAssistantLines, search: searchAssistantCatalogue, recommendations: readAssistantRecommendations,
+    execution: readExecution, approved: readApproved, projectEstimate: readAssistantProjectEstimate, lines: readAssistantLines, search: searchAssistantCatalogue, recommendations: readAssistantRecommendations,
     ...options.readers
   };
   async function guarded<T>(read: (context: AssistantContext, tx: ChatTransaction) => Promise<T>): Promise<T> {
@@ -228,6 +238,11 @@ export function createAssistantReadSources(options: {
   };
   return {
     status: () => guarded(statusRead),
+    projectEstimate: input => guarded(async (context, tx) => {
+      if (!["current", "approved", "published"].includes(input.basis)) throw new ApiError(400, "ASSISTANT_INPUT_INVALID", "Choose a published estimate source.");
+      const result = await readers.projectEstimate!(context, input, tx);
+      return { ...result, freshness: [scopeWitness(context), ...result.freshness] };
+    }),
     execution: () => guarded(async (context, tx) => {
       const result = await readers.execution(context, tx); return { facts: result.facts, freshness: [scopeWitness(context), ...result.freshness] };
     }),
@@ -261,6 +276,11 @@ export function createAssistantReadSources(options: {
               case "assistant-status": current = (await statusRead(context, tx)).freshness.find(row => row.kind === witness.kind); break;
               case "assistant-execution": current = (await readers.execution(context, tx)).freshness.find(row => row.kind === witness.kind); break;
               case "assistant-approved": current = (await readers.approved(context, tx)).freshness.find(row => row.kind === witness.kind); break;
+              case "assistant-project-estimate": {
+                const basis = witness.id.slice(scope.projectId.length + 1);
+                if (!witness.id.startsWith(`${scope.projectId}:`) || !["current", "approved", "published"].includes(basis)) return false;
+                current = (await readers.projectEstimate!(context, { basis: basis as "current" | "approved" | "published" }, tx)).freshness.find(row => row.kind === witness.kind); break;
+              }
               case "assistant-line": current = (await readers.lines(boundedAssistantIds([witness.id]), tx.session)).freshness.find(row => row.id === witness.id); break;
               case "assistant-candidate": {
                 const candidate = (await readers.lines(boundedAssistantIds([witness.id]), tx.session)).lines.get(witness.id)?.candidate;

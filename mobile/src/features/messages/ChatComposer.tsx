@@ -53,6 +53,10 @@ import {
   type AttachmentOptionSource
 } from "./AttachmentOptionsSheet";
 import { ChatIcon } from "./ChatIcon";
+import { ChatComposerMetadata, useChatComposerMetadata } from "./ChatComposerMetadata";
+import { mentionsAfterEdit, trimMentionedMessage } from "./chatDraftMetadata";
+import { useChatTypingActivity } from "./useChatTypingActivity";
+import type { ChatMention } from "./chatModel";
 import { chatColors } from "./chatTheme";
 
 interface AttachmentPolicy {
@@ -178,10 +182,11 @@ export function canSubmitChatMessage(input: {
 interface SendChatMessagePayload {
   readonly body: string;
   readonly attachmentIds?: readonly string[];
-  readonly mentions: readonly string[];
+  readonly mentions: readonly ChatMention[];
+  readonly action?: { readonly typeId: string; readonly dueDate: string };
   readonly priority: PresentedPriority;
   readonly replyToId: string | null;
-  readonly responsibleUserId: null;
+  readonly responsibleUserId: string | null;
   readonly clientMessageId: string;
 }
 
@@ -262,6 +267,8 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [accessRevoked, setAccessRevoked] = useState(false);
+  const metadata = useChatComposerMetadata(projectId, session, owner.key, !readOnly && !accessRevoked);
+  const typing = useChatTypingActivity(projectId, !readOnly && !accessRevoked && session.authorization.permissions.includes("chat.send"));
   const clientMessageId = useRef(createClientMessageId());
   const sendSnapshot = useRef<SendChatMessagePayload | null>(null);
   const uploadId = useRef(createClientUploadId());
@@ -377,6 +384,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
     sendSnapshot.current = null;
     setAccessRevoked(true);
     setBody("");
+    metadata.reset(); typing.stop();
     setPriority("normal");
     setPriorityOpen(false);
     setAttachmentOpen(false);
@@ -610,6 +618,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
       stagedRef.current = [];
       setStaged([]);
       setBody("");
+      metadata.reset(); typing.stop();
       setPriority("normal");
       setError(null);
       clientMessageId.current = createClientMessageId();
@@ -646,9 +655,9 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
   }, [onSendingChange, send.isPending]);
 
   useEffect(() => {
-    onOverlayChange?.(attachmentOpen || priorityOpen || Boolean(selectingSource));
+    onOverlayChange?.(attachmentOpen || priorityOpen || metadata.open || Boolean(selectingSource));
     return () => onOverlayChange?.(false);
-  }, [attachmentOpen, onOverlayChange, priorityOpen, selectingSource]);
+  }, [attachmentOpen, onOverlayChange, priorityOpen, metadata.open, selectingSource]);
 
   useEffect(() => () => {
     onSendingChange?.(false);
@@ -738,6 +747,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
     send.reset();
     setAccessRevoked(false);
     setBody("");
+    metadata.reset(); typing.stop();
     setPriority("normal");
     setPriorityOpen(false);
     setAttachmentOpen(false);
@@ -1159,7 +1169,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
 
   const clearPriority = useCallback(() => {
     if (pendingRef.current || stagedRemovalsRef.current.size > 0) return;
-    setPriority("normal");
+    setPriority("normal"); metadata.setAction(null); metadata.setResponsible("");
     renewDraftIdentity();
   }, [renewDraftIdentity]);
 
@@ -1170,28 +1180,33 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
       clientMessageId.current = createClientMessageId();
       sendSnapshot.current = null;
     }
+    const validation = sendSnapshot.current ? null : metadata.validate(body);
+    if (validation) { setError(validation); return; }
+    const trimmed = trimMentionedMessage(body, metadata.mentions);
     const snapshot = sendSnapshot.current ?? Object.freeze({
-      body: body.trim(),
+      body: trimmed.body,
       ...(staged.length
         ? { attachmentIds: Object.freeze(staged.map((item) => item.attachment.id)) }
         : {}),
-      mentions: Object.freeze([]),
+      mentions: Object.freeze(trimmed.mentions),
+      ...(metadata.action ? { action: Object.freeze({ ...metadata.action }) } : {}),
       priority,
       replyToId,
-      responsibleUserId: null,
+      responsibleUserId: metadata.responsibleUserId || null,
       clientMessageId: clientMessageId.current
     });
     sendSnapshot.current = snapshot;
+    typing.stop(); metadata.setOpen(false);
     const operation = captureOperation();
     pendingRef.current = true;
     setAttachmentOpen(false);
     setPriorityOpen(false);
     send.mutate({ operation, payload: snapshot });
-  }, [body, captureOperation, priority, readOnly, reply?.id, send, staged]);
+  }, [body, captureOperation, priority, readOnly, reply?.id, send, staged, metadata, typing]);
 
   useImperativeHandle(ref, () => ({
     hasTransientState() {
-      return pendingRef.current || send.isPending || removingStagedCount > 0 || attachmentOpen || priorityOpen || recordingStarting || recording || recordingStopping || Boolean(selectingSource) || uploading || Boolean(selectedAsset) || staged.length > 0 || Boolean(reply) || priority !== "normal";
+      return metadata.open || Boolean(metadata.action) || Boolean(metadata.responsibleUserId) || pendingRef.current || send.isPending || removingStagedCount > 0 || attachmentOpen || priorityOpen || recordingStarting || recording || recordingStopping || Boolean(selectingSource) || uploading || Boolean(selectedAsset) || staged.length > 0 || Boolean(reply) || priority !== "normal";
     },
     dismissTransientState() {
       if (pendingRef.current || send.isPending) return true;
@@ -1200,6 +1215,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
         setAttachmentOpen(false);
         return true;
       }
+      if (metadata.open) { metadata.setOpen(false); return true; }
       if (priorityOpen) {
         setPriorityOpen(false);
         return true;
@@ -1221,13 +1237,13 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
         for (const item of staged) void removeStaged(item);
         return true;
       }
-      if (priority !== "normal") {
+      if (priority !== "normal" || metadata.action || metadata.responsibleUserId) {
         clearPriority();
         return true;
       }
       return false;
     }
-  }), [attachmentOpen, cancelReply, cancelVoice, clearPriority, priority, priorityOpen, recording, recordingStarting, recordingStopping, removingStagedCount, reply, selectedAsset, selectingSource, send.isPending, staged, uploading]);
+  }), [metadata, attachmentOpen, cancelReply, cancelVoice, clearPriority, priority, priorityOpen, recording, recordingStarting, recordingStopping, removingStagedCount, reply, selectedAsset, selectingSource, send.isPending, staged, uploading]);
 
   const submitEnabled = !readOnly && canSubmitChatMessage({
     body,
@@ -1378,9 +1394,11 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
             }}
             onChangeText={(value) => {
               if (pendingRef.current || stagedRemovalsRef.current.size > 0) return;
-              setBody(value);
+              metadata.setMentions(mentionsAfterEdit(body, value, metadata.mentions));
+              setBody(value); typing.edit(value);
               renewDraftIdentity();
             }}
+            onBlur={typing.stop}
             placeholder="Type a message"
             placeholderTextColor="#849198"
             ref={inputRef}
@@ -1443,6 +1461,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
       </View>
       <Text style={styles.audience}>Shared with the client and project team</Text>
       {!mediaEnabled && !policy.isPending && !policy.isError ? <Text style={styles.mediaUnavailable}>Media sharing is unavailable in this conversation.</Text> : null}
+      <ChatComposerMetadata controller={metadata} projectId={projectId} session={session} ownerKey={owner.key} body={body} cursor={selectionRef.current.start} priority={priority} disabled={interactionLocked} onBodyChange={(next, cursor) => { setBody(next); selectionRef.current = { start: cursor, end: cursor }; typing.edit(next); }} onPriorityChange={setPriority} onChanged={renewDraftIdentity} onDenied={revokeComposerAccess} />
       <Modal animationType="fade" onRequestClose={() => interactionLocked ? undefined : setPriorityOpen(false)} transparent visible={priorityOpen}>
         <View style={styles.priorityOverlay}>
           <Pressable accessibilityLabel="Close message importance" accessibilityRole="button" accessibilityState={{ disabled: interactionLocked }} disabled={interactionLocked} onPress={() => setPriorityOpen(false)} style={styles.priorityBackdrop} />
@@ -1457,7 +1476,7 @@ export const ChatComposer = forwardRef<ChatComposerHandle, ChatComposerProps>(fu
                   disabled={interactionLocked}
                   onPress={() => {
                     if (pendingRef.current || stagedRemovalsRef.current.size > 0) return;
-                    setPriority(value);
+                    setPriority(value); metadata.setAction(null); if (value === "normal") metadata.setResponsible("");
                     setPriorityOpen(false);
                     renewDraftIdentity();
                   }}

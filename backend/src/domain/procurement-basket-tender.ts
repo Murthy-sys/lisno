@@ -150,6 +150,7 @@ export interface ProcurementBasketBoqLine extends ProcurementBasketBoqLineInput 
   mainLineName: string | null;
   approvedQuantity: string;
   approvedUnit: string;
+  specification?: string;
   approvedQuoteAmountPaise: number | null;
   uomId: string;
   uomCode: string;

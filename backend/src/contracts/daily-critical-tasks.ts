@@ -7,7 +7,8 @@ export interface ChatAvailability {
 
 export type DailyCriticalTaskItem =
   | { readonly kind: "chat_action"; readonly id: string; readonly projectId: string; readonly projectName: string; readonly title: string; readonly dueDate: string; readonly messageId: string }
-  | { readonly kind: "workflow_task"; readonly id: string; readonly projectId: string; readonly projectName: string; readonly title: string; readonly dueAt: string; readonly status: string };
+  | { readonly kind: "workflow_task"; readonly id: string; readonly projectId: string; readonly projectName: string; readonly title: string; readonly dueAt: string; readonly status: string }
+  | { readonly kind: "design_requirement"; readonly id: string; readonly projectId: string; readonly projectName: string; readonly title: string; readonly dueAt: string | null; readonly status: string; readonly category: "selection" | "critical" | "stock" | "po_approval" };
 
 export interface DailyCriticalTasks {
   readonly timezone: "Asia/Kolkata";

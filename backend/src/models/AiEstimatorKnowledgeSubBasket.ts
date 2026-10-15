@@ -6,6 +6,7 @@ const subBasketSchema = new Schema({
   basketId: { type: String, ref: "AiEstimatorKnowledgeBasket", required: true, immutable: true },
   name: { type: String, required: true, maxlength: AI_ESTIMATOR_KNOWLEDGE_MAX_SHORT_TEXT },
   nameNormalized: { type: String, required: true },
+  description: { type: String, default: null, maxlength: 4000 },
   displayOrder: { type: Number, required: true, min: 0, validate: Number.isSafeInteger },
   version: { type: Number, required: true, default: 1, min: 1, validate: Number.isSafeInteger },
   dependencyEpoch: { type: Number, default: 0, min: 0, max: Number.MAX_SAFE_INTEGER,

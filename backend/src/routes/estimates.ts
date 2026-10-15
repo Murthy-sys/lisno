@@ -1,3 +1,9 @@
+import { normalizeDesignRules, designRulesDigest, designRuleEstimateNotes } from "../domain/main-line-design-rules.js";
+import { ProjectModel } from "../models/Project.js";
+import { EstimateClientReviewRoundModel } from "../models/EstimateClientReviewRound.js";
+import { comparePublishedEstimateSnapshots } from "../services/estimate-client-presentation.js";
+import { effectiveCommercialStatus, estimateCommercialStatusFilter, estimateCommercialStatusFields, isCollaborativeEstimate, newEstimationLifecycle, type EstimationLifecycle } from "../domain/estimation-lifecycle.js";
+import { assertEstimateEditable, canStaffEditEstimate, fenceCollaborativeEstimate, estimatePhysicalScopeChanged, requireEstimateClientMembership, requireEstimateStaffActor } from "../services/estimate-collaboration-policy.service.js";
 import { createMongoRepository } from "../repositories/mongo.js";
 import { randomUUID } from "node:crypto";
 import mongoose from "mongoose";
@@ -39,7 +45,7 @@ const selectedMainBasketClassificationSchema = z.object({
   classification: estimateClassificationSchema
 }).strict();
 const legacyEstimateLineSchema = z.object({
-  source: z.literal("legacy").optional(), catalogueId: stableIdSchema,
+  source: z.literal("legacy").optional(), id: stableIdSchema.optional(), catalogueId: stableIdSchema,
   roomName: z.string().trim().min(1), specification: z.string().trim().min(1),
   unit: z.string().trim().min(1), rate: z.number().finite().nonnegative(),
   quantity: z.number().finite().nonnegative(), included: z.boolean()
@@ -80,6 +86,7 @@ const configuredEstimateLineSchema = z.object({
 const estimateLineSchema = z.union([configuredEstimateLineSchema, legacyEstimateLineSchema]);
 const estimateSchema = z.object({
   propertyType: z.string().trim().min(1), rooms: z.array(z.record(z.unknown())),
+  bedroomCount: z.number().int().min(1).max(50).nullable().optional(),
   scopes: z.array(z.string()), selectedMainBasketIds: z.array(stableIdSchema).optional(),
   selectedMainBasketClassifications: z.array(selectedMainBasketClassificationSchema).optional(),
   expectedVersion: z.number().int().positive().optional(),
@@ -97,6 +104,10 @@ const estimateSchema = z.object({
       message: "Classify each Main Basket only once."
     });
   }
+  const suppliedLineIds = value.lineItems.flatMap((line) => line.id ? [line.id] : []);
+  if (new Set(suppliedLineIds).size !== suppliedLineIds.length) context.addIssue({
+    code: z.ZodIssueCode.custom, path: ["lineItems"], message: "Estimate line IDs must be unique."
+  });
   const identities = new Set<string>();
   const configuredInput = value.lineItems.some((line) => line.source === "configuration");
   const roomIds = new Set<string>();
@@ -211,6 +222,24 @@ function normalizeRecommendationOrigins(
   return entries.map((entry) => entry.line);
 }
 
+const variableBedroomPropertyTypes = new Set(["villa", "duplex", "penthouse"]);
+const fixedBedroomPropertyTypes = new Set(["1bhk", "2bhk", "2.5bhk", "3bhk", "3.5bhk", "4bhk", "studio"]);
+
+function resolveBedroomCount(
+  propertyType: string,
+  suppliedCount: number | null | undefined,
+  previousPropertyType: string | undefined,
+  previousCount: number | null | undefined
+): number | null {
+  const normalize = (value: string) => value.toLowerCase().replace(/\s+/gu, "");
+  const nextType = normalize(propertyType);
+  if (fixedBedroomPropertyTypes.has(nextType)) return null;
+  if (suppliedCount !== undefined) return suppliedCount;
+  if (variableBedroomPropertyTypes.has(nextType) && previousPropertyType !== undefined &&
+    normalize(previousPropertyType) === nextType) return previousCount ?? null;
+  return null;
+}
+
 const assignmentSchema = z.object({ designerId: z.string().trim().min(1) }).strict();
 const decisionSchema = z.object({ decision: z.enum(["approve", "request_changes"]), note: z.string().trim().max(1000).default("") }).strict();
 const clientDecisionSchema = decisionSchema.extend({
@@ -238,7 +267,7 @@ export function createEstimatesRouter(
     value: Record<string, unknown> | null
   ) => {
     let estimate = mapEstimate(value);
-    if (!estimate || !["estimator_sales", "super_admin"].includes(actor.role)) return estimate;
+    if (!estimate || !["estimator_sales", "designer", "super_admin"].includes(actor.role)) return estimate;
     if (isEditableEstimateStatus(estimate.status) && Array.isArray(estimate.lineItems)) {
       const savedLines = estimate.lineItems as Record<string, unknown>[];
       const latest = await resolveEstimatorCatalogueLines(savedLines.filter((line) =>
@@ -267,13 +296,23 @@ export function createEstimatesRouter(
       reviews.currentSummaryForEstimate(actor, String(estimate.id)),
       reviews.currentClientFeedbackForEstimate(actor, String(estimate.id), estimate)
     ]);
-    return { ...estimate, ...(clientReview ? { clientReview } : {}), ...(clientFeedback ? { clientFeedback } : {}) };
+    let preApprovedReview = null;
+    const lifecycle = estimate.estimation as EstimationLifecycle | undefined;
+    if (isCollaborativeEstimate(estimate) && lifecycle?.preApproval) {
+      const reference = lifecycle.preApproval;
+      const pre = await EstimateClientReviewRoundModel.findOne({ _id: reference.reviewRoundId, estimateId: estimate.id,
+        projectId: estimate.projectId, estimateVersion: reference.estimateVersion, status: "approved", decision: "approve" }).lean();
+      if (pre) preApprovedReview = { reviewRoundId: String(pre._id), estimateVersion: Number(pre.estimateVersion), snapshot: pre.estimateSnapshot };
+    }
+    return { ...estimate, ...(clientReview ? { clientReview } : {}), ...(clientFeedback ? { clientFeedback } : {}),
+      ...(isCollaborativeEstimate(estimate) ? { preApprovedReview, changesFromPre: preApprovedReview
+        ? comparePublishedEstimateSnapshots(preApprovedReview.snapshot, estimate) : null } : {}) };
   };
-  router.get("/leads/:leadId/estimate", protectedRoute, requireOperation("GET /leads/:leadId/estimate"), async (req, res, next) => { try { const lead = await leads.get(req.authenticatedUser!, req.params.leadId as string); const estimateFilter = req.authenticatedUser!.role === "super_admin" ? { leadId: lead.id } : { leadId: lead.id, ownerId: req.authenticatedUser!.id }; const estimate = await EstimateModel.findOne(estimateFilter).lean(); res.json({ data: await estimatorEstimate(req.authenticatedUser!, estimate) }); } catch (error) { next(error); } });
+  router.get("/leads/:leadId/estimate", protectedRoute, requireOperation("GET /leads/:leadId/estimate"), async (req, res, next) => { try { const lead = await leads.get(req.authenticatedUser!, req.params.leadId as string); const estimate = await EstimateModel.findOne({ leadId: lead.id, ...estimateStaffReadFilter(req.authenticatedUser!) }).lean(); res.json({ data: await estimatorEstimate(req.authenticatedUser!, estimate) }); } catch (error) { next(error); } });
   router.get("/estimates", protectedRoute, requireOperation("GET /estimates"), async (req, res, next) => { try {
-    const estimateFilter = req.authenticatedUser!.role === "super_admin" ? {} : { ownerId: req.authenticatedUser!.id };
+    const estimateFilter = req.authenticatedUser!.role === "super_admin" ? {} : req.authenticatedUser!.role === "designer" ? { "estimation.workflowVersion": 2, "estimation.phase": "post", designPlanDesignerId: req.authenticatedUser!.id } : { ownerId: req.authenticatedUser!.id };
     const estimates = await EstimateModel.find(estimateFilter).sort({ updatedAt: -1 }).lean();
-    const leadFilter = req.authenticatedUser!.role === "super_admin"
+    const leadFilter = ["super_admin", "designer"].includes(req.authenticatedUser!.role)
       ? { _id: { $in: estimates.map((estimate) => estimate.leadId) } }
       : { _id: { $in: estimates.map((estimate) => estimate.leadId) }, ownerId: req.authenticatedUser!.id };
     const leadItems = await LeadModel.find(leadFilter).lean();
@@ -287,17 +326,29 @@ export function createEstimatesRouter(
     const lead = await leads.get(req.authenticatedUser!, req.params.leadId as string);
     let savedEstimate: Record<string, unknown>;
     try { savedEstimate = await withMongoTransaction(async (session) => {
-      let estimate = await EstimateModel.findOne({ leadId: lead.id, ownerId: req.authenticatedUser!.id }).session(session);
+      let estimate = await EstimateModel.findOne({ leadId: lead.id }).session(session);
+      if (estimate && !canStaffEditEstimate(req.authenticatedUser!, estimate)) throw estimateNotFound();
+      if (!estimate && req.authenticatedUser!.role !== "super_admin" && req.authenticatedUser!.id !== lead.ownerId) throw estimateNotFound();
+      if (estimate) await requireEstimateStaffActor(req.authenticatedUser!.id, estimate, session, req.authenticatedUser!.role);
+      else {
+        const currentActor = await UserModel.findOne({ _id: req.authenticatedUser!.id, active: true, role: req.authenticatedUser!.role }).session(session).lean();
+        if (!currentActor || currentActor.role !== "estimator_sales" || lead.ownerId !== String(currentActor._id)) throw estimateNotFound();
+      }
+      const previousEstimate = estimate?.toObject();
+      const project = lead.projectId ? await ProjectModel.findById(lead.projectId).session(session).lean() : null;
+      const collaborativeDraft = isCollaborativeEstimate(estimate ?? {}) || project?.estimationWorkflowVersion === 2;
+      if (estimate) { assertEstimateEditable(estimate); await fenceCollaborativeEstimate(estimate, session); }
+      else if (collaborativeDraft) await ProjectModel.updateOne({ _id: lead.projectId, estimationWorkflowVersion: 2 }, { $inc: { estimationFenceEpoch: 1 } }, { session });
       const configuredDraft = (req.body.lineItems as z.infer<typeof estimateLineSchema>[])
         .some((line) => line.source === "configuration") ||
         estimate?.lineItems.some((line: { source?: string }) => line.source === "configuration") === true ||
         Boolean((req.body.selectedMainBasketIds as string[] | undefined)?.length) ||
         Boolean(estimate?.selectedMainBasketIds?.length);
       const updatingExistingEstimate = Boolean(estimate);
-      if (configuredDraft && estimate && req.body.expectedVersion !== estimate.version) {
+      if ((configuredDraft || collaborativeDraft) && estimate && req.body.expectedVersion !== estimate.version) {
         throw new ApiError(409, "ESTIMATE_VERSION_CONFLICT", "This estimate changed. Refresh it before saving again.");
       }
-      if (configuredDraft && !estimate && req.body.expectedVersion !== undefined) {
+      if ((configuredDraft || collaborativeDraft) && !estimate && req.body.expectedVersion !== undefined) {
         throw new ApiError(409, "ESTIMATE_VERSION_CONFLICT", "This estimate changed. Refresh it before saving again.");
       }
       const previousLines = (estimate?.toObject().lineItems ?? []) as Record<string, unknown>[];
@@ -335,25 +386,22 @@ export function createEstimatesRouter(
       const configuredMainLineIds = inputLines
         .filter((line): line is z.infer<typeof configuredEstimateLineSchema> => line.source === "configuration")
         .map((line) => line.mainLineId);
-      const configurationPricedLines = inputLines.filter((line) => {
-        if (line.source !== "configuration") return false;
-        const prior = previousConfigured.get(configuredLineKey(line.roomId, line.mainLineId));
-        return line.rateSource === "configuration" || line.rateSource === undefined &&
-          prior?.rateSource === "configuration" && line.ratePaise === prior.ratePaise;
-      });
-      await fenceEstimateConfigurationDependencies(configurationPricedLines, session);
+      // Design obligations also apply to configured lines with a manual selling price.
+      await fenceEstimateConfigurationDependencies(inputLines, session);
       const configured = await resolveEstimatorCatalogueLines(configuredMainLineIds, session);
       const lineItems = inputLines.map((line, index) => {
         if (line.source !== "configuration") {
-          const previous = previousLines[index];
+          const candidates = previousLines.filter((prior) => prior.source !== "configuration" &&
+            (line.id ? prior.id === line.id : prior.catalogueId === line.catalogueId && prior.roomName === line.roomName && prior.specification === line.specification));
+          const previous = candidates.length === 1 ? candidates[0] : undefined;
+          if (line.id && !previous) throw new ApiError(409, "ESTIMATE_LINE_CHANGED", "Refresh the saved estimate line before editing it.");
           const amount = line.included ? Math.round(line.quantity * line.rate) : 0;
           if (!Number.isSafeInteger(amount) || !Number.isSafeInteger(amount * 100)) {
             throw new ApiError(400, "ESTIMATE_AMOUNT_INVALID", "An estimate amount is too large.");
           }
           return {
-            id: previous?.source !== "configuration" && typeof previous?.id === "string"
-              ? previous.id : `estimate-line-${randomUUID()}`,
-            ...line, source: "legacy" as const, amount, amountPaise: amount * 100
+            ...line, id: typeof previous?.id === "string" ? previous.id : `estimate-line-${randomUUID()}`,
+            source: "legacy" as const, amount, amountPaise: amount * 100
           };
         }
         const prior = previousConfigured.get(`${line.roomId}\u0000${line.mainLineId}`);
@@ -456,14 +504,14 @@ export function createEstimatesRouter(
           "The estimate and lead are linked to different projects."
         );
       }
-      if (estimate && !["draft", "designer_changes_requested", "client_changes_requested"].includes(estimate.status)) {
-        throw new ApiError(409, "ESTIMATE_LOCKED", "This estimate is locked while another person is reviewing it.");
-      }
+      if (estimate) assertEstimateEditable(estimate);
       if (!estimate) {
-        estimate = new EstimateModel({ _id: `estimate-${randomUUID()}`, leadId: lead.id, ownerId: req.authenticatedUser!.id, projectId: leadProjectId, version: 1, status: "draft" });
+        estimate = new EstimateModel({ _id: `estimate-${randomUUID()}`, leadId: lead.id, ownerId: lead.ownerId, projectId: leadProjectId, version: 1, status: "draft", ...(collaborativeDraft ? { estimation: newEstimationLifecycle(Number(project?.estimateRequirementsVersion ?? 0)) } : {}) });
       } else if (estimate.projectId == null && leadProjectId !== null) {
         estimate.projectId = leadProjectId;
       }
+      estimate.bedroomCount = resolveBedroomCount(
+        req.body.propertyType, req.body.bedroomCount, estimate.propertyType, estimate.bedroomCount);
       estimate.propertyType = req.body.propertyType;
       estimate.rooms = req.body.rooms;
       estimate.scopes = req.body.scopes;
@@ -477,12 +525,12 @@ export function createEstimatesRouter(
       estimate.gst = gstPaise / 100;
       estimate.total = totalPaise / 100;
       estimate.isIncomplete = isIncomplete;
-      if (estimate.status !== "draft") {
-        estimate.status = "draft";
-        estimate.version += 1;
-      } else if (configuredDraft && updatingExistingEstimate) {
-        estimate.version += 1;
-      }
+      if (effectiveCommercialStatus(estimate) !== "draft" || (configuredDraft || collaborativeDraft) && updatingExistingEstimate) estimate.version += 1;
+      if (isCollaborativeEstimate(estimate)) {
+        if (previousEstimate && estimatePhysicalScopeChanged(previousEstimate, estimate.toObject())) estimate.estimation.designScopeRevision += 1;
+        estimate.estimation.status = "draft";
+        estimate.status = estimate.estimation.preApproval ? "client_approved" : "draft";
+      } else estimate.status = "draft";
       await estimate.save({ session });
       return estimate.toObject();
     }); } catch (error) {
@@ -493,7 +541,10 @@ export function createEstimatesRouter(
   } catch (error) { next(error); } });
   router.post("/leads/:leadId/estimate/submit", protectedRoute, requireOperation("POST /leads/:leadId/estimate/submit"), async (req, res, next) => { try {
     const lead = await leads.get(req.authenticatedUser!, req.params.leadId as string);
-    const estimate = await EstimateModel.findOne({ leadId: lead.id, ownerId: req.authenticatedUser!.id });
+    const estimate = await EstimateModel.findOne({ leadId: lead.id });
+    if (estimate && !canStaffEditEstimate(req.authenticatedUser!, estimate)) throw estimateNotFound();
+    if (estimate && isCollaborativeEstimate(estimate) && req.body.expectedVersion !== estimate.version) throw new ApiError(409, "ESTIMATE_VERSION_CONFLICT", "Refresh the estimate before submitting it.");
+    if (estimate) assertEstimateEditable(estimate);
     if (!estimate || estimate.lineItems.every((line: { included: boolean }) => !line.included)) throw new ApiError(409, "ESTIMATE_EMPTY", "Select at least one estimate item before submitting.");
     assertEstimateReadyToSubmit(estimate.lineItems);
     await assertEstimateCurrentConfiguration(estimate.toObject());
@@ -515,15 +566,19 @@ export function createEstimatesRouter(
     }
     const savedEstimate = await withMongoTransaction(async (session) => {
       const current = await EstimateModel.findOne({
-        _id: estimate._id, ownerId: req.authenticatedUser!.id,
-        version: estimate.version, status: "draft", total: { $gt: 1_500_000 }
+        _id: estimate._id,
+        ...(req.authenticatedUser!.role === "estimator_sales" ? { ownerId: req.authenticatedUser!.id } : {}),
+        version: estimate.version, ...estimateCommercialStatusFilter(estimate, "draft"), total: { $gt: 1_500_000 }
       }).session(session);
       if (!current) throw new ApiError(409, "ESTIMATE_LOCKED", "The estimate changed before it could be submitted.");
+      if (!canStaffEditEstimate(req.authenticatedUser!, current)) throw estimateNotFound();
+      await requireEstimateStaffActor(req.authenticatedUser!.id, current, session, req.authenticatedUser!.role);
       assertEstimateReadyToSubmit(current.lineItems);
       await fenceEstimateConfigurationDependencies(current.toObject().lineItems, session);
       await assertEstimateCurrentConfiguration(current.toObject(), session);
+      await fenceCollaborativeEstimate(current, session);
       current.approvalRequired = true;
-      current.status = "pending_manager_assignment";
+      current.set(estimateCommercialStatusFields(current, "pending_manager_assignment"));
       current.submittedAt = submittedAt;
       current.reviews.push({ actorId: req.authenticatedUser!.id, action: "submitted", note: "", occurredAt: submittedAt });
       await current.save({ session });
@@ -533,16 +588,14 @@ export function createEstimatesRouter(
   } catch (error) { next(error); } });
 
   router.get("/estimates/:estimateId/pdf", protectedRoute, requireOperation("GET /estimates/:estimateId/pdf"), async (req, res, next) => { try {
-    const filter = req.authenticatedUser!.role === "super_admin"
-      ? { _id: req.params.estimateId }
-      : { _id: req.params.estimateId, ownerId: req.authenticatedUser!.id };
+    const filter = { _id: req.params.estimateId, ...estimateStaffReadFilter(req.authenticatedUser!) };
     const estimate = await EstimateModel.findOne(filter).lean();
-    if (!estimate) throw estimateNotFound();
+    if (!estimate || !canStaffEditEstimate(req.authenticatedUser!, estimate)) throw estimateNotFound();
     if (estimate.lineItems.some((line: { source?: string; included?: boolean; ratePaise?: number | null }) =>
       line.source === "configuration" && line.included && line.ratePaise == null)) {
       throw new ApiError(409, "ESTIMATE_INCOMPLETE", "Enter all selected selling rates before downloading a proposal PDF.");
     }
-    if (isEditableEstimateStatus(estimate.status)) await assertEstimateCurrentConfiguration(estimate);
+    if (isEditableEstimateStatus(effectiveCommercialStatus(estimate))) await assertEstimateCurrentConfiguration(estimate);
     const lead = await LeadModel.findById(estimate.leadId).lean();
     if (!lead) throw estimateNotFound();
     const pdf = await estimatePdf.generate(toEstimatePdfInput(estimate, lead));
@@ -552,10 +605,10 @@ export function createEstimatesRouter(
   router.get("/estimates/review-queue", protectedRoute, requireOperation("GET /estimates/review-queue"), async (req, res, next) => { try {
     const user = req.authenticatedUser!;
     const filter = user.role === "super_admin"
-      ? { status: { $in: ["pending_manager_assignment", "pending_designer_approval"] } }
+      ? commercialStatusQuery({ $in: ["pending_manager_assignment", "pending_designer_approval"] })
       : user.role === "design_manager"
-      ? { status: "pending_manager_assignment" }
-      : { status: "pending_designer_approval", assignedDesignerId: user.id };
+      ? commercialStatusQuery("pending_manager_assignment")
+      : { ...commercialStatusQuery("pending_designer_approval"), assignedDesignerId: user.id };
     const estimates = await EstimateModel.find(filter).sort({ submittedAt: 1 }).lean();
     const leadIds = estimates.map((estimate) => estimate.leadId);
     const leadItems = await LeadModel.find({ _id: { $in: leadIds } }).lean();
@@ -585,13 +638,14 @@ export function createEstimatesRouter(
       if (!manager) throw new ApiError(404, "DESIGNER_MANAGER_NOT_FOUND", "Choose a designer with an active accountable manager.");
       const estimate = await EstimateModel.findOne({
         _id: req.params.estimateId,
-        status: "pending_manager_assignment"
+        ...commercialStatusQuery("pending_manager_assignment")
       }).session(session);
       if (!estimate) throw new ApiError(409, "ESTIMATE_NOT_ASSIGNABLE", "This estimate is no longer awaiting assignment.");
       const occurredAt = new Date();
       estimate.assignedManagerId = manager._id;
       estimate.assignedDesignerId = designer._id;
-      estimate.status = "pending_designer_approval";
+      await fenceCollaborativeEstimate(estimate, session);
+      estimate.set(estimateCommercialStatusFields(estimate, "pending_designer_approval"));
       estimate.reviews.push({ actorId: req.authenticatedUser!.id, action: "designer_assigned", note: designer.name, occurredAt });
       estimate.notifications.push({ recipientEmail: designer.email, recipientRole: "designer", event: "estimate_approval_assigned", status: "queued", queuedAt: occurredAt });
       await estimate.save({ session });
@@ -612,9 +666,10 @@ export function createEstimatesRouter(
 
   router.post("/estimates/:estimateId/designer-decision", protectedRoute, requireOperation("POST /estimates/:estimateId/designer-decision"), validateBody(decisionSchema), async (req, res, next) => { try {
     const savedEstimate = await withMongoTransaction(async (session) => {
-      const estimate = await EstimateModel.findOne({ _id: req.params.estimateId, status: "pending_designer_approval", assignedDesignerId: req.authenticatedUser!.id }).session(session);
+      const estimate = await EstimateModel.findOne({ _id: req.params.estimateId, ...commercialStatusQuery("pending_designer_approval"), assignedDesignerId: req.authenticatedUser!.id }).session(session);
       if (!estimate) throw new ApiError(409, "ESTIMATE_NOT_REVIEWABLE", "This estimate is not assigned to you for review.");
-      estimate.status = req.body.decision === "approve" ? "ready_for_client" : "designer_changes_requested";
+      await fenceCollaborativeEstimate(estimate, session);
+      estimate.set(estimateCommercialStatusFields(estimate, req.body.decision === "approve" ? "ready_for_client" : "designer_changes_requested"));
       estimate.reviews.push({ actorId: req.authenticatedUser!.id, action: req.body.decision === "approve" ? "designer_approved" : "designer_changes_requested", note: req.body.note, occurredAt: new Date() });
       await estimate.save({ session });
       return estimate.toObject();
@@ -623,7 +678,9 @@ export function createEstimatesRouter(
   } catch (error) { next(error); } });
 
   router.post("/estimates/:estimateId/send-client", protectedRoute, requireOperation("POST /estimates/:estimateId/send-client"), async (req, res, next) => { try {
-    const estimate = await EstimateModel.findOne({ _id: req.params.estimateId, ownerId: req.authenticatedUser!.id, status: "ready_for_client" });
+    const estimate = await EstimateModel.findOne({ _id: req.params.estimateId, ...commercialStatusQuery("ready_for_client") });
+    if (estimate && !canStaffEditEstimate(req.authenticatedUser!, estimate)) throw estimateNotFound();
+    if (estimate && isCollaborativeEstimate(estimate) && req.body.expectedVersion !== estimate.version) throw new ApiError(409, "ESTIMATE_VERSION_CONFLICT", "Refresh the estimate before sending it.");
     if (!estimate) throw new ApiError(409, "ESTIMATE_NOT_READY", "Complete required approvals before sending this estimate.");
     assertEstimateReadyToSubmit(estimate.lineItems);
     const published = await publication.publishEstimateToClient({
@@ -648,8 +705,11 @@ export function createEstimatesRouter(
     const actor = req.authenticatedUser!;
     const [estimate] = await reviews.listClientEstimates(actor, String(req.params.estimateId));
     if (!estimate) throw estimateNotFound();
-    if (!estimate.publishedReview || estimate.publishedReview.id !== roundId.data) {
+    if (!estimate.estimation && (!estimate.publishedReview || estimate.publishedReview.id !== roundId.data)) {
       throw new ApiError(409, "ESTIMATE_NOT_REVIEWABLE", "The submitted estimate changed. Refresh before downloading its PDF.");
+    }
+    if (estimate.estimation && !await EstimateClientReviewRoundModel.exists({ _id: roundId.data, estimateId: req.params.estimateId })) {
+      throw estimateNotFound();
     }
     const download = actor.role === "client"
       ? await reviews.readClientPdf(actor, roundId.data)
@@ -662,6 +722,7 @@ export function createEstimatesRouter(
     const estimateId = String(req.params.estimateId);
     const estimate = await EstimateModel.findOne({ _id: estimateId }).lean();
     if (!estimate) throw estimateNotFound();
+    await requireEstimateClientMembership(actor, estimate);
     const lead = await LeadModel.findById(estimate.leadId).lean();
     if (
       !lead ||
@@ -695,6 +756,7 @@ function mapEstimate(value: Record<string, unknown> | null): Record<string, unkn
   return {
     ...estimate,
     id: _id ?? value.id,
+    status: effectiveCommercialStatus(estimate),
     selectedMainBasketClassifications: selectedMainBasketIds.map((mainBasketId) => ({
       mainBasketId,
       classification: savedClassificationsById.get(mainBasketId) === "special" ? "special" : "standard"
@@ -719,6 +781,9 @@ function currentConfiguredFields(source: {
   subBasketName: string | null;
 }) {
   return {
+    designRules: source.line.designRules,
+    designRulesDigest: source.line.designRulesDigest,
+    estimateNotes: source.line.estimateNotes,
     itemType: source.line.itemType,
     mainBasketId: source.line.basketId,
     subBasketId: source.line.subBasketId,
@@ -755,7 +820,9 @@ async function assertEstimateCurrentConfiguration(
         "This Main Line has no current Configuration. Correct it before submitting the estimate.");
     }
     const fields = currentConfiguredFields(source);
-    if (Object.entries(fields).some(([field, value]) => line[field] !== value) ||
+    if (Object.entries(fields).some(([field, value]) => !["designRules", "designRulesDigest", "estimateNotes"].includes(field) && line[field] !== value) ||
+      designRulesDigest(line.designRules) !== source.line.designRulesDigest ||
+      JSON.stringify(line.estimateNotes ?? []) !== JSON.stringify(source.line.estimateNotes) ||
       !estimateConfigurationRateMatches(line, source.line.modeBaseRatesPaise)) {
       throw new ApiError(409, "ESTIMATE_CONFIGURATION_CHANGED",
         "Configuration changed. Save the estimate with its current Main Line values before continuing.");
@@ -830,6 +897,8 @@ function savedConfiguredSnapshot(prior: Record<string, unknown>): {
     mainBasketName: String(prior.mainBasketName),
     subBasketName: directTemporary ? null : String(prior.subBasketName),
     line: {
+      designRules: normalizeDesignRules(prior.designRules), designRulesDigest: designRulesDigest(prior.designRules),
+      estimateNotes: designRuleEstimateNotes(prior.designRules),
       id: String(prior.mainLineId), mainLineId: String(prior.mainLineId),
       basketId: String(prior.mainBasketId),
       subBasketId: directTemporary ? null : String(prior.subBasketId), itemType,
@@ -939,4 +1008,12 @@ function toEstimatePdfInput(
       location: lead.location
     }
   };
+}
+
+function commercialStatusQuery(status: string | { $in: string[] }): Record<string, unknown> {
+  return { $or: [{ "estimation.workflowVersion": 2, "estimation.status": status }, { "estimation.workflowVersion": { $ne: 2 }, status }] };
+}
+
+function estimateStaffReadFilter(actor: { id: string; role: string }): Record<string, unknown> {
+  return actor.role === "super_admin" ? {} : actor.role === "designer" ? { "estimation.workflowVersion": 2, "estimation.phase": "post", designPlanDesignerId: actor.id } : { ownerId: actor.id };
 }

@@ -370,3 +370,24 @@ describe("Super Admin purchase order approval", () => {
     expect(screen.getByRole("heading", { name: "Individual vendor orders" })).toHaveFocus();
   });
 });
+
+describe("Collaborative procurement approvals", () => {
+  it("keeps internally approved individual orders visible without allowing duplicate approval", async () => {
+    server.use(http.get("/api/v1/admin/purchase-orders/pending", () => HttpResponse.json({ data: { items: [{ ...order, status: "ready_to_issue", issueReadiness: { required: true, canIssue: false, blockers: ["Initial payment must be confirmed."], finalSource: null } }], total: 1, limit: 50, offset: 0 } })));
+    renderWithQuery(<SuperAdminPurchaseOrdersPage />); const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: /PO-ONE/ }));
+    const review = screen.getByRole("form", { name: "Review PO-ONE" });
+    expect(within(review).getByText("Initial payment must be confirmed.")).toBeVisible();
+    expect(within(review).getByRole("radio", { name: "Approve" })).toBeDisabled();
+    expect(within(review).getByRole("radio", { name: "Request changes" })).toBeChecked();
+  });
+  it("keeps a ready project package unissued and permits return for changes", async () => {
+    server.use(http.get("/api/v1/admin/purchase-order-requests/pending", () => HttpResponse.json({ data: { items: [{ ...projectRequest, status: "ready_to_issue", issueReadiness: { required: true, canIssue: false, blockers: ["Final client approval is required."], finalSource: null } }], total: 1, limit: 50, offset: 0 } })));
+    renderWithQuery(<SuperAdminPurchaseOrdersPage />); const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: /Aurora Villa/ }));
+    const review = screen.getByRole("form", { name: "Review Aurora Villa purchase order request" });
+    expect(within(review).getByText("Final client approval is required.")).toBeVisible();
+    expect(within(review).getByRole("radio", { name: "Approve all vendor orders" })).toBeDisabled();
+    expect(within(review).getByRole("radio", { name: "Request changes" })).toBeChecked();
+  });
+});

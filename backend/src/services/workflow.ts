@@ -90,6 +90,20 @@ export async function requireProjectOperationAccess(
   return project;
 }
 
+/** Only the generic project detail read may use the observer assignment scope. */
+export async function requireProjectReadAccess(repository: AppRepository, actor: PublicUser, projectId: string): Promise<ProjectRecord> {
+  if (currentHumanOperation().operation.permission !== "projects.read") {
+    throw new AuthorizationConfigurationError("Project read scope requires the project detail read operation.");
+  }
+  if (actor.role !== "procurement" && actor.role !== "program_manager") {
+    return requireProjectOperationAccess(repository, actor, projectId);
+  }
+  const user = await requireActor(repository, actor);
+  const project = await repository.findProjectForUserRead(user, projectId);
+  if (!project) throw new ApiError(404, "NOT_FOUND", "The requested resource was not found.");
+  return project;
+}
+
 export async function requireTask(
   repository: AppRepository,
   taskId: string

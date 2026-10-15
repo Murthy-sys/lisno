@@ -14,6 +14,7 @@ import { DesignSectionReview } from "./DesignSectionReview";
 import { ProjectWorkflowPanel } from "../workflow/ProjectWorkflowPanel";
 import { ClientVendorWorkReview } from "./ClientVendorWorkReview";
 import { ClientSiteCompletionReview } from "./ClientSiteCompletionReview";
+import { ClientEstimateRequirements } from "./ClientEstimateRequirements";
 import "./clientWorkflow.css";
 
 export function ClientProject() {
@@ -28,6 +29,7 @@ export function ClientProject() {
   return <section className="client-page client-page--project" data-theme="sidebar" aria-labelledby="client-project-title">
     <PageHeader id="client-project-title" title={project.name} eyebrow="Your project" description={project.location} breadcrumb={<Link className="client-project-back" to="/client">Back to projects</Link>} metadata={<span className="client-project-status">{project.status.replaceAll("_", " ")}</span>} />
     <ProjectChatNavigation projectId={projectId} overviewTo={`/client/projects/${projectId}`} />
+    {project.estimationWorkflowVersion === 2 ? <ClientEstimateRequirements key={`requirements-${projectId}`} projectId={projectId} /> : null}
     <EstimateReviewPanel key={`estimate-${projectId}`} projectId={projectId} />
     <div className="client-project-workflow" ref={setTimelineContainer} />
     <ProjectWorkflowPanel key={projectId} projectId={projectId} timelineContainer={timelineContainer} presentation="client" />

@@ -1015,14 +1015,7 @@
 .lead-quick-review .lead-timeline li { display: grid; gap: var(--space-1); }
 .lead-quick-review .ui-button { justify-self: start; }
 .lead-create-form__fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-4); }
-.lead-contact-card { display: flex; flex-direction: column; gap: var(--space-3); min-inline-size: 0; padding: var(--space-4); border: 1px solid var(--color-border); border-radius: var(--radius-surface); background: var(--color-bg); overflow-wrap: anywhere; }
-.lead-contact-card__heading { display: flex; align-items: center; gap: var(--space-2); margin: 0; font: var(--type-heading-3); }
-.lead-follow-up__actions { display: flex; justify-content: flex-start; }
-.lead-follow-up__empty { color: var(--color-text-muted); }
 .estimator-dashboard .lead-controls { display: grid; grid-template-columns: minmax(0, 1fr) minmax(10rem, 16rem); gap: var(--space-3); padding: 0; background: transparent; }
-.estimator-dashboard .lead-detail__grid form { gap: var(--space-3); }
-.estimator-dashboard .lead-detail__grid .ui-field__label { margin: 0; }
-.estimator-dashboard .lead-detail__grid .ui-textarea { min-block-size: 5rem; }
 .estimate-workspace.estimator-dashboard .estimate-panel { padding: var(--space-4); }
 .estimate-workspace.estimator-dashboard .estimate-panel h2 { font: var(--type-section-title); }
 .estimate-workspace.estimator-dashboard .estimate-workspace__summary strong,
@@ -1757,8 +1750,12 @@
   gap: 16px;
   padding: 9px 16px 12px;
 }
+.estimate-workspace--configure-view .estimate-configure-details__fields--with-bedroom-count {
+  grid-template-columns: minmax(0, 1fr) minmax(10rem, .7fr) minmax(0, 1.5fr);
+}
 .estimate-workspace--configure-view .estimate-configure-details__field { display: grid; align-content: start; gap: 4px; min-width: 0; }
-.estimate-workspace--configure-view .estimate-configure-details__field > span {
+.estimate-workspace--configure-view .estimate-configure-details__field > span,
+.estimate-workspace--configure-view .estimate-configure-details__field > label {
   color: var(--estimate-configure-muted);
   font-size: 11px;
   font-weight: 700;
@@ -1773,6 +1770,45 @@
   color: var(--estimate-configure-ink);
   box-shadow: none;
 }
+.estimate-workspace--configure-view .estimate-bedroom-count {
+  width: 100%;
+  min-width: 0;
+  min-height: 34px;
+  padding: 6px 10px;
+  border: 1px solid var(--estimate-configure-line);
+  border-radius: 4px;
+  background: var(--estimate-configure-surface);
+  color: var(--estimate-configure-ink);
+  font: inherit;
+  font-size: 13px;
+  box-shadow: none;
+}
+.estimate-workspace--configure-view .estimate-bedroom-count:focus-visible {
+  outline: 2px solid var(--color-focus-ring, var(--color-primary));
+  outline-offset: 2px;
+}
+.estimate-workspace--configure-view .estimate-bedroom-count[aria-invalid="true"] { border-color: var(--color-danger); }
+.estimate-workspace--configure-view .estimate-bedroom-count:disabled { opacity: .65; cursor: not-allowed; }
+.estimate-workspace--configure-view .estimate-bedroom-count__hint,
+.estimate-workspace--configure-view .estimate-bedroom-count__error,
+.estimate-workspace--configure-view .estimate-retained-rooms-note {
+  margin: 0;
+  color: var(--estimate-configure-muted);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.estimate-workspace--configure-view .estimate-bedroom-count__error { color: var(--color-danger); }
+.estimate-workspace--configure-view .estimate-retained-rooms-note { padding: 0 16px 12px; }
+.estimate-bedroom-count-required {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding-block: 12px;
+}
+.estimate-bedroom-count-required p { flex: 1 1 20rem; margin: 0; }
+.estimate-bedroom-count-required button { max-width: 100%; white-space: normal; }
 .estimate-workspace--configure-view .estimate-configure-details__field [role="listbox"],
 .estimate-workspace--configure-view .rooms-select__menu {
   z-index: 40;

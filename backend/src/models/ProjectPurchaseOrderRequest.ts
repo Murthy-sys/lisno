@@ -18,6 +18,7 @@ const decisionSchema = new Schema({
   requestDigest: { type: String, required: true, immutable: true }
 }, { _id: false, strict: "throw" });
 const receiptSchema = new Schema({
+  kind: { type: String, enum: ["submit", "issue", "reconcile"] },
   idempotencyKey: { type: String, required: true },
   requestDigest: { type: String, required: true, match: /^[a-f0-9]{64}$/u },
   revisionId: { type: String, required: true },
@@ -28,14 +29,14 @@ const schema = new Schema({
   projectId: { type: String, required: true, immutable: true, ref: "Project" },
   projectName: { type: String, required: true, immutable: true },
   requestNumber: { type: String, required: true, immutable: true, match: /^POR-\d{8}-[A-F0-9]{8}$/u },
-  status: { type: String, required: true, enum: ["pending_approval", "changes_requested", "rejected", "approved"] },
+  status: { type: String, required: true, enum: ["pending_approval", "changes_requested", "rejected", "ready_to_issue", "approved"] },
   version: { type: Number, required: true, min: 1, validate: Number.isSafeInteger },
   revision: { type: Number, required: true, min: 1, validate: Number.isSafeInteger },
   submittedRevisionId: { type: String, required: true },
   approvedOrderIds: { type: [String], default: [] },
-  estimateId: { type: String, required: true, immutable: true },
-  estimateVersion: { type: Number, required: true, min: 1, validate: Number.isSafeInteger, immutable: true },
-  estimateReviewRoundId: { type: String, default: null, immutable: true },
+  estimateId: { type: String, required: true },
+  estimateVersion: { type: Number, required: true, min: 1, validate: Number.isSafeInteger },
+  estimateReviewRoundId: { type: String, default: null },
   preparationDigest: { type: String, required: true, match: /^[a-f0-9]{64}$/u },
   approvedEstimatePaise: paise,
   committedPaise: paise,
@@ -52,7 +53,7 @@ const schema = new Schema({
 
 schema.index({ projectId: 1, updatedAt: -1, _id: 1 });
 schema.index({ requestNumber: 1 }, { unique: true });
-schema.index({ projectId: 1 }, { unique: true, name: "project_purchase_order_request_one_active",
-  partialFilterExpression: { status: { $in: ["pending_approval", "changes_requested"] } } });
+schema.index({ projectId: 1 }, { unique: true, name: "project_purchase_order_request_one_active_v2",
+  partialFilterExpression: { status: { $in: ["pending_approval", "changes_requested", "ready_to_issue"] } } });
 schema.index({ status: 1, updatedAt: 1, _id: 1 });
 export const ProjectPurchaseOrderRequestModel = models.ProjectPurchaseOrderRequest ?? model("ProjectPurchaseOrderRequest", schema);

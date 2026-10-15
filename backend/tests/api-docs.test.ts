@@ -46,7 +46,7 @@ describe("OpenAPI and Swagger UI", () => {
   it("documents isolated proposal snapshots, scoped writes and complete publication outcomes", () => {
     const paths = openApiDocument.paths as Record<string, Record<string, OpenApiObject>>;
     const operations = HUMAN_JWT_OPERATION_LIST.filter(operation => /\/(basket-proposals|vendor-basket-proposals)(\/|$)/u.test(operation.key));
-    expect(operations).toHaveLength(44);
+    expect(operations).toHaveLength(46);
     for (const operation of operations) {
       const [method, route] = operation.key.split(" ") as [string, string];
       const documented = paths[openApiPathForRoute(route)]![method.toLowerCase()]!;
@@ -69,6 +69,28 @@ describe("OpenAPI and Swagger UI", () => {
     expect(schemas.VendorBasketProposalResource!.required).not.toContain("editorPayload");
     expect(schemas.VendorBasketProposalResource).toHaveProperty("properties.editorPayload.type", "object");
     expect(schemas.VendorBasketProposalSectionInput).toHaveProperty("properties.applicability.enum", ["configured", "not_applicable", "not_configured"]);
+  });
+
+  it("documents versioned hierarchy intake saves under existing scoped permissions", () => {
+    const paths = openApiDocument.paths as Record<string, Record<string, OpenApiObject>>;
+    for (const [base, permission] of [
+      ["/procurement/vendor-basket-proposals", "procurement.vendor_basket_proposal.update"],
+      ["/admin/ai-estimator-knowledge/basket-proposals", "ai_estimator_knowledge.configuration.update"]
+    ]) {
+      const operation = paths[`${base}/{proposalId}/intake`]!.put!;
+      expect(operation.security).toEqual([{ bearerAuth: [] }]);
+      expect(operation["x-lisno-permission"]).toBe(permission);
+      expect(operation.requestBody).toHaveProperty("content.application/json.schema.$ref", "#/components/schemas/VendorBasketProposalIntakeInput");
+      expect(operation.responses).toHaveProperty("2XX.content.application/json.schema.properties.data.$ref", "#/components/schemas/VendorBasketProposalDetail");
+    }
+    const schemas = componentSchemas();
+    expect(schemas.VendorBasketProposalIntakeInput!.required).toEqual(expect.arrayContaining(["expectedVersion", "intake"]));
+    expect(schemas.VendorBasketProposalIntakeInput!.additionalProperties).toBe(false);
+    expect(schemas.VendorBasketProposalIntakeContent!.additionalProperties).toBe(false);
+    expect(schemas.VendorBasketProposalIntakeContent).toHaveProperty("properties.mainLines.items.additionalProperties", false);
+    expect(schemas.VendorBasketProposalIntakeContent).not.toHaveProperty("properties.mainLines.items.properties.price");
+    expect(schemas.VendorBasketProposalSummary).toHaveProperty("properties.requestMode");
+    expect(schemas.KnowledgeVendorBasketRequest).toHaveProperty("properties.requestMode");
   });
 
   it("documents proposal-only UOM and Surface contracts without making new publication fields mandatory", () => {
@@ -211,6 +233,21 @@ describe("OpenAPI and Swagger UI", () => {
     expect(schemas.ClientEstimateSnapshot).toHaveProperty("properties.lineItems.items.properties.pricingMode.enum", ["pmc", "sub_vendor", "in_house"]);
     expect(schemas.ClientEstimateSnapshot).toHaveProperty("properties.lineItems.items.properties.rateSource.enum", ["configuration", "manual"]);
   });
+  it("documents optional bedroom counts and keeps client-review snapshots unchanged", () => {
+    const schemas = componentSchemas();
+    expect(schemas.EstimateInput!.required).not.toContain("bedroomCount");
+    expect(schemas.EstimateInput).toHaveProperty("properties.bedroomCount", {
+      type: "integer", minimum: 1, maximum: 50, nullable: true,
+      description: expect.stringContaining("Omission preserves a saved count only for an unchanged variable property type")
+    });
+    expect(schemas.EstimateInput).toHaveProperty("additionalProperties", false);
+    expect(schemas.EstimateInput).not.toHaveProperty("properties.propertyType.enum");
+    expect(schemas.ClientEstimateSnapshot).not.toHaveProperty("properties.bedroomCount");
+    const paths = openApiDocument.paths as Record<string, Record<string, OpenApiObject>>;
+    expect(paths["/leads/{leadId}/estimate"]!.put!.requestBody)
+      .toHaveProperty("content.application/json.schema.$ref", "#/components/schemas/EstimateInput");
+  });
+
   it("documents the ready-item catalogue opt-in and mutable-source versions", () => {
     const paths = openApiDocument.paths as Record<string, Record<string, OpenApiObject>>;
     const catalogue = paths["/estimation/catalogue"]!.get!;
@@ -1130,7 +1167,7 @@ describe("OpenAPI and Swagger UI", () => {
     }
   });
 
-  it("contains all 434 routes without versioning paths twice", () => {
+  it("contains all 458 routes without versioning paths twice", () => {
     const methods = new Set(["get", "post", "put", "patch", "delete"]);
     const operationCount = Object.values(openApiDocument.paths).reduce(
       (total, pathItem) =>
@@ -1138,8 +1175,8 @@ describe("OpenAPI and Swagger UI", () => {
       0
     );
 
-    expect(operationCount).toBe(HUMAN_JWT_OPERATION_LIST.length + 19);
-    expect(operationCount).toBe(434);
+    expect(operationCount).toBe(HUMAN_JWT_OPERATION_LIST.length + 21);
+    expect(operationCount).toBe(458);
     expect(Object.keys(openApiDocument.paths).some((path) =>
       path.startsWith("/api/v1")
     )).toBe(false);
@@ -1334,8 +1371,15 @@ describe("OpenAPI and Swagger UI", () => {
         not: { required: ["draftSubBasketGuard", "draftItemGuard"] }
       });
     }
+    expect(componentSchemas().KnowledgeMainLineUpdateRequest).toHaveProperty("properties.estimationVisibility.enum", ["internal", "external"]);
+    for (const name of ["KnowledgeMainLine", "KnowledgeItemListItem", "KnowledgeItemDetail"]) {
+      expect(componentSchemas()[name]).toHaveProperty("properties.estimationVisibility.default", "internal");
+    }
+    expect(componentSchemas().EstimateRequirementCreate).toHaveProperty("properties.mainLineId.nullable", true);
+    expect(componentSchemas().EstimateRequirementUpdate).toHaveProperty("properties.mainLineId.nullable", true);
+    expect(componentSchemas().EstimateRequirements).toHaveProperty("properties.mainLines.items.required", ["id", "mainBasketId", "subBasketId", "subBasketName", "name"]);
     expect(componentSchemas().KnowledgeMainLineUpdateRequest).toHaveProperty("anyOf", [
-      { required: ["name"] }, { required: ["description"] }, { required: ["displayOrder"] }
+      { required: ["name"] }, { required: ["description"] }, { required: ["displayOrder"] }, { required: ["estimationVisibility"] }
     ]);
 
     const previewRequest = componentSchemas().KnowledgePreviewRequest as {
@@ -2537,8 +2581,9 @@ describe("OpenAPI and Swagger UI", () => {
         ?.responses?.["410"]
     ).toEqual({ $ref: "#/components/responses/Gone" });
     expect(
-      openApiDocument.paths["/auth/client-signup"]?.post?.responses?.["401"]
-    ).toEqual({ $ref: "#/components/responses/AuthenticationRequired" });
+      openApiDocument.paths["/auth/client-signup"]?.post?.responses?.["403"]
+    ).toEqual({ $ref: "#/components/responses/Forbidden" });
+    expect(openApiDocument.paths["/auth/client-signup"]?.post?.responses?.["201"]).toBeUndefined();
   });
 
   it("documents optional fulfillment setup and nullable hierarchy results for vendor classification requests", () => {

@@ -8,7 +8,8 @@ import { createMongoProjectChatRepository } from "../src/repositories/project-ch
 import { createProjectAssistantRuntime, type AssistantRuntimeOptions } from "../src/services/project-assistant-runtime.js";
 import type { AssistantGeneratedResult, AssistantReadSources } from "../src/contracts/project-chat-assistant.js";
 import { createAskLisnoService } from "../src/services/ask-lisno.service.js";
-const generated: AssistantGeneratedResult = {kind: "no_answer", facts: [], candidates: [], missingInputs: [], commercial: null, freshness: []};
+import { UserModel } from "../src/models/User.js";
+const generated: AssistantGeneratedResult = {disclosurePolicy: "project-publication-v1", projectPricing: null, kind: "no_answer", facts: [], candidates: [], missingInputs: [], commercial: null, freshness: []};
 const sources: AssistantReadSources = {status: async () => ({facts: [], freshness: []}), execution: async () => ({facts: [], freshness: []}), searchCatalogue: async () => [], recommendations: async () => ({rules: [], freshness: []}), preview: async () => {throw new Error("unused");}, revalidate: async () => true};
 let replica: Awaited<ReturnType<typeof startMongoReplicaSet>>;
 beforeAll(async () => {replica = await startMongoReplicaSet("project-assistant-runtime"); for (const model of [...chatModels, ...projectAssistantModels]) await model.syncIndexes();}, 120000);
@@ -24,6 +25,24 @@ async function fixture() {
   return {...f, options, runtime, input, message, clock, advance: (ms: number) => {time += ms;}};
 }
 describe("assistant Mongo transaction and restart invariants", () => {
+  it("persists the freshly authorized requester name once inside shared publication", async () => {
+    const f = await fixture();
+    const question = await f.service.send(f.actor("client-a"), "a", chatSend("I'm worried, show my project status"));
+    const publish = vi.fn(async () => ({messageId: randomUUID(), resultId: randomUUID()}));
+    const runtime = createProjectAssistantRuntime({...f.options, publish, provider: {async generate() {
+      await UserModel.updateOne({_id: "client-a"}, {$set: {name: "Murthy Example"}});
+      return {...generated, kind: "status", facts: [{id: "stage", label: "Project status", value: "Active", source: {id: "a", label: "Project", href: null}}]};
+    }}});
+    const run = (await f.chatRepository.mutate(tx => runtime.enqueueAssistant(tx, {...f.input, messageId: question.id, messageVersion: question.version})))!;
+    f.advance(120_000);
+    expect(await runtime.runOnce()).toBe(true);
+    const stored = await ProjectChatAssistantResultModel.findOne({runId: run.id}).lean();
+    expect(stored).toMatchObject({narrative: [{text: "I hear your concern, Murthy.", factIds: []}], facts: [{value: "Active"}]});
+    expect(publish).toHaveBeenCalledOnce();
+    expect(await createProjectAssistantRuntime({...f.options, publish}).runOnce()).toBe(false);
+    expect(await ProjectChatAssistantResultModel.countDocuments({runId: run.id})).toBe(1);
+    expect(await ProjectChatAssistantReceiptModel.countDocuments({kind: "publication", runId: run.id})).toBe(1);
+  });
   it("settles private profile-only reservations once while keeping nonusage receipts project-scoped", async () => {
     const f = await fixture();
     const provider = {async generate(context: import("../src/services/project-assistant-provider.js").AssistantProviderContext) {

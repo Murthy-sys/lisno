@@ -108,6 +108,16 @@ export const REQUESTABLE_MODULES_BY_ROLE = {
 } as const satisfies Record<Role, readonly RequestableProjectModule[]>;
 
 export const PERMISSION_CODES = [
+  "projects.client_invitation.read",
+  "projects.client_invitation.manage",
+  "identity.project_invitation.accept",
+  "estimation.requirements.read",
+  "estimation.requirements.create",
+  "estimation.requirements.update",
+  "estimation.requirements.resolve",
+  "estimation.review.withdraw",
+  "estimation.preparation.release",
+
   "ask_lisno.request",
   "chat.assistant.read",
   "chat.assistant.request",
@@ -129,6 +139,7 @@ export const PERMISSION_CODES = [
   "projects.status.read",
   "projects.design_workflow.read",
   "projects.design_workflow.act",
+  "projects.design_requirements.act",
   "projects.design_workflow.payments.read",
   "projects.initiate",
   "projects.procurement_identity.manage",
@@ -299,7 +310,7 @@ export const PERMISSION_CODES = [
 export type PermissionCode = (typeof PERMISSION_CODES)[number];
 
 export const AUTHORIZATION_POLICY_VERSION =
-  "2026-10-11.vendor-basket-proposals.v1" as const;
+  "2026-10-14.main-line-design-rules.v1" as const;
 
 export interface AuthorizationSnapshot {
   readonly role: Role;

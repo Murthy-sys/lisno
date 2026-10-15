@@ -1,3 +1,7 @@
+import { effectiveCommercialStatus, estimateCommercialStatusFilter, estimateCommercialStatusFields, isCollaborativeEstimate } from "../domain/estimation-lifecycle.js";
+import { ProjectModel } from "../models/Project.js";
+import { currentFinalDesignBinding, fenceCollaborativeEstimate, requireEstimateClientMembership } from "./estimate-collaboration-policy.service.js";
+import { assertEstimateRequirementsResolved } from "./estimate-requirements.service.js";
 import { createMongoRepository } from "../repositories/mongo.js";
 import { randomUUID } from "node:crypto";
 import mongoose from "mongoose";
@@ -21,6 +25,8 @@ import type { PublicUser } from "./auth.service.js";
 import type { EstimateClientReviewService } from "./estimate-client-review.service.js";
 import type { EstimateDesignService } from "./estimate-design.service.js";
 import type { EnsurePendingFinanceBucketInput } from "./project-finance.service.js";
+import { syncCollaborativeFinanceBaseline } from "./project-finance.service.js";
+import { ensureCollaborativePreparationTask } from "./project-workflow.service.js";
 import { resolveApprovalProject } from "./estimate-project-handoff.js";
 import { presentClientEstimate } from "./estimate-client-presentation.js";
 
@@ -125,7 +131,9 @@ export function createEstimateDecisionService(input: {
         ) {
           estimateNotFound();
         }
-        if (estimate.status !== "sent_to_client" || estimate.designFrozenAt != null) {
+        if (context.source === "client_portal") await requireEstimateClientMembership(context.actor, estimate, session);
+        const collaborationProject = await fenceCollaborativeEstimate(estimate, session);
+        if (effectiveCommercialStatus(estimate) !== "sent_to_client" || (!isCollaborativeEstimate(estimate) && estimate.designFrozenAt != null) || estimate.estimation?.editClosedAt) {
           estimateNotReviewable();
         }
 
@@ -139,11 +147,20 @@ export function createEstimateDecisionService(input: {
             }).session(session).lean())
           : null;
         if (round && !reviewRound) estimateNotReviewable();
+        if (isCollaborativeEstimate(estimate)) {
+          if (!reviewRound || estimate.estimation.pendingReviewRoundId !== round?.id ||
+            reviewRound.phase !== estimate.estimation.phase || reviewRound.requirementsVersion !== estimate.estimation.requirementsVersion) estimateNotReviewable();
+          await assertEstimateRequirementsResolved(String(estimate.projectId), estimate.estimation.requirementsVersion, session);
+          if (estimate.estimation.phase === "post") {
+            const binding = await currentFinalDesignBinding(estimate, session);
+            if (Object.entries(binding).some(([key, value]) => reviewRound[key] !== value)) estimateNotReviewable();
+          }
+        }
         if (context.source === "client_portal") {
           const latestRound = asRecord(await EstimateClientReviewRoundModel.findOne({ estimateId })
             .sort({ sendGeneration: -1, _id: 1 }).session(session).lean());
           if (!latestRound || String(latestRound._id) !== round?.id ||
-            !presentClientEstimate(context.actor, estimate, lead, reviewRound)?.publishedReview?.canDecide) {
+            !presentClientEstimate(context.actor, estimate, lead, reviewRound, collaborationProject)?.publishedReview?.canDecide) {
             estimateNotReviewable();
           }
         }
@@ -214,6 +231,9 @@ export function createEstimateDecisionService(input: {
             status: terminalStatus,
             version: Number(reviewRound.version) + 1
           });
+        }
+        if (input.finance && decision === "approve" && isCollaborativeEstimate(estimate) && estimate.estimation.phase === "post") {
+          await syncCollaborativeFinanceBaseline(estimateId, session);
         }
 
         let proofId: string | null = null;
@@ -387,7 +407,8 @@ async function requestChanges(input: {
     estimateCasFilter(estimate),
     {
       $set: {
-        status: "client_changes_requested",
+        ...estimateCommercialStatusFields(estimate, "client_changes_requested"),
+        ...(isCollaborativeEstimate(estimate) ? { "estimation.pendingReviewRoundId": null } : {}),
         clientDecisionAt: occurredAt
       },
       $inc: { version: 1, designLifecycleVersion: 1 },
@@ -410,7 +431,8 @@ async function requestChanges(input: {
   }, session);
   return {
     ...estimate,
-    status: "client_changes_requested",
+    status: estimate.estimation?.preApproval ? "client_approved" : "client_changes_requested",
+    ...(isCollaborativeEstimate(estimate) ? { estimation: { ...estimate.estimation, status: "client_changes_requested", pendingReviewRoundId: null } } : {}),
     version: Number(estimate.version) + 1,
     designLifecycleVersion: Number(estimate.designLifecycleVersion ?? 0) + 1,
     clientDecisionAt: occurredAt,
@@ -447,7 +469,9 @@ async function approve(input: {
     reviewRound,
     assignedAdminId
   } = input;
-  const clientId = context.source === "client_portal"
+  if (isCollaborativeEstimate(estimate) && estimate.estimation.phase === "post") return approveFinal(input);
+  const projectMembership = isCollaborativeEstimate(estimate) ? await ProjectModel.findById(estimate.projectId).session(session).lean() : null;
+  const clientId = isCollaborativeEstimate(estimate) ? projectMembership?.clientId ?? null : context.source === "client_portal"
     ? context.actor.id
     : (await UserModel.findOne({
         emailNormalized: normalizeEmail(String(lead.clientEmail)),
@@ -517,6 +541,8 @@ async function approve(input: {
     {
       $set: {
         status: "client_approved",
+        ...(isCollaborativeEstimate(estimate) ? { estimation: { ...estimate.estimation, phase: "post", status: "draft", pendingReviewRoundId: null,
+          preApproval: { reviewRoundId: String(reviewRound!._id), estimateVersion: Number(reviewRound!.estimateVersion), approvedAt: occurredAt.toISOString() } } } : {}),
         projectId,
         clientDecisionAt: occurredAt,
         designFrozenAt: null,
@@ -538,9 +564,16 @@ async function approve(input: {
     { session }
   );
   requireMatched(updated);
+  if (isCollaborativeEstimate(estimate)) {
+    await ensureCollaborativePreparationTask({ ...estimate, projectId, status: "client_approved", estimation: {
+      ...estimate.estimation, phase: "post", status: "draft", pendingReviewRoundId: null,
+      preApproval: { reviewRoundId: String(reviewRound!._id), estimateVersion: Number(reviewRound!.estimateVersion), approvedAt: occurredAt.toISOString() }
+    } }, occurredAt, session);
+  }
   if (finance) {
     const snapshot = reviewRound?.estimateSnapshot ?? estimate;
     await finance.ensurePending({
+      ...(isCollaborativeEstimate(estimate) ? { workflowVersion: 2 as const } : {}),
       projectId,
       estimateId: String(estimate._id),
       estimateVersion: reviewRound == null
@@ -592,6 +625,8 @@ async function approve(input: {
   return {
     ...estimate,
     status: "client_approved",
+    ...(isCollaborativeEstimate(estimate) ? { estimation: { ...estimate.estimation, phase: "post", status: "draft", pendingReviewRoundId: null,
+      preApproval: { reviewRoundId: String(reviewRound!._id), estimateVersion: Number(reviewRound!.estimateVersion), approvedAt: occurredAt.toISOString() } } } : {}),
     version: Number(estimate.version) + 1,
     designLifecycleVersion: Number(estimate.designLifecycleVersion ?? 0) + 1,
     designFrozenAt: null,
@@ -608,6 +643,29 @@ async function approve(input: {
     clientDecisionAt: occurredAt,
     reviews: [...(estimate.reviews ?? []), review]
   };
+}
+
+async function approveFinal(input: Parameters<typeof approve>[0]): Promise<Row> {
+  const { estimate, reviewRound, context, note, occurredAt, session, audit } = input;
+  const binding = await currentFinalDesignBinding(estimate, session);
+  const finalApproval = {
+    reviewRoundId: String(reviewRound!._id), estimateVersion: Number(reviewRound!.estimateVersion),
+    approvedAt: occurredAt.toISOString(), requirementsVersion: estimate.estimation.requirementsVersion, ...binding
+  };
+  const estimation = { ...estimate.estimation, status: "client_approved", finalApproval,
+    pendingReviewRoundId: null, editClosedAt: occurredAt.toISOString() };
+  const review = { actorId: context.actor.id, action: "final_estimate_approved", note, occurredAt };
+  const updated = await EstimateModel.updateOne(estimateCasFilter(estimate), {
+    $set: { estimation, status: "client_approved", clientDecisionAt: occurredAt },
+    $inc: { version: 1 }, $push: { reviews: review }
+  }, { session, runValidators: true });
+  requireMatched(updated);
+  await audit.appendInMongoTransaction({ actorId: context.actor.id, action: "final_estimate_approved",
+    entityType: "estimate", entityId: String(estimate._id), occurredAt: occurredAt.toISOString(),
+    oldValues: { status: "sent_to_client", phase: "post" }, newValues: { status: "client_approved", finalApproval }
+  }, session);
+  return { ...estimate, estimation, status: "client_approved", clientDecisionAt: occurredAt,
+    version: Number(estimate.version) + 1, reviews: [...(estimate.reviews ?? []), review] };
 }
 
 async function appendSourceAudit(input: {
@@ -656,12 +714,12 @@ function estimateCasFilter(estimate: Row): Row {
   const lifecycleVersion = Number(estimate.designLifecycleVersion ?? 0);
   return {
     _id: estimate._id,
-    status: "sent_to_client",
+    ...(isCollaborativeEstimate(estimate) ? estimateCommercialStatusFilter(estimate, "sent_to_client") : { status: "sent_to_client" }),
     version: estimate.version,
     designLifecycleVersion: lifecycleVersion === 0
       ? { $in: [0, null] }
       : lifecycleVersion,
-    designFrozenAt: { $in: [null] }
+    ...(!isCollaborativeEstimate(estimate) ? { designFrozenAt: { $in: [null] } } : { "estimation.editClosedAt": null })
   };
 }
 
@@ -682,7 +740,7 @@ function summary(round: Row): EstimateClientReviewSummary {
 
 function mapEstimate(value: Row): Record<string, unknown> {
   const { _id, ...estimate } = value;
-  return { ...estimate, id: String(_id) };
+  return { ...estimate, status: effectiveCommercialStatus(estimate), id: String(_id) };
 }
 
 function asRecord(value: unknown): Row | null {

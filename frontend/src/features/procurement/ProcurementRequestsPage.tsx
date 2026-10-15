@@ -9,9 +9,10 @@ import { Field, Input, Select } from "../../components/ui/Field";
 import { InlineMessage } from "../../components/ui/InlineMessage";
 import { PageState } from "../../components/ui/PageState";
 import { OwnProposalList } from "../vendor-basket-proposals/OwnProposalList";
+import { ProposalIntakeWorkspace } from "../vendor-basket-proposals/ProposalIntakeWorkspace";
 import { ProposalWorkspace } from "../vendor-basket-proposals/ProposalWorkspace";
 import { proposalKeys } from "../vendor-basket-proposals/proposalApi";
-import { proposalDenied, proposalError, proposalStatusLabels } from "../vendor-basket-proposals/proposalPresentation";
+import { proposalDenied, proposalError, proposalStatusLabel } from "../vendor-basket-proposals/proposalPresentation";
 import type { ProposalDetail } from "../vendor-basket-proposals/proposalTypes";
 import { vendorDirectoryPageSizes, type VendorDirectoryPageSize } from "./VendorDirectoryTable";
 import { listOwnVendorBasketRequests, vendorBasketRequestKeys, type OwnVendorBasketRequestFilters, type VendorBasketRequest } from "./vendorBasketRequestApi";
@@ -24,7 +25,7 @@ const parentName = (request: VendorBasketRequest) => request.target?.kind === "n
 const dateLabel = (date: string) => Number.isNaN(Date.parse(date)) ? "Date unavailable" : new Intl.DateTimeFormat("en-IN", { day: "numeric", month: "short", year: "numeric" }).format(new Date(date));
 
 function RequestStatus({ request }: { request: VendorBasketRequest }) {
-  return <span className={`vendor-directory__status${request.status === "pending" ? " vendor-directory__status--review" : request.status === "rejected" ? " vendor-directory__status--inactive" : ""}`}>{proposalStatusLabels[request.status]}</span>;
+  return <span className={`vendor-directory__status${request.status === "pending" ? " vendor-directory__status--review" : request.status === "rejected" ? " vendor-directory__status--inactive" : ""}`}>{proposalStatusLabel(request.status, request.requestMode)}</span>;
 }
 
 export function ProcurementRequestsPage() {
@@ -57,6 +58,7 @@ function RequestDirectory({ actor, allowed, canReadProposals }: { actor: string;
   const denied = !allowed || accessDenied || proposalDenied(query.error);
   const total = query.data?.pagination.total;
   const selectedRequest = query.data?.items.find(request => request.id === selected?.id) ?? selected;
+  const SelectedWorkspace = selectedRequest?.requestMode === "hierarchy_intake" ? ProposalIntakeWorkspace : ProposalWorkspace;
   useEffect(() => () => {
     if (searchTimer.current !== null) clearTimeout(searchTimer.current);
     void client.cancelQueries({ queryKey: vendorBasketRequestKeys.mineActor(actor) });
@@ -105,14 +107,14 @@ function RequestDirectory({ actor, allowed, canReadProposals }: { actor: string;
       <div className="vendor-directory__heading"><div><h2 id={`${id}-submitted`}>Submitted requests</h2><p>Requests you have sent for approval.</p></div><div className="procurement-requests__actions">{canReadProposals ? <Button variant="secondary" onClick={() => setDraftsOpen(true)}>Saved drafts</Button> : null}<Button ref={refreshButton} variant="secondary" disabled={query.isFetching} onClick={() => void query.refetch()}>Refresh</Button></div></div>
       <form className="vendor-directory__filters" role="search" aria-label="Search my requests" onSubmit={apply}>
         <Field id={`${id}-search`} label="Search requests" className="vendor-directory__search">{props => <Input {...props} type="search" value={search} maxLength={100} placeholder="Requested basket name" onChange={event => searchChanged(event.target.value)} />}</Field>
-        <Field id={`${id}-status`} label="Status">{props => <Select {...props} value={filters.status} onChange={event => changeFilters({ status: event.target.value as OwnVendorBasketRequestFilters["status"] })}><option value="">All statuses</option><option value="pending">Awaiting Super Admin</option><option value="fulfilled">Approved and active</option><option value="rejected">Rejected</option></Select>}</Field>
+        <Field id={`${id}-status`} label="Status">{props => <Select {...props} value={filters.status} onChange={event => changeFilters({ status: event.target.value as OwnVendorBasketRequestFilters["status"] })}><option value="">All statuses</option><option value="pending">Awaiting Super Admin</option><option value="fulfilled">Approved</option><option value="rejected">Sent back / Rejected</option></Select>}</Field>
         <Field id={`${id}-type`} label="Request type">{props => <Select {...props} value={filters.targetKind} onChange={event => changeFilters({ targetKind: event.target.value as OwnVendorBasketRequestFilters["targetKind"] })}><option value="">All types</option><option value="new_main_basket">Main Basket</option><option value="new_sub_basket">Sub-Basket</option></Select>}</Field>
         <Button variant="secondary" onClick={reset}>Reset</Button>
       </form>
       {notice ? <p role="status" className="vendor-directory__notice">{notice}</p> : null}
       {query.isPending ? <PageState state="loading" message="Loading your requests…" /> : query.isError && !query.data ? <PageState state="error" message={proposalError(query.error)} action={{ label: "Retry requests", onAction: () => void query.refetch() }} /> : <>
         {query.isError ? <InlineMessage tone="warning" action={<Button variant="secondary" onClick={() => void query.refetch()}>Retry requests</Button>}>Requests could not be refreshed. Showing the last loaded statuses.</InlineMessage> : null}
-        {!items.length ? <PageState state="empty" message={Object.values(filters).some(Boolean) ? "No requests match this view. Adjust the filters or reset your search." : "No requests submitted yet. Configure a Main Basket or Sub-Basket from Vendors and send it for approval."} /> : <div className="vendor-directory__table-wrap"><table className="vendor-directory__table procurement-requests__table"><caption className="sr-only">Your submitted basket requests and statuses</caption>
+        {!items.length ? <PageState state="empty" message={Object.values(filters).some(Boolean) ? "No requests match this view. Adjust the filters or reset your search." : "No requests submitted yet. Request a Main Basket or Sub-Basket from Vendors and send it for approval."} /> : <div className="vendor-directory__table-wrap"><table className="vendor-directory__table procurement-requests__table"><caption className="sr-only">Your submitted basket requests and statuses</caption>
           <colgroup><col className="procurement-requests__name-column" /><col /><col /><col className="procurement-requests__status-column" /><col /><col /></colgroup>
           <thead><tr><th scope="col">Requested item</th><th scope="col">Request type</th><th scope="col">Main Basket</th><th scope="col">Status</th><th scope="col">Submitted</th><th scope="col" data-placement="actions">Action</th></tr></thead>
           <tbody>{items.map(request => <tr key={request.id}>
@@ -129,6 +131,6 @@ function RequestDirectory({ actor, allowed, canReadProposals }: { actor: string;
       {query.isFetching && !query.isPending ? <p role="status" className="vendor-directory__notice">Refreshing requests…</p> : null}
     </section>
     {draftsOpen && canReadProposals ? <OwnProposalList draftsOnly onClose={() => setDraftsOpen(false)} onSubmitted={submitted} /> : null}
-    {selectedRequest ? selectedRequest.kind === "configuration_proposal" && selectedRequest.proposalId && canReadProposals ? <ProposalWorkspace key={`${actor}:${selectedRequest.proposalId}`} proposalId={selectedRequest.proposalId} onClose={() => setSelected(null)} onSubmitted={submitted} /> : <ContextPanel title={selectedRequest.proposedName} eyebrow="My request" onClose={() => setSelected(null)}><dl className="procurement-requests__summary"><div><dt>Request type</dt><dd>{requestType(selectedRequest)}</dd></div>{selectedRequest.target?.kind === "new_sub_basket" ? <div><dt>Main Basket</dt><dd>{parentName(selectedRequest)}</dd></div> : null}<div><dt>Status</dt><dd><RequestStatus request={selectedRequest} /></dd></div><div><dt>Submitted</dt><dd>{dateLabel(selectedRequest.createdAt)}</dd></div>{selectedRequest.reason ? <div><dt>Reason</dt><dd>{selectedRequest.reason}</dd></div> : null}{selectedRequest.decidedAt ? <div><dt>Decision date</dt><dd>{dateLabel(selectedRequest.decidedAt)}</dd></div> : null}</dl>{selectedRequest.kind === "configuration_proposal" ? <InlineMessage tone="info">Configuration detail is unavailable with your current access.</InlineMessage> : null}</ContextPanel> : null}
+    {selectedRequest ? selectedRequest.kind === "configuration_proposal" && selectedRequest.proposalId && canReadProposals ? <SelectedWorkspace key={`${actor}:${selectedRequest.proposalId}`} proposalId={selectedRequest.proposalId} scope="procurement" onClose={() => setSelected(null)} onSubmitted={submitted} /> : <ContextPanel title={selectedRequest.proposedName} eyebrow="My request" onClose={() => setSelected(null)}><dl className="procurement-requests__summary"><div><dt>Request type</dt><dd>{requestType(selectedRequest)}</dd></div>{selectedRequest.target?.kind === "new_sub_basket" ? <div><dt>Main Basket</dt><dd>{parentName(selectedRequest)}</dd></div> : null}<div><dt>Status</dt><dd><RequestStatus request={selectedRequest} /></dd></div><div><dt>Submitted</dt><dd>{dateLabel(selectedRequest.createdAt)}</dd></div>{selectedRequest.reason ? <div><dt>Reason</dt><dd>{selectedRequest.reason}</dd></div> : null}{selectedRequest.decidedAt ? <div><dt>Decision date</dt><dd>{dateLabel(selectedRequest.decidedAt)}</dd></div> : null}</dl>{selectedRequest.kind === "configuration_proposal" ? <InlineMessage tone="info">{selectedRequest.requestMode === "hierarchy_intake" ? "Request detail is unavailable with your current access." : "Configuration detail is unavailable with your current access."}</InlineMessage> : null}</ContextPanel> : null}
   </section>;
 }

@@ -13,7 +13,7 @@ function response(): AskLisnoResponse {
     projectId: "project-a",
     resolution: { state: "resolved", project: { id: "project-a", name: "Garden home" }, question: null, choices: [] },
     checkedAt: "2026-10-11T08:20:00Z",
-    answer: {
+    answer: { disclosurePolicy: "project-publication-v1",
       kind: "status",
       facts: [fact("project-status", "Status", "In progress"), fact("project-stage", "Current stage", "Execution")],
       candidates: [], missingInputs: [], commercial: null

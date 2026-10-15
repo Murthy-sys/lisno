@@ -52,8 +52,8 @@ describe("mobile contract provenance", () => {
     expect(PERMISSION_CODES).toEqual(canonicalPermissions);
     expect(quotedArray(frontendAuthorization, "ROLE_CODES")).toEqual(canonicalRoles);
     expect(quotedArray(frontendAuthorization, "PERMISSION_CODES")).toEqual(canonicalPermissions);
-    expect(PERMISSION_CODES).toHaveLength(151);
-    expect(canonicalPolicyVersion).toBe("2026-09-28.vendor-induction.v1");
+    expect(PERMISSION_CODES).toHaveLength(196);
+    expect(canonicalPolicyVersion).toBe("2026-10-14.main-line-design-rules.v1");
     expect(AUTHORIZATION_POLICY_VERSION).toBe(canonicalPolicyVersion);
     expect(frontendPolicyVersion).toBe(canonicalPolicyVersion);
   });
@@ -68,7 +68,7 @@ describe("mobile contract provenance", () => {
       permission: entry[2]!,
       superAdminBehavior: entry[3]!
     }));
-    expect(canonical).toHaveLength(257);
+    expect(canonical).toHaveLength(437);
     expect(PROTECTED_OPERATIONS).toEqual(canonical);
   });
 

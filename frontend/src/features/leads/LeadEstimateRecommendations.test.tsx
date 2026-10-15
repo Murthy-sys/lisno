@@ -121,7 +121,7 @@ async function openBuilder(user: ReturnType<typeof userEvent.setup>, additionalB
   await screen.findByRole("heading", { name: "Main Baskets" });
   await user.click(screen.getByRole("button", { name: "Select rooms" }));
   await user.click(screen.getByRole("option", { name: "Living & Dining" }));
-  await user.click(screen.getByRole("option", { name: "Master Bedroom" }));
+  await user.click(screen.getByRole("option", { name: "Bedroom 1" }));
   await user.click(screen.getByRole("button", { name: "Done" }));
   await user.click(screen.getByRole("button", { name: /^(?:Add|Added) POP \/ Gypsum$/ }));
   for (const name of additionalBasketNames) await user.click(screen.getByRole("button", { name: `Add ${name}` }));
@@ -454,7 +454,7 @@ describe("estimator room recommendations", () => {
     await user.type(paintingQuantity, "3.25");
     await user.click(screen.getByRole("button", { name: "Back to Asha Shah" }));
     expect(screen.getByRole("region", { name: /Living & Dining dimensions/ })).toBeVisible();
-    expect(screen.getByRole("region", { name: /Master Bedroom dimensions/ })).toBeVisible();
+    expect(screen.getByRole("region", { name: /Bedroom 1 dimensions/ })).toBeVisible();
     const search = screen.getByRole("searchbox", { name: "Search baskets" });
     await user.type(search, "pop");
     expect(screen.getByRole("button", { name: "Added POP / Gypsum" })).toHaveAttribute("aria-pressed", "true");
@@ -491,7 +491,7 @@ describe("estimator room recommendations", () => {
     expect(screen.getByRole("textbox", { name: /Selling rate.*POP false ceiling/ })).toHaveValue("123.45");
     expect(screen.getByRole("spinbutton", { name: /Quantity.*False ceiling painting/ })).toHaveValue(3.25);
     expect(screen.getByRole("textbox", { name: /Selling rate.*False ceiling painting/ })).toHaveValue("287.65");
-    expect(screen.getByRole("navigation", { name: "Rooms" })).toHaveTextContent("Master Bedroom");
+    expect(screen.getByRole("navigation", { name: "Rooms" })).toHaveTextContent("Bedroom 1");
     expect(screen.getByRole("navigation", { name: "Rooms" })).toHaveTextContent("Living & Dining");
     expect(savedInputs).toHaveLength(1);
 
@@ -772,7 +772,7 @@ describe("estimator room recommendations", () => {
     await openBuilder(user, ["Painting"]);
 
     const rooms = screen.getByRole("navigation", { name: "Rooms" });
-    await user.click(within(rooms).getByRole("button", { name: /Master Bedroom/ }));
+    await user.click(within(rooms).getByRole("button", { name: /Bedroom 1/ }));
     const masterPainting = within(screen.getByRole("region", { name: "Painting" }))
       .getByText("False ceiling painting").closest(".configured-estimate-line") as HTMLElement;
     await user.click(within(masterPainting).getByRole("checkbox", { name: /False ceiling painting/ }));
@@ -786,7 +786,7 @@ describe("estimator room recommendations", () => {
     await user.click(within(dialog).getByRole("button", { name: "Not now" }));
     await waitFor(() => expect(sourceCheckbox).not.toBeChecked());
 
-    await user.click(within(rooms).getByRole("button", { name: /Master Bedroom/ }));
+    await user.click(within(rooms).getByRole("button", { name: /Bedroom 1/ }));
     const remainingPainting = within(screen.getByRole("region", { name: "Painting" }))
       .getByText("False ceiling painting").closest(".configured-estimate-line") as HTMLElement;
     expect(within(remainingPainting).getByRole("checkbox", { name: /False ceiling painting/ })).toBeChecked();
@@ -819,17 +819,17 @@ describe("estimator room recommendations", () => {
     expect(await screen.findByRole("dialog", { name: "Recommendations for Living & Dining" })).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Close recommendations" }));
 
-    await user.click(within(screen.getByRole("navigation", { name: "Rooms" })).getByRole("button", { name: /Master Bedroom/ }));
+    await user.click(within(screen.getByRole("navigation", { name: "Rooms" })).getByRole("button", { name: /Bedroom 1/ }));
     const masterPaint = within(screen.getByRole("region", { name: "Painting" })).getByText("False ceiling painting").closest(".configured-estimate-line") as HTMLElement;
     expect(within(masterPaint).getByRole("checkbox", { name: /False ceiling painting/ })).not.toBeChecked();
     expect(screen.queryByRole("region", { name: "Recommendations for this room" })).not.toBeInTheDocument();
 
     const functional = screen.getByText("Functional Lights").closest(".configured-estimate-line") as HTMLElement;
     await user.click(within(functional).getByRole("checkbox", { name: /Functional Lights/ }));
-    const masterDialog = await screen.findByRole("dialog", { name: "Recommendations for Master Bedroom" });
+    const masterDialog = await screen.findByRole("dialog", { name: "Recommendations for Bedroom 1" });
     expect(await within(masterDialog).findByText("Provide fittings at the ceiling openings.")).toBeVisible();
     expect(within(masterDialog).getByText("Consider False ceiling functional lights for Functional Lights.")).toBeVisible();
-    expect(within(masterDialog).getByRole("button", { name: "Add False ceiling functional lights for Master Bedroom" })).toBeEnabled();
+    expect(within(masterDialog).getByRole("button", { name: "Add False ceiling functional lights for Bedroom 1" })).toBeEnabled();
   });
 
   it("keeps a failed recommendation read distinct from an empty result and retries it", async () => {
@@ -921,7 +921,7 @@ describe("estimator room recommendations", () => {
 
     const pop = screen.getByText("POP false ceiling").closest(".configured-estimate-line") as HTMLElement;
     await user.click(within(pop).getByRole("checkbox", { name: /POP false ceiling/ }));
-    await user.click(within(screen.getByRole("navigation", { name: "Rooms" })).getByRole("button", { name: /Master Bedroom/ }));
+    await user.click(within(screen.getByRole("navigation", { name: "Rooms" })).getByRole("button", { name: /Bedroom 1/ }));
     releaseRecommendation();
     await user.click(within(screen.getByRole("navigation", { name: "Rooms" })).getByRole("button", { name: /Living & Dining/ }));
     const alert = await screen.findByRole("region", { name: "Recommendations for this room" });

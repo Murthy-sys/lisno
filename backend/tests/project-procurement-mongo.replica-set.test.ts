@@ -1,3 +1,4 @@
+import { newEstimationLifecycle } from "../src/domain/estimation-lifecycle.js";
 import mongoose from "mongoose";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { MAX_FINANCE_AMOUNT_PAISE } from "../src/domain/project-finance.js";
@@ -118,6 +119,33 @@ describe("project purchase order preparation", () => {
       sections: [{ netPaise: null, items: [{ id: item.id, plannedOrderQuantityMilliUnits: null,
         plannedLineNetPaise: null, blockers: expect.arrayContaining([{ code: "QUANTITY_MISSING", message: expect.any(String), itemId: item.id }]) }] }] });
     expect(legacy.blockers.map((blocker) => blocker.code)).toContain("QUANTITY_MISSING");
+  });
+
+  it("rebinds a stable working item after a stale request is rejected while preserving its frozen history", async () => {
+    const item = await service.create(actor, "project-a", fields);
+    const original = await EstimateClientReviewRoundModel.findById("round-project-a").lean();
+    await EstimateClientReviewRoundModel.collection.insertOne({ ...original!, _id: "round-final-a", projectId: "project-a",
+      estimateVersion: 3, sendGeneration: 2, phase: "post", dedupeKey: "f".repeat(64) });
+    await ProjectModel.updateOne({ _id: "project-a" }, { $set: { estimationWorkflowVersion: 2, status: "planning" } });
+    await EstimateModel.updateOne({ _id: "estimate-project-a" }, { $set: { version: 4, estimation: {
+      ...newEstimationLifecycle(), phase: "post", status: "client_approved", editClosedAt: now.toISOString(),
+      preApproval: { reviewRoundId: "round-project-a", estimateVersion: 1, approvedAt: now.toISOString() },
+      finalApproval: { reviewRoundId: "round-final-a", estimateVersion: 3, approvedAt: now.toISOString(), requirementsVersion: 0,
+        designReviewRoundId: "design-a", designPlanVersion: 1, designScopeRevision: 1 }
+    } } });
+    await ProjectPurchaseOrderRequestModel.collection.insertOne({ _id: "stale-request", projectId: "project-a",
+      status: "ready_to_issue", submittedRevisionId: "stale-revision" } as never);
+    const frozen = { _id: "stale-revision", requestId: "stale-request", projectId: "project-a",
+      lines: [{ procurementItemId: item.id, estimateVersion: 1, sourceLineItemKey: "line-first" }] };
+    await ProjectPurchaseOrderRequestRevisionModel.collection.insertOne(frozen as never);
+    const update = { ...fields, estimateVersion: 3, expectedVersion: item.version };
+    await expect(service.update(actor, "project-a", item.id, update)).rejects.toMatchObject({ code: "PROCUREMENT_ITEM_REQUEST_PENDING" });
+    await ProjectPurchaseOrderRequestModel.collection.updateOne({ _id: "stale-request" }, { $set: { status: "rejected" } });
+    const rebound = await service.update(actor, "project-a", item.id, update);
+    expect(rebound).toMatchObject({ id: item.id, version: item.version + 1, pricePaise: item.pricePaise,
+      estimateSource: { estimateVersion: 3, estimateReviewRoundId: "round-final-a" },
+      preparationSource: { kind: "approved_final", sourceSnapshotId: "round-final-a" } });
+    expect(await ProjectPurchaseOrderRequestRevisionModel.findById("stale-revision").lean()).toMatchObject(frozen);
   });
 
   it("protects submitted request items until Super Admin returns them for correction", async () => {

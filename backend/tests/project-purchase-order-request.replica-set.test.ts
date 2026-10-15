@@ -1,7 +1,11 @@
+import * as designRequirements from "../src/services/design-requirements.service.js";
+import { ApiError } from "../src/middleware/errors.js";
+import { collaborativePurchasePreparation, collaborativePurchaseFinal, collaborativePurchasePayment } from "./helpers/collaborative-purchase-order.js";
 import mongoose, { type ClientSession } from "mongoose";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createKnowledgeRevisionDigest } from "../src/domain/ai-estimator-knowledge-completeness.js";
 import { AI_ESTIMATOR_KNOWLEDGE_SECTION_KEYS } from "../src/domain/ai-estimator-knowledge.js";
+import { AiEstimatorKnowledgeMainLineModel } from "../src/models/AiEstimatorKnowledgeMainLine.js";
 import { AiEstimatorKnowledgePriceVersionModel } from "../src/models/AiEstimatorKnowledgePriceVersion.js";
 import { AiEstimatorKnowledgeRevisionModel } from "../src/models/AiEstimatorKnowledgeRevision.js";
 import { AiEstimatorKnowledgeSectionModel } from "../src/models/AiEstimatorKnowledgeSection.js";
@@ -139,6 +143,7 @@ function item(projectId: string, suffix: string, sectionId: string, lineKey: str
 async function configureFirstApprovedLine() {
   const mainLineId = "request-main-line";
   const revisionId = "request-config-revision";
+  await AiEstimatorKnowledgeMainLineModel.collection.insertOne({ _id: mainLineId, code: "REQUEST-ML", basketId: "request-basket-a", subBasketId: "request-sub-a", name: "Timber", nameNormalized: "timber", status: "active", activeRevisionId: revisionId, draftRevisionId: null, version: 1, displayOrder: 1, createdById: buyer.id, updatedById: buyer.id, createdAt: now, updatedAt: now });
   const sections = AI_ESTIMATOR_KNOWLEDGE_SECTION_KEYS.map(sectionKey => ({
     _id: `${revisionId}-${sectionKey}`, mainLineId, revisionId, sectionKey,
     applicability: ["overview", "advanced", "pricing", "quantity-margin"].includes(sectionKey) ? "configured" : "not_configured",
@@ -713,4 +718,76 @@ describe("project purchase-order request transactions", () => {
     expect(await ProjectPurchaseOrderRequestModel.findById(submitted.id).lean()).toMatchObject({ status: "pending_approval", version: 1 });
     expect(committed).not.toHaveBeenCalled();
   });
+});
+
+
+describe("collaborative project request issuance", () => {
+  async function prepare() {
+    await collaborativePurchasePreparation("request-project-a", now);
+    const preview = await preparation();
+    const submitted = await service.submit(buyer, "request-project-a", submitInput(preview.digest));
+    return service.decide(admin, submitted.id, { expectedVersion: submitted.version, submittedRevisionId: submitted.submittedRevisionId,
+      decision: "approve", reason: null, budgetOverrideReason: null, idempotencyKey: "approve-preparation-only" });
+  }
+  it("keeps an approved preparation open without creating vendor orders or assignments", async () => {
+    const ready = await prepare();
+    expect(ready).toMatchObject({ status: "ready_to_issue", approvedOrderIds: [], issueReadiness: { canIssue: false } });
+    expect(await ProjectPurchaseOrderModel.countDocuments()).toBe(0);
+    expect(await VendorWorkAssignmentModel.countDocuments()).toBe(0); expect(committed).not.toHaveBeenCalled();
+    await expect(service.issue(buyer, "request-project-a", ready.id, { expectedVersion: ready.version, idempotencyKey: "request-issue-before-final" })).rejects.toMatchObject({ code: "WORK_ORDER_NOT_READY" });
+    const preview = await preparation();
+    await expect(service.submit(buyer, "request-project-a", { ...submitInput(preview.digest), idempotencyKey: "second-open-request" })).rejects.toMatchObject({ code: "PURCHASE_ORDER_REQUEST_STATE_CONFLICT" });
+    const rejected = await service.decide(admin, ready.id, { expectedVersion: ready.version, submittedRevisionId: ready.submittedRevisionId, decision: "reject", reason: "Replace obsolete prepared scope", budgetOverrideReason: null, idempotencyKey: "reject-prepared-request" });
+    expect(rejected.status).toBe("rejected");
+    expect(rejected.decisions.map(entry => entry.decision)).toEqual(["approve", "reject"]);
+  });
+  it("preserves the quote and SA decision through reconciliation and explicit final issuance", async () => {
+    const ready = await prepare();
+    const original = await ProjectPurchaseOrderRequestRevisionModel.findById(ready.submittedRevisionId).lean();
+    await collaborativePurchaseFinal("request-project-a", now);
+    await collaborativePurchasePayment("request-project-a", now);
+    await expect(service.issue(buyer, "request-project-a", ready.id, { expectedVersion: ready.version, idempotencyKey: "request-issue-stale-source" })).rejects.toMatchObject({ code: "WORK_ORDER_SOURCE_RECONCILIATION_REQUIRED" });
+    const reopened = await service.reconcile(buyer, "request-project-a", ready.id, { expectedVersion: ready.version, idempotencyKey: "request-reconcile-final", reason: "Review final scope and vendor quantities", acknowledgeScopeChanges: false });
+    expect(reopened.status).toBe("changes_requested");
+    expect(await ProjectPurchaseOrderRequestRevisionModel.findById(ready.submittedRevisionId).lean()).toEqual(original);
+    const preview = await preparation();
+    const input = submitInput(preview.digest);
+    input.lines = input.lines.map(entry => ({ ...entry, expectedVersion: 2 }));
+    const submitted = await service.submit(buyer, "request-project-a", { ...input, expectedRequestVersion: reopened.version, idempotencyKey: "request-resubmit-final" });
+    const finalReady = await service.decide(admin, submitted.id, { expectedVersion: submitted.version, submittedRevisionId: submitted.submittedRevisionId, decision: "approve", reason: null, budgetOverrideReason: null, idempotencyKey: "request-approve-final" });
+    expect(finalReady.status).toBe("ready_to_issue");
+    const issue = { expectedVersion: finalReady.version, idempotencyKey: "request-issue-final" };
+    const results = await Promise.all([service.issue(buyer, "request-project-a", ready.id, issue), service.issue(buyer, "request-project-a", ready.id, issue)]);
+    expect(results[0].approvedOrderIds).toEqual(results[1].approvedOrderIds);
+    expect(results[0].approvedOrderIds).toHaveLength(2);
+    expect(await ProjectPurchaseOrderModel.countDocuments()).toBe(2);
+    expect(await VendorWorkAssignmentModel.countDocuments()).toBe(2);
+    const orders = await ProjectPurchaseOrderModel.find().lean();
+    expect(orders.every(order => order.decisions[0].actorId === admin.id && order.estimateReviewRoundId === "final-request-project-a")).toBe(true);
+  });
+});
+
+
+it("checks Designer readiness on project-request submission and approval while leaving quote preparation available", async () => {
+  const guard = vi.spyOn(designRequirements, "assertDesignRequirementsPoAllowed");
+  const deny = () => guard.mockRejectedValueOnce(new ApiError(409, "DESIGN_REQUIREMENTS_PO_BLOCKED", "Designer checklist is incomplete."));
+  try {
+    const prepared = await preparation();
+    const input = submitInput(prepared.digest);
+    const { idempotencyKey: _key, ...quoteInput } = input;
+    expect((await service.quote(buyer, "request-project-a", quoteInput)).lines).toHaveLength(2);
+    expect(guard).not.toHaveBeenCalled();
+    deny();
+    await expect(service.submit(buyer, "request-project-a", input)).rejects.toMatchObject({ code: "DESIGN_REQUIREMENTS_PO_BLOCKED" });
+    expect(await ProjectPurchaseOrderRequestRevisionModel.countDocuments()).toBe(0);
+    expect(guard.mock.calls[0]?.slice(0, 2)).toEqual(["request-project-a", ["line-first", "line-second"]]);
+    const submitted = await service.submit(buyer, "request-project-a", input);
+    const decision = { expectedVersion: submitted.version, submittedRevisionId: submitted.submittedRevisionId,
+      decision: "approve" as const, reason: null, budgetOverrideReason: null, idempotencyKey: "design-request-approve" };
+    deny();
+    await expect(service.decide(admin, submitted.id, decision)).rejects.toMatchObject({ code: "DESIGN_REQUIREMENTS_PO_BLOCKED" });
+    expect(await ProjectPurchaseOrderModel.countDocuments()).toBe(0);
+    expect(await VendorWorkAssignmentModel.countDocuments()).toBe(0);
+    expect((await service.decide(admin, submitted.id, decision)).approvedOrderIds).toHaveLength(2);
+  } finally { guard.mockRestore(); }
 });

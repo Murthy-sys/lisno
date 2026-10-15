@@ -6,6 +6,9 @@ import type { ChatStoredMessage, ChatTransaction, ProjectChatRepository } from "
 import type { AssistantRun, AssistantTransactions } from "../repositories/project-assistant.js";
 import type { AssistantProvider } from "./project-assistant-provider.js";
 import { isSocialMessage } from "./ask-lisno-project-resolution.js";
+import { hasCurrentAssistantDisclosure } from "../contracts/assistant-project-pricing.js";
+import { assistantSensitiveTerms, readAssistantContext } from "./project-assistant-context.js";
+import { styleAssistantConversation } from "./assistant-conversation-style.js";
 
 type AssistantTx = ChatTransaction & {assistant: AssistantTransactions};
 const operations = (tx: ChatTransaction) => (tx as AssistantTx).assistant;
@@ -200,7 +203,9 @@ export function createProjectAssistantRuntime(options: AssistantRuntimeOptions) 
       });
       const scope: AssistantReadScope = {projectId: claimed.projectId, clientId: claimed.clientId, sessionVersion: claimed.sessionVersion};
       const sources = options.readSources(scope);
-      const generated = await options.provider.generate({messages, sources, signal,
+      const sensitiveTerms = assistantSensitiveTerms(await readAssistantContext(options.repository, scope));
+      const requiredMessageIds = [...(claimed.coalescedSources ?? []).map(source => source.messageId), claimed.messageId];
+      const generated = await options.provider.generate({surface: "project_messages", projectAvailable: true, sensitiveTerms, messages, requiredMessageIds, sources, signal,
         reserveAttempt: bytes => options.repository.mutate(async tx => {
           const now = clock().toISOString(), a = operations(tx);
           if (!(await current(tx, claimed, now, token))) throw new AssistantFailure("ASSISTANT_CANCELLED");
@@ -214,6 +219,7 @@ export function createProjectAssistantRuntime(options: AssistantRuntimeOptions) 
         })
       });
       if (signal.aborted) throw new AssistantFailure("ASSISTANT_TIMEOUT", true);
+      if (!hasCurrentAssistantDisclosure(generated)) throw new AssistantFailure("ASSISTANT_DISCLOSURE_INVALID");
       if (!(await sources.revalidate(generated.freshness))) throw new AssistantFailure("ASSISTANT_SOURCE_CHANGED");
       let committedRecipients: string[] = [];
       await options.repository.mutate(async tx => {
@@ -225,9 +231,20 @@ export function createProjectAssistantRuntime(options: AssistantRuntimeOptions) 
         if (signal.aborted || Date.parse(now) - Date.parse(row.generationStartedAt!) >= defaults.generationMs) throw new AssistantFailure("ASSISTANT_TIME_LIMIT");
         const publicationId = hash(["publication", row.id]);
         if (await a.receipt(publicationId)) return;
-        const published = await options.publish(tx, row, generated, now);
+        // Personalize once at publication for the initiating Client, never a later viewer.
+        const presentationMessages: string[] = [];
+        let unambiguousAuthor = true;
+        for (const id of [...(row.coalescedSources ?? []).map(source => source.messageId), row.messageId]) {
+          const message = await tx.message(row.projectId, id);
+          if (!message || message.author.id !== row.clientId || !("role" in message.author) || message.author.role !== "client") { unambiguousAuthor = false; break; }
+          presentationMessages.push(message.body);
+        }
+        const initiator = unambiguousAuthor ? await tx.app.findUserById(row.clientId) : null;
+        const presented = unambiguousAuthor ? styleAssistantConversation(generated, {messages: presentationMessages,
+          accountName: initiator?.active && initiator.role === "client" && initiator.sessionVersion === row.sessionVersion ? initiator.name : null}) : generated;
+        const published = await options.publish(tx, row, presented, now);
         committedRecipients = published.recipientIds ?? [];
-        await a.saveResult({...generated, id: published.resultId, projectId: row.projectId, messageId: published.messageId, runId: row.id, checkedAt: now});
+        await a.saveResult({...presented, id: published.resultId, projectId: row.projectId, messageId: published.messageId, runId: row.id, checkedAt: now});
         await a.saveReceipt({id: publicationId, kind: "publication", projectId: row.projectId, runId: row.id, createdAt: now, fingerprint: published.messageId, amount: 0, settled: true});
         await save(tx, {...row, ...(published.notified !== undefined ? {notified: published.notified} : {}), ...(published.routing ? {routing: published.routing} : {}), status: generated.kind === "clarification" || generated.commercial?.state === "clarification_required" ? "needs_clarification" : generated.kind === "no_answer" ? "no_answer" : "answered", leaseToken: null, leaseUntil: null, resultId: published.resultId, answerMessageId: published.messageId, checkedAt: now, updatedAt: now, failureCode: null});
       });

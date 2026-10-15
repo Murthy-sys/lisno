@@ -259,6 +259,17 @@ export interface FurnitureReviewEvidence {
 }
 
 export type InitialPaymentStatus = "awaiting_estimate_approval" | "awaiting_payment" | "received";
+export interface InitialPaymentDetails {
+  workflowVersion?: 2;
+  designStartedAt?: string | null;
+  existingReceiptAt?: string | null;
+  requiresAttestation?: boolean;
+  confirmedAt: string | null;
+  canConfirm: boolean;
+  version: number;
+  status?: InitialPaymentStatus;
+  issue?: string;
+}
 
 export interface DesignWorkflowView {
   projectId: string;
@@ -269,7 +280,7 @@ export interface DesignWorkflowView {
   /** Client receipt time preserves the server clock when cached data remounts. */
   receivedAt?: number;
   projectStages?: DesignWorkflowStage[];
-  initialPayment?: { confirmedAt: string | null; canConfirm: boolean; version: number; status?: InitialPaymentStatus; issue?: string };
+  initialPayment?: InitialPaymentDetails;
   measurementDesigners?: Array<{ id: string; name: string }>;
   furnitureRooms?: FurnitureEstimateRoom[];
   furnitureScopeIssue?: string;
@@ -290,6 +301,9 @@ export const getDesignWorkflow = (projectId: string) =>
   ).then((workflow) => ({ ...workflow, receivedAt: Date.now() }));
 
 export interface DesignPaymentConfirmation {
+  workflowVersion?: 2;
+  existingReceiptAt?: string | null;
+  requiresAttestation?: boolean;
   projectId: string;
   projectName: string;
   confirmedAt: string | null;
@@ -300,6 +314,9 @@ export interface DesignPaymentConfirmation {
 
 export const getDesignPaymentConfirmations = () =>
   apiClient.get<DesignPaymentConfirmation[]>("/design-workflow/payment-confirmations", { showGlobalLoader: false });
+
+export const reconcileDesignPlanScope = (projectId: string, input: { expectedDesignPlanVersion: number; expectedScopeRevision: number }) =>
+  apiClient.post<{ designPlanVersion: number; designScopeRevision: number }>(`/projects/${encodeURIComponent(projectId)}/design-plan/reconcile-scope`, input);
 
 export async function performDesignWorkflowAction(input: {
   projectId: string;

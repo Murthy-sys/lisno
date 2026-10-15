@@ -8,6 +8,7 @@ import { authenticatedChatUser, projectChatContext } from "./project-chat-contex
 import { systemClock, type Clock } from "./workflow.js";
 import type { AuditService, AuditWrite } from "./audit.service.js";
 import type { UserRecord } from "../repositories/types.js";
+import { projectDesignRequirements } from "../domain/design-requirements.js";
 
 const nextDate = (date: string) => new Date(Date.parse(`${date}T00:00:00.000Z`) + 86_400_000).toISOString().slice(0, 10);
 const previousDate = (date: string) => new Date(Date.parse(`${date}T00:00:00.000Z`) - 86_400_000).toISOString().slice(0, 10);
@@ -90,14 +91,33 @@ export function createDailyCriticalTasksService(options: {
         before = page.at(-1)!.sequence;
       }
       for (const task of context.sources.workflowTasks) {
-        if (task.projectId !== projectId || task.assigneeUserId !== actor.id || task.status === "completed" || !task.openedAt) continue;
+        if (task.preparationOnly === true || task.projectId !== projectId || task.assigneeUserId !== actor.id || task.status === "completed" || !task.openedAt) continue;
         const due = task.dueAt ? new Date(task.dueAt) : workflowTaskDueAt(task.kind, new Date(task.openedAt));
         if (!Number.isFinite(due.getTime()) || due.getTime() >= at.getTime()) continue;
         result.push({kind: "workflow_task", id: task.id, projectId, projectName, title: task.title ?? task.kind.replaceAll("_", " "),
           dueAt: due.toISOString(), status: task.status ?? "open"});
       }
     }
-    return result.sort((a, b) => (a.kind === "chat_action" ? a.dueDate : a.dueAt).localeCompare(b.kind === "chat_action" ? b.dueDate : b.dueAt) || a.projectId.localeCompare(b.projectId) || a.id.localeCompare(b.id));
+    // Preparation assignments can read project details before chat/trade activation. Their
+    // Design obligations must not depend on membership in an execution conversation.
+    if (actor.role === "designer" || actor.role === "procurement") {
+      for (let offset = 0; ; offset += 100) {
+        const projects = await tx.app.pageProjectsForUserRead(user, { offset, limit: 100 });
+        for (const project of projects.items) {
+          const source = await tx.app.findDesignRequirementsSource(project.id);
+          if (!source || !(actor.role === "designer" ? source.designerIds : source.procurementIds).includes(actor.id)) continue;
+          const requirements = await tx.app.findDesignRequirementsState(project.id) ?? { projectId: project.id, version: 0, history: [] };
+          for (const entry of projectDesignRequirements(source, requirements)) {
+            if (entry.status === "approved" || entry.status === "completed" ||
+              (actor.role === "procurement" ? entry.category !== "stock" : entry.category === "stock")) continue;
+            result.push({ kind: "design_requirement", id: entry.id, projectId: project.id, projectName: project.name,
+              title: `${entry.lineName}: ${entry.label}`, category: entry.category, dueAt: entry.dueAt, status: entry.status });
+          }
+        }
+        if (offset + projects.items.length >= projects.total || projects.items.length === 0) break;
+      }
+    }
+    return result.sort((a, b) => (a.kind === "chat_action" ? a.dueDate : a.dueAt ?? "9999").localeCompare(b.kind === "chat_action" ? b.dueDate : b.dueAt ?? "9999") || a.projectId.localeCompare(b.projectId) || a.id.localeCompare(b.id));
   }
 
   const pickReceipt = (receipts: DailyCriticalTaskReceipt[]) => receipts.find(row => !row.acknowledgedAt) ?? receipts.at(-1) ?? null;

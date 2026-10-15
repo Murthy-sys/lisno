@@ -2,9 +2,9 @@ import { useEffect, useRef, useState } from "react";
 
 const PROMPTS = [
   { label: "Show my projects", message: "Show my projects", icon: "projects" },
-  { label: "Project progress", message: "Project progress", icon: "progress" },
-  { label: "Timeline", message: "Expected timeline", icon: "timeline" },
-  { label: "Add to estimate", message: "Add something to my estimate", icon: "estimate" }
+  { label: "Project progress", message: "Show my project progress", icon: "progress" },
+  { label: "Timeline", message: "Show my project timeline", icon: "timeline" },
+  { label: "Published estimate", message: "Show my estimate", icon: "estimate" }
 ] as const;
 
 function PromptIcon({ kind }: { kind: typeof PROMPTS[number]["icon"] }) {

@@ -9,9 +9,9 @@ import {
 } from "react";
 
 import { ApiError } from "../../api/client";
+import { projectClientInvitationKeys } from "../../auth/projectClientInvitationsApi";
 import type {
   EstimatorOption,
-  InitiateAdminProjectInput,
   InitiatedAdminProjectSummary
 } from "../../api/types";
 import { useFeedback } from "../../components/feedback/FeedbackProvider";
@@ -23,7 +23,8 @@ import {
   adminProjectKeys,
   getEstimatorOptions,
   getSalesManagerOptions,
-  initiateAdminProject
+  initiateAdminProject,
+  type ProjectInitiationInput
 } from "./adminProjectsApi";
 import { leadKeys } from "../leads/leadsApi";
 import { dashboardKeys } from "./dashboard/superAdminDashboardApi";
@@ -123,6 +124,7 @@ export function AdminProjectInitiationDialog({
   const [submissionError, setSubmissionError] = useState<string | null>(null);
   const refs = useRef<Record<string, HTMLInputElement | HTMLSelectElement | HTMLButtonElement | null>>({});
   const submissionStarted = useRef(false);
+  const initiationKey = useRef<string | null>(null);
 
   useEffect(() => {
     const normalized = assigneeSearch.trim();
@@ -153,6 +155,9 @@ export function AdminProjectInitiationDialog({
   const mutation = useMutation({
     mutationFn: initiateAdminProject,
     onSuccess: async (project) => {
+      if (project.clientInvitation) {
+        queryClient.setQueryData(projectClientInvitationKeys.detail(project.id), project.clientInvitation);
+      }
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: adminProjectKeys.all }),
         queryClient.invalidateQueries({ queryKey: dashboardKeys.all }),
@@ -160,7 +165,9 @@ export function AdminProjectInitiationDialog({
       ]);
       feedback.success({
         title: "Project initiated",
-        message: selectsSalesManager
+        message: project.clientInvitation && ["not_issued", "delivery_failed"].includes(project.clientInvitation.status)
+          ? "Your project is ready. Check the client invitation status to send or retry the invitation."
+          : selectsSalesManager
           ? "Your lead is ready with the selected Sales Manager."
           : "The Sales handoff is ready."
       });
@@ -205,7 +212,9 @@ export function AdminProjectInitiationDialog({
     if (!selectedAssignee) return;
 
     const source = resolvedSource(form);
-    const input: InitiateAdminProjectInput = {
+    initiationKey.current ??= crypto.randomUUID();
+    const input: ProjectInitiationInput = {
+      initiationKey: initiationKey.current,
       clientName: form.clientName.trim(),
       clientEmail: form.clientEmail.trim(),
       clientMobile: form.clientMobile.trim(),

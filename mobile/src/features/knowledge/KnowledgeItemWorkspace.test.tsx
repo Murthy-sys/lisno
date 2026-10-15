@@ -42,6 +42,7 @@ async function setup({ update = true, itemType = "main_line", advancedPayload = 
   const recommendationLoad = recommendationsPending ? new Promise<void>(resolve => { releaseRecommendationLoad = resolve; }) : Promise.resolve();
   const sections = new Map<string, KnowledgeSectionEnvelope>([
     ["overview", section()],
+    ["design", { ...section({}), sectionKey: "design" }],
     ["advanced", { ...section(advancedPayload), sectionKey: "advanced" }],
     ["pricing", { ...section(pricingPayload), sectionKey: "pricing" }],
     ["recommendations", { ...section(recommendationsPayload), sectionKey: "recommendations", applicability: itemType === "temporary" ? "not_applicable" : "not_configured" }]
@@ -76,6 +77,41 @@ async function editUom() {
 }
 beforeEach(() => jest.clearAllMocks());
 
+it("opens Design after Quality without changing completion and saves before tab navigation", async () => {
+  const test = await setup();
+  expect(screen.getAllByRole("tab").map(tab => tab.props.accessibilityLabel)).toEqual(["Overview", "Mode", "Recommendation & Exclusions", "Quality Parameter", "Design", "Basket closure priority"]);
+  await fireEvent.press(screen.getByRole("tab", { name: "Design" }));
+  await screen.findByRole("radio", { name: "Custom" });
+  expect(screen.queryByText("Estimation visibility")).toBeNull();
+  await fireEvent.press(screen.getByRole("radio", { name: "Custom" }));
+  await fireEvent.press(screen.getByRole("tab", { name: "Basket closure priority" }));
+  expect(screen.getByText("Unsaved Configuration changes")).toBeTruthy();
+  await fireEvent.press(screen.getByRole("button", { name: "Save and continue" }));
+  await screen.findByText("No configuration options are available in this section yet.");
+  expect(screen.getByText("0 of 4 tabs configured")).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Save Basket closure priority" })).toBeNull();
+  expect(test.api.updateKnowledgeSection).toHaveBeenCalledWith("line-a", "rev-a", "design", expect.objectContaining({ expectedVersion: 4, expectedAggregateVersion: 11, payload: expect.objectContaining({ itemNature: "custom" }) }));
+  await fireEvent.press(screen.getByRole("tab", { name: "Design" }));
+  await waitFor(() => expect(screen.getByRole("radio", { name: "Custom" })).toHaveProp("accessibilityState", expect.objectContaining({ checked: true })));
+});
+
+it("keeps Back and discard blocked until an unconfirmed Design save is reconciled", async () => {
+  const test = await setup();
+  await fireEvent.press(screen.getByRole("tab", { name: "Design" }));
+  await screen.findByRole("radio", { name: "Custom" });
+  await fireEvent.press(screen.getByRole("radio", { name: "Custom" }));
+  test.api.updateKnowledgeSection.mockRejectedValueOnce(new Error("Response lost"));
+  await fireEvent.press(screen.getByRole("button", { name: "Save Design" }));
+  await screen.findByRole("button", { name: "Confirm Design rules" });
+  await fireEvent.press(screen.getByRole("button", { name: "Back to Main Baskets" }));
+  expect(screen.getByText("A Design save is unconfirmed. Stay here and load current rules before leaving.")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "Discard and continue" })).toBeDisabled();
+  expect(test.onBack).not.toHaveBeenCalled();
+  await fireEvent.press(screen.getByRole("button", { name: "Save and continue" }));
+  await waitFor(() => expect(test.onBack).toHaveBeenCalledTimes(1));
+  expect(test.api.updateKnowledgeSection.mock.calls[1]![3]).toEqual(test.api.updateKnowledgeSection.mock.calls[0]![3]);
+});
+
 it("uses captured versions after background refresh and guards leaving unsaved Overview", async () => {
   const test = await setup();
   await editUom();
@@ -97,6 +133,25 @@ it("keeps a failed save on screen, then permits explicit discard and navigation"
   expect(test.onBack).not.toHaveBeenCalled();
   await fireEvent.press(screen.getByRole("button", { name: "Discard and continue" }));
   expect(test.onBack).toHaveBeenCalledTimes(1);
+});
+
+it("locks proposal section changes and discard while allowing the same unconfirmed save to retry", async () => {
+  const test = await setup();
+  let unknown = false;
+  Object.defineProperty(test.context, "saveOutcomeUnknown", { get: () => unknown });
+  const saved = test.api.updateKnowledgeSection.getMockImplementation()!;
+  test.api.updateKnowledgeSection.mockImplementationOnce(async () => { unknown = true; throw new ApiError(503, "UNAVAILABLE", "Response lost"); });
+  test.api.updateKnowledgeSection.mockImplementationOnce(async (...args) => { const result = await saved(...args); unknown = false; return result; });
+  await editUom();
+  await fireEvent.press(screen.getByRole("button", { name: "Save Overview" }));
+  await screen.findByText("Response lost");
+  expect(screen.getByRole("combobox", { name: "Unit of measure (UOM)" })).toBeDisabled();
+  await fireEvent.press(screen.getByRole("button", { name: "Back to Main Baskets" }));
+  expect(screen.getByRole("button", { name: "Discard and continue" })).toBeDisabled();
+  expect(test.onBack).not.toHaveBeenCalled();
+  await fireEvent.press(screen.getByRole("button", { name: "Save and continue" }));
+  await waitFor(() => expect(test.onBack).toHaveBeenCalledTimes(1));
+  expect(test.api.updateKnowledgeSection.mock.calls[1]).toEqual(test.api.updateKnowledgeSection.mock.calls[0]);
 });
 
 it("retains conflict values and requires explicit review before a fresh-version save", async () => {
@@ -122,7 +177,7 @@ it("keeps overview controls and saves inaccessible without update permission", a
 
 it("keeps all tabs accessible and saved context expandable without obscuring the editor", async () => {
   const test = await setup();
-  expect(screen.getAllByRole("tab")).toHaveLength(4);
+  expect(screen.getAllByRole("tab")).toHaveLength(6);
   expect(screen.getByRole("tab", { name: "Overview" })).toHaveProp("accessibilityState", expect.objectContaining({ selected: true }));
   expect(screen.getByRole("progressbar", { name: "Configuration completeness" })).toHaveProp("accessibilityValue", expect.objectContaining({ now: 0, min: 0, max: 100 }));
   expect(screen.getByText("0 of 4 tabs configured")).toBeTruthy();
@@ -319,21 +374,19 @@ it("keeps Mode typing and a failed save out of Quick summary, then shows confirm
   expect(within(summary).queryByText("Locally typed method")).toBeNull();
 });
 
-it("keeps four touch-accessible tabs and readable activation checks for temporary items", async () => {
+it("keeps six touch-accessible tabs and readable activation checks for temporary items", async () => {
   const test = await setup();
   await act(async () => { test.client.setQueryData(test.context.key("detail", "line-a"), { ...item, itemType: "temporary", blockers: [{ code: "MISSING_UOM", message: "uomId is required before activation." }], warnings: [{ code: "MISSING_MODE", message: "advanced is not configured." }] }); });
-  await waitFor(() => expect(screen.getAllByRole("tab")).toHaveLength(4));
+  await waitFor(() => expect(screen.getAllByRole("tab")).toHaveLength(6));
   const recommendationsTab = screen.getByRole("tab", { name: "Recommendation & Exclusions" });
   expect(StyleSheet.flatten(recommendationsTab.props.style).minHeight).toBeGreaterThanOrEqual(44);
   expect(within(recommendationsTab).getByText("Recommendations\n& Exclusions")).toBeTruthy();
   const tablist = recommendationsTab.parent!;
-  const dockPadding = StyleSheet.flatten(tablist.parent!.props.style).paddingHorizontal as number;
-  const tabs = within(tablist).getAllByRole("tab");
-  const flex = tabs.map(tab => StyleSheet.flatten(tab.props.style).flex as number);
-  for (const viewportWidth of [320, 411]) {
-    const tabWidths = flex.map(weight => (viewportWidth - dockPadding * 2) * weight / flex.reduce((sum, value) => sum + value, 0));
-    expect(Math.min(...tabWidths)).toBeGreaterThan(50);
-    expect(tabWidths[2]).toBeGreaterThan(100);
+  expect(screen.getByTestId("knowledge-section-tabs")).toHaveProp("horizontal", true);
+  for (const tab of within(tablist).getAllByRole("tab")) {
+    const tabStyle = StyleSheet.flatten(tab.props.style);
+    expect(tabStyle.minWidth).toBeGreaterThanOrEqual(44);
+    expect(tabStyle.minHeight).toBeGreaterThanOrEqual(44);
   }
   await fireEvent.press(recommendationsTab);
   await waitFor(() => expect(screen.getByRole("button", { name: "Add Mandatory Item" })).toBeTruthy());

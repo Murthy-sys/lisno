@@ -10,12 +10,11 @@ import { BrandLoader } from "../../ui/brand";
 import { Button } from "../../ui/primitives";
 import { colors, fonts, spacing } from "../../ui/tokens";
 import { clientEstimateListKey, getClientEstimates } from "../estimates/clientReviewApi";
-import { estimatesForProject } from "../estimates/clientReviewModel";
+import { clientEstimateMoney, clientEstimateStatus, estimatesForProject } from "../estimates/clientReviewModel";
+import { EstimateRequirementsPanel } from "../estimates/EstimateRequirementsPanel";
 import { ProjectCardHeader } from "./ProjectDetailOverview";
 import { projectDetailTheme } from "./projectDetailTheme";
 
-const money = new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 });
-const statusLabel = (value: string) => value.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
 
 /** Estimate IDs are resolved from the Client's own list; the project payload contains no Client estimate. */
 export function useClientProjectEstimates(projectId: string, session: AuthenticatedSession) {
@@ -35,19 +34,19 @@ export function ClientProjectEstimatePanel({ projectId, session }: { readonly pr
   if (!allowed) return null;
   let content;
   if (query.isPending) content = <BrandLoader label="Loading project estimates" tone="dark" />;
-  else if (query.isError && !query.data) {
+  else if (query.isError) {
     const denied = query.error instanceof ApiError && [401, 403, 404].includes(query.error.status);
     content = <View style={styles.stack}><Text accessibilityLiveRegion="assertive" style={styles.copy}>{denied ? "Project estimates are unavailable for this account." : "Project estimates could not be loaded."}</Text>{!denied ? <Button label="Retry estimates" variant="secondary" onPress={() => void query.refetch()} /> : null}</View>;
   } else {
     content = estimates.length === 0 ? <Text style={styles.copy}>No estimate is linked to this project yet.</Text> : estimates.map((estimate) => (
       <View key={estimate.id} style={styles.estimate}>
-        <View style={styles.row}><View style={styles.identity}><Text style={styles.name}>{estimate.lead?.projectName || "Project estimate"}</Text><Text style={styles.copy}>{statusLabel(estimate.status)}</Text></View><Text style={styles.amount}>{money.format(estimate.total)}</Text></View>
+        <View style={styles.row}><View style={styles.identity}><Text style={styles.name}>{estimate.lead?.projectName || "Project estimate"}</Text><Text style={styles.copy}>{clientEstimateStatus(estimate)}</Text></View><Text style={styles.amount}>{clientEstimateMoney(estimate.total)}</Text></View>
         <Text style={styles.copy}>Estimate total, including GST</Text>
         <Button label={`Open estimate ${estimate.id}`} variant="secondary" onPress={() => router.push({ pathname: "/estimate/[estimateId]", params: { estimateId: estimate.id } })} />
       </View>
     ));
   }
-  return <View testID="client-project-estimation" style={styles.card}><ProjectCardHeader glyph="calculator" title="Estimation" subtitle="Published estimates and Client decisions" /><View style={styles.body}>{content}</View></View>;
+  return <View testID="client-project-estimation" style={styles.card}><ProjectCardHeader glyph="calculator" title="Estimation" subtitle="Published estimates and Client decisions" /><View style={styles.body}><EstimateRequirementsPanel projectId={projectId} session={session} />{content}</View></View>;
 }
 
 const styles = StyleSheet.create({

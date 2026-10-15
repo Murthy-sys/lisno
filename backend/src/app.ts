@@ -59,6 +59,8 @@ import { createNotificationEventsHub } from "./services/notification-events.serv
 import { createNotificationStreamService } from "./services/notification-stream.service.js";
 import { createNotificationEmailDispatcher } from "./services/notification-email-dispatcher.js";
 import { createNotificationsRouter } from "./routes/notifications.js";
+import { createDesignRequirementsService } from "./services/design-requirements.service.js";
+import { createDesignRequirementsRouter } from "./routes/design-requirements.js";
 import { createDesignWorkflowStateService } from "./services/design-workflow-state.service.js";
 import { createWorkflowEvidenceStorage } from "./services/workflow-evidence-storage.js";
 import { createDesignWorkflowStateRouter } from "./routes/design-workflow-state.js";
@@ -197,6 +199,10 @@ import {
   type PasswordResetAsyncFailure
 } from "./services/password-reset.service.js";
 import { createUserInvitationService } from "./services/user-invitation.service.js";
+import { createProjectClientInvitationService } from "./services/project-client-invitation.service.js";
+import { createProjectClientInvitationsRouter } from "./routes/project-client-invitations.js";
+import { createEstimateRequirementsRouter } from "./routes/estimate-requirements.js";
+import { createEstimateCollaborationRouter } from "./routes/estimate-collaboration.js";
 import { systemClock, type Clock } from "./services/workflow.js";
 import { createLocalStorage } from "./storage/local-storage.js";
 import type { FileStorage } from "./storage/storage.js";
@@ -208,6 +214,7 @@ export interface AppDependencies {
   chatEvents?: { watchChanges?: boolean; pollIntervalMs?: number; heartbeatMs?: number };
   projectChatAssistant?: {
     enabled: boolean;
+    askLisnoEnabled?: boolean;
     provider?: AssistantProvider;
     tokensPerDay?: number;
     readSources?: ProjectChatAssistantOptions["readSources"];
@@ -367,10 +374,14 @@ export function createApp(dependencies: AppDependencies) {
       ? { reportAsyncFailure: dependencies.passwordResetAsyncFailureReporter }
       : {})
   });
+  const projectClientInvitations = createProjectClientInvitationService({ repository, audit: auditService,
+    mailer: dependencies.invitationMailer ?? { deliveryKind: "disabled" }, clock, auth: authService,
+    allowDemoAccountExternalEmail: dependencies.allowDemoAccountExternalEmail });
   const adminProjectService = createAdminProjectService(
     repository,
     auditService,
-    clock
+    clock,
+    projectClientInvitations
   );
   const superAdminDashboardService = createSuperAdminDashboardService(
     repository,
@@ -395,7 +406,7 @@ export function createApp(dependencies: AppDependencies) {
     onNotificationsCommitted: ids => { for (const id of ids) notificationHub.wake(id); notificationEmail.wake(); }
   });
   const askLisno = createAskLisnoService({chatRepository, clock,
-    enabled: dependencies.projectChatAssistant?.enabled === true && Boolean(dependencies.projectChatAssistant.provider),
+    enabled: dependencies.projectChatAssistant?.askLisnoEnabled === true && Boolean(dependencies.projectChatAssistant.provider),
     provider: dependencies.projectChatAssistant?.provider ?? {async generate() { throw new AssistantFailure("ASSISTANT_UNAVAILABLE"); }},
     tokensPerDay: dependencies.projectChatAssistant?.tokensPerDay,
     readSources: dependencies.projectChatAssistant?.readSources
@@ -435,6 +446,7 @@ export function createApp(dependencies: AppDependencies) {
   );
   const clientPortalUrl = dependencies.clientPortalUrl ?? "http://localhost:5173/client";
   const estimateClientReviewStorage = createEstimateClientReviewStorage(storage);
+  const designRequirementsService = createDesignRequirementsService({ repository, audit: auditService, clock });
   const designWorkflowStateService = createDesignWorkflowStateService(repository, auditService, clock);
   const projectFinanceService = createProjectFinanceService({
     now: clock,
@@ -606,6 +618,9 @@ export function createApp(dependencies: AppDependencies) {
   app.use(express.json({ limit: "300kb" }));
   app.use("/api/v1", healthRouter);
   app.use("/api/v1", createAuthRouter(authService, authRateLimit, profilePhotoService));
+  app.use("/api/v1", createProjectClientInvitationsRouter(authService, projectClientInvitations, (_req, _res, next) => next(), invitationDeliveryRateLimit));
+  app.use("/api/v1", createEstimateRequirementsRouter(authService, auditService));
+  app.use("/api/v1", createEstimateCollaborationRouter(authService, auditService));
   app.use("/api/v1", createProfilePhotosRouter(authService, profilePhotoService));
   app.use("/api/v1", createNotificationsRouter(authService, notifications, notificationStream));
   app.use("/api/v1", createDailyCriticalTasksRouter(authService, dailyCriticalTasks));
@@ -663,6 +678,7 @@ export function createApp(dependencies: AppDependencies) {
       aiEstimatorKnowledgeContextService
     )
   );
+  app.use("/api/v1", createDesignRequirementsRouter(authService, designRequirementsService));
   app.use("/api/v1", createDesignWorkflowStateRouter(authService, designWorkflowStateService, createWorkflowEvidenceStorage(storage), maxUploadBytes));
   app.use(
     "/api/v1",
@@ -795,6 +811,9 @@ export function createApp(dependencies: AppDependencies) {
 }
 
 const publicInvitationPaths = [
+  "/api/v1/auth/project-invitations/inspect",
+  "/api/v1/auth/project-invitations/accept",
+  "/api/v1/auth/project-invitations/accept-existing",
   "/api/v1/auth/user-invitations/inspect",
   "/api/v1/auth/user-invitations/accept"
 ];
@@ -807,5 +826,6 @@ const publicPasswordResetPaths = [
 
 const noStore: RequestHandler = (_request, response, next) => {
   response.setHeader("Cache-Control", "no-store");
+  response.setHeader("Referrer-Policy", "no-referrer");
   next();
 };

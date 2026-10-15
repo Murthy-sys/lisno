@@ -1,6 +1,6 @@
 import { apiClient } from "../../api/client";
 import type { KnowledgeBasketQuality, KnowledgeSectionKey } from "../ai-estimator-knowledge/knowledgeTypes";
-import type { ProposalChange, ProposalCreateInput, ProposalDecisionInput, ProposalDecisionResult, ProposalDetail, ProposalHierarchyNode, ProposalMetadataInput, ProposalMasterInput, ProposalMasterKind, ProposalMasterResource, ProposalMutationResult, ProposalPage, ProposalQualityInput, ProposalReadiness, ProposalReferenceKind, ProposalResource, ProposalScope, ProposalSectionInput, ProposalSnapshot, ProposalStatus, ProposalSubmitInput, ProposalSummary, ProposalVersionInput } from "./proposalTypes";
+import type { ProposalChange, ProposalCreateInput, ProposalDecisionInput, ProposalDecisionResult, ProposalDetail, ProposalHierarchyNode, ProposalIntakeInput, ProposalMetadataInput, ProposalMasterInput, ProposalMasterKind, ProposalMasterResource, ProposalMutationResult, ProposalPage, ProposalQualityInput, ProposalReadiness, ProposalReferenceKind, ProposalResource, ProposalScope, ProposalSectionInput, ProposalSnapshot, ProposalStatus, ProposalSubmitInput, ProposalSummary, ProposalVersionInput } from "./proposalTypes";
 
 const segment = encodeURIComponent;
 const base = (scope: ProposalScope) => scope === "admin" ? "/admin/ai-estimator-knowledge/basket-proposals" : "/procurement/vendor-basket-proposals";
@@ -38,6 +38,7 @@ export const saveProposalMainLine = (scope: ProposalScope, id: string, lineId: s
 export const removeProposalMainLine = (scope: ProposalScope, id: string, lineId: string, input: ProposalVersionInput): Promise<ProposalMutationResult> => apiClient.delete(`${path(scope, id)}/main-lines/${segment(lineId)}`, input);
 export const saveProposalSection = (scope: ProposalScope, id: string, lineId: string, section: KnowledgeSectionKey, input: ProposalSectionInput): Promise<ProposalMutationResult> => apiClient.put(`${path(scope, id)}/main-lines/${segment(lineId)}/sections/${segment(section)}`, input);
 export const saveProposalQuality = (scope: ProposalScope, id: string, input: ProposalQualityInput): Promise<ProposalMutationResult> => apiClient.put(`${path(scope, id)}/quality`, input);
+export const saveProposalIntake = (scope: ProposalScope, id: string, input: ProposalIntakeInput): Promise<ProposalDetail> => apiClient.put(`${path(scope, id)}/intake`, input);
 export const submitProposal = (id: string, input: ProposalSubmitInput): Promise<ProposalDetail> => apiClient.post(`${path("procurement", id)}/submit`, input);
 export const reviseProposal = (id: string, input: ProposalSubmitInput): Promise<ProposalDetail> => apiClient.post(`${path("procurement", id)}/revise`, input);
 export const decideProposal = (id: string, input: ProposalDecisionInput): Promise<ProposalDecisionResult> => apiClient.post(`${path("admin", id)}/decision`, input);

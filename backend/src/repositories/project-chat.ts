@@ -5,6 +5,7 @@ import type { Role } from "../domain/roles.js";
 import type { EstimateWorkflowLine, ProjectWorkflowTaskKind } from "../domain/project-workflow.js";
 import type { AppRepository, LeadRecord, ProjectAccessGrantRecord, ProjectRecord, UserRecord } from "./types.js";
 import type { ClientSession } from "mongoose";
+import type { EstimationLifecycle } from "../domain/estimation-lifecycle.js";
 export interface ChatEstimateSource {
     id: string;
     projectId: string | null;
@@ -12,6 +13,7 @@ export interface ChatEstimateSource {
     ownerId: string;
     status: string;
     version: number;
+    estimation?: EstimationLifecycle | null;
     approvalRequired: boolean;
     assignedManagerId: string | null;
     assignedDesignerId: string | null;
@@ -21,6 +23,7 @@ export interface ChatEstimateSource {
     lineItems: EstimateWorkflowLine[];
 }
 export interface ChatWorkflowSource {
+    preparationOnly?: boolean;
     id: string;
     projectId: string;
     estimateId: string;

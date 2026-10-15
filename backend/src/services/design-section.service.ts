@@ -370,7 +370,7 @@ export function createDesignSectionService(
       let submittedCount: number;
       try {
         submittedCount = await repository.runInTransaction(async (transaction) => {
-          await assertDesignWorkflowSubmissionAllowed(transaction, project.id, { lock: true });
+          const designRequirementsReadiness = await assertDesignWorkflowSubmissionAllowed(transaction, project.id, { lock: true });
           const count = await transaction.submitDesignSectionDrafts(versionId, occurredAt);
           await audit.append({
             actorId: actor.id,
@@ -379,7 +379,7 @@ export function createDesignSectionService(
             entityId: versionId,
             occurredAt,
             oldValues: { extractionStatus: job.status },
-            newValues: { extractionStatus: "submitted", submittedCount: count }
+            newValues: { extractionStatus: "submitted", submittedCount: count, designRequirementsReadiness }
           }, transaction);
           return count;
         });

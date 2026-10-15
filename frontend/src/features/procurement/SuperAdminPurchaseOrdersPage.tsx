@@ -1,3 +1,5 @@
+import { WorkOrderReadiness } from "./ProcurementEstimateSource";
+import { refreshProcurementLifecycle } from "./procurementLifecycleQueries";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRef, useState, type FormEvent } from "react";
 
@@ -52,11 +54,12 @@ export function SuperAdminPurchaseOrdersPage() {
       decision, reason: decision === "approve" ? null : reason.trim(), budgetOverrideReason: decision === "approve" ? overrideReason.trim() || null : null, idempotencyKey
     }),
     onSuccess: async (order) => {
-      if (decision === "approve") setIssuedOrder(order);
+      if (decision === "approve" && order.status === "approved" && order.approvedRevisionId) setIssuedOrder(order);
       queueHeadingRef.current?.focus();
       reviewOpenerRef.current = null;
       setPendingKey(null); setSelectedId(null); setReason(""); setOverrideReason(""); setError("");
-      setNotice(`${order.orderNumber} ${decision === "approve" ? "approved" : decision === "reject" ? "rejected" : "returned for changes"}.`);
+      await refreshProcurementLifecycle(queryClient);
+      setNotice(order.status === "ready_to_issue" ? `${order.orderNumber} internally approved. Procurement must issue after final approval and initial payment.` : `${order.orderNumber} ${decision === "approve" ? "approved" : decision === "reject" ? "rejected" : "returned for changes"}.`);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: purchaseOrderKeys.pending }),
         queryClient.invalidateQueries({ queryKey: purchaseOrderKeys.project(order.projectId) }),
@@ -67,6 +70,7 @@ export function SuperAdminPurchaseOrdersPage() {
   });
   function submit(event: FormEvent) {
     event.preventDefault();
+    if (selected?.status === "ready_to_issue" && decision === "approve") return setError("This preparation is already internally approved. Procurement must issue it after release conditions are met.");
     if (!selected?.submittedRevisionId || !submitted) return setError("The submitted revision is unavailable. Refresh the queue.");
     if (decision === "approve" && !commitments.data) return setError("Load the approved budget before making a decision.");
     if (decision === "approve" && exceedsBudget && !overrideReason.trim()) return setError("Explain why this order exceeds the approved estimate before GST.");
@@ -97,8 +101,8 @@ export function SuperAdminPurchaseOrdersPage() {
         <div className="purchase-orders__queue-headings" aria-hidden="true"><span>Order and vendor</span><span>Project</span><span>Submitted total</span></div>
         <ul className="purchase-orders__list" aria-label="Pending purchase orders">{orders.data.map((order) => {
           const submittedRevision = order.revisions.find((revision) => revision.id === order.submittedRevisionId);
-          return <li key={order.id}><button type="button" className="purchase-orders__row" onClick={(event) => { reviewOpenerRef.current = event.currentTarget; setSelectedId(order.id); setDecision("approve"); setReason(""); setOverrideReason(""); setError(""); }} aria-current={selectedId === order.id ? "true" : undefined}>
-            <span className="purchase-orders__queue-identity"><strong>{order.orderNumber}</strong><small>{order.vendor.name}</small></span>
+          return <li key={order.id}><button type="button" className="purchase-orders__row" onClick={(event) => { reviewOpenerRef.current = event.currentTarget; setSelectedId(order.id); setDecision(order.status === "ready_to_issue" ? "request_changes" : "approve"); setReason(""); setOverrideReason(""); setError(""); }} aria-current={selectedId === order.id ? "true" : undefined}>
+            <span className="purchase-orders__queue-identity"><strong>{order.orderNumber}</strong><small>{order.vendor.name}</small>{order.status === "ready_to_issue" ? <small>Internally approved, awaiting issue</small> : null}</span>
             <span className="purchase-orders__queue-scope"><small className="purchase-orders__field-label">Project</small>{order.projectId}</span>
             <span className="purchase-orders__queue-amount"><small className="purchase-orders__field-label">Submitted total</small>{submittedRevision ? formatPaise(submittedRevision.totals.totalPaise) : "Unavailable"}</span>
           </button></li>;
@@ -106,12 +110,13 @@ export function SuperAdminPurchaseOrdersPage() {
       </> : <PageState state="empty" message="No purchase orders are waiting for approval." />}
       {selected ? <form className="purchase-orders__detail" onSubmit={submit} aria-label={`Review ${selected.orderNumber}`}>
         <div className="purchase-orders__detail-head"><div><p className="eyebrow">Revision {selected.revision}</p><h3>{selected.orderNumber}</h3><p>{selected.vendor.name}</p></div><Button type="button" variant="quiet" onClick={closeReview}>Close</Button></div>
+        <WorkOrderReadiness readiness={selected.issueReadiness} />
         {submitted ? <dl className="purchase-orders__totals"><div><dt>Before GST</dt><dd>{formatPaise(submitted.totals.netPaise)}</dd></div><div><dt>GST</dt><dd>{formatPaise(submitted.totals.gstPaise)}</dd></div><div><dt>Order total</dt><dd>{formatPaise(submitted.totals.totalPaise)}</dd></div></dl> : null}
         {!submitted ? <InlineMessage tone="error">The submitted revision is unavailable. Refresh this request before deciding.</InlineMessage> : null}
         {submitted && (commitments.data ? <div className="purchase-orders__budget"><p><strong>Approved estimate before GST</strong><span>{formatPaise(commitments.data.approvedEstimatePaise)}</span></p><p><strong>Already committed before GST</strong><span>{formatPaise(commitments.data.committedPaise)}</span></p><p><strong>This order before GST</strong><span>{formatPaise(submitted.totals.netPaise)}</span></p>{exceedsBudget ? <InlineMessage tone="warning">This order would exceed the approved estimate before GST. Record a budget override reason to approve.</InlineMessage> : null}</div> : commitments.isError ? <InlineMessage tone="error">{procurementError(commitments.error, "The approved budget could not be loaded. Approval is unavailable until it is refreshed.")}</InlineMessage> : <p className="purchase-orders__hint">Loading approved budget…</p>)}
         <div className="purchase-orders__review-lines"><h3>Submitted lines</h3><ul>{submitted?.lines.map((line) => <li key={line.id}><div><strong>{line.itemName}</strong><small>{line.roomName} · {line.description}</small></div><div className="purchase-orders__line-quantity"><small className="purchase-orders__field-label">Quantity and unit price</small>{line.quantityMilliUnits / 1000} {line.uomCode} · {formatPaise(line.unitPricePaise)} / unit</div><div className="purchase-orders__line-amount"><small className="purchase-orders__field-label">Line total</small>{formatPaise(line.totalPaise)}</div></li>)}</ul></div>
         <p className="purchase-orders__terms"><strong>Terms:</strong> {submitted?.terms ?? "Submitted terms unavailable."}</p>
-        <fieldset className="purchase-orders__choice"><legend>Decision</legend><label><input type="radio" name="purchase-order-decision" checked={decision === "approve"} onChange={() => setDecision("approve")} /> Approve</label><label><input type="radio" name="purchase-order-decision" checked={decision === "request_changes"} onChange={() => setDecision("request_changes")} /> Request changes</label><label><input type="radio" name="purchase-order-decision" checked={decision === "reject"} onChange={() => setDecision("reject")} /> Reject</label></fieldset>
+        <fieldset className="purchase-orders__choice"><legend>Decision</legend><label><input type="radio" name="purchase-order-decision" disabled={selected.status === "ready_to_issue"} checked={decision === "approve"} onChange={() => setDecision("approve")} /> Approve</label><label><input type="radio" name="purchase-order-decision" checked={decision === "request_changes"} onChange={() => setDecision("request_changes")} /> Request changes</label><label><input type="radio" name="purchase-order-decision" checked={decision === "reject"} onChange={() => setDecision("reject")} /> Reject</label></fieldset>
         {decision === "approve" ? <Field id="purchase-order-budget-override" label="Budget override reason" required={exceedsBudget} hint="Required if approved commitments would exceed the estimate before GST.">{(props) => <Textarea {...props} rows={2} maxLength={2000} value={overrideReason} onChange={(event) => setOverrideReason(event.target.value)} />}</Field> : <Field id="purchase-order-decision-reason" label="Reason" required>{(props) => <Textarea {...props} rows={2} maxLength={2000} value={reason} onChange={(event) => setReason(event.target.value)} />}</Field>}
         {error ? <InlineMessage tone="error">{error}</InlineMessage> : null}
         {act.isError ? <InlineMessage tone="error">{procurementError(act.error, "This decision could not be recorded. Refresh the queue and review its current version.")}</InlineMessage> : null}

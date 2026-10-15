@@ -13,8 +13,7 @@ import { knowledgeQueryKeys } from "../ai-estimator-knowledge/knowledgeQueryKeys
 import type { KnowledgeMaster } from "../ai-estimator-knowledge/knowledgeTypes";
 import { ProcurementVendorDirectory } from "./ProcurementVendorDirectory";
 import { ProcurementVendorDraftProvider, useProcurementVendorDraft, type RetainedVendorDraft } from "./ProcurementVendorDraftProvider";
-import { proposalFixture, proposalHierarchyFixture, proposalSectionFixture } from "../vendor-basket-proposals/proposal.fixtures";
-import type { KnowledgeSectionKey } from "../ai-estimator-knowledge/knowledgeTypes";
+import { proposalFixture } from "../vendor-basket-proposals/proposal.fixtures";
 import { completeVendor, vendorBasket, vendorSubBasket } from "./vendorProfile.fixtures";
 import { vendorDraft } from "./vendorProfileDraft";
 import { vendorDirectoryColumns, type VendorDirectoryColumn } from "./vendorDirectoryColumns";
@@ -26,6 +25,20 @@ vi.mock("../../auth/AuthProvider", () => ({ useAuth: () => ({ user: { id: role =
 const endpoint = "/api/v1/admin/ai-estimator-knowledge/vendors";
 const data = (value: unknown) => HttpResponse.json({ data: value });
 const error = (status = 503) => HttpResponse.json({ error: { code: status === 403 ? "FORBIDDEN" : "TEMPORARY", message: status === 403 ? "Access changed" : "Try again" } }, { status });
+const mainBasketIntake = {
+  basket: { name: "Stone finishes", description: "Natural stone finishes" },
+  subBasket: { name: "Interior stone", description: "Interior wall and floor stone" },
+  mainLines: [{ name: "Stone installation" }]
+};
+function fillBasketRequest(panel: HTMLElement, newMainBasket = true, subBasketName = mainBasketIntake.subBasket.name) {
+  if (newMainBasket) {
+    fireEvent.change(within(panel).getByRole("textbox", { name: "Main Basket name" }), { target: { value: mainBasketIntake.basket.name } });
+    fireEvent.change(within(panel).getByRole("textbox", { name: "Main Basket description" }), { target: { value: mainBasketIntake.basket.description } });
+  }
+  fireEvent.change(within(panel).getByRole("textbox", { name: "Sub Basket name" }), { target: { value: subBasketName } });
+  fireEvent.change(within(panel).getByRole("textbox", { name: "Sub Basket description" }), { target: { value: mainBasketIntake.subBasket.description } });
+  fireEvent.change(within(panel).getByRole("textbox", { name: "Main Line 1 name" }), { target: { value: mainBasketIntake.mainLines[0].name } });
+}
 let rows: KnowledgeMaster[];
 let requests: URLSearchParams[];
 let overviewMissing: boolean;
@@ -113,18 +126,12 @@ describe("reference vendor directory", () => {
     role = "procurement";
     Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn(() => "blob:synthetic-vendor-draft") });
     Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
-    let proposal = proposalFixture({ vendorName: null, ...(target === "sub" ? { target: { kind: "new_sub_basket", basketId: vendorBasket.id }, targetParentName: vendorBasket.name, basketId: vendorBasket.id, name: "Kitchen joinery", counts: { subBaskets: 1, mainLines: 0 } } : {}) });
-    const commands: unknown[] = []; const vendorWrites: unknown[] = [];
+    const intake = target === "sub" ? { subBasket: { ...mainBasketIntake.subBasket, name: "Kitchen joinery" }, mainLines: mainBasketIntake.mainLines } : mainBasketIntake;
+    let proposal = proposalFixture({ vendorName: null, requestMode: "hierarchy_intake", intake, ...(target === "sub" ? { target: { kind: "new_sub_basket", basketId: vendorBasket.id }, targetParentName: vendorBasket.name, basketId: vendorBasket.id, name: "Kitchen joinery" } : {}) });
+    const commands: unknown[] = []; const creates: unknown[] = []; const vendorWrites: unknown[] = [];
     const proposalPath = "/api/v1/procurement/vendor-basket-proposals";
     server.use(
-      http.post(proposalPath, () => data(proposal)),
-      http.get(`${proposalPath}/proposal-one`, () => data(proposal)),
-      http.get(`${proposalPath}/proposal-one/hierarchy`, () => data({ items: proposalHierarchyFixture(proposal).filter(row => target !== "sub" || row.kind === "sub_basket"), pagination: { total: target === "sub" ? 1 : 2, limit: 100, offset: 0, hasMore: false } })),
-      http.get(`${proposalPath}/proposal-one/masters/:masterKind`, () => data({ items: [], pagination: { total: 0, limit: 100, offset: 0, hasMore: false } })),
-      http.get(`${proposalPath}/references`, () => data({ items: [], pagination: { total: 0, limit: 100, offset: 0, hasMore: false } })),
-      http.get(`${proposalPath}/proposal-one/resources/:resourceId`, ({ params }) => data(proposalSectionFixture(String(params.resourceId).replace("resource-", "") as KnowledgeSectionKey, {}, proposal))),
-      http.get(`${proposalPath}/proposal-one/inherited-quality`, () => data({ basketId: vendorBasket.id, basketName: vendorBasket.name, basketStatus: "active", version: 1, revisionId: null, revisionNumber: null, contentDigest: "empty-quality", parameters: [], updatedAt: proposal.updatedAt })),
-      http.get(`${proposalPath}/proposal-one/readiness`, () => data({ head: proposal.head, version: proposal.version, requestVersion: proposal.requestVersion, ready: true, findings: [] })),
+      http.post(proposalPath, async ({ request }) => { creates.push(await request.json()); return data(proposal); }),
       http.post(`${proposalPath}/proposal-one/submit`, async ({ request }) => {
         commands.push(await request.json());
         if (target === "sub" && commands.length === 1) return error();
@@ -146,21 +153,21 @@ describe("reference vendor directory", () => {
       await waitFor(() => expect(screen.getByRole("button", { name: "Add Sub Basket" })).toBeEnabled());
     }
     await user.click(screen.getByRole("button", { name: target === "sub" ? "Add Sub Basket" : "Add Main Basket" }));
-    const panel = screen.getByRole("dialog", { name: target === "sub" ? "Configure Sub-Basket" : "Configure Main Basket" });
+    const panel = screen.getByRole("dialog", { name: target === "sub" ? "Request Sub Basket" : "Request Main Basket" });
     expect(within(panel).queryByRole("textbox", { name: "Vendor name" })).not.toBeInTheDocument();
-    await user.type(within(panel).getByRole("textbox", { name: target === "sub" ? "New Sub-Basket name" : "New Main Basket name" }), proposal.name);
-    await user.click(within(panel).getByRole("button", { name: "Create configuration draft" }));
-    const submit = await screen.findByRole("button", { name: "Send for approval and activation" });
-    await waitFor(() => expect(submit).toBeEnabled()); await user.click(submit);
+    fillBasketRequest(panel, target === "main", target === "sub" ? "Kitchen joinery" : mainBasketIntake.subBasket.name);
+    await user.click(within(panel).getByRole("button", { name: "Send to Super Admin" }));
     if (target === "sub") {
       expect(await screen.findByText(/Try again/)).toBeVisible();
-      expect(screen.getByRole("dialog", { name: "Configure Sub-Basket" })).toBeVisible();
+      expect(screen.getByRole("dialog", { name: "Request Sub Basket" })).toBeVisible();
       expect(screen.getByRole("dialog", { name: "Add vendor" })).toBeInTheDocument();
       await user.click(screen.getByRole("button", { name: "Retry same action" }));
     }
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     const resume = screen.getByRole("button", { name: "Resume vendor draft" });
     expect(resume).toBeVisible(); expect(vendorWrites).toEqual([]);
+    expect(creates).toEqual([{ vendorId: null, name: proposal.name, requestMode: "hierarchy_intake", intake, idempotencyKey: expect.any(String), ...(target === "sub" ? { target: { kind: "new_sub_basket", basketId: vendorBasket.id } } : {}) }]);
+    expect(commands[0]).toEqual({ expectedVersion: 1, idempotencyKey: expect.any(String) });
     if (target === "sub") expect(commands[1]).toEqual(commands[0]);
     await user.click(screen.getByRole("button", { name: "All my requests" }));
     expect(await screen.findByRole("heading", { name: "Requests route" })).toBeVisible();
@@ -173,25 +180,21 @@ describe("reference vendor directory", () => {
     expect(screen.getByRole("textbox", { name: "Position" })).toHaveValue("Preserved vendor contact");
     expect(await screen.findByRole("img", { name: "Selected vendor picture preview" })).toBeVisible();
     expect(vi.mocked(URL.createObjectURL).mock.calls.at(-1)?.[0]).toBe(picture);
+    expect(screen.getByRole("button", { name: /^Main Baskets,/ })).toHaveAccessibleName(target === "sub" ? `Main Baskets, 1 selected: ${vendorBasket.name}` : "Main Baskets, 0 selected");
+    expect(screen.getByRole("button", { name: /^Sub Baskets,/ })).toHaveAccessibleName("Sub Baskets, 0 selected");
     expect(vendorWrites).toEqual([]);
   });
 
   it("preserves an existing vendor's original version until explicit reload and clears a discarded resumed draft", async () => {
     role = "procurement";
     let detail = structuredClone(completeVendor);
-    let proposal = proposalFixture({ vendorId: detail.id, vendorName: detail.name });
+    let proposal = proposalFixture({ vendorId: detail.id, vendorName: detail.name, requestMode: "hierarchy_intake", intake: mainBasketIntake });
     const vendorWrites: unknown[] = [];
     const proposalPath = "/api/v1/procurement/vendor-basket-proposals";
     server.use(
       http.get(`${endpoint}/vendor-one`, () => data(detail)),
       http.patch(`${endpoint}/vendor-one`, async ({ request }) => { vendorWrites.push(await request.json()); return data(detail); }),
       http.post(proposalPath, () => data(proposal)),
-      http.get(`${proposalPath}/proposal-one`, () => data(proposal)),
-      http.get(`${proposalPath}/proposal-one/hierarchy`, () => data({ items: proposalHierarchyFixture(proposal), pagination: { total: 2, limit: 100, offset: 0, hasMore: false } })),
-      http.get(`${proposalPath}/proposal-one/masters/:masterKind`, () => data({ items: [], pagination: { total: 0, limit: 100, offset: 0, hasMore: false } })),
-      http.get(`${proposalPath}/references`, () => data({ items: [], pagination: { total: 0, limit: 100, offset: 0, hasMore: false } })),
-      http.get(`${proposalPath}/proposal-one/resources/:resourceId`, ({ params }) => data(proposalSectionFixture(String(params.resourceId).replace("resource-", "") as KnowledgeSectionKey, {}, proposal))),
-      http.get(`${proposalPath}/proposal-one/readiness`, () => data({ head: proposal.head, version: proposal.version, requestVersion: proposal.requestVersion, ready: true, findings: [] })),
       http.post(`${proposalPath}/proposal-one/submit`, () => {
         proposal = { ...proposal, status: "pending", requestId: "request-existing", requestVersion: 1, version: 2, capabilities: { ...proposal.capabilities, edit: false, submit: false } };
         return data(proposal);
@@ -201,10 +204,9 @@ describe("reference vendor directory", () => {
     await user.click(await screen.findByRole("button", { name: "Edit Timber House" }));
     fireEvent.change(await screen.findByRole("textbox", { name: "Position" }), { target: { value: "Preserved original draft" } });
     await user.click(screen.getByRole("button", { name: "Add Main Basket" }));
-    await user.type(screen.getByRole("textbox", { name: "New Main Basket name" }), proposal.name);
-    await user.click(screen.getByRole("button", { name: "Create configuration draft" }));
-    const submit = await screen.findByRole("button", { name: "Send for approval and activation" });
-    await waitFor(() => expect(submit).toBeEnabled()); await user.click(submit);
+    const panel = screen.getByRole("dialog", { name: "Request Main Basket" });
+    fillBasketRequest(panel);
+    await user.click(within(panel).getByRole("button", { name: "Send to Super Admin" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     await user.click(screen.getByRole("button", { name: "Edit Vendor 2" }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();

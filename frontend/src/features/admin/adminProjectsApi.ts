@@ -1,4 +1,5 @@
 import { apiClient } from "../../api/client";
+import type { ProjectClientInvitationStatus } from "../../auth/projectClientInvitationsApi";
 import type {
   AdminProjectPage,
   AdminProjectListInput,
@@ -80,5 +81,10 @@ export const getSalesManagerOptions = (
     salesManagerOptionsPath(search, pagination)
   );
 
-export const initiateAdminProject = (input: InitiateAdminProjectInput) =>
-  apiClient.post<InitiatedAdminProjectSummary>("/admin/projects", input);
+export type ProjectInitiationInput = InitiateAdminProjectInput & { initiationKey?: string };
+export type ProjectInitiationResult = InitiatedAdminProjectSummary & {
+  clientInvitation?: ProjectClientInvitationStatus;
+};
+
+export const initiateAdminProject = (input: ProjectInitiationInput) =>
+  apiClient.post<ProjectInitiationResult>("/admin/projects", input);
