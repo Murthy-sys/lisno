@@ -62,6 +62,23 @@ beforeEach(async () => {
 });
 
 describe("vendor-independent basket proposals", { timeout: 45_000 }, () => {
+  it("keeps proposal Design rules admin-only, including direct resource reads", async () => {
+    const { service } = fixture(); const draft = await prepare(service, "new_main_basket");
+    const requesterHierarchy = await service.hierarchy(AUTHOR, "procurement", draft.id, paging);
+    const line = requesterHierarchy.items.find((row) => row.kind === "main_line")!;
+    expect(line.sections).not.toHaveProperty("design");
+    await expect(service.saveSection(AUTHOR, "procurement", draft.id, line.resourceId, "design", {
+      expectedVersion: draft.version, applicability: "configured", payload: { answers: { stockCheck: true } }
+    })).rejects.toMatchObject({ status: 403 });
+    const submitted = await service.submit(AUTHOR, draft.id, { expectedVersion: draft.version, idempotencyKey: "design-submit" });
+    const saved = await service.saveSection(ADMIN, "admin", draft.id, line.resourceId, "design", {
+      expectedVersion: submitted.version, expectedRequestVersion: submitted.requestVersion!, applicability: "configured",
+      payload: { answers: { stockCheck: true }, details: { tradeCoordination: "PRIVATE DESIGN NOTES" } }
+    });
+    expect((await service.resource(ADMIN, "admin", draft.id, saved.resource!.resourceId)).payload).toMatchObject({ payload: { answers: { stockCheck: true } } });
+    await expect(service.resource(AUTHOR, "procurement", draft.id, saved.resource!.resourceId)).rejects.toMatchObject({ status: 404 });
+    expect(JSON.stringify(await service.hierarchy(AUTHOR, "procurement", draft.id, paging))).not.toContain("PRIVATE DESIGN NOTES");
+  });
   async function prepare(service: ReturnType<typeof createVendorBasketProposalService>, kind: "new_main_basket" | "new_sub_basket", actor = AUTHOR, key = "vendorless-draft") {
     const target = kind === "new_sub_basket" ? { kind, basketId: "vendorless-parent" } : { kind };
     let detail = await service.create(actor, { name: "Vendorless finishes", target, idempotencyKey: key });
@@ -204,7 +221,7 @@ describe("hierarchy intake requests", { timeout: 45_000 }, () => {
     expect(await AiEstimatorKnowledgeRevisionModel.countDocuments({ status: "active" })).toBe(0);
     expect(await AiEstimatorKnowledgePriceVersionModel.countDocuments()).toBe(0);
     const sections = await AiEstimatorKnowledgeSectionModel.find().lean();
-    expect(sections).toHaveLength(16);
+    expect(sections).toHaveLength(18);
     for (const section of sections) {
       expect(section.applicability).toBe("not_configured");
       expect(section.payload ?? {}).toEqual({});
@@ -457,7 +474,7 @@ describe("isolated full basket proposals", { timeout: 45_000 }, () => {
     expect(await service.decide(ADMIN, detail.id, command)).toEqual(result);
     expect(await AiEstimatorKnowledgeBasketModel.countDocuments()).toBe(1);
     expect(await AiEstimatorKnowledgeMainLineModel.findById(lineId).lean()).toMatchObject({ status: "active", draftRevisionId: null, activeRevisionId: result.published!.mainLines[0]!.revisionId });
-    expect(await AiEstimatorKnowledgeSectionModel.countDocuments()).toBe(8);
+    expect(await AiEstimatorKnowledgeSectionModel.countDocuments()).toBe(9);
     expect((await service.get(AUTHOR, "procurement", detail.id)).publishedBasketId).toBe(detail.basketId);
     const related = await service.references(AUTHOR, "procurement", { ...paging, kind: "main-lines", ids: [lineId] });
     expect(related.items[0]).toMatchObject({ mainLineId: lineId, subBasketId: subId, basketId: detail.basketId, uomId: UOM,

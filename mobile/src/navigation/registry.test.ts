@@ -21,6 +21,13 @@ function snapshot(role: Role): AuthorizationSnapshot {
 }
 
 describe("authorized mobile navigation", () => {
+  it("exposes private Ask Lisno only to authorized Clients without changing their dock", () => {
+    const client = snapshot("client");
+    expect(resolveAuthorizedFeature("ask-lisno", "client", client)?.path).toBe("/feature/ask-lisno");
+    expect(resolveAuthorizedFeature("ask-lisno", "client", { ...client, permissions: client.permissions.filter(permission => permission !== "ask_lisno.request") })).toBeNull();
+    expect(resolveAuthorizedFeature("ask-lisno", "admin", snapshot("admin"))).toBeNull();
+    expect(rootTabsForAuthorization("client", client).map(tab => tab.destination?.id ?? tab.id)).toEqual(["projects", "messages", "profile", "more"]);
+  });
   it.each(ROLE_CODES)("provides %s with an authorized landing destination", (role) => {
     const landing = landingDestination(role, snapshot(role));
     expect(landing).not.toBeNull();
@@ -112,10 +119,10 @@ describe("authorized mobile navigation", () => {
     expect(resolveAuthorizedFeature("projects", "client", authorization)?.id).toBe("projects");
   });
 
-  it("keeps vendor access Procurement-only and preserves one root tab with either authorized child", () => {
+  it("allows authorized Super Admin and Procurement vendor access and preserves one Procurement root tab", () => {
     const full = snapshot("procurement");
     expect(resolveAuthorizedFeature("procurement-vendors", "procurement", full)?.path).toBe("/feature/procurement-vendors");
-    expect(resolveAuthorizedFeature("procurement-vendors", "super_admin", snapshot("super_admin"))).toBeNull();
+    expect(resolveAuthorizedFeature("procurement-vendors", "super_admin", snapshot("super_admin"))?.id).toBe("procurement-vendors");
     const onlyDashboard = { ...full, permissions: ["workflow.tasks.read", "procurement.workspace.read"] as const };
     const onlyVendors = { ...full, permissions: ["workflow.tasks.read", "procurement.vendor_directory.read"] as const };
     const neither = { ...full, permissions: ["workflow.tasks.read"] as const };

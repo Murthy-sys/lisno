@@ -5,6 +5,7 @@ import { clientKeys } from "../features/client/clientApi";
 import { designerKeys } from "../features/designer/designerApi";
 import { projectFinanceKeys } from "../features/finance/projectFinanceApi";
 import { projectWorkflowKeys } from "../features/workflow/projectWorkflowApi";
+import { projectReadKeys } from "../features/projects/projectReadQueries";
 
 /** Refresh live project presentations after a canonical rename, without editing snapshots. */
 export async function invalidateProjectNameQueries(client: QueryClient, projectId: string): Promise<void> {
@@ -14,6 +15,8 @@ export async function invalidateProjectNameQueries(client: QueryClient, projectI
     client.invalidateQueries({ queryKey: dashboardKeys.all }),
     client.invalidateQueries({ queryKey: clientKeys.projects }),
     client.invalidateQueries({ queryKey: designerKeys.projects() }),
+    client.invalidateQueries({ queryKey: [...projectReadKeys.all, "list"] }),
+    client.invalidateQueries({ queryKey: [...projectReadKeys.all, "detail", projectId] }),
     client.invalidateQueries({ queryKey: projectFinanceKeys.projects }),
     client.invalidateQueries({ queryKey: projectFinanceKeys.bucket(projectId) }),
     client.invalidateQueries({ queryKey: projectWorkflowKeys.all }),

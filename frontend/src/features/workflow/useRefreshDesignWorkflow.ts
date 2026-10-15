@@ -8,11 +8,15 @@ import { estimateDesignKeys } from "../leads/estimateDesignApi";
 import { projectWorkflowKeys } from "./projectWorkflowApi";
 import { procurementKeys } from "../procurement/procurementApi";
 import { projectFinanceKeys } from "../finance/projectFinanceApi";
+import { projectDesignRequirementsKeys } from "./projectDesignRequirementsApi";
+import { projectReadKeys } from "../projects/projectReadQueries";
 
 export function useRefreshDesignWorkflow({ includeClientPlans = false }: { includeClientPlans?: boolean } = {}) {
   const queryClient = useQueryClient();
   return () => Promise.all([
     queryClient.invalidateQueries({ queryKey: projectWorkflowKeys.all }),
+    queryClient.invalidateQueries({ queryKey: projectDesignRequirementsKeys.all }),
+    queryClient.invalidateQueries({ queryKey: projectReadKeys.all }),
     queryClient.invalidateQueries({ queryKey: designerKeys.all }),
     queryClient.invalidateQueries({ queryKey: adminProjectKeys.all }),
     queryClient.invalidateQueries({ queryKey: clientKeys.projects }),

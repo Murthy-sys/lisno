@@ -1,3 +1,4 @@
+import { normalizeDesignRules } from "../domain/main-line-design-rules.js";
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 
@@ -119,6 +120,7 @@ export interface KnowledgeDraftItemGuard {
 }
 
 export interface KnowledgeMainLineUpdateInput extends Partial<Omit<KnowledgeMainLineInput, "subBasketId" | "subBasketName" | "itemType">> {
+  readonly estimationVisibility?: "internal" | "external";
   readonly expectedVersion: number;
   readonly draftSubBasketGuard?: KnowledgeDraftSubBasketGuard;
   readonly draftItemGuard?: KnowledgeDraftItemGuard;
@@ -290,7 +292,7 @@ export function createAiEstimatorKnowledgeItemService(
         const storedActor = await actorGuard.requireMutationActor(actor, session);
         validateInlineItemMutationGuards(input);
         if ((input.draftItemGuard || input.draftSubBasketGuard)
-          && input.name === undefined && input.description === undefined && input.displayOrder === undefined) {
+          && input.name === undefined && input.description === undefined && input.displayOrder === undefined && input.estimationVisibility === undefined) {
           invalid("name", "Change at least one item field before saving.");
         }
         const current = asRow(
@@ -302,6 +304,10 @@ export function createAiEstimatorKnowledgeItemService(
         if (!current || (!input.draftItemGuard && current.status === "archived")) notFound();
         if (requiredInteger(current.version) !== input.expectedVersion) versionConflict();
         assertDraftItemGuard(current, input.draftItemGuard);
+        if (input.estimationVisibility !== undefined && !["internal", "external"].includes(input.estimationVisibility))
+          invalid("estimationVisibility", "Choose Internal or External.");
+        if (input.estimationVisibility === "external" && current.itemType === "temporary")
+          invalid("estimationVisibility", "Temporary items cannot be made available to clients.");
         const occurredAt = now();
         const subBasketAdvance = await advanceDirectSubBasketAggregateForLine({
           line: current,
@@ -319,6 +325,7 @@ export function createAiEstimatorKnowledgeItemService(
           set.nameNormalized = normalizeKnowledgeIdentity(input.name);
         }
         if (input.description !== undefined) set.description = input.description;
+        if (input.estimationVisibility !== undefined) set.estimationVisibility = input.estimationVisibility;
         if (input.displayOrder !== undefined) {
           const basketId = requiredString(current.basketId);
           await observeExplicitAiEstimatorKnowledgeDisplayOrder({
@@ -344,6 +351,7 @@ export function createAiEstimatorKnowledgeItemService(
           occurredAt: occurredAt.toISOString(),
           oldValues: {
             version: input.expectedVersion,
+            ...(input.estimationVisibility === undefined ? {} : { estimationVisibility: current.estimationVisibility === "external" ? "external" : "internal" }),
             ...(String(current.name) === String(asRow(updated)!.name) ? {} : { name: String(current.name) }),
             ...(subBasketAdvance === null
               ? {}
@@ -357,6 +365,7 @@ export function createAiEstimatorKnowledgeItemService(
           },
           newValues: {
             version: input.expectedVersion + 1,
+            ...(input.estimationVisibility === undefined ? {} : { estimationVisibility: input.estimationVisibility }),
             ...(String(current.name) === String(asRow(updated)!.name) ? {} : { name: String(asRow(updated)!.name) }),
             ...(subBasketAdvance === null
               ? {}
@@ -649,13 +658,14 @@ export function createAiEstimatorKnowledgeItemService(
 
     async getSection(actor, mainLineId, revisionId, sectionKey) {
       await actorGuard.requireReadActor(actor);
-      const section = asRow(
-        await AiEstimatorKnowledgeSectionModel.findOne({
-          mainLineId,
-          revisionId,
-          sectionKey
-        }).lean().exec()
+      let section = asRow(
+        await AiEstimatorKnowledgeSectionModel.findOne({ mainLineId, revisionId, sectionKey }).lean().exec()
       );
+      if (!section && sectionKey === "design") {
+        const revision = asRow(await AiEstimatorKnowledgeRevisionModel.findOne({ _id: revisionId, mainLineId }).lean().exec());
+        const line = await AiEstimatorKnowledgeMainLineModel.exists({ _id: mainLineId });
+        if (revision && line) section = virtualDesignSection(mainLineId, revisionId, revision);
+      }
       if (!section) notFound();
       return sectionKey === "pricing"
         ? enrichPricingSectionDto(section)
@@ -674,10 +684,13 @@ export function createAiEstimatorKnowledgeItemService(
           .session(session).lean().exec();
         const line = asRow(lineDocument);
         const revision = asRow(revisionDocument);
-        const section = asRow(sectionDocument);
-        if (!line || !revision || !section) notFound();
+        let section = asRow(sectionDocument);
+        if (!line || !revision) notFound();
+        const lazyDesignSection = !section && sectionKey === "design";
+        if (lazyDesignSection) section = virtualDesignSection(mainLineId, revisionId, revision);
+        if (!section) notFound();
         if (line.itemType === "temporary" && !TEMPORARY_ITEM_SECTIONS.includes(sectionKey)) {
-          throw new ApiError(400, "VALIDATION_ERROR", "Temporary items support only Overview, Mode, Recommendation & Exclusions and Quality Parameters.");
+          throw new ApiError(400, "VALIDATION_ERROR", "Temporary items support only Overview, Mode, Recommendation & Exclusions, Quality Parameters and Design.");
         }
         const temporaryRecommendations = line.itemType === "temporary" && sectionKey === "recommendations";
         if (revision.status !== "draft" || line.draftRevisionId !== revisionId) immutableHistory();
@@ -686,6 +699,15 @@ export function createAiEstimatorKnowledgeItemService(
         if (requiredInteger(line.version) !== expectedAggregateVersion) versionConflict();
 
         const occurredAt = now();
+        if (lazyDesignSection) {
+          const [created] = await AiEstimatorKnowledgeSectionModel.create([{
+            _id: knowledgeId("section-design", uuid()), mainLineId, revisionId, sectionKey,
+            applicability: "not_configured", payload: {}, version: 1,
+            createdById: storedActor.id, updatedById: storedActor.id,
+            createdAt: occurredAt, updatedAt: occurredAt
+          }], { session });
+          section = asRow(created.toObject())!;
+        }
         const previousPayload = payloadFor(section);
         const persistedPayload = sectionKey === "pricing"
           ? await materializePriceCommands({
@@ -699,11 +721,14 @@ export function createAiEstimatorKnowledgeItemService(
               uuid,
               audit: dependencies.audit
             })
+          : sectionKey === "design"
+            ? normalizeDesignRules(input.payload) as unknown as Row
           : sectionKey === "advanced"
             ? preserveModeConfigurationCompatibility(previousPayload, input.payload)
           : sectionKey === "recommendations"
             ? normalizeRecommendationPayload(input.payload)
             : structuredClone(input.payload);
+        await coordinateNewDesignVendorReference(sectionKey, previousPayload, persistedPayload, session);
         await coordinateNewBasketReferences(
           sectionKey,
           previousPayload,
@@ -940,6 +965,7 @@ export function createAiEstimatorKnowledgeItemService(
           basketId,
           subBasketId: source.subBasketId ?? null,
           itemType: source.itemType ?? "main_line",
+          estimationVisibility: "internal",
           name: duplicateName,
           nameNormalized: normalizeKnowledgeIdentity(duplicateName),
           description: source.description ?? null,
@@ -2231,6 +2257,7 @@ async function buildItemSummary(
     basketId: requiredString(line.basketId),
     basketName: requiredString(basket.name),
     itemType: line.itemType === "temporary" ? "temporary" : "main_line",
+    estimationVisibility: line.itemType !== "temporary" && line.estimationVisibility === "external" ? "external" : "internal",
     completionRequired: line.itemType === "temporary",
     subBasketId: optionalString(line.subBasketId) ?? null,
     subBasketName: subBasketDocument ? requiredString(asRow(subBasketDocument)!.name) : null,
@@ -2305,6 +2332,23 @@ function revisionDto(row: Row): KnowledgeRevision {
   };
 }
 
+function virtualDesignSection(mainLineId: string, revisionId: string, revision: Row): Row {
+  return { ...revision, _id: `${revisionId}:design`, mainLineId, revisionId,
+    sectionKey: "design", applicability: "not_configured", payload: {}, version: 1 };
+}
+
+async function coordinateNewDesignVendorReference(sectionKey: KnowledgeSectionKey, previous: Row, next: Row, session: ClientSession): Promise<void> {
+  if (sectionKey !== "design") return;
+  const rules = normalizeDesignRules(next);
+  const before = normalizeDesignRules(previous);
+  if (!rules.answers.vendorPreDiscussed || (before.answers.vendorPreDiscussed && rules.discussedVendorId === before.discussedVendorId)) return;
+  const vendor = await AiEstimatorKnowledgeVendorModel.findOneAndUpdate(
+    { _id: rules.discussedVendorId, status: "active" }, { $inc: { dependencyEpoch: 1 } },
+    { session, new: true, timestamps: false }
+  ).select({ _id: 1 }).lean().exec();
+  if (!vendor) throw new ApiError(409, "DESIGN_VENDOR_UNAVAILABLE", "Select an active vendor for this discussion.");
+}
+
 function sectionDto(row: Row): KnowledgeSectionEnvelope<Row> {
   return {
     id: requiredString(row._id),
@@ -2312,7 +2356,7 @@ function sectionDto(row: Row): KnowledgeSectionEnvelope<Row> {
     revisionId: requiredString(row.revisionId),
     sectionKey: requiredString(row.sectionKey) as KnowledgeSectionKey,
     applicability: requiredString(row.applicability) as KnowledgeSectionApplicability,
-    payload: structuredClone(payloadFor(row)),
+    payload: row.sectionKey === "design" ? normalizeDesignRules(payloadFor(row)) as unknown as Row : structuredClone(payloadFor(row)),
     version: requiredInteger(row.version),
     createdById: requiredString(row.createdById),
     updatedById: requiredString(row.updatedById),
@@ -2451,7 +2495,7 @@ function activationCompletenessFindings(
   }];
 }
 
-const TEMPORARY_ITEM_SECTIONS: readonly KnowledgeSectionKey[] = ["overview", "advanced", "pricing", "recommendations", "quality"];
+const TEMPORARY_ITEM_SECTIONS: readonly KnowledgeSectionKey[] = ["overview", "advanced", "pricing", "recommendations", "quality", "design"];
 
 function emptyCompleteness(mainLineId: string, itemType?: "main_line" | "temporary"): KnowledgeCompletenessSummary {
   return deriveKnowledgeCompleteness({
@@ -3831,6 +3875,7 @@ function publicMainLine(value: unknown): Row {
   return {
     id: requiredString(row._id),
     itemType: row.itemType === "temporary" ? "temporary" : "main_line",
+    estimationVisibility: row.itemType !== "temporary" && row.estimationVisibility === "external" ? "external" : "internal",
     completionRequired: row.itemType === "temporary",
     basketId: requiredString(row.basketId),
     subBasketId: optionalString(row.subBasketId) ?? null,
@@ -3999,6 +4044,7 @@ export async function validateKnowledgeProposalSectionRows(rows: Row[], session:
 
 /** Apply precisely the normal section-save reference locks to new publication rows. */
 export async function coordinateKnowledgeProposalSectionReferences(sectionKey: KnowledgeSectionKey, payload: Row, session: ClientSession): Promise<void> {
+  await coordinateNewDesignVendorReference(sectionKey, {}, payload, session);
   await coordinateNewBasketReferences(sectionKey, {}, payload, session);
   await coordinateNewModeConfigurationReferences(sectionKey, {}, payload, session);
   await coordinateNewPriorityReferences(sectionKey, {}, payload, session);
@@ -4046,6 +4092,7 @@ export async function validateKnowledgeProposalPriceCommands(payload: Row, sessi
 /** Preserve the ordinary editor's identity and legacy compatibility rules when
  * saving isolated proposal resources. This helper performs no persistence. */
 export function normalizeKnowledgeProposalSectionPayload(sectionKey: KnowledgeSectionKey, payload: Row, previousPayload: Row): Row {
+  if (sectionKey === "design") return normalizeDesignRules(payload) as unknown as Row;
   if (sectionKey === "advanced") return preserveModeConfigurationCompatibility(previousPayload, payload);
   if (sectionKey === "pricing") return preserveTypedSpecificationCompatibility(previousPayload, payload);
   if (sectionKey === "recommendations") return normalizeRecommendationPayload(payload);

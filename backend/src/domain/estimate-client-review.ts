@@ -100,6 +100,7 @@ export interface EstimateClientReviewSnapshot {
     subBasketName?: string | null;
     mainLineName?: string;
     uomName?: string;
+    estimateNotes?: readonly string[];
   }[];
   subtotal: number;
   gst: number;

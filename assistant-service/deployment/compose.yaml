@@ -1,0 +1,60 @@
+# Independent Linux host only. No public model port or runtime internet egress.
+# Build/install approved artifacts separately before bringing up this stack.
+services:
+  model:
+    image: ${OLLAMA_IMAGE:?Supply a verified Ollama image with immutable @sha256 digest}
+    pull_policy: never
+    environment:
+      OLLAMA_HOST: 127.0.0.1:11434
+      OLLAMA_NO_CLOUD: "1"
+      OLLAMA_NUM_PARALLEL: "2"
+      OLLAMA_MAX_QUEUE: "2"
+      OLLAMA_MAX_LOADED_MODELS: "1"
+      OLLAMA_KEEP_ALIVE: 5m
+      OLLAMA_CONTEXT_LENGTH: "16384"
+      OLLAMA_MODELS: /models
+    volumes:
+      - ${PINNED_MODEL_DIRECTORY:?Supply preinstalled independent-host model directory}:/models:ro
+    # The assistant shares this network namespace; this is its port, not Ollama.
+    ports:
+      - "127.0.0.1:8080:8080"
+    networks: [isolated]
+    read_only: true
+    tmpfs: [/tmp, /root/.ollama]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 256
+    mem_limit: ${MODEL_MEMORY_LIMIT:-12g}
+    cpus: ${MODEL_CPU_LIMIT:-4}
+    restart: unless-stopped
+    stop_grace_period: 30s
+  assistant:
+    image: ${ASSISTANT_IMAGE:?Supply the prebuilt assistant image with immutable @sha256 digest}
+    pull_policy: never
+    network_mode: service:model
+    depends_on: [model]
+    environment:
+      ASSISTANT_SERVICE_TOKEN: ${ASSISTANT_SERVICE_TOKEN:?Supply the shared server-only token}
+      ASSISTANT_MODEL_URL: http://127.0.0.1:11434
+      ASSISTANT_MODEL_NAME: ${ASSISTANT_MODEL_NAME:?Supply a pinned local tag}
+      ASSISTANT_MODEL_DIGEST: ${ASSISTANT_MODEL_DIGEST:?Supply sha256 digest from installed artifact}
+      ASSISTANT_MAX_CONCURRENCY: "2"
+      ASSISTANT_REQUEST_TIMEOUT_MS: "19000"
+      OLLAMA_NO_CLOUD: "1"
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 64
+    mem_limit: 512m
+    cpus: 1
+    restart: unless-stopped
+    stop_grace_period: 25s
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health/live', timeout=2)"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+networks:
+  isolated:
+    internal: true

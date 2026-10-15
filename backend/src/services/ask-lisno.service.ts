@@ -2,16 +2,18 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { AskLisnoResolution, AskLisnoResponse } from "../contracts/ask-lisno.js";
 import type { ChatActor } from "../contracts/project-chat.js";
-import type { AssistantFactBundle, AssistantReadScope, AssistantReadSources } from "../contracts/project-chat-assistant.js";
+import { ASSISTANT_DISCLOSURE_POLICY, type AssistantFactBundle, type AssistantReadScope, type AssistantReadSources } from "../contracts/project-chat-assistant.js";
+import { hasCurrentAssistantDisclosure } from "../contracts/assistant-project-pricing.js";
 import { ASSISTANT_DEFAULTS as limits, AssistantFailure } from "../domain/project-chat-assistant.js";
 import { ApiError } from "../middleware/errors.js";
 import type { ChatTransaction, ProjectChatRepository } from "../repositories/project-chat.js";
 import { acquireAssistantSlot, admitAssistant, admitAssistantProject, reserveAssistantTokens, settleAssistantTokens } from "./assistant-usage.js";
 import { clarification, isSocialMessage, resolveProjectName, type ProjectName } from "./ask-lisno-project-resolution.js";
 import { isProjectListRequest, orderedProjectList, PROJECT_LIST_PAGE_SIZE, projectListChanged, projectListPage } from "./ask-lisno-project-list.js";
-import { readAssistantContext, sourceWitness } from "./project-assistant-context.js";
+import { assistantSensitiveTerms, readAssistantContext, sourceWitness } from "./project-assistant-context.js";
 import type { AssistantProvider } from "./project-assistant-provider.js";
 import { createAssistantReadSources } from "./project-assistant-sources.js";
+import { styleAssistantConversation } from "./assistant-conversation-style.js";
 
 const projectIdSchema = z.string().trim().min(1).max(200).nullable();
 export const askLisnoSchema = z.object({
@@ -42,12 +44,15 @@ export function createAskLisnoService(options: {
     // the provider ask a natural clarification without selecting a project.
     const socialOnly = isSocialMessage(input.message) || (!input.history.length && /^(?:yes|no)[.!?\s]*$/i.test(input.message));
     const scope = (projectId: string): AssistantReadScope => ({projectId, clientId: actor.id, sessionVersion: actor.sessionVersion});
+    const sensitiveTerms = new Set<string>();
+    const rememberScope = (context: Parameters<typeof assistantSensitiveTerms>[0]) => assistantSensitiveTerms(context).forEach(value => sensitiveTerms.add(value));
     const authorize = async (transaction?: ChatTransaction) => {
       if (actor.role !== "client") throw new ApiError(403, "FORBIDDEN", "Ask Lisno is available to Clients.");
       if (actor.expiresAt <= Math.floor(clock().getTime() / 1000)) throw new ApiError(401, "SESSION_EXPIRED", "Please sign in again.");
       const read = async (tx: ChatTransaction) => {
         const user = await tx.app.findUserById(actor.id);
         if (!user || !user.active || user.role !== "client" || user.sessionVersion !== actor.sessionVersion) throw new ApiError(401, "SESSION_EXPIRED", "Please sign in again.");
+        for (const value of [user.name, user.email, user.mobile]) if (value) sensitiveTerms.add(value);
         return user;
       };
       return transaction ? read(transaction) : options.chatRepository.snapshot(read);
@@ -55,7 +60,7 @@ export function createAskLisnoService(options: {
     await authorize();
     // Explicit IDs remain untrusted, including old page hints and inline choices.
     for (const id of new Set([input.projectId, input.contextProjectId, input.choiceProjectId].filter((id): id is string => Boolean(id)))) {
-      await readAssistantContext(options.chatRepository, scope(id));
+      rememberScope(await readAssistantContext(options.chatRepository, scope(id)));
     }
     if (!options.enabled) throw new ApiError(503, "ASSISTANT_UNAVAILABLE", "Ask Lisno is currently unavailable. Please contact your project team.");
     if (Buffer.byteLength(JSON.stringify(input), "utf8") > limits.maxPayloadBytes) throw new ApiError(400, "ASSISTANT_CONTEXT_LIMIT", "This conversation is too long. Please start a new question.");
@@ -88,6 +93,8 @@ export function createAskLisnoService(options: {
           expectedTotal = page.total;
           for (const project of page.items) {
             if (project.clientId !== actor.id) continue;
+            sensitiveTerms.add(project.name);
+            if (project.location) sensitiveTerms.add(project.location);
             if (!authorizedOnly) projects.push({id: project.id, name: project.name, detail: project.location || null});
             else {
               checkTime();
@@ -128,7 +135,7 @@ export function createAskLisnoService(options: {
         });
         const introduction = list.items.length ? "Here are your projects. Select one to view its progress or ask a question." : "You don't have any accessible projects yet. Please contact your Lisno team for help.";
         return {projectId: null, resolution, projectList: list, checkedAt: clock().toISOString(),
-          answer: {kind: "status", facts: [], candidates: [], missingInputs: [], commercial: null, narrative: [{text: introduction, factIds: []}]}};
+          answer: {disclosurePolicy: ASSISTANT_DISCLOSURE_POLICY, projectPricing: null, kind: "status", facts: [], candidates: [], missingInputs: [], commercial: null, narrative: [{text: introduction, factIds: []}]}};
       }
       const updateHistory = () => {
         const current = resolution.project?.id ?? null;
@@ -147,7 +154,7 @@ export function createAskLisnoService(options: {
         let next = resolveProjectName({message: input.message, projects: discovered.projects, complete: discovered.complete,
           modelName: name, contextProjectId: input.contextProjectId, pageProjectId: input.projectId, choiceProjectId: input.choiceProjectId});
         if (next.project) {
-          await readAssistantContext(options.chatRepository, scope(next.project.id));
+          rememberScope(await readAssistantContext(options.chatRepository, scope(next.project.id)));
           // A provider cannot combine reads from different projects in one answer.
           if (admittedProjectId && admittedProjectId !== next.project.id) throw new AssistantFailure("ASSISTANT_SOURCE_CHANGED");
         } else if (admittedProjectId) throw new AssistantFailure("ASSISTANT_SOURCE_CHANGED");
@@ -185,6 +192,10 @@ export function createAskLisnoService(options: {
       const sources: AssistantReadSources = {
         status: async () => (await getSources()).status(),
         execution: async () => (await getSources()).execution(),
+        projectEstimate: async input => {
+          const reader = await getSources();
+          return reader.projectEstimate ? reader.projectEstimate(input) : {report: null, unavailableReason: "not_published", freshness: []};
+        },
         searchCatalogue: async input => (await getSources()).searchCatalogue(input),
         recommendations: async input => (await getSources()).recommendations(input),
         preview: async input => (await getSources()).preview(input),
@@ -194,16 +205,13 @@ export function createAskLisnoService(options: {
       const profile = async (): Promise<AssistantFactBundle> => {
         const user = profileValue(await authorize());
         const facts = [
-          {id: "profile:name", label: "Your name", value: user.name},
-          {id: "profile:email", label: "Your account email", value: user.email},
-          ...(user.mobile ? [{id: "profile:mobile", label: "Your account phone", value: user.mobile}] : []),
           {id: "support:projects", label: "Your projects", value: "You can ask about a project by name. If no projects are available, contact your Lisno team."},
           {id: "support:team", label: "Contact your team", value: "Open Project messages to contact your project team. Your private Ask Lisno question is not sent to them."},
           ...(!resolution.project ? [{id: "support:select-project", label: "Project information", value: "Tell me the project name to check its status, timeline, progress, or estimate."}] : [])
         ];
         return {facts: facts.map(fact => ({...fact, source: {id: actor.id, label: "Your account", href: null}})), freshness: [sourceWitness("ask-lisno-profile", actor.id, user)]};
       };
-      const generated = await options.provider.generate({messages, sources, ...(!socialOnly ? {profile, resolveProject} : {}), projectAvailable: () => resolution.state === "resolved", signal,
+      const generated = await options.provider.generate({surface: "private", sensitiveTerms: [...sensitiveTerms], messages, sources, ...(!socialOnly ? {profile, resolveProject} : {}), projectAvailable: () => resolution.state === "resolved", signal,
         reserveAttempt: async bytes => {
           checkTime();
           if (attempts >= limits.maxProviderAttempts) throw new AssistantFailure("ASSISTANT_RETRY_LIMIT");
@@ -217,6 +225,7 @@ export function createAskLisnoService(options: {
         settleAttempt: (id, usage) => options.chatRepository.mutate(tx => settleAssistantTokens(tx.assistant, id, usage, clock().toISOString()))
       });
       checkTime();
+      if (!hasCurrentAssistantDisclosure(generated)) throw new AssistantFailure("ASSISTANT_DISCLOSURE_INVALID");
       const currentProfile = profileValue(await authorize());
       const profileVersion = sourceWitness("ask-lisno-profile", actor.id, currentProfile);
       if (generated.freshness.some(source => source.kind === "ask-lisno-profile" && (source.id !== actor.id || source.version !== profileVersion.version))) throw new AssistantFailure("ASSISTANT_SOURCE_CHANGED");
@@ -232,13 +241,13 @@ export function createAskLisnoService(options: {
           currentChoices.push({id: choice.id, name: context.sources.project.name, detail: context.sources.project.location || null});
         } catch (error) { if (!(error instanceof ApiError && error.status === 404)) throw error; }
       }
-      await authorize(); checkTime();
+      const deliveryUser = await authorize(); checkTime();
       const {freshness: _freshness, ...answer} = generated;
       if (resolution.state === "clarification") {
         resolution = {...clarification(resolution.question!, currentChoices)};
-        return {projectId: null, resolution, checkedAt: clock().toISOString(), answer: {kind: "clarification", facts: [], candidates: [], missingInputs: [], commercial: null, narrative: [{text: resolution.question!, factIds: []}]}};
+        return {projectId: null, resolution, checkedAt: clock().toISOString(), answer: styleAssistantConversation({disclosurePolicy: ASSISTANT_DISCLOSURE_POLICY, projectPricing: null, kind: "clarification", facts: [], candidates: [], missingInputs: [], commercial: null, narrative: [{text: resolution.question!, factIds: []}]}, {messages: [input.message], accountName: deliveryUser.name})};
       }
-      return {projectId: resolution.project?.id ?? null, resolution, checkedAt: clock().toISOString(), answer};
+      return {projectId: resolution.project?.id ?? null, resolution, checkedAt: clock().toISOString(), answer: styleAssistantConversation(answer, {messages: [input.message], accountName: deliveryUser.name})};
     } catch (error) {
       if (error instanceof ApiError) throw error;
       const code = error instanceof AssistantFailure ? error.code : "ASSISTANT_UNAVAILABLE";

@@ -75,6 +75,20 @@ describe("Staff estimate collaboration", () => {
 });
 
 describe("Staff request resolution", () => {
+  it("shows the requested Main Line and limits resolution to that exact stable line", async () => {
+    server.use(http.get("/api/v1/projects/project-one/estimate-requirements", () => HttpResponse.json({ data: {
+      ...detail, mainLines: [{ id: "main-line", name: "Storage unit", mainBasketId: "joinery", subBasketId: null, subBasketName: null }],
+      requirements: [{ ...detail.requirements[0]!, mainLineId: "main-line" }]
+    } })));
+    renderWithQuery(<StaffEstimateRequirements projectId="project-one" estimate={{ ...estimate, lineItems: [line,
+      { ...line, id: "other-line", mainLineId: "another-line", catalogueId: "another-line", mainLineName: "Different storage" }] }} />);
+    expect(await screen.findByText("Requested Main Line: Storage unit")).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Resolve requirement 1" }));
+    const dialog = screen.getByRole("dialog", { name: "Resolve client requirement" });
+    expect(within(dialog).getAllByRole("checkbox")).toHaveLength(1);
+    expect(within(dialog).queryByText(/Different storage/)).not.toBeInTheDocument();
+  });
+
   function setup(overrides: Partial<EstimateRequirementsDetail> = {}) {
     const state = { detail: structuredClone({ ...detail, ...overrides }) }; const advance = vi.fn();
     server.use(http.get("/api/v1/projects/project-one/estimate-requirements", () => HttpResponse.json({ data: state.detail })));

@@ -1,3 +1,4 @@
+import { parseAssistantResult } from "./assistantResultParser";
 import type { ChatAssistantResult, ChatAssistantMessageState, ChatAssistantRequestInput } from "./projectChatAssistantTypes";
 import { apiClient, ApiError } from "../../api/client";
 import type { ChatActionType, ChatActionTypes, ChatAttachmentPolicy, ChatStagedAttachment, ChatConversationPage, ChatIssueInput, ChatMessage, ChatMessagePage, ChatMessageQuery, ChatParticipantInput, ChatParticipantOptions, ChatParticipantPage, ChatParticipantRevokeInput, ChatReadInput, ChatReadResult, ChatSendInput, ChatSummary, ChatTypingInput, ChatTypingResult } from "./projectChatTypes";
@@ -30,7 +31,7 @@ export function chatErrorMessage(error: unknown) {
   return error instanceof ApiError ? error.message : "Unable to connect. Please try again.";
 }
 export const projectChatApi = {
-  assistantResult: (id: string, resultId: string, signal?: AbortSignal) => apiClient.get<ChatAssistantResult>(`${chatPath(id)}/assistant/results/${encodeURIComponent(resultId)}`, { ...quiet, signal, cache: "no-store" }),
+  assistantResult: async (id: string, resultId: string, signal?: AbortSignal) => parseAssistantResult(await apiClient.get<unknown>(`${chatPath(id)}/assistant/results/${encodeURIComponent(resultId)}`, { ...quiet, signal, cache: "no-store" }), id, resultId),
   requestAssistant: (id: string, messageId: string, input: ChatAssistantRequestInput, signal?: AbortSignal) => apiClient.post<ChatAssistantMessageState>(`${chatPath(id)}/messages/${encodeURIComponent(messageId)}/assistant/request`, input, { ...quiet, signal, cache: "no-store" }),
   availability: (signal?: AbortSignal) => apiClient.get<ChatAvailability>("/chat/availability", { ...quiet, signal }),
   dailyCriticalTasks: (signal?: AbortSignal) => apiClient.get<DailyCriticalTasks | null>("/daily-critical-tasks", { ...quiet, signal }),

@@ -174,7 +174,7 @@ export function ClientPlanPageViewer({ estimate, session, workspace, page, uploa
     const validation = validatePlanDocument(annotations, page);
     if (validation) { setError(validation); return; }
     void runAction("save", async () => {
-      const result = await saveClientPlanDraft(context.runtime, page.id, draftVersion, annotations);
+      const result = await saveClientPlanDraft(context.runtime, page.id, draftVersion, annotations, page.reviewRoundId);
       setDraftVersion(planMutationVersion(result, page.id));
       setSavedDocument(JSON.stringify(annotations));
       setNotice("Annotation draft saved.");
@@ -187,7 +187,7 @@ export function ClientPlanPageViewer({ estimate, session, workspace, page, uploa
     const validation = validatePlanFeedback(annotations, summary, page);
     if (validation) { setError(validation); return; }
     void runAction("preview", async () => {
-      const preview = await previewClientPlanTargets(context.runtime, page.id, annotations);
+      const preview = await previewClientPlanTargets(context.runtime, page.id, annotations, page.reviewRoundId);
       const fingerprint = submissionFingerprint(annotations, summary);
       if (submissionRef.current?.fingerprint !== fingerprint) submissionRef.current = { fingerprint, key: createIdempotencyKey() };
       setPendingRequest({
@@ -204,6 +204,7 @@ export function ClientPlanPageViewer({ estimate, session, workspace, page, uploa
     if (!canPreview || !pendingRequest || (pendingRequest.preview.targets.length > 0 && pendingRequest.selectedDrawingIds.length === 0)) return;
     void runAction("submit", async () => {
       const result = await submitClientPlanRequest(context.runtime, page.id, {
+        ...(page.reviewRoundId ? { reviewRoundId: page.reviewRoundId } : {}),
         version: pendingRequest.preview.pageRevisionNumber,
         summary: pendingRequest.summary,
         annotations: pendingRequest.annotations,

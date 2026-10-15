@@ -1,7 +1,7 @@
 const text = {type: "string"};
 const nullableText = {...text, nullable: true};
 const integer = {type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER};
-const money = {...integer, nullable: true, description: "Integer paise. Preliminary customer selling amount, not internal base cost."};
+const money = {...integer, nullable: true, description: "Exact integer paise from an immutable customer estimate. Null means unavailable."};
 const boolean = {type: "boolean"};
 const ref = (name: string) => ({$ref: `#/components/schemas/${name}`});
 const object = (properties: Record<string, unknown>, required = Object.keys(properties)) => ({type: "object", additionalProperties: false, properties, required});
@@ -29,7 +29,13 @@ export const CHAT_ASSISTANT_SCHEMAS = {
   AssistantCommercialSnapshot: object({currency: {type: "string", enum: ["INR"]}, policy: {type: "string", enum: ["configuration-selling-v1"]}, state,
     lines: list(ref("AssistantPriceLine")), subtotalPaise: money, gstRateBps: integer, gstPaise: money, totalPaise: money, optionalSubtotalPaise: money,
     approvedBaselinePaise: money, hypotheticalTotalPaise: money, assumptions: list(text), missingInputs: list(text)}),
+  AssistantProjectPricing: object({policy: {type: "string", enum: ["published-project-estimate-v1"]}, currency: {type: "string", enum: ["INR"]},
+    state: {type: "string", enum: ["published", "approved"]}, estimateId: text, estimateVersion: {...integer, minimum: 1}, reviewRoundId: text, reviewVersion: {...integer, minimum: 1},
+    publishedAt: {...text, format: "date-time"}, source: object({id: text, label: text, href: nullableText}),
+    lines: {type: "array", maxItems: 100, items: object({id: text, label: text, quantity: nullableText, unit: nullableText, ratePaise: money, amountPaise: money})},
+    lineCount: integer, hasMoreLines: boolean, subtotalPaise: money, gstPaise: money, totalPaise: money}),
   ChatAssistantResult: object({id: text, projectId: text, messageId: text, kind: {type: "string", enum: ["status", "catalogue", "price", "clarification", "handoff", "no_answer"]},
+    disclosurePolicy: {type: "string", enum: ["project-publication-v1"]}, projectPricing: {allOf: [ref("AssistantProjectPricing")], nullable: true},
     narrative: ref("AssistantNarrative"), facts: list(ref("AssistantFact")), candidates: list(ref("AssistantCatalogueCandidate")), missingInputs: list(text),
     commercial: {allOf: [ref("AssistantCommercialSnapshot")], nullable: true}, checkedAt: {...text, format: "date-time"}, stale: boolean,
     commercialAccess: {type: "string", enum: ["allowed", "restricted", "none"], description: "Commercial access is checked independently from chat membership on every read."}}, ["id", "projectId", "messageId", "kind", "facts", "candidates", "missingInputs", "commercial", "checkedAt", "stale", "commercialAccess"])

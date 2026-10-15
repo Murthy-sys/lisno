@@ -1,0 +1,527 @@
+{
+  "private": {
+    "greeting": {
+      "projectId": null,
+      "resolution": {
+        "state": "account",
+        "project": null,
+        "question": null,
+        "choices": []
+      },
+      "checkedAt": "2026-09-16T10:00:00.000Z",
+      "answer": {
+        "disclosurePolicy": "project-publication-v1",
+        "projectPricing": null,
+        "kind": "no_answer",
+        "facts": [],
+        "candidates": [],
+        "missingInputs": [],
+        "commercial": null,
+        "narrative": [
+          {
+            "text": "Hello, Client! I can help with your project's progress, timelines, and published estimates. What would you like to know?",
+            "factIds": []
+          }
+        ]
+      }
+    },
+    "progress": {
+      "projectId": "a",
+      "resolution": {
+        "state": "resolved",
+        "project": {
+          "id": "a",
+          "name": "Project a"
+        },
+        "question": null,
+        "choices": []
+      },
+      "checkedAt": "2026-09-16T10:00:00.000Z",
+      "answer": {
+        "disclosurePolicy": "project-publication-v1",
+        "projectPricing": null,
+        "kind": "status",
+        "facts": [
+          {
+            "id": "project-status",
+            "label": "Project status",
+            "value": "active",
+            "source": {
+              "id": "a",
+              "label": "Project status",
+              "href": null
+            }
+          },
+          {
+            "id": "work-state",
+            "label": "Work status",
+            "value": "Site verified; awaiting Client acceptance.",
+            "source": {
+              "id": "a",
+              "label": "Project execution",
+              "href": null
+            }
+          },
+          {
+            "id": "work-progress",
+            "label": "Vendor reported progress",
+            "value": "75% reported; this is not a Client acceptance.",
+            "source": {
+              "id": "a",
+              "label": "Project execution",
+              "href": null
+            }
+          },
+          {
+            "id": "work-schedule",
+            "label": "Confirmed schedule",
+            "value": "2026-10-16 to 2026-10-20; confirmed work dates, not a project handover commitment.",
+            "source": {
+              "id": "a",
+              "label": "Project execution",
+              "href": null
+            }
+          }
+        ],
+        "candidates": [],
+        "missingInputs": [],
+        "commercial": null,
+        "narrative": [
+          {
+            "text": "Project status: active",
+            "factIds": [
+              "project-status"
+            ]
+          },
+          {
+            "text": "Work status: Site verified; awaiting Client acceptance.",
+            "factIds": [
+              "work-state"
+            ]
+          },
+          {
+            "text": "Vendor reported progress: 75% reported; this is not a Client acceptance.",
+            "factIds": [
+              "work-progress"
+            ]
+          },
+          {
+            "text": "Confirmed schedule: 2026-10-16 to 2026-10-20; confirmed work dates, not a project handover commitment.",
+            "factIds": [
+              "work-schedule"
+            ]
+          }
+        ]
+      }
+    },
+    "timeline": {
+      "projectId": "a",
+      "resolution": {
+        "state": "resolved",
+        "project": {
+          "id": "a",
+          "name": "Project a"
+        },
+        "question": null,
+        "choices": []
+      },
+      "checkedAt": "2026-09-16T10:00:00.000Z",
+      "answer": {
+        "disclosurePolicy": "project-publication-v1",
+        "projectPricing": null,
+        "kind": "status",
+        "facts": [
+          {
+            "id": "work-state",
+            "label": "Work status",
+            "value": "Site verified; awaiting Client acceptance.",
+            "source": {
+              "id": "a",
+              "label": "Project execution",
+              "href": null
+            }
+          },
+          {
+            "id": "work-progress",
+            "label": "Vendor reported progress",
+            "value": "75% reported; this is not a Client acceptance.",
+            "source": {
+              "id": "a",
+              "label": "Project execution",
+              "href": null
+            }
+          },
+          {
+            "id": "work-schedule",
+            "label": "Confirmed schedule",
+            "value": "2026-10-16 to 2026-10-20; confirmed work dates, not a project handover commitment.",
+            "source": {
+              "id": "a",
+              "label": "Project execution",
+              "href": null
+            }
+          }
+        ],
+        "candidates": [],
+        "missingInputs": [],
+        "commercial": null,
+        "narrative": [
+          {
+            "text": "Work status: Site verified; awaiting Client acceptance.",
+            "factIds": [
+              "work-state"
+            ]
+          },
+          {
+            "text": "Vendor reported progress: 75% reported; this is not a Client acceptance.",
+            "factIds": [
+              "work-progress"
+            ]
+          },
+          {
+            "text": "Confirmed schedule: 2026-10-16 to 2026-10-20; confirmed work dates, not a project handover commitment.",
+            "factIds": [
+              "work-schedule"
+            ]
+          }
+        ]
+      }
+    },
+    "estimate": {
+      "projectId": "a",
+      "resolution": {
+        "state": "resolved",
+        "project": {
+          "id": "a",
+          "name": "Project a"
+        },
+        "question": null,
+        "choices": []
+      },
+      "checkedAt": "2026-09-16T10:00:00.000Z",
+      "answer": {
+        "disclosurePolicy": "project-publication-v1",
+        "projectPricing": {
+          "policy": "published-project-estimate-v1",
+          "currency": "INR",
+          "state": "approved",
+          "estimateId": "estimate-a",
+          "estimateVersion": 2,
+          "reviewRoundId": "review-a",
+          "reviewVersion": 1,
+          "publishedAt": "2026-10-10T10:00:00.000Z",
+          "source": {
+            "id": "review-a",
+            "label": "Approved customer estimate",
+            "href": null
+          },
+          "lines": [
+            {
+              "id": "line-a",
+              "label": "Customer work",
+              "quantity": "1",
+              "unit": "item",
+              "ratePaise": 23000,
+              "amountPaise": 23000
+            }
+          ],
+          "lineCount": 1,
+          "hasMoreLines": false,
+          "subtotalPaise": 23000,
+          "gstPaise": 4140,
+          "totalPaise": 27140
+        },
+        "kind": "price",
+        "facts": [],
+        "candidates": [],
+        "missingInputs": [],
+        "commercial": null,
+        "narrative": []
+      }
+    },
+    "clarification": {
+      "projectId": null,
+      "resolution": {
+        "state": "clarification",
+        "project": null,
+        "question": "Which project would you like me to check? Please tell me its name.",
+        "choices": []
+      },
+      "checkedAt": "2026-09-16T10:00:00.000Z",
+      "answer": {
+        "disclosurePolicy": "project-publication-v1",
+        "projectPricing": null,
+        "kind": "clarification",
+        "facts": [],
+        "candidates": [],
+        "missingInputs": [],
+        "commercial": null,
+        "narrative": [
+          {
+            "text": "Which project would you like me to check? Please tell me its name.",
+            "factIds": []
+          }
+        ]
+      }
+    },
+    "projectList": {
+      "projectId": null,
+      "resolution": {
+        "state": "account",
+        "project": null,
+        "question": null,
+        "choices": []
+      },
+      "projectList": {
+        "items": [
+          {
+            "id": "a",
+            "name": "Project a",
+            "detail": "Test"
+          }
+        ],
+        "offset": 0,
+        "nextOffset": null,
+        "version": "146405b132ac5050cde975bc7e049d2eefdcb2b450d7c2fc7a23833cb2d03127"
+      },
+      "checkedAt": "2026-09-16T10:00:00.000Z",
+      "answer": {
+        "disclosurePolicy": "project-publication-v1",
+        "projectPricing": null,
+        "kind": "status",
+        "facts": [],
+        "candidates": [],
+        "missingInputs": [],
+        "commercial": null,
+        "narrative": [
+          {
+            "text": "Here are your projects. Select one to view its progress or ask a question.",
+            "factIds": []
+          }
+        ]
+      }
+    },
+    "choices": {
+      "projectId": null,
+      "resolution": {
+        "state": "clarification",
+        "project": null,
+        "question": "Which project would you like me to check first?",
+        "choices": [
+          {
+            "id": "a",
+            "name": "City Loft",
+            "detail": "Test"
+          },
+          {
+            "id": "c",
+            "name": "City Loft",
+            "detail": "Test"
+          }
+        ]
+      },
+      "checkedAt": "2026-09-16T10:00:00.000Z",
+      "answer": {
+        "disclosurePolicy": "project-publication-v1",
+        "projectPricing": null,
+        "kind": "clarification",
+        "facts": [],
+        "candidates": [],
+        "missingInputs": [],
+        "commercial": null,
+        "narrative": [
+          {
+            "text": "Which project would you like me to check first?",
+            "factIds": []
+          }
+        ]
+      }
+    },
+    "toneGreeting": {
+      "projectId": null,
+      "resolution": {
+        "state": "account",
+        "project": null,
+        "question": null,
+        "choices": []
+      },
+      "checkedAt": "2026-09-16T10:00:00.000Z",
+      "answer": {
+        "disclosurePolicy": "project-publication-v1",
+        "projectPricing": null,
+        "kind": "no_answer",
+        "facts": [],
+        "candidates": [],
+        "missingInputs": [],
+        "commercial": null,
+        "narrative": [
+          {
+            "text": "Hello, Murthy! I can help with your project's progress, timelines, and published estimates. What would you like to know?",
+            "factIds": []
+          }
+        ]
+      }
+    },
+    "toneConcern": {
+      "projectId": "a",
+      "resolution": {
+        "state": "resolved",
+        "project": {
+          "id": "a",
+          "name": "Project a"
+        },
+        "question": null,
+        "choices": []
+      },
+      "checkedAt": "2026-09-16T10:00:00.000Z",
+      "answer": {
+        "disclosurePolicy": "project-publication-v1",
+        "projectPricing": null,
+        "kind": "status",
+        "facts": [
+          {
+            "id": "project-status",
+            "label": "Project status",
+            "value": "active",
+            "source": {
+              "id": "a",
+              "label": "Project status",
+              "href": null
+            }
+          }
+        ],
+        "candidates": [],
+        "missingInputs": [],
+        "commercial": null,
+        "narrative": [
+          {
+            "text": "I hear your concern, Murthy.",
+            "factIds": []
+          },
+          {
+            "text": "Project status: active",
+            "factIds": [
+              "project-status"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "shared": {
+    "estimate": {
+      "disclosurePolicy": "project-publication-v1",
+      "projectPricing": {
+        "policy": "published-project-estimate-v1",
+        "currency": "INR",
+        "state": "approved",
+        "estimateId": "estimate-a",
+        "estimateVersion": 2,
+        "reviewRoundId": "review-a",
+        "reviewVersion": 1,
+        "publishedAt": "2026-10-10T10:00:00.000Z",
+        "source": {
+          "id": "review-a",
+          "label": "Approved customer estimate",
+          "href": null
+        },
+        "lines": [
+          {
+            "id": "line-a",
+            "label": "Customer work",
+            "quantity": "1",
+            "unit": "item",
+            "ratePaise": 23000,
+            "amountPaise": 23000
+          }
+        ],
+        "lineCount": 1,
+        "hasMoreLines": false,
+        "subtotalPaise": 23000,
+        "gstPaise": 4140,
+        "totalPaise": 27140
+      },
+      "kind": "price",
+      "facts": [],
+      "candidates": [],
+      "missingInputs": [],
+      "commercial": null,
+      "narrative": [],
+      "id": "rules-result",
+      "projectId": "a",
+      "messageId": "rules-question",
+      "checkedAt": "2026-09-16T10:00:00.000Z",
+      "stale": false,
+      "commercialAccess": "allowed"
+    },
+    "restricted": {
+      "disclosurePolicy": "project-publication-v1",
+      "projectPricing": null,
+      "kind": "price",
+      "facts": [],
+      "candidates": [],
+      "missingInputs": [],
+      "commercial": null,
+      "narrative": [],
+      "id": "rules-result",
+      "projectId": "a",
+      "messageId": "rules-question",
+      "checkedAt": "2026-09-16T10:00:00.000Z",
+      "stale": false,
+      "commercialAccess": "restricted"
+    },
+    "stale": {
+      "disclosurePolicy": "project-publication-v1",
+      "projectPricing": null,
+      "kind": "price",
+      "facts": [],
+      "candidates": [],
+      "missingInputs": [],
+      "commercial": null,
+      "id": "rules-result",
+      "projectId": "a",
+      "messageId": "rules-question",
+      "checkedAt": "2026-09-16T10:00:00.000Z",
+      "stale": true,
+      "commercialAccess": "allowed"
+    },
+    "toneStatus": {
+      "disclosurePolicy": "project-publication-v1",
+      "projectPricing": null,
+      "kind": "status",
+      "facts": [
+        {
+          "id": "project-status",
+          "label": "Project status",
+          "value": "active",
+          "source": {
+            "id": "a",
+            "label": "Project status",
+            "href": null
+          }
+        }
+      ],
+      "candidates": [],
+      "missingInputs": [],
+      "commercial": null,
+      "narrative": [
+        {
+          "text": "I hear your concern, Murthy.",
+          "factIds": []
+        },
+        {
+          "text": "Project status: active",
+          "factIds": [
+            "project-status"
+          ]
+        }
+      ],
+      "id": "rules-result",
+      "projectId": "a",
+      "messageId": "rules-question",
+      "checkedAt": "2026-09-16T10:00:00.000Z",
+      "stale": false,
+      "commercialAccess": "none"
+    }
+  }
+}

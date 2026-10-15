@@ -321,7 +321,9 @@ export function createVendorBasketProposalService(dependencies: Dependencies) {
     },
     async resource(actor: PublicUser, scope: ProposalScope, proposalId: string, resourceId: string, options: ReadOptions = {}): Promise<ProposalResource> {
       await authorize(actor, scope); const loaded = await load(actor, scope, proposalId, options);
-      return requireResource(loaded, resourceId);
+      const resource = requireResource(loaded, resourceId);
+      if (scope !== "admin" && resource.kind === "section" && (resource.payload as ProposalSectionValue).sectionKey === "design") notFound();
+      return resource;
     },
     async masters(actor: PublicUser, scope: ProposalScope, proposalId: string, kind: ProposalMasterKind, options: HierarchyOptions): Promise<ProposalPage<ProposalMasterResource>> {
       await authorize(actor, scope); const loaded = await load(actor, scope, proposalId, options);
@@ -392,19 +394,21 @@ export function createVendorBasketProposalService(dependencies: Dependencies) {
     removeMainLine(actor: PublicUser, scope: ProposalScope, proposalId: string, mainLineId: string, input: ProposalVersionInput) {
       return remove(actor, scope, proposalId, mainLineId, "main_line", input);
     },
-    saveSection(actor: PublicUser, scope: ProposalScope, proposalId: string, mainLineId: string, sectionKey: KnowledgeSectionKey, input: ProposalSectionInput) {
+    async saveSection(actor: PublicUser, scope: ProposalScope, proposalId: string, mainLineId: string, sectionKey: KnowledgeSectionKey, input: ProposalSectionInput) {
+      if (sectionKey === "design" && scope !== "admin") throw new ApiError(403, "FORBIDDEN", "Only Super Admin configures Design rules.");
       return mutate(actor, scope, proposalId, input, async (loaded, session) => {
         requireResource(loaded, mainLineId, "main_line");
         if (isSubTarget(loaded.proposal) && sectionKey === "quality") parentReadOnly();
         const findings = validateKnowledgeSectionPayload(sectionKey, input.payload);
         if (findings.length) throw new ApiError(400, "VALIDATION_ERROR", "The section contains invalid values.", Object.fromEntries(findings.map((finding) => [finding.path, finding.message])));
         const previous = loaded.resources.find((row) => row.kind === "section" && row.parentId === mainLineId && (row.payload as ProposalSectionValue).sectionKey === sectionKey);
-        if (!previous) notFound();
-        const payload = sectionKey === "pricing" ? normalizeProposalPriceCommands(input.payload, (previous.payload as ProposalSectionValue).payload, createId)
-          : normalizeKnowledgeProposalSectionPayload(sectionKey, input.payload, (previous.payload as ProposalSectionValue).payload);
-        const resource = await append(proposalId, previous.resourceId, "section", mainLineId,
-          { sectionKey, applicability: input.applicability, payload }, previous.version + 1, actor, session, loaded.head.id);
-        return { resources: loaded.resources.filter((row) => row.resourceId !== previous.resourceId).concat(resource), resource };
+        if (!previous && sectionKey !== "design") notFound();
+        const previousPayload = previous ? (previous.payload as ProposalSectionValue).payload : {};
+        const payload = sectionKey === "pricing" ? normalizeProposalPriceCommands(input.payload, previousPayload, createId)
+          : normalizeKnowledgeProposalSectionPayload(sectionKey, input.payload, previousPayload);
+        const resource = await append(proposalId, previous?.resourceId ?? id("proposal-section"), "section", mainLineId,
+          { sectionKey, applicability: input.applicability, payload }, (previous?.version ?? 0) + 1, actor, session, loaded.head.id);
+        return { resources: loaded.resources.filter((row) => row.resourceId !== previous?.resourceId).concat(resource), resource };
       }, { kind: "section", mainLineId, sectionKey });
     },
     saveQuality(actor: PublicUser, scope: ProposalScope, proposalId: string, input: ProposalQualityInput) {
@@ -653,7 +657,8 @@ function detail(loaded: Loaded, scope: ProposalScope, snapshot: ProposalSnapshot
 function hierarchyNode(loaded: Loaded, row: ProposalResource, scope: ProposalScope): ProposalHierarchyNode {
   const node: ProposalHierarchyNode = { ...row, payload: row.payload as ProposalMetadata, sections: {} };
   if (row.kind !== "main_line") return node;
-  const sections = loaded.resources.filter((entry) => entry.kind === "section" && entry.parentId === row.resourceId);
+  const sections = loaded.resources.filter((entry) => entry.kind === "section" && entry.parentId === row.resourceId &&
+    (scope === "admin" || (entry.payload as ProposalSectionValue).sectionKey !== "design"));
   for (const section of sections) node.sections[(section.payload as ProposalSectionValue).sectionKey] = section.resourceId;
   const overview = (sections.find((entry) => (entry.payload as ProposalSectionValue).sectionKey === "overview")?.payload as ProposalSectionValue | undefined)?.payload ?? {};
   const quality = loaded.resources.find((entry) => entry.kind === "quality")?.payload as { parameters: unknown[] } | undefined;
@@ -670,7 +675,7 @@ function hierarchyNode(loaded: Loaded, row: ProposalResource, scope: ProposalSco
   const editable = detail(loaded, scope).capabilities.edit;
   const metadata = { version: loaded.proposal.version, createdById: loaded.proposal.requesterId, updatedById: row.savedById,
     createdAt: loaded.proposal.createdAt.toISOString(), updatedAt: row.savedAt };
-  node.editorItem = { ...metadata, id: row.resourceId, itemType: "main_line", completionRequired: false,
+  node.editorItem = { ...metadata, id: row.resourceId, itemType: "main_line", estimationVisibility: "internal", completionRequired: false,
     basketId: loaded.proposal.basketId, basketName: basket.name, subBasketId: row.parentId, subBasketName: parent?.name ?? null,
     mainLineId: row.resourceId, mainLineName: node.payload.name, description: node.payload.description, status: "draft",
     activeRevisionId: null, draftRevisionId: revisionId, revisionNumber: 1,

@@ -17,6 +17,9 @@ import type { AuthenticatedSession } from "../../contracts/session";
 import { ApiError } from "../../core/http/apiClient";
 import { canPerformOperation } from "../../core/session/operationCapabilities";
 import { NavigationIcon } from "../../navigation/NavigationIcon";
+import { KnowledgeSelect } from "../knowledge/knowledgeUi";
+import { DashboardDrilldowns } from "./DashboardDrilldowns";
+import { REPORT_MODULES, type ReportModule } from "./data/drilldownApi";
 import { useReducedMotion } from "../onboarding/useReducedMotion";
 import {
   BudgetPositionChart,
@@ -651,6 +654,12 @@ function DashboardFailure({ denied, onRetry }: { readonly denied: boolean; reado
 const DEFAULT_DASHBOARD_PERIOD: DashboardPeriod = 30;
 
 export function SuperAdminMobileDashboard({ session }: { readonly session: AuthenticatedSession }) {
+  const [module, setModule] = useState<"overview" | ReportModule>("overview");
+  if (!canPerformOperation(session, "GET /admin/dashboard/overview")) return <View style={styles.root}><DashboardFailure denied onRetry={() => undefined} /></View>;
+  return <View style={styles.root}><View style={{ padding: space.md }}><KnowledgeSelect label="Dashboard module" value={module} allowEmpty={false} options={[{ value: "overview", label: "Executive overview" }, ...REPORT_MODULES.map(value => ({ value, label: value.charAt(0).toUpperCase() + value.slice(1) }))]} onChange={value => setModule(value as typeof module)} /></View>{module === "overview" ? <DashboardOverview session={session} /> : <DashboardDrilldowns session={session} module={module} />}</View>;
+}
+
+function DashboardOverview({ session }: { readonly session: AuthenticatedSession }) {
   const { width, fontScale } = useWindowDimensions();
   const [selectedPeriod, setPeriod] = useState<DashboardPeriod>(DEFAULT_DASHBOARD_PERIOD);
   // A period outside the selector (for example a retired 90-day value) falls back to 30 days.
@@ -714,7 +723,7 @@ export function SuperAdminMobileDashboard({ session }: { readonly session: Authe
     setChartRetryKey((current) => current + 1);
   };
 
-  if (!authorized) return <View style={styles.root}><DashboardFailure denied onRetry={() => undefined} /></View>;
+  if (!authorized || query.error instanceof ApiError && [401, 403, 404].includes(query.error.status)) return <View style={styles.root}><DashboardFailure denied onRetry={() => undefined} /></View>;
   if (query.isPending && !model) {
     return <View style={styles.root}><View style={styles.loadingContent}><DashboardSkeleton /></View></View>;
   }

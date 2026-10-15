@@ -1,24 +1,28 @@
-import { fireEvent, render } from "@testing-library/react-native";
+import { fireEvent, render, within } from "@testing-library/react-native";
 import * as Native from "react-native";
 
 import { AUTHORIZATION_POLICY_VERSION } from "../../contracts/authorization";
 import type { AuthenticatedSession } from "../../contracts/session";
 import { ApiError } from "../../core/http/apiClient";
+import { useScaffoldNavigationBlocked } from "../../navigation/AdaptiveAppScaffold";
 import { ProjectsWorkspace } from "./ProjectsWorkspace";
 import { parseProjectPage } from "./projectsModel";
 import { useProjects } from "./useProjects";
 
 const mockPush = jest.fn();
 jest.mock("expo-router", () => ({ router: { push: (...args: unknown[]) => mockPush(...args) } }));
+jest.mock("../../runtime/RuntimeProvider", () => ({ useConfiguredRuntime: jest.fn() }));
 jest.mock("./useProjects", () => ({ useProjects: jest.fn() }));
 jest.mock("./ProjectCreateActions", () => ({ ProjectCreateAction: () => null }));
-jest.mock("../../navigation/AdaptiveAppScaffold", () => ({ ScaffoldContentBack: () => null }));
+jest.mock("../../navigation/AdaptiveAppScaffold", () => ({ ScaffoldContentBack: () => null, useScaffoldNavigationBlocked: jest.fn() }));
 
 const session: AuthenticatedSession = {
   user: { id: "projects-admin", name: "Admin", email: "admin@example.test", role: "super_admin" },
   authorization: { role: "super_admin", policyVersion: AUTHORIZATION_POLICY_VERSION, permissions: ["projects.list"] }
 };
+const client: AuthenticatedSession = { ...session, user: { ...session.user, role: "client" }, authorization: { ...session.authorization, role: "client", permissions: ["projects.client_summary.read", "ask_lisno.request"] } };
 const queryMock = jest.mocked(useProjects);
+const navigationBlocked = jest.mocked(useScaffoldNavigationBlocked);
 const refetch = jest.fn();
 const fetchNextPage = jest.fn();
 const records = [
@@ -39,8 +43,33 @@ function result(overrides: Record<string, unknown> = {}) {
 }
 
 describe("Projects reference workspace", () => {
-  beforeEach(() => { jest.clearAllMocks(); queryMock.mockReturnValue(result()); });
+  it("offers one floating Ask Lisno button outside the Client project list only with its current permission", async () => {
+    const view = await render(<ProjectsWorkspace session={client} />);
+    expect(view.getAllByRole("button", { name: "Ask Lisno" })).toHaveLength(1);
+    expect(within(view.getByTestId("projects-list")).queryByRole("button", { name: "Ask Lisno" })).toBeNull();
+    expect(view.getByTestId("ask-lisno-launcher")).toHaveStyle({ position: "absolute", bottom: 16, right: 16 });
+    expect(view.queryByText("Ask Lisno")).toBeNull();
+    expect(view.queryByText("Projects, estimates and timelines. Just ask.")).toBeNull();
+    expect(Native.StyleSheet.flatten(view.getByTestId("projects-list").props.contentContainerStyle).paddingBottom).toBeGreaterThanOrEqual(88);
+    await fireEvent.press(view.getByRole("button", { name: "Ask Lisno" }));
+    expect(mockPush).toHaveBeenLastCalledWith("/feature/ask-lisno");
+    await view.rerender(<ProjectsWorkspace session={{ ...client, authorization: { ...client.authorization, permissions: ["projects.client_summary.read"] } }} />);
+    expect(view.queryByRole("button", { name: "Ask Lisno" })).toBeNull();
+    expect(view.queryByTestId("ask-lisno-launcher")).toBeNull();
+    expect(Native.StyleSheet.flatten(view.getByTestId("projects-list").props.contentContainerStyle).paddingBottom).toBe(28);
+    await view.rerender(<ProjectsWorkspace session={session} />);
+    expect(view.queryByRole("button", { name: "Ask Lisno" })).toBeNull();
+  });
+  beforeEach(() => { jest.clearAllMocks(); queryMock.mockReturnValue(result()); navigationBlocked.mockReturnValue(false); });
   afterEach(() => jest.restoreAllMocks());
+
+  it("keeps the floating launcher disabled while scaffold navigation is blocked", async () => {
+    navigationBlocked.mockReturnValue(true);
+    const view = await render(<ProjectsWorkspace session={client} />);
+    expect(view.getByRole("button", { name: "Ask Lisno" })).toBeDisabled();
+    await fireEvent.press(view.getByRole("button", { name: "Ask Lisno" }));
+    expect(mockPush).not.toHaveBeenCalled();
+  });
 
   it("renders account-scoped totals, genuine dates and stable detail navigation", async () => {
     const view = await render(<ProjectsWorkspace session={session} />);
@@ -75,7 +104,7 @@ describe("Projects reference workspace", () => {
 
   it("qualifies partial status counts and keeps pagination reachable in an empty filter", async () => {
     queryMock.mockReturnValue(result({ data: { pages: [page([records[0]], 31, 0, true)] }, hasNextPage: true }));
-    const view = await render(<ProjectsWorkspace session={session} />);
+    const view = await render(<ProjectsWorkspace session={client} />);
     expect(view.getByLabelText("Total projects: 31")).toBeTruthy();
     expect(view.getByLabelText("Active in loaded projects: 1")).toBeTruthy();
     expect(view.getByText(/Status counts cover 1 loaded projects of 31/)).toBeTruthy();
@@ -86,6 +115,7 @@ describe("Projects reference workspace", () => {
     expect(fetchNextPage).toHaveBeenCalledTimes(1);
     await fireEvent.press(view.getByRole("button", { name: "Show all projects" }));
     expect(view.getByText("Villa")).toBeTruthy();
+    expect(view.getAllByRole("button", { name: "Ask Lisno" })).toHaveLength(1);
   });
 
   it("includes a second loaded page and removes partial-count wording when complete", async () => {
@@ -99,8 +129,9 @@ describe("Projects reference workspace", () => {
 
   it("shows loading without false zero counters", async () => {
     queryMock.mockReturnValue(result({ data: undefined, isPending: true }));
-    const view = await render(<ProjectsWorkspace session={session} />);
+    const view = await render(<ProjectsWorkspace session={client} />);
     expect(view.getByText("Loading projects")).toBeTruthy();
+    expect(view.getByRole("button", { name: "Ask Lisno" })).toBeTruthy();
     expect(view.queryByLabelText("Total projects: 0")).toBeNull();
     expect(view.queryByText("No projects yet")).toBeNull();
   });
@@ -117,15 +148,17 @@ describe("Projects reference workspace", () => {
 
   it("shows genuine empty state after a successful zero result", async () => {
     queryMock.mockReturnValue(result({ data: { pages: [page([])] } }));
-    const view = await render(<ProjectsWorkspace session={session} />);
+    const view = await render(<ProjectsWorkspace session={client} />);
     expect(view.getByLabelText("Total projects: 0")).toBeTruthy();
     expect(view.getByText("No projects yet")).toBeTruthy();
+    expect(view.getByRole("button", { name: "Ask Lisno" })).toBeTruthy();
   });
 
   it("offers retry after initial failure", async () => {
     queryMock.mockReturnValue(result({ data: undefined, isError: true, error: new Error("offline") }));
-    const view = await render(<ProjectsWorkspace session={session} />);
+    const view = await render(<ProjectsWorkspace session={client} />);
     expect(view.getByText("Projects could not be loaded")).toBeTruthy();
+    expect(view.getByRole("button", { name: "Ask Lisno" })).toBeTruthy();
     await fireEvent.press(view.getByRole("button", { name: "Retry" }));
     expect(refetch).toHaveBeenCalledTimes(1);
   });

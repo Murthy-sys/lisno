@@ -218,6 +218,7 @@ export function createProjectStatusService(options: {
           if (!user.vendorId || !execution.people.some(person => person.id === actor.id && person.role === "vendor" && person.vendorId === user.vendorId) ||
             !execution.vendorMemberIds.includes(actor.id)) chatNotFound();
         } else if (!membership.participants.some(person => person.id === actor.id) &&
+            !(actor.role === "program_manager" && sources.project.programManagerId === user.id) &&
             !execution.people.some(person => person.id === actor.id && person.role === "procurement" && actor.role === "procurement")) {
           chatNotFound();
         }

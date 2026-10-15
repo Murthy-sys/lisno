@@ -5,6 +5,7 @@ export interface EstimateRequirement {
   projectId: string;
   phase: "pre" | "post";
   mainBasketId: string;
+  mainLineId?: string | null;
   roomId: string | null;
   text: string;
   authorId: string;
@@ -29,6 +30,7 @@ export interface EstimateRequirementsDetail {
   canResolve: boolean;
   requirements: EstimateRequirement[];
   mainBaskets: Array<{ id: string; name: string }>;
+  mainLines?: Array<{ id: string; name: string; mainBasketId: string; subBasketId: string | null; subBasketName: string | null }>;
   rooms: Array<{ id: string; label: string }>;
   indicativeTotalPaise: number | null;
   pricingComplete: boolean;
@@ -36,6 +38,7 @@ export interface EstimateRequirementsDetail {
 
 export interface CreateEstimateRequirementInput {
   mainBasketId: string;
+  mainLineId?: string | null;
   roomId?: string | null;
   text: string;
   expectedRequirementsVersion: number;
@@ -46,6 +49,7 @@ export interface UpdateEstimateRequirementInput {
   expectedRequirementsVersion: number;
   expectedVersion: number;
   mainBasketId?: string;
+  mainLineId?: string | null;
   roomId?: string | null;
   text?: string;
   withdraw?: boolean;
@@ -72,6 +76,7 @@ export const getEstimateRequirements = (projectId: string) =>
 export const createEstimateRequirement = (projectId: string, input: CreateEstimateRequirementInput) =>
   apiClient.post<EstimateRequirementsDetail>(path(projectId), {
     mainBasketId: input.mainBasketId,
+    ...(input.mainLineId === undefined ? {} : { mainLineId: input.mainLineId }),
     roomId: input.roomId ?? null,
     text: input.text,
     expectedRequirementsVersion: input.expectedRequirementsVersion,
@@ -83,6 +88,7 @@ export const updateEstimateRequirement = (projectId: string, requirementId: stri
     expectedRequirementsVersion: input.expectedRequirementsVersion,
     expectedVersion: input.expectedVersion,
     ...(input.mainBasketId === undefined ? {} : { mainBasketId: input.mainBasketId }),
+    ...(input.mainLineId === undefined ? {} : { mainLineId: input.mainLineId }),
     ...(input.roomId === undefined ? {} : { roomId: input.roomId }),
     ...(input.text === undefined ? {} : { text: input.text }),
     ...(input.withdraw === undefined ? {} : { withdraw: input.withdraw })

@@ -91,7 +91,28 @@ export interface AssistantCommercialSnapshot {
   assumptions: string[];
   missingInputs: string[];
 }
+/** Immutable customer publication only. Never populated from live Configuration. */
+export interface AssistantProjectPricing {
+  policy: "published-project-estimate-v1";
+  currency: "INR";
+  state: "published" | "approved";
+  estimateId: string;
+  estimateVersion: number;
+  reviewRoundId: string;
+  reviewVersion: number;
+  publishedAt: string;
+  source: AssistantSourceReference;
+  lines: Array<{ id: string; label: string; quantity: string | null; unit: string | null; ratePaise: number | null; amountPaise: number | null }>;
+  lineCount: number;
+  hasMoreLines: boolean;
+  subtotalPaise: number | null;
+  gstPaise: number | null;
+  totalPaise: number | null;
+}
+export const ASSISTANT_DISCLOSURE_POLICY = "project-publication-v1" as const;
 export interface AssistantGeneratedResult {
+  disclosurePolicy?: typeof ASSISTANT_DISCLOSURE_POLICY;
+  projectPricing?: AssistantProjectPricing | null;
   /** Bounded conversational paragraphs, grounded in the selected verified facts. */
   narrative?: Array<{ text: string; factIds: string[] }>;
   kind: "status" | "catalogue" | "price" | "clarification" | "handoff" | "no_answer";

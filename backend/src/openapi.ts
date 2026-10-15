@@ -1,3 +1,4 @@
+import { DESIGN_REQUIREMENTS_SCHEMAS } from "./openapi/design-requirements.js";
 import { VENDOR_BASKET_REQUEST_NOTIFICATION_SCHEMAS, VENDOR_BASKET_REQUEST_NOTIFICATION_RESPONSES, VENDOR_BASKET_REQUEST_NOTIFICATION_QUERIES, VENDOR_BASKET_REQUEST_NOTIFICATION_BODIES } from "./openapi/vendor-basket-request-notifications.js";
 import { ESTIMATE_COLLABORATION_SCHEMAS, ESTIMATE_COLLABORATION_REQUESTS, ESTIMATE_COLLABORATION_RESPONSES } from "./openapi/estimate-collaboration.js";
 import { VENDOR_BASKET_PROPOSAL_SCHEMAS, VENDOR_BASKET_PROPOSAL_BODIES, VENDOR_BASKET_PROPOSAL_RESPONSES, VENDOR_BASKET_PROPOSAL_QUERIES } from "./openapi/vendor-basket-proposals.js";
@@ -153,6 +154,7 @@ const requestBodiesByOperation: Readonly<Record<string, OpenApiRequestBody>> = {
   ...VENDOR_SUGGESTION_REQUESTS,
   ...VENDOR_KPI_REQUESTS,
   ...VENDOR_INDUCTION_REQUESTS,
+  "POST /projects/:projectId/design-requirements/actions": jsonRequest("DesignRequirementAction"),
   "POST /projects/:projectId/design-workflow/furniture-uoms": jsonRequest("FurnitureUomCreate"),
   "POST /projects/:projectId/design-workflow/actions": { required: true, content: { "application/json": { schema: { $ref: "#/components/schemas/DesignWorkflowActionRequest" } }, "multipart/form-data": { schema: { $ref: "#/components/schemas/DesignWorkflowActionRequest" } } } },
   "POST /auth/login": jsonRequest("LoginRequest"),
@@ -286,6 +288,8 @@ const responseSchemaByOperation: Readonly<Record<string, string>> = {
   "GET /admin/designers": "DesignerOptionList",
   "POST /admin/projects/:projectId/design-assignment": "DesignPlanTask",
   "GET /designer/design-plan-tasks": "DesignPlanTaskList",
+  "GET /projects/:projectId/design-requirements": "DesignRequirements",
+  "POST /projects/:projectId/design-requirements/actions": "DesignRequirements",
   "GET /projects/:projectId/design-workflow": "DesignWorkflow",
   "GET /projects/:projectId/status": "ProjectStatusSummary",
   "GET /projects/:projectId/design-workflow/furniture-uoms": "FurnitureUomOptions",
@@ -2716,6 +2720,7 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
         revisions: { type: "array", items: { type: "object", additionalProperties: true } }
       }
     },
+    ...DESIGN_REQUIREMENTS_SCHEMAS,
     DesignWorkflowActionRequest: {
       type: "object", additionalProperties: false, required: ["expectedVersion", "action", "idempotencyKey"],
       description: "space_planning_complete requires the actual project Client (no representatives), exact data {estimateId, designPlanVersion, reviewRoundId}, expectedVersion and an idempotency key. Every current image must match the immutable approved review round and its approval evidence, with no open feedback and completed prerequisites. This separately records stage completion; existing per-image Design finalization, finance and task generation are unchanged. operational.spacePlanning exposes estimateId, designPlanVersion, nullable reviewRoundId, totalImages, approvedImages, readyForCompletion and nullable completedAt. For internal_kickoff_complete, data must contain designHandoverAcknowledged: true and meetingAt. The assigned Designer acknowledges receiving the design flow after initial-payment confirmation. A signed checklist is required. The server records the acknowledging Designer and receipt time; manager handover and supplied acknowledgement identities are not accepted. After Internal Kick off is completed, its submitted document is available to the linked Client through the authenticated workflow proof endpoint. For client_kickoff_complete, data must contain reviewedDocumentEventId matching Client Kick off operational.submittedDocument.eventId to acknowledge reviewing that document, close Client Kick off and open Key Collection. Missing or mismatched document acknowledgements are rejected. An authorized Sales Manager or Super Admin acting on behalf of the Client must also attach representation proof. The existing Client Kick off countdown starts at Internal Kick off completion.",

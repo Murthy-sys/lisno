@@ -93,7 +93,11 @@ export interface UploadRequest {
   readonly deleteInputWhenFinished?: boolean | undefined;
   readonly onProgress?: ((progress: TransferProgress) => void) | undefined;
   readonly signal?: AbortSignal | undefined;
+  /** Additional parts belong to the same atomic workflow submission. */
+  readonly additionalFiles?: readonly UploadFilePart[] | undefined;
 }
+
+export interface UploadFilePart { readonly fileUri: string; readonly fileName: string; readonly mimeType: string; readonly fieldName: string }
 
 export interface DownloadRequest {
   readonly path: string;
@@ -144,6 +148,7 @@ export interface NativeTransferAdapter {
     readonly fileName: string;
     readonly mimeType: string;
     readonly parameters: Readonly<Record<string, string>>;
+    readonly additionalFiles?: readonly UploadFilePart[] | undefined;
     readonly method: "POST" | "PUT" | "PATCH";
     readonly onProgress: (loadedBytes: number, totalBytes: number | null) => void;
   }): NativeTask<NativeUploadResult>;
@@ -272,6 +277,32 @@ function createExpoTransferAdapter(): NativeTransferAdapter {
       return { exists: file.exists, sizeBytes: file.size };
     },
     createUpload(input) {
+      if (input.additionalFiles?.length) {
+        const xhr = new XMLHttpRequest();
+        let started = false;
+        return {
+          run: () => new Promise<NativeUploadResult>((resolve, reject) => {
+            started = true;
+            xhr.open(input.method, input.url);
+            for (const [key, value] of Object.entries(input.headers)) xhr.setRequestHeader(key, value);
+            xhr.onload = () => resolve({ status: xhr.status, body: xhr.responseText });
+            xhr.onerror = () => reject(new Error("The upload could not be confirmed."));
+            xhr.onabort = () => reject(new TransferCancelledError());
+            xhr.ontimeout = () => reject(new Error("The upload timed out."));
+            xhr.timeout = 180_000;
+            xhr.upload.onprogress = (event) => input.onProgress(event.loaded, event.lengthComputable ? event.total : null);
+            const body = new FormData();
+            for (const [key, value] of Object.entries(input.parameters)) body.append(key, value);
+            for (const part of [input, ...input.additionalFiles!]) {
+              // React Native streams local URI parts without loading their contents into JavaScript.
+              body.append(part.fieldName, { uri: part.fileUri, name: part.fileName, type: part.mimeType } as unknown as Blob);
+            }
+            xhr.send(body);
+          }),
+          cancel: () => { if (started) xhr.abort(); },
+          release: () => { xhr.onload = null; xhr.onerror = null; xhr.onabort = null; xhr.ontimeout = null; xhr.upload.onprogress = null; }
+        };
+      }
       const task = new File(input.fileUri).createUploadTask(input.url, {
         httpMethod: input.method,
         uploadType: UploadType.MULTIPART,
@@ -346,7 +377,7 @@ export class NativeTransferManager {
 
   upload<T>(request: UploadRequest): CancellableTransfer<T> {
     if (request.maxBytes < 1) throw new Error("The upload byte limit must be positive.");
-    if (!/^(?:file|content):\/\//u.test(request.fileUri)) {
+    if ([request, ...(request.additionalFiles ?? [])].some((part) => !/^(?:file|content):\/\//u.test(part.fileUri))) {
       throw new Error("Only local files can be uploaded.");
     }
     const context = this.requireContext();
@@ -363,12 +394,13 @@ export class NativeTransferManager {
 
     const result = (async () => {
       try {
-        const file = await this.native.stat(request.fileUri);
-        if (!file.exists) throw new Error("The selected file is no longer available.");
-        if (file.sizeBytes !== null && file.sizeBytes > request.maxBytes) {
+        const files = await Promise.all([request, ...(request.additionalFiles ?? [])].map((part) => this.native.stat(part.fileUri)));
+        if (files.some((file) => !file.exists)) throw new Error("A selected file is no longer available.");
+        if (files.reduce((sum, file) => sum + (file.sizeBytes ?? 0), 0) > request.maxBytes) {
           throw new TransferSizeError(request.maxBytes);
         }
         if (cancelled) throw new TransferCancelledError();
+        if (!this.resources.isCurrent(context)) throw new StaleTransferError();
         task = this.native.createUpload({
           url,
           fileUri: request.fileUri,
@@ -377,6 +409,7 @@ export class NativeTransferManager {
           fileName: safeFileName(request.fileName),
           mimeType: request.mimeType,
           parameters: request.parameters ?? {},
+          ...(request.additionalFiles?.length ? { additionalFiles: request.additionalFiles.map((part) => ({ ...part, fileName: safeFileName(part.fileName) })) } : {}),
           method: request.method ?? "POST",
           onProgress: (loadedBytes, totalBytes) => {
             if (
@@ -407,7 +440,7 @@ export class NativeTransferManager {
           this.releaseTask(task);
         }
         if (request.deleteInputWhenFinished) {
-          await this.native.delete(request.fileUri).catch(() => undefined);
+          await Promise.all([request, ...(request.additionalFiles ?? [])].map((part) => this.native.delete(part.fileUri).catch(() => undefined)));
         }
       }
     })();

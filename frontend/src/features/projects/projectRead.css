@@ -1,0 +1,4 @@
+.assigned-project-overview { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr)); gap: 1rem; margin: 1rem 0 0; }
+.assigned-project-overview > div { min-width: 0; }
+.assigned-project-overview dt { color: var(--color-text-muted); font-size: .875rem; }
+.assigned-project-overview dd { margin: .25rem 0 0; overflow-wrap: anywhere; }

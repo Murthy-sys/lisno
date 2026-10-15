@@ -23,6 +23,7 @@ import {
 } from "./chatModel";
 import { chatColors } from "./chatTheme";
 import { ChatImageViewer } from "./ChatImageViewer";
+import { ChatAssistantMessage } from "./ChatAssistantMessage";
 import { ChatIcon } from "./ChatIcon";
 import {
   SWIPE_REPLY_COMMIT_DISTANCE,
@@ -345,7 +346,7 @@ function MessageAttachment({
             onPress={() => void open()}
             style={({ pressed }) => [styles.openAttachment, pressed ? styles.pressed : null]}
           >
-            {busy ? <ActivityIndicator color={colors.violet} size="small" /> : <Text style={styles.openAttachmentText}>Open</Text>}
+            {busy ? <ActivityIndicator color={colors.violet} size="small" /> : <Text style={styles.openAttachmentText}>{attachment.kind === "video" ? "Open video" : "Open"}</Text>}
           </Pressable>
         ) : null}
         {error ? <Text accessibilityLiveRegion="polite" style={styles.error}>{error}</Text> : null}
@@ -620,10 +621,16 @@ export function MessageBubble({
         ) : null}
         {message.body ? (
           <Text selectable style={styles.body}>
-            {message.body}
+            {message.mentions?.length ? (() => {
+              const parts = []; let cursor = 0;
+              for (const mention of [...message.mentions].sort((left, right) => left.start - right.start)) { if (mention.start < cursor) continue; parts.push(message.body.slice(cursor, mention.start)); parts.push(<Text key={`${mention.userId}:${mention.start}`} style={{ fontFamily: fonts.semibold }}>{message.body.slice(mention.start, mention.end)}</Text>); cursor = mention.end; }
+              parts.push(message.body.slice(cursor)); return parts;
+            })() : message.body}
             {usesInlineTextTime ? <Text style={styles.inlineTimeReserve}>{"\u00A0".repeat(14)}</Text> : null}
           </Text>
         ) : null}
+        {message.action ? <Text style={styles.replyBody}>{message.action.typeName} · Due {message.action.dueDate}{message.responsible ? ` · ${message.responsible.name}${message.responsible.available ? "" : " (unavailable)"}` : ""}</Text> : message.responsible ? <Text style={styles.replyBody}>Responsible: {message.responsible.name}{message.responsible.available ? "" : " (unavailable)"}</Text> : null}
+        {message.assistant ? <ChatAssistantMessage message={message} onDenied={onDenied} /> : null}
         {message.attachments.map((attachment) => (
           <MessageAttachment
             key={attachment.id}

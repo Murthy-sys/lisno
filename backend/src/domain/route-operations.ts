@@ -46,6 +46,8 @@ export interface HumanJwtOperation {
 }
 
 export const HUMAN_JWT_OPERATION_LIST = [
+  { key: "GET /projects/:projectId/design-requirements", permission: "projects.design_workflow.read", scope: { kind: "project", module: "projects" }, operationClass: "read", superAdminBehavior: "global_read", availability: "baseline" },
+  { key: "POST /projects/:projectId/design-requirements/actions", permission: "projects.design_requirements.act", scope: { kind: "project", module: "projects" }, operationClass: "personal", superAdminBehavior: "deny_personal", availability: "baseline" },
   { key: "POST /estimates/:estimateId/enable-collaboration", permission: "estimation.estimate.save", scope: { kind: "non_project", namespace: "estimation_ownership" }, operationClass: "personal", superAdminBehavior: "deny_personal", availability: "baseline" },
   { key: "GET /projects/:projectId/client-invitation", permission: "projects.client_invitation.read", scope: { kind: "project", module: "projects" }, operationClass: "read", superAdminBehavior: "global_read", availability: "baseline" },
   { key: "POST /projects/:projectId/client-invitation", permission: "projects.client_invitation.manage", scope: { kind: "project", module: "projects" }, operationClass: "admin", superAdminBehavior: "admin_override", availability: "baseline" },

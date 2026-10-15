@@ -1167,7 +1167,7 @@ describe("OpenAPI and Swagger UI", () => {
     }
   });
 
-  it("contains all 456 routes without versioning paths twice", () => {
+  it("contains all 458 routes without versioning paths twice", () => {
     const methods = new Set(["get", "post", "put", "patch", "delete"]);
     const operationCount = Object.values(openApiDocument.paths).reduce(
       (total, pathItem) =>
@@ -1176,7 +1176,7 @@ describe("OpenAPI and Swagger UI", () => {
     );
 
     expect(operationCount).toBe(HUMAN_JWT_OPERATION_LIST.length + 21);
-    expect(operationCount).toBe(456);
+    expect(operationCount).toBe(458);
     expect(Object.keys(openApiDocument.paths).some((path) =>
       path.startsWith("/api/v1")
     )).toBe(false);
@@ -1371,8 +1371,15 @@ describe("OpenAPI and Swagger UI", () => {
         not: { required: ["draftSubBasketGuard", "draftItemGuard"] }
       });
     }
+    expect(componentSchemas().KnowledgeMainLineUpdateRequest).toHaveProperty("properties.estimationVisibility.enum", ["internal", "external"]);
+    for (const name of ["KnowledgeMainLine", "KnowledgeItemListItem", "KnowledgeItemDetail"]) {
+      expect(componentSchemas()[name]).toHaveProperty("properties.estimationVisibility.default", "internal");
+    }
+    expect(componentSchemas().EstimateRequirementCreate).toHaveProperty("properties.mainLineId.nullable", true);
+    expect(componentSchemas().EstimateRequirementUpdate).toHaveProperty("properties.mainLineId.nullable", true);
+    expect(componentSchemas().EstimateRequirements).toHaveProperty("properties.mainLines.items.required", ["id", "mainBasketId", "subBasketId", "subBasketName", "name"]);
     expect(componentSchemas().KnowledgeMainLineUpdateRequest).toHaveProperty("anyOf", [
-      { required: ["name"] }, { required: ["description"] }, { required: ["displayOrder"] }
+      { required: ["name"] }, { required: ["description"] }, { required: ["displayOrder"] }, { required: ["estimationVisibility"] }
     ]);
 
     const previewRequest = componentSchemas().KnowledgePreviewRequest as {

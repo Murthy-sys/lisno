@@ -1,3 +1,4 @@
+import { validateDesignRules } from "./main-line-design-rules.js";
 import type {
   KnowledgeQualityPerformer,
   KnowledgeQualityParameter,
@@ -390,6 +391,7 @@ export function validateQualityParameter(
 }
 
 const ALLOWED_SECTION_KEYS: Record<KnowledgeSectionKey, ReadonlySet<string>> = {
+  design: new Set(["itemNature", "answers", "details", "discussedVendorId", "poApprovalChecklist"]),
   overview: new Set(["description", "uomId", "priorityId", "surfaceIds", "modeIds", "sectionApplicability"]),
   pricing: new Set(["specifications", "brands", "technicalDescription", "qualityLevel", "internalVendorNotes", "priceEntries"]),
   "quantity-margin": new Set(["quantitySlabs", "slabRates", "gapBehavior", "startMarginBps", "bottomMarginBps", "pmcMarkupBps", "wastageBps", "previewInputs"]),
@@ -815,6 +817,8 @@ function validateNonPricingSectionPayload(
   record: Record<string, unknown>
 ): KnowledgeValidationIssue[] {
   switch (sectionKey) {
+    case "design":
+      return validateDesignRules(record);
     case "overview":
       return validateOverviewPayload(record);
     case "quantity-margin":

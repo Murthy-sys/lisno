@@ -1,3 +1,4 @@
+import { normalizeDesignRules, designRulesDigest, designRuleEstimateNotes } from "../domain/main-line-design-rules.js";
 import { ProjectModel } from "../models/Project.js";
 import { EstimateClientReviewRoundModel } from "../models/EstimateClientReviewRound.js";
 import { comparePublishedEstimateSnapshots } from "../services/estimate-client-presentation.js";
@@ -385,13 +386,8 @@ export function createEstimatesRouter(
       const configuredMainLineIds = inputLines
         .filter((line): line is z.infer<typeof configuredEstimateLineSchema> => line.source === "configuration")
         .map((line) => line.mainLineId);
-      const configurationPricedLines = inputLines.filter((line) => {
-        if (line.source !== "configuration") return false;
-        const prior = previousConfigured.get(configuredLineKey(line.roomId, line.mainLineId));
-        return line.rateSource === "configuration" || line.rateSource === undefined &&
-          prior?.rateSource === "configuration" && line.ratePaise === prior.ratePaise;
-      });
-      await fenceEstimateConfigurationDependencies(configurationPricedLines, session);
+      // Design obligations also apply to configured lines with a manual selling price.
+      await fenceEstimateConfigurationDependencies(inputLines, session);
       const configured = await resolveEstimatorCatalogueLines(configuredMainLineIds, session);
       const lineItems = inputLines.map((line, index) => {
         if (line.source !== "configuration") {
@@ -785,6 +781,9 @@ function currentConfiguredFields(source: {
   subBasketName: string | null;
 }) {
   return {
+    designRules: source.line.designRules,
+    designRulesDigest: source.line.designRulesDigest,
+    estimateNotes: source.line.estimateNotes,
     itemType: source.line.itemType,
     mainBasketId: source.line.basketId,
     subBasketId: source.line.subBasketId,
@@ -821,7 +820,9 @@ async function assertEstimateCurrentConfiguration(
         "This Main Line has no current Configuration. Correct it before submitting the estimate.");
     }
     const fields = currentConfiguredFields(source);
-    if (Object.entries(fields).some(([field, value]) => line[field] !== value) ||
+    if (Object.entries(fields).some(([field, value]) => !["designRules", "designRulesDigest", "estimateNotes"].includes(field) && line[field] !== value) ||
+      designRulesDigest(line.designRules) !== source.line.designRulesDigest ||
+      JSON.stringify(line.estimateNotes ?? []) !== JSON.stringify(source.line.estimateNotes) ||
       !estimateConfigurationRateMatches(line, source.line.modeBaseRatesPaise)) {
       throw new ApiError(409, "ESTIMATE_CONFIGURATION_CHANGED",
         "Configuration changed. Save the estimate with its current Main Line values before continuing.");
@@ -896,6 +897,8 @@ function savedConfiguredSnapshot(prior: Record<string, unknown>): {
     mainBasketName: String(prior.mainBasketName),
     subBasketName: directTemporary ? null : String(prior.subBasketName),
     line: {
+      designRules: normalizeDesignRules(prior.designRules), designRulesDigest: designRulesDigest(prior.designRules),
+      estimateNotes: designRuleEstimateNotes(prior.designRules),
       id: String(prior.mainLineId), mainLineId: String(prior.mainLineId),
       basketId: String(prior.mainBasketId),
       subBasketId: directTemporary ? null : String(prior.subBasketId), itemType,

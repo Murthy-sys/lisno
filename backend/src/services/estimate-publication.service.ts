@@ -1,3 +1,4 @@
+import { designRulesDigest } from "../domain/main-line-design-rules.js";
 import { effectiveCommercialStatus, estimateCommercialStatusFields, type EstimationLifecycle } from "../domain/estimation-lifecycle.js";
 import { currentFinalDesignBinding, fenceCollaborativeEstimate, requireEstimateStaffActor } from "./estimate-collaboration-policy.service.js";
 import { assertEstimateRequirementsResolved } from "./estimate-requirements.service.js";
@@ -534,6 +535,7 @@ export function toEstimateSnapshot(
       subBasketName: line.subBasketName,
       mainLineName: line.mainLineName,
       uomName: line.uomName,
+      ...(line.estimateNotes === undefined ? {} : { estimateNotes: [...line.estimateNotes] }),
       id: approvedEstimateLineItemKey({
         id: (line as { id?: unknown }).id,
         estimateId: estimate._id,
@@ -665,6 +667,8 @@ export async function assertCurrentConfiguredPublication(
       unit: source.line.uom.name
     };
     if (Object.entries(expected).some(([field, value]) => stored[field] !== value) ||
+      designRulesDigest(stored.designRules) !== source.line.designRulesDigest ||
+      JSON.stringify(line.estimateNotes ?? []) !== JSON.stringify(source.line.estimateNotes) ||
       !estimateConfigurationRateMatches(line, source.line.modeBaseRatesPaise)) {
       throw new ApiError(409, "ESTIMATE_CONFIGURATION_CHANGED",
         "Configuration changed. Save the estimate with its current Main Line values before sending it.");

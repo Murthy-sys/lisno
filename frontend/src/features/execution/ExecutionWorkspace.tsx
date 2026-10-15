@@ -2,6 +2,8 @@ import { useQuery } from "@tanstack/react-query";
 import { useEffect, useId, useState, type ReactNode } from "react";
 import { Link, useInRouterContext, useLocation, useParams, useSearchParams } from "react-router-dom";
 import { ApiError } from "../../api/client";
+import { useAuth } from "../../auth/AuthProvider";
+import { hasFrontendPermission } from "../../auth/authorization";
 import { Button } from "../../components/ui/Button";
 import { Field, Input, Select } from "../../components/ui/Field";
 import { InlineMessage } from "../../components/ui/InlineMessage";
@@ -15,6 +17,9 @@ import { ExecutionDetailPanel } from "./ExecutionDetailPanel";
 import { VendorAccessPanel } from "./VendorAccessPanel";
 import { ExecutionPolicyPanel } from "./ExecutionPolicyPanel";
 import { executionDate, executionLabel, executionStatusLabels, executionTime } from "./executionPresentation";
+import { AssignedProjectOverview } from "../projects/AssignedProjectOverview";
+import { useAssignedProject } from "../projects/projectReadQueries";
+import { ProjectWorkflowPanel } from "../workflow/ProjectWorkflowPanel";
 import "./execution.css";
 
 export type ExecutionConnectionState = "live" | "connecting" | "polling" | "offline" | "denied";
@@ -83,9 +88,15 @@ function WorkRow({ work, vendor, onOpen }: { work: ExecutionWork; vendor: boolea
 export function VendorExecutionWorkspace({ renderLegacy, connection }: { renderLegacy?: LegacyRenderer; connection?: ExecutionConnectionState }) { return <ExecutionWorkspace vendor renderLegacy={renderLegacy} connection={connection} />; }
 export function ProjectExecutionTracker({ projectId, projectName, connection }: { projectId: string; projectName?: string; connection?: ExecutionConnectionState }) { return <ExecutionWorkspace projectId={projectId} projectName={projectName} connection={connection} />; }
 export function ProjectExecutionPage({ projectId: suppliedProjectId }: { projectId?: string }) {
+  const auth = useAuth();
   const { projectId: routeProjectId } = useParams();
   const projectId = suppliedProjectId ?? routeProjectId;
-  return <div className="execution"><PageHeader id="project-execution-title" eyebrow="Project execution" title="Main Line workflow" description="Track commitments, daily reports and verified completion." />{projectId ? <><ProjectExecutionTracker projectId={projectId} /><VendorAccessPanel projectId={projectId} /></> : <PageState state="error" message="A project is required to open this tracker." />}</div>;
+  const details = useAssignedProject(projectId ?? "", auth.user?.role === "program_manager");
+  return <div className="execution"><PageHeader id="project-execution-title" eyebrow="Project execution" title={details.project?.name ?? "Main Line workflow"} description="Track commitments, daily reports and verified completion." />
+    {details.project ? <><AssignedProjectOverview project={details.project} /><ProjectStatusButton projectId={details.project.id} />{hasFrontendPermission(auth.authorization, "projects.design_workflow.read") ? <ProjectWorkflowPanel projectId={details.project.id} showInitialPayment={false} /> : null}</>
+      : details.canRead && details.query.isPending ? <PageState state="loading" message="Loading project details…" />
+        : details.canRead && details.query.isError ? <PageState state="error" message={procurementError(details.query.error, "Project details could not be loaded.")} action={{ label: "Retry project details", onAction: () => void details.query.refetch() }} /> : null}
+    {projectId ? <><ProjectExecutionTracker projectId={projectId} /><VendorAccessPanel projectId={projectId} /></> : <PageState state="error" message="A project is required to open this tracker." />}</div>;
 }
 
 export function ExecutionPortfolioPage() {

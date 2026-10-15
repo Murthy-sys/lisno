@@ -19,6 +19,7 @@ import { knowledgeQueryKeys } from "./knowledgeQueryKeys";
 import { projectProcurementKeys } from "../procurement/projectProcurementApi";
 import { procurementBasketKeys } from "../procurement/procurementBasketApi";
 import { vendorSuggestionKeys } from "../procurement/vendorSuggestionsApi";
+import { estimateRequirementsKeys } from "../client/estimateRequirementsApi";
 import { estimationCatalogueKeys } from "../leads/estimationCatalogueApi";
 import type {
   KnowledgeCompleteness,
@@ -81,6 +82,19 @@ function itemDetail(overrides: Partial<KnowledgeItemDetail> = {}): KnowledgeItem
 }
 
 describe("knowledge mutation cache synchronization", () => {
+  it("refreshes client requirements after Main Line metadata changes without modifying published quotation caches", async () => {
+    const client = queryClient();
+    const requirementKey = estimateRequirementsKeys.detail("project-one");
+    const published = ["client", "estimates", "approved-round"];
+    client.setQueryData(requirementKey, { mainLines: [{ id: "line-1", name: "Current external line" }] });
+    client.setQueryData(published, { totalPaise: 987600, version: 2 });
+    await refreshKnowledgeMainLineCatalog(client);
+    expect(client.getQueryState(requirementKey)?.isInvalidated).toBe(true);
+    expect(client.getQueryState(published)?.isInvalidated).toBe(false);
+    expect(client.getQueryData(published)).toEqual({ totalPaise: 987600, version: 2 });
+    client.clear();
+  });
+
   it("refreshes cached project basket prices after a Configuration save and activation", async () => {
     const client = queryClient();
     const listKey = procurementBasketKeys.list("project-one");

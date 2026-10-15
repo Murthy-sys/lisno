@@ -1,4 +1,5 @@
 import { model, models, Schema } from "./mongoose.js";
+import { assistantProjectPricingSchema } from "../contracts/assistant-project-pricing.js";
 const identity = {type: String, required: true, immutable: true};
 const run = new Schema({
   _id: identity, projectId: identity, clientId: identity, sessionVersion: {type: Number, required: true, immutable: true},
@@ -21,6 +22,9 @@ run.index({status: 1, eligibleAt: 1, leaseUntil: 1});
 run.index({projectId: 1, status: 1});
 const result = new Schema({
   _id: identity, projectId: identity, messageId: identity, runId: identity, checkedAt: identity,
+  disclosurePolicy: {type: String, enum: ["project-publication-v1"], immutable: true, default: undefined},
+  projectPricing: {type: Schema.Types.Mixed, immutable: true, default: undefined,
+    validate: {validator: (value: unknown) => value == null || assistantProjectPricingSchema.safeParse(value).success, message: "Invalid customer estimate snapshot"}},
   kind: identity, facts: {type: [Schema.Types.Mixed], required: true, immutable: true},
   narrative: {type: [new Schema({text: {type: String, required: true, maxlength: 2000}, factIds: {type: [String], required: true}}, {_id: false})], default: undefined, immutable: true,
     validate: {validator: (rows: Array<{text: string}> | undefined) => rows === undefined || rows.length <= 4 && rows.reduce((length, row) => length + row.text.length, 0) <= 2000, message: "Assistant narrative exceeds its limit"}},

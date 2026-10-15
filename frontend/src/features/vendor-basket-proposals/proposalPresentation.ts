@@ -9,7 +9,7 @@ export const proposalUncertain = (error: unknown) => !(error instanceof ApiError
 export const proposalError = (error: unknown) => error instanceof Error ? error.message : "The request could not be completed. Your entries are preserved.";
 
 const sectionLabels: Record<KnowledgeSectionKey, string> = {
-  overview: "Overview", advanced: "Mode settings", pricing: "Mode pricing",
+  design: "Design", overview: "Overview", advanced: "Mode settings", pricing: "Mode pricing",
   recommendations: "Recommendations", quality: "Quality parameters", scope: "Scope",
   "quantity-margin": "Quantity and margin", execution: "Execution"
 };

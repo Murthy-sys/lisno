@@ -1,3 +1,5 @@
+import * as designRequirements from "../src/services/design-requirements.service.js";
+import { ApiError } from "../src/middleware/errors.js";
 import { collaborativePurchasePreparation, collaborativePurchaseFinal, collaborativePurchasePayment } from "./helpers/collaborative-purchase-order.js";
 import mongoose, { type ClientSession } from "mongoose";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -696,4 +698,31 @@ describe("collaborative individual purchase-order issuance", () => {
     expect(saved.scopeReviewRequired).not.toBe(true);
     expect((await service.submit(buyer, "project-po-a", saved.id, { expectedVersion: saved.version, idempotencyKey: "submit-reviewed-scope" })).status).toBe("pending_approval");
   });
+});
+
+
+it("enforces current Designer readiness before raising, submitting and approving a direct PO without partial writes", async () => {
+  const guard = vi.spyOn(designRequirements, "assertDesignRequirementsPoAllowed");
+  const deny = () => guard.mockRejectedValueOnce(new ApiError(409, "DESIGN_REQUIREMENTS_PO_BLOCKED", "Designer checklist is incomplete."));
+  try {
+    const input = { vendorId: "vendor-po", lines: [line], terms: "Install", idempotencyKey: "design-gate-create" };
+    deny();
+    await expect(service.create(buyer, "project-po-a", input)).rejects.toMatchObject({ code: "DESIGN_REQUIREMENTS_PO_BLOCKED" });
+    expect(await ProjectPurchaseOrderModel.countDocuments()).toBe(0);
+    expect(guard.mock.calls[0]?.slice(0, 2)).toEqual(["project-po-a", ["line-first"]]);
+    const draft = await service.create(buyer, "project-po-a", input);
+    deny();
+    const submission = { expectedVersion: draft.version, idempotencyKey: "design-gate-submit" };
+    await expect(service.submit(buyer, "project-po-a", draft.id, submission)).rejects.toMatchObject({ code: "DESIGN_REQUIREMENTS_PO_BLOCKED" });
+    expect(await ProjectPurchaseOrderRevisionModel.countDocuments()).toBe(0);
+    expect((await ProjectPurchaseOrderModel.findById(draft.id).lean())?.status).toBe("draft");
+    const submitted = await service.submit(buyer, "project-po-a", draft.id, submission);
+    deny();
+    const decision = { expectedVersion: submitted.version, submittedRevisionId: submitted.submittedRevisionId!,
+      decision: "approve" as const, reason: null, budgetOverrideReason: null, idempotencyKey: "design-gate-approve" };
+    await expect(service.decide(admin, "project-po-a", draft.id, decision)).rejects.toMatchObject({ code: "DESIGN_REQUIREMENTS_PO_BLOCKED" });
+    expect(callback).not.toHaveBeenCalled();
+    expect((await ProjectPurchaseOrderModel.findById(draft.id).lean())?.status).toBe("pending_approval");
+    expect((await service.decide(admin, "project-po-a", draft.id, decision)).status).toBe("approved");
+  } finally { guard.mockRestore(); }
 });

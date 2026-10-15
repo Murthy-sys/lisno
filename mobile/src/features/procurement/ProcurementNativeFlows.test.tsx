@@ -1,0 +1,234 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { act, fireEvent, render, waitFor } from "@testing-library/react-native";
+import type { ReactNode } from "react";
+import { Alert } from "react-native";
+import { AUTHORIZATION_POLICY_VERSION, PERMISSION_CODES } from "../../contracts/authorization";
+import type { AuthenticatedSession } from "../../contracts/session";
+import { ApiError, ApiNetworkError } from "../../core/http/apiClient";
+import { useInvalidateEvent } from "../../core/query/useInvalidation";
+import { useConfiguredRuntime } from "../../runtime/RuntimeProvider";
+import { pickDocument } from "../../platform/files";
+import { ProcurementProject } from "./ProcurementProject";
+import { ProcurementAwardPanel } from "./ProcurementAwardPanel";
+import { ProcurementItemsPanel } from "./ProcurementItemsPanel";
+import { ProcurementModeEditor } from "./ProcurementModeEditor";
+import type { ProcurementBasketDetail, ProcurementBasketLine, BasketEnquiry, BasketBidComparisonRow } from "./procurementBasketApi";
+import { ProcurementBasketsPanel } from "./ProcurementBasketsPanel";
+import { ProcurementApprovalScreen } from "./ProcurementApprovalScreen";
+import { ProcurementOrdersPanel } from "./ProcurementOrdersPanel";
+import { VendorLoginAccessPanel } from "./VendorLoginAccessPanel";
+import { decimalUnits, useProcurementContext, type ProcurementContext } from "./procurementNative";
+jest.mock("../../platform/files", () => ({ ...jest.requireActual("../../platform/files"), pickDocument: jest.fn() }));
+jest.mock("../../navigation/AdaptiveAppScaffold", () => ({ useScaffoldNavigationGuard: () => null }));
+jest.mock("../../runtime/RuntimeProvider", () => ({ useConfiguredRuntime: jest.fn() }));
+jest.mock("../../core/query/useInvalidation", () => ({ useInvalidateEvent: jest.fn() }));
+const upload = jest.fn();
+const get = jest.fn(); const post = jest.fn(); const put = jest.fn(); const patch = jest.fn(); const del = jest.fn(); const refresh = jest.fn(async () => undefined);
+const session = { user: { id: "procurement-a", role: "procurement" }, authorization: { role: "procurement", policyVersion: AUTHORIZATION_POLICY_VERSION, permissions: PERMISSION_CODES } } as unknown as AuthenticatedSession;
+const source = { estimateId: "estimate-a", estimateVersion: 7, estimateReviewRoundId: "round-a" };
+const basket = { id: "basket-a", projectId: "project-a", name: "Carpentry", readyLineCount: 1, includedLineCount: 1, workingTotalPaise: 120000, workingTotalComplete: true, approvedEstimatePaise: 160000, committedNetPaise: 20000, estimateSource: source, preparationDigest: "digest-a", lines: [{ sourceLineItemKey: "stable-line/one", mainLineName: "Wardrobe", roomName: "Bedroom 1", approvedQuantity: "2", approvedUnit: "sqft", approvedAmountPaise: 160000, included: true, source: "configuration", mode: null, baseUnitRatePaise: 40000, projectRate: { version: 0, overridePaise: null }, standardCost: null }] };
+const preparation = { projectId: "project-a", estimateSource: source, approvedEstimatePaise: 160000, committedPaise: 20000, remainingPaise: 140000, committedGstPaise: 0, committedTotalPaise: 20000, itemCount: 1, readyItemCount: 1, digest: "preparation-a", blockers: [], orderDefaults: { targetDate: "2026-11-02", deliveryLocation: "Project site" }, estimateLines: [{ key: "stable-line/one", included: true, roomName: "Bedroom 1", mainLineName: "Wardrobe" }], sections: [{ id: "section-a", label: "Carpentry", roomName: "Bedroom 1", estimatedPaise: 160000, netPaise: 100000, items: [{ id: "item-a", version: 4, sourceSectionId: "section-a", sourceLineItemKey: "stable-line/one", itemName: "Wardrobe material", brand: "Maker", uom: { id: "uom-a", name: "Square feet", code: "sqft", status: "active", decimalScale: 3 }, vendor: { id: "vendor-a", name: "Vendor A", code: "VA", status: "active" }, plannedOrderQuantityMilliUnits: 2000, pricePaise: 50000, allocatedWorkPaise: 100000, plannedLineNetPaise: 100000, blockers: [] }] }] };
+function Context({ children }: { children: (c: ProcurementContext) => ReactNode }) { const c = useProcurementContext(session); return <>{children(c)}</>; }
+async function mount(node: ReactNode) { const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { retry: false } } }); return { ...await render(<QueryClientProvider client={client}>{node}</QueryClientProvider>), client }; }
+beforeEach(() => {
+ jest.clearAllMocks();
+ jest.mocked(useInvalidateEvent).mockReturnValue(refresh);
+ jest.mocked(useConfiguredRuntime).mockReturnValue({ environment: { environment: { id: "test" }, status: "ready", generation: 1 }, session: { generation: 1 }, runtime: { api: { authenticated: { get, post, put, patch, delete: del } }, transfers: { upload } } } as unknown as ReturnType<typeof useConfiguredRuntime>);
+});
+it("uses integer decimal conversion without floating rounding or silent precision loss", () => { expect(decimalUnits("0.29", 2)).toBe(29); expect(decimalUnits("4.123")).toBe(4123); expect(decimalUnits("4.1234")).toBeNull(); expect(decimalUnits("-1")).toBeNull(); expect(decimalUnits("1e3")).toBeNull(); });
+it("creates BOQ with the exact selected stable source and preparation digest", async () => {
+ get.mockImplementation(async (path: string) => path.endsWith("/baskets") ? { projectId: "project-a", estimateSource: source, baskets: [basket] } : path.endsWith("/basket-a") ? basket : path.endsWith("/enquiries") ? [] : Promise.reject(new Error(`Unexpected ${path}`)));
+ post.mockResolvedValue({ id: "enquiry-a" });
+ const view = await mount(<Context>{c => <ProcurementBasketsPanel context={c} projectId="project-a" />}</Context>);
+ await fireEvent.press(await view.findByRole("radio", { name: /Carpentry/ }));
+ await fireEvent.press(await view.findByRole("checkbox", { name: /Bedroom 1 · Wardrobe/ }));
+ await fireEvent.press(view.getByRole("button", { name: "Create BOQ enquiry" }));
+ await waitFor(() => expect(post).toHaveBeenCalledWith("/procurement/projects/project-a/baskets/basket-a/enquiries", expect.objectContaining({ expectedPreparationDigest: "digest-a", lines: [{ sourceLineItemKey: "stable-line/one" }], idempotencyKey: expect.any(String) })));
+});
+it("retains one invitation command on unknown delivery and retries exactly that command", async () => {
+ const access = { vendorId: "vendor-a", vendorName: "Vendor A", vendorVersion: 9, recipient: { name: "Vendor A", email: "vendor@example.test" }, access: "setup_pending", invitation: null, delivery: { state: "not_requested" }, readiness: { state: "ready" }, availableActions: ["send_invitation"], blockedReasonCode: null };
+ get.mockResolvedValue(access); post.mockRejectedValueOnce(new ApiNetworkError(new Error("offline"))).mockResolvedValueOnce({ ...access, delivery: { state: "queued" } });
+ const view = await mount(<VendorLoginAccessPanel vendorId="vendor-a" session={session} />);
+ await fireEvent.press(await view.findByRole("button", { name: "Send vendor invitation" }));
+ await fireEvent.press(await view.findByRole("button", { name: "Retry same request" }));
+ await waitFor(() => expect(post).toHaveBeenCalledTimes(2));
+ expect(post.mock.calls[0]).toEqual(post.mock.calls[1]); expect(post.mock.calls[0]?.[1]).toMatchObject({ expectedVendorVersion: 9, invitationId: null, expectedInvitationVersion: null });
+});
+it("hides vendor access details on permission loss", async () => {
+ get.mockRejectedValue(new ApiError(403, "FORBIDDEN", "Denied"));
+ const view = await mount(<VendorLoginAccessPanel vendorId="vendor-a" session={session} />);
+ await view.findByText("Vendor login access unavailable"); expect(view.queryByText("vendor@example.test")).toBeNull(); expect(view.queryByRole("button", { name: "Send vendor invitation" })).toBeNull();
+});
+it("approves only the queued award slot and frozen proposal, with reasoned budget override", async () => {
+ const item = { awardId: "award-a", projectId: "project-a", mainBasketId: "basket-a", enquiryId: "enquiry-a", projectName: "Project A", basketName: "Carpentry", vendorName: "Vendor A", grossPaise: 120000, slot: "budget_override", status: "pending_approvals" };
+ const award = { id: "award-a", projectId: "project-a", mainBasketId: "basket-a", enquiryId: "enquiry-a", version: 6, proposalRevisionId: "proposal-2", status: "pending_approvals", lines: [], approvals: [], proposal: { revision: 2, totals: { netPaise: 100000, gstPaise: 20000, totalPaise: 120000 }, approvedEstimatePaise: 90000, committedNetPaise: 0, milestones: [], requiredSlots: ["budget_override"] } };
+ get.mockImplementation(async (path: string) => path === "/work-order-approvals" ? [item] : award); post.mockResolvedValue(award);
+ const view = await mount(<ProcurementApprovalScreen session={session} />);
+ await fireEvent.press(await view.findByRole("radio", { name: /Project A/ }));
+ const button = await view.findByRole("button", { name: "Approve award revision" }); expect(button.props.accessibilityState.disabled).toBe(true);
+ await fireEvent.changeText(view.getByLabelText("Award approval reason"), "Approved exceptional project allocation");
+ await fireEvent.press(view.getByRole("button", { name: "Approve award revision" }));
+ await waitFor(() => expect(post).toHaveBeenCalledWith("/work-order-approvals/award-a/decision", expect.objectContaining({ expectedVersion: 6, proposalRevisionId: "proposal-2", slot: "budget_override", decision: "approve", reason: "Approved exceptional project allocation" })));
+});
+it("quotes a project request with saved item versions and uses date-only order terms", async () => {
+ get.mockImplementation(async (path: string) => path.includes("purchase-order-preparation") ? preparation : { items: [], total: 0, offset: 0, limit: 50 });
+ post.mockResolvedValue({ projectId: "project-a", preparationDigest: "preparation-a", estimateSource: source, lines: [], modeSnapshots: [], vendorTotals: [{ vendorId: "vendor-a", name: "Vendor A", totals: { totalPaise: 118000 } }], totals: { netPaise: 100000, gstPaise: 18000, totalPaise: 118000 }, remainingPaise: 40000 });
+ const view = await mount(<Context>{c => <ProcurementOrdersPanel context={c} projectId="project-a" />}</Context>);
+ await fireEvent.press(await view.findByRole("button", { name: "Prepare project request" }));
+ await fireEvent.press(view.getByRole("checkbox", { name: /Wardrobe material · Vendor A/ }));
+ await fireEvent.changeText(view.getByLabelText("GST (%): Wardrobe material"), "18");
+ await fireEvent.press(view.getByRole("combobox", { name: "Scope: Wardrobe material" }));
+ await fireEvent.press(await view.findByRole("radio", { name: /Supply and execution/ }));
+ await fireEvent.changeText(view.getByLabelText("Terms for Vendor A"), "Deliver to approved scope and schedule.");
+ await fireEvent.press(view.getByRole("button", { name: "Calculate request quotation" }));
+ await waitFor(() => expect(post).toHaveBeenCalledWith("/procurement/projects/project-a/purchase-order-requests/quote", expect.objectContaining({ expectedPreparationDigest: "preparation-a", lines: [expect.objectContaining({ procurementItemId: "item-a", expectedVersion: 4, gstBasisPoints: 1800, targetDate: "2026-11-02", deliveryLocation: "Project site", scopeType: "supply_and_execution" })] })));
+ expect(await view.findByText("Server quotation: ₹1,180.00")).toBeTruthy();
+});
+it("blocks repeated stale order submission until current data is reloaded", async () => {
+ const order = { id: "po-a", projectId: "project-a", orderNumber: "PO-A", vendor: { name: "Vendor A" }, status: "draft", version: 3, revision: 0, submittedRevisionId: null, approvedRevisionId: null, draftLines: [], draftTotals: { netPaise: 10000, gstPaise: 0, totalPaise: 10000 }, revisions: [], decisions: [] };
+ get.mockImplementation(async (path: string) => path.includes("purchase-order-preparation") ? preparation : path.includes("purchase-order-requests") ? { items: [], total: 0 } : { items: [order], total: 1 });
+ post.mockRejectedValue(new ApiError(409, "STALE_VERSION", "The order changed."));
+ const view = await mount(<Context>{c => <ProcurementOrdersPanel context={c} projectId="project-a" />}</Context>);
+ await fireEvent.press(await view.findByRole("button", { name: "Submit order for approval" }));
+ await view.findByRole("button", { name: "Reload current data" });
+ expect(view.getByRole("button", { name: "Submit order for approval" }).props.accessibilityState.disabled).toBe(true);
+ expect(post).toHaveBeenCalledTimes(1);
+});
+it("previews and saves the current line mode with explicit configuration/source versions", async () => {
+ const line = { ...basket.lines[0], mode: { state: "ready", options: [{ key: "pmc", label: "PMC" }], decision: { id: "decision-a", version: 5, mode: "pmc", quantity: "2", discountBps: 0, markupBasis: "starting" }, preview: null, issues: [], revision: { id: "revision-a", version: 4, contentDigest: "config-a" }, uom: { id: "uom-a", code: "sqft", decimalScale: 3 } } } as unknown as ProcurementBasketLine;
+ post.mockImplementation(async (path: string) => path.endsWith("previews") ? { projectId: "project-a", estimateSource: source, sourceLineItemKey: line.sourceLineItemKey, decisionVersion: 5, scopes: [], issues: [], preview: { adjustedCostPaise: 98765, sellingPaise: 145678 } } : { id: "decision-a", version: 6 });
+ const view = await mount(<Context>{c => <ProcurementModeEditor context={c} projectId="project-a" basketId="basket-a" line={line} source={source} digest="digest-a" onSaved={refresh} />}</Context>);
+ await fireEvent.changeText(view.getByLabelText("Discount (%)"), "0.29");
+ await fireEvent.press(view.getByRole("button", { name: "Preview mode calculation" }));
+ expect(await view.findByText("Cost ₹987.65 · Selling ₹1,456.78")).toBeTruthy();
+ await fireEvent.press(view.getByRole("button", { name: "Save mode" }));
+ await waitFor(() => expect(post).toHaveBeenCalledWith("/procurement/projects/project-a/purchase-order-mode-decisions", expect.objectContaining({ expectedVersion: 5, sourceLineItemKey: "stable-line/one", expectedRevisionDigest: "config-a", expectedEstimateSource: source, quantity: "2", discountBps: 29 })));
+});
+it("creates an item from native fields with positive paise and exact approved source", async () => {
+ get.mockImplementation(async (path: string) => path.includes("purchase-order-preparation") ? preparation : path === "/procurement/uoms" ? [{ id: "uom-a", name: "Square feet", code: "sqft" }] : { items: [], total: 0 });
+ post.mockImplementation(async (_path: string, body: Record<string, unknown>) => ({ id: "created-a", projectId: "project-a", estimateSource: { estimateId: body.estimateId, estimateVersion: body.estimateVersion, sourceLineItemKey: body.sourceLineItemKey } }));
+ const view = await mount(<Context>{c => <ProcurementItemsPanel context={c} projectId="project-a" />}</Context>);
+ await fireEvent.press(await view.findByRole("button", { name: "Add procurement item" }));
+ await fireEvent.press(view.getByRole("combobox", { name: "Approved estimate source" }));
+ await fireEvent.press(await view.findByRole("radio", { name: /Bedroom 1 · Wardrobe/ }));
+ await fireEvent.changeText(view.getByLabelText("Item name"), "Drawer hinges");
+ await fireEvent.changeText(view.getByLabelText("Brand"), "Maker");
+ await fireEvent.press(view.getByRole("combobox", { name: "Unit of measurement" }));
+ await fireEvent.press(await view.findByRole("radio", { name: /Square feet/ }));
+ await fireEvent.changeText(view.getByLabelText("Unit price (INR)"), "29.12");
+ await fireEvent.changeText(view.getByLabelText("Planned order quantity"), "1.25");
+ await fireEvent.press(view.getByRole("button", { name: "Save procurement item" }));
+ await waitFor(() => expect(post).toHaveBeenCalledWith("/procurement/projects/project-a/items", expect.objectContaining({ itemName: "Drawer hinges", brand: "Maker", uomId: "uom-a", vendorId: null, pricePaise: 2912, plannedOrderQuantityMilliUnits: 1250, allocatedWorkPaise: null, estimateId: "estimate-a", estimateVersion: 7, sourceLineItemKey: "stable-line/one" })));
+});
+it("uses the server award schedule and preserves reviewer slots when saving the draft", async () => {
+ const enquiry = { id: "enquiry-a", projectId: "project-a", mainBasketId: "basket-a", version: 4, status: "sent" } as BasketEnquiry;
+ const bid = { bidId: "bid-a", vendorId: "vendor-a", vendorName: "Vendor A", quoteGrossPaise: 118000, eligible: true, lines: [{ boqLineId: "boq-a", description: "Wardrobe", quantityMilliUnits: 2000, uomCode: "sqft", totalPaise: 118000 }] } as BasketBidComparisonRow;
+ const award = { id: "award-a", projectId: "project-a", mainBasketId: "basket-a", enquiryId: "enquiry-a", version: 1, status: "draft", bidId: "bid-a", approvals: [], lines: bid.lines, proposal: { revision: 1, advanceBasisPoints: 2000, totals: { netPaise: 100000, gstPaise: 18000, totalPaise: 118000 }, vendorName: "Vendor A", milestones: [{ id: "advance", name: "Advance", basisPoints: 2000, amountPaise: 23600, reviewerSlots: ["procurement"] }], requiredSlots: ["procurement"] } };
+ get.mockResolvedValue(award);
+ post.mockImplementation(async (path: string) => path.endsWith("award-preview") ? { bidId: "bid-a", vendorId: "vendor-a", vendorName: "Vendor A", totals: { netPaise: 100000, gstPaise: 18000, totalPaise: 118000 }, milestones: [{ id: "advance", name: "Advance", basisPoints: 2000, amountPaise: 23600 }], designerOptions: [], approverBlockers: [], requiredSlots: ["procurement"] } : award);
+ const view = await mount(<Context>{c => <ProcurementAwardPanel context={c} basket={basket as unknown as ProcurementBasketDetail} enquiry={enquiry} bid={bid} awardId={null} refresh={refresh} />}</Context>);
+ await fireEvent.press(view.getByRole("button", { name: "Preview award and payment schedule" }));
+ expect(await view.findByText("Advance · 20% · ₹236.00")).toBeTruthy();
+ await fireEvent.press(view.getByRole("button", { name: "Save award draft" }));
+ await waitFor(() => expect(post).toHaveBeenCalledWith("/procurement/projects/project-a/baskets/basket-a/enquiries/enquiry-a/awards", expect.objectContaining({ expectedVersion: 4, bidId: "bid-a", advanceBasisPoints: 2000, milestoneReviewers: expect.arrayContaining([{ id: "advance", reviewerSlots: ["procurement"] }]), lineTerms: [{ boqLineId: "boq-a" }] })));
+});
+it("locks an uncertain receipt upload and retries the exact source, paise and request identity", async () => {
+ jest.mocked(pickDocument).mockResolvedValue({ status: "selected", asset: { uri: "file:///tmp/synthetic-receipt.png", name: "receipt.png", mimeType: "image/png", size: 120 } } as Awaited<ReturnType<typeof pickDocument>>);
+ upload.mockImplementationOnce(() => ({ result: Promise.reject(new ApiNetworkError(new Error("offline"))) })).mockImplementationOnce(() => ({ result: Promise.resolve({}) }));
+ const onRefresh = jest.fn();
+ const view = await mount(<ProcurementProject projectId="project-a" session={session} data={[{ id: "source-a", name: "Wardrobe", sourceLineItemKey: "stable-line/one" }]} onRefresh={onRefresh} />);
+ await fireEvent.press(view.getByRole("radio", { name: "Wardrobe" }));
+ await fireEvent.changeText(view.getByLabelText("Amount (INR)"), "129.35");
+ await fireEvent.changeText(view.getByLabelText("Description"), "Materials received");
+ await fireEvent.changeText(view.getByLabelText("Incurred date (YYYY-MM-DD)"), "2026-10-14");
+ await fireEvent.press(view.getByRole("button", { name: "Choose receipt" }));
+ await view.findByRole("button", { name: "Receipt: receipt.png" });
+ await fireEvent.press(view.getByRole("button", { name: "Record cost" }));
+ await view.findByRole("button", { name: "Retry same request" });
+ expect(view.getByLabelText("Amount (INR)").props.editable).toBe(false);
+ await fireEvent.press(view.getByRole("button", { name: "Retry same request" }));
+ await waitFor(() => expect(upload).toHaveBeenCalledTimes(2));
+ expect(upload.mock.calls[0]?.[0]).toBe(upload.mock.calls[1]?.[0]);
+ expect(upload.mock.calls[0]?.[0].parameters).toMatchObject({ sourceLineItemKey: "stable-line/one", amountPaise: "12935", incurredAt: "2026-10-14T00:00:00.000Z", idempotencyKey: expect.any(String) });
+ await waitFor(() => expect(onRefresh).toHaveBeenCalledTimes(1));
+});
+
+
+it("preserves a quoted preparation and requires reopening after changed prices or added items", async () => {
+ let currentPreparation = preparation;
+ const quote = { projectId: "project-a", preparationDigest: "preparation-a", estimateSource: source, lines: [], modeSnapshots: [], vendorTotals: [{ vendorId: "vendor-a", name: "Vendor A", totals: { totalPaise: 118000 } }], totals: { netPaise: 100000, gstPaise: 18000, totalPaise: 118000 }, remainingPaise: 40000 };
+ get.mockImplementation(async (path: string) => path.includes("purchase-order-preparation") ? currentPreparation : { items: [], total: 0 }); post.mockResolvedValue(quote);
+ const view = await mount(<Context>{c => <ProcurementOrdersPanel context={c} projectId="project-a" />}</Context>);
+ await fireEvent.press(await view.findByRole("button", { name: "Prepare project request" }));
+ await fireEvent.press(view.getByRole("checkbox", { name: /Wardrobe material · Vendor A/ }));
+ await fireEvent.changeText(view.getByLabelText("GST (%): Wardrobe material"), "18");
+ await fireEvent.press(view.getByRole("combobox", { name: "Scope: Wardrobe material" }));
+ await fireEvent.press(await view.findByRole("radio", { name: /Supply and execution/ }));
+ await fireEvent.changeText(view.getByLabelText("Terms for Vendor A"), "Reviewed original amount");
+ await fireEvent.press(view.getByRole("button", { name: "Calculate request quotation" }));
+ await view.findByText("Server quotation: ₹1,180.00");
+ const item = preparation.sections[0]!.items[0]!;
+ currentPreparation = { ...preparation, digest: "preparation-b", sections: [{ ...preparation.sections[0]!, items: [{ ...item, version: 5, pricePaise: 60000 }, { ...item, id: "item-b", sourceLineItemKey: "stable-line/two", itemName: "New drawer" }] }] };
+ await act(async () => { await view.client.invalidateQueries(); });
+ expect(await view.findByText(/Preparation changed/)).toBeTruthy();
+ expect(view.getByRole("button", { name: "Submit project request" }).props.accessibilityState.disabled).toBe(true);
+ expect(view.getByRole("button", { name: "Calculate request quotation" }).props.accessibilityState.disabled).toBe(true);
+ expect(view.getByText("Server quotation: ₹1,180.00")).toBeTruthy();
+ await fireEvent.press(view.getByRole("button", { name: "Submit project request" }));
+ expect(post).toHaveBeenCalledTimes(1);
+ const alert = jest.spyOn(Alert, "alert").mockImplementation((_title, _message, buttons) => { buttons?.find(button => button.style === "destructive")?.onPress?.(); });
+ await fireEvent.press(view.getByRole("button", { name: "Close order editor" }));
+ await fireEvent.press(view.getByRole("button", { name: "Prepare project request" }));
+ expect(view.queryByText("Server quotation: ₹1,180.00")).toBeNull();
+ expect(view.getByRole("checkbox", { name: /New drawer · Vendor A/ })).toBeTruthy();
+ expect(view.getByRole("button", { name: "Submit project request" }).props.accessibilityState.disabled).toBe(true);
+ alert.mockRestore();
+});
+
+it("retains the original pending order after a background queue refresh removes it", async () => {
+ const order = { id: "po-a", projectId: "project-a", orderNumber: "PO-A", vendor: { name: "Vendor A" }, status: "pending_approval", version: 3, revision: 1, submittedRevisionId: "revision-a", approvedRevisionId: null, draftLines: [], draftTotals: { netPaise: 10000, gstPaise: 0, totalPaise: 10000 }, revisions: [], decisions: [] };
+ let queue: unknown[] = [order];
+ get.mockImplementation(async (path: string) => path.startsWith("/admin/purchase-orders/pending") ? { items: queue, total: queue.length } : { items: [], total: 0 });
+ post.mockRejectedValueOnce(new ApiNetworkError(new Error("lost response"))).mockResolvedValueOnce({ ...order, version: 4, status: "ready_to_issue" });
+ const view = await mount(<ProcurementApprovalScreen session={session} kind="orders" />);
+ await fireEvent.press(await view.findByRole("button", { name: "Approve submitted revision" }));
+ await view.findByRole("button", { name: "Retry same request" });
+ queue = []; await act(async () => { await view.client.invalidateQueries(); });
+ expect(view.getByText("PO-A")).toBeTruthy();
+ await fireEvent.press(view.getByRole("button", { name: "Retry same request" }));
+ await waitFor(() => expect(post).toHaveBeenCalledTimes(2));
+ expect(post.mock.calls[1]).toEqual(post.mock.calls[0]);
+ await view.findByText("No pending vendor orders.");
+});
+
+it("blocks replacing an unresolved award approval and keeps recovery if its queue changes", async () => {
+ const item = { awardId: "award-a", projectId: "project-a", mainBasketId: "basket-a", enquiryId: "enquiry-a", projectName: "Project A", basketName: "Carpentry", vendorName: "Vendor A", grossPaise: 120000, slot: "procurement", status: "pending_approvals" };
+ const other = { ...item, awardId: "award-b", projectId: "project-b", projectName: "Project B" };
+ const award = { id: "award-a", projectId: "project-a", mainBasketId: "basket-a", enquiryId: "enquiry-a", version: 6, proposalRevisionId: "proposal-2", status: "pending_approvals", lines: [], approvals: [], proposal: { revision: 2, totals: { netPaise: 100000, gstPaise: 20000, totalPaise: 120000 }, approvedEstimatePaise: 130000, committedNetPaise: 0, milestones: [], requiredSlots: ["procurement"] } };
+ let queue = [item, other];
+ get.mockImplementation(async (path: string) => path === "/work-order-approvals" ? queue : award);
+ post.mockRejectedValueOnce(new ApiNetworkError(new Error("lost response"))).mockResolvedValueOnce(award);
+ const alert = jest.spyOn(Alert, "alert").mockImplementation(() => undefined);
+ const view = await mount(<ProcurementApprovalScreen session={session} />);
+ await fireEvent.press(await view.findByRole("radio", { name: /Project A/ }));
+ await fireEvent.press(await view.findByRole("button", { name: "Approve award revision" }));
+ await view.findByRole("button", { name: "Retry same request" });
+ await fireEvent.press(view.getByRole("radio", { name: /Project B/ }));
+ expect(alert).toHaveBeenCalledWith("Request still being resolved", expect.any(String));
+ expect(get.mock.calls.some(call => String(call[0]).includes("/work-order-approvals/award-b"))).toBe(false);
+ queue = [other]; await act(async () => { await view.client.invalidateQueries(); });
+ await fireEvent.press(view.getByRole("button", { name: "Retry same request" }));
+ await waitFor(() => expect(post).toHaveBeenCalledTimes(2)); expect(post.mock.calls[1]).toEqual(post.mock.calls[0]);
+ alert.mockRestore();
+});
+
+it("does not retain protected approval rows when refresh denies access during recovery", async () => {
+ const order = { id: "po-private", projectId: "project-a", orderNumber: "PRIVATE-ORDER", vendor: { name: "Private Vendor" }, status: "pending_approval", version: 3, revision: 1, submittedRevisionId: "revision-a", draftLines: [], draftTotals: { netPaise: 10000, gstPaise: 0, totalPaise: 10000 }, revisions: [], decisions: [] };
+ let deny = false;
+ get.mockImplementation(async (path: string) => { if (deny) throw new ApiError(403, "FORBIDDEN", "Access removed"); return path.startsWith("/admin/purchase-orders/pending") ? { items: [order], total: 1 } : { items: [], total: 0 }; });
+ post.mockRejectedValue(new ApiNetworkError(new Error("lost response")));
+ const view = await mount(<ProcurementApprovalScreen session={session} kind="orders" />);
+ await fireEvent.press(await view.findByRole("button", { name: "Approve submitted revision" })); await view.findByRole("button", { name: "Retry same request" });
+ deny = true; await act(async () => { await view.client.invalidateQueries(); });
+ await waitFor(() => expect(view.queryByText("PRIVATE-ORDER")).toBeNull()); expect(view.queryByRole("button", { name: "Retry same request" })).toBeNull();
+});

@@ -8,6 +8,7 @@ export interface KnowledgeUnsavedChangesDialogProps {
   readonly onStay: () => void;
   readonly busy?: boolean;
   readonly error?: string | null;
+  readonly blockingReason?: string;
 }
 
 export function KnowledgeUnsavedChangesDialog({
@@ -15,13 +16,14 @@ export function KnowledgeUnsavedChangesDialog({
   onDiscard,
   onStay,
   busy = false,
-  error
+  error,
+  blockingReason
 }: KnowledgeUnsavedChangesDialogProps) {
   return (
     <Dialog
       title="Save changes before leaving?"
       eyebrow="Estimation configuration"
-      description="This section has changes that have not been saved."
+      description={blockingReason ?? "This section has changes that have not been saved."}
       role="alertdialog"
       busy={busy}
       onClose={onStay}
@@ -37,11 +39,12 @@ export function KnowledgeUnsavedChangesDialog({
         <Button variant="quiet" onClick={onStay} disabled={busy}>
           Stay here
         </Button>
-        <Button variant="destructive-outline" onClick={onDiscard} disabled={busy}>
+        <Button variant="destructive-outline" onClick={onDiscard} disabled={busy || Boolean(blockingReason)}>
           Discard changes
         </Button>
         <Button
           onClick={onSave}
+          disabled={Boolean(blockingReason)}
           busy={busy}
           busyLabel="Saving changes…"
         >

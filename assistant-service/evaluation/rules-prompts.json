@@ -1,0 +1,20 @@
+[
+  {"id":"projects","prompt":"Show my projects","nodeDirect":true},
+  {"id":"progress","prompt":"Show my project progress","tool":"project_status","alsoTools":["project_execution"]},
+  {"id":"timeline","prompt":"Show my project timeline","tool":"project_execution"},
+  {"id":"published-estimate","prompt":"Show my estimate","tool":"project_estimate","basis":"current"},
+  {"id":"project-choice","prompt":"Show progress for [private name]","tool":"project_status","alsoTools":["project_execution"]},
+  {"id":"greeting-progress","prompt":"Hi Lisno, show my project progress","tool":"project_status","alsoTools":["project_execution"]},
+  {"id":"greeting-timeline","prompt":"Good evening, show my project timeline","tool":"project_execution"},
+  {"id":"approved-estimate","prompt":"Show my approved estimate","tool":"project_estimate","basis":"approved"},
+  {"id":"followup-timeline","prompt":"And the timeline?","tool":"project_execution"},
+  {"id":"followup-estimate","prompt":"What about my published estimate?","tool":"project_estimate","basis":"published"},
+  {"id":"help","prompt":"What can you do?","code":"unsupported_request"},
+  {"id":"unknown","prompt":"Tell me a joke","code":"unclear_question"},
+  {"id":"configured-prices","prompt":"Show configured prices","code":"privacy_required"},
+  {"id":"extra-work-price","prompt":"What is the cost of adding a new wardrobe?","code":"quote_required"},
+  {"id":"negated-progress","prompt":"Do not show project progress","code":"unclear_question"},
+  {"id":"conditional-progress","prompt":"If the schedule is late show project progress","code":"unclear_question"},
+  {"id":"unsupported-compound","prompt":"Show project progress and book a flight","code":"unclear_question"},
+  {"id":"callback-suffix","prompt":"Show progress for [private name] and delete the project","code":"unsupported_request"}
+]

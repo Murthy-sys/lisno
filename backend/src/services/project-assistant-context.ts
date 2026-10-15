@@ -10,6 +10,12 @@ export interface AssistantContext {
   user: UserRecord;
 }
 
+/** Identity aliases are derived only from the authorized scope and never sent as a map. */
+export function assistantSensitiveTerms(context: AssistantContext): string[] {
+  return [context.sources.project.name, context.sources.project.location, context.user.name, context.user.email, context.user.mobile,
+    ...context.sources.users.flatMap(user => [user.name, user.email, user.mobile])].filter((value): value is string => typeof value === "string" && value.trim().length > 0);
+}
+
 /** A durable run retains the initiating Client scope, never a synthetic login token. */
 export async function readAssistantContext(repository: ProjectChatRepository, scope: AssistantReadScope, transaction?: ChatTransaction): Promise<AssistantContext> {
   const read = async (tx: ChatTransaction) => {

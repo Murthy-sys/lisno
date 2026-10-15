@@ -766,6 +766,18 @@ describe("AI Estimator Knowledge HTTP routes", () => {
     );
   });
 
+  it("allows visibility-only metadata PATCH while rejecting invalid values and confidential fields", async () => {
+    const testServices = services();
+    const app = appFor(testServices);
+    const path = "/api/v1/admin/ai-estimator-knowledge/main-lines/main-line-1";
+    const input = { expectedVersion: 1, estimationVisibility: "external" };
+    await request(app).patch(path).set("Authorization", "Bearer super-admin-token").send(input).expect(200);
+    expect(testServices.item.updateMainLine).toHaveBeenCalledWith(superAdmin, "main-line-1", input);
+    await request(app).patch(path).set("Authorization", "Bearer super-admin-token").send({ ...input, estimationVisibility: "public" }).expect(400);
+    await request(app).patch(path).set("Authorization", "Bearer super-admin-token").send({ ...input, vendorRate: 1 }).expect(400);
+    await request(app).patch(path).set("Authorization", "Bearer admin-token").send(input).expect(403);
+  });
+
   it("forwards the strict Draft Sub Basket guard for child rename and removal", async () => {
     const testServices = services();
     const app = appFor(testServices);

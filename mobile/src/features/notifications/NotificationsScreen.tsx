@@ -1,8 +1,10 @@
+import { useState, useRef, useEffect, type ReactNode } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { router } from "expo-router";
 import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, useWindowDimensions, View } from "react-native";
 
 import { useInvalidateEvent } from "../../core/query/useInvalidation";
+import { useScaffoldNavigationGuard } from "../../navigation/AdaptiveAppScaffold";
 import { NavigationIcon } from "../../navigation/NavigationIcon";
 import { useConfiguredRuntime } from "../../runtime/RuntimeProvider";
 import { StateView } from "../../ui/primitives";
@@ -29,12 +31,14 @@ export function NotificationsScreen({
   data,
   refreshing,
   onRefresh,
+  footer,
   now = new Date()
 }: {
   readonly definition: FeatureDefinition;
   readonly data: unknown;
   readonly refreshing: boolean;
   readonly onRefresh: () => void;
+  readonly footer?: ReactNode;
   /** Injectable clock for deterministic grouping in tests. */
   readonly now?: Date;
 }) {
@@ -42,16 +46,26 @@ export function NotificationsScreen({
   const invalidate = useInvalidateEvent();
   const { fontScale } = useWindowDimensions();
   const stacked = fontScale >= STACKED_FONT_SCALE;
+  const alive = useRef(true); const guard = useScaffoldNavigationGuard();
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
+  const [readError, setReadError] = useState(""); const opening = useRef(false);
   const markRead = useMutation({
-    mutationFn: (id: string) => context.runtime.api.authenticated.put(`/notifications/${encodeURIComponent(id)}/read`),
+    mutationFn: (item: ChatNotification) => context.runtime.api.authenticated.put<ChatNotification>(`/notifications/${encodeURIComponent(item.id)}/read`, item.routing ? { routingMessageVersion: item.routing.messageVersion } : {}),
     onSuccess: () => invalidate("notification-changed")
   });
+  useEffect(() => { guard?.setBlocked(markRead.isPending); return () => guard?.setBlocked(false); }, [guard, markRead.isPending]);
   const groups = groupNotifications(parseNotifications(data), now);
-
-  const open = (item: ChatNotification) => {
-    // A failed mark-read is not surfaced as success; the next refetch shows the true read state.
-    if (isUnread(item)) markRead.mutate(item.id, { onError: () => undefined });
-    router.push({ pathname: "/record/[featureId]/[recordId]", params: { featureId: "messages", recordId: item.projectId } });
+  const open = async (item: ChatNotification) => {
+    if (opening.current) return; opening.current = true; setReadError("");
+    try {
+      if (isUnread(item)) {
+        const saved = await markRead.mutateAsync(item);
+        if (!alive.current) return;
+        if (item.routing && (saved.routing?.messageVersion !== item.routing.messageVersion || !saved.readAt)) { setReadError("This request changed. Refresh notifications and open the current request."); onRefresh(); return; }
+      }
+      router.push({ pathname: "/record/[featureId]/[recordId]", params: { featureId: "messages", recordId: item.projectId, message: item.messageId } });
+    } catch { if (alive.current) setReadError("This notification could not be opened. Refresh and try again."); }
+    finally { opening.current = false; }
   };
 
   return (
@@ -68,6 +82,7 @@ export function NotificationsScreen({
         {refreshing ? <Text accessibilityLiveRegion="polite" style={styles.updating}>Updating…</Text> : null}
       </View>
 
+      {readError ? <Text accessibilityLiveRegion="assertive" style={styles.error}>{readError}</Text> : null}
       {groups.length === 0 ? (
         <StateView title={`No ${definition.title.toLowerCase()}`} message={definition.emptyMessage} />
       ) : (
@@ -76,17 +91,18 @@ export function NotificationsScreen({
             <Text accessibilityRole="header" style={styles.sectionLabel}>{group.label}</Text>
             <View style={styles.list}>
               {group.items.map((item) => (
-                <NotificationCard key={item.id} item={item} now={now} stacked={stacked} onPress={() => open(item)} />
+                <NotificationCard key={item.id} item={item} now={now} stacked={stacked} disabled={markRead.isPending} onPress={() => void open(item)} />
               ))}
             </View>
           </View>
         ))
       )}
+      {footer}
     </ScrollView>
   );
 }
 
-function NotificationCard({ item, now, stacked, onPress }: { readonly item: ChatNotification; readonly now: Date; readonly stacked: boolean; readonly onPress: () => void }) {
+function NotificationCard({ item, now, stacked, onPress, disabled }: { readonly disabled?: boolean; readonly item: ChatNotification; readonly now: Date; readonly stacked: boolean; readonly onPress: () => void }) {
   const tone = notificationTone(item.type);
   const unread = isUnread(item);
   return (
@@ -94,6 +110,8 @@ function NotificationCard({ item, now, stacked, onPress }: { readonly item: Chat
       accessibilityRole="button"
       accessibilityLabel={notificationAccessibilityLabel(item, now)}
       accessibilityHint="Opens the conversation"
+      disabled={disabled}
+      accessibilityState={{ disabled: Boolean(disabled) }}
       onPress={onPress}
       style={({ pressed }) => [styles.card, pressed ? styles.cardPressed : null]}
     >
@@ -116,6 +134,7 @@ function NotificationCard({ item, now, stacked, onPress }: { readonly item: Chat
 }
 
 const styles = StyleSheet.create({
+  error: { color: colors.danger, fontFamily: fonts.regular, fontSize: 13 },
   content: { flexGrow: 1, width: "100%", maxWidth: 980, alignSelf: "center", padding: spacing.lg, paddingBottom: spacing.huge, gap: spacing.xl },
   header: { gap: spacing.xs, minHeight: 112, paddingRight: spacing.xxl },
   eyebrow: { color: colors.primary, fontFamily: fonts.semibold, fontSize: 11, letterSpacing: 1.4 },

@@ -16,14 +16,8 @@ import { ProjectDetailGlyph } from "../projects/projectDetailIcons";
 import { projectDetailTheme } from "../projects/projectDetailTheme";
 import { ClientEstimateAction } from "./ClientEstimateAction";
 import { clientEstimateListKey, getClientEstimates, type ClientEstimateDecisionResult } from "./clientReviewApi";
-import type { ClientEstimate } from "./clientReviewModel";
-
-const money = new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 });
-const STATUS_LABELS: Readonly<Record<ClientEstimate["status"], string>> = {
-  sent_to_client: "Awaiting your decision",
-  client_changes_requested: "Changes requested",
-  client_approved: "Estimate approved"
-};
+import { clientEstimateMoney, clientEstimateStatus, type ClientEstimate } from "./clientReviewModel";
+import { ClientPreEstimateComparison, PublishedEstimateItems } from "./ClientPublishedEstimateDetails";
 
 function nonempty(value: string | undefined | null): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
@@ -38,29 +32,14 @@ function designState(status: ClientEstimate["status"], planStatus: string | null
   return "Any design plans shared with you will appear in this review.";
 }
 
-function LineItem({ line, index }: { readonly line: ClientEstimate["lineItems"][number]; readonly index: number }) {
-  const name = nonempty(line.roomName) ?? `Included item ${index + 1}`;
-  const specification = nonempty(line.specification);
-  const unit = nonempty(line.unit);
-  return (
-    <View testID={`estimate-line-${index}`} style={[styles.line, index > 0 ? styles.divider : null]}>
-      <View style={styles.lineCopy}>
-        <Text style={styles.lineName}>{name}</Text>
-        {specification ? <Text style={styles.lineDetail}>{specification}</Text> : null}
-        <Text style={styles.lineDetail}>{line.quantity}{unit ? ` ${unit}` : ""} × {money.format(line.rate)}</Text>
-      </View>
-      <Text style={styles.lineAmount}>{line.amount === undefined ? "Amount unavailable" : money.format(line.amount)}</Text>
-    </View>
-  );
-}
-
 export function ClientEstimateReviewScreen({ estimateId, session, reviewContent }: {
   readonly estimateId: string;
   readonly session: AuthenticatedSession;
   readonly reviewContent?: (estimate: ClientEstimate) => ReactNode;
 }) {
   const context = useConfiguredRuntime();
-  const [decisionResult, setDecisionResult] = useState<ClientEstimateDecisionResult | null>(null);
+  const [decisionState, setDecisionState] = useState<{ scopeKey: string; result: ClientEstimateDecisionResult } | null>(null);
+  const scopeKey = `${context.environment.environment.id}:${session.user.id}`;
   const canRead = session.user.role === "client" &&
     Boolean(resolveAuthorizedFeature("estimates", session.user.role, session.authorization)) &&
     canPerformOperation(session, "GET /client/estimates");
@@ -72,6 +51,7 @@ export function ClientEstimateReviewScreen({ estimateId, session, reviewContent 
   });
 
   if (!canRead) return <StateView tone="denied" title="Estimate review unavailable" message="Your current account cannot open this Client estimate." />;
+  if (context.environment.status !== "ready") return <StateView tone="error" title="Estimate review unavailable" message="Connect to the service to load this estimate." />;
   if (query.isPending) return <View style={styles.center}><BrandLoader label="Loading estimate review" tone="dark" /></View>;
   if (query.error instanceof ApiError && [401, 403, 404].includes(query.error.status)) {
     return <StateView tone="denied" title="Estimate review unavailable" message="This estimate is outside your current access." actionLabel="Retry" onAction={() => void query.refetch()} />;
@@ -88,9 +68,12 @@ export function ClientEstimateReviewScreen({ estimateId, session, reviewContent 
     return <StateView tone="denied" title="Estimate unavailable" message="This estimate is not in your current Client review list." actionLabel="Refresh" onAction={() => void query.refetch()} />;
   }
 
-  const status = decisionResult?.status ?? estimate.status;
-  const projectId = decisionResult ? decisionResult.projectId : estimate.projectId;
-  const reviewEstimate: ClientEstimate = decisionResult ? { ...estimate, status, projectId } : estimate;
+  const review = estimate.reviewSourceIssue ? null : estimate.publishedReview;
+  const decisionResult = decisionState?.scopeKey === scopeKey ? decisionState.result : null;
+  const recorded = decisionResult?.id === estimate.id && decisionResult.publishedReview.id === review?.id ? decisionResult : null;
+  const status = recorded?.status ?? estimate.status;
+  const projectId = recorded ? recorded.projectId : estimate.projectId;
+  const reviewEstimate: ClientEstimate = recorded ? { ...estimate, status, projectId } : estimate;
   const projectAllowed = Boolean(projectId) && Boolean(resolveAuthorizedFeature("projects", session.user.role, session.authorization)) &&
     canPerformOperation(session, "GET /projects/:projectId");
   const included = estimate.lineItems.filter((item) => item.included);
@@ -110,7 +93,7 @@ export function ClientEstimateReviewScreen({ estimateId, session, reviewContent 
 
       {query.isRefetchError ? <View style={styles.notice}><Text accessibilityLiveRegion="assertive" style={styles.noticeText}>The latest estimate could not be loaded. These details may be out of date.</Text><Button label="Refresh estimate" variant="quiet" onPress={() => void query.refetch()} /></View> : null}
       {query.isRefetching && !query.isRefetchError ? <Text accessibilityLiveRegion="polite" style={styles.updating}>Updating estimate…</Text> : null}
-      {decisionResult ? <View style={styles.notice}><Text accessibilityLiveRegion="polite" style={styles.noticeText}>{status === "client_approved" ? "Your approval was recorded." : "Your change request was recorded."}</Text></View> : null}
+      {recorded ? <View style={styles.notice}><Text accessibilityLiveRegion="polite" style={styles.noticeText}>{status === "client_approved" ? "Your approval was recorded." : "Your change request was recorded."}</Text></View> : null}
 
       <View style={styles.card}>
         <View style={styles.cardHeading}>
@@ -124,24 +107,33 @@ export function ClientEstimateReviewScreen({ estimateId, session, reviewContent 
           <View style={styles.summary}>
             <View style={styles.summaryCopy}>
               <Text style={styles.label}>GST-inclusive total</Text>
-              <Text testID="estimate-total" style={styles.total}>{money.format(estimate.total)}</Text>
+              <Text testID="estimate-total" style={styles.total}>{clientEstimateMoney(estimate.total)}</Text>
             </View>
-            <Text testID="estimate-status" style={styles.status}>{STATUS_LABELS[status]}</Text>
+            <Text testID="estimate-status" style={styles.status}>{recorded ? status === "client_approved" ? "Estimate approved" : "Changes requested" : clientEstimateStatus(estimate)}</Text>
           </View>
           <View style={styles.meta}>
             <Text style={styles.metaText}>Estimate ID: {estimate.id}</Text>
             {clientName ? <Text style={styles.metaText}>Client: {clientName}</Text> : null}
-            {estimate.subtotal !== undefined ? <Text style={styles.metaText}>Subtotal: {money.format(estimate.subtotal)}</Text> : null}
-            {estimate.gst !== undefined ? <Text style={styles.metaText}>GST: {money.format(estimate.gst)}</Text> : null}
+            {estimate.subtotal !== null ? <Text style={styles.metaText}>Subtotal: {clientEstimateMoney(estimate.subtotal)}</Text> : null}
+            {estimate.gst !== null ? <Text style={styles.metaText}>GST: {clientEstimateMoney(estimate.gst)}</Text> : null}
           </View>
-          <ClientEstimateAction estimate={estimate} session={session} onDecision={setDecisionResult} onRefresh={() => void query.refetch()} decisionRecorded={decisionResult !== null} />
+          {review ? <>
+            <Text style={styles.metaText}>{review.phase === "post" ? "Final post-estimate" : review.phase === "pre" ? "Pre-estimate" : "Published estimate"} · Version {review.estimateVersion} · Submission {review.sendGeneration}</Text>
+            <Text style={styles.metaText}>Submitted {Number.isFinite(Date.parse(review.submittedAt)) ? new Date(review.submittedAt).toLocaleDateString("en-GB") : "Date unavailable"}</Text>
+            {review.status === "superseded" ? <Text style={styles.designState}>This submitted review was withdrawn. Your team is revising the estimate; review the next submission when it is ready.</Text> : null}
+            {review.status === "changes_requested" ? <Text style={styles.designState}>Sales is revising your estimate. Your last submitted estimate remains available here.</Text> : null}
+            {review.decisionNote ? <Text style={styles.designState}>Your review note: {review.decisionNote}</Text> : null}
+            {review.status === "approved" ? <Text style={styles.designState}>{review.phase === "post" ? "Your final approval is recorded and estimate changes are closed. Your team will confirm the initial payment before issuing work orders." : review.phase === "pre" ? "Your pre-estimate approval is recorded. Design and procurement preparation can continue while your team prepares the final estimate." : "Your approved estimate is recorded."}</Text> : null}
+            <ClientPreEstimateComparison key={`${estimate.id}:${review.id}`} estimate={estimate} session={session} />
+          </> : <Text accessibilityLiveRegion="polite" style={styles.designState}>The submitted version could not be verified. Please ask your Sales team to submit the estimate again.</Text>}
+          <ClientEstimateAction key={`${scopeKey}:${estimate.id}:${review?.id}:${review?.version}`} estimate={estimate} session={session} onDecision={(result) => setDecisionState({ scopeKey, result })} onRefresh={() => query.refetch({ throwOnError: true })} decisionRecorded={recorded !== null} decisionBlocked={query.isRefetchError || query.isRefetching} />
           {projectAllowed && projectId ? (
             <Button label="Open project designs" variant="secondary" onPress={() => router.push({ pathname: "/record/[featureId]/[recordId]", params: { featureId: "projects", recordId: projectId, tab: "designs" } })} />
           ) : null}
         </View>
       </View>
 
-      <View style={styles.card}>
+      {review ? <View style={styles.card}>
         <View style={styles.cardHeading}>
           <View style={styles.iconChip}><ProjectDetailGlyph name="list" size={22} color={colors.primary} /></View>
           <View style={styles.headingCopy}>
@@ -150,10 +142,9 @@ export function ClientEstimateReviewScreen({ estimateId, session, reviewContent 
           </View>
         </View>
         <View style={styles.lines}>
-          {included.length === 0 ? <Text style={styles.empty}>No included items were returned for this estimate. Refresh to check the published scope.</Text> :
-            included.map((line, index) => <LineItem key={line.id ?? `${line.catalogueId ?? "line"}-${index}`} line={line} index={index} />)}
+          <PublishedEstimateItems snapshot={review.snapshot} />
         </View>
-      </View>
+      </View> : null}
 
       <View style={styles.card}>
         <View style={styles.cardHeading}>
@@ -194,14 +185,7 @@ const styles = StyleSheet.create({
   status: { color: colors.primary, fontFamily: fonts.medium, fontSize: 12, lineHeight: 18 },
   meta: { gap: 4 },
   metaText: { color: colors.inkMuted, fontFamily: fonts.regular, fontSize: 12, lineHeight: 18 },
-  lines: { paddingHorizontal: spacing.md, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
-  line: { flexDirection: "row", flexWrap: "wrap", alignItems: "flex-start", justifyContent: "space-between", gap: spacing.sm, paddingVertical: spacing.md },
-  divider: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
-  lineCopy: { flexGrow: 1, flexBasis: 160, minWidth: 0, gap: 3 },
-  lineName: { color: colors.ink, fontFamily: fonts.semibold, fontSize: 14, lineHeight: 20 },
-  lineDetail: { color: colors.inkMuted, fontFamily: fonts.regular, fontSize: 12, lineHeight: 18 },
-  lineAmount: { color: colors.ink, fontFamily: fonts.semibold, fontSize: 14, lineHeight: 20, fontVariant: ["tabular-nums"] },
-  empty: { color: colors.inkMuted, fontFamily: fonts.regular, fontSize: 13, lineHeight: 19, paddingVertical: spacing.md },
+  lines: { padding: spacing.md, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
   designState: { color: colors.inkMuted, fontFamily: fonts.regular, fontSize: 13, lineHeight: 20 },
   notice: { gap: spacing.xs, padding: spacing.sm, borderWidth: 1, borderColor: colors.border, borderRadius: projectDetailTheme.innerRadius, backgroundColor: colors.surface },
   noticeText: { color: colors.ink, fontFamily: fonts.medium, fontSize: 13, lineHeight: 20 },

@@ -137,8 +137,8 @@ const ADDITIONAL_ROWS = {
   design_manager: [2, 5, 9, 11, 13, ...range(16, 23), ...range(26, 29), 38, 39, ...range(61, 65), ...range(77, 79)],
   design_head: [2, 5, 9, 11, ...range(14, 23), ...range(26, 29), 38, 39, ...range(61, 65)],
   client: [2, 3, 5, 24, ...range(26, 27), 29, ...range(36, 39), ...range(45, 48), ...range(54, 60), ...range(82, 84)],
-  procurement: [17, 18, 88, 89, 90],
-  program_manager: [],
+  procurement: [2, 5, 17, 18, 88, 89, 90],
+  program_manager: [2, 5],
   finance_head: [17, 18, 88, 89, 90],
   site_manager: [17, 18, 88, 89, 90],
   worker_electrician: [17, 18],
@@ -164,6 +164,15 @@ function permissionsForRows(rows: readonly number[]): string[] {
 }
 
 describe("authorization policy", () => {
+  it.each(["procurement", "program_manager"] as const)("grants %s only generic project observer permissions", role => {
+    for (const permission of ["projects.list", "projects.read", "projects.design_workflow.read"] as const) {
+      expect(hasPermission(role, permission)).toBe(true);
+    }
+    for (const permission of ["projects.floor.create", "projects.stage.create", "projects.task.create",
+      "projects.design_workflow.act", "projects.design_workflow.payments.read", "design.version.upload"] as const) {
+      expect(hasPermission(role, permission)).toBe(false);
+    }
+  });
   it("contains exactly the six project module codes", () => {
     expect(PROJECT_MODULES).toEqual([
       "projects", "design", "estimation", "procurement", "finance", "execution"
@@ -232,6 +241,7 @@ describe("authorization policy", () => {
           !permission.startsWith("projects.client_invitation.") && !permission.startsWith("estimation.requirements.") && !["identity.project_invitation.accept", "estimation.review.withdraw", "estimation.preparation.release"].includes(permission) &&
           !(role === "designer" && ["estimation.lead.read", "estimation.estimate.read", "estimation.estimate.save", "estimation.estimate.submit", "estimation.estimate.send_client"].includes(permission)) &&
           permission !== "ask_lisno.request" && !permission.startsWith("chat.") && !permission.startsWith("execution.") && !permission.startsWith("procurement.vendor_access.") &&
+          permission !== "projects.design_requirements.act" &&
           permission !== "projects.status.read" &&
           !permission.startsWith("procurement.items.") && !permission.startsWith("procurement.vendors.") && !permission.startsWith("procurement.vendor_suggestions.") &&
           !VENDOR_DIRECTORY_PERMISSIONS.includes(permission as never) &&
@@ -270,8 +280,8 @@ describe("authorization policy", () => {
         permissionsForRows([...COMMON_ROWS, ...ADDITIONAL_ROWS[role]])
       );
     }
-    expect(PERMISSION_CODES).toHaveLength(195);
-    expect(new Set(PERMISSION_CODES).size).toBe(195);
+    expect(PERMISSION_CODES).toHaveLength(196);
+    expect(new Set(PERMISSION_CODES).size).toBe(196);
     expect(ROLE_PERMISSIONS.super_admin).toEqual(PERMISSION_CODES);
   });
 
@@ -340,8 +350,8 @@ describe("authorization policy", () => {
         expect(hasPermission(role, permission), `${role} ${permission}`).toBe(
           ["site_manager", "designer", "procurement", "finance_head", "super_admin"].includes(role));
     }
-    expect(hasPermission("program_manager", "projects.list")).toBe(false);
-    expect(hasPermission("program_manager", "projects.read")).toBe(false);
+    expect(hasPermission("program_manager", "projects.list")).toBe(true);
+    expect(hasPermission("program_manager", "projects.read")).toBe(true);
   });
 
   it("restricts reusable Quality Control option creation to Super Admin", () => {
@@ -860,4 +870,12 @@ describe("AI Estimator Knowledge mutation actor guard", () => {
       });
     }
   );
+});
+
+
+it("limits Design requirement actions to the task actors, separately from workflow observers", () => {
+  for (const role of ROLE_CODES) {
+    expect(hasPermission(role, "projects.design_requirements.act"), role)
+      .toBe(["super_admin", "designer", "procurement", "client"].includes(role));
+  }
 });

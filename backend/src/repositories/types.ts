@@ -1,4 +1,5 @@
 import type { ProjectClientInvitationRecord, ProjectInitiationReceipt } from "../domain/project-client-invitations.js";
+import type { DesignRequirementsSource, DesignRequirementsState } from "../domain/design-requirements.js";
 import type { WorkflowDesignPlanData, WorkflowSpacePlanningSource } from "../domain/workflow-space-planning.js";
 import type { ProjectStatusEstimateEvidence } from "./project-status.js";
 import type { FurnitureUomOption, FurnitureUomRecord, NewFurnitureUom } from "../domain/workflow-uoms.js";
@@ -944,6 +945,16 @@ export interface GrantRevocation {
 }
 
 export interface SeedData {
+  designRequirementsSources?: DesignRequirementsSource[];
+  designRequirementsStates?: DesignRequirementsState[];
+  /** Current assignment projection; production reads the canonical workflow task collection. */
+  projectWorkflowAssignments?: Array<{
+    projectId: string;
+    kind: import("../domain/project-workflow.js").ProjectWorkflowTaskKind;
+    assigneeRole: Role;
+    assigneeUserId: string | null;
+    supersededAt?: string | null;
+  }>;
   projectClientInvitations?: ProjectClientInvitationRecord[];
   projectInitiationReceipts?: ProjectInitiationReceipt[];
   procurementVendorInvitationSources?: import("../domain/user-invitations.js").ProcurementVendorInvitationSource[];
@@ -1003,6 +1014,9 @@ export type NewDesignStage = DesignStageRecord;
 export type NewTask = TaskRecord;
 
 export interface AppRepository {
+  findDesignRequirementsSource(projectId: string, lock?: boolean): Promise<DesignRequirementsSource | null>;
+  findDesignRequirementsState(projectId: string, lock?: boolean): Promise<DesignRequirementsState | null>;
+  saveDesignRequirementsState(projectId: string, expectedVersion: number, state: DesignRequirementsState): Promise<DesignRequirementsState>;
   findProjectClientInvitation(projectId: string): Promise<ProjectClientInvitationRecord | null>;
   findProjectClientInvitationByTokenHash(tokenHash: string): Promise<ProjectClientInvitationRecord | null>;
   findLatestProjectClientInvitationIssuedAt(emailNormalized: string): Promise<string | null>;
@@ -1229,6 +1243,9 @@ export interface AppRepository {
     user: UserRecord,
     module: ProjectModule
   ): Promise<ProjectRecord[]>;
+  /** Metadata/progress visibility only; must not supply mutation or priced module scope. */
+  pageProjectsForUserRead(user: UserRecord, pagination: PaginationInput): Promise<PageResult<ProjectRecord>>;
+  findProjectForUserRead(user: UserRecord, projectId: string): Promise<ProjectRecord | null>;
   listProjectsForDesignerIds(
     designerIds: string[],
     limit?: number

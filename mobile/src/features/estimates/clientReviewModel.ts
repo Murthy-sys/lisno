@@ -7,39 +7,92 @@ const id = z.string().trim().min(1);
 const optionalText = z.string().nullish().transform((value) => value ?? null);
 const finiteMoney = z.number().finite().nonnegative();
 
+const paise = z.number().int().safe().nonnegative();
+const nullableMoney = finiteMoney.nullish().transform((value) => value ?? null);
+
+// Deliberately strip staff-only fields: client rendering accepts the frozen publication only.
 const lineItemSchema = z.object({
-  id: id.optional(),
+  id: optionalText,
+  source: z.enum(["legacy", "configuration"]).optional(),
   catalogueId: z.string().optional(),
   roomName: z.string().optional(),
-  specification: z.string().optional(),
+  specification: optionalText,
+  estimateNotes: z.array(z.string()).optional(),
   unit: z.string().optional(),
+  uomName: z.string().optional(),
+  mainBasketId: z.string().optional(),
+  mainBasketName: z.string().optional(),
+  subBasketName: optionalText,
+  mainLineName: z.string().optional(),
+  itemType: z.enum(["main_line", "temporary"]).optional(),
   quantity: z.number().finite().nonnegative(),
-  rate: finiteMoney,
-  amount: finiteMoney.optional(),
+  rate: nullableMoney,
+  ratePaise: paise.nullable().optional(),
+  amount: nullableMoney,
+  amountPaise: paise.nullable().optional(),
   included: z.boolean()
-}).passthrough();
-
-const estimateSchema = z.object({
-  id,
-  projectId: optionalText,
-  status: z.enum(["sent_to_client", "client_changes_requested", "client_approved"]),
-  designPlanStatus: optionalText,
-  total: finiteMoney,
-  subtotal: finiteMoney.optional(),
-  gst: finiteMoney.optional(),
+});
+const snapshotSchema = z.object({
+  projectName: z.string(), clientName: z.string(), location: z.string(),
+  propertyType: z.string().optional(),
   lineItems: z.array(lineItemSchema),
-  lead: z.object({
-    projectName: z.string().optional(),
-    location: z.string().optional(),
-    clientName: z.string().optional()
-  }).passthrough().nullable()
-}).passthrough();
+  total: nullableMoney, subtotal: nullableMoney, gst: nullableMoney,
+  totalPaise: paise.nullable().optional(), subtotalPaise: paise.nullable().optional(), gstPaise: paise.nullable().optional()
+});
+const publishedReviewSchema = z.object({
+  id, version: z.number().int().positive(), estimateVersion: z.number().int().positive(),
+  phase: z.enum(["pre", "post"]).optional(), sendGeneration: z.number().int().positive(),
+  status: z.enum(["pending", "approved", "changes_requested", "superseded"]),
+  submittedAt: z.string(), snapshot: snapshotSchema,
+  decisionNote: optionalText, decidedAt: optionalText, canDecide: z.boolean()
+});
+const estimateSchema = z.object({
+  id, projectId: optionalText, version: z.number().int().positive().optional(),
+  status: z.enum(["draft", "pending_manager_assignment", "pending_designer_approval", "designer_changes_requested", "ready_for_client", "sent_to_client", "client_changes_requested", "client_approved"]),
+  designPlanStatus: optionalText,
+  publishedReview: publishedReviewSchema.nullish().transform((value) => value ?? null),
+  preApprovedReview: z.object({ reviewRoundId: id, estimateVersion: z.number().int().positive(), snapshot: snapshotSchema }).nullish().transform((value) => value ?? null),
+  changesFromPre: z.object({
+    addedLineIds: z.array(z.string()), removedLineIds: z.array(z.string()), changedLineIds: z.array(z.string()),
+    scopeChanged: z.boolean(), noChanges: z.boolean(), beforeTotal: finiteMoney, afterTotal: finiteMoney
+  }).nullish().transform((value) => value ?? null),
+  reviewSourceIssue: z.enum(["missing_snapshot", "source_conflict"]).nullish().transform((value) => value ?? null)
+}).transform((estimate) => {
+  const snapshot = estimate.reviewSourceIssue ? null : estimate.publishedReview?.snapshot;
+  return {
+    ...estimate,
+    publishedReview: snapshot ? estimate.publishedReview : null,
+    total: snapshot ? publishedMoney(snapshot.total, snapshot.totalPaise) : null,
+    subtotal: snapshot ? publishedMoney(snapshot.subtotal, snapshot.subtotalPaise) : null,
+    gst: snapshot ? publishedMoney(snapshot.gst, snapshot.gstPaise) : null,
+    lineItems: snapshot?.lineItems ?? [],
+    lead: snapshot ? { projectName: snapshot.projectName, clientName: snapshot.clientName, location: snapshot.location } : null
+  };
+});
 
 export type ClientEstimate = z.infer<typeof estimateSchema>;
+export type ClientEstimateSnapshot = z.infer<typeof snapshotSchema>;
+export type ClientPublishedReview = z.infer<typeof publishedReviewSchema>;
+
+/** Paise is authoritative when supplied, including an explicit unavailable value. */
+export function publishedMoney(rupees: number | null | undefined, amountPaise?: number | null): number | null {
+  return amountPaise === undefined ? rupees ?? null : amountPaise === null ? null : amountPaise / 100;
+}
+const moneyFormat = new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 2 });
+export function clientEstimateMoney(value: number | null | undefined): string {
+  return value == null ? "Estimate unavailable" : moneyFormat.format(value).replace(/\.00$/, "");
+}
+export function clientEstimateStatus(estimate: ClientEstimate): string {
+  const review = estimate.publishedReview;
+  if (!review || estimate.reviewSourceIssue) return "Submitted estimate unavailable";
+  return review.status === "approved" ? "Estimate approved" : review.status === "changes_requested" ? "Changes requested" :
+    review.status === "superseded" ? "Review withdrawn" : "Awaiting your decision";
+}
 
 const planPageSchema = z.object({
   id,
   uploadId: id,
+  reviewRoundId: z.string().nullish(),
   pageNumber: z.number().int().positive(),
   width: z.number().int().positive(),
   height: z.number().int().positive(),
@@ -198,7 +251,11 @@ export function estimatesForProject(estimates: readonly ClientEstimate[], projec
 }
 
 export function canDecideClientEstimate(estimate: ClientEstimate): boolean {
-  return estimate.status === "sent_to_client";
+  const review = estimate.publishedReview;
+  return !estimate.reviewSourceIssue && estimate.status === "sent_to_client" && Boolean(review?.canDecide) &&
+    review?.status === "pending" && estimate.version === review.estimateVersion && estimate.total !== null && estimate.subtotal !== null && estimate.gst !== null &&
+    review.snapshot.lineItems.filter((line) => line.included).every((line) => publishedMoney(line.rate, line.ratePaise) !== null && publishedMoney(line.amount, line.amountPaise) !== null) &&
+    (review.phase !== "post" || Boolean(estimate.preApprovedReview && estimate.changesFromPre && publishedMoney(estimate.preApprovedReview.snapshot.total, estimate.preApprovedReview.snapshot.totalPaise) !== null));
 }
 
 export function canEditClientPlan(estimate: ClientEstimate): boolean {

@@ -12,6 +12,7 @@ export const ASK_LISNO_SCHEMAS = {
     project: {allOf: [object({id: {type: "string"}, name: {type: "string"}})], nullable: true}, question: {type: "string", nullable: true},
     choices: {type: "array", maxItems: 5, items: object({id: {type: "string"}, name: {type: "string"}, detail: {type: "string", nullable: true}})}}),
   AskLisnoResponse: object({ projectId, resolution: ref("AskLisnoResolution"), projectList: ref("AskLisnoProjectList"), checkedAt: { type: "string", format: "date-time" }, answer: object({
+    disclosurePolicy: {type: "string", enum: ["project-publication-v1"]}, projectPricing: {allOf: [ref("AssistantProjectPricing")], nullable: true},
     kind: { type: "string", enum: ["status", "catalogue", "price", "clarification", "handoff", "no_answer"] },
     narrative: ref("AssistantNarrative"), facts: { type: "array", items: ref("AssistantFact") },
     candidates: { type: "array", items: ref("AssistantCatalogueCandidate") },

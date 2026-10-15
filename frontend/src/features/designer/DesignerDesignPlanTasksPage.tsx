@@ -5,6 +5,7 @@ import { Link, useSearchParams } from "react-router-dom";
 
 import type { DesignPlanStatus, DesignPlanTask } from "../../api/types";
 import { ApiError } from "../../api/client";
+import { useAuth } from "../../auth/AuthProvider";
 import { Button } from "../../components/ui/Button";
 import { Dialog } from "../../components/ui/Dialog";
 import { PageHeader } from "../../components/ui/PageHeader";
@@ -93,17 +94,18 @@ function stageAction(workflow: DesignWorkflowView, stage: DesignWorkflowStage | 
 }
 
 export function DesignerDesignPlanTasksPage() {
+  const { user } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const [timelineContainer, setTimelineContainer] = useState<HTMLDivElement | null>(null);
   const tasks = useQuery({
-    queryKey: projectWorkflowKeys.designerPlans,
+    queryKey: [...projectWorkflowKeys.designerPlans, user?.id ?? null, user?.role ?? null],
     queryFn: getDesignerPlanTasks
   });
   const requestedEstimateId = searchParams.get("estimate");
   const task = tasks.data?.find((item) => item.estimateId === requestedEstimateId) ?? tasks.data?.[0];
   // This observer shares the panel's query; its polling updates upload eligibility and next action together.
   const workflow = useQuery({
-    queryKey: projectWorkflowKeys.designWorkflow(task?.projectId ?? ""),
+    queryKey: [...projectWorkflowKeys.designWorkflow(task?.projectId ?? ""), user?.id ?? null, user?.role ?? null],
     queryFn: () => getDesignWorkflow(task!.projectId),
     enabled: Boolean(task?.projectId)
   });

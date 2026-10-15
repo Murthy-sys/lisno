@@ -6,7 +6,7 @@ import { resolveAuthorizedFeature } from "../../../navigation/registry";
 import { useRuntime } from "../../../runtime/RuntimeProvider";
 
 export default function RecordRoute() {
-  const params = useLocalSearchParams<{ featureId?: string | string[]; recordId?: string | string[]; tab?: string | string[] }>();
+  const params = useLocalSearchParams<{ featureId?: string | string[]; recordId?: string | string[]; tab?: string | string[]; message?: string | string[] }>();
   const featureId = typeof params.featureId === "string" ? params.featureId : "";
   const recordId = typeof params.recordId === "string" ? params.recordId : "";
   const initialProjectTab = typeof params.tab === "string" ? params.tab : undefined;
@@ -23,7 +23,7 @@ export default function RecordRoute() {
         : {})}
       {...(destination.id === "projects" ? { backPlacement: "content" as const } : {})}
     >
-      <RecordDetailScreen destination={destination} recordId={recordId} session={context.session.session} initialProjectTab={initialProjectTab} />
+      <RecordDetailScreen destination={destination} recordId={recordId} session={context.session.session} initialProjectTab={initialProjectTab} initialMessageId={typeof params.message === "string" ? params.message : undefined} />
     </AdaptiveAppScaffold>
   );
 }

@@ -13,6 +13,7 @@ import {
   type ClientDrawingWorkspace,
   type ClientEstimate,
   type ClientPlanWorkspace,
+  type ClientPublishedReview,
   type ClientSectionReview
 } from "./clientReviewModel";
 
@@ -43,15 +44,17 @@ export async function getClientSectionReview(runtime: MobileRuntime, projectId: 
 const decisionResultSchema = z.object({
   id: z.string().min(1),
   status: z.enum(["sent_to_client", "client_changes_requested", "client_approved"]),
-  projectId: z.string().nullish().transform((value) => value ?? null)
-}).passthrough();
+  projectId: z.string().nullish().transform((value) => value ?? null),
+  publishedReview: z.object({ id: z.string().min(1), version: z.number().int().positive(), status: z.enum(["approved", "changes_requested"]) })
+});
 
 export type ClientEstimateDecisionResult = z.infer<typeof decisionResultSchema>;
 
-export async function decideClientEstimate(runtime: MobileRuntime, estimateId: string, decision: "approve" | "request_changes", note: string): Promise<ClientEstimateDecisionResult> {
-  const value = await runtime.api.authenticated.post<unknown>(`/client/estimates/${encoded(estimateId)}/decision`, { decision, note: note.trim() });
+export async function decideClientEstimate(runtime: MobileRuntime, estimateId: string, decision: "approve" | "request_changes", note: string, review: Pick<ClientPublishedReview, "id" | "version">): Promise<ClientEstimateDecisionResult> {
+  const value = await runtime.api.authenticated.post<unknown>(`/client/estimates/${encoded(estimateId)}/decision`, { decision, note: note.trim(), reviewRoundId: review.id, reviewRoundVersion: review.version });
   const result = decisionResultSchema.safeParse(value);
-  if (!result.success || result.data.id !== estimateId) throw new ApiProtocolError();
+  if (!result.success || result.data.id !== estimateId || result.data.publishedReview.id !== review.id || result.data.publishedReview.version <= review.version ||
+    result.data.publishedReview.status !== (decision === "approve" ? "approved" : "changes_requested")) throw new ApiProtocolError();
   return result.data;
 }
 
@@ -67,24 +70,28 @@ const targetPreviewSchema = z.object({
   targets: z.array(z.object({ drawingId: z.string().min(1), title: z.string(), reason: z.enum(["anchor_inside", "area_overlap"]) }).passthrough())
 }).passthrough();
 
+export const clientEstimatePdfPath = (estimateId: string, roundId: string) =>
+  `/client/estimates/${encoded(estimateId)}/pdf?roundId=${encoded(roundId)}`;
+
 export const clientPlanPageImagePath = (pageId: string, thumbnail = false) =>
   `/client/estimate-plan-pages/${encoded(pageId)}/${thumbnail ? "thumbnail" : "current-image"}`;
 export const clientDrawingRevisionImagePath = (revisionId: string) => `/estimate-design-revisions/${encoded(revisionId)}/image`;
 export const clientSectionRevisionImagePath = (revisionId: string) => `/design-section-revisions/${encoded(revisionId)}/image`;
 export const clientDesignVersionDownloadPath = (versionId: string) => `/design-versions/${encoded(versionId)}/download`;
 
-export function saveClientPlanDraft(runtime: MobileRuntime, pageId: string, version: number, annotations: AnnotationDocumentV1): Promise<unknown> {
-  return runtime.api.authenticated.put(`/client/estimate-plan-pages/${encoded(pageId)}/annotation-draft`, { version, annotations });
+export function saveClientPlanDraft(runtime: MobileRuntime, pageId: string, version: number, annotations: AnnotationDocumentV1, reviewRoundId?: string | null): Promise<unknown> {
+  return runtime.api.authenticated.put(`/client/estimate-plan-pages/${encoded(pageId)}/annotation-draft`, { version, annotations, ...(reviewRoundId ? { reviewRoundId } : {}) });
 }
 
-export async function previewClientPlanTargets(runtime: MobileRuntime, pageId: string, annotations: AnnotationDocumentV1): Promise<ClientPlanTargetPreview> {
-  const value = await runtime.api.authenticated.post<unknown>(`/client/estimate-plan-pages/${encoded(pageId)}/target-preview`, { annotations });
+export async function previewClientPlanTargets(runtime: MobileRuntime, pageId: string, annotations: AnnotationDocumentV1, reviewRoundId?: string | null): Promise<ClientPlanTargetPreview> {
+  const value = await runtime.api.authenticated.post<unknown>(`/client/estimate-plan-pages/${encoded(pageId)}/target-preview`, { annotations, ...(reviewRoundId ? { reviewRoundId } : {}) });
   const result = targetPreviewSchema.safeParse(value);
   if (!result.success) throw new ApiProtocolError();
   return result.data;
 }
 
 export interface SubmitClientPlanRequest {
+  readonly reviewRoundId?: string;
   readonly version: number;
   readonly summary: string;
   readonly annotations: AnnotationDocumentV1;

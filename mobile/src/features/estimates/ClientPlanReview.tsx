@@ -86,7 +86,7 @@ export function ClientPlanReview({ estimate, session }: { readonly estimate: Cli
         </View>
       )}
       <View style={styles.refreshAction}><Button label="Refresh plans" variant="quiet" loading={query.isRefetching} onPress={() => void query.refetch()} /></View>
-      {selectedPage && selectedUpload ? <ClientPlanPageViewer key={selectedPage.id} estimate={estimate} session={session} workspace={query.data} page={selectedPage} uploadName={selectedUpload.originalFilename} siblingPages={selectedUpload.pages} reviewAvailable={!awaiting} onClose={() => setSelectedPageId(null)} onSelectPage={setSelectedPageId} onRefresh={async () => { const result = await query.refetch(); if (result.isError) throw result.error; }} /> : null}
+      {selectedPage && selectedUpload ? <ClientPlanPageViewer key={`${selectedPage.id}:${selectedPage.reviewRoundId ?? "estimate"}`} estimate={estimate} session={session} workspace={query.data} page={selectedPage} uploadName={selectedUpload.originalFilename} siblingPages={selectedUpload.pages} reviewAvailable={!awaiting} onClose={() => setSelectedPageId(null)} onSelectPage={setSelectedPageId} onRefresh={async () => { const result = await query.refetch(); if (result.isError) throw result.error; }} /> : null}
     </View>
   );
 }

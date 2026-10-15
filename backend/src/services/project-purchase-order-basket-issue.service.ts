@@ -1,3 +1,4 @@
+import { assertDesignRequirementsPoAllowed } from "./design-requirements.service.js";
 import { notifyIssuedWorkCommitted } from "./issued-work-delivery.js";
 import { assertProjectWorkOrderIssueEligible } from "./project-work-order-eligibility.service.js";
 import { createHash, randomUUID } from "node:crypto";
@@ -78,6 +79,8 @@ export function createProjectPurchaseOrderBasketIssueService(input: { audit: Aud
           enquiry.latestAwardId !== awardId || enquiry.status !== "award_pending" || proposal.boqDigest !== boq.digest ||
           proposal.bidDigest !== bid.bidDigest || proposal.bidId !== bid._id || proposal.vendorId !== award.vendorId)
           conflict("The award, BOQ or vendor quote changed. Refresh before issuing.");
+        await assertDesignRequirementsPoAllowed(projectId,
+          (boq.lines as Row[]).map(line => String(line.sourceLineItemKey)), session);
         const source = await procurementItemSourceSnapshot(projectId, session, true);
         await assertProjectWorkOrderIssueEligible(projectId, session, source.estimateReviewRoundId ? {
           estimateId: source.estimateId, estimateVersion: source.estimateVersion, estimateReviewRoundId: source.estimateReviewRoundId

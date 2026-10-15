@@ -12,10 +12,15 @@ import { Button, StateView } from "../../ui/primitives";
 import { colors, fonts, radii, spacing, typography } from "../../ui/tokens";
 import { FEATURE_DEFINITIONS } from "./featureDefinitions";
 import { isRecord, recordFields, recordTitle } from "./recordPresentation";
-import { FinanceWorkspace } from "../finance/FinanceEntryForm";
-import { LeadActions } from "../leads/LeadActions";
+import { ProjectFinanceWorkspace } from "../finance/FinanceWorkspace";
+import { ManagementWorkspace } from "../management/ManagementWorkspace";
+import { ExecutionWorkspace } from "../execution";
+import { VendorWorkWorkspace } from "../vendor-work";
+import { ProjectCompletionWorkspace } from "../completion";
+import { StaffEstimateWorkspace } from "../estimate-authoring/StaffEstimateWorkspace";
+import { ReviewDetailWorkspace } from "../reviews/ReviewQueueWorkspace";
 import { MessagesWorkspace } from "../messages/MessagesWorkspace";
-import { ProcurementProject } from "../procurement/ProcurementProject";
+import { ProcurementProjectWorkspace } from "../procurement/ProcurementProjectWorkspace";
 import { ProjectStructure } from "../projects/ProjectStructure";
 import { projectDetailTheme } from "../projects/projectDetailTheme";
 import { EvaluationWorkspace } from "../management/EvaluationWorkspace";
@@ -28,9 +33,17 @@ function displayedRecord(value: unknown): Record<string, unknown> | null {
   return value;
 }
 
-export function RecordDetailScreen({ destination, recordId, session, initialProjectTab }: { readonly destination: FeatureDestination; readonly recordId: string; readonly session: AuthenticatedSession; readonly initialProjectTab?: string | undefined }) {
+export function RecordDetailScreen({ destination, recordId, session, initialProjectTab, initialMessageId }: { readonly destination: FeatureDestination; readonly recordId: string; readonly session: AuthenticatedSession; readonly initialProjectTab?: string | undefined; readonly initialMessageId?: string | undefined }) {
+  if (destination.id === "finance") return <ScrollView contentContainerStyle={styles.content}><ProjectFinanceWorkspace projectId={recordId} session={session} /></ScrollView>;
+  if (destination.id === "team") return <ManagementWorkspace subjectUserId={recordId} session={session} />;
+  if (destination.id === "execution") return <ExecutionWorkspace projectId={recordId} session={session} />;
+  if (destination.id === "vendor-work") return <VendorWorkWorkspace workId={recordId} session={session} />;
+  if (destination.id === "project-completion") return <ProjectCompletionWorkspace projectId={recordId} session={session} />;
+  if (destination.id === "client-responses" || destination.id === "design-approvals") return <ReviewDetailWorkspace roundId={recordId} session={session} kind={destination.id === "client-responses" ? "estimate" : "design"} />;
+  if (destination.id === "leads") return <StaffEstimateWorkspace leadId={recordId} session={session} />;
+  if (destination.id === "procurement") return <ProcurementProjectWorkspace projectId={recordId} session={session} />;
   if (destination.id === "messages") {
-    return <MessagesWorkspace selectedProjectId={recordId} session={session} />;
+    return <MessagesWorkspace selectedProjectId={recordId} session={session} initialMessageId={initialMessageId ?? null} />;
   }
   return <GenericRecordDetailScreen destination={destination} recordId={recordId} session={session} initialProjectTab={initialProjectTab} />;
 }
@@ -52,9 +65,6 @@ function GenericRecordDetailScreen({ destination, recordId, session, initialProj
     return <StateView tone={denied ? "denied" : "error"} title={denied ? "This record is unavailable" : "Detail could not be loaded"} message={denied ? "It may be outside your project scope or no longer available." : "Check your connection and try again."} actionLabel="Retry" onAction={() => void query.refetch()} />;
   }
 
-  if (destination.id === "procurement") {
-    return <ScrollView contentContainerStyle={styles.content}><ProcurementProject projectId={recordId} data={query.data} session={session} onRefresh={() => void query.refetch()} /></ScrollView>;
-  }
   if (destination.id === "projects") {
     return (
       <ScrollView contentContainerStyle={[styles.content, styles.projectContent]}>
@@ -82,8 +92,6 @@ function GenericRecordDetailScreen({ destination, recordId, session, initialProj
           </View>
         ))}
       </View>
-      {destination.id === "finance" ? <FinanceWorkspace projectId={recordId} session={session} /> : null}
-      {destination.id === "leads" ? <LeadActions leadId={recordId} canUpdate={canPerformOperation(session, "PATCH /leads/:leadId")} canAddActivity={canPerformOperation(session, "POST /leads/:leadId/activities")} /> : null}
       {destination.id === "team" ? <EvaluationWorkspace subjectUserId={recordId} session={session} /> : null}
       {query.isRefetching ? <Text accessibilityLiveRegion="polite" style={styles.updating}>Updating…</Text> : null}
       <Button label="Refresh" variant="secondary" onPress={() => void query.refetch()} />

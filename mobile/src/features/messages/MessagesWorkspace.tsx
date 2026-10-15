@@ -12,6 +12,7 @@ import { messagesLayout } from "./messagesLayout";
 
 export interface MessagesWorkspaceProps {
   readonly session: AuthenticatedSession;
+  readonly initialMessageId?: string | null;
   readonly selectedProjectId?: string | null;
   readonly onSelectProject?: (projectId: string) => void;
   readonly compact?: boolean;
@@ -21,6 +22,7 @@ export interface MessagesWorkspaceProps {
 export function MessagesWorkspace({
   session,
   selectedProjectId = null,
+  initialMessageId = null,
   onSelectProject,
   compact = false,
   viewportWidth
@@ -80,6 +82,7 @@ export function MessagesWorkspace({
   if (layout.mode === "phone" && activeProjectId) {
     return (
       <ChatThread
+        initialMessageId={activeProjectId === selectedProjectId ? initialMessageId : null}
         key={activeProjectId}
         compact
         onBack={closeThread}
@@ -105,7 +108,8 @@ export function MessagesWorkspace({
         <View style={styles.threadPane}>
           {activeProjectId ? (
             <ChatThread
-              key={activeProjectId}
+              initialMessageId={activeProjectId === selectedProjectId ? initialMessageId : null}
+        key={activeProjectId}
               compact={false}
               onSendingChange={setThreadSending}
               projectId={activeProjectId}

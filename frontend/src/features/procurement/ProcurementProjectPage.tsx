@@ -3,7 +3,6 @@ import { ProjectChatNavigation } from "../messages";
 import { useRef } from "react";
 import { Link, useParams } from "react-router-dom";
 
-import { ApiError } from "../../api/client";
 import type { ProcurementProject } from "../../api/types";
 import { useAuth } from "../../auth/AuthProvider";
 import { hasFrontendPermission } from "../../auth/authorization";
@@ -11,6 +10,9 @@ import { PageHeader } from "../../components/ui/PageHeader";
 import { PageState } from "../../components/ui/PageState";
 import { ProcurementEstimateSource } from "./ProcurementEstimateSource";
 import { ProcurementBasketWorkspace } from "./ProcurementBasketWorkspace";
+import { AssignedProjectOverview } from "../projects/AssignedProjectOverview";
+import { projectReadDenied, useAssignedProject } from "../projects/projectReadQueries";
+import { ProjectWorkflowPanel } from "../workflow/ProjectWorkflowPanel";
 import {
   procurementError,
   useProcurementProjects
@@ -18,19 +20,22 @@ import {
 
 export function ProcurementProjectPage() {
   const { projectId = "" } = useParams();
-  const lastValidProject = useRef<ProcurementProject | null>(null);
+  const lastValidProject = useRef<{ actor: string; project: ProcurementProject } | null>(null);
   const auth = useAuth();
   const canRead = hasFrontendPermission(
     auth.authorization,
     "procurement.workspace.read"
   );
   const { query, integrityError, projects } = useProcurementProjects(canRead, true);
+  const details = useAssignedProject(projectId, canRead);
+  const actor = `${auth.user?.id ?? ""}:${auth.user?.role ?? ""}`;
   const project = projects?.find(
     (candidate) => candidate.projectId === projectId
   ) ?? null;
-  if (project && query.isSuccess && !integrityError) lastValidProject.current = project;
-  const retainedProject = lastValidProject.current?.projectId === projectId ? lastValidProject.current : null;
-  const accessRevoked = query.error instanceof ApiError && [401, 403].includes(query.error.status);
+  const accessRevoked = projectReadDenied(query.error);
+  if (!canRead || accessRevoked || (query.isSuccess && !project)) lastValidProject.current = null;
+  if (project && query.isSuccess && !integrityError) lastValidProject.current = { actor, project };
+  const retainedProject = lastValidProject.current?.actor === actor && lastValidProject.current.project.projectId === projectId ? lastValidProject.current.project : null;
   const visibleProject = accessRevoked ? null : project ?? retainedProject;
   const projectSourceStale = query.isFetching || !project || !query.isSuccess || Boolean(integrityError);
 
@@ -42,12 +47,16 @@ export function ProcurementProjectPage() {
       <PageHeader
         id="procurement-project-page-title"
         eyebrow="Project procurement"
-        title={visibleProject?.projectName ?? "Project procurement"}
+        title={canRead ? details.project?.name ?? visibleProject?.projectName ?? "Project procurement" : "Project procurement"}
         description="Plan each main basket, compare vendor BOQs and issue approved work orders."
         breadcrumb={<Link to="/procurement">Back to projects</Link>}
       />
 
-      <ProjectChatNavigation projectId={projectId} overviewTo={`/procurement/projects/${projectId}`} overviewLabel="Procurement" />
+      {canRead && (details.project || visibleProject) ? <ProjectChatNavigation projectId={projectId} overviewTo={`/procurement/projects/${projectId}`} overviewLabel="Procurement" /> : null}
+      {details.project ? <><AssignedProjectOverview project={details.project} />
+        {hasFrontendPermission(auth.authorization, "projects.design_workflow.read") ? <ProjectWorkflowPanel projectId={projectId} showInitialPayment={false} /> : null}
+      </> : details.canRead && details.query.isPending ? <PageState state="loading" message="Loading project details…" />
+        : details.canRead && details.query.isError ? <PageState state="error" message={procurementError(details.query.error, "Project details could not be loaded.")} action={{ label: "Retry project details", onAction: () => void details.query.refetch() }} /> : null}
       {!canRead ? (
         <PageState
           state="error"
@@ -70,7 +79,7 @@ export function ProcurementProjectPage() {
       ) : !project ? (
         <PageState
           state="empty"
-          message="This project is not available for procurement. It may not be Design approved yet."
+          message={details.project ? "Procurement preparation is not available yet. You can review project details and progress while estimation and approval continue." : "This project is not available for procurement preparation."}
         />
       ) : null}
       {canRead && !accessRevoked && visibleProject && hasFrontendPermission(auth.authorization, "execution.tracker.read") ? <p><Link to={`/projects/${encodeURIComponent(projectId)}/execution`}>View Main Line execution</Link></p> : null}
@@ -78,7 +87,7 @@ export function ProcurementProjectPage() {
       {canRead && !accessRevoked && visibleProject ? <VendorAccessPanel projectId={projectId} /> : null}
       {canRead && !accessRevoked && visibleProject ? <ProcurementBasketWorkspace key={`basket-workspace-${projectId}`}
         projectId={projectId} projectName={visibleProject.projectName} projectSourceStale={projectSourceStale} issueReadiness={visibleProject.issueReadiness}
-        currentEstimate={project ? { estimateId: project.estimateId, estimateVersion: project.estimateVersion } : undefined} /> : null}
+        currentEstimate={project && query.isSuccess && !integrityError ? { estimateId: project.estimateId, estimateVersion: project.estimateVersion } : undefined} /> : null}
     </section>
   );
 }

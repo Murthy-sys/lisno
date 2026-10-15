@@ -94,14 +94,14 @@ describe("mobile chat presenters", () => {
   it("keeps legacy mobile messages and summaries readable with additive web action metadata", () => {
     const action = { typeId: "action", typeName: "Action", originalDueDate: "2026-10-03", dueDate: "2026-10-05" };
     const raw = rawMessage({ priority: "important", issueStatus: "open", action,
-      issueHistory: [{ action: "reschedule", actionMetadata: action, note: "Access arranged for Monday" }],
+      issueHistory: [{ id: "history-one", actor: person("staff-one", "Staff", "designer"), occurredAt: "2026-10-03T00:00:00Z", action: "reschedule", actionMetadata: action, note: "Access arranged for Monday" }],
       capabilities: { ...rawMessage().capabilities, canReschedule: true }
     });
     expect(presentMessages({ items: [raw] })).toHaveLength(1);
     expect(presentMessages({ items: [raw] })[0]).toMatchObject({ id: "message-a", priority: "important", issueStatus: "open" });
     const summary = rawSummary();
     expect(presentChatSummary({ ...summary, project: { ...summary.project, nameVersion: 2 }, capabilities: { ...summary.capabilities, canRenameProject: false } }))
-      .toEqual(summary);
+      .toEqual({ ...summary, project: { ...summary.project, nameVersion: 2 }, capabilities: { ...summary.capabilities, canRenameProject: false } });
     expect(presentChatParticipantPage({ items: [{ ...person("client-a", "Maya", "client"), sources: [], selection: null, removalVersion: 0, canRemove: false }], setupWarnings: [], removed: [] })?.items)
       .toHaveLength(1);
   });

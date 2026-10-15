@@ -101,13 +101,13 @@ describe("frontend authorization contract", () => {
       "execution"
     ]);
     expect(AUTHORIZATION_POLICY_VERSION).toBe(
-      "2026-10-13.client-estimation.v1"
+      "2026-10-14.main-line-design-rules.v1"
     );
   });
 
-  it("publishes all 195 unique permissions in canonical order", () => {
-    expect(PERMISSION_CODES).toHaveLength(195);
-    expect(new Set(PERMISSION_CODES)).toHaveLength(195);
+  it("publishes all 196 unique permissions in canonical order", () => {
+    expect(PERMISSION_CODES).toHaveLength(196);
+    expect(new Set(PERMISSION_CODES)).toHaveLength(196);
     expect(PERMISSION_CODES.slice(0, 21)).toEqual([...estimateCollaborationPermissions, "ask_lisno.request", "chat.assistant.read", "chat.assistant.request", "procurement.vendor_access.read", "procurement.vendor_access.manage", "execution.tracker.read", "execution.work.update", "execution.staff.manage", "execution.verify", "execution.policy.manage", "execution.notifications.read", "execution.access.retry"]);
     expect(PERMISSION_CODES).toContain("chat.action_types.manage");
     expect(PERMISSION_CODES).toContain("chat.project_name.manage");

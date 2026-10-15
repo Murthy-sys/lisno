@@ -1,12 +1,7 @@
-import { useMutation } from "@tanstack/react-query";
 import { useState } from "react";
 import { Pressable, Text, View } from "react-native";
-import type { KnowledgeBasket, KnowledgeSubBasket } from "../../../../shared/knowledge/knowledgeTypes";
-import { ApiError } from "../../core/http/apiClient";
 import { Button, Field } from "../../ui/primitives";
-import type { VendorMobileContext } from "./vendorRuntime";
 import { KnowledgeChoice, KnowledgeModal, KnowledgeText, knowledgeStyles as s } from "./knowledgeUi";
-import { catalogError, closeCatalogDraft } from "./knowledgeCatalogForms";
 
 export interface VendorBasketOption { readonly id: string; readonly label: string; readonly disabled?: boolean }
 export interface VendorBasketGroup { readonly id: string; readonly title: string; readonly options: readonly VendorBasketOption[] }
@@ -43,31 +38,4 @@ export function KnowledgeVendorBasketChoices({ label, selectedIds, groups, disab
       <Button label="Done" variant="secondary" onPress={() => setOpen(false)} />
     </KnowledgeModal> : null}
   </View>;
-}
-
-export function KnowledgeVendorBasketCreator({ context, parent, onClose, onSaved, onAccessLost }: {
-  readonly context: VendorMobileContext;
-  readonly parent?: KnowledgeBasket;
-  readonly onClose: () => void;
-  readonly onSaved: (created: KnowledgeBasket | KnowledgeSubBasket) => void;
-  readonly onAccessLost?: () => void;
-}) {
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  const [order, setOrder] = useState("0");
-  const valid = context.ready && context.canRead && context.canCreateClassification && name.trim().length > 0 && name.trim().length <= 240 && (parent ? parent.status === "active" : Number.isSafeInteger(Number(order)) && Number(order) >= 0);
-  const mutation = useMutation({ mutationFn: async () => {
-    if (!valid) throw new Error("Review the basket fields before saving.");
-    return parent ? context.api.createKnowledgeSubBasket(parent.id, { name: name.trim() }) : context.api.createKnowledgeBasket({ name: name.trim(), description: description.trim() || null, displayOrder: Number(order) });
-  }, retry: false, onSuccess: created => { onSaved(created); }, onError: error => {
-    if (error instanceof ApiError && (error.status === 401 || error.status === 403)) onAccessLost?.();
-  } });
-  const dirty = Boolean(name || description || order !== "0");
-  return <KnowledgeModal title={parent ? "Add sub-basket" : "Add main basket"} busy={mutation.isPending} onClose={() => closeCatalogDraft(dirty, onClose)}>
-    {parent ? <KnowledgeText>Main basket: {parent.name}</KnowledgeText> : null}
-    <Field label="Name" value={name} onChangeText={setName} maxLength={240} editable={!mutation.isPending} />
-    {!parent ? <><Field label="Description" value={description} onChangeText={setDescription} maxLength={4000} multiline editable={!mutation.isPending} /><Field label="Display order" value={order} onChangeText={setOrder} keyboardType="number-pad" editable={!mutation.isPending} /></> : null}
-    {mutation.isError ? <KnowledgeText error>{catalogError(mutation.error)}</KnowledgeText> : null}
-    <Button label={parent ? "Add sub-basket" : "Add main basket"} disabled={!valid} loading={mutation.isPending} onPress={() => mutation.mutate()} />
-  </KnowledgeModal>;
 }

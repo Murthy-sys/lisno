@@ -21,6 +21,8 @@ jest.mock("react-native-safe-area-context", () => {
   const { View } = jest.requireActual("react-native") as typeof import("react-native");
   return { SafeAreaView: ({ children }: { readonly children: import("react").ReactNode }) => React.createElement(View, null, children) };
 });
+jest.mock("expo-router", () => ({ useIsFocused: () => true }));
+jest.mock("../../runtime/RuntimeProvider", () => ({ useConfiguredRuntime: jest.fn() }));
 jest.mock("./useChatThread", () => ({ useChatThread: jest.fn() }));
 jest.mock("./useChatAvailability", () => ({ useChatAvailability: () => ({ writable: mockChatWritable, unavailable: false, nextOpenAt: mockChatWritable ? null : "2026-09-30T02:00:00.000Z", refreshing: false }) }));
 jest.mock("../../navigation/AdaptiveAppScaffold", () => ({ useScaffoldNavigationGuard: () => mockNavigationGuard }));

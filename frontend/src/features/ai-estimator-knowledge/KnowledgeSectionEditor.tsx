@@ -42,6 +42,7 @@ const ARRAY_FIELDS = {
   "quantity-margin": [],
   scope: ["exclusions"],
   recommendations: ["recommendations", "exclusions"],
+  design: [],
   quality: ["parameters"],
   execution: ["steps", "productivity"],
   advanced: ["dependencies", "modeOverrides"]
@@ -80,6 +81,7 @@ const SECTION_MASTER_CATALOGS = {
   "quantity-margin": ["uoms"],
   scope: ["modes", "surfaces"],
   recommendations: ["priorities"],
+  design: [],
   quality: [],
   execution: ["uoms"],
   advanced: ["modes"]
@@ -786,6 +788,7 @@ function sectionHelp(sectionKey: KnowledgeSectionKey): string {
     "quantity-margin": "Configure priced Quantity slabs and shared basis-point margins. Legacy adjustment slabs retain their existing calculation behavior.",
     scope: "Define applicable modes, surfaces, and explicit exclusions.",
     recommendations: "Describe related scope changes when this item is added or removed, and explain why each change is required or optional.",
+    design: "Configure design approvals and project requirements.",
     quality: "All quality checks are required. Define what to inspect, what passes, and which evidence the site team must provide.",
     execution: "Order execution steps and productivity rules.",
     advanced: "Maintain dependencies, mode overrides, and revision lineage."

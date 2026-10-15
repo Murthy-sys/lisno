@@ -42,6 +42,84 @@ async function addDraft() {
 }
 
 describe("ClientEstimateRequirements", () => {
+  it("refreshes stale Main Line options after a server validation rejection without losing the draft", async () => {
+    const { state } = setup({ ...empty, mainLines: [{ id: "line-one", name: "Wall storage", mainBasketId: "basket-one", subBasketId: null, subBasketName: null }] });
+    server.use(http.post(path, () => {
+      state.detail = { ...state.detail, mainLines: [] };
+      return HttpResponse.json({ error: { code: "ESTIMATE_REQUIREMENT_MAIN_LINE_INVALID", message: "Select an available Main Line." } }, { status: 400 });
+    }));
+    const user = await addDraft();
+    await user.selectOptions(screen.getByRole("combobox", { name: "Main Line (optional)" }), "line-one");
+    await user.click(screen.getByRole("button", { name: "Send requirement" }));
+    expect(await screen.findByText(/The selected Main Line is no longer available/)).toBeVisible();
+    await waitFor(() => expect(screen.queryByText("Wall storage")).not.toBeInTheDocument());
+    expect(screen.getByRole("textbox", { name: "What would you like?" })).toHaveValue(`  ${request.text}  `);
+    expect(screen.getByRole("combobox", { name: "Main Line (optional)" })).toHaveFocus();
+  });
+
+  it("offers only server-projected Main Lines for the selected basket and sends the stable optional selection", async () => {
+    const mainLines = [
+      { id: "line-one", name: "Wall storage", mainBasketId: "basket-one", subBasketId: "sub-one", subBasketName: "Storage" },
+      { id: "line-two", name: "Pendant light", mainBasketId: "basket-two", subBasketId: null, subBasketName: null }
+    ];
+    const { state } = setup({ ...empty, mainLines });
+    server.use(http.post(path, async ({ request: incoming }) => {
+      expect(await incoming.json()).toEqual({ mainBasketId: "basket-one", mainLineId: "line-one", roomId: null,
+        text: request.text, expectedRequirementsVersion: 3, idempotencyKey: expect.any(String) });
+      state.detail = { ...state.detail, requirementsVersion: 4, requirements: [{ ...request, mainLineId: "line-one" }] };
+      return HttpResponse.json({ data: state.detail });
+    }));
+    const user = await addDraft();
+    const selection = screen.getByRole("combobox", { name: "Main Line (optional)" });
+    expect(within(selection).queryByRole("option", { name: /Pendant light/ })).not.toBeInTheDocument();
+    await user.selectOptions(selection, "line-one");
+    await user.selectOptions(screen.getByRole("combobox", { name: "Main Basket" }), "basket-two");
+    expect(selection).toHaveValue("");
+    expect(within(selection).queryByRole("option", { name: /Wall storage/ })).not.toBeInTheDocument();
+    await user.selectOptions(screen.getByRole("combobox", { name: "Main Basket" }), "basket-one");
+    await user.selectOptions(selection, "line-one");
+    expect((await axe.run(screen.getByRole("form"), { rules: { "color-contrast": { enabled: false } } })).violations).toEqual([]);
+    await user.click(screen.getByRole("button", { name: "Send requirement" }));
+    expect(await screen.findByText("Requested Main Line: Wall storage")).toBeVisible();
+    expect(screen.queryByLabelText(/Price|Rate|Quantity/)).not.toBeInTheDocument();
+  });
+
+  it("preserves unavailable historical references without exposing names and allows explicit clearing", async () => {
+    const { state } = setup({ ...empty, mainLines: [], requirements: [{ ...request, mainLineId: "private-line" }] });
+    const patch = vi.fn(async ({ request: incoming }: { request: Request }) => {
+      expect(await incoming.json()).toEqual({ expectedRequirementsVersion: 3, expectedVersion: 2,
+        mainBasketId: "basket-one", mainLineId: null, roomId: null, text: request.text });
+      state.detail = { ...state.detail, requirements: [{ ...request, mainLineId: null, version: 3 }], requirementsVersion: 4 };
+      return HttpResponse.json({ data: state.detail });
+    });
+    server.use(http.patch(`${path}/request-one`, patch));
+    expect(await screen.findByText("Requested Main Line: Selected item unavailable")).toBeVisible();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Edit requirement 1" }));
+    await user.click(screen.getByRole("button", { name: "Save requirement" }));
+    expect(patch).not.toHaveBeenCalled();
+    const selection = screen.getByRole("combobox", { name: "Main Line (optional)" });
+    expect(selection).toHaveFocus();
+    expect(selection).toHaveAccessibleDescription(/Choose an available Main Line/);
+    await user.selectOptions(selection, "");
+    await user.click(screen.getByRole("button", { name: "Save requirement" }));
+    expect(await screen.findByText("Your requirement was updated.")).toBeVisible();
+    expect(patch).toHaveBeenCalledOnce();
+  });
+
+  it("requires replacing a selected Main Line removed by a background refresh", async () => {
+    const { state, queryClient } = setup({ ...empty, mainLines: [{ id: "line-one", name: "Wall storage", mainBasketId: "basket-one", subBasketId: null, subBasketName: null }] });
+    const user = await addDraft();
+    await user.selectOptions(screen.getByRole("combobox", { name: "Main Line (optional)" }), "line-one");
+    state.detail = { ...state.detail, mainLines: [] };
+    await act(async () => { await queryClient.refetchQueries({ queryKey: estimateRequirementsKeys.detail("project-one") }); });
+    await waitFor(() => expect(screen.queryByText("Wall storage")).not.toBeInTheDocument());
+    expect(screen.getByRole("option", { name: "Selected item unavailable" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Send requirement" }));
+    expect(screen.getByRole("combobox", { name: "Main Line (optional)" })).toHaveFocus();
+    expect(screen.getByText("Choose an available Main Line or continue with a general request.")).toBeVisible();
+  });
+
   it("works before an estimate exists using only baskets and text, with no editable prices or internal item catalogue", async () => {
     setup();
     expect(await screen.findByText("Awaiting estimate")).toBeVisible();

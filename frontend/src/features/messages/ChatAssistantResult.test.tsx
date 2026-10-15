@@ -1,4 +1,5 @@
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { publishedPriceFixture } from "./assistantPricingFixtures";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
@@ -15,9 +16,7 @@ vi.mock("../../auth/AuthProvider", () => ({ useAuth: () => ({ user: { role: iden
 const access = { userId: "client-a", scope: "session-a", enabled: true, denied: new Set<string>(), isCurrent: () => () => true, verifyAccess: vi.fn(), invalidate: vi.fn().mockResolvedValue(undefined) };
 vi.mock("./ProjectChatProvider", () => ({ useProjectChat: () => access }));
 const state = (override: Partial<ChatAssistantMessageState> = {}): ChatAssistantMessageState => ({ runId: "run-a", generation: 1, stateVersion: 1, status: "waiting_for_human", eligibleAt: "2026-10-09T08:05:00Z", resultId: null, checkedAt: null, routing: "notified", notified: chatTestPeople[1], canRequest: true, failureCode: null, ...override });
-const result = (override: Partial<Result> = {}): Result => ({ id: "result-a", messageId: "answer-a", projectId: "project-a", kind: "price", checkedAt: "2026-10-09T08:05:00Z", stale: false, commercialAccess: "allowed", candidates: [], missingInputs: [], facts: [{ id: "stage", label: "Project stage", value: "Execution in progress", source: { id: "project-a", label: "Project status", href: "/projects/project-a" } }], commercial: {
-  currency: "INR", policy: "configuration-selling-v1", state: "complete", lines: [{ mainLineId: "line-a", roomId: "room-a", name: "POP false ceiling", quantity: "100", uom: "sq-ft", pricingMode: "sub_vendor", optional: false, amountPaise: 825000, revisionId: "revision-a", missingInputs: [] }], subtotalPaise: 825000, gstRateBps: 1800, gstPaise: 148500, totalPaise: 973500, optionalSubtotalPaise: null, approvedBaselinePaise: 5000000, hypotheticalTotalPaise: 5973500, assumptions: ["100 sq-ft added to Living room."], missingInputs: []
-}, ...override });
+const result = (override: Partial<Result> = {}): Result => ({ id: "result-a", messageId: "answer-a", projectId: "project-a", kind: "price", checkedAt: "2026-10-09T08:05:00Z", stale: false, commercialAccess: "allowed", candidates: [], missingInputs: [], facts: [{ id: "stage", label: "Project stage", value: "Execution in progress", source: { id: "project-a", label: "Project status", href: "/projects/project-a" } }], disclosurePolicy: "project-publication-v1", projectPricing: publishedPriceFixture(), commercial: null, ...override });
 function mount(children: React.ReactNode) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   const view = render(<QueryClientProvider client={client}><MemoryRouter>{children}</MemoryRouter></QueryClientProvider>);
@@ -26,15 +25,31 @@ function mount(children: React.ReactNode) {
 beforeEach(() => { vi.clearAllMocks(); identity.role = "client"; access.scope = "session-a"; access.userId = "client-a"; access.denied.clear(); vi.spyOn(projectChatApi, "assistantResult").mockResolvedValue(result()); });
 
 describe("authenticated Lisno AI answers", () => {
-  it("renders server-priced additions, explicit GST, assumptions and source links", async () => {
+  it("hides prices on window blur and applies revoked access before restoring an answer", async () => {
+    mount(<ChatAssistantResult projectId="project-a" resultId="result-a" />);
+    await screen.findByText("₹9,735.00");
+    fireEvent(window, new Event("blur"));
+    expect(screen.queryByText("₹9,735.00")).not.toBeInTheDocument();
+    vi.mocked(projectChatApi.assistantResult).mockRejectedValueOnce(new ApiError(403, "DENIED", "Denied"));
+    fireEvent(window, new Event("focus"));
+    await screen.findByText(/unavailable for your current access/);
+    expect(screen.queryByText("₹9,735.00")).not.toBeInTheDocument();
+  });
+  it("never renders unclassified legacy facts, narrative or prices", async () => {
+    vi.mocked(projectChatApi.assistantResult).mockResolvedValue(result({ disclosurePolicy: undefined, narrative: [{ text: "Old private narrative", factIds: [] }] }));
+    mount(<ChatAssistantResult projectId="project-a" resultId="result-a" />);
+    await screen.findByText(/This answer needs to be refreshed/);
+    expect(screen.queryByText(/Old private narrative|Execution in progress|₹9,735.00/)).not.toBeInTheDocument();
+  });
+  it("renders published customer prices, explicit GST, lineage and source links", async () => {
     mount(<ChatAssistantResult projectId="project-a" resultId="result-a" />);
     const answer = await screen.findByRole("region", { name: "Lisno AI answer" });
     expect(within(answer).getByRole("link", { name: "Project status" })).toHaveAttribute("href", "/projects/project-a");
     expect(within(answer).getByText("₹9,735.00")).toBeInTheDocument();
-    expect(within(answer).getByText("GST (18%)")).toBeInTheDocument();
-    expect(within(answer).getByText("₹59,735.00")).toBeInTheDocument();
-    expect(within(answer).getByText(/approved estimate is unchanged/)).toBeInTheDocument();
-    expect(within(answer).getByText("100 sq-ft · Sub-Vendor")).toBeInTheDocument();
+    expect(within(answer).getByText("GST")).toBeInTheDocument();
+    expect(within(answer).getByText("Estimate version 3 · Review version 2")).toBeInTheDocument();
+    expect(within(answer).getByRole("region", { name: "Published estimate" })).toBeInTheDocument();
+    expect(within(answer).getByText("100 sq-ft · Rate: ₹82.50")).toBeInTheDocument();
   });
   it("removes old prices during revalidation and treats commercial denial separately from chat access", async () => {
     const { client } = mount(<ChatAssistantResult projectId="project-a" resultId="result-a" />);
@@ -59,10 +74,10 @@ describe("authenticated Lisno AI answers", () => {
   });
   it("shows partial results and stale context without inventing missing prices or following unsafe source URLs", async () => {
     const input = result();
-    vi.mocked(projectChatApi.assistantResult).mockResolvedValue(result({ stale: true, missingInputs: ["Confirm the room and quantity."], facts: [{ ...input.facts[0], source: { id: "bad", label: "Untrusted source", href: "javascript:alert(1)" } }], commercial: { ...input.commercial!, state: "clarification_required", lines: [{ ...input.commercial!.lines[0], quantity: null, amountPaise: null }], subtotalPaise: null, totalPaise: null, gstPaise: null, approvedBaselinePaise: null, hypotheticalTotalPaise: null } }));
+    vi.mocked(projectChatApi.assistantResult).mockResolvedValue(result({ stale: true, missingInputs: ["Confirm the room and quantity."], facts: [{ ...input.facts[0], source: { id: "bad", label: "Untrusted source", href: "javascript:alert(1)" } }], projectPricing: publishedPriceFixture({ totalPaise: null }) }));
     mount(<ChatAssistantResult projectId="project-a" resultId="result-a" />);
-    expect(await screen.findByText(/Configuration data has changed/)).toBeInTheDocument();
-    expect(screen.getByText("Not priced")).toBeInTheDocument();
+    expect(await screen.findByText(/Project information has changed/)).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Published estimate" })).not.toBeInTheDocument();
     expect(screen.getByText("Confirm the room and quantity.")).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Untrusted source" })).not.toBeInTheDocument();
     expect(screen.queryByText("Approximate additions total")).not.toBeInTheDocument();
@@ -100,7 +115,7 @@ describe("authenticated Lisno AI answers", () => {
     expect(screen.queryByText(/team needs to confirm/)).not.toBeInTheDocument();
   });
   it("renders natural narrative once with facts behind a details disclosure", async () => {
-    vi.mocked(projectChatApi.assistantResult).mockResolvedValue(result({ narrative: [{ text: "Your project is currently in execution. I can help you check the next steps.", factIds: ["stage"] }], commercial: null, commercialAccess: "none" }));
+    vi.mocked(projectChatApi.assistantResult).mockResolvedValue(result({ narrative: [{ text: "Your project is currently in execution. I can help you check the next steps.", factIds: ["stage"] }], commercial: null, projectPricing: null, commercialAccess: "none" }));
     mount(<ChatAssistantResult projectId="project-a" resultId="result-a" />);
     expect(await screen.findByText("Your project is currently in execution. I can help you check the next steps.")).toBeVisible();
     expect(screen.getByText("Execution in progress")).not.toBeVisible();
@@ -111,12 +126,23 @@ describe("authenticated Lisno AI answers", () => {
     { kind: "status" as const, text: "Hello! How can I help you today?" },
     { kind: "no_answer" as const, text: "You're welcome!" }
   ])("renders a source-free $kind reply once without source or team-confirmation boilerplate", async ({ kind, text }) => {
-    vi.mocked(projectChatApi.assistantResult).mockResolvedValue(result({ kind, narrative: [{ text, factIds: [] }], facts: [], commercial: null, commercialAccess: "none" }));
+    vi.mocked(projectChatApi.assistantResult).mockResolvedValue(result({ kind, narrative: [{ text, factIds: [] }], facts: [], commercial: null, projectPricing: null, commercialAccess: "none" }));
     mount(<ChatAssistantResult projectId="project-a" resultId="result-a" />);
     const answer = await screen.findByRole("region", { name: "Lisno AI answer" });
     expect(within(answer).getAllByText(text)).toHaveLength(1);
     expect(within(answer).getByText(text)).toBeVisible();
     expect(within(answer).queryByText(/Sources and details|Checked |team needs to confirm/)).not.toBeInTheDocument();
+  });
+  it("renders a rules clarification as a successful answer with supported next steps", async () => {
+    const question = "Please ask about project progress, timelines or your published estimate.";
+    vi.mocked(projectChatApi.assistantResult).mockResolvedValue(result({ kind: "clarification", facts: [], missingInputs: [question], commercial: null, projectPricing: null, commercialAccess: "none" }));
+    mount(<ChatAssistantResult projectId="project-a" resultId="result-a" />);
+    const answer = await screen.findByRole("region", { name: "Lisno AI answer" });
+    expect(within(answer).getByText(question)).toBeVisible();
+    expect(within(answer).getByRole("region", { name: "Details needed" })).toBeVisible();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Retry answer" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/team needs to confirm|could not be loaded/)).not.toBeInTheDocument();
   });
   it("retains price details and checked metadata for a narrative without factual sources", async () => {
     vi.mocked(projectChatApi.assistantResult).mockResolvedValue(result({ narrative: [{ text: "Here is the approximate addition cost for your review.", factIds: [] }], facts: [] }));
@@ -124,17 +150,17 @@ describe("authenticated Lisno AI answers", () => {
     expect(await screen.findByText("₹9,735.00")).toBeVisible();
     await userEvent.click(screen.getByText("Sources and details"));
     expect(screen.getByText(/Checked /)).toBeVisible();
-    expect(screen.getByText(/approved estimate is unchanged/)).toBeVisible();
+    expect(screen.getByRole("region", { name: "Published estimate" })).toBeVisible();
   });
   it("retains stale guidance and checked metadata even when a narrative has no facts", async () => {
-    vi.mocked(projectChatApi.assistantResult).mockResolvedValue(result({ stale: true, narrative: [{ text: "Please check the current project details.", factIds: [] }], facts: [], commercial: null, commercialAccess: "none" }));
+    vi.mocked(projectChatApi.assistantResult).mockResolvedValue(result({ stale: true, narrative: [{ text: "Please check the current project details.", factIds: [] }], facts: [], commercial: null, projectPricing: null, commercialAccess: "none" }));
     mount(<ChatAssistantResult projectId="project-a" resultId="result-a" />);
-    expect(await screen.findByText(/Configuration data has changed/)).toBeVisible();
+    expect(await screen.findByText(/Project information has changed/)).toBeVisible();
     await userEvent.click(screen.getByText("Sources and details"));
     expect(screen.getByText(/Checked /)).toBeVisible();
   });
   it("retains the original fallback for older answers without narrative", async () => {
-    vi.mocked(projectChatApi.assistantResult).mockResolvedValue(result({ kind: "no_answer", facts: [], commercial: null, commercialAccess: "none" }));
+    vi.mocked(projectChatApi.assistantResult).mockResolvedValue(result({ kind: "no_answer", facts: [], commercial: null, projectPricing: null, commercialAccess: "none" }));
     mount(<ChatAssistantResult projectId="project-a" resultId="result-a" />);
     expect(await screen.findByText("The project team needs to confirm this request.")).toBeVisible();
     expect(screen.getByText(/Checked /)).toBeVisible();

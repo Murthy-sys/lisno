@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 
 import { ApiError } from "../../api/client";
 import type { ProcurementProject } from "../../api/types";
+import { useAuth } from "../../auth/AuthProvider";
 import { getProcurementProjects, procurementKeys } from "./procurementApi";
 
 export const RECEIPT_ACCEPT =
@@ -34,8 +35,9 @@ export function procurementProjectPath(projectId: string) {
  * payload, so they share one query, one integrity gate, and one display filter.
  */
 export function useProcurementProjects(enabled: boolean, includeZeroBudgetItems = false) {
+  const { user } = useAuth();
   const query = useQuery({
-    queryKey: procurementKeys.projects,
+    queryKey: [...procurementKeys.projects, user?.id ?? null, user?.role ?? null],
     queryFn: getProcurementProjects,
     enabled
   });

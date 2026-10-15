@@ -15,7 +15,7 @@ function fixture() {
   const f = createChatFixture();
   const sources: AssistantReadSources = {status: async () => ({facts: [], freshness: []}), execution: async () => ({facts: [], freshness: []}), searchCatalogue: async () => [], recommendations: async () => ({rules: [], freshness: []}), preview: async () => {throw new Error("unused");}, revalidate: async () => true};
   const assistant = createProjectChatAssistantService({chatRepository: f.chatRepository, audit: f.audit, clock: f.clock, enabled: true,
-    provider: {generate: async () => ({kind: "no_answer", facts: [], candidates: [], missingInputs: [], commercial: null, freshness: []})}, readSources: () => sources});
+    provider: {generate: async () => ({disclosurePolicy: "project-publication-v1", projectPricing: null, kind: "no_answer", facts: [], candidates: [], missingInputs: [], commercial: null, freshness: []})}, readSources: () => sources});
   vi.spyOn(assistant.runtime, "wake").mockImplementation(() => {});
   const service = createProjectChatService({repository: f.repository, chatRepository: f.chatRepository, audit: f.audit, clock: f.clock, assistant});
   const auth = createAuthService(f.repository, {jwtSecret: secret, jwtExpiresInSeconds: 3600}, {clock: f.clock});

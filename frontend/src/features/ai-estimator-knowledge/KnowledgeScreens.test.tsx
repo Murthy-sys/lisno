@@ -876,14 +876,14 @@ describe("temporary item workspace", () => {
     await waitFor(() => expect(knowledgeApi.updateKnowledgeSection).toHaveBeenCalledWith("line-1", "revision-1", "recommendations", expect.objectContaining({ expectedVersion: 2, expectedAggregateVersion: 4, payload: { budgetAlterations: [{ ...budgetRule, targetKind: "main_line", reason: "Recessed lights need the false ceiling." }], exclusions: notes } })));
   });
 
-  it("shows all four temporary sections with keyboard navigation and saved summary", async () => {
+  it("shows all temporary sections with keyboard navigation and saved summary", async () => {
     vi.mocked(knowledgeApi.getKnowledgeItem).mockResolvedValue({ ...item, itemType: "temporary" });
     const user = userEvent.setup();
     renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
     await screen.findByRole("heading", { name: "Wall panelling" });
     expect(screen.getByText("Temporary item · Must be completed")).toBeVisible();
     expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
-      "Overview", "Mode", "Recommendation & Exclusions", "Quality Parameter"
+      "Overview", "Mode", "Recommendation & Exclusions", "Quality Parameter", "Design", "Basket closure priority"
     ]);
     await doneFocusedEditing(user);
     await user.click(screen.getByRole("tab", { name: "Mode" }));
@@ -1004,6 +1004,241 @@ describe("temporary item workspace", () => {
 });
 
 describe("AI estimator knowledge screens", () => {
+  const stockAnswer = (answer: "Yes" | "No") => within(screen.getByRole("group", {
+    name: /Does designer need to check stock before selection/
+  })).getByRole("radio", { name: answer });
+
+  it("blocks discarding Design while a direct rules save is still in flight", async () => {
+    const user = userEvent.setup();
+    let current = item;
+    let currentSection = section("design");
+    let pendingPayload: KnowledgeJsonObject = {};
+    let finish!: (value: KnowledgeSectionMutationEnvelope) => void;
+    vi.mocked(knowledgeApi.getKnowledgeItem).mockImplementation(async () => current);
+    vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_id, _revision, key) =>
+      key === "design" ? currentSection : section(key));
+    vi.mocked(knowledgeApi.updateKnowledgeSection).mockImplementation((_id, _revision, _key, input) => {
+      pendingPayload = input.payload;
+      return new Promise((resolve) => { finish = resolve; });
+    });
+    renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
+    await screen.findByRole("heading", { name: "Wall panelling" });
+    await user.click(screen.getByRole("tab", { name: "Design" }));
+    await screen.findByRole("radio", { name: "Standard" });
+    await user.click(stockAnswer("Yes"));
+    await user.click(screen.getByRole("button", { name: "Save Design rules" }));
+    await user.click(screen.getByRole("tab", { name: "Basket closure priority" }));
+    const guard = screen.getByRole("alertdialog", { name: "Save changes before leaving?" });
+    expect(within(guard).getByRole("button", { name: "Discard changes" })).toBeDisabled();
+    expect(within(guard).getByRole("button", { name: "Save changes" })).toBeDisabled();
+    expect(screen.getByRole("tabpanel", { name: "Design", hidden: true })).toBeInTheDocument();
+    await act(async () => {
+      current = { ...item, version: item.version + 1 };
+      const saved = mutationSection("design", pendingPayload);
+      currentSection = saved;
+      finish(saved);
+    });
+    await waitFor(() => expect(within(guard).getByRole("button", { name: "Stay here" })).toBeEnabled());
+    await user.click(within(guard).getByRole("button", { name: "Stay here" }));
+    expect(stockAnswer("Yes")).toBeChecked();
+    expect(knowledgeApi.updateKnowledgeSection).toHaveBeenCalledExactlyOnceWith("line-1", "revision-1", "design", {
+      expectedVersion: 2, expectedAggregateVersion: 4, applicability: "configured", payload: pendingPayload
+    });
+    expect(knowledgeApi.updateKnowledgeMainLine).not.toHaveBeenCalled();
+  });
+
+  it("does not allow unknown Design save outcome to be discarded before reconciliation", async () => {
+    const user = userEvent.setup();
+    let readUnavailable = false;
+    let current = item;
+    let currentSection = section("design");
+    vi.mocked(knowledgeApi.getKnowledgeItem).mockImplementation(async () => {
+      if (readUnavailable) throw new Error("offline");
+      return current;
+    });
+    vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_id, _revision, key) => {
+      if (key !== "design") return section(key);
+      if (readUnavailable) throw new Error("offline");
+      return currentSection;
+    });
+    vi.mocked(knowledgeApi.updateKnowledgeSection).mockImplementationOnce(async (_id, _revision, _key, input) => {
+      current = { ...item, version: item.version + 1 };
+      currentSection = section("design", input.payload, 3);
+      readUnavailable = true;
+      throw new Error("response lost after commit");
+    }).mockImplementation(async (_id, _revision, key, input) => {
+      current = { ...current, version: current.version + 1 };
+      const saved = mutationSection(key, input.payload, currentSection.version + 1, current.version);
+      currentSection = saved;
+      return saved;
+    });
+    renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
+    await screen.findByRole("heading", { name: "Wall panelling" });
+    await user.click(screen.getByRole("tab", { name: "Design" }));
+    await screen.findByRole("radio", { name: "Standard" });
+    await user.click(stockAnswer("Yes"));
+    await user.click(screen.getByRole("button", { name: "Save Design rules" }));
+    expect(await screen.findByText("Saved rules are unconfirmed")).toBeVisible();
+    await user.click(screen.getByRole("tab", { name: "Basket closure priority" }));
+    const guard = screen.getByRole("alertdialog", { name: "Save changes before leaving?" });
+    expect(within(guard).getByRole("button", { name: "Discard changes" })).toBeDisabled();
+    expect(within(guard).getByRole("button", { name: "Save changes" })).toBeDisabled();
+    expect(guard).toHaveTextContent("A Design save is unconfirmed");
+    await user.click(within(guard).getByRole("button", { name: "Stay here" }));
+    readUnavailable = false;
+    await user.click(screen.getByRole("button", { name: "Load current rules" }));
+    await waitFor(() => expect(stockAnswer("No")).toBeEnabled());
+    expect(stockAnswer("Yes")).toBeChecked();
+    await user.click(stockAnswer("No"));
+    await user.click(screen.getByRole("button", { name: "Save Design rules" }));
+    await waitFor(() => expect(knowledgeApi.updateKnowledgeSection).toHaveBeenLastCalledWith("line-1", "revision-1", "design", {
+      expectedVersion: 3, expectedAggregateVersion: 5, applicability: "configured", payload: expect.objectContaining({ answers: expect.objectContaining({ stockCheck: false }) })
+    }));
+    expect(await screen.findByText("Design rules saved.")).toBeVisible();
+    expect(knowledgeApi.updateKnowledgeMainLine).not.toHaveBeenCalled();
+  });
+
+  it("protects unsaved Design rules with stay, discard and save navigation", async () => {
+    const user = userEvent.setup();
+    let current = item;
+    let currentSection = section("design");
+    vi.mocked(knowledgeApi.getKnowledgeItem).mockImplementation(async () => current);
+    vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_id, _revision, key) =>
+      key === "design" ? currentSection : section(key));
+    vi.mocked(knowledgeApi.updateKnowledgeSection).mockImplementation(async (_id, _revision, key, input) => {
+      current = { ...current, version: current.version + 1 };
+      const saved = mutationSection(key, input.payload, currentSection.version + 1, current.version);
+      currentSection = saved;
+      return saved;
+    });
+    renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
+    await screen.findByRole("heading", { name: "Wall panelling" });
+    await user.click(screen.getByRole("tab", { name: "Design" }));
+    await screen.findByRole("radio", { name: "Standard" });
+    await user.click(stockAnswer("Yes"));
+    await user.click(screen.getByRole("tab", { name: "Basket closure priority" }));
+    let guard = screen.getByRole("alertdialog", { name: "Save changes before leaving?" });
+    await user.click(within(guard).getByRole("button", { name: "Stay here" }));
+    expect(stockAnswer("Yes")).toBeChecked();
+    await user.click(screen.getByRole("tab", { name: "Basket closure priority" }));
+    guard = screen.getByRole("alertdialog", { name: "Save changes before leaving?" });
+    await user.click(within(guard).getByRole("button", { name: "Discard changes" }));
+    expect(knowledgeApi.updateKnowledgeSection).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("tab", { name: "Design" }));
+    await screen.findByRole("radio", { name: "Standard" });
+    expect(stockAnswer("No")).toBeChecked();
+    await user.click(stockAnswer("Yes"));
+    await user.click(screen.getByRole("tab", { name: "Basket closure priority" }));
+    guard = screen.getByRole("alertdialog", { name: "Save changes before leaving?" });
+    await user.click(within(guard).getByRole("button", { name: "Save changes" }));
+    expect(await screen.findByRole("tabpanel", { name: "Basket closure priority" })).toBeVisible();
+    expect(knowledgeApi.updateKnowledgeSection).toHaveBeenCalledExactlyOnceWith("line-1", "revision-1", "design", {
+      expectedVersion: 2, expectedAggregateVersion: 4, applicability: "configured", payload: expect.objectContaining({ answers: expect.objectContaining({ stockCheck: true }) })
+    });
+    await user.click(screen.getByRole("tab", { name: "Design" }));
+    await screen.findByRole("radio", { name: "Standard" });
+    expect(stockAnswer("Yes")).toBeChecked();
+    expect(knowledgeApi.updateKnowledgeMainLine).not.toHaveBeenCalled();
+  });
+
+  it.each(["draft", "read-only", "no revision"] as const)("opens Design rules without estimation visibility and preserves Basket closure priority and completeness (%s)", async (state) => {
+    if (state === "read-only") {
+      vi.mocked(authorization.hasFrontendPermission).mockImplementation((_auth, permission) =>
+        permission !== "ai_estimator_knowledge.configuration.update");
+    } else if (state === "no revision") {
+      vi.mocked(knowledgeApi.getKnowledgeItem).mockResolvedValue({ ...item, draftRevision: null, draftRevisionId: null });
+    }
+    const user = userEvent.setup();
+    const { queryClient } = renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
+    await screen.findByRole("heading", { name: "Wall panelling" });
+    await waitFor(() => expect(queryClient.isFetching()).toBe(0));
+    vi.mocked(knowledgeApi.getKnowledgeSection).mockClear();
+    vi.mocked(knowledgeApi.getKnowledgeBasketQuality).mockClear();
+
+    await user.click(screen.getByRole("tab", { name: "Design" }));
+    const design = screen.getByRole("tabpanel", { name: "Design" });
+    expect(design).not.toHaveAttribute("aria-busy");
+    expect(within(design).queryByRole("heading", { name: "Estimation visibility" })).not.toBeInTheDocument();
+    expect(within(design).queryByRole("radio", { name: /^Internal/ })).not.toBeInTheDocument();
+    expect(within(design).queryByRole("radio", { name: /^External/ })).not.toBeInTheDocument();
+    expect(within(design).queryByRole("button", { name: "Save visibility" })).not.toBeInTheDocument();
+    if (state === "no revision") {
+      expect(design).toHaveTextContent("Create a draft revision to configure Design rules.");
+      expect(within(design).queryByRole("radio")).not.toBeInTheDocument();
+      expect(knowledgeApi.getKnowledgeSection).not.toHaveBeenCalled();
+    } else {
+      await within(design).findByRole("radio", { name: "Standard" });
+      expect(within(design).getByRole("heading", { name: "Design requirements", level: 2 })).toBeVisible();
+      expect(within(design).getAllByRole("radio", { name: "Yes" })).toHaveLength(14);
+      expect(within(design).getAllByRole("radio", { name: "No", checked: true })).toHaveLength(14);
+      if (state === "read-only") {
+        expect(stockAnswer("Yes")).toBeDisabled();
+        expect(within(design).queryByRole("button", { name: "Save Design rules" })).not.toBeInTheDocument();
+      } else {
+        expect(stockAnswer("Yes")).toBeEnabled();
+        expect(within(design).getByRole("button", { name: "Save Design rules" })).toBeDisabled();
+      }
+      expect(knowledgeApi.getKnowledgeSection).toHaveBeenCalledExactlyOnceWith("line-1", "revision-1", "design");
+    }
+    expect(screen.getByRole("region", { name: "Workspace status" })).toHaveTextContent("0 of 4 tabs configured");
+    await expectNoAutomatedAccessibilityViolations();
+    const sectionReads = vi.mocked(knowledgeApi.getKnowledgeSection).mock.calls.length;
+    await user.click(screen.getByRole("tab", { name: "Basket closure priority" }));
+    const closure = screen.getByRole("tabpanel", { name: "Basket closure priority" });
+    expect(within(closure).getByRole("heading", { name: "Basket closure priority", level: 2 })).toBeVisible();
+    expect(closure).toHaveTextContent("No configuration options are available in this section yet.");
+    expect(within(closure).queryByRole("button")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Save / })).not.toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Workspace status" })).toHaveTextContent("0 of 4 tabs configured");
+    expect(knowledgeApi.getKnowledgeSection).toHaveBeenCalledTimes(sectionReads);
+    expect(knowledgeApi.getKnowledgeBasketQuality).not.toHaveBeenCalled();
+    expect(knowledgeApi.updateKnowledgeSection).not.toHaveBeenCalled();
+    expect(knowledgeApi.updateKnowledgeMainLine).not.toHaveBeenCalled();
+    expect(knowledgeApi.updateKnowledgeBasketQuality).not.toHaveBeenCalled();
+  });
+
+  it("retains stay, discard and save protection when leaving an edited section for the new tabs", async () => {
+    const user = userEvent.setup();
+    let savedOverview: KnowledgeJsonObject = { uomId: squareFoot.id };
+    vi.mocked(knowledgeApi.listKnowledgeMasters).mockImplementation(async (type) => ({
+      items: type === "uoms" ? [squareFoot, squareMetre] : [], pagination: page
+    }));
+    vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_line, _revision, key) =>
+      section(key, key === "overview" ? savedOverview : {}));
+    vi.mocked(knowledgeApi.updateKnowledgeSection).mockImplementation(async (_line, _revision, key, input) => {
+      savedOverview = input.payload;
+      return mutationSection(key, input.payload);
+    });
+    renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
+    const uom = await screen.findByRole("combobox", { name: "Unit of measure (UOM)" });
+    await user.selectOptions(uom, squareMetre.id);
+    const overview = screen.getByRole("tab", { name: "Overview" });
+    overview.focus();
+    await user.keyboard("{End}");
+    let guard = screen.getByRole("alertdialog", { name: "Save changes before leaving?" });
+    await user.click(within(guard).getByRole("button", { name: "Stay here" }));
+    await waitFor(() => expect(overview).toHaveFocus());
+    expect(overview).toHaveAttribute("aria-selected", "true");
+    expect(uom).toHaveValue(squareMetre.id);
+
+    await user.click(screen.getByRole("tab", { name: "Design" }));
+    guard = screen.getByRole("alertdialog", { name: "Save changes before leaving?" });
+    await user.click(within(guard).getByRole("button", { name: "Discard changes" }));
+    expect(screen.getByRole("tabpanel", { name: "Design" })).toBeVisible();
+    expect(knowledgeApi.updateKnowledgeSection).not.toHaveBeenCalled();
+
+    await user.click(overview);
+    await user.selectOptions(await screen.findByRole("combobox", { name: "Unit of measure (UOM)" }), squareMetre.id);
+    await user.selectOptions(screen.getByRole("combobox", { name: "Configuration section" }), "basket-closure-priority");
+    guard = screen.getByRole("alertdialog", { name: "Save changes before leaving?" });
+    await user.click(within(guard).getByRole("button", { name: "Save changes" }));
+    expect(await screen.findByRole("tabpanel", { name: "Basket closure priority" })).toBeVisible();
+    expect(knowledgeApi.updateKnowledgeSection).toHaveBeenCalledExactlyOnceWith("line-1", "revision-1", "overview", expect.objectContaining({
+      payload: { uomId: squareMetre.id }
+    }));
+    expect(screen.queryByRole("button", { name: /^Save / })).not.toBeInTheDocument();
+  });
+
   it("edits a reusable Surface from Overview without replacing the pending Main Line selection", async () => {
     const user = userEvent.setup();
     let currentSurface = wallSurface;
@@ -2272,7 +2507,7 @@ describe("AI estimator knowledge screens", () => {
     expect(surfaceCalls.every(([, params]) => params?.includeArchived === true)).toBe(true);
   });
 
-  it("renders four guided sections with saved summaries in the rail while preserving Overview and Mode behavior", async () => {
+  it("renders six guided sections with saved summaries in the rail while preserving Overview and Mode behavior", async () => {
     vi.mocked(knowledgeApi.getKnowledgeBasketQuality).mockResolvedValue({ basketId: "basket-1", basketName: "Carpentry", basketStatus: "active", version: 3, revisionId: "basket-quality-1", revisionNumber: 1, contentDigest: "quality-digest", parameters: [{ id: "shared-quality-1", type: "number", label: "Thickness", unit: "mm", required: true, active: true }], updatedAt: item.updatedAt });
 
     const user = userEvent.setup();
@@ -2300,7 +2535,9 @@ describe("AI estimator knowledge screens", () => {
       "Overview",
       "Mode",
       "Recommendation & Exclusions",
-      "Quality Parameter"
+      "Quality Parameter",
+      "Design",
+      "Basket closure priority"
     ]);
     expect(within(tablist).queryByRole("tab", { name: "Scope" })).not.toBeInTheDocument();
     expect(within(tablist).queryByRole("tab", { name: "Execution" })).not.toBeInTheDocument();
@@ -2868,7 +3105,7 @@ describe("AI estimator knowledge screens", () => {
     expect(screen.getByRole("option", { name: "Counter surface" })).toBeVisible();
   });
 
-  it("preserves arrow, Home, End, and wraparound order across the four workspace tabs", async () => {
+  it("preserves arrow, Home, End, and wraparound order across the six workspace tabs", async () => {
     const user = userEvent.setup();
     setViewportWidth(1024);
     renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
@@ -2881,11 +3118,11 @@ describe("AI estimator knowledge screens", () => {
     await user.keyboard("{ArrowRight}");
     expect(screen.getByRole("tab", { name: "Recommendation & Exclusions" })).toHaveFocus();
     await user.keyboard("{End}");
-    expect(screen.getByRole("tab", { name: "Quality Parameter" })).toHaveFocus();
+    expect(screen.getByRole("tab", { name: "Basket closure priority" })).toHaveFocus();
     await user.keyboard("{Home}");
     expect(overview).toHaveFocus();
     await user.keyboard("{ArrowLeft}");
-    expect(screen.getByRole("tab", { name: "Quality Parameter" })).toHaveFocus();
+    expect(screen.getByRole("tab", { name: "Basket closure priority" })).toHaveFocus();
   });
 
   it("keeps focus on the selected Mode tab when dirty keyboard navigation is declined", async () => {
@@ -2923,7 +3160,9 @@ describe("AI estimator knowledge screens", () => {
         "Overview",
         "Mode",
         "Recommendation & Exclusions",
-        "Quality Parameter"
+        "Quality Parameter",
+        "Design",
+        "Basket closure priority"
       ]);
       await user.selectOptions(selector, "mode");
       expect(await screen.findByRole("tabpanel", { name: "Mode" })).toBeVisible();

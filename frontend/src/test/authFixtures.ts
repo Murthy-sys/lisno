@@ -91,6 +91,9 @@ const DEFAULT_PERMISSIONS_BY_ROLE = {
   ],
   procurement: [
     ...BASE_SESSION_PERMISSIONS,
+    "projects.list",
+    "projects.read",
+    "projects.design_workflow.read",
     "workflow.tasks.read",
     "workflow.tasks.update",
     "procurement.workspace.read",
@@ -122,7 +125,7 @@ const DEFAULT_PERMISSIONS_BY_ROLE = {
     "procurement.vendor_allocation_baseline.correct",
     "access_request.self.read"
   ],
-  program_manager: [...BASE_SESSION_PERMISSIONS],
+  program_manager: [...BASE_SESSION_PERMISSIONS, "projects.list", "projects.read", "projects.design_workflow.read"],
   finance_head: [
     ...BASE_SESSION_PERMISSIONS,
     "workflow.tasks.read",

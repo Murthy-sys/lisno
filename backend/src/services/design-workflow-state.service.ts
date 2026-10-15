@@ -1,4 +1,5 @@
 import type { WorkflowSpacePlanningSource } from "../domain/workflow-space-planning.js";
+import { assertDesignRequirementsSubmissionAllowed } from "./design-requirements.service.js";
 import { furnitureUomCreateSchema, type FurnitureUomCreateInput } from "../domain/workflow-uoms.js";
 import { normalizeKnowledgeIdentity } from "../domain/ai-estimator-knowledge.js";
 import type { WorkflowEstimateRoomContext } from "../domain/workflow-estimate-items.js";
@@ -117,10 +118,24 @@ export async function requireDesignWorkflowScope(repository: AppRepository, acto
   if (!(representative || designer || client || sales || manager || allowFinance && finance)) missing();
   return { project, capabilities: { designer, client: client || representative, sales, finance, representative, manager: manager || representative } };
 }
+
+/** Observers can inspect progress but never acquire an existing stage-action capability. */
+export async function requireDesignWorkflowReadScope(repository: AppRepository, actor: PublicUser, projectId: string) {
+  if (actor.role !== "procurement" && actor.role !== "program_manager") {
+    return requireDesignWorkflowScope(repository, actor, projectId);
+  }
+  const user = await requireActor(repository, actor);
+  const project = await repository.findProjectForUserRead(user, projectId);
+  if (!project) missing();
+  return { project, capabilities: { designer: false, client: false, sales: false,
+    finance: false, representative: false, manager: false } };
+}
 export async function assertDesignWorkflowSubmissionAllowed(repository: AppRepository, projectId: string, options: { lock?: boolean; roomIds?: string[]; phase?: "upload" | "submission" } = {}) {
   const project = await repository.findProjectById(projectId);
   if (!project) missing();
-  if (!project.designWorkflowStages) return;
+  const readiness = options.phase === "upload" ? undefined : await assertDesignRequirementsSubmissionAllowed(repository, projectId, options.lock ?? false);
+  const designRequirementsReadiness = readiness?.entries.length ? readiness : undefined;
+  if (!project.designWorkflowStages) return designRequirementsReadiness;
   const state = await hydrateDesignWorkflowState(repository, projectId, await repository.findDesignWorkflowState(projectId) ?? emptyDesignWorkflowState(projectId), options.lock ?? false);
   const reasons = workflowSubmissionBlockers(state, options.roomIds, options.phase);
   const furniture = state.stages.existing_furniture_dimensions;
@@ -136,6 +151,7 @@ export async function assertDesignWorkflowSubmissionAllowed(repository: AppRepos
     try { await repository.saveDesignWorkflowState(projectId, state.version, state); }
     catch (error) { if (error instanceof RepositoryConflictError) blocked(["The workflow changed. Refresh before submitting."]); throw error; }
   }
+  return designRequirementsReadiness;
 }
 function allowed(state: DesignWorkflowState, action: Exclude<DesignWorkflowAction, "confirm_initial_payment">, at: number, actorId?: string): boolean {
   if (!workflowDesignStartAt(state)) return false;

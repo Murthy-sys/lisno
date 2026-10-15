@@ -4,16 +4,16 @@ const id = z.string().trim().min(1).max(160);
 const version = z.number().int().min(0).max(Number.MAX_SAFE_INTEGER - 1);
 const text = z.string().trim().min(1).max(4000);
 export const createEstimateRequirementSchema = z.object({
-  mainBasketId: id, roomId: id.nullable().optional(), text,
+  mainBasketId: id, mainLineId: id.nullable().optional(), roomId: id.nullable().optional(), text,
   expectedRequirementsVersion: version,
   idempotencyKey: z.string().regex(/^[A-Za-z0-9_-]{8,128}$/u)
 }).strict();
 export const updateEstimateRequirementSchema = z.object({
   expectedRequirementsVersion: version, expectedVersion: version.min(1),
-  mainBasketId: id.optional(), roomId: id.nullable().optional(), text: text.optional(),
+  mainBasketId: id.optional(), mainLineId: id.nullable().optional(), roomId: id.nullable().optional(), text: text.optional(),
   withdraw: z.boolean().optional()
 }).strict().refine(value => value.withdraw === true || value.mainBasketId !== undefined ||
-  value.roomId !== undefined || value.text !== undefined, "Supply a change or withdraw the request.");
+  value.mainLineId !== undefined || value.roomId !== undefined || value.text !== undefined, "Supply a change or withdraw the request.");
 export const resolveEstimateRequirementSchema = z.object({
   expectedRequirementsVersion: version, expectedVersion: version.min(1),
   status: z.enum(["included", "declined", "superseded"]),

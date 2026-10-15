@@ -3,7 +3,7 @@ import type { WorkflowEstimateRoom } from "../domain/workflow-estimate-items.js"
 import { RepositoryConflictError } from "../repositories/types.js";
 import { instructionsForStage, type DesignStageInstructions } from "../domain/design-workflow-instructions.js";
 import { emptyDesignWorkflowState, workflowStageStartAt, workflowIsPaused, workflowDesignStartAt } from "../domain/design-workflow-state.js";
-import { projectInitialPayment, projectOperationalStage, requireDesignWorkflowScope, hydrateDesignWorkflowState } from "./design-workflow-state.service.js";
+import { projectInitialPayment, projectOperationalStage, requireDesignWorkflowReadScope, hydrateDesignWorkflowState } from "./design-workflow-state.service.js";
 import { createProjectDesignWorkflow } from "../domain/design-workflow.js";
 import { randomUUID } from "node:crypto";
 
@@ -31,6 +31,7 @@ import type { AuditService } from "./audit.service.js";
 import {
   forbidden,
   requireProjectOperationAccess,
+  requireProjectReadAccess,
   requireActor,
   requireUser,
   type Clock
@@ -206,7 +207,7 @@ export function createProjectService(
 ): ProjectService {
   return {
     async designWorkflow(actor, projectId) {
-      const { capabilities } = await requireDesignWorkflowScope(repository, actor, projectId).catch((error: unknown) => {
+      const { capabilities } = await requireDesignWorkflowReadScope(repository, actor, projectId).catch((error: unknown) => {
         if (error instanceof ApiError && error.status === 401) throw new ApiError(404, "NOT_FOUND", "The requested resource was not found.");
         throw error;
       });
@@ -362,11 +363,10 @@ export function createProjectService(
 
     async list(actor, pagination) {
       const user = await requireActor(repository, actor);
-      const page = await repository.pageProjectsForUserInModule(
-        user,
-        currentProjectModule(),
-        pagination
-      );
+      const module = currentProjectModule();
+      const page = user.role === "procurement" || user.role === "program_manager"
+        ? await repository.pageProjectsForUserRead(user, pagination)
+        : await repository.pageProjectsForUserInModule(user, module, pagination);
       const tasks = await repository.listTasksForProjectIds(
         page.items.map((project) => project.id)
       );
@@ -508,7 +508,7 @@ export function createProjectService(
     },
 
     async get(actor, projectId) {
-      await requireProjectOperationAccess(repository, actor, projectId);
+      await requireProjectReadAccess(repository, actor, projectId);
       const hierarchy = await repository.getProjectHierarchy(projectId);
       if (!hierarchy) {
         throw new ApiError(404, "NOT_FOUND", "The requested resource was not found.");

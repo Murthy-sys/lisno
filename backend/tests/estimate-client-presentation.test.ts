@@ -27,7 +27,8 @@ describe("published Client estimate presentation", () => {
         revisionId: "rev-old", sourceItemStatus: "inactive", sourceRevisionStatus: "draft",
         sourceItemVersion: 7, sourceRevisionVersion: 3,
         uomId: "uom-sqft", mainBasketName: "Original basket",
-        subBasketName: "Original child", mainLineName: "Original console", uomName: "Square feet"
+        subBasketName: "Original child", mainLineName: "Original console", uomName: "Square feet",
+        estimateNotes: ["Keep the service hatch accessible."], designRules: { discussedVendorId: "INTERNAL VENDOR", details: { vendorPreDiscussed: "INTERNAL DISCUSSION" } }
       }]
     };
     const result = presentClientEstimate(actor, { ...estimate, lineItems: [{ catalogueId: "changed" }] }, lead,
@@ -56,6 +57,9 @@ describe("published Client estimate presentation", () => {
       expect(presentClientEstimate(actor, estimate, lead, { ...round, estimateSnapshot: { ...configured,
         lineItems: [{ ...configured.lineItems[0], ...metadata }] } })).toMatchObject({ reviewSourceIssue: "missing_snapshot", publishedReview: null });
     }
+    expect(result?.lineItems[0].estimateNotes).toEqual(["Keep the service hatch accessible."]);
+    expect(result?.lineItems[0]).not.toHaveProperty("designRules");
+    expect(JSON.stringify(result)).not.toContain("INTERNAL DISCUSSION");
     expect(result?.lineItems[0]).not.toHaveProperty("pricingMode");
     expect(result?.lineItems[0]).not.toHaveProperty("rateSource");
     const historical = presentClientEstimate(actor, estimate, lead, { ...round,

@@ -5,9 +5,11 @@ import type { ProcurementVendorDetail } from "../../../../shared/knowledge/knowl
 import { ApiError } from "../../core/http/apiClient";
 import { pickDocument, releaseSelectedAsset } from "../../platform/files";
 import { useConfiguredRuntime } from "../../runtime/RuntimeProvider";
+import { intakeProposalFixture } from "../vendor-requests/proposal.fixtures";
 import { KnowledgeVendorEditor } from "./KnowledgeVendorEditor";
 import type { KnowledgeMobileContext } from "./knowledgeRuntime";
 
+jest.mock("../../navigation/AdaptiveAppScaffold", () => ({ useScaffoldNavigationGuard: () => null }));
 jest.mock("../../runtime/RuntimeProvider", () => ({ useConfiguredRuntime: jest.fn() }));
 jest.mock("./KnowledgeVendorBaseline", () => ({ KnowledgeVendorBaseline: ({ onAccessLost }: { onAccessLost: () => void }) => {
   const NativePressable = require("react-native").Pressable;
@@ -16,6 +18,7 @@ jest.mock("./KnowledgeVendorBaseline", () => ({ KnowledgeVendorBaseline: ({ onAc
 } }));
 jest.mock("../../platform/files", () => ({ pickDocument: jest.fn(), releaseSelectedAsset: jest.fn(async () => undefined), TransferHttpError: class extends Error {} }));
 const get = jest.fn(); const patch = jest.fn(); const post = jest.fn(); const upload = jest.fn(); const download = jest.fn();
+const requestSession = { user: { id: "procurement-test", role: "procurement" }, authorization: { permissions: ["procurement.vendor_basket_proposal.create", "procurement.vendor_basket_proposal.read", "procurement.vendor_basket_proposal.update", "procurement.vendor_basket_proposal.submit"] } };
 const now = "2026-09-25T00:00:00.000Z";
 const meta = { version: 3, createdAt: now, updatedAt: now, createdById: "admin", updatedById: "admin", description: null, displayOrder: 0, status: "active" as const };
 const vendor: ProcurementVendorDetail = { ...meta, id: "vendor-a", masterType: "vendors", code: "V001", name: "Example Vendor", procurementSummary: { vendorType: "supplier", profileComplete: true, currentAddressVerifiedPhysically: false, mainBaskets: [{ id: "basket-a", name: "Carpentry", status: "active" }], subBaskets: [{ id: "sub-a", basketId: "basket-a", name: "Joinery" }], mainBasket: { id: "basket-a", name: "Carpentry", status: "active" }, subBasket: { id: "sub-a", name: "Joinery" } }, geoTaggedPicture: null, msmeCertificate: null, procurementProfile: { vendorType: "supplier", organizationType: "firm", bankAccount: null, nameOfRepresentative: "Example Representative", position: "Owner", workProfile: "Materials", email: "vendor@example.test", phoneNumber: "9000000000", address: "Example address", aadhar: "123412341234", pan: "ABCDE1234F", currentAddress: "Example address", gstRegistered: false, gstNumber: null, msmeRegistered: false, supplier: true, executionType: null, currentAddressVerifiedPhysically: false, turnoverSelfDeclaredPaise: 100000, turnoverVerifiedPaise: null, mainBasketIds: ["basket-a"], subBasketIds: ["sub-a"], mainBasketId: "basket-a", subBasketId: "sub-a", reference: "", physicalAddressVerifiedAt: null, physicalAddressVerifiedById: null } };
@@ -44,7 +47,7 @@ beforeEach(() => {
   patch.mockResolvedValue({ ...vendor, version: 4 });
   post.mockResolvedValue({ ...vendor, version: 4 });
   upload.mockReturnValue({ result: Promise.resolve({ uploadId: "certificate-ready", expiresAt: "2099-01-01T00:00:00Z" }), cancel: jest.fn() });
-  jest.mocked(useConfiguredRuntime).mockReturnValue({ runtime: { api: { authenticated: { get, post, patch, delete: jest.fn() } }, transfers: { upload, download } } } as unknown as ReturnType<typeof useConfiguredRuntime>);
+  jest.mocked(useConfiguredRuntime).mockReturnValue({ environment: { environment: { id: "test" }, generation: 1, status: "ready" }, session: { generation: 1, session: requestSession }, runtime: { api: { authenticated: { get, post, patch, delete: jest.fn() } }, transfers: { upload, download } } } as unknown as ReturnType<typeof useConfiguredRuntime>);
 });
 
 describe("Native Configuration vendor", () => {
@@ -234,57 +237,30 @@ describe("Native Configuration vendor", () => {
     expect(view.queryByRole("button", { name: "Add sub-basket" })).toBeNull();
   });
 
-  it("adds a parent and a child to existing choices using a specific selected parent", async () => {
-    useCatalog();
-    let createdMain = false;
-    let createdSub = false;
-    const newBasket = { ...meta, id: "basket-c", name: "Metalwork" };
-    const newSub = { ...meta, id: "sub-c", basketId: "basket-c", name: "Welding" };
-    const normalGet = get.getMockImplementation()!;
-    get.mockImplementation(async (path: string) => path.includes("/baskets/basket-c/sub-baskets") ? page(createdSub ? [newSub] : []) : path.includes("/baskets?") ? page([...([basketA, basketB]), ...(createdMain ? [newBasket] : [])]) : normalGet(path));
-    post.mockImplementation(async (path: string) => {
-      if (path.includes("/baskets/basket-c/sub-baskets")) { createdSub = true; return newSub; }
-      if (path.endsWith("/baskets")) { createdMain = true; return newBasket; }
-      return vendor;
-    });
+  it("creates a request draft without immediately adding or selecting active baskets", async () => {
+    useCatalog(); post.mockResolvedValueOnce(intakeProposalFixture());
     const { view } = await mount();
     await fireEvent.press(view.getByRole("button", { name: "Add main basket" }));
-    await fireEvent.changeText(view.getByLabelText("Name"), "Metalwork");
-    await fireEvent.press(view.getAllByRole("button", { name: "Add main basket" }).at(-1)!);
-    await view.findByText("Main Baskets: 2 selected");
-    await waitFor(() => expect(view.getByRole("button", { name: "Add sub-basket" }).props.accessibilityState.disabled).toBe(false));
-    await fireEvent.press(view.getByRole("button", { name: "Add sub-basket" }));
-    expect(view.getByText("Main basket: Metalwork")).toBeTruthy();
-    await fireEvent.changeText(view.getByLabelText("Name"), "Welding");
-    await fireEvent.press(view.getAllByRole("button", { name: "Add sub-basket" }).at(-1)!);
-    await view.findByText("Sub Baskets: 2 selected");
-    expect(view.getByRole("combobox", { name: "Sub Baskets" }).props.accessibilityValue.text).toContain("Metalwork · Welding");
-    await fireEvent.press(view.getByRole("button", { name: "Save vendor changes" }));
-    await waitFor(() => expect(patch).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ procurementProfile: expect.objectContaining({ mainBasketIds: ["basket-a", "basket-c"], subBasketIds: ["sub-a", "sub-c"] }) }), expect.any(Object)));
+    await fireEvent.changeText(view.getByLabelText("Main Basket name"), "Metalwork");
+    await fireEvent.changeText(view.getByLabelText("Main Basket description"), "Metal fittings");
+    await fireEvent.changeText(view.getByLabelText("Sub Basket name"), "Rails");
+    await fireEvent.changeText(view.getByLabelText("Sub Basket description"), "Stair rails");
+    await fireEvent.changeText(view.getByLabelText("Main Line 1 name"), "Railing");
+    await fireEvent.press(view.getByRole("button", { name: "Save draft" }));
+    await view.findByText("Draft saved. Continue it from My Requests.");
+    expect(post).toHaveBeenCalledWith("/procurement/vendor-basket-proposals", expect.objectContaining({ requestMode: "hierarchy_intake", vendorId: "vendor-a", intake: expect.objectContaining({ basket: { name: "Metalwork", description: "Metal fittings" } }) }));
+    expect(view.getByText("Main Baskets: 1 selected")).toBeTruthy();
+    expect(view.getByText("Sub Baskets: 1 selected")).toBeTruthy();
   });
 
-  it("keeps a created basket selected when the broader catalog refresh fails", async () => {
-    useCatalog();
-    const created = { ...meta, id: "basket-c", name: "Metalwork" };
-    let wasCreated = false;
-    const normalGet = get.getMockImplementation()!;
-    get.mockImplementation(async (path: string) => path.includes("/baskets/basket-c/sub-baskets") ? page([]) : path.includes("/baskets?") ? page([...([basketA, basketB]), ...(wasCreated ? [created] : [])]) : normalGet(path));
-    post.mockImplementation(async (path: string) => {
-      if (path.endsWith("/baskets")) { wasCreated = true; return created; }
-      return vendor;
-    });
-    const refresh = jest.fn().mockRejectedValueOnce(new Error("Refresh unavailable")).mockResolvedValue(undefined);
-    const { view } = await mount({ refresh });
-    await fireEvent.press(view.getByRole("button", { name: "Add main basket" }));
-    await fireEvent.changeText(view.getByLabelText("Name"), "Metalwork");
-    await fireEvent.press(view.getAllByRole("button", { name: "Add main basket" }).at(-1)!);
-    await view.findByText("Main Baskets: 2 selected");
-    await view.findByText("Basket created and selected. Other vendor lists could not refresh.");
-    expect(post).toHaveBeenCalledTimes(1);
-    await fireEvent.press(view.getByRole("button", { name: "Retry catalog refresh" }));
-    await waitFor(() => expect(view.queryByText("Basket created and selected. Other vendor lists could not refresh.")).toBeNull());
-    expect(refresh).toHaveBeenCalledTimes(2);
-    expect(post).toHaveBeenCalledTimes(1);
+  it("requests a Sub Basket under the selected read-only parent", async () => {
+    const { view } = await mount();
+    await waitFor(() => expect(view.getByRole("button", { name: "Add sub-basket" })).toBeEnabled());
+    await fireEvent.press(view.getByRole("button", { name: "Add sub-basket" }));
+    expect(view.getByText("Selected Main Basket: Carpentry")).toBeTruthy();
+    expect(view.queryByLabelText("Main Basket name")).toBeNull();
+    expect(view.getByLabelText("Sub Basket description")).toBeTruthy();
+    expect(view.getByLabelText("Main Line 1 name")).toBeTruthy();
   });
 
   it("uses the full organization dropdown and preserves bank account leading zeros", async () => {
@@ -352,11 +328,13 @@ describe("Native Configuration vendor", () => {
     expect(readonly.view.getByLabelText("Entity Name").props.editable).toBe(false);
   });
 
-  it("requires classification permission for inline baskets independently of vendor create permission", async () => {
-    const restricted = await mount({ canCreateClassification: false, canCreate: true });
-    expect(restricted.view.queryByRole("button", { name: "Add main basket" })).toBeNull();
-    await restricted.view.unmount();
-    const allowed = await mount({ canCreateClassification: true, canCreate: false, canUpdate: true });
+  it("requires proposal-create permission independently of retired classification permission", async () => {
+    const runtime = jest.mocked(useConfiguredRuntime).getMockImplementation()!();
+    jest.mocked(useConfiguredRuntime).mockReturnValue({ ...runtime, session: { session: { ...requestSession, authorization: { permissions: [] } }, generation: 1 } } as unknown as ReturnType<typeof useConfiguredRuntime>);
+    const restricted = await mount({ canCreateClassification: true });
+    expect(restricted.view.queryByRole("button", { name: "Add main basket" })).toBeNull(); await restricted.view.unmount();
+    jest.mocked(useConfiguredRuntime).mockReturnValue(runtime);
+    const allowed = await mount({ canCreateClassification: false, canCreate: false, canUpdate: true });
     expect(allowed.view.getByRole("button", { name: "Add main basket" })).toBeTruthy();
   });
 
@@ -369,15 +347,16 @@ describe("Native Configuration vendor", () => {
     expect(view.queryByRole("button", { name: "Save vendor changes" })).toBeNull();
   });
 
-  it("removes parent vendor detail after a forbidden inline basket creation", async () => {
+  it("hides the intake after a forbidden request creation", async () => {
     post.mockRejectedValueOnce(new ApiError(403, "FORBIDDEN", "Access removed"));
     const { view } = await mount();
     await fireEvent.press(view.getByRole("button", { name: "Add main basket" }));
-    await fireEvent.changeText(view.getByLabelText("Name"), "Blocked basket");
-    await fireEvent.press(view.getAllByRole("button", { name: "Add main basket" }).at(-1)!);
-    await view.findByText("Vendor access required");
-    expect(view.queryByLabelText("Entity Name")).toBeNull();
-    expect(view.queryByText("Blocked basket")).toBeNull();
+    await fireEvent.changeText(view.getByLabelText("Main Basket name"), "Blocked basket");
+    await fireEvent.changeText(view.getByLabelText("Sub Basket name"), "Blocked child");
+    await fireEvent.changeText(view.getByLabelText("Main Line 1 name"), "Blocked line");
+    await fireEvent.press(view.getByRole("button", { name: "Save draft" }));
+    await view.findByText("Your current access does not allow basket requests.");
+    expect(view.queryByLabelText("Main Basket name")).toBeNull();
   });
 
   it("removes parent vendor detail when historical correction loses access", async () => {

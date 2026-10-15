@@ -1,3 +1,5 @@
+import * as designRequirements from "../src/services/design-requirements.service.js";
+import { ApiError } from "../src/middleware/errors.js";
 import { collaborativePurchasePreparation, collaborativePurchaseFinal, collaborativePurchasePayment } from "./helpers/collaborative-purchase-order.js";
 import mongoose, { type ClientSession } from "mongoose";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -763,4 +765,29 @@ describe("collaborative project request issuance", () => {
     const orders = await ProjectPurchaseOrderModel.find().lean();
     expect(orders.every(order => order.decisions[0].actorId === admin.id && order.estimateReviewRoundId === "final-request-project-a")).toBe(true);
   });
+});
+
+
+it("checks Designer readiness on project-request submission and approval while leaving quote preparation available", async () => {
+  const guard = vi.spyOn(designRequirements, "assertDesignRequirementsPoAllowed");
+  const deny = () => guard.mockRejectedValueOnce(new ApiError(409, "DESIGN_REQUIREMENTS_PO_BLOCKED", "Designer checklist is incomplete."));
+  try {
+    const prepared = await preparation();
+    const input = submitInput(prepared.digest);
+    const { idempotencyKey: _key, ...quoteInput } = input;
+    expect((await service.quote(buyer, "request-project-a", quoteInput)).lines).toHaveLength(2);
+    expect(guard).not.toHaveBeenCalled();
+    deny();
+    await expect(service.submit(buyer, "request-project-a", input)).rejects.toMatchObject({ code: "DESIGN_REQUIREMENTS_PO_BLOCKED" });
+    expect(await ProjectPurchaseOrderRequestRevisionModel.countDocuments()).toBe(0);
+    expect(guard.mock.calls[0]?.slice(0, 2)).toEqual(["request-project-a", ["line-first", "line-second"]]);
+    const submitted = await service.submit(buyer, "request-project-a", input);
+    const decision = { expectedVersion: submitted.version, submittedRevisionId: submitted.submittedRevisionId,
+      decision: "approve" as const, reason: null, budgetOverrideReason: null, idempotencyKey: "design-request-approve" };
+    deny();
+    await expect(service.decide(admin, submitted.id, decision)).rejects.toMatchObject({ code: "DESIGN_REQUIREMENTS_PO_BLOCKED" });
+    expect(await ProjectPurchaseOrderModel.countDocuments()).toBe(0);
+    expect(await VendorWorkAssignmentModel.countDocuments()).toBe(0);
+    expect((await service.decide(admin, submitted.id, decision)).approvedOrderIds).toHaveLength(2);
+  } finally { guard.mockRestore(); }
 });

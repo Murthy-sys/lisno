@@ -1,3 +1,4 @@
+import { DESIGN_RULE_KEYS } from "../domain/main-line-design-rules.js";
 import {
 } from "../contracts/ai-estimator-knowledge.js";
 import {
@@ -495,6 +496,7 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
     displayOrder: createDisplayOrder
   }), not: { required: ["subBasketId", "subBasketName"] } },
   KnowledgeMainLineUpdateRequest: { ...strictObject(["expectedVersion"], {
+    estimationVisibility: { type: "string", enum: ["internal", "external"], description: "Whole Main Line client selection visibility; temporary items must remain internal." },
     expectedVersion: version,
     name: masterProperties.name,
     description,
@@ -502,7 +504,7 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
     draftSubBasketGuard: ref("KnowledgeDraftSubBasketGuard"),
     draftItemGuard: ref("KnowledgeDraftItemGuard")
   }), not: { required: ["draftSubBasketGuard", "draftItemGuard"] },
-  anyOf: [{ required: ["name"] }, { required: ["description"] }, { required: ["displayOrder"] }] },
+  anyOf: [{ required: ["name"] }, { required: ["description"] }, { required: ["displayOrder"] }, { required: ["estimationVisibility"] }] },
   KnowledgeMainLineDeleteRequest: { ...strictObject(["expectedVersion", "reason"], {
     expectedVersion: version,
     reason: { type: "string", minLength: 1, maxLength: 1_000 },
@@ -1354,8 +1356,9 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
   KnowledgePriorityPage: pageSchema("KnowledgePriority"),
   KnowledgeSurfacePage: pageSchema("KnowledgeSurface"),
   KnowledgeMainLine: strictObject(
-    ["id", "basketId", "name", "description", "displayOrder", "status", "activeRevisionId", "draftRevisionId", "completionRequired", "version", ...Object.keys(actorMetadata)],
+    ["estimationVisibility", "id", "basketId", "name", "description", "displayOrder", "status", "activeRevisionId", "draftRevisionId", "completionRequired", "version", ...Object.keys(actorMetadata)],
     {
+      estimationVisibility: { type: "string", enum: ["internal", "external"], default: "internal" },
       id,
       basketId: id,
       itemType: { type: "string", enum: ["main_line", "temporary"] },
@@ -1406,8 +1409,9 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
     }
   ),
   KnowledgeItemListItem: strictObject(
-    ["id", "basketId", "basketName", "mainLineId", "mainLineName", "description", "status", "activeRevisionId", "draftRevisionId", "revisionNumber", "uomId", "priorityId", "modeIds", "surfaceIds", "vendorIds", "completionRequired", "completeness", "allowedActions", "version", ...Object.keys(actorMetadata)],
+    ["estimationVisibility", "id", "basketId", "basketName", "mainLineId", "mainLineName", "description", "status", "activeRevisionId", "draftRevisionId", "revisionNumber", "uomId", "priorityId", "modeIds", "surfaceIds", "vendorIds", "completionRequired", "completeness", "allowedActions", "version", ...Object.keys(actorMetadata)],
     {
+      estimationVisibility: { type: "string", enum: ["internal", "external"], default: "internal" },
       id,
       basketId: id,
       itemType: { type: "string", enum: ["main_line", "temporary"] },
@@ -1436,8 +1440,9 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
   ),
   KnowledgeItemPage: pageSchema("KnowledgeItemListItem"),
   KnowledgeItemDetail: strictObject(
-    ["id", "basketId", "basketName", "mainLineId", "mainLineName", "description", "status", "activeRevisionId", "draftRevisionId", "revisionNumber", "uomId", "priorityId", "modeIds", "surfaceIds", "vendorIds", "completionRequired", "completeness", "allowedActions", "version", ...Object.keys(actorMetadata), "activeRevision", "draftRevision", "blockers", "warnings"],
+    ["estimationVisibility", "id", "basketId", "basketName", "mainLineId", "mainLineName", "description", "status", "activeRevisionId", "draftRevisionId", "revisionNumber", "uomId", "priorityId", "modeIds", "surfaceIds", "vendorIds", "completionRequired", "completeness", "allowedActions", "version", ...Object.keys(actorMetadata), "activeRevision", "draftRevision", "blockers", "warnings"],
     {
+      estimationVisibility: { type: "string", enum: ["internal", "external"], default: "internal" },
       id,
       basketId: id,
       itemType: { type: "string", enum: ["main_line", "temporary"] },
@@ -1653,6 +1658,7 @@ function nullableRef(name: string): OpenApiObject {
 
 function sectionPayloadKeys(sectionKey: string): readonly string[] {
   const keys: Readonly<Record<string, readonly string[]>> = {
+    design: ["itemNature", "answers", "details", "discussedVendorId", "poApprovalChecklist"],
     overview: ["description", "uomId", "priorityId", "surfaceIds", "modeIds", "sectionApplicability"],
     pricing: ["specifications", "brands", "technicalDescription", "qualityLevel", "internalVendorNotes", "priceEntries"],
     "quantity-margin": ["quantitySlabs", "slabRates", "gapBehavior", "startMarginBps", "bottomMarginBps", "pmcMarkupBps", "wastageBps", "previewInputs"],
@@ -1669,6 +1675,17 @@ function sectionPayloadProperties(sectionKey: string): Readonly<Record<string, u
   const properties = Object.fromEntries(
     sectionPayloadKeys(sectionKey).map((key) => [key, {}])
   );
+  if (sectionKey === "design") {
+    properties.itemNature = { type: "string", enum: ["standard", "custom"], default: "standard" };
+    properties.answers = { type: "object", additionalProperties: false,
+      properties: Object.fromEntries(DESIGN_RULE_KEYS.map((key) => [key, { type: "boolean", default: false }])) };
+    properties.details = { type: "object", additionalProperties: false,
+      properties: Object.fromEntries(DESIGN_RULE_KEYS.map((key) => [key, { type: "string", maxLength: 4000 }])) };
+    properties.discussedVendorId = { type: "string", nullable: true, maxLength: 128 };
+    properties.poApprovalChecklist = { type: "array", maxItems: 50, items: strictObject(["id", "text"], {
+      id: { type: "string", minLength: 1, maxLength: 128 }, text: { type: "string", minLength: 1, maxLength: 1000 }
+    }) };
+  }
   if (sectionKey === "recommendations") {
     const commonBudgetAlterationProperties = {
       id: { type: "string" }, trigger: { type: "string", enum: ["added", "removed"] },

@@ -27,6 +27,7 @@ interface RequestDraft {
   expectedRequirementsVersion: number;
   idempotencyKey: string;
   mainBasketId: string;
+  mainLineId: string;
   roomId: string;
   text: string;
 }
@@ -48,6 +49,7 @@ export function ClientEstimateRequirements({ projectId }: { projectId: string })
   const sectionRef = useRef<HTMLElement>(null);
   const basketRef = useRef<HTMLSelectElement>(null);
   const roomRef = useRef<HTMLSelectElement>(null);
+  const lineRef = useRef<HTMLSelectElement>(null);
   const textRef = useRef<HTMLTextAreaElement>(null);
   const cancelWithdrawRef = useRef<HTMLButtonElement>(null);
   const withdrawTriggerRef = useRef<HTMLButtonElement>(null);
@@ -86,6 +88,9 @@ export function ClientEstimateRequirements({ projectId }: { projectId: string })
     onError: async (error) => {
       if (error instanceof ApiError && [401, 403, 404].includes(error.status)) {
         await queryClient.invalidateQueries({ queryKey: estimateRequirementsKeys.detail(projectId) });
+      } else if (error instanceof ApiError && error.code === "ESTIMATE_REQUIREMENT_MAIN_LINE_INVALID") {
+        setErrors((current) => ({ ...current, mainLineId: "Choose an available Main Line or continue with a general request." }));
+        await queryClient.invalidateQueries({ queryKey: estimateRequirementsKeys.detail(projectId) });
       } else if (error instanceof ApiError && error.status === 409) {
         setConflict(true);
         setWithdrawal(null);
@@ -99,13 +104,18 @@ export function ClientEstimateRequirements({ projectId }: { projectId: string })
     if (draft) basketRef.current?.focus();
   }, [draft?.requirementId, Boolean(draft)]);
 
+  useEffect(() => {
+    if (!mutation.isPending && mutation.error instanceof ApiError
+      && mutation.error.code === "ESTIMATE_REQUIREMENT_MAIN_LINE_INVALID") lineRef.current?.focus();
+  }, [mutation.isPending, mutation.error]);
+
   const startDraft = (detail: EstimateRequirementsDetail, request?: EstimateRequirement) => {
     if (!detail.editingAllowed || draft || mutation.isPending || (request && !request.canEdit)) return;
     setErrors({}); setFeedback(null); setConflict(false); mutation.reset();
     setDraft({
       requirementId: request?.id ?? null, expectedVersion: request?.version ?? null,
       expectedRequirementsVersion: detail.requirementsVersion, idempotencyKey: crypto.randomUUID(),
-      mainBasketId: request?.mainBasketId ?? "", roomId: request?.roomId ?? "", text: request?.text ?? ""
+      mainBasketId: request?.mainBasketId ?? "", mainLineId: request?.mainLineId ?? "", roomId: request?.roomId ?? "", text: request?.text ?? ""
     });
   };
 
@@ -115,11 +125,13 @@ export function ClientEstimateRequirements({ projectId }: { projectId: string })
     if (!draft || !detail?.editingAllowed || query.isError || query.isFetching || conflict || submitting.current) return;
     const nextErrors: Record<string, string> = {};
     if (!detail.mainBaskets.some((basket) => basket.id === draft.mainBasketId)) nextErrors.mainBasketId = "Select an available Main Basket.";
+    if (draft.mainLineId && !detail.mainLines?.some((line) => line.id === draft.mainLineId && line.mainBasketId === draft.mainBasketId)) nextErrors.mainLineId = "Choose an available Main Line or continue with a general request.";
     if (draft.roomId && !detail.rooms.some((room) => room.id === draft.roomId)) nextErrors.roomId = "Select a current room or choose the whole project.";
     if (!draft.text.trim() || draft.text.trim().length > 4000) nextErrors.text = "Describe your requirement in 1 to 4,000 characters.";
     setErrors(nextErrors);
     if (Object.keys(nextErrors).length) {
       if (nextErrors.mainBasketId) basketRef.current?.focus();
+      else if (nextErrors.mainLineId) lineRef.current?.focus();
       else if (nextErrors.roomId) roomRef.current?.focus();
       else textRef.current?.focus();
       return;
@@ -127,7 +139,15 @@ export function ClientEstimateRequirements({ projectId }: { projectId: string })
     if (draft.requirementId && !detail.requirements.find((request) => request.id === draft.requirementId)?.canEdit) return;
     submitting.current = true;
     setFeedback(null);
-    const values = { mainBasketId: draft.mainBasketId, roomId: draft.roomId || null, text: draft.text.trim(), expectedRequirementsVersion: draft.expectedRequirementsVersion };
+    const supportsMainLines = detail.mainLines !== undefined || Boolean(draft.mainLineId)
+      || selectedRequestHasLine(detail, draft.requirementId);
+    const values = {
+      mainBasketId: draft.mainBasketId,
+      ...(supportsMainLines ? { mainLineId: draft.mainLineId || null } : {}),
+      roomId: draft.roomId || null,
+      text: draft.text.trim(),
+      expectedRequirementsVersion: draft.expectedRequirementsVersion
+    };
     mutation.mutate(draft.requirementId && draft.expectedVersion !== null
       ? { action: "update", id: draft.requirementId, input: { ...values, expectedVersion: draft.expectedVersion } }
       : { action: "create", input: { ...values, idempotencyKey: draft.idempotencyKey } });
@@ -154,18 +174,21 @@ export function ClientEstimateRequirements({ projectId }: { projectId: string })
   const originalRequestLocked = Boolean(draft?.requirementId && !selectedRequest?.canEdit);
   const draftDisabled = mutation.isPending || !detail.editingAllowed || originalRequestLocked;
   const safePrice = detail.indicativeTotalPaise !== null && Number.isSafeInteger(detail.indicativeTotalPaise) && detail.indicativeTotalPaise >= 0;
-  const updateDraft = (field: "mainBasketId" | "roomId" | "text", value: string) => {
-    setDraft((current) => current ? { ...current, [field]: value } : current);
-    setErrors((current) => ({ ...current, [field]: "" }));
+  const availableLines = (detail.mainLines ?? []).filter((line) => line.mainBasketId === draft?.mainBasketId);
+  const updateDraft = (field: "mainBasketId" | "mainLineId" | "roomId" | "text", value: string) => {
+    setDraft((current) => current ? { ...current, [field]: value, ...(field === "mainBasketId" ? { mainLineId: "" } : {}) } : current);
+    setErrors((current) => ({ ...current, [field]: "", ...(field === "mainBasketId" ? { mainLineId: "" } : {}) }));
   };
-  const errorMessage = mutation.error instanceof ApiError && mutation.error.status === 409
+  const errorMessage = mutation.error instanceof ApiError && mutation.error.code === "ESTIMATE_REQUIREMENT_MAIN_LINE_INVALID"
+    ? "The selected Main Line is no longer available. Your draft is preserved. Choose another item or General request."
+    : mutation.error instanceof ApiError && mutation.error.status === 409
     ? "The estimate or its requests changed. Your draft is preserved. Review the latest requests below before continuing."
     : "We couldn't save this change. Your draft is preserved; please try again.";
 
   return <section className="client-requirements" aria-labelledby={`${id}-title`} ref={sectionRef} tabIndex={-1}>
     <header className="client-requirements__header">
       <div><p className="eyebrow">{phaseLabel}</p><h2 id={`${id}-title`}>Your estimate requirements</h2>
-        <p>Select a Main Basket and describe what you need. Your team will choose the items and prepare the pricing.</p></div>
+        <p>Select a Main Basket and describe what you need. You can also choose an available Main Line. Your team will prepare the pricing.</p></div>
       <dl className="client-requirements__price"><div><dt>Indicative total</dt><dd>{safePrice ? formatPrice.format(detail.indicativeTotalPaise! / 100) : "Awaiting estimate"}</dd></div></dl>
     </header>
     <p className="client-requirements__hint">Prices are read-only. {detail.pricingComplete ? "Review the submitted estimate below for approval." : "Your team is still preparing the estimate or pricing outstanding requests."}</p>
@@ -192,6 +215,11 @@ export function ClientEstimateRequirements({ projectId }: { projectId: string })
           {draft.mainBasketId && !detail.mainBaskets.some((basket) => basket.id === draft.mainBasketId) ? <option value={draft.mainBasketId} disabled>Basket no longer available</option> : null}
           {detail.mainBaskets.map((basket) => <option key={basket.id} value={basket.id}>{basket.name}</option>)}
         </Select>}</Field>
+        {detail.mainLines !== undefined || draft.mainLineId ? <Field id={`${id}-line`} label="Main Line (optional)" error={errors.mainLineId} hint={draft.mainLineId && !availableLines.some((line) => line.id === draft.mainLineId) ? "This selection is unavailable. Choose another item or General request to continue." : !draft.mainBasketId ? "Choose a Main Basket first." : !availableLines.length ? "No items are available to select. You can still send a general request." : "Choose an item or describe a general requirement for this basket."}>{(props) => <Select {...props} ref={lineRef} value={draft.mainLineId} disabled={draftDisabled || !draft.mainBasketId} onChange={(event) => updateDraft("mainLineId", event.target.value)}>
+          <option value="">General request</option>
+          {draft.mainLineId && !availableLines.some((line) => line.id === draft.mainLineId) ? <option value={draft.mainLineId} disabled>Selected item unavailable</option> : null}
+          {availableLines.map((line) => <option key={line.id} value={line.id}>{line.name}{line.subBasketName ? ` · ${line.subBasketName}` : ""}</option>)}
+        </Select>}</Field> : null}
         <Field id={`${id}-room`} label="Room (optional)" error={errors.roomId} hint={!detail.rooms.length ? "You can add a project-wide request before your team adds rooms." : undefined}>{(props) => <Select {...props} ref={roomRef} value={draft.roomId} disabled={draftDisabled} onChange={(event) => updateDraft("roomId", event.target.value)}>
           <option value="">Whole project</option>
           {draft.roomId && !detail.rooms.some((room) => room.id === draft.roomId) ? <option value={draft.roomId} disabled>Room no longer available</option> : null}
@@ -208,6 +236,7 @@ export function ClientEstimateRequirements({ projectId }: { projectId: string })
       {!detail.requirements.length ? <p className="client-requirements__empty">No requirements yet. Add what you would like your team to include in the estimate.</p> : detail.requirements.map((request, index) => <article key={request.id} className="client-requirements__request" aria-labelledby={`${id}-request-${index}`}>
         <div className="client-requirements__request-heading"><h3 id={`${id}-request-${index}`}>{detail.mainBaskets.find((basket) => basket.id === request.mainBasketId)?.name ?? "Basket no longer available"}</h3><span>{statusLabels[request.status]}</span></div>
         <p className="client-requirements__hint">{request.phase === "post" ? "Post-estimation" : "Pre-estimation"} · {request.roomId ? detail.rooms.find((room) => room.id === request.roomId)?.label ?? "Previous room" : "Whole project"}</p>
+        {request.mainLineId ? <p className="client-requirements__hint">Requested Main Line: {detail.mainLines?.find((line) => line.id === request.mainLineId && line.mainBasketId === request.mainBasketId)?.name ?? "Selected item unavailable"}</p> : null}
         <p className="client-requirements__request-text">{request.text}</p>
         {request.reason ? <p className="client-requirements__resolution"><strong>Team response</strong> {request.reason}</p> : null}
         {request.status === "superseded" && request.supersededById ? <p className="client-requirements__hint">{detail.requirements.find((item) => item.id === request.supersededById)?.text ? `Replacement request: ${detail.requirements.find((item) => item.id === request.supersededById)!.text}` : "Your team has linked a replacement request."}</p> : null}
@@ -227,4 +256,8 @@ export function ClientEstimateRequirements({ projectId }: { projectId: string })
         }}>Withdraw requirement</Button></div>
     </Dialog> : null}
   </section>;
+}
+
+function selectedRequestHasLine(detail: EstimateRequirementsDetail, requestId: string | null): boolean {
+  return Boolean(requestId && detail.requirements.find((request) => request.id === requestId)?.mainLineId);
 }

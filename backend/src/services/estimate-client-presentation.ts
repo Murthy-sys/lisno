@@ -19,6 +19,7 @@ const legacyLine = z.object({ ...commonLine, source: z.literal("legacy").optiona
 const configuredLine = z.object({
   ...commonLine, rate: money.nullable(), amount: money.nullable(),
   source: z.literal("configuration"), specification: z.null(),
+  estimateNotes: z.array(z.string().max(4000)).max(4).optional(),
   itemType: z.enum(["main_line", "temporary"]).optional(),
   classification: z.enum(["standard", "special"]).optional(),
   pricingMode: z.enum(ESTIMATE_PRICING_MODES).optional(),
@@ -202,7 +203,7 @@ export function comparePublishedEstimateSnapshots(before: Row, after: Row) {
   const current = new Map<string, Row>((after.lineItems ?? []).filter((line: Row) => line.included).map((line: Row) => [String(line.id), line]));
   const addedLineIds = [...current.keys()].filter((id) => !previous.has(id));
   const removedLineIds = [...previous.keys()].filter((id) => !current.has(id));
-  const fields = ["roomId", "roomName", "specification", "mainLineName", "mainBasketId", "unit", "quantity", "rate", "amount"];
+  const fields = ["roomId", "roomName", "specification", "mainLineName", "mainBasketId", "unit", "quantity", "rate", "amount", "estimateNotes"];
   const changedLineIds = [...current.keys()].filter((id) => previous.has(id) && fields.some((field) =>
     !isDeepStrictEqual(previous.get(id)![field] ?? null, current.get(id)![field] ?? null)));
   const scopeChanged = ["propertyType", "bedroomCount", "rooms", "scopes", "selectedMainBasketIds"].some((field) =>

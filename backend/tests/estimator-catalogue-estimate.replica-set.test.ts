@@ -1,3 +1,6 @@
+import { normalizeDesignRules, designRulesDigest } from "../src/domain/main-line-design-rules.js";
+import { resolveCurrentMainLineDesignRules } from "../src/services/estimator-catalogue.service.js";
+import { assertCurrentConfiguredPublication, toEstimateSnapshot } from "../src/services/estimate-publication.service.js";
 import express from "express";
 import request from "supertest";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -129,6 +132,49 @@ async function seedFixtureItem(input: FixtureItem) {
 }
 
 describe("estimator configured catalogue and estimate", { timeout: 30_000 }, () => {
+  it("snapshots Design rules for manual-price lines and freezes public notes independently from later Configuration", async () => {
+    const rules = normalizeDesignRules({ answers: { stockCheck: true, maintenanceAccess: true, vendorPreDiscussed: true },
+      discussedVendorId: "internal-vendor", details: { vendorPreDiscussed: "INTERNAL DISCUSSION", maintenanceAccess: "Keep the service hatch accessible." } });
+    await AiEstimatorKnowledgeSectionModel.collection.insertOne({ _id: "design-a", mainLineId: "line-a", revisionId: "revision-a", sectionKey: "design", payload: rules } as never);
+    const { server } = app();
+    const path = "/api/v1/leads/lead-design-rules/estimate";
+    const saved = await request(server).put(path).set(bearer("estimator"))
+      .send(estimateInput([configuredLine({ rateSource: "manual", pricingMode: "sub_vendor" })])).expect(200);
+    const stored = await EstimateModel.findById(saved.body.data.id).lean();
+    expect(stored!.lineItems[0]).toMatchObject({ designRules: rules, designRulesDigest: designRulesDigest(rules),
+      estimateNotes: ["This item is subject to availability at the time of procurement.", "Keep the service hatch accessible."] });
+    expect((await AiEstimatorKnowledgeMainLineModel.findById("line-a").lean())?.dependencyEpoch).toBe(1);
+    const frozen = toEstimateSnapshot(stored as never, { clientName: "Fixture client", projectName: "Fixture project", location: "Fixture city" } as never);
+    expect(frozen.lineItems[0]).toHaveProperty("estimateNotes", stored!.lineItems[0].estimateNotes);
+    expect(frozen.lineItems[0]).not.toHaveProperty("designRules");
+    expect(JSON.stringify(frozen)).not.toContain("INTERNAL DISCUSSION");
+    await assertCurrentConfiguredPublication(stored as never);
+    await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: "design-a" }, { $set: { "payload.details.maintenanceAccess": "Revised safe note." } });
+    await expect(assertCurrentConfiguredPublication(stored as never)).rejects.toMatchObject({ code: "ESTIMATE_CONFIGURATION_CHANGED" });
+    const refreshed = await request(server).get(path).set(bearer("estimator")).expect(200);
+    expect(refreshed.body.data.lineItems[0].estimateNotes).toContain("Revised safe note.");
+    expect(frozen.lineItems[0]!.estimateNotes).toContain("Keep the service hatch accessible.");
+    expect((await EstimateModel.findById(saved.body.data.id).lean())!.lineItems[0].estimateNotes).toContain("Keep the service hatch accessible.");
+  });
+
+  it("selects saved Draft Design rules ahead of the Active revision", async () => {
+    await AiEstimatorKnowledgeRevisionModel.collection.insertOne({ _id: "design-draft-revision", mainLineId: "line-a", status: "draft", version: 2 } as never);
+    await AiEstimatorKnowledgeMainLineModel.collection.updateOne({ _id: "line-a" }, { $set: { draftRevisionId: "design-draft-revision" } });
+    await AiEstimatorKnowledgeSectionModel.collection.insertMany([
+      { _id: "design-active", mainLineId: "line-a", revisionId: "revision-a", sectionKey: "design", payload: { answers: { stockCheck: true } } },
+      { _id: "design-draft", mainLineId: "line-a", revisionId: "design-draft-revision", sectionKey: "design", payload: { answers: { physicalSampleApproval: true } } }
+    ] as never[]);
+    expect((await resolveCurrentMainLineDesignRules(["line-a"])).get("line-a")).toMatchObject({ revisionId: "design-draft-revision", revisionVersion: 2,
+      designRules: { answers: { stockCheck: false, physicalSampleApproval: true } } });
+  });
+
+  it("resolves Design independently of missing pricing and UOM, but fails closed on malformed current rules", async () => {
+    await AiEstimatorKnowledgeSectionModel.deleteMany({ revisionId: "revision-a" });
+    expect((await resolveCurrentMainLineDesignRules(["line-a"])).get("line-a")).toMatchObject({ mainLineId: "line-a", revisionId: "revision-a", designRules: normalizeDesignRules() });
+    await AiEstimatorKnowledgeSectionModel.collection.insertOne({ _id: "invalid-design-a", mainLineId: "line-a", revisionId: "revision-a", sectionKey: "design", payload: { answers: { stockCheck: "yes" } } } as never);
+    await expect(resolveCurrentMainLineDesignRules(["line-a"])).rejects.toMatchObject({ code: "ESTIMATE_DESIGN_RULES_UNAVAILABLE" });
+  });
+
   it("projects current saved basket descriptions and null for empty or legacy descriptions", async () => {
     const description = "Electrical wiring, switches, and related installation works.";
     await AiEstimatorKnowledgeBasketModel.collection.updateOne({ _id: "basket-a" }, { $set: { description } });
@@ -496,7 +542,8 @@ describe("estimator configured catalogue and estimate", { timeout: 30_000 }, () 
       revisionId: "revision-temp-direct", uom: { id: "uom-ea" }
     }] });
     expect(first.body.data.ineligibleLineCount).toBe(2);
-    expect(JSON.stringify(first.body.data)).not.toMatch(/vendorId|vendorName|vendorRates|cost|margin|pricePaise/iu);
+    // Design discussion identity is an intentional internal-only workflow field; pricing vendor details stay absent.
+    expect(JSON.stringify(first.body.data, (key, value) => key === "designRules" ? undefined : value)).not.toMatch(/vendorId|vendorName|vendorRates|cost|margin|pricePaise/iu);
     await AiEstimatorKnowledgeMainLineModel.collection.updateOne({ _id: "line-b" }, { $unset: { itemType: "" } });
     const second = await request(server).get("/api/v1/estimation/catalogue?limit=1&offset=1")
       .set(bearer("estimator")).expect(200);

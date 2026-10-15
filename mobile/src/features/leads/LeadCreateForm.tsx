@@ -7,11 +7,13 @@ import { useInvalidateEvent } from "../../core/query/useInvalidation";
 import { useConfiguredRuntime } from "../../runtime/RuntimeProvider";
 import { Button, Field } from "../../ui/primitives";
 import { colors, fonts, radii, spacing } from "../../ui/tokens";
+import { EstimateSelect } from "../estimate-authoring/EstimateUI";
+import { propertyTypes } from "../estimate-authoring/propertyTypes";
 import { validateLeadDraft, type LeadDraft } from "./leadValidation";
 
 const initialDraft = (): LeadDraft => ({ clientName: "", clientEmail: "", clientMobile: "", projectName: "", location: "", propertyType: "", budgetMin: "", budgetMax: "", source: "", nextAction: "", nextActionAt: new Date(Date.now() + 86_400_000).toISOString() });
 
-export function LeadCreateForm() {
+export function LeadCreateForm({ onCreated }: { readonly onCreated?: (leadId: string) => void } = {}) {
   const context = useConfiguredRuntime();
   const invalidate = useInvalidateEvent();
   const [open, setOpen] = useState(false);
@@ -22,9 +24,9 @@ export function LeadCreateForm() {
     mutationFn: async () => {
       const result = validateLeadDraft(draft);
       if (!result.value) throw new Error(result.error);
-      return context.runtime.api.authenticated.post("/leads", result.value);
+      return context.runtime.api.authenticated.post<{ id: string }>("/leads", result.value);
     },
-    onSuccess: async () => { setDraft(initialDraft()); setOpen(false); await invalidate("project-initiated"); },
+    onSuccess: async (lead) => { setDraft(initialDraft()); setOpen(false); await invalidate("project-initiated").catch(() => undefined); if (typeof lead.id === "string" && lead.id) onCreated?.(lead.id); },
     onError: (cause) => setError(cause instanceof ApiError ? cause.message : cause instanceof Error ? cause.message : "The lead could not be created.")
   });
   if (!open) return <Button label="Create lead" onPress={() => setOpen(true)} />;
@@ -37,7 +39,7 @@ export function LeadCreateForm() {
       <Field label="Client mobile" value={draft.clientMobile} onChangeText={set("clientMobile")} keyboardType="phone-pad" />
       <Field label="Project name" value={draft.projectName} onChangeText={set("projectName")} />
       <Field label="Location" value={draft.location} onChangeText={set("location")} />
-      <Field label="Property type" value={draft.propertyType} onChangeText={set("propertyType")} />
+      <EstimateSelect label="Property type" value={draft.propertyType} options={propertyTypes.map((value) => ({ value, label: value }))} onChange={set("propertyType")} disabled={mutation.isPending} />
       <View style={styles.row}><View style={styles.half}><Field label="Minimum budget" value={draft.budgetMin} onChangeText={set("budgetMin")} keyboardType="decimal-pad" /></View><View style={styles.half}><Field label="Maximum budget" value={draft.budgetMax} onChangeText={set("budgetMax")} keyboardType="decimal-pad" /></View></View>
       <Field label="Lead source" value={draft.source} onChangeText={set("source")} />
       <Field label="Next action" value={draft.nextAction} onChangeText={set("nextAction")} />

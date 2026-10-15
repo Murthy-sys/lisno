@@ -11,6 +11,10 @@ describe("canonical project name synchronization", () => {
       ["super-admin-dashboard", "projects", 30],
       ["client", "projects"],
       ["designer", "projects", "courtyard"],
+      ["assigned-projects", "list", "procurement-one", "procurement"],
+      ["assigned-projects", "list", "manager-two", "program_manager"],
+      ["assigned-projects", "detail", "courtyard", "procurement-one", "procurement"],
+      ["assigned-projects", "detail", "courtyard", "manager-two", "program_manager"],
       ["project-finance", "projects"],
       ["project-finance", "bucket", "courtyard"],
       ["project-workflow", "design-workflow", "courtyard"],
@@ -19,6 +23,8 @@ describe("canonical project name synchronization", () => {
     ];
     const unaffected = [
       ["admin-projects", "detail", "garden"],
+      ["assigned-projects", "detail", "garden", "procurement-one", "procurement"],
+      ["assigned-projects", "detail", "garden", "manager-two", "program_manager"],
       ["project-finance", "bucket", "garden"],
       ["project-finance", "entries", "courtyard"],
       ["leads", "lead-a", "estimate"],

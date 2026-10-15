@@ -15,6 +15,8 @@ jest.mock("react-native-safe-area-context", () => ({ useSafeAreaInsets: () => ({
 jest.mock("../onboarding/useReducedMotion", () => ({ useReducedMotion: () => false }));
 
 const runtimeMock = jest.mocked(useConfiguredRuntime);
+const mockPush = jest.fn();
+jest.mock("expo-router", () => ({ router: { push: (...args: unknown[]) => mockPush(...args) } }));
 const apiGet = jest.fn();
 const apiPost = jest.fn();
 const clients: QueryClient[] = [];
@@ -153,6 +155,7 @@ describe("Project creation entry action", () => {
 
     await waitFor(() => expect(apiPost).toHaveBeenCalledTimes(1));
     expect(apiPost).toHaveBeenCalledWith("/admin/projects", {
+      initiationKey: expect.any(String),
       clientName: "New client",
       clientEmail: "new.client@example.test",
       clientMobile: "9990001112",
@@ -252,11 +255,13 @@ describe("Project creation entry action", () => {
     await fireEvent.press(view.getByRole("button", { name: "Initiate project" }));
     await fillInitiation(view);
     await fireEvent.press(view.getByRole("button", { name: "Initiate" }));
-    expect(await view.findByText("Project could not be saved. Try again.")).toBeTruthy();
+    expect(await view.findByText(/The result could not be confirmed/)).toBeTruthy();
     expect(view.getByLabelText("Project / property name").props.value).toBe(projectFields["Project / property name"]);
-    await fireEvent.press(view.getByRole("button", { name: "Initiate" }));
+    expect(view.getByLabelText("Project / property name").props.editable).toBe(false);
+    await fireEvent.press(view.getByRole("button", { name: "Retry saved submission" }));
     await waitFor(() => expect(view.queryByLabelText("Project / property name")).toBeNull());
     expect(apiPost).toHaveBeenCalledTimes(2);
+    expect(apiPost.mock.calls[1]).toEqual(apiPost.mock.calls[0]);
   });
 
   it.each(["environment", "environment generation", "session generation", "identity", "role"] as const)("clears drafts when the %s changes", async (change) => {

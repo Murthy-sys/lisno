@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient, type QueryKey } from "@tanstack/react-query";
 import { projectWorkflowKeys } from "../../features/workflow/projectWorkflowApi";
 
 import { ApiError, apiClient } from "../../api/client";
@@ -40,15 +40,18 @@ interface MutationContext {
 export function TaskUpdateDialog({
   task,
   userId,
+  projectQueryKey,
   onClose,
   onSaved
 }: {
   task: TaskRecord;
   userId: string;
+  projectQueryKey?: QueryKey;
   onClose: () => void;
   onSaved: (task: TaskRecord) => void;
 }) {
   const queryClient = useQueryClient();
+  const projectKey = projectQueryKey ?? designerKeys.project(task.projectId);
   const [status, setStatus] = useState<TaskStatus>(task.status);
   const [progress, setProgress] = useState(String(task.progress));
   const [note, setNote] = useState("");
@@ -74,7 +77,6 @@ export function TaskUpdateDialog({
     mutationFn: (input) =>
       apiClient.patch<TaskRecord>(`/tasks/${task.id}`, input),
     onMutate: async (input) => {
-      const projectKey = designerKeys.project(task.projectId);
       await queryClient.cancelQueries({ queryKey: projectKey });
       const previous = queryClient.getQueryData<ProjectHierarchy>(projectKey);
       queryClient.setQueryData<ProjectHierarchy>(projectKey, (current) =>
@@ -85,7 +87,7 @@ export function TaskUpdateDialog({
     onError: (error, _input, context) => {
       if (context?.previous) {
         queryClient.setQueryData(
-          designerKeys.project(task.projectId),
+          projectKey,
           context.previous
         );
       }
@@ -95,7 +97,7 @@ export function TaskUpdateDialog({
         );
         setConflictVersion(task.version);
         void queryClient.refetchQueries({
-          queryKey: designerKeys.project(task.projectId),
+          queryKey: projectKey,
           exact: true,
           type: "active"
         });
@@ -113,7 +115,7 @@ export function TaskUpdateDialog({
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: projectWorkflowKeys.designWorkflow(task.projectId) }),
         queryClient.invalidateQueries({
-          queryKey: designerKeys.project(task.projectId),
+          queryKey: projectKey,
           exact: true
         }),
         queryClient.invalidateQueries({

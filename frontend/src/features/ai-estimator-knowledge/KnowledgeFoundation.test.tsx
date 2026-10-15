@@ -11,22 +11,23 @@ import { KnowledgeSafetyNotice } from "./KnowledgeSafetyNotice";
 import { KnowledgeSectionNavigation } from "./KnowledgeSectionNavigation";
 import { KnowledgeUnsavedChangesDialog } from "./KnowledgeUnsavedChangesDialog";
 import { KnowledgeVersionConflictDialog } from "./KnowledgeVersionConflictDialog";
-import { KNOWLEDGE_WORKSPACE_SECTION_LABELS } from "./knowledgePresentation";
 import {
   KNOWLEDGE_WORKSPACE_BACKEND_SECTIONS,
   KNOWLEDGE_WORKSPACE_SECTION_KEYS,
-  type KnowledgeWorkspaceSectionKey
+  KNOWLEDGE_WORKSPACE_TAB_KEYS,
+  KNOWLEDGE_WORKSPACE_TAB_LABELS,
+  type KnowledgeWorkspaceTabKey
 } from "./knowledgeWorkspaceSections";
 
 function SectionHarness({
   disabledSections,
   panelBusy = false
 }: {
-  readonly disabledSections?: readonly KnowledgeWorkspaceSectionKey[];
+  readonly disabledSections?: readonly KnowledgeWorkspaceTabKey[];
   readonly panelBusy?: boolean;
 }) {
   const [section, setSection] =
-    useState<KnowledgeWorkspaceSectionKey>("overview");
+    useState<KnowledgeWorkspaceTabKey>("overview");
   return (
     <KnowledgeSectionNavigation
       activeSection={section}
@@ -34,7 +35,7 @@ function SectionHarness({
       disabledSections={disabledSections}
       panelBusy={panelBusy}
     >
-      <h2>{KNOWLEDGE_WORKSPACE_SECTION_LABELS[section]} settings</h2>
+      <h2>{KNOWLEDGE_WORKSPACE_TAB_LABELS[section]} settings</h2>
     </KnowledgeSectionNavigation>
   );
 }
@@ -77,11 +78,11 @@ describe("knowledge feature foundation", () => {
     expect(
       screen.getByRole("region", { name: "Knowledge base isolation notice" })
     ).toHaveTextContent(
-      "Knowledge-base changes do not modify current estimates or the existing Sales estimate builder."
+      "Configuration updates apply to current selections. Published estimates and approvals keep their recorded values."
     );
   });
 
-  it("renders the four workspace sections with associated roving tabs and a labelled mobile selector", async () => {
+  it("renders the six web workspace sections with associated roving tabs and a labelled mobile selector", async () => {
     const user = userEvent.setup();
     render(<SectionHarness />);
 
@@ -90,6 +91,9 @@ describe("knowledge feature foundation", () => {
       "mode",
       "recommendations",
       "quality"
+    ]);
+    expect(KNOWLEDGE_WORKSPACE_TAB_KEYS).toEqual([
+      ...KNOWLEDGE_WORKSPACE_SECTION_KEYS, "design", "basket-closure-priority"
     ]);
     expect(Object.keys(KNOWLEDGE_WORKSPACE_BACKEND_SECTIONS)).toEqual([
       "overview",
@@ -108,7 +112,9 @@ describe("knowledge feature foundation", () => {
       "Overview",
       "Mode",
       "Recommendation & Exclusions",
-      "Quality Parameter"
+      "Quality Parameter",
+      "Design",
+      "Basket closure priority"
     ]);
     expect(
       within(tablist).queryByRole("tab", { name: "Pricing" })
@@ -126,7 +132,9 @@ describe("knowledge feature foundation", () => {
       "Overview",
       "Mode",
       "Recommendation & Exclusions",
-      "Quality Parameter"
+      "Quality Parameter",
+      "Design",
+      "Basket closure priority"
     ]);
 
     const overview = screen.getByRole("tab", { name: "Overview" });
@@ -144,21 +152,23 @@ describe("knowledge feature foundation", () => {
     expect(panel).not.toHaveAttribute("aria-busy");
 
     await user.keyboard("{End}");
-    const quality = screen.getByRole("tab", { name: "Quality Parameter" });
-    expect(quality).toHaveFocus();
+    const closurePriority = screen.getByRole("tab", { name: "Basket closure priority" });
+    expect(closurePriority).toHaveFocus();
     await user.keyboard("{ArrowRight}");
     expect(overview).toHaveFocus();
     await user.keyboard("{ArrowLeft}");
-    expect(quality).toHaveFocus();
+    expect(closurePriority).toHaveFocus();
     await user.keyboard("{Home}");
     expect(overview).toHaveFocus();
 
-    await user.selectOptions(selector, "recommendations");
-    expect(screen.getByRole("tab", { name: "Recommendation & Exclusions" })).toHaveAttribute(
+    await user.selectOptions(selector, "design");
+    expect(screen.getByRole("tab", { name: "Design" })).toHaveAttribute(
       "aria-selected",
       "true"
     );
-    expect(panel).toHaveAccessibleName("Recommendation & Exclusions");
+    expect(panel).toHaveAccessibleName("Design");
+    await user.selectOptions(selector, "basket-closure-priority");
+    expect(panel).toHaveAccessibleName("Basket closure priority");
   });
 
   it("announces only the active panel as busy without changing tab ownership", () => {

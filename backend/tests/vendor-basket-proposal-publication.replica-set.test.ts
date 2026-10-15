@@ -117,8 +117,8 @@ describe("isolated proposal readiness and atomic canonical publication", { timeo
     expect(result).toMatchObject({ basketId: "proposed-basket", subBasketIds: ["proposed-sub-0", "proposed-sub-1"] });
     expect(await AiEstimatorKnowledgeMainLineModel.countDocuments({ status: "active", draftRevisionId: null })).toBe(2);
     expect(await AiEstimatorKnowledgeRevisionModel.countDocuments({ status: "active", contentDigest: /^[a-f0-9]{64}$/ })).toBe(2);
-    expect(await AiEstimatorKnowledgeSectionModel.countDocuments()).toBe(16);
-    expect(result.sections).toHaveLength(16);
+    expect(await AiEstimatorKnowledgeSectionModel.countDocuments()).toBe(18);
+    expect(result.sections).toHaveLength(18);
     expect(result.prices).toEqual([]);
     expect(result.qualityRevisionId).toEqual(expect.any(String));
     const quality = await AiEstimatorKnowledgeBasketQualityRevisionModel.findOne().lean();

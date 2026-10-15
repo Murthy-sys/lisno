@@ -1,123 +1,88 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
-import { AppState, Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
-
-import type { DailyCriticalTasks } from "../../../../shared/chat/dailyCriticalTasks";
+import { useQueryClient } from "@tanstack/react-query";
+import { router } from "expo-router";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Modal, Pressable, ScrollView, Text, View, StyleSheet } from "react-native";
+import type { CurrentCriticalTaskReview, DailyCriticalTaskItem } from "../../../../shared/chat/dailyCriticalTasks";
 import type { AuthenticatedSession } from "../../contracts/session";
+import { ApiError } from "../../core/http/apiClient";
+import { privateQueryKey } from "../../core/query/queryClient";
+import { resolveAuthorizedFeature } from "../../navigation/registry";
 import { useConfiguredRuntime } from "../../runtime/RuntimeProvider";
 import { colors, fonts, spacing } from "../../ui/tokens";
 
-/** The receipt stays pending until the recipient views and acknowledges the list. */
-export function DailyCriticalTasksControl({ session }: { readonly session: AuthenticatedSession }) {
+const consumed = new WeakMap<object, Set<string>>();
+/** A successful automatic review occurs once per accepted runtime session. Manual reads always reauthorize. */
+export function DailyCriticalTasksControl({ session, navigationBlocked = false }: { readonly session: AuthenticatedSession; readonly navigationBlocked?: boolean }) {
   const context = useConfiguredRuntime();
-  const queryClient = useQueryClient();
-  const key = ["daily-critical-tasks", context.environment.environment.id, session.user.id] as const;
-  const [opened, setOpened] = useState(false);
-  const [opening, setOpening] = useState(false);
-  const query = useQuery({
-    queryKey: key,
-    queryFn: () => context.runtime.api.authenticated.get<DailyCriticalTasks | null>("/daily-critical-tasks"),
-    refetchInterval: 30_000,
-    refetchOnWindowFocus: true
-  });
-  const digest = query.data;
-  const requiresAcknowledgment = Boolean(digest && !digest.acknowledgedAt);
-  const acknowledge = useMutation({
-    mutationFn: (localDate: string) => context.runtime.api.authenticated.put(
-      `/daily-critical-tasks/${encodeURIComponent(localDate)}/acknowledgment`
-    ),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: key });
-      setOpened(false);
-    }
-  });
-  const canAcknowledge = !query.isError && !query.isFetching && !acknowledge.isPending;
-  const listCurrent = !query.isError && !query.isFetching;
-
-  const openCurrentList = async () => {
-    setOpening(true);
+  if (session.user.role === "client" || !session.authorization.permissions.includes("chat.read")) return null;
+  const identity = `${context.environment.generation}:${context.session.generation}:${session.user.id}`;
+  return <CurrentTaskReview key={identity} identity={identity} session={session} navigationBlocked={navigationBlocked} />;
+}
+function CurrentTaskReview({ identity, session, navigationBlocked }: { identity: string; session: AuthenticatedSession; navigationBlocked: boolean }) {
+  const context = useConfiguredRuntime(); const client = useQueryClient();
+  const [review, setReview] = useState<CurrentCriticalTaskReview | null>(null); const [busy, setBusy] = useState(false); const [saving, setSaving] = useState(false); const [error, setError] = useState("");
+  const alive = useRef(false); const sequence = useRef(0); const controller = useRef<AbortController | null>(null); const ackLock = useRef(false);
+  const scopeId = context.environment.environment.id;
+  const key = privateQueryKey({ environmentId: scopeId, userId: session.user.id }, "notifications", "current-critical-review", identity);
+  const read = useCallback(async (automatic: boolean) => {
+    const request = ++sequence.current; controller.current?.abort(); const abort = new AbortController(); controller.current = abort;
+    setBusy(true); setError(""); setReview(null);
     try {
-      const result = await query.refetch();
-      if (result.isSuccess && result.data) setOpened(true);
-    } finally {
-      setOpening(false);
-    }
-  };
-
+      const data = await client.fetchQuery({ queryKey: privateQueryKey({ environmentId: scopeId, userId: session.user.id }, "notifications", "current-critical-review", identity), retry: false, staleTime: 0, queryFn: () => context.runtime.api.authenticated.get<CurrentCriticalTaskReview>("/daily-critical-tasks/current", { signal: abort.signal }) });
+      if (!alive.current || request !== sequence.current || abort.signal.aborted) return;
+      const sessions = consumed.get(context.runtime) ?? new Set<string>(); const won = !sessions.has(identity); sessions.add(identity); consumed.set(context.runtime, sessions);
+      if (!automatic || won && data.items.length > 0) setReview(data);
+    } catch {
+      if (!alive.current || request !== sequence.current || abort.signal.aborted) return;
+      client.removeQueries({ queryKey: privateQueryKey({ environmentId: scopeId, userId: session.user.id }, "notifications", "current-critical-review", identity) });
+      setError("Current critical tasks could not be loaded. Retry to review your authorized work.");
+    } finally { if (alive.current && request === sequence.current) setBusy(false); }
+  }, [client, scopeId, session.user.id, identity, context.runtime]);
   useEffect(() => {
-    const subscription = AppState.addEventListener("change", (state) => {
-      if (state === "active") void query.refetch();
-    });
-    return () => subscription.remove();
-  }, [query.refetch]);
-
-  useEffect(() => {
-    if (!context.runtime.realtime?.createStream) return;
-    const stream = context.runtime.realtime.createStream({
-      path: "/notifications/events",
-      onEvent: (event) => {
-        if (event.event === "daily-critical-tasks") void query.refetch();
-      },
-      onResync: () => void query.refetch(),
-      heartbeatTimeoutMs: 45_000
-    });
-    stream.start();
-    return () => stream.stop();
-  }, [context.runtime.realtime, query.refetch]);
-
-  const visible = opened || requiresAcknowledgment;
-  const close = () => {
-    if (!requiresAcknowledgment && !acknowledge.isPending) setOpened(false);
-  };
-
-  return (
-    <>
-      {query.isError ? (
-        <Pressable accessibilityRole="button" accessibilityLabel="Retry critical tasks" onPress={() => void query.refetch()} style={styles.topButton}>
-          <Text style={styles.topButtonText}>Retry tasks</Text>
-        </Pressable>
-      ) : digest ? (
-        <Pressable accessibilityRole="button" accessibilityLabel="Open my critical tasks" accessibilityState={{ busy: opening }} disabled={opening} onPress={() => { void openCurrentList(); }} style={styles.topButton}>
-          <Text style={styles.topButtonText}>Tasks</Text>
-        </Pressable>
-      ) : null}
-      <Modal animationType="fade" onRequestClose={close} transparent visible={visible}>
-        <View style={styles.scrim}>
-          <View accessibilityViewIsModal style={styles.panel}>
-            <Text accessibilityRole="header" style={styles.title}>Critical task list</Text>
-            <Text style={styles.subtitle}>{digest?.localDate ? `${digest.localDate} · ` : ""}Your open critical chat actions and overdue assigned tasks</Text>
-            {query.isError ? (
-              <Pressable accessibilityRole="button" accessibilityLabel="Retry critical task list" onPress={() => void query.refetch()}>
-                <Text accessibilityLiveRegion="polite" style={styles.error}>This list may be out of date. Retry to review the latest tasks.</Text>
-              </Pressable>
-            ) : null}
-            {query.isFetching ? <Text accessibilityLiveRegion="polite" style={styles.subtitle}>Refreshing assigned tasks…</Text> : null}
-            <ScrollView contentContainerStyle={styles.list}>
-              {!listCurrent ? null : digest?.items.length ? digest.items.map((item) => (
-                <View key={`${item.kind}:${item.projectId}:${item.id}`} style={styles.item}>
-                  <Text style={styles.project}>{item.projectName}</Text>
-                  <Text style={styles.itemTitle}>{item.title}</Text>
-                  <Text style={styles.itemMeta}>{item.kind === "chat_action" ? "Critical chat action" : "Overdue workflow task"}</Text>
-                </View>
-              )) : <Text style={styles.empty}>You have no open critical actions or overdue assigned tasks.</Text>}
-            </ScrollView>
-            {acknowledge.isError ? <Text accessibilityLiveRegion="polite" style={styles.error}>Could not save your acknowledgment. Please retry.</Text> : null}
-            <View style={styles.actions}>
-              {requiresAcknowledgment && digest ? (
-                <Pressable accessibilityRole="button" accessibilityState={{ busy: acknowledge.isPending, disabled: !canAcknowledge }} disabled={!canAcknowledge} onPress={() => acknowledge.mutate(digest.localDate)} style={styles.primaryButton}>
-                  <Text style={styles.primaryText}>{acknowledge.isPending ? "Saving…" : "I have reviewed my tasks"}</Text>
-                </Pressable>
-              ) : (
-                <Pressable accessibilityRole="button" onPress={close} style={styles.primaryButton}>
-                  <Text style={styles.primaryText}>Close</Text>
-                </Pressable>
-              )}
-            </View>
-          </View>
-        </View>
-      </Modal>
-    </>
-  );
+    alive.current = true;
+    if (!consumed.get(context.runtime)?.has(identity)) void read(true);
+    return () => { alive.current = false; sequence.current += 1; controller.current?.abort(); };
+  }, [context.runtime, identity, read]);
+  const requiresAcknowledgment = Boolean(review?.receipt && !review.receipt.acknowledgedAt);
+  async function acknowledge() {
+    if (!review || ackLock.current) return;
+    if (!requiresAcknowledgment) { setReview(null); return; }
+    ackLock.current = true; setSaving(true); setError("");
+    try {
+      await context.runtime.api.authenticated.put(`/daily-critical-tasks/${encodeURIComponent(review.receipt!.localDate)}/acknowledgment`, {});
+      if (alive.current) { setReview(null); client.removeQueries({ queryKey: key }); }
+    } catch (cause) {
+      if (!alive.current) return;
+      if (cause instanceof ApiError && [401, 403].includes(cause.status)) { setReview(null); client.removeQueries({ queryKey: key }); }
+      setError("Could not save your acknowledgment. Refresh the current list and try again.");
+    } finally { ackLock.current = false; if (alive.current) setSaving(false); }
+  }
+  function openTask(item: DailyCriticalTaskItem) {
+    if (requiresAcknowledgment || saving || navigationBlocked) return;
+    const featureId = item.kind === "chat_action" ? "messages" : "projects";
+    if (!resolveAuthorizedFeature(featureId, session.user.role, session.authorization)) return;
+    setReview(null);
+    router.push({ pathname: "/record/[featureId]/[recordId]", params: { featureId, recordId: item.projectId, ...(item.kind === "chat_action" ? { message: item.messageId } : { tab: item.kind === "design_requirement" ? "designs" : "tasks" }) } });
+  }
+  return <>
+    <Pressable accessibilityRole="button" accessibilityLabel={error ? "Retry critical tasks" : "Open my critical tasks"} accessibilityState={{ busy, disabled: busy || saving || navigationBlocked }} disabled={busy || saving || navigationBlocked} onPress={() => void read(false)} style={styles.topButton}><Text style={styles.topButtonText}>{busy ? "Loading tasks…" : error ? "Retry tasks" : "Tasks"}</Text></Pressable>
+    {error && !review ? <Text accessibilityLiveRegion="assertive" style={styles.error}>{error}</Text> : null}
+    <Modal animationType="fade" transparent visible={Boolean(review)} onRequestClose={() => { if (!requiresAcknowledgment && !saving) setReview(null); }}><View style={styles.scrim}><View accessibilityViewIsModal style={styles.panel}>
+      <Text accessibilityRole="header" style={styles.title}>Critical task list</Text>
+      <Text style={styles.subtitle}>Your current critical actions, design requirements and overdue assigned tasks. Reviewing this list does not complete the tasks.</Text>
+      {review ? <Text style={styles.subtitle}>Checked {new Date(review.checkedAt).toLocaleString()}</Text> : null}
+      <ScrollView contentContainerStyle={styles.list}>{review?.items.length ? review.items.map((item) => {
+        const due = item.kind === "chat_action" ? item.dueDate : item.dueAt; const feature = item.kind === "chat_action" ? "messages" : "projects";
+        return <View key={`${item.kind}:${item.projectId}:${item.id}`} style={styles.item}><Text style={styles.project}>{item.projectName}</Text><Text style={styles.itemTitle}>{item.title}</Text><Text style={styles.itemMeta}>{item.kind === "chat_action" ? "Critical chat action" : item.kind === "design_requirement" ? item.category === "stock" ? "Critical supply check" : "Design requirement" : "Overdue workflow task"}</Text>
+          <Text style={styles.subtitle}>{due ? `Due ${item.kind === "chat_action" ? due : new Date(due).toLocaleString()}` : item.kind === "design_requirement" && item.category === "stock" ? "Deadline starts after initial payment confirmation" : item.kind === "design_requirement" && item.category === "po_approval" ? "Required before raising a purchase order" : "Required before Design submission"}</Text>
+          {resolveAuthorizedFeature(feature, session.user.role, session.authorization) ? <Pressable accessibilityRole="button" disabled={requiresAcknowledgment || saving || navigationBlocked} accessibilityState={{ disabled: requiresAcknowledgment || saving || navigationBlocked }} onPress={() => openTask(item)} style={styles.topButton}><Text style={[styles.project, { color: colors.primary }]}>{item.kind === "chat_action" ? "Open conversation" : item.kind === "design_requirement" ? "Open Design checklist" : "Open project tasks"}</Text></Pressable> : null}
+        </View>;
+      }) : <Text style={styles.empty}>You have no open critical actions, design requirements or overdue assigned tasks.</Text>}</ScrollView>
+      {requiresAcknowledgment ? <Text style={styles.subtitle}>Acknowledge this list before opening a task.</Text> : null}
+      {error ? <Text accessibilityLiveRegion="assertive" style={styles.error}>{error}</Text> : null}
+      <View style={styles.actions}><Pressable accessibilityRole="button" accessibilityState={{ busy: saving, disabled: saving }} disabled={saving} onPress={() => void acknowledge()} style={styles.primaryButton}><Text style={styles.primaryText}>{saving ? "Saving…" : "I have reviewed my tasks"}</Text></Pressable></View>
+    </View></View></Modal>
+  </>;
 }
 
 const styles = StyleSheet.create({

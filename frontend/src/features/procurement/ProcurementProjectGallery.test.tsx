@@ -199,7 +199,7 @@ describe("Procurement project gallery", () => {
 
   it("renders zero summaries for an empty successful response", async () => {
     install([]); mount();
-    await screen.findByText(/automatically after their Design plan is approved/i);
+    await screen.findByText(/Projects appear when you are assigned/i);
     expect(summary()).toHaveTextContent("0");
     expect(summary()).toHaveTextContent("₹0.00");
     expect(cards()).toHaveLength(0);

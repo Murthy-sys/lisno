@@ -41,6 +41,8 @@ import { EXPECTED_PROJECT_CHAT_OPERATIONS } from "./fixtures/project-chat-route-
 import { EXPECTED_PROFILE_PHOTO_OPERATIONS } from "./fixtures/profile-photo-route-operations.js";
 
 const EXPECTED_ALL_HUMAN_JWT_OPERATIONS = [
+  { key: "GET /projects/:projectId/design-requirements", permission: "projects.design_workflow.read", scope: { kind: "project", module: "projects" }, operationClass: "read", superAdminBehavior: "global_read", availability: "baseline" },
+  { key: "POST /projects/:projectId/design-requirements/actions", permission: "projects.design_requirements.act", scope: { kind: "project", module: "projects" }, operationClass: "personal", superAdminBehavior: "deny_personal", availability: "baseline" },
   ...EXPECTED_ESTIMATE_COLLABORATION_OPERATIONS,
   ...EXPECTED_VENDOR_BASKET_PROPOSAL_OPERATIONS,
   { key: "POST /client/ask-lisno", permission: "ask_lisno.request", scope: { kind: "non_project", namespace: "identity" }, operationClass: "personal", superAdminBehavior: "deny_personal", availability: "baseline" },
@@ -247,9 +249,9 @@ describe("human JWT operation registry", () => {
     expect(HUMAN_JWT_OPERATION_LIST.filter(({ key }) => expected.some((row) => row.key === key))).toEqual(expected);
   });
 
-  it("matches all 435 normative operation rows", () => {
+  it("matches all 437 normative operation rows", () => {
     expect(Object.values(HUMAN_JWT_OPERATIONS).sort((a, b) => a.key.localeCompare(b.key))).toEqual([...EXPECTED_ALL_HUMAN_JWT_OPERATIONS].sort((a, b) => a.key.localeCompare(b.key)));
-    expect(Object.keys(HUMAN_JWT_OPERATIONS)).toHaveLength(435);
+    expect(Object.keys(HUMAN_JWT_OPERATIONS)).toHaveLength(437);
   });
 
   it("mounts rows 2 through 23 as exact router groups with one ordered marker pair", () => {
@@ -553,7 +555,7 @@ describe("human JWT operation registry", () => {
     }
   });
 
-  it("mounts the exact 435-operation manifest with one ordered marker pair each", () => {
+  it("mounts the exact 437-operation manifest with one ordered marker pair each", () => {
     const expectedKeys = EXPECTED_ALL_HUMAN_JWT_OPERATIONS.map(
       ({ key }) => key
     ).sort();
@@ -563,8 +565,8 @@ describe("human JWT operation registry", () => {
     const mountedOperations = mountedRoutes.map(({ key }) => key);
 
     expect([...mountedOperations].sort()).toEqual(expectedKeys);
-    expect(expectedKeys).toHaveLength(435);
-    expect(new Set(expectedKeys).size).toBe(435);
+    expect(expectedKeys).toHaveLength(437);
+    expect(new Set(expectedKeys).size).toBe(437);
     expect(mountedOperations).toContain(
       "POST /execution/worker-assignments/override"
     );
@@ -611,9 +613,9 @@ describe("human JWT operation registry", () => {
     expect(() => assertTaskSixRouteMounts(routers)).toThrow();
   });
 
-  it("has 435 unique keys and exactly 194 routed permissions", () => {
-    expect(new Set(HUMAN_JWT_OPERATION_LIST.map(({ key }) => key)).size).toBe(435);
-    expect(new Set(HUMAN_JWT_OPERATION_LIST.map(({ permission }) => permission)).size).toBe(194);
+  it("has 437 unique keys and exactly 195 routed permissions", () => {
+    expect(new Set(HUMAN_JWT_OPERATION_LIST.map(({ key }) => key)).size).toBe(437);
+    expect(new Set(HUMAN_JWT_OPERATION_LIST.map(({ permission }) => permission)).size).toBe(195);
     expect(HUMAN_JWT_OPERATION_LIST.every(({ permission }) =>
       (PERMISSION_CODES as readonly string[]).includes(permission)
     )).toBe(true);
@@ -758,4 +760,12 @@ describe("human JWT operation registry", () => {
     app.use(errorHandler);
     await request(app).get("/context").expect(200, { key: "GET /auth/me" });
   });
+});
+
+
+it("keeps Design requirement review readable but denies Super Admin personal signoff", () => {
+  expect(HUMAN_JWT_OPERATIONS["GET /projects/:projectId/design-requirements"])
+    .toMatchObject({ permission: "projects.design_workflow.read", superAdminBehavior: "global_read", operationClass: "read" });
+  expect(HUMAN_JWT_OPERATIONS["POST /projects/:projectId/design-requirements/actions"])
+    .toMatchObject({ permission: "projects.design_requirements.act", superAdminBehavior: "deny_personal", operationClass: "personal" });
 });

@@ -1,3 +1,4 @@
+import { customerEstimatePricing } from "./helpers/assistant-pricing.js";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import mongoose from "mongoose";
 import type { AssistantGeneratedResult, AssistantReadSources } from "../src/contracts/project-chat-assistant.js";
@@ -19,10 +20,11 @@ import { chatSend } from "./helpers/project-chat.js";
 import { startMongoReplicaSet } from "./helpers/mongo-replica-set.js";
 
 const generated: AssistantGeneratedResult = {
-  narrative: [{text: "Your project is active. The approximate addition is available below for review.", factIds: ["project-status"]}],
+  disclosurePolicy: "project-publication-v1", projectPricing: customerEstimatePricing(28084),
+  narrative: [{text: "Your project is active.", factIds: ["project-status"]}],
   kind: "price", facts: [{id: "project-status", label: "Project status", value: "Active", source: {id: "a", label: "Project", href: null}}],
   candidates: [], missingInputs: [], freshness: [{kind: "synthetic-source", id: "source-a", version: "v1"}],
-  commercial: {currency: "INR", policy: "configuration-selling-v1", state: "complete", lines: [], subtotalPaise: 23800, gstRateBps: 1800, gstPaise: 4284, totalPaise: 28084, optionalSubtotalPaise: null, approvedBaselinePaise: 1797531, hypotheticalTotalPaise: 1825615, assumptions: ["Extra quantity only"], missingInputs: []}
+  commercial: null
 };
 let replica: Awaited<ReturnType<typeof startMongoReplicaSet>>;
 beforeAll(async () => {
@@ -67,7 +69,7 @@ describe("project assistant real Mongo chat integration", () => {
     expect(message).toMatchObject({author: {kind: "service", id: "lisno-ai", name: "Lisno AI"}, assistantRunId: run!.id, replyTo: {id: question.id, author: {id: "client-a", role: "client"}}});
     expect(message!.author.role).toBeUndefined();
     expect(await UserModel.countDocuments({_id: "lisno-ai"})).toBe(0);
-    expect(await ProjectChatAssistantResultModel.findById(run!.resultId).lean()).toMatchObject({runId: run!.id, messageId: String(message!._id), projectId: "a", narrative: generated.narrative, commercial: {totalPaise: 28084}});
+    expect(await ProjectChatAssistantResultModel.findById(run!.resultId).lean()).toMatchObject({runId: run!.id, messageId: String(message!._id), projectId: "a", narrative: generated.narrative, projectPricing: {totalPaise: 28084}});
     expect((await f.assistant.result(f.actor("client-a"), "a", run!.resultId!)).narrative).toEqual(generated.narrative);
     expect(await ProjectChatAssistantReceiptModel.countDocuments({kind: "publication", runId: run!.id})).toBe(1);
     const loaded = (await f.service.messages(f.actor("client-a"), "a", {})).items.find(row => row.id === run!.answerMessageId)!;
@@ -86,8 +88,8 @@ describe("project assistant real Mongo chat integration", () => {
     const shared = (await f.service.messages(f.actor("electric-a"), "a", {})).items;
     const worker = await f.assistant.result(f.actor("electric-a"), "a", run!.resultId!);
     const client = await f.assistant.result(f.actor("client-a"), "a", run!.resultId!);
-    expect(client).toMatchObject({commercialAccess: "allowed", commercial: {totalPaise: 28084}});
-    expect(worker).toMatchObject({commercialAccess: "restricted", commercial: null, facts: generated.facts});
+    expect(client).toMatchObject({commercialAccess: "allowed", projectPricing: {totalPaise: 28084}});
+    expect(worker).toMatchObject({commercialAccess: "restricted", commercial: null, projectPricing: null, facts: generated.facts});
     const surfaces = {shared, worker, events: await ProjectChatEventModel.find().lean(), notifications: await ChatNotificationModel.find().lean()};
     expect(JSON.stringify(surfaces)).not.toMatch(/28084|1797531|1825615|subtotalPaise|gstPaise|freshness/);
     expect(JSON.stringify({shared, events: surfaces.events, notifications: surfaces.notifications})).not.toContain(generated.narrative![0]!.text);

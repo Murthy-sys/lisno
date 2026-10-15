@@ -556,7 +556,7 @@ export function createProjectWorkflowService(input: {
       )
         ? [...new Set(currentRevisions.map(({ drawing }) => String(drawing.roomId)))]
         : undefined;
-      await assertDesignWorkflowSubmissionAllowed(createMongoRepository(session), String(project._id), {
+      const designRequirementsReadiness = await assertDesignWorkflowSubmissionAllowed(createMongoRepository(session), String(project._id), {
         lock: true,
         roomIds: mappedRooms
       });
@@ -604,6 +604,7 @@ export function createProjectWorkflowService(input: {
       const roundId = `design-plan-review-${randomUUID()}`;
       await DesignPlanReviewRoundModel.create([{
         _id: roundId,
+        designRequirementsReadiness,
         estimateId,
         projectId: String(project._id),
         leadId: String(lead._id),

@@ -53,6 +53,10 @@ const EVENT_FAMILIES = Object.freeze({
   "project-initiated": ["projects", "dashboard", "leads"],
   "task-changed": ["project-hierarchy", "tasks", "workflow", "kpi", "dashboard"],
   "design-workflow-changed": [
+    "procurement",
+    "operations",
+    "notifications",
+    "estimates",
     "workflow",
     "projects",
     "design",
@@ -64,6 +68,10 @@ const EVENT_FAMILIES = Object.freeze({
     "dashboard"
   ],
   "estimate-decision-changed": [
+    "procurement",
+    "operations",
+    "notifications",
+    "leads",
     "estimates",
     "estimate-responses",
     "plan-review",
@@ -90,6 +98,12 @@ const EVENT_FAMILIES = Object.freeze({
     "dashboard"
   ],
   "procurement-changed": [
+    "workflow",
+    "design",
+    "operations",
+    "notifications",
+    "tasks",
+    "users",
     "procurement",
     "vendors",
     "vendor-suggestions",

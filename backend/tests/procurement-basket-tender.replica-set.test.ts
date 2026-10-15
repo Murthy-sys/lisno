@@ -1,3 +1,4 @@
+import * as designRequirements from "../src/services/design-requirements.service.js";
 import { ProjectPurchaseOrderModeDecisionModel } from "../src/models/ProjectPurchaseOrderModeDecision.js";
 import { ProcurementBasketBaseRateModel } from "../src/models/ProcurementBasketBaseRate.js";
 import { procurementItemSourceSnapshot } from "../src/services/procurement.service.js";
@@ -1774,3 +1775,34 @@ function mockFinalSourceOnce() {
   vi.mocked(procurementItemSourceSnapshot).mockResolvedValueOnce({ ...basket.estimateSource,
     preparationSource: basket.preparationSource, lineItems: [{ key: "line-a", sectionId: "basket-a" }], allLineItems: [] } as any);
 }
+
+
+it("requires Designer checklist readiness even for small awards but permits enquiry and preview preparation", async () => {
+  const guard = vi.spyOn(designRequirements, "assertDesignRequirementsPoAllowed");
+  const deny = () => guard.mockRejectedValueOnce(new ApiError(409, "DESIGN_REQUIREMENTS_PO_BLOCKED", "Designer checklist is incomplete."));
+  try {
+    const enquiry = await sentEnquiry(["vendor-a"]);
+    const token = sent[0]!.rawToken;
+    const boq = await enquiries.inspectVendorBoq(token);
+    const bid = await enquiries.submitVendorBid({ token, idempotencyKey: "design-small-bid",
+      lines: [{ boqLineId: boq.lines[0]!.id, unitPricePaise: 1_000, gstBasisPoints: 0 }] });
+    const current = await enquiries.get(buyer, "project-a", "basket-a", enquiry.id);
+    const preview = await awards.preview(buyer, "project-a", "basket-a", enquiry.id,
+      { bidId: bid.bidId, advanceBasisPoints: 2_000 });
+    expect(preview.requiredSlots).toEqual(["procurement"]);
+    expect(guard).not.toHaveBeenCalled();
+    const input = { expectedVersion: current.version, idempotencyKey: "design-small-award", bidId: bid.bidId,
+      advanceBasisPoints: 2_000, milestoneReviewers: procurementReviewers };
+    deny();
+    await expect(awards.create(buyer, "project-a", "basket-a", enquiry.id, input))
+      .rejects.toMatchObject({ code: "DESIGN_REQUIREMENTS_PO_BLOCKED" });
+    expect(await ProcurementBasketAwardModel.countDocuments()).toBe(0);
+    expect(guard.mock.calls[0]?.slice(0, 2)).toEqual(["project-a", ["line-a"]]);
+    const award = await awards.create(buyer, "project-a", "basket-a", enquiry.id, input);
+    deny();
+    const submission = { expectedVersion: award.version, idempotencyKey: "design-small-submit" };
+    await expect(awards.submit(buyer, "project-a", "basket-a", enquiry.id, award.id, submission))
+      .rejects.toMatchObject({ code: "DESIGN_REQUIREMENTS_PO_BLOCKED" });
+    expect((await ProcurementBasketAwardModel.findById(award.id).lean())?.status).toBe("draft");
+  } finally { guard.mockRestore(); }
+});

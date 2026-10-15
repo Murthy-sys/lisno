@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { router } from "expo-router";
 import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
@@ -9,10 +10,10 @@ import { canPerformOperation } from "../../core/session/operationCapabilities";
 import type { FeatureDestination } from "../../navigation/registry";
 import { useConfiguredRuntime } from "../../runtime/RuntimeProvider";
 import { BrandLoader } from "../../ui/brand";
-import { StateView } from "../../ui/primitives";
+import { Button, StateView } from "../../ui/primitives";
 import { colors, fonts, radii, spacing, typography } from "../../ui/tokens";
 import { FEATURE_DEFINITIONS } from "./featureDefinitions";
-import { dashboardMetrics, extractRecords, recordId, recordSubtitle, recordTitle } from "./recordPresentation";
+import { dashboardMetrics, extractRecords, isRecord, recordId, recordSubtitle, recordTitle } from "./recordPresentation";
 import { OperationalTaskAction } from "../operations/OperationalTaskAction";
 import { NotificationsScreen } from "../notifications/NotificationsScreen";
 import { AccessRequestActions } from "../access/AccessRequestActions";
@@ -20,14 +21,33 @@ import { CreateAccessRequest } from "../access/CreateAccessRequest";
 import { LeadCreateForm } from "../leads/LeadCreateForm";
 import { ProxyDecisionAction } from "../reviews/ProxyDecisionAction";
 import { clientEstimateListKey, getClientEstimates } from "../estimates/clientReviewApi";
-import type { ClientEstimate } from "../estimates/clientReviewModel";
+import { clientEstimateMoney, clientEstimateStatus } from "../estimates/clientReviewModel";
 import { AdminInvitationPanel, ManagedUserActiveAction, type ManagedUserSummary } from "../admin";
 import { KnowledgeCatalogWorkspace } from "../knowledge";
+import { AskLisnoWorkspace } from "../ask-lisno";
 import { ProjectsWorkspace } from "../projects/ProjectsWorkspace";
 import { MessagesWorkspace } from "../messages/MessagesWorkspace";
 import { SuperAdminMobileDashboard } from "../dashboard/SuperAdminMobileDashboard";
+import { LeadPipelineWorkspace } from "../estimate-authoring/LeadPipelineWorkspace";
+import { StaffEstimateQueue } from "../estimate-authoring/StaffEstimateQueue";
+import { MyRequestsWorkspace } from "../vendor-requests";
+import { PaymentConfirmationsWorkspace } from "../workflows/PaymentConfirmationsWorkspace";
+import { ProcurementApprovalScreen } from "../procurement/ProcurementApprovalScreen";
 import { ProcurementDashboard } from "../procurement/ProcurementDashboard";
+import { ProcurementHome } from "../procurement/ProcurementHome";
 import { ProcurementVendorsWorkspace } from "../procurement/ProcurementVendorsWorkspace";
+import { PersonalPerformanceWorkspace } from "../performance";
+import { NotificationsWorkspace } from "../notifications/NotificationsWorkspace";
+import { ReviewQueueWorkspace } from "../reviews/ReviewQueueWorkspace";
+import { TasksWorkspace } from "../operations/TasksWorkspace";
+import { DesignPlanTasksWorkspace } from "../design-plans/DesignPlanTasksWorkspace";
+import { ExecutionWorkspace } from "../execution";
+import { VendorWorkWorkspace } from "../vendor-work";
+import { ProjectCompletionWorkspace } from "../completion";
+import { FinanceOverviewWorkspace } from "../finance/FinanceWorkspace";
+import { ManagementWorkspace } from "../management/ManagementWorkspace";
+import { UsersWorkspace } from "../admin/UsersWorkspace";
+import { AccessRequestsWorkspace } from "../access/AccessRequestsWorkspace";
 
 function requestScope(context: ReturnType<typeof useConfiguredRuntime>, session: AuthenticatedSession) {
   return {
@@ -36,7 +56,27 @@ function requestScope(context: ReturnType<typeof useConfiguredRuntime>, session:
   };
 }
 
-export function FeatureWorkspace({ destination, session }: { readonly destination: FeatureDestination; readonly session: AuthenticatedSession }) {
+export function FeatureWorkspace({ destination, session, initialProjectId }: { readonly destination: FeatureDestination; readonly session: AuthenticatedSession; readonly initialProjectId?: string }) {
+  if (destination.id === "ask-lisno") return <AskLisnoWorkspace session={session} {...(initialProjectId ? { initialProjectId } : {})} />;
+  if (destination.id === "leads") return <LeadPipelineWorkspace session={session} onOpenLead={(leadId) => router.push({ pathname: "/staff-estimate/[leadId]", params: { leadId, from: "leads" } })} />;
+  if (destination.id === "notifications") return <NotificationsWorkspace session={session} />;
+  if (destination.id === "performance") return <PersonalPerformanceWorkspace session={session} />;
+  if (destination.id === "work") return session.user.role === "procurement" ? <ProcurementHome session={session} /> : <TasksWorkspace session={session} />;
+  if (destination.id === "client-responses" || destination.id === "design-approvals") return <ReviewQueueWorkspace session={session} kind={destination.id === "client-responses" ? "estimate" : "design"} />;
+  if (destination.id === "design-plans") return <DesignPlanTasksWorkspace session={session} onOpenProject={(recordId) => router.push({ pathname: "/record/[featureId]/[recordId]", params: { featureId: "projects", recordId } })} onOpenEstimate={(leadId) => router.push({ pathname: "/staff-estimate/[leadId]", params: { leadId, from: "projects" } })} />;
+  if (destination.id === "execution") return <ExecutionWorkspace session={session} />;
+  if (destination.id === "vendor-work") return <VendorWorkWorkspace session={session} />;
+  if (destination.id === "project-completion") return <ProjectCompletionWorkspace session={session} />;
+  if (destination.id === "finance") return <FinanceOverviewWorkspace session={session} onOpenProject={(recordId) => router.push({ pathname: "/record/[featureId]/[recordId]", params: { featureId: "finance", recordId } })} />;
+  if (destination.id === "team" || destination.id === "organization") return <ManagementWorkspace session={session} onOpenProject={(recordId) => router.push({ pathname: "/record/[featureId]/[recordId]", params: { featureId: "projects", recordId } })} />;
+  if (destination.id === "users") return <UsersWorkspace session={session} />;
+  if (destination.id === "access-review" || destination.id === "access-self") return <AccessRequestsWorkspace session={session} mode={destination.id === "access-self" ? "self" : "review"} />;
+  if (destination.id === "staff-estimates") return <StaffEstimateQueue session={session} onOpenLead={(leadId) => router.push({ pathname: "/staff-estimate/[leadId]", params: { leadId, from: "staff-estimates" } })} />;
+  if (destination.id === "my-requests") return <MyRequestsWorkspace session={session} />;
+  if (destination.id === "payment-confirmations") return <PaymentConfirmationsWorkspace session={session} />;
+  if (destination.id === "work-order-approvals" || destination.id === "purchase-orders") {
+    return <ProcurementApprovalScreen session={session} kind={destination.id === "work-order-approvals" ? "basket" : "orders"} />;
+  }
   if (destination.id === "dashboard") {
     return <SuperAdminMobileDashboard session={session} />;
   }
@@ -59,14 +99,6 @@ export function FeatureWorkspace({ destination, session }: { readonly destinatio
     return <ProcurementVendorsWorkspace session={session} />;
   }
   return <GenericFeatureWorkspace destination={destination} session={session} />;
-}
-
-const estimateMoney = new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 });
-
-function clientEstimateStatus(estimate: ClientEstimate): string {
-  if (estimate.status === "sent_to_client") return "Awaiting your decision";
-  if (estimate.status === "client_changes_requested") return "Changes requested";
-  return "Estimate approved";
 }
 
 function ClientEstimatesWorkspace({ session }: { readonly session: AuthenticatedSession }) {
@@ -106,7 +138,7 @@ function ClientEstimatesWorkspace({ session }: { readonly session: Authenticated
           const title = estimate.lead?.projectName?.trim() || `Estimate ${estimate.id}`;
           const location = estimate.lead?.location?.trim();
           return <Pressable key={estimate.id} testID={`client-estimate-${estimate.id}`} accessibilityRole="button"
-            accessibilityLabel={`${title}, ${clientEstimateStatus(estimate)}, ${estimateMoney.format(estimate.total)}`}
+            accessibilityLabel={`${title}, ${clientEstimateStatus(estimate)}, ${clientEstimateMoney(estimate.total)}`}
             accessibilityHint="Opens estimate details and design review"
             onPress={() => router.push({ pathname: "/estimate/[estimateId]", params: { estimateId: estimate.id } })}
             style={({ pressed }) => [styles.record, styles.estimateRecord, pressed ? styles.recordPressed : null]}>
@@ -115,7 +147,7 @@ function ClientEstimatesWorkspace({ session }: { readonly session: Authenticated
               {location ? <Text style={styles.recordSubtitle}>{location}</Text> : null}
               <Text style={styles.estimateStatus}>{clientEstimateStatus(estimate)}</Text>
             </View>
-            <Text style={styles.estimateTotal}>{estimateMoney.format(estimate.total)}</Text>
+            <Text style={styles.estimateTotal}>{clientEstimateMoney(estimate.total)}</Text>
           </Pressable>;
         })}
       </View>
@@ -126,7 +158,10 @@ function ClientEstimatesWorkspace({ session }: { readonly session: Authenticated
 function GenericFeatureWorkspace({ destination, session }: { readonly destination: FeatureDestination; readonly session: AuthenticatedSession }) {
   const context = useConfiguredRuntime();
   const definition = FEATURE_DEFINITIONS[destination.id];
-  const endpoint = typeof definition.endpoint === "function" ? definition.endpoint(session.user.role) : definition.endpoint;
+  const [offset, setOffset] = useState(0);
+  const baseEndpoint = typeof definition.endpoint === "function" ? definition.endpoint(session.user.role) : definition.endpoint;
+  const paged = /[?&]offset=\d+/.test(baseEndpoint);
+  const endpoint = paged ? baseEndpoint.replace(/([?&]offset=)\d+/, `$1${offset}`) : baseEndpoint;
   const query = useQuery({
     queryKey: privateQueryKey(requestScope(context, session), definition.family, destination.id, endpoint),
     queryFn: ({ signal }) => context.runtime.api.authenticated.get<unknown>(endpoint, { signal }),
@@ -154,6 +189,8 @@ function GenericFeatureWorkspace({ destination, session }: { readonly destinatio
   }
 
   const records = extractRecords(query.data);
+  const pagination = isRecord(query.data) && isRecord(query.data.pagination) ? query.data.pagination : null;
+  const limit = pagination && Number.isSafeInteger(pagination.limit) && Number(pagination.limit) > 0 ? Number(pagination.limit) : 30;
   const metrics = destination.id === "dashboard" ? dashboardMetrics(query.data) : [];
 
   return (
@@ -169,8 +206,10 @@ function GenericFeatureWorkspace({ destination, session }: { readonly destinatio
       </View>
 
       {destination.id === "access-self" && canPerformOperation(session, "POST /access-requests") ? <CreateAccessRequest role={session.user.role} /> : null}
-      {destination.id === "leads" && canPerformOperation(session, "POST /leads") ? <LeadCreateForm /> : null}
+      {destination.id === "leads" && canPerformOperation(session, "POST /leads") ? <LeadCreateForm onCreated={(leadId) => router.push({ pathname: "/staff-estimate/[leadId]", params: { leadId, from: "leads" } })} /> : null}
       {destination.id === "users" ? <AdminInvitationPanel session={session} /> : null}
+
+      {paged && pagination ? <View style={styles.list}><Text style={styles.recordSubtitle}>Page {Math.floor(offset / limit) + 1}{typeof pagination.total === "number" ? ` · ${pagination.total} results` : ""}</Text><Button label="Previous page" variant="quiet" disabled={offset === 0 || query.isFetching} onPress={() => setOffset(Math.max(0, offset - limit))} /><Button label="Next page" variant="quiet" disabled={pagination.hasMore !== true || query.isFetching} onPress={() => setOffset(offset + limit)} /></View> : null}
 
       {metrics.length > 0 ? (
         <View style={styles.metricGrid}>

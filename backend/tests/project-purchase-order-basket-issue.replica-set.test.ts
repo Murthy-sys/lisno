@@ -1,3 +1,4 @@
+import * as designRequirements from "../src/services/design-requirements.service.js";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProcurementBasketDetailDto } from "../src/domain/procurement-basket-projection.js";
 import type { ProjectPurchaseOrderPreparationDto } from "../src/domain/project-purchase-order-preparation.js";
@@ -919,4 +920,22 @@ describe("approved basket award issuance", () => {
     expect(result.status).toBe("issued");
     expect(await counts()).toEqual({ children: 1, orders: 1, revisions: 1, assignments: 1 });
   });
+});
+
+
+it("rechecks Designer readiness at basket issue and preserves the original issued replay", async () => {
+  const ready = await approvedAward({ unitPricePaise: 440_000, withChips: true });
+  const guard = vi.spyOn(designRequirements, "assertDesignRequirementsPoAllowed");
+  try {
+    const fields = { expectedVersion: ready.awardVersion, idempotencyKey: "issue-design-checklist" };
+    guard.mockRejectedValueOnce(new ApiError(409, "DESIGN_REQUIREMENTS_PO_BLOCKED", "Designer checklist is incomplete."));
+    await expect(issue.issue(buyer, "project-a", "basket-a", ready.enquiryId, ready.awardId, fields))
+      .rejects.toMatchObject({ code: "DESIGN_REQUIREMENTS_PO_BLOCKED" });
+    expect(await counts()).toEqual({ children: 0, orders: 0, revisions: 0, assignments: 0 });
+    expect(guard.mock.calls[0]?.slice(0, 2)).toEqual(["project-a", ["line-a"]]);
+    const issued = await issue.issue(buyer, "project-a", "basket-a", ready.enquiryId, ready.awardId, fields);
+    guard.mockRejectedValueOnce(new ApiError(409, "DESIGN_REQUIREMENTS_PO_BLOCKED", "Later changed rules."));
+    expect(await issue.issue(buyer, "project-a", "basket-a", ready.enquiryId, ready.awardId, fields)).toEqual(issued);
+    expect(await counts()).toEqual({ children: 1, orders: 1, revisions: 1, assignments: 1 });
+  } finally { guard.mockRestore(); }
 });

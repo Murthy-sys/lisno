@@ -127,7 +127,7 @@ describe("Client project published estimate review", () => {
     configured.publishedReview!.snapshot.lineItems = [{
       id: "estimate-line-1", source: "configuration", catalogueId: "line-internal-1",
       mainBasketId: "basket-1", mainBasketName: "Joinery", subBasketId: "sub-1",
-      subBasketName: "Wardrobes", mainLineId: "line-internal-1", mainLineName: "Wardrobe carcass",
+      subBasketName: "Wardrobes", mainLineId: "line-internal-1", mainLineName: "Wardrobe carcass", estimateNotes: ["Maintain removable service access"],
       roomId: "room-1", roomName: "Master Bedroom", specification: null,
       unit: "sq ft", uomName: "sq ft", rate: 80.05, ratePaise: 8005,
       quantity: 1.25, included: true, amount: 100.06, amountPaise: 10006
@@ -142,6 +142,7 @@ describe("Client project published estimate review", () => {
     expect(within(review).getByText("Joinery")).toBeVisible();
     expect(within(review).getByText("Wardrobe carcass")).toBeVisible();
     expect(within(review).getByText("Wardrobes · Master Bedroom")).toBeVisible();
+    expect(within(review).getByText("Maintain removable service access")).toBeVisible();
     expect(within(review).getByText("1.25 sq ft × ₹80.05")).toBeVisible();
     expect(within(review).getAllByText("₹100.06").length).toBeGreaterThan(0);
     expect(within(review).queryByText("line-internal-1")).not.toBeInTheDocument();

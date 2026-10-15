@@ -1,3 +1,4 @@
+import { assertDesignRequirementsPoAllowed } from "./design-requirements.service.js";
 import { procurementPreparationProjectFilter, procurementPreparationProjectAllowed } from "./procurement.service.js";
 import type { ClientSession, PipelineStage } from "mongoose";
 import { averageProcurementBasketBidNetPaise, compareProcurementBasketBids, procurementBasketDigest, procurementBasketPaymentSchedule,
@@ -303,6 +304,7 @@ export function createProcurementBasketAwardService({ audit, now = () => new Dat
             runValidators: true, timestamps: false }).lean() as TenderRow | null;
         if (!project) tenderConflict("PROCUREMENT_BASKET_PROJECT_INACTIVE", "This project is not active.");
         await assertProposalFresh(award, proposal, session);
+        await assertAwardDesignRequirements(award, session);
         if (proposal.requiredSlots.includes("finance_head")) {
           const financeTask = await ProjectWorkflowTaskModel.exists({ projectId, kind: "finance",
             assigneeRole: "finance_head" }).session(session);
@@ -440,6 +442,7 @@ export function createProcurementBasketAwardService({ audit, now = () => new Dat
           String(proposal._id) !== input.proposalRevisionId)
           tenderConflict("PROCUREMENT_BASKET_AWARD_VERSION_CONFLICT", "This award changed. Reload before deciding.");
         await assertProposalFresh(award, proposal, session);
+        if (input.decision === "approve") await assertAwardDesignRequirements(award, session);
         const prior = await ProcurementBasketAwardApprovalModel.find({ awardId, proposalRevisionId: proposal._id })
           .session(session).lean() as TenderRow[];
         if (prior.some(row => row.slot === input.slot || row.actorId === actor.id))
@@ -604,6 +607,8 @@ async function prepareAward(enquiry: TenderRow, bidId: string, advanceBasisPoint
     selectedDesignerId: string | null; kpiAssessment: TenderRow; sourceReconciliation: TenderRow | null; basketPreparationDigest: string }> {
   if (!["sent", "award_pending"].includes(enquiry.status)) tenderConflict("PROCUREMENT_BASKET_ENQUIRY_STATE", "This enquiry is not open for an award.");
   const comparison = await readComparison(enquiry, session);
+  if (fence) await assertDesignRequirementsPoAllowed(String(enquiry.projectId),
+    (comparison.revision.lines as ProcurementBasketBoqLine[]).map(line => line.sourceLineItemKey), session);
   const row = comparison.rows.find(item => item.bidId === bidId);
   if (!row || !row.eligible || row.comparisonScoreBps === null)
     tenderConflict("PROCUREMENT_BASKET_BID_INELIGIBLE", "Choose a complete current bid from an eligible vendor.");
@@ -886,4 +891,12 @@ function reviewerSlot(role: PublicUser["role"]): string | null {
     case "super_admin": return "budget_override";
     default: return null;
   }
+}
+
+async function assertAwardDesignRequirements(award: TenderRow, session: ClientSession): Promise<void> {
+  const boq = await ProcurementBasketBoqRevisionModel.findOne({ _id: award.boqRevisionId,
+    projectId: award.projectId, enquiryId: award.enquiryId }).session(session).lean() as TenderRow | null;
+  if (!boq) tenderConflict("PROCUREMENT_BASKET_BOQ_UNAVAILABLE", "The award's source BOQ is unavailable.");
+  await assertDesignRequirementsPoAllowed(String(award.projectId),
+    (boq.lines as ProcurementBasketBoqLine[]).map(line => line.sourceLineItemKey), session);
 }

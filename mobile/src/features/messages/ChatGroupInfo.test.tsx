@@ -67,6 +67,7 @@ function runtimeValue() {
       generation: 1,
       status: "ready"
     },
+    session: { status: "authenticated", session, generation: 1 },
     runtime: { api: { authenticated: { get: apiGet, post: apiPost } } }
   } as unknown as ReturnType<typeof useConfiguredRuntime>;
 }

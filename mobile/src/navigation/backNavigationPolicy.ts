@@ -26,8 +26,8 @@ export interface AppDestination {
   readonly featureId?: string;
 }
 
-const appNames = new Set(["index", "feature/[featureId]", "record/[featureId]/[recordId]", "estimate/[estimateId]", "vendor/[vendorId]", "more", "access-denied", "sign-in", "forgot-password", "reset-password", "accept-invitation", "welcome", "startup-recovery"]);
-const accountNames = new Set(["forgot-password", "reset-password", "accept-invitation"]);
+const appNames = new Set(["index", "feature/[featureId]", "record/[featureId]/[recordId]", "estimate/[estimateId]", "staff-estimate/[leadId]", "vendor/[vendorId]", "more", "access-denied", "sign-in", "forgot-password", "reset-password", "accept-invitation", "accept-project-invitation", "welcome", "startup-recovery"]);
+const accountNames = new Set(["forgot-password", "reset-password", "accept-invitation", "accept-project-invitation"]);
 
 /** Accept one decoded or percent-encoded path scalar, never a separator or malformed escape. */
 export function parseEstimateRouteId(value: unknown): string | null {
@@ -56,6 +56,11 @@ export function appDestination(entry: NavigationEntry | undefined): AppDestinati
   if (!entry) return null;
   if (entry.name === "more") return { kind: "more", path: "/more" };
   const params = entry.params as Record<string, unknown> | undefined;
+  if (entry.name === "staff-estimate/[leadId]") {
+    const leadId = parseEstimateRouteId(params?.leadId);
+    const featureId = params?.from === "leads" || params?.from === "staff-estimates" ? params.from : "projects";
+    return leadId ? { kind: "record", featureId, path: `/staff-estimate/${encodeURIComponent(leadId)}?from=${featureId}` } : null;
+  }
   if (entry.name === "estimate/[estimateId]") {
     const estimateId = parseEstimateRouteId(params?.estimateId);
     return estimateId ? { kind: "record", featureId: "estimates", path: `/estimate/${encodeURIComponent(estimateId)}` } : null;

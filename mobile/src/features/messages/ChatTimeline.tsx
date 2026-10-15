@@ -104,6 +104,7 @@ function TimelineMessageBubble({
 
 export function ChatTimeline({
   messages,
+  targetMessageId = null,
   currentUserId,
   lastReadSequence,
   compact,
@@ -121,6 +122,7 @@ export function ChatTimeline({
   onDenied
 }: {
   readonly messages: readonly PresentedMessage[];
+  readonly targetMessageId?: string | null;
   readonly currentUserId: string;
   readonly lastReadSequence: number;
   readonly compact: boolean;
@@ -183,7 +185,8 @@ export function ChatTimeline({
   }, [onNearBottomChange]);
 
   const renderItem = useCallback(({ item }: { item: PresentedMessageTimelineItem }) => (
-    <View>
+    <View style={item.message.id === targetMessageId ? { borderWidth: 1, borderColor: chatColors.green, backgroundColor: colors.primarySoft } : undefined}>
+      {item.message.id === targetMessageId ? <Text accessibilityLiveRegion="polite" style={{ color: colors.inkMuted, padding: spacing.xs }}>Linked message</Text> : null}
       {item.showDateSeparator ? (
         <View accessibilityRole="text" style={styles.separatorRow}>
           <Text style={styles.dateSeparator}>{dayLabel(item.dayKey)}</Text>
@@ -205,7 +208,7 @@ export function ChatTimeline({
         onReply={onReply}
       />
     </View>
-  ), [compact, onDenied, onOpenActions, onReply, reducedMotion]);
+  ), [compact, onDenied, onOpenActions, onReply, reducedMotion, targetMessageId]);
 
   if (!timeline.length) {
     return <View style={styles.container}><ChatWallpaper /><StateView title="No messages yet" message="Start the project conversation with an update or question." /></View>;
@@ -232,8 +235,11 @@ export function ChatTimeline({
           });
           scrollState.current = transition.state;
           if (transition.action !== "initial") return;
-          list.current?.scrollToEnd({ animated: false });
+          const targetIndex = targetMessageId ? timeline.findIndex(item => item.message.id === targetMessageId) : -1;
+          if (targetIndex >= 0) list.current?.scrollToIndex({ index: targetIndex, animated: false, viewPosition: .3 });
+          else list.current?.scrollToEnd({ animated: false });
         }}
+        onScrollToIndexFailed={({ index, averageItemLength }) => { list.current?.scrollToOffset({ offset: Math.max(0, index * averageItemLength), animated: false }); requestAnimationFrame(() => list.current?.scrollToIndex({ index, animated: false, viewPosition: .3 })); }}
         onScroll={handleScroll}
         scrollEventThrottle={80}
         onStartReached={() => {

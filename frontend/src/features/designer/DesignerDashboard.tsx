@@ -13,7 +13,8 @@ import { Button } from "../../components/ui/Button";
 import type {
   DesignPlanStatus,
   DesignPlanTask,
-  KpiProjectAggregate
+  KpiProjectAggregate,
+  Project
 } from "../../api/types";
 import { useAuth } from "../../auth/AuthProvider";
 import { KpiPanel } from "../../components/kpi/KpiPanel";
@@ -76,11 +77,11 @@ export function DesignerDashboard() {
   const user = auth.user!;
   const period = reviewPeriod();
   const projectsQuery = useQuery({
-    queryKey: designerKeys.projects(),
+    queryKey: [...designerKeys.projects(), user.id, user.role],
     queryFn: getAllProjects
   });
   const designTasksQuery = useQuery({
-    queryKey: projectWorkflowKeys.designerPlans,
+    queryKey: [...projectWorkflowKeys.designerPlans, user.id, user.role],
     queryFn: getDesignerPlanTasks
   });
   const kpiQuery = useQuery(kpiQueryOptions(user.id, period));
@@ -118,6 +119,7 @@ export function DesignerDashboard() {
     (project) => project.status === "active"
   ).length;
   const atRiskCount = aggregates.riskCounts.red + aggregates.riskCounts.yellow;
+  const assignedCount = new Set([...projects.map((project) => project.id), ...designTasks.map((task) => task.projectId)]).size;
   const rankedTasks = designTasks
     .map((task) => {
       const aggregate = aggregates.projects.find(
@@ -141,7 +143,7 @@ export function DesignerDashboard() {
         title="Design workspace"
         description={`Good morning, ${user.name.split(" ")[0]}. Here’s what needs your eye across active client work.`}
         metadata={(
-          <StatusBadge tone="info" label={`${designTasks.length} assigned`} />
+          <StatusBadge tone="info" label={`${assignedCount} assigned`} />
         )}
       />
 
@@ -176,11 +178,11 @@ export function DesignerDashboard() {
           </div>
           <span>
             {priorityCount
-              ? `${priorityCount} priority · ${designTasks.length} assigned`
-              : `${designTasks.length} assigned`}
+              ? `${priorityCount} priority · ${assignedCount} assigned`
+              : `${assignedCount} assigned`}
           </span>
         </div>
-        {designTasks.length ? (
+        {assignedCount ? (
           <div className="designer-project-list">
             <div className="designer-project-list__header" aria-hidden="true">
               <span>Client</span>
@@ -198,6 +200,9 @@ export function DesignerDashboard() {
                 onReview={() => setSelectedTaskId(task.id)}
               />
             ))}
+            {projects.filter((project) => !designTasks.some((task) => task.projectId === project.id)).map((project) => (
+              <AssignedProjectRow key={project.id} project={project} />
+            ))}
           </div>
         ) : (
           <div className="project-empty designer-projects__empty">
@@ -205,7 +210,7 @@ export function DesignerDashboard() {
             <div>
               <h3>No design projects assigned</h3>
               <p>
-                Approved estimates will appear after a Sales Manager or Super Admin assigns you.
+                Projects will appear here when you are assigned, including projects awaiting estimate approval.
               </p>
             </div>
           </div>
@@ -308,6 +313,7 @@ function DesignProjectRow({
         )}
       </div>
       <div className="designer-project-row__actions" data-label="Actions">
+        <Link to={`/designer/projects/${encodeURIComponent(task.projectId)}`} aria-label={`View project details for ${task.projectName}`}>View project</Link>
         <Button variant="secondary" size="compact" onClick={onReview} aria-label={`Quick review ${task.projectName}`}>Quick review</Button>
         <Link
           to={`/designer/design-plans?estimate=${encodeURIComponent(task.estimateId)}`}
@@ -319,6 +325,17 @@ function DesignProjectRow({
       </div>
     </article>
   );
+}
+
+function AssignedProjectRow({ project }: { project: Project }) {
+  const headingId = `designer-project-${project.id}`;
+  return <article className="designer-project-row" aria-labelledby={headingId}>
+    <div className="designer-project-row__client" data-label="Client"><strong>{project.clientName || "Client details pending"}</strong></div>
+    <div className="designer-project-row__project" data-label="Project"><h3 id={headingId}>{project.name}</h3><small>{project.location}</small></div>
+    <div className="designer-project-row__status" data-label="Design status"><StatusBadge tone="neutral" label="Design task not available yet" /></div>
+    <div className="designer-project-row__health" data-label="Health"><span>Not available</span></div>
+    <div className="designer-project-row__actions" data-label="Actions"><Link to={`/designer/projects/${encodeURIComponent(project.id)}`} aria-label={`View project details for ${project.name}`}>View project</Link></div>
+  </article>;
 }
 
 function designTaskAction(status: DesignPlanStatus) {

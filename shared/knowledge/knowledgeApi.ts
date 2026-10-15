@@ -214,6 +214,7 @@ export interface KnowledgeCreateMainLineInput {
 
 export interface KnowledgeUpdateMainLineInput {
   readonly expectedVersion: number;
+  readonly estimationVisibility?: "internal" | "external";
   readonly name?: string;
   readonly description?: string | null;
   readonly displayOrder?: number;

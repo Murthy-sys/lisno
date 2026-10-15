@@ -11,6 +11,8 @@ export type FeatureId =
   | "dashboard"
   | "projects"
   | "estimates"
+  | "staff-estimates"
+  | "performance"
   | "work"
   | "design-plans"
   | "leads"
@@ -20,12 +22,20 @@ export type FeatureId =
   | "procurement-vendors"
   | "finance"
   | "messages"
+  | "ask-lisno"
   | "users"
   | "configuration"
   | "client-responses"
   | "design-approvals"
   | "access-review"
   | "access-self"
+  | "execution"
+  | "vendor-work"
+  | "work-order-approvals"
+  | "purchase-orders"
+  | "project-completion"
+  | "my-requests"
+  | "payment-confirmations"
   | "notifications";
 
 export interface FeatureDestination {
@@ -48,23 +58,38 @@ export const FEATURE_DESTINATIONS = Object.freeze([
   destination("projects", "Projects", "projects.list", [
     "super_admin",
     "admin",
-    "designer"
+    "designer",
+    "procurement",
+    "program_manager",
+    "design_manager",
+    "design_head"
   ]),
   destination("projects", "My projects", "projects.client_summary.read", ["client"]),
+  destination("staff-estimates", "Estimate review", "estimation.estimate.list", ["super_admin", "admin", "estimator_sales", "designer", "design_manager", "design_head"]),
+  destination("staff-estimates", "Estimate review", "estimation.review_queue.read", ["super_admin", "admin", "design_manager", "design_head"]),
   destination("estimates", "Estimates & design review", "estimation.client_estimate.list", ["client"]),
+  destination("performance", "My performance", "organization.user_kpi.read", ["designer", ...WORK_ROLES]),
   destination("work", "Work", "workflow.tasks.read", WORK_ROLES),
+  destination("execution", "Execution", "execution.tracker.read", ["super_admin", "program_manager", "procurement", "site_manager"]),
+  destination("vendor-work", "My work", "procurement.vendor_work.read", ["vendor"]),
+  destination("work-order-approvals", "Work order approvals", "procurement.work_order_approval.read", ["site_manager", "designer", "procurement", "finance_head", "super_admin"]),
+  destination("purchase-orders", "Purchase orders", "procurement.purchase_orders.approve", ["super_admin"]),
+  destination("project-completion", "Project completion", "procurement.project_completion.decide", ["super_admin"]),
+  destination("my-requests", "All my requests", "procurement.vendor_directory.read", ["procurement"]),
+  destination("payment-confirmations", "Payment confirmations", "projects.design_workflow.payments.read", ["super_admin"]),
   destination("design-plans", "Design plans", "design.plan_task.read", ["designer"]),
   destination("leads", "Leads & estimates", "estimation.lead.list", ["estimator_sales"]),
   destination("team", "Team", "organization.team.read", ["design_manager"]),
   destination("organization", "Organization", "organization.tree.read", ["design_head"]),
   destination("procurement", "Procurement", "procurement.workspace.read", ["procurement"]),
-  destination("procurement-vendors", "Vendors", "procurement.vendor_directory.read", ["procurement"]),
+  destination("procurement-vendors", "Vendors", "procurement.vendor_directory.read", ["procurement", "super_admin"]),
   destination("procurement", "Procurement", "procurement.vendor_suggestions.read", [
     "admin",
     "super_admin"
   ]),
   destination("finance", "Finance", "finance.bucket.read", ["finance_head", "super_admin"]),
   destination("messages", "Messages", "chat.read", ROLE_CODES),
+  destination("ask-lisno", "Ask Lisno", "ask_lisno.request", ["client"]),
   destination("users", "Users", "identity.users.read", ["super_admin"]),
   destination(
     "configuration",
@@ -94,7 +119,9 @@ export const FEATURE_DESTINATIONS = Object.freeze([
     "finance_head",
     "site_manager"
   ]),
-  destination("notifications", "Notifications", "chat.read", ROLE_CODES)
+  destination("notifications", "Notifications", "chat.read", ROLE_CODES),
+  destination("notifications", "Notifications", "execution.notifications.read", ROLE_CODES),
+  destination("notifications", "Notifications", "ai_estimator_knowledge.configuration.read", ["super_admin"])
 ] satisfies readonly FeatureDestination[]);
 
 function destination(
@@ -112,6 +139,7 @@ const LANDING_BY_ROLE = Object.freeze({
   estimator_sales: "leads",
   designer: "projects",
   procurement: "work",
+  program_manager: "execution",
   finance_head: "work",
   site_manager: "work",
   worker_electrician: "work",
@@ -122,7 +150,8 @@ const LANDING_BY_ROLE = Object.freeze({
   worker_other: "work",
   design_manager: "team",
   design_head: "organization",
-  client: "projects"
+  client: "projects",
+  vendor: "vendor-work"
 } as const satisfies Readonly<Record<Role, FeatureId>>);
 
 const DOMAIN_BY_ROLE = Object.freeze({
@@ -131,6 +160,7 @@ const DOMAIN_BY_ROLE = Object.freeze({
   estimator_sales: null,
   designer: "design-plans",
   procurement: "procurement",
+  program_manager: "projects",
   finance_head: "finance",
   site_manager: null,
   worker_electrician: null,
@@ -141,7 +171,8 @@ const DOMAIN_BY_ROLE = Object.freeze({
   worker_other: null,
   design_manager: null,
   design_head: null,
-  client: null
+  client: null,
+  vendor: null
 } as const satisfies Readonly<Record<Role, FeatureId | null>>);
 
 export type RootTabId = "landing" | "domain" | "messages" | "profile" | "more";
@@ -185,11 +216,9 @@ export function destinationsForAuthorization(
   if (!isCompatibleSnapshot(role, authorization)) return Object.freeze([]);
 
   return Object.freeze(
-    FEATURE_DESTINATIONS.filter(
-      (candidate) =>
-        candidate.roles.includes(role) &&
-        authorization.permissions.includes(candidate.permission)
-    )
+    [...new Map(FEATURE_DESTINATIONS.filter(
+      (candidate) => candidate.roles.includes(role) && authorization.permissions.includes(candidate.permission)
+    ).map(candidate => [candidate.id, candidate])).values()]
   );
 }
 

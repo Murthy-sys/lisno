@@ -11,7 +11,7 @@ import { VendorKpiStaffScreen } from "./VendorKpiStaffScreen";
 
 jest.mock("../../runtime/RuntimeProvider", () => ({ useConfiguredRuntime: jest.fn() }));
 jest.mock("../../core/query/useInvalidation", () => ({ useInvalidateEvent: jest.fn() }));
-jest.mock("../../navigation/AdaptiveAppScaffold", () => ({ ScaffoldContentBack: () => null }));
+jest.mock("../../navigation/AdaptiveAppScaffold", () => ({ ScaffoldContentBack: () => null, useScaffoldNavigationGuard: () => null }));
 jest.mock("../knowledge/KnowledgeVendorEditor", () => ({ KnowledgeVendorEditor: ({ existing }: { existing: { name: string } }) => {
   const Text = require("react-native").Text;
   return <Text>Vendor profile editor: {existing.name}</Text>;

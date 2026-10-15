@@ -4,6 +4,7 @@ export const ROLE_CODES = [
   "estimator_sales",
   "designer",
   "procurement",
+  "program_manager",
   "finance_head",
   "site_manager",
   "worker_electrician",
@@ -14,7 +15,8 @@ export const ROLE_CODES = [
   "worker_other",
   "design_manager",
   "design_head",
-  "client"
+  "client",
+  "vendor"
 ] as const;
 
 export type Role = (typeof ROLE_CODES)[number];
@@ -25,6 +27,7 @@ export const ROLE_LABELS = {
   estimator_sales: "Sales",
   designer: "Designer",
   procurement: "Procurement",
+  program_manager: "Program Manager",
   finance_head: "Finance Manager",
   site_manager: "Site Manager",
   worker_electrician: "Electrician",
@@ -35,7 +38,8 @@ export const ROLE_LABELS = {
   worker_other: "Other Worker",
   design_manager: "Design Manager",
   design_head: "Design Head",
-  client: "Client"
+  client: "Client",
+  vendor: "Vendor"
 } as const satisfies Readonly<Record<Role, string>>;
 
 export const WORKER_ROLES = [
@@ -53,6 +57,7 @@ export const OPERATIONAL_ROLES = [
   "estimator_sales",
   "designer",
   "procurement",
+  "program_manager",
   "finance_head",
   "site_manager",
   ...WORKER_ROLES
@@ -87,6 +92,7 @@ export const REQUESTABLE_MODULES_BY_ROLE = {
   estimator_sales: [],
   designer: ["design"],
   procurement: ["procurement"],
+  program_manager: [],
   finance_head: ["finance"],
   site_manager: ["execution"],
   worker_electrician: [],
@@ -97,20 +103,46 @@ export const REQUESTABLE_MODULES_BY_ROLE = {
   worker_other: [],
   design_manager: [],
   design_head: [],
+  vendor: [],
   client: []
 } as const satisfies Record<Role, readonly RequestableProjectModule[]>;
 
 export const PERMISSION_CODES = [
+  "projects.client_invitation.read",
+  "projects.client_invitation.manage",
+  "identity.project_invitation.accept",
+  "estimation.requirements.read",
+  "estimation.requirements.create",
+  "estimation.requirements.update",
+  "estimation.requirements.resolve",
+  "estimation.review.withdraw",
+  "estimation.preparation.release",
+
+  "ask_lisno.request",
+  "chat.assistant.read",
+  "chat.assistant.request",
+  "procurement.vendor_access.read",
+  "procurement.vendor_access.manage",
+  "execution.tracker.read",
+  "execution.work.update",
+  "execution.staff.manage",
+  "execution.verify",
+  "execution.policy.manage",
+  "execution.notifications.read",
+  "execution.access.retry",
   "identity.self.read",
   "identity.self.profile_photo.manage",
   "projects.list",
   "projects.client_summary.read",
   "projects.create",
   "projects.read",
+  "projects.status.read",
   "projects.design_workflow.read",
   "projects.design_workflow.act",
+  "projects.design_requirements.act",
   "projects.design_workflow.payments.read",
   "projects.initiate",
+  "projects.procurement_identity.manage",
   "projects.floor.create",
   "projects.stage.create",
   "projects.task.create",
@@ -181,6 +213,7 @@ export const PERMISSION_CODES = [
   "estimation.lead_activity.read",
   "estimation.lead_activity.create",
   "estimation.estimate.read",
+  "estimation.catalogue.read",
   "estimation.estimate.list",
   "estimation.estimate.save",
   "estimation.estimate.submit",
@@ -217,6 +250,7 @@ export const PERMISSION_CODES = [
   "finance.bucket.read",
   "finance.entry.read",
   "finance.entry.create",
+  "finance.vendor_invoice.manage",
   "workflow.tasks.read",
   "workflow.tasks.update",
   "ai_estimator_knowledge.configuration.read",
@@ -234,6 +268,21 @@ export const PERMISSION_CODES = [
   "chat.project_name.manage",
   "procurement.items.read",
   "procurement.items.manage",
+  "procurement.purchase_orders.read",
+  "procurement.purchase_orders.manage",
+  "procurement.purchase_orders.approve",
+  "procurement.work_order_approval.read",
+  "procurement.work_order_approval.decide",
+  "procurement.vendor_city.manage",
+  "procurement.vendor_work.read",
+  "procurement.vendor_work.update",
+  "procurement.vendor_work.media.read",
+  "procurement.vendor_work.media.upload",
+  "procurement.client_work.read",
+  "procurement.client_work.decide",
+  "procurement.progress.read",
+  "procurement.site_completion.manage",
+  "procurement.project_completion.decide",
   "procurement.vendors.read",
   "procurement.vendors.create",
   "procurement.vendor_suggestions.read",
@@ -244,6 +293,10 @@ export const PERMISSION_CODES = [
   "procurement.vendor_directory.update",
   "procurement.vendor_directory.lifecycle",
   "procurement.vendor_classification.create",
+  "procurement.vendor_basket_proposal.read",
+  "procurement.vendor_basket_proposal.create",
+  "procurement.vendor_basket_proposal.update",
+  "procurement.vendor_basket_proposal.submit",
   "procurement.vendor_allocation_baseline.correct",
   "procurement.vendor_kpi.read",
   "procurement.vendor_kpi.rate",
@@ -257,7 +310,7 @@ export const PERMISSION_CODES = [
 export type PermissionCode = (typeof PERMISSION_CODES)[number];
 
 export const AUTHORIZATION_POLICY_VERSION =
-  "2026-09-28.vendor-induction.v1" as const;
+  "2026-10-14.main-line-design-rules.v1" as const;
 
 export interface AuthorizationSnapshot {
   readonly role: Role;

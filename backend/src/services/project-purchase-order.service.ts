@@ -1,3 +1,4 @@
+import { assertDesignRequirementsPoAllowed } from "./design-requirements.service.js";
 import { EstimateClientReviewRoundModel } from "../models/EstimateClientReviewRound.js";
 import { ProjectPurchaseOrderModeDecisionModel } from "../models/ProjectPurchaseOrderModeDecision.js";
 import { ProcurementBasketBaseRateModel } from "../models/ProcurementBasketBaseRate.js";
@@ -145,6 +146,7 @@ export function createProjectPurchaseOrderService(input: { audit: AuditService; 
     assertSource(order, source);
     await requireActiveVendor(order.vendorId, session);
     assertRevisionSource(revision, source);
+    await assertDesignRequirementsPoAllowed(projectId, revision.lines.map((line: Row) => String(line.sourceLineItemKey)), session);
     // Every approval for this project writes the same document before reading
     // commitments. Concurrent snapshots cannot approve disjoint orders using
     // the same remaining budget, even when their vendors differ.
@@ -555,14 +557,17 @@ export async function cutOverProjectAuthority(projectId: string, actorId: string
 async function draftLines(projectId: string, vendorId: string, inputLines: readonly PurchaseOrderLineInput[], source: Source, session: ClientSession, previous: readonly Row[] = []): Promise<Row[]> {
   const lineByKey = new Map(source.lineItems.map(line => [line.key, line]));
   const rows: Row[] = [];
+  const sourceKeys: string[] = [];
   for (const line of inputLines) {
     // The write fence serializes draft insertion with a concurrent tombstone.
     const item = await ProjectProcurementItemModel.findOneAndUpdate({ _id: line.procurementItemId, projectId, vendorId, removedAt: null },
       { $inc: { commitmentEpoch: 1 } }, { session, returnDocument: "after", runValidators: true, timestamps: false }).lean();
     if (!item || item.estimateId !== source.estimateId || item.estimateVersion !== source.estimateVersion || item.estimateReviewRoundId !== source.estimateReviewRoundId || !lineByKey.has(String(item.sourceLineItemKey)) || lineByKey.get(String(item.sourceLineItemKey))?.sectionId !== item.sourceSectionId) throw new ApiError(409, "PURCHASE_ORDER_ITEM_SOURCE_CONFLICT", "A selected item is no longer available under this approved estimate.");
     calculatePurchaseOrderLine(line);
+    sourceKeys.push(String(item.sourceLineItemKey));
     rows.push({ ...line, id: previous.find(old => old.procurementItemId === line.procurementItemId)?.id ?? `purchase-order-line-${randomUUID()}`, procurementItemVersion: item.version });
   }
+  await assertDesignRequirementsPoAllowed(projectId, sourceKeys, session);
   return rows;
 }
 async function submittedLines(order: Row, source: Source, session: ClientSession): Promise<ApprovedPurchaseOrderLine[]> {
@@ -580,6 +585,7 @@ async function submittedLines(order: Row, source: Source, session: ClientSession
       brand: String(item.brand), uomId: String(item.uomId), uomCode: String(item.uomCode), uomName: String(item.uomName),
       ...calculatePurchaseOrderLine(draft as PurchaseOrderLineInput) });
   }
+  await assertDesignRequirementsPoAllowed(String(order.projectId), submitted.map(line => line.sourceLineItemKey), session);
   return submitted;
 }
 function assertRevisionSource(revision: Row, source: Source): void {

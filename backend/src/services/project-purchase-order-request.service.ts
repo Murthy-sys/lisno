@@ -1,3 +1,4 @@
+import { assertDesignRequirementsPoAllowed } from "./design-requirements.service.js";
 import { notifyIssuedWorkCommitted } from "./issued-work-delivery.js";
 import { createHash, randomUUID } from "node:crypto";
 import mongoose, { type ClientSession } from "mongoose";
@@ -141,6 +142,7 @@ export function createProjectPurchaseOrderRequestService(input: { audit: AuditSe
     if (preparation.digest !== revision.preparationDigest) throw new ApiError(409, "PURCHASE_ORDER_PREPARATION_CONFLICT", "Procurement items changed after submission. Request changes before approval.");
     assertRecoveredSnapshotsCurrent(recoveredSnapshots, preparation as ProjectPurchaseOrderPreparationDto);
     const lines = revision.lines as PurchaseOrderRequestLine[];
+    await assertDesignRequirementsPoAllowed(String(request.projectId), lines.map(line => line.sourceLineItemKey), session);
     const manual = await manualOrderItems(String(request.projectId), session);
     if (manual.open.size || lines.some(line => manual.approved.has(line.procurementItemId))) throw new ApiError(409, "PURCHASE_ORDER_MANUAL_OVERLAP", "An individual purchase order now overlaps this project request.");
     const eligibleIds = (preparation.sections as Row[]).flatMap(section => (section.items as Row[]).map(item => String(item.id))).filter(id => !manual.approved.has(id));
@@ -322,6 +324,7 @@ export function createProjectPurchaseOrderRequestService(input: { audit: AuditSe
         }
         if (vendorTerms.size !== vendorIds.size || [...vendorTerms.keys()].some(id => !vendorIds.has(id))) throw new ApiError(400, "VALIDATION_ERROR", "Vendor terms must match the selected vendors exactly.", { vendorTerms: "Remove unmatched vendor terms." });
         for (const vendorId of [...vendorIds].sort()) await requireActiveVendor(vendorId, session);
+        await assertDesignRequirementsPoAllowed(projectId, lines.map(line => line.sourceLineItemKey), session);
         const totals = calculatePurchaseOrderTotals(lines);
         const modeSnapshots = buildModeSnapshots(preparation as ProjectPurchaseOrderPreparationDto, lines, fields.lines, referenceAsOf);
         const sectionTotals = groupSectionTotals(lines, preparation.sections as Row[]);

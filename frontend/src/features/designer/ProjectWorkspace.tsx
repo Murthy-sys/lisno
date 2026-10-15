@@ -61,9 +61,10 @@ export function ProjectWorkspace() {
     useState<StructureAction | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [planRequestsOpen, setPlanRequestsOpen] = useState(false);
+  const projectQueryKey = [...designerKeys.project(projectId), user.id, user.role];
 
   const projectQuery = useQuery({
-    queryKey: designerKeys.project(projectId),
+    queryKey: projectQueryKey,
     queryFn: () =>
       apiClient.get<ProjectHierarchy>(
         `/projects/${encodeURIComponent(projectId)}`
@@ -344,6 +345,7 @@ export function ProjectWorkspace() {
 
       {taskAction?.kind === "update" && selectedTask ? (
         <TaskUpdateDialog
+          projectQueryKey={projectQueryKey}
           task={selectedTask}
           userId={user.id}
           onClose={() => setTaskAction(null)}
@@ -352,6 +354,7 @@ export function ProjectWorkspace() {
       ) : null}
       {taskAction?.kind === "upload" && selectedTask ? (
         <DesignUploadDialog
+          projectQueryKey={projectQueryKey}
           task={selectedTask}
           onClose={() => setTaskAction(null)}
           onUploaded={(version: DesignVersion) =>

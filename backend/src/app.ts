@@ -59,6 +59,8 @@ import { createNotificationEventsHub } from "./services/notification-events.serv
 import { createNotificationStreamService } from "./services/notification-stream.service.js";
 import { createNotificationEmailDispatcher } from "./services/notification-email-dispatcher.js";
 import { createNotificationsRouter } from "./routes/notifications.js";
+import { createDesignRequirementsService } from "./services/design-requirements.service.js";
+import { createDesignRequirementsRouter } from "./routes/design-requirements.js";
 import { createDesignWorkflowStateService } from "./services/design-workflow-state.service.js";
 import { createWorkflowEvidenceStorage } from "./services/workflow-evidence-storage.js";
 import { createDesignWorkflowStateRouter } from "./routes/design-workflow-state.js";
@@ -212,6 +214,7 @@ export interface AppDependencies {
   chatEvents?: { watchChanges?: boolean; pollIntervalMs?: number; heartbeatMs?: number };
   projectChatAssistant?: {
     enabled: boolean;
+    askLisnoEnabled?: boolean;
     provider?: AssistantProvider;
     tokensPerDay?: number;
     readSources?: ProjectChatAssistantOptions["readSources"];
@@ -403,7 +406,7 @@ export function createApp(dependencies: AppDependencies) {
     onNotificationsCommitted: ids => { for (const id of ids) notificationHub.wake(id); notificationEmail.wake(); }
   });
   const askLisno = createAskLisnoService({chatRepository, clock,
-    enabled: dependencies.projectChatAssistant?.enabled === true && Boolean(dependencies.projectChatAssistant.provider),
+    enabled: dependencies.projectChatAssistant?.askLisnoEnabled === true && Boolean(dependencies.projectChatAssistant.provider),
     provider: dependencies.projectChatAssistant?.provider ?? {async generate() { throw new AssistantFailure("ASSISTANT_UNAVAILABLE"); }},
     tokensPerDay: dependencies.projectChatAssistant?.tokensPerDay,
     readSources: dependencies.projectChatAssistant?.readSources
@@ -443,6 +446,7 @@ export function createApp(dependencies: AppDependencies) {
   );
   const clientPortalUrl = dependencies.clientPortalUrl ?? "http://localhost:5173/client";
   const estimateClientReviewStorage = createEstimateClientReviewStorage(storage);
+  const designRequirementsService = createDesignRequirementsService({ repository, audit: auditService, clock });
   const designWorkflowStateService = createDesignWorkflowStateService(repository, auditService, clock);
   const projectFinanceService = createProjectFinanceService({
     now: clock,
@@ -674,6 +678,7 @@ export function createApp(dependencies: AppDependencies) {
       aiEstimatorKnowledgeContextService
     )
   );
+  app.use("/api/v1", createDesignRequirementsRouter(authService, designRequirementsService));
   app.use("/api/v1", createDesignWorkflowStateRouter(authService, designWorkflowStateService, createWorkflowEvidenceStorage(storage), maxUploadBytes));
   app.use(
     "/api/v1",

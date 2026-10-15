@@ -6,6 +6,7 @@ import sharp from "sharp";
 import { estimatePdfCatalogue } from "../domain/estimate-pdf-catalogue.js";
 
 export interface EstimatePdfLine {
+  estimateNotes?: readonly string[];
   source?: "legacy" | "configuration";
   itemType?: "main_line" | "temporary";
   catalogueId: string;
@@ -244,7 +245,7 @@ function lineCellText(line: EstimatePdfLine) {
   const description = line.source === "configuration"
     ? [lineDescription(line), line.itemType === "temporary"
       ? ["Temporary item", line.subBasketName].filter(Boolean).join(" · ")
-      : line.subBasketName].filter(Boolean).join("\n")
+      : line.subBasketName, ...(line.estimateNotes ?? [])].filter(Boolean).join("\n")
     : [lineDescription(line), line.specification].filter(Boolean).join("\n");
   return {
     description,

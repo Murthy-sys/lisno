@@ -28,7 +28,12 @@ export function useKnowledgeContext(session: AuthenticatedSession) {
   };
 }
 
-export type KnowledgeMobileContext = ReturnType<typeof useKnowledgeContext>;
+export type KnowledgeMobileContext = ReturnType<typeof useKnowledgeContext> & {
+  readonly readOnlyQuality?: boolean;
+  readonly supportsLegacyQuality?: boolean;
+  readonly showDesign?: boolean;
+  readonly saveOutcomeUnknown?: boolean;
+};
 
 /** Complete catalogs are required for stable-ID choices. A failed page fails the load. */
 export async function allKnowledgePages<T>(load: (page: { limit: number; offset: number }) => Promise<{ items: readonly T[]; pagination: { total: number; hasMore: boolean; offset: number; limit: number } }>): Promise<readonly T[]> {

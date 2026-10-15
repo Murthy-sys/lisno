@@ -6,6 +6,9 @@ import { projectStatusWorkflowEvidence } from "../src/services/design-workflow-s
 import { emptyDesignWorkflowState } from "../src/domain/design-workflow-state.js";
 import { createProjectDesignWorkflow } from "../src/domain/design-workflow.js";
 import { newEstimationLifecycle } from "../src/domain/estimation-lifecycle.js";
+import { chatUser } from "./helpers/project-chat.js";
+import { createProjectChatService } from "../src/services/project-chat.service.js";
+import { createAuditService } from "../src/services/audit.service.js";
 
 function collaborativeStatusFixture(corrupt?: (data: Parameters<NonNullable<Parameters<typeof statusFixture>[0]>>[0], evidence: Parameters<NonNullable<Parameters<typeof statusFixture>[0]>>[1]) => void) {
   return statusFixture((data, evidence) => {
@@ -27,6 +30,21 @@ function collaborativeStatusFixture(corrupt?: (data: Parameters<NonNullable<Para
 }
 
 describe("project status participant-safe source projection", () => {
+  it("allows exact assigned Program Manager status reads without adding chat participation", async () => {
+    const f = statusFixture(data => {
+      data.seed.users.push(chatUser("pm-a", "program_manager"), chatUser("pm-b", "program_manager"));
+      data.seed.projects[0]!.programManagerId = "pm-a";
+      data.seed.projects[1]!.programManagerId = "pm-b";
+    });
+    const mutate = vi.spyOn(f.chatRepository, "mutate");
+    expect(await f.service.get(f.actor("pm-a"), "a")).toMatchObject({ projectId: "a", currentStage: { key: "estimate_approval" } });
+    expect(await f.service.get(f.actor("pm-b"), "b")).toMatchObject({ projectId: "b", currentStage: { key: "estimate_preparation" } });
+    await expect(f.service.get(f.actor("pm-b"), "a")).rejects.toMatchObject({ status: 404 });
+    await expect(f.service.get(f.actor("pm-a"), "b")).rejects.toMatchObject({ status: 404 });
+    const chat = createProjectChatService({ repository: f.repository, audit: createAuditService(f.repository), chatRepository: f.chatRepository, clock: f.clock });
+    await expect(chat.actionTypes(f.actor("pm-a"), "a")).rejects.toMatchObject({ status: 403 });
+    expect(mutate).not.toHaveBeenCalled();
+  });
   it("uses the pending pre-estimate round without requiring a prior approval", async () => {
     const f = statusFixture((data, evidence) => {
       data.seed.projects[0]!.estimationWorkflowVersion = 2;
@@ -110,6 +128,23 @@ describe("project status participant-safe source projection", () => {
     expect((await f.service.get(f.actor("procurement"), "a")).projectId).toBe("a");
     await f.chatRepository.mutate(tx => tx.saveSelection({ ...selection, active: false, version: 2 }));
     await expect(f.service.get(f.actor("procurement"), "a")).rejects.toMatchObject({ status: 404 });
+  });
+
+  it("preserves explicit Program Manager participant status access alongside direct assignment", async () => {
+    const f = statusFixture(data => {
+      data.seed.users.push(chatUser("selected-pm", "program_manager"), chatUser("assigned-pm", "program_manager"));
+      data.seed.projects[0]!.programManagerId = "assigned-pm";
+    });
+    const selection = { id: "selected-pm-membership", projectId: "a", userId: "selected-pm", selectedRole: "program_manager" as const, active: true, version: 1,
+      selectedBy: { id: "super", name: "Super", role: "super_admin" as const }, selectedAt: CHAT_NOW, reason: "Support", tradeReference: null, revokedBy: null, revokedAt: null, revocationReason: null };
+    await expect(f.service.get(f.actor("selected-pm"), "a")).rejects.toMatchObject({ status: 404 });
+    await f.chatRepository.mutate(tx => tx.saveSelection(selection));
+    expect(await f.service.get(f.actor("selected-pm"), "a")).toMatchObject({ projectId: "a" });
+    expect(await f.service.get(f.actor("assigned-pm"), "a")).toMatchObject({ projectId: "a" });
+    await expect(f.service.get(f.actor("selected-pm"), "b")).rejects.toMatchObject({ status: 404 });
+    await f.chatRepository.mutate(tx => tx.saveSelection({ ...selection, active: false, version: 2 }));
+    await expect(f.service.get(f.actor("selected-pm"), "a")).rejects.toMatchObject({ status: 404 });
+    expect(await f.service.get(f.actor("assigned-pm"), "a")).toMatchObject({ projectId: "a" });
   });
 
   it.each(["missing", "stale", "cross-project", "wrong-lead", "duplicate", "orphan", "mutable-version"])("fails closed for %s published evidence", async kind => {

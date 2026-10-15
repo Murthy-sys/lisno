@@ -1,4 +1,5 @@
 import { ProjectClientInvitationModel, ProjectInitiationReceiptModel } from "../models/ProjectClientInvitation.js";
+import { mongoDesignRequirementsSource, mongoDesignRequirementsState, mongoSaveDesignRequirementsState } from "./design-requirements-mongo.js";
 import { activateCollaborativeProjectWorkflow } from "../services/project-workflow.service.js";
 import { openProjectFinanceBucket } from "../services/project-finance.service.js";
 import { currentEstimationApproval, isCollaborativeEstimate } from "../domain/estimation-lifecycle.js";
@@ -204,6 +205,20 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
     return {
       $or: [legacyFilter, { _id: { $in: grantProjectIds } }]
     };
+  };
+
+  const projectFilterForUserRead = async (user: UserRecord): Promise<PlainDocument | null> => {
+    if (!user.active) return null;
+    if (user.role === "program_manager") return { programManagerId: user.id };
+    if (user.role !== "procurement") return projectFilterForUserInModule(user, "projects");
+    const taskQuery = ProjectWorkflowTaskModel.find({ kind: "procurement", assigneeRole: "procurement",
+      assigneeUserId: user.id, supersededAt: null }).select({ projectId: 1, _id: 0 }).lean();
+    const grantQuery = ProjectAccessGrantModel.find({ userId: user.id, module: "procurement",
+      source: "access_request", active: true }).select({ projectId: 1, _id: 0 }).lean();
+    if (session) { taskQuery.session(session); grantQuery.session(session); }
+    const [tasks, grants] = await Promise.all([taskQuery.exec(), grantQuery.exec()]);
+    const ids = [...new Set([...tasks, ...grants].map(row => String(row.projectId)))];
+    return ids.length ? { _id: { $in: ids } } : null;
   };
 
   const loadAdminProjectSummaries = async (
@@ -450,6 +465,9 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
   };
 
   const repository: AppRepository = {
+    findDesignRequirementsSource: (projectId, lock = false) => mongoDesignRequirementsSource(projectId, session, lock),
+    findDesignRequirementsState: (projectId, lock = false) => mongoDesignRequirementsState(projectId, session, lock),
+    saveDesignRequirementsState: (projectId, expectedVersion, state) => mongoSaveDesignRequirementsState(projectId, expectedVersion, state, session),
     async findVendorBoundUsers(vendorId) {
       const query = UserModel.find({ vendorId }).limit(2);
       if (session) query.session(session);
@@ -1790,6 +1808,26 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       if (limit !== undefined) query.limit(limit);
       const documents = await query.lean().exec();
       return documents.map(mapProject);
+    },
+
+    async pageProjectsForUserRead(user, pagination) {
+      const filter = await projectFilterForUserRead(user);
+      if (filter === null) return { items: [], total: 0 };
+      const itemQuery = ProjectModel.find(filter).sort({ name: 1, _id: 1 })
+        .skip(pagination.offset).limit(pagination.limit).lean();
+      const countQuery = ProjectModel.countDocuments(filter);
+      if (session) { itemQuery.session(session); countQuery.session(session); }
+      const [documents, total] = await Promise.all([itemQuery.exec(), countQuery.exec()]);
+      return { items: documents.map(mapProject), total };
+    },
+
+    async findProjectForUserRead(user, projectId) {
+      const filter = await projectFilterForUserRead(user);
+      if (filter === null) return null;
+      const query = ProjectModel.findOne({ $and: [filter, { _id: projectId }] }).lean();
+      if (session) query.session(session);
+      const document = await query.exec();
+      return document ? mapProject(document) : null;
     },
 
     async pageProjectsForUserInModule(user, module, pagination) {

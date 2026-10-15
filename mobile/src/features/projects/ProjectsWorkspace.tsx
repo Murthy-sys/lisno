@@ -10,6 +10,7 @@ import { BrandLoader } from "../../ui/brand";
 import { Button, StateView } from "../../ui/primitives";
 import { colors, fonts } from "../../ui/tokens";
 import { FEATURE_DEFINITIONS } from "../workspace/featureDefinitions";
+import { AskLisnoEntry, canUseAskLisno } from "../ask-lisno";
 import { ProjectCard } from "./ProjectCard";
 import { ProjectCreateAction } from "./ProjectCreateActions";
 import { projectCounts, projectStatusLabels, uniqueProjects, type ProjectStatus } from "./projectsModel";
@@ -50,6 +51,7 @@ export function ProjectsWorkspace({ session }: { readonly session: Authenticated
   const denied = query.error instanceof ApiError && [401, 403, 404].includes(query.error.status);
   const unusable = denied || (query.isError && !query.data);
   const narrowSummary = width < 600 && fontScale > 1.25;
+  const showAskLisno = canUseAskLisno(session);
   const summaries = [
     { label: "Total projects", value: total, color: "#85a180", background: "#e7eee1" },
     { label: "Active", value: counts.active, color: "#60a871", background: "#dfecdb" },
@@ -58,67 +60,76 @@ export function ProjectsWorkspace({ session }: { readonly session: Authenticated
   ];
 
   return (
-    <FlatList
-      testID="projects-list"
-      data={unusable ? [] : filtered}
-      keyExtractor={(project) => project.id}
-      contentContainerStyle={styles.content}
-      keyboardShouldPersistTaps="handled"
-      refreshControl={<RefreshControl refreshing={query.isRefetching && !query.isFetchingNextPage} onRefresh={() => void query.refetch()} tintColor={colors.primary} />}
-      ItemSeparatorComponent={() => <View style={styles.cardGap} />}
-      renderItem={({ item }) => <ProjectCard project={item} onPress={() => router.push({ pathname: "/record/[featureId]/[recordId]", params: { featureId: "projects", recordId: item.id } })} />}
-      ListHeaderComponent={<>
-        <ProjectsHero />
-        {!denied ? <View style={styles.creation}><ProjectCreateAction session={session} /></View> : null}
-        {query.isPending ? <View style={styles.loading}><BrandLoader label="Loading projects" tone="dark" /></View> : unusable ? (
-          <StateView tone={denied ? "denied" : "error"} title={denied ? "Projects are unavailable" : "Projects could not be loaded"}
-            message={denied ? "Your current session cannot access these projects." : "Check your connection and try again."} actionLabel="Retry" onAction={() => void query.refetch()} />
-        ) : <>
-          {query.isRefetchError && !query.isFetchNextPageError ? <View style={styles.notice}>
-            <Text accessibilityRole="alert" style={styles.noticeText}>Projects could not be refreshed. Showing the last loaded results.</Text>
-            <Button label="Retry refresh" variant="quiet" onPress={() => void query.refetch()} />
-          </View> : null}
-          <View style={[styles.summary, narrowSummary ? styles.summaryWrap : null]}>
-            {summaries.map((entry, index) => <View key={entry.label} accessible accessibilityLabel={`${entry.label}${partialCounts && index > 0 ? " in loaded projects" : ""}: ${entry.value}`}
-              style={[styles.summaryItem, narrowSummary ? styles.summaryItemHalf : null, (narrowSummary ? index % 2 === 1 : index > 0) ? styles.summaryDivider : null]}>
-              <Text style={styles.summaryValue}>{entry.value}</Text>
-              <Text style={styles.summaryLabel}>{entry.label}</Text>
-              <View style={[styles.summaryHalo, { backgroundColor: entry.background }]}>
-                {index === 0 ? <Svg width={14} height={14} viewBox="0 0 20 20" accessible={false}><Path d="M3 7L10 3L17 7L10 11ZM3 11L10 15L17 11M3 15L10 19L17 15" fill="none" stroke={entry.color} strokeWidth={1.4} strokeLinejoin="round" /></Svg> : <View style={[styles.summaryDot, { backgroundColor: entry.color }]} />}
-              </View>
-            </View>)}
-          </View>
-          {partialCounts ? <Text style={styles.countScope}>Status counts cover {records.length} loaded projects of {total}. {query.hasNextPage ? "Load more for the remaining projects." : "Pull to refresh the current project totals."}</Text> : null}
-          {query.isRefetching && !query.isFetchingNextPage ? <Text accessibilityLiveRegion="polite" style={styles.countScope}>Updating projects…</Text> : null}
-          <View style={styles.listHeading}>
-            <Text accessibilityRole="header" accessibilityLiveRegion="polite" style={styles.listTitle}>{filter === "all" ? "Projects" : `${filterLabel(filter)} projects`} ({filtered.length})</Text>
-            <Pressable accessibilityRole="button" accessibilityLabel={`Filter projects. ${filterLabel(filter)}`} accessibilityState={{ expanded: filterOpen }} onPress={() => setFilterOpen(!filterOpen)} style={styles.filterButton}>
-              <Text style={styles.filterLabel}>{filterLabel(filter)}</Text><Svg accessible={false} width={16} height={16} viewBox="0 0 20 20"><Path d={filterOpen ? "M5 12L10 7L15 12" : "M5 7L10 12L15 7"} fill="none" stroke={colors.ink} strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" /></Svg>
-            </Pressable>
-          </View>
-          {filterOpen ? <View accessibilityRole="radiogroup" accessibilityLabel="Project status" style={styles.filterOptions}>
-            {[...filters, ...(counts.unknown ? ["unknown" as const] : [])].map((option) => <Pressable key={option} accessibilityRole="radio" accessibilityLabel={`Show ${filterLabel(option).toLowerCase()} projects`} accessibilityState={{ checked: filter === option }}
-              onPress={() => { setFilter(option); setFilterOpen(false); }} style={[styles.filterOption, filter === option ? styles.filterOptionSelected : null]}>
-              <Text style={[styles.filterLabel, filter === option ? styles.filterLabelSelected : null]}>{filterLabel(option)}</Text>
-            </Pressable>)}
-          </View> : null}
+    <View style={styles.viewport}>
+      <FlatList
+        testID="projects-list"
+        style={styles.list}
+        data={unusable ? [] : filtered}
+        keyExtractor={(project) => project.id}
+        contentContainerStyle={[styles.content, showAskLisno ? styles.contentWithLauncher : null]}
+        keyboardShouldPersistTaps="handled"
+        refreshControl={<RefreshControl refreshing={query.isRefetching && !query.isFetchingNextPage} onRefresh={() => void query.refetch()} tintColor={colors.primary} />}
+        ItemSeparatorComponent={() => <View style={styles.cardGap} />}
+        renderItem={({ item }) => <ProjectCard project={item} onPress={() => router.push({ pathname: "/record/[featureId]/[recordId]", params: { featureId: "projects", recordId: item.id } })} />}
+        ListHeaderComponent={<>
+          <ProjectsHero />
+          {!denied ? <View style={styles.creation}><ProjectCreateAction session={session} /></View> : null}
+          {query.isPending ? <View style={styles.loading}><BrandLoader label="Loading projects" tone="dark" /></View> : unusable ? (
+            <StateView tone={denied ? "denied" : "error"} title={denied ? "Projects are unavailable" : "Projects could not be loaded"}
+              message={denied ? "Your current session cannot access these projects." : "Check your connection and try again."} actionLabel="Retry" onAction={() => void query.refetch()} />
+          ) : <>
+            {query.isRefetchError && !query.isFetchNextPageError ? <View style={styles.notice}>
+              <Text accessibilityRole="alert" style={styles.noticeText}>Projects could not be refreshed. Showing the last loaded results.</Text>
+              <Button label="Retry refresh" variant="quiet" onPress={() => void query.refetch()} />
+            </View> : null}
+            <View style={[styles.summary, narrowSummary ? styles.summaryWrap : null]}>
+              {summaries.map((entry, index) => <View key={entry.label} accessible accessibilityLabel={`${entry.label}${partialCounts && index > 0 ? " in loaded projects" : ""}: ${entry.value}`}
+                style={[styles.summaryItem, narrowSummary ? styles.summaryItemHalf : null, (narrowSummary ? index % 2 === 1 : index > 0) ? styles.summaryDivider : null]}>
+                <Text style={styles.summaryValue}>{entry.value}</Text>
+                <Text style={styles.summaryLabel}>{entry.label}</Text>
+                <View style={[styles.summaryHalo, { backgroundColor: entry.background }]}>
+                  {index === 0 ? <Svg width={14} height={14} viewBox="0 0 20 20" accessible={false}><Path d="M3 7L10 3L17 7L10 11ZM3 11L10 15L17 11M3 15L10 19L17 15" fill="none" stroke={entry.color} strokeWidth={1.4} strokeLinejoin="round" /></Svg> : <View style={[styles.summaryDot, { backgroundColor: entry.color }]} />}
+                </View>
+              </View>)}
+            </View>
+            {partialCounts ? <Text style={styles.countScope}>Status counts cover {records.length} loaded projects of {total}. {query.hasNextPage ? "Load more for the remaining projects." : "Pull to refresh the current project totals."}</Text> : null}
+            {query.isRefetching && !query.isFetchingNextPage ? <Text accessibilityLiveRegion="polite" style={styles.countScope}>Updating projects…</Text> : null}
+            <View style={styles.listHeading}>
+              <Text accessibilityRole="header" accessibilityLiveRegion="polite" style={styles.listTitle}>{filter === "all" ? "Projects" : `${filterLabel(filter)} projects`} ({filtered.length})</Text>
+              <Pressable accessibilityRole="button" accessibilityLabel={`Filter projects. ${filterLabel(filter)}`} accessibilityState={{ expanded: filterOpen }} onPress={() => setFilterOpen(!filterOpen)} style={styles.filterButton}>
+                <Text style={styles.filterLabel}>{filterLabel(filter)}</Text><Svg accessible={false} width={16} height={16} viewBox="0 0 20 20"><Path d={filterOpen ? "M5 12L10 7L15 12" : "M5 7L10 12L15 7"} fill="none" stroke={colors.ink} strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" /></Svg>
+              </Pressable>
+            </View>
+            {filterOpen ? <View accessibilityRole="radiogroup" accessibilityLabel="Project status" style={styles.filterOptions}>
+              {[...filters, ...(counts.unknown ? ["unknown" as const] : [])].map((option) => <Pressable key={option} accessibilityRole="radio" accessibilityLabel={`Show ${filterLabel(option).toLowerCase()} projects`} accessibilityState={{ checked: filter === option }}
+                onPress={() => { setFilter(option); setFilterOpen(false); }} style={[styles.filterOption, filter === option ? styles.filterOptionSelected : null]}>
+                <Text style={[styles.filterLabel, filter === option ? styles.filterLabelSelected : null]}>{filterLabel(option)}</Text>
+              </Pressable>)}
+            </View> : null}
+          </>}
         </>}
-      </>}
-      ListEmptyComponent={!query.isPending && !unusable ? <View style={styles.empty}>
-        <Text style={styles.emptyTitle}>{filter === "all" ? "No projects yet" : `No ${filterLabel(filter).toLowerCase()} projects${partialCounts ? " in loaded results" : ""}`}</Text>
-        <Text style={styles.emptyCopy}>{filter === "all" ? FEATURE_DEFINITIONS.projects.emptyMessage : partialCounts && query.hasNextPage ? "Load more projects or choose another status." : "Choose another status to see your projects."}</Text>
-        {filter !== "all" ? <Button label="Show all projects" variant="quiet" onPress={() => setFilter("all")} /> : null}
-      </View> : null}
-      ListFooterComponent={!unusable && !query.isPending ? <View style={styles.footer}>
-        {query.isFetchNextPageError ? <Text accessibilityRole="alert" style={styles.noticeText}>More projects could not be loaded. Your current results are still available.</Text> : null}
-        {query.hasNextPage ? <Button label={query.isFetchNextPageError ? "Retry loading projects" : "Load more projects"} variant="quiet" loading={query.isFetchingNextPage} disabled={query.isRefetching && !query.isFetchingNextPage} onPress={() => void query.fetchNextPage()} /> : null}
-      </View> : null}
-    />
+        ListEmptyComponent={!query.isPending && !unusable ? <View style={styles.empty}>
+          <Text style={styles.emptyTitle}>{filter === "all" ? "No projects yet" : `No ${filterLabel(filter).toLowerCase()} projects${partialCounts ? " in loaded results" : ""}`}</Text>
+          <Text style={styles.emptyCopy}>{filter === "all" ? FEATURE_DEFINITIONS.projects.emptyMessage : partialCounts && query.hasNextPage ? "Load more projects or choose another status." : "Choose another status to see your projects."}</Text>
+          {filter !== "all" ? <Button label="Show all projects" variant="quiet" onPress={() => setFilter("all")} /> : null}
+        </View> : null}
+        ListFooterComponent={!unusable && !query.isPending ? <View style={styles.footer}>
+          {query.isFetchNextPageError ? <Text accessibilityRole="alert" style={styles.noticeText}>More projects could not be loaded. Your current results are still available.</Text> : null}
+          {query.hasNextPage ? <Button label={query.isFetchNextPageError ? "Retry loading projects" : "Load more projects"} variant="quiet" loading={query.isFetchingNextPage} disabled={query.isRefetching && !query.isFetchingNextPage} onPress={() => void query.fetchNextPage()} /> : null}
+        </View> : null}
+      />
+      {showAskLisno ? <View testID="ask-lisno-launcher" pointerEvents="box-none" style={styles.askLisnoLauncher}><AskLisnoEntry session={session} /></View> : null}
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  viewport: { flex: 1 },
+  list: { flex: 1 },
   content: { flexGrow: 1, width: "100%", maxWidth: 820, alignSelf: "center", paddingHorizontal: 16, paddingBottom: 28 },
+  // Keep the list end above the 56px launcher and its 16px viewport inset.
+  contentWithLauncher: { paddingBottom: 88 },
+  askLisnoLauncher: { position: "absolute", right: 16, bottom: 16 },
   hero: { position: "relative", minHeight: 170, marginHorizontal: -16, paddingHorizontal: 16, paddingBottom: 8, overflow: "hidden" },
   heroArtwork: { position: "absolute", top: 0, right: 0, bottom: 0 },
   heroImage: { width: "100%", height: "100%", opacity: 0.94 },

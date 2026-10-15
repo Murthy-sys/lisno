@@ -2,6 +2,7 @@ import type React from "react";
 import { act, fireEvent, render } from "@testing-library/react-native";
 import { RefreshControl, StyleSheet } from "react-native";
 
+import { ApiError } from "../../core/http/apiClient";
 import { AUTHORIZATION_POLICY_VERSION } from "../../contracts/authorization";
 import type { AuthenticatedSession } from "../../contracts/session";
 import { buildDashboardViewModel, useDashboardOverview } from "./data";
@@ -386,4 +387,12 @@ describe("SuperAdminMobileDashboard", () => {
     await fireEvent.press(view.getByRole("button", { name: "TRY AGAIN" }));
     expect(refetch).toHaveBeenCalledTimes(1);
   });
+});
+
+
+it("hides a cached executive dashboard after access is denied", async () => {
+  useDashboardOverviewMock.mockReturnValue(queryResult({ isError: true, error: new ApiError(403, "FORBIDDEN", "Access removed") }));
+  const view = await render(<SuperAdminMobileDashboard session={session} />);
+  expect(view.getByRole("header", { name: "Dashboard access changed" })).toBeTruthy();
+  expect(view.queryByTestId("dashboard-kpi-finance.approvedSubtotalPaise")).toBeNull();
 });

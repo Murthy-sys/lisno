@@ -1001,6 +1001,7 @@ function mapSnapshot(row: Row): EstimateClientReviewSnapshot {
         subBasketName: lineItem.subBasketName === null ? null : stringField(lineItem, "subBasketName"),
         mainLineName: stringField(lineItem, "mainLineName"),
         uomName: stringField(lineItem, "uomName"),
+        ...(Array.isArray(lineItem.estimateNotes) ? { estimateNotes: [...lineItem.estimateNotes] as string[] } : {}),
         ratePaise: lineItem.ratePaise === null ? null : numberField(lineItem, "ratePaise"),
         amountPaise: lineItem.amountPaise === null ? null : numberField(lineItem, "amountPaise")
       } : {

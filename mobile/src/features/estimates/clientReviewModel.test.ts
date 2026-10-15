@@ -1,6 +1,8 @@
 import { ApiProtocolError } from "../../core/http/apiClient";
 import {
   canDecideClientEstimate,
+  clientEstimateMoney,
+  publishedMoney,
   canEditClientPlan,
   canViewClientPlan,
   estimatesForProject,
@@ -11,9 +13,18 @@ import {
 } from "./clientReviewModel";
 
 const estimate = (id: string, projectId: string | null, status: string, designPlanStatus: string | null = null) => ({
-  id, projectId, status, designPlanStatus, total: id === "estimate-one" ? 100_000 : 950_000,
-  lineItems: [{ id: `${id}-line`, quantity: 1, rate: id === "estimate-one" ? 100_000 : 950_000, amount: id === "estimate-one" ? 100_000 : 950_000, included: true }],
-  lead: { projectName: id === "estimate-one" ? "Home A" : "Home B", location: "Pune", clientName: "Client" }
+  id, projectId, status, designPlanStatus, version: 3,
+  total: 999_999,
+  publishedReview: {
+    id: `round-${id}`, version: 1, estimateVersion: 3, sendGeneration: 1,
+    status: status === "client_approved" ? "approved" : status === "client_changes_requested" ? "changes_requested" : "pending",
+    submittedAt: "2026-10-14T06:00:00Z", canDecide: status === "sent_to_client",
+    snapshot: {
+      total: id === "estimate-one" ? 100_000 : 950_000, subtotal: 90_000, gst: 10_000,
+      lineItems: [{ id: `${id}-line`, quantity: 1, rate: id === "estimate-one" ? 100_000 : 950_000, amount: id === "estimate-one" ? 100_000 : 950_000, included: true }],
+      projectName: id === "estimate-one" ? "Home A" : "Home B", location: "Pune", clientName: "Client"
+    }
+  }
 });
 
 describe("client review contracts", () => {
@@ -44,6 +55,40 @@ describe("client review contracts", () => {
       [false, true, true],
       [false, false, true]
     ]);
+  });
+
+  it("ignores mutable draft amounts and confidential properties, handles unavailable prices, and respects exact paise", () => {
+    const row = estimate("estimate-one", "project-one", "sent_to_client");
+    const snapshot = { ...row.publishedReview.snapshot, total: 117, totalPaise: 11807, subtotalPaise: 10006, gstPaise: 1801,
+      lineItems: [{ id: "line-one", quantity: 2, rate: null, amount: null, ratePaise: null, amountPaise: null, included: false, vendorRate: 123, margin: 40, designRules: { discussedVendorId: "private" }, estimateNotes: ["Subject to availability"] }] };
+    const [parsed] = parseClientEstimates([{ ...row, total: 9999999, lead: { projectName: "Mutable name" }, vendorRate: 999,
+      publishedReview: { ...row.publishedReview, snapshot } }]);
+    expect(parsed!.total).toBe(118.07);
+    expect(clientEstimateMoney(parsed!.total)).toBe("₹118.07");
+    expect(parsed!.lead!.projectName).toBe("Home A");
+    expect(parsed!.lineItems[0]!.rate).toBeNull();
+    expect(parsed!.lineItems[0]).not.toHaveProperty("vendorRate");
+    expect(parsed!.lineItems[0]).not.toHaveProperty("designRules");
+    expect(parsed).not.toHaveProperty("vendorRate");
+    expect(publishedMoney(40, null)).toBeNull();
+    expect(publishedMoney(undefined)).toBeNull();
+    expect(clientEstimateMoney(null)).toBe("Estimate unavailable");
+  });
+
+  it("fails closed for missing snapshots, source conflicts, outdated rounds and incomplete final comparisons", () => {
+    const row = estimate("estimate-one", "project-one", "sent_to_client");
+    const rows = parseClientEstimates([
+      { ...row, publishedReview: null },
+      { ...row, reviewSourceIssue: "source_conflict" },
+      { ...row, version: 4 },
+      { ...row, publishedReview: { ...row.publishedReview, phase: "post" } },
+      { ...row, publishedReview: { ...row.publishedReview, status: "superseded" } }
+    ]);
+    expect(rows.map(canDecideClientEstimate)).toEqual([false, false, false, false, false]);
+    for (const parsed of rows.slice(0, 2)) {
+      expect(parsed.total).toBeNull(); expect(parsed.lineItems).toEqual([]); expect(parsed.lead).toBeNull();
+    }
+    expect(() => parseClientEstimates([{ ...row, publishedReview: { ...row.publishedReview, version: 0 } }])).toThrow(ApiProtocolError);
   });
 
   it("rejects missing actionable IDs and cross-linked plan pages and sections", () => {

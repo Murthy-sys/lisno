@@ -105,16 +105,44 @@ export interface AssistantPreview {
   restricted: AssistantCommercialSnapshot;
   freshness: AssistantSourceVersion[];
 }
+/** Immutable customer publication only. Never populated from live Configuration. */
+export interface AssistantProjectPricing {
+  policy: "published-project-estimate-v1";
+  currency: "INR";
+  state: "published" | "approved";
+  estimateId: string;
+  estimateVersion: number;
+  reviewRoundId: string;
+  reviewVersion: number;
+  publishedAt: string;
+  source: AssistantSourceReference;
+  lines: Array<{ id: string; label: string; quantity: string | null; unit: string | null; ratePaise: number | null; amountPaise: number | null }>;
+  lineCount: number;
+  hasMoreLines: boolean;
+  subtotalPaise: number | null;
+  gstPaise: number | null;
+  totalPaise: number | null;
+}
+export const ASSISTANT_DISCLOSURE_POLICY = "project-publication-v1" as const;
+export interface AssistantProjectEstimate {
+  report: AssistantProjectPricing | null;
+  unavailableReason: "not_published" | "source_conflict" | "incomplete" | null;
+  freshness: AssistantSourceVersion[];
+}
 /** All methods revalidate the captured scope; model arguments cannot replace it. */
 export interface AssistantReadSources {
   status(): Promise<AssistantFactBundle>;
   execution(): Promise<AssistantFactBundle>;
+  projectEstimate?(input: { basis: "current" | "approved" | "published" }): Promise<AssistantProjectEstimate>;
   searchCatalogue(input: { query: string; limit: number }): Promise<AssistantCatalogueCandidate[]>;
   recommendations(input: { mainLineIds: string[]; roomId: string | null }): Promise<{ rules: AssistantRecommendation[]; freshness: AssistantSourceVersion[] }>;
   preview(input: AssistantAdditionRequest): Promise<AssistantPreview>;
   revalidate(freshness: AssistantSourceVersion[]): Promise<boolean>;
 }
 export interface AssistantGeneratedResult {
+  /** Server-owned classification. Missing/unknown policies cannot disclose stored content. */
+  disclosurePolicy?: typeof ASSISTANT_DISCLOSURE_POLICY;
+  projectPricing?: AssistantProjectPricing | null;
   /** Bounded conversational paragraphs, grounded in the selected verified facts. */
   narrative?: Array<{ text: string; factIds: string[] }>;
   kind: "status" | "catalogue" | "price" | "clarification" | "handoff" | "no_answer";

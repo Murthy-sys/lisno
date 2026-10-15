@@ -1,0 +1,10 @@
+import { useQuery } from "@tanstack/react-query";
+import { Text, View } from "react-native";
+import { AccessLost, dateTime, label, money, p, Panel, QueryState, ScopeMismatch, unavailable, type DeliveryContext } from "../execution/executionNative";
+export function VendorApprovedOrder({ context: c, orderId, projectId }: { context: DeliveryContext; orderId: string; projectId: string }) {
+  const allowed = c.can("GET /vendor/purchase-orders/:orderId");
+  const query = useQuery({ queryKey: c.key("vendor-order", orderId), queryFn: ({ signal }) => c.vendor.order(orderId, signal), enabled: allowed && c.ready, retry: false });
+  if (!allowed || unavailable(query.error)) return <AccessLost title="Approved order unavailable" />;
+  const data = !query.isError && query.data?.id === orderId && query.data.projectId === projectId ? query.data : null;
+  return <Panel title="Approved purchase order"><QueryState title="Approved order" query={query} />{query.data && !query.isError && !data ? <ScopeMismatch /> : null}{data ? <><Text style={p.strong}>{data.orderNumber} · Revision {data.revision}</Text><Text style={p.copy}>Approved {dateTime(data.approvedAt)}</Text><Text style={p.copy}>{data.vendor.name} · {data.vendor.code}</Text>{data.lines.map(line => <View key={line.id} style={p.panel}><Text style={p.strong}>{line.itemName || line.description}</Text><Text style={p.copy}>{line.description}</Text><Text style={p.copy}>{line.quantityMilliUnits / 1000} {line.uomCode ?? "UOM unavailable"} · {line.scopeType ? label(line.scopeType) : "Scope not specified"}</Text><Text style={p.copy}>Target: {line.targetDate ?? "Not specified"} · {line.deliveryLocation ?? "Location not specified"}</Text><Text style={p.copy}>Unit price {money(line.unitPricePaise)} · GST {line.gstBasisPoints / 100}%</Text><Text style={p.strong}>{money(line.totalPaise)}</Text></View>)}<Text style={p.copy}>Before GST: {money(data.totals.netPaise)}</Text><Text style={p.copy}>GST: {money(data.totals.gstPaise)}</Text><Text style={p.strong}>Total: {money(data.totals.totalPaise)}</Text>{data.terms ? <Text style={p.copy}>Terms: {data.terms}</Text> : null}</> : null}</Panel>;
+}

@@ -6,7 +6,7 @@ const PROJECT_FACT_IDS = ["project-stage", "project-status"] as const;
 
 export function getAskLisnoProjectSummary(response: AskLisnoResponse) {
   const project = response.resolution?.project;
-  if (response.answer.kind !== "status" || response.resolution?.state !== "resolved"
+  if (response.answer.disclosurePolicy !== "project-publication-v1" || response.answer.kind !== "status" || response.resolution?.state !== "resolved"
     || !project || !project.id || project.id !== response.projectId || !project.name.trim()) return null;
 
   const facts = PROJECT_FACT_IDS.flatMap(id => {

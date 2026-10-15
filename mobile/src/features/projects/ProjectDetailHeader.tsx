@@ -4,7 +4,7 @@ import { AccessibilityInfo, Modal, Platform, Pressable, StyleSheet, Text, View, 
 import { SafeAreaInsetsContext } from "react-native-safe-area-context";
 
 import type { AuthenticatedSession } from "../../contracts/session";
-import { ScaffoldContentBack } from "../../navigation/AdaptiveAppScaffold";
+import { ScaffoldContentBack, useScaffoldNavigationBlocked } from "../../navigation/AdaptiveAppScaffold";
 import { resolveAuthorizedFeature } from "../../navigation/registry";
 import { colors, fonts, radii, spacing } from "../../ui/tokens";
 import { BotanicalAccent } from "../notifications/BotanicalAccent";
@@ -14,6 +14,7 @@ import { projectDetailTheme } from "./projectDetailTheme";
 
 interface ProjectAction {
   readonly key: string;
+  readonly disabled?: boolean;
   readonly label: string;
   readonly glyph: ProjectDetailGlyphName;
   readonly onSelect: () => void;
@@ -42,6 +43,7 @@ export function ProjectDetailHeader({ detail, session, onRefresh }: {
   readonly session: AuthenticatedSession;
   readonly onRefresh: () => void;
 }) {
+  const navigationBlocked = useScaffoldNavigationBlocked();
   const [open, setOpen] = useState(false);
   const [anchor, setAnchor] = useState<MenuAnchor | null>(null);
   const trigger = useRef<View>(null);
@@ -88,6 +90,14 @@ export function ProjectDetailHeader({ detail, session, onRefresh }: {
     });
   }
 
+  if (projectId && resolveAuthorizedFeature("ask-lisno", session.user.role, session.authorization)) {
+    actions.push({ key: "ask-lisno", label: "Ask Lisno", glyph: "message", disabled: navigationBlocked, onSelect: () => {
+      if (navigationBlocked) return;
+      setOpen(false);
+      router.push({ pathname: "/feature/[featureId]", params: { featureId: "ask-lisno", projectId } });
+    } });
+  }
+
   const panelTop = Math.max(insetTop + spacing.xs, anchor?.top ?? insetTop + FALLBACK_TOP);
   const panelRight = Math.max(insetRight + spacing.xs, anchor?.right ?? insetRight + spacing.md);
 
@@ -114,7 +124,7 @@ export function ProjectDetailHeader({ detail, session, onRefresh }: {
             style={[styles.panel, { top: panelTop, right: panelRight }]}>
             {actions.map((action, index) => (
               <Pressable key={action.key} ref={index === 0 ? firstItem : undefined} testID={`project-action-${action.key}`} accessibilityRole="menuitem"
-                accessibilityLabel={action.label} onPress={action.onSelect} style={({ pressed }) => [styles.item, pressed ? styles.itemPressed : null]}>
+                accessibilityLabel={action.label} accessibilityState={{ disabled: Boolean(action.disabled) }} disabled={action.disabled} onPress={action.onSelect} style={({ pressed }) => [styles.item, pressed ? styles.itemPressed : null]}>
                 <ProjectDetailGlyph name={action.glyph} size={projectDetailTheme.glyph} />
                 <Text style={styles.itemLabel}>{action.label}</Text>
               </Pressable>

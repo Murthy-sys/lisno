@@ -8,14 +8,11 @@ import { LisnoChatMark } from "../messages/LisnoChatMark";
 import { askLisnoApi, type AskLisnoInput, type AskLisnoProjectList, type AskLisnoResponse } from "./askLisnoApi";
 import { AskLisnoProjectCard, getAskLisnoProjectSummary } from "./AskLisnoProjectCard";
 import { AskLisnoQuickPrompts } from "./AskLisnoQuickPrompts";
+import { assistantFailureMessage } from "./assistantFailureMessage";
 import "./askLisno.css";
 
-interface Turn { id: string; message: string; sentAt: string; receivedAt?: string; response?: AskLisnoResponse; error?: string; choiceProjectId?: string; listError?: string; listChanged?: boolean }
+interface Turn { id: string; message: string; sentAt: string; receivedAt?: string; response?: AskLisnoResponse; error?: string; choiceProjectId?: string; listError?: string; listChanged?: boolean; pricingNeedsRefresh?: boolean }
 const denied = (error: unknown) => error instanceof ApiError && [401, 403, 404].includes(error.status);
-function failure(error: unknown) {
-  if (error instanceof ApiError && error.status === 429) return "The AI request limit has been reached. Please try again later.";
-  return "Lisno AI could not answer right now. Try again or contact your project team.";
-}
 
 function MessageTime({ value, label }: { value: string; label: string }) {
   const date = new Date(value);
@@ -80,13 +77,27 @@ export function AskLisnoPanel({ open, onClose, routeProjectId, scope, returnFocu
   const log = useRef<HTMLDivElement>(null);
 
   function stopPaging() { paging.current?.abort(); paging.current = null; setPagingId(null); }
-  function stop() { generation.current += 1; controller.current?.abort(); controller.current = null; stopPaging(); verification.current?.abort(); verification.current = null; setBusy(false); setHistoryAccess("unchecked"); }
+  function stop() {
+    setTurns(current => current.map(turn => {
+      if (turn.response?.answer.projectPricing) return { ...turn, pricingNeedsRefresh: true, response: { ...turn.response, answer: { ...turn.response.answer, projectPricing: null } } };
+      return !turn.response && !turn.error ? { ...turn, error: "The answer was paused when you left. Retry when you are ready." } : turn;
+    }));
+    generation.current += 1; controller.current?.abort(); controller.current = null;
+    stopPaging(); verification.current?.abort(); verification.current = null;
+    setBusy(false); setHistoryAccess("unchecked");
+  }
+
   function close() {
     stop(); onClose();
     if (!returnFocusRef.current?.closest("[inert]")) returnFocusRef.current?.focus();
   }
   useEffect(() => () => { generation.current += 1; controller.current?.abort(); paging.current?.abort(); verification.current?.abort(); }, []);
-  useEffect(() => { stop(); setTurns([]); setContextProjectId(null); setDraft(""); setNotice(""); setIgnorePageHint(false); setExpanded(false); }, [scope]);
+  useEffect(() => {
+    stop(); setTurns([]); setContextProjectId(null); setDraft(""); setNotice(""); setIgnorePageHint(false); setExpanded(false);
+    // The new session has no retained project history to verify. Its first
+    // request still goes through the backend's current authorization checks.
+    setHistoryAccess(open ? "ready" : "unchecked");
+  }, [scope]);
   useEffect(() => {
     if (!open) { stop(); return; }
     void verifyHistory();
@@ -140,6 +151,19 @@ export function AskLisnoPanel({ open, onClose, routeProjectId, scope, returnFocu
     }
   }
 
+  const currentVerify = useRef(verifyHistory);
+  currentVerify.current = verifyHistory;
+  useEffect(() => {
+    if (!open) return;
+    const hide = () => stop();
+    const resume = () => { if (document.visibilityState !== "hidden") void currentVerify.current(); };
+    const visibility = () => document.visibilityState === "hidden" ? hide() : resume();
+    document.addEventListener("visibilitychange", visibility);
+    window.addEventListener("blur", hide);
+    window.addEventListener("focus", resume);
+    return () => { document.removeEventListener("visibilitychange", visibility); window.removeEventListener("blur", hide); window.removeEventListener("focus", resume); };
+  }, [open]);
+
   async function send(retry?: Turn, choiceProjectId?: string, suggestion?: string) {
     const message = retry?.message ?? suggestion ?? draft.trim();
     if (!message || controller.current || historyAccess !== "ready") return;
@@ -182,7 +206,7 @@ export function AskLisnoPanel({ open, onClose, routeProjectId, scope, returnFocu
       if (denied(error)) {
         setTurns([]); setDraft(""); setNotice("This conversation is no longer available for your current access.");
         setContextProjectId(null); setIgnorePageHint(true);
-      } else { setTurns([...previous, { ...turn, error: failure(error) }]); setDraft(message); }
+      } else { setTurns([...previous, { ...turn, error: assistantFailureMessage(error) }]); setDraft(message); }
     } finally {
       stopTrackingFocus();
       if (version === generation.current) {
@@ -236,7 +260,7 @@ export function AskLisnoPanel({ open, onClose, routeProjectId, scope, returnFocu
   }}>
     <header className="ask-lisno-panel__header">
       <HeaderBotanical />
-      <div className="ask-lisno-panel__identity"><LisnoChatMark /><div><div className="ask-lisno-panel__title"><h2 id="ask-lisno-title">Ask Lisno</h2><span className="ask-lisno-panel__identity-dot" aria-hidden="true" /></div><p>Your AI assistant</p></div></div>
+      <div className="ask-lisno-panel__identity"><LisnoChatMark /><div><div className="ask-lisno-panel__title"><h2 id="ask-lisno-title">Ask Lisno</h2><span className="ask-lisno-panel__identity-dot" aria-hidden="true" /></div><p>Your project assistant</p></div></div>
       <div className="ask-lisno-panel__window-actions">
         <button type="button" className="ask-lisno-panel__window-button" onClick={close} aria-label="Minimize Ask Lisno" title="Minimize"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="M5 12h14" /></svg></button>
         <button type="button" className="ask-lisno-panel__window-button" onClick={() => setExpanded(value => !value)} aria-label={expanded ? "Restore Ask Lisno size" : "Expand Ask Lisno"} aria-pressed={expanded} title={expanded ? "Restore size" : "Expand"}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{expanded ? <><path d="M9 3v6H3M15 21v-6h6M3 9l6-6M21 15l-6 6" /></> : <><path d="M14 4h6v6M20 4l-9 9M10 4H5a1 1 0 0 0-1 1v14a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-5" /></>}</svg></button>
@@ -244,15 +268,15 @@ export function AskLisnoPanel({ open, onClose, routeProjectId, scope, returnFocu
       </div>
     </header>
     <div className="ask-lisno-panel__conversation" ref={log} role="log" aria-label="Private conversation" aria-live="polite" aria-busy={busy || historyAccess === "checking"}>
-      {historyAccess === "ready" ? <div className="ask-lisno-panel__welcome ask-lisno-panel__assistant-row"><span className="ask-lisno-panel__avatar"><LisnoChatMark /></span><div className="ask-lisno-panel__message"><div className="ask-lisno-panel__bubble ask-lisno-panel__welcome-bubble"><h3>Hi {firstName}!</h3><p>Ask me anything about your projects, estimates, materials, vendors or timelines. I’ll help you find the right information.</p></div></div></div> : null}
+      {historyAccess === "ready" ? <div className="ask-lisno-panel__welcome ask-lisno-panel__assistant-row"><span className="ask-lisno-panel__avatar"><LisnoChatMark /></span><div className="ask-lisno-panel__message"><div className="ask-lisno-panel__bubble ask-lisno-panel__welcome-bubble"><h3>Hi {firstName}!</h3><p>Ask about your projects, progress, timelines or published estimates. This conversation stays private and is not posted in Project messages.</p></div></div></div> : null}
       {notice ? <p role="alert" className="ask-lisno-panel__notice">{notice}</p> : null}
       {historyAccess === "checking" || historyAccess === "unchecked" ? <p role="status">Checking access to your conversation…</p> : null}
       {historyAccess === "error" ? <div><p role="alert">Your conversation access could not be checked.</p><Button variant="quiet" size="compact" onClick={() => void verifyHistory()}>Retry conversation</Button></div> : null}
       {historyAccess === "ready" ? turns.map((turn, index) => <div key={turn.id} className="ask-lisno-panel__turn"><div className="ask-lisno-panel__user-message"><p className="ask-lisno-panel__question"><span className="sr-only">You: </span>{turn.message}</p><MessageTime value={turn.sentAt} label="Sent at" /></div>
         {turn.response ? <div className="ask-lisno-panel__answer ask-lisno-panel__assistant-row"><span className="ask-lisno-panel__avatar ask-lisno-panel__speaker"><LisnoChatMark /><span className="sr-only">Lisno AI</span></span><div className="ask-lisno-panel__message"><AnswerProjectContext response={turn.response} /><div className="ask-lisno-panel__bubble ask-lisno-panel__answer-bubble">
-          {turn.listChanged ? <p role="status">Your project list has changed. Refresh it to see the current projects.</p> : turn.response.resolution?.state === "clarification" ? <div className="ask-lisno-panel__clarification"><p>{turn.response.resolution.question ?? "Which project would you like to discuss?"}</p><div>{turn.response.resolution.choices.map(choice => <button key={choice.id} type="button" disabled={busy || index !== turns.length - 1} onClick={() => void send(turn, choice.id)}>{choice.name}{choice.detail ? <small>{choice.detail}</small> : null}</button>)}</div></div> : <><AssistantAnswerContent result={{ ...turn.response.answer, checkedAt: turn.response.checkedAt, stale: false, commercialAccess: turn.response.answer.commercial ? "allowed" : "none" }} /><AskLisnoProjectCard response={turn.response} /></>}
+          {turn.listChanged ? <p role="status">Your project list has changed. Refresh it to see the current projects.</p> : turn.response.resolution?.state === "clarification" ? <div className="ask-lisno-panel__clarification"><p>{turn.response.resolution.question ?? "Which project would you like to discuss?"}</p><div>{directoryRows(turn.response.resolution.choices).map(choice => <button key={choice.id} type="button" disabled={busy || index !== turns.length - 1} onClick={() => void send(turn, choice.id)}>{choice.name}{choice.detail ? <small>{choice.detail}</small> : null}{choice.reference ? <small>{choice.reference}</small> : null}</button>)}</div></div> : <><AssistantAnswerContent result={{ ...turn.response.answer, checkedAt: turn.response.checkedAt, stale: false, commercialAccess: turn.response.answer.projectPricing ? "allowed" : "none" }} />{turn.pricingNeedsRefresh ? <p className="ask-lisno-panel__privacy-note">Estimate details need a fresh check. <Button variant="quiet" size="compact" disabled={busy} onClick={() => void send(undefined, turn.response?.projectId ?? undefined, turn.message)}>Refresh estimate</Button></p> : null}<AskLisnoProjectCard response={turn.response} /></>}
           {turn.response.projectList ? <section className="ask-lisno-panel__projects" aria-label="Your projects" aria-busy={pagingId === turn.id}>
-            {turn.response.projectList.items.length ? <ul>{directoryRows(turn.response.projectList.items).map(project => <li key={project.id}><div><strong>{project.name}</strong>{project.detail ? <small>{project.detail}</small> : null}{project.reference ? <small>{project.reference}</small> : null}</div><button type="button" disabled={busy} aria-label={`View progress for ${project.name}${project.detail ? `, ${project.detail}` : ""}${project.reference ? `, ${project.reference}` : ""}`} onClick={() => void send(undefined, project.id, `Show progress for ${project.name}`)}>View progress</button></li>)}</ul> : null}
+            {turn.response.projectList.items.length ? <ul>{directoryRows(turn.response.projectList.items).map(project => <li key={project.id}><div><strong>{project.name}</strong>{project.detail ? <small>{project.detail}</small> : null}{project.reference ? <small>{project.reference}</small> : null}</div><button type="button" disabled={busy} aria-label={`View progress for ${project.name}${project.detail ? `, ${project.detail}` : ""}${project.reference ? `, ${project.reference}` : ""}`} onClick={() => void send(undefined, project.id, "Show my project progress")}>View progress</button></li>)}</ul> : null}
             {turn.listError ? <p role="alert">{turn.listError}</p> : null}
             {pagingId === turn.id ? <p role="status">Loading projects…</p> : null}
             {turn.listChanged ? <Button variant="quiet" size="compact" disabled={busy || pagingId !== null} onClick={() => void loadProjects(turn, true)}>Refresh projects</Button> : turn.response.projectList.nextOffset !== null ? <Button variant="quiet" size="compact" disabled={busy || pagingId !== null} onClick={() => void loadProjects(turn)}>{turn.listError ? "Retry loading projects" : "Show more"}</Button> : null}

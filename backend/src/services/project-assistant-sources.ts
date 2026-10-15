@@ -23,10 +23,12 @@ import { boundedAssistantIds, readAssistantLines, readAssistantRecommendations, 
 import { calculateAssistantAddition, type AssistantApprovedScope } from "./project-assistant-pricing.js";
 import { createProjectStatusService } from "./project-status.service.js";
 import type { Clock } from "./workflow.js";
+import { readAssistantProjectEstimate } from "./project-assistant-estimate.js";
 
 type Row = Record<string, any>;
 interface ApprovedRead { scope: AssistantApprovedScope; freshness: AssistantSourceVersion[]; estimateId: string | null; estimateVersion: number | null; roundId: string | null; sourceKeys: string[] }
 export interface AssistantSourceReaders {
+  projectEstimate?: typeof readAssistantProjectEstimate;
   status(context: AssistantContext, transaction?: ChatTransaction): Promise<ProjectStatusSummary>;
   execution(context: AssistantContext, transaction?: ChatTransaction): Promise<AssistantFactBundle>;
   approved(context: AssistantContext, transaction?: ChatTransaction): Promise<{ scope: AssistantApprovedScope; freshness: AssistantSourceVersion[] }>;
@@ -218,7 +220,7 @@ export function createAssistantReadSources(options: {
   const snapshot = <T>(read: (tx: ChatTransaction) => Promise<T>) => options.transaction ? read(options.transaction) : options.chatRepository.snapshot(read);
   const readers: AssistantSourceReaders = {
     status: (context, tx) => createProjectStatusService({ repository: tx!.app, chatRepository: options.chatRepository, clock: options.clock }).getForClientScope(scope, tx),
-    execution: readExecution, approved: readApproved, lines: readAssistantLines, search: searchAssistantCatalogue, recommendations: readAssistantRecommendations,
+    execution: readExecution, approved: readApproved, projectEstimate: readAssistantProjectEstimate, lines: readAssistantLines, search: searchAssistantCatalogue, recommendations: readAssistantRecommendations,
     ...options.readers
   };
   async function guarded<T>(read: (context: AssistantContext, tx: ChatTransaction) => Promise<T>): Promise<T> {
@@ -236,6 +238,11 @@ export function createAssistantReadSources(options: {
   };
   return {
     status: () => guarded(statusRead),
+    projectEstimate: input => guarded(async (context, tx) => {
+      if (!["current", "approved", "published"].includes(input.basis)) throw new ApiError(400, "ASSISTANT_INPUT_INVALID", "Choose a published estimate source.");
+      const result = await readers.projectEstimate!(context, input, tx);
+      return { ...result, freshness: [scopeWitness(context), ...result.freshness] };
+    }),
     execution: () => guarded(async (context, tx) => {
       const result = await readers.execution(context, tx); return { facts: result.facts, freshness: [scopeWitness(context), ...result.freshness] };
     }),
@@ -269,6 +276,11 @@ export function createAssistantReadSources(options: {
               case "assistant-status": current = (await statusRead(context, tx)).freshness.find(row => row.kind === witness.kind); break;
               case "assistant-execution": current = (await readers.execution(context, tx)).freshness.find(row => row.kind === witness.kind); break;
               case "assistant-approved": current = (await readers.approved(context, tx)).freshness.find(row => row.kind === witness.kind); break;
+              case "assistant-project-estimate": {
+                const basis = witness.id.slice(scope.projectId.length + 1);
+                if (!witness.id.startsWith(`${scope.projectId}:`) || !["current", "approved", "published"].includes(basis)) return false;
+                current = (await readers.projectEstimate!(context, { basis: basis as "current" | "approved" | "published" }, tx)).freshness.find(row => row.kind === witness.kind); break;
+              }
               case "assistant-line": current = (await readers.lines(boundedAssistantIds([witness.id]), tx.session)).freshness.find(row => row.id === witness.id); break;
               case "assistant-candidate": {
                 const candidate = (await readers.lines(boundedAssistantIds([witness.id]), tx.session)).lines.get(witness.id)?.candidate;

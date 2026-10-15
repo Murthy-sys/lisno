@@ -50,6 +50,7 @@ const estimateClientReviewLineItemSchema = new Schema(
     catalogueId: { type: String, required: true, immutable: true },
     roomId: { type: String, default: undefined, immutable: true },
     roomName: { type: String, required: true, immutable: true },
+    estimateNotes: { type: [String], default: undefined, immutable: true },
     specification: { type: String, default: null, immutable: true },
     unit: { type: String, required: true, immutable: true },
     rate: { type: Number, default: null, immutable: true },

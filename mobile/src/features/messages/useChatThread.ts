@@ -14,10 +14,13 @@ import {
   presentChatSummary,
   presentMessagePage,
   selectSafelyReadableMessage,
+  type ChatMessageFilter,
   type PresentedChatSummary,
   type PresentedMessage,
   type PresentedMessagePage
 } from "./chatModel";
+import { parseTypingSnapshot } from "./chatEnhancementsApi";
+import { usePendingAssistantRefresh } from "./usePendingAssistantRefresh";
 import { chatQueryKeys } from "./chatQueryKeys";
 
 const MESSAGE_PAGE_SIZE = 50;
@@ -26,9 +29,9 @@ function denied(error: unknown): boolean {
   return error instanceof ApiError && [401, 403, 404].includes(error.status);
 }
 
-export function buildMessageHistoryPath(projectId: string, before?: string): string {
+export function buildMessageHistoryPath(projectId: string, before?: string, options?: { filter?: ChatMessageFilter; around?: string; after?: string }): string {
   const path = `/projects/${encodeURIComponent(projectId)}/chat/messages?limit=${MESSAGE_PAGE_SIZE}`;
-  return before ? `${path}&before=${encodeURIComponent(before)}` : path;
+  return `${path}${before ? `&before=${encodeURIComponent(before)}` : options?.after ? `&after=${encodeURIComponent(options.after)}` : options?.around ? `&around=${encodeURIComponent(options.around)}` : ""}${options?.filter && options.filter !== "all" ? `&filter=${options.filter}` : ""}`;
 }
 
 function requireSummary(value: unknown, projectId: string): PresentedChatSummary {
@@ -45,6 +48,10 @@ function requirePage(value: unknown, projectId: string): PresentedMessagePage {
 
 export interface ChatThreadState {
   readonly ownerKey: string;
+  readonly typing?: readonly { userId: string; name: string }[];
+  readonly hasNewerHistory?: boolean;
+  readonly loadingNewer?: boolean;
+  loadNewer?(): Promise<void>;
   readonly summary: PresentedChatSummary | null;
   readonly messages: readonly PresentedMessage[];
   readonly loading: boolean;
@@ -71,7 +78,8 @@ export interface ChatThreadState {
 
 export function useChatThread(
   projectId: string,
-  session: AuthenticatedSession
+  session: AuthenticatedSession,
+  options: { filter?: ChatMessageFilter; around?: string | null; active?: boolean } = {}
 ): ChatThreadState {
   const context = useConfiguredRuntime();
   const queryClient = useQueryClient();
@@ -88,6 +96,8 @@ export function useChatThread(
     () => chatQueryKeys.conversations(scope),
     [scope]
   );
+  const filter = options.filter ?? "all"; const around = options.around ?? null;
+  const [typing, setTyping] = useState<ReturnType<typeof parseTypingSnapshot>>([]);
   const [accessDenied, setAccessDenied] = useState(false);
   const [newMessagesAvailable, setNewMessagesAvailable] = useState(false);
   const [scrollToEndRequest, setScrollToEndRequest] = useState(0);
@@ -99,6 +109,7 @@ export function useChatThread(
   const readingActive = useRef(true);
 
   useEffect(() => {
+    setTyping([]);
     setAccessDenied(false);
     setNewMessagesAvailable(false);
     setReadError(null);
@@ -123,16 +134,17 @@ export function useChatThread(
   });
 
   const messageQuery = useInfiniteQuery({
-    queryKey: chatQueryKeys.messages(scope, projectId),
+    queryKey: filter === "all" && !around ? chatQueryKeys.messages(scope, projectId) : [...chatQueryKeys.messages(scope, projectId), filter, around ?? "latest"],
     queryFn: async ({ signal, pageParam }) => requirePage(
       await context.runtime.api.authenticated.get<unknown>(
-        buildMessageHistoryPath(projectId, pageParam ?? undefined),
+        buildMessageHistoryPath(projectId, pageParam?.direction === "before" ? pageParam.cursor : undefined, { filter, ...(around ? { around } : {}), ...(pageParam?.direction === "after" ? { after: pageParam.cursor } : {}) }),
         { signal }
       ),
       projectId
     ),
-    initialPageParam: null as string | null,
-    getNextPageParam: (page) => page.olderCursor ?? undefined,
+    initialPageParam: null as { direction: "before" | "after"; cursor: string } | null,
+    getNextPageParam: (page) => page.olderCursor ? { direction: "before" as const, cursor: page.olderCursor } : undefined,
+    getPreviousPageParam: (page) => page.newerCursor ? { direction: "after" as const, cursor: page.newerCursor } : undefined,
     enabled: Boolean(projectId) && !accessDenied,
     staleTime: 10_000,
     retry: (count, error) => !denied(error) && !(error instanceof ApiProtocolError) && count < 1
@@ -155,6 +167,7 @@ export function useChatThread(
   }, [conversationsKey, projectKey, queryClient]);
 
   const denyProject = useCallback(async () => {
+    setTyping([]);
     setAccessDenied(true);
     setNewMessagesAvailable(false);
     setReadError(null);
@@ -170,6 +183,7 @@ export function useChatThread(
 
   useEffect(() => {
     if (accessDenied || summaryQuery.error || messageQuery.error || !messageHistoryReady || !projectId || !summary) return;
+    let active = true;
     const stream = context.runtime.realtime.createStream({
       path: `/projects/${encodeURIComponent(projectId)}/chat/events`,
       cursor: summary.cursor,
@@ -186,15 +200,19 @@ export function useChatThread(
         }
       },
       onEvent: (event) => {
+        if (!active) return;
+        if (event.event === "typing") { try { setTyping(parseTypingSnapshot(JSON.parse(event.data), projectId, session.user.id)); } catch { setTyping([]); } }
+        if (event.event === "state") { try { if (JSON.parse(event.data).status !== "live") setTyping([]); } catch { setTyping([]); } }
         if (event.event === "chat") void invalidateProject();
       },
-      onResync: () => invalidateProject(),
-      onDenied: denyProject
+      onResync: () => { if (!active) return; setTyping([]); return invalidateProject(); },
+      onDenied: () => { if (active) return denyProject(); }
     });
     stream.start();
-    return () => stream.stop();
+    return () => { active = false; stream.stop(); setTyping([]); };
   }, [
     accessDenied,
+    ownerKey,
     context.runtime.realtime,
     denyProject,
     invalidateProject,
@@ -205,6 +223,11 @@ export function useChatThread(
     summary?.project.id
   ]);
 
+  useEffect(() => {
+    if (!typing.length) return;
+    const timeout = setTimeout(() => setTyping(current => current.filter(person => person.expiresAt > Date.now())), Math.max(0, Math.min(...typing.map(person => person.expiresAt)) - Date.now()) + 1);
+    return () => clearTimeout(timeout);
+  }, [typing]);
   const latestSequence = messages.at(-1)?.sequence ?? 0;
   useEffect(() => {
     const previous = priorLatestSequence.current;
@@ -241,7 +264,7 @@ export function useChatThread(
   const acknowledgeVisible = useCallback((messageIds: ReadonlySet<string>) => {
     lastVisibleIds.current = new Set(messageIds);
     if (
-      accessDenied ||
+      accessDenied || filter !== "all" ||
       !readingActive.current ||
       summaryQuery.error !== null ||
       messageQuery.error !== null ||
@@ -261,7 +284,7 @@ export function useChatThread(
     highestReadRequested.current = message.sequence;
     setReadError(null);
     readMutation.mutate(message);
-  }, [accessDenied, hasOlderHistory, messageQuery.error, messages, projectId, readMutation, session.authorization.permissions, summary, summaryQuery.error]);
+  }, [accessDenied, filter, hasOlderHistory, messageQuery.error, messages, projectId, readMutation, session.authorization.permissions, summary, summaryQuery.error]);
 
   const retryRead = useCallback(() => {
     highestReadRequested.current = summary?.lastReadSequence ?? 0;
@@ -277,6 +300,12 @@ export function useChatThread(
   const refresh = useCallback(async () => {
     await Promise.all([summaryQuery.refetch(), messageQuery.refetch()]);
   }, [messageQuery, summaryQuery]);
+
+  usePendingAssistantRefresh({
+    ownerKey, messages, refresh,
+    enabled: options.active !== false && Boolean(projectId) && !accessDenied && !denied(summaryQuery.error) && !denied(messageQuery.error)
+      && !(summaryQuery.error instanceof ApiProtocolError) && !(messageQuery.error instanceof ApiProtocolError)
+  });
 
   const refreshParticipantContext = useCallback(async (participantCount?: number) => {
     const summaryKey = chatQueryKeys.summary(scope, projectId);
@@ -297,6 +326,10 @@ export function useChatThread(
     await messageQuery.fetchNextPage();
   }, [messageQuery]);
 
+  const loadNewer = useCallback(async () => {
+    if (!messageQuery.hasPreviousPage || messageQuery.isFetchingPreviousPage) return;
+    await messageQuery.fetchPreviousPage();
+  }, [messageQuery]);
   const setNearBottom = useCallback((value: boolean) => {
     nearBottom.current = value;
     if (value) setNewMessagesAvailable(false);
@@ -313,6 +346,8 @@ export function useChatThread(
   const protocolFailure = summaryQuery.error instanceof ApiProtocolError || messageQuery.error instanceof ApiProtocolError;
   return {
     ownerKey,
+    typing: primaryDenied || primaryError ? [] : typing,
+    hasNewerHistory: Boolean(messageQuery.hasPreviousPage), loadingNewer: messageQuery.isFetchingPreviousPage, loadNewer,
     summary: primaryDenied || protocolFailure ? null : summary,
     messages: primaryDenied || protocolFailure ? [] : messages,
     loading: summaryQuery.isPending || messageQuery.isPending,
@@ -322,7 +357,7 @@ export function useChatThread(
       : primaryError instanceof Error
         ? primaryError.message
         : "The conversation could not be loaded.",
-    refreshing: summaryQuery.isRefetching || (messageQuery.isRefetching && !messageQuery.isFetchingNextPage),
+    refreshing: summaryQuery.isRefetching || (messageQuery.isRefetching && !messageQuery.isFetchingNextPage && !messageQuery.isFetchingPreviousPage),
     hasOlderHistory,
     loadingOlder: messageQuery.isFetchingNextPage,
     olderError: messageQuery.isFetchNextPageError ? "Earlier messages could not be loaded." : null,

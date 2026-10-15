@@ -64,6 +64,7 @@ export interface ConfiguredEstimateLineInput {
 export type EstimateLineInput = LegacyEstimateLineInput | ConfiguredEstimateLineInput;
 
 export interface ConfiguredEstimateLine extends Omit<ConfiguredEstimateLineInput, "itemType"> {
+  estimateNotes?: string[];
   itemType?: "main_line" | "temporary";
   id: string;
   mainBasketName: string;

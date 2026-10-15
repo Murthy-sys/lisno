@@ -105,6 +105,7 @@ interface MemorySnapshot {
 
 const snapshotReaders = new WeakMap<AppRepository, () => MemorySnapshot>();
 const mutationMethods = new Set<keyof AppRepository>([
+  "saveDesignRequirementsState",
   "saveDesignWorkflowState",
   "createWorkflowUom",
   "referenceWorkflowUoms",
@@ -271,6 +272,38 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
   };
 
   const implementation: AppRepository = {
+    async findDesignRequirementsSource(projectId) {
+      const project = state.projects.find(row => row.id === projectId);
+      if (!project) return null;
+      const configured = state.designRequirementsSources?.find(row => row.projectId === projectId);
+      const estimate = state.estimateSummaries?.find(row => row.projectId === projectId);
+      const workflow = state.designWorkflowStates?.find(row => row.projectId === projectId);
+      const active = (ids: string[], role: string) => ids.filter(id => state.users.some(user => user.id === id && user.active && user.role === role)).sort();
+      const designTasks = (state.projectWorkflowAssignments ?? []).filter(task => task.projectId === projectId && task.kind === "design_plan_upload");
+      const designSourceIds = [...new Set([estimate?.designPlanDesignerId, ...designTasks.map(task => task.assigneeUserId)].filter((id): id is string => Boolean(id)))];
+      const poCandidate = designSourceIds.length === 1 ? designSourceIds[0]! : project.assignedDesignerIds.length === 1 ? project.assignedDesignerIds[0]! : null;
+      const poAssignmentConsistent = designSourceIds.length <= 1 && designTasks.length <= 1 && designTasks.every(task => task.assigneeRole === "designer" && task.assigneeUserId);
+      return clone({ projectId, estimateId: estimate?.id ?? null, estimateVersion: estimate?.version ?? null,
+        lines: [], issues: [], ...configured,
+        clientId: active(project.clientId ? [project.clientId] : [], "client")[0] ?? null,
+        designerIds: active([...new Set(project.assignedDesignerIds)], "designer"),
+        poDesignerId: poAssignmentConsistent && poCandidate && active(project.assignedDesignerIds, "designer").includes(poCandidate) ? poCandidate : null,
+        procurementIds: active((state.projectWorkflowAssignments ?? []).filter(task => task.projectId === projectId && task.kind === "procurement" && task.assigneeRole === "procurement" && !task.supersededAt && task.assigneeUserId).map(task => task.assigneeUserId!), "procurement"),
+        initialPaymentAt: workflow?.initialPaymentAt ?? workflow?.history.find(event => event.action === "confirm_initial_payment")?.at ?? configured?.initialPaymentAt ?? null
+      });
+    },
+    async findDesignRequirementsState(projectId) {
+      return clone(state.designRequirementsStates?.find(row => row.projectId === projectId) ?? null);
+    },
+    async saveDesignRequirementsState(projectId, expectedVersion, next) {
+      state.designRequirementsStates ??= [];
+      const index = state.designRequirementsStates.findIndex(row => row.projectId === projectId);
+      const current = state.designRequirementsStates[index] ?? { projectId, version: 0, history: [] };
+      if (current.version !== expectedVersion || next.history.length !== current.history.length + 1 || JSON.stringify(next.history.slice(0, -1)) !== JSON.stringify(current.history)) throw new RepositoryConflictError("Design requirements history or version changed.");
+      const saved = clone({ ...next, projectId, version: expectedVersion + 1 });
+      if (index === -1) state.designRequirementsStates.push(saved); else state.designRequirementsStates[index] = saved;
+      return clone(saved);
+    },
     async findVendorBoundUsers(vendorId) { return clone(state.users.filter(user => user.vendorId === vendorId).slice(0, 2)); },
     async findProcurementVendorInvitationSource(sourceIntentId) {
       const source = state.procurementVendorInvitationSources?.find(row => row.sourceIntentId === sourceIntentId);
@@ -1448,6 +1481,41 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
         )
         .sort(byNameThenId);
       return clone(limit === undefined ? projects : projects.slice(0, limit));
+    },
+
+    async pageProjectsForUserRead(user, pagination) {
+      if (!user.active) return { items: [], total: 0 };
+      if (user.role !== "program_manager" && user.role !== "procurement") {
+        return implementation.pageProjectsForUserInModule(user, "projects", pagination);
+      }
+      const assignedIds = new Set((state.projectWorkflowAssignments ?? [])
+        .filter(task => task.kind === "procurement" && task.assigneeRole === "procurement" &&
+          task.assigneeUserId === user.id && task.supersededAt == null)
+        .map(task => task.projectId));
+      const grantedIds = new Set(state.projectAccessGrants
+        .filter(grant => grant.userId === user.id && grant.module === "procurement" &&
+          grantCanSupplyProjectModuleScope(user.role, grant))
+        .map(grant => grant.projectId));
+      return paginate(clone(state.projects.filter(project => user.role === "program_manager"
+        ? project.programManagerId === user.id
+        : assignedIds.has(project.id) || grantedIds.has(project.id)).sort(byNameThenId)), pagination);
+    },
+
+    async findProjectForUserRead(user, projectId) {
+      if (!user.active) return null;
+      if (user.role !== "program_manager" && user.role !== "procurement") {
+        return (await implementation.listProjectsForUserInModule(user, "projects"))
+          .find(project => project.id === projectId) ?? null;
+      }
+      const project = state.projects.find(row => row.id === projectId);
+      if (!project) return null;
+      const allowed = user.role === "program_manager" ? project.programManagerId === user.id
+        : (state.projectWorkflowAssignments ?? []).some(task => task.projectId === project.id &&
+          task.kind === "procurement" && task.assigneeRole === "procurement" &&
+          task.assigneeUserId === user.id && task.supersededAt == null) ||
+          state.projectAccessGrants.some(grant => grant.projectId === project.id && grant.userId === user.id &&
+            grant.module === "procurement" && grantCanSupplyProjectModuleScope(user.role, grant));
+      return allowed ? clone(project) : null;
     },
 
     async pageProjectsForUserInModule(user, module, pagination) {

@@ -4,10 +4,10 @@ import { createAskLisnoService } from "../src/services/ask-lisno.service.js";
 import { createProjectAssistantRuntime } from "../src/services/project-assistant-runtime.js";
 import { createChatFixture, chatProject, chatSend } from "./helpers/project-chat.js";
 import type { AssistantProviderContext } from "../src/services/project-assistant-provider.js";
-import { createGeminiAssistantProvider } from "../src/services/project-assistant-gemini.js";
 import type { AskLisnoRequest } from "../src/contracts/ask-lisno.js";
+import { createPythonAssistantProvider } from "../src/services/project-assistant-python.js";
 
-const answer: AssistantGeneratedResult = {kind: "no_answer", facts: [], candidates: [], missingInputs: [], commercial: null, freshness: []};
+const answer: AssistantGeneratedResult = {disclosurePolicy: "project-publication-v1", projectPricing: null, kind: "no_answer", facts: [], candidates: [], missingInputs: [], commercial: null, freshness: []};
 const sources = (): AssistantReadSources => ({status: vi.fn(async () => ({facts: [{id: "status", label: "Status", value: "Active", source: {id: "a", label: "Project", href: null}}], freshness: []})), execution: async () => ({facts: [], freshness: []}), searchCatalogue: async () => [], recommendations: async () => ({rules: [], freshness: []}), preview: async () => {throw new Error("unused");}, revalidate: vi.fn(async () => true)});
 function fixture(generate: (context: AssistantProviderContext) => Promise<AssistantGeneratedResult> = async context => {
   const id = await context.reserveAttempt(100); await context.settleAttempt(id, {inputTokens: 30, outputTokens: 10});
@@ -18,31 +18,31 @@ function fixture(generate: (context: AssistantProviderContext) => Promise<Assist
   const ask = (projectId: string | null = "a", message = "Project status?") => service.request(f.actor("client-a"), {projectId, message, history: []});
   return {...f, chatService: f.service, read, provider, service, ask};
 }
+function displayNames(f: ReturnType<typeof fixture>, name: (id: string) => string) {
+  const snapshot = f.chatRepository.snapshot.bind(f.chatRepository);
+  vi.spyOn(f.chatRepository, "snapshot").mockImplementation(operation => snapshot(tx => operation({...tx, app: {...tx.app,
+    findUserById: async id => {const user = await tx.app.findUserById(id); return user ? {...user, name: name(id)} : user;}
+  }})));
+}
 describe("private Ask Lisno requests", () => {
-  it("uses Gemini immediately for private authorized facts without publishing or notifying", async () => {
+  it("uses the configured provider immediately for private authorized facts without publishing or notifying", async () => {
     const f = createChatFixture(), read = sources();
-    const transport = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json({
-      candidates: [{finishReason: "STOP", content: {role: "model", parts: [{functionCall: {name: "project_status", args: {}, id: "status-read"}, thoughtSignature: "synthetic-signature"}]}}],
-      usageMetadata: {promptTokenCount: 10, candidatesTokenCount: 8, thoughtsTokenCount: 2, totalTokenCount: 20}
-    })).mockResolvedValueOnce(Response.json({
-      candidates: [{finishReason: "STOP", content: {role: "model", parts: [{text: JSON.stringify({kind: "status", factIds: ["status"], candidateIds: [], previewId: null, clarificationCodes: []})}]}}],
-      usageMetadata: {promptTokenCount: 10, candidatesTokenCount: 8, thoughtsTokenCount: 2, totalTokenCount: 20}
-    }));
-    const provider = createGeminiAssistantProvider({apiKey: "synthetic-gemini-key", model: "gemini-3.8-flash", fetch: transport});
+    const generate = vi.fn(async (context: AssistantProviderContext): Promise<AssistantGeneratedResult> => {
+      expect(context.surface).toBe("private");
+      const receipt = await context.reserveAttempt(200);
+      await context.settleAttempt(receipt, {inputTokens: 30, outputTokens: 10});
+      return {...answer, kind: "status", ...await context.sources.status()};
+    });
+    const provider = {generate};
     const service = createAskLisnoService({chatRepository: f.chatRepository, clock: f.clock, enabled: true, provider, readSources: () => read});
     const before = f.clock().toISOString();
     await expect(service.request(f.actor("client-a"), {projectId: "b", message: "Project status?", history: []})).rejects.toMatchObject({status: 404});
-    expect(transport).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
     const response = await service.request(f.actor("client-a"), {projectId: "a", message: "Project status?", history: []});
     expect(response).toMatchObject({projectId: "a", answer: {kind: "status", facts: [{value: "Active"}]}});
     expect(f.clock().toISOString()).toBe(before);
-    expect(transport).toHaveBeenCalledTimes(2);
-    for (const [url, init] of transport.mock.calls) {
-      expect(url).toBe("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent");
-      expect(init?.headers).toMatchObject({"x-goog-api-key": "synthetic-gemini-key"});
-      expect(init?.redirect).toBe("error");
-      expect(String(init?.body)).not.toContain("client-b");
-    }
+    expect(generate).toHaveBeenCalledOnce();
+    expect(JSON.stringify(generate.mock.calls[0]![0].messages)).not.toContain("client-b");
     expect(await f.chatRepository.snapshot(tx => tx.assistant.projectRuns("a"))).toEqual([]);
     expect(await f.chatRepository.snapshot(tx => tx.messages({projectId: "a", userId: "client-a", filter: "all", limit: 100}))).toEqual([]);
     for (const user of f.seed.users) expect(await f.chatRepository.snapshot(tx => tx.notificationPage(user.id, ["a", "b"], 100, 0))).toMatchObject({total: 0});
@@ -62,7 +62,8 @@ describe("private Ask Lisno requests", () => {
     await f.repository.renameProjectName("a", "Cedar House", 1, f.clock().toISOString());
     await f.repository.createProject({...chatProject("c", "client-a"), name: "Lake House"});
     const result = await f.service.request(f.actor("client-a"), {projectId: null, contextProjectId: "a", message, history: []});
-    expect(result).toMatchObject({projectId: null, resolution: {state: "account", project: null, choices: []}, answer: {narrative}});
+    const expectedNarrative = message === "I'm upset" ? [{text: "I'm sorry this has been frustrating, Client.", factIds: []}, ...narrative] : narrative;
+    expect(result).toMatchObject({projectId: null, resolution: {state: "account", project: null, choices: []}, answer: {narrative: expectedNarrative}});
     expect(discovery).not.toHaveBeenCalled();
     expect(f.read.status).not.toHaveBeenCalled();
     expect(f.read.revalidate).not.toHaveBeenCalled();
@@ -140,7 +141,8 @@ describe("private Ask Lisno requests", () => {
       const id = await ctx.reserveAttempt(100); await ctx.settleAttempt(id, {inputTokens: 10, outputTokens: 10});
       const bundle = await ctx.profile!();
       expect(JSON.stringify(bundle)).not.toMatch(/passwordHash|managerId|authorizedClientIds|client-b/);
-      expect(bundle.facts).toEqual(expect.arrayContaining([expect.objectContaining({value: "Client A"}), expect.objectContaining({id: "support:select-project"})]));
+      expect(bundle.facts).toEqual(expect.arrayContaining([expect.objectContaining({id: "support:select-project"})]));
+      expect(JSON.stringify(bundle.facts)).not.toMatch(/Client A|client-a@|profile:email|profile:mobile/);
       return {...answer, kind: "status", ...bundle};
     });
     expect((await f.ask(null, "What is my account email?")).projectId).toBeNull();
@@ -170,6 +172,42 @@ describe("private Ask Lisno requests", () => {
       return answer;
     });
     await expect(f.ask()).rejects.toMatchObject({status: 401});
+  });
+  it("personalizes a social reply with the fresh account name at delivery, never message-supplied identity", async () => {
+    let accountName = "Murthy Example";
+    const f = fixture(async context => {
+      const generated = await createPythonAssistantProvider().generate(context);
+      accountName = "Nila Example";
+      return generated;
+    });
+    displayNames(f, id => id === "client-a" ? accountName : "Priya Viewer");
+    const response = await f.ask(null, "Hi");
+    expect(response.answer.narrative?.[0]?.text).toBe("Hello, Nila! I can help with your project's progress, timelines, and published estimates. What would you like to know?");
+    expect(JSON.stringify(response.answer)).not.toMatch(/Murthy|Example/);
+    expect(f.provider.generate.mock.calls[0]![0].messages).toEqual([{id: "question", body: "Hi"}]);
+  });
+  it("acknowledges concern once after verified project reads without changing facts or scope", async () => {
+    const f = fixture();
+    displayNames(f, id => id === "client-a" ? "Murthy Example" : "Priya Viewer");
+    const response = await f.ask("a", "I'm worried, may I know my project status?");
+    expect(response.projectId).toBe("a");
+    expect(response.answer.narrative).toEqual([{text: "I hear your concern, Murthy.", factIds: []}]);
+    expect(response.answer.facts).toEqual((await f.read.status()).facts);
+    expect(JSON.stringify(response.answer)).not.toMatch(/Priya|Viewer|Example/);
+    expect(await f.chatRepository.snapshot(tx => tx.assistant.projectRuns("a"))).toEqual([]);
+  });
+  it.each(["", "Murthy <script>", "Murthy\u202eExample"])("keeps an unsafe or absent account name out of private replies: %s", async name => {
+    const f = fixture(createPythonAssistantProvider().generate);
+    displayNames(f, () => name);
+    expect((await f.ask(null, "Thanks")).answer.narrative?.[0]?.text).toBe("You're welcome. I can help with your project details and published estimates.");
+  });
+  it("does not deliver a personalized greeting after account revocation", async () => {
+    const f = fixture(async context => {
+      const generated = await createPythonAssistantProvider().generate(context);
+      await f.repository.updateUserCredentials("client-a", 1, 1, {passwordHash: "synthetic-revoked", updatedAt: f.clock().toISOString()});
+      return generated;
+    });
+    await expect(f.ask(null, "Hi")).rejects.toMatchObject({status: 401});
   });
   it("preserves the current question after untrusted Client history and exposes no staff text", async () => {
     const f = fixture();

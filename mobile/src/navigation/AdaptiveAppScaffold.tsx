@@ -1,7 +1,8 @@
 import { router, useIsFocused } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
-import { Pressable, StyleSheet, Text, View, useWindowDimensions } from "react-native";
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { AccessibilityInfo, findNodeHandle, Pressable, StyleSheet, Text, View, useWindowDimensions } from "react-native";
+import Svg, { Path } from "react-native-svg";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import type { PublicUser } from "../contracts/session";
@@ -15,8 +16,10 @@ import { GlassSelection } from "./GlassSelection";
 import { NavigationIcon, RootTabIcon } from "./NavigationIcon";
 import { ProfileAvatar } from "./ProfileAvatar";
 import { ProfileMenu } from "./ProfileMenu";
+import { ProcurementDrawer, ProcurementMenuContents } from "./ProcurementDrawer";
+import { procurementNavigationColors as procurementColors } from "./procurementMenuModel";
 import { DailyCriticalTasksControl } from "../features/notifications/DailyCriticalTasksControl";
-import { resolveAuthorizedFeature, rootTabsForAuthorization, type FeatureId, type RootTab } from "./registry";
+import { rootTabsForAuthorization, type FeatureDestination, type FeatureId, type RootTab } from "./registry";
 import { scaffoldNavigationMode } from "./scaffoldLayout";
 import { useScreenBack } from "./useScreenBack";
 
@@ -28,16 +31,23 @@ interface ScaffoldNavigationGuardValue {
   setBlocked(value: boolean): void;
 }
 
-const ScaffoldNavigationGuardContext = createContext<ScaffoldNavigationGuardValue | null>(null);
+const ScaffoldNavigationGuardContext = createContext<{ setBlocked(owner: symbol, value: boolean): void } | null>(null);
+const ScaffoldNavigationBlockedContext = createContext(false);
+export function useScaffoldNavigationBlocked() { return useContext(ScaffoldNavigationBlockedContext); }
 const ScaffoldBackContext = createContext<ReturnType<typeof useScreenBack> | null>(null);
+/** Reuses the scaffold's Back registration for a screen-owned header. */
+export function useScaffoldContentBack() { return useContext(ScaffoldBackContext); }
 
 export function useScaffoldNavigationGuard(): ScaffoldNavigationGuardValue | null {
-  return useContext(ScaffoldNavigationGuardContext);
+  const registry = useContext(ScaffoldNavigationGuardContext);
+  const owner = useRef(Symbol("navigation-guard"));
+  useEffect(() => () => registry?.setBlocked(owner.current, false), [registry]);
+  return useMemo(() => registry ? { setBlocked: (value: boolean) => registry.setBlocked(owner.current, value) } : null, [registry]);
 }
 
 /** Screens with an illustrated header can place the same guarded Back control in their content. */
 export function ScaffoldContentBack() {
-  const back = useContext(ScaffoldBackContext);
+  const back = useScaffoldContentBack();
   return back?.visible ? <BackButton onPress={back.onBack} disabled={back.disabled} /> : null;
 }
 
@@ -80,6 +90,7 @@ export function AdaptiveAppScaffold({
   navigationRailBreakpoint = 600,
   immersiveBelowWidth,
   backPlacement = "scaffold",
+  presentation = "standard",
   children
 }: {
   readonly activeFeature?: FeatureId;
@@ -89,122 +100,122 @@ export function AdaptiveAppScaffold({
   readonly navigationRailBreakpoint?: number;
   readonly immersiveBelowWidth?: number;
   readonly backPlacement?: "scaffold" | "content";
+  /** A screen-owned header and composer, with scaffold-owned safe-area clearance. */
+  readonly presentation?: "standard" | "conversation";
   readonly children: ReactNode;
 }) {
   const context = useConfiguredRuntime();
   const isFocused = useIsFocused();
   const { width } = useWindowDimensions();
-  const [navigationBlocked, setNavigationBlocked] = useState(false);
+  const [navigationBlocks, setNavigationBlocks] = useState<ReadonlySet<symbol>>(() => new Set());
+  const navigationBlocked = navigationBlocks.size > 0;
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
-  const [procurementExpanded, setProcurementExpanded] = useState(true);
+  const [procurementMenuOpen, setProcurementMenuOpen] = useState(false);
+  const procurementMenuTrigger = useRef<View>(null);
+  useEffect(() => { setProcurementMenuOpen(false); }, [activeFeature, more, profile, isFocused]);
   const back = useScreenBack({ blocked: navigationBlocked });
   const navigationGuard = useMemo(
-    () => ({ setBlocked: setNavigationBlocked }),
+    () => ({ setBlocked: (owner: symbol, value: boolean) => setNavigationBlocks((previous) => {
+      if (previous.has(owner) === value) return previous;
+      const next = new Set(previous);
+      if (value) next.add(owner); else next.delete(owner);
+      return next;
+    }) }),
     []
   );
-  const navigationMode = scaffoldNavigationMode(
+  const conversation = presentation === "conversation";
+  const navigationMode = conversation ? "immersive" : scaffoldNavigationMode(
     width,
     navigationRailBreakpoint,
     immersiveBelowWidth
   );
+  useEffect(() => { if (navigationMode !== "tabs") setProcurementMenuOpen(false); }, [navigationMode]);
   const authenticated = context.session.status === "authenticated" ? context.session.session : null;
   if (!authenticated) {
     router.replace("/sign-in");
     return null;
   }
   const tabs = rootTabsForAuthorization(authenticated.user.role, authenticated.authorization);
-  const procurementChildren = authenticated.user.role === "procurement"
-    ? (["procurement", "procurement-vendors"] as const).flatMap((id) => {
-        const destination = resolveAuthorizedFeature(id, authenticated.user.role, authenticated.authorization);
-        return destination ? [destination] : [];
-      })
-    : [];
-  const isProcurementRoute = activeFeature === "procurement" || activeFeature === "procurement-vendors";
+  const procurementShell = authenticated.user.role === "procurement";
+  const drawerVisible = procurementShell && procurementMenuOpen && navigationMode === "tabs";
+  const isProcurementRoute = activeFeature === "procurement" || activeFeature === "procurement-vendors" || activeFeature === "my-requests";
   const isSelected = (tab: RootTab) => more ? tab.id === "more" : profile ? tab.id === "profile" : tab.id === "domain" && authenticated.user.role === "procurement"
     ? isProcurementRoute
     : tab.destination?.id === activeFeature;
   const openProfileMenu = () => setProfileMenuOpen(true);
+  const closeProcurementMenu = () => {
+    setProcurementMenuOpen(false);
+    const node = findNodeHandle(procurementMenuTrigger.current);
+    if (node !== null) AccessibilityInfo.setAccessibilityFocus(node);
+  };
+  const navigateProcurement = (destination: FeatureDestination) => {
+    if (navigationBlocked) return;
+    setProcurementMenuOpen(false);
+    if (destination.id !== activeFeature || more || profile) router.push(destination.path as never);
+  };
+  const procurementMenu = {
+    session: authenticated, ...(activeFeature ? { activeFeature } : {}), disabled: navigationBlocked,
+    onNavigate: navigateProcurement,
+    onProfile: () => { if (!navigationBlocked) { setProcurementMenuOpen(false); router.push("/profile" as never); } },
+    onMore: () => { if (!navigationBlocked) { setProcurementMenuOpen(false); router.push("/more"); } }
+  };
+  const topBar = <SafeAreaView edges={["top", "left", "right"]} testID="scaffold-top-inset">
+    <View style={[styles.topBar, procurementShell ? styles.procurementTopBar : null]}>
+      {procurementShell && navigationMode === "tabs" ? <Pressable ref={procurementMenuTrigger} accessibilityLabel="Open navigation" accessibilityRole="button" accessibilityState={{ expanded: procurementMenuOpen, disabled: navigationBlocked }} disabled={navigationBlocked} onPress={() => setProcurementMenuOpen(true)} style={styles.menuTrigger}>
+        <Svg width={24} height={24} viewBox="0 0 24 24" accessible={false}><Path d="M3 6h18M3 12h18M3 18h12" stroke={procurementColors.ink} strokeWidth={1.7} strokeLinecap="round" /></Svg>
+      </Pressable> : null}
+      <View accessible accessibilityRole="image" accessibilityLabel="Lisno" style={styles.brand}><LisnoWordmark tone={procurementShell ? "dark" : "light"} width={procurementShell ? 86 : 104} /></View>
+      {authenticated.user.role !== "client" && context.runtime.api?.authenticated ? <View style={procurementShell ? styles.procurementTasks : null}><DailyCriticalTasksControl session={authenticated} navigationBlocked={navigationBlocked} /></View> : null}
+      <Pressable accessibilityLabel="Open notifications" accessibilityRole="button" accessibilityState={{ disabled: navigationBlocked }} disabled={navigationBlocked} onPress={() => router.push("/feature/notifications")} style={[styles.notificationButton, navigationBlocked ? styles.disabled : null]}>
+        {({ pressed }) => <View testID="notification-circle" style={[styles.notificationCircle, pressed ? styles.notificationPressed : null]}>
+          {!procurementShell ? <GlassSelection testID="notification-glass" radius={18} /> : null}
+          <NavigationIcon name="notifications" color={procurementShell ? procurementColors.ink : chrome.ink} size={20} />
+        </View>}
+      </Pressable>
+    </View>
+  </SafeAreaView>;
 
   return (
     <AppModalBackdrop>
-    <View style={styles.safeArea}>
-      {isFocused ? <StatusBar style={navigationMode === "immersive" ? "dark" : "light"} /> : null}
-      {navigationMode !== "immersive" ? (
-        <ChromeSurface edge="top" testID="scaffold-top-chrome">
-          <SafeAreaView edges={["top", "left", "right"]} testID="scaffold-top-inset">
-            <View style={styles.topBar}>
-              <View accessible accessibilityRole="image" accessibilityLabel="Lisno" style={styles.brand}>
-                <LisnoWordmark tone="light" width={104} />
-              </View>
-              {authenticated.user.role !== "client" && context.runtime.api?.authenticated ? <DailyCriticalTasksControl session={authenticated} /> : null}
-              <Pressable accessibilityLabel="Open notifications" accessibilityRole="button" accessibilityState={{ disabled: navigationBlocked }} disabled={navigationBlocked} onPress={() => router.push("/feature/notifications")} style={[styles.notificationButton, navigationBlocked ? styles.disabled : null]}>
-                {({ pressed }) => (
-                  <View testID="notification-circle" style={[styles.notificationCircle, pressed ? styles.notificationPressed : null]}>
-                    <GlassSelection testID="notification-glass" radius={18} />
-                    <NavigationIcon name="notifications" color={chrome.ink} size={20} />
-                  </View>
-                )}
-              </Pressable>
-            </View>
-          </SafeAreaView>
-        </ChromeSurface>
-      ) : null}
-      <SafeAreaView edges={navigationMode === "immersive" ? [] : ["left", "right"]} style={[styles.body, navigationMode !== "immersive" ? styles.bodyRounded : null]} testID="scaffold-body-inset">
-        {navigationMode === "rail" ? (
-          <ChromeSurface edge="rail" style={styles.railSurface} testID="scaffold-rail-chrome">
+    <View style={[styles.safeArea, conversation && styles.conversation]}>
+      {isFocused ? <StatusBar style={navigationMode === "immersive" || procurementShell ? "dark" : "light"} /> : null}
+      {navigationMode !== "immersive" ? (procurementShell
+        ? <View testID="procurement-top-bar" style={styles.procurementHeader} accessibilityElementsHidden={drawerVisible} importantForAccessibility={drawerVisible ? "no-hide-descendants" : "auto"}>{topBar}</View>
+        : <ChromeSurface edge="top" testID="scaffold-top-chrome">{topBar}</ChromeSurface>) : null}
+      <SafeAreaView edges={conversation ? ["top", "right", "bottom", "left"] : navigationMode === "immersive" ? [] : ["left", "right"]} style={[styles.body, conversation && styles.conversation, navigationMode !== "immersive" && !procurementShell ? styles.bodyRounded : null]} testID="scaffold-body-inset" accessibilityElementsHidden={drawerVisible} importantForAccessibility={drawerVisible ? "no-hide-descendants" : "auto"}>
+        {navigationMode === "rail" ? (procurementShell
+          ? <SafeAreaView edges={["bottom"]} style={styles.procurementRail} testID="procurement-navigation-rail"><ProcurementMenuContents {...procurementMenu} /></SafeAreaView>
+          : <ChromeSurface edge="rail" style={styles.railSurface} testID="scaffold-rail-chrome">
             <SafeAreaView edges={["bottom"]} style={styles.rail} testID="scaffold-rail-inset">
               <View accessibilityRole="tablist" style={styles.railTabs}>
-                {tabs.map((tab) => (
-                  <View key={tab.id}>
-                    <NavigationButton tab={tab} compact={false} disabled={navigationBlocked} user={authenticated.user} onOpenProfile={openProfileMenu} selected={isSelected(tab)}
-                      {...(tab.id === "domain" && authenticated.user.role === "procurement" ? {
-                        onPress: () => setProcurementExpanded((value) => !value),
-                        expanded: procurementExpanded
-                      } : {})} />
-                    {tab.id === "domain" && authenticated.user.role === "procurement" && procurementExpanded ? (
-                      <View style={styles.procurementChildren} testID="procurement-rail-children">
-                        {procurementChildren.map((destination) => {
-                          const selected = activeFeature === destination.id;
-                          return <Pressable key={destination.id} accessibilityRole="button" accessibilityLabel={destination.id === "procurement" ? "Procurement Dashboard" : "Procurement Vendors"}
-                            accessibilityState={{ selected, disabled: navigationBlocked }} disabled={navigationBlocked}
-                            onPress={() => router.push(destination.path as never)}
-                            style={({ pressed }) => [styles.procurementChild, selected ? styles.procurementChildSelected : null, pressed ? styles.pressed : null]}>
-                            <Text style={[styles.procurementChildLabel, selected ? styles.procurementChildLabelSelected : null]}>{destination.id === "procurement" ? "Dashboard" : "Vendors"}</Text>
-                          </Pressable>;
-                        })}
-                      </View>
-                    ) : null}
-                  </View>
-                ))}
+                {tabs.map(tab => <NavigationButton key={tab.id} tab={tab} compact={false} disabled={navigationBlocked} user={authenticated.user} onOpenProfile={openProfileMenu} selected={isSelected(tab)} />)}
               </View>
             </SafeAreaView>
-          </ChromeSurface>
-        ) : null}
+          </ChromeSurface>) : null}
         <ScaffoldNavigationGuardContext.Provider value={navigationGuard}>
-          <ScaffoldBackContext.Provider value={backPlacement === "content" ? back : null}>
-          <SafeAreaView edges={navigationMode === "rail" ? ["bottom"] : []} style={styles.content} testID="scaffold-content-inset">
+          <ScaffoldNavigationBlockedContext.Provider value={navigationBlocked}>
+          <ScaffoldBackContext.Provider value={conversation || backPlacement === "content" ? back : null}>
+          <SafeAreaView edges={navigationMode === "rail" ? ["bottom"] : []} style={[styles.content, conversation && styles.conversation]} testID="scaffold-content-inset">
             {back.visible && navigationMode !== "immersive" && backPlacement === "scaffold" ? (
               <View style={styles.backBar}><BackButton onPress={back.onBack} disabled={back.disabled} /></View>
             ) : null}
             {children}
           </SafeAreaView>
           </ScaffoldBackContext.Provider>
+        </ScaffoldNavigationBlockedContext.Provider>
         </ScaffoldNavigationGuardContext.Provider>
       </SafeAreaView>
       {navigationMode === "tabs" ? (
-        <SafeAreaView edges={["bottom", "left", "right"]} style={styles.bottomInset} testID="scaffold-bottom-inset">
+        <SafeAreaView edges={["bottom", "left", "right"]} style={styles.bottomInset} testID="scaffold-bottom-inset" accessibilityElementsHidden={drawerVisible} importantForAccessibility={drawerVisible ? "no-hide-descendants" : "auto"}>
           <ChromeSurface edge="bottom" style={styles.dock} testID="scaffold-bottom-chrome">
-            <View accessibilityRole="tablist" style={styles.bottomBar}>
-              {tabs.map((tab) => <NavigationButton key={tab.id} tab={tab} compact disabled={navigationBlocked} user={authenticated.user} onOpenProfile={openProfileMenu} selected={isSelected(tab)} />)}
-            </View>
+            <View accessibilityRole="tablist" style={styles.bottomBar}>{tabs.map(tab => <NavigationButton key={tab.id} tab={tab} compact disabled={navigationBlocked} user={authenticated.user} onOpenProfile={openProfileMenu} selected={isSelected(tab)} />)}</View>
           </ChromeSurface>
         </SafeAreaView>
       ) : null}
-      {navigationMode !== "immersive" ? (
-        <ProfileMenu visible={profileMenuOpen} placement={navigationMode} onRequestClose={() => setProfileMenuOpen(false)} />
-      ) : null}
-      {navigationMode === "immersive" && authenticated.user.role !== "client" && context.runtime.api?.authenticated ? (
-        <View style={styles.immersiveTasks}><DailyCriticalTasksControl session={authenticated} /></View>
+      {navigationMode !== "immersive" ? <ProfileMenu visible={profileMenuOpen} placement={navigationMode} onRequestClose={() => setProfileMenuOpen(false)} /> : null}
+      {procurementShell ? <ProcurementDrawer {...procurementMenu} visible={drawerVisible} onClose={closeProcurementMenu} /> : null}
+      {navigationMode === "immersive" && !conversation && authenticated.user.role !== "client" && context.runtime.api?.authenticated ? (
+        <View style={styles.immersiveTasks}><DailyCriticalTasksControl session={authenticated} navigationBlocked={navigationBlocked} /></View>
       ) : null}
     </View>
     </AppModalBackdrop>
@@ -213,6 +224,12 @@ export function AdaptiveAppScaffold({
 
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: colors.shell },
+  conversation: { backgroundColor: "#FAF9F3" },
+  procurementTasks: { backgroundColor: procurementColors.active, borderRadius: 4 },
+  procurementHeader: { backgroundColor: procurementColors.header, borderBottomWidth: 1, borderBottomColor: procurementColors.border },
+  procurementTopBar: { minHeight: 56, paddingHorizontal: 8, gap: 6 },
+  menuTrigger: { minWidth: 44, minHeight: 48, alignItems: "center", justifyContent: "center" },
+  procurementRail: { width: 252, backgroundColor: procurementColors.rail, borderRightWidth: 1, borderRightColor: procurementColors.border },
   topBar: { minHeight: 52, paddingHorizontal: spacing.md, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.sm },
   brand: { alignItems: "flex-start" },
   notificationButton: { minWidth: 48, minHeight: 48, alignItems: "center", justifyContent: "center" },
@@ -238,11 +255,6 @@ const styles = StyleSheet.create({
   navLabel: { color: chrome.muted, fontFamily: fonts.medium },
   navLabelRail: { flex: 1, fontSize: 13, textAlign: "left" },
   navLabelSelected: { color: colors.primaryInk, fontFamily: fonts.semibold },
-  procurementChildren: { marginTop: spacing.xxs, marginLeft: spacing.lg, gap: spacing.xxs },
-  procurementChild: { minHeight: 44, justifyContent: "center", paddingHorizontal: spacing.sm, borderRadius: radii.control },
-  procurementChildSelected: { backgroundColor: chrome.selected },
-  procurementChildLabel: { color: chrome.muted, fontFamily: fonts.medium, fontSize: 13 },
-  procurementChildLabelSelected: { color: chrome.ink, fontFamily: fonts.semibold },
   pressed: { opacity: 0.72 },
   disabled: { opacity: 0.48 }
 });

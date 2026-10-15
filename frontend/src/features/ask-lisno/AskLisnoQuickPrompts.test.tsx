@@ -19,10 +19,10 @@ describe("Ask Lisno quick prompts", () => {
     render(<AskLisnoQuickPrompts disabled={false} onSelect={onSelect} />);
     expect(screen.getByRole("group", { name: "Suggested questions" })).toBeVisible();
     expect(onSelect).not.toHaveBeenCalled();
-    for (const label of ["Show my projects", "Project progress", "Timeline", "Add to estimate"]) {
+    for (const label of ["Show my projects", "Project progress", "Timeline", "Published estimate"]) {
       await userEvent.click(screen.getByRole("button", { name: label }));
     }
-    expect(onSelect.mock.calls).toEqual([["Show my projects"], ["Project progress"], ["Expected timeline"], ["Add something to my estimate"]]);
+    expect(onSelect.mock.calls).toEqual([["Show my projects"], ["Show my project progress"], ["Show my project timeline"], ["Show my estimate"]]);
     expect(screen.queryByRole("img")).not.toBeInTheDocument();
   });
 
@@ -51,7 +51,7 @@ describe("Ask Lisno quick prompts", () => {
     await userEvent.click(screen.getByRole("button", { name: "Show more suggested questions" }));
     expect(viewport.scrollLeft).toBe(460);
     expect(screen.queryByRole("button", { name: "Show more suggested questions" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Add to estimate" })).toHaveFocus();
+    expect(screen.getByRole("button", { name: "Published estimate" })).toHaveFocus();
     viewport.scrollLeft = 20; fireEvent.scroll(viewport);
     expect(screen.getByRole("button", { name: "Show more suggested questions" })).toBeVisible();
   });
@@ -62,12 +62,12 @@ describe("Ask Lisno quick prompts", () => {
     const viewport = container.querySelector<HTMLElement>(".ask-lisno-quick-prompts__viewport")!;
     setDimensions(viewport, 240, 700);
     vi.spyOn(viewport, "getBoundingClientRect").mockReturnValue({ left: 100, right: 340 } as DOMRect);
-    const last = screen.getByRole("button", { name: "Add to estimate" });
+    const last = screen.getByRole("button", { name: "Published estimate" });
     vi.spyOn(last, "getBoundingClientRect").mockReturnValue({ left: 610, right: 800 } as DOMRect);
     act(() => last.focus());
     expect(viewport.scrollLeft).toBe(460);
     await userEvent.keyboard("{Enter}");
-    expect(onSelect).toHaveBeenCalledExactlyOnceWith("Add something to my estimate");
+    expect(onSelect).toHaveBeenCalledExactlyOnceWith("Show my estimate");
     const first = screen.getByRole("button", { name: "Show my projects" });
     vi.spyOn(first, "getBoundingClientRect").mockReturnValue({ left: -360, right: -190 } as DOMRect);
     act(() => first.focus());

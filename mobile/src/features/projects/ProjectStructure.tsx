@@ -1,45 +1,27 @@
-import { useMutation } from "@tanstack/react-query";
-import { useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 
 import type { AuthenticatedSession } from "../../contracts/session";
-import { ApiError } from "../../core/http/apiClient";
-import { useInvalidateEvent } from "../../core/query/useInvalidation";
-import { canPerformOperation } from "../../core/session/operationCapabilities";
-import { useConfiguredRuntime } from "../../runtime/RuntimeProvider";
 import { Button, Field } from "../../ui/primitives";
 import { colors, fonts, radii, spacing } from "../../ui/tokens";
 import { isRecord, recordTitle } from "../workspace/recordPresentation";
 import { FloorCreateAction, StageCreateAction, TaskCreateAction } from "./HierarchyCreateActions";
 import { DesignUploadAction } from "../design/DesignVersionWorkspace";
+import { NativeTaskEditor } from "../tasks/NativeTaskEditor";
 import { ProjectDetailPage } from "./ProjectDetailPage";
 import { presentProjectDetail } from "./projectDetailModel";
 import { projectDetailTheme } from "./projectDetailTheme";
 
-type TaskStatus = "not_started" | "in_progress" | "in_review" | "blocked" | "completed";
-const TASK_STATUSES: readonly TaskStatus[] = ["not_started", "in_progress", "in_review", "blocked", "completed"];
-
 function projectRecord(data: unknown): Record<string, unknown> | null { if (!isRecord(data)) return null; return isRecord(data.project) ? data.project : data; }
 function records(value: unknown): readonly Record<string, unknown>[] { return Array.isArray(value) ? value.filter(isRecord) : []; }
-
-function TaskEditor({ task, session }: { readonly task: Record<string, unknown>; readonly session: AuthenticatedSession }) {
-  const context = useConfiguredRuntime(); const invalidate = useInvalidateEvent(); const id = typeof task.id === "string" ? task.id : null; const version = typeof task.version === "number" ? task.version : null;
-  const canUpdate = canPerformOperation(session, "PATCH /tasks/:taskId"); const canDeadline = canPerformOperation(session, "PATCH /tasks/:taskId/deadline");
-  const currentProgress = typeof task.progress === "number" ? task.progress : 0; const currentStatus = TASK_STATUSES.includes(task.status as TaskStatus) ? task.status as TaskStatus : "not_started";
-  const [mode, setMode] = useState<"update" | "deadline" | null>(null); const [progress, setProgress] = useState(String(currentProgress)); const [status, setStatus] = useState<TaskStatus>(currentStatus); const [note, setNote] = useState(""); const [deadline, setDeadline] = useState(typeof task.currentDeadlineAt === "string" ? task.currentDeadlineAt : ""); const [reason, setReason] = useState(""); const [error, setError] = useState<string | null>(null);
-  const update = useMutation({ mutationFn: () => context.runtime.api.authenticated.patch(`/tasks/${encodeURIComponent(id!)}`, { version, status, progress: Number(progress), ...(note.trim() ? { note: note.trim() } : {}) }), onSuccess: async () => { setMode(null); await invalidate("task-changed"); }, onError: (cause) => setError(cause instanceof ApiError && cause.status === 409 ? "This task changed. Refresh the project before editing again." : cause instanceof ApiError ? cause.message : "The task could not be updated.") });
-  const revise = useMutation({ mutationFn: () => context.runtime.api.authenticated.patch(`/tasks/${encodeURIComponent(id!)}/deadline`, { version, currentDeadlineAt: new Date(deadline).toISOString(), reason: reason.trim() }), onSuccess: async () => { setMode(null); await invalidate("task-changed"); }, onError: (cause) => setError(cause instanceof ApiError && cause.status === 409 ? "This task changed. Refresh before revising its deadline." : cause instanceof ApiError ? cause.message : "The deadline could not be revised.") });
-  if (!id || !version || (!canUpdate && !canDeadline)) return null;
-  if (mode === "update") return <View style={styles.editor}><Text style={styles.label}>Status</Text><View style={styles.options}>{TASK_STATUSES.map((value) => <Pressable key={value} accessibilityRole="radio" accessibilityState={{ selected: status === value }} onPress={() => setStatus(value)} style={[styles.option, status === value ? styles.optionSelected : null]}><Text style={[styles.optionText, status === value ? styles.optionTextSelected : null]}>{value.replaceAll("_", " ")}</Text></Pressable>)}</View><Field label="Progress percentage" value={progress} onChangeText={setProgress} keyboardType="number-pad" /><Field label="Update note (optional)" value={note} onChangeText={setNote} multiline />{error ? <Text style={styles.error}>{error}</Text> : null}<View style={styles.actions}><View style={styles.action}><Button label="Cancel" variant="quiet" disabled={update.isPending} onPress={() => setMode(null)} /></View><View style={styles.action}><Button label="Save task" loading={update.isPending} onPress={() => { const amount = Number(progress); if (!Number.isFinite(amount) || amount < 0 || amount > 100) setError("Enter progress from 0 to 100."); else update.mutate(); }} /></View></View></View>;
-  if (mode === "deadline") return <View style={styles.editor}><Text style={styles.copy}>Original deadline: {typeof task.originalDeadlineAt === "string" ? new Date(task.originalDeadlineAt).toLocaleString() : "Unavailable"}. It remains in the immutable task history.</Text><Field label="New deadline (ISO 8601)" value={deadline} onChangeText={setDeadline} /><Field label="Reason" value={reason} onChangeText={setReason} multiline />{error ? <Text style={styles.error}>{error}</Text> : null}<View style={styles.actions}><View style={styles.action}><Button label="Cancel" variant="quiet" disabled={revise.isPending} onPress={() => setMode(null)} /></View><View style={styles.action}><Button label="Save deadline" loading={revise.isPending} disabled={!reason.trim() || Number.isNaN(new Date(deadline).getTime())} onPress={() => revise.mutate()} /></View></View></View>;
-  return <View style={styles.actions}>{canUpdate ? <View style={styles.action}><Button label="Update task" variant="secondary" onPress={() => setMode("update")} /></View> : null}{canDeadline ? <View style={styles.action}><Button label="Revise deadline" variant="quiet" onPress={() => setMode("deadline")} /></View> : null}</View>;
-}
 
 export function ProjectStructure({ data, session, onRefresh, initialTab }: { readonly data: unknown; readonly session: AuthenticatedSession; readonly onRefresh: () => void; readonly initialTab?: string | undefined }) {
   const project = projectRecord(data);
   const detail = presentProjectDetail(data, session.user.role);
   if (!project || !detail) return null;
   const floors = records(project.floors);
+  const estimate = isRecord(project.estimate) ? project.estimate : null;
+  const assignedDesigner = estimate && isRecord(estimate.designPlanDesigner) ? estimate.designPlanDesigner : null;
+  const designAssignment = { estimateStatus: typeof estimate?.status === "string" ? estimate.status : null, designPlanStatus: typeof estimate?.designPlanStatus === "string" ? estimate.designPlanStatus : null, assignedDesignerId: typeof assignedDesigner?.id === "string" ? assignedDesigner.id : null };
   const tasksPanel = (
     <View testID="project-structure-panel" style={styles.panel}>
       <View style={styles.heading}>
@@ -59,7 +41,7 @@ export function ProjectStructure({ data, session, onRefresh, initialTab }: { rea
                 <View key={typeof task.id === "string" ? task.id : `task-${taskIndex}`} style={styles.task}>
                   <Text style={styles.taskTitle}>{recordTitle(task, taskIndex)}</Text>
                   <Text style={styles.copy}>{typeof task.status === "string" ? task.status.replaceAll("_", " ") : "Status unavailable"} · {typeof task.progress === "number" ? `${task.progress}%` : "Progress unavailable"}</Text>
-                  <TaskEditor task={task} session={session} />
+                  <NativeTaskEditor task={task} session={session} onChanged={onRefresh} />
                   {typeof task.id === "string" ? <DesignUploadAction taskId={task.id} session={session} /> : null}
                 </View>
               ))}
@@ -69,7 +51,7 @@ export function ProjectStructure({ data, session, onRefresh, initialTab }: { rea
       ))}
     </View>
   );
-  return <ProjectDetailPage detail={detail} session={session} onRefresh={onRefresh} tasksPanel={tasksPanel} initialTab={initialTab} />;
+  return <ProjectDetailPage detail={detail} session={session} onRefresh={onRefresh} tasksPanel={tasksPanel} initialTab={initialTab} designAssignment={designAssignment} />;
 }
 
 /** Operational containers follow the project detail page: paper surface, thin border, card radius, olive headings. */

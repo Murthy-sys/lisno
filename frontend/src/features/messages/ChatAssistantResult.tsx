@@ -1,40 +1,31 @@
+import { safeAssistantPath } from "./assistantAnswerSchema";
 import { useAuth } from "../../auth/AuthProvider";
 import { Link } from "react-router-dom";
 import { Button } from "../../components/ui/Button";
-import type { AssistantCommercialSnapshot, AssistantSourceReference, ChatAssistantMessageState, ChatAssistantResult as AssistantResult } from "./projectChatAssistantTypes";
+import type { AssistantProjectPricing, AssistantSourceReference, ChatAssistantMessageState, ChatAssistantResult as AssistantResult } from "./projectChatAssistantTypes";
 import type { ChatMessage } from "./projectChatTypes";
 import { useChatAssistantRequest, useChatAssistantResult } from "./useChatAssistant";
 import "./projectChatAssistant.css";
 
 const money = (paise: number) => new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 2 }).format(paise / 100);
-const mode = { pmc: "PMC", sub_vendor: "Sub-Vendor", in_house: "In-house" };
+
 function checkedTime(value: string) { return new Intl.DateTimeFormat("en-IN", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Kolkata" }).format(new Date(value)); }
 
 function Source({ source }: { source: AssistantSourceReference }) {
   // Tool-provided content is text, never HTML. Only application-relative links are navigable.
-  const href = source.href && /^\/(?!\/)[^\\\s]*$/.test(source.href) ? source.href : null;
+  const href = source.href && safeAssistantPath(source.href) ? source.href : null;
   return href ? <Link to={href} className="project-chat-assistant__source">{source.label}</Link> : <span className="project-chat-assistant__source">{source.label}</span>;
 }
 
-function Price({ price }: { price: AssistantCommercialSnapshot }) {
-  const missing = [...new Set([...price.missingInputs, ...price.lines.flatMap(line => line.missingInputs)])];
-  return <section className="project-chat-assistant__price" aria-label="Approximate addition charges">
-    <h3>Approximate addition charges</h3>
-    <p className="project-chat-assistant__note">{price.state === "complete" ? "Estimate preview" : "Incomplete estimate preview"}. Final scope and charges require team confirmation. Your approved estimate is unchanged.</p>
-    <ul className="project-chat-assistant__lines">{price.lines.map((line, index) => <li key={`${line.mainLineId}:${line.roomId}:${index}`}>
-      <div><strong>{line.name}</strong><span>{line.quantity === null ? "Quantity needed" : `${line.quantity} ${line.uom}`} · {mode[line.pricingMode]}{line.optional ? " · Optional addition" : ""}</span></div>
-      <strong>{line.amountPaise === null ? "Not priced" : money(line.amountPaise)}</strong>
-    </li>)}</ul>
-    <dl className="project-chat-assistant__totals">
-      {price.subtotalPaise !== null ? <div><dt>Additions before GST</dt><dd>{money(price.subtotalPaise)}</dd></div> : null}
-      {price.gstPaise !== null ? <div><dt>GST ({price.gstRateBps / 100}%)</dt><dd>{money(price.gstPaise)}</dd></div> : null}
-      {price.totalPaise !== null ? <div><dt>Approximate additions total</dt><dd>{money(price.totalPaise)}</dd></div> : null}
-      {price.optionalSubtotalPaise !== null ? <div><dt>Optional additions before GST</dt><dd>{money(price.optionalSubtotalPaise)}</dd></div> : null}
-      {price.approvedBaselinePaise !== null ? <div><dt>Approved estimate</dt><dd>{money(price.approvedBaselinePaise)}</dd></div> : null}
-      {price.hypotheticalTotalPaise !== null ? <div><dt>Potential project total</dt><dd>{money(price.hypotheticalTotalPaise)}</dd></div> : null}
-    </dl>
-    {price.assumptions.length ? <div><h4>Assumptions</h4><ul>{price.assumptions.map((item, i) => <li key={i}>{item}</li>)}</ul></div> : null}
-    {missing.length ? <div><h4>Details needed</h4><ul>{missing.map((item, i) => <li key={i}>{item}</li>)}</ul></div> : null}
+function Price({ price }: { price: AssistantProjectPricing }) {
+  const amount = (value: number | null) => value === null ? "Unavailable" : money(value);
+  return <section className="project-chat-assistant__price" aria-label={price.state === "approved" ? "Approved estimate" : "Published estimate"}>
+    <h3>{price.state === "approved" ? "Approved estimate" : "Published estimate"}</h3>
+    <p className="project-chat-assistant__note">Estimate version {price.estimateVersion} · Review version {price.reviewVersion}</p>
+    <Source source={price.source} />
+    <ul className="project-chat-assistant__lines">{price.lines.map(line => <li key={line.id}><div><strong>{line.label}</strong><span>{line.quantity === null ? "Quantity unavailable" : `${line.quantity}${line.unit ? ` ${line.unit}` : ""}`} · Rate: {amount(line.ratePaise)}</span></div><strong>{amount(line.amountPaise)}</strong></li>)}</ul>
+    {price.hasMoreLines ? <p className="project-chat-assistant__note">Showing {price.lines.length} of {price.lineCount} lines. Open the estimate for all lines.</p> : null}
+    <dl className="project-chat-assistant__totals">{(["subtotalPaise", "gstPaise", "totalPaise"] as const).map((key, index) => <div key={key}><dt>{["Subtotal before GST", "GST", "Total"][index]}</dt><dd>{amount(price[key])}</dd></div>)}</dl>
   </section>;
 }
 
@@ -48,17 +39,18 @@ export function ChatAssistantResult({ projectId, resultId }: { projectId: string
 }
 
 export function AssistantAnswerContent({ result }: { result: Omit<AssistantResult, "id" | "projectId" | "messageId"> }) {
+  if (result.disclosurePolicy !== "project-publication-v1") return <p role="status" className="project-chat-assistant__note">This answer needs to be refreshed. Ask Lisno again for current information.</p>;
   const narrative = result.narrative?.filter(paragraph => paragraph.text.trim()) ?? [];
-  const hasDetails = result.facts.length > 0 || result.candidates.length > 0 || result.missingInputs.length > 0 || result.stale || result.commercialAccess === "restricted" || (result.commercialAccess === "allowed" && result.commercial !== null);
+  const hasDetails = result.facts.length > 0 || result.missingInputs.length > 0 || result.stale || result.commercialAccess === "restricted" || (result.commercialAccess === "allowed" && Boolean(result.projectPricing));
   const facts = result.facts.length ? <dl className="project-chat-assistant__facts">{result.facts.map(fact => <div key={fact.id}><dt>{fact.label}</dt><dd>{fact.value}<Source source={fact.source} /></dd></div>)}</dl> : null;
   return <section className="project-chat-assistant__result" aria-label="Lisno AI answer">
     <h2 className="sr-only">Lisno AI answer</h2>
     {narrative.length ? <div className="project-chat-assistant__narrative">{narrative.map((paragraph, index) => <p key={index}>{paragraph.text}</p>)}</div> : null}
-    {result.stale ? <p role="status" className="project-chat-assistant__notice">Project or Configuration data has changed since this answer. Use the options menu on your original message to refresh the AI reply before relying on these details.</p> : null}
+    {result.stale ? <p role="status" className="project-chat-assistant__notice">Project information has changed since this answer. Use the options menu on your original message to refresh the AI reply before relying on these details.</p> : null}
     {narrative.length ? hasDetails ? <details className="project-chat-assistant__details"><summary>Sources and details</summary>{facts}<p className="project-chat-assistant__note">Checked <time dateTime={result.checkedAt}>{checkedTime(result.checkedAt)}</time> India time</p></details> : null : <>{facts}<p className="project-chat-assistant__note">Checked <time dateTime={result.checkedAt}>{checkedTime(result.checkedAt)}</time> India time</p></>}
-    {result.candidates.length ? <section aria-label="Matching Main Lines"><h3>Matching Main Lines</h3><ul>{result.candidates.map(candidate => <li key={candidate.mainLineId}><strong>{candidate.name}</strong><span className="project-chat-assistant__note">{candidate.basketName}{candidate.subBasketName ? ` · ${candidate.subBasketName}` : ""} · {candidate.uom.name}{!candidate.available ? " · Currently unavailable" : ""}</span></li>)}</ul></section> : null}
     {result.missingInputs.length ? <section aria-label="Details needed"><h3>Details needed</h3><ul>{result.missingInputs.map((item, index) => <li key={index}>{item}</li>)}</ul><p className="project-chat-assistant__note">Reply in this conversation with these details.</p></section> : null}
-    {result.commercialAccess === "allowed" && result.commercial ? <Price price={result.commercial} /> : null}
+    {result.commercialAccess === "allowed" && !result.stale && result.projectPricing?.policy === "published-project-estimate-v1" ? <Price price={result.projectPricing} /> : null}
+    {result.kind === "price" && !result.stale && result.commercialAccess !== "restricted" && !result.projectPricing ? <p className="project-chat-assistant__note">Published estimate details are unavailable. Ask Lisno again to check the latest information.</p> : null}
     {result.commercialAccess === "restricted" ? <p className="project-chat-assistant__note">Price details are restricted to authorised project users.</p> : null}
     {!narrative.length && (result.kind === "handoff" || result.kind === "no_answer") ? <p className="project-chat-assistant__note">The project team needs to confirm this request.</p> : null}
   </section>;

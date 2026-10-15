@@ -11,6 +11,7 @@ export interface ChatNotification {
   readonly excerpt: string;
   readonly createdAt: string;
   readonly readAt: string | null;
+  readonly routing?: { readonly priority: "important" | "critical"; readonly messageVersion: number; readonly lastAlertAt: string };
 }
 
 export type NotificationGroupKey = "today" | "yesterday" | "earlier";
@@ -51,7 +52,9 @@ function parseItem(value: unknown): ChatNotification | null {
   if (!isRecord(actor) || !nonEmpty(actor.id) || !nonEmpty(actor.name)) return null;
   if (typeof excerpt !== "string" || !nonEmpty(createdAt) || Number.isNaN(Date.parse(createdAt))) return null;
   if (readAt !== null && typeof readAt !== "string") return null;
-  return { id, type, projectId, projectName, messageId, actor: { id: actor.id, name: actor.name }, excerpt, createdAt, readAt };
+  const routing = isRecord(value.routing) && ["important", "critical"].includes(String(value.routing.priority)) && Number.isSafeInteger(value.routing.messageVersion) && Number(value.routing.messageVersion) > 0 && typeof value.routing.lastAlertAt === "string" ? { priority: value.routing.priority as "important" | "critical", messageVersion: Number(value.routing.messageVersion), lastAlertAt: value.routing.lastAlertAt } : undefined;
+  if (type === "chat.assistant.route" && !routing) return null;
+  return { id, type, projectId, projectName, messageId, actor: { id: actor.id, name: actor.name }, excerpt, createdAt, readAt, ...(routing ? { routing } : {}) };
 }
 
 /** Accepts the unwrapped `{ items }` page or the raw `{ data: { items } }` envelope; malformed entries are skipped. */

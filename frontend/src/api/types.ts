@@ -284,6 +284,7 @@ export interface EstimateClientReviewSnapshot {
     roomId?: string;
     roomName: string;
     specification: string | null;
+    estimateNotes?: string[];
     unit: string;
     rate: number | null;
     ratePaise?: number | null;
@@ -455,6 +456,7 @@ export interface DesignPlanTask {
     roomId?: string;
     roomName: string;
     specification: string | null;
+    estimateNotes?: string[];
     unit: string;
     quantity: number;
     included: boolean;

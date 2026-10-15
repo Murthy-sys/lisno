@@ -171,7 +171,8 @@ describe("estimate PDF service", () => {
         specification: null, unit: "sqft", rate: 48.5, ratePaise: 4_850,
         quantity: 2.5, included: true, amount: 121.25, amountPaise: 12_125,
         mainBasketId: "basket-lower", mainBasketName: "Original basket",
-        subBasketName: "Original child", mainLineName: "Original console"
+        subBasketName: "Original child", mainLineName: "Original console",
+        estimateNotes: ["This item is subject to availability at the time of procurement.", "Allow servicing access."]
       }]
     };
     const result = await readPdf((await service.generate(configured)).bytes);
@@ -179,6 +180,8 @@ describe("estimate PDF service", () => {
     expect(result.text).toContain("Original child");
     expect(result.text).toContain("Original console");
     expect(result.text).toContain("INR 143.08");
+    expect(result.text).toContain("subject to availability");
+    expect(result.text).toContain("Allow servicing access.");
     await expect(service.generate({ ...configured, lineItems: [{
       ...configured.lineItems[0]!, rate: null, ratePaise: null, amount: null, amountPaise: null
     }] })).rejects.toThrow(/entered rate/u);

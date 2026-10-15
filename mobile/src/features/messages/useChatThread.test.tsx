@@ -280,3 +280,32 @@ describe("useChatThread", () => {
     client.clear();
   });
 });
+
+
+describe("linked history, filters and typing", () => {
+  it("loads around a linked message, pages forward, and never marks filtered history read", async () => {
+    const get = jest.fn(async (path: string) => {
+      if (path.endsWith("/chat")) return summary("project-a");
+      return { items: [rawMessage("project-a", path.includes("after=") ? "message-2" : "message-1", path.includes("after=") ? 2 : 1)], olderCursor: null, newerCursor: path.includes("after=") ? null : "forward/cursor", snapshotCursor: "snapshot", latestMessageSequence: 2 };
+    });
+    const put = jest.fn();
+    useRuntimeMock.mockReturnValue({ environment: { environment: { id: "history-env" }, generation: 1 }, session: { generation: 1 }, runtime: { api: { authenticated: { get, put } }, realtime: { createStream: () => ({ start: jest.fn(), stop: jest.fn() }) } } } as unknown as ReturnType<typeof useConfiguredRuntime>);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false, gcTime: Infinity } } }); let state!: ChatThreadState;
+    function LinkedHarness() { state = useChatThread("project-a", session, { filter: "mentions", around: "message/1" }); return null; }
+    const view = await render(<QueryClientProvider client={client}><LinkedHarness /></QueryClientProvider>);
+    await waitFor(() => expect(state.messages).toHaveLength(1)); expect(get).toHaveBeenCalledWith("/projects/project-a/chat/messages?limit=50&around=message%2F1&filter=mentions", expect.anything());
+    await act(async () => state.acknowledgeVisible(new Set(["message-1"]))); expect(put).not.toHaveBeenCalled();
+    expect(state.hasNewerHistory).toBe(true); await act(async () => state.loadNewer?.()); await waitFor(() => expect(state.messages).toHaveLength(2)); expect(get).toHaveBeenCalledWith("/projects/project-a/chat/messages?limit=50&after=forward%2Fcursor&filter=mentions", expect.anything()); expect(state.hasNewerHistory).toBe(false); await view.unmount(); client.clear();
+  });
+  it("handles typing outside message caches and ignores callbacks from a previous project stream", async () => {
+    type StreamOptions = { onEvent(event: { event: string; data: string }): void };
+    const streams: StreamOptions[] = [];
+    const get = jest.fn(async (path: string) => { const projectId = path.includes("project-b") ? "project-b" : "project-a"; return path.endsWith("/chat") ? summary(projectId) : { items: [rawMessage(projectId, "message-1", 1)], olderCursor: null, newerCursor: null, snapshotCursor: "snapshot", latestMessageSequence: 1 }; });
+    useRuntimeMock.mockReturnValue({ environment: { environment: { id: "typing-env" }, generation: 1 }, session: { generation: 1 }, runtime: { api: { authenticated: { get, put: jest.fn() } }, realtime: { createStream: (options: StreamOptions) => { streams.push(options); return { start: jest.fn(), stop: jest.fn() }; } } } } as unknown as ReturnType<typeof useConfiguredRuntime>);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false, gcTime: Infinity } } }); let state!: ChatThreadState;
+    const element = (id: string) => <QueryClientProvider client={client}><Harness projectId={id} onValue={value => { state = value; }} /></QueryClientProvider>; const view = await render(element("project-a")); await waitFor(() => expect(streams).toHaveLength(1));
+    const event = { event: "typing", data: JSON.stringify({ projectId: "project-a", serverTime: "2026-10-14T00:00:00Z", participants: [{ userId: "user-me", name: "Me", expiresAt: "2026-10-14T00:00:08Z" }, { userId: "other-a", name: "Mira", expiresAt: "2026-10-14T00:00:08Z" }] }) };
+    await act(async () => streams[0]?.onEvent(event)); expect(state.typing).toEqual([expect.objectContaining({ userId: "other-a", name: "Mira" })]); expect(state.messages).toHaveLength(1);
+    await view.rerender(element("project-b")); await waitFor(() => expect(streams).toHaveLength(2)); await act(async () => streams[0]?.onEvent(event)); expect(state.typing).toEqual([]); await view.unmount(); client.clear();
+  });
+});
