@@ -20,5 +20,18 @@ allprojects {
   }
 }
 
+// React's root plugin evaluates :app immediately, so install these hooks first.
+apply from: '../scripts/lisno-build-environment.gradle'
+
+subprojects { subproject ->
+  if (subproject.name == 'expo-constants') {
+    subproject.tasks.withType(Exec).configureEach { task ->
+      if (task.name == 'createExpoConfig') {
+        rootProject.ext.lisnoBuildEnvironment.configureMetadata(task)
+      }
+    }
+  }
+}
+
 apply plugin: "expo-root-project"
 apply plugin: "com.facebook.react.rootproject"

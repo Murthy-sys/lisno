@@ -1,0 +1,77 @@
+import groovy.json.JsonOutput
+import java.security.MessageDigest
+import org.gradle.api.tasks.PathSensitivity
+
+// Expo metadata is shared across Android variants, while React Native bundles each variant.
+def variantModes = [:]
+def helperFile = new File(rootDir, '../scripts/lisno-build-environment.gradle')
+def nodePreload = new File(rootDir, '../scripts/lisno-node-environment.cjs')
+def shellInputs = [
+    'LISNO_APP_VARIANT', 'LISNO_ANDROID_PACKAGE', 'LISNO_ALLOW_LOCAL_HTTP',
+    'EXPO_NO_DOTENV', 'EXPO_NO_CLIENT_ENV_VARS', 'EXPO_UNSAFE_DOTENV_KEYS',
+    '__EXPO_ENV_LOADED', '__EXPO_CONFIG_MODE', 'BABEL_ENV'
+]
+
+ext.lisnoBuildEnvironment = [
+    registerVariant: { String appPath, String variantName, boolean debuggable ->
+        def mode = debuggable ? 'development' : 'production'
+        def suffix = variantName.capitalize()
+        variantModes["${appPath}:pre${suffix}Build".toString()] = mode
+        variantModes["${appPath}:createBundle${suffix}JsAndAssets".toString()] = mode
+    },
+    configureMetadata: { Exec configTask ->
+        configTask.doFirst {
+            def modes = configTask.project.gradle.taskGraph.allTasks
+                .collect { variantModes[it.path] }.findAll { it != null }.toSet()
+            if (modes.size() > 1) {
+                throw new GradleException('Expo metadata is shared. Build debug and release in separate Gradle invocations.')
+            }
+            configTask.environment('NODE_ENV', modes.isEmpty() ? 'development' : modes.first())
+        }
+    },
+    configureBundle: { bundleTask, File mobileRoot ->
+        def providers = bundleTask.project.providers
+        def mode = bundleTask.devEnabled.map { it ? 'development' : 'production' }
+        def dotenvFiles = mode.map { value ->
+            bundleTask.project.fileTree(mobileRoot) {
+                include '.env', '.env.local', ".env.${value}", ".env.${value}.local"
+            }
+        }
+
+        // A file tree also notices when an optional dotenv file is added or removed.
+        bundleTask.inputs.files(dotenvFiles).withPropertyName('lisnoDotenvFiles')
+            .withPathSensitivity(PathSensitivity.RELATIVE)
+        bundleTask.inputs.files(helperFile, nodePreload).withPropertyName('lisnoEnvironmentHelpers')
+            .withPathSensitivity(PathSensitivity.RELATIVE)
+        bundleTask.inputs.property('lisnoNodeEnvironment', mode)
+        bundleTask.inputs.property('lisnoEnvironmentOverridesSha256', providers.provider {
+            def overrides = new TreeMap<String, String>(providers.environmentVariablesPrefixedBy('EXPO_PUBLIC_').get())
+            def pending = new ArrayDeque<String>(shellInputs)
+            pending.addAll(overrides.keySet())
+            def collectReferences = { String value ->
+                // Match @expo/env's word/dot keys, excluding escaped dollars and command substitution.
+                (value =~ /(?<!\\)\$(?!\()\{?([\w.]+)/).each { match -> pending.add(match[1]) }
+            }
+            // Interpolation can follow shell values recursively. Track only reachable variables,
+            // and visit each once so self-references and cycles cannot hang input collection.
+            dotenvFiles.get().files.each { file ->
+                collectReferences(file.text)
+            }
+            def visited = new HashSet<String>()
+            while (!pending.isEmpty()) {
+                def name = pending.removeFirst()
+                if (visited.add(name)) {
+                    def value = providers.environmentVariable(name).orNull
+                    overrides[name] = value
+                    if (value != null) collectReferences(value)
+                }
+            }
+            MessageDigest.getInstance('SHA-256')
+                .digest(JsonOutput.toJson(overrides).getBytes('UTF-8')).encodeHex().toString()
+        })
+
+        // BundleHermesCTask has no process-environment API. Preload only its Node commands.
+        def nodeCommand = bundleTask.nodeExecutableAndArgs.get()
+        bundleTask.nodeExecutableAndArgs.set(nodeCommand + ['--require', nodePreload.absolutePath])
+    }
+]

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   KNOWLEDGE_REVISION_STATUS_LABELS,
@@ -20,7 +20,17 @@ describe("knowledge presentation", () => {
     expect(KNOWLEDGE_SECTION_LABELS["quantity-margin"]).toBe(
       "Quantity & margin"
     );
-    expect(Object.keys(KNOWLEDGE_SECTION_LABELS)).toHaveLength(8);
+    expect(Object.keys(KNOWLEDGE_SECTION_LABELS)).toEqual([
+      "overview",
+      "pricing",
+      "quantity-margin",
+      "scope",
+      "recommendations",
+      "quality",
+      "design",
+      "execution",
+      "advanced"
+    ]);
   });
 
   it("uses the exact four-key workspace vocabulary without changing backend ownership", () => {
@@ -59,6 +69,50 @@ describe("knowledge presentation", () => {
     [Number.MAX_SAFE_INTEGER, /₹\s?9,00,71,99,25,47,409\.91/u]
   ])("formats %i paise exactly in INR", (paise, expected) => {
     expect(formatKnowledgeMoney(paise)).toMatch(expected);
+  });
+
+  it("preserves exact paise when the runtime cannot format BigInt with Intl", () => {
+    const formatDescriptor = Object.getOwnPropertyDescriptor(
+      Intl.NumberFormat.prototype,
+      "format"
+    )!;
+    const format = vi.fn<(value: number | bigint) => string>();
+    Object.defineProperty(Intl.NumberFormat.prototype, "format", {
+      ...formatDescriptor,
+      get(this: Intl.NumberFormat) {
+        const nativeFormat = formatDescriptor.get!.call(this) as (value: number | bigint) => string;
+        format.mockImplementation((value) => {
+          if (typeof value === "bigint") {
+            throw new TypeError("Cannot convert BigInt to number");
+          }
+          return nativeFormat(value);
+        });
+        return format;
+      }
+    });
+
+    try {
+      const cases = [
+        [0, "₹0.00"],
+        [1, "₹0.01"],
+        [99, "₹0.99"],
+        [100, "₹1.00"],
+        [101, "₹1.01"],
+        [12_345_678, "₹1,23,456.78"],
+        [Number.MAX_SAFE_INTEGER - 92, "₹9,00,71,99,25,47,408.99"],
+        [Number.MAX_SAFE_INTEGER - 91, "₹9,00,71,99,25,47,409.00"],
+        [Number.MAX_SAFE_INTEGER - 1, "₹9,00,71,99,25,47,409.90"],
+        [Number.MAX_SAFE_INTEGER, "₹9,00,71,99,25,47,409.91"]
+      ] as const;
+
+      for (const [paise, expected] of cases) {
+        expect(formatKnowledgeMoney(paise)).toBe(expected);
+      }
+      expect(format).toHaveBeenCalledTimes(cases.length);
+      expect(format.mock.calls.every(([value]) => typeof value === "number")).toBe(true);
+    } finally {
+      Object.defineProperty(Intl.NumberFormat.prototype, "format", formatDescriptor);
+    }
   });
 
   it("does not manufacture a date when the API value is invalid", () => {
@@ -115,9 +169,10 @@ describe("knowledge presentation", () => {
     expect(formatPaiseForRupeeInput(paise)).toBe(rupees);
   });
 
-  it.each([-1, 1.5, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1])(
+  it.each([-1, 1.5, Number.NaN, Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1])(
     "rejects invalid paise value %s",
     (paise) => {
+      expect(() => formatKnowledgeMoney(paise)).toThrow(RangeError);
       expect(() => formatPaiseForRupeeInput(paise)).toThrow(RangeError);
     }
   );

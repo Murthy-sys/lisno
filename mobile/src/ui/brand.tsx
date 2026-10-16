@@ -7,6 +7,7 @@ import {
   Image,
   StyleSheet,
   Text,
+  useWindowDimensions,
   View,
   type ImageStyle,
   type StyleProp,
@@ -14,6 +15,8 @@ import {
 } from "react-native";
 import Svg, { Circle } from "react-native-svg";
 
+import { useReducedMotion as useStartupReducedMotion } from "../features/onboarding/useReducedMotion";
+import { StartupMotif, type StartupMotifKind } from "./StartupArtwork";
 import { colors, fonts, spacing } from "./tokens";
 
 const wordmarkLight = require("../../assets/brand/wordmark-light.png");
@@ -181,6 +184,13 @@ export function BrandLoader({
   );
 }
 
+const startupMotifs: ReadonlyArray<{ kind: StartupMotifKind; x: number; y: number }> = [
+  { kind: "interior", x: 0.22, y: 0.22 },
+  { kind: "plan", x: 0.78, y: 0.22 },
+  { kind: "structure", x: 0.22, y: 0.78 },
+  { kind: "tools", x: 0.78, y: 0.78 }
+];
+
 export function StartupBrand({
   message = "Preparing your workspace",
   reducedMotion
@@ -188,52 +198,127 @@ export function StartupBrand({
   readonly message?: string;
   readonly reducedMotion?: boolean;
 }) {
-  const prefersReducedMotion = useReducedMotion(reducedMotion);
-  const reveal = useRef(new Animated.Value(prefersReducedMotion ? 1 : 0)).current;
+  const motionPreference = useStartupReducedMotion(reducedMotion);
+  const window = useWindowDimensions();
+  const [layout, setLayout] = useState<{ width: number; height: number } | null>(null);
+  const [messageHeight, setMessageHeight] = useState(0);
+  const entrances = useRef(startupMotifs.map(() => new Animated.Value(1))).current;
+  const hasAnimated = useRef(false);
+  const artworkSize = Math.max(0, Math.min(
+    360,
+    (layout?.width ?? window.width) - spacing.xl * 2,
+    (layout?.height ?? window.height) - spacing.xl * 2 - spacing.lg -
+      (messageHeight || 22 * window.fontScale)
+  ));
+  const motifSize = artworkSize * 0.36;
 
   useEffect(() => {
-    if (prefersReducedMotion) {
-      reveal.setValue(1);
+    // Unknown preferences stay still; a later preference change never replays the entrance.
+    if (motionPreference !== false || hasAnimated.current) {
+      entrances.forEach((value) => value.setValue(1));
       return;
     }
-    const animation = Animated.timing(reveal, {
-      toValue: 1,
-      duration: 520,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: true
-    });
+    hasAnimated.current = true;
+    entrances.forEach((value) => value.setValue(0));
+    const animation = Animated.parallel(entrances.map((value, index) =>
+      Animated.timing(value, {
+        toValue: 1,
+        duration: 770,
+        delay: index * 110,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+        isInteraction: false
+      })
+    ));
     animation.start();
     return () => animation.stop();
-  }, [prefersReducedMotion, reveal]);
+  }, [entrances, motionPreference]);
 
   return (
-    <View style={styles.startup} testID="startup-brand">
+    <View
+      style={styles.startup}
+      testID="startup-brand"
+      onLayout={({ nativeEvent: { layout: next } }) => {
+        setLayout((current) => current?.width === next.width && current.height === next.height
+          ? current
+          : { width: next.width, height: next.height });
+      }}
+    >
       <StatusBar style="light" />
-      <Animated.View
-        style={{
-          opacity: reveal,
-          transform: [
-            {
-              translateY: reveal.interpolate({
-                inputRange: [0, 1],
-                outputRange: [8, 0]
-              })
-            }
-          ]
-        }}
+      <View
+        testID="startup-artwork"
+        accessible={false}
+        accessibilityElementsHidden
+        importantForAccessibility="no-hide-descendants"
+        pointerEvents="none"
+        style={[styles.startupArtwork, { width: artworkSize, height: artworkSize }]}
       >
-        <LisnoWordmark tone="light" width={184} />
-      </Animated.View>
-      <BrandLoader label={message} reducedMotion={prefersReducedMotion} tone="light" />
+        {startupMotifs.map(({ kind, x, y }, index) => {
+          const entrance = entrances[index]!;
+          return (
+            <Animated.View
+              key={kind}
+              testID={`startup-motif-${kind}`}
+              style={{
+                position: "absolute",
+                left: artworkSize * x - motifSize / 2,
+                top: artworkSize * y - motifSize / 2,
+                opacity: entrance,
+                transform: [
+                  { translateX: entrance.interpolate({ inputRange: [0, 1], outputRange: [(0.5 - x) * artworkSize * 0.6, 0] }) },
+                  { translateY: entrance.interpolate({ inputRange: [0, 1], outputRange: [(0.5 - y) * artworkSize * 0.6, 0] }) },
+                  { scale: entrance.interpolate({ inputRange: [0, 1], outputRange: [0.72, 1] }) }
+                ]
+              }}
+            >
+              <StartupMotif kind={kind} size={motifSize} />
+            </Animated.View>
+          );
+        })}
+        <View style={styles.startupWordmark}>
+          <LisnoWordmark tone="light" width={artworkSize * 0.55} />
+        </View>
+      </View>
+      <View
+        accessible
+        accessibilityRole="progressbar"
+        accessibilityLabel={message}
+        accessibilityLiveRegion="polite"
+        style={styles.startupMessage}
+        onLayout={({ nativeEvent }) => setMessageHeight(nativeEvent.layout.height)}
+      >
+        <Text style={[styles.loaderLabel, styles.lightText, styles.startupMessageText]}>{message}</Text>
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   startup: {
+    flex: 1,
+    width: "100%",
     backgroundColor: colors.shell,
     alignItems: "center",
-    gap: spacing.huge
+    justifyContent: "center",
+    padding: spacing.xl,
+    gap: spacing.lg
+  },
+  startupArtwork: {
+    flexShrink: 0,
+    alignItems: "center",
+    justifyContent: "center"
+  },
+  startupWordmark: {
+    backgroundColor: colors.shell,
+    paddingVertical: spacing.xs,
+    paddingHorizontal: spacing.xs
+  },
+  startupMessage: {
+    width: "100%"
+  },
+  startupMessageText: {
+    textAlign: "center",
+    lineHeight: 22
   },
   loader: {
     alignItems: "center",

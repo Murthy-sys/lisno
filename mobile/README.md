@@ -6,7 +6,7 @@ React Native Android application for Lisno. It lives in this repository as a sib
 
 - Node.js 22 LTS (the repository `.nvmrc` pins `22`)
 - npm
-- JDK 17 and Android Studio/SDK for APK builds
+- JDK 17 and Android Studio/SDK for APK and AAB builds
 - Android API 24 or newer device/emulator
 - A reachable Lisno backend mounted at `/api/v1`
 
@@ -36,7 +36,7 @@ LISNO_APP_VARIANT=development
 LISNO_ALLOW_LOCAL_HTTP=1
 ```
 
-Only the selected profile's URL is required in development. `EXPO_PUBLIC_API_ENV` defaults to `remote`; unsupported values fail startup. Production builds require `remote` plus an HTTPS `EXPO_PUBLIC_REMOTE_API_URL` and reject Local. The app contains no backend selector or URL editor and never falls back automatically. After changing `.env.local`, stop Metro and run `npm run android` again so configuration and native development settings are rebuilt.
+Only the selected profile's URL is required in development. `EXPO_PUBLIC_API_ENV` defaults to `remote`; unsupported values fail startup. The production app variant (`LISNO_APP_VARIANT=production`) requires `remote` plus an HTTPS `EXPO_PUBLIC_REMOTE_API_URL` and rejects Local. The app contains no backend selector or URL editor and never falls back automatically. For a running development app, stop Metro and run `npm run android` again after changing `.env.local`. For a standalone APK or AAB, rebuild using the release commands below.
 
 For a local backend:
 
@@ -52,11 +52,36 @@ npm run android
 npm run typecheck
 npm test -- --runInBand
 npm run test:contracts
+node --test scripts/native-build-environment.test.mjs
 npm run doctor
 npm run export:android
 ```
 
 The app uses the development package `com.lisno.mobile.dev`. Production configuration requires an explicit approved `LISNO_ANDROID_PACKAGE`; no permanent identity is inferred. This repository does not create production signing material or publish an application.
+
+## Release APK and AAB
+
+With dependencies installed and JDK 17 and the Android SDK configured, run either command from `mobile/android/`:
+
+```bash
+./gradlew assembleRelease
+./gradlew bundleRelease
+```
+
+| Command | Output relative to `mobile/` |
+| --- | --- |
+| `./gradlew assembleRelease` | `android/app/build/outputs/apk/release/app-release.apk` |
+| `./gradlew bundleRelease` | `android/app/build/outputs/bundle/release/app-release.aab` |
+
+Gradle selects the release environment mode for Expo configuration and bundles the JavaScript/assets. No `NODE_ENV` prefix, running Metro server, or manual `clean` is required. The existing Expo dotenv precedence applies, including `.env.local` and explicit shell overrides. Changes to the relevant dotenv files or public configuration overrides invalidate the JavaScript bundle; unchanged inputs can reuse it.
+
+Run debug and release builds in separate Gradle invocations. Expo shares one generated metadata asset between variants, so a build graph requesting both is rejected instead of mixing their environment settings. The two release commands above may also run together.
+
+The service target remains the one selected in the mobile environment. A release build does not change `LISNO_APP_VARIANT`, package identity, or signing. The current release configuration uses the development certificate for QA. Play Store distribution requires a separately configured production identity and signing certificate; generating an AAB alone does not configure these.
+
+Changing native settings such as the package, permissions, or local cleartext policy still requires the established native generation workflow and review of its tracked changes. A service URL change alone does not require native regeneration.
+
+## Debug APK and device checks
 
 Generate the native Android project and build a debug APK with:
 
