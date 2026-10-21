@@ -1,11 +1,14 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { createRef } from "react";
+import { onlineManager, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import axe from "axe-core";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../../api/client";
 import { KnowledgeBasketManagementDialog } from "./KnowledgeBasketManagementDialog";
+import { KnowledgeSubBasketDeleteDialog } from "./KnowledgeSubBasketDialogs";
 import * as api from "./knowledgeApi";
+import { knowledgeQueryKeys } from "./knowledgeQueryKeys";
 import type { KnowledgeBasket, KnowledgeSubBasket, KnowledgeSubBasketDeletionImpact } from "./knowledgeTypes";
 
 vi.mock("./knowledgeApi", async (original) => ({
@@ -58,6 +61,7 @@ beforeEach(() => {
     groups = []; return { basketId: basket.id, subBasketId: group.id, deleted: true, deletedAt: timestamp, deletedMainLineIds: ["child-a", "child-b"], deletedReferenceCount: 3 };
   });
 });
+afterEach(() => { onlineManager.setOnline(true); });
 
 describe("Configuration basket management", () => {
   it("loads authoritative groups on demand and reaches empty groups on later pages", async () => {
@@ -105,6 +109,161 @@ describe("Configuration basket management", () => {
     expect(api.permanentlyDeleteKnowledgeSubBasket).toHaveBeenCalledWith(basket.id, group.id, { expectedVersion: 4, confirmationName: group.name, reason: "Duplicate group", impactToken: "impact-one" });
     expect(await screen.findByText("No Sub-Baskets have been added to this Main Basket.")).toBeVisible(); expect(screen.getByRole("status")).toHaveTextContent("was permanently deleted");
     await waitFor(() => expect(document.querySelector(".knowledge-basket-manager__results")).toHaveFocus());
+  });
+  it.each([
+    { label: "exact name", entered: "Polished stone", reviewed: "Polished stone" },
+    { label: "outer spaces", entered: "  Polished stone  ", reviewed: "Polished stone" },
+    { label: "repeated word spaces", entered: "Polished   stone", reviewed: "Polished stone" },
+    { label: "non-breaking spaces", entered: "\u00a0Polished\u00a0stone\u00a0", reviewed: "Polished stone" },
+    { label: "whitespace in the reviewed name", entered: "Polished stone", reviewed: "  Polished\u00a0  stone  " }
+  ])("accepts $label while sending the exact reviewed name and snapshot", async ({ entered, reviewed }) => {
+    const reviewedImpact = { ...impact, subBasketName: reviewed, version: 9, impactToken: "reviewed-whitespace-impact" };
+    vi.mocked(api.getKnowledgeSubBasketDeletionImpact).mockResolvedValue(reviewedImpact);
+    const user = userEvent.setup(); renderManager(); const dialog = await openDelete(user);
+    const name = await within(dialog).findByRole("textbox", { name: "Type Sub-Basket name to confirm" });
+    await user.type(name, entered);
+    await user.type(within(dialog).getByRole("textbox", { name: "Reason" }), "  Duplicate group  ");
+    expect(name).toHaveValue(entered);
+    expect(within(dialog).getByRole("button", { name: "Delete Sub-Basket" })).toBeEnabled();
+    await user.click(within(dialog).getByRole("button", { name: "Delete Sub-Basket" }));
+    await waitFor(() => expect(api.permanentlyDeleteKnowledgeSubBasket).toHaveBeenCalledExactlyOnceWith(basket.id, group.id, {
+      expectedVersion: 9, confirmationName: reviewed, reason: "Duplicate group", impactToken: "reviewed-whitespace-impact"
+    }));
+  });
+  it.each([
+    ["different capitalization", "polished stone"],
+    ["missing word separator", "Polishedstone"],
+    ["different name", "Polished tile"],
+    ["changed punctuation", "Polished-stone"],
+    ["zero-width character", "Polished\u200b stone"],
+    ["non-whitespace lookalike", "\uff30olished stone"],
+    ["blank", ""],
+    ["whitespace only", " \u00a0 "]
+  ])("explains a %s mismatch after blur and recovers on correction", async (_label, entered) => {
+    const user = userEvent.setup(); renderManager(); const dialog = await openDelete(user);
+    const name = await within(dialog).findByRole("textbox", { name: "Type Sub-Basket name to confirm" });
+    const mismatch = "Enter the displayed Sub-Basket name with matching capitalization.";
+    expect(name).not.toHaveAttribute("aria-invalid");
+    expect(within(dialog).queryByText(mismatch)).not.toBeInTheDocument();
+    await user.click(name);
+    if (entered) await user.type(name, entered);
+    expect(within(dialog).queryByText(mismatch)).not.toBeInTheDocument();
+    await user.tab();
+    expect(within(dialog).getByText(mismatch)).toBeVisible();
+    expect(name).toHaveAttribute("aria-invalid", "true");
+    expect(name).toHaveAccessibleDescription(expect.stringContaining(mismatch));
+    await user.type(within(dialog).getByRole("textbox", { name: "Reason" }), "Duplicate group");
+    expect(within(dialog).getByRole("button", { name: "Delete Sub-Basket" })).toBeDisabled();
+    expect(api.permanentlyDeleteKnowledgeSubBasket).not.toHaveBeenCalled();
+    await user.clear(name);
+    await user.type(name, group.name);
+    expect(name).not.toHaveAttribute("aria-invalid");
+    expect(within(dialog).queryByText(mismatch)).not.toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Delete Sub-Basket" })).toBeEnabled();
+    expect(api.permanentlyDeleteKnowledgeSubBasket).not.toHaveBeenCalled();
+  });
+  it("associates a whitespace-only reason error after blur and clears it on correction", async () => {
+    const user = userEvent.setup(); renderManager(); const dialog = await openDelete(user);
+    await user.type(await within(dialog).findByRole("textbox", { name: "Type Sub-Basket name to confirm" }), group.name);
+    const reason = within(dialog).getByRole("textbox", { name: "Reason" });
+    const message = "Enter a reason for this permanent deletion.";
+    expect(reason).not.toHaveAttribute("aria-invalid");
+    await user.type(reason, " \u00a0 ");
+    expect(within(dialog).queryByText(message)).not.toBeInTheDocument();
+    await user.tab();
+    expect(reason).toHaveAttribute("aria-invalid", "true");
+    expect(reason).toHaveAccessibleDescription(expect.stringContaining(message));
+    expect(within(dialog).getByRole("button", { name: "Delete Sub-Basket" })).toBeDisabled();
+    expect(api.permanentlyDeleteKnowledgeSubBasket).not.toHaveBeenCalled();
+    await user.type(reason, "Duplicate group");
+    expect(reason).not.toHaveAttribute("aria-invalid");
+    expect(within(dialog).queryByText(message)).not.toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Delete Sub-Basket" })).toBeEnabled();
+  });
+  it("explains a cached preview refresh and restores unchanged confirmation when it finishes", async () => {
+    const user = userEvent.setup(); const { queryClient } = renderManager(); const dialog = await openDelete(user);
+    const name = await within(dialog).findByRole("textbox", { name: "Type Sub-Basket name to confirm" });
+    await user.type(name, group.name);
+    await user.type(within(dialog).getByRole("textbox", { name: "Reason" }), "Duplicate group");
+    let finishRefresh!: (value: KnowledgeSubBasketDeletionImpact) => void;
+    vi.mocked(api.getKnowledgeSubBasketDeletionImpact).mockImplementationOnce(() => new Promise((resolve) => { finishRefresh = resolve; }));
+    let refresh!: Promise<void>;
+    act(() => { refresh = queryClient.refetchQueries({ queryKey: knowledgeQueryKeys.subBasketDeletionImpact(basket.id, group.id) }); });
+    await waitFor(() => expect(within(dialog).getByRole("status")).toHaveTextContent("Checking the latest deletion impact"));
+    expect(name).toHaveValue(group.name);
+    expect(name).toBeDisabled();
+    expect(within(dialog).getByRole("button", { name: "Delete Sub-Basket" })).toBeDisabled();
+    expect(api.permanentlyDeleteKnowledgeSubBasket).not.toHaveBeenCalled();
+    await act(async () => { finishRefresh(impact); await refresh; });
+    await waitFor(() => expect(within(dialog).getByRole("button", { name: "Delete Sub-Basket" })).toBeEnabled());
+    expect(name).toHaveValue(group.name);
+    expect(within(dialog).queryByText(/Checking the latest deletion impact/)).not.toBeInTheDocument();
+  });
+  it("blocks a paused cached preview with recovery guidance until reconnection completes the check", async () => {
+    const user = userEvent.setup(); const view = renderManager(); const dialog = await openDelete(user);
+    const name = await within(dialog).findByRole("textbox", { name: "Type Sub-Basket name to confirm" });
+    await user.type(name, group.name);
+    await user.type(within(dialog).getByRole("textbox", { name: "Reason" }), "Duplicate group");
+    try {
+      act(() => { onlineManager.setOnline(false); });
+      act(() => { void view.queryClient.refetchQueries({ queryKey: knowledgeQueryKeys.subBasketDeletionImpact(basket.id, group.id) }); });
+      await waitFor(() => expect(within(dialog).getByRole("status")).toHaveTextContent(/paused while offline/));
+      expect(within(dialog).getByRole("button", { name: "Retry impact check" })).toBeEnabled();
+      expect(name).toBeDisabled();
+      expect(within(dialog).getByRole("button", { name: "Delete Sub-Basket" })).toBeDisabled();
+      expect(api.permanentlyDeleteKnowledgeSubBasket).not.toHaveBeenCalled();
+      act(() => { onlineManager.setOnline(true); });
+      await waitFor(() => expect(api.getKnowledgeSubBasketDeletionImpact).toHaveBeenCalledTimes(2));
+      await waitFor(() => expect(within(dialog).getByRole("button", { name: "Delete Sub-Basket" })).toBeEnabled());
+      expect(name).toHaveValue(group.name);
+      expect(within(dialog).queryByText(/paused while offline/)).not.toBeInTheDocument();
+    } finally {
+      view.unmount(); view.queryClient.clear(); onlineManager.setOnline(true);
+    }
+  });
+  it.each([
+    { label: "version", update: { version: 5 } },
+    { label: "token", update: { impactToken: "updated-impact" } }
+  ])("requires reconfirmation when only the reviewed $label changes", async ({ update }) => {
+    const user = userEvent.setup(); const { queryClient } = renderManager(); const dialog = await openDelete(user);
+    const name = await within(dialog).findByRole("textbox", { name: "Type Sub-Basket name to confirm" });
+    await user.type(name, group.name);
+    await user.type(within(dialog).getByRole("textbox", { name: "Reason" }), "Duplicate group");
+    vi.mocked(api.getKnowledgeSubBasketDeletionImpact).mockResolvedValue({ ...impact, ...update });
+    await act(async () => { await queryClient.refetchQueries({ queryKey: knowledgeQueryKeys.subBasketDeletionImpact(basket.id, group.id) }); });
+    await waitFor(() => expect(name).toHaveValue(""));
+    expect(within(dialog).getByText("Deletion impact changed")).toBeVisible();
+    expect(name).not.toHaveAttribute("aria-invalid");
+    expect(within(dialog).getByRole("textbox", { name: "Reason" })).toHaveValue("Duplicate group");
+    expect(within(dialog).getByRole("button", { name: "Delete Sub-Basket" })).toBeDisabled();
+    expect(api.permanentlyDeleteKnowledgeSubBasket).not.toHaveBeenCalled();
+  });
+  it("clears confirmation when the target changes even if version and token are unchanged", async () => {
+    const user = userEvent.setup();
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const otherGroup = { ...group, id: "other-group", name: "Porcelain tile" };
+    const fallbackFocusRef = createRef<HTMLElement>();
+    const onDeleted = vi.fn(); const onClose = vi.fn();
+    vi.mocked(api.getKnowledgeSubBasketDeletionImpact).mockImplementation(async (_basketId, subBasketId) => ({
+      ...impact, subBasketId, subBasketName: subBasketId === group.id ? group.name : otherGroup.name
+    }));
+    const content = (target: KnowledgeSubBasket) => <QueryClientProvider client={queryClient}>
+      <KnowledgeSubBasketDeleteDialog basket={basket} subBasket={target} fallbackFocusRef={fallbackFocusRef} onClose={onClose} onDeleted={onDeleted} />
+    </QueryClientProvider>;
+    const view = render(content(group));
+    const dialog = await screen.findByRole("alertdialog", { name: "Delete Sub-Basket?" });
+    await user.type(await within(dialog).findByRole("textbox", { name: "Type Sub-Basket name to confirm" }), group.name);
+    await user.type(within(dialog).getByRole("textbox", { name: "Reason" }), "Duplicate group");
+    expect(within(dialog).getByRole("button", { name: "Delete Sub-Basket" })).toBeEnabled();
+    act(() => { queryClient.setQueryData(knowledgeQueryKeys.subBasketDeletionImpact(basket.id, otherGroup.id), {
+      ...impact, subBasketId: otherGroup.id, subBasketName: otherGroup.name
+    }); });
+    view.rerender(content(otherGroup));
+    await waitFor(() => expect(dialog).toHaveAccessibleDescription(expect.stringContaining(otherGroup.name)));
+    expect(await within(dialog).findByRole("textbox", { name: "Type Sub-Basket name to confirm" })).toHaveValue("");
+    expect(within(dialog).getByRole("textbox", { name: "Reason" })).toHaveValue("Duplicate group");
+    expect(within(dialog).getByRole("button", { name: "Delete Sub-Basket" })).toBeDisabled();
+    expect(api.permanentlyDeleteKnowledgeSubBasket).not.toHaveBeenCalled();
   });
   it("clears exact-name confirmation after changed impact and never auto-retries", async () => {
     const user = userEvent.setup(); vi.mocked(api.permanentlyDeleteKnowledgeSubBasket).mockRejectedValueOnce(new ApiError(409, "DELETION_IMPACT_CHANGED", "References changed."));
