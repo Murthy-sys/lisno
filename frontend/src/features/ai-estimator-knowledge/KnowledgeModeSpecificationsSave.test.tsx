@@ -268,8 +268,8 @@ describe("Knowledge Mode Specifications save integration", () => {
     renderPanel(ref);
 
     await openSpecificationEditor(user);
-    const brandSelect = screen.getByRole("combobox", { name: "Brand name" });
-    await user.selectOptions(brandSelect, screen.getByRole("option", { name: "Add brand" }));
+    await user.click(screen.getByRole("button", { name: "Brands" }));
+    await user.click(screen.getByRole("button", { name: "Add brand" }));
     const brandDialog = await screen.findByRole("dialog", { name: "Add Brand" });
     await user.type(within(brandDialog).getByRole("textbox", { name: "Brand name" }), "Century Green");
     await user.click(within(brandDialog).getByRole("button", { name: "Add" }));
@@ -416,7 +416,7 @@ describe("Knowledge Mode Specifications save integration", () => {
     await user.type(description, "Local guidance");
     await act(async () => { expect(await ref.current?.save()).toBe(false); });
     await user.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Keep editing" }));
-    expect(screen.getByRole("combobox", { name: "Brand name" })).toHaveDisplayValue("Hettich");
+    expect(screen.getByRole("button", { name: "Brands" })).toHaveTextContent("Hettich");
     expect(screen.getByRole("textbox", { name: "Brief description" })).toHaveValue("Local guidance");
 
     await act(async () => { expect(await ref.current?.save()).toBe(true); });
@@ -468,14 +468,15 @@ describe("Knowledge Mode Specifications save integration", () => {
     renderPanel(ref);
 
     await openSpecificationEditor(user);
-    const brandSelect = screen.getByRole("combobox", { name: "Brand name" });
-    await user.selectOptions(brandSelect, screen.getByRole("option", { name: "Add brand" }));
+    await user.click(screen.getByRole("button", { name: "Brands" }));
+    await user.click(screen.getByRole("button", { name: "Add brand" }));
     const addBrand = await screen.findByRole("dialog", { name: "Add Brand" });
     await user.type(within(addBrand).getByRole("textbox", { name: "Brand name" }), "Local Blum");
     await user.click(within(addBrand).getByRole("button", { name: "Add" }));
     await act(async () => { expect(await ref.current?.save()).toBe(false); });
     await user.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Keep editing" }));
-    expect(screen.getByRole("combobox", { name: "Brand name" })).toHaveDisplayValue("Local Blum");
+    expect(screen.getByRole("button", { name: "Brands" })).toHaveTextContent("Century Green");
+    expect(screen.getByRole("button", { name: "Brands" })).toHaveTextContent("Local Blum");
     expect(screen.queryByRole("region", { name: "Brands" })).not.toBeInTheDocument();
 
     await act(async () => { expect(await ref.current?.save()).toBe(true); });
@@ -489,7 +490,7 @@ describe("Knowledge Mode Specifications save integration", () => {
     expect(retriedPayload.specifications).toEqual([{
       id: "spec-panel-grade",
       name: "Plywood",
-      brandId: retriedBrands[2]?.id
+      brandIds: ["brand-century", retriedBrands[2]?.id]
     }]);
   });
 
@@ -530,8 +531,9 @@ describe("Knowledge Mode Specifications save integration", () => {
     renderPanel(ref);
 
     await openSpecificationEditor(user);
-    const brandSelect = screen.getByRole("combobox", { name: "Brand name" });
-    await user.selectOptions(brandSelect, screen.getByRole("option", { name: "Add brand" }));
+    const brandSelect = screen.getByRole("button", { name: "Brands" });
+    await user.click(screen.getByRole("button", { name: "Brands" }));
+    await user.click(screen.getByRole("button", { name: "Add brand" }));
     const addBrand = await screen.findByRole("dialog", { name: "Add Brand" });
     await user.type(within(addBrand).getByRole("textbox", { name: "Brand name" }), "Blum");
     await user.click(within(addBrand).getByRole("button", { name: "Add" }));
@@ -539,11 +541,12 @@ describe("Knowledge Mode Specifications save integration", () => {
     await act(async () => { expect(await ref.current?.save()).toBe(false); });
     await user.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Keep editing" }));
 
-    expect(brandSelect).toHaveAccessibleDescription("Brand names must be unique.");
+    expect(brandSelect).toHaveAccessibleDescription(expect.stringContaining("Brand names must be unique."));
     await act(async () => { expect(await ref.current?.save()).toBe(false); });
     expect(knowledgeApi.updateKnowledgeSection).toHaveBeenCalledTimes(1);
 
-    await user.selectOptions(brandSelect, screen.getByRole("option", { name: "Edit selected brand" }));
+    await user.click(screen.getByRole("button", { name: "Brands" }));
+    await user.click(screen.getByRole("button", { name: "Edit Blum" }));
     const editBrand = await screen.findByRole("dialog", { name: "Edit Brand" });
     const brandName = within(editBrand).getByRole("textbox", { name: "Brand name" });
     expect(brandName).toHaveValue("Blum");
@@ -562,7 +565,7 @@ describe("Knowledge Mode Specifications save integration", () => {
     expect(retriedPayload.specifications).toEqual([{
       id: "spec-panel-grade",
       name: "Plywood",
-      brandId: retriedBrands[2]?.id
+      brandIds: ["brand-century", retriedBrands[2]?.id]
     }]);
   });
 
@@ -870,4 +873,84 @@ describe("Knowledge Mode Specifications save integration", () => {
       expect(call[3].payload.priceEntries).toEqual([{ operation: "reference", priceEntryId: "price-entry-vendor-lifecycle", priceVersionId: "price-version-vendor-lifecycle" }]);
     }
   });
+
+  it.each<{ title: string; baseline: KnowledgeJsonObject; server: KnowledgeJsonObject; action: string; expected: KnowledgeJsonObject }>([
+    { title: "local legacy-to-list over a server single selection", baseline: { brandId: "brand-century" }, server: { brandId: "brand-hettich" }, action: "add", expected: { brandIds: ["brand-century", "brand-hettich"] } },
+    { title: "local list-to-legacy over a server list", baseline: { brandIds: ["brand-century", "brand-hettich"] }, server: { brandIds: ["brand-hettich", "brand-century"] }, action: "remove", expected: { brandId: "brand-century" } },
+    { title: "server list with a local descriptive edit", baseline: { brandId: "brand-century" }, server: { brandIds: ["brand-century", "brand-hettich"] }, action: "description", expected: { brandIds: ["brand-century", "brand-hettich"] } },
+    { title: "local cleared list over a server single selection", baseline: { brandIds: ["brand-century", "brand-hettich"] }, server: { brandId: "brand-hettich" }, action: "clear", expected: {} }
+  ])("merges associations as one field: $title", async ({ baseline, server, action, expected }) => {
+    const user = userEvent.setup();
+    let pricingReads = 0;
+    vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_line, _revision, sectionKey) => {
+      if (sectionKey !== "pricing") return section(sectionKey as "advanced" | "quantity-margin", {});
+      pricingReads += 1;
+      return { ...section("pricing", {
+        specifications: [{ id: "spec-panel-grade", name: "Plywood", description: "Saved", ...(pricingReads === 1 ? baseline : server) }],
+        brands: [{ id: "brand-century", name: "Century Green" }, { id: "brand-hettich", name: "Hettich" }],
+        priceEntries: []
+      }), version: pricingReads === 1 ? 12 : 13 };
+    });
+    let updateAttempts = 0;
+    vi.mocked(knowledgeApi.updateKnowledgeSection).mockImplementation(async (_line, _revision, sectionKey, input) => {
+      updateAttempts += 1;
+      if (updateAttempts === 1) throw new ApiError(409, "VERSION_CONFLICT", "Changed elsewhere.");
+      return savedSection(sectionKey as "pricing", input, 8);
+    });
+    const ref = createRef<KnowledgeModePanelHandle>();
+    renderPanel(ref);
+    await openSpecificationEditor(user);
+    if (action === "add") {
+      await user.click(screen.getByRole("button", { name: "Brands" }));
+      await user.click(screen.getByRole("option", { name: "Hettich" }));
+      await user.keyboard("{Escape}");
+    } else if (action === "remove" || action === "clear") {
+      await user.click(screen.getByRole("button", { name: "Brands" }));
+      await user.click(screen.getByRole("option", { name: action === "remove" ? "Hettich" : "Not configured" }));
+      await user.keyboard("{Escape}");
+    }
+    else await user.type(screen.getByRole("textbox", { name: "Brief description" }), " local");
+    await act(async () => { expect(await ref.current?.save()).toBe(false); });
+    await user.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Keep editing" }));
+    // A subsequent edit must not reconstruct stale singular/list fields in pending state.
+    await user.type(screen.getByRole("textbox", { name: "Brief description" }), " reviewed");
+    await act(async () => { expect(await ref.current?.save()).toBe(true); });
+    const payload = vi.mocked(knowledgeApi.updateKnowledgeSection).mock.calls[1]?.[3].payload;
+    expect(payload?.specifications).toEqual([{
+      id: "spec-panel-grade", name: "Plywood", description: action === "description" ? "Saved local reviewed" : "Saved reviewed", ...expected
+    }]);
+    expect(vi.mocked(knowledgeApi.updateKnowledgeSection).mock.calls[1]?.[3].expectedVersion).toBe(13);
+  });
+
+  it("persists all selected brand IDs through Save Mode and a fresh query-client reload", async () => {
+    const user = userEvent.setup();
+    let persisted: KnowledgeJsonObject = {
+      specifications: [{ id: "spec-panel-grade", name: "Plywood", type: "text", value: "A1", options: [] }],
+      brands: [{ id: "brand-century", name: "Century Green" }, { id: "brand-hettich", name: "Hettich" }],
+      priceEntries: []
+    };
+    vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_line, _revision, key) => section(key as "advanced" | "pricing" | "quantity-margin", key === "pricing" ? persisted : {}));
+    vi.mocked(knowledgeApi.updateKnowledgeSection).mockImplementation(async (_line, _revision, key, input) => {
+      persisted = input.payload;
+      return savedSection(key as "pricing", input, 8);
+    });
+    const ref = createRef<KnowledgeModePanelHandle>();
+    const mounted = renderPanel(ref);
+    await openSpecificationEditor(user);
+    await user.click(screen.getByRole("button", { name: "Brands" }));
+    await user.click(screen.getByRole("option", { name: "Century Green" }));
+    await user.click(screen.getByRole("option", { name: "Hettich" }));
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    await act(async () => { expect(await ref.current?.save()).toBe(true); });
+    expect(persisted.specifications).toEqual([{ id: "spec-panel-grade", name: "Plywood", type: "text", value: "A1", options: [], brandIds: ["brand-century", "brand-hettich"] }]);
+    mounted.unmount();
+    renderPanel(createRef<KnowledgeModePanelHandle>());
+    await openSpecificationEditor(user);
+    const selections = screen.getByRole("button", { name: "Brands" });
+    expect(selections).toHaveTextContent("Century Green");
+    expect(selections).toHaveTextContent("Hettich");
+    expect(screen.getByText("Saved")).toBeInTheDocument();
+  });
+
 });

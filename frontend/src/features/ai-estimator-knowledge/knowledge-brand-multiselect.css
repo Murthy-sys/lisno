@@ -1,0 +1,80 @@
+.knowledge-brand-multiselect {
+  min-inline-size: 0;
+  color: var(--role-ink, var(--color-text));
+}
+
+.knowledge-brand-multiselect__trigger {
+  min-inline-size: 0;
+  padding-block: var(--space-1);
+  text-align: start;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  transition: none;
+}
+
+.knowledge-brand-multiselect__popup {
+  margin-block-start: 6px;
+  padding: var(--space-2);
+  border: 1px solid var(--role-line-strong, var(--color-border-strong));
+  border-radius: var(--radius-field);
+  background: var(--role-deck, var(--color-surface));
+}
+
+.knowledge-brand-multiselect__search {
+  display: grid;
+  gap: 4px;
+  font-size: var(--text-sm);
+}
+
+.knowledge-brand-multiselect__options {
+  max-block-size: min(15rem, 40dvh);
+  margin-block-start: var(--space-2);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.knowledge-brand-multiselect__option,
+.knowledge-brand-multiselect__action {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  inline-size: 100%;
+  min-block-size: 44px;
+  padding: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: var(--text-sm);
+  text-align: start;
+  overflow-wrap: anywhere;
+}
+
+.knowledge-brand-multiselect__option[aria-selected="true"] {
+  background: var(--role-deck-tint, var(--color-surface-subtle));
+  border-color: var(--role-line, var(--color-border));
+}
+
+.knowledge-brand-multiselect__check {
+  display: grid;
+  place-items: center;
+  flex: 0 0 18px;
+  block-size: 18px;
+  border: 1px solid var(--role-line-strong, var(--color-border-strong));
+  font-size: 13px;
+}
+
+.knowledge-brand-multiselect__actions {
+  margin-block-start: var(--space-1);
+  padding-block-start: var(--space-1);
+  border-block-start: 1px solid var(--role-line, var(--color-border));
+}
+
+.knowledge-brand-multiselect__action:disabled { color: var(--role-ink-muted, var(--color-text-muted)); cursor: not-allowed; }
+.knowledge-brand-multiselect__empty { margin: 8px 0; font-size: var(--text-sm); }
+.knowledge-brand-multiselect :is(button, input):focus-visible,
+.knowledge-brand-multiselect:focus-visible {
+  outline: 2px solid var(--role-focus, var(--button-primary-bg));
+  outline-offset: 2px;
+  box-shadow: none;
+}

@@ -70,6 +70,8 @@
 .knowledge-recommendations__table thead th:nth-child(5) { width: auto; }
 .knowledge-recommendations__table thead th:nth-child(6) { width: 13%; }
 .knowledge-recommendations__table :is(td, th):last-child { width: 34px; padding-inline: 3px; }
+.knowledge-recommendations__table tbody tr[draggable="true"] { cursor: grab; }
+.knowledge-recommendations__table tbody tr[draggable="true"]:active { cursor: grabbing; }
 .knowledge-recommendations__table tbody tr:hover { background: color-mix(in srgb, var(--recommendation-tint) 55%, var(--color-surface)); }
 .knowledge-recommendations__item { font-weight: 500; }
 .knowledge-recommendations__item > button { display: block; padding: 0; border: 0; background: none; color: var(--color-text); font: inherit; font-weight: 650; text-align: start; line-height: 1.5; cursor: pointer; overflow-wrap: anywhere; }
@@ -87,14 +89,24 @@
 .knowledge-recommendations__other > summary::-webkit-details-marker { display: none; }
 .knowledge-recommendations__other > summary > svg { width: 14px; height: 14px; }
 .knowledge-recommendations__other[open] > summary > svg { transform: rotate(180deg); }
+.knowledge-recommendations__group,
+.knowledge-recommendations__other > summary { position: relative; }
+.knowledge-recommendations__drop-target { outline: 2px solid var(--color-text-muted); outline-offset: 2px; }
+/* Hints must never move a destination underneath an ongoing native drag. */
+.knowledge-recommendations__drop-hint { position: absolute; inset-inline-start: 12px; inset-block-end: 8px; z-index: 2; inline-size: max-content; max-inline-size: calc(100% - 24px); margin: 0; padding: 7px 12px; border: 1px solid var(--color-border-strong); background: var(--color-surface); color: var(--color-text); font-size: 11px; font-weight: 400; line-height: 1.5; pointer-events: none; }
+.knowledge-recommendations__other > summary > .knowledge-recommendations__drop-hint { inset-block-start: 100%; inset-block-end: auto; inset-inline-start: 0; max-inline-size: 100%; }
+.knowledge-recommendations__move-notice { margin: 0; padding: 8px 12px; border: 1px solid var(--color-border); color: var(--color-text); font-size: 12px; line-height: 1.5; }
+.knowledge-recommendations__move-notice--error { border-color: var(--button-negative-border); color: var(--button-negative-ink); }
 .knowledge-recommendations__menu { position: relative; }
 .knowledge-recommendations__menu > summary { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 4px; cursor: pointer; list-style: none; }
 .knowledge-recommendations__menu > summary::-webkit-details-marker { display: none; }
 .knowledge-recommendations__menu > summary > svg { width: 15px; height: 15px; }
 .knowledge-recommendations__menu[open] > summary { background: var(--color-surface-subtle); }
-.knowledge-recommendations__menu-items { position: absolute; inset-inline-end: 0; inset-block-start: 30px; z-index: 8; display: grid; min-inline-size: 150px; padding: 4px; border: 1px solid var(--color-border-strong); border-radius: 6px; background: var(--color-surface); box-shadow: 0 8px 24px rgb(0 0 0 / 12%); }
+.knowledge-recommendations__menu-items { position: absolute; inset-inline-end: 0; inset-block-start: 30px; z-index: 8; display: grid; inline-size: max-content; min-inline-size: 150px; max-inline-size: min(280px, calc(100vw - 48px)); padding: 4px; border: 1px solid var(--color-border-strong); border-radius: 6px; background: var(--color-surface); box-shadow: 0 8px 24px rgb(0 0 0 / 12%); }
 .knowledge-recommendations__menu-items > button { min-block-size: 36px; padding: 7px 10px; border: 0; border-radius: 3px; background: transparent; color: var(--color-text); font: inherit; font-size: 12px; text-align: start; cursor: pointer; }
 .knowledge-recommendations__menu-items > button:hover { background: var(--color-surface-subtle); }
+.knowledge-recommendations__menu-items > .knowledge-recommendations__move-first { border-block-start: 1px solid var(--color-border); border-radius: 0; }
+.knowledge-recommendations__move-blocked { margin: 0; padding: 7px 10px; max-inline-size: 240px; color: var(--color-text-muted); font-size: 11px; line-height: 1.5; }
 /* The negative "Remove rule" entry stays a full-width menu row: red ink and a 1px red outline sized to the row. */
 .knowledge-recommendations__menu-items > button.ui-button.ui-button--destructive-outline,
 .ui-app-shell[data-role] .knowledge-page .knowledge-recommendations__menu-items > button.ui-button.ui-button--destructive-outline { display: block; inline-size: 100%; max-inline-size: 100%; min-block-size: 36px; margin-block-start: 2px; padding: 7px 10px; border: 1px solid var(--button-negative-border); border-radius: 3px; background: transparent; color: var(--button-negative-ink); font: inherit; font-size: 12px; line-height: inherit; text-align: start; white-space: normal; }

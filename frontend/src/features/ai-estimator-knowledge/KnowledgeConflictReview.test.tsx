@@ -5,6 +5,20 @@ import { describe, expect, it } from "vitest";
 import { KnowledgeConflictReview } from "./KnowledgeConflictReview";
 
 describe("KnowledgeConflictReview Budgeting projection", () => {
+  it("renders all selected Brands with unavailable references in the accessible server review", async () => {
+    const { container } = render(<KnowledgeConflictReview sectionKey="pricing" localVersion={2} serverVersion={3}
+      payload={{ brands: [{ id: "private-z", name: "Zinc" }, { id: "private-a", name: "Amber renamed" },
+        { id: "private-duplicate", name: "First duplicate" }, { id: "private-duplicate", name: "Second duplicate" },
+        { id: "other-line", name: "Missing brand" }],
+        specifications: [{ id: "private-spec", name: "Paint", brandIds: ["private-z", "private-a", "private-missing", "private-duplicate"] }] }}
+      masters={{}} relationshipBaskets={[]} relationshipItems={[]} />);
+    const review = screen.getByRole("region", { name: "Latest Budgeting server version" });
+    expect(review).toHaveTextContent("Item 1 · BrandsZinc, Amber renamed, Unavailable brand, Unavailable brand");
+    expect(review).not.toHaveTextContent(/private|First duplicate|Second duplicate|Missing brand/iu);
+    const accessibility = await axe.run(container, { rules: { "color-contrast": { enabled: false } } });
+    expect(accessibility.violations).toEqual([]);
+  });
+
   it("shows a whole Sub-Basket recommendation without exposing nullable target IDs", () => {
     render(<KnowledgeConflictReview sectionKey="recommendations" localVersion={2} serverVersion={3}
       payload={{ budgetAlterations: [{ id: "private-rule", trigger: "added", action: "add", requirement: "must",

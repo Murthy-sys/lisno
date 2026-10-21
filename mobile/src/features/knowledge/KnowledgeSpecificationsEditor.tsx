@@ -4,7 +4,7 @@ import { colors, fonts } from "../../ui/tokens";
 import { Button, Field, IconButton } from "./knowledgeDetailUi";
 import { knowledgeRowId } from "../../../../shared/knowledge/knowledgeId";
 import type { KnowledgeJsonObject } from "../../../../shared/knowledge/knowledgeTypes";
-import { KNOWLEDGE_MAX_BRANDS, KNOWLEDGE_MAX_SPECIFICATIONS, parseKnowledgeSpecifications, referencedSpecificationIds, validateKnowledgeBrands } from "../../../../shared/knowledge/knowledgeSpecificationConfiguration";
+import { KNOWLEDGE_MAX_BRANDS, KNOWLEDGE_MAX_SPECIFICATIONS, parseKnowledgeSpecifications, readSpecificationBrandIds, referencedSpecificationIds, serializeSpecificationBrandIds, validateKnowledgeBrands, validateSpecificationBrandAssociation } from "../../../../shared/knowledge/knowledgeSpecificationConfiguration";
 import { KnowledgeCard, KnowledgeModal, KnowledgeSelect, KnowledgeText } from "./knowledgeDetailUi";
 import { isKnowledgeObject, knowledgeText, patchKnowledgeRow } from "./knowledgeModeNativeModel";
 
@@ -13,6 +13,16 @@ interface Props {
   readonly onChange: (payload: KnowledgeJsonObject) => void;
   readonly readOnly: boolean;
   readonly protectedIds?: readonly string[];
+}
+
+function withSingleBrand(row: KnowledgeJsonObject, id: string): KnowledgeJsonObject {
+  const { brandId: _brandId, brandIds: _brandIds, ...rest } = row;
+  return { ...rest, ...serializeSpecificationBrandIds(id ? [id] : []) };
+}
+
+// Even an invalid mixed-format row must protect every reference until repaired.
+function referencesBrand(row: KnowledgeJsonObject, id: string): boolean {
+  return row.brandId === id || (Array.isArray(row.brandIds) && row.brandIds.includes(id));
 }
 
 export function KnowledgeSpecificationsEditor({ payload, onChange, readOnly, protectedIds = [] }: Props) {
@@ -31,13 +41,23 @@ export function KnowledgeSpecificationsEditor({ payload, onChange, readOnly, pro
   const issue = (path: string) => issues.find(entry => entry.path === path)?.message;
   const specIndex = specifications.findIndex(row => isKnowledgeObject(row) && row.id === editing);
   const brandIndex = brands.findIndex(row => isKnowledgeObject(row) && row.id === brandEditor);
+  const selectedBrandIds = isKnowledgeObject(selected) ? readSpecificationBrandIds(selected) : [];
+  const brandSelectionManagedOnWeb = isKnowledgeObject(selected) && (selectedBrandIds.length > 1 || validateSpecificationBrandAssociation(selected).length > 0);
+  const brandLabels = (row: KnowledgeJsonObject) => {
+    const ids = readSpecificationBrandIds(row);
+    return ids.length ? ids.map(id => {
+      const matches = id ? brandRows.filter(entry => entry.id === id) : [];
+      return matches.length === 1 ? knowledgeText(matches[0]?.name).trim() || "Unavailable Brand" : "Unavailable Brand";
+    }).join(", ") : "Not configured";
+  };
+  const brandReferenced = (id: string) => specifications.some(row => isKnowledgeObject(row) && referencesBrand(row, id));
 
   function add(kind: "brands" | "specifications") {
-    if (readOnly) return;
+    if (readOnly || (kind === "brands" && brandSelectionManagedOnWeb)) return;
     const id = knowledgeRowId();
     const rows = kind === "brands" ? brands : specifications;
     if (rows.length >= (kind === "brands" ? KNOWLEDGE_MAX_BRANDS : KNOWLEDGE_MAX_SPECIFICATIONS)) return;
-    onChange({ ...payload, [kind]: [...rows, { id, name: "" }], ...(kind === "brands" && editing ? { specifications: specifications.map(row => isKnowledgeObject(row) && row.id === editing ? { ...row, brandId: id } : row) } : {}) });
+    onChange({ ...payload, [kind]: [...rows, { id, name: "" }], ...(kind === "brands" && editing ? { specifications: specifications.map(row => isKnowledgeObject(row) && row.id === editing ? withSingleBrand(row, id) : row) } : {}) });
     if (kind === "specifications") setEditing(id);
     else setBrandEditor(id);
   }
@@ -50,7 +70,7 @@ export function KnowledgeSpecificationsEditor({ payload, onChange, readOnly, pro
       <View style={styles.itemHeading}>
         <View style={styles.itemSummary}>
           <Text style={styles.itemName}>{index + 1}. {knowledgeText(row.name) || "Item not named"}</Text>
-          <KnowledgeText>Brand: {brandRows.find(entry => entry.id === row.brandId)?.name as string || (row.brandId ? "Unavailable Brand" : "Not configured")}</KnowledgeText>
+          <KnowledgeText>Brands: {brandLabels(row)}</KnowledgeText>
         </View>
         <View style={styles.actions}>
           <IconButton label={`${readOnly ? "View" : "Edit"} Specification ${index + 1}`} icon={readOnly ? "right" : "edit"} variant="quiet" onPress={() => setEditing(knowledgeText(row.id))} />
@@ -62,24 +82,26 @@ export function KnowledgeSpecificationsEditor({ payload, onChange, readOnly, pro
       {["type", "options", "value"].some(key => Object.hasOwn(row, key)) ? <KnowledgeText>Legacy typed fields are retained with this Specification.</KnowledgeText> : null}
     </View> : <KnowledgeText key={index} error>Saved Specification {index + 1} cannot be edited safely. Its data is retained.</KnowledgeText>)}
     <View style={styles.brands}>
-      <View style={styles.itemHeading}><Text accessibilityRole="header" style={[styles.sectionTitle, styles.itemSummary]}>Brands</Text>{!readOnly ? <IconButton label="Add Brand" icon="add" variant="quiet" disabled={brands.length >= KNOWLEDGE_MAX_BRANDS} onPress={() => add("brands")} /> : null}</View>
+      <View style={styles.itemHeading}><Text accessibilityRole="header" style={[styles.sectionTitle, styles.itemSummary]}>Brands</Text>{!readOnly ? <IconButton label="Add Brand" icon="add" variant="quiet" disabled={brands.length >= KNOWLEDGE_MAX_BRANDS || brandSelectionManagedOnWeb} onPress={() => add("brands")} /> : null}</View>
       {!brands.length ? <KnowledgeText>No Brands configured.</KnowledgeText> : null}
       {brandRows.map((row, index) => <View key={`${knowledgeText(row.id)}:${index}`} style={styles.brandRow}>
         <Text style={[styles.itemName, styles.itemSummary]}>{knowledgeText(row.name) || "Brand not named"}</Text>
         <View style={styles.actions}><IconButton label={`${readOnly ? "View" : "Edit"} Brand ${index + 1}`} icon={readOnly ? "right" : "edit"} variant="quiet" onPress={() => setBrandEditor(knowledgeText(row.id))} />
-          {!readOnly ? <IconButton label={`Remove Brand ${index + 1}`} icon="close" variant="quiet" disabled={specifications.some(spec => isKnowledgeObject(spec) && spec.brandId === row.id)} onPress={() => setConfirmRemoval({ kind: "brands", id: knowledgeText(row.id), name: knowledgeText(row.name) || "this Brand" })} /> : null}
+          {!readOnly ? <IconButton label={`Remove Brand ${index + 1}`} icon="close" variant="quiet" disabled={brandReferenced(knowledgeText(row.id))} onPress={() => setConfirmRemoval({ kind: "brands", id: knowledgeText(row.id), name: knowledgeText(row.name) || "this Brand" })} /> : null}
         </View>
       </View>)}
     </View>
     {isKnowledgeObject(selected) ? <KnowledgeModal title={`${readOnly ? "View" : "Edit"} Specification`} onClose={() => setEditing(null)}>
       <Field label="Item name" value={knowledgeText(selected.name)} editable={!readOnly} maxLength={240} error={issue(`specifications.${specIndex}.name`)} onChangeText={name => patch("specifications", editing!, { name })} />
-      <KnowledgeSelect label="Brand" value={knowledgeText(selected.brandId)} options={brandRows.map(row => ({ value: knowledgeText(row.id), label: knowledgeText(row.name) || "Brand not named" }))} disabled={readOnly} onChange={brandId => {
-        if (readOnly) return;
-        const next = { ...selected };
-        if (brandId) next.brandId = brandId; else delete next.brandId;
+      {brandSelectionManagedOnWeb ? <>
+        <KnowledgeText>Brands: {brandLabels(selected)}</KnowledgeText>
+        <KnowledgeText>Manage this item's brand choices in web Configuration.{readOnly ? "" : " Item names and descriptions can still be edited here."}</KnowledgeText>
+      </> : <KnowledgeSelect label="Brand" value={selectedBrandIds[0] ?? ""} options={brandRows.map(row => ({ value: knowledgeText(row.id), label: knowledgeText(row.name) || "Brand not named" }))} disabled={readOnly} onChange={brandId => {
+        if (readOnly || brandSelectionManagedOnWeb) return;
+        const next = withSingleBrand(selected, brandId);
         onChange({ ...payload, specifications: specifications.map(row => row === selected ? next : row) });
-      }} />
-      {!readOnly ? <Button label="Add Brand" variant="secondary" onPress={() => add("brands")} /> : null}
+      }} />}
+      {!readOnly ? <Button label="Add Brand" variant="secondary" disabled={brandSelectionManagedOnWeb || brands.length >= KNOWLEDGE_MAX_BRANDS} onPress={() => add("brands")} /> : null}
       <Field label="Brief description" value={knowledgeText(selected.description)} editable={!readOnly} multiline maxLength={4000} error={issue(`specifications.${specIndex}.description`)} onChangeText={description => patch("specifications", editing!, { description })} />
     </KnowledgeModal> : null}
     {isKnowledgeObject(brand) ? <KnowledgeModal title={`${readOnly ? "View" : "Edit"} Brand`} onClose={() => setBrandEditor(null)}>
@@ -92,7 +114,7 @@ export function KnowledgeSpecificationsEditor({ payload, onChange, readOnly, pro
     {confirmRemoval ? <KnowledgeModal title={`Remove ${confirmRemoval.name}?`} onClose={() => setConfirmRemoval(null)}>
       <KnowledgeText>The item will be removed from your draft. Save the Mode tab to apply this change.</KnowledgeText>
       <Button label="Remove" variant="danger" disabled={readOnly} onPress={() => {
-        if (readOnly || (confirmRemoval.kind === "specifications" && blocked.has(confirmRemoval.id)) || (confirmRemoval.kind === "brands" && specifications.some(row => isKnowledgeObject(row) && row.brandId === confirmRemoval.id))) return;
+        if (readOnly || (confirmRemoval.kind === "specifications" && blocked.has(confirmRemoval.id)) || (confirmRemoval.kind === "brands" && brandReferenced(confirmRemoval.id))) return;
         onChange({ ...payload, [confirmRemoval.kind]: (confirmRemoval.kind === "brands" ? brands : specifications).filter(row => !isKnowledgeObject(row) || row.id !== confirmRemoval.id) });
         setConfirmRemoval(null);
       }} />

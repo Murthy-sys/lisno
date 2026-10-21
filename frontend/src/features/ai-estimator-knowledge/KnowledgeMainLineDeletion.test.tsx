@@ -103,6 +103,9 @@ function renderIndex() {
 }
 
 async function expand(user: ReturnType<typeof userEvent.setup>, name = group.name) {
+  const parentName = name === otherGroup.name ? otherBasket.name : basket.name;
+  const parent = await screen.findByRole("button", { name: parentName });
+  if (parent.getAttribute("aria-expanded") !== "true") await user.click(parent);
   const control = await screen.findByRole("button", { name });
   if (control.getAttribute("aria-expanded") !== "true") await user.click(control);
   return control;
@@ -166,6 +169,22 @@ describe("direct Main Line deletion", () => {
     await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
     expect(knowledgeApi.permanentlyDeleteKnowledgeMainLine).not.toHaveBeenCalled();
     await waitFor(() => expect(trigger).toHaveFocus());
+  });
+
+  it("returns focus to the visible Main Basket when its item and Sub-Basket were hidden while the dialog was open", async () => {
+    setupHierarchy();
+    const user = userEvent.setup();
+    renderIndex();
+    const subHeader = await expand(user);
+    const parent = screen.getByRole("button", { name: basket.name });
+    const { trigger, dialog } = await openDelete(user);
+    // Simulate the hierarchy closing while the overlay owns focus.
+    fireEvent.click(parent);
+    expect(subHeader).not.toBeVisible();
+    expect(trigger.isConnected).toBe(true);
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(parent).toHaveFocus());
+    expect(knowledgeApi.permanentlyDeleteKnowledgeMainLine).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -402,7 +421,7 @@ describe("direct Main Line deletion", () => {
     setupHierarchy();
     const user = userEvent.setup();
     renderIndex();
-    await screen.findByRole("button", { name: group.name });
+    await screen.findByRole("button", { name: basket.name });
     await user.type(screen.getByRole("searchbox", { name: "Search Basket or Main Line" }), "POP ceiling");
     await user.click(screen.getByRole("button", { name: "Search" }));
     const { dialog } = await openDelete(user);

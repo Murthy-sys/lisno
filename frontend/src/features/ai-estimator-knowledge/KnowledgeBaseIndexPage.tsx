@@ -6,8 +6,6 @@ import {
   useQueryClient
 } from "@tanstack/react-query";
 import {
-  ChevronDown,
-  Layers,
   ListTree,
   Pencil,
   Plus,
@@ -23,6 +21,7 @@ import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { ApiError } from "../../api/client";
 import { useAuth } from "../../auth/AuthProvider";
 import { hasFrontendPermission } from "../../auth/authorization";
+import { resolveMainBasketImage } from "../../components/baskets/mainBasketImages";
 import { Button } from "../../components/ui/Button";
 import { ContextPanel } from "../../components/ui/ContextPanel";
 import { Dialog } from "../../components/ui/Dialog";
@@ -48,6 +47,7 @@ import { syncKnowledgeBasketDeletion, syncKnowledgeBasketMutation } from "./know
 import { knowledgeQueryKeys } from "./knowledgeQueryKeys";
 import { KNOWLEDGE_ITEM_STATUS_LABELS } from "./knowledgePresentation";
 import { KnowledgeBasketManagementDialog } from "./KnowledgeBasketManagementDialog";
+import { KnowledgeBasketCard } from "./KnowledgeBasketCard";
 import { KnowledgeBasketRequestReview } from "./KnowledgeBasketRequestReview";
 import { CreateKnowledgeItemDialog } from "./CreateKnowledgeItemDialog";
 import { KnowledgeSafetyNotice } from "./KnowledgeSafetyNotice";
@@ -105,6 +105,10 @@ const emptyFilters: FilterState = {
   uomId: "",
   vendorId: ""
 };
+function isVisibleFocusTarget(element: HTMLElement | null | undefined): element is HTMLElement {
+  return Boolean(element?.isConnected && !element.closest("[hidden]"));
+}
+
 function errorMessage(error: Error | null): string {
   return error?.message ?? "The knowledge base could not be loaded.";
 }
@@ -131,8 +135,9 @@ export function KnowledgeBaseIndexPage() {
   const [temporaryBasketId, setTemporaryBasketId] = useState<string | null>(null);
   const [announcement, setAnnouncement] = useState("");
   const [advancedFiltersOpen, setAdvancedFiltersOpen] = useState(false);
-  const [collapsedBaskets, setCollapsedBaskets] = useState<readonly string[]>([]);
+  const [expandedBaskets, setExpandedBaskets] = useState<readonly string[]>([]);
   const [expandedSubBaskets, setExpandedSubBaskets] = useState<readonly string[]>([]);
+  const [filteredCollapsedGroups, setFilteredCollapsedGroups] = useState<readonly string[]>([]);
   /* Component state only: the safety notice returns on the next visit. */
   const [noticeDismissed, setNoticeDismissed] = useState(false);
   const manageBasketsButtonRef = useRef<HTMLButtonElement>(null);
@@ -214,6 +219,9 @@ export function KnowledgeBaseIndexPage() {
         ? "error"
         : "ready";
   const hasActiveFilters = Object.values(appliedFilters).some(Boolean);
+  const isBasketExpanded = (basketId: string) => hasActiveFilters
+    ? !filteredCollapsedGroups.includes(`main:${basketId}`)
+    : expandedBaskets.includes(basketId);
   /* Unfiltered, every live basket gets a card even with no items yet — otherwise
      a freshly configured basket is invisible until its first item exists. */
   const groupedItems = useMemo(() => {
@@ -238,7 +246,7 @@ export function KnowledgeBaseIndexPage() {
     queries: groupedItems.map(([basketId]) => ({
       queryKey: [...knowledgeQueryKeys.subBasketLists(basketId), "index-catalog"],
       queryFn: () => collectAllKnowledgeMasterPages((page) => listKnowledgeSubBaskets(basketId, page), "Sub-Basket"),
-      enabled: !collapsedBaskets.includes(basketId)
+      enabled: isBasketExpanded(basketId)
     }))
   });
   const deletionBasket = subBasketDelete
@@ -295,6 +303,7 @@ export function KnowledgeBaseIndexPage() {
   function applyFilters(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setOffset(0);
+    setFilteredCollapsedGroups([]);
     setAppliedFilters(filters);
   }
 
@@ -302,6 +311,7 @@ export function KnowledgeBaseIndexPage() {
     setFilters(emptyFilters);
     setAppliedFilters(emptyFilters);
     setOffset(0);
+    setFilteredCollapsedGroups([]);
   }
 
   function removeFilter(key: keyof FilterState) {
@@ -309,10 +319,15 @@ export function KnowledgeBaseIndexPage() {
     setFilters((current) => ({ ...current, [key]: cleared }));
     setAppliedFilters((current) => ({ ...current, [key]: cleared }));
     setOffset(0);
+    setFilteredCollapsedGroups([]);
   }
 
   function toggleBasket(basketId: string) {
-    setCollapsedBaskets((current) =>
+    if (hasActiveFilters) {
+      toggleFilteredGroup(`main:${basketId}`);
+      return;
+    }
+    setExpandedBaskets((current) =>
       current.includes(basketId)
         ? current.filter((id) => id !== basketId)
         : [...current, basketId]
@@ -320,8 +335,17 @@ export function KnowledgeBaseIndexPage() {
   }
 
   function toggleSubBasket(subBasketId: string) {
+    if (hasActiveFilters) {
+      toggleFilteredGroup(`child:${subBasketId}`);
+      return;
+    }
     setExpandedSubBaskets((current) => current.includes(subBasketId)
       ? current.filter((id) => id !== subBasketId) : [...current, subBasketId]);
+  }
+
+  function toggleFilteredGroup(key: string) {
+    setFilteredCollapsedGroups((current) => current.includes(key)
+      ? current.filter((id) => id !== key) : [...current, key]);
   }
 
   function dismissNotice() {
@@ -339,7 +363,7 @@ export function KnowledgeBaseIndexPage() {
   }
 
   function closeSubBasketDelete() {
-    if (subBasketDeletionCommittedRef.current || !subBasketDeleteFocusRef.current?.isConnected) {
+    if (subBasketDeletionCommittedRef.current || !isVisibleFocusTarget(subBasketDeleteFocusRef.current)) {
       subBasketDeleteFocusRef.current = subBasketDelete
         ? basketHeaderRefs.current.get(subBasketDelete.basket.id) ?? indexFocusRef.current
         : indexFocusRef.current;
@@ -374,12 +398,12 @@ export function KnowledgeBaseIndexPage() {
   }
 
   function closeMainLineDelete() {
-    if (mainLineDeletionCommittedRef.current || !mainLineDeleteFocusRef.current?.isConnected) {
+    if (mainLineDeletionCommittedRef.current || !isVisibleFocusTarget(mainLineDeleteFocusRef.current)) {
       const subBasketHeader = mainLineDeleteItem?.subBasketId
         ? subBasketHeaderRefs.current.get(mainLineDeleteItem.subBasketId) : undefined;
       const basketHeader = mainLineDeleteItem ? basketHeaderRefs.current.get(mainLineDeleteItem.basketId) : undefined;
-      mainLineDeleteFocusRef.current = subBasketHeader?.isConnected ? subBasketHeader
-        : basketHeader?.isConnected ? basketHeader : indexFocusRef.current;
+      mainLineDeleteFocusRef.current = isVisibleFocusTarget(subBasketHeader) ? subBasketHeader
+        : isVisibleFocusTarget(basketHeader) ? basketHeader : indexFocusRef.current;
     }
     setMainLineDeleteItem(null);
   }
@@ -664,7 +688,8 @@ export function KnowledgeBaseIndexPage() {
       ) : (
         <div className="knowledge-basket-groups" aria-label="Knowledge items">
           {groupedItems.map(([basketId, group], groupIndex) => {
-            const expanded = !collapsedBaskets.includes(basketId);
+            const expanded = isBasketExpanded(basketId);
+            const basketImage = resolveMainBasketImage(group.basketName);
             const panelId = `knowledge-basket-panel-${basketId}`;
             const subBasketQuery = subBasketQueries[groupIndex];
             const basketRecord = basketsQuery.data?.items.find(({ id }) => id === basketId);
@@ -679,126 +704,114 @@ export function KnowledgeBaseIndexPage() {
             }
             const directItems = group.items.filter((item) => !item.subBasketId);
             const directKey = `direct:${basketId}`;
-            const directExpanded = hasActiveFilters || !expandedSubBaskets.includes(directKey);
+            const directExpanded = hasActiveFilters
+              ? !filteredCollapsedGroups.includes(`child:${directKey}`)
+              : !expandedSubBaskets.includes(directKey);
             /* A filtered group whose basket record is not loaded has no description. */
             const basketDescription = (basketsQuery.data?.items ?? [])
               .find(({ id }) => id === basketId)?.description?.trim();
             return (
-            <Surface
+            <KnowledgeBasketCard
               key={basketId}
-              as="section"
-              className="knowledge-basket-group knowledge-basket-panel"
-              data-expanded={expanded || undefined}
+              variant="main"
+              name={group.basketName}
+              panelId={panelId}
+              imageUrl={basketImage}
+              countText={`${group.items.length} ${group.items.length === 1 ? "item" : "items"} on this page`}
+              expanded={expanded}
+              onToggle={() => toggleBasket(basketId)}
+              toggleRef={(element) => {
+                if (element) basketHeaderRefs.current.set(basketId, element);
+                else basketHeaderRefs.current.delete(basketId);
+              }}
+              description={basketDescription}
+              creationActions={canCreate ? <>
+                {canCreate ? <Button size="compact" variant="secondary" leadingIcon={<Plus />} onClick={() => setItemDialogOpen(true)}>Add estimation item<span className="sr-only"> to {group.basketName}</span></Button> : null}
+                {canCreate ? <Button size="compact" variant="secondary" leadingIcon={<Plus />} onClick={() => setTemporaryBasketId(basketId)}>Add temporary item<span className="sr-only"> to {group.basketName}</span></Button> : null}
+              </> : undefined}
+              actions={canUpdate || canLifecycle ? <>
+                {canUpdate ? <Button
+                  variant="quiet"
+                  className="knowledge-icon-action"
+                  aria-label={`Edit basket ${group.basketName}`}
+                  title="Edit basket"
+                  leadingIcon={<Pencil />}
+                  onClick={() => setBasketEditor((basketsQuery.data?.items ?? []).find(({ id }) => id === basketId) ?? null)}
+                /> : null}
+                {canLifecycle ? <Button
+                  variant="destructive-outline"
+                  className="knowledge-icon-action knowledge-icon-action--danger"
+                  aria-label={`Delete ${group.basketName}`}
+                  title="Delete basket"
+                  leadingIcon={<Trash2 />}
+                  onClick={() => setBasketDelete((basketsQuery.data?.items ?? []).find(({ id }) => id === basketId) ?? null)}
+                /> : null}
+              </> : undefined}
             >
-              <div className="knowledge-section-heading knowledge-basket-panel__header">
-                <span className="knowledge-basket-panel__icon" aria-hidden="true">
-                  <Layers />
-                </span>
-                <div className="knowledge-basket-panel__heading">
-                  <h2 className="knowledge-basket-panel__title">
-                    <button
-                      ref={(element) => {
-                        if (element) basketHeaderRefs.current.set(basketId, element);
-                        else basketHeaderRefs.current.delete(basketId);
-                      }}
-                      type="button"
-                      className="knowledge-basket-panel__toggle"
-                      aria-expanded={expanded}
-                      aria-controls={panelId}
-                      onClick={() => toggleBasket(basketId)}
-                    >
-                      <ChevronDown className="knowledge-basket-panel__chevron" aria-hidden="true" />
-                      <span>{group.basketName}</span>
-                    </button>
-                  </h2>
-                  {basketDescription ? (
-                    <p className="knowledge-basket-panel__description">{basketDescription}</p>
-                  ) : null}
-                </div>
-                <div className="knowledge-basket-panel__meta">
-                  <span className="knowledge-count-pill">
-                    {group.items.length} {group.items.length === 1 ? "item" : "items"} on this page
-                  </span>
-                  <div className="knowledge-row-actions">
-                    {/* The count pill beside it already reports an empty basket, so
-                        this is the only prompt the basket needs. The name is spoken
-                        but not shown: several baskets each offer this command, and
-                        "Add estimation item" alone would name them all alike. */}
-                    {canCreate ? <Button size="compact" variant="secondary" leadingIcon={<Plus />} onClick={() => setItemDialogOpen(true)}>Add estimation item<span className="sr-only"> to {group.basketName}</span></Button> : null}
-                    {canCreate ? <Button size="compact" variant="secondary" leadingIcon={<Plus />} onClick={() => setTemporaryBasketId(basketId)}>Add temporary item<span className="sr-only"> to {group.basketName}</span></Button> : null}
-                    {/* Icon-only: the name carries the basket, the tooltip the command. */}
-                    {canUpdate ? (
-                      <Button
-                        variant="quiet"
-                        className="knowledge-icon-action"
-                        aria-label={`Edit basket ${group.basketName}`}
-                        title="Edit basket"
-                        leadingIcon={<Pencil />}
-                        onClick={() => setBasketEditor((basketsQuery.data?.items ?? []).find(({ id }) => id === basketId) ?? null)}
-                      />
-                    ) : null}
-                    {canLifecycle ? (
-                      <Button
-                        variant="destructive-outline"
-                        className="knowledge-icon-action knowledge-icon-action--danger"
-                        aria-label={`Delete ${group.basketName}`}
-                        title="Delete basket"
-                        leadingIcon={<Trash2 />}
-                        onClick={() => setBasketDelete((basketsQuery.data?.items ?? []).find(({ id }) => id === basketId) ?? null)}
-                      />
-                    ) : null}
-                  </div>
-                </div>
-              </div>
-              <div id={panelId} className="knowledge-basket-panel__body" hidden={!expanded}>
-                {subBasketQuery?.isPending ? <p role="status">Loading Sub-Baskets…</p> : null}
-                {subBasketQuery?.isError ? <InlineMessage tone="warning" role="alert">Sub-Baskets could not be loaded. Known items remain available. <Button type="button" variant="quiet" onClick={() => void subBasketQuery.refetch()}>Retry Sub-Baskets</Button></InlineMessage> : null}
+              {subBasketQuery?.isPending ? <p role="status">Loading Sub-Baskets…</p> : null}
+              {subBasketQuery?.isError ? <InlineMessage tone="warning" role="alert">Sub-Baskets could not be loaded. Known items remain available. <Button type="button" variant="quiet" onClick={() => void subBasketQuery.refetch()}>Retry Sub-Baskets</Button></InlineMessage> : null}
+              <div className="knowledge-basket-sections">
                 {Array.from(subBasketNames, ([subBasketId, subBasketName]) => {
                   const subItems = group.items.filter((item) => item.subBasketId === subBasketId);
                   const subBasketRecord = catalogSubBaskets.find(({ id, basketId: parentId }) => id === subBasketId && parentId === basketId);
-                  const subExpanded = hasActiveFilters || expandedSubBaskets.includes(subBasketId);
+                  const subExpanded = hasActiveFilters
+                    ? !filteredCollapsedGroups.includes(`child:${subBasketId}`)
+                    : expandedSubBaskets.includes(subBasketId);
                   const subPanelId = `knowledge-sub-basket-panel-${subBasketId}`;
-                  return <section key={subBasketId} className="knowledge-sub-basket" data-expanded={subExpanded || undefined}>
-                    <div className="knowledge-sub-basket__header">
-                      <div className="knowledge-sub-basket__name">
-                        <h3><button ref={(element) => {
-                          if (element) subBasketHeaderRefs.current.set(subBasketId, element);
-                          else subBasketHeaderRefs.current.delete(subBasketId);
-                        }} type="button" className="knowledge-sub-basket__toggle" aria-expanded={subExpanded} aria-controls={subPanelId} onClick={() => toggleSubBasket(subBasketId)}><ChevronDown aria-hidden="true" /><span>{subBasketName}</span></button></h3>
-                        {auth.user?.role === "super_admin" && canUpdate && !basketsQuery.isError && !subBasketQuery?.isError && basketRecord?.status !== "archived" && basketRecord && subBasketRecord ? <KnowledgeRenamePenButton
-                          label={`Edit Sub-Basket name for ${subBasketName}`}
-                          onClick={(event) => {
-                            subBasketEditFocusRef.current = event.currentTarget;
-                            setSubBasketEditor({ basket: basketRecord, subBasket: subBasketRecord });
-                          }}
-                        /> : null}
-                        {auth.user?.role === "super_admin" && canLifecycle && basketsQuery.isSuccess && subBasketQuery?.isSuccess && basketRecord && basketRecord.status !== "archived" && subBasketRecord ? <Button
-                          size="compact"
-                          variant="destructive-outline"
-                          className="knowledge-sub-basket__delete"
-                          aria-label={`Delete Sub-Basket ${subBasketName} permanently`}
-                          onClick={(event) => {
-                            subBasketDeleteFocusRef.current = event.currentTarget;
-                            subBasketDeletionCommittedRef.current = false;
-                            setSubBasketDelete({ basket: basketRecord, subBasket: subBasketRecord });
-                          }}
-                        >Delete</Button> : null}
-                      </div>
-                      <span className="knowledge-count-pill">{subItems.length} {subItems.length === 1 ? "item" : "items"} on this page</span>
-                    </div>
-                    <div id={subPanelId} className="knowledge-sub-basket__body" hidden={!subExpanded}>
-                      {subItems.length ? <div className="knowledge-item-grid">{subItems.map(renderItemCard)}</div>
-                        : <p>{!hasActiveFilters && total <= PAGE_SIZE ? "No items in this Sub-Basket yet." : "No items from this Sub-Basket on this page."}</p>}
-                    </div>
-                  </section>;
+                  return <KnowledgeBasketCard
+                    key={subBasketId}
+                    variant="sub"
+                    name={subBasketName}
+                    panelId={subPanelId}
+                    imageUrl={null}
+                    countText={`${subItems.length} ${subItems.length === 1 ? "item" : "items"} on this page`}
+                    expanded={subExpanded}
+                    onToggle={() => toggleSubBasket(subBasketId)}
+                    toggleRef={(element) => {
+                      if (element) subBasketHeaderRefs.current.set(subBasketId, element);
+                      else subBasketHeaderRefs.current.delete(subBasketId);
+                    }}
+                    actions={<>
+                      {auth.user?.role === "super_admin" && canUpdate && !basketsQuery.isError && !subBasketQuery?.isError && basketRecord?.status !== "archived" && basketRecord && subBasketRecord ? <KnowledgeRenamePenButton
+                        label={`Edit Sub-Basket name for ${subBasketName}`}
+                        onClick={(event) => {
+                          subBasketEditFocusRef.current = event.currentTarget;
+                          setSubBasketEditor({ basket: basketRecord, subBasket: subBasketRecord });
+                        }}
+                      /> : null}
+                      {auth.user?.role === "super_admin" && canLifecycle && basketsQuery.isSuccess && subBasketQuery?.isSuccess && basketRecord && basketRecord.status !== "archived" && subBasketRecord ? <Button
+                        size="compact"
+                        variant="destructive-outline"
+                        className="knowledge-sub-basket__delete"
+                        aria-label={`Delete Sub-Basket ${subBasketName} permanently`}
+                        onClick={(event) => {
+                          subBasketDeleteFocusRef.current = event.currentTarget;
+                          subBasketDeletionCommittedRef.current = false;
+                          setSubBasketDelete({ basket: basketRecord, subBasket: subBasketRecord });
+                        }}
+                      >Delete</Button> : null}
+                    </>}
+                  >
+                    {subItems.length ? <div className="knowledge-item-grid">{subItems.map(renderItemCard)}</div>
+                      : <p>{!hasActiveFilters && total <= PAGE_SIZE ? "No items in this Sub-Basket yet." : "No items from this Sub-Basket on this page."}</p>}
+                  </KnowledgeBasketCard>;
                 })}
-                {directItems.length ? <section className="knowledge-sub-basket" data-expanded={directExpanded || undefined}>
-                  <div className="knowledge-sub-basket__header"><h3><button type="button" className="knowledge-sub-basket__toggle" aria-expanded={directExpanded} aria-controls={`knowledge-direct-items-${basketId}`} onClick={() => toggleSubBasket(directKey)}><ChevronDown aria-hidden="true" /><span>Items directly under Main Basket</span></button></h3><span className="knowledge-count-pill">{directItems.length} {directItems.length === 1 ? "item" : "items"} on this page</span></div>
-                  <div id={`knowledge-direct-items-${basketId}`} className="knowledge-sub-basket__body" hidden={!directExpanded}><div className="knowledge-item-grid">{directItems.map(renderItemCard)}</div></div>
-                </section> : null}
-                {!subBasketQuery?.isPending && subBasketNames.size === 0 && directItems.length === 0 ? <p>No Sub-Baskets or items are available in this Main Basket.</p> : null}
+                {directItems.length ? <KnowledgeBasketCard
+                  variant="direct"
+                  name="Items directly under Main Basket"
+                  panelId={`knowledge-direct-items-${basketId}`}
+                  imageUrl={null}
+                  countText={`${directItems.length} ${directItems.length === 1 ? "item" : "items"} on this page`}
+                  expanded={directExpanded}
+                  onToggle={() => toggleSubBasket(directKey)}
+                >
+                  <div className="knowledge-item-grid">{directItems.map(renderItemCard)}</div>
+                </KnowledgeBasketCard> : null}
               </div>
-            </Surface>
+              {subBasketQuery?.isSuccess && subBasketNames.size === 0 && directItems.length === 0 ? <p>{!hasActiveFilters && total <= PAGE_SIZE
+                ? "No Sub-Baskets or items are available in this Main Basket."
+                : "No items from this Main Basket on this page."}</p> : null}
+            </KnowledgeBasketCard>
             );
           })}
         </div>

@@ -240,7 +240,7 @@ describe("Mode pending change projection", () => {
         key: "specification:id:spec-1",
         title: "Plywood",
         kind: "updated",
-        fields: [{ key: "brandId", label: "Brand name", value: "Century Green" }]
+        fields: [{ key: "brandIds", label: "Brands", value: "Century Green" }]
       }]
     });
     expect(JSON.stringify(visiblePendingContent(groups))).not.toContain("brand-current");
@@ -259,7 +259,7 @@ describe("Mode pending change projection", () => {
       }
     });
     expect(cleared.find(({ key }) => key === "specifications")?.entries[0]?.fields).toEqual([
-      { key: "brandId", label: "Brand name", value: "Not configured" }
+      { key: "brandIds", label: "Brands", value: "Not configured" }
     ]);
 
     const unavailable = project({}, {}, {
@@ -271,8 +271,50 @@ describe("Mode pending change projection", () => {
     });
     expect(unavailable[0]?.entries[0]?.fields).toEqual([
       { key: "name", label: "Item name", value: "Plywood" },
-      { key: "brandId", label: "Brand name", value: "Unavailable brand" }
+      { key: "brandIds", label: "Brands", value: "Unavailable brand" }
     ]);
     expect(JSON.stringify(unavailable)).not.toContain("private-missing-brand-id");
+  });
+
+  it("compares legacy and list associations as the same selection without sorting review labels", () => {
+    const brands = [{ id: "brand-z", name: "Zinc" }, { id: "brand-a", name: "Amber" }];
+    const equivalent = project({}, {}, {
+      pricingBaseline: { brands, specifications: [{ id: "spec", name: "Paint", brandId: "brand-z" }] },
+      pricingDraft: { brands, specifications: [{ id: "spec", name: "Paint", brandIds: ["brand-z"] }] }
+    });
+    expect(equivalent).toEqual([]);
+    const reordered = project({}, {}, {
+      pricingBaseline: { brands, specifications: [{ id: "spec", name: "Paint", brandIds: ["brand-z", "brand-a"] }] },
+      pricingDraft: { brands, specifications: [{ id: "spec", name: "Paint", brandIds: ["brand-a", "brand-z"] }] }
+    });
+    expect(reordered).toEqual([]);
+    const expanded = project({}, {}, {
+      pricingBaseline: { brands, specifications: [{ id: "spec", name: "Paint", brandId: "brand-z" }] },
+      pricingDraft: { brands, specifications: [{ id: "spec", name: "Paint", brandIds: ["brand-z", "brand-a"] }] }
+    });
+    expect(expanded.find(group => group.key === "specifications")?.entries[0]?.fields).toEqual([
+      { key: "brandIds", label: "Brands", value: "Zinc, Amber" }
+    ]);
+  });
+
+  it("shows a second-brand rename and unavailable or ambiguous associations without exposing IDs", () => {
+    const before = {
+      brands: [{ id: "private-first", name: "First" }, { id: "private-second", name: "Second" }],
+      specifications: [{ id: "spec", name: "Paint", brandIds: ["private-first", "private-second"] }]
+    };
+    const renamed = project({}, {}, { pricingBaseline: before, pricingDraft: {
+      ...before, brands: [before.brands[0], { id: "private-second", name: "Second renamed" }]
+    } });
+    expect(renamed.find(group => group.key === "brands")?.entries[0]).toMatchObject({
+      title: "Second renamed", fields: [{ key: "name", label: "Brand name", value: "Second renamed" }]
+    });
+    const unavailable = project({}, {}, { pricingBaseline: before, pricingDraft: {
+      brands: [{ id: "different-line", name: "Second" }, before.brands[0], before.brands[0]],
+      specifications: [{ id: "spec", name: "Paint", brandIds: ["private-first", "private-second", "private-missing"] }]
+    } });
+    expect(unavailable.find(group => group.key === "specifications")?.entries[0]?.fields).toEqual([
+      { key: "brandIds", label: "Brands", value: "Unavailable brand, Unavailable brand, Unavailable brand" }
+    ]);
+    expect(JSON.stringify(visiblePendingContent(unavailable))).not.toContain("private-");
   });
 });

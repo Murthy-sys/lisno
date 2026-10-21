@@ -30,6 +30,9 @@ import {
 } from "./KnowledgeSpecificationBuilder";
 import {
   parseKnowledgeSpecifications,
+  readSpecificationBrandIds,
+  serializeSpecificationBrandIds,
+  validateSpecificationBrandAssociation,
   validateKnowledgeBrands
 } from "./knowledgeSpecificationConfiguration";
 import {
@@ -917,7 +920,7 @@ function rebasePricingDraft(
     const localRows = Array.isArray(draft.pendingPayload[field])
       ? draft.pendingPayload[field]
       : [];
-    const merged = applyPendingEdit(serverRows, baselineRows, localRows) ?? [];
+    const merged = applyPendingEdit(serverRows, baselineRows, localRows, field === "specifications") ?? [];
     fields[field] = merged;
     pendingBaseline[field] = serverRows;
     pendingPayload[field] = merged;
@@ -962,7 +965,7 @@ function pricingIssueTargetsSpecificationRow(
     if (!brandMatch) return false;
     const brand = brands[Number(brandMatch[1])];
     return typeof brand?.id === "string" && specifications.some(
-      (specification) => specification.brandId === brand.id
+      (specification) => readSpecificationBrandIds(specification).includes(brand.id as string)
     );
   });
 }
@@ -1017,10 +1020,10 @@ function pendingModeStateAfterEdit(draft: ModeDraft, after: KnowledgeJsonObject,
   let baseline = { ...(draft.pendingBaseline ?? {}) };
   let next = { ...draft.pendingPayload };
   const before = draft.payload;
-  const apply = (localBaseline: KnowledgeJsonValue | undefined, local: KnowledgeJsonValue | undefined, saved: KnowledgeJsonValue | undefined, edited: KnowledgeJsonValue | undefined) => {
-    const acceptedBaseline = pendingBaselineForNewEdit(localBaseline, local, saved, edited);
-    const acceptedDraft = applyPendingEdit(local, localBaseline, acceptedBaseline);
-    return { baseline: acceptedBaseline, payload: applyPendingEdit(acceptedDraft, saved, edited) };
+  const apply = (localBaseline: KnowledgeJsonValue | undefined, local: KnowledgeJsonValue | undefined, saved: KnowledgeJsonValue | undefined, edited: KnowledgeJsonValue | undefined, specificationRows = false) => {
+    const acceptedBaseline = pendingBaselineForNewEdit(localBaseline, local, saved, edited, specificationRows);
+    const acceptedDraft = applyPendingEdit(local, localBaseline, acceptedBaseline, specificationRows);
+    return { baseline: acceptedBaseline, payload: applyPendingEdit(acceptedDraft, saved, edited, specificationRows) };
   };
   const fields = sectionKey === "pricing" ? ["specifications", "brands"] : ADVANCED_EDITABLE_FIELDS;
   const subVendorMarginEdited = sectionKey === "advanced" &&
@@ -1042,7 +1045,7 @@ function pendingModeStateAfterEdit(draft: ModeDraft, after: KnowledgeJsonObject,
     const beforeValue = valueForField(before, field);
     const afterValue = valueForField(after, field);
     if (pendingValuesEqual(beforeValue, afterValue)) continue;
-    const updated = apply(valueForField(baseline, field), valueForField(next, field), beforeValue, afterValue);
+    const updated = apply(valueForField(baseline, field), valueForField(next, field), beforeValue, afterValue, field === "specifications");
     baseline[field] = updated.baseline ?? null;
     next[field] = updated.payload ?? null;
   }
@@ -1068,11 +1071,15 @@ const pendingObject = (value: KnowledgeJsonValue | undefined): value is Knowledg
 /** Conflict recovery can expose a saved row/field that this session has not edited.
  * Capture its accepted pre-edit value only when the user first changes it. Existing
  * local differences retain their original comparison values. */
-function pendingBaselineForNewEdit(baseline: KnowledgeJsonValue | undefined, local: KnowledgeJsonValue | undefined, before: KnowledgeJsonValue | undefined, after: KnowledgeJsonValue | undefined): KnowledgeJsonValue | undefined {
+function pendingBaselineForNewEdit(baseline: KnowledgeJsonValue | undefined, local: KnowledgeJsonValue | undefined, before: KnowledgeJsonValue | undefined, after: KnowledgeJsonValue | undefined, specificationRows = false): KnowledgeJsonValue | undefined {
   if (pendingValuesEqual(before, after)) return baseline;
   if (pendingObject(before) && pendingObject(after) && pendingObject(baseline) && pendingObject(local)) {
     const result = { ...baseline };
+    if (specificationRows && !pendingValuesEqual(comparableBrandAssociation(before), comparableBrandAssociation(after))) {
+      copyBrandAssociation(result, pendingValuesEqual(comparableBrandAssociation(baseline), comparableBrandAssociation(local)) ? before : baseline);
+    }
     for (const key of new Set([...Object.keys(before), ...Object.keys(after)])) {
+      if (specificationRows && (key === "brandId" || key === "brandIds")) continue;
       const value = pendingBaselineForNewEdit(baseline[key], local[key], before[key], after[key]);
       if (value === undefined) delete result[key]; else result[key] = value;
     }
@@ -1091,19 +1098,23 @@ function pendingBaselineForNewEdit(baseline: KnowledgeJsonValue | undefined, loc
       if (!previous || pendingValuesEqual(previous, row)) continue;
       const index = result.findIndex((candidate) => candidate.id === row.id);
       const current = (local as KnowledgeJsonObject[]).find((candidate) => candidate.id === row.id);
-      const value = pendingBaselineForNewEdit(index < 0 ? undefined : result[index], current, previous, row) as KnowledgeJsonObject;
+      const value = pendingBaselineForNewEdit(index < 0 ? undefined : result[index], current, previous, row, specificationRows) as KnowledgeJsonObject;
       if (index < 0) result.push(value); else result[index] = value;
     }
     return result;
   }
   return pendingValuesEqual(baseline, local) ? before : baseline;
 }
-function applyPendingEdit(local: KnowledgeJsonValue | undefined, before: KnowledgeJsonValue | undefined, after: KnowledgeJsonValue | undefined): KnowledgeJsonValue | undefined {
+function applyPendingEdit(local: KnowledgeJsonValue | undefined, before: KnowledgeJsonValue | undefined, after: KnowledgeJsonValue | undefined, specificationRows = false): KnowledgeJsonValue | undefined {
   if (pendingValuesEqual(before, after)) return local;
   const object = (value: KnowledgeJsonValue | undefined): value is KnowledgeJsonObject => Boolean(value && typeof value === "object" && !Array.isArray(value));
   if (object(before) && object(after)) {
     const next = { ...(object(local) ? local : before) };
+    if (specificationRows && !pendingValuesEqual(comparableBrandAssociation(before), comparableBrandAssociation(after))) {
+      copyBrandAssociation(next, after);
+    }
     for (const key of new Set([...Object.keys(before), ...Object.keys(after)])) {
+      if (specificationRows && (key === "brandId" || key === "brandIds")) continue;
       if (!pendingValuesEqual(before[key], after[key])) {
         const value = applyPendingEdit(next[key], before[key], after[key]);
         if (value === undefined) delete next[key]; else next[key] = value;
@@ -1121,7 +1132,7 @@ function applyPendingEdit(local: KnowledgeJsonValue | undefined, before: Knowled
       const previous = oldRows.find((candidate) => candidate.id === row.id);
       if (pendingValuesEqual(previous, row)) continue;
       const index = result.findIndex((candidate) => candidate.id === row.id);
-      const updated = applyPendingEdit(index < 0 ? previous : result[index], previous, row) as KnowledgeJsonObject;
+      const updated = applyPendingEdit(index < 0 ? previous : result[index], previous, row, specificationRows) as KnowledgeJsonObject;
       if (index < 0) result.push(updated); else result[index] = updated;
     }
     const retained = rows.filter((row) => oldRows.some((previous) => previous.id === row.id));
@@ -1130,4 +1141,20 @@ function applyPendingEdit(local: KnowledgeJsonValue | undefined, before: Knowled
     return result;
   }
   return after;
+}
+
+/** Treat legacy/list spellings as one association field during three-way edits. */
+function comparableBrandAssociation(row: KnowledgeJsonObject): KnowledgeJsonObject {
+  const fields: Record<string, KnowledgeJsonValue> = {};
+  copyBrandAssociation(fields, row);
+  return validateSpecificationBrandAssociation(fields).length
+    ? fields
+    : serializeSpecificationBrandIds(readSpecificationBrandIds(fields));
+}
+
+function copyBrandAssociation(target: Record<string, KnowledgeJsonValue>, source: KnowledgeJsonObject) {
+  delete target.brandId;
+  delete target.brandIds;
+  if (Object.hasOwn(source, "brandId")) target.brandId = source.brandId!;
+  if (Object.hasOwn(source, "brandIds")) target.brandIds = source.brandIds!;
 }

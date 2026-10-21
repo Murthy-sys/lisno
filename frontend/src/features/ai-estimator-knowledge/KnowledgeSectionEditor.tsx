@@ -761,14 +761,16 @@ function singular(label: string): string {
 }
 
 function validationPathLabel(path: string): string {
-  return path.split(".").map((part) => {
+  const parts = path.split(".");
+  return parts.map((part, index) => {
     if (part === "brands") return "Brands";
     if (part === "specifications") return "Specifications";
+    if (/^\d+$/u.test(part) && parts[index - 1] === "brandIds") return `Brand ${Number(part) + 1}`;
     if (/^\d+$/u.test(part) && path.startsWith("specifications.")) return `Item ${Number(part) + 1}`;
     if (/^\d+$/u.test(part) && path.startsWith("brands.")) return `Brand ${Number(part) + 1}`;
     if (part === "name" && path.startsWith("specifications.")) return "Item name";
     if (part === "name" && path.startsWith("brands.")) return "Brand name";
-    if (part === "brandId") return "Brand";
+    if (part === "brandId" || part === "brandIds") return "Brands";
     if (part === "priceEntries") return "Budgets";
     if (/^\d+$/u.test(part) && path.startsWith("priceEntries.")) return `Budget ${Number(part) + 1}`;
     if (part === "vendorId") return "Vendor";

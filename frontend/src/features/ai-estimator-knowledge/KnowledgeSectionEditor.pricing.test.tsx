@@ -107,6 +107,23 @@ function currentBudget(): Record<string, unknown> {
 }
 
 describe("knowledge Budgeting editor", () => {
+  it("labels indexed brand issues and focuses the multi-select on a save attempt", async () => {
+    const user = userEvent.setup();
+    render(<PricingEditorHarness
+      initialPayload={{
+        specifications: [{ id: "spec-one", name: "Plywood", brandIds: ["brand-1", "brand-2"] }],
+        brands: [{ id: "brand-1", name: "Century Green" }, { id: "brand-2", name: "Hettich" }],
+        priceEntries: []
+      }}
+      serverIssues={[{ path: "specifications.0.brandIds.1", message: "Review this brand." }]}
+    />);
+    expect(screen.getByRole("alert")).toHaveTextContent("Specifications → Item 1 → Brands → Brand 2: Review this brand.");
+    await user.click(screen.getByRole("button", { name: "Attempt save" }));
+    const brands = await screen.findByRole("button", { name: "Brands" });
+    await waitFor(() => expect(brands).toHaveFocus());
+    expect(brands).toHaveAccessibleDescription(expect.stringContaining("Review this brand."));
+  });
+
   it("keeps Specifications and local Brands distinct from Budget Vendors", async () => {
     const user = userEvent.setup();
     render(
@@ -124,9 +141,8 @@ describe("knowledge Budgeting editor", () => {
     expect(screen.queryByRole("region", { name: "Brands" })).not.toBeInTheDocument();
     expect(screen.getByText("Saved")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Edit Specification 1" }));
-    const brand = screen.getByRole("combobox", { name: "Brand name" });
-    expect(brand).toHaveDisplayValue("Century Green");
-    expect(screen.getByRole("option", { name: "Add brand" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Brands" })).toHaveTextContent("Century Green");
+    expect(screen.queryByRole("button", { name: "Add brand" })).not.toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Specifications" })).not.toHaveTextContent("brand-1");
     expect(screen.getByRole("heading", { name: "Budgets" })).toBeVisible();
     expect(screen.getByText("Set the unit budget used by the estimator. Complete the details, then Save Mode.")).toBeVisible();
@@ -146,7 +162,8 @@ describe("knowledge Budgeting editor", () => {
     const budgets = screen.getByRole("region", { name: "Budgets" });
     expect(within(budgets).queryByRole("button", { name: /move .* (up|down)/iu })).not.toBeInTheDocument();
 
-    await user.selectOptions(brand, screen.getByRole("option", { name: "Add brand" }));
+    await user.click(screen.getByRole("button", { name: "Brands" }));
+    await user.click(screen.getByRole("button", { name: "Add brand" }));
     const dialog = await screen.findByRole("dialog", { name: "Add Brand" });
     await user.type(within(dialog).getByRole("textbox", { name: "Brand name" }), "Hettich");
     await user.click(within(dialog).getByRole("button", { name: "Add" }));
@@ -165,7 +182,7 @@ describe("knowledge Budgeting editor", () => {
     expect(payload.specifications[0]).toMatchObject({
       id: "specification-1",
       name: "Plywood",
-      brandId: payload.brands[1]?.id
+      brandIds: ["brand-1", payload.brands[1]?.id]
     });
     expect(payload.priceEntries[0]).toMatchObject({
       priceVersion: { vendorId: "vendor-1" }
@@ -284,7 +301,7 @@ describe("knowledge Budgeting editor", () => {
     expect(screen.getByRole("group", { name: "Saved budget details" })).toBeVisible();
     expect(screen.queryByRole("button", { name: "Update budget" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Remove .* from this Draft/iu })).not.toBeInTheDocument();
-    expect(screen.queryByRole("option", { name: "Add brand" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add brand" })).not.toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Brands" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Add tax" })).not.toBeInTheDocument();
   });

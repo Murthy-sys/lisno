@@ -677,6 +677,60 @@ describe("AI estimator knowledge validation", () => {
     ]));
   });
 
+  it("accepts zero, one, multiple and maximum local Brand lists without changing typed metadata", () => {
+    const brands = Array.from({ length: 200 }, (_, index) => ({ id: `brand-${index}`, name: `Brand ${index}` }));
+    brands[199] = { id: "b".repeat(240), name: "Maximum stable ID" };
+    const payload = {
+      brands,
+      specifications: [
+        { id: "spec-none", name: "Unassigned", brandIds: [] },
+        { id: "spec-one", name: "One Brand", brandIds: [brands[0]!.id] },
+        { id: "spec-many", name: "Every Brand", brandIds: brands.map(({ id }) => id) },
+        { ...specification("dropdown", "Finish", ["Matte", "Gloss"], "Matte"), brandIds: [brands[1]!.id, brands[0]!.id] }
+      ]
+    };
+    const original = structuredClone(payload);
+    expect(validateKnowledgeSectionPayload("pricing", payload)).toEqual([]);
+    expect(payload).toEqual(original);
+  });
+
+  it.each([
+    [null, "payload.specifications.0.brandIds", "INVALID_TYPE"],
+    ["brand-one", "payload.specifications.0.brandIds", "INVALID_TYPE"],
+    [[null], "payload.specifications.0.brandIds.0", "INVALID_REFERENCE"],
+    [[3], "payload.specifications.0.brandIds.0", "INVALID_REFERENCE"],
+    [[""], "payload.specifications.0.brandIds.0", "INVALID_REFERENCE"],
+    [[" brand-one "], "payload.specifications.0.brandIds.0", "INVALID_REFERENCE"],
+    [["b".repeat(241)], "payload.specifications.0.brandIds.0", "INVALID_REFERENCE"],
+    [["brand-one", "brand-one"], "payload.specifications.0.brandIds.1", "DUPLICATE_ID"],
+    [["brand-one", "brand-foreign"], "payload.specifications.0.brandIds.1", "INVALID_REFERENCE"],
+    [Array.from({ length: 201 }, (_, index) => `brand-${index}`), "payload.specifications.0.brandIds", "TOO_MANY_BRANDS"]
+  ])("rejects invalid list associations %j at their exact field", (brandIds, path, code) => {
+    expect(validateKnowledgeSectionPayload("pricing", {
+      specifications: [{ id: "spec-paint", name: "Paint", brandIds }],
+      brands: [{ id: "brand-one", name: "Same name as a Brand in another Main Line" }]
+    })).toContainEqual(expect.objectContaining({ path, code }));
+  });
+
+  it("rejects mixed fields and ambiguous later list references rather than taking the first match", () => {
+    const issues = validateKnowledgeSectionPayload("pricing", {
+      specifications: [
+        { id: "spec-mixed", name: "Mixed", brandId: "brand-one", brandIds: ["brand-one"] },
+        { id: "spec-ambiguous", name: "Ambiguous", brandIds: ["brand-one", "brand-duplicate"] }
+      ],
+      brands: [
+        { id: "brand-one", name: "One Brand" },
+        { id: "brand-duplicate", name: "Earlier Brand" },
+        { id: "brand-duplicate", name: "Later Brand" }
+      ]
+    });
+    expect(issues).toEqual(expect.arrayContaining([
+      expect.objectContaining({ path: "payload.specifications.0.brandIds", code: "INVALID_BRAND_ASSOCIATION" }),
+      expect.objectContaining({ path: "payload.specifications.1.brandIds.1", code: "INVALID_REFERENCE" }),
+      expect.objectContaining({ path: "payload.brands.2.id", code: "DUPLICATE_ID" })
+    ]));
+  });
+
   it("rejects malformed, dangling, and ambiguous local Brand associations at the Item/part field", () => {
     const tooLongBrandId = "b".repeat(241);
     const issues = validateKnowledgeSectionPayload("pricing", {

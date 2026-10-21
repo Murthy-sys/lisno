@@ -1055,6 +1055,136 @@ describe("AI estimator knowledge integrated replica-set invariants", { timeout: 
     expect(await persistentStateCounts()).toEqual(beforeContext);
   });
 
+  it("persists every Specification Brand across reload and unrelated edits without changing prices or local identity", async () => {
+    const services = createServices();
+    const draft = await createConfiguredDraft(services.item, "Multi-brand board", { withPrice: true });
+    const other = await createConfiguredDraft(services.item, "Other Main Line");
+    await updateDraftSection(services.item, other, "pricing", {
+      brands: [{ id: "foreign-brand", name: "Second Brand" }]
+    });
+    const original = await services.item.getSection(SUPER_ADMIN, draft.mainLineId, draft.revisionId, "pricing");
+    const pricesBefore = await AiEstimatorKnowledgePriceVersionModel.find({ revisionId: draft.revisionId }).lean();
+    const payload = {
+      ...original.payload,
+      priceEntries: (original.payload.priceEntries as Array<{ operation: "reference"; priceEntryId: string; priceVersionId: string }>)
+        .map(({ operation, priceEntryId, priceVersionId }) => ({ operation, priceEntryId, priceVersionId })),
+      specifications: [
+        { id: "spec-standard", name: "Board", brandIds: ["brand-first", "brand-second"], description: "Original detail" },
+        { id: "spec-single", name: "Singular compatibility", brandIds: ["brand-second"] },
+        { id: "spec-empty", name: "No Brand", brandIds: [] }
+      ],
+      brands: [{ id: "brand-first", name: "First Brand" }, { id: "brand-second", name: "Second Brand" }]
+    };
+    const command = { expectedVersion: original.version, expectedAggregateVersion: draft.aggregateVersion, payload };
+    const saved = await services.item.updateSection(SUPER_ADMIN, draft.mainLineId, draft.revisionId, "pricing", command);
+    const reloaded = await services.item.getSection(SUPER_ADMIN, draft.mainLineId, draft.revisionId, "pricing");
+    expect(reloaded.payload).toEqual({ ...payload, priceEntries: original.payload.priceEntries });
+    expect(await AiEstimatorKnowledgeSectionModel.findById(saved.id).lean()).toMatchObject({ payload });
+    expect(saved).toMatchObject({ version: original.version + 1, aggregateVersion: draft.aggregateVersion + 1 });
+
+    const beforeRejected = await lisnoPersistenceSnapshot();
+    await expect(services.item.updateSection(SUPER_ADMIN, draft.mainLineId, draft.revisionId, "pricing", command))
+      .rejects.toMatchObject({ status: 409, code: "VERSION_CONFLICT" });
+    for (const invalid of [
+      { ...payload, specifications: [{ ...payload.specifications[0], brandIds: ["brand-first", "foreign-brand"] }] },
+      { ...payload, brands: [payload.brands[0]] },
+      { ...payload, specifications: [{ ...payload.specifications[0], brandId: "brand-first" }] }
+    ]) {
+      await expect(services.item.updateSection(SUPER_ADMIN, draft.mainLineId, draft.revisionId, "pricing", {
+        expectedVersion: saved.version, expectedAggregateVersion: saved.aggregateVersion, payload: invalid
+      })).rejects.toMatchObject({ status: 400, code: "VALIDATION_ERROR", fields: expect.objectContaining({
+        ["brandId" in invalid.specifications[0]! ? "payload.specifications.0.brandIds" : "payload.specifications.0.brandIds.1"]: expect.any(String)
+      }) });
+      expect(await lisnoPersistenceSnapshot()).toEqual(beforeRejected);
+    }
+
+    // Historical typed metadata is retained when a current descriptive editor omits it.
+    await AiEstimatorKnowledgeSectionModel.updateOne({ _id: saved.id }, { $set: {
+      "payload.specifications.0.type": "text",
+      "payload.specifications.0.options": [],
+      "payload.specifications.0.value": "18 mm"
+    } });
+    const editedPayload = {
+      ...payload,
+      specifications: payload.specifications.map((row) => ({ ...row, description: "Updated item guidance" })),
+      brands: [{ id: "brand-first", name: "First Brand" }, { id: "brand-second", name: "Renamed Second Brand" }]
+    };
+    const edited = await services.item.updateSection(SUPER_ADMIN, draft.mainLineId, draft.revisionId, "pricing", {
+      expectedVersion: saved.version, expectedAggregateVersion: saved.aggregateVersion, payload: editedPayload
+    });
+    expect(edited.payload.specifications).toEqual([
+      { ...editedPayload.specifications[0], type: "text", options: [], value: "18 mm" },
+      editedPayload.specifications[1], editedPayload.specifications[2]
+    ]);
+    expect((await services.item.getSection(SUPER_ADMIN, draft.mainLineId, draft.revisionId, "pricing")).payload).toEqual(edited.payload);
+    expect(edited.payload.priceEntries).toEqual(original.payload.priceEntries);
+    expect(await AiEstimatorKnowledgePriceVersionModel.find({ revisionId: draft.revisionId }).lean()).toEqual(pricesBefore);
+    expect(await AuditEventModel.countDocuments({ entityId: saved.id, action: "ai_estimator_knowledge_section_updated" })).toBe(3);
+
+    const quantity = await services.item.getSection(SUPER_ADMIN, draft.mainLineId, draft.revisionId, "quantity-margin");
+    await services.item.updateSection(SUPER_ADMIN, draft.mainLineId, draft.revisionId, "quantity-margin", {
+      expectedVersion: quantity.version, expectedAggregateVersion: edited.aggregateVersion,
+      payload: { slabRates: [{ id: "slab-multi-brand", specificationId: "spec-standard", uomId: UOM_ID, quantity: "2", unitRatePaise: 1 }] }
+    });
+    const beforeRead = await lisnoPersistenceSnapshot();
+    const context = await services.context.resolve(SUPER_ADMIN, {
+      mainBasketId: BASKET_ID, mainLineId: draft.mainLineId, quantity: "2", uomId: UOM_ID
+    });
+    expect(context.sections.pricing?.specifications).toEqual([
+      { id: "spec-standard", name: "Board", description: "Updated item guidance", brandIds: ["brand-first", "brand-second"],
+        brands: [{ id: "brand-first", name: "First Brand" }, { id: "brand-second", name: "Renamed Second Brand" }] },
+      { id: "spec-single", name: "Singular compatibility", description: "Updated item guidance", brandId: "brand-second",
+        brand: { id: "brand-second", name: "Renamed Second Brand" } },
+      { id: "spec-empty", name: "No Brand", description: "Updated item guidance" }
+    ]);
+    expect(context.preview).toMatchObject({ effectiveUnitRatePaise: 10_000, vendorTotal: { amountPaise: 23_600 } });
+    expect(context.sections["quantity-margin"]).toMatchObject({ slabRates: [
+      { id: "slab-multi-brand", specificationId: "spec-standard", uomId: UOM_ID, quantity: "2", unitRatePaise: 1 }
+    ] });
+    expect(JSON.stringify(context)).not.toMatch(/commercially sensitive|foreign-brand|18 mm/);
+    expect(context.sections.pricing).not.toHaveProperty("priceEntries");
+    expect(await lisnoPersistenceSnapshot()).toEqual(beforeRead);
+  });
+
+  it("projects valid Brand lists completely and fails closed on malformed historical associations", async () => {
+    const services = createServices();
+    const draft = await createConfiguredDraft(services.item, "Historical Brand projection");
+    const pricing = await services.item.getSection(SUPER_ADMIN, draft.mainLineId, draft.revisionId, "pricing");
+    const invalidAssociations = [
+      { brandIds: ["brand-first", "brand-duplicate"] },
+      { brandId: "brand-first", brandIds: ["brand-first", "brand-second"] },
+      { brandIds: ["brand-first", "brand-missing"] },
+      { brandIds: ["brand-first", "brand-first"] },
+      { brandIds: ["brand-first", " brand-second "] },
+      { brandIds: ["brand-first", null] },
+      { brandIds: "brand-first" },
+      { brandId: " brand-first " }
+    ];
+    await AiEstimatorKnowledgeSectionModel.updateOne({ _id: pricing.id }, { $set: {
+      applicability: "configured",
+      payload: {
+        specifications: [
+          { id: "spec-valid", name: "Valid", brandIds: ["brand-second", "brand-first"], privateCost: 123 },
+          ...invalidAssociations.map((association, index) => ({ id: `spec-invalid-${index}`, name: `Invalid ${index}`, ...association }))
+        ],
+        brands: [
+          { id: "brand-first", name: "First Brand", privateCost: 111, internalVendorNotes: "private brand data" },
+          { id: "brand-second", name: "Second Brand", description: "Public description", privateCost: 222 },
+          { id: "brand-duplicate", name: "Earlier name" },
+          { id: "brand-duplicate", name: "Later name" }
+        ],
+        internalVendorNotes: "private pricing data", priceEntries: []
+      }
+    } });
+    const context = await services.context.resolve(SUPER_ADMIN, { mainBasketId: BASKET_ID, mainLineId: draft.mainLineId });
+    expect(context.sections.pricing?.specifications).toEqual([
+      { id: "spec-valid", name: "Valid", brandIds: ["brand-second", "brand-first"],
+        brands: [{ id: "brand-second", name: "Second Brand" }, { id: "brand-first", name: "First Brand" }] },
+      ...invalidAssociations.map((_, index) => ({ id: `spec-invalid-${index}`, name: `Invalid ${index}` }))
+    ]);
+    expect(JSON.stringify(context)).not.toMatch(/privateCost|private brand data|private pricing data/);
+  });
+
   it("commits exactly one concurrent same-scope Budget command without orphan versions or audits", async () => {
     const services = createServices();
     const alternateVendor = await services.reference.createMaster(SUPER_ADMIN, "vendors", {

@@ -1,5 +1,5 @@
 import { useQueries, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState, type DragEvent } from "react";
 import { Link } from "react-router-dom";
 import { ChevronDown, CircleHelp, LockKeyhole, MoreVertical, Pencil, Plus, ShieldCheck, ShieldMinus, ShieldPlus, Trash2 } from "lucide-react";
 import { ADD_MAIN_BASKET, CreateKnowledgeBasketFields } from "./CreateKnowledgeBasketFields";
@@ -32,6 +32,7 @@ import type { KnowledgeBudgetCatalogState } from "./KnowledgeBudgetBuilder";
 import type { KnowledgeBasket, KnowledgeItemDetail, KnowledgeItemListItem, KnowledgeJsonObject, KnowledgeJsonValue, KnowledgePermanentDeleteSubBasketResult, KnowledgeSubBasket, KnowledgeSubBasketListResponse } from "./knowledgeTypes";
 import type { KnowledgeValidationIssue } from "./knowledgeSectionValidation";
 import { RECOMMENDATION_GROUPS, newRecommendationRule, recommendationAction, recommendationGroup, type RecommendationGroup } from "./knowledgeRecommendationPresentation";
+import { moveRecommendationRule, recommendationMoveBlockReason } from "./knowledgeRecommendationMoves";
 import "./knowledge-recommendations.css";
 
 const SUB_BASKET_CATALOG_STALE_TIME_MS = 30_000;
@@ -86,6 +87,7 @@ type CatalogDialogState = {
 );
 
 type PendingGroupVersion = { readonly basketId: string; readonly subBasketId: string; readonly version: number };
+type RuleDrag = { owner: string; resetKey?: string; ruleId: string; token: string };
 
 export function KnowledgeBudgetAlterationBuilder({ value, mainLineName, catalogState = { status: "ready" }, validationAttempt = 0, resetKey, savedValue, ...props }: Props) {
   const dataSource = props.dataSource ?? liveKnowledgeEditorDataSource;
@@ -97,6 +99,14 @@ export function KnowledgeBudgetAlterationBuilder({ value, mainLineName, catalogS
   const [editing, setEditing] = useState<{ owner: string; resetKey?: string; ruleId: string } | null>(null);
   const [basketCreationBusy, setBasketCreationBusy] = useState(false);
   const [otherOpen, setOtherOpen] = useState(false);
+  const [dragging, setDragging] = useState<RuleDrag | null>(null);
+  const [dropTarget, setDropTarget] = useState<RecommendationGroup | null>(null);
+  const [moveNotice, setMoveNotice] = useState<{ kind: "status" | "error"; message: string } | null>(null);
+  const dragRef = useRef<RuleDrag | null>(null);
+  const dragOrigin = useRef<{ owner: string; resetKey?: string; ruleId: unknown; blocked: boolean } | null>(null);
+  const dragSequence = useRef(0);
+  const actionRefs = useRef(new Map<string, HTMLElement>());
+  const pendingMoveFocus = useRef<{ owner: string; resetKey?: string; ruleId: string; destination: RecommendationGroup } | null>(null);
   const fallbackFocusRef = useRef<HTMLHeadingElement>(null);
   const returnFocusRef = useRef<HTMLElement | null>(null);
   const editorRef = useRef<HTMLDivElement>(null);
@@ -157,6 +167,114 @@ export function KnowledgeBudgetAlterationBuilder({ value, mainLineName, catalogS
     ? rows.findIndex((row, index) => rowKey(row, index) === editing.ruleId) : -1;
   const editingRow = rows[editingIndex];
   const readOnly = props.readOnly || invalidShape;
+  // Native drag events may outlive a render. Always resolve the current draft and permission.
+  const currentMoveScope = useRef({ rows, readOnly, owner: props.mainLineId, resetKey, onChange: props.onChange });
+  currentMoveScope.current = { rows, readOnly, owner: props.mainLineId, resetKey, onChange: props.onChange };
+  const dragType = `application/x-lisno-recommendation-${id.replace(/[^a-z0-9]/gi, "").toLowerCase()}`;
+  const clearDrag = () => {
+    dragRef.current = null;
+    setDragging(null);
+    setDropTarget(null);
+  };
+  const targetLabel = (row: KnowledgeJsonObject) => recommendationTargetKind(row) === "sub_basket"
+    ? targetSubBaskets.get(String(row.targetSubBasketId))?.name
+      ?? items.find((item) => item.basketId === row.targetBasketId && item.subBasketId === row.targetSubBasketId)?.subBasketName
+      ?? "Unavailable Sub-Basket"
+    : items.find((item) => item.mainLineId === row.targetMainLineId)?.mainLineName ?? "Unavailable related item";
+  const moveRule = (ruleId: unknown, destination: RecommendationGroup, restoreFocus: boolean) => {
+    const current = currentMoveScope.current;
+    if (current.readOnly) return false;
+    const result = moveRecommendationRule(current.rows, ruleId, destination);
+    if (result.status === "rejected") {
+      setMoveNotice({ kind: "error", message: result.message });
+      return false;
+    }
+    if (result.status === "unchanged") return false;
+    const title = RECOMMENDATION_GROUPS.find((group) => group.key === destination)!.title;
+    if (restoreFocus) pendingMoveFocus.current = { owner: current.owner, resetKey: current.resetKey, ruleId: String(ruleId), destination };
+    if (destination === "other") setOtherOpen(true);
+    current.onChange(result.rows);
+    setMoveNotice({ kind: "status", message: `${targetLabel(result.row)} moved to ${title}.${destination === "other" ? " This rule now applies when the source item is removed." : ""} Save the section to keep this change.` });
+    return true;
+  };
+  const startDrag = (event: DragEvent<HTMLElement>, ruleId: unknown) => {
+    const current = currentMoveScope.current;
+    // Browsers can report the draggable row as the source even when the pointer
+    // started on a descendant menu control. Keep those controls independent.
+    const origin = dragOrigin.current;
+    if ((event.target instanceof Element && event.target.closest(".knowledge-recommendations__actions"))
+      || (origin?.owner === current.owner && origin.resetKey === current.resetKey && origin.ruleId === ruleId && origin.blocked)) {
+      event.preventDefault();
+      return;
+    }
+    const blocked = recommendationMoveBlockReason(current.rows, ruleId);
+    if (current.readOnly || blocked) {
+      event.preventDefault();
+      if (blocked && !current.readOnly) setMoveNotice({ kind: "error", message: blocked });
+      return;
+    }
+    const gesture = { owner: current.owner, resetKey: current.resetKey, ruleId: String(ruleId), token: `${id}:${++dragSequence.current}` };
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData(dragType, gesture.token);
+    dragRef.current = gesture;
+    setDragging(gesture);
+  };
+  const acceptsDrag = (event: DragEvent<HTMLElement>) => {
+    const current = currentMoveScope.current;
+    const gesture = dragRef.current;
+    return Boolean(gesture && !current.readOnly && gesture.owner === current.owner && gesture.resetKey === current.resetKey
+      && !recommendationMoveBlockReason(current.rows, gesture.ruleId) && Array.from(event.dataTransfer.types).includes(dragType));
+  };
+  const dropEvents = (destination: RecommendationGroup) => ({
+    onDragOver: (event: DragEvent<HTMLElement>) => {
+      if (!acceptsDrag(event)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      event.dataTransfer.dropEffect = "move";
+      setDropTarget(destination);
+    },
+    onDragLeave: (event: DragEvent<HTMLElement>) => {
+      if (!(event.relatedTarget instanceof Node) || !event.currentTarget.contains(event.relatedTarget)) setDropTarget((current) => current === destination ? null : current);
+    },
+    onDrop: (event: DragEvent<HTMLElement>) => {
+      if (!acceptsDrag(event)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const gesture = dragRef.current!;
+      if (event.dataTransfer.getData(dragType) === gesture.token) moveRule(gesture.ruleId, destination, false);
+      clearDrag();
+    }
+  });
+  useEffect(() => {
+    const gesture = dragRef.current;
+    if (gesture && (readOnly || gesture.owner !== props.mainLineId || gesture.resetKey !== resetKey
+      || recommendationMoveBlockReason(rows, gesture.ruleId))) clearDrag();
+    const pending = pendingMoveFocus.current;
+    if (!pending) return;
+    if (readOnly || pending.owner !== props.mainLineId || pending.resetKey !== resetKey
+      || recommendationMoveBlockReason(rows, pending.ruleId)) {
+      pendingMoveFocus.current = null;
+    } else if (rows.some((row) => row.id === pending.ruleId && recommendationGroup(row) === pending.destination)) {
+      actionRefs.current.get(pending.ruleId)?.focus();
+      pendingMoveFocus.current = null;
+    }
+  }, [value, props.mainLineId, resetKey, readOnly]);
+  useEffect(() => { setMoveNotice(null); }, [props.mainLineId, resetKey]);
+  useEffect(() => {
+    if (!dragging) return;
+    const cancel = (event: KeyboardEvent) => { if (event.key === "Escape") clearDrag(); };
+    window.addEventListener("keydown", cancel);
+    window.addEventListener("dragend", clearDrag);
+    return () => {
+      window.removeEventListener("keydown", cancel);
+      window.removeEventListener("dragend", clearDrag);
+    };
+  }, [dragging]);
+  const draggingRow = dragging && !readOnly && dragging.owner === props.mainLineId && dragging.resetKey === resetKey
+    && !recommendationMoveBlockReason(rows, dragging.ruleId) ? rows.find((row) => row.id === dragging.ruleId) : undefined;
+  const moveHint = (destination: RecommendationGroup) => destination === "other"
+    ? "Drop here to apply this rule when the source item is removed."
+    : `Drop here to move to ${RECOMMENDATION_GROUPS.find((group) => group.key === destination)!.title}.`;
   const openEditor = (row: KnowledgeJsonObject, index: number, trigger?: HTMLElement) => {
     validationFocus.current = false;
     initialFocusRef.current = null;
@@ -192,12 +310,13 @@ export function KnowledgeBudgetAlterationBuilder({ value, mainLineName, catalogS
     const entries = rows.map((row, index) => ({ row, index })).filter(({ row }) => recommendationGroup(row) === group.key);
     const isExclusion = group.key === "exclusions";
     const Icon = group.key === "mandatory" ? ShieldCheck : group.key === "probable" ? ShieldPlus : group.key === "exclusions" ? ShieldMinus : CircleHelp;
-    return <section key={group.key} className={`knowledge-recommendations__group knowledge-recommendations__group--${group.key}`} aria-labelledby={`${id}-${group.key}`}>
+    return <section key={group.key} className={`knowledge-recommendations__group knowledge-recommendations__group--${group.key}${draggingRow && dropTarget === group.key ? " knowledge-recommendations__drop-target" : ""}`} aria-labelledby={`${id}-${group.key}`} {...dropEvents(group.key)}>
       <div className="knowledge-recommendations__group-heading">
         <Icon aria-hidden="true" />
         <div><h4 id={`${id}-${group.key}`}>{group.title}<span className="knowledge-recommendations__count">{entries.length}</span></h4><p>{group.description}</p></div>
         {!readOnly && <Button type="button" variant="secondary" size="compact" leadingIcon={<Plus aria-hidden="true" />} disabled={rows.length >= 100} onClick={(event) => addRule(group.key, event.currentTarget)}>{group.addLabel}</Button>}
       </div>
+      {draggingRow && dropTarget === group.key && (group.key !== "other" || otherOpen) && recommendationGroup(draggingRow) !== group.key && <p className="knowledge-recommendations__drop-hint">{moveHint(group.key)}</p>}
       {entries.length ? <table className={`knowledge-recommendations__table${isExclusion ? " knowledge-recommendations__table--exclusions" : ""}`} aria-label={group.title}>
         <thead><tr><th scope="col">#</th><th scope="col">Related item</th><th scope="col">Relationship</th><th scope="col">{isExclusion ? "Effect" : "Action"}</th><th scope="col">{isExclusion ? "Condition" : "Applicability"}</th><th scope="col">Status</th><th scope="col"><span className="sr-only">Actions</span></th></tr></thead>
         <tbody>{entries.map(({ row, index }, position) => {
@@ -224,7 +343,11 @@ export function KnowledgeBudgetAlterationBuilder({ value, mainLineName, catalogS
           const saved = savedRows.find((candidate) => candidate.id === row.id);
           const unsaved = JSON.stringify(saved) !== JSON.stringify(row);
           const relationship = group.key === "mandatory" ? "Mandatory" : group.key === "probable" ? "Probable" : row.requirement === "must" ? "Required" : row.requirement === "can" ? "Optional" : "Needs review";
-          return <tr key={rowKey(row, index)} className={row.active === false ? "knowledge-recommendations__row--disabled" : undefined}>
+          const moveBlockReason = recommendationMoveBlockReason(rows, row.id);
+          return <tr key={rows.filter((candidate) => candidate.id === row.id).length > 1 ? `${rowKey(row, index)}:${index}` : rowKey(row, index)} className={row.active === false ? "knowledge-recommendations__row--disabled" : undefined}
+            draggable={!readOnly && !moveBlockReason} aria-describedby={!readOnly && !moveBlockReason ? `${id}-drag-instructions` : undefined}
+            onPointerDownCapture={(event) => { dragOrigin.current = { owner: props.mainLineId, resetKey, ruleId: row.id, blocked: event.target instanceof Element && Boolean(event.target.closest(".knowledge-recommendations__actions")) }; }}
+            onDragStart={(event) => startDrag(event, row.id)} onDragEnd={clearDrag}>
             <td data-label="#">{position + 1}</td>
             <th scope="row" className="knowledge-recommendations__item"><button type="button" aria-label={`${readOnly ? "View" : "Edit"} rule ${index + 1}: ${targetName ?? (targetKind === "sub_basket" ? "Choose Sub-Basket" : "Choose related item")}`} onClick={(event) => openEditor(row, index, event.currentTarget)}>{targetName ?? ((targetKind === "sub_basket" ? row.targetSubBasketId : row.targetMainLineId) ? `Unavailable ${targetKind === "sub_basket" ? "Sub-Basket" : "related item"}` : `Choose ${targetKind === "sub_basket" ? "Sub-Basket" : "related item"}`)}</button><span>{targetKind === "sub_basket" ? `Whole Sub-Basket · ${basketsLabel(baskets, row.targetBasketId, items)}` : `Line item · ${item?.subBasketName ?? basketsLabel(baskets, row.targetBasketId, items)}`}</span></th>
             <td data-label="Relationship"><span className="knowledge-recommendations__relationship">{relationship}</span></td>
@@ -237,6 +360,9 @@ export function KnowledgeBudgetAlterationBuilder({ value, mainLineName, catalogS
               {row.active === false && <span className="knowledge-recommendations__status knowledge-recommendations__status--disabled">Disabled</span>}
             </td>
             <td className="knowledge-recommendations__actions"><RuleActions index={index} readOnly={readOnly} active={row.active === true}
+              group={group.key} moveBlockReason={moveBlockReason}
+              actionRef={(element) => { if (typeof row.id === "string" && !moveBlockReason) { if (element) actionRefs.current.set(row.id, element); else actionRefs.current.delete(row.id); } }}
+              onMove={(destination) => moveRule(row.id, destination, true)}
               onEdit={(trigger) => openEditor(row, index, trigger)}
               onToggle={() => props.onChange(rows.map((current, i) => i === index ? { ...current, active: !current.active } : current))}
               onRemove={() => { props.onChange(rows.filter((_, i) => i !== index)); fallbackFocusRef.current?.focus(); }} /></td>
@@ -247,6 +373,9 @@ export function KnowledgeBudgetAlterationBuilder({ value, mainLineName, catalogS
   };
   return <section className="knowledge-recommendations" aria-labelledby={`${id}-title`}>
     <h3 id={`${id}-title`} ref={fallbackFocusRef} tabIndex={-1} className="sr-only">Related scope rules</h3>
+    <p id={`${id}-drag-instructions`} className="sr-only">Drag this item row to another section, or use the rule actions to choose a destination.</p>
+    <div aria-live="polite" aria-atomic="true" className={moveNotice?.kind === "status" ? undefined : "sr-only"}>{moveNotice?.kind === "status" && <p role="status" className="knowledge-recommendations__move-notice">{moveNotice.message}</p>}</div>
+    <div aria-live="assertive" aria-atomic="true" className={moveNotice?.kind === "error" ? undefined : "sr-only"}>{moveNotice?.kind === "error" && <p role="alert" className="knowledge-recommendations__move-notice knowledge-recommendations__move-notice--error">{moveNotice.message}</p>}</div>
     <p className="knowledge-recommendations__intro"><CircleHelp aria-hidden="true" /><span>Define required additions, optional suggestions and exclusions for <strong>{mainLineName}</strong>.</span></p>
     {catalogState.status !== "ready" || catalogState.refreshErrorMessage ? <InlineMessage tone={catalogState.status === "loading" ? "info" : "warning"}>
       {catalogState.status === "loading" ? "Loading related items…" : "Related items could not be fully loaded. Saved selections are retained."}
@@ -255,7 +384,7 @@ export function KnowledgeBudgetAlterationBuilder({ value, mainLineName, catalogS
     {invalidShape && <InlineMessage tone="error">Saved rules contain unsupported data. Reload the configuration before editing these rules.</InlineMessage>}
     {RECOMMENDATION_GROUPS.slice(0, 3).map(renderGroup)}
     <details className="knowledge-recommendations__other" open={otherOpen} onToggle={(event) => setOtherOpen(event.currentTarget.open)}>
-      <summary>Other scope rules <span className="knowledge-recommendations__count">{rows.filter((row) => recommendationGroup(row) === "other").length}</span><ChevronDown aria-hidden="true" /></summary>
+      <summary className={draggingRow && dropTarget === "other" ? "knowledge-recommendations__drop-target" : undefined} {...dropEvents("other")}>Other scope rules <span className="knowledge-recommendations__count">{rows.filter((row) => recommendationGroup(row) === "other").length}</span><ChevronDown aria-hidden="true" />{draggingRow && dropTarget === "other" && recommendationGroup(draggingRow) !== "other" && !otherOpen && <span className="knowledge-recommendations__drop-hint">{moveHint("other")}</span>}</summary>
       {renderGroup(RECOMMENDATION_GROUPS[3])}
     </details>
     {editingRow && <Drawer id={`${id}-editor`} open variant="contextual" width="wide" className="knowledge-recommendations__editor" title={`${readOnly ? "View" : "Edit"} scope rule ${editingIndex + 1}`} eyebrow="Recommendations & exclusions"
@@ -307,8 +436,11 @@ function basketsLabel(baskets: readonly KnowledgeBasket[], basketId: KnowledgeJs
     ?? "Main Basket not selected";
 }
 
-function RuleActions({ index, readOnly, active, onEdit, onToggle, onRemove }: {
+function RuleActions({ index, readOnly, active, group, moveBlockReason, actionRef, onMove, onEdit, onToggle, onRemove }: {
   index: number; readOnly: boolean; active: boolean; onEdit: (trigger: HTMLElement) => void; onToggle: () => void; onRemove: () => void;
+  group: RecommendationGroup; moveBlockReason?: string;
+  actionRef: (element: HTMLElement | null) => void;
+  onMove: (destination: RecommendationGroup) => boolean;
 }) {
   const ref = useRef<HTMLDetailsElement>(null);
   const [open, setOpen] = useState(false);
@@ -321,13 +453,15 @@ function RuleActions({ index, readOnly, active, onEdit, onToggle, onRemove }: {
       event.currentTarget.querySelector("summary")?.focus();
     }
   }}>
-    <summary aria-label={`Actions for rule ${index + 1}`} onKeyDown={(event) => {
+    <summary ref={actionRef} tabIndex={0} aria-label={`Actions for rule ${index + 1}`} onKeyDown={(event) => {
       if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setOpen((current) => !current); }
     }}><MoreVertical aria-hidden="true" /></summary>
     {open && <div className="knowledge-recommendations__menu-items">
       <button type="button" onClick={() => { const trigger = ref.current?.querySelector("summary"); if (ref.current) ref.current.open = false; if (trigger) onEdit(trigger); }}>{readOnly ? "View" : "Edit"} rule {index + 1}</button>
       {!readOnly && <>
         <button type="button" onClick={() => { onToggle(); if (ref.current) { ref.current.open = false; ref.current.querySelector("summary")?.focus(); } }}>{active ? "Disable" : "Enable"} rule {index + 1}</button>
+        {moveBlockReason ? <p className="knowledge-recommendations__move-blocked">{moveBlockReason}</p> : RECOMMENDATION_GROUPS.filter((destination) => destination.key !== group).map((destination, position) => <button key={destination.key} type="button" className={position === 0 ? "knowledge-recommendations__move-first" : undefined}
+          onClick={() => { if (onMove(destination.key)) setOpen(false); }}>Move to {destination.title}</button>)}
         <button type="button" className="ui-button ui-button--destructive-outline" onClick={onRemove}>Remove rule {index + 1}</button>
       </>}
     </div>}

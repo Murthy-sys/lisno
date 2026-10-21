@@ -110,6 +110,19 @@ describe("knowledge section client validation", () => {
     });
   });
 
+  it("validates every multi-brand reference against its own Pricing catalog", () => {
+    const brands = [{ id: "brand-a", name: "Alpha" }, { id: "brand-b", name: "Beta" }];
+    expect(validateKnowledgeSection("pricing", {
+      brands, specifications: [{ id: "spec-paint", name: "Paint", brandIds: ["brand-a", "brand-b"] }]
+    })).toEqual([]);
+    expect(validateKnowledgeSection("pricing", {
+      brands, specifications: [{ id: "spec-paint", name: "Paint", brandIds: ["brand-a", "other-line-brand"] }]
+    })).toContainEqual({ path: "specifications.0.brandIds.1", message: "Choose a configured Brand." });
+    expect(validateKnowledgeSection("pricing", {
+      brands, specifications: [{ id: "spec-paint", name: "Paint", brandId: "brand-a", brandIds: ["brand-a", "brand-b"] }]
+    })).toContainEqual(expect.objectContaining({ path: "specifications.0.brandIds", message: expect.stringContaining("not both") }));
+  });
+
   it("validates priced slabs against live Specifications, UOM scale, uniqueness, and derived totals", () => {
     const context = {
       specifications: [{ id: "spec-1", name: "Plywood" }],

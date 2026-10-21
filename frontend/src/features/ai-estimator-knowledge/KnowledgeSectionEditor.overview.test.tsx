@@ -205,8 +205,8 @@ describe("knowledge Overview and primary UOM editors", () => {
     const specificationEditor = screen.getByRole("dialog", { name: "Edit Specification" });
     expect(within(specificationEditor).getByRole("textbox", { name: "Brief description" }))
       .toHaveValue("Specification detail");
-    expect(within(specificationEditor).getByRole("combobox", { name: "Brand name" }))
-      .toHaveValue("brand-1");
+    expect(within(specificationEditor).getByRole("button", { name: "Brands" }))
+      .toHaveTextContent("Example brand");
     expect(within(specificationEditor).queryByRole("textbox", { name: "Description" }))
       .not.toBeInTheDocument();
     expect(within(recommendationsEditor as HTMLElement).getByRole("textbox", { name: "Reason" })).toHaveValue("Recommendation reason");
