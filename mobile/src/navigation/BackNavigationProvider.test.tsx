@@ -18,6 +18,7 @@ const mockRouteContext = createContext({ key: "unmounted", focused: false });
 const mockReplace = jest.fn();
 const mockDispatch = jest.fn();
 const mockListeners = new Map<EventName, Set<() => void>>();
+let mockPresentationReady = true;
 let mockReady = true;
 let mockRootState: NavigationTree;
 let mockRuntime: ReadyRuntime;
@@ -46,6 +47,7 @@ jest.mock("expo-router", () => {
   };
 });
 jest.mock("../runtime/RuntimeProvider", () => ({ useRuntime: () => mockRuntime }));
+jest.mock("../core/startup", () => ({ useStartupPresentation: () => ({ readyForNavigation: mockPresentationReady }) }));
 
 const capturedScreens = new Map<string, ScreenBack>();
 const nativeBackHandlers = new Set<NativeBackHandler>();
@@ -148,6 +150,7 @@ async function pressNativeBack(): Promise<boolean | null | undefined> {
 }
 
 beforeEach(() => {
+  mockPresentationReady = true;
   mockRuntime = runtime();
   mockReady = true;
   mockRootState = rootState([feature("projects")]);
@@ -167,6 +170,21 @@ beforeEach(() => {
 afterEach(() => { jest.restoreAllMocks(); });
 
 describe("BackNavigationProvider rendered integration", () => {
+  it("consumes hardware and visible Back until the cold-launch presentation releases its route", async () => {
+    const detail = record("projects");
+    mockRootState = rootState([detail]);
+    mockPresentationReady = false;
+    const view = await render(<TestApp screens={[{ routeKey: detail.key! }]} />);
+    expect(await pressNativeBack()).toBe(true);
+    await fireEvent.press(view.getByRole("button"));
+    expect(mockReplace).not.toHaveBeenCalled();
+    expect(mockDispatch).not.toHaveBeenCalled();
+    mockPresentationReady = true;
+    await view.rerender(<TestApp screens={[{ routeKey: detail.key! }]} />);
+    expect(await pressNativeBack()).toBe(true);
+    expect(mockReplace).toHaveBeenCalledWith("/feature/projects");
+  });
+
   it("uses the app stack rather than the Expo wrapper and gives native and visible Back the same targeted pop", async () => {
     const list = feature("messages");
     const thread = record("messages");

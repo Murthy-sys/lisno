@@ -5,11 +5,16 @@ import { ClientEstimateReviewScreen } from "../../features/estimates/ClientEstim
 import { ClientDrawingReview } from "../../features/estimates/ClientDrawingReview";
 import { ClientPlanReview } from "../../features/estimates/ClientPlanReview";
 import { AdaptiveAppScaffold } from "../../navigation/AdaptiveAppScaffold";
+import { StartupRouteGate } from "../../navigation/StartupRouteGate";
 import { parseEstimateRouteId } from "../../navigation/backNavigationPolicy";
 import { resolveAuthorizedFeature } from "../../navigation/registry";
 import { useRuntime } from "../../runtime/RuntimeProvider";
 
 export default function ClientEstimateRoute() {
+  return <StartupRouteGate><ClientEstimateRouteContent /></StartupRouteGate>;
+}
+
+function ClientEstimateRouteContent() {
   const params = useLocalSearchParams<{ estimateId?: string | string[] }>();
   const estimateId = parseEstimateRouteId(params.estimateId);
   const context = useRuntime();

@@ -2,12 +2,17 @@ import { Redirect, router, useLocalSearchParams } from "expo-router";
 
 import { FeatureWorkspace } from "../../features/workspace/FeatureWorkspace";
 import { AdaptiveAppScaffold } from "../../navigation/AdaptiveAppScaffold";
+import { StartupRouteGate } from "../../navigation/StartupRouteGate";
 import { destinationsForAuthorization, landingDestination, resolveAuthorizedFeature } from "../../navigation/registry";
 import { useScreenBack } from "../../navigation/useScreenBack";
 import { useRuntime } from "../../runtime/RuntimeProvider";
 import { FeatureErrorBoundary } from "../../ui/FeatureErrorBoundary";
 
 export default function FeatureRoute() {
+  return <StartupRouteGate><FeatureRouteContent /></StartupRouteGate>;
+}
+
+function FeatureRouteContent() {
   const params = useLocalSearchParams<{ featureId?: string | string[]; projectId?: string | string[] }>();
   const featureId = typeof params.featureId === "string" ? params.featureId : "";
   const context = useRuntime();

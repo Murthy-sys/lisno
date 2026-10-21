@@ -2,10 +2,15 @@ import { Redirect, useLocalSearchParams } from "expo-router";
 
 import { RecordDetailScreen } from "../../../features/workspace/RecordDetailScreen";
 import { AdaptiveAppScaffold } from "../../../navigation/AdaptiveAppScaffold";
+import { StartupRouteGate } from "../../../navigation/StartupRouteGate";
 import { resolveAuthorizedFeature } from "../../../navigation/registry";
 import { useRuntime } from "../../../runtime/RuntimeProvider";
 
 export default function RecordRoute() {
+  return <StartupRouteGate><RecordRouteContent /></StartupRouteGate>;
+}
+
+function RecordRouteContent() {
   const params = useLocalSearchParams<{ featureId?: string | string[]; recordId?: string | string[]; tab?: string | string[]; message?: string | string[] }>();
   const featureId = typeof params.featureId === "string" ? params.featureId : "";
   const recordId = typeof params.recordId === "string" ? params.recordId : "";

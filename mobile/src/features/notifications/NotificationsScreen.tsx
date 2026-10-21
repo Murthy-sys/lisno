@@ -135,11 +135,11 @@ function NotificationCard({ item, now, stacked, onPress, disabled }: { readonly 
 
 const styles = StyleSheet.create({
   error: { color: colors.danger, fontFamily: fonts.regular, fontSize: 13 },
-  content: { flexGrow: 1, width: "100%", maxWidth: 980, alignSelf: "center", padding: spacing.lg, paddingBottom: spacing.huge, gap: spacing.xl },
-  header: { gap: spacing.xs, minHeight: 112, paddingRight: spacing.xxl },
+  content: { flexGrow: 1, width: "100%", maxWidth: 980, alignSelf: "center", padding: spacing.md, paddingBottom: spacing.huge, gap: spacing.md },
+  header: { gap: spacing.xs, paddingRight: spacing.md },
   eyebrow: { color: colors.primary, fontFamily: fonts.semibold, fontSize: 11, letterSpacing: 1.4 },
   title: { color: colors.ink, ...typography.pageTitle },
-  description: { color: colors.inkMuted, fontFamily: fonts.regular, fontSize: 14, lineHeight: 22, maxWidth: 680 },
+  description: { color: colors.inkMuted, ...typography.body, maxWidth: 680 },
   updating: { color: colors.info, fontFamily: fonts.medium, fontSize: 12 },
   section: { gap: spacing.sm },
   sectionLabel: { color: colors.inkMuted, fontFamily: fonts.semibold, fontSize: 13, lineHeight: 18 },
@@ -165,7 +165,7 @@ const styles = StyleSheet.create({
   body: { flex: 1, minWidth: 0, gap: spacing.xxs },
   topRow: { flexDirection: "row", alignItems: "flex-start", gap: spacing.xs },
   topRowStacked: { flexDirection: "column", alignItems: "flex-start", gap: 2 },
-  cardTitle: { color: colors.ink, ...typography.cardTitle, fontSize: 15 },
+  cardTitle: { color: colors.ink, ...typography.cardTitle },
   cardTitleInline: { flex: 1 },
   cardTitleUnread: { fontFamily: fonts.bold },
   meta: { flexDirection: "row", alignItems: "center", gap: spacing.xxs, paddingTop: 2 },

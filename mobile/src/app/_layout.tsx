@@ -8,8 +8,6 @@ import { Stack } from "expo-router";
 import { useFonts } from "expo-font";
 import * as SplashScreen from "expo-splash-screen";
 import { StatusBar } from "expo-status-bar";
-import { useCallback } from "react";
-import { View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import "react-native-reanimated";
@@ -17,10 +15,16 @@ import "react-native-reanimated";
 import { RuntimeProvider } from "../runtime/RuntimeProvider";
 import { BackNavigationProvider } from "../navigation/BackNavigationProvider";
 import { colors } from "../ui/tokens";
+import { StartupMotionContext } from "../ui/StartupMotion";
+import { StartupExperience, useStartupAssets } from "../ui/StartupExperience";
+import { useReducedMotion } from "../features/onboarding/useReducedMotion";
 
+SplashScreen.setOptions({ duration: 0, fade: false });
 void SplashScreen.preventAutoHideAsync().catch(() => undefined);
 
 export default function RootLayout() {
+  const startupMotionPreference = useReducedMotion();
+  const startupAssetsStatus = useStartupAssets();
   const [fontsLoaded, fontError] = useFonts({
     Poppins_400Regular,
     Poppins_500Medium,
@@ -29,30 +33,28 @@ export default function RootLayout() {
     Fraunces_500Medium,
     Fraunces_400Regular_Italic
   });
-  const onLayout = useCallback(() => {
-    if (fontsLoaded || fontError) void SplashScreen.hideAsync();
-  }, [fontError, fontsLoaded]);
-
   if (!fontsLoaded && !fontError) return null;
 
   return (
-    <GestureHandlerRootView style={{ flex: 1 }}>
-      <SafeAreaProvider>
-        <RuntimeProvider>
-          <BackNavigationProvider>
-          <View onLayout={onLayout} style={{ flex: 1, backgroundColor: colors.midnight }}>
-            <StatusBar style="dark" />
-            <Stack
-              screenOptions={{
-                headerShown: false,
-                animation: "fade",
-                contentStyle: { backgroundColor: colors.canvas }
-              }}
-            />
-          </View>
-          </BackNavigationProvider>
-        </RuntimeProvider>
-      </SafeAreaProvider>
-    </GestureHandlerRootView>
+    <StartupMotionContext.Provider value={startupMotionPreference}>
+      <GestureHandlerRootView style={{ flex: 1 }}>
+        <SafeAreaProvider>
+          <RuntimeProvider>
+            <StartupExperience assetsStatus={startupAssetsStatus} reducedMotion={startupMotionPreference}>
+              <BackNavigationProvider>
+                <StatusBar style="dark" />
+                <Stack
+                  screenOptions={{
+                    headerShown: false,
+                    animation: "fade",
+                    contentStyle: { backgroundColor: colors.canvas }
+                  }}
+                />
+              </BackNavigationProvider>
+            </StartupExperience>
+          </RuntimeProvider>
+        </SafeAreaProvider>
+      </GestureHandlerRootView>
+    </StartupMotionContext.Provider>
   );
 }

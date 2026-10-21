@@ -3,26 +3,26 @@ import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-nati
 import Svg, { Path } from "react-native-svg";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Button, Field } from "../../ui/primitives";
-import { colors, fonts, spacing } from "../../ui/tokens";
+import { colors, fonts, spacing, typography } from "../../ui/tokens";
 
 export const knowledgeStyles = StyleSheet.create({
-  screen: { padding: spacing.md, paddingBottom: spacing.huge, gap: spacing.md, backgroundColor: colors.canvas },
-  stack: { gap: spacing.sm },
-  row: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: spacing.sm },
-  column: { flex: 1, minWidth: 140, gap: spacing.sm },
-  card: { borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, padding: spacing.md, gap: spacing.sm },
-  title: { color: colors.ink, fontFamily: fonts.semibold, fontSize: 18 },
-  subtitle: { color: colors.ink, fontFamily: fonts.medium, fontSize: 14 },
+  screen: { padding: spacing.md, paddingBottom: spacing.huge, gap: spacing.sm, backgroundColor: colors.canvas },
+  stack: { gap: spacing.xs },
+  row: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: spacing.xs },
+  column: { flex: 1, minWidth: 140, gap: spacing.xs },
+  card: { borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, padding: spacing.sm, gap: spacing.xs },
+  title: { color: colors.ink, ...typography.sectionTitle, fontFamily: fonts.semibold },
+  subtitle: { color: colors.ink, fontFamily: fonts.medium, fontSize: 13, lineHeight: 18 },
   text: { color: colors.inkMuted, fontFamily: fonts.regular, fontSize: 13, lineHeight: 20 },
   error: { color: colors.danger, fontFamily: fonts.medium, fontSize: 13, lineHeight: 20 },
-  choice: { minHeight: 44, borderWidth: 1, borderColor: colors.borderStrong, padding: spacing.sm, justifyContent: "center", flexDirection: "row", alignItems: "center", gap: spacing.sm },
+  choice: { minHeight: 44, borderWidth: 1, borderColor: colors.borderStrong, padding: spacing.xs, justifyContent: "center", flexDirection: "row", alignItems: "center", gap: spacing.xs },
   selected: { backgroundColor: colors.primarySoft, borderColor: colors.primary },
   disabled: { opacity: .55 },
-  select: { minHeight: 48, borderWidth: 1, borderColor: colors.borderStrong, padding: spacing.sm, flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 8 },
+  select: { minHeight: 48, borderWidth: 1, borderColor: colors.borderStrong, padding: spacing.xs, flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 8 },
   divider: { height: 1, backgroundColor: colors.border },
   modal: { flex: 1, backgroundColor: colors.canvas },
-  modalHeading: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.sm, padding: spacing.md, borderBottomWidth: 1, borderBottomColor: colors.border },
-  summaryRow: { flexDirection: "row", alignItems: "flex-start", gap: spacing.sm, paddingVertical: spacing.xs, borderBottomWidth: 1, borderBottomColor: colors.border }
+  modalHeading: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: spacing.xs, padding: spacing.sm, borderBottomWidth: 1, borderBottomColor: colors.border },
+  summaryRow: { flexDirection: "row", alignItems: "flex-start", gap: spacing.xs, paddingVertical: 6, borderBottomWidth: 1, borderBottomColor: colors.border }
 });
 
 const DetailDensity = createContext(false);

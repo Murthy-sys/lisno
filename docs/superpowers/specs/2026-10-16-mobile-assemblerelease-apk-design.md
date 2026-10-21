@@ -67,3 +67,4 @@ The first produces an APK and the second an AAB, using the saved mobile environm
 ## Open decisions
 
 None for the existing release/QA configuration. The approved scope expands the earlier one-off APK build into a durable build-configuration fix covering both APK and AAB.
+.90op

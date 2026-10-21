@@ -56,18 +56,18 @@ export function MoreScreen() {
 }
 
 const styles = StyleSheet.create({
-  content: { flexGrow: 1, width: "100%", maxWidth: 860, alignSelf: "center", padding: spacing.lg, paddingBottom: spacing.huge, gap: spacing.xl },
+  content: { flexGrow: 1, width: "100%", maxWidth: 860, alignSelf: "center", padding: spacing.md, paddingBottom: spacing.huge, gap: spacing.md },
   heading: { gap: spacing.xs },
   eyebrow: { color: colors.violet, fontFamily: fonts.semibold, fontSize: 11, letterSpacing: 1.4 },
   title: { color: colors.ink, ...typography.pageTitle },
-  subtitle: { color: colors.inkMuted, fontFamily: fonts.regular, fontSize: 14, lineHeight: 22 },
+  subtitle: { color: colors.inkMuted, ...typography.body },
   section: { gap: spacing.sm },
   sectionTitle: { color: colors.inkMuted, fontFamily: fonts.semibold, fontSize: 12, letterSpacing: 0.8, textTransform: "uppercase" },
-  row: { minHeight: 62, borderRadius: radii.control, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, flexDirection: "row", alignItems: "center", padding: spacing.md, gap: spacing.sm },
+  row: { minHeight: 48, borderRadius: radii.control, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, flexDirection: "row", alignItems: "center", padding: spacing.sm, gap: spacing.xs },
   pressed: { opacity: 0.7 },
   rowLabel: { flex: 1, color: colors.ink, fontFamily: fonts.semibold, fontSize: 14 },
   chevron: { color: colors.violet, fontSize: 26 },
-  accountCard: { borderRadius: radii.control, backgroundColor: colors.surfaceMuted, padding: spacing.md, gap: 4 },
-  accountName: { color: colors.ink, fontFamily: fonts.semibold, fontSize: 15 },
+  accountCard: { borderRadius: radii.control, backgroundColor: colors.surfaceMuted, padding: spacing.sm, gap: 4 },
+  accountName: { color: colors.ink, ...typography.cardTitle },
   accountEmail: { color: colors.inkMuted, fontFamily: fonts.regular, fontSize: 12 }
 });

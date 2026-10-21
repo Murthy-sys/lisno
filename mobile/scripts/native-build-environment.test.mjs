@@ -74,8 +74,10 @@ test('Gradle tracks environment changes and matches Expo metadata to each reques
   put('package.json', JSON.stringify({ name: 'native-build-environment-fixture', version: '1.0.0' }));
   symlinkSync(path.join(mobileRoot, 'node_modules'), path.join(fixture, 'node_modules'), 'junction');
   mkdirSync(path.join(fixture, 'src/core/config'), { recursive: true });
+  mkdirSync(path.join(fixture, 'src/ui'), { recursive: true });
   copyFileSync(path.join(mobileRoot, 'app.config.ts'), path.join(fixture, 'app.config.ts'));
   copyFileSync(path.join(mobileRoot, 'src/core/config/remoteHost.js'), path.join(fixture, 'src/core/config/remoteHost.js'));
+  copyFileSync(path.join(mobileRoot, 'src/ui/startupTheme.js'), path.join(fixture, 'src/ui/startupTheme.js'));
   put('.env', 'LISNO_APP_VARIANT=development\nEXPO_PUBLIC_API_ENV=remote\nEXPO_PUBLIC_REMOTE_API_URL=https://base.example/api/v1\n');
   put('.env.local', 'EXPO_PUBLIC_FIXTURE_LABEL=local-file\n');
   put('.env.production', 'EXPO_PUBLIC_REMOTE_API_URL=https://release.example/api/v1\n');

@@ -162,9 +162,9 @@ const styles = StyleSheet.create({
     width: "100%",
     maxWidth: 920,
     alignSelf: "center",
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.xl,
-    gap: spacing.xl
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
+    gap: spacing.md
   },
   headingBlock: { gap: spacing.xs },
   eyebrow: {
@@ -177,18 +177,18 @@ const styles = StyleSheet.create({
   heading: { color: colors.ink, ...typography.pageTitle },
   subtitle: { color: colors.inkMuted, ...typography.body },
   fieldGroup: { gap: 6 },
-  fieldLabel: { color: colors.ink, fontFamily: fonts.medium, fontSize: 14 },
+  fieldLabel: { color: colors.ink, fontFamily: fonts.medium, fontSize: 13, lineHeight: 18 },
   field: {
-    minHeight: 52,
+    minHeight: 48,
     borderWidth: 1,
     borderColor: colors.borderStrong,
     borderRadius: radii.control,
     backgroundColor: colors.surface,
     color: colors.ink,
     fontFamily: fonts.regular,
-    fontSize: 16,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm
+    fontSize: 14,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 10
   },
   fieldError: { borderColor: colors.danger },
   compactLabel: { fontSize: 12, lineHeight: 17 },
@@ -197,10 +197,10 @@ const styles = StyleSheet.create({
   compactButtonText: { fontSize: 12, lineHeight: 17 },
   errorText: { color: colors.danger, fontFamily: fonts.regular, fontSize: 12 },
   button: {
-    minHeight: 52,
+    minHeight: 48,
     borderRadius: radii.control,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 10,
     alignItems: "center",
     justifyContent: "center",
     flexDirection: "row",
@@ -226,11 +226,11 @@ const styles = StyleSheet.create({
     minHeight: 280,
     alignItems: "center",
     justifyContent: "center",
-    padding: spacing.xl,
+    padding: spacing.md,
     gap: spacing.sm
   },
   stateMark: { width: 40, height: 4, borderRadius: 2, backgroundColor: colors.gold },
   stateMarkError: { backgroundColor: colors.danger },
   stateTitle: { color: colors.ink, fontFamily: fonts.semibold, fontSize: 20, textAlign: "center" },
-  stateMessage: { color: colors.inkMuted, fontFamily: fonts.regular, fontSize: 14, lineHeight: 22, textAlign: "center", maxWidth: 480 }
+  stateMessage: { color: colors.inkMuted, ...typography.body, textAlign: "center", maxWidth: 480 }
 });

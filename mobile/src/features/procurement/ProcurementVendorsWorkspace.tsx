@@ -8,7 +8,7 @@ import type { VendorEffectiveStatus } from "../../../../shared/knowledge/vendorI
 import type { AuthenticatedSession } from "../../contracts/session";
 import { ApiError } from "../../core/http/apiClient";
 import { Button, Field, StateView } from "../../ui/primitives";
-import { colors, fonts, spacing } from "../../ui/tokens";
+import { colors, fonts, spacing, typography } from "../../ui/tokens";
 import { KnowledgeVendorEditor } from "../knowledge/KnowledgeVendorEditor";
 import { allKnowledgePages } from "../knowledge/knowledgeRuntime";
 import { KnowledgeCard, KnowledgeModal, KnowledgeSelect, KnowledgeText, knowledgeStyles as s } from "../knowledge/knowledgeUi";
@@ -119,10 +119,10 @@ function VendorDirectory({ session, context }: { readonly session: Authenticated
 }
 
 const styles = StyleSheet.create({
-  screen: { padding: spacing.lg, paddingBottom: spacing.huge, gap: spacing.lg, backgroundColor: colors.canvas },
+  screen: { padding: spacing.md, paddingBottom: spacing.huge, gap: spacing.md, backgroundColor: colors.canvas },
   heading: { gap: spacing.xs },
   eyebrow: { color: colors.primary, fontFamily: fonts.semibold, fontSize: 11, letterSpacing: 1.2 },
-  title: { color: colors.ink, fontFamily: fonts.semibold, fontSize: 27 },
+  title: { color: colors.ink, ...typography.pageTitle },
   description: { color: colors.inkMuted, fontFamily: fonts.regular, fontSize: 13, lineHeight: 19 },
   metrics: { flexDirection: "row", flexWrap: "wrap", borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
   metric: { flexGrow: 1, flexBasis: "30%", minWidth: 96, padding: spacing.sm, gap: spacing.xs, borderRightWidth: 1, borderColor: colors.border },
@@ -130,8 +130,8 @@ const styles = StyleSheet.create({
   metricValue: { color: colors.ink, fontFamily: fonts.semibold, fontSize: 22 },
   sectionHeading: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: spacing.sm },
   sectionCopy: { flex: 1, minWidth: 180, gap: spacing.xs },
-  sectionTitle: { color: colors.ink, fontFamily: fonts.semibold, fontSize: 18 },
-  filters: { gap: spacing.sm, padding: spacing.md, backgroundColor: colors.surfaceMuted, borderWidth: 1, borderColor: colors.border },
+  sectionTitle: { color: colors.ink, ...typography.sectionTitle, fontFamily: fonts.semibold },
+  filters: { gap: spacing.xs, padding: spacing.sm, backgroundColor: colors.surfaceMuted, borderWidth: 1, borderColor: colors.border },
   list: { gap: spacing.sm },
-  pagination: { gap: spacing.sm, borderTopWidth: 1, borderColor: colors.border, paddingTop: spacing.md }
+  pagination: { gap: spacing.xs, borderTopWidth: 1, borderColor: colors.border, paddingTop: spacing.sm }
 });

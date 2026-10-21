@@ -1,0 +1,10 @@
+[     111ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://127.0.0.1:4189/bundle.js:21359
+[     131ms] [WARNING] props.pointerEvents is deprecated. Use style.pointerEvents @ http://127.0.0.1:4189/bundle.js:27514
+[     140ms] [ERROR] Received `%s` for a non-boolean attribute `%s`.
+
+If you want to write it to the DOM, pass a string instead: %s="%s" or %s={value.toString()}.
+
+If you used to conditionally omit it with %s={condition && value}, pass %s={condition ? value : undefined} instead. false accessible accessible false accessible accessible accessible @ http://127.0.0.1:4189/bundle.js:3732
+[     140ms] [ERROR] React does not recognize the `%s` prop on a DOM element. If you intentionally want it to appear in the DOM as a custom attribute, spell it as lowercase `%s` instead. If you accidentally passed it from a parent component, remove it from the DOM element. accessibilityElementsHidden accessibilityelementshidden @ http://127.0.0.1:4189/bundle.js:3659
+[     140ms] [ERROR] React does not recognize the `%s` prop on a DOM element. If you intentionally want it to appear in the DOM as a custom attribute, spell it as lowercase `%s` instead. If you accidentally passed it from a parent component, remove it from the DOM element. importantForAccessibility importantforaccessibility @ http://127.0.0.1:4189/bundle.js:3659
+[     579ms] [WARNING] Animated: `useNativeDriver` is not supported because the native animated module is missing. Falling back to JS-based animation. To resolve this, add `RCTAnimation` module to this app, or remove `useNativeDriver`. Make sure to run `bundle exec pod install` first. Read more about autolinking: https://github.com/react-native-community/cli/blob/master/docs/autolinking.md @ http://127.0.0.1:4189/bundle.js:33658

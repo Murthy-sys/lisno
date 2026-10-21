@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { AccessibilityInfo, findNodeHandle, Keyboard, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, { Circle, Ellipse, Path } from "react-native-svg";
-import { colors, fonts } from "../../ui/tokens";
+import { colors, fonts, typography } from "../../ui/tokens";
 
 type IconName = "back" | "bolt" | "down" | "search" | "filter" | "info" | "close" | "values" | "basket" | "add" | "item" | "temporary" | "next";
 export type KnowledgeCatalogAction = "values" | "baskets" | "basket" | "item" | "temporary";
@@ -134,16 +134,16 @@ export function KnowledgeCatalogHeader({ search, onSearchChange, onSearch, onFil
 }
 
 const styles = StyleSheet.create({
-  header: { marginHorizontal: -16, marginTop: -16, paddingHorizontal: 22, paddingTop: 4, paddingBottom: 18, backgroundColor: colors.surface, overflow: "hidden" },
+  header: { marginHorizontal: -16, marginTop: -16, paddingHorizontal: 16, paddingTop: 4, paddingBottom: 12, backgroundColor: colors.surface, overflow: "hidden" },
   leaves: { position: "absolute", right: -10, top: -8, opacity: .78 },
-  topRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 7, marginLeft: -7, marginRight: -6 },
+  topRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 4, marginLeft: -7, marginRight: -6 },
   back: { minHeight: 44, flexDirection: "row", alignItems: "center", gap: 8, paddingRight: 8 },
   backIcon: { width: 30, height: 30, borderRadius: 15, alignItems: "center", justifyContent: "center", backgroundColor: colors.surfaceMuted },
   navLabel: { fontFamily: fonts.medium, color: colors.ink, fontSize: 12, lineHeight: 18 },
   actionsButton: { minHeight: 44, paddingHorizontal: 13, borderWidth: 1, borderColor: colors.primary, borderRadius: 24, flexDirection: "row", gap: 9, alignItems: "center", backgroundColor: "rgba(251,250,246,0.72)" },
-  title: { fontFamily: fonts.semibold, fontSize: 25, lineHeight: 33, letterSpacing: -.65, color: colors.ink },
+  title: { ...typography.pageTitle, fontSize: 22, lineHeight: 28, letterSpacing: -.4, color: colors.ink },
   description: { fontFamily: fonts.regular, fontSize: 13, lineHeight: 19, color: colors.inkMuted, marginTop: 4 },
-  notice: { flexDirection: "row", alignItems: "flex-start", gap: 12, paddingHorizontal: 12, paddingVertical: 11, borderRadius: 9, backgroundColor: colors.surfaceMuted, marginTop: 12, marginBottom: 15 },
+  notice: { flexDirection: "row", alignItems: "flex-start", gap: 8, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 9, backgroundColor: colors.surfaceMuted, marginTop: 8, marginBottom: 10 },
   noticeText: { flex: 1, fontFamily: fonts.regular, fontSize: 10.5, lineHeight: 17, color: colors.inkMuted },
   searchRow: { minHeight: 44, flexDirection: "row", alignItems: "center", borderWidth: 1, borderColor: "#b8b8bb", borderRadius: 12, backgroundColor: colors.surface },
   searchInput: { flex: 1, minWidth: 0, minHeight: 44, paddingVertical: 8, paddingHorizontal: 0, fontFamily: fonts.regular, fontSize: 11, color: colors.ink },

@@ -4,6 +4,7 @@ import { Pressable, Text } from "react-native";
 
 import FeatureRoute from "../../app/feature/[featureId]";
 import { AUTHORIZATION_POLICY_VERSION } from "../../contracts/authorization";
+import { useStartupPresentation } from "../../core/startup/StartupPresentation";
 import { useScaffoldNavigationGuard } from "../../navigation/AdaptiveAppScaffold";
 import { useConfiguredRuntime, useRuntime } from "../../runtime/RuntimeProvider";
 import { FeatureWorkspace } from "./FeatureWorkspace";
@@ -28,6 +29,12 @@ jest.mock("../../navigation/useScreenBack", () => ({
   useScreenBack: ({ blocked }: { blocked?: boolean } = {}) => ({ visible: true, disabled: blocked, onBack: mockBack })
 }));
 jest.mock("../../runtime/RuntimeProvider", () => ({ useRuntime: jest.fn(), useConfiguredRuntime: jest.fn() }));
+jest.mock("../../core/startup/StartupPresentation", () => ({ useStartupPresentation: jest.fn() }));
+jest.mock("../../ui/StartupBrand", () => {
+  const React = jest.requireActual("react") as typeof import("react");
+  const { Text } = jest.requireActual("react-native") as typeof import("react-native");
+  return { StartupBrand: () => React.createElement(Text, null, "Preparing your workspace") };
+});
 jest.mock("./FeatureWorkspace", () => ({ FeatureWorkspace: jest.fn() }));
 jest.mock("../../ui/brand", () => ({ LisnoWordmark: () => null }));
 jest.mock("react-native-safe-area-context", () => {
@@ -44,6 +51,7 @@ jest.mock("../../ui/ChromeSurface", () => {
 function runtimeFixture() {
   return {
     configured: true,
+    booted: true,
     environment: { environment: { id: "test" }, generation: 1 },
     session: {
       status: "authenticated", generation: 1,
@@ -76,6 +84,7 @@ beforeEach(() => {
   mockFail = false;
   mockBack.mockReturnValue(false);
   context = runtimeFixture();
+  jest.mocked(useStartupPresentation).mockReturnValue({ phase: "settled", readyForNavigation: true, complete: jest.fn() });
   jest.mocked(useRuntime).mockImplementation(() => context as unknown as ReturnType<typeof useRuntime>);
   jest.mocked(useConfiguredRuntime).mockImplementation(() => context as unknown as ReturnType<typeof useConfiguredRuntime>);
   jest.mocked(FeatureWorkspace).mockImplementation(() => <TestFeature />);
@@ -147,4 +156,39 @@ it.each(["unauthorized", "signed out", "unconfigured"])("redirects %s sessions b
   expect(view.getByText(`Redirect: ${state === "unauthorized" ? "/access-denied" : "/"}`)).toBeTruthy();
   expect(FeatureWorkspace).not.toHaveBeenCalled();
   expect(view.queryByRole("button", { name: "Try again" })).toBeNull();
+});
+
+it("retains the requested feature and project through restoration and the full introduction", async () => {
+  mockParams = { featureId: "projects", projectId: "project-deep-link" };
+  context.booted = false;
+  context.session.status = "restoring";
+  jest.mocked(useStartupPresentation).mockReturnValue({ phase: "playing", readyForNavigation: false, complete: jest.fn() });
+  const view = await render(<FeatureRoute />);
+  expect(FeatureWorkspace).not.toHaveBeenCalled();
+  expect(view.queryByText("Redirect: /")).toBeNull();
+
+  context.booted = true;
+  context.session.status = "authenticated";
+  await view.rerender(<FeatureRoute />);
+  expect(FeatureWorkspace).not.toHaveBeenCalled();
+
+  jest.mocked(useStartupPresentation).mockReturnValue({ phase: "settled", readyForNavigation: true, complete: jest.fn() });
+  await view.rerender(<FeatureRoute />);
+  expect(jest.mocked(FeatureWorkspace).mock.calls[0]![0]).toEqual(expect.objectContaining({
+    destination: expect.objectContaining({ id: "projects" }), initialProjectId: "project-deep-link"
+  }));
+});
+
+it("rechecks authorization when the introduction releases a restored deep link", async () => {
+  context.booted = false;
+  context.session.status = "restoring";
+  const view = await render(<FeatureRoute />);
+  expect(FeatureWorkspace).not.toHaveBeenCalled();
+
+  context.booted = true;
+  context.session.status = "authenticated";
+  context.session.session.authorization.permissions = ["projects.list"];
+  await view.rerender(<FeatureRoute />);
+  expect(view.getByText("Redirect: /access-denied")).toBeTruthy();
+  expect(FeatureWorkspace).not.toHaveBeenCalled();
 });

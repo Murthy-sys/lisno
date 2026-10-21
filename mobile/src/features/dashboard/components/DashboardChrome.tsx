@@ -1,4 +1,4 @@
-import { useId, type ReactNode } from "react";
+import { useId, useState, type ReactNode } from "react";
 import {
   Image,
   Pressable,
@@ -17,6 +17,7 @@ import type { DashboardPeriod } from "../data";
 import { DASHBOARD_PERIODS } from "../data/contract";
 import {
   dashboardColors as color,
+  dashboardLayout,
   dashboardRadii as radius,
   dashboardSpacing as space,
   dashboardTypography as type
@@ -141,14 +142,18 @@ export function FactRail({
   readonly accent?: "violet" | "cyan";
   readonly style?: StyleProp<ViewStyle>;
 }) {
+  const { width, fontScale } = useWindowDimensions();
+  const [railWidth, setRailWidth] = useState<number | null>(null);
+  const stacked = (railWidth ?? width) / fontScale < dashboardLayout.widePhoneBreakpoint;
+
   return (
-    <View style={[styles.factRail, style]}>
-      <View style={styles.factHeader}>
+    <View onLayout={({ nativeEvent }) => setRailWidth(nativeEvent.layout.width)} style={[styles.factRail, style, stacked ? styles.factRailStacked : null]} testID="dashboard-fact-rail">
+      <View style={[styles.factHeader, stacked ? styles.factColumn : null]}>
         <Text style={styles.factTitle}>{title.toUpperCase()}</Text>
-        <Text adjustsFontSizeToFit minimumFontScale={0.72} numberOfLines={1} style={styles.factHeadline}>{headline}</Text>
+        <Text style={styles.factHeadline}>{headline}</Text>
         <Text style={styles.factHeadlineLabel}>{headlineLabel}</Text>
       </View>
-      <View style={styles.factList}>
+      <View style={[styles.factList, stacked ? styles.factColumn : null]}>
         {facts.map((fact) => (
           <View key={fact.label} style={styles.factItem}>
             <Text style={styles.factItemLabel}>{fact.label}</Text>
@@ -322,17 +327,17 @@ export function DashboardSkeleton() {
 const styles = StyleSheet.create({
   header: { gap: 0 },
   hero: {
-    minHeight: 180,
+    minHeight: 136,
     marginHorizontal: -16,
     overflow: "hidden",
     backgroundColor: color.canvas
   },
   heroPhoto: { position: "absolute", top: 0, right: 0, bottom: 0, width: "80%", height: "100%" },
-  headerCopy: { gap: 4, paddingTop: 14, paddingBottom: 18, paddingHorizontal: 24, maxWidth: 360 },
+  headerCopy: { gap: 4, paddingVertical: 12, paddingHorizontal: 16, maxWidth: 360 },
   headerCopyStacked: { maxWidth: "100%" },
   greeting: { color: color.textMuted, fontFamily: type.displayItalic, fontSize: 14, lineHeight: 20 },
-  title: { color: color.text, fontFamily: type.display, fontSize: 36, lineHeight: 38, letterSpacing: -0.8 },
-  subtitle: { color: color.textMuted, fontFamily: type.display, fontSize: 16, lineHeight: 20, maxWidth: 260, marginTop: 1 },
+  title: { color: color.text, fontFamily: type.display, fontSize: 22, lineHeight: 28 },
+  subtitle: { color: color.textMuted, fontFamily: type.display, fontSize: 14, lineHeight: 20, maxWidth: 260, marginTop: 1 },
   periodControl: {
     alignSelf: "stretch",
     flexDirection: "row",
@@ -358,16 +363,17 @@ const styles = StyleSheet.create({
     flex: 1,
     position: "relative",
     flexDirection: "row",
-    gap: space.md,
-    paddingVertical: space.lg,
-    paddingHorizontal: space.md,
+    gap: space.sm,
+    padding: space.sm,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderColor: color.stageEdge
   },
+  factRailStacked: { flexDirection: "column" },
+  factColumn: { flexGrow: 0, flexShrink: 0, flexBasis: "auto" },
   factHeader: { minWidth: 96, flex: 0.9, gap: 2 },
   factTitle: { color: color.textDim, fontFamily: type.semibold, fontSize: 12, lineHeight: 18, letterSpacing: 0.5 },
-  factHeadline: { color: color.text, ...type.pageTitle },
+  factHeadline: { color: color.text, fontFamily: type.semibold, fontSize: 24, lineHeight: 30 },
   factHeadlineLabel: { color: color.textMuted, fontFamily: type.regular, fontSize: 12, lineHeight: 18 },
   factList: { minWidth: 72, flex: 1, justifyContent: "space-between", gap: 6 },
   factItem: { flexDirection: "row", flexWrap: "wrap", alignItems: "baseline", justifyContent: "space-between", gap: 5 },
@@ -377,8 +383,8 @@ const styles = StyleSheet.create({
   factWarning: { color: color.warning },
   factDanger: { color: color.dangerInk },
   factUnavailable: { color: color.textMuted },
-  selector: { flexGrow: 0, marginHorizontal: -space.lg },
-  selectorContent: { paddingHorizontal: space.lg, gap: 8 },
+  selector: { flexGrow: 0, marginHorizontal: -space.md },
+  selectorContent: { paddingHorizontal: space.md, gap: 8 },
   selectorButton: {
     minHeight: 48,
     justifyContent: "center",
@@ -396,15 +402,15 @@ const styles = StyleSheet.create({
   scene: {
     position: "relative",
     overflow: "hidden",
-    gap: space.md,
+    gap: space.sm,
     borderRadius: radius.surface,
     borderWidth: 1,
     borderColor: color.stageEdge,
     backgroundColor: color.stage,
-    paddingTop: space.xl
+    paddingTop: space.sm
   },
   sceneCompact: { borderRadius: radius.surface },
-  sceneHeader: { paddingHorizontal: space.lg, flexDirection: "row", alignItems: "flex-start", gap: space.sm },
+  sceneHeader: { paddingHorizontal: space.sm, flexDirection: "row", alignItems: "flex-start", gap: space.xs },
   sceneCopy: { flex: 1, gap: 3 },
   sceneEyebrow: { color: color.warning, fontFamily: type.semibold, fontSize: 12, lineHeight: 18, letterSpacing: 0.5 },
   sceneTitle: { color: color.text, ...type.sectionTitle },
@@ -414,7 +420,7 @@ const styles = StyleSheet.create({
   sceneFooter: {
     minHeight: 48,
     justifyContent: "center",
-    paddingHorizontal: space.lg,
+    paddingHorizontal: space.sm,
     paddingVertical: space.sm,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: color.stageLine,

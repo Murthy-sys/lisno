@@ -289,11 +289,11 @@ function ProfileContent({ session }: { readonly session: AuthenticatedSession })
 }
 
 const styles = StyleSheet.create({
-  content: { flexGrow: 1, width: "100%", maxWidth: 860, alignSelf: "center", padding: spacing.lg, paddingBottom: spacing.huge, gap: spacing.xl },
+  content: { flexGrow: 1, width: "100%", maxWidth: 860, alignSelf: "center", padding: spacing.md, paddingBottom: spacing.huge, gap: spacing.md },
   heading: { gap: spacing.xs },
   eyebrow: { color: colors.violet, fontFamily: fonts.semibold, fontSize: 11, letterSpacing: 1.4 },
   title: { color: colors.ink, ...typography.pageTitle },
-  identity: { alignItems: "center", gap: spacing.md, borderRadius: radii.surface, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, padding: spacing.lg },
+  identity: { alignItems: "center", gap: spacing.sm, borderRadius: radii.surface, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, padding: spacing.sm },
   identityText: { alignItems: "center", gap: spacing.xxs, maxWidth: "100%" },
   name: { color: colors.ink, ...typography.cardTitle, textAlign: "center" },
   email: { color: colors.inkMuted, ...typography.body, textAlign: "center" },
@@ -305,8 +305,8 @@ const styles = StyleSheet.create({
   failure: { gap: spacing.xs },
   error: { color: colors.danger, fontFamily: fonts.medium, fontSize: 12, lineHeight: 18 },
   success: { color: colors.success, fontFamily: fonts.medium, fontSize: 12, lineHeight: 18 },
-  confirmation: { gap: spacing.sm, borderWidth: 1, borderColor: colors.danger, borderRadius: radii.surface, backgroundColor: colors.dangerSoft, padding: spacing.md },
-  confirmTitle: { color: colors.ink, fontFamily: fonts.semibold, fontSize: 16 },
+  confirmation: { gap: spacing.xs, borderWidth: 1, borderColor: colors.danger, borderRadius: radii.surface, backgroundColor: colors.dangerSoft, padding: spacing.sm },
+  confirmTitle: { color: colors.ink, ...typography.cardTitle },
   copy: { color: colors.inkMuted, fontFamily: fonts.regular, fontSize: 12, lineHeight: 18 },
   actions: { flexDirection: "row", gap: spacing.sm },
   action: { flex: 1 }
