@@ -13,7 +13,7 @@
    theme without !important.
    ========================================================================== */
 
-/* The index fills the workspace so the card grid has room for four columns;
+/* The index fills the workspace so basket rows and their contents have room;
    every other page keeps the shell's 1440px measure. */
 .ui-workspace > .knowledge-page--index {
   inline-size: 100%;
@@ -364,13 +364,10 @@
   background: var(--kx-panel);
 }
 
-.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-card--main[data-expanded] {
-  grid-column: 1 / -1;
-}
-
 .ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-card--main > .knowledge-basket-card__header {
   display: grid;
-  grid-template-columns: clamp(76px, 27%, 108px) minmax(0, 1fr);
+  grid-template-columns: 64px minmax(0, 1fr);
+  align-items: center;
   gap: 12px;
   padding: 12px;
   border-radius: 3px;
@@ -384,16 +381,18 @@
   text-transform: uppercase;
 }
 
-.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-card__photo {
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-card--main > .knowledge-basket-card__header > .knowledge-basket-card__photo {
   position: relative;
+  align-self: start;
+  inline-size: 64px;
+  block-size: 64px;
   min-inline-size: 0;
-  min-block-size: 108px;
   overflow: hidden;
   border-radius: 3px;
   background: #e8e5dc;
 }
 
-.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-card__photo img {
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-card--main > .knowledge-basket-card__header .knowledge-basket-card__photo img {
   position: absolute;
   inset: 0;
   inline-size: 100%;
@@ -401,11 +400,10 @@
   object-fit: cover;
 }
 
-.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-card__photo-placeholder {
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-card--main > .knowledge-basket-card__header .knowledge-basket-card__photo-placeholder {
   display: block;
   inline-size: 100%;
   block-size: 100%;
-  min-block-size: 108px;
   background: #e8e5dc;
 }
 
@@ -426,11 +424,27 @@
 }
 
 .ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-card--main > .knowledge-basket-card__header .knowledge-basket-card__heading {
+  grid-column: 1 / -1;
+  grid-row: 2;
   font-size: 1.125rem;
 }
 
-.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-card--main[data-expanded] > .knowledge-basket-card__header .knowledge-basket-card__heading {
-  font-size: 1.25rem;
+/* Parent identity uses two compact rows; nested section content stays flex. */
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-card--main > .knowledge-basket-card__header > .knowledge-basket-card__content {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 2px 12px;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-card--main > .knowledge-basket-card__header .knowledge-basket-card__count {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-card--main > .knowledge-basket-card__header .knowledge-basket-card__description {
+  grid-column: 1 / -1;
+  grid-row: 3;
 }
 
 .ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-card__toggle {
@@ -665,35 +679,34 @@
   font-size: 0.875rem;
 }
 
-@container knowledge-basket-layout (min-width: 44rem) {
-  .ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-groups {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
-@container knowledge-basket-layout (min-width: 64rem) {
-  .ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-card--main[data-expanded] > .knowledge-basket-card__header {
-    grid-template-columns: 120px minmax(16rem, 1fr) auto;
-    align-items: center;
-    gap: 24px;
-    padding: 20px 24px;
+@container knowledge-basket-layout (min-width: 56rem) {
+  .ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-card--main > .knowledge-basket-card__header {
+    grid-template-columns: 64px minmax(16rem, 1fr) auto;
   }
 
-  .ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-card--main[data-expanded] > .knowledge-basket-card__header > .knowledge-basket-card__photo {
-    align-self: stretch;
-    min-block-size: 120px;
-  }
-
-  .ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-card--main[data-expanded] > .knowledge-basket-card__header > .knowledge-basket-card__commands {
+  .ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-card--main > .knowledge-basket-card__header > .knowledge-basket-card__commands {
     grid-column: 3;
     justify-content: flex-end;
-    max-inline-size: 34rem;
+  }
+
+  .ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-card--main > .knowledge-basket-card__header .knowledge-basket-card__creation-actions,
+  .ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-card--main > .knowledge-basket-card__header .knowledge-basket-card__creation-actions .ui-button {
+    flex: 0 1 auto;
   }
 }
 
-@container knowledge-basket-layout (min-width: 88rem) {
-  .ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-groups {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+@container knowledge-basket-layout (max-width: 27rem) {
+  .ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-card--main > .knowledge-basket-card__header > .knowledge-basket-card__content {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-card--main > .knowledge-basket-card__header .knowledge-basket-card__count {
+    grid-column: 1;
+    grid-row: 3;
+  }
+
+  .ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-card--main > .knowledge-basket-card__header .knowledge-basket-card__description {
+    grid-row: 4;
   }
 }
 
