@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { StatusBar } from "expo-status-bar";
 import {
   AccessibilityInfo,
   Animated,
@@ -181,60 +180,9 @@ export function BrandLoader({
   );
 }
 
-export function StartupBrand({
-  message = "Preparing your workspace",
-  reducedMotion
-}: {
-  readonly message?: string;
-  readonly reducedMotion?: boolean;
-}) {
-  const prefersReducedMotion = useReducedMotion(reducedMotion);
-  const reveal = useRef(new Animated.Value(prefersReducedMotion ? 1 : 0)).current;
-
-  useEffect(() => {
-    if (prefersReducedMotion) {
-      reveal.setValue(1);
-      return;
-    }
-    const animation = Animated.timing(reveal, {
-      toValue: 1,
-      duration: 520,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: true
-    });
-    animation.start();
-    return () => animation.stop();
-  }, [prefersReducedMotion, reveal]);
-
-  return (
-    <View style={styles.startup} testID="startup-brand">
-      <StatusBar style="light" />
-      <Animated.View
-        style={{
-          opacity: reveal,
-          transform: [
-            {
-              translateY: reveal.interpolate({
-                inputRange: [0, 1],
-                outputRange: [8, 0]
-              })
-            }
-          ]
-        }}
-      >
-        <LisnoWordmark tone="light" width={184} />
-      </Animated.View>
-      <BrandLoader label={message} reducedMotion={prefersReducedMotion} tone="light" />
-    </View>
-  );
-}
+export { StartupBrand } from "./StartupBrand";
 
 const styles = StyleSheet.create({
-  startup: {
-    backgroundColor: colors.shell,
-    alignItems: "center",
-    gap: spacing.huge
-  },
   loader: {
     alignItems: "center",
     gap: spacing.md

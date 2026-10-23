@@ -62,7 +62,8 @@ export function formatKnowledgeMoney(amountPaise: number): string {
   const exactPaise = BigInt(amountPaise);
   const wholeRupees = exactPaise / 100n;
   const fractionalPaise = (exactPaise % 100n).toString().padStart(2, "0");
-  return `${KNOWLEDGE_INR_WHOLE.format(wholeRupees)}.${fractionalPaise}`;
+  // The validated whole-rupee quotient is safe as a Number; some mobile Intl runtimes reject BigInt.
+  return `${KNOWLEDGE_INR_WHOLE.format(Number(wholeRupees))}.${fractionalPaise}`;
 }
 
 export type RupeeInputParseResult =

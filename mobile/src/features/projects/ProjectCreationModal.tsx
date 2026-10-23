@@ -5,7 +5,7 @@ import Svg, { Path } from "react-native-svg";
 
 import { useScaffoldNavigationGuard } from "../../navigation/AdaptiveAppScaffold";
 import { useModalBackdrop } from "../../ui/AppModalBackdrop";
-import { colors, fonts, radii, spacing } from "../../ui/tokens";
+import { colors, fonts, radii, spacing, typography } from "../../ui/tokens";
 import { useReducedMotion } from "../onboarding/useReducedMotion";
 
 interface ProjectCreationModalProps {
@@ -25,7 +25,7 @@ export function ProjectCreationModal({ visible, title, description, busy, onClos
   const navigationGuard = useScaffoldNavigationGuard();
   const reducedMotion = useReducedMotion();
   const insets = useSafeAreaInsets();
-  const { height, width, fontScale } = useWindowDimensions();
+  const { height, width } = useWindowDimensions();
   const closeRef = useRef<View>(null);
   const wasVisible = useRef(false);
   const focusFrame = useRef<number | null>(null);
@@ -102,7 +102,7 @@ export function ProjectCreationModal({ visible, title, description, busy, onClos
           >
             <View style={styles.header}>
               <View style={styles.heading}>
-                <Text accessibilityRole="header" style={[styles.title, fontScale >= 1.5 ? styles.titleLargeText : null]}>{title}</Text>
+                <Text accessibilityRole="header" style={styles.title}>{title}</Text>
                 <Text style={styles.description}>{description}</Text>
               </View>
               <Pressable
@@ -140,14 +140,13 @@ const styles = StyleSheet.create({
   overlay: { flex: 1 },
   position: { flex: 1, alignItems: "center", justifyContent: "center" },
   panel: { width: "100%", maxWidth: 560, flexShrink: 1, backgroundColor: colors.canvas, borderWidth: 1, borderColor: colors.border, borderRadius: radii.surface, overflow: "hidden" },
-  header: { flexDirection: "row", alignItems: "flex-start", paddingLeft: spacing.lg, paddingVertical: spacing.md, paddingRight: spacing.xs, borderBottomWidth: 1, borderBottomColor: colors.border },
-  heading: { flex: 1, gap: spacing.xs, paddingTop: spacing.xs },
-  title: { color: colors.ink, fontFamily: fonts.display, fontSize: 27, lineHeight: 34 },
-  titleLargeText: { fontSize: 22, lineHeight: 29 },
+  header: { flexDirection: "row", alignItems: "flex-start", paddingLeft: spacing.sm, paddingVertical: spacing.sm, paddingRight: spacing.xs, borderBottomWidth: 1, borderBottomColor: colors.border },
+  heading: { flex: 1, minWidth: 0, gap: 6, paddingTop: spacing.xxs },
+  title: { ...typography.pageTitle, color: colors.ink, fontFamily: fonts.display },
   description: { color: colors.inkMuted, fontFamily: fonts.regular, fontSize: 12, lineHeight: 18 },
   close: { minWidth: 48, minHeight: 48, alignItems: "center", justifyContent: "center", borderRadius: radii.control },
   closePressed: { backgroundColor: colors.primarySoft },
   scroll: { flexShrink: 1 },
-  fields: { padding: spacing.lg, gap: spacing.md },
-  footer: { gap: spacing.sm, padding: spacing.md, borderTopWidth: 1, borderTopColor: colors.border, backgroundColor: colors.canvas }
+  fields: { padding: spacing.sm, gap: spacing.xs },
+  footer: { gap: spacing.xs, padding: spacing.sm, borderTopWidth: 1, borderTopColor: colors.border, backgroundColor: colors.canvas }
 });

@@ -1,4 +1,5 @@
 import { Surface } from "../../components/ui/Surface";
+import { readSpecificationBrandIds } from "./knowledgeSpecificationConfiguration";
 import { BUDGET_ACTIONS, budgetAlterationRows, recommendationTargetKind } from "./knowledgeBudgetAlterations";
 import { pmcMarginRange, subVendorMarginRange } from "./knowledgePmcMargin";
 import {
@@ -264,16 +265,18 @@ function pricingValues(
   specifications.forEach((specification, index) => {
     const prefix = `Item ${index + 1}`;
     const label = meaningfulText(specification.name);
-    const brandId = meaningfulText(specification.brandId);
+    const brandIds = readSpecificationBrandIds(specification);
     const description = meaningfulText(specification.description);
     if (label) {
       values.push({ label: `${prefix} · Item name`, value: label });
     }
-    if (brandId) {
-      const brand = brands.find((candidate) => stringValue(candidate.id) === brandId);
+    if (brandIds.length) {
       values.push({
-        label: `${prefix} · Brand name`,
-        value: meaningfulText(brand?.name) ?? "Unavailable brand"
+        label: `${prefix} · ${brandIds.length > 1 ? "Brands" : "Brand name"}`,
+        value: brandIds.map(id => {
+          const matches = id ? brands.filter(candidate => candidate.id === id) : [];
+          return matches.length === 1 ? meaningfulText(matches[0]?.name) ?? "Unavailable brand" : "Unavailable brand";
+        }).join(", ")
       });
     }
     if (description) {

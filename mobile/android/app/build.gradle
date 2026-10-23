@@ -3,6 +3,8 @@ apply plugin: "org.jetbrains.kotlin.android"
 apply plugin: "com.facebook.react"
 
 def projectRoot = rootDir.getAbsoluteFile().getParentFile().getAbsolutePath()
+// The legacy project.ext.react map shadows dynamic property access to this extension.
+def lisnoReactExtension = extensions.getByType(com.facebook.react.ReactExtension)
 
 /**
  * This is the configuration block to customize your React Native Android app.
@@ -178,5 +180,16 @@ dependencies {
         implementation("com.facebook.react:hermes-android")
     } else {
         implementation jscFlavor
+    }
+}
+
+androidComponents.onVariants(androidComponents.selector().all()) { variant ->
+    def debuggable = lisnoReactExtension.debuggableVariants.get().any { it.equalsIgnoreCase(variant.name) }
+    rootProject.ext.lisnoBuildEnvironment.registerVariant(project.path, variant.name, debuggable)
+    if (!debuggable) {
+        // React Native registers this variant's bundle before this callback runs.
+        tasks.named("createBundle${variant.name.capitalize()}JsAndAssets", com.facebook.react.tasks.BundleHermesCTask).configure { task ->
+            rootProject.ext.lisnoBuildEnvironment.configureBundle(task, file(projectRoot))
+        }
     }
 }

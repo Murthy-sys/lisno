@@ -6,7 +6,7 @@ import { SafeAreaInsetsContext } from "react-native-safe-area-context";
 import type { AuthenticatedSession } from "../../contracts/session";
 import { ScaffoldContentBack, useScaffoldNavigationBlocked } from "../../navigation/AdaptiveAppScaffold";
 import { resolveAuthorizedFeature } from "../../navigation/registry";
-import { colors, fonts, radii, spacing } from "../../ui/tokens";
+import { colors, fonts, radii, spacing, typography } from "../../ui/tokens";
 import { BotanicalAccent } from "../notifications/BotanicalAccent";
 import { ProjectDetailGlyph, type ProjectDetailGlyphName } from "./projectDetailIcons";
 import type { ProjectDetailPresentation } from "./projectDetailModel";
@@ -153,7 +153,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface
   },
   kebabPressed: { backgroundColor: colors.surfaceMuted },
-  title: { color: colors.ink, fontFamily: fonts.semibold, fontSize: 28, lineHeight: 34 },
+  title: { ...typography.pageTitle, color: colors.ink },
   subtitle: { color: colors.inkMuted, fontFamily: fonts.regular, fontSize: 14, lineHeight: 20 },
   overlay: { flex: 1 },
   backdrop: { position: "absolute", top: 0, right: 0, bottom: 0, left: 0, backgroundColor: "rgba(31, 42, 28, 0.16)" },

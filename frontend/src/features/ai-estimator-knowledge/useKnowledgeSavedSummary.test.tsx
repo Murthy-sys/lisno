@@ -155,6 +155,18 @@ describe("saved summary queries", () => {
     expect(JSON.stringify(result.current[1])).not.toContain("Original brand");
   });
 
+  it("refreshes every saved association when the second selected Brand is renamed", async () => {
+    const specifications = [{ id: "spec", name: "Paint", brandIds: ["brand-z", "brand-a"] }];
+    vi.mocked(api.getKnowledgeSection).mockImplementation(async (_id, _revision, key) => section(key,
+      key === "pricing" ? { brands: [{ id: "brand-z", name: "Zinc" }, { id: "brand-a", name: "Amber" }], specifications } : {}));
+    const { result, client } = setup();
+    await waitFor(() => expect(result.current[1].details.find(row => row.label === "Paint · Brands")?.value).toBe("Zinc, Amber"));
+    await act(async () => { commitKnowledgeSectionMutation(client, { ...section("pricing", {
+      brands: [{ id: "brand-z", name: "Zinc" }, { id: "brand-a", name: "Amber renamed" }], specifications
+    }, 3), aggregateVersion: 5 }); });
+    await waitFor(() => expect(result.current[1].details.find(row => row.label === "Paint · Brands")?.value).toBe("Zinc, Amber renamed"));
+  });
+
   it("keeps available sources visible through an independent failure and scoped retry", async () => {
     vi.mocked(api.getKnowledgeSection).mockImplementation(async (_id, _revision, key) => {
       if (key === "advanced") throw new Error("Unavailable");

@@ -240,10 +240,10 @@ describe("projectKnowledgeOverviewSummary", () => {
     ]);
     expect(summary.specificationDetails[0]).toEqual({
       option: { id: "spec-fire", label: "Fire-rated board", state: "available" },
-      brand: { id: "brand-century-green", label: "Century Green", state: "available" },
+      brands: [{ id: "brand-century-green", label: "Century Green", state: "available" }],
       description: "Two layers"
     });
-    expect(summary.specificationDetails[1]?.brand).toBeNull();
+    expect(summary.specificationDetails[1]?.brands).toEqual([]);
     expect(summary.priceDetails[0]).toMatchObject({
       id: "price-pmc",
       inputAmountPaise: 12_345,
@@ -378,16 +378,31 @@ describe("projectKnowledgeOverviewSummary", () => {
       }
     });
 
-    expect(summary.specificationDetails.map(({ brand }) => brand && ({
+    expect(summary.specificationDetails.map(({ brands }) => brands.map(brand => ({
       label: brand.label,
       state: brand.state
-    }))).toEqual([
-      { label: "Century Green", state: "available" },
-      { label: KNOWLEDGE_OVERVIEW_UNAVAILABLE_LABEL, state: "unavailable" },
-      null
+    })))).toEqual([
+      [{ label: "Century Green", state: "available" }],
+      [{ label: KNOWLEDGE_OVERVIEW_UNAVAILABLE_LABEL, state: "unavailable" }],
+      []
     ]);
-    expect(summary.specificationDetails[0]?.brand?.label).not.toBe("private-current-brand-id");
-    expect(summary.specificationDetails[1]?.brand?.label).not.toBe("private-missing-brand-id");
+    expect(summary.specificationDetails[0]?.brands[0]?.label).not.toBe("private-current-brand-id");
+    expect(summary.specificationDetails[1]?.brands[0]?.label).not.toBe("private-missing-brand-id");
+  });
+
+  it("projects every brand in selection order and refuses missing or ambiguous local references", () => {
+    const summary = projectKnowledgeOverviewSummary({ sections: { pricing: {
+      brands: [{ id: "private-z", name: "Zinc" }, { id: "private-a", name: "Amber renamed" },
+        { id: "private-duplicate", name: "Duplicate one" }, { id: "private-duplicate", name: "Duplicate two" },
+        { id: "other-line", name: "Missing brand" }],
+      specifications: [{ id: "spec", name: "Paint", brandIds: ["private-z", "private-a", "private-missing", "private-duplicate"] }]
+    } } });
+    expect(summary.specificationDetails[0]?.brands.map(({ label, state }) => ({ label, state }))).toEqual([
+      { label: "Zinc", state: "available" }, { label: "Amber renamed", state: "available" },
+      { label: KNOWLEDGE_OVERVIEW_UNAVAILABLE_LABEL, state: "unavailable" },
+      { label: KNOWLEDGE_OVERVIEW_UNAVAILABLE_LABEL, state: "unavailable" }
+    ]);
+    expect(summary.specificationDetails[0]).not.toHaveProperty("brand");
   });
 
   it("keeps generic price Mode IDs out of the fixed dynamic selector and quantity-margin values shared", () => {

@@ -12,7 +12,7 @@ import {
   KNOWLEDGE_MAX_BRANDS,
   type KnowledgeSpecificationIssue
 } from "./knowledgeSpecificationConfiguration";
-import type { KnowledgeJsonValue } from "./knowledgeTypes";
+import type { KnowledgeJsonObject, KnowledgeJsonValue } from "./knowledgeTypes";
 
 function Harness({
   initialValue = [],
@@ -88,7 +88,7 @@ describe("KnowledgeSpecificationBuilder", () => {
 
     const table = screen.getByRole("table", { name: "Configured Specifications" });
     expect(within(table).getByRole("columnheader", { name: "Item name" })).toBeVisible();
-    expect(within(table).getByRole("columnheader", { name: "Brand name" })).toBeVisible();
+    expect(within(table).getByRole("columnheader", { name: "Brands" })).toBeVisible();
     expect(within(table).getByRole("columnheader", { name: "Brief description" })).toBeVisible();
     expect(within(table).getAllByText("Saved")).toHaveLength(2);
     expect(within(table).getByText("Century Green")).toBeVisible();
@@ -166,10 +166,10 @@ describe("KnowledgeSpecificationBuilder", () => {
   it("marks every row selecting a renamed Brand Unsaved and preserves hidden Brand fields", async () => {
     const user = userEvent.setup();
     const initialValue: KnowledgeJsonValue = [
-      { id: "spec-plywood", name: "Plywood", brandId: "brand-century" },
+      { id: "spec-plywood", name: "Plywood", brandIds: ["brand-hettich", "brand-century"] },
       { id: "spec-laminate", name: "Laminate", brandId: "brand-century" }
     ];
-    const initialBrands: KnowledgeJsonValue = [{
+    const initialBrands: KnowledgeJsonValue = [{ id: "brand-hettich", name: "Hettich" }, {
       id: "brand-century",
       name: "Century Green",
       description: "Keep this hidden Brand detail."
@@ -182,8 +182,8 @@ describe("KnowledgeSpecificationBuilder", () => {
     />);
 
     await user.click(screen.getByRole("button", { name: "Edit Specification 1" }));
-    const select = screen.getByRole("combobox", { name: "Brand name" });
-    await user.selectOptions(select, screen.getByRole("option", { name: "Edit selected brand" }));
+    await user.click(screen.getByRole("button", { name: "Brands" }));
+    await user.click(screen.getByRole("button", { name: "Edit Century Green" }));
     const dialog = await screen.findByRole("dialog", { name: "Edit Brand" });
     const name = within(dialog).getByRole("textbox", { name: "Brand name" });
     await user.clear(name);
@@ -192,7 +192,7 @@ describe("KnowledgeSpecificationBuilder", () => {
     await user.click(within(screen.getByRole("dialog", { name: "Edit Specification" })).getByRole("button", { name: "Done" }));
 
     expect(screen.getAllByText("Unsaved")).toHaveLength(2);
-    expect(brandsPayload()).toEqual([{
+    expect(brandsPayload()).toEqual([{ id: "brand-hettich", name: "Hettich" }, {
       id: "brand-century",
       name: "Century Green Pro",
       description: "Keep this hidden Brand detail."
@@ -245,9 +245,9 @@ describe("KnowledgeSpecificationBuilder", () => {
     await user.click(screen.getByRole("button", { name: "View Specification 1" }));
     const panel = screen.getByRole("dialog", { name: "View Specification" });
     expect(within(panel).getByRole("textbox", { name: "Item name" })).toBeDisabled();
-    expect(within(panel).getByRole("combobox", { name: "Brand name" })).toBeDisabled();
-    expect(within(panel).queryByRole("option", { name: /Add brand/u })).not.toBeInTheDocument();
-    expect(within(panel).getAllByRole("button")).toHaveLength(2);
+    expect(within(panel).getByRole("button", { name: "Brands" })).toBeDisabled();
+    expect(within(panel).queryByRole("button", { name: "Add brand" })).not.toBeInTheDocument();
+    expect(within(panel).getAllByRole("button")).toHaveLength(3);
   });
 
   it("disables protected removal with its accessible reason and restores focus after a removable row is removed", async () => {
@@ -327,9 +327,9 @@ describe("KnowledgeSpecificationBuilder", () => {
 
     const panel = await screen.findByRole("dialog", { name: "Edit Specification" });
     expect(within(panel).getByRole("textbox", { name: "Item name" })).toHaveValue("Hardware");
-    const brand = within(panel).getByRole("combobox", { name: "Brand name" });
+    const brand = within(panel).getByRole("button", { name: "Brands" });
     await waitFor(() => expect(brand).toHaveFocus());
-    expect(brand).toHaveAccessibleDescription("Brand names must be unique.");
+    expect(brand).toHaveAccessibleDescription(expect.stringContaining("Brand names must be unique."));
   });
 
   it("creates a Brand atomically, selects it for the initiating draft, and resolves its summary label", async () => {
@@ -369,13 +369,13 @@ describe("KnowledgeSpecificationBuilder", () => {
     />);
 
     await user.click(screen.getByRole("button", { name: "Edit Specification 1" }));
-    const select = screen.getByRole("combobox", { name: "Brand name" });
-    await user.selectOptions(select, screen.getByRole("option", { name: "Add brand" }));
+    const select = screen.getByRole("button", { name: "Brands" });
+    await openAddBrand(user);
     const dialog = await screen.findByRole("dialog", { name: "Add Brand" });
     await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
 
     await waitFor(() => expect(select).toHaveFocus());
-    expect(select).toHaveValue("brand-century");
+    expect(screen.getByRole("button", { name: "Brands" })).toHaveTextContent("Century Green");
     expect(onValue).not.toHaveBeenCalled();
   });
 
@@ -392,13 +392,14 @@ describe("KnowledgeSpecificationBuilder", () => {
       savedBrands={brands}
     />);
     await user.click(screen.getByRole("button", { name: "Edit Specification 1" }));
-    const select = screen.getByRole("combobox", { name: "Brand name" });
-    expect(screen.getByRole("option", { name: `Add brand — maximum ${KNOWLEDGE_MAX_BRANDS} reached` })).toBeDisabled();
+    const select = screen.getByRole("button", { name: "Brands" });
     expect(select).toHaveAccessibleDescription(
-      `Maximum ${KNOWLEDGE_MAX_BRANDS} Brands reached. Existing Brands remain selectable.`
+      `Maximum ${KNOWLEDGE_MAX_BRANDS} Brands reached. Existing Brands remain selectable. Not configured`
     );
-    await user.selectOptions(select, "brand-17");
-    expect(select).toHaveValue("brand-17");
+    await user.click(select);
+    expect(screen.getByRole("button", { name: "Add brand (maximum 200 reached)" })).toBeDisabled();
+    await user.click(screen.getByRole("option", { name: "Brand 17" }));
+    expect(specificationsPayload()[0]).toMatchObject({ brandId: "brand-17" });
   });
 
   it("reports blank, duplicate, and oversized Brand names without changing the draft", async () => {
@@ -419,7 +420,7 @@ describe("KnowledgeSpecificationBuilder", () => {
     expect(input).toHaveAccessibleDescription("Brand name is required.");
     await user.type(input, "CENTURY   GREEN");
     await user.click(within(dialog).getByRole("button", { name: "Add" }));
-    expect(input).toHaveAccessibleDescription("Brand names must be unique.");
+    expect(input).toHaveAccessibleDescription(expect.stringContaining("Brand names must be unique."));
     await user.clear(input);
     fireEvent.change(input, { target: { value: "B".repeat(241) } });
     await user.click(within(dialog).getByRole("button", { name: "Add" }));
@@ -442,9 +443,9 @@ describe("KnowledgeSpecificationBuilder", () => {
     expect(within(table).getByText("Unavailable Brand")).toBeVisible();
     expect(within(table).queryByText("private-missing-id")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Edit Specification 1" }));
-    const brand = screen.getByRole("combobox", { name: "Brand name" });
+    const brand = screen.getByRole("button", { name: "Brands" });
     expect(brand).toHaveAttribute("aria-invalid", "true");
-    expect(brand).toHaveAccessibleDescription("Choose a configured Brand.");
+    expect(brand).toHaveAccessibleDescription(expect.stringContaining("Choose a configured Brand."));
   });
 
   it("closes Brand creation without writing if the editor becomes read-only", async () => {
@@ -470,11 +471,173 @@ describe("KnowledgeSpecificationBuilder", () => {
     expect(onValue).not.toHaveBeenCalled();
     expect(props.onDirty).not.toHaveBeenCalled();
   });
+
+  it("selects multiple brands in selection order, reopens them, and removes or clears without losing typed fields", async () => {
+    const user = userEvent.setup();
+    render(<Harness initialValue={[{ id: "typed-spec", name: "Plywood", type: "dropdown", options: ["BWP"], value: "BWP" }]} initialBrands={savedBrands} />);
+    await user.click(screen.getByRole("button", { name: "Edit Specification 1" }));
+    await user.click(screen.getByRole("button", { name: "Brands" }));
+    expect(screen.getByRole("listbox", { name: "Brand options" })).toHaveAttribute("aria-multiselectable", "true");
+    await user.click(screen.getByRole("option", { name: "Hettich" }));
+    await user.click(screen.getByRole("option", { name: "Century Green" }));
+    expect(screen.getByRole("option", { name: "Century Green" })).toHaveAttribute("aria-selected", "true");
+    expect(specificationsPayload()[0]).toEqual({ id: "typed-spec", name: "Plywood", type: "dropdown", options: ["BWP"], value: "BWP", brandIds: ["brand-hettich", "brand-century"] });
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    expect(screen.getByRole("table")).toHaveTextContent("Hettich, Century Green");
+    await user.click(screen.getByRole("button", { name: "Edit Specification 1" }));
+    await user.click(screen.getByRole("button", { name: "Brands" }));
+    await user.click(screen.getByRole("option", { name: "Hettich" }));
+    expect(specificationsPayload()[0]).toMatchObject({ brandId: "brand-century", type: "dropdown", value: "BWP" });
+    expect(specificationsPayload()[0]).not.toHaveProperty("brandIds");
+    await user.click(screen.getByRole("option", { name: "Not configured" }));
+    expect(specificationsPayload()[0]).not.toHaveProperty("brandId");
+    expect(specificationsPayload()[0]).not.toHaveProperty("brandIds");
+    await user.keyboard("{Escape}");
+    expect(screen.getByRole("button", { name: "Brands" })).toHaveFocus();
+  });
+
+  it("keeps the closed dropdown compact and retains Add and Edit inside its popup", async () => {
+    const user = userEvent.setup();
+    render(<Harness initialValue={[{ id: "spec-one", name: "Plywood", brandId: "brand-century" }]} initialBrands={savedBrands} />);
+    await user.click(screen.getByRole("button", { name: "Edit Specification 1" }));
+    const trigger = screen.getByRole("button", { name: "Brands" });
+    expect(trigger).toHaveClass("ui-control", "ui-select");
+    expect(trigger).toHaveTextContent("Century Green");
+    expect(trigger).toHaveAccessibleDescription("Century Green");
+    const selection = screen.getByRole("group", { name: "Brand selection" });
+    expect(within(selection).getAllByRole("button")).toEqual([trigger]);
+    expect(screen.queryByRole("list", { name: "Selected brands" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Optional. Select one or more brands.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Add brand|Edit selected brand|Remove Brand|Clear brands/u })).not.toBeInTheDocument();
+
+    await user.click(trigger);
+    const listbox = screen.getByRole("listbox", { name: "Brand options" });
+    const edit = screen.getByRole("button", { name: "Edit selected brand Century Green" });
+    const add = screen.getByRole("button", { name: "Add brand" });
+    expect(edit).toHaveTextContent("Edit selected brand");
+    expect(selection).toContainElement(edit);
+    expect(selection).toContainElement(add);
+    expect(listbox).not.toContainElement(edit);
+    expect(listbox).not.toContainElement(add);
+    expect(screen.getByRole("option", { name: "Not configured" })).toHaveAttribute("aria-selected", "false");
+    await user.click(edit);
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+    const dialog = screen.getByRole("dialog", { name: "Edit Brand" });
+    expect(within(dialog).getByRole("textbox", { name: "Brand name" })).toHaveValue("Century Green");
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(trigger).toHaveFocus());
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("appends a created brand after all selections and returns focus to the dropdown", async () => {
+    const user = userEvent.setup();
+    render(<Harness initialValue={[{ id: "spec-one", name: "Plywood", brandIds: ["brand-century", "brand-hettich"] }]} initialBrands={savedBrands} />);
+    await user.click(screen.getByRole("button", { name: "Edit Specification 1" }));
+    const trigger = screen.getByRole("button", { name: "Brands" });
+    await openAddBrand(user);
+    const dialog = screen.getByRole("dialog", { name: "Add Brand" });
+    await user.type(within(dialog).getByRole("textbox", { name: "Brand name" }), "Blum");
+    await user.click(within(dialog).getByRole("button", { name: "Add" }));
+    expect(specificationsPayload()[0]?.brandIds).toEqual(["brand-century", "brand-hettich", brandsPayload()[2]?.id]);
+    await waitFor(() => expect(trigger).toHaveFocus());
+    await user.click(trigger);
+    const edit = screen.getByRole("button", { name: "Edit Hettich" });
+    await user.click(edit);
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(trigger).toHaveFocus());
+    expect(screen.getByRole("dialog", { name: "Edit Specification" })).toBeVisible();
+  });
+
+  it("supports search, keyboard selection, Home/End and Escape without closing the specification panel", async () => {
+    const user = userEvent.setup();
+    render(<Harness initialValue={[{ id: "spec-one", name: "Plywood" }]} initialBrands={savedBrands} />);
+    await user.click(screen.getByRole("button", { name: "Edit Specification 1" }));
+    const trigger = screen.getByRole("button", { name: "Brands" });
+    await user.click(trigger);
+    const search = screen.getByRole("searchbox", { name: "Search brands" });
+    expect(search).toHaveFocus();
+    await user.tab();
+    expect(screen.getByRole("option", { name: "Not configured" })).toHaveFocus();
+    await user.keyboard("{ArrowDown}");
+    expect(screen.getByRole("option", { name: "Century Green" })).toHaveFocus();
+    await user.keyboard("{ArrowDown}{End} ");
+    expect(screen.getByRole("option", { name: "Hettich" })).toHaveAttribute("aria-selected", "true");
+    await user.keyboard("{Home}{ArrowDown}{Enter}");
+    expect(specificationsPayload()[0]?.brandIds).toEqual(["brand-hettich", "brand-century"]);
+    await user.click(search);
+    await user.type(search, "not found");
+    expect(within(screen.getByRole("dialog", { name: "Edit Specification" })).getByRole("status")).toHaveTextContent("No brands match your search.");
+    expect(screen.getByRole("button", { name: "Brands" })).toHaveTextContent("Hettich");
+    await user.keyboard("{Escape}");
+    expect(trigger).toHaveFocus();
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Edit Specification" })).toBeVisible();
+    await user.keyboard("{ArrowUp}");
+    expect(screen.getByRole("option", { name: "Hettich" })).toHaveFocus();
+    const results = await axe.run(document.body, { rules: { "color-contrast": { enabled: false } } });
+    expect(results.violations).toEqual([]);
+    await user.tab();
+    expect(screen.getByRole("button", { name: "Edit Hettich" })).toHaveFocus();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+  });
+
+  it("keeps unavailable references visible during search and removes only that association", async () => {
+    const user = userEvent.setup();
+    render(<Harness initialValue={[{ id: "spec-one", name: "Plywood", brandIds: ["brand-century", "private-missing"] }]} initialBrands={savedBrands} />);
+    await user.click(screen.getByRole("button", { name: "Edit Specification 1" }));
+    const trigger = screen.getByRole("button", { name: "Brands" });
+    expect(trigger).toHaveAttribute("aria-invalid", "true");
+    await user.click(trigger);
+    await user.type(screen.getByRole("searchbox"), "Hettich");
+    expect(screen.getByRole("option", { name: "Unavailable Brand" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("button", { name: "Edit Century Green" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: /Edit selected brand/u })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Brands" })).not.toHaveTextContent("private-missing");
+    await user.click(screen.getByRole("option", { name: "Unavailable Brand" }));
+    expect(specificationsPayload()[0]).toMatchObject({ brandId: "brand-century" });
+    expect(trigger).not.toHaveAttribute("aria-invalid");
+  });
+
+  it.each<KnowledgeJsonObject>([
+    { brandId: "brand-century", brandIds: ["brand-hettich"] },
+    { brandIds: ["brand-century", null] }
+  ])("preserves malformed association evidence through unrelated edits until explicit repair: %j", async (association) => {
+    const user = userEvent.setup();
+    render(<Harness initialValue={[{ id: "spec-one", name: "Plywood", ...association }]} initialBrands={savedBrands} />);
+    await user.click(screen.getByRole("button", { name: "Edit Specification 1" }));
+    await user.type(screen.getByRole("textbox", { name: "Brief description" }), "Guidance");
+    expect(specificationsPayload()[0]).toMatchObject({ ...association, description: "Guidance" });
+    expect(screen.getByRole("button", { name: "Brands" })).toHaveAttribute("aria-invalid", "true");
+    await user.click(screen.getByRole("button", { name: "Brands" }));
+    await user.click(screen.getByRole("option", { name: "Not configured" }));
+    expect(specificationsPayload()[0]).not.toHaveProperty("brandId");
+    expect(specificationsPayload()[0]).not.toHaveProperty("brandIds");
+  });
+
+  it("focuses indexed brand errors and closes an open picker when access becomes read-only", async () => {
+    const user = userEvent.setup();
+    const props = { value: [{ id: "spec-one", name: "Plywood", brandIds: ["brand-century", "brand-hettich"] }], brands: savedBrands, priceEntries: [], onDirty: vi.fn(), onChange: vi.fn(), validationAttempt: 1, issues: [{ path: "specifications.0.brandIds.1", message: "Brand needs correction." }] };
+    const { rerender } = render(<KnowledgeSpecificationBuilder {...props} readOnly={false} />);
+    const trigger = await screen.findByRole("button", { name: "Brands" });
+    await waitFor(() => expect(trigger).toHaveFocus());
+    expect(trigger).toHaveAccessibleDescription(expect.stringContaining("Brand needs correction."));
+    await user.click(trigger);
+    rerender(<KnowledgeSpecificationBuilder {...props} readOnly />);
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+    expect(trigger).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Brands" })).toHaveTextContent("Century Green, Hettich");
+    expect(trigger).toHaveAccessibleDescription("Brand needs correction. Century Green, Hettich");
+    expect(screen.queryByRole("button", { name: "Add brand" })).not.toBeInTheDocument();
+    expect(props.onChange).not.toHaveBeenCalled();
+  });
+
 });
 
 async function openAddBrand(user: ReturnType<typeof userEvent.setup>) {
-  const select = screen.getByRole("combobox", { name: "Brand name" });
-  await user.selectOptions(select, screen.getByRole("option", { name: "Add brand" }));
+  await user.click(screen.getByRole("button", { name: "Brands" }));
+  await user.click(screen.getByRole("button", { name: "Add brand" }));
   await screen.findByRole("dialog", { name: "Add Brand" });
 }
 

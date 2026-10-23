@@ -198,7 +198,7 @@ function ProcurementRatingForm({ vendorType, assessment, busy, error, stale, onS
 }
 
 const styles = StyleSheet.create({
-  screen: { width: "100%", maxWidth: 920, alignSelf: "center", padding: spacing.lg, paddingBottom: spacing.huge, gap: spacing.lg },
+  screen: { width: "100%", maxWidth: 920, alignSelf: "center", padding: spacing.md, paddingBottom: spacing.huge, gap: spacing.md },
   heading: { gap: spacing.xs },
   eyebrow: { color: colors.primary, fontFamily: fonts.semibold, fontSize: 11, letterSpacing: 1.2 },
   title: { color: colors.ink, ...typography.pageTitle },
@@ -206,12 +206,12 @@ const styles = StyleSheet.create({
   actions: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm, marginTop: spacing.sm },
   notice: { color: colors.success, fontFamily: fonts.medium, fontSize: 13 },
   summary: { flexDirection: "row", flexWrap: "wrap", borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface },
-  metric: { flexGrow: 1, flexBasis: "46%", minWidth: 170, padding: spacing.md, gap: spacing.xs },
+  metric: { flexGrow: 1, flexBasis: "46%", minWidth: 170, padding: spacing.sm, gap: spacing.xs },
   metricLabel: { color: colors.inkMuted, fontFamily: fonts.medium, fontSize: 12 },
   metricValue: { color: colors.ink, fontFamily: fonts.semibold, fontSize: 22 },
-  card: { borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, padding: spacing.md, gap: spacing.md },
-  sectionTitle: { color: colors.ink, fontFamily: fonts.semibold, fontSize: 18 },
-  scoreRow: { flexDirection: "row", alignItems: "flex-start", gap: spacing.sm, borderTopWidth: 1, borderTopColor: colors.border, paddingTop: spacing.sm },
+  card: { borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, padding: spacing.sm, gap: spacing.sm },
+  sectionTitle: { color: colors.ink, ...typography.sectionTitle, fontFamily: fonts.semibold },
+  scoreRow: { flexDirection: "row", alignItems: "flex-start", gap: spacing.xs, borderTopWidth: 1, borderTopColor: colors.border, paddingTop: spacing.xs },
   scoreName: { flex: 1, color: colors.ink, fontFamily: fonts.regular, fontSize: 13, lineHeight: 20 },
   scoreValue: { color: colors.ink, fontFamily: fonts.semibold, fontSize: 14, fontVariant: ["tabular-nums"] },
   error: { color: colors.danger, fontFamily: fonts.medium, fontSize: 13, lineHeight: 20 }

@@ -221,6 +221,16 @@ function renderIndex(entry = "/admin/configuration/estimation", navigation = fal
   return { ...view, queryClient, rerenderIndex: () => view.rerender(content()) };
 }
 
+async function openMainBaskets(...names: string[]) {
+  const user = userEvent.setup();
+  await screen.findByRole("heading", { level: 2, name: names[0] ?? "Carpentry" });
+  for (const heading of screen.getAllByRole("heading", { level: 2 })) {
+    if (names.length && !names.includes(heading.textContent ?? "")) continue;
+    const toggle = within(heading).queryByRole("button");
+    if (toggle?.getAttribute("aria-expanded") === "false") await user.click(toggle);
+  }
+}
+
 function basketPanel(name: string) {
   return screen.getByRole("heading", { level: 2, name }).closest("section")!;
 }
@@ -314,6 +324,169 @@ beforeEach(() => {
 });
 
 describe("Knowledge Base index page", () => {
+  it("starts with collapsed photo cards and reads only the opened parent catalog", async () => {
+    const user = userEvent.setup();
+    renderIndex();
+    const carpentryToggle = await screen.findByRole("button", { name: carpentry.name });
+    const plumbingToggle = screen.getByRole("button", { name: plumbing.name });
+    expect(carpentryToggle).toHaveAttribute("aria-expanded", "false");
+    expect(plumbingToggle).toHaveAttribute("aria-expanded", "false");
+    expect(knowledgeApi.listKnowledgeSubBaskets).not.toHaveBeenCalled();
+    expect(screen.queryByRole("link", { name: panelling.mainLineName })).not.toBeInTheDocument();
+    expect(within(basketPanel(carpentry.name)).getAllByText("1 item on this page")[0]).toBeVisible();
+
+    carpentryToggle.focus();
+    await user.keyboard("{Enter}");
+    expect(await screen.findByRole("link", { name: panelling.mainLineName })).toBeVisible();
+    await waitFor(() => expect(knowledgeApi.listKnowledgeSubBaskets).toHaveBeenCalledWith(carpentry.id, expect.anything()));
+    expect(vi.mocked(knowledgeApi.listKnowledgeSubBaskets).mock.calls.every(([id]) => id === carpentry.id)).toBe(true);
+    await user.click(plumbingToggle);
+    expect(await screen.findByRole("link", { name: pipework.mainLineName })).toBeVisible();
+    expect(carpentryToggle).toHaveAttribute("aria-expanded", "true");
+    await user.click(carpentryToggle);
+    expect(carpentryToggle).toHaveFocus();
+    expect(screen.queryByRole("link", { name: panelling.mainLineName })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: pipework.mainLineName })).toBeVisible();
+  });
+
+  it("reserves category photos for Main Baskets and keeps named Main Lines within their own nested sections", async () => {
+    const user = userEvent.setup();
+    const state = mockDeletionHierarchy();
+    const directItem = listItem({
+      id: "line-direct", mainLineId: "line-direct", mainLineName: "Site preparation"
+    });
+    state.items.push(directItem);
+    renderIndex();
+    await openMainBaskets();
+
+    const carpentryPanel = basketPanel(carpentry.name);
+    const plumbingPanel = basketPanel(plumbing.name);
+    const carpentrySection = await within(carpentryPanel).findByRole("region", { name: panelGroup.name });
+    const plumbingSection = within(plumbingPanel).getByRole("region", { name: pipeGroup.name });
+    const directSection = within(carpentryPanel).getByRole("region", { name: "Items directly under Main Basket" });
+
+    expect(carpentryPanel.querySelectorAll("img")).toHaveLength(1);
+    expect(carpentryPanel.querySelector("img")?.closest("section")).toBe(carpentryPanel);
+    for (const section of [carpentrySection, plumbingSection, directSection]) {
+      expect(section.querySelector("img")).toBeNull();
+    }
+    expect(within(carpentrySection).getByText("Sub-Basket")).toBeVisible();
+    expect(within(plumbingSection).getByText("Sub-Basket")).toBeVisible();
+    expect(within(directSection).queryByText("Sub-Basket")).not.toBeInTheDocument();
+    expect(within(carpentryPanel).getByRole("region", { name: emptyGroup.name })).toBeVisible();
+    expect(within(directSection).getByRole("link", { name: directItem.mainLineName })).toBeVisible();
+
+    await user.click(within(carpentrySection).getByRole("button", { name: panelGroup.name }));
+    await user.click(within(plumbingSection).getByRole("button", { name: pipeGroup.name }));
+    expect(within(carpentrySection).getByRole("heading", { level: 3, name: panelGroup.name })).toBeVisible();
+    expect(within(carpentrySection).getByRole("link", { name: panelling.mainLineName }))
+      .toHaveAttribute("href", `/admin/configuration/estimation/items/${panelling.id}`);
+    expect(within(plumbingSection).getByRole("link", { name: pipework.mainLineName }))
+      .toHaveAttribute("href", `/admin/configuration/estimation/items/${pipework.id}`);
+    expect(within(carpentrySection).queryByRole("link", { name: pipework.mainLineName })).not.toBeInTheDocument();
+    expect(within(plumbingSection).queryByRole("link", { name: panelling.mainLineName })).not.toBeInTheDocument();
+    expect(within(directSection).queryByRole("link", { name: panelling.mainLineName })).not.toBeInTheDocument();
+  });
+
+  it("reveals filtered results and restores independent stored parent, child, and direct choices on clear", async () => {
+    const user = userEvent.setup();
+    const state = mockDeletionHierarchy();
+    state.items.push(listItem({ id: "line-direct", mainLineId: "line-direct", mainLineName: "Direct panelling" }));
+    renderIndex();
+    await openMainBaskets(carpentry.name);
+    const carpentryPanel = basketPanel(carpentry.name);
+    await user.click(await within(carpentryPanel).findByRole("button", { name: panelGroup.name }));
+    await user.click(within(carpentryPanel).getByRole("button", { name: "Items directly under Main Basket" }));
+    expect(screen.queryByRole("link", { name: "Direct panelling" })).not.toBeInTheDocument();
+    await user.type(screen.getByRole("searchbox", { name: "Search Basket or Main Line" }), "finishes{Enter}");
+    expect(await screen.findByRole("link", { name: pipework.mainLineName })).toBeVisible();
+    expect(screen.getByRole("link", { name: "Direct panelling" })).toBeVisible();
+    await user.click(within(carpentryPanel).getByRole("button", { name: carpentry.name }));
+    expect(within(carpentryPanel).getByRole("button", { name: carpentry.name })).toHaveAttribute("aria-expanded", "false");
+    await user.click(screen.getByRole("button", { name: "Clear all" }));
+    expect(within(carpentryPanel).getByRole("button", { name: carpentry.name })).toHaveAttribute("aria-expanded", "true");
+    expect(within(carpentryPanel).getByRole("button", { name: panelGroup.name })).toHaveAttribute("aria-expanded", "true");
+    expect(within(carpentryPanel).getByRole("button", { name: retainedGroup.name })).toHaveAttribute("aria-expanded", "false");
+    expect(within(carpentryPanel).getByRole("button", { name: "Items directly under Main Basket" })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByRole("button", { name: plumbing.name })).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("keeps expansion across item pages and distinguishes page counts from an empty Sub-Basket", async () => {
+    const user = userEvent.setup();
+    vi.mocked(knowledgeApi.listKnowledgeSubBaskets).mockResolvedValue({ items: [emptyGroup], pagination: { ...pagination, total: 1 } });
+    vi.mocked(knowledgeApi.listKnowledgeItems).mockImplementation(async (params) => ({
+      items: params?.offset ? [{ ...panelling, subBasketId: emptyGroup.id, subBasketName: emptyGroup.name }] : [pipework],
+      pagination: { ...pagination, limit: 20, offset: params?.offset ?? 0, total: 21, hasMore: !params?.offset }
+    }));
+    renderIndex();
+    await openMainBaskets(carpentry.name);
+    await user.click(await screen.findByRole("button", { name: emptyGroup.name }));
+    expect(screen.getByText("No items from this Sub-Basket on this page.")).toBeVisible();
+    expect(screen.queryByText("No items in this Sub-Basket yet.")).not.toBeInTheDocument();
+    expect(within(basketPanel(carpentry.name)).getAllByText("0 items on this page")).toHaveLength(2);
+    await user.click(screen.getByRole("button", { name: "Next" }));
+    expect(await screen.findByRole("link", { name: panelling.mainLineName })).toBeVisible();
+    expect(screen.getByRole("button", { name: emptyGroup.name })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("button", { name: carpentry.name })).toHaveAttribute("aria-expanded", "true");
+    expect(within(basketPanel(carpentry.name)).getAllByText("1 item on this page")).toHaveLength(2);
+  });
+
+  it("does not claim an unreadable child catalog is empty and recovers through its retry", async () => {
+    const user = userEvent.setup();
+    vi.mocked(knowledgeApi.listKnowledgeItems).mockResolvedValue({ items: [], pagination });
+    vi.mocked(knowledgeApi.listKnowledgeSubBaskets).mockRejectedValueOnce(new Error("Catalog unavailable"));
+    renderIndex();
+    await openMainBaskets(carpentry.name);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Sub-Baskets could not be loaded");
+    expect(screen.queryByText("No Sub-Baskets or items are available in this Main Basket.")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Retry Sub-Baskets" }));
+    expect(await screen.findByText("No Sub-Baskets or items are available in this Main Basket.")).toBeVisible();
+    expect(screen.getByRole("button", { name: carpentry.name })).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("does not claim a Main Basket is empty based on a zero count on one item page", async () => {
+    vi.mocked(knowledgeApi.listKnowledgeItems).mockResolvedValue({
+      items: [pipework], pagination: { ...pagination, limit: 20, total: 21, hasMore: true }
+    });
+    renderIndex();
+    await openMainBaskets(carpentry.name);
+    expect(await screen.findByText("No items from this Main Basket on this page.")).toBeVisible();
+    expect(screen.queryByText("No Sub-Baskets or items are available in this Main Basket.")).not.toBeInTheDocument();
+    expect(within(basketPanel(carpentry.name)).getByText("0 items on this page")).toBeVisible();
+  });
+
+  it("preserves known children and expansion after a catalog refresh failure without exposing stale edit actions", async () => {
+    const user = userEvent.setup();
+    mockDeletionHierarchy();
+    const { queryClient } = renderIndex();
+    await openMainBaskets(carpentry.name);
+    await user.click(await screen.findByRole("button", { name: panelGroup.name }));
+    vi.mocked(knowledgeApi.listKnowledgeSubBaskets).mockRejectedValueOnce(new Error("Refresh unavailable"));
+    await act(async () => { await queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.subBasketLists(carpentry.id) }); });
+    expect(await screen.findByRole("alert")).toHaveTextContent("Sub-Baskets could not be loaded");
+    expect(screen.getByRole("link", { name: panelling.mainLineName })).toBeVisible();
+    expect(screen.getByRole("button", { name: panelGroup.name })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.queryByRole("button", { name: `Edit Sub-Basket name for ${panelGroup.name}` })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: `Delete Sub-Basket ${panelGroup.name} permanently` })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Retry Sub-Baskets" }));
+    expect(await screen.findByRole("button", { name: `Edit Sub-Basket name for ${panelGroup.name}` })).toBeVisible();
+    expect(screen.getByRole("button", { name: panelGroup.name })).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("allows read-only browsing of cards without exposing mutation controls", async () => {
+    authState.create = false;
+    authState.update = false;
+    authState.lifecycle = false;
+    authState.role = "admin";
+    mockDeletionHierarchy();
+    const user = userEvent.setup();
+    renderIndex();
+    await openMainBaskets(carpentry.name);
+    await user.click(await screen.findByRole("button", { name: panelGroup.name }));
+    expect(screen.getByRole("link", { name: panelling.mainLineName })).toBeVisible();
+    expect(screen.queryByRole("button", { name: /^(Add estimation item|Add temporary item|Edit basket|Delete |Edit Sub-Basket)/u })).not.toBeInTheDocument();
+  });
+
   it("opens pending review directly and preserves unrelated parameters across back and forward", async () => {
     const user = userEvent.setup();
     renderIndex("/admin/configuration/estimation?basketRequests=pending&context=vendor", true);
@@ -426,17 +599,15 @@ describe("Knowledge Base index page", () => {
 
     await screen.findByRole("heading", { level: 2, name: "Carpentry" });
     const carpentryPanel = basketPanel("Carpentry");
-    const description = carpentryPanel.querySelector(".knowledge-basket-panel__description");
-    expect(description).toHaveTextContent(/^Wardrobes, panelling and loose furniture$/u);
-    expect(description?.closest(".knowledge-basket-panel__heading")).toContainElement(
-      within(carpentryPanel).getByRole("heading", { level: 2, name: "Carpentry" })
-    );
-    expect(carpentryPanel.querySelector(".knowledge-basket-panel__icon")).toHaveAttribute("aria-hidden", "true");
+    const description = within(carpentryPanel).getByText("Wardrobes, panelling and loose furniture");
+    expect(description).not.toBeVisible();
+    await openMainBaskets("Carpentry");
+    expect(description).toBeVisible();
+    expect(description.closest(".knowledge-basket-card__header")).toContainElement(description);
 
     for (const name of ["Plumbing", "Blank notes", "Unloaded basket"]) {
       const panel = basketPanel(name);
-      expect(panel.querySelector(".knowledge-basket-panel__description")).toBeNull();
-      expect(panel.querySelector(".knowledge-basket-panel__icon")).toHaveAttribute("aria-hidden", "true");
+      expect(panel.querySelector(".knowledge-basket-card__description")).toBeNull();
     }
     expect(screen.getAllByText("Wardrobes, panelling and loose furniture")).toHaveLength(1);
   });
@@ -466,6 +637,7 @@ describe("Knowledge Base index page", () => {
       pagination: { ...pagination, total: basketId === carpentry.id ? 2 : 0 }
     }));
     renderIndex();
+    await openMainBaskets();
     const group = await screen.findByRole("button", { name: "Paint finishes" });
     expect(group).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByRole("link", { name: "Wall panelling" })).not.toBeInTheDocument();
@@ -643,6 +815,7 @@ describe("Knowledge Base index page", () => {
 
   it("gives each card the priority and unit names from the loaded catalogs", async () => {
     renderIndex();
+    await openMainBaskets();
 
     await screen.findByRole("link", { name: "Concealed pipework" });
     const panellingCard = itemCard("Wall panelling");
@@ -656,7 +829,7 @@ describe("Knowledge Base index page", () => {
     expect(pipeworkCard.querySelector(".knowledge-priority-chip")).toHaveAttribute("data-tone", "low");
     expect(panellingCard).not.toHaveTextContent("Running metre");
     expect(pipeworkCard).not.toHaveTextContent("Square foot");
-    expect(document.querySelector("img")).toBeNull();
+    expect(panellingCard.querySelector("img")).toBeNull();
   });
 
   it("shows loading values while the catalogs load and unavailable values after they fail", async () => {
@@ -668,6 +841,7 @@ describe("Knowledge Base index page", () => {
         : Promise.resolve({ items: [], pagination })
     );
     renderIndex();
+    await openMainBaskets();
 
     await screen.findByRole("link", { name: "Wall panelling" });
     const card = itemCard("Wall panelling");
@@ -685,6 +859,7 @@ describe("Knowledge Base index page", () => {
   it("opens the item workspace from the card menu", async () => {
     const user = userEvent.setup();
     renderIndex();
+    await openMainBaskets();
 
     await screen.findByRole("link", { name: "Concealed pipework" });
     await user.click(screen.getByRole("button", { name: "More actions for Concealed pipework" }));
@@ -716,6 +891,7 @@ describe("Knowledge Base index page", () => {
       return renamed;
     });
     renderIndex();
+    await openMainBaskets();
 
     await screen.findByRole("heading", { level: 2, name: "Carpentry" });
     const panel = basketPanel("Carpentry");
@@ -723,7 +899,7 @@ describe("Knowledge Base index page", () => {
     expect(action).toHaveClass("knowledge-rename-pen");
     expect(action.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
     expect(action).toHaveTextContent("");
-    expect(action.closest(".knowledge-sub-basket__name")).toContainElement(within(panel).getByRole("button", { name: "Shared name" }));
+    expect(action.closest(".knowledge-basket-card")).toContainElement(within(panel).getByRole("button", { name: "Shared name" }));
     expect(within(panel).getByRole("heading", { level: 3, name: "Shared name" })).toBeVisible();
     expect(within(panel).getByRole("button", { name: "Edit Sub-Basket name for Panel finishes" })).toBeVisible();
     await user.click(action);
@@ -758,6 +934,7 @@ describe("Knowledge Base index page", () => {
       return { items: basketId === carpentry.id ? [group] : [], pagination: { ...pagination, total: basketId === carpentry.id ? 1 : 0 } };
     });
     renderIndex();
+    await openMainBaskets();
 
     await screen.findByRole("button", { name: "Paint finishes" });
     expect(screen.queryByRole("button", { name: "Edit Sub-Basket name for Paint finishes" })).not.toBeInTheDocument();
@@ -782,6 +959,7 @@ describe("Knowledge Base index page", () => {
       return group;
     });
     renderIndex();
+    await openMainBaskets();
 
     await user.click(await screen.findByRole("button", { name: "Edit Sub-Basket name for Old group" }));
     const editor = screen.getByRole("dialog", { name: "Edit Sub-Basket name" });
@@ -817,6 +995,7 @@ describe("Knowledge Base index page", () => {
       return current;
     });
     renderIndex();
+    await openMainBaskets();
 
     const titleLink = await screen.findByRole("link", { name: "Site covering" });
     titleLink.focus();
@@ -863,6 +1042,7 @@ describe("Knowledge Base index page", () => {
         return current;
       });
     renderIndex();
+    await openMainBaskets();
 
     await screen.findByRole("link", { name: "Wall panelling" });
     await user.click(screen.getByRole("button", { name: "Edit Main Line name for Wall panelling" }));
@@ -906,6 +1086,7 @@ describe("Knowledge Base index page", () => {
       return current;
     });
     renderIndex();
+    await openMainBaskets();
 
     await screen.findByRole("link", { name: "Wall panelling" });
     await user.click(screen.getByRole("button", { name: "Edit Main Line name for Wall panelling" }));
@@ -950,6 +1131,7 @@ describe("Knowledge Base index page", () => {
       items: basketId === carpentry.id ? [activeGroup] : [], pagination: { ...pagination, total: basketId === carpentry.id ? 1 : 0 }
     }));
     const view = renderIndex();
+    await openMainBaskets();
 
     const subEdit = await screen.findByRole("button", { name: "Edit Sub-Basket name for Inactive parent child" });
     expect(subEdit).toBeVisible();
@@ -958,6 +1140,7 @@ describe("Knowledge Base index page", () => {
     view.unmount();
     authState.update = false;
     renderIndex();
+    await openMainBaskets();
     expect(screen.queryByRole("button", { name: "Edit Sub-Basket name for Inactive parent child" })).not.toBeInTheDocument();
     await screen.findByRole("button", { name: "More actions for Concealed pipework" });
     expect(screen.queryByRole("button", { name: "Edit Main Line name for Concealed pipework" })).not.toBeInTheDocument();
@@ -973,6 +1156,7 @@ describe("Knowledge Base index page", () => {
     });
     vi.mocked(knowledgeApi.listKnowledgeSubBaskets).mockResolvedValue({ items: [group], pagination: { ...pagination, total: 1 } });
     renderIndex();
+    await openMainBaskets();
 
     await screen.findByRole("button", { name: "Archived group" });
     expect(screen.queryByRole("button", { name: "Edit Sub-Basket name for Archived group" })).not.toBeInTheDocument();
@@ -984,6 +1168,7 @@ describe("Sub-Basket deletion from the Configuration hierarchy", () => {
     const user = userEvent.setup();
     mockDeletionHierarchy();
     renderIndex();
+    await openMainBaskets();
 
     const action = await screen.findByRole("button", { name: `Delete Sub-Basket ${emptyGroup.name} permanently` });
     const toggle = screen.getByRole("button", { name: emptyGroup.name });
@@ -1010,6 +1195,7 @@ describe("Sub-Basket deletion from the Configuration hierarchy", () => {
     const user = userEvent.setup();
     mockDeletionHierarchy();
     renderIndex();
+    await openMainBaskets();
     const carpentryPanel = await screen.findByRole("heading", { level: 2, name: carpentry.name }).then((heading) => heading.closest("section")!);
     const trigger = await within(carpentryPanel).findByRole("button", { name: `Delete Sub-Basket ${panelGroup.name} permanently` });
     await user.click(within(carpentryPanel).getByRole("button", { name: panelGroup.name }));
@@ -1051,6 +1237,7 @@ describe("Sub-Basket deletion from the Configuration hierarchy", () => {
       version: 19, mainLineCount: 8, referenceCount: 3, impactToken: "reviewed-plumbing-impact"
     });
     renderIndex();
+    await openMainBaskets();
     await screen.findByRole("heading", { level: 2, name: plumbing.name });
     await user.type(screen.getByRole("searchbox", { name: "Search Basket or Main Line" }), "pipe{Enter}");
     await user.click(screen.getByRole("button", { name: "Next" }));
@@ -1085,6 +1272,7 @@ describe("Sub-Basket deletion from the Configuration hierarchy", () => {
       });
     }
     const view = renderIndex();
+    await openMainBaskets();
     const panel = await screen.findByRole("heading", { level: 2, name: carpentry.name }).then((heading) => heading.closest("section")!);
     await within(panel).findByRole("button", { name: panelGroup.name });
     await waitFor(() => expect(view.queryClient.isFetching()).toBe(0));
@@ -1111,6 +1299,7 @@ describe("Sub-Basket deletion from the Configuration hierarchy", () => {
       });
     }
     const view = renderIndex();
+    await openMainBaskets();
     const panel = await screen.findByRole("heading", { level: 2, name: carpentry.name }).then((heading) => heading.closest("section")!);
     await within(panel).findByRole("button", { name: panelGroup.name });
     if (restriction === "loading child") expect(within(panel).getByText("Loading Sub-Baskets…")).toBeVisible();
@@ -1127,6 +1316,7 @@ describe("Sub-Basket deletion from the Configuration hierarchy", () => {
       items: [{ ...carpentry, status: "inactive" }, plumbing], pagination: { ...pagination, total: 2 }
     });
     renderIndex();
+    await openMainBaskets();
 
     expect(await screen.findByRole("button", { name: `Delete Sub-Basket ${emptyGroup.name} permanently` })).toBeVisible();
     expect(screen.queryByRole("button", { name: `Edit Sub-Basket name for ${emptyGroup.name}` })).not.toBeInTheDocument();
@@ -1136,6 +1326,7 @@ describe("Sub-Basket deletion from the Configuration hierarchy", () => {
     const user = userEvent.setup();
     mockDeletionHierarchy();
     const view = renderIndex();
+    await openMainBaskets();
     await user.click(await screen.findByRole("button", { name: `Delete Sub-Basket ${emptyGroup.name} permanently` }));
     const dialog = await screen.findByRole("alertdialog", { name: "Delete Sub-Basket?" });
     await fillSubBasketDeletion(user, dialog, emptyGroup.name);
@@ -1144,6 +1335,7 @@ describe("Sub-Basket deletion from the Configuration hierarchy", () => {
     if (lost === "permission") authState.lifecycle = false;
     else authState.role = "admin";
     view.rerenderIndex();
+    await openMainBaskets();
 
     expect(within(dialog).getByRole("button", { name: "Delete Sub-Basket" })).toBeDisabled();
     expect(within(dialog).getByRole("alert")).toHaveTextContent(/permission|access/i);
@@ -1158,6 +1350,7 @@ describe("Sub-Basket deletion from the Configuration hierarchy", () => {
     const user = userEvent.setup();
     const state = mockDeletionHierarchy();
     const view = renderIndex();
+    await openMainBaskets();
     const panel = await screen.findByRole("heading", { level: 2, name: carpentry.name }).then((heading) => heading.closest("section")!);
     await user.click(await within(panel).findByRole("button", { name: `Delete Sub-Basket ${panelGroup.name} permanently` }));
     const dialog = await screen.findByRole("alertdialog", { name: "Delete Sub-Basket?" });
@@ -1205,6 +1398,7 @@ describe("Sub-Basket deletion from the Configuration hierarchy", () => {
       return deleteGroup(...args);
     });
     renderIndex();
+    await openMainBaskets();
     await user.click(await screen.findByRole("button", { name: `Delete Sub-Basket ${emptyGroup.name} permanently` }));
     const dialog = await screen.findByRole("alertdialog", { name: "Delete Sub-Basket?" });
     await fillSubBasketDeletion(user, dialog, emptyGroup.name);
@@ -1238,6 +1432,7 @@ describe("Sub-Basket deletion from the Configuration hierarchy", () => {
     const user = userEvent.setup();
     mockDeletionHierarchy();
     renderIndex();
+    await openMainBaskets();
     await user.click(await screen.findByRole("button", { name: `Delete Sub-Basket ${emptyGroup.name} permanently` }));
     const dialog = await screen.findByRole("alertdialog", { name: "Delete Sub-Basket?" });
     await fillSubBasketDeletion(user, dialog, emptyGroup.name);

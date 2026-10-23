@@ -245,8 +245,8 @@ it("reveals every confirmed Mode and Specifications value in a counted, accessib
       { id: "house-private", modeKind: "execution", executionSource: "in_house", fields: [{ id: "site-private", label: "Site ready", type: "checkbox", options: [], value: false }], exclusions: [{ id: "waste-private", name: "Waste removal", selected: true }] }
     ]
   }, pricingPayload: {
-    brands: [{ id: "brand-private", name: "Acoustic Works", description: "Approved finish" }],
-    specifications: [{ id: "spec-private", name: "Sound rated panel", brandId: "brand-private", description: "Fire tested" }],
+    brands: [{ id: "brand-private", name: "Acoustic Works", description: "Approved finish" }, { id: "second-private", name: "Quiet Build" }],
+    specifications: [{ id: "spec-private", name: "Sound rated panel", brandIds: ["brand-private", "second-private"], description: "Fire tested" }],
     priceEntries: [{ inputAmountPaise: 999_999 }]
   } });
   await fireEvent.press(screen.getByRole("button", { name: "Quick summary" }));
@@ -258,7 +258,7 @@ it("reveals every confirmed Mode and Specifications value in a counted, accessib
   expect(screen.getByRole("button", { name: /Hide Mode details, \d+ more saved values/u })).toHaveProp("accessibilityState", expect.objectContaining({ expanded: true }));
   expect(within(summary).getByText(longDescription)).toBeTruthy();
   expect(StyleSheet.flatten(within(summary).getByText(longDescription).props.style).width).toBe("100%");
-  for (const value of ["Transport · Not selected", "Waste removal · Selected", "Crew size", "Site ready", "0", "No", "Acoustic Works", "Approved finish", "Sound rated panel", "Fire tested"]) {
+  for (const value of ["Transport · Not selected", "Waste removal · Selected", "Crew size", "Site ready", "0", "No", "Acoustic Works", "Quiet Build", "Acoustic Works, Quiet Build", "Approved finish", "Sound rated panel", "Fire tested"]) {
     expect(within(summary).getAllByText(value).length).toBeGreaterThan(0);
   }
   expect(within(summary).queryByText(/private|999,999|hidden compatibility/u)).toBeNull();

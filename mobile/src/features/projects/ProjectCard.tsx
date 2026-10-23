@@ -1,7 +1,7 @@
 import { Pressable, StyleSheet, Text, View, useWindowDimensions } from "react-native";
 import Svg, { Circle, Path, Rect } from "react-native-svg";
 
-import { colors, fonts } from "../../ui/tokens";
+import { colors, fonts, typography } from "../../ui/tokens";
 import { projectStatusLabels, type ProjectItem, type ProjectStatus } from "./projectsModel";
 
 export const statusColors: Record<ProjectStatus, { ink: string; background: string; dot: string }> = {
@@ -85,7 +85,7 @@ const styles = StyleSheet.create({
   titleRow: { flexDirection: "row", alignItems: "flex-start", flexWrap: "wrap", gap: 5 },
   titleRowCompact: { flexDirection: "column" },
   titleCopy: { flex: 1, minWidth: 90 },
-  name: { fontFamily: fonts.semibold, fontSize: 16, lineHeight: 22, color: colors.ink },
+  name: { ...typography.cardTitle, color: colors.ink },
   subtitle: { fontFamily: fonts.regular, fontSize: 10, lineHeight: 16, color: colors.inkMuted },
   badge: { flexDirection: "row", alignItems: "center", alignSelf: "flex-start", gap: 4, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 12, flexShrink: 1 },
   badgeDot: { height: 6, width: 6, borderRadius: 3 },

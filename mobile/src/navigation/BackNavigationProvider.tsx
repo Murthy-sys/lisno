@@ -4,6 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useLayoutEffect, use
 import { BackHandler, Keyboard } from "react-native";
 
 import { useRuntime, type RuntimeContextValue } from "../runtime/RuntimeProvider";
+import { useStartupPresentation } from "../core/startup";
 import { BackEntryOwnership, readAppStack, resolveBackAction, type AppStack, type BackAction } from "./backNavigationPolicy";
 
 function ownerFence(context: RuntimeContextValue): string | null {
@@ -33,6 +34,9 @@ export function useBackNavigation(): BackNavigationContextValue {
 export function BackNavigationProvider({ children }: { readonly children: ReactNode }) {
   const navigation = useNavigationContainerRef();
   const runtime = useRuntime();
+  const { readyForNavigation } = useStartupPresentation();
+  const presentationHeld = useRef(!readyForNavigation);
+  presentationHeld.current = !readyForNavigation;
   const runtimeRef = useRef(runtime);
   runtimeRef.current = runtime;
   const ownership = useRef(new BackEntryOwnership()).current;
@@ -87,6 +91,7 @@ export function BackNavigationProvider({ children }: { readonly children: ReactN
   }, [navigation]);
 
   const execute = useCallback((expectedKey?: string, parent?: string) => {
+    if (presentationHeld.current) return true;
     const current = readCurrent();
     const key = current?.routes[current.index]?.key;
     if (!current || !key || (expectedKey && key !== expectedKey)) return false;

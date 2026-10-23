@@ -2,11 +2,16 @@ import { Redirect, useLocalSearchParams } from "expo-router";
 
 import { VendorKpiStaffScreen } from "../../features/procurement/VendorKpiStaffScreen";
 import { AdaptiveAppScaffold } from "../../navigation/AdaptiveAppScaffold";
+import { StartupRouteGate } from "../../navigation/StartupRouteGate";
 import { parseEstimateRouteId } from "../../navigation/backNavigationPolicy";
 import { resolveAuthorizedFeature } from "../../navigation/registry";
 import { useRuntime } from "../../runtime/RuntimeProvider";
 
 export default function VendorKpiRoute() {
+  return <StartupRouteGate><VendorKpiRouteContent /></StartupRouteGate>;
+}
+
+function VendorKpiRouteContent() {
   const params = useLocalSearchParams<{ vendorId?: string | string[]; from?: string | string[] }>();
   const vendorId = parseEstimateRouteId(params.vendorId);
   const context = useRuntime();

@@ -101,14 +101,14 @@ function GenericRecordDetailScreen({ destination, recordId, session, initialProj
 
 const styles = StyleSheet.create({
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
-  content: { flexGrow: 1, width: "100%", maxWidth: 860, alignSelf: "center", padding: spacing.lg, paddingBottom: spacing.huge, gap: spacing.xl },
+  content: { flexGrow: 1, width: "100%", maxWidth: 860, alignSelf: "center", padding: spacing.md, paddingBottom: spacing.huge, gap: spacing.md },
   projectContent: { maxWidth: projectDetailTheme.pageMaxWidth, gap: spacing.sm },
   heading: { gap: spacing.xs },
   eyebrow: { color: colors.violet, fontFamily: fonts.semibold, fontSize: 11, letterSpacing: 1.4 },
   title: { color: colors.ink, ...typography.pageTitle },
   details: { borderRadius: radii.surface, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, overflow: "hidden" },
-  row: { minHeight: 58, paddingHorizontal: spacing.md, paddingVertical: spacing.sm, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border, gap: 4 },
+  row: { minHeight: 52, paddingHorizontal: spacing.sm, paddingVertical: spacing.xs, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border, gap: 4 },
   label: { color: colors.inkMuted, fontFamily: fonts.medium, fontSize: 11, textTransform: "uppercase", letterSpacing: 0.6 },
-  value: { color: colors.ink, fontFamily: fonts.regular, fontSize: 14, lineHeight: 21 },
+  value: { color: colors.ink, ...typography.body },
   updating: { color: colors.info, fontFamily: fonts.medium, fontSize: 12 }
 });

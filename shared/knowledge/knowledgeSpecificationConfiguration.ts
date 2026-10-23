@@ -9,7 +9,9 @@ export const KNOWLEDGE_MAX_BRANDS = 200;
 export interface KnowledgeSpecificationConfiguration {
   readonly id: string;
   readonly name: string;
-  readonly brandId: string | null;
+  readonly brandIds: readonly string[];
+  /** Retain malformed wire data during unrelated edits until explicitly repaired. */
+  readonly invalidBrandAssociation?: KnowledgeJsonObject;
   readonly description: string | null;
   /** Compatibility-only data from the former typed Specification contract. */
   readonly hiddenTypedFields: KnowledgeJsonObject | null;
@@ -91,6 +93,73 @@ const MAX_TEXT = 4_000;
 const TYPED_COMPATIBILITY_KEYS = ["type", "options", "value"] as const;
 let fallbackIdCounter = 0;
 
+/** Read display IDs without trimming, deduplicating, or choosing a mixed-field winner. */
+export function readSpecificationBrandIds(row: KnowledgeJsonObject): readonly string[] {
+  if (Object.hasOwn(row, "brandId") && Object.hasOwn(row, "brandIds")) return [""];
+  if (Object.hasOwn(row, "brandIds")) {
+    return Array.isArray(row.brandIds)
+      ? row.brandIds.map((id) => typeof id === "string" ? id : "")
+      : [""];
+  }
+  return Object.hasOwn(row, "brandId") ? [typeof row.brandId === "string" ? row.brandId : ""] : [];
+}
+
+export function serializeSpecificationBrandIds(brandIds: readonly string[]): KnowledgeJsonObject {
+  return brandIds.length > 1 ? { brandIds: [...brandIds] }
+    : brandIds.length === 1 ? { brandId: brandIds[0]! } : {};
+}
+
+export function withSpecificationBrandIds(
+  specification: KnowledgeSpecificationConfiguration,
+  brandIds: readonly string[]
+): KnowledgeSpecificationConfiguration {
+  const { invalidBrandAssociation: _invalid, ...rest } = specification;
+  return { ...rest, brandIds: [...brandIds] };
+}
+
+export function validateSpecificationBrandAssociation(
+  row: KnowledgeJsonObject,
+  path = "",
+  brands?: KnowledgeJsonValue
+): readonly KnowledgeSpecificationIssue[] {
+  const issues: KnowledgeSpecificationIssue[] = [];
+  const field = (name: string) => path ? `${path}.${name}` : name;
+  const counts = brands === undefined ? null : new Map<string, number>();
+  if (counts && Array.isArray(brands)) for (const brand of brands) {
+    if (isObject(brand) && typeof brand.id === "string") counts.set(brand.id, (counts.get(brand.id) ?? 0) + 1);
+  }
+  const validateId = (id: KnowledgeJsonValue | undefined, idPath: string) => {
+    if (typeof id !== "string" || !id.trim() || id !== id.trim() || id.length > MAX_SHORT_TEXT) {
+      issues.push({ path: idPath, message: "Brand must use a bounded stable ID." });
+    } else if (counts && counts.get(id) !== 1) {
+      issues.push({ path: idPath, message: "Choose a configured Brand." });
+    }
+  };
+  if (Object.hasOwn(row, "brandId") && Object.hasOwn(row, "brandIds")) {
+    issues.push({ path: field("brandIds"), message: "Use one Brand association format, not both brandId and brandIds." });
+  }
+  if (Object.hasOwn(row, "brandId")) validateId(row.brandId, field("brandId"));
+  if (Object.hasOwn(row, "brandIds")) {
+    if (!Array.isArray(row.brandIds)) {
+      issues.push({ path: field("brandIds"), message: "Brands must be a list of stable IDs." });
+    } else {
+      if (row.brandIds.length > KNOWLEDGE_MAX_BRANDS) {
+        issues.push({ path: field("brandIds"), message: `Select at most ${KNOWLEDGE_MAX_BRANDS} Brands.` });
+      }
+      const seen = new Set<string>();
+      row.brandIds.forEach((id, index) => {
+        const idPath = field(`brandIds.${index}`);
+        validateId(id, idPath);
+        if (typeof id === "string") {
+          if (seen.has(id)) issues.push({ path: idPath, message: "Selected Brands must be unique." });
+          seen.add(id);
+        }
+      });
+    }
+  }
+  return issues;
+}
+
 export function parseKnowledgeSpecifications(
   value: KnowledgeJsonValue | undefined,
   brands?: KnowledgeJsonValue
@@ -104,6 +173,7 @@ export function parseKnowledgeSpecifications(
   }
 
   const specifications: KnowledgeSpecificationConfiguration[] = [];
+  const associationSources: KnowledgeJsonObject[] = [];
   const issues: KnowledgeSpecificationIssue[] = [];
   value.forEach((entry, index) => {
     const path = `specifications.${index}`;
@@ -116,8 +186,8 @@ export function parseKnowledgeSpecifications(
       Object.hasOwn(entry, key)
     );
     const allowedKeys = hasTypedCompatibility
-      ? ["id", "name", "brandId", "description", ...TYPED_COMPATIBILITY_KEYS]
-      : ["id", "name", "brandId", "description"];
+      ? ["id", "name", "brandId", "brandIds", "description", ...TYPED_COMPATIBILITY_KEYS]
+      : ["id", "name", "brandId", "brandIds", "description"];
     for (const key of Object.keys(entry)) {
       if (!allowedKeys.includes(key)) {
         issues.push({ path: `${path}.${key}`, message: "Unknown Specification property." });
@@ -131,14 +201,19 @@ export function parseKnowledgeSpecifications(
       }
     }
 
+    const association = {
+      ...(Object.hasOwn(entry, "brandId") ? { brandId: entry.brandId! } : {}),
+      ...(Object.hasOwn(entry, "brandIds") ? { brandIds: entry.brandIds! } : {})
+    };
+    associationSources.push(association);
+    const malformedAssociation = (Object.hasOwn(entry, "brandId") && Object.hasOwn(entry, "brandIds"))
+      || (Object.hasOwn(entry, "brandId") && typeof entry.brandId !== "string")
+      || (Object.hasOwn(entry, "brandIds") && (!Array.isArray(entry.brandIds) || entry.brandIds.some(id => typeof id !== "string")));
     specifications.push({
       id: stringValue(entry.id),
       name: typeof entry.name === "string" ? entry.name : "",
-      brandId: Object.hasOwn(entry, "brandId")
-        ? typeof entry.brandId === "string"
-          ? entry.brandId
-          : ""
-        : null,
+      brandIds: readSpecificationBrandIds(entry),
+      ...(malformedAssociation ? { invalidBrandAssociation: association } : {}),
       description: entry.description === null
         ? null
         : typeof entry.description === "string"
@@ -150,13 +225,14 @@ export function parseKnowledgeSpecifications(
 
   return {
     specifications,
-    issues: [...issues, ...validateKnowledgeSpecifications(specifications, brands)]
+    issues: [...issues, ...validateKnowledgeSpecifications(specifications, brands, associationSources)]
   };
 }
 
 export function validateKnowledgeSpecifications(
   specifications: readonly KnowledgeSpecificationConfiguration[],
-  brands?: KnowledgeJsonValue
+  brands?: KnowledgeJsonValue,
+  associationSources?: readonly KnowledgeJsonObject[]
 ): readonly KnowledgeSpecificationIssue[] {
   const issues: KnowledgeSpecificationIssue[] = [];
   if (specifications.length > KNOWLEDGE_MAX_SPECIFICATIONS) {
@@ -168,15 +244,6 @@ export function validateKnowledgeSpecifications(
 
   const ids = new Set<string>();
   const names = new Set<string>();
-  const brandIdCounts = brands === undefined
-    ? null
-    : new Map<string, number>();
-  if (brandIdCounts && Array.isArray(brands)) {
-    for (const brand of brands) {
-      if (!isObject(brand) || typeof brand.id !== "string") continue;
-      brandIdCounts.set(brand.id, (brandIdCounts.get(brand.id) ?? 0) + 1);
-    }
-  }
   specifications.forEach((specification, index) => {
     const path = `specifications.${index}`;
     validateStableId(specification.id, `${path}.id`, issues);
@@ -198,23 +265,10 @@ export function validateKnowledgeSpecifications(
     }
     if (normalizedName) names.add(normalizedName);
 
-    if (specification.brandId !== null) {
-      if (
-        !specification.brandId.trim()
-        || specification.brandId !== specification.brandId.trim()
-        || specification.brandId.length > MAX_SHORT_TEXT
-      ) {
-        issues.push({
-          path: `${path}.brandId`,
-          message: "Brand must use a bounded stable ID."
-        });
-      } else if (brandIdCounts && brandIdCounts.get(specification.brandId) !== 1) {
-        issues.push({
-          path: `${path}.brandId`,
-          message: "Choose a configured Brand."
-        });
-      }
-    }
+    issues.push(...validateSpecificationBrandAssociation(
+      associationSources?.[index] ?? specification.invalidBrandAssociation ?? serializeSpecificationBrandIds(specification.brandIds),
+      path, brands
+    ));
 
     if (
       typeof specification.description === "string" &&
@@ -233,7 +287,7 @@ export function createKnowledgeSpecification(): KnowledgeSpecificationConfigurat
   return {
     id: createStableSpecificationId(),
     name: "",
-    brandId: null,
+    brandIds: [],
     description: "",
     hiddenTypedFields: null
   };
@@ -245,7 +299,7 @@ export function serializeKnowledgeSpecifications(
   return specifications.map((specification) => ({
     id: specification.id,
     name: specification.name,
-    ...(specification.brandId ? { brandId: specification.brandId } : {}),
+    ...(specification.invalidBrandAssociation ?? serializeSpecificationBrandIds(specification.brandIds)),
     ...(specification.description === null
       ? { description: null }
       : specification.description.trim()

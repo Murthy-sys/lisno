@@ -3,13 +3,16 @@ import { StatusBar } from "expo-status-bar";
 import { StyleSheet, Text, View } from "react-native";
 
 import { useOnboardingCompletion } from "../core/onboarding";
+import { useStartupPresentation } from "../core/startup";
 import { landingDestination } from "../navigation/registry";
 import { useRuntime } from "../runtime/RuntimeProvider";
 import { StartupBrand } from "../ui/brand";
+import { startupTheme } from "../ui/startupTheme.js";
 import { colors, fonts, spacing } from "../ui/tokens";
 
 export default function StartupRouter() {
   const context = useRuntime();
+  const { readyForNavigation } = useStartupPresentation();
   const shouldResolveOnboarding =
     context.configured &&
     context.booted &&
@@ -30,11 +33,16 @@ export default function StartupRouter() {
     );
   }
 
+  if (context.session.status === "transient_error" || context.initializationError) {
+    return <Redirect href="/startup-recovery" />;
+  }
+
   if (
     !context.booted ||
     context.session.status === "booting" ||
     context.session.status === "restoring" ||
-    context.session.status === "signing_out"
+    context.session.status === "signing_out" ||
+    !readyForNavigation
   ) {
     return (
       <View style={styles.screen}>
@@ -43,9 +51,6 @@ export default function StartupRouter() {
     );
   }
 
-  if (context.session.status === "transient_error" || context.initializationError) {
-    return <Redirect href="/startup-recovery" />;
-  }
   if (context.session.status !== "authenticated" || !context.session.session) {
     if (onboardingComplete === null) {
       return (
@@ -68,7 +73,7 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: colors.midnight
+    backgroundColor: startupTheme.background
   },
   configurationError: {
     flex: 1,

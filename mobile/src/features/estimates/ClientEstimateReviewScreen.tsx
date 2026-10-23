@@ -11,7 +11,7 @@ import { resolveAuthorizedFeature } from "../../navigation/registry";
 import { useConfiguredRuntime } from "../../runtime/RuntimeProvider";
 import { BrandLoader } from "../../ui/brand";
 import { Button, StateView } from "../../ui/primitives";
-import { colors, fonts, spacing } from "../../ui/tokens";
+import { colors, fonts, spacing, typography } from "../../ui/tokens";
 import { ProjectDetailGlyph } from "../projects/projectDetailIcons";
 import { projectDetailTheme } from "../projects/projectDetailTheme";
 import { ClientEstimateAction } from "./ClientEstimateAction";
@@ -165,27 +165,27 @@ export function ClientEstimateReviewScreen({ estimateId, session, reviewContent 
 
 const styles = StyleSheet.create({
   center: { flex: 1, alignItems: "center", justifyContent: "center" },
-  page: { flexGrow: 1, width: "100%", maxWidth: projectDetailTheme.pageMaxWidth, alignSelf: "center", padding: spacing.lg, paddingBottom: spacing.huge, gap: projectDetailTheme.blockGap },
+  page: { flexGrow: 1, width: "100%", maxWidth: projectDetailTheme.pageMaxWidth, alignSelf: "center", padding: spacing.md, paddingBottom: spacing.huge, gap: projectDetailTheme.blockGap },
   header: { gap: 5, minWidth: 0, paddingBottom: spacing.xs },
   back: { alignSelf: "flex-start", marginLeft: -10, minHeight: projectDetailTheme.touch },
   eyebrow: { color: colors.primary, fontFamily: fonts.semibold, fontSize: 11, letterSpacing: 1.2 },
-  title: { color: colors.ink, fontFamily: fonts.semibold, fontSize: 28, lineHeight: 34 },
+  title: { ...typography.pageTitle, color: colors.ink },
   subtitle: { color: colors.inkMuted, fontFamily: fonts.regular, fontSize: 14, lineHeight: 20 },
   card: { minWidth: 0, overflow: "hidden", borderWidth: 1, borderColor: colors.border, borderRadius: projectDetailTheme.cardRadius, backgroundColor: colors.surface },
-  cardHeading: { minHeight: 72, flexDirection: "row", alignItems: "center", gap: 12, padding: spacing.md },
+  cardHeading: { minHeight: 64, flexDirection: "row", alignItems: "center", gap: 8, padding: spacing.sm },
   iconChip: { width: projectDetailTheme.iconChipSize, height: projectDetailTheme.iconChipSize, alignItems: "center", justifyContent: "center", borderRadius: projectDetailTheme.innerRadius, backgroundColor: projectDetailTheme.iconChip },
   headingCopy: { flex: 1, minWidth: 0, gap: 2 },
-  cardTitle: { color: colors.ink, fontFamily: fonts.semibold, fontSize: 18, lineHeight: 24 },
+  cardTitle: { ...typography.sectionTitle, color: colors.ink, fontFamily: fonts.semibold },
   cardSubtitle: { color: colors.inkMuted, fontFamily: fonts.regular, fontSize: 13, lineHeight: 18 },
-  cardBody: { gap: spacing.md, padding: spacing.md, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
-  summary: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between", alignItems: "center", gap: spacing.sm, padding: spacing.md, borderRadius: projectDetailTheme.innerRadius, backgroundColor: projectDetailTheme.valueTint, borderWidth: 1, borderColor: projectDetailTheme.valueBorder },
-  summaryCopy: { gap: 2, minWidth: 0 },
+  cardBody: { gap: spacing.sm, padding: spacing.sm, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
+  summary: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between", alignItems: "center", gap: spacing.xs, padding: spacing.sm, borderRadius: projectDetailTheme.innerRadius, backgroundColor: projectDetailTheme.valueTint, borderWidth: 1, borderColor: projectDetailTheme.valueBorder },
+  summaryCopy: { gap: 2, minWidth: 0, maxWidth: "100%", flexShrink: 1 },
   label: { color: colors.inkMuted, fontFamily: fonts.medium, fontSize: 12, lineHeight: 17 },
-  total: { color: colors.primary, fontFamily: fonts.semibold, fontSize: 25, lineHeight: 32, fontVariant: ["tabular-nums"] },
+  total: { color: colors.primary, fontFamily: fonts.semibold, fontSize: 22, lineHeight: 28, fontVariant: ["tabular-nums"] },
   status: { color: colors.primary, fontFamily: fonts.medium, fontSize: 12, lineHeight: 18 },
   meta: { gap: 4 },
   metaText: { color: colors.inkMuted, fontFamily: fonts.regular, fontSize: 12, lineHeight: 18 },
-  lines: { padding: spacing.md, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
+  lines: { padding: spacing.sm, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
   designState: { color: colors.inkMuted, fontFamily: fonts.regular, fontSize: 13, lineHeight: 20 },
   notice: { gap: spacing.xs, padding: spacing.sm, borderWidth: 1, borderColor: colors.border, borderRadius: projectDetailTheme.innerRadius, backgroundColor: colors.surface },
   noticeText: { color: colors.ink, fontFamily: fonts.medium, fontSize: 13, lineHeight: 20 },

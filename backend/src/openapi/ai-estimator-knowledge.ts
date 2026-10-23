@@ -252,6 +252,14 @@ const specificationBrandId = {
   ...pricingBrandId,
   description: "Stable reference to one local Brand in this Pricing payload's brands array. This is not a reusable Vendor master ID."
 } as const;
+const specificationBrandIds = {
+  type: "array",
+  minItems: 0,
+  maxItems: AI_ESTIMATOR_KNOWLEDGE_MAX_ARRAY_ITEMS,
+  uniqueItems: true,
+  items: specificationBrandId,
+  description: "Ordered stable references to local Brands in this Pricing payload. Each ID must resolve exactly once. Mutually exclusive with brandId; omit for no selection, use brandId for one selection, and brandIds for multiple selections when writing."
+} as const;
 const shortText = { type: "string", minLength: 1, maxLength: 240 } as const;
 const version = { type: "integer", minimum: 1 } as const;
 const dateTime = { type: "string", format: "date-time" } as const;
@@ -597,9 +605,11 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
         id,
         name: { type: "string", minLength: 1, maxLength: 240 },
         description,
-        brandId: specificationBrandId
+        brandId: specificationBrandId,
+        brandIds: specificationBrandIds
       }
     ),
+    not: { required: ["brandId", "brandIds"] },
     example: {
       id: "specification-plywood",
       name: "Plywood",
@@ -615,6 +625,7 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
   KnowledgeCanonicalSpecification: {
     deprecated: true,
     description: "Compatibility-only schema for typed Specification rows already stored in a revision. New typed rows and typed-field changes are rejected.",
+    not: { required: ["brandId", "brandIds"] },
     oneOf: [
       ...(["text", "textarea"] as const).map((type) => strictObject(
         ["id", "name", "type", "options", "value"],
@@ -623,6 +634,7 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
           name: { type: "string", minLength: 1, maxLength: 240 },
           description,
           brandId: specificationBrandId,
+          brandIds: specificationBrandIds,
           type: { type: "string", enum: [type] },
           options: { type: "array", maxItems: 0, items: { type: "string" } },
           value: { type: "string", maxLength: 4_000, nullable: true }
@@ -635,6 +647,7 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
           name: { type: "string", minLength: 1, maxLength: 240 },
           description,
           brandId: specificationBrandId,
+          brandIds: specificationBrandIds,
           type: { type: "string", enum: ["number"] },
           options: { type: "array", maxItems: 0, items: { type: "string" } },
           value: {
@@ -652,6 +665,7 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
           name: { type: "string", minLength: 1, maxLength: 240 },
           description,
           brandId: specificationBrandId,
+          brandIds: specificationBrandIds,
           type: { type: "string", enum: [type] },
           options: {
             type: "array",
@@ -676,6 +690,7 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
           name: { type: "string", minLength: 1, maxLength: 240 },
           description,
           brandId: specificationBrandId,
+          brandIds: specificationBrandIds,
           type: { type: "string", enum: ["checkbox"] },
           options: { type: "array", maxItems: 0, items: { type: "string" } },
           value: { type: "boolean" }
@@ -694,7 +709,7 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
     }
   },
   KnowledgeSpecification: {
-    description: "An Item/part row with an optional stable local Brand association, or an unchanged stored typed row retained for compatibility.",
+    description: "An Item/part row with optional stable local Brand associations, or an unchanged stored typed row retained for compatibility. brandId and brandIds are mutually exclusive; every selected ID must resolve exactly once in this Pricing payload's brands array.",
     oneOf: [
       ref("KnowledgeDescriptiveSpecification"),
       ref("KnowledgeCanonicalSpecification")
@@ -730,10 +745,31 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
         name: { type: "string", minLength: 1, maxLength: 240 },
         description,
         brandId: specificationBrandId,
-        brand: ref("KnowledgeSpecificationBrandIdentity")
+        brand: ref("KnowledgeSpecificationBrandIdentity"),
+        brandIds: { ...specificationBrandIds, minItems: 2 },
+        brands: {
+          type: "array",
+          minItems: 2,
+          maxItems: AI_ESTIMATOR_KNOWLEDGE_MAX_ARRAY_ITEMS,
+          items: ref("KnowledgeSpecificationBrandIdentity")
+        }
       }
     ),
-    description: "Public Item/part context. When brandId is present, brand contains the identity resolved by that stable local ID."
+    oneOf: [
+      { not: { anyOf: ["brandId", "brand", "brandIds", "brands"].map((field) => ({ required: [field] })) } },
+      { required: ["brandId", "brand"], not: { anyOf: [{ required: ["brandIds"] }, { required: ["brands"] }] } },
+      { required: ["brandIds", "brands"], not: { anyOf: [{ required: ["brandId"] }, { required: ["brand"] }] } }
+    ],
+    description: "Public Item/part context. A single selection exposes brandId/brand. Multiple selections expose the complete ordered brandIds/brands lists with only public ID/name identities and no singular alias.",
+    example: {
+      id: "specification-plywood",
+      name: "Plywood",
+      brandIds: ["brand-century-green", "brand-greenply"],
+      brands: [
+        { id: "brand-century-green", name: "Century Green" },
+        { id: "brand-greenply", name: "Greenply" }
+      ]
+    }
   },
   KnowledgePricingContext: {
     type: "object",

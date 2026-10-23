@@ -3,13 +3,15 @@ import { useCallback } from "react";
 import { StyleSheet, View } from "react-native";
 
 import { onboardingCompletion, useOnboardingCompletion } from "../core/onboarding";
+import { useStartupPresentation } from "../core/startup";
 import { OnboardingScreen } from "../features/onboarding";
 import { useRuntime } from "../runtime/RuntimeProvider";
 import { StartupBrand } from "../ui/brand";
-import { colors } from "../ui/tokens";
+import { startupTheme } from "../ui/startupTheme.js";
 
 export default function WelcomeRoute() {
   const context = useRuntime();
+  const { readyForNavigation } = useStartupPresentation();
   const shouldResolveCompletion =
     context.configured &&
     context.booted &&
@@ -26,20 +28,21 @@ export default function WelcomeRoute() {
   }, []);
 
   if (!context.configured) return <Redirect href="/" />;
+  if (context.session.status === "transient_error" || context.initializationError) {
+    return <Redirect href="/startup-recovery" />;
+  }
   if (
     !context.booted ||
     context.session.status === "booting" ||
     context.session.status === "restoring" ||
-    context.session.status === "signing_out"
+    context.session.status === "signing_out" ||
+    !readyForNavigation
   ) {
     return (
       <View style={styles.loading}>
         <StartupBrand message="Preparing your workspace" />
       </View>
     );
-  }
-  if (context.session.status === "transient_error" || context.initializationError) {
-    return <Redirect href="/startup-recovery" />;
   }
   if (context.session.status === "authenticated") return <Redirect href="/" />;
   if (completion === null) {
@@ -58,6 +61,6 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: colors.midnight
+    backgroundColor: startupTheme.background
   }
 });

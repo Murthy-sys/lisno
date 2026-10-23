@@ -18,6 +18,7 @@ import { buildKnowledgeConfigurationContext } from "../domain/ai-estimator-knowl
 import { selectCurrentMainLineRevision } from "../domain/ai-estimator-knowledge-current-revision.js";
 import { createKnowledgeRevisionDigest } from "../domain/ai-estimator-knowledge-completeness.js";
 import {
+  AI_ESTIMATOR_KNOWLEDGE_MAX_ARRAY_ITEMS,
   AI_ESTIMATOR_KNOWLEDGE_MODE_FIELD_TYPES,
   AI_ESTIMATOR_KNOWLEDGE_SECTION_KEYS,
   type KnowledgeDurationUnit,
@@ -905,9 +906,19 @@ function sanitizeSectionPayload(sectionKey: KnowledgeSectionKey, payload: Row): 
       .map(publicNamedRow)
       .filter((entry): entry is Row => entry !== null)
     : [];
-  const brandsById = new Map(
-    publicBrands.map((brand) => [requiredString(brand.id), brand] as const)
-  );
+  const brandsById = new Map<string, Row>();
+  const seenBrandIds = new Set<string>();
+  for (const value of Array.isArray(payload.brands) ? payload.brands : []) {
+    const row = asRow(value);
+    if (!row || !isPricingBrandId(row.id)) continue;
+    if (seenBrandIds.has(row.id)) {
+      brandsById.delete(row.id);
+      continue;
+    }
+    seenBrandIds.add(row.id);
+    const brand = publicNamedRow(row);
+    if (brand) brandsById.set(row.id, brand);
+  }
   if (Array.isArray(payload.specifications)) {
     safe.specifications = payload.specifications
       .map((specification) => publicSpecification(specification, brandsById))
@@ -989,16 +1000,33 @@ function publicSpecification(
   const row = asRow(value);
   const safe = publicNamedRow(value);
   if (!row || !safe) return null;
-  const brandId = optionalString(row.brandId);
-  const brand = brandId ? brandsById.get(brandId) : undefined;
-  if (brandId && brand) {
-    safe.brandId = brandId;
-    safe.brand = {
-      id: requiredString(brand.id),
-      name: requiredString(brand.name)
-    };
+  if (Object.hasOwn(row, "brandId") && Object.hasOwn(row, "brandIds")) return safe;
+  const brandIds = Object.hasOwn(row, "brandIds")
+    ? row.brandIds
+    : Object.hasOwn(row, "brandId") ? [row.brandId] : [];
+  if (
+    !Array.isArray(brandIds)
+    || brandIds.length > AI_ESTIMATOR_KNOWLEDGE_MAX_ARRAY_ITEMS
+    || !brandIds.every(isPricingBrandId)
+    || new Set(brandIds).size !== brandIds.length
+    || brandIds.some((id) => !brandsById.has(id))
+  ) return safe;
+  const brands = brandIds.map((id) => ({
+    id,
+    name: requiredString(brandsById.get(id)!.name)
+  }));
+  if (brandIds.length === 1) {
+    safe.brandId = brandIds[0];
+    safe.brand = brands[0];
+  } else if (brandIds.length > 1) {
+    safe.brandIds = [...brandIds];
+    safe.brands = brands;
   }
   return safe;
+}
+
+function isPricingBrandId(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0 && value.length <= 240 && value === value.trim();
 }
 
 function publicNamedRow(value: unknown): Row | null {

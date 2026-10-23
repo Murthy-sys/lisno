@@ -174,6 +174,10 @@ export function KnowledgeSubBasketEditor({ basket, existing, fallbackFocusRef, r
   </ContextPanel>;
 }
 
+function normalizeDeletionConfirmation(value: string) {
+  return value.trim().replace(/\s+/gu, " ");
+}
+
 export function KnowledgeSubBasketDeleteDialog({ basket, subBasket, fallbackFocusRef, returnFocusRef, inline = false, disabledReason, onBusyChange, onCommitted, onRefreshError, onClose, onDeleted }: {
   readonly basket: KnowledgeBasket;
   readonly subBasket: KnowledgeSubBasket;
@@ -190,12 +194,18 @@ export function KnowledgeSubBasketDeleteDialog({ basket, subBasket, fallbackFocu
   const queryClient = useQueryClient();
   const formId = useId();
   const [confirmationName, setConfirmationName] = useState("");
+  const [confirmationReviewKey, setConfirmationReviewKey] = useState<string | undefined>();
+  const [nameTouched, setNameTouched] = useState(false);
   const [reason, setReason] = useState("");
+  const [reasonTouched, setReasonTouched] = useState(false);
   const [conflict, setConflict] = useState(false);
   const [saved, setSaved] = useState<KnowledgePermanentDeleteSubBasketResult | null>(null);
   const [refreshError, setRefreshError] = useState("");
   const [refreshing, setRefreshing] = useState(false);
-  const priorToken = useRef<string | undefined>(undefined);
+  const targetKey = JSON.stringify([basket.id, subBasket.id]);
+  const priorTarget = useRef(targetKey);
+  const priorReview = useRef<string | undefined>(undefined);
+  const deletedName = useRef(subBasket.name);
   const cancelRef = useRef<HTMLButtonElement>(null);
   const submissionLocked = useRef(false);
   const committed = useRef(false);
@@ -206,21 +216,29 @@ export function KnowledgeSubBasketDeleteDialog({ basket, subBasket, fallbackFocu
     refetchOnReconnect: false, enabled: !saved
   });
   const impact = impactQuery.data;
+  const reviewKey = impact ? JSON.stringify([
+    basket.id, subBasket.id, impact.basketId, impact.subBasketId,
+    impact.version, impact.impactToken, impact.subBasketName
+  ]) : undefined;
 
   useEffect(() => {
-    if (priorToken.current && priorToken.current !== impact?.impactToken) {
+    if (priorTarget.current !== targetKey || (priorReview.current && priorReview.current !== reviewKey)) {
       setConfirmationName("");
+      setConfirmationReviewKey(undefined);
+      setNameTouched(false);
       setConflict(true);
     }
-    priorToken.current = impact?.impactToken;
-  }, [impact?.impactToken]);
+    if (priorTarget.current !== targetKey) setReasonTouched(false);
+    priorTarget.current = targetKey;
+    priorReview.current = reviewKey;
+  }, [reviewKey, targetKey]);
 
   async function refreshDeleted(result: KnowledgePermanentDeleteSubBasketResult) {
     setRefreshing(true);
     setRefreshError("");
     try {
       await syncKnowledgeSubBasketDeletion(queryClient, result);
-      onDeleted(impact?.subBasketName ?? subBasket.name);
+      onDeleted(deletedName.current);
     } catch {
       const message = "The Sub-Basket was permanently deleted, but the catalog could not refresh. Retry the refresh; deletion will not run again.";
       setRefreshError(message);
@@ -230,19 +248,16 @@ export function KnowledgeSubBasketDeleteDialog({ basket, subBasket, fallbackFocu
 
   async function refreshImpact() {
     setConfirmationName("");
+    setConfirmationReviewKey(undefined);
+    setNameTouched(false);
     await impactQuery.refetch();
   }
 
   const mutation = useMutation({
     retry: false,
-    mutationFn: () => {
-      if (!impact) throw new Error("Deletion impact is unavailable.");
-      return permanentlyDeleteKnowledgeSubBasket(basket.id, subBasket.id, {
-        expectedVersion: impact.version, confirmationName, reason: reason.trim(), impactToken: impact.impactToken,
-        ...(inline ? { draftOnly: true as const } : {})
-      });
-    },
-    onSuccess: async (result) => {
+    mutationFn: (submission: Parameters<typeof permanentlyDeleteKnowledgeSubBasket>) => permanentlyDeleteKnowledgeSubBasket(...submission),
+    onSuccess: async (result, submission) => {
+      deletedName.current = submission[2].confirmationName;
       setSaved(result);
       if (!committed.current) {
         committed.current = true;
@@ -250,10 +265,10 @@ export function KnowledgeSubBasketDeleteDialog({ basket, subBasket, fallbackFocu
       }
       await refreshDeleted(result);
     },
-    onError: async (error) => {
+    onError: (error) => {
       if (error instanceof ApiError && ["VERSION_CONFLICT", "DELETION_IMPACT_CHANGED"].includes(error.code)) {
         setConflict(true);
-        await refreshImpact();
+        void refreshImpact();
       }
     },
     onSettled: () => { submissionLocked.current = false; }
@@ -273,8 +288,13 @@ export function KnowledgeSubBasketDeleteDialog({ basket, subBasket, fallbackFocu
     : undefined;
   const identityMatches = impact?.basketId === basket.id && impact?.subBasketId === subBasket.id;
   const blockReason = disabledReason || mutationBlock || (impact && !identityMatches ? "The deletion preview does not match this Sub-Basket. Close this dialog and refresh the catalog." : undefined);
-  const canDelete = Boolean(impact && !(impact.vendorReferenceCount ?? 0) && confirmationName === impact.subBasketName && reason.trim()
-    && identityMatches && !blockReason && !busy && !impactQuery.isFetching && !impactQuery.isError && !saved);
+  const normalizedName = normalizeDeletionConfirmation(confirmationName);
+  const nameMatches = Boolean(normalizedName && normalizedName === normalizeDeletionConfirmation(impact?.subBasketName ?? ""));
+  const impactReady = impactQuery.isSuccess && !impactQuery.isFetching && !impactQuery.isPaused;
+  const canDelete = Boolean(impact && !(impact.vendorReferenceCount ?? 0) && nameMatches && reason.trim()
+    && confirmationReviewKey === reviewKey && identityMatches && !blockReason && !busy && impactReady && !saved);
+  const nameError = nameTouched && !nameMatches ? "Enter the displayed Sub-Basket name with matching capitalization." : undefined;
+  const reasonError = reasonTouched && !reason.trim() ? "Enter a reason for this permanent deletion." : undefined;
 
   return <Dialog title={inline ? "Remove Sub-Basket?" : "Delete Sub-Basket?"} tone="danger" eyebrow={basket.name} role="alertdialog"
     description={`“${impact?.subBasketName ?? subBasket.name}” and its items will be permanently deleted. This cannot be undone.`}
@@ -282,9 +302,13 @@ export function KnowledgeSubBasketDeleteDialog({ basket, subBasket, fallbackFocu
   >
     <form className={`ui-dialog__form knowledge-dialog-form${inline ? " knowledge-draft-catalog-dialog" : ""}`} onSubmit={(event) => {
       event.preventDefault();
-      if (!canDelete || submissionLocked.current || committed.current) return;
+      if (!canDelete || !impact || submissionLocked.current || committed.current) return;
       submissionLocked.current = true;
-      mutation.mutate();
+      mutation.mutate([basket.id, subBasket.id, {
+        expectedVersion: impact.version, confirmationName: impact.subBasketName,
+        reason: reason.trim(), impactToken: impact.impactToken,
+        ...(inline ? { draftOnly: true as const } : {})
+      }]);
     }}>
       <div className="ui-dialog__body knowledge-dialog-body knowledge-basket-delete">
         {saved ? <InlineMessage tone="warning" title="Sub-Basket deleted" role="status">{refreshError || "Refreshing the catalog…"}</InlineMessage>
@@ -293,8 +317,11 @@ export function KnowledgeSubBasketDeleteDialog({ basket, subBasket, fallbackFocu
               This rule will keep its unavailable target in your draft. Choose another target or remove the rule before saving the section.
             </InlineMessage> : null}
             {blockReason ? <InlineMessage tone="error" role="alert">{blockReason}</InlineMessage> : null}
-            {impactQuery.isPending ? <PageState state="loading" message="Loading Sub-Basket deletion impact…" />
-              : impactQuery.isError ? <PageState state="error" message={impactQuery.error.message} action={{ label: "Retry impact check", onAction: () => void refreshImpact() }} />
+            {impactQuery.isPaused ? <InlineMessage tone="warning" role="status" action={<Button variant="secondary" onClick={() => void refreshImpact()}>Retry impact check</Button>}>
+              The deletion impact check is paused while offline. Reconnect to continue, or retry the check.
+            </InlineMessage> : impact && impactQuery.isFetching ? <InlineMessage tone="info" role="status">Checking the latest deletion impact…</InlineMessage> : null}
+            {impactQuery.isPending ? !impactQuery.isPaused && <PageState state="loading" message="Loading Sub-Basket deletion impact…" />
+              : impactQuery.isError && !impactQuery.isFetching && !impactQuery.isPaused ? <PageState state="error" message={impactQuery.error.message} action={{ label: "Retry impact check", onAction: () => void refreshImpact() }} />
               : impact ? <div className="knowledge-basket-delete__impact">
                 <dl>
                   <div><dt>Items deleted with it</dt><dd>{impact.mainLineCount}</dd></div>
@@ -308,16 +335,21 @@ export function KnowledgeSubBasketDeleteDialog({ basket, subBasket, fallbackFocu
                 </InlineMessage>
               </div> : null}
             {conflict ? <InlineMessage tone="warning" title="Deletion impact changed">
-              {impactQuery.isError ? "The latest impact could not be loaded. Retry the impact check before continuing." : "Review the refreshed counts and enter the current Sub-Basket name again. Deletion was not retried."}
+              {impactQuery.isPaused || impactQuery.isFetching ? "Wait for the latest impact check before reviewing the counts and confirming the name again. Deletion was not retried."
+                : impactQuery.isError ? "The latest impact could not be loaded. Retry the impact check before continuing." : "Review the refreshed counts and enter the current Sub-Basket name again. Deletion was not retried."}
             </InlineMessage> : null}
             {mutation.error && !mutationBlock && !(mutation.error instanceof ApiError && ["VERSION_CONFLICT", "DELETION_IMPACT_CHANGED"].includes(mutation.error.code))
               ? <InlineMessage tone="error" role="alert">{mutation.error.message}</InlineMessage> : null}
             {impact ? <>
-              <Field id={`${formId}-name`} label="Type Sub-Basket name to confirm" required hint={<>Enter <strong>{impact.subBasketName}</strong> exactly, including spaces and capitalization.</>}>
-                {(props) => <Input {...props} value={confirmationName} autoComplete="off" maxLength={240} disabled={busy || impactQuery.isFetching} onChange={(event) => setConfirmationName(event.target.value)} />}
+              <Field id={`${formId}-name`} label="Type Sub-Basket name to confirm" required error={nameError} hint={<>Enter <strong>{impact.subBasketName}</strong> with matching capitalization. Extra whitespace is ignored.</>}>
+                {(props) => <Input {...props} value={confirmationName} autoComplete="off" maxLength={240} disabled={busy || impactQuery.isFetching || impactQuery.isPaused}
+                  onBlur={() => setNameTouched(true)} onChange={(event) => {
+                    setConfirmationName(event.target.value);
+                    setConfirmationReviewKey(reviewKey);
+                  }} />}
               </Field>
-              <Field id={`${formId}-reason`} label="Reason" required hint="Recorded in the audit history for this permanent change.">
-                {(props) => <Textarea {...props} value={reason} maxLength={1000} disabled={busy} onChange={(event) => setReason(event.target.value)} />}
+              <Field id={`${formId}-reason`} label="Reason" required error={reasonError} hint="Recorded in the audit history for this permanent change.">
+                {(props) => <Textarea {...props} value={reason} maxLength={1000} disabled={busy} onBlur={() => setReasonTouched(true)} onChange={(event) => setReason(event.target.value)} />}
               </Field>
             </> : null}
           </>}

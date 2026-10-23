@@ -4,7 +4,7 @@ import { Pencil, Trash2 } from "lucide-react";
 import { Button } from "../../components/ui/Button";
 import { ContextPanel } from "../../components/ui/ContextPanel";
 import { Dialog } from "../../components/ui/Dialog";
-import { Field, Input, Select, Textarea } from "../../components/ui/Field";
+import { Field, Input, Textarea } from "../../components/ui/Field";
 import {
   KNOWLEDGE_MAX_BRANDS,
   KNOWLEDGE_MAX_SPECIFICATIONS,
@@ -13,13 +13,13 @@ import {
   referencedSpecificationIds as referencedSpecificationIdsFromPrices,
   serializeKnowledgeSpecifications,
   validateKnowledgeBrands,
+  withSpecificationBrandIds,
   type KnowledgeSpecificationConfiguration,
   type KnowledgeSpecificationIssue
 } from "./knowledgeSpecificationConfiguration";
 import type { KnowledgeJsonValue } from "./knowledgeTypes";
+import { KnowledgeBrandMultiSelect } from "./KnowledgeBrandMultiSelect";
 
-const ADD_BRAND_VALUE = "__add_knowledge_brand__";
-const EDIT_BRAND_VALUE = "__edit_knowledge_brand__";
 const MAX_BRAND_NAME_LENGTH = 240;
 
 type SpecificationField = "name" | "brand" | "description";
@@ -75,7 +75,7 @@ export function KnowledgeSpecificationBuilder({
   const panelReturnFocusRef = useRef<HTMLElement | null>(null);
   const panelInitialFocusRef = useRef<HTMLElement | null>(null);
   const brandNameRef = useRef<HTMLInputElement>(null);
-  const brandSelectRef = useRef<HTMLSelectElement>(null);
+  const brandSelectRef = useRef<HTMLElement | null>(null);
   const lastValidationAttempt = useRef(0);
   const parsed = useMemo(
     () => parseKnowledgeSpecifications(value, brands ?? []),
@@ -94,17 +94,6 @@ export function KnowledgeSpecificationBuilder({
     [savedBrands]
   );
   const brandOptions = useMemo(() => knowledgeBrandOptions(brands), [brands]);
-  const addBrandValue = useMemo(
-    () => uniqueAddBrandValue(brandOptions),
-    [brandOptions]
-  );
-  const editBrandValue = useMemo(
-    () => uniqueActionValue(
-      [...brandOptions.map(({ id }) => id), addBrandValue],
-      EDIT_BRAND_VALUE
-    ),
-    [addBrandValue, brandOptions]
-  );
   const issues = suppliedIssues ?? parsed.issues;
   const referencedIds = useMemo(
     () => new Set([
@@ -162,6 +151,7 @@ export function KnowledgeSpecificationBuilder({
     nextSpecifications: readonly KnowledgeSpecificationConfiguration[],
     nextBrands: readonly KnowledgeJsonValue[] = brandValues
   ) {
+    if (readOnly) return;
     onDirty();
     onChange({
       specifications: serializeKnowledgeSpecifications(nextSpecifications),
@@ -179,16 +169,20 @@ export function KnowledgeSpecificationBuilder({
     return issues.find((issue) => issue.path === path)?.message;
   }
 
-  function brandIssueFor(brandId: string | null): string | undefined {
-    if (!brandId) return undefined;
-    const brandIndex = brandValues.findIndex((brand) =>
-      isJsonObject(brand) && stringValue(brand.id) === brandId
-    );
-    if (brandIndex < 0) return undefined;
-    const path = `brands.${brandIndex}`;
-    return issues.find((issue) =>
-      issue.path === path || issue.path.startsWith(`${path}.`)
-    )?.message;
+  function brandIssueFor(brandIds: readonly string[]): string | undefined {
+    for (const brandId of brandIds) {
+      const brandIndex = brandValues.findIndex((brand) => isJsonObject(brand) && stringValue(brand.id) === brandId);
+      if (brandIndex < 0) continue;
+      const path = `brands.${brandIndex}`;
+      const issue = issues.find((entry) => entry.path === path || entry.path.startsWith(`${path}.`));
+      if (issue) return issue.message;
+    }
+    return undefined;
+  }
+
+  function associationIssueFor(index: number): string | undefined {
+    const prefix = `specifications.${index}.brandId`;
+    return issues.find((issue) => issue.path === prefix || issue.path === `${prefix}s` || issue.path.startsWith(`${prefix}s.`))?.message;
   }
 
   function openEditor(specificationId: string, trigger: HTMLElement, field: SpecificationField = "name") {
@@ -220,7 +214,8 @@ export function KnowledgeSpecificationBuilder({
     window.setTimeout(() => (addButtonRef.current ?? headingRef.current)?.focus(), 0);
   }
 
-  function openBrandDialog(specificationId: string, select: HTMLSelectElement) {
+  function openBrandDialog(specificationId: string, select: HTMLElement) {
+    if (readOnly) return;
     brandSelectRef.current = select;
     setBrandDialogSpecificationId(specificationId);
     setBrandDialogBrandId(null);
@@ -228,9 +223,10 @@ export function KnowledgeSpecificationBuilder({
     setBrandNameError(undefined);
   }
 
-  function openBrandEditDialog(specificationId: string, brandId: string, select: HTMLSelectElement) {
+  function openBrandEditDialog(specificationId: string, brandId: string, select: HTMLElement) {
     const brand = knowledgeBrandRows(brands).find((candidate) => candidate.brandId === brandId);
     if (!brand) return;
+    if (readOnly) return;
     brandSelectRef.current = select;
     setBrandDialogSpecificationId(specificationId);
     setBrandDialogBrandId(brandId);
@@ -247,7 +243,7 @@ export function KnowledgeSpecificationBuilder({
 
   function submitBrand(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!brandDialogSpecificationId) return;
+    if (readOnly || !brandDialogSpecificationId) return;
 
     const trimmedName = brandName.trim();
     const candidateIndex = brandDialogBrandId
@@ -282,7 +278,7 @@ export function KnowledgeSpecificationBuilder({
       ? parsed.specifications
       : parsed.specifications.map((specification) =>
           specification.id === brandDialogSpecificationId
-            ? { ...specification, brandId: isJsonObject(brand) ? stringValue(brand.id) : null }
+            ? withSpecificationBrandIds(specification, [...specification.brandIds, isJsonObject(brand) ? stringValue(brand.id) : ""])
             : specification
         );
     update(nextSpecifications, nextBrands);
@@ -293,7 +289,7 @@ export function KnowledgeSpecificationBuilder({
     specification: KnowledgeSpecificationConfiguration,
     index: number
   ): "Saved" | "Unsaved" | "Needs review" {
-    if (validationAttempt > 0 && rowIssues(issues, index, specification.brandId, brandValues).length > 0) {
+    if (validationAttempt > 0 && rowIssues(issues, index, specification.brandIds, brandValues).length > 0) {
       return "Needs review";
     }
     const savedSpecification = savedParsed.specifications.find((entry) => entry.id === specification.id);
@@ -301,12 +297,11 @@ export function KnowledgeSpecificationBuilder({
       serializeKnowledgeSpecifications([specification])[0],
       serializeKnowledgeSpecifications([savedSpecification])[0]
     )) return "Unsaved";
-    if (!specification.brandId) return "Saved";
-    const currentBrand = brandRecord(brandValues, specification.brandId);
-    const savedBrand = brandRecord(savedBrandValues, specification.brandId);
-    return currentBrand !== undefined && savedBrand !== undefined && jsonEqual(currentBrand, savedBrand)
-      ? "Saved"
-      : "Unsaved";
+    return specification.brandIds.every((brandId) => {
+      const currentBrand = brandRecord(brandValues, brandId);
+      const savedBrand = brandRecord(savedBrandValues, brandId);
+      return currentBrand !== undefined && savedBrand !== undefined && jsonEqual(currentBrand, savedBrand);
+    }) ? "Saved" : "Unsaved";
   }
 
   function fieldInitialRef(field: SpecificationField, element: HTMLElement | null) {
@@ -321,7 +316,7 @@ export function KnowledgeSpecificationBuilder({
       <div className="knowledge-specification-builder__header">
         <div>
           <h3 id="knowledge-specifications-title" ref={headingRef} tabIndex={-1}>Specifications</h3>
-          <p>Configure the item, its Brand and concise work guidance.</p>
+          <p>Configure the item, its Brands and concise work guidance.</p>
         </div>
         {!readOnly ? (
           <Button
@@ -344,7 +339,7 @@ export function KnowledgeSpecificationBuilder({
             <thead>
               <tr>
                 <th scope="col">Item name</th>
-                <th scope="col">Brand name</th>
+                <th scope="col">Brands</th>
                 <th scope="col">Brief description</th>
                 <th scope="col">Status</th>
                 <th scope="col"><span className="sr-only">Actions</span></th>
@@ -371,7 +366,7 @@ export function KnowledgeSpecificationBuilder({
                         {specification.name.trim() || "Item not named"}
                       </button>
                     </th>
-                    <td data-label="Brand name">{brandLabel(specification.brandId, brandOptions)}</td>
+                    <td data-label="Brands">{brandLabel(specification.brandIds, brandOptions)}</td>
                     <td data-label="Brief description" className="knowledge-specification-table__description">
                       {specification.description?.trim() || "Not configured"}
                     </td>
@@ -420,7 +415,7 @@ export function KnowledgeSpecificationBuilder({
         </div>
       ) : (
         <p className="knowledge-specification-builder__empty">
-          {readOnly ? "No Specifications configured." : "No Specifications configured. Add one to define an item, Brand and guidance."}
+          {readOnly ? "No Specifications configured." : "No Specifications configured. Add one to define an item, Brands and guidance."}
         </p>
       )}
 
@@ -466,51 +461,25 @@ export function KnowledgeSpecificationBuilder({
               </Field>
               <Field
                 id={panelFieldId(editingSpecification.id, "brand")}
-                label="Brand name"
+                label="Brands"
                 hint={brandValues.length >= KNOWLEDGE_MAX_BRANDS
                   ? `Maximum ${KNOWLEDGE_MAX_BRANDS} Brands reached. Existing Brands remain selectable.`
                   : undefined}
-                error={issueFor(`specifications.${editingIndex}.brandId`) ?? brandIssueFor(editingSpecification.brandId)}
+                error={associationIssueFor(editingIndex) ?? brandIssueFor(editingSpecification.brandIds)}
               >
                 {(props) => (
-                  <Select
+                  <KnowledgeBrandMultiSelect
                     {...props}
                     ref={(element) => fieldInitialRef("brand", element)}
-                    disabled={readOnly}
-                    value={editingSpecification.brandId ?? ""}
-                    onChange={(event) => {
-                      if (event.target.value === addBrandValue) {
-                        openBrandDialog(editingSpecification.id, event.currentTarget);
-                        return;
-                      }
-                      if (event.target.value === editBrandValue && editingSpecification.brandId) {
-                        openBrandEditDialog(editingSpecification.id, editingSpecification.brandId, event.currentTarget);
-                        return;
-                      }
-                      replace(editingSpecification.id, {
-                        ...editingSpecification,
-                        brandId: event.target.value || null
-                      });
-                    }}
-                  >
-                    <option value="">Not configured</option>
-                    {editingSpecification.brandId && !brandOptions.some(({ id }) => id === editingSpecification.brandId) ? (
-                      <option value={editingSpecification.brandId} disabled>Unavailable Brand</option>
-                    ) : null}
-                    {brandOptions.map((brand) => (
-                      <option key={brand.id} value={brand.id}>{brand.name}</option>
-                    ))}
-                    {!readOnly && editingSpecification.brandId && brandOptions.some(({ id }) => id === editingSpecification.brandId) ? (
-                      <option value={editBrandValue}>Edit selected brand</option>
-                    ) : null}
-                    {!readOnly ? brandValues.length >= KNOWLEDGE_MAX_BRANDS ? (
-                      <option value={addBrandValue} disabled>
-                        Add brand — maximum {KNOWLEDGE_MAX_BRANDS} reached
-                      </option>
-                    ) : (
-                      <option value={addBrandValue}>Add brand</option>
-                    ) : null}
-                  </Select>
+                    brands={brandOptions}
+                    selectedIds={editingSpecification.brandIds}
+                    readOnly={readOnly}
+                    addDisabled={brandValues.length >= KNOWLEDGE_MAX_BRANDS}
+                    addLabel={brandValues.length >= KNOWLEDGE_MAX_BRANDS ? `Add brand (maximum ${KNOWLEDGE_MAX_BRANDS} reached)` : "Add brand"}
+                    onChange={(brandIds) => replace(editingSpecification.id, withSpecificationBrandIds(editingSpecification, brandIds))}
+                    onAdd={(trigger) => openBrandDialog(editingSpecification.id, trigger)}
+                    onEdit={(brandId, trigger) => openBrandEditDialog(editingSpecification.id, brandId, trigger)}
+                  />
                 )}
               </Field>
               <Field
@@ -599,17 +568,15 @@ function knowledgeBrandRows(value: KnowledgeJsonValue | undefined): readonly Kno
 }
 
 function knowledgeBrandOptions(value: KnowledgeJsonValue | undefined): readonly KnowledgeBrandOption[] {
-  const seen = new Set<string>();
-  return knowledgeBrandRows(value).flatMap((brand, index) => {
-    if (!brand.brandId || seen.has(brand.brandId)) return [];
-    seen.add(brand.brandId);
+  const rows = knowledgeBrandRows(value);
+  return rows.flatMap((brand, index) => {
+    if (!brand.brandId || rows.filter((candidate) => candidate.brandId === brand.brandId).length !== 1) return [];
     return [{ id: brand.brandId, name: brand.name.trim() || `Unnamed Brand ${index + 1}` }];
   });
 }
 
-function brandLabel(brandId: string | null, brands: readonly KnowledgeBrandOption[]): string {
-  if (!brandId) return "Not configured";
-  return brands.find((brand) => brand.id === brandId)?.name ?? "Unavailable Brand";
+function brandLabel(brandIds: readonly string[], brands: readonly KnowledgeBrandOption[]): string {
+  return brandIds.length ? brandIds.map((brandId) => brands.find((brand) => brand.id === brandId)?.name ?? "Unavailable Brand").join(", ") : "Not configured";
 }
 
 function brandRecord(brands: readonly KnowledgeJsonValue[], brandId: string): KnowledgeJsonValue | undefined {
@@ -619,18 +586,15 @@ function brandRecord(brands: readonly KnowledgeJsonValue[], brandId: string): Kn
 function rowIssues(
   issues: readonly KnowledgeSpecificationIssue[],
   specificationIndex: number,
-  brandId: string | null,
+  brandIds: readonly string[],
   brands: readonly KnowledgeJsonValue[]
 ): readonly KnowledgeSpecificationIssue[] {
   const specificationPath = `specifications.${specificationIndex}`;
-  const brandIndex = brandId
-    ? brands.findIndex((brand) => isJsonObject(brand) && stringValue(brand.id) === brandId)
-    : -1;
-  const brandPath = brandIndex >= 0 ? `brands.${brandIndex}` : null;
+  const brandPaths = brands.flatMap((brand, index) => isJsonObject(brand) && brandIds.includes(stringValue(brand.id)) ? [`brands.${index}`] : []);
   return issues.filter((issue) =>
     issue.path === specificationPath
     || issue.path.startsWith(`${specificationPath}.`)
-    || (brandPath !== null && (issue.path === brandPath || issue.path.startsWith(`${brandPath}.`)))
+    || brandPaths.some((path) => issue.path === path || issue.path.startsWith(`${path}.`))
   );
 }
 
@@ -649,31 +613,17 @@ function firstValidationTarget(
       const property = specificationIssue.path.slice(path.length + 1);
       return {
         specificationId: specification.id,
-        field: property === "brandId" ? "brand" : property === "description" ? "description" : "name"
+        field: (property === "brandId" || property === "brandIds" || property.startsWith("brandIds.")) ? "brand" : property === "description" ? "description" : "name"
       };
     }
-    if (!specification.brandId) continue;
-    const brandIndex = brands.findIndex((brand) =>
-      isJsonObject(brand) && stringValue(brand.id) === specification.brandId
-    );
-    if (brandIndex < 0) continue;
-    const brandPath = `brands.${brandIndex}`;
-    if (issues.some((issue) => issue.path === brandPath || issue.path.startsWith(`${brandPath}.`))) {
-      return { specificationId: specification.id, field: "brand" };
-    }
+    if (specification.brandIds.some((brandId) => {
+      const brandIndex = brands.findIndex((brand) => isJsonObject(brand) && stringValue(brand.id) === brandId);
+      if (brandIndex < 0) return false;
+      const path = `brands.${brandIndex}`;
+      return issues.some((issue) => issue.path === path || issue.path.startsWith(`${path}.`));
+    })) return { specificationId: specification.id, field: "brand" };
   }
   return null;
-}
-
-function uniqueAddBrandValue(brands: readonly KnowledgeBrandOption[]): string {
-  return uniqueActionValue(brands.map((brand) => brand.id), ADD_BRAND_VALUE);
-}
-
-function uniqueActionValue(ids: readonly string[], seed: string): string {
-  const usedIds = new Set(ids);
-  let value = seed;
-  while (usedIds.has(value)) value = `_${value}`;
-  return value;
 }
 
 function createKnowledgeBrand(name: string): Record<string, KnowledgeJsonValue> {

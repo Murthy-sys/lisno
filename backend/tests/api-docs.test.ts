@@ -1657,7 +1657,7 @@ describe("OpenAPI and Swagger UI", () => {
       }
     });
     expect(componentSchemas().KnowledgeSpecification).toEqual({
-      description: "An Item/part row with an optional stable local Brand association, or an unchanged stored typed row retained for compatibility.",
+      description: expect.stringContaining("brandId and brandIds are mutually exclusive"),
       oneOf: [
         { $ref: "#/components/schemas/KnowledgeDescriptiveSpecification" },
         { $ref: "#/components/schemas/KnowledgeCanonicalSpecification" }
@@ -1667,7 +1667,13 @@ describe("OpenAPI and Swagger UI", () => {
       type: "object",
       additionalProperties: false,
       required: ["id", "name"],
+      not: { required: ["brandId", "brandIds"] },
       properties: expect.objectContaining({
+        brandIds: expect.objectContaining({
+          type: "array", minItems: 0, maxItems: 200, uniqueItems: true,
+          items: expect.objectContaining({ type: "string", maxLength: 240 }),
+          description: expect.stringContaining("Each ID must resolve exactly once")
+        }),
         brandId: expect.objectContaining({
           type: "string",
           maxLength: 240,
@@ -1689,6 +1695,7 @@ describe("OpenAPI and Swagger UI", () => {
     expect(componentSchemas().KnowledgeCanonicalSpecification).toMatchObject({
       deprecated: true,
       description: expect.stringContaining("Compatibility-only"),
+      not: { required: ["brandId", "brandIds"] },
       "x-lisno-field-types": ["text", "textarea", "number", "radio", "dropdown", "checkbox"],
       example: {
         id: "specification-finish",
@@ -1705,6 +1712,7 @@ describe("OpenAPI and Swagger UI", () => {
           properties: expect.objectContaining({
             type: { type: "string", enum: ["number"] },
             brandId: expect.objectContaining({ type: "string" }),
+            brandIds: expect.objectContaining({ type: "array", maxItems: 200, uniqueItems: true }),
             value: expect.objectContaining({
               pattern: "^(0|[1-9][0-9]*)(\\.[0-9]{1,6})?$"
             })
@@ -1751,7 +1759,14 @@ describe("OpenAPI and Swagger UI", () => {
       required: ["id", "name"],
       properties: {
         brandId: expect.objectContaining({ type: "string" }),
-        brand: { $ref: "#/components/schemas/KnowledgeSpecificationBrandIdentity" }
+        brand: { $ref: "#/components/schemas/KnowledgeSpecificationBrandIdentity" },
+        brandIds: expect.objectContaining({ type: "array", minItems: 2, maxItems: 200, uniqueItems: true }),
+        brands: { type: "array", minItems: 2, maxItems: 200, items: { $ref: "#/components/schemas/KnowledgeSpecificationBrandIdentity" } }
+      },
+      oneOf: expect.any(Array),
+      example: {
+        brandIds: ["brand-century-green", "brand-greenply"],
+        brands: [{ id: "brand-century-green", name: "Century Green" }, { id: "brand-greenply", name: "Greenply" }]
       }
     });
     expect(componentSchemas().KnowledgeSpecificationBrandIdentity).toMatchObject({

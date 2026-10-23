@@ -1,23 +1,38 @@
 import type { ConfigContext } from "expo/config";
 
 import { createAppConfig, selectedApiEnvironment } from "./app.config";
+import { startupTheme } from "./src/ui/startupTheme";
 import { colors } from "./src/ui/tokens";
 
 const context = { config: {} } as ConfigContext;
 describe("Android app environment configuration", () => {
-  it("keeps the native launch background and launcher aligned with the forest application theme", () => {
+  it("matches the native window to the olive startup while preserving launcher branding", () => {
     const config = createAppConfig(context, {});
 
-    expect(config.backgroundColor).toBe(colors.shell);
-    expect(config.android?.adaptiveIcon?.backgroundColor).toBe(colors.shell);
+    expect(config.backgroundColor).toBe(startupTheme.background);
+    expect(config.icon).toBe("./assets/brand/icon.png");
+    expect(config.android?.adaptiveIcon).toEqual({
+      backgroundColor: colors.shell,
+      foregroundImage: "./assets/brand/icon-foreground.png",
+      monochromeImage: "./assets/brand/icon-monochrome.png"
+    });
     expect(config.ios?.bundleIdentifier).toBe("com.lisno.mobile.dev");
+  });
+
+  it("uses an unbranded olive native splash in both Android appearances", () => {
+    const config = createAppConfig(context, {});
+
     expect(config.plugins).toContainEqual([
       "expo-splash-screen",
       {
-        backgroundColor: colors.shell,
-        image: "./assets/brand/splash-icon.png",
-        imageWidth: 112,
-        resizeMode: "contain"
+        backgroundColor: startupTheme.background,
+        android: {
+          drawable: {
+            icon: "./assets/brand/startup-transparent.xml",
+            darkIcon: "./assets/brand/startup-transparent.xml"
+          },
+          dark: { backgroundColor: startupTheme.background }
+        }
       }
     ]);
   });

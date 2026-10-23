@@ -585,8 +585,8 @@ function validateSpecificationRows(
     validateExactRowKeys(
       row,
       isCanonical
-        ? ["id", "name", "description", "brandId", "type", "options", "value"]
-        : ["id", "name", "description", "brandId"],
+        ? ["id", "name", "description", "brandId", "brandIds", "type", "options", "value"]
+        : ["id", "name", "description", "brandId", "brandIds"],
       isCanonical
         ? ["id", "name", "type", "options", "value"]
         : ["id", "name"],
@@ -594,20 +594,33 @@ function validateSpecificationRows(
       issues
     );
     validateNamedPricingRow(row, rowPath, ids, names, issues);
+    if ("brandId" in row && "brandIds" in row) {
+      issues.push({
+        path: `${rowPath}.brandIds`,
+        code: "INVALID_BRAND_ASSOCIATION",
+        message: "Use one Brand association format, not both brandId and brandIds."
+      });
+    }
     if ("brandId" in row) {
-      const brandPath = `${rowPath}.brandId`;
-      validatePricingBrandId(row.brandId, brandPath, issues);
-      if (
-        typeof row.brandId === "string" &&
-        row.brandId.length > 0 &&
-        row.brandId.length <= 240 &&
-        row.brandId === row.brandId.trim() &&
-        brandIdCounts.get(row.brandId) !== 1
-      ) {
-        issues.push({
-          path: brandPath,
-          code: "INVALID_REFERENCE",
-          message: "Select a Brand configured in this Pricing section."
+      validateSpecificationBrandReference(row.brandId, `${rowPath}.brandId`, brandIdCounts, issues);
+    }
+    if ("brandIds" in row) {
+      const brandPath = `${rowPath}.brandIds`;
+      if (!Array.isArray(row.brandIds)) {
+        issues.push(invalidTypeIssue(brandPath, "an array of stable Brand IDs"));
+      } else {
+        if (row.brandIds.length > AI_ESTIMATOR_KNOWLEDGE_MAX_ARRAY_ITEMS) {
+          issues.push({
+            path: brandPath,
+            code: "TOO_MANY_BRANDS",
+            message: `Select at most ${AI_ESTIMATOR_KNOWLEDGE_MAX_ARRAY_ITEMS} Brands.`
+          });
+        }
+        const selectedIds = new Set<string>();
+        row.brandIds.forEach((brandId, brandIndex) => {
+          const idPath = `${brandPath}.${brandIndex}`;
+          validateSpecificationBrandReference(brandId, idPath, brandIdCounts, issues);
+          addUniqueString(brandId, selectedIds, idPath, "DUPLICATE_ID", issues);
         });
       }
     }
@@ -615,6 +628,28 @@ function validateSpecificationRows(
       validateCanonicalSpecification(row, rowPath, issues);
     }
   });
+}
+
+function validateSpecificationBrandReference(
+  brandId: unknown,
+  path: string,
+  brandIdCounts: ReadonlyMap<string, number>,
+  issues: KnowledgeValidationIssue[]
+): void {
+  validatePricingBrandId(brandId, path, issues);
+  if (
+    typeof brandId === "string" &&
+    brandId.length > 0 &&
+    brandId.length <= 240 &&
+    brandId === brandId.trim() &&
+    brandIdCounts.get(brandId) !== 1
+  ) {
+    issues.push({
+      path,
+      code: "INVALID_REFERENCE",
+      message: "Select a Brand configured in this Pricing section."
+    });
+  }
 }
 
 function validateNamedPricingRows(

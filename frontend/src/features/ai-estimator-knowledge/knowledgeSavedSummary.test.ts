@@ -306,8 +306,19 @@ describe("projectKnowledgeSavedSummary", () => {
     expect(detail).toContain("Note");
     expect(detail).toContain("Saved answer: 0");
     expect(detail).toContain("Ambiguous · Brand: Name unavailable");
-    expect(detail).toContain("Unassigned · Brand: Not assigned");
+    expect(detail).toContain("Unassigned · Brand: Name unavailable");
     expect(detail).not.toContain("private");
+  });
+
+  it("keeps every saved Brand association visible including renamed, unavailable and ambiguous selections", () => {
+    const result = projectKnowledgeSavedSummary(input({ sections: { pricing: {
+      brands: [{ id: "private-z", name: "Zinc" }, { id: "private-a", name: "Amber renamed" },
+        { id: "private-duplicate", name: "First duplicate" }, { id: "private-duplicate", name: "Second duplicate" },
+        { id: "other-line", name: "Missing brand" }],
+      specifications: [{ id: "private-spec", name: "Paint", brandIds: ["private-z", "private-a", "private-missing", "private-duplicate"] }]
+    } } })).mode;
+    expect(values(result)).toContain("Paint · Brands: Zinc, Amber renamed, Name unavailable, Name unavailable");
+    expect(values(result)).not.toMatch(/private|Legacy saved configuration/iu);
   });
 
   it("renders complete rule targets, trigger, action, reason, inactive state and legacy recommendation dependency", () => {

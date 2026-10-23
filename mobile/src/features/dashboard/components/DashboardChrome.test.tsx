@@ -67,7 +67,7 @@ describe("dashboard chrome", () => {
     { width: 320, fontScale: 1 },
     { width: 360, fontScale: 2 }
   ])("keeps three equal single-line segments at $width dp and font scale $fontScale", async ({ width, fontScale }) => {
-    jest.spyOn(ReactNative, "useWindowDimensions").mockReturnValue({ width, height: 800, scale: 3, fontScale });
+    jest.spyOn(jest.requireActual<typeof ReactNative>("react-native"), "useWindowDimensions").mockReturnValue({ width, height: 800, scale: 3, fontScale });
     const view = await render(<OperationsHeader {...reportingProps} />);
 
     const track = StyleSheet.flatten(view.getByTestId("dashboard-period-selector").props.style);
@@ -143,5 +143,29 @@ describe("dashboard chrome", () => {
 
     expect(view.getByLabelText("Loading dashboard").props.accessibilityRole).toBe("progressbar");
     expect(view.queryByText(/[0-9]+%/)).toBeNull();
+  });
+
+  it("stacks full financial values when its measured width or enlarged text needs more room", async () => {
+    const dimensions = jest.spyOn(jest.requireActual<typeof ReactNative>("react-native"), "useWindowDimensions").mockReturnValue({ width: 768, height: 1024, scale: 2, fontScale: 1 });
+    const rail = <FactRail title="Finance" headline="₹12,34,567.89" headlineLabel="Selected value" facts={[{ label: "Recorded spend", value: "₹98,765.43" }]} />;
+    const view = await render(rail);
+    const container = () => view.getByTestId("dashboard-fact-rail");
+    await fireEvent(container(), "layout", { nativeEvent: { layout: { width: 768 } } });
+    expect(StyleSheet.flatten(container().props.style).flexDirection).toBe("row");
+
+    await fireEvent(container(), "layout", { nativeEvent: { layout: { width: 320 } } });
+    expect(StyleSheet.flatten(container().props.style).flexDirection).toBe("column");
+
+    await fireEvent(container(), "layout", { nativeEvent: { layout: { width: 600 } } });
+    expect(StyleSheet.flatten(container().props.style).flexDirection).toBe("row");
+    dimensions.mockReturnValue({ width: 768, height: 1024, scale: 2, fontScale: 1.5 });
+    await view.rerender(<FactRail title="Finance" headline="₹12,34,567.89" headlineLabel="Selected value" facts={[{ label: "Recorded spend", value: "₹98,765.43" }]} />);
+    expect(StyleSheet.flatten(container().props.style).flexDirection).toBe("column");
+    for (const value of ["₹12,34,567.89", "₹98,765.43"]) {
+      const text = view.getByText(value);
+      expect(text.props.numberOfLines).toBeUndefined();
+      expect(text.props.adjustsFontSizeToFit).not.toBe(true);
+      expect(text.props.allowFontScaling).not.toBe(false);
+    }
   });
 });

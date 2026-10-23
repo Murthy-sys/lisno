@@ -38,6 +38,5 @@ yarn-error.*
 
 example
 
-# generated native folders
+# Generated iOS folder. Android sources are tracked; android/.gitignore excludes its build output.
 /ios
-/android

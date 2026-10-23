@@ -1645,6 +1645,25 @@ describe("Inline whole Sub-Basket removal", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: `Remove Sub-Basket ${sub.name}` })).toHaveFocus());
   });
 
+  it("accepts whitespace-equivalent inline confirmation and preserves the exact reviewed name and draft-only guard", async () => {
+    const reviewedName = " Lights\u00a0  Procurement ";
+    vi.mocked(api.getKnowledgeSubBasketDeletionImpact).mockResolvedValue({
+      basketId: sub.basketId, subBasketId: sub.id, subBasketName: reviewedName, version: 7,
+      mainLineCount: 1, referenceCount: 2, impactToken: "whitespace-inline-impact"
+    });
+    const { user } = setup([whole], { canLifecycle: true });
+    const dialog = await openRemoval(user);
+    const name = within(dialog).getByRole("textbox", { name: "Type Sub-Basket name to confirm" });
+    await user.type(name, "  Lights   Procurement  ");
+    await user.type(within(dialog).getByRole("textbox", { name: "Reason" }), "  Group no longer needed  ");
+    expect(name).toHaveValue("  Lights   Procurement  ");
+    expect(within(dialog).getByRole("button", { name: "Remove permanently" })).toBeEnabled();
+    await user.click(within(dialog).getByRole("button", { name: "Remove permanently" }));
+    await waitFor(() => expect(api.permanentlyDeleteKnowledgeSubBasket).toHaveBeenCalledExactlyOnceWith(sub.basketId, sub.id, {
+      expectedVersion: 7, confirmationName: reviewedName, reason: "Group no longer needed", impactToken: "whitespace-inline-impact", draftOnly: true
+    }));
+  });
+
   it("removes an empty group and retains a clean saved rule before refresh", async () => {
     vi.mocked(api.getKnowledgeSubBasketDeletionImpact).mockResolvedValue({ basketId: sub.basketId, subBasketId: sub.id, subBasketName: sub.name, version: sub.version, mainLineCount: 0, referenceCount: 1, impactToken: "empty-impact" });
     vi.mocked(api.permanentlyDeleteKnowledgeSubBasket).mockImplementation(async () => {

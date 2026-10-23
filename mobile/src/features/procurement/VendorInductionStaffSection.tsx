@@ -327,7 +327,7 @@ function AnswerList({ submission, questions }: { readonly submission: VendorIndu
 
 const styles = StyleSheet.create({
   stack: { gap: spacing.md },
-  card: { borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, padding: spacing.md, gap: spacing.md },
+  card: { borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, padding: spacing.sm, gap: spacing.sm },
   sectionTitle: { color: colors.ink, fontFamily: fonts.semibold, fontSize: 18 },
   subsection: { borderTopWidth: 1, borderTopColor: colors.border, paddingTop: spacing.sm, gap: spacing.sm },
   status: { color: colors.ink, fontFamily: fonts.semibold, fontSize: 22 },

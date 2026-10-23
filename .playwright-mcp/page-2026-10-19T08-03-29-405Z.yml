@@ -1,0 +1,6 @@
+- generic [ref=e3]:
+  - generic [aria-hidden]:
+    - generic:
+      - progressbar:
+        - generic: Preparing your workspace
+  - progressbar "Preparing your workspace" [ref=e4]

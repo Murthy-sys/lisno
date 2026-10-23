@@ -356,6 +356,160 @@ describe("workspace hierarchy summary", () => {
     return summary;
   }
 
+  describe("recommendation section move", () => {
+    const saveLabel = "Save Recommendation & Exclusions";
+    const legacyRecommendation = { id: "legacy-rec", name: "Coordinate delivery", priorityId: "priority-low", reason: "Retain this separate advice", active: false, dependency: true };
+
+    function setupMoveWorkspace(targetKind: "main_line" | "sub_basket" = "main_line") {
+      setupRecommendations();
+      vi.mocked(knowledgeApi.listKnowledgeMasters).mockImplementation(async (type) => ({ items: type === "priorities" ? [...canonicalPriorities] : [], pagination: { ...page, total: type === "priorities" ? canonicalPriorities.length : 0 } }));
+      const wholeGroup = targetKind === "sub_basket";
+      const targetName = wholeGroup ? "Ceiling fittings" : "Ceiling light";
+      const sourceRule: KnowledgeJsonObject & { reason: string } = {
+        ...rule, trigger: "added", action: "add", requirement: "must", active: wholeGroup,
+        ...(wholeGroup ? { targetKind: "sub_basket", targetType: null, targetSubBasketId: "fittings-group", targetMainLineId: null } : {}),
+        reason: wholeGroup ? "Coordinate all ceiling fittings" : "Retain disabled ceiling guidance"
+      };
+      const payload: KnowledgeJsonObject = { ...savedPayload, budgetAlterations: [sourceRule], recommendations: [legacyRecommendation] };
+      let confirmed = section("recommendations", payload);
+      vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_id, _revision, key) => key === "recommendations" ? confirmed : section(key));
+      vi.mocked(knowledgeApi.updateKnowledgeSection).mockImplementation(async (_id, _revision, key, input) => {
+        const result = mutationSection(key, input.payload, confirmed.version + 1);
+        confirmed = result;
+        vi.mocked(knowledgeApi.getKnowledgeItem).mockResolvedValue({ ...item, version: result.aggregateVersion });
+        return result;
+      });
+      if (wholeGroup) {
+        vi.mocked(knowledgeApi.listKnowledgeSubBaskets).mockResolvedValue({ items: [{ ...squareFoot, id: "fittings-group", basketId: "basket-1", name: targetName }], pagination: { ...page, total: 1 } });
+        vi.mocked(knowledgeApi.listKnowledgeItems).mockResolvedValue({ items: [{ ...item, id: "target-2", mainLineId: "target-2", mainLineName: "Ceiling light", itemType: "main_line", subBasketId: "fittings-group", subBasketName: targetName }], pagination: { ...page, total: 1 } });
+      }
+      return { sourceRule, payload, targetName, refresh: (next: KnowledgeSectionEnvelope<KnowledgeJsonObject>) => { confirmed = next; } };
+    }
+
+    async function showRecommendations(user: ReturnType<typeof userEvent.setup>) {
+      await screen.findByRole("tab", { name: "Recommendation & Exclusions" });
+      await doneFocusedEditing(user);
+      await user.click(screen.getByRole("tab", { name: "Recommendation & Exclusions" }));
+      await screen.findByRole("button", { name: "Add Mandatory Item" });
+    }
+
+    async function moveTo(user: ReturnType<typeof userEvent.setup>, targetName: string, destination: string) {
+      const other = screen.getByText("Other scope rules", { selector: "summary" });
+      if (!(other.parentElement as HTMLDetailsElement).open) await user.click(other);
+      const target = screen.getByRole("button", { name: new RegExp(`^Edit rule \\d+: ${targetName}$`) });
+      const row = target.closest("tr")!;
+      await user.click(within(row).getByLabelText(/^Actions for rule \d+$/));
+      await user.click(await within(row).findByRole("button", { name: `Move to ${destination}` }));
+      expect(within(screen.getByRole("table", { name: destination })).getByRole("button", { name: new RegExp(`^Edit rule \\d+: ${targetName}$`) })).toBeVisible();
+    }
+
+    function expectNoWrites() {
+      for (const mutation of [knowledgeApi.updateKnowledgeSection, knowledgeApi.createKnowledgeMainLine, knowledgeApi.createKnowledgeMaster,
+        knowledgeApi.updateKnowledgeMainLine, knowledgeApi.permanentlyDeleteKnowledgeMainLine, knowledgeApi.permanentlyDeleteKnowledgeSubBasket,
+        knowledgeApi.updateKnowledgeBasketQuality]) expect(mutation).not.toHaveBeenCalled();
+    }
+
+    it.each([
+      { targetKind: "main_line", firstDestination: "Probable Additions", requirement: "can" },
+      { targetKind: "sub_basket", firstDestination: "Exclusions", requirement: "must" }
+    ] as const)("saves and reloads repeated moves of a $targetKind target without losing its identity or legacy data", async ({ targetKind, firstDestination, requirement }) => {
+      const { sourceRule, payload, targetName } = setupMoveWorkspace(targetKind);
+      const user = userEvent.setup();
+      const view = renderRoute(<KnowledgeItemWorkspacePage />, route, pattern);
+      await showRecommendations(user);
+      await moveTo(user, targetName, firstDestination);
+      await moveTo(user, targetName, "Other scope rules");
+      await moveTo(user, targetName, "Exclusions");
+      expectNoWrites();
+      expect(screen.getByText("Unsaved changes")).toBeVisible();
+      const expectedPayload = { ...payload, budgetAlterations: [{ ...sourceRule, targetKind, trigger: "added", action: "remove", requirement }] };
+      await user.click(screen.getByRole("button", { name: saveLabel }));
+      expect(await screen.findByText("Recommendation & Exclusions saved.")).toBeVisible();
+      expect(knowledgeApi.updateKnowledgeSection).toHaveBeenCalledExactlyOnceWith("line-1", "revision-1", "recommendations", expect.objectContaining({ expectedVersion: 2, expectedAggregateVersion: 4, payload: expectedPayload }));
+      await waitFor(() => expect(screen.getByRole("button", { name: saveLabel })).toBeDisabled());
+      view.unmount();
+
+      renderRoute(<KnowledgeItemWorkspacePage />, route, pattern);
+      await showRecommendations(user);
+      const exclusions = await screen.findByRole("table", { name: "Exclusions" });
+      expect(exclusions).toHaveTextContent(requirement === "can" ? "Optional removal" : "Required removal");
+      if (sourceRule.active === false) expect(exclusions).toHaveTextContent("Disabled");
+      else expect(exclusions).not.toHaveTextContent("Disabled");
+      const rowButton = within(exclusions).getByRole("button", { name: new RegExp(`^Edit rule \\d+: ${targetName}$`) });
+      await user.click(rowButton);
+      expect(screen.getByRole("textbox", { name: "Why is this change needed?" })).toHaveValue(sourceRule.reason);
+      expect((screen.getByRole("checkbox", { name: "Enabled" }) as HTMLInputElement).checked).toBe(sourceRule.active);
+      expect(screen.queryByText("Unsaved changes")).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: saveLabel })).toBeDisabled();
+      expect(knowledgeApi.updateKnowledgeSection).toHaveBeenCalledTimes(1);
+    });
+
+    it("restores the saved rule when a moved draft is discarded", async () => {
+      const { targetName } = setupMoveWorkspace();
+      const user = userEvent.setup();
+      renderRoute(<KnowledgeItemWorkspacePage />, route, pattern);
+      await showRecommendations(user);
+      await moveTo(user, targetName, "Probable Additions");
+      await user.click(screen.getByRole("tab", { name: "Overview" }));
+      const guard = await screen.findByRole("alertdialog");
+      await user.click(within(guard).getByRole("button", { name: "Discard changes" }));
+      await showRecommendations(user);
+      expect(await screen.findByRole("table", { name: "Non-Negotiable Additions" })).toHaveTextContent(targetName);
+      expect(screen.queryByRole("table", { name: "Probable Additions" })).not.toBeInTheDocument();
+      expect(screen.queryByText("Unsaved changes")).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: saveLabel })).toBeDisabled();
+      expectNoWrites();
+    });
+
+    it("retains the moved draft after a failed save and submits the same rule on retry", async () => {
+      const { sourceRule, targetName } = setupMoveWorkspace();
+      const user = userEvent.setup();
+      renderRoute(<KnowledgeItemWorkspacePage />, route, pattern);
+      await showRecommendations(user);
+      await moveTo(user, targetName, "Probable Additions");
+      expectNoWrites();
+      vi.mocked(knowledgeApi.updateKnowledgeSection).mockRejectedValueOnce(new Error("Move save interrupted"));
+      await user.click(screen.getByRole("button", { name: saveLabel }));
+      expect((await screen.findAllByText("Move save interrupted")).length).toBeGreaterThan(0);
+      expect(screen.getByRole("table", { name: "Probable Additions" })).toHaveTextContent(targetName);
+      expect(screen.getByRole("table", { name: "Probable Additions" })).toHaveTextContent("Unsaved");
+      expect(screen.getByRole("button", { name: saveLabel })).toBeEnabled();
+      await user.click(screen.getByRole("button", { name: saveLabel }));
+      expect(await screen.findByText("Recommendation & Exclusions saved.")).toBeVisible();
+      const calls = vi.mocked(knowledgeApi.updateKnowledgeSection).mock.calls;
+      expect(calls).toHaveLength(2);
+      expect(calls[1]).toEqual(calls[0]);
+      expect(calls[1]![3]).toMatchObject({ expectedVersion: 2, payload: { budgetAlterations: [{ ...sourceRule, targetKind: "main_line", requirement: "can" }] } });
+      await waitFor(() => expect(screen.getByRole("button", { name: saveLabel })).toBeDisabled());
+    });
+
+    it("requires review of a refreshed version before saving a moved local rule", async () => {
+      const { sourceRule, payload, targetName, refresh } = setupMoveWorkspace();
+      const user = userEvent.setup();
+      const { queryClient } = renderRoute(<KnowledgeItemWorkspacePage />, route, pattern);
+      await showRecommendations(user);
+      await moveTo(user, targetName, "Probable Additions");
+      const newer = section("recommendations", { ...payload, budgetAlterations: [{ ...sourceRule, reason: "Another editor's saved requirement" }] }, 8);
+      refresh(newer);
+      await act(async () => { queryClient.setQueryData(knowledgeQueryKeys.section("line-1", "revision-1", "recommendations"), newer); });
+      await user.click(screen.getByRole("button", { name: saveLabel }));
+      expect(await screen.findByRole("alertdialog", { name: "This section changed elsewhere" })).toHaveTextContent("You edited version 2, while the server now has version 8");
+      expectNoWrites();
+      await user.click(screen.getByRole("button", { name: "Keep editing" }));
+      expect(screen.getByRole("table", { name: "Probable Additions" })).toHaveTextContent(targetName);
+      await user.click(screen.getByRole("button", { name: saveLabel }));
+      await user.click(screen.getByRole("button", { name: "Review server version" }));
+      expect(screen.getByRole("region", { name: "Latest Recommendation & Exclusions server version" })).toHaveTextContent("Another editor's saved requirement");
+      await user.click(screen.getByRole("button", { name: "Use reviewed local changes" }));
+      expectNoWrites();
+      await user.click(screen.getByRole("button", { name: saveLabel }));
+      expect(await screen.findByText("Recommendation & Exclusions saved.")).toBeVisible();
+      expect(knowledgeApi.updateKnowledgeSection).toHaveBeenCalledExactlyOnceWith("line-1", "revision-1", "recommendations", expect.objectContaining({
+        expectedVersion: 8, expectedAggregateVersion: 4, payload: { ...payload, budgetAlterations: [{ ...sourceRule, targetKind: "main_line", requirement: "can" }] }
+      }));
+    });
+  });
+
   it("shows the current assignment on a clean workspace while history is loading", async () => {
     vi.mocked(knowledgeApi.getKnowledgeItem).mockResolvedValue({ ...item, subBasketId: "joinery", subBasketName: "Interior joinery" });
     vi.mocked(knowledgeApi.getKnowledgeHistory).mockImplementation(() => new Promise(() => {}));
@@ -1722,12 +1876,14 @@ describe("AI estimator knowledge screens", () => {
   });
 
   it("renders minimal item cards with a linked heading and direct rename and delete actions", async () => {
+    const user = userEvent.setup();
     vi.mocked(knowledgeApi.listKnowledgeBaskets).mockResolvedValue({ items: [{ id: "basket-1", name: "Carpentry", description: null, displayOrder: 0, status: "active", version: 1, createdById: "super-admin-1", updatedById: "super-admin-1", createdAt: item.createdAt, updatedAt: item.updatedAt }], pagination: { ...page, total: 1 } });
     vi.mocked(knowledgeApi.listKnowledgeItems).mockResolvedValue({ items: [item], pagination: { ...page, limit: 20, total: 1 } });
     renderRoute(<KnowledgeBaseIndexPage />, "/admin/configuration/estimation", "/admin/configuration/estimation");
 
     expect(await screen.findByRole("heading", { name: "AI Estimator Knowledge Base" })).toBeVisible();
     expect(await screen.findByRole("heading", { name: "Carpentry" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Carpentry" }));
     expect(screen.getByText("50% complete")).toBeVisible();
     const title = screen.getByRole("link", { name: "Wall panelling" });
     expect(title).toHaveAttribute("href", "/admin/configuration/estimation/items/line-1");

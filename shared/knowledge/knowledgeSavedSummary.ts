@@ -4,6 +4,7 @@ import { pmcMarginRange, pmcMarginRangeIssues, subVendorMarginRange, subVendorMa
 import { formatKnowledgeMoney } from "./knowledgePresentation";
 import { validateQualityParametersForSave } from "./knowledgeQuality";
 import { qualityFrequencyPresentation, qualityPassRange, qualityPerformerPresentation, qualitySeverityPresentation } from "./knowledgeQualityPresentation";
+import { readSpecificationBrandIds } from "./knowledgeSpecificationConfiguration";
 import type { KnowledgeJsonObject, KnowledgeJsonValue, KnowledgeMasterType } from "./knowledgeTypes";
 import type {
   SavedSummaryContent,
@@ -227,9 +228,8 @@ function savedModeConfigurationRows(input: SavedSummaryProjectionInput, payload:
   });
 }
 
-function savedBrandAssociation(brands: readonly KnowledgeJsonObject[], id: KnowledgeJsonValue | undefined): string {
-  if (id === null) return "Not assigned";
-  if (typeof id !== "string" || !id.trim()) return NAME_UNAVAILABLE;
+function savedBrandAssociation(brands: readonly KnowledgeJsonObject[], id: string): string {
+  if (!id.trim()) return NAME_UNAVAILABLE;
   const matches = brands.filter(brand => brand.id === id);
   return matches.length === 1 ? text(matches[0]?.name) || NAME_UNAVAILABLE : NAME_UNAVAILABLE;
 }
@@ -249,10 +249,11 @@ function savedModePricingRows(pricing: KnowledgeJsonObject, details: SavedSummar
     const name = text(specification.name) || NAME_UNAVAILABLE;
     details.push(row(key, `Specification ${index + 1}`, name));
     add(details, `${key}-description`, `${name} · Description`, specification.description);
-    if (Object.hasOwn(specification, "brandId")) {
-      details.push(row(`${key}-brand`, `${name} · Brand`, savedBrandAssociation(brands, specification.brandId)));
+    const brandIds = readSpecificationBrandIds(specification);
+    if (brandIds.length) {
+      details.push(row(`${key}-brand`, `${name} · ${brandIds.length > 1 ? "Brands" : "Brand"}`, brandIds.map(id => savedBrandAssociation(brands, id)).join(", ")));
     }
-    if (Object.keys(specification).some(field => !["id", "name", "brandId", "description", "type", "options", "value"].includes(field))) {
+    if (Object.keys(specification).some(field => !["id", "name", "brandId", "brandIds", "description", "type", "options", "value"].includes(field))) {
       review(details, `${key}-review`, `Specification ${index + 1}`, true);
     }
   });

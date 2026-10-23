@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { moveRecommendationRule } from "./knowledgeRecommendationMoves";
 import {
   acknowledgeRecommendationPendingChangesTracker,
   advanceRecommendationPendingChangesTracker,
@@ -168,6 +169,32 @@ describe("recommendation pending changes", () => {
       { key: "order", title: "Recommendations order", kind: "reordered", fields: [] }
     ]);
     expect(project(baseline, { recommendations: [second] })[0]!.entries.map((entry) => entry.kind)).toEqual(["removed"]);
+  });
+
+  it("projects repeated section moves as one stable rule update and retained order without altering legacy entries", () => {
+    const untouchedRule = { ...rule, id: "untouched-rule", targetMainLineId: "gypsum-light-id", targetBasketId: "gypsum-id", targetSubBasketId: "ceiling-id" };
+    const baseline: KnowledgeJsonObject & { budgetAlterations: KnowledgeJsonObject[] } = { ...saved, budgetAlterations: [rule, untouchedRule] };
+    const probable = moveRecommendationRule(baseline.budgetAlterations, rule.id, "probable");
+    expect(probable.status).toBe("changed");
+    if (probable.status !== "changed") throw new Error("Expected a probable addition move");
+    const excluded = moveRecommendationRule(probable.rows, rule.id, "exclusions");
+    expect(excluded.status).toBe("changed");
+    if (excluded.status !== "changed") throw new Error("Expected an exclusion move");
+    const payload: KnowledgeJsonObject = { ...baseline, budgetAlterations: excluded.rows };
+    const groups = project(baseline, payload);
+
+    expect(groups).toEqual([{ key: "budgetAlterations", label: "Budget Alterations", entries: [
+      { key: "id:rule-id", title: "Rule 2", kind: "updated", fields: [
+        { key: "trigger", label: "Trigger", value: "The item is added to scope" },
+        { key: "scopeAction", label: "Scope action", value: "Can be removed" }
+      ] },
+      { key: "order", title: "Budget Alterations order", kind: "reordered", fields: [] }
+    ] }]);
+    expect(excluded.rows.map((row) => row.id)).toEqual([untouchedRule.id, rule.id]);
+    expect(excluded.rows[1]).toEqual({ ...rule, targetKind: "main_line", trigger: "added", requirement: "can" });
+    expect(payload.recommendations).toBe(baseline.recommendations);
+    expect(payload.exclusions).toBe(baseline.exclusions);
+    expect(project(payload, structuredClone(payload))).toEqual([]);
   });
 
   it("handles a single ID-less legacy edit conservatively without name joins or persisted identities", () => {

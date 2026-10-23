@@ -87,10 +87,10 @@ export const fonts = Object.freeze({
 });
 
 export const typography = Object.freeze({
-  pageTitle: { fontFamily: fonts.semibold, fontSize: 24, lineHeight: 30 },
-  sectionTitle: { fontFamily: fonts.medium, fontSize: 18, lineHeight: 25 },
-  cardTitle: { fontFamily: fonts.semibold, fontSize: 16, lineHeight: 22 },
-  body: { fontFamily: fonts.regular, fontSize: 14, lineHeight: 21 },
-  metadata: { fontFamily: fonts.regular, fontSize: 12, lineHeight: 18 },
-  button: { fontFamily: fonts.semibold, fontSize: 14, lineHeight: 21 }
+  pageTitle: { fontFamily: fonts.semibold, fontSize: 20, lineHeight: 26 },
+  sectionTitle: { fontFamily: fonts.medium, fontSize: 16, lineHeight: 22 },
+  cardTitle: { fontFamily: fonts.semibold, fontSize: 14, lineHeight: 20 },
+  body: { fontFamily: fonts.regular, fontSize: 14, lineHeight: 20 },
+  metadata: { fontFamily: fonts.regular, fontSize: 12, lineHeight: 17 },
+  button: { fontFamily: fonts.semibold, fontSize: 13, lineHeight: 18 }
 });

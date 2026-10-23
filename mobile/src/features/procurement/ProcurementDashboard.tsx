@@ -139,18 +139,18 @@ export function ProcurementDashboard({ session, headerContent }: {
 
 const styles = StyleSheet.create({
   content: { flexGrow: 1, width: "100%", maxWidth: 1080, alignSelf: "center", padding: spacing.md, paddingBottom: spacing.huge },
-  header: { gap: spacing.md, paddingBottom: spacing.md },
+  header: { gap: spacing.sm, paddingBottom: spacing.sm },
   heading: { gap: 6 },
   eyebrow: { color: colors.inkMuted, fontFamily: fonts.medium, fontSize: 9, letterSpacing: 1.8 },
-  title: { color: colors.ink, ...typography.pageTitle, fontSize: 27, lineHeight: 36 },
+  title: { color: colors.ink, ...typography.pageTitle },
   description: { color: colors.inkMuted, fontFamily: fonts.regular, fontSize: 12, lineHeight: 20 },
   loading: { minHeight: 130, alignItems: "center", justifyContent: "center" },
   summary: { flexDirection: "row", flexWrap: "wrap", backgroundColor: colors.surfaceMuted, borderWidth: 1, borderColor: colors.border, borderRadius: 4 },
-  summaryCount: { minWidth: 108, flexGrow: 1, padding: spacing.md, gap: 6 },
-  summaryValue: { minWidth: 190, flexGrow: 2, flexShrink: 1, padding: spacing.md, gap: 6, backgroundColor: colors.primarySoft },
+  summaryCount: { minWidth: 108, flexGrow: 1, padding: spacing.sm, gap: 6 },
+  summaryValue: { minWidth: 190, flexGrow: 2, flexShrink: 1, padding: spacing.sm, gap: 6, backgroundColor: colors.primarySoft },
   summaryLabel: { color: colors.inkMuted, fontFamily: fonts.medium, fontSize: 10, lineHeight: 17 },
-  summaryNumber: { color: colors.ink, fontFamily: fonts.semibold, fontSize: 26, lineHeight: 34, fontVariant: ["tabular-nums"] },
-  summaryAmount: { color: colors.primary, fontFamily: fonts.semibold, fontSize: 22, lineHeight: 34, fontVariant: ["tabular-nums"] },
+  summaryNumber: { color: colors.ink, fontFamily: fonts.semibold, fontSize: 24, lineHeight: 30, fontVariant: ["tabular-nums"] },
+  summaryAmount: { color: colors.primary, fontFamily: fonts.semibold, fontSize: 22, lineHeight: 28, fontVariant: ["tabular-nums"] },
   scope: { color: colors.inkMuted, fontFamily: fonts.regular, fontSize: 10, lineHeight: 17 },
   error: { color: colors.danger, fontFamily: fonts.regular, fontSize: 11, lineHeight: 18 },
   search: { flexDirection: "row", alignItems: "center", minHeight: 48, paddingLeft: spacing.sm, borderWidth: 1, borderColor: colors.borderStrong, borderRadius: 4, backgroundColor: colors.surface },
@@ -164,6 +164,6 @@ const styles = StyleSheet.create({
   listCaption: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 8, paddingTop: 3 },
   listTitle: { color: colors.ink, fontFamily: fonts.semibold, fontSize: 14 },
   resultCount: { color: colors.inkMuted, fontFamily: fonts.regular, fontSize: 10 },
-  cardGap: { height: 18 },
-  footer: { paddingVertical: spacing.md, gap: 10 }
+  cardGap: { height: 12 },
+  footer: { paddingVertical: spacing.sm, gap: 8 }
 });

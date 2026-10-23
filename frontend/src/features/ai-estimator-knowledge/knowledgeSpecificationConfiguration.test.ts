@@ -6,6 +6,7 @@ import {
   parseKnowledgeSpecifications,
   referencedSpecificationIds,
   serializeKnowledgeSpecifications,
+  withSpecificationBrandIds,
   validateKnowledgeBrands
 } from "./knowledgeSpecificationConfiguration";
 import type { KnowledgeJsonValue } from "./knowledgeTypes";
@@ -75,7 +76,7 @@ describe("knowledge descriptive Specification configuration", () => {
     ], [{ id: "brand-century-green", name: "Century Green" }]);
 
     expect(parsed.issues).toEqual([]);
-    expect(parsed.specifications[0]?.brandId).toBeNull();
+    expect(parsed.specifications[0]?.brandIds).toEqual([]);
     expect(serializeKnowledgeSpecifications(parsed.specifications)).toEqual([
       { id: "spec-laminate", name: "Laminate" }
     ]);
@@ -104,7 +105,64 @@ describe("knowledge descriptive Specification configuration", () => {
     ]);
 
     expect(parsed.issues).toEqual([]);
-    expect(parsed.specifications[0]?.brandId).toBe("brand-century-green");
+    expect(parsed.specifications[0]?.brandIds).toEqual(["brand-century-green"]);
+  });
+
+  it("round-trips ordered multi-brand choices and serializes zero/one selections compatibly", () => {
+    const brands = [{ id: "brand-a", name: "Alpha" }, { id: "brand-b", name: "Beta" }];
+    const source = { id: "spec", name: "Paint", brandIds: ["brand-b", "brand-a"], type: "text", options: [], value: "retained" };
+    const parsed = parseKnowledgeSpecifications([source], brands);
+    expect(parsed.issues).toEqual([]);
+    expect(parsed.specifications[0]?.brandIds).toEqual(["brand-b", "brand-a"]);
+    expect(serializeKnowledgeSpecifications(parsed.specifications)).toEqual([source]);
+    const one = withSpecificationBrandIds(parsed.specifications[0]!, ["brand-a"]);
+    expect(serializeKnowledgeSpecifications([one])[0]).toMatchObject({ brandId: "brand-a", value: "retained" });
+    expect(serializeKnowledgeSpecifications([one])[0]).not.toHaveProperty("brandIds");
+    const empty = serializeKnowledgeSpecifications([withSpecificationBrandIds(one, [])])[0];
+    expect(empty).not.toHaveProperty("brandId");
+    expect(empty).not.toHaveProperty("brandIds");
+    expect(parseKnowledgeSpecifications([{ id: "spec", name: "Paint", brandIds: [] }], brands).issues).toEqual([]);
+  });
+
+  it.each([
+    { value: null, path: "brandIds" },
+    { value: "brand-a", path: "brandIds" },
+    { value: ["brand-a", null], path: "brandIds.1" },
+    { value: ["brand-a", 12], path: "brandIds.1" },
+    { value: ["brand-a", ""], path: "brandIds.1" },
+    { value: ["brand-a", " brand-b "], path: "brandIds.1" },
+    { value: ["brand-a", "brand-a"], path: "brandIds.1" },
+    { value: ["brand-a", "other-line-brand"], path: "brandIds.1" },
+    { value: ["brand-a", "x".repeat(241)], path: "brandIds.1" }
+  ])("rejects invalid list $value without losing it in unrelated edits", ({ value, path }) => {
+    const source = { id: "spec", name: "Paint", brandIds: value };
+    const brands = [{ id: "brand-a", name: "Alpha" }, { id: "brand-b", name: "Beta" }];
+    const parsed = parseKnowledgeSpecifications([source], brands);
+    expect(parsed.issues).toContainEqual(expect.objectContaining({ path: `specifications.0.${path}` }));
+    const serialized = serializeKnowledgeSpecifications([{ ...parsed.specifications[0]!, description: "Edited description" }]);
+    expect(serialized[0]?.brandIds).toEqual(value);
+    expect(parseKnowledgeSpecifications(serialized, brands).issues.length).toBeGreaterThan(0);
+  });
+
+  it("preserves mixed association evidence until the user explicitly repairs the choice", () => {
+    const source = { id: "spec", name: "Paint", brandId: "brand-a", brandIds: ["brand-a", "brand-b"] };
+    const brands = [{ id: "brand-a", name: "Alpha" }, { id: "brand-b", name: "Beta" }];
+    const parsed = parseKnowledgeSpecifications([source], brands);
+    expect(parsed.issues).toContainEqual(expect.objectContaining({ path: "specifications.0.brandIds", message: expect.stringContaining("not both") }));
+    expect(serializeKnowledgeSpecifications([{ ...parsed.specifications[0]!, name: "Primer" }])).toEqual([{ ...source, name: "Primer" }]);
+    const repaired = serializeKnowledgeSpecifications([withSpecificationBrandIds(parsed.specifications[0]!, ["brand-b"])]);
+    expect(repaired[0]).toEqual({ id: "spec", name: "Paint", brandId: "brand-b" });
+    expect(parseKnowledgeSpecifications(repaired, brands).issues).toEqual([]);
+  });
+
+  it("checks every selected ID for ambiguous local identities and the 200-brand bound", () => {
+    const ambiguous = parseKnowledgeSpecifications([{ id: "spec", name: "Paint", brandIds: ["brand-a", "brand-b"] }], [
+      { id: "brand-a", name: "Alpha" }, { id: "brand-b", name: "Beta" }, { id: "brand-b", name: "Different Beta" }
+    ]);
+    expect(ambiguous.issues).toContainEqual({ path: "specifications.0.brandIds.1", message: "Choose a configured Brand." });
+    const brands = Array.from({ length: 201 }, (_, i) => ({ id: `brand-${i}`, name: `Brand ${i}` }));
+    expect(parseKnowledgeSpecifications([{ id: "spec", name: "Paint", brandIds: brands.map(b => b.id) }], brands).issues)
+      .toContainEqual({ path: "specifications.0.brandIds", message: "Select at most 200 Brands." });
   });
 
   it("accepts nullable descriptions and omits descriptions cleared to blank text", () => {

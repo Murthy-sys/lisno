@@ -10,6 +10,7 @@ import type {
   KnowledgeMasterType,
   KnowledgeSectionKey
 } from "./knowledgeTypes";
+import { readSpecificationBrandIds } from "./knowledgeSpecificationConfiguration";
 import {
   KNOWLEDGE_MODE_OPTIONS,
   parseKnowledgeModeConfigurations,
@@ -91,7 +92,7 @@ export interface KnowledgeOverviewPriceDetail {
 
 export interface KnowledgeOverviewSpecificationDetail {
   readonly option: KnowledgeOverviewReference;
-  readonly brand: KnowledgeOverviewReference | null;
+  readonly brands: readonly KnowledgeOverviewReference[];
   readonly description: string | null;
 }
 
@@ -222,7 +223,6 @@ interface ProjectionContext {
   >;
   readonly specifications: readonly KnowledgeJsonObject[];
   readonly specificationMap: ReadonlyMap<string, KnowledgeJsonObject>;
-  readonly brandMap: ReadonlyMap<string, KnowledgeJsonObject>;
   readonly baskets: ReadonlyMap<string, Pick<KnowledgeBasket, "id" | "name">>;
   readonly items: ReadonlyMap<
     string,
@@ -256,9 +256,6 @@ export function projectKnowledgeOverviewSummary(
     specificationMap: new Map(
       specifications.map((value) => [requiredStableId(value.id)!, value])
     ),
-    brandMap: new Map(
-      brands.map((value) => [requiredStableId(value.id)!, value])
-    ),
     baskets: new Map((input.baskets ?? []).map((value) => [value.id, value])),
     items: new Map((input.items ?? []).map((value) => [value.mainLineId, value]))
   };
@@ -268,15 +265,13 @@ export function projectKnowledgeOverviewSummary(
   );
   const specificationDetails = specifications.map((specification) => {
     const id = requiredStableId(specification.id)!;
-    const brandId = optionalStableId(specification.brandId);
+    const brandIds = readSpecificationBrandIds(specification);
     return {
       option: directReference(id, optionalText(specification.name)),
-      brand: brandId
-        ? resolveNamedEntity(
-            brandId,
-            optionalText(context.brandMap.get(brandId)?.name) ?? undefined
-          )
-        : null,
+      brands: brandIds.map(brandId => {
+        const matches = brandId ? brands.filter(brand => brand.id === brandId) : [];
+        return resolveNamedEntity(brandId, matches.length === 1 ? optionalText(matches[0]?.name) ?? undefined : undefined);
+      }),
       description: optionalText(specification.description)
     };
   });

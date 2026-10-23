@@ -7,6 +7,7 @@ import { formatKnowledgePercentage, parseRupeeInputToPaise } from "./knowledgePr
 import { pairPendingRows, pendingObjectRows, pendingRowsReordered, pendingText, pendingValuesEqual, type KnowledgePendingChangeEntry, type KnowledgePendingChangeField, type KnowledgePendingChangeGroup } from "./knowledgePendingChanges";
 import type { KnowledgeModeCalculationDraft } from "./KnowledgeModeCalculationTable";
 import type { KnowledgeJsonObject, KnowledgeMaster } from "./knowledgeTypes";
+import { readSpecificationBrandIds } from "./knowledgeSpecificationConfiguration";
 
 export interface KnowledgePendingCalculation {
   readonly draft: KnowledgeModeCalculationDraft;
@@ -35,7 +36,7 @@ function field(key: string, label: string, value: unknown): KnowledgePendingChan
   return { key, label, value: text, ...(text === "" ? { cleared: true } : {}) };
 }
 
-function rows(before: readonly KnowledgeJsonObject[], after: readonly KnowledgeJsonObject[], key: string, titleKey: string, fallback: string, labels: Readonly<Record<string, string>>, options: { required?: readonly string[]; normalize?: (row: KnowledgeJsonObject) => KnowledgeJsonObject; format?: (name: string, value: unknown) => unknown } = {}): KnowledgePendingChangeEntry[] {
+function rows(before: readonly KnowledgeJsonObject[], after: readonly KnowledgeJsonObject[], key: string, titleKey: string, fallback: string, labels: Readonly<Record<string, string>>, options: { required?: readonly string[]; normalize?: (row: KnowledgeJsonObject) => KnowledgeJsonObject; equal?: (name: string, before: unknown, after: unknown) => boolean; format?: (name: string, value: unknown) => unknown } = {}): KnowledgePendingChangeEntry[] {
   const pairs = pairPendingRows(before, after);
   const entries: KnowledgePendingChangeEntry[] = [];
   for (const pair of pairs) {
@@ -48,7 +49,7 @@ function rows(before: readonly KnowledgeJsonObject[], after: readonly KnowledgeJ
     }
     const fields = Object.entries(labels).flatMap(([name, label]) => {
       const value = current[name];
-      if (original ? pendingValuesEqual(original[name], value) : value == null || value === "" || (Array.isArray(value) && value.length === 0)) return [];
+      if (original ? (options.equal?.(name, original[name], value) ?? pendingValuesEqual(original[name], value)) : value == null || value === "" || (Array.isArray(value) && value.length === 0)) return [];
       return [field(name, label, options.format?.(name, value) ?? value)];
     });
     if (!original || fields.length) entries.push({ key: `${key}:${pair.key}`, title: identity, kind: original ? "updated" : "added", fields,
@@ -182,11 +183,7 @@ export function projectKnowledgeModePendingChanges(input: KnowledgeModePendingCh
       },
       { required: ["name"] }
     ));
-    const brandNames = new Map(pendingObjectRows(input.pricingDraft.brands).flatMap((brand) => {
-      const id = pendingText(brand.id).trim();
-      const name = pendingText(brand.name).trim();
-      return id && name ? [[id, name] as const] : [];
-    }));
+    const brands = pendingObjectRows(input.pricingDraft.brands);
     add("specifications", "Specifications · Shared", rows(
       pendingObjectRows(input.pricingBaseline.specifications),
       pendingObjectRows(input.pricingDraft.specifications),
@@ -195,7 +192,7 @@ export function projectKnowledgeModePendingChanges(input: KnowledgeModePendingCh
       "Item",
       {
         name: "Item name",
-        brandId: "Brand name",
+        brandIds: "Brands",
         description: "Brief description"
       },
       {
@@ -203,11 +200,14 @@ export function projectKnowledgeModePendingChanges(input: KnowledgeModePendingCh
         normalize: (row) => ({
           ...row,
           name: row.name ?? "",
-          brandId: row.brandId ?? "",
+          brandIds: [...readSpecificationBrandIds(row)],
           description: row.description ?? ""
         }),
-        format: (name, value) => name === "brandId"
-          ? resolvePendingBrand(value, brandNames)
+        equal: (name, before, after) => name === "brandIds" && Array.isArray(before) && Array.isArray(after)
+          ? pendingValuesEqual([...before].sort(), [...after].sort())
+          : pendingValuesEqual(before, after),
+        format: (name, value) => name === "brandIds"
+          ? resolvePendingBrands(value, brands)
           : value
       }
     ));
@@ -215,11 +215,13 @@ export function projectKnowledgeModePendingChanges(input: KnowledgeModePendingCh
   return groups;
 }
 
-function resolvePendingBrand(
+function resolvePendingBrands(
   value: unknown,
-  brandNames: ReadonlyMap<string, string>
+  brands: readonly KnowledgeJsonObject[]
 ): string {
-  const id = pendingText(value).trim();
-  if (!id) return "Not configured";
-  return brandNames.get(id) ?? "Unavailable brand";
+  if (!Array.isArray(value) || !value.length) return "Not configured";
+  return value.map(id => {
+    const matches = typeof id === "string" && id ? brands.filter(brand => brand.id === id) : [];
+    return matches.length === 1 ? pendingText(matches[0]?.name).trim() || "Unavailable brand" : "Unavailable brand";
+  }).join(", ");
 }
