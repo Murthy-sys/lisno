@@ -258,6 +258,44 @@ function financeEntry(
 }
 
 describe("FinanceOverviewPage", () => {
+  it("opens Super Admin project budgets and restores the filtered list after viewing a project", async () => {
+    installSuperAdminFinanceSession();
+    const requested: string[] = [];
+    const budget = { ...baseBucket, clientId: "client-one", clientName: "Aurora Homes", budgetApprovedAt: "2026-08-20T09:00:00.000Z", budgetStatus: "within_budget", budgetUtilizationBps: 5000 };
+    server.use(
+      http.get("/api/v1/finance/projects", ({ request }) => {
+        requested.push(new URL(request.url).search);
+        return HttpResponse.json({ data: {
+          items: [budget], summary: portfolioSummary,
+          pagination: { limit: 10, offset: 0, total: 1, hasMore: false },
+          filterOptions: { projects: [{ id: budget.projectId, name: budget.projectName }], clients: [{ id: "client-one", name: "Aurora Homes" }], hasUnlinkedClients: false },
+          observedAt: "2026-10-24T08:00:00.000Z"
+        } });
+      }),
+      http.get("/api/v1/finance/projects/project-one", () => HttpResponse.json({ data: budget })),
+      http.get("/api/v1/finance/projects/project-one/entries", () => HttpResponse.json({ data: { items: [], pagination: { limit: 100, offset: 0, total: 0, hasMore: false } } }))
+    );
+    const user = userEvent.setup();
+    renderApp(["/finance?search=Aurora&budgetStatus=within_budget"]);
+    expect(await screen.findByRole("heading", { name: "Project Budgets" })).toBeVisible();
+    await user.click(await screen.findByRole("link", { name: "View details for Aurora Villa" }));
+    expect(await screen.findByRole("heading", { name: "Budget Overview" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Project budget" })).toBeVisible();
+    const back = screen.getByRole("link", { name: "Back to Project Budgets" });
+    expect(back).toHaveAttribute("href", "/finance?search=Aurora&budgetStatus=within_budget");
+    await user.click(back);
+    expect(await screen.findByRole("heading", { name: "Project Budgets" })).toBeVisible();
+    expect(screen.getByRole("searchbox", { name: "Search projects" })).toHaveValue("Aurora");
+    expect(screen.getByRole("combobox", { name: "Budget status" })).toHaveValue("within_budget");
+    expect(requested.length).toBeGreaterThan(0);
+    for (const query of requested) {
+      const params = new URLSearchParams(query);
+      expect(params.get("limit")).toBe("10");
+      expect(params.get("search")).toBe("Aurora");
+      expect(params.get("budgetStatus")).toBe("within_budget");
+    }
+  });
+
   it("uses the server-wide approved-project summary and shows the fixed profit reserve, expenses, budget, and deadline risk", async () => {
     installFinanceSession();
     const requestedUrls: string[] = [];

@@ -94,6 +94,8 @@ function setup() {
     listProjects: vi.fn(async () => ({
       items: [BUCKET],
       total: 1,
+      filterOptions: { projects: [{ id: BUCKET.projectId, name: BUCKET.projectName }], clients: [], hasUnlinkedClients: true },
+      observedAt: "2026-10-24T09:00:00.000Z",
       summary: {
         projectCount: 1,
         approvedContractTotalPaise: BUCKET.approvedContractTotalPaise,
@@ -162,8 +164,38 @@ describe("project finance routes", () => {
         projectCount: 1,
         approvedContractTotalPaise: BUCKET.approvedContractTotalPaise
       }),
+      filterOptions: { projects: [{ id: BUCKET.projectId, name: BUCKET.projectName }], clients: [], hasUnlinkedClients: true },
+      observedAt: "2026-10-24T09:00:00.000Z",
       pagination: { limit: 25, offset: 5, total: 1, hasMore: false }
     });
+  });
+
+  it("validates combined budget filters without leaking them into pagination", async () => {
+    const { app, service } = setup();
+    const query = { search: "Aurora", projectId: "project-1", clientId: "client-1", budgetStatus: "at_risk",
+      financeStage: "open", projectStatus: "active", approvedFrom: "2024-02-29", approvedTo: "2026-10-24", limit: "10", offset: "0" };
+    const response = await request(app).get("/api/v1/finance/projects").query(query)
+      .set("Authorization", bearer("superAdmin")).expect(200);
+    expect(service.listProjects).toHaveBeenCalledWith(ACTORS.superAdmin, { ...query, limit: 10, offset: 0 });
+    expect(response.body.data.pagination).toEqual({ limit: 10, offset: 0, total: 1, hasMore: false });
+    await request(app).get("/api/v1/finance/projects?unlinkedClient=true")
+      .set("Authorization", bearer("financeManager")).expect(200);
+    expect(service.listProjects).toHaveBeenLastCalledWith(ACTORS.financeManager, { limit: 20, offset: 0, unlinkedClient: true });
+  });
+
+  it.each([
+    { approvedFrom: "2026-02-29" }, { approvedTo: "2026-04-31" },
+    { approvedFrom: "2026-1-01" }, { approvedFrom: "invalid" },
+    { approvedFrom: "2026-10-25", approvedTo: "2026-10-24" },
+    { clientId: "client-1", unlinkedClient: "true" }, { unlinkedClient: "false" },
+    { budgetStatus: "red" }, { financeStage: "active" }, { projectStatus: "open" },
+    { projectId: " " }, { clientId: "x".repeat(201) }, { search: "x".repeat(201) },
+    { search: ["one", "two"] }, { unexpected: "true" }
+  ])("rejects malformed or contradictory budget filters: %j", async (query) => {
+    const { app, service } = setup();
+    await request(app).get("/api/v1/finance/projects").query(query)
+      .set("Authorization", bearer("superAdmin")).expect(400);
+    expect(service.listProjects).not.toHaveBeenCalled();
   });
 
   it("allows Finance Manager to read a scoped bucket and its ledger", async () => {

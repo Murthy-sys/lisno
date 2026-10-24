@@ -228,7 +228,7 @@ describe("Finance project workflow control", () => {
 
     renderApp(["/finance/projects/project-one"]);
 
-    expect(await screen.findByRole("heading", { name: "Budget and delivery control" })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Project budget" })).toBeVisible();
     expect(await screen.findByRole("heading", { name: "Entire project workflow" })).toBeVisible();
     const estimateStage = screen.getByRole("heading", { name: "2. Estimate approved" }).closest("section")!;
     expect(estimateStage).toHaveTextContent("Approved");

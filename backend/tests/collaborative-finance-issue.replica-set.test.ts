@@ -31,7 +31,7 @@ beforeEach(async () => {
     role: actor.role, active: true, passwordHash: "synthetic-unused", accountKind: "standard", version: 1 });
 });
 
-async function fixture(id: string, pre: number, final: number, preOnly = false) {
+async function fixture(id: string, pre: number, final: number, preOnly = false, finalApprovedAt = at) {
   await ProjectModel.create({ _id: id, name: `Synthetic ${id}`, clientName: "Synthetic Client", clientEmail: `${id}@example.test`,
     clientEmailNormalized: `${id}@example.test`, clientMobile: "0000000000", clientAddress: "Synthetic location", location: "Synthetic location",
     status: "planning", plannedStartAt: at, plannedEndAt: at, estimationWorkflowVersion: 2, estimateRequirementsVersion: 0 });
@@ -39,7 +39,7 @@ async function fixture(id: string, pre: number, final: number, preOnly = false) 
     clientMobile: "0000000000", projectName: `Synthetic ${id}`, location: "Synthetic location", propertyType: "2BHK", source: "walk_in", stage: "won", nextAction: "Estimation", nextActionAt: at });
   const estimation = { ...newEstimationLifecycle(), phase: "post", status: preOnly ? "draft" : "client_approved", editClosedAt: preOnly ? null : at.toISOString(),
     preApproval: { reviewRoundId: `${id}-pre`, estimateVersion: 1, approvedAt: at.toISOString() },
-    finalApproval: preOnly ? null : { reviewRoundId: `${id}-final`, estimateVersion: 7, approvedAt: at.toISOString(), requirementsVersion: 0,
+    finalApproval: preOnly ? null : { reviewRoundId: `${id}-final`, estimateVersion: 7, approvedAt: finalApprovedAt.toISOString(), requirementsVersion: 0,
       designReviewRoundId: `${id}-design`, designPlanVersion: 3, designScopeRevision: 1 }, approvedDesignScopeRevision: preOnly ? null : 1 };
   await EstimateModel.create({ _id: `${id}-estimate`, leadId: `${id}-lead`, projectId: id, ownerId: "sales", propertyType: "2BHK", rooms: [], scopes: [], lineItems: [],
     version: 25, status: "client_approved", estimation, subtotal: final, gst: 0, total: final,
@@ -48,7 +48,7 @@ async function fixture(id: string, pre: number, final: number, preOnly = false) 
   for (const [phase, value, version] of [["pre", pre, 1], ["post", final, 7]] as const) {
     if (preOnly && phase === "post") continue;
     await EstimateClientReviewRoundModel.collection.insertOne({ _id: `${id}-${phase === "post" ? "final" : "pre"}`, estimateId: `${id}-estimate`,
-      leadId: `${id}-lead`, projectId: id, phase, estimateVersion: version, status: "approved", decision: "approve", decidedById: "synthetic-client", decidedAt: at,
+      leadId: `${id}-lead`, projectId: id, phase, estimateVersion: version, status: "approved", decision: "approve", decidedById: "synthetic-client", decidedAt: phase === "post" ? finalApprovedAt : at,
       decisionSource: "client_portal", estimateSnapshot: { subtotal: value, gst: 0, total: value, subtotalPaise: value * 100, gstPaise: 0, totalPaise: value * 100, lineItems: [] } } as never);
   }
   if (!preOnly) await DesignPlanReviewRoundModel.collection.insertOne({ _id: `${id}-design`, estimateId: `${id}-estimate`, projectId: id,
@@ -67,6 +67,22 @@ async function payment(id: string, roundId = `${id}-final`, receivedAt = at) {
 }
 
 describe("final finance source and work-order gate", () => {
+  it("filters by the effective final approval decision instead of the original or materialization date", async () => {
+    const finalApprovedAt = new Date("2026-10-20T23:59:59.999Z");
+    await fixture("final-date", 1000, 1500, false, finalApprovedAt);
+    await fixture("pre-date", 2300, 3100, true);
+    const service = createProjectFinanceService({ now: () => new Date("2026-10-24T10:00:00Z") });
+    const final = await service.getBucket(actor, "final-date");
+    expect(final).toMatchObject({ budgetApprovedAt: finalApprovedAt.toISOString(), baselinePhase: "post", approvedSubtotalPaise: 150000 });
+    expect(final.createdAt).not.toBe(final.budgetApprovedAt);
+    const finalPage = await service.listProjects(actor, { limit: 10, offset: 0, approvedFrom: "2026-10-20", approvedTo: "2026-10-20" });
+    expect(finalPage.items).toEqual([final]);
+    expect(finalPage.summary).toMatchObject({ projectCount: 1, approvedSubtotalPaise: 150000, costBudgetPaise: 120000 });
+    const prePage = await service.listProjects(actor, { limit: 10, offset: 0, approvedFrom: "2026-10-13", approvedTo: "2026-10-13" });
+    expect(prePage.items).toEqual([expect.objectContaining({ projectId: "pre-date", budgetApprovedAt: at.toISOString(), baselinePhase: "pre" })]);
+    expect(await ProjectFinanceBucketModel.findOne({ projectId: "final-date" }).lean()).toMatchObject({ approvedSubtotalPaise: 100000 });
+  });
+
   it("does not invent a legacy design approval event when a collaborative design round is missing", async () => {
     await fixture("missing-design-history", 1000, 1500);
     await DesignPlanReviewRoundModel.deleteOne({ _id: "missing-design-history-design" });

@@ -13,6 +13,27 @@ const paginationSchema = z.object({
   offset: z.coerce.number().int().min(0).default(0)
 }).strict();
 
+const calendarDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((value) => {
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}, "Expected a real calendar date in YYYY-MM-DD format.");
+
+const projectListSchema = paginationSchema.extend({
+  search: z.string().trim().min(1).max(200).optional(),
+  projectId: z.string().trim().min(1).max(200).optional(),
+  clientId: z.string().trim().min(1).max(200).optional(),
+  unlinkedClient: z.literal("true").transform(() => true).optional(),
+  budgetStatus: z.enum(["over_budget", "at_risk", "within_budget", "no_budget"]).optional(),
+  financeStage: z.enum(["pending_design", "open", "closed"]).optional(),
+  projectStatus: z.enum(["planning", "active", "on_hold", "completed"]).optional(),
+  approvedFrom: calendarDateSchema.optional(),
+  approvedTo: calendarDateSchema.optional()
+}).strict().refine((query) => !(query.clientId && query.unlinkedClient), {
+  message: "Select a linked client or unlinked clients, not both.", path: ["unlinkedClient"]
+}).refine((query) => !query.approvedFrom || !query.approvedTo || query.approvedFrom <= query.approvedTo, {
+  message: "The approval start date must not follow the end date.", path: ["approvedTo"]
+});
+
 const financeEntryFields = {
   category: z.string().trim().min(1).max(100),
   amountPaise: z.number().int().positive(),
@@ -49,7 +70,7 @@ export function createProjectFinanceRouter(
     "/finance/projects",
     protectedRoute,
     requireOperation("GET /finance/projects"),
-    validateQuery(paginationSchema),
+    validateQuery(projectListSchema),
     async (request, response, next) => {
       try {
         const pagination = response.locals.validatedQuery;
@@ -61,8 +82,11 @@ export function createProjectFinanceRouter(
           data: {
             items: page.items,
             summary: page.summary,
+            filterOptions: page.filterOptions,
+            observedAt: page.observedAt,
             pagination: {
-              ...pagination,
+              limit: pagination.limit,
+              offset: pagination.offset,
               total: page.total,
               hasMore: pagination.offset + page.items.length < page.total
             }

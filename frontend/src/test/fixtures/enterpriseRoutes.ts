@@ -392,7 +392,6 @@ const team = [
   { user: { id: "designer-1", name: "Ananya Rao", email: "ananya@lisno.example" }, activeProjectCount: 2, workload: 24, overdueCount: 1, yellowRiskCount: 2, pendingEvaluation: true, kpi: { score: 84, components: designer.components }, projects: designer.projects.map((p) => ({ ...p, progress: 45 })), tasks: designer.kpiTasks },
   { user: { id: "designer-2", name: "Kabir Shah", email: "kabir@lisno.example" }, activeProjectCount: 1, workload: 12, overdueCount: 0, yellowRiskCount: 1, pendingEvaluation: false, kpi: { score: 79, components: designer.components }, projects: [], tasks: [] }
 ];
-const buckets = [finance.baseBucket, finance.overBudgetBucket, finance.unknownCompletionBucket, finance.lateCompletionBucket];
 function zeroAggregates(value: unknown): unknown {
   if (typeof value === "number") return 0;
   if (Array.isArray(value)) return [];
@@ -553,10 +552,10 @@ export function enterpriseDataFor(path: string, params: URLSearchParams, scenari
   if (/^\/estimates\/(estimate-1|estimate-aurora-villa|estimate-aurora-studio)\/design-plan-documents$/.test(path)) return { manifestHash: `synthetic-${path.split("/")[2]}`, readyForSubmission: false, documents: [], reviewRoundId: null };
   if (path === "/estimates/pending-review" || path === "/estimates/review-queue") return [];
   if (path === "/estimates/designers") return team.map((t) => t.user);
-  if (path === "/finance/projects") return { ...page(buckets), summary: empty ? zeroAggregates(finance.portfolioSummary) : finance.portfolioSummary };
+  if (path === "/finance/projects") return finance.projectBudgetFixturePage(params, scenario.route.includes("qaFinanceBudgets=large"), empty);
   if (/^\/finance\/projects\/[^/]+(?:\/entries)?$/.test(path)) {
     const projectId = decodeURIComponent(path.split("/")[3]);
-    const bucket = [...buckets, admin.approvedPendingBucket].find((candidate) => candidate.projectId === projectId);
+    const bucket = [...finance.projectBudgetFixtures(scenario.route.includes("qaFinanceBudgets=large")), admin.approvedPendingBucket].find((candidate) => candidate.projectId === projectId);
     if (!bucket) return Response.json({ error: { code: "FINANCE_BUCKET_NOT_FOUND", message: "The synthetic project has no approved finance baseline yet." } }, { status: 404 });
     return path.endsWith("/entries") ? page(financeLedgerFor(bucket)) : bucket;
   }

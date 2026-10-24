@@ -619,6 +619,17 @@ const queryParametersByOperation: Readonly<
 > = {
   ...CHAT_QUERY_PARAMETERS,
   ...EXECUTION_QUERIES,
+  "GET /finance/projects": [
+    { name: "search", in: "query", required: false, schema: { type: "string", minLength: 1, maxLength: 200 }, description: "Case-insensitive literal search across project and client names." },
+    { name: "projectId", in: "query", required: false, schema: { type: "string", minLength: 1, maxLength: 200 }, description: "Stable project ID within the authorized approved-project population." },
+    { name: "clientId", in: "query", required: false, schema: { type: "string", minLength: 1, maxLength: 200 }, description: "Stable linked client ID; mutually exclusive with unlinkedClient." },
+    { name: "unlinkedClient", in: "query", required: false, schema: { type: "string", enum: ["true"] }, description: "Select projects with no linked client ID; mutually exclusive with clientId." },
+    { name: "budgetStatus", in: "query", required: false, schema: { type: "string", enum: ["over_budget", "at_risk", "within_budget", "no_budget"] }, description: "Authoritative budget risk using the existing 90% usable-budget threshold for unfinished projects." },
+    { name: "financeStage", in: "query", required: false, schema: { type: "string", enum: [...PROJECT_FINANCE_BUCKET_STATUSES] } },
+    { name: "projectStatus", in: "query", required: false, schema: { type: "string", enum: ["planning", "active", "on_hold", "completed"] } },
+    { name: "approvedFrom", in: "query", required: false, schema: { type: "string", format: "date" }, description: "Inclusive UTC approval day for the applicable canonical budget baseline. Filters the approval cohort; amounts remain current lifetime values." },
+    { name: "approvedTo", in: "query", required: false, schema: { type: "string", format: "date" }, description: "Inclusive UTC approval day through 23:59:59.999Z; must not precede approvedFrom. Invalid calendar dates are rejected." }
+  ],
   "GET /estimation/catalogue": [
     { name: "includeReadyNonActive", in: "query", required: false,
       schema: { type: "string", enum: ["true", "false"], default: "false" },
@@ -3552,6 +3563,11 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
         projectId: id,
         projectName: { type: "string", minLength: 1 },
         projectStatus: { type: "string" },
+        clientId: { type: "string", nullable: true, description: "Stable linked client ID, or null when unlinked." },
+        clientName: { type: "string", nullable: true, description: "Project client presentation name; never an identity join key." },
+        budgetApprovedAt: { ...dateTime, description: "Applicable canonical baseline approval decision time, including the effective final approval when present. Never the bucket materialization time. Populated on list/detail reads." },
+        budgetStatus: { type: "string", enum: ["over_budget", "at_risk", "within_budget", "no_budget"], description: "Over budget when costs exceed usable budget; at risk for unfinished projects consuming at least 90%; no budget when usable budget and cost are zero; otherwise within budget." },
+        budgetUtilizationBps: { type: "integer", minimum: 0, nullable: true, description: "Recorded cost divided by usable cost budget, rounded to basis points. May exceed 10000; null when usable budget is zero." },
         estimateId: id,
         estimateVersion: { type: "integer", minimum: 1 },
         estimateReviewRoundId: { type: "string", nullable: true },
@@ -3683,20 +3699,29 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
     },
     ProjectFinanceBucketPage: {
       type: "object",
-      description: "Paginated project cards plus a portfolio summary calculated across every authorized Client-approved project, not only the current page.",
-      required: ["items", "summary", "pagination"],
+      description: "Paginated project budgets plus a portfolio summary calculated across every matching authorized Client-approved project, not only the current page. Filters apply before summary, count and pagination; choices cover the authorized eligible population before filtering.",
+      required: ["items", "summary", "pagination", "filterOptions", "observedAt"],
       properties: {
         items: {
           type: "array",
           items: { $ref: "#/components/schemas/ProjectFinanceBucket" }
         },
         summary: { $ref: "#/components/schemas/ProjectFinancePortfolioSummary" },
+        observedAt: dateTime,
+        filterOptions: {
+          type: "object", required: ["projects", "clients", "hasUnlinkedClients"],
+          properties: {
+            projects: { type: "array", items: { type: "object", required: ["id", "name"], properties: { id, name: { type: "string" } } } },
+            clients: { type: "array", items: { type: "object", required: ["id", "name"], properties: { id, name: { type: "string" } } } },
+            hasUnlinkedClients: { type: "boolean" }
+          }
+        },
         pagination: { $ref: "#/components/schemas/Pagination" }
       }
     },
     ProjectFinancePortfolioSummary: {
       type: "object",
-      description: "Live accumulated portfolio across all authorized projects with a Client-approved Estimate. Every amount is the sum of its project-level value across the full result set, independent of pagination. Current profit is not finalized actual profit while costs remain unposted or a project remains open.",
+      description: "Live accumulated portfolio across all authorized projects with a Client-approved Estimate that match the requested filters. Every amount is the sum of its project-level value across the full matching result set, independent of pagination. Approval-date filters select the baseline cohort; amounts remain current lifetime values. Current profit is not finalized actual profit while costs remain unposted or a project remains open.",
       required: [
         "projectCount", "approvedContractTotalPaise", "approvedGstPaise",
         "approvedSubtotalPaise", "targetProfitPaise", "costBudgetPaise",

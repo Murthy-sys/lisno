@@ -573,6 +573,11 @@ export interface ProjectFinanceBucket {
   projectId: string;
   projectName: string;
   projectStatus: string;
+  clientId?: string | null;
+  clientName?: string | null;
+  budgetApprovedAt?: string;
+  budgetStatus?: "over_budget" | "at_risk" | "within_budget" | "no_budget";
+  budgetUtilizationBps?: number | null;
   estimateId: string;
   estimateVersion: number;
   estimateReviewRoundId: string | null;
