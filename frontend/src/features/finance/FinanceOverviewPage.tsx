@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 import { useEffect } from "react";
 
 import type { ProjectFinanceBucket } from "../../api/types";
+import { useAuth } from "../../auth/AuthProvider";
 import { Button } from "../../components/ui/Button";
 import { PageHeader } from "../../components/ui/PageHeader";
 import { PageState } from "../../components/ui/PageState";
@@ -13,6 +14,7 @@ import { formatPaise } from "./financeFormat";
 import { PortfolioFinanceChart } from "./ProjectFinanceChart";
 import { getProjectFinanceBuckets, projectFinanceKeys } from "./projectFinanceApi";
 import { DesignPaymentConfirmations } from "./DesignPaymentConfirmations";
+import { SuperAdminProjectBudgets } from "./SuperAdminProjectBudgets";
 
 const deadlineDate = new Intl.DateTimeFormat("en-IN", {
   dateStyle: "medium",
@@ -20,6 +22,11 @@ const deadlineDate = new Intl.DateTimeFormat("en-IN", {
 });
 
 export function FinanceOverviewPage() {
+  const auth = useAuth();
+  return auth.user?.role === "super_admin" ? <SuperAdminProjectBudgets /> : <FinanceHeadOverview />;
+}
+
+function FinanceHeadOverview() {
   const query = useInfiniteQuery({
     queryKey: projectFinanceKeys.projects,
     queryFn: ({ pageParam }) => getProjectFinanceBuckets(pageParam),

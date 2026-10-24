@@ -2553,6 +2553,14 @@ describe("OpenAPI and Swagger UI", () => {
       title: "Deadline risk status",
       description: expect.stringContaining("It does not change overheadPaise")
     });
+    expect(bucketProperties.budgetStatus?.enum).toEqual(["over_budget", "at_risk", "within_budget", "no_budget"]);
+    expect(bucketProperties.budgetApprovedAt?.description).toContain("Never the bucket materialization time");
+    expect(bucketProperties.budgetUtilizationBps).toMatchObject({ type: "integer", nullable: true, minimum: 0 });
+    expect(schemas.ProjectFinanceBucketPage?.required).toEqual(expect.arrayContaining(["filterOptions", "observedAt"]));
+    const financeParameters = openApiDocument.paths["/finance/projects"]?.get?.parameters as Array<OpenApiObject>;
+    expect(financeParameters.map(parameter => parameter.name)).toEqual(expect.arrayContaining([
+      "limit", "offset", "search", "projectId", "clientId", "unlinkedClient", "budgetStatus", "financeStage", "projectStatus", "approvedFrom", "approvedTo"
+    ]));
 
     expect(schemas.ProjectFinanceBucketPage?.description).toContain(
       "not only the current page"

@@ -1,0 +1,61 @@
+.project-finance-panel--budget,
+.ui-app-shell[data-role] .ui-surface.project-finance-panel--budget {
+  --color-surface: #faf9f3;
+  --color-surface-subtle: #faf9f3;
+  --color-border: #d5dacf;
+  --color-text: #233c2a;
+  --color-text-muted: #626d58;
+  --budget-green: #245d3c;
+  --budget-sage: #dbe5d5;
+  --budget-ochre: #a67620;
+  --budget-overhead: #a84e3d;
+  --budget-ink: var(--color-text);
+  --budget-border: var(--color-border);
+  color: var(--budget-ink);
+  background: var(--color-surface);
+  border-color: var(--budget-border);
+  border-radius: 0;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.project-finance-panel--budget .ui-status--success { color: #245d3c; }
+.project-budget-sections { display: flex; flex-wrap: wrap; gap: 0.25rem 1.5rem; border-bottom: 1px solid var(--budget-border); }
+.project-budget-sections button { padding: 0.8rem 0; color: var(--color-text-muted); background: transparent; border: 0; border-bottom: 2px solid transparent; font: inherit; cursor: pointer; }
+.project-budget-sections button[aria-pressed="true"] { color: var(--budget-ink); border-bottom-color: var(--budget-green); font-weight: 700; }
+.project-budget-sections button:focus-visible, .project-budget-baseline > summary:focus-visible { outline: 2px solid var(--budget-green); outline-offset: 4px; }
+.project-budget-overview { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1.25rem; color: var(--budget-ink); }
+.project-budget-overview h3, .project-budget-costs h3 { margin: 0; font: var(--type-heading-3); }
+.project-budget-overview__visual, .project-budget-overview__summary, .project-budget-overview__insights { padding: 1.25rem; border: 1px solid var(--budget-border); background: var(--color-surface-subtle, #f7f8f1); }
+.project-budget-overview__overrun { margin: 1rem 0 0; font-size: 0.8rem; color: var(--color-danger, #a4342e); }
+.project-budget-overview__information { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 1.25rem; align-content: start; }
+.project-budget-overview__summary dl { margin: 0.8rem 0 0; }
+.project-budget-overview__summary dl > div { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0.6rem; padding: 0.85rem 0.6rem; border-bottom: 1px solid var(--budget-border); }
+.project-budget-overview__summary dl > div:last-child { border-bottom: 0; }
+.project-budget-overview__summary dt { font-size: 0.85rem; }
+.project-budget-overview__summary dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
+.project-budget-overview__summary small { display: block; font-size: 0.68rem; margin-top: 0.2rem; color: var(--color-text-muted); }
+.project-budget-overview__summary [data-tone="usable"] { background: #e9eee3; }
+.project-budget-overview__summary [data-tone="reserve"] dd { color: #755013; }
+.project-budget-overview__summary [data-tone="overrun"] { background: #f6e9e3; color: var(--color-danger, #a4342e); }
+.project-budget-overview__insights ul { padding-left: 1.1rem; margin: 0.8rem 0 0; display: grid; gap: 0.65rem; font-size: 0.82rem; line-height: 1.5; }
+.project-budget-baseline { border: 1px solid var(--budget-border); padding: 1rem; }
+.project-budget-baseline > summary { cursor: pointer; font-weight: 600; }
+.project-budget-baseline .project-finance-panel__details { margin-top: 1rem; }
+.project-budget-costs { max-width: 58rem; }
+.project-budget-costs > p, .project-budget-overheads-note { color: var(--color-text-muted); font-size: 0.85rem; line-height: 1.6; }
+.project-budget-costs dl { margin: 1rem 0; }
+.project-budget-costs dl > div { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 1rem 0; border-bottom: 1px solid var(--budget-border); }
+.project-budget-costs dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
+.project-budget-costs dd small { display: block; color: var(--color-text-muted); font-size: 0.75rem; margin-top: 0.25rem; }
+.project-budget-costs__total { font-weight: 700; }
+
+@media (max-width: 1050px) { .project-budget-overview__information { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 600px) {
+  .project-budget-sections { gap: 0 1rem; }
+  .project-budget-sections button { font-size: 0.8rem; }
+  .project-budget-overview__visual, .project-budget-overview__summary, .project-budget-overview__insights { padding: 0.85rem; }
+  .project-budget-overview__summary dd strong { font-size: 0.85rem; }
+  .project-budget-overview__summary dl > div { padding-inline: 0.4rem; }
+}

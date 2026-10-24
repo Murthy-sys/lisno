@@ -53,6 +53,154 @@ afterAll(async () => {
 });
 
 describe("project finance lifecycle and ledger", () => {
+  it("lists only existing project budgets when stale approvals and Finance Head tasks reference a deleted project", async () => {
+    await createProject("existing-alpha", "Alpha budget", { clientId: "existing-client", clientName: "Existing Client" });
+    await createProject("existing-beta", "Beta budget", { approvedMoney: {
+      subtotalRupees: 500_000, gstRupees: 90_000, totalRupees: 590_000
+    } });
+    await createProject("deleted-project", "Deleted budget", { financeLink: "lead", clientId: "deleted-client", clientName: "Deleted Client" });
+    await createFinanceWorkflowTask("existing-alpha");
+    await createFinanceWorkflowTask("deleted-project");
+    await ProjectModel.deleteOne({ _id: "deleted-project" });
+    await mongoose.connection.transaction(session => ensurePendingProjectFinanceBucket(approvedBudgetInput("existing-alpha"), session));
+    await seedHistoricalProcurementExpense("existing-alpha", 1_000, "existing-alpha-spend");
+
+    const service = createProjectFinanceService({ now: () => NOW });
+    const first = await service.listProjects(superAdminActor(), { limit: 1, offset: 0 });
+    const second = await service.listProjects(superAdminActor(), { limit: 1, offset: 1 });
+    expect(first.total).toBe(2);
+    expect(first.items).toHaveLength(1);
+    expect(second.items).toHaveLength(1);
+    expect(first.summary).toEqual(second.summary);
+    expect(first.summary).toMatchObject({ projectCount: 2, approvedSubtotalPaise: 150_000_000,
+      approvedGstPaise: 27_000_000, approvedContractTotalPaise: 177_000_000, targetProfitPaise: 30_000_000,
+      costBudgetPaise: 120_000_000, recordedCostPaise: 1_000, remainingBudgetPaise: 119_999_000 });
+    expect(first.filterOptions).toEqual({ projects: [
+      { id: "existing-alpha", name: "Alpha budget" }, { id: "existing-beta", name: "Beta budget" }
+    ], clients: [{ id: "existing-client", name: "Existing Client" }], hasUnlinkedClients: true });
+    expect(second.filterOptions).toEqual(first.filterOptions);
+    const items = [...first.items, ...second.items];
+    expect(items.map(item => item.projectId).sort()).toEqual(["existing-alpha", "existing-beta"]);
+    for (const item of items) expect(await service.getBucket(superAdminActor(), item.projectId)).toEqual(item);
+
+    const financeActor = { id: FINANCE_MANAGER_ID, role: "finance_head" as const, name: "Finance", email: "finance-manager@example.test" };
+    const scoped = await service.listProjects(financeActor, { limit: 10, offset: 0 });
+    expect(scoped.items).toEqual([items.find(item => item.projectId === "existing-alpha")]);
+    expect(scoped.summary).toMatchObject({ projectCount: 1, approvedSubtotalPaise: 100_000_000, recordedCostPaise: 1_000 });
+    expect(scoped.filterOptions).toEqual({ projects: [{ id: "existing-alpha", name: "Alpha budget" }],
+      clients: [{ id: "existing-client", name: "Existing Client" }], hasUnlinkedClients: false });
+    expect(await service.listProjects(financeActor, { limit: 10, offset: 0, projectId: "deleted-project" })).toMatchObject({ total: 0, items: [], summary: { projectCount: 0 } });
+    expect(await EstimateModel.countDocuments({ _id: "estimate-deleted-project" })).toBe(1);
+  });
+
+  it("still rejects inconsistent approval evidence on an existing project even when a different project is selected", async () => {
+    await createProject("valid-budget", "Valid budget");
+    await createProject("invalid-budget", "Invalid budget");
+    await EstimateModel.updateOne({ _id: "estimate-invalid-budget" }, { $set: { reviews: [] } });
+    const service = createProjectFinanceService({ now: () => NOW });
+    await expect(service.listProjects(superAdminActor(), { limit: 10, offset: 0, projectId: "valid-budget" }))
+      .rejects.toMatchObject({ status: 409, code: "FINANCE_APPROVAL_SOURCE_CONFLICT" });
+  });
+
+  it("filters unequal budgets before summary and pagination, retaining scoped client and project choices", async () => {
+    const service = createProjectFinanceService({ now: () => NOW });
+    const rows = [
+      { id: "budget-alpha", name: "Aurora Residence", clientId: "client-a", subtotal: 2_500_000, gst: 450_000,
+        approvedAt: new Date("2026-08-24T00:00:00.000Z"), direct: 160_000_000, overhead: 20_000_000 },
+      { id: "budget-beta", name: "Birch Residence", clientId: "client-b", subtotal: 4_500_000, gst: 810_000,
+        approvedAt: new Date("2026-08-24T23:59:59.999Z"), direct: 340_000_000, overhead: 30_000_000 }
+    ];
+    for (const row of rows) {
+      await createProject(row.id, row.name, { clientId: row.clientId, clientName: "Same Client", approvedAt: row.approvedAt,
+        approvedMoney: { subtotalRupees: row.subtotal, gstRupees: row.gst, totalRupees: row.subtotal + row.gst } });
+      await mongoose.connection.transaction(async session => {
+        await ensurePendingProjectFinanceBucket({ ...approvedBudgetInput(row.id), approvedSubtotalRupees: row.subtotal,
+          approvedGstRupees: row.gst, approvedContractTotalRupees: row.subtotal + row.gst,
+          occurredAt: NOW }, session);
+        await openProjectFinanceBucket({ projectId: row.id, designPlanVersion: 1, openedById: SUPER_ADMIN_ID, occurredAt: NOW }, session);
+      });
+      await seedHistoricalProcurementExpense(row.id, row.direct, `${row.id}-direct`);
+      await service.postEntry(superAdminActor(), row.id, { type: "overhead", category: "Site overhead", amountPaise: row.overhead,
+        incurredAt: NOW.toISOString(), description: "Recorded overhead included in spending", idempotencyKey: `${row.id}-overhead` });
+    }
+    await createProject("budget-unlinked", "Cedar Residence", { approvedAt: new Date("2026-08-25T00:00:00.000Z") });
+    const query = { limit: 1, offset: 0, search: "rEsIdEnCe", approvedFrom: "2026-08-24", approvedTo: "2026-08-24", financeStage: "open" as const, projectStatus: "active" as const };
+    const first = await service.listProjects(superAdminActor(), query);
+    const second = await service.listProjects(superAdminActor(), { ...query, offset: 1 });
+    expect(first.total).toBe(2);
+    expect(first.items).toHaveLength(1);
+    expect(second.items[0]!.projectId).not.toBe(first.items[0]!.projectId);
+    expect(first.summary).toEqual(second.summary);
+    expect(first.summary).toMatchObject({ projectCount: 2, approvedSubtotalPaise: 700_000_000, approvedGstPaise: 126_000_000,
+      approvedContractTotalPaise: 826_000_000, targetProfitPaise: 140_000_000, costBudgetPaise: 560_000_000,
+      directSpendPaise: 500_000_000, overheadPaise: 50_000_000, recordedCostPaise: 550_000_000, remainingBudgetPaise: 10_000_000 });
+    expect(first.observedAt).toBe(NOW.toISOString());
+    expect(first.filterOptions).toEqual({ projects: [
+      { id: "budget-alpha", name: "Aurora Residence" }, { id: "budget-beta", name: "Birch Residence" }, { id: "budget-unlinked", name: "Cedar Residence" }
+    ], clients: [{ id: "client-a", name: "Same Client" }, { id: "client-b", name: "Same Client" }], hasUnlinkedClients: true });
+    for (const row of rows) {
+      const detail = await service.getBucket(superAdminActor(), row.id);
+      expect(detail.budgetApprovedAt).toBe(row.approvedAt.toISOString());
+      expect(detail.createdAt).not.toBe(detail.budgetApprovedAt);
+      expect(detail).toEqual([...first.items, ...second.items].find(item => item.projectId === row.id));
+      const filtered = await service.listProjects(superAdminActor(), { ...query, clientId: row.clientId });
+      expect(filtered.items.map(item => item.projectId)).toEqual([row.id]);
+      expect(filtered.summary.recordedCostPaise).toBe(detail.recordedCostPaise);
+      expect(filtered.filterOptions).toEqual(first.filterOptions);
+    }
+    const atRisk = await service.listProjects(superAdminActor(), { ...query, budgetStatus: "at_risk" });
+    expect(atRisk.items[0]).toMatchObject({ projectId: "budget-alpha", budgetStatus: "at_risk", budgetUtilizationBps: 9_000 });
+    const overBudget = await service.listProjects(superAdminActor(), { ...query, budgetStatus: "over_budget" });
+    expect(overBudget.items[0]).toMatchObject({ projectId: "budget-beta", budgetStatus: "over_budget", budgetUtilizationBps: 10_278, remainingBudgetPaise: -10_000_000 });
+    const unlinked = await service.listProjects(superAdminActor(), { limit: 10, offset: 0, unlinkedClient: true });
+    expect(unlinked.items.map(item => item.projectId)).toEqual(["budget-unlinked"]);
+    const empty = await service.listProjects(superAdminActor(), { ...query, projectId: "budget-unlinked" });
+    expect(empty).toMatchObject({ total: 0, items: [], summary: { projectCount: 0, recordedCostPaise: 0, costBudgetPaise: 0 } });
+    expect(empty.filterOptions).toEqual(first.filterOptions);
+    expect((await service.listProjects(superAdminActor(), { ...query, offset: 10 })).summary).toEqual(first.summary);
+  });
+
+  it("uses per-project reserve rounding and distinguishes zero budgets from completed high utilization", async () => {
+    for (const [id, subtotalPaise, gstPaise] of [["rounding-a", 103, 19], ["rounding-b", 108, 19], ["zero-budget", 0, 0]] as const) {
+      await createProject(id, id);
+      await EstimateClientReviewRoundModel.collection.insertOne({ _id: `round-${id}`, estimateId: `estimate-${id}`,
+        dedupeKey: `finance-rounding-${id}`, sendGeneration: 1,
+        projectId: id, estimateVersion: 3, status: "approved", decision: "approve", decisionSource: "client_portal",
+        decidedById: "synthetic-client", decidedAt: NOW, estimateSnapshot: {
+          subtotal: subtotalPaise / 100, gst: gstPaise / 100, total: (subtotalPaise + gstPaise) / 100,
+          subtotalPaise, gstPaise, totalPaise: subtotalPaise + gstPaise, lineItems: []
+        }
+      } as never);
+    }
+    const service = createProjectFinanceService({ now: () => NOW });
+    const rounded = await service.listProjects(superAdminActor(), { limit: 1, offset: 0, search: "rounding" });
+    expect(rounded.summary).toMatchObject({ projectCount: 2, approvedSubtotalPaise: 211, approvedGstPaise: 38,
+      targetProfitPaise: 43, costBudgetPaise: 168 });
+    const zero = await service.listProjects(superAdminActor(), { limit: 10, offset: 0, budgetStatus: "no_budget" });
+    expect(zero.items).toEqual([expect.objectContaining({ projectId: "zero-budget", budgetStatus: "no_budget", budgetUtilizationBps: null })]);
+    await createProject("completed-high-use", "Completed project", { status: "completed", actualEndAt: NOW });
+    await mongoose.connection.transaction(session => ensurePendingProjectFinanceBucket(approvedBudgetInput("completed-high-use"), session));
+    await seedHistoricalProcurementExpense("completed-high-use", 72_000_000, "completed-cost");
+    expect(await service.getBucket(superAdminActor(), "completed-high-use")).toMatchObject({ budgetStatus: "within_budget", budgetUtilizationBps: 9_000 });
+    await seedHistoricalProcurementExpense("completed-high-use", 9_000_000, "completed-extra-cost");
+    expect(await service.getBucket(superAdminActor(), "completed-high-use")).toMatchObject({ budgetStatus: "over_budget", budgetUtilizationBps: 10_125 });
+  });
+
+  it("does not expose unassigned projects or client choices through Finance Head filters", async () => {
+    await createProject("assigned-budget", "Assigned", { clientId: "client-authorized", clientName: "Visible client" });
+    await createProject("foreign-budget", "Foreign", { clientId: "client-foreign", clientName: "Hidden client" });
+    const service = createProjectFinanceService({ now: () => NOW });
+    const actor = { id: FINANCE_MANAGER_ID, role: "finance_head" as const, name: "Finance", email: "finance-manager@example.test" };
+    expect(await service.listProjects(actor, { limit: 10, offset: 0 })).toMatchObject({ total: 0,
+      filterOptions: { projects: [], clients: [], hasUnlinkedClients: false }, observedAt: NOW.toISOString() });
+    await createFinanceWorkflowTask("assigned-budget");
+    const visible = await service.listProjects(actor, { limit: 10, offset: 0 });
+    expect(visible.filterOptions).toEqual({ projects: [{ id: "assigned-budget", name: "Assigned" }],
+      clients: [{ id: "client-authorized", name: "Visible client" }], hasUnlinkedClients: false });
+    const hidden = await service.listProjects(actor, { limit: 10, offset: 0, projectId: "foreign-budget", clientId: "client-foreign" });
+    expect(hidden).toMatchObject({ total: 0, items: [], summary: { projectCount: 0 }, filterOptions: visible.filterOptions });
+  });
+
   it("derives every portfolio total from a legacy Lead-linked approved Estimate without a finance bucket", async () => {
     const projectId = "legacy-approved-without-finance-bucket";
     await createProject(projectId, "Murthy Residence", {
@@ -916,6 +1064,9 @@ async function createProject(
   id: string,
   name: string,
   input: {
+    clientId?: string;
+    clientName?: string;
+    approvedAt?: Date;
     plannedEndAt?: Date;
     status?: "active" | "completed";
     actualEndAt?: Date | null;
@@ -930,8 +1081,8 @@ async function createProject(
   await ProjectModel.create({
     _id: id,
     name,
-    clientId: null,
-    clientName: "Client",
+    clientId: input.clientId ?? null,
+    clientName: input.clientName ?? "Client",
     clientEmail: `${id}@client.example.test`,
     clientEmailNormalized: `${id}@client.example.test`,
     clientMobile: "9000000000",
@@ -996,11 +1147,11 @@ async function createProject(
       actorId: SUPER_ADMIN_ID,
       action: "client_approved",
       note: "Approved",
-      occurredAt: NOW
+      occurredAt: input.approvedAt ?? NOW
     }],
     designPlanStatus: "pending_assignment",
     designPlanVersion: 0,
-    clientDecisionAt: NOW
+    clientDecisionAt: input.approvedAt ?? NOW
   });
 }
 

@@ -10,6 +10,11 @@ export const baseBucket: ProjectFinanceBucket = {
   projectId: "project-one",
   projectName: "Aurora Villa",
   projectStatus: "active",
+  clientId: "finance-client-one",
+  clientName: "Aurora Homes",
+  budgetApprovedAt: "2026-08-20T09:00:00.000Z",
+  budgetStatus: "within_budget",
+  budgetUtilizationBps: 5_000,
   estimateId: "estimate-one",
   estimateVersion: 4,
   estimateReviewRoundId: "estimate-round-one",
@@ -48,6 +53,11 @@ export const overBudgetBucket: ProjectFinanceBucket = {
   id: "finance-bucket-project-two",
   projectId: "project/two",
   projectName: "Lake House",
+  clientId: "finance-client-two",
+  clientName: "Lake Developments",
+  budgetApprovedAt: "2026-07-15T09:00:00.000Z",
+  budgetStatus: "over_budget",
+  budgetUtilizationBps: 11_250,
   estimateId: "estimate-two",
   estimateReviewRoundId: "estimate-round-two",
   designPlanVersion: 1,
@@ -77,6 +87,8 @@ export const unknownCompletionBucket: ProjectFinanceBucket = {
   id: "finance-bucket-project-three",
   projectId: "project-three",
   projectName: "Cedar Apartment",
+  clientId: null,
+  clientName: "Cedar Homes",
   projectStatus: "completed",
   deadlineStatus: "completed_date_unknown",
   status: "closed"
@@ -87,6 +99,8 @@ export const lateCompletionBucket: ProjectFinanceBucket = {
   id: "finance-bucket-project-four",
   projectId: "project-four",
   projectName: "Maple Office",
+  clientId: "finance-client-three",
+  clientName: "Aurora Homes",
   projectStatus: "completed",
   deadlineStatus: "completed_late",
   status: "closed"
@@ -113,6 +127,51 @@ export const portfolioSummary: ProjectFinancePortfolioSummary = {
   lateCompletedProjectCount: 1,
   overdueTaskCount: 3
 };
+
+export function projectBudgetFixtures(large = false): ProjectFinanceBucket[] {
+  const rows = [baseBucket, overBudgetBucket, unknownCompletionBucket, lateCompletionBucket];
+  if (!large) return rows;
+  const names = ["Garden Residence", "Oak Pavilion", "Hillcrest Villa", "River View", "Palm Court", "Urban Nest", "Serene Homes", "Meadow House"];
+  return [...rows, ...names.map((name, index) => ({
+    ...rows[index % rows.length], id: `finance-bucket-extra-${index}`, projectId: `finance-extra-${index}`,
+    projectName: name, estimateId: `finance-estimate-extra-${index}`
+  }))];
+}
+
+/** Synthetic server filtering keeps browser summaries consistent with the visible cohort. */
+export function projectBudgetFixturePage(params: URLSearchParams, large = false, empty = false) {
+  const all = empty ? [] : projectBudgetFixtures(large);
+  const rows = all.filter((row) =>
+    (!params.get("search") || row.projectName.toLowerCase().includes(params.get("search")!.toLowerCase())) &&
+    (!params.get("projectId") || row.projectId === params.get("projectId")) &&
+    (!params.get("clientId") || row.clientId === params.get("clientId")) &&
+    (params.get("unlinkedClient") !== "true" || row.clientId === null) &&
+    (!params.get("budgetStatus") || row.budgetStatus === params.get("budgetStatus")) &&
+    (!params.get("financeStage") || row.status === params.get("financeStage")) &&
+    (!params.get("projectStatus") || row.projectStatus === params.get("projectStatus")) &&
+    (!params.get("approvedFrom") || row.budgetApprovedAt!.slice(0, 10) >= params.get("approvedFrom")!) &&
+    (!params.get("approvedTo") || row.budgetApprovedAt!.slice(0, 10) <= params.get("approvedTo")!)
+  );
+  const summary = { ...portfolioSummary, projectCount: rows.length };
+  for (const key of ["approvedContractTotalPaise", "approvedGstPaise", "approvedSubtotalPaise", "targetProfitPaise", "costBudgetPaise", "procurementCostPaise", "employeePaymentPaise", "otherExpensePaise", "directSpendPaise", "overheadPaise", "recordedCostPaise", "remainingBudgetPaise", "currentProfitPaise", "overdueTaskCount"] as const) {
+    summary[key] = rows.reduce((total, row) => total + row[key], 0);
+  }
+  summary.currentMarginBps = summary.approvedSubtotalPaise > 0 ? Math.round(summary.currentProfitPaise * 10_000 / summary.approvedSubtotalPaise) : null;
+  summary.overBudgetProjectCount = rows.filter((row) => row.overBudget).length;
+  summary.overdueProjectCount = rows.filter((row) => row.deadlineStatus === "overdue").length;
+  summary.lateCompletedProjectCount = rows.filter((row) => row.deadlineStatus === "completed_late").length;
+  const limit = Number(params.get("limit") ?? 10), offset = Number(params.get("offset") ?? 0);
+  return {
+    items: rows.slice(offset, offset + limit), summary,
+    pagination: { limit, offset, total: rows.length, hasMore: offset + limit < rows.length },
+    filterOptions: {
+      projects: all.map((row) => ({ id: row.projectId, name: row.projectName })),
+      clients: [...new Map(all.filter((row) => row.clientId).map((row) => [row.clientId!, { id: row.clientId!, name: row.clientName! }])).values()],
+      hasUnlinkedClients: all.some((row) => row.clientId === null)
+    },
+    observedAt: "2026-10-24T08:00:00.000Z"
+  };
+}
 
 export function financeEntry(
   id: string,

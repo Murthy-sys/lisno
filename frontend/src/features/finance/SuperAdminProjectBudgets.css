@@ -1,0 +1,144 @@
+.project-budgets {
+  --budget-ink: #19281f;
+  --budget-muted: #526057;
+  --budget-green: #225d3b;
+  --budget-line: #d4dbd0;
+  --budget-paper: #fafaf5;
+  --budget-warm: #eeefe6;
+  color: var(--budget-ink);
+  background: var(--budget-warm);
+  padding: 24px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.project-budgets :is(input, select, button, summary, a):focus-visible,
+.project-budgets__table-scroll:focus-visible {
+  outline: 2px solid var(--budget-green);
+  outline-offset: 3px;
+  box-shadow: none;
+}
+
+.project-budgets__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 20px 30px;
+  padding: 4px 0 24px;
+}
+
+.project-budgets__heading { flex: 1 1 340px; }
+.project-budgets__breadcrumb { display: flex; gap: 10px; margin: 0 0 12px; color: var(--budget-muted); font-size: 13px; }
+.project-budgets h1 { margin: 0 0 8px; color: var(--budget-ink); font-size: clamp(28px, 2.5vw, 38px); line-height: 1.12; letter-spacing: -.035em; }
+.project-budgets__heading > p:last-child { margin: 0; color: var(--budget-muted); font-size: 14px; max-width: 56ch; }
+.project-budgets__scope { display: flex; gap: 14px; align-items: flex-end; flex-wrap: wrap; min-width: 0; }
+.project-budgets label { display: grid; gap: 5px; color: var(--budget-muted); font-size: 12px; font-weight: 500; min-width: 0; }
+.project-budgets :is(input, select) { min-height: 42px; width: 100%; min-width: 0; border: 1px solid var(--budget-line); border-radius: 2px; background: var(--budget-paper); color: var(--budget-ink); padding: 9px 10px; font-size: 13px; }
+.project-budgets select { padding-right: 28px; }
+.project-budgets button { min-height: 42px; padding: 9px 13px; border: 1px solid var(--budget-line); border-radius: 2px; background: var(--budget-paper); color: var(--budget-ink); cursor: pointer; font-size: 12px; font-weight: 600; white-space: nowrap; box-shadow: none; }
+.project-budgets button:disabled { opacity: .5; cursor: default; }
+.project-budgets__scope > label { min-width: 150px; }
+.project-budgets__dates { min-width: 0; }
+.project-budgets__dates fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
+.project-budgets__dates legend { color: var(--budget-muted); font-size: 12px; font-weight: 500; padding: 0 0 5px; }
+.project-budgets__dates fieldset > div { display: flex; align-items: center; gap: 8px; }
+.project-budgets__dates fieldset > div > span { color: var(--budget-muted); font-size: 12px; }
+.project-budgets__dates input { min-width: 135px; }
+.project-budgets .project-budgets__date-note { flex-basis: 100%; margin: -6px 0 0; font-size: 12px; color: var(--budget-muted); }
+
+.project-budgets__totals { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; margin: 0; }
+.project-budgets__total { position: relative; padding: 20px 15px 20px 62px; border: 1px solid var(--budget-line); background: var(--budget-paper); min-width: 0; }
+.project-budgets__total dt { color: var(--budget-muted); font-size: 12px; line-height: 1.4; }
+.project-budgets__total dd { margin: 8px 0 0; color: var(--budget-ink); font-family: inherit; font-variant-numeric: tabular-nums; font-size: clamp(21px, 1.9vw, 29px); font-weight: 650; white-space: nowrap; line-height: 1.15; letter-spacing: -.03em; }
+.project-budgets__total .project-budgets__total-note { margin: 8px 0 0; font-family: inherit; font-weight: 400; letter-spacing: normal; white-space: normal; font-size: 11px; line-height: 1.5; color: var(--budget-muted); }
+.project-budgets__total-icon { position: absolute; left: 15px; top: 20px; display: flex; width: 36px; height: 40px; align-items: center; justify-content: center; color: var(--budget-green); background: #e5ebdd; }
+.project-budgets__total-icon svg { width: 26px; height: 26px; }
+.project-budgets__total--margin .project-budgets__total-icon,
+.project-budgets__total--overheads .project-budgets__total-icon { color: #845c1a; background: #f0e6cf; }
+.project-budgets__summary-context { display: flex; gap: 8px 20px; justify-content: space-between; flex-wrap: wrap; margin: 12px 0 24px; }
+.project-budgets__summary-context p { margin: 0; color: var(--budget-muted); font-size: 11px; }
+.project-budgets__workspace { border: 1px solid var(--budget-line); background: var(--budget-paper); min-width: 0; }
+.project-budgets__toolbar { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; padding: 20px; }
+.project-budgets__search { display: flex; flex: 1 1 230px; gap: 6px; }
+.project-budgets__search label { flex: 1; }
+.project-budgets__toolbar > label { flex: 0 1 165px; }
+.project-budgets__toolbar > label:first-of-type { max-width: 220px; }
+.project-budgets__more-filters { flex: 0 0 auto; position: relative; }
+.project-budgets__more-filters summary { min-height: 42px; padding: 12px 10px; border: 1px solid var(--budget-line); cursor: pointer; font-size: 12px; font-weight: 500; }
+.project-budgets__more-filters > label { margin-top: 10px; }
+.project-budgets .project-budgets__export { background: #294d32; border-color: #294d32; color: #fafaf5; margin-left: auto; }
+.project-budgets__risk-note { margin: -4px 20px 16px; font-size: 11px; color: var(--budget-muted); }
+.project-budgets__scroll-note { margin: 0; padding: 8px 20px; border-top: 1px solid var(--budget-line); background: var(--budget-warm); color: var(--budget-muted); font-size: 11px; }
+.project-budgets__table-scroll { overflow-x: auto; max-width: 100%; scrollbar-color: #84947c var(--budget-warm); overscroll-behavior-x: contain; }
+.project-budgets__table { width: 100%; min-width: 1080px; border-collapse: collapse; table-layout: auto; color: var(--budget-ink); font-size: 12px; }
+.project-budgets__table th,
+.project-budgets__table td { padding: 18px 8px; border: 0; border-bottom: 1px solid #e0e4db; vertical-align: middle; text-align: left; }
+.project-budgets__table thead th { background: #f0f2e9; color: #485447; font-size: 10px; font-weight: 600; white-space: nowrap; padding-top: 14px; padding-bottom: 14px; }
+.project-budgets__table thead small { color: var(--budget-muted); font-size: 9px; font-weight: 400; }
+.project-budgets__table :is(th, td):first-child { padding-left: 12px; }
+.project-budgets__table td:nth-child(n+4):nth-child(-n+9) { font-family: inherit; font-variant-numeric: tabular-nums; white-space: nowrap; text-align: right; }
+.project-budgets__table thead th:nth-child(n+4):nth-child(-n+9) { text-align: right; }
+.project-budgets__table tbody th { min-width: 145px; max-width: 200px; font-weight: 600; }
+.project-budgets__table td:nth-child(3) { min-width: 90px; max-width: 160px; color: var(--budget-muted); }
+.project-budgets__table a { color: var(--budget-ink); text-underline-offset: 3px; }
+.project-budgets__table th a { text-decoration-thickness: 1px; }
+.project-budgets__table small { display: block; margin-top: 5px; font-size: 10px; font-weight: 400; color: var(--budget-muted); }
+.project-budgets__table tbody tr:last-child :is(th, td) { border-bottom: 0; }
+.project-budgets__table .project-budgets__negative { color: #a42e21; font-weight: 650; }
+.project-budgets__status { display: inline-block; padding: 6px 8px; font-size: 10px; font-weight: 600; white-space: nowrap; }
+.project-budgets__status--within_budget { color: #215234; background: #e6eddf; }
+.project-budgets__status--at_risk { color: #78510c; background: #f5ebd6; }
+.project-budgets__status--over_budget { color: #a12c24; background: #f7e6e0; }
+.project-budgets__status--no_budget { color: #4a514a; background: #e9ece5; }
+.project-budgets__details-link { display: inline-block; padding: 12px 0; white-space: nowrap; }
+.project-budgets__pagination { display: flex; justify-content: space-between; align-items: center; gap: 15px; flex-wrap: wrap; padding: 16px 20px; border-top: 1px solid var(--budget-line); }
+.project-budgets__pagination p { margin: 0; font-size: 12px; color: var(--budget-muted); }
+.project-budgets__pagination nav { display: flex; align-items: center; gap: 12px; font-size: 12px; }
+.project-budgets__state { margin: 14px 0; padding: 28px 20px; background: var(--budget-paper); color: var(--budget-muted); }
+.project-budgets__state h2 { color: var(--budget-ink); font-size: 18px; margin: 0 0 8px; }
+.project-budgets__state p { font-size: 13px; }
+.project-budgets__notice { background: #eceee3; padding: 12px 16px; color: #455441; font-size: 12px; border: 1px solid var(--budget-line); }
+.project-budgets__error { color: #8d2d24; }
+.project-budgets__payments { margin-top: 24px; border-block: 1px solid var(--budget-line); }
+.project-budgets__payments > summary { cursor: pointer; padding: 18px 0; color: var(--budget-green); font-size: 14px; font-weight: 600; }
+.project-budgets__payments .design-payment-confirmations { margin-bottom: 20px; }
+
+@media (max-width: 1250px) {
+  .project-budgets__total { padding: 58px 12px 16px; }
+  .project-budgets__total-icon { left: 12px; top: 16px; width: 30px; height: 32px; }
+}
+
+@media (max-width: 850px) {
+  .project-budgets__totals { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .project-budgets__total { padding: 16px 12px 16px 52px; }
+  .project-budgets__total:last-child { grid-column: 1 / -1; }
+  .project-budgets__total dd { font-size: 24px; }
+  .project-budgets__scope { width: 100%; }
+  .project-budgets__scope > label { flex: 1 1 170px; }
+  .project-budgets__toolbar > label { flex: 1 1 150px; }
+  .project-budgets__toolbar > label:first-of-type { max-width: none; }
+  .project-budgets__search { flex-basis: 100%; }
+}
+
+@media (max-width: 500px) {
+  .project-budgets { padding: 14px 12px; }
+  .project-budgets__heading { flex-basis: 100%; }
+  .project-budgets__header { gap: 20px; }
+  .project-budgets__dates { width: 100%; }
+  .project-budgets__dates fieldset > div { flex-wrap: wrap; }
+  .project-budgets__dates label { flex: 1; }
+  .project-budgets__dates input { min-width: 0; padding-inline: 7px; font-size: 12px; }
+  .project-budgets__dates button { flex-basis: 100%; }
+  .project-budgets__total { padding: 58px 10px 14px; }
+  .project-budgets__total:last-child { padding: 14px 10px 14px 52px; }
+  .project-budgets__total dt { font-size: 11px; }
+  .project-budgets__total dd { font-size: 22px; }
+  .project-budgets__toolbar { padding: 14px; gap: 12px; }
+  .project-budgets__toolbar > label { flex-basis: 100%; }
+  .project-budgets__more-filters { width: 100%; }
+  .project-budgets .project-budgets__export { flex: 1; margin-left: 0; }
+  .project-budgets__risk-note { margin-inline: 14px; }
+  .project-budgets__pagination { padding: 16px 14px; }
+  .project-budgets__pagination nav { width: 100%; justify-content: space-between; }
+}

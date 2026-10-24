@@ -19,6 +19,7 @@ import { SupportingDocumentActions } from "../procurement/SupportingDocumentActi
 import { projectStatusKeys } from "../project-status/projectStatusApi";
 import { formatBps, formatPaise, formatPercentage } from "./financeFormat";
 import { ProjectFinanceChart } from "./ProjectFinanceChart";
+import { ProjectBudgetCostBreakdown, ProjectBudgetOverview } from "./ProjectBudgetOverview";
 import {
   getFinanceSupportingDocument,
   getProjectFinanceBucket,
@@ -40,14 +41,21 @@ export function ProjectFinancePanel({
   projectId,
   enabled = true,
   title = "Finance bucket",
-  expectedSource
+  expectedSource,
+  presentation = "standard"
 }: {
   projectId: string;
   enabled?: boolean;
   title?: string;
   expectedSource?: ProjectFinanceExpectedSource | null;
+  presentation?: "standard" | "project-budget";
 }) {
   const auth = useAuth();
+  const [budgetSection, setBudgetSection] = useState<"Overview" | "Transactions" | "Cost Breakdown" | "Overheads">("Overview");
+  useEffect(() => setBudgetSection("Overview"), [projectId]);
+  const isBudgetPresentation = presentation === "project-budget";
+  const showLedger = !isBudgetPresentation || budgetSection === "Transactions" || budgetSection === "Overheads";
+  const overheadsOnly = isBudgetPresentation && budgetSection === "Overheads";
   const canCreate = hasFrontendPermission(auth.authorization, "finance.entry.create");
   const canReadDocuments = hasFrontendPermission(auth.authorization, "finance.entry.read");
   const canDecideCompletion = auth.user?.role === "super_admin" &&
@@ -99,7 +107,7 @@ export function ProjectFinancePanel({
   return (
     <Surface
       as="section"
-      className="project-finance-panel"
+      className={`project-finance-panel${isBudgetPresentation ? " project-finance-panel--budget" : ""}`}
       aria-labelledby={`project-finance-${projectId}`}
     >
       <div className="section-heading">
@@ -144,27 +152,25 @@ export function ProjectFinancePanel({
         />
       ) : trustedBucket ? (
         <>
-          <ProjectFinanceChart bucket={trustedBucket} />
-          <div className="project-finance-panel__details">
-            <dl>
-              <div><dt>Client-approved value (incl. GST)</dt><dd>{formatPaise(trustedBucket.approvedContractTotalPaise)}</dd></div>
-              {trustedBucket.baselinePhase === "post" && trustedBucket.originalApprovedContractTotalPaise !== undefined ? <div><dt>Original pre-estimate value (incl. GST)</dt><dd>{formatPaise(trustedBucket.originalApprovedContractTotalPaise)}</dd></div> : null}
-              <div><dt>GST included (18%)</dt><dd>{formatPaise(trustedBucket.approvedGstPaise)}</dd></div>
-              <div><dt>Net approved revenue (excl. GST)</dt><dd>{formatPaise(trustedBucket.approvedSubtotalPaise)}</dd></div>
-              <div><dt>Profit margin policy</dt><dd>{formatBps(trustedBucket.targetMarginBps)}</dd></div>
-              <div><dt>Cost budget consumed</dt><dd>{formatPercentage(trustedBucket.recordedCostPaise, trustedBucket.costBudgetPaise)}</dd></div>
-              <div><dt>Approved estimate baseline</dt><dd>{trustedBucket.baselinePhase === "post" ? "Final estimate · " : trustedBucket.baselinePhase === "pre" ? "Pre-estimate · " : ""}Version {trustedBucket.estimateVersion}</dd></div>
-              <div><dt>Design plan baseline</dt><dd>Version {trustedBucket.designPlanVersion}</dd></div>
-              <div><dt>Project deadline</dt><dd>{date.format(new Date(trustedBucket.deadlineAt))}</dd></div>
-              <div><dt>Schedule position</dt><dd>{deadlineLabel(trustedBucket)}</dd></div>
-            </dl>
-          </div>
+          {isBudgetPresentation ? <>
+            <nav className="project-budget-sections" aria-label="Project budget sections">
+              {(["Overview", "Transactions", "Cost Breakdown", "Overheads"] as const).map((section) => <button key={section} type="button" aria-pressed={budgetSection === section} onClick={() => setBudgetSection(section)}>{section}</button>)}
+            </nav>
+            {budgetSection === "Overview" ? <ProjectBudgetOverview bucket={trustedBucket} /> : null}
+            {budgetSection === "Cost Breakdown" ? <ProjectBudgetCostBreakdown bucket={trustedBucket} /> : null}
+            {overheadsOnly ? <p className="project-budget-overheads-note">Total overheads: <strong>{formatPaise(trustedBucket.overheadPaise)}</strong>, included in total spending. Entries below are filtered from the loaded ledger; summary totals include the full project history.</p> : null}
+          </> : <ProjectFinanceChart bucket={trustedBucket} />}
+          {isBudgetPresentation && !showLedger && ledgerIntegrityError ? <PageState state="error" message={ledgerIntegrityError} action={{ label: "Refresh ledger", onAction: () => void entries.refetch() }} /> : null}
+          {isBudgetPresentation && !showLedger && entries.isError && !entries.data ? <PageState state="error" message="The spending and overhead ledger could not be loaded. The approved financial baseline remains available above." action={{ label: "Retry ledger", onAction: () => void entries.refetch() }} /> : null}
+          {isBudgetPresentation && bucket.isFetching ? <p role="status">Refreshing project budget…</p> : null}
+          {isBudgetPresentation && showLedger && entries.isRefetchError ? <InlineMessage tone="warning" action={<Button variant="secondary" onClick={() => void entries.refetch()}>Retry ledger refresh</Button>}>The ledger could not be refreshed. Previously loaded entries are shown.</InlineMessage> : null}
+          {isBudgetPresentation ? <details className="project-budget-baseline"><summary>Approved contract, GST and baseline details</summary><FinanceBaselineDetails bucket={trustedBucket} showUndefinedRatio /></details> : <FinanceBaselineDetails bucket={trustedBucket} />}
           {canRecordCost || canCloseProject ? (
             <FinanceEntryWorkspace key={`entry-form-${projectId}`} projectId={projectId} projectName={trustedBucket.projectName}
               projectStatus={trustedBucket.projectStatus} canRecordCost={canRecordCost} canCloseProject={canCloseProject}
               onCompleted={() => setCompletedProjectId(projectId)} />
           ) : null}
-          {entries.isPending ? (
+          {showLedger ? entries.isPending ? (
             <PageState state="loading" message="Loading spending and overhead ledger…" />
           ) : entries.isError && !entries.data ? (
             <PageState
@@ -182,7 +188,9 @@ export function ProjectFinancePanel({
             <FinanceEntries
               key={`ledger-${projectId}`}
               projectId={projectId}
-              entries={entryItems}
+              entries={overheadsOnly ? entryItems.filter((entry) => entry.type === "overhead") : entryItems}
+              overheadsOnly={overheadsOnly}
+              loadedCount={entryItems.length}
               total={entryTotal}
               canReadDocuments={canReadDocuments}
               hasMore={entries.hasNextPage}
@@ -190,11 +198,28 @@ export function ProjectFinancePanel({
               loadMoreError={entries.isFetchNextPageError}
               onLoadMore={() => void entries.fetchNextPage()}
             />
-          )}
+          ) : null}
         </>
       ) : null}
     </Surface>
   );
+}
+
+function FinanceBaselineDetails({ bucket, showUndefinedRatio = false }: { bucket: ProjectFinanceBucket; showUndefinedRatio?: boolean }) {
+  return <div className="project-finance-panel__details">
+            <dl>
+              <div><dt>Client-approved value (incl. GST)</dt><dd>{formatPaise(bucket.approvedContractTotalPaise)}</dd></div>
+              {bucket.baselinePhase === "post" && bucket.originalApprovedContractTotalPaise !== undefined ? <div><dt>Original pre-estimate value (incl. GST)</dt><dd>{formatPaise(bucket.originalApprovedContractTotalPaise)}</dd></div> : null}
+              <div><dt>GST included (18%)</dt><dd>{formatPaise(bucket.approvedGstPaise)}</dd></div>
+              <div><dt>Net approved revenue (excl. GST)</dt><dd>{formatPaise(bucket.approvedSubtotalPaise)}</dd></div>
+              <div><dt>Profit margin policy</dt><dd>{formatBps(bucket.targetMarginBps)}</dd></div>
+              <div><dt>Cost budget consumed</dt><dd>{showUndefinedRatio && bucket.costBudgetPaise <= 0 ? "Not defined (no usable budget)" : formatPercentage(bucket.recordedCostPaise, bucket.costBudgetPaise)}</dd></div>
+              <div><dt>Approved estimate baseline</dt><dd>{bucket.baselinePhase === "post" ? "Final estimate · " : bucket.baselinePhase === "pre" ? "Pre-estimate · " : ""}Version {bucket.estimateVersion}</dd></div>
+              <div><dt>Design plan baseline</dt><dd>Version {bucket.designPlanVersion}</dd></div>
+              <div><dt>Project deadline</dt><dd>{date.format(new Date(bucket.deadlineAt))}</dd></div>
+              <div><dt>Schedule position</dt><dd>{deadlineLabel(bucket)}</dd></div>
+            </dl>
+          </div>;
 }
 
 export interface ProjectFinanceExpectedSource {
@@ -529,7 +554,9 @@ function FinanceEntries({
   hasMore,
   loadingMore,
   loadMoreError,
-  onLoadMore
+  onLoadMore,
+  overheadsOnly = false,
+  loadedCount = entries.length
 }: {
   projectId: string;
   entries: FinanceLedgerEntry[];
@@ -539,17 +566,21 @@ function FinanceEntries({
   loadingMore: boolean;
   loadMoreError: boolean;
   onLoadMore: () => void;
+  overheadsOnly?: boolean;
+  loadedCount?: number;
 }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const selectedEntry = entries.find((entry) => entry.id === selectedId) ?? null;
+  const ledgerTitle = overheadsOnly ? "Overhead ledger" : "Spending and overhead ledger";
   useEffect(() => {
     if (selectedId && !selectedEntry) setSelectedId(null);
   }, [selectedId, selectedEntry]);
 
   return (
     <section className="finance-entries" aria-labelledby="finance-entries-title">
-      <div className="section-heading"><div><h3 id="finance-entries-title">Spending and overhead ledger</h3></div><span>{hasMore ? `${entries.length} of ${total} entries` : `${entries.length} entries`}</span></div>
-      {entries.length === 0 ? <p className="inline-empty">No project costs have been recorded.</p> : (
+      <div className="section-heading"><div><h3 id="finance-entries-title">{ledgerTitle}</h3></div><span>{overheadsOnly ? `${entries.length} overhead entries in ${loadedCount} loaded ledger entries` : hasMore ? `${entries.length} of ${total} entries` : `${entries.length} entries`}</span></div>
+      {overheadsOnly && hasMore ? <p role="status">Partial history: {loadedCount} of {total} ledger entries loaded. Load more to find additional overheads.</p> : null}
+      {entries.length === 0 ? <p className="inline-empty">{overheadsOnly ? hasMore ? "No overheads in the loaded entries." : "No overhead entries have been recorded." : "No project costs have been recorded."}</p> : (
         <>
           <div className="finance-entries__list">
             {entries.map((entry) => (
@@ -564,6 +595,9 @@ function FinanceEntries({
               </article>
             ))}
           </div>
+        </>
+      )}
+      {entries.length > 0 || overheadsOnly ? <>
           {loadingMore ? <p role="status">Loading more ledger entries…</p> : null}
           {loadMoreError ? (
             <div>
@@ -582,12 +616,11 @@ function FinanceEntries({
           ) : (
             <p role="status">All available ledger entries loaded.</p>
           )}
-        </>
-      )}
+      </> : null}
       {selectedEntry ? <ContextPanel
         key={`${projectId}:${selectedEntry.id}`}
         title={selectedEntry.category}
-        eyebrow="Spending and overhead ledger"
+        eyebrow={ledgerTitle}
         description={`${financeEntryLabel(selectedEntry)} · ${date.format(new Date(selectedEntry.incurredAt))}`}
         onClose={() => setSelectedId(null)}
         metadata={<StatusBadge tone={selectedEntry.status === "posted" ? "success" : "neutral"} label={selectedEntry.status} />}

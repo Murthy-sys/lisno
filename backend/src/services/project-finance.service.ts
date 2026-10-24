@@ -5,6 +5,7 @@ import mongoose, { type ClientSession } from "mongoose";
 import { approvedEstimateLineItemKey } from "../domain/estimate-line-item.js";
 import { configuredEstimateParentIsValid } from "../domain/estimate-client-review.js";
 import { currentEstimationApproval, isCollaborativeEstimate } from "../domain/estimation-lifecycle.js";
+import { financeRiskFactors } from "../domain/super-admin-dashboard.js";
 import { ProjectFinanceBaselineRevisionModel } from "../models/ProjectFinanceBaselineRevision.js";
 import { assertProjectWorkOrderIssueEligible } from "./project-work-order-eligibility.service.js";
 import {
@@ -47,6 +48,26 @@ export interface ProjectFinancePagination {
   offset: number;
 }
 
+export type ProjectFinanceBudgetStatus = "over_budget" | "at_risk" | "within_budget" | "no_budget";
+
+export interface ProjectFinanceListQuery extends ProjectFinancePagination {
+  search?: string;
+  projectId?: string;
+  clientId?: string;
+  unlinkedClient?: boolean;
+  budgetStatus?: ProjectFinanceBudgetStatus;
+  financeStage?: ProjectFinanceBucketStatus;
+  projectStatus?: "planning" | "active" | "on_hold" | "completed";
+  approvedFrom?: string;
+  approvedTo?: string;
+}
+
+export interface ProjectFinanceFilterOptions {
+  projects: { id: string; name: string }[];
+  clients: { id: string; name: string }[];
+  hasUnlinkedClients: boolean;
+}
+
 export interface ProjectFinanceBucketDto {
   baselinePhase?: "pre" | "post";
   originalApprovedContractTotalPaise?: number;
@@ -54,6 +75,11 @@ export interface ProjectFinanceBucketDto {
   projectId: string;
   projectName: string;
   projectStatus: string;
+  clientId?: string | null;
+  clientName?: string | null;
+  budgetApprovedAt?: string;
+  budgetStatus?: ProjectFinanceBudgetStatus;
+  budgetUtilizationBps?: number | null;
   estimateId: string;
   estimateVersion: number;
   estimateReviewRoundId: string | null;
@@ -121,6 +147,38 @@ export interface FinanceLedgerEntryDto {
   updatedAt: string;
 }
 
+function matchesFinanceListQuery(bucket: ProjectFinanceBucketDto, query: ProjectFinanceListQuery): boolean {
+  const search = query.search?.trim().toLocaleLowerCase();
+  if (search && !`${bucket.projectName}\n${bucket.clientName ?? ""}`.toLocaleLowerCase().includes(search)) return false;
+  if (query.projectId && bucket.projectId !== query.projectId) return false;
+  if (query.clientId && bucket.clientId !== query.clientId) return false;
+  if (query.unlinkedClient && bucket.clientId !== null) return false;
+  if (query.budgetStatus && bucket.budgetStatus !== query.budgetStatus) return false;
+  if (query.financeStage && bucket.status !== query.financeStage) return false;
+  if (query.projectStatus && bucket.projectStatus !== query.projectStatus) return false;
+  const approvedDay = bucket.budgetApprovedAt?.slice(0, 10);
+  if (query.approvedFrom && (!approvedDay || approvedDay < query.approvedFrom)) return false;
+  if (query.approvedTo && (!approvedDay || approvedDay > query.approvedTo)) return false;
+  return true;
+}
+
+function financeFilterOptions(buckets: readonly ProjectFinanceBucketDto[]): ProjectFinanceFilterOptions {
+  const compare = (a: { id: string; name: string }, b: { id: string; name: string }) =>
+    a.name.localeCompare(b.name) || a.id.localeCompare(b.id);
+  const clients = new Map<string, { id: string; name: string }>();
+  // Sort first so a legacy name discrepancy for one ID has a deterministic label.
+  for (const bucket of [...buckets].sort((a, b) => a.projectId.localeCompare(b.projectId))) {
+    if (bucket.clientId && !clients.has(bucket.clientId)) {
+      clients.set(bucket.clientId, { id: bucket.clientId, name: bucket.clientName ?? "Unnamed client" });
+    }
+  }
+  return {
+    projects: buckets.map((bucket) => ({ id: bucket.projectId, name: bucket.projectName })).sort(compare),
+    clients: [...clients.values()].sort(compare),
+    hasUnlinkedClients: buckets.some((bucket) => bucket.clientId === null)
+  };
+}
+
 export interface FinanceSupportingDocumentDto {
   id: string;
   originalFilename: string;
@@ -179,11 +237,13 @@ export interface ProjectFinancePortfolioSummary {
 export interface ProjectFinanceService {
   listProjects(
     actor: PublicUser,
-    pagination: ProjectFinancePagination
+    query: ProjectFinanceListQuery
   ): Promise<{
     items: ProjectFinanceBucketDto[];
     total: number;
     summary: ProjectFinancePortfolioSummary;
+    filterOptions: ProjectFinanceFilterOptions;
+    observedAt: string;
   }>;
   getBucket(
     actor: PublicUser,
@@ -235,7 +295,7 @@ export async function readProjectFinancePortfolioReport(
       )
       .sort(compareFinanceSources);
     const projects = await ProjectModel.find({ _id: { $in: approvedProjectIds } })
-      .select({ _id: 1, name: 1, status: 1, plannedEndAt: 1, actualEndAt: 1 })
+      .select({ _id: 1, name: 1, status: 1, clientId: 1, clientName: 1, plannedEndAt: 1, actualEndAt: 1 })
       .session(session)
       .lean();
     const projectsById = new Map(
@@ -287,7 +347,7 @@ export async function readProjectFinanceDashboardProjects(
       ))
       .sort(compareFinanceSources);
     const projects = await ProjectModel.find({ _id: { $in: boundedProjectIds } })
-      .select({ _id: 1, name: 1, status: 1, plannedEndAt: 1, actualEndAt: 1 })
+      .select({ _id: 1, name: 1, status: 1, clientId: 1, clientName: 1, plannedEndAt: 1, actualEndAt: 1 })
       .session(session)
       .lean();
     const projectsById = new Map(
@@ -456,23 +516,40 @@ export function createProjectFinanceService(input: {
   const now = input.now ?? (() => new Date());
 
   return {
-    async listProjects(actor, pagination) {
-      validatePagination(pagination);
+    async listProjects(actor, query) {
+      validatePagination(query);
       return financeSnapshotRead(async (session) => {
         const storedActor = await requireFinanceActor(actor, session);
-        const projectIds = storedActor.role === "super_admin"
+        const observedAt = now();
+        const workflowProjectIds = storedActor.role === "super_admin"
           ? null
           : await financeWorkflowProjectIds(session);
-        if (projectIds?.length === 0) {
-          return { items: [], total: 0, summary: emptyPortfolioSummary() };
+        const projects = await ProjectModel.find(workflowProjectIds === null
+          ? {} : { _id: { $in: workflowProjectIds } })
+          .select({
+            _id: 1,
+            name: 1,
+            status: 1,
+            clientId: 1,
+            clientName: 1,
+            plannedEndAt: 1,
+            actualEndAt: 1
+          })
+          .session(session)
+          .lean();
+        const projectIds = projects.map((project) => String(project._id));
+        if (projectIds.length === 0) {
+          return { items: [], total: 0, summary: emptyPortfolioSummary(),
+            filterOptions: { projects: [], clients: [], hasUnlinkedClients: false },
+            observedAt: observedAt.toISOString() };
         }
 
         /*
-         * Client-approved Estimates are the portfolio membership source—the
-         * same source shown on the Projects list. A finance bucket is an
-         * optional materialized ledger state, not evidence that a project was
-         * approved. This keeps pre-backfill approvals visible and prevents a
-         * zero portfolio when approved Estimates already exist.
+         * Existing authorized Projects bound the portfolio; stale approvals
+         * or workflow tasks cannot reintroduce a deleted Project. Within that
+         * population, Client-approved Estimates establish membership. A finance
+         * bucket is optional materialized ledger state, not approval evidence.
+         * This keeps pre-backfill approvals visible without requiring a bucket.
          */
         const approvedEstimates = await approvedFinanceEstimates(
           projectIds,
@@ -498,23 +575,7 @@ export function createProjectFinanceService(input: {
             return financeBucketForRead(estimate, materialized);
           }
         ).sort(compareFinanceSources);
-        const total = financeSources.length;
-        const buckets = financeSources.slice(
-          pagination.offset,
-          pagination.offset + pagination.limit
-        );
         const allProjectIds = financeSources.map((bucket) => String(bucket.projectId));
-        const observedAt = now();
-        const projects = await ProjectModel.find({ _id: { $in: allProjectIds } })
-          .select({
-            _id: 1,
-            name: 1,
-            status: 1,
-            plannedEndAt: 1,
-            actualEndAt: 1
-          })
-          .session(session)
-          .lean();
         const enrichments = await loadFinanceEnrichments(
           allProjectIds,
           observedAt,
@@ -524,21 +585,19 @@ export function createProjectFinanceService(input: {
           projects.map((project) => [String(project._id), project])
         );
         requireCompletePortfolio(financeSources, projectsById);
+        const eligible = financeSources.map((bucket) => {
+          const projectId = String(bucket.projectId);
+          return bucketDto(bucket, projectsById.get(projectId)!, enrichments.get(projectId), observedAt);
+        });
+        const matching = eligible.filter((bucket) => matchesFinanceListQuery(bucket, query));
+        const matchingIds = new Set(matching.map((bucket) => bucket.projectId));
         return {
-          items: buckets.map((bucket) => {
-            const projectId = String(bucket.projectId);
-            const project = projectsById.get(projectId);
-            if (!project) financeStateCorrupt();
-            return bucketDto(
-              bucket,
-              project,
-              enrichments.get(projectId),
-              observedAt
-            );
-          }),
-          total,
+          items: matching.slice(query.offset, query.offset + query.limit),
+          total: matching.length,
+          filterOptions: financeFilterOptions(eligible),
+          observedAt: observedAt.toISOString(),
           summary: portfolioSummary(
-            financeSources,
+            financeSources.filter((bucket) => matchingIds.has(String(bucket.projectId))),
             projectsById,
             enrichments,
             observedAt
@@ -561,7 +620,7 @@ export function createProjectFinanceService(input: {
         const estimate = canonicalApprovedEstimate(estimates);
         const bucket = financeBucketForRead(estimate, materialized);
         const project = await ProjectModel.findById(projectId)
-          .select({ _id: 1, name: 1, status: 1, plannedEndAt: 1, actualEndAt: 1 })
+          .select({ _id: 1, name: 1, status: 1, clientId: 1, clientName: 1, plannedEndAt: 1, actualEndAt: 1 })
           .session(session)
           .lean();
         const enrichments = await loadFinanceEnrichments(
@@ -1077,7 +1136,7 @@ async function replayCommittedEntry(
       .session(session)
       .lean();
     const project = await ProjectModel.findById(projectId)
-      .select({ _id: 1, name: 1, status: 1, plannedEndAt: 1, actualEndAt: 1 })
+      .select({ _id: 1, name: 1, status: 1, clientId: 1, clientName: 1, plannedEndAt: 1, actualEndAt: 1 })
       .session(session)
       .lean();
     const enrichments = await loadFinanceEnrichments(
@@ -1317,13 +1376,15 @@ function syntheticFinanceBucket(estimate: Row): Row {
     openedAt: designApproval?.occurredAt ?? null,
     closedAt: null,
     createdAt,
+    budgetApprovedAt: approval.occurredAt,
     updatedAt
   };
 }
 
 function financeBucketForRead(estimate: Row, materialized?: Row | null): Row {
   if (!materialized) return syntheticFinanceBucket(estimate);
-  materialized = effectiveProjectFinanceBucket(materialized);
+  materialized = { ...effectiveProjectFinanceBucket(materialized),
+    budgetApprovedAt: approvedEstimateLineage(estimate).occurredAt };
   requireMatchingApprovedSource(materialized, estimate);
   const designApproval = approvedDesignApproval(estimate);
   if (!designApproval) return materialized;
@@ -1792,12 +1853,29 @@ function bucketDto(
     overheadPaise: Number(bucket.overheadPaise ?? 0)
   });
   const deadline = projectDeadline(project, observedAt);
+  const costBudgetPaise = Number(bucket.costBudgetPaise);
+  const financeRisk = financeRiskFactors({
+    projectId: String(bucket.projectId),
+    projectCompleted: project.status === "completed",
+    costBudgetPaise,
+    recordedCostPaise: position.recordedCostPaise
+  });
+  const budgetStatus: ProjectFinanceBudgetStatus = financeRisk.some((factor) => factor.level === "red")
+    ? "over_budget"
+    : costBudgetPaise === 0 ? "no_budget"
+      : financeRisk.some((factor) => factor.level === "yellow") ? "at_risk" : "within_budget";
   return {
     ...(bucket.effectiveBaseline ? { baselinePhase: bucket.effectiveBaseline.phase, originalApprovedContractTotalPaise: Number(bucket.originalApprovedContractTotalPaise) } : bucket.estimationWorkflowVersion === 2 ? { baselinePhase: "pre" as const } : {}),
     id: String(bucket._id),
     projectId: String(bucket.projectId),
     projectName: String(project.name),
     projectStatus: String(project.status),
+    clientId: nonEmptyIdentifier(project.clientId),
+    clientName: nonEmptyIdentifier(project.clientName),
+    ...(bucket.budgetApprovedAt ? { budgetApprovedAt: new Date(bucket.budgetApprovedAt).toISOString() } : {}),
+    budgetStatus,
+    budgetUtilizationBps: costBudgetPaise === 0 ? null
+      : Math.round(position.recordedCostPaise / costBudgetPaise * 10_000),
     estimateId: String(bucket.estimateId),
     estimateVersion: Number(bucket.estimateVersion),
     estimateReviewRoundId: bucket.estimateReviewRoundId == null
@@ -1833,7 +1911,7 @@ export async function projectFinanceBucketDtoForTransaction(
   session: ClientSession
 ): Promise<ProjectFinanceBucketDto> {
   const project = await ProjectModel.findById(projectId)
-    .select({ _id: 1, name: 1, status: 1, plannedEndAt: 1, actualEndAt: 1 })
+    .select({ _id: 1, name: 1, status: 1, clientId: 1, clientName: 1, plannedEndAt: 1, actualEndAt: 1 })
     .session(session)
     .lean();
   if (!project || String(bucket.projectId) !== projectId) notFound();
