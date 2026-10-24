@@ -225,7 +225,7 @@ describe("apiClient", () => {
       )
     );
 
-    await expect(staleRequest).rejects.toMatchObject({ status: 401 });
+    await expect(staleRequest).rejects.toMatchObject({ name: "AbortError" });
     expect(tokenStorage.get()).toBe("token-b");
     expect(listener).not.toHaveBeenCalled();
     window.removeEventListener("lisno:unauthorized", listener);
@@ -358,7 +358,7 @@ describe("apiClient", () => {
     });
     xhr.onload?.();
 
-    await expect(upload).rejects.toMatchObject({ status: 401 });
+    await expect(upload).rejects.toMatchObject({ name: "AbortError" });
     expect(tokenStorage.get()).toBe("token-b");
     expect(listener).not.toHaveBeenCalled();
     window.removeEventListener("lisno:unauthorized", listener);
@@ -474,5 +474,135 @@ describe("apiClient", () => {
       "http://localhost:3000/api/v1",
       "/api/v1/design-section-revisions/revision-1/image"
     )).toBe("http://localhost:3000/api/v1/design-section-revisions/revision-1/image");
+  });
+});
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
+  return { promise, resolve, reject };
+}
+
+describe("session-scoped response isolation", () => {
+  it.each(["replace", "logout", "same-token", "external"])("rejects late JSON after %s", async change => {
+    tokenStorage.set("synthetic-a");
+    const gate = deferred<Response>();
+    vi.spyOn(globalThis, "fetch").mockReturnValueOnce(gate.promise);
+    const request = apiClient.get("/private");
+    const rejected = expect(request).rejects.toMatchObject({ name: "AbortError" });
+    if (change === "replace") tokenStorage.set("synthetic-b");
+    if (change === "logout") tokenStorage.clear();
+    if (change === "same-token") { tokenStorage.clear(); tokenStorage.set("synthetic-a"); }
+    if (change === "external") {
+      window.localStorage.removeItem("lisno.auth.token");
+      window.localStorage.setItem("lisno.auth.token", "synthetic-a");
+      window.dispatchEvent(new StorageEvent("storage", { key: "lisno.auth.token", oldValue: "synthetic-a", newValue: null, storageArea: localStorage }));
+    }
+    const response = Response.json({ data: { private: "a" } });
+    const cancel = vi.spyOn(response.body!, "cancel");
+    gate.resolve(response);
+    await rejected;
+    expect(cancel).toHaveBeenCalledOnce();
+  });
+
+  it.each([200, 400, 401])("fences asynchronous JSON body completion with status %s", async status => {
+    tokenStorage.set("synthetic-a");
+    const body = deferred<unknown>();
+    const response = Response.json({}, { status });
+    const json = vi.spyOn(response, "json").mockReturnValue(body.promise);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(response);
+    const listener = vi.fn();
+    window.addEventListener("lisno:unauthorized", listener);
+    const request = apiClient.get("/private");
+    await vi.waitFor(() => expect(json).toHaveBeenCalledOnce());
+    tokenStorage.clear(); tokenStorage.set("synthetic-a");
+    body.resolve({ data: "private-a", error: { message: "private-a" } });
+    await expect(request).rejects.toMatchObject({ name: "AbortError" });
+    expect(tokenStorage.get()).toBe("synthetic-a");
+    expect(listener).not.toHaveBeenCalled();
+    window.removeEventListener("lisno:unauthorized", listener);
+  });
+
+  it("suppresses a stale parser error and preserves the new credential", async () => {
+    tokenStorage.set("synthetic-a");
+    const body = deferred<unknown>();
+    const response = Response.json({});
+    const json = vi.spyOn(response, "json").mockReturnValue(body.promise);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(response);
+    const pending = apiClient.get("/private");
+    await vi.waitFor(() => expect(json).toHaveBeenCalledOnce());
+    tokenStorage.set("synthetic-b");
+    body.reject(new Error("private parser detail"));
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+  });
+
+  it.each(["putMultipart", "postMultipart"] as const)("fences late %s body completion", async method => {
+    tokenStorage.set("synthetic-a");
+    const body = deferred<unknown>();
+    const response = Response.json({});
+    const json = vi.spyOn(response, "json").mockReturnValue(body.promise);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(response);
+    const pending = apiClient[method]("/private", new FormData());
+    await vi.waitFor(() => expect(json).toHaveBeenCalledOnce());
+    tokenStorage.set("synthetic-b");
+    body.resolve({ data: "private-a" });
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+  });
+
+  it.each(["progress", "success", "error", "unauthorized"])("fences stale XHR %s", async outcome => {
+    tokenStorage.set("synthetic-a");
+    const Xhr = installFakeXMLHttpRequest();
+    const progress = vi.fn();
+    const pending = apiClient.postMultipartWithProgress("/private", new FormData(), progress);
+    const xhr = Xhr.instances[0];
+    tokenStorage.clear(); tokenStorage.set("synthetic-a");
+    if (outcome === "progress") xhr.upload.onprogress?.({ lengthComputable: true, loaded: 1, total: 1 } as ProgressEvent);
+    else if (outcome === "error") xhr.onerror?.();
+    else { xhr.status = outcome === "success" ? 200 : 401; xhr.responseText = '{"data":"private-a"}'; xhr.onload?.(); }
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    expect(progress).not.toHaveBeenCalled();
+    expect(tokenStorage.get()).toBe("synthetic-a");
+    expect(xhr.abort).toHaveBeenCalledOnce();
+  });
+
+  it("rejects a stale unbounded download after its body finishes", async () => {
+    tokenStorage.set("synthetic-a");
+    const body = deferred<Blob>();
+    const response = new Response();
+    const blob = vi.spyOn(response, "blob").mockReturnValue(body.promise);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(response);
+    const pending = apiClient.getBlob("/private");
+    await vi.waitFor(() => expect(blob).toHaveBeenCalledOnce());
+    tokenStorage.set("synthetic-b");
+    body.resolve(new Blob(["private-a"]));
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+  });
+
+  it.each(["download", "events"])("cancels stale streamed %s chunks without exposing progress or data", async kind => {
+    tokenStorage.set("synthetic-a");
+    let controller!: ReadableStreamDefaultController<Uint8Array>;
+    const cancelled = vi.fn();
+    const response = new Response(new ReadableStream<Uint8Array>({ start(value) { controller = value; }, cancel: cancelled }));
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(response);
+    const progress = vi.fn();
+    const pending = kind === "download" ? apiClient.getBlob("/private", { maxBytes: 100, onProgress: progress }) : apiClient.stream("/private").then(value => value.text());
+    await Promise.resolve(); await Promise.resolve();
+    tokenStorage.set("synthetic-b");
+    controller.enqueue(new Uint8Array([1, 2, 3]));
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    expect(progress).not.toHaveBeenCalled();
+    expect(cancelled).toHaveBeenCalledOnce();
+  });
+
+  it("keeps public auth/token calls unbound while credentials change", async () => {
+    tokenStorage.set("synthetic-a");
+    const gate = deferred<Response>();
+    const fetch = vi.spyOn(globalThis, "fetch").mockReturnValue(gate.promise);
+    const pending = apiClient.postPublic("/auth/public", {}, { headers: { Authorization: "Bearer unwanted" } });
+    tokenStorage.set("synthetic-b");
+    gate.resolve(Response.json({ data: { accepted: true } }));
+    await expect(pending).resolves.toEqual({ accepted: true });
+    expect(new Headers(fetch.mock.calls[0][1]?.headers).has("Authorization")).toBe(false);
   });
 });

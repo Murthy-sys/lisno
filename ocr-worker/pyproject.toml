@@ -9,7 +9,7 @@ description = "Leased PaddleOCR extraction worker for Lisno design uploads"
 requires-python = ">=3.11"
 dependencies = [
   "numpy>=1.26,<3",
-  "Pillow>=10,<13",
+  "Pillow>=13,<14",
   "pillow-heif>=0.20,<2",
   "PyMuPDF>=1.24,<2",
 ]

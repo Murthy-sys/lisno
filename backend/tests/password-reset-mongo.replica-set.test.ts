@@ -267,6 +267,30 @@ function controlledInvitationMailer() {
 }
 
 describe("password reset Mongo replica-set transactions", () => {
+  it("revokes legacy sessions only for actual identity changes and serializes competing CAS writes", async () => {
+    await insertUser();
+    await UserModel.collection.updateOne({ _id: "mongo-reset-user" }, { $unset: { version: "", sessionVersion: "" } });
+    const repository = createMongoRepository();
+    const same = await repository.updateUser("mongo-reset-user", 1, { active: true, role: "admin", updatedAt: NOW });
+    expect(same).toMatchObject({ version: 2, sessionVersion: 1 });
+    const inactive = await repository.updateUser(same.id, same.version, { active: false, updatedAt: NOW });
+    expect(inactive).toMatchObject({ version: 3, sessionVersion: 2 });
+    const active = await repository.updateUser(inactive.id, inactive.version, { active: true, updatedAt: NOW });
+    expect(active).toMatchObject({ version: 4, sessionVersion: 3 });
+    const role = await repository.updateUser(active.id, active.version, { role: "designer", updatedAt: NOW });
+    expect(role).toMatchObject({ version: 5, sessionVersion: 4 });
+    const restored = await repository.updateUser(role.id, role.version, { role: "admin", updatedAt: NOW });
+    expect(restored).toMatchObject({ version: 6, sessionVersion: 5 });
+    const results = await Promise.allSettled([
+      repository.updateUser(restored.id, restored.version, { active: false, updatedAt: NOW }),
+      repository.updateUser(restored.id, restored.version, { role: "designer", updatedAt: NOW })
+    ]);
+    expect(results.filter(result => result.status === "fulfilled")).toHaveLength(1);
+    const rejected = results.find(result => result.status === "rejected") as PromiseRejectedResult;
+    expect(rejected.reason).toBeInstanceOf(RepositoryConflictError);
+    expect(await repository.findUserById(restored.id)).toMatchObject({ version: 7, sessionVersion: 6 });
+  });
+
   it("leaves no coordination, reset, audit, or email state for unknown and ineligible requests", async () => {
     await UserModel.create([
       {
@@ -738,7 +762,7 @@ describe("password reset Mongo replica-set transactions", () => {
       expect(user).toMatchObject({
         passwordHash: "$2b$12$original-password-hash-placeholder",
         version: 2,
-        sessionVersion: 1,
+        sessionVersion: 2,
         ...(mutation === "deactivate"
           ? { active: false, role: "admin" }
           : { active: true, role: "designer" })

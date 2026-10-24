@@ -7,6 +7,7 @@ import type { SaveFileInput } from "../storage/storage.js";
 import { createTemporaryUploadStorage, type TemporaryUploadStorage } from "../storage/temporary-upload-storage.js";
 import { ApiError } from "./errors.js";
 import { validateUploadedFile, type ValidatedUpload } from "./upload.js";
+import { admitWorkflowUpload } from "./workflow-upload-admission.js";
 
 const FIELDS = new Set(["expectedVersion", "action", "stageId", "idempotencyKey", "note", "data"]);
 const extensions: Record<string, SaveFileInput["extension"]> = {
@@ -140,9 +141,16 @@ async function consumeEvidence(request: Request, maxProofBytes: number, storage:
   }
 }
 
-export function uploadWorkflowEvidence(maxProofBytes: number, options: { createStorage?: () => Promise<TemporaryUploadStorage>; inactivityMs?: number } = {}): RequestHandler {
+export function uploadWorkflowEvidence(maxProofBytes: number, options: { createStorage?: () => Promise<TemporaryUploadStorage>; inactivityMs?: number; admit?: (actor: string) => () => void } = {}): RequestHandler {
   return async (request, response, next) => {
     if (!request.is("multipart/form-data")) { next(); return; }
+    let releaseAdmission: () => void;
+    try {
+      releaseAdmission = (options.admit ?? admitWorkflowUpload)(request.authenticatedUser?.id ?? request.socket.remoteAddress ?? "unknown");
+    } catch (error) {
+      request.pause(); response.setHeader("Connection", "close");
+      response.once("finish", () => request.destroy()); next(error); return;
+    }
     const controller = new AbortController();
     const abort = () => controller.abort(cancelled());
     let timeout: NodeJS.Timeout | undefined;
@@ -161,7 +169,7 @@ export function uploadWorkflowEvidence(maxProofBytes: number, options: { createS
         await Promise.allSettled([...active]);
         clearTimeout(timeout);
         request.removeListener("aborted", abort); response.removeListener("close", closed); response.removeListener("finish", finished);
-        await storage?.cleanup();
+        try { await storage?.cleanup(); } finally { releaseAdmission(); }
       })(); }
     };
     const closed = () => { if (!response.writableFinished) abort(); void lifetime.cleanup().catch(() => {}); };

@@ -1,5 +1,6 @@
 import { randomBytes as cryptoRandomBytes, randomUUID } from "node:crypto";
 import bcrypt from "bcryptjs";
+import { requireValidNewPassword } from "./password-policy.js";
 
 import { isReservedDemoEmail, isReservedDevelopmentDemoIdentity } from "../domain/demo-identities.js";
 import {
@@ -485,6 +486,7 @@ export function createUserInvitationService(
     },
 
     async accept(acceptInput) {
+      requireValidNewPassword(acceptInput.password);
       let discovered: PublicInvitationMatch;
       try {
         discovered = await findAvailablePublicInvitation(

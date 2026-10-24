@@ -1,5 +1,6 @@
 import { Router, type RequestHandler } from "express";
 import { z } from "zod";
+import { newPasswordSchema } from "../domain/password-policy.js";
 
 import {
   INVITABLE_ROLE_CODES,
@@ -66,10 +67,7 @@ const inspectSchema = z.object({ token: z.string() }).strict();
 const acceptSchema = z
   .object({
     token: z.string(),
-    password: z
-      .string()
-      .min(12, "Password must be at least 12 characters.")
-      .max(128, "Password must be at most 128 characters."),
+    password: newPasswordSchema,
     passwordConfirmation: z.string()
   })
   .strict()

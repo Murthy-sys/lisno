@@ -31,6 +31,19 @@ function setup(options: { disabled?: boolean; failed?: boolean; existing?: boole
 }
 
 describe("project-bound client invitations", () => {
+  it.each(["a".repeat(73), "é".repeat(37), "😀".repeat(19), "short"])("rejects an invalid password without consuming or linking the project invitation", async invalidPassword => {
+    const f = setup();
+    await f.service.send(f.actor, "invited-project-1");
+    const token = f.deliveries[0]!.rawToken;
+    const before = await f.repository.listUsers();
+    const auditBefore = await f.repository.listAuditEvents({});
+    await expect(f.service.acceptNew({ token, password: invalidPassword, passwordConfirmation: invalidPassword }, context)).rejects.toMatchObject({ status: 400, code: "VALIDATION_ERROR", fields: { password: expect.any(String) } });
+    await expect(f.service.inspect(token)).resolves.toMatchObject({ requiresSignIn: false });
+    expect(await f.repository.listUsers()).toEqual(before);
+    expect(await f.repository.listAuditEvents({})).toEqual(auditBefore);
+    expect(await f.repository.findProjectById("invited-project-1")).toMatchObject({ clientId: null });
+  });
+
   it("preflights disabled delivery without invitation or audit writes", async () => {
     const f = setup({ disabled: true });
     const before = await f.repository.listAuditEvents({});

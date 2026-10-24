@@ -1,6 +1,6 @@
 import bcrypt from "bcryptjs";
 import { randomUUID } from "node:crypto";
-import { z } from "zod";
+import { requireValidNewPassword } from "./password-policy.js";
 import { isReservedDemoEmail, isReservedDevelopmentDemoIdentity } from "../domain/demo-identities.js";
 import { normalizeEmail } from "../domain/email.js";
 import type { ProjectClientInvitationRecord, ProjectClientInvitationSummary } from "../domain/project-client-invitations.js";
@@ -156,7 +156,8 @@ export function createProjectClientInvitationService(deps: ProjectClientInvitati
       return { projectId: project.id, projectName: project.name, clientName: project.clientName, email: record.emailNormalized, expiresAt: record.expiresAt, requiresSignIn: existing !== null };
     },
     async acceptNew(input: { token: string; password: string; passwordConfirmation: string }, context: AuthenticationRequestContext) {
-      if (!z.string().min(12).max(128).safeParse(input.password).success || input.password !== input.passwordConfirmation) throw new ApiError(400, "VALIDATION_ERROR", "Use matching passwords between 12 and 128 characters.");
+      requireValidNewPassword(input.password);
+      if (input.password !== input.passwordConfirmation) throw new ApiError(400, "VALIDATION_ERROR", "Passwords do not match.", { passwordConfirmation: "Passwords do not match." });
       try { auth.assertClientInvitationRequestContext?.(context); }
       catch { throw new ApiError(401, "INVALID_CREDENTIALS", "Invalid email or password."); }
       const result = await accept(input.token, undefined, input.password);

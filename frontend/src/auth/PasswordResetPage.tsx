@@ -1,3 +1,4 @@
+import { newPasswordError, PASSWORD_HINT } from "./passwordPolicy";
 import { Eye, EyeOff } from "lucide-react";
 import {
   useEffect,
@@ -40,12 +41,8 @@ function validatePasswords(
   password: string,
   passwordConfirmation: string
 ): PasswordErrors {
-  if (password.length < 12) {
-    return { password: "Password must be at least 12 characters." };
-  }
-  if (password.length > 128) {
-    return { password: "Password must be at most 128 characters." };
-  }
+  const passwordError = newPasswordError(password);
+  if (passwordError) return { password: passwordError };
   if (password !== passwordConfirmation) {
     return { passwordConfirmation: "Passwords do not match." };
   }
@@ -285,7 +282,7 @@ export function PasswordResetPage() {
                     : "login-field__message login-field__message--hint"
                 }
               >
-                {errors.password ?? "Use 12 to 128 characters."}
+                {errors.password ?? PASSWORD_HINT}
               </p>
             </div>
 

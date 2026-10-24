@@ -1307,7 +1307,11 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
         ...(change.role === undefined ? {} : { role: change.role }),
         ...(change.active === undefined ? {} : { active: change.active }),
         updatedAt: change.updatedAt,
-        version: current.version + 1
+        version: current.version + 1,
+        sessionVersion: (current.sessionVersion ?? 1) + (
+          (change.role !== undefined && change.role !== current.role) ||
+          (change.active !== undefined && change.active !== current.active) ? 1 : 0
+        )
       };
       state.users[index] = updated;
       return clone(updated);

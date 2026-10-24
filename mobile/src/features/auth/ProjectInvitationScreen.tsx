@@ -10,7 +10,7 @@ import { BackButton } from "../../ui/BackButton";
 import { Button, Field } from "../../ui/primitives";
 import { colors, fonts } from "../../ui/tokens";
 import { AuthFrame } from "./AuthFrame";
-import { newPasswordSchema } from "./validation";
+import { newPasswordSchema, PASSWORD_HINT } from "./validation";
 
 const inspectionSchema = z.object({ projectId: z.string().min(1), projectName: z.string(), clientName: z.string(), email: z.string().email(), expiresAt: z.string(), requiresSignIn: z.boolean() });
 type Inspection = z.infer<typeof inspectionSchema>;
@@ -75,6 +75,7 @@ export function ProjectInvitationScreen() {
       <Text style={styles.copy}>Invitation expires {new Date(inspection.expiresAt).toLocaleString()}.</Text>
       {wrongAccount ? <><Text style={styles.error}>Sign out of the current account to join using the invited email.</Text><Button label="Sign out" variant="secondary" disabled={busy} onPress={() => void context.runtime.session.logout()} /></> : <>
         {!matches ? <Field label={inspection.requiresSignIn ? "Account password" : "New password"} value={password} onChangeText={setPassword} secureTextEntry editable={!busy} autoComplete={inspection.requiresSignIn ? "current-password" : "new-password"} /> : null}
+        {!matches && !inspection.requiresSignIn ? <Text style={styles.copy}>{PASSWORD_HINT}</Text> : null}
         {!matches && !inspection.requiresSignIn ? <Field label="Confirm new password" value={confirmation} onChangeText={setConfirmation} secureTextEntry editable={!busy} autoComplete="new-password" /> : null}
         <Button label="Accept project invitation" loading={busy} onPress={() => void accept()} />
       </>}

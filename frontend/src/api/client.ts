@@ -51,17 +51,67 @@ export class ApiError extends Error {
   }
 }
 
+// Token equality alone does not identify a session: a user may log out and
+// sign back in with the same credential while an earlier request is pending.
+let credentialGeneration = 0;
+let observedToken: string | null | undefined;
+function currentToken(): string | null {
+  const token = window.localStorage.getItem(TOKEN_KEY);
+  if (token !== observedToken) {
+    observedToken = token;
+    credentialGeneration += 1;
+  }
+  return token;
+}
+window.addEventListener("storage", (event) => {
+  if (event.storageArea && event.storageArea !== window.localStorage) return;
+  if (event.key === TOKEN_KEY || event.key === null) {
+    credentialGeneration += 1;
+    observedToken = window.localStorage.getItem(TOKEN_KEY);
+  }
+});
+
 export const tokenStorage = {
-  get(): string | null {
-    return window.localStorage.getItem(TOKEN_KEY);
+  get: currentToken,
+  invalidate(): void {
+    credentialGeneration += 1;
   },
   set(token: string): void {
     window.localStorage.setItem(TOKEN_KEY, token);
+    observedToken = token;
+    credentialGeneration += 1;
   },
   clear(): void {
     window.localStorage.removeItem(TOKEN_KEY);
+    observedToken = null;
+    credentialGeneration += 1;
   }
 };
+
+interface RequestScope { token: string | null; generation: number }
+function captureScope(): RequestScope {
+  const token = currentToken();
+  return { token, generation: credentialGeneration };
+}
+function assertCurrent(scope: RequestScope | null): void {
+  if (scope && (currentToken() !== scope.token || credentialGeneration !== scope.generation)) {
+    throw new DOMException("The request belongs to an earlier session.", "AbortError");
+  }
+}
+async function readScoped<T>(scope: RequestScope | null, read: () => Promise<T>): Promise<T> {
+  try {
+    return await read();
+  } finally {
+    // Also suppress old-session parser/network errors and their private fields.
+    assertCurrent(scope);
+  }
+}
+function expireSession(scope: RequestScope | null): void {
+  assertCurrent(scope);
+  if (!scope?.token) return;
+  tokenStorage.clear();
+  window.dispatchEvent(new CustomEvent("lisno:unauthorized", { detail: { token: scope.token } }));
+}
 
 interface LoadingOptions {
   /** Disable the page indicator when the caller owns local or background feedback. */
@@ -129,25 +179,26 @@ function buildHeaders(
 async function fetchApi(
   path: string,
   options: RequestInit,
-  requestToken: string | null
+  scope: RequestScope | null
 ): Promise<Response> {
   const url = resolveApiUrl(API_BASE_URL, path);
-  const response = await fetch(url, options);
-
+  let response: Response;
+  try {
+    response = await fetch(url, options);
+  } catch (error) {
+    assertCurrent(scope);
+    throw error;
+  }
+  try {
+    assertCurrent(scope);
+  } catch (error) {
+    void response.body?.cancel().catch(() => {});
+    throw error;
+  }
   if (!response.ok) {
-    const error = await parseApiError(response);
-    if (
-      response.status === 401 &&
-      requestToken !== null &&
-      tokenStorage.get() === requestToken
-    ) {
-      tokenStorage.clear();
-      window.dispatchEvent(
-        new CustomEvent("lisno:unauthorized", {
-          detail: { token: requestToken }
-        })
-      );
-    }
+    const error = await readScoped(scope, () => parseApiError(response));
+    assertCurrent(scope);
+    if (response.status === 401) expireSession(scope);
     throw error;
   }
 
@@ -161,13 +212,14 @@ async function request<T>(
   const finish = showGlobalLoader ? beginApiRequest() : () => {};
   try {
     const hasBody = body !== undefined;
-    const requestToken = tokenStorage.get();
+    const scope = captureScope();
     const response = await fetchApi(path, {
       ...options,
-      headers: buildHeaders(headers, hasBody, requestToken),
+      headers: buildHeaders(headers, hasBody, scope.token),
       ...(hasBody ? { body: JSON.stringify(body) } : {})
-    }, requestToken);
-    const envelope = (await response.json()) as ApiResponse<T>;
+    }, scope);
+    const envelope = (await readScoped(scope, () => response.json())) as ApiResponse<T>;
+    assertCurrent(scope);
     return envelope.data;
   } finally {
     finish();
@@ -210,15 +262,36 @@ export const apiClient = {
   /** Authenticated long-lived response; the caller owns stream parsing and cleanup. */
   async stream(path: string, options: RequestOptions = {}): Promise<Response> {
     const { headers, showGlobalLoader: _showGlobalLoader, ...requestOptions } = options;
-    const requestToken = tokenStorage.get();
-    const streamHeaders = buildHeaders(headers, false, requestToken);
+    const scope = captureScope();
+    const streamHeaders = buildHeaders(headers, false, scope.token);
     streamHeaders.set("Accept", "text/event-stream");
-    return fetchApi(path, {
+    const response = await fetchApi(path, {
       ...requestOptions,
       method: "GET",
       headers: streamHeaders,
       cache: "no-store"
-    }, requestToken);
+    }, scope);
+    if (!response.body) return response;
+    const reader = response.body.getReader();
+    const body = new ReadableStream<Uint8Array>({
+      async pull(controller) {
+        try {
+          assertCurrent(scope);
+          const chunk = await readScoped(scope, () => reader.read());
+          assertCurrent(scope);
+          if (chunk.done) { reader.releaseLock(); controller.close(); }
+          else controller.enqueue(chunk.value);
+        } catch (error) {
+          await reader.cancel().catch(() => {});
+          reader.releaseLock();
+          controller.error(error);
+        }
+      },
+      async cancel(reason) {
+        try { await reader.cancel(reason); } finally { reader.releaseLock(); }
+      }
+    }, { highWaterMark: 0 });
+    return new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
   },
   get<T>(path: string, options?: RequestOptions): Promise<T> {
     return request<T>(path, { ...options, method: "GET" });
@@ -241,11 +314,13 @@ export const apiClient = {
   async putMultipart<T>(path: string, body: FormData): Promise<T> {
     const finish = beginApiRequest();
     try {
-      const requestToken = tokenStorage.get();
+      const scope = captureScope();
       const response = await fetchApi(path, {
-        method: "PUT", headers: buildHeaders(undefined, false, requestToken), body
-      }, requestToken);
-      return ((await response.json()) as ApiResponse<T>).data;
+        method: "PUT", headers: buildHeaders(undefined, false, scope.token), body
+      }, scope);
+      const envelope = (await readScoped(scope, () => response.json())) as ApiResponse<T>;
+      assertCurrent(scope);
+      return envelope.data;
     } finally {
       finish();
     }
@@ -253,13 +328,14 @@ export const apiClient = {
   async postMultipart<T>(path: string, body: FormData, { showGlobalLoader = true }: LoadingOptions = {}): Promise<T> {
     const finish = showGlobalLoader ? beginApiRequest() : () => {};
     try {
-      const requestToken = tokenStorage.get();
+      const scope = captureScope();
       const response = await fetchApi(path, {
         method: "POST",
-        headers: buildHeaders(undefined, false, requestToken),
+        headers: buildHeaders(undefined, false, scope.token),
         body
-      }, requestToken);
-      const envelope = (await response.json()) as ApiResponse<T>;
+      }, scope);
+      const envelope = (await readScoped(scope, () => response.json())) as ApiResponse<T>;
+      assertCurrent(scope);
       return envelope.data;
     } finally {
       finish();
@@ -271,7 +347,7 @@ export const apiClient = {
     onProgress: (percent: number) => void,
     { showGlobalLoader = true, signal, timeoutMs }: UploadOptions = {}
   ): Promise<T> {
-    const requestToken = tokenStorage.get();
+    const scope = captureScope();
     const url = resolveApiUrl(API_BASE_URL, path);
     const finish = showGlobalLoader ? beginApiRequest() : () => {};
     return new Promise<T>((resolve, reject) => {
@@ -299,16 +375,22 @@ export const apiClient = {
       xhr.open("POST", url);
       if (timeoutMs !== undefined) xhr.timeout = timeoutMs;
 
-      const headers = buildHeaders(undefined, false, requestToken);
+      const headers = buildHeaders(undefined, false, scope.token);
       headers.forEach((value, name) => xhr.setRequestHeader(name, value));
 
+      const ensureCurrent = () => {
+        if (settled) return false;
+        try { assertCurrent(scope); return true; }
+        catch (error) { fail(error); xhr.abort(); return false; }
+      };
       xhr.upload.onprogress = (event) => {
+        if (!ensureCurrent()) return;
         if (settled || signal?.aborted || !event.lengthComputable || event.total <= 0) return;
         onProgress(Math.min(100, Math.max(0, Math.round((event.loaded / event.total) * 100))));
       };
 
       xhr.onload = () => {
-        if (settled) return;
+        if (!ensureCurrent()) return;
         if (xhr.status >= 200 && xhr.status < 300) {
           try {
             const data = (JSON.parse(xhr.responseText) as ApiResponse<T>).data;
@@ -321,24 +403,13 @@ export const apiClient = {
         }
 
         const error = parseXhrApiError(xhr.status, xhr.responseText);
-        if (
-          xhr.status === 401 &&
-          requestToken !== null &&
-          tokenStorage.get() === requestToken
-        ) {
-          tokenStorage.clear();
-          window.dispatchEvent(
-            new CustomEvent("lisno:unauthorized", {
-              detail: { token: requestToken }
-            })
-          );
-        }
+        if (xhr.status === 401) expireSession(scope);
         fail(error);
       };
 
-      xhr.onerror = () => fail(new ApiError(0, "REQUEST_FAILED", "The request could not be completed."));
-      xhr.onabort = () => fail(new DOMException("Upload cancelled.", "AbortError"));
-      xhr.ontimeout = () => fail(new ApiError(0, "REQUEST_TIMEOUT", "The upload timed out. Please retry."));
+      xhr.onerror = () => ensureCurrent() && fail(new ApiError(0, "REQUEST_FAILED", "The request could not be completed."));
+      xhr.onabort = () => ensureCurrent() && fail(new DOMException("Upload cancelled.", "AbortError"));
+      xhr.ontimeout = () => ensureCurrent() && fail(new ApiError(0, "REQUEST_TIMEOUT", "The upload timed out. Please retry."));
       signal?.addEventListener("abort", abort, { once: true });
       try { xhr.send(body); } catch (error) { fail(error); }
     }).finally(finish);
@@ -349,12 +420,12 @@ export const apiClient = {
   ): Promise<{ blob: Blob; filename: string | undefined }> {
     const finish = showGlobalLoader ? beginApiRequest() : () => {};
     try {
-      const requestToken = tokenStorage.get();
+      const scope = captureScope();
       const response = await fetchApi(path, {
         method: "GET",
-        headers: buildHeaders(undefined, false, requestToken),
+        headers: buildHeaders(undefined, false, scope.token),
         signal
-      }, requestToken);
+      }, scope);
       const sizeHeader = response.headers.get("Content-Length");
       const declaredSize = sizeHeader === null ? NaN : Number(sizeHeader);
       const totalBytes = Number.isSafeInteger(declaredSize) && declaredSize >= 0 ? declaredSize : null;
@@ -371,7 +442,8 @@ export const apiClient = {
         try {
           while (true) {
             signal?.throwIfAborted();
-            const { done, value } = await reader.read();
+            const { done, value } = await readScoped(scope, () => reader.read());
+            assertCurrent(scope);
             signal?.throwIfAborted();
             if (done) break;
             loadedBytes += value.byteLength;
@@ -385,11 +457,13 @@ export const apiClient = {
           throw error;
         } finally { reader.releaseLock(); }
       } else {
-        blob = await response.blob();
+        blob = await readScoped(scope, () => response.blob());
+        assertCurrent(scope);
         signal?.throwIfAborted();
         if (maxBytes !== undefined && blob.size > maxBytes) throw tooLarge();
         onProgress?.({ loadedBytes: blob.size, totalBytes });
       }
+      assertCurrent(scope);
       return {
         blob,
         filename: filenameFromDisposition(response.headers.get("Content-Disposition"))

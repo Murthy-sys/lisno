@@ -12,12 +12,25 @@ Python 3.11 or newer is required:
 cd ocr-worker
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -e ".[test,model]"
+python -m pip install --upgrade "pip==26.2"
+python -m pip install -r requirements-model.lock -c security-constraints.txt
+python -m pip install --no-deps -e ".[test,model]"
 ```
 
 The `model` extra installs PaddleOCR and PaddlePaddle. To run contract tests
-without the OCR runtime or model downloads, install only `-e ".[test]"`.
+without the OCR runtime or model downloads, install `requirements.lock` with
+`-c security-constraints.txt`, then install `--no-deps -e ".[test]"`.
+
+The lockfiles preserve unaffected versions and include the October 2026 security
+updates. `security-constraints.txt` prevents known vulnerable transitive versions
+when resolving updates. Regenerate with Python 3.11 using
+`uv pip compile pyproject.toml --extra test --constraint security-constraints.txt --output-file requirements.lock`;
+add `--extra model` and use `requirements-model.lock` for the model environment.
+Retain the existing PaddleOCR/PaddlePaddle versions unless a model upgrade is
+explicitly tested. Re-audit generated locks and run non-model tests after updates.
+The optional lock was resolved from metadata without installing or executing
+models. Verify native wheels, compatibility and inference on the actual target
+platform before deploying it.
 
 `pillow-heif` is installed in the base worker environment. Deploy with a
 compatible prebuilt wheel that supplies native HEIF support, or install the
@@ -42,9 +55,18 @@ the committed PNG only when deliberately updating the model smoke fixture.
 - `OCR_WORKER_TOKEN` — required shared secret of at least 32 characters; it must
   exactly match the backend value and must never reach browser code.
 - `OCR_API_BASE_URL` — versioned backend base URL; default
-  `http://127.0.0.1:3000/api/v1`.
+  `http://127.0.0.1:3000/api/v1`. Remote backends require HTTPS with a valid
+  certificate. HTTP is accepted only for literal loopback IP addresses; DNS
+  names such as `localhost` are not accepted for HTTP. URL credentials,
+  queries, fragments, encoded paths, and path traversal are rejected.
 - `OCR_POLL_SECONDS` — positive empty-queue poll delay; default `5`.
-- `OCR_REQUEST_TIMEOUT_SECONDS` — positive HTTP timeout; default `60`.
+- `OCR_REQUEST_TIMEOUT_SECONDS` — finite positive HTTP budget; default `60`.
+  Requests and each socket read share a deadline, including slowly arriving
+  headers and bodies. OS DNS resolution is subject to the host resolver's
+  timeout; use a reliable resolver and process supervision in deployment.
+- `OCR_MAX_SOURCE_BYTES` — streamed source download limit; default 64 MiB,
+  hard maximum 256 MiB. Set this to cover the backend's approved upload limit.
+  Worker API JSON responses have a separate fixed 1 MiB limit.
 - `OCR_CONFIDENCE_FLOOR` — candidates below this score are discarded; default
   `0.2`, while candidates below the UI warning threshold remain reviewable.
 - `OCR_ACCEPTED_PLAN_TYPES` — comma-separated plan families eligible for OCR
@@ -69,6 +91,14 @@ The backend controls `OCR_LEASE_SECONDS` (default `300`) and returns the
 authoritative duration on every claim and renewal. The worker schedules each
 heartbeat from that response with a safety fraction; no duplicate worker lease
 setting is required. An abandoned job becomes claimable after expiry.
+
+Source downloads must use the configured backend origin and the exact source
+route for the claimed job. Root-relative and API-relative backend source URLs
+remain supported. The worker never follows redirects or uses environment HTTP
+proxies. Partial, oversized, encoded, empty, and failed downloads are rejected;
+temporary source files have private permissions and are removed after failures
+or processing. Failure callbacks contain fixed messages for the documented
+codes, never model, transport, or filesystem exception text.
 
 ```bash
 export OCR_WORKER_TOKEN="local-development-only-ocr-worker-token-123456"

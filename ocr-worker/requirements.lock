@@ -1,0 +1,10 @@
+# Audited base/test environment, Python 3.11. See README.md for regeneration.
+iniconfig==2.3.0
+numpy==2.3.5
+packaging==26.2
+pillow==13.0.0
+pillow-heif==1.8.1
+pluggy==1.6.0
+pygments==2.20.0
+pymupdf==1.28.0
+pytest==9.1.1

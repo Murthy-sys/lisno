@@ -126,7 +126,7 @@ def second_job():
 
 def settings():
     return WorkerSettings(
-        api_base_url="http://backend.example/api/v1",
+        api_base_url="https://backend.example/api/v1",
         worker_token="worker-token-with-at-least-32-characters",
         poll_seconds=2.5,
         request_timeout_seconds=30,
@@ -370,7 +370,7 @@ def test_run_worker_constructs_estimate_extractor_with_claimed_taxonomy(
         ClaimedJob(
             id="estimate-job-1",
             claim_token="claim-1",
-            source_url="/source",
+            source_url="/api/v1/internal/extraction-jobs/estimate-job-1/source",
             source_filename="plan.png",
             source_mime_type="image/png",
             lease_duration_seconds=0.06,
@@ -446,7 +446,7 @@ def test_download_uses_authoritative_mime_type_for_temporary_suffix(
     claimed = ClaimedJob(
         id="job-1",
         claim_token="claim-1",
-        source_url="/source",
+        source_url="/api/v1/internal/extraction-jobs/job-1/source",
         source_filename="wrong.pdf",
         source_mime_type=mime_type,
         lease_duration_seconds=300,
@@ -509,7 +509,7 @@ def test_worker_reports_an_extraction_that_runs_past_its_processing_deadline():
             return []
 
     limited_settings = WorkerSettings(
-        api_base_url="http://backend.example/api/v1",
+        api_base_url="https://backend.example/api/v1",
         worker_token="worker-token-with-at-least-32-characters",
         poll_seconds=2.5,
         request_timeout_seconds=30,
@@ -527,7 +527,7 @@ def test_worker_reports_an_extraction_that_runs_past_its_processing_deadline():
     assert observed[0][0] == "project_design"
     assert api.completed == []
     assert api.failed[0][1].code == "OCR_FAILED"
-    assert api.failed[0][1].message == "The extraction exceeded its processing time limit."
+    assert api.failed[0][1].message == "The OCR worker could not process the source."
 
 
 def test_worker_interrupts_an_extractor_that_blocks_past_its_processing_deadline():
@@ -545,7 +545,7 @@ def test_worker_interrupts_an_extractor_that_blocks_past_its_processing_deadline
             return []
 
     limited_settings = WorkerSettings(
-        api_base_url="http://backend.example/api/v1",
+        api_base_url="https://backend.example/api/v1",
         worker_token="worker-token-with-at-least-32-characters",
         poll_seconds=2.5,
         request_timeout_seconds=30,
@@ -567,7 +567,7 @@ def test_worker_interrupts_an_extractor_that_blocks_past_its_processing_deadline
     assert time.monotonic() - started < 0.15
     assert api.completed == []
     assert api.failed[0][1].code == "OCR_FAILED"
-    assert api.failed[0][1].message == "The extraction exceeded its processing time limit."
+    assert api.failed[0][1].message == "The OCR worker could not process the source."
     assert signal.getsignal(signal.SIGALRM) == original_handler
 
 
@@ -586,7 +586,7 @@ def test_worker_interrupts_with_an_existing_alarm_and_restores_it_afterward():
             return []
 
     limited_settings = WorkerSettings(
-        api_base_url="http://backend.example/api/v1",
+        api_base_url="https://backend.example/api/v1",
         worker_token="worker-token-with-at-least-32-characters",
         poll_seconds=2.5,
         request_timeout_seconds=30,
@@ -633,7 +633,7 @@ def test_worker_reports_bounded_failure_without_a_traceback():
     assert api.completed == []
     assert api.failed[0][0] == "job-1"
     assert api.failed[0][1].code == "OCR_FAILED"
-    assert api.failed[0][1].message == "engine failed"
+    assert api.failed[0][1].message == "The OCR worker could not process the source."
     assert len(api.failed[0][1].message) <= 500
 
 

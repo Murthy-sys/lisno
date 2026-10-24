@@ -42,3 +42,12 @@ it("reads fragments only from the project invitation route", () => {
   expect(invitationToken(undefined, "lisno-dev://unrelated#token=synthetic")).toBe("");
   expect(invitationToken(["multiple"], null)).toBe("");
 });
+it.each(["a".repeat(73), "🙂".repeat(19)])("explains byte-oversized new passwords without creating an account", async value => {
+  const { acceptProjectInvitation } = setup(); await render(<ProjectInvitationScreen />);
+  await screen.findByText("Accept project invitation");
+  await fireEvent.changeText(screen.getByLabelText("New password"), value);
+  await fireEvent.changeText(screen.getByLabelText("Confirm new password"), value);
+  await fireEvent.press(screen.getByText("Accept project invitation"));
+  expect(await screen.findByText("Password must be at most 72 UTF-8 bytes. Accented characters and emoji use more than one byte.")).toHaveProp("accessibilityLiveRegion", "assertive");
+  expect(acceptProjectInvitation).not.toHaveBeenCalled();
+});

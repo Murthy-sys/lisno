@@ -99,6 +99,24 @@ async function waitForResetLink(
 }
 
 describe("self-service password reset", () => {
+  it.each(["a".repeat(73), "é".repeat(37), "😀".repeat(19), "short"])("rejects an invalid new password without consuming a reset or hashing", async password => {
+    const repository = createMemoryRepository(standardSeed());
+    const mailer = recordingMailer();
+    const jobs: Array<() => Promise<void>> = [];
+    const passwordHasher = vi.fn(async () => "unused");
+    const service = createPasswordResetService({ repository, audit: createAuditService(repository), mailer, clock: () => new Date(), dispatch: job => { jobs.push(job); }, passwordHasher });
+    await service.request("recovery-user@example.test");
+    await jobs.shift()!();
+    const rawToken = mailer.resetLinks[0]!.rawToken;
+    const userBefore = await repository.findUserById("user-password-reset");
+    const auditsBefore = await repository.listAuditEvents({});
+    await expect(service.complete({ rawToken, password })).rejects.toMatchObject({ status: 400, code: "VALIDATION_ERROR", fields: { password: expect.any(String) } });
+    expect(passwordHasher).not.toHaveBeenCalled();
+    await expect(service.inspect(rawToken)).resolves.toEqual({ available: true });
+    expect(await repository.findUserById("user-password-reset")).toEqual(userBefore);
+    expect(await repository.listAuditEvents({})).toEqual(auditsBefore);
+  });
+
   it("fails closed before account lookup when reset mail is globally disabled", async () => {
     const base = createMemoryRepository(standardSeed());
     const findUserByEmail = vi.fn(base.findUserByEmail.bind(base));

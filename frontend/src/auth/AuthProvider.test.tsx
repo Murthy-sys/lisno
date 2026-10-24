@@ -990,7 +990,7 @@ describe("AuthProvider cache isolation", () => {
     await userEvent.click(screen.getByRole("button", { name: "Log in as B" }));
     await cleanupStarted.promise;
     staleResponseGate.resolve();
-    await expect(staleARequest).rejects.toMatchObject({ status: 401 });
+    await expect(staleARequest).rejects.toMatchObject({ name: "AbortError" });
 
     expect(tokenStorage.get()).toBe("token-b");
     expect(screen.getByLabelText("Session expired")).toHaveTextContent("false");
@@ -1469,14 +1469,18 @@ describe("AuthProvider login review lifecycle", () => {
   it("does not restart auth or recreate a marker after external logout", async () => {
     tokenStorage.set("token-a");
     vi.spyOn(globalThis, "fetch").mockImplementation(async input => restoredSessionResponse(input, userA));
-    renderAuthProvider();
+    const { queryClient } = renderAuthProvider();
     await waitFor(() => expect(screen.getByLabelText("Review user")).toHaveTextContent(userA.id));
     const old = captureLoginReviewSession()!;
+    queryClient.setQueryData(["private-viewer"], { owner: userA.id });
     act(() => {
       tokenStorage.clear();
       localStorage.removeItem("lisno.auth.login-review.v1");
       window.dispatchEvent(new StorageEvent("storage", { key: "lisno.auth.login-review.v1", storageArea: localStorage }));
     });
+    await waitFor(() => expect(screen.getByLabelText("Authentication status")).toHaveTextContent(/^unauthenticated$/));
+    expect(screen.getByLabelText("Current user")).toHaveTextContent("none");
+    expect(queryClient.getQueryData(["private-viewer"])).toBeUndefined();
     expect(getLoginReviewState(old)).toBe("stale");
     expect(globalThis.fetch).toHaveBeenCalledTimes(2);
     expect(captureLoginReviewSession()).toBeNull();
@@ -1618,4 +1622,26 @@ describe("AuthProvider login review lifecycle", () => {
     expect(await consumeLoginReview(accepted, () => true)).toBe(false);
     expect(tokenStorage.get()).toBe("token-b");
   });
+});
+
+it("security audit: late mutation cannot repopulate a new user's private cache", async () => {
+  tokenStorage.set("synthetic-user-a");
+  let release!: (response: Response) => void;
+  const pending = new Promise<Response>(resolve => { release = resolve; });
+  vi.spyOn(globalThis, "fetch").mockReturnValue(pending);
+  const queryClient = createQueryClient();
+  const key = ["estimate-requirements", "synthetic-project-a"];
+  const mutation = queryClient.getMutationCache().build(queryClient, {
+    mutationFn: () => apiClient.post("/projects/synthetic-project-a/estimate-requirements", { synthetic: true }),
+    onSuccess: detail => { queryClient.setQueryData(key, detail); }
+  });
+  const result = mutation.execute(undefined).catch(() => undefined);
+  await waitFor(() => expect(globalThis.fetch).toHaveBeenCalledTimes(1));
+  await queryClient.cancelQueries();
+  queryClient.clear();
+  tokenStorage.clear();
+  tokenStorage.set("synthetic-user-b");
+  release(Response.json({ data: { syntheticPrivateData: "user-a-only" } }));
+  await result;
+  expect(queryClient.getQueryData(key)).toBeUndefined();
 });

@@ -53,11 +53,11 @@ services:
     plan: starter
     region: singapore
     rootDir: ocr-worker
-    buildCommand: pip install --upgrade pip && pip install ".[model]"
+    buildCommand: pip install --upgrade "pip==26.2" && pip install -r requirements-model.lock -c security-constraints.txt && pip install --no-deps ".[model]"
     startCommand: lisno-ocr-worker
     envVars:
       - key: PYTHON_VERSION
-        value: "3.11.11"
+        value: "3.11.17"
       - key: OCR_API_BASE_URL
         sync: false
       - key: OCR_WORKER_TOKEN

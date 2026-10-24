@@ -1,5 +1,6 @@
 import { randomBytes as cryptoRandomBytes, randomUUID } from "node:crypto";
 import bcrypt from "bcryptjs";
+import { requireValidNewPassword } from "./password-policy.js";
 
 import {
   PASSWORD_RESET_RECIPIENT_WINDOW_MS,
@@ -171,6 +172,7 @@ export function createPasswordResetService(
     },
 
     async complete({ rawToken, password }) {
+      requireValidNewPassword(password);
       if (!PASSWORD_RESET_TOKEN_PATTERN.test(rawToken)) {
         throw new PasswordResetUnavailableError();
       }

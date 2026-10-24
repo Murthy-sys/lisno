@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import os
+import math
 from dataclasses import dataclass
 from typing import Literal
+
+from .transport import backend_url
 
 
 FailureCode = Literal[
@@ -139,6 +142,14 @@ class WorkerSettings:
     max_page_pixels: int = 40_000_000
     max_output_bytes: int = 40 * 1024 * 1024
     max_processing_seconds: float = 900.0
+    max_source_bytes: int = 64 * 1024 * 1024
+
+    def __post_init__(self) -> None:
+        backend_url(self.api_base_url)
+        if not 0 < self.max_source_bytes <= 256 * 1024 * 1024:
+            raise ValueError("OCR_MAX_SOURCE_BYTES must be between 1 and 268435456.")
+        if not math.isfinite(self.request_timeout_seconds) or self.request_timeout_seconds <= 0:
+            raise ValueError("OCR_REQUEST_TIMEOUT_SECONDS must be finite and positive.")
 
     @classmethod
     def from_environment(cls) -> WorkerSettings:
@@ -157,6 +168,9 @@ class WorkerSettings:
             "OCR_MAX_OUTPUT_BYTES", 40 * 1024 * 1024, 44 * 1024 * 1024
         )
         max_processing_seconds = _positive_float("OCR_MAX_PROCESSING_SECONDS", 900.0)
+        max_source_bytes = _bounded_positive_int(
+            "OCR_MAX_SOURCE_BYTES", 64 * 1024 * 1024, 256 * 1024 * 1024
+        )
         return cls(
             api_base_url=api_base_url,
             worker_token=worker_token,
@@ -167,6 +181,7 @@ class WorkerSettings:
             max_page_pixels=max_page_pixels,
             max_output_bytes=max_output_bytes,
             max_processing_seconds=max_processing_seconds,
+            max_source_bytes=max_source_bytes,
         )
 
 
@@ -193,7 +208,7 @@ class ResultRejectedError(ExtractionError):
 def _positive_float(name: str, default: float) -> float:
     raw = os.environ.get(name)
     value = default if raw is None else float(raw)
-    if value <= 0:
+    if not math.isfinite(value) or value <= 0:
         raise ValueError(f"{name} must be positive.")
     return value
 

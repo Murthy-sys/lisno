@@ -1,9 +1,10 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import axe from "axe-core";
 import { http, HttpResponse } from "msw";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { MemoryRouter } from "react-router-dom";
 
 import { ApiError, apiClient } from "../../api/client";
 import { useAuth } from "../../auth/AuthProvider";
@@ -20,9 +21,9 @@ function asSuperAdmin() {
   vi.mocked(useAuth).mockReturnValue({ user: { id: "sa-one", role: "super_admin" }, authorization: authorizationFor("super_admin", ["projects.design_workflow.payments.read", "projects.design_workflow.act"]) } as ReturnType<typeof useAuth>);
 }
 
-function setup(workflow?: DesignWorkflowView) {
+function setup(workflow?: DesignWorkflowView, summaryHref?: string) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-  return { client, ...render(<QueryClientProvider client={client}>{workflow ? <ProjectInitialPaymentStatus workflow={workflow} /> : <DesignPaymentConfirmations />}</QueryClientProvider>) };
+  return { client, ...render(<QueryClientProvider client={client}>{workflow ? <ProjectInitialPaymentStatus workflow={workflow} /> : <MemoryRouter><DesignPaymentConfirmations summaryHref={summaryHref} /></MemoryRouter>}</QueryClientProvider>) };
 }
 
 beforeEach(() => {
@@ -31,6 +32,53 @@ beforeEach(() => {
 });
 
 describe("DesignPaymentConfirmations", () => {
+  it("counts unconfirmed receipts including final-estimate attestations without exposing summary mutations", async () => {
+    asSuperAdmin();
+    server.use(http.get("/api/v1/design-workflow/payment-confirmations", () => HttpResponse.json({ data: [
+      { projectId: "new", projectName: "New receipt", confirmedAt: null, version: 0, canConfirm: true },
+      { projectId: "attestation", projectName: "Existing receipt", confirmedAt: null, version: 3, canConfirm: true, workflowVersion: 2, requiresAttestation: true, existingReceiptAt: "2026-09-11T09:04:00.000Z" },
+      { projectId: "done", projectName: "Confirmed", confirmedAt: "2026-09-11T09:04:00.000Z", version: 4, canConfirm: false }
+    ] })));
+    const post = vi.spyOn(apiClient, "post");
+    const href = "/admin/dashboard?tab=finance&periodDays=30&section=payments";
+    const { container } = setup(undefined, href);
+    const region = screen.getByRole("region", { name: "Initial payment confirmations" });
+    const link = await within(region).findByRole("link", { name: /Awaiting initial payment confirmation/ });
+    await waitFor(() => expect(link).toHaveTextContent("2"));
+    expect(link).toHaveAttribute("href", href);
+    expect(region).toHaveTextContent("Review receipts and final-estimate attestations");
+    expect(within(region).queryByRole("form")).not.toBeInTheDocument();
+    expect(within(region).queryByRole("textbox")).not.toBeInTheDocument();
+    expect(within(region).queryByRole("button")).not.toBeInTheDocument();
+    await userEvent.setup().click(link);
+    expect(post).not.toHaveBeenCalled();
+    expect((await axe.run(container, { rules: { "color-contrast": { enabled: false } } })).violations).toEqual([]);
+  });
+
+  it("keeps a failed compact queue retryable without displaying a fabricated zero", async () => {
+    asSuperAdmin();
+    let reads = 0;
+    server.use(http.get("/api/v1/design-workflow/payment-confirmations", () => ++reads === 1
+      ? HttpResponse.json({ message: "Unavailable" }, { status: 503 })
+      : HttpResponse.json({ data: [] })));
+    setup(undefined, "/admin/dashboard?tab=finance&section=payments");
+    const region = screen.getByRole("region", { name: "Initial payment confirmations" });
+    expect(within(region).getByRole("status")).toHaveTextContent("Loading payment confirmations");
+    expect(await within(region).findByRole("alert")).toHaveTextContent("Payment confirmations could not be refreshed.");
+    expect(within(region).getByRole("link")).not.toHaveTextContent("0");
+    await userEvent.setup().click(within(region).getByRole("button", { name: "Reload confirmations" }));
+    await waitFor(() => expect(within(region).getByRole("link")).toHaveTextContent("0"));
+    expect(within(region).queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("does not fetch or render a compact queue without payment-read permission", () => {
+    vi.mocked(useAuth).mockReturnValue({ user: { id: "sa-one", role: "super_admin" }, authorization: authorizationFor("super_admin", []) } as ReturnType<typeof useAuth>);
+    const get = vi.spyOn(apiClient, "get");
+    setup(undefined, "/admin/dashboard?tab=finance&section=payments");
+    expect(screen.queryByRole("region", { name: "Initial payment confirmations" })).not.toBeInTheDocument();
+    expect(get).not.toHaveBeenCalled();
+  });
+
   it("keeps final-estimate payment read-only for Finance even if cached capabilities are stale", () => {
     setup({ ...projectWorkflow, initialPayment: { ...projectWorkflow.initialPayment!, workflowVersion: 2 } });
     expect(screen.queryByRole("button", { name: "Mark initial payment received" })).not.toBeInTheDocument();

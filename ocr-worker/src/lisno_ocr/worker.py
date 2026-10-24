@@ -1,17 +1,17 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from http.client import HTTPException
 import json
+import math
 import os
+import re
 import signal
 import tempfile
 import threading
 import time
 from pathlib import Path
 from typing import Any, Callable, Iterator, Protocol, Sequence
-from urllib.error import HTTPError, URLError
-from urllib.parse import urljoin
-from urllib.request import Request, urlopen
 from uuid import uuid4
 
 from .contracts import (
@@ -27,6 +27,7 @@ from .contracts import (
     WorkerSettings,
 )
 from .extractor import Extractor
+from .transport import bounded_chunks, open_response, source_url
 
 
 class Api(Protocol):
@@ -62,6 +63,8 @@ class WorkerApi:
             return None
         data = payload.get("data", {})
         job_id = _required_string(data, "id")
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", job_id):
+            raise ResultRejectedError("The backend returned an invalid worker job ID.")
         claim_token = _required_string(data, "claimToken")
         source_url = _required_string(data, "sourceUrl")
         kind = data.get("kind", "project_design")
@@ -90,6 +93,12 @@ class WorkerApi:
         )
 
     def download(self, claimed: ClaimedJob) -> Path:
+        try:
+            validated_url = source_url(
+                self._settings.api_base_url, claimed.source_url, claimed.id
+            )
+        except ValueError as error:
+            raise InvalidSourceError("The source download address is invalid.") from error
         suffix = {
             "application/pdf": ".pdf",
             "image/png": ".png",
@@ -100,7 +109,7 @@ class WorkerApi:
             "image/heif": ".heif",
         }.get(claimed.source_mime_type, ".bin")
         return self._download_source(
-            claimed.source_url,
+            validated_url,
             suffix,
             claimed.claim_token,
         )
@@ -150,31 +159,34 @@ class WorkerApi:
     def _download_source(
         self, source_url: str, suffix: str, claim_token: str
     ) -> Path:
-        request = Request(
-            urljoin(self._settings.api_base_url + "/", source_url),
-            headers={
+        destination: Path | None = None
+        try:
+            with open_response(source_url, "GET", {
                 "Authorization": f"Bearer {self._settings.worker_token}",
                 "X-Extraction-Claim-Token": claim_token,
-            },
-            method="GET",
-        )
-        try:
-            with urlopen(
-                request, timeout=self._settings.request_timeout_seconds
+                "Accept-Encoding": "identity",
+            }, None, self._settings.request_timeout_seconds
             ) as response:
-                data = response.read()
-        except (HTTPError, URLError, TimeoutError, OSError) as error:
+                if response.status != 200:
+                    raise InvalidSourceError("The source file could not be downloaded.")
+                with tempfile.NamedTemporaryFile(
+                    prefix="lisno-ocr-", suffix=suffix, delete=False
+                ) as handle:
+                    destination = Path(handle.name)
+                    total = 0
+                    for chunk in bounded_chunks(response, self._settings.max_source_bytes):
+                        handle.write(chunk)
+                        total += len(chunk)
+                    if not total:
+                        raise InvalidSourceError("The downloaded source file is empty.")
+            result = destination
+            destination = None
+            return result
+        except (HTTPException, TimeoutError, OSError, ValueError) as error:
             raise InvalidSourceError("The source file could not be downloaded.") from error
-        if not data:
-            raise InvalidSourceError("The downloaded source file is empty.")
-        handle = tempfile.NamedTemporaryFile(
-            prefix="lisno-ocr-", suffix=suffix, delete=False
-        )
-        try:
-            handle.write(data)
         finally:
-            handle.close()
-        return Path(handle.name)
+            if destination is not None:
+                self.cleanup(destination)
 
     def _request_json(
         self,
@@ -183,9 +195,15 @@ class WorkerApi:
         body: dict[str, Any] | None = None,
         claim_token: str | None = None,
     ) -> tuple[int, dict[str, Any]]:
+        if not re.fullmatch(
+            r"/internal/extraction-jobs/(?:claim|[A-Za-z0-9_-]{1,128}/(?:heartbeat|complete|fail))",
+            path,
+        ):
+            raise ResultRejectedError("The worker request path is invalid.")
         headers = {
             "Authorization": f"Bearer {self._settings.worker_token}",
             "Accept": "application/json",
+            "Accept-Encoding": "identity",
         }
         encoded = None
         if body is not None:
@@ -193,31 +211,29 @@ class WorkerApi:
             headers["Content-Type"] = "application/json"
         if claim_token:
             headers["X-Extraction-Claim-Token"] = claim_token
-        request = Request(
-            urljoin(self._settings.api_base_url + "/", path.lstrip("/")),
-            data=encoded,
-            headers=headers,
-            method=method,
-        )
         try:
-            with urlopen(
-                request, timeout=self._settings.request_timeout_seconds
+            with open_response(
+                self._settings.api_base_url.rstrip("/") + "/" + path.lstrip("/"),
+                method, headers, encoded, self._settings.request_timeout_seconds,
             ) as response:
                 status = response.status
-                data = response.read()
-        except HTTPError as error:
-            if 400 <= error.code < 500:
-                raise ResultRejectedError(
-                    f"The backend rejected the worker result ({error.code})."
-                ) from error
+                if 300 <= status < 500:
+                    raise ResultRejectedError("The backend rejected the worker request.")
+                if status >= 500:
+                    raise OcrError("The backend worker API is unavailable.")
+                data = b"".join(bounded_chunks(response, 1024 * 1024))
+        except (HTTPException, TimeoutError, OSError) as error:
             raise OcrError("The backend worker API is unavailable.") from error
-        except (URLError, TimeoutError, OSError) as error:
-            raise OcrError("The backend worker API is unavailable.") from error
+        except ValueError as error:
+            raise ResultRejectedError("The backend returned an invalid worker response.") from error
         if status == 204 or not data:
             return status, {}
         try:
-            return status, json.loads(data)
-        except (json.JSONDecodeError, UnicodeDecodeError) as error:
+            payload = json.loads(data)
+            if not isinstance(payload, dict):
+                raise ValueError
+            return status, payload
+        except (ValueError, UnicodeDecodeError, RecursionError) as error:
             raise ResultRejectedError(
                 "The backend returned an invalid worker response."
             ) from error
@@ -421,26 +437,21 @@ def _report_failure_with_retry(
 def classify_failure(error: Exception) -> WorkerFailure:
     if isinstance(error, PdfRenderError):
         code = "PDF_RENDER_FAILED"
+        message = "The source PDF could not be rendered."
     elif isinstance(error, InvalidSourceError):
         code = "INVALID_SOURCE"
+        message = "The source file could not be downloaded or decoded."
     elif isinstance(error, ResultRejectedError):
         code = "RESULT_REJECTED"
+        message = "The backend rejected the extraction result."
     else:
         code = "OCR_FAILED"
-    message = _safe_message(error)
+        message = "The OCR worker could not process the source."
     return WorkerFailure(code=code, message=message)
 
 
-def _safe_message(error: Exception) -> str:
-    message = " ".join(str(error).split())
-    message = message.partition("Traceback")[0].strip()
-    if not message:
-        message = "The OCR worker could not process the source."
-    return message[:500]
-
-
 def _required_string(data: dict[str, Any], field: str) -> str:
-    value = data.get(field)
+    value = data.get(field) if isinstance(data, dict) else None
     if not isinstance(value, str) or not value:
         raise ResultRejectedError(
             f"The backend worker response omitted {field}."
@@ -449,8 +460,11 @@ def _required_string(data: dict[str, Any], field: str) -> str:
 
 
 def _required_positive_number(data: dict[str, Any], field: str) -> float:
-    value = data.get(field)
-    if not isinstance(value, (int, float)) or isinstance(value, bool) or value <= 0:
+    value = data.get(field) if isinstance(data, dict) else None
+    if (
+        not isinstance(value, (int, float)) or isinstance(value, bool)
+        or not math.isfinite(value) or value <= 0
+    ):
         raise ResultRejectedError(
             f"The backend worker response omitted {field}."
         )

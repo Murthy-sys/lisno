@@ -98,6 +98,20 @@ describe("ProjectInvitationAcceptancePage", () => {
     expect(screen.getByRole("button", { name: "Hide password" })).toHaveAttribute("aria-pressed", "true");
   });
 
+  it.each(["a".repeat(73), "🙂".repeat(19)])("rejects byte-oversized new passwords before account creation", async value => {
+    inspect();
+    const accept = vi.fn();
+    server.use(http.post("/api/v1/auth/project-invitations/accept", accept));
+    showPage();
+    const input = await screen.findByLabelText("Password", { exact: true });
+    fireEvent.change(input, { target: { value } });
+    fireEvent.change(screen.getByLabelText("Confirm password"), { target: { value } });
+    await userEvent.click(screen.getByRole("button", { name: "Accept project invitation" }));
+    expect(input).toHaveFocus();
+    expect(input).toHaveAccessibleDescription(/72 UTF-8 bytes/);
+    expect(accept).not.toHaveBeenCalled();
+  });
+
   it("accepts once, installs a validated client session, and links only the returned project", async () => {
     inspect(); installSession();
     let finish!: () => void;

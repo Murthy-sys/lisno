@@ -1,3 +1,4 @@
+import { newPasswordError, PASSWORD_HINT } from "./passwordPolicy";
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { Link } from "react-router-dom";
@@ -93,8 +94,7 @@ export function ProjectInvitationAcceptancePage() {
     if (!matchingAccount) {
       const message = invitation.requiresSignIn
         ? (!password ? "Enter your password." : null)
-        : password.length < 12 ? "Password must be at least 12 characters."
-          : password.length > 128 ? "Password must be at most 128 characters." : null;
+        : newPasswordError(password);
       if (message) {
         setPasswordError(message);
         passwordInput.current?.focus();
@@ -200,7 +200,7 @@ export function ProjectInvitationAcceptancePage() {
               <button className="login-password-toggle" type="button" aria-label={showPassword ? "Hide password" : "Show password"}
                 aria-pressed={showPassword} disabled={busy || sessionBlocked} onClick={() => setShowPassword((show) => !show)}>{showPassword ? "Hide" : "Show"}</button>
             </div>
-            <p id="project-invitation-password-hint" className={`login-field__message${passwordError ? " login-field__message--error" : ""}`}>{passwordError ?? (invitation.requiresSignIn ? "Use your existing account password." : "Use 12 to 128 characters.")}</p>
+            <p id="project-invitation-password-hint" className={`login-field__message${passwordError ? " login-field__message--error" : ""}`}>{passwordError ?? (invitation.requiresSignIn ? "Use your existing account password." : PASSWORD_HINT)}</p>
           </div>
           {!invitation.requiresSignIn ? <div className="login-field">
             <label htmlFor="project-invitation-confirmation" className="login-field__label">Confirm password</label>

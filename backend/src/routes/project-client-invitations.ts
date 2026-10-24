@@ -1,5 +1,6 @@
 import { Router, type RequestHandler } from "express";
 import { z } from "zod";
+import { newPasswordSchema } from "../domain/password-policy.js";
 import { authenticate } from "../middleware/auth.js";
 import { requireOperation } from "../middleware/authorization.js";
 import { validateBody } from "../middleware/validate.js";
@@ -8,7 +9,7 @@ import type { ProjectClientInvitationService } from "../services/project-client-
 
 const tokenSchema = z.object({ token: z.string().max(128) }).strict();
 const versionSchema = z.object({ expectedVersion: z.number().int().positive() }).strict();
-const acceptSchema = tokenSchema.extend({ password: z.string().min(12).max(128), passwordConfirmation: z.string().max(128) }).strict().refine(input => input.password === input.passwordConfirmation, { path: ["passwordConfirmation"], message: "Passwords do not match." });
+const acceptSchema = tokenSchema.extend({ password: newPasswordSchema, passwordConfirmation: z.string().max(128) }).strict().refine(input => input.password === input.passwordConfirmation, { path: ["passwordConfirmation"], message: "Passwords do not match." });
 const noStore: RequestHandler = (_request, response, next) => { response.setHeader("Cache-Control", "no-store"); response.setHeader("Referrer-Policy", "no-referrer"); next(); };
 
 export function createProjectClientInvitationsRouter(auth: AuthService, service: ProjectClientInvitationService, publicRateLimit: RequestHandler, deliveryRateLimit: RequestHandler): Router {

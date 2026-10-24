@@ -6,6 +6,7 @@ import path from "node:path";
 import type { Readable } from "node:stream";
 import type { ManagedFileStorage } from "./managed-storage.js";
 import { writePrivateStream } from "./stream-file.js";
+import type { StorageWriteGuard } from "./storage-capacity.js";
 
 export interface TemporaryUpload { reference: string; sizeBytes: number; sha256: string }
 export interface TemporaryUploadStorage extends Pick<ManagedFileStorage, "open" | "readRange"> {
@@ -14,7 +15,7 @@ export interface TemporaryUploadStorage extends Pick<ManagedFileStorage, "open" 
 }
 
 /** One private directory per request; no client-supplied filesystem paths. */
-export async function createTemporaryUploadStorage(): Promise<TemporaryUploadStorage> {
+export async function createTemporaryUploadStorage(options: { capacityGuard?: StorageWriteGuard } = {}): Promise<TemporaryUploadStorage> {
   const directory = await mkdtemp(path.join(tmpdir(), "lisno-workflow-evidence-"));
   const active = new Set<Promise<unknown>>();
   let closing = false;
@@ -24,10 +25,10 @@ export async function createTemporaryUploadStorage(): Promise<TemporaryUploadSto
     return path.join(directory, reference);
   };
   return {
-    async write(source, options) {
+    async write(source, writeOptions) {
       if (closing) { source.destroy(); throw new Error("The temporary upload is closed."); }
       const reference = `${randomUUID()}.upload`;
-      const pending = writePrivateStream(resolve(reference), source, options);
+      const pending = writePrivateStream(resolve(reference), source, { ...writeOptions, capacityGuard: options.capacityGuard });
       active.add(pending);
       try { return { reference, ...await pending }; } finally { active.delete(pending); }
     },

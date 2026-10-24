@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 
 import { normalizedEmailSchema } from "../domain/email.js";
+import { newPasswordSchema } from "../domain/password-policy.js";
 import { validateBody } from "../middleware/validate.js";
 import type { PasswordResetService } from "../services/password-reset.service.js";
 
@@ -18,10 +19,7 @@ const inspectSchema = z
 const completeSchema = z
   .object({
     token: tokenSchema,
-    password: z
-      .string()
-      .min(12, "Password must be at least 12 characters.")
-      .max(128, "Password must be at most 128 characters."),
+    password: newPasswordSchema,
     passwordConfirmation: z.string()
   })
   .strict()

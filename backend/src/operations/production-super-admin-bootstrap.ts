@@ -5,6 +5,7 @@ import { pathToFileURL } from "node:url";
 
 import bcrypt from "bcryptjs";
 import mongoose, { type ClientSession, type Connection } from "mongoose";
+import { newPasswordSchema } from "../domain/password-policy.js";
 
 import {
   RESERVED_DEMO_IDENTITIES,
@@ -29,8 +30,6 @@ export const PRODUCTION_SUPER_ADMIN_MAINTENANCE_CONFIRMATION =
   "lisno_has_no_other_writers" as const;
 
 const BCRYPT_COST = 12;
-const MINIMUM_PASSWORD_LENGTH = 12;
-const MAXIMUM_PASSWORD_LENGTH = 128;
 const MINIMUM_APPROVAL_KEY_LENGTH = 32;
 const EXPECTED_LEGACY_DESIGNER_COUNT = 1;
 const EXPECTED_LEGACY_DESIGNER_TASK_COUNT = 5;
@@ -199,8 +198,7 @@ export function parseProductionSuperAdminBootstrapConfig(
   const emailNormalized = normalizeInvitationEmail(email);
   if (
     isReservedDemoEmail(emailNormalized) ||
-    password.length < MINIMUM_PASSWORD_LENGTH ||
-    password.length > MAXIMUM_PASSWORD_LENGTH ||
+    !newPasswordSchema.safeParse(password).success ||
     approvalKey.length < MINIMUM_APPROVAL_KEY_LENGTH
   ) {
     fail("INVALID_CONFIGURATION");
@@ -225,6 +223,9 @@ export async function runProductionSuperAdminBootstrap(
   config: ProductionSuperAdminBootstrapConfig,
   dependencies: ProductionSuperAdminBootstrapDependencies = {}
 ): Promise<ProductionSuperAdminBootstrapReport> {
+  if (!newPasswordSchema.safeParse(config.password).success) {
+    fail("INVALID_CONFIGURATION");
+  }
   const connection = dependencies.connection ?? mongoose.connection;
   assertConnectedTarget(connection);
   const comparePassword = dependencies.comparePassword ?? bcrypt.compare;
