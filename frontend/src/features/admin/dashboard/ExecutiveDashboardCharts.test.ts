@@ -38,36 +38,17 @@ const seriesOf = (option: unknown) =>
   ((option as { series?: Series[] }).series ?? []);
 
 describe("executive dashboard ECharts options", () => {
-  it("keeps stable finance activity identities and separates snapshot guides", () => {
-    const make = () => createRecordedCostActivityOption({
-      trends: superAdminDashboardOverviewFixture.trends,
-      approvedNetRevenuePaise: superAdminDashboardOverviewFixture.finance.approvedSubtotalPaise,
-      costBudgetPaise: superAdminDashboardOverviewFixture.finance.costBudgetPaise,
-      theme
-    });
-    const first = seriesOf(make());
-    const updated = seriesOf(make());
-
-    expect(first.map(({ id, type }) => ({ id, type }))).toEqual([
-      { id: "recorded-cost-activity", type: "bar" },
-      { id: "approved-net-revenue-guide", type: "line" },
-      { id: "cost-budget-guide", type: "line" }
-    ]);
-    expect(updated.map(({ id }) => id)).toEqual(first.map(({ id }) => id));
-    expect(first.every((series) => Boolean(series.universalTransition))).toBe(true);
+  it("plots only incurred-date expenses with stable identities", () => {
+    const option = createRecordedCostActivityOption({ trends: superAdminDashboardOverviewFixture.trends, approvedNetRevenuePaise: 99_000_000, costBudgetPaise: 44_000_000, theme });
+    const series = seriesOf(option);
+    expect(series.map(({ id, type }) => ({ id, type }))).toEqual([{ id: "recorded-cost-activity", type: "line" }]);
+    expect(series[0].data?.map(({ id, value }) => ({ id, value }))).toEqual(superAdminDashboardOverviewFixture.trends.map((bucket) => ({ id: bucket.date, value: bucket.ledgerExpensesPostedPaise })));
+    expect(option.animation).toBe(false);
   });
 
-  it("omits an unavailable snapshot guide instead of turning it into zero", () => {
-    const series = seriesOf(createRecordedCostActivityOption({
-      trends: superAdminDashboardOverviewFixture.trends,
-      approvedNetRevenuePaise: null,
-      costBudgetPaise: superAdminDashboardOverviewFixture.finance.costBudgetPaise,
-      theme
-    }));
-    expect(series.map(({ id }) => id)).toEqual([
-      "recorded-cost-activity",
-      "cost-budget-guide"
-    ]);
+  it("keeps unavailable expense observations null", () => {
+    const series = seriesOf(createRecordedCostActivityOption({ trends: superAdminDashboardOverviewFixture.trends, recordedCostsAvailable: false, theme }));
+    expect(series[0].data?.every(({ value }) => value === null)).toBe(true);
   });
 
   it("keeps verified lifecycle slices when one stage is unavailable", () => {
@@ -121,6 +102,6 @@ describe("executive dashboard ECharts options", () => {
     overspent.finance.recordedCostPaise = 15_000;
     overspent.finance.remainingBudgetPaise = -5_000;
     const marks = seriesOf(createBudgetPositionOption({ data: overspent, theme }))[0].data!;
-    expect(marks[2]).toMatchObject({ id: "remaining-budget", name: "Overspent", value: -5_000 });
+    expect(marks[2]).toMatchObject({ id: "remaining-budget", name: "remaining-budget", value: -5_000 });
   });
 });

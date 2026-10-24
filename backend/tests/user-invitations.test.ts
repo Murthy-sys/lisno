@@ -1183,6 +1183,21 @@ describe("protected user invitation administration", () => {
 });
 
 describe("public user invitation inspection and acceptance", () => {
+  it.each(["a".repeat(73), "é".repeat(37), "😀".repeat(19), "short"])("rejects an invalid password before hashing or consuming the invitation", async password => {
+    const { seed, operator } = standardSeed();
+    const record = publicInvitation("password-boundary", operator);
+    seed.userInvitations = [record];
+    const passwordHasher = vi.fn(async () => ACCEPTED_PASSWORD_HASH);
+    const { repository, service } = setup(seed, { passwordHasher });
+    const usersBefore = await repository.listUsers();
+    await expect(service.accept({ rawToken: PUBLIC_RAW_TOKEN, password })).rejects.toMatchObject({ status: 400, code: "VALIDATION_ERROR", fields: { password: expect.any(String) } });
+    expect(passwordHasher).not.toHaveBeenCalled();
+    expect(await repository.findUserInvitationById(record.id)).toEqual(record);
+    expect(await repository.listUsers()).toEqual(usersBefore);
+    expect(await invitationAudits(repository)).toEqual([]);
+    await expect(service.inspect(PUBLIC_RAW_TOKEN)).resolves.toMatchObject({ email: record.email });
+  });
+
   const unavailable = {
     status: 410,
     code: "INVITATION_UNAVAILABLE",

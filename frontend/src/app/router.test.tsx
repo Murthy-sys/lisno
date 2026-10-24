@@ -906,8 +906,8 @@ describe("registered permission routes", () => {
       "super_admin",
       "/admin/dashboard",
       ["identity.self.read", "admin.dashboard.read"],
-      "Organization overview",
-      "Organization headline metrics"
+      "Dashboard",
+      "Approved net value"
     ],
     [
       "admin",
@@ -981,7 +981,8 @@ describe("registered permission routes", () => {
   it("routes the Super Admin root to Dashboard while denied Admin makes no dashboard request", async () => {
     installAuthorizationSession("super_admin", ["identity.self.read", "admin.dashboard.read"]);
     const first = renderApp(["/"]);
-    expect(await screen.findByRole("heading", { name: "Organization overview" })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Dashboard" })).toBeVisible();
+    expect(screen.getByRole("region", { name: "Organization headline metrics" })).toHaveTextContent("Approved net value");
     expect(first.router.state.location.pathname).toBe("/admin/dashboard");
     first.unmount();
 

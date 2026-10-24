@@ -5,14 +5,20 @@ import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { apiClient } from "../../../api/client";
+import { useVendorBasketRequestCount } from "../../procurement/useVendorBasketRequestCount";
 import { vendorBasketRequestKeys } from "../../procurement/vendorBasketRequestApi";
 import { VendorClassificationRequestQueueItem } from "./VendorClassificationRequestQueueItem";
 
 const pendingPage = (total: number) => ({ items: [], pagination: { total, limit: 1, offset: 0, hasMore: total > 1 } });
 
+function OwnedCount() {
+  const count = useVendorBasketRequestCount(true);
+  return <table><tbody><VendorClassificationRequestQueueItem count={count} /></tbody></table>;
+}
+
 function start() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  const view = render(<QueryClientProvider client={client}><MemoryRouter><ul><VendorClassificationRequestQueueItem /></ul></MemoryRouter></QueryClientProvider>);
+  const view = render(<QueryClientProvider client={client}><MemoryRouter><OwnedCount /></MemoryRouter></QueryClientProvider>);
   return { ...view, client };
 }
 
@@ -32,9 +38,9 @@ describe("Vendor classification request queue", () => {
     const waiting = new Promise<never>((_, reject) => { fail = reject; });
     const read = vi.spyOn(apiClient, "get").mockReturnValueOnce(waiting).mockResolvedValue(pendingPage(0));
     start();
-    expect(screen.getByLabelText("Loading count…")).toHaveTextContent("—");
+    expect(screen.getByLabelText("Loading count…")).toHaveTextContent("Not available");
     await act(async () => { fail(new Error("offline")); });
-    expect(await screen.findByLabelText("Count unavailable")).toHaveTextContent("—");
+    expect(await screen.findByLabelText("Count unavailable")).toHaveTextContent("Not available");
     await userEvent.setup().click(screen.getByRole("button", { name: "Retry request count" }));
     expect(await screen.findByLabelText("0 pending vendor classification requests")).toHaveTextContent("0");
     expect(screen.getByText(/No pending requests/)).toBeVisible();

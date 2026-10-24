@@ -1586,10 +1586,21 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       if (change.role === "vendor") {
         throw new RepositoryConflictError("Vendor membership requires an invitation.");
       }
+      const currentQuery = UserModel.findById(userId);
+      if (session) currentQuery.session(session);
+      const current = await currentQuery.lean().exec();
+      if (!current) throw new RepositoryNotFoundError(`User ${userId} was not found.`);
+      if ((current.version ?? 1) !== expectedVersion) {
+        throw new RepositoryConflictError(`User ${userId} changed concurrently.`);
+      }
+      const invalidatesSessions =
+        (change.role !== undefined && change.role !== current.role) ||
+        (change.active !== undefined && change.active !== current.active);
       const set: PlainDocument = {
         ...(change.role === undefined ? {} : { role: change.role }),
         ...(change.active === undefined ? {} : { active: change.active }),
-        updatedAt: date(change.updatedAt)
+        updatedAt: date(change.updatedAt),
+        ...(invalidatesSessions ? { sessionVersion: (current.sessionVersion ?? 1) + 1 } : {})
       };
       const filter: PlainDocument =
         expectedVersion === 1

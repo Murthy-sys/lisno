@@ -3,6 +3,7 @@ import type { ReadStream } from "node:fs";
 import { mkdir, open as openFile, readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { writePrivateStream } from "./stream-file.js";
+import type { StorageWriteGuard } from "./storage-capacity.js";
 import { createLocalManagedStorage } from "./local-managed-storage.js";
 import type { ManagedStorageCapability } from "./managed-storage.js";
 
@@ -15,7 +16,7 @@ import type {
 const safeReference =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.(?:pdf|png|jpg|webp|tif|heic|gif|mp4|mov|webm)$/i;
 
-export function createLocalStorage(rootDirectory: string): FileStorage & ManagedStorageCapability {
+export function createLocalStorage(rootDirectory: string, options: { capacityGuard?: StorageWriteGuard } = {}): FileStorage & ManagedStorageCapability {
   const root = path.resolve(rootDirectory);
 
   const save = async (input: SaveFileInput): Promise<StoredFile> => {
@@ -54,7 +55,7 @@ export function createLocalStorage(rootDirectory: string): FileStorage & Managed
         signal?.throwIfAborted();
         await mkdir(root, { recursive: true });
         const reference = `${randomUUID()}${extension}`;
-        await writePrivateStream(resolveReference(root, reference), source, { expectedBytes, sha256, signal });
+        await writePrivateStream(resolveReference(root, reference), source, { expectedBytes, sha256, signal, capacityGuard: options.capacityGuard });
         return { reference };
       } finally { source.destroy(); }
     },

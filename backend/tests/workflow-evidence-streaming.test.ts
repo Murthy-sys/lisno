@@ -6,11 +6,13 @@ import express from "express";
 import request from "supertest";
 import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
-import { createTemporaryUploadStorage } from "../src/storage/temporary-upload-storage.js";
+import { createTemporaryUploadStorage, type TemporaryUploadStorage } from "../src/storage/temporary-upload-storage.js";
 import { uploadWorkflowEvidence } from "../src/middleware/workflow-evidence-upload.js";
 import { validateBody } from "../src/middleware/validate.js";
 import { errorHandler } from "../src/middleware/errors.js";
 import { createWorkflowEvidenceStorage } from "../src/services/workflow-evidence-storage.js";
+import { createStorageWriteGuard } from "../src/storage/storage-capacity.js";
+import { createWorkflowUploadAdmission } from "../src/middleware/workflow-upload-admission.js";
 
 const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aZAAAAABJRU5ErkJggg==", "base64");
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(yes => { resolve = yes; }); return { resolve, promise }; }
@@ -30,6 +32,62 @@ async function parserFixture(inactivityMs = 120_000) {
 }
 
 describe("streamed evidence lifecycle", () => {
+  it("returns a safe retryable storage error and cleans staging when capacity is exhausted", async () => {
+    const temporary = await createTemporaryUploadStorage({ capacityGuard: createStorageWriteGuard({ availableBytes: async () => 0n }) });
+    const cleaned = deferred<void>(); const cleanup = temporary.cleanup.bind(temporary);
+    temporary.cleanup = async () => { await cleanup(); cleaned.resolve(); };
+    const app = express();
+    app.use(uploadWorkflowEvidence(1024, { createStorage: async () => temporary }));
+    app.post("/", (_req, res) => res.json({ ok: true })); app.use(errorHandler);
+    const response = await request(app).post("/").attach("mediaFiles", png, { filename: "site.png", contentType: "image/png" }).expect(507);
+    expect(response.headers["retry-after"]).toBe("60");
+    expect(response.body.error).toEqual({ code: "INSUFFICIENT_STORAGE", message: "File storage is temporarily unavailable. Please try again later." });
+    await cleaned.promise;
+  });
+
+  it("retains upload admission through imports and cleanup, then admits the next request", async () => {
+    const admit = createWorkflowUploadAdmission({ total: 1, perActor: 1 });
+    const entered = deferred<void>(); const finish = deferred<void>(); const cleaned = deferred<void>();
+    const created: TemporaryUploadStorage[] = [];
+    let handled = 0;
+    const app = express();
+    app.use(uploadWorkflowEvidence(1024, { admit, createStorage: async () => {
+      const storage = await createTemporaryUploadStorage(); created.push(storage);
+      const cleanup = storage.cleanup.bind(storage);
+      storage.cleanup = async () => { await cleanup(); cleaned.resolve(); };
+      return storage;
+    } }));
+    app.post("/", async (req, res) => {
+      const release = req.workflowEvidence!.hold();
+      try {
+        if (++handled === 1) { entered.resolve(); await finish.promise; }
+        res.json({ ok: true });
+      } finally { release(); await req.workflowEvidence!.cleanup(); }
+    });
+    app.use(errorHandler);
+    const send = () => request(app).post("/").attach("mediaFiles", png, { filename: "site.png", contentType: "image/png" });
+    const first = send().then(result => result);
+    try {
+      await entered.promise;
+      const busy = await send().expect(503); expect(busy.headers["retry-after"]).toBe("5");
+      expect(created).toHaveLength(1);
+      finish.resolve(); expect((await first).status).toBe(200); await cleaned.promise;
+      await send().expect(200); expect(created).toHaveLength(2);
+    } finally { finish.resolve(); await first; await Promise.all(created.map(storage => storage.cleanup())); }
+  });
+
+  it("releases upload admission after staging setup fails", async () => {
+    const admit = createWorkflowUploadAdmission({ total: 1, perActor: 1 });
+    let attempts = 0;
+    const app = express();
+    app.use(uploadWorkflowEvidence(1024, { admit, createStorage: async () => {
+      if (++attempts === 1) throw new Error("synthetic unavailable staging");
+      return createTemporaryUploadStorage();
+    } }));
+    app.post("/", (_req, res) => res.json({ ok: true })); app.use(errorHandler);
+    await request(app).post("/").attach("mediaFiles", png, { filename: "site.png", contentType: "image/png" }).expect(500);
+    await request(app).post("/").attach("mediaFiles", png, { filename: "site.png", contentType: "image/png" }).expect(200);
+  });
   it.each(["success", "schema", "invalid media", "unknown field", "malformed"])("cleans private staging after %s before/without action handler cleanup", async mode => {
     const f = await parserFixture();
     if (mode === "malformed") {

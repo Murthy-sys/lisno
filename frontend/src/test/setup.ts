@@ -16,6 +16,16 @@ class TestIntersectionObserver implements IntersectionObserver {
   takeRecords(): IntersectionObserverEntry[] { return []; }
 }
 if (!globalThis.IntersectionObserver) globalThis.IntersectionObserver = TestIntersectionObserver;
+// JSDOM omits matchMedia. Provide the actual callable boundary before tests
+// spy on it; Vitest 4 correctly refuses to spy on an undefined property.
+if (!window.matchMedia) {
+  window.matchMedia = (media: string): MediaQueryList => ({
+    media, matches: false, onchange: null,
+    addListener() {}, removeListener() {},
+    addEventListener() {}, removeEventListener() {}, dispatchEvent() { return true; }
+  });
+}
+
 
 beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
 

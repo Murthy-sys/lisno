@@ -12,8 +12,9 @@ Lightweight tests use fake transports with real network access denied:
 
 ```sh
 python3.11 -m venv /tmp/lisno-assistant-tests
+/tmp/lisno-assistant-tests/bin/pip install --upgrade "pip==26.2"
 /tmp/lisno-assistant-tests/bin/pip install -r requirements.lock
-/tmp/lisno-assistant-tests/bin/pip install -e '.[test]'
+/tmp/lisno-assistant-tests/bin/pip install -c requirements.lock -e '.[test]'
 /tmp/lisno-assistant-tests/bin/python -m pytest -m 'not model'
 ```
 

@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import axe from "axe-core";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useLocation, useNavigate } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { apiClient } from "../../../api/client";
@@ -19,6 +19,7 @@ import {
   createRecordedCostActivityOption
 } from "./ExecutiveDashboardCharts";
 import { SuperAdminDashboardPage } from "./SuperAdminDashboardPage";
+import * as dashboardReport from "./dashboardReportExport";
 import type {
   SuperAdminDashboardOverview,
   SuperAdminDashboardProjectsPage
@@ -70,13 +71,14 @@ vi.mock("./echarts/loadDashboardEChartsRuntime", () => ({
   loadDashboardEChartsRuntime: dashboardChartRuntimeMock.load
 }));
 beforeEach(() => {
+  vi.spyOn(window, "scrollTo").mockImplementation(() => undefined);
   dashboardChartRuntimeMock.init.mockClear();
   dashboardChartRuntimeMock.instances.clear();
   dashboardChartRuntimeMock.load.mockClear();
   vi.mocked(useAuth).mockReturnValue({ user: { id: "super-admin-one", role: "super_admin" }, authorization: authorizationFor("super_admin", []) } as ReturnType<typeof useAuth>);
 });
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 function installDashboardApi({
   overview = superAdminDashboardOverviewFixture,
@@ -95,15 +97,22 @@ function installDashboardApi({
   });
 }
 
+function HistoryControls() {
+  const navigate = useNavigate();
+  const location = useLocation();
+  return <nav aria-label="Test browser history"><button onClick={() => navigate(-1)}>Browser back</button><button onClick={() => navigate(1)}>Browser forward</button><output data-testid="current-url">{location.search}</output></nav>;
+}
+
 function renderDashboard(
   entry = "/admin/dashboard?tab=overview&periodDays=30",
-  queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
+  queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } }),
+  history = false
 ) {
   return {
     queryClient,
     ...render(
     <QueryClientProvider client={queryClient}>
-      <LoadingProvider><MemoryRouter initialEntries={[entry]}><SuperAdminDashboardPage /></MemoryRouter></LoadingProvider>
+      <LoadingProvider><MemoryRouter initialEntries={[entry]}>{history ? <HistoryControls /> : null}<SuperAdminDashboardPage /></MemoryRouter></LoadingProvider>
     </QueryClientProvider>
     )
   };
@@ -136,9 +145,39 @@ describe("Super Admin dashboard page", () => {
   it("does not request or render the vendor approval count without Configuration read permission", async () => {
     const read = installDashboardApi();
     renderDashboard();
-    await screen.findByRole("heading", { name: "Organization overview" });
+    await screen.findByRole("heading", { name: "Overview" });
     expect(screen.queryByRole("link", { name: /Vendor classification requests/ })).not.toBeInTheDocument();
     expect(read.mock.calls.some(([path]) => path.startsWith("/admin/ai-estimator-knowledge/basket-requests?"))).toBe(false);
+  });
+
+  it("loads only the fixed five-row priority query on Overview and uses the selected period", async () => {
+    const read = installDashboardApi();
+    const user = userEvent.setup();
+    renderDashboard("/admin/dashboard?tab=overview&periodDays=30&search=ignored&riskLevel=red&offset=40&sort=name_asc");
+    await screen.findByText("North Residence");
+    const projectReads = () => read.mock.calls.filter(([path]) => path.startsWith("/admin/dashboard/projects?")).map(([path]) => path);
+    expect(projectReads()).toEqual(["/admin/dashboard/projects?periodDays=30&module=projects&sort=risk_desc&limit=5&offset=0"]);
+    await user.selectOptions(screen.getByRole("combobox", { name: "Reporting period" }), "90");
+    await waitFor(() => expect(projectReads()).toContain("/admin/dashboard/projects?periodDays=90&module=projects&sort=risk_desc&limit=5&offset=0"));
+    const priorityReadCount = projectReads().length;
+    await user.click(screen.getByRole("link", { name: "Finance details" }));
+    await waitFor(() => expect(projectReads().some((path) => path.includes("module=finance&sort=risk_desc&limit=20&offset=0"))).toBe(true));
+    expect(projectReads().filter((path) => path.includes("limit=5"))).toHaveLength(priorityReadCount);
+  });
+
+  it("does not request priority projects eagerly when opening a legacy detail URL", async () => {
+    const read = installDashboardApi();
+    renderDashboard("/admin/dashboard?tab=workforce&periodDays=30");
+    await screen.findAllByText("Aarav Electrician");
+    expect(read.mock.calls.some(([path]) => path.startsWith("/admin/dashboard/projects?"))).toBe(false);
+  });
+
+  it("does not request initial-payment data without its operation permission", async () => {
+    const read = installDashboardApi();
+    renderDashboard();
+    await screen.findByRole("heading", { name: "Overview", level: 2 });
+    expect(screen.queryByRole("region", { name: "Initial payment confirmations" })).not.toBeInTheDocument();
+    expect(read.mock.calls.some(([path]) => path === "/design-workflow/payment-confirmations")).toBe(false);
   });
 
   it("uses stable UTC and semantic identities for executive ECharts transitions", () => {
@@ -149,14 +188,12 @@ describe("Super Admin dashboard page", () => {
       theme: chartTheme
     }) as unknown as { series: Array<Record<string, unknown>> };
     expect(activity.series).toEqual([
-      expect.objectContaining({ id: "recorded-cost-activity", type: "bar", universalTransition: expect.anything() }),
-      expect.objectContaining({ id: "approved-net-revenue-guide", type: "line", universalTransition: true }),
-      expect.objectContaining({ id: "cost-budget-guide", type: "line", universalTransition: true })
+      expect.objectContaining({ id: "recorded-cost-activity", type: "line", animation: false })
     ]);
     expect((activity.series[0].data as Array<Record<string, unknown>>).map(({ id }) => id)).toEqual(["2026-08-30"]);
 
     const lifecycle = createExecutiveLifecycleOption({ data: superAdminDashboardOverviewFixture, theme: chartTheme }) as unknown as { series: Array<Record<string, unknown>> };
-    expect(lifecycle.series[0]).toMatchObject({ id: "executive-project-status", type: "pie", universalTransition: expect.anything() });
+    expect(lifecycle.series[0]).toMatchObject({ id: "dashboard-project-status", type: "pie", emphasis: { scale: false, label: { show: false } } });
     expect((lifecycle.series[0].data as Array<Record<string, unknown>>).map(({ id, groupId }) => ({ id, groupId }))).toEqual([
       { id: "planning", groupId: "projects.planning" },
       { id: "active", groupId: "projects.active" },
@@ -164,29 +201,36 @@ describe("Super Admin dashboard page", () => {
       { id: "completed", groupId: "projects.completed" }
     ]);
   });
-  it("makes approved-project payment confirmations available from Overview", async () => {
+  it("opens the existing payment workflow from the read-only overview summary", async () => {
     vi.mocked(useAuth).mockReturnValue({ user: { id: "super-admin-one", role: "super_admin" }, authorization: authorizationFor("super_admin", ["projects.design_workflow.payments.read", "projects.design_workflow.act"]) } as ReturnType<typeof useAuth>);
     const get = installDashboardApi();
+    const user = userEvent.setup();
     renderDashboard();
-    const region = await screen.findByRole("region", { name: "Initial payment confirmations" });
-    expect(region).toHaveTextContent("Super Admin confirms payment after final approval to enable work-order issuance.");
-    expect(region).toHaveTextContent("Earlier projects keep their existing payment workflow.");
-    expect(await within(region).findByText("No projects are waiting for initial-payment confirmation.")).toBeVisible();
-    const analyticsEnd = screen.getByRole("heading", { name: "Module summaries" });
-    expect(analyticsEnd.compareDocumentPosition(region) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const summary = await screen.findByRole("region", { name: "Initial payment confirmations" });
+    const link = within(summary).getByRole("link", { name: /Awaiting initial payment confirmation/ });
+    await waitFor(() => expect(link).toHaveTextContent("0"));
+    expect(link).toHaveAttribute("href", expect.stringContaining("section=payments"));
+    expect(within(summary).queryByRole("textbox")).not.toBeInTheDocument();
+    await user.click(link);
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Initial payment review" })).toHaveFocus());
+    const workflow = screen.getByRole("region", { name: "Initial payment confirmations" });
+    expect(workflow).toHaveTextContent("Super Admin confirms payment after final approval to enable work-order issuance.");
+    expect(workflow).toHaveTextContent("Earlier projects keep their existing payment workflow.");
+    expect(within(workflow).getByText("No projects are waiting for initial-payment confirmation.")).toBeVisible();
     expect(get).toHaveBeenCalledWith("/design-workflow/payment-confirmations", { showGlobalLoader: false });
   });
-
   it("shows only one logo while the dashboard API and page are both loading", async () => {
     const pending = deferred<Response>();
-    vi.spyOn(globalThis, "fetch").mockReturnValueOnce(pending.promise);
+    vi.spyOn(globalThis, "fetch").mockImplementation((input) => String(input).includes("/admin/dashboard/projects?")
+      ? Promise.resolve(Response.json({ data: superAdminDashboardProjectsPageFixture }))
+      : pending.promise);
     const { queryClient } = renderDashboard();
     try {
       expect(screen.getByRole("status", { name: "Dashboard status" })).toHaveTextContent("Loading organization dashboard…");
       expect(document.querySelectorAll(".lisno-loading-mark")).toHaveLength(1);
       expect(screen.getAllByRole("status")).toHaveLength(1);
       pending.resolve(Response.json({ data: superAdminDashboardOverviewFixture }));
-      expect(await screen.findByRole("heading", { name: "Organization overview" })).toBeVisible();
+      expect(await screen.findByRole("heading", { name: "Overview" })).toBeVisible();
       await waitFor(() => expect(document.querySelectorAll(".lisno-loading-mark")).toHaveLength(0));
     } finally {
       pending.resolve(Response.json({ data: superAdminDashboardOverviewFixture }));
@@ -198,20 +242,24 @@ describe("Super Admin dashboard page", () => {
     const get = installDashboardApi();
     const { container } = renderDashboard();
 
-    expect(await screen.findByRole("heading", { name: "Organization overview" })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeVisible();
     for (const heading of [
-      "Recorded cost activity",
-      "Project status",
-      "Priority project",
-      "Action queue",
-      "Cost composition",
-      "Budget position",
+      "Recorded expenses over time",
+      "Project activity trend",
+      "Projects by current stage",
+      "Period activity comparison",
+      "Financial overview",
       "Module progress",
       "Workforce summary",
-      "Module summaries"
+      "Project activity heatmap",
+      "Priority projects",
+      "Operational actions",
     ]) expect(screen.getByRole("heading", { name: heading })).toBeVisible();
+    expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
+    expect(screen.queryByRole("tabpanel")).not.toBeInTheDocument();
+    expect(screen.queryByText("More portfolio context")).not.toBeInTheDocument();
     const headline = screen.getByRole("region", { name: "Organization headline metrics" });
-    for (const label of ["Total projects", "Approved net revenue", "Approved contract value", "Current margin", "Live overdue projects"]) {
+    for (const label of ["Total projects", "Approved net value", "Approved contract value", "Current margin", "Live overdue projects"]) {
       expect(within(headline).getByText(label)).toBeVisible();
     }
     expect(screen.queryByText(/Pipeline value|Revenue trend|Recent activity|Top vendors/i)).not.toBeInTheDocument();
@@ -221,24 +269,18 @@ describe("Super Admin dashboard page", () => {
     expect(requested.join(" ")).not.toMatch(/\/admin\/projects|\/finance\/projects/);
     expect((await axe.run(container, { rules: { "color-contrast": { enabled: false } } })).violations).toEqual([]);
   });
-  it("keeps every executive finance mark in its exact-value table", async () => {
+  it("keeps exact finance values visible beside the expense chart", async () => {
     installDashboardApi();
     const user = userEvent.setup();
     renderDashboard();
-
-    const activity = await screen.findByRole("figure", { name: "Recorded cost activity" });
+    const finance = await screen.findByRole("region", { name: "Financial overview" });
+    const activity = within(finance).getByRole("figure", { name: "Recorded expenses over time" });
     await user.click(within(activity).getByRole("button", { name: "Show values" }));
-    expect(within(activity).getByRole("row", { name: /30 Aug.*₹2,500\.00.*₹1,00,000\.00.*₹80,000\.00/ })).toBeVisible();
-
-    const composition = screen.getByRole("figure", { name: "Cost composition" });
-    await user.click(within(composition).getByRole("button", { name: "Show values" }));
-    expect(within(composition).getByRole("row", { name: /Procurement.*₹12,000\.00/ })).toBeVisible();
-    expect(within(composition).getByRole("row", { name: /Employee payments.*₹9,000\.00/ })).toBeVisible();
-
-    const budget = screen.getByRole("figure", { name: "Budget position" });
-    await user.click(within(budget).getByRole("button", { name: "Show values" }));
-    expect(within(budget).getByRole("row", { name: /Cost budget.*₹80,000\.00/ })).toBeVisible();
-    expect(within(budget).getByRole("row", { name: /Remaining budget.*₹52,000\.00/ })).toBeVisible();
+    expect(within(activity).getByRole("row", { name: /2026-08-30.*₹2,500\.00/ })).toBeVisible();
+    expect(within(activity).queryByText("₹1,00,000.00")).not.toBeInTheDocument();
+    for (const value of ["₹12,000.00", "₹9,000.00", "₹80,000.00", "₹52,000.00"]) {
+      expect(within(finance).getByText(value)).toBeVisible();
+    }
   });
   it("keeps healthy finance marks and exact tables when one cost class is unavailable", async () => {
     installDashboardApi({
@@ -258,17 +300,17 @@ describe("Super Admin dashboard page", () => {
         }
       }
     });
-    const user = userEvent.setup();
     renderDashboard();
 
-    const figure = await screen.findByRole("figure", { name: "Cost composition" });
-    expect(within(figure).getByRole("img", { name: /Recorded cost composition/ })).toBeVisible();
-    expect(within(figure).getByText(/Employee payment lineage could not be verified/)).toBeVisible();
-    await user.click(within(figure).getByRole("button", { name: "Show values" }));
-    expect(within(figure).getByRole("row", { name: /Employee payments.*Not available/ })).toBeVisible();
-    expect(within(figure).getByRole("row", { name: /Procurement.*₹12,000\.00/ })).toBeVisible();
+    await screen.findByRole("heading", { name: "Overview", level: 2 });
+    const figure = screen.getByRole("region", { name: "Financial overview" });
+    expect(screen.queryByText(/Some dashboard metrics are unavailable/)).not.toBeInTheDocument();
+    expect(within(figure).queryByText(/Employee payment lineage could not be verified/)).not.toBeInTheDocument();
+    expect(within(figure).queryByText("Employee payments")).not.toBeInTheDocument();
+    expect(within(figure).getByText("Procurement")).toBeVisible();
+    expect(within(figure).getByText("₹12,000.00")).toBeVisible();
   });
-  it("narrates unavailable budget lineage without exposing raw fallback zeroes", async () => {
+  it("omits unavailable budget charts without exposing raw fallback zeroes", async () => {
     const unavailableMetricKeys = [
       "finance.costBudgetPaise",
       "finance.recordedCostPaise",
@@ -297,41 +339,38 @@ describe("Super Admin dashboard page", () => {
         }
       }
     });
-    const user = userEvent.setup();
     renderDashboard();
 
-    const figure = await screen.findByRole("figure", { name: "Budget position" });
-    const chart = within(figure).getByRole("img", {
-      name: "Approved cost budget Not available, recorded cost Not available, remaining budget Not available."
-    });
-    expect(chart).toBeVisible();
-    expect(chart).not.toHaveAccessibleName(/₹0\.00/);
-
-    await user.click(within(figure).getByRole("button", { name: "Show values" }));
-    expect(within(figure).getByRole("row", { name: "Cost budget Not available" })).toBeVisible();
-    expect(within(figure).getByRole("row", { name: "Recorded cost Not available" })).toBeVisible();
-    expect(within(figure).getByRole("row", { name: "Remaining budget Not available" })).toBeVisible();
+    await screen.findByRole("heading", { name: "Overview", level: 2 });
+    expect(screen.queryByRole("figure", { name: "Budget position" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/finance.costBudgetPaise could not be verified/)).not.toBeInTheDocument();
+    const finance = screen.getByRole("region", { name: "Financial overview" });
+    expect(within(finance).queryByText("Cost budget")).not.toBeInTheDocument();
+    expect(within(finance).getByText("₹12,000.00")).toBeVisible();
   });
-  it("presents five accurate headline metrics with explicit snapshot bases", async () => {
+  it("presents five linked headline metrics with explicit snapshot bases", async () => {
     installDashboardApi();
     renderDashboard();
 
     const band = await screen.findByRole("region", { name: "Organization headline metrics" });
-    for (const label of ["Total projects", "Approved net revenue", "Approved contract value", "Current margin", "Live overdue projects"]) {
+    for (const label of ["Total projects", "Approved net value", "Approved contract value", "Current margin", "Live overdue projects"]) {
       expect(within(band).getByText(label)).toBeVisible();
     }
-    expect(within(band).getByText("Client-approved subtotal; GST excluded")).toBeVisible();
-    expect(within(band).getByText("Includes ₹18,000.00 GST")).toBeVisible();
+    expect(within(band).getAllByRole("article")).toHaveLength(5);
+    expect(within(band).getByText("Excluding GST")).toBeVisible();
+    expect(within(band).getByText("Including GST")).toBeVisible();
     expect(within(band).getByText("72.00%")).toBeVisible();
-    expect(within(band).getByText("Current incomplete portfolio")).toBeVisible();
+    expect(within(band).getByText("Current portfolio")).toBeVisible();
+    expect(within(band).getAllByRole("link")).toHaveLength(5);
+    expect(band).not.toHaveTextContent("vs previous");
   });
   it("keeps context-rail actions aligned with the live authorization snapshot", async () => {
     const get = installDashboardApi();
     const withoutPermissions = renderDashboard();
 
-    const queue = await screen.findByRole("region", { name: "Action queue" });
-    expect(screen.queryByRole("link", { name: "Directory" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "View project" })).not.toBeInTheDocument();
+    const queue = await screen.findByRole("region", { name: "Operational actions" });
+    expect(screen.queryByRole("link", { name: "Client directory" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "North Residence" })).not.toBeInTheDocument();
     expect(within(within(queue).getByText("Pending Client responses").closest("li")!).queryByRole("link")).not.toBeInTheDocument();
     withoutPermissions.unmount();
 
@@ -346,9 +385,10 @@ describe("Super Admin dashboard page", () => {
     } as ReturnType<typeof useAuth>);
     renderDashboard();
 
-    expect(await screen.findByRole("link", { name: "Directory" })).toHaveAttribute("href", "/admin/users");
-    expect(screen.getByRole("link", { name: "View project" })).toHaveAttribute("href", "/admin/projects/project-risk");
-    const permittedQueue = screen.getByRole("region", { name: "Action queue" });
+    await screen.findByRole("heading", { name: "Overview", level: 2 });
+    expect(screen.getByRole("link", { name: "Client directory" })).toHaveAttribute("href", "/admin/users");
+    expect(screen.getByRole("link", { name: "North Residence" })).toHaveAttribute("href", "/admin/projects/project-risk");
+    const permittedQueue = screen.getByRole("region", { name: "Operational actions" });
     expect(within(within(permittedQueue).getByText("Pending Client responses").closest("li")!).getByRole("link")).toHaveAttribute("href", "/admin/client-responses");
     expect(get).toHaveBeenCalled();
   });
@@ -368,34 +408,37 @@ describe("Super Admin dashboard page", () => {
     renderDashboard();
 
     const band = await screen.findByRole("region", { name: "Organization headline metrics" });
-    expect(within(within(band).getByText("Total projects").closest("article")!).getByText("Not available")).toBeVisible();
+    expect(within(band).queryByText("Total projects")).not.toBeInTheDocument();
     expect(screen.queryByText(/No projects yet/)).not.toBeInTheDocument();
   });
-  it("stores comparison visibility in URL state and updates project activity without refetching", async () => {
+  it("stores comparison visibility in URL state without changing snapshot metrics or refetching", async () => {
     const get = installDashboardApi();
     const user = userEvent.setup();
     renderDashboard();
-
     const toggle = await screen.findByRole("checkbox", { name: "Compare with previous period" });
     const metric = within(screen.getByRole("region", { name: "Organization headline metrics" })).getByText("Total projects").closest("article")!;
-    expect(toggle).toBeChecked();
-    expect(metric).toHaveTextContent("vs previous");
+    const snapshot = metric.textContent;
+    const chart = screen.getByRole("figure", { name: "Period activity comparison" });
+    await user.click(within(chart).getByRole("button", { name: "Show values" }));
+    expect(within(chart).getByRole("columnheader", { name: "Previous period" })).toBeVisible();
     await user.click(toggle);
     expect(toggle).not.toBeChecked();
-    expect(metric).toHaveTextContent("created in the selected period");
-    expect(metric).not.toHaveTextContent("vs previous");
-    expect(screen.getByRole("link", { name: /Finance/ })).toHaveAttribute("href", expect.stringContaining("comparison=off"));
+    expect(metric.textContent).toBe(snapshot);
+    expect(within(chart).queryByRole("columnheader", { name: "Previous period" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Finance details" })).toHaveAttribute("href", expect.stringContaining("comparison=off"));
     expect(get.mock.calls.filter(([path]) => path.startsWith("/admin/dashboard/overview?")).length).toBe(1);
   });
-
   it("keeps current project activity when the previous comparison is unavailable", async () => {
     const sourceComparison = superAdminDashboardOverviewFixture.comparison!;
     installDashboardApi({ overview: { ...superAdminDashboardOverviewFixture, comparison: { ...sourceComparison, metrics: { ...sourceComparison.metrics, projects_created: { ...sourceComparison.metrics.projects_created, previous: null, previousStatus: "unavailable", previousUnavailableReason: "Previous project history could not be verified.", delta: null, changeBps: null, changeKind: "unavailable" } } } } });
     renderDashboard();
 
     const card = within(await screen.findByRole("region", { name: "Organization headline metrics" })).getByText("Total projects").closest("article")!;
-    expect(card).toHaveTextContent("1 project created");
-    expect(card).toHaveTextContent("Previous project history could not be verified.");
+    expect(card).toHaveTextContent("2");
+    const comparison = screen.getByRole("figure", { name: "Period activity comparison" });
+    await userEvent.setup().click(within(comparison).getByRole("button", { name: "Show values" }));
+    expect(within(comparison).getByRole("row", { name: /Projects created 1/ })).toBeVisible();
+    expect(card).not.toHaveTextContent("Previous project history could not be verified.");
   });
   it("keeps snapshot KPIs visible when current project activity is unavailable", async () => {
     const sourceComparison = superAdminDashboardOverviewFixture.comparison!;
@@ -405,35 +448,38 @@ describe("Super Admin dashboard page", () => {
     const band = await screen.findByRole("region", { name: "Organization headline metrics" });
     const card = within(band).getByText("Total projects").closest("article")!;
     expect(card).toHaveTextContent("2");
-    expect(card).toHaveTextContent("Current project history could not be verified.");
-    expect(within(band).getByText("₹1,00,000.00")).toBeVisible();
+    expect(card).not.toHaveTextContent("Current project history could not be verified.");
+    expect(within(band).getByLabelText("₹1,00,000.00")).toHaveTextContent("₹1 L");
   });
-  it("uses backend project-activity delta fields without recomputing them", async () => {
+  it("does not attach event deltas to current portfolio snapshots", async () => {
     const comparison = superAdminDashboardOverviewFixture.comparison!;
     installDashboardApi({ overview: { ...superAdminDashboardOverviewFixture, comparison: { ...comparison, metrics: { ...comparison.metrics, projects_created: { ...comparison.metrics.projects_created, delta: 77, changeBps: 1234, changeKind: "percentage" } } } } });
     renderDashboard();
     const band = await screen.findByRole("region", { name: "Organization headline metrics" });
-    expect(within(band).getByText(/\+77 \(\+12\.34%\) vs previous/)).toBeVisible();
-    expect(within(band).queryByText(/−1 \(−50/)).not.toBeInTheDocument();
+    expect(band).not.toHaveTextContent("77");
+    expect(band).not.toHaveTextContent("12.34%");
+    expect(within(band).getByText("Total projects").closest("article")).toHaveTextContent("2");
   });
-  it("marks optional comparison and Client fields unavailable while retaining verified snapshots", async () => {
+  it("omits unavailable optional comparison and Client fields while retaining verified snapshots", async () => {
     const { clients: _clients, comparison: _comparison, ...oldOverview } = superAdminDashboardOverviewFixture;
     installDashboardApi({ overview: oldOverview });
     renderDashboard();
 
     const band = await screen.findByRole("region", { name: "Organization headline metrics" });
     expect(within(band).getByText("Total projects").closest("article")).toHaveTextContent("2");
-    expect(within(band).getByText("Total projects").closest("article")).toHaveTextContent("Period project activity is not available");
-    expect(within(band).getByText("Approved net revenue").closest("article")).toHaveTextContent("₹1,00,000.00");
-    expect(screen.getByRole("region", { name: "Client pulse" })).toHaveTextContent("This response predates Client reporting.");
+    expect(within(band).getByText("Total projects").closest("article")).not.toHaveTextContent("unavailable");
+    expect(within(band).getByRole("link", { name: "Approved net value: ₹1,00,000.00. View finance" })).toHaveTextContent("₹1 L");
+    expect(within(band).queryByText("Active clients")).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Client accounts" })).not.toBeInTheDocument();
   });
   it("opens a lifecycle drilldown with the selected stable project status", async () => {
     const get = installDashboardApi();
     const user = userEvent.setup();
     renderDashboard();
 
-    const lifecycle = await screen.findByRole("navigation", { name: "Filter projects by lifecycle stage" });
-    await user.click(within(lifecycle).getByRole("link", { name: /Active\s+1/ }));
+    await screen.findByRole("heading", { name: "Overview", level: 2 });
+    const lifecycle = screen.getByRole("figure", { name: "Projects by current stage" });
+    await user.click(within(lifecycle).getByRole("button", { name: "View active projects" }));
     await waitFor(() => expect(screen.getByRole("heading", { name: "Projects", level: 2 })).toBeVisible());
     expect(get.mock.calls.some(([path]) => path.includes("projectStatus=active"))).toBe(true);
   });
@@ -443,13 +489,14 @@ describe("Super Admin dashboard page", () => {
     const user = userEvent.setup();
     renderDashboard();
 
-    const figure = await screen.findByRole("figure", { name: "Project status" });
-    const chartHost = within(figure).getByRole("img", { name: /Project status doughnut/ });
+    await screen.findByRole("heading", { name: "Overview", level: 2 });
+    const figure = screen.getByRole("figure", { name: "Projects by current stage" });
+    const chartHost = within(figure).getByRole("img", { name: /Projects by current stage\./ });
     await user.click(within(figure).getByRole("button", { name: "Show values" }));
     const table = within(figure).getByRole("table");
     expect(within(table).getByRole("row", { name: "Active 1 50%" })).toBeVisible();
     expect(within(table).getByRole("row", { name: "Completed 1 50%" })).toBeVisible();
-    expect(within(figure).getByRole("img", { name: /Project status doughnut/ })).toBe(chartHost);
+    expect(within(figure).getByRole("img", { name: /Projects by current stage\./ })).toBe(chartHost);
     expect(get.mock.calls.filter(([path]) => path.startsWith("/admin/dashboard/overview?")).length).toBe(1);
   });
   it("keeps project-status segments keyboard-operable for the project drilldown", async () => {
@@ -457,36 +504,65 @@ describe("Super Admin dashboard page", () => {
     const user = userEvent.setup();
     renderDashboard();
 
-    const figure = await screen.findByRole("figure", { name: "Project status" });
-    const chart = within(figure).getByRole("img", { name: /Project status doughnut/ });
+    await screen.findByRole("heading", { name: "Overview", level: 2 });
+    const figure = screen.getByRole("figure", { name: "Projects by current stage" });
+    const chart = within(figure).getByRole("img", { name: /Projects by current stage\./ });
     chart.focus();
     await user.keyboard("{Home}{ArrowRight}{Enter}");
 
     await waitFor(() => expect(screen.getByRole("heading", { name: "Projects", level: 2 })).toBeVisible());
     expect(get.mock.calls.some(([path]) => path.includes("projectStatus=active"))).toBe(true);
   });
-  it("supports roving focus, explicit activation, URL-backed tabs, and panel focus", async () => {
-    installDashboardApi();
+  it("replaces tabs with keyboard-operable visual links and restores focus on return", async () => {
+    const get = installDashboardApi({ overview: { ...superAdminDashboardOverviewFixture, period: { ...superAdminDashboardOverviewFixture.period, days: 90 } } });
     const user = userEvent.setup();
-    renderDashboard("/admin/dashboard?tab=projects&periodDays=30");
-
-    const projectsTab = await screen.findByRole("tab", { name: "Projects" });
-    expect(screen.getByRole("heading", { name: "Projects", level: 2 })).toBeVisible();
-    expect(await screen.findAllByText("North Residence")).not.toHaveLength(0);
-
-    projectsTab.focus();
-    await user.keyboard("{ArrowRight}");
-    const estimationTab = screen.getByRole("tab", { name: "Estimation" });
-    expect(estimationTab).toHaveFocus();
-    expect(screen.getByRole("heading", { name: "Projects", level: 2 })).toBeVisible();
+    renderDashboard("/admin/dashboard?periodDays=90&comparison=off&search=old&offset=40&role=worker_plumber");
+    const entry = await screen.findByRole("link", { name: /Estimation approvals/ });
+    expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Dashboard section" })).not.toBeInTheDocument();
+    entry.focus();
     await user.keyboard("{Enter}");
     await waitFor(() => expect(screen.getByRole("heading", { name: "Estimation", level: 2 })).toHaveFocus());
-
-    await user.selectOptions(screen.getByRole("combobox", { name: "Dashboard section" }), "workforce");
+    expect(get.mock.calls.some(([path]) => path === "/admin/dashboard/projects?periodDays=90&module=estimation&sort=risk_desc&limit=20&offset=0")).toBe(true);
+    await user.click(screen.getByRole("button", { name: "Back to dashboard" }));
+    await waitFor(() => expect(screen.getByRole("link", { name: /Estimation approvals/ })).toHaveFocus());
+    await user.click(screen.getByRole("link", { name: "View workforce" }));
     await waitFor(() => expect(screen.getByRole("heading", { name: "Workforce", level: 2 })).toHaveFocus());
     expect(await screen.findAllByText("Aarav Electrician")).not.toHaveLength(0);
     expect(screen.getAllByText("Not available").length).toBeGreaterThan(0);
-    expect(screen.getByText("No authoritative capacity denominator")).toBeVisible();
+    await user.click(screen.getByText(/More workforce metrics/));
+    expect(screen.queryByText("No authoritative capacity denominator")).not.toBeInTheDocument();
+    expect(screen.queryByText("Capacity utilization")).not.toBeInTheDocument();
+  });
+  it("restores the filtered detail view through browser Back and Forward", async () => {
+    const get = installDashboardApi();
+    const user = userEvent.setup();
+    renderDashboard("/admin/dashboard?periodDays=90&comparison=off", undefined, true);
+    await user.click(await screen.findByRole("button", { name: "View active projects" }));
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Projects", level: 2 })).toHaveFocus());
+    expect(screen.getByTestId("current-url")).toHaveTextContent("projectStatus=active");
+    expect(screen.getByTestId("current-url")).toHaveTextContent("periodDays=90");
+    expect(screen.getByTestId("current-url")).toHaveTextContent("comparison=off");
+    await user.click(screen.getByRole("button", { name: "Browser back" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "View active projects" })).toHaveFocus());
+    await user.click(screen.getByRole("button", { name: "Browser forward" }));
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Projects", level: 2 })).toHaveFocus());
+    expect(screen.getByTestId("current-url")).toHaveTextContent("projectStatus=active");
+    expect(get.mock.calls.some(([path]) => path.includes("projectStatus=active"))).toBe(true);
+  });
+
+  it("opens stable worker-role filters and clearly named schedule-risk details", async () => {
+    const get = installDashboardApi();
+    const user = userEvent.setup();
+    renderDashboard();
+    await user.click(await screen.findByRole("link", { name: /Electrician 1/ }));
+    await screen.findByRole("heading", { name: "Workforce", level: 2 });
+    expect(get.mock.calls.some(([path]) => path.includes("/workforce?") && path.includes("role=worker_electrician"))).toBe(true);
+    await user.click(screen.getByRole("button", { name: "Back to dashboard" }));
+    await user.click(await screen.findByRole("link", { name: /Live overdue projects:.*Review schedule risk/ }));
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Schedule risk", level: 2 })).toHaveFocus());
+    expect(get.mock.calls.some(([path]) => path.includes("riskFactor=schedule") && path.includes("sort=deadline_asc"))).toBe(true);
+    expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
   });
 
   it("falls back invalid URL values to Overview and 30 days", async () => {
@@ -556,33 +632,28 @@ describe("Super Admin dashboard page", () => {
     });
     renderDashboard("/admin/dashboard?tab=procurement&periodDays=30");
 
-    const approved = (await screen.findByText("Approved procurement amount")).closest("article");
-    const variance = screen.getByText("Variance").closest("article");
-    expect(approved).not.toBeNull();
-    expect(variance).not.toBeNull();
-    expect(within(approved!).getByText("Not available")).toBeVisible();
-    expect(within(variance!).getByText("Not available")).toBeVisible();
+    await screen.findByRole("heading", { name: "Procurement", level: 2 });
+    expect(screen.queryByText("Approved procurement amount")).not.toBeInTheDocument();
+    await userEvent.setup().click(screen.getByText(/More procurement metrics/));
+    expect(screen.queryByText("Variance")).not.toBeInTheDocument();
     expect(await screen.findAllByText(/posted of Not available approved/)).not.toHaveLength(0);
-    expect(within(approved!).queryByText(/₹30,000/)).not.toBeInTheDocument();
-    expect(within(variance!).queryByText(/₹18,000/)).not.toBeInTheDocument();
   });
 
-  it("shows unavailable risk and project context without manufacturing zero", async () => {
+  it("hides unavailable risk summaries while preserving project records", async () => {
     const unavailableKeys = ["risk.projectDistribution", "risk.factorDistribution", "risk.topProjects", "projects.completionRate"];
     installDashboardApi({ overview: { ...superAdminDashboardOverviewFixture, dataQuality: { status: "partial", totalIssueCount: unavailableKeys.length, unavailableMetricKeys: unavailableKeys, issues: unavailableKeys.map((metricKey) => ({ code: "module_aggregate_unavailable" as const, metricKey, message: `${metricKey} could not be verified.`, entityType: null, entityId: null })) } } });
     const overviewRender = renderDashboard();
 
-    const queue = await screen.findByRole("region", { name: "Action queue" });
-    expect(within(queue).getByText("Red-risk projects").closest("li")).toHaveTextContent("Not available");
-    expect(screen.getByRole("region", { name: "Priority project" })).toHaveTextContent("risk.topProjects could not be verified.");
-    expect(screen.queryByText("North Residence")).not.toBeInTheDocument();
-    const modules = screen.getByRole("region", { name: "Module summaries" });
-    expect(within(within(modules).getByText("Risk").closest("a")!).getByText("Not available")).toBeVisible();
+    const queue = await screen.findByRole("region", { name: "Operational actions" });
+    expect(within(queue).queryByText("Red-risk projects")).not.toBeInTheDocument();
+    expect(await screen.findByText("North Residence")).toBeVisible();
+    expect(screen.getByRole("region", { name: "Priority projects" })).not.toHaveTextContent("risk.topProjects could not be verified.");
+    expect(screen.getByRole("heading", { name: "Module progress" })).toBeVisible();
 
     overviewRender.unmount();
     renderDashboard("/admin/dashboard?tab=risk&periodDays=30");
-    const riskTabRed = (await screen.findByText("Red-risk projects")).closest("article")!;
-    expect(within(riskTabRed).getByText("Not available")).toBeVisible();
+    await screen.findByRole("heading", { name: "Risk", level: 2 });
+    expect(screen.queryByText("Red-risk projects")).not.toBeInTheDocument();
   });
   it("shows initial loading and retains verified data during a background refresh", async () => {
     const loading = deferred<never>();
@@ -603,9 +674,48 @@ describe("Super Admin dashboard page", () => {
       { updatedAt: 1 }
     );
     renderDashboard(undefined, queryClient);
-    expect(await screen.findByRole("heading", { name: "Organization overview" })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Overview" })).toBeVisible();
     expect(screen.getByText("Refreshing dashboard…")).toBeVisible();
-    expect(screen.getByText("Module summaries")).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Module progress" })).toBeVisible();
+  });
+
+  it("keeps visual destinations on the selected period while showing the previous verified snapshot", async () => {
+    vi.mocked(useAuth).mockReturnValue({ user: { id: "super-admin-one", role: "super_admin" }, authorization: authorizationFor("super_admin", ["projects.design_workflow.payments.read"]) } as ReturnType<typeof useAuth>);
+    const pendingOverview = deferred<SuperAdminDashboardOverview>();
+    const read = vi.spyOn(apiClient, "get").mockImplementation(async (path) => {
+      if (path === "/admin/dashboard/overview?periodDays=30") return superAdminDashboardOverviewFixture as never;
+      if (path === "/admin/dashboard/overview?periodDays=90") return pendingOverview.promise as never;
+      if (path.startsWith("/admin/dashboard/projects?")) return superAdminDashboardProjectsPageFixture as never;
+      if (path === "/design-workflow/payment-confirmations") return [] as never;
+      throw new Error(`Unexpected dashboard request: ${path}`);
+    });
+    const user = userEvent.setup();
+    const { queryClient, unmount } = renderDashboard("/admin/dashboard?periodDays=30&comparison=off");
+    try {
+      const headline = await screen.findByRole("region", { name: "Organization headline metrics" });
+      const snapshot = within(headline).getByText("Total projects").closest("article")!.textContent;
+      const reportingContext = screen.getByRole("region", { name: "Reporting context" }).textContent;
+      await user.selectOptions(screen.getByRole("combobox", { name: "Reporting period" }), "90");
+      expect(screen.getByText("Refreshing dashboard…")).toBeVisible();
+      expect(within(headline).getByText("Total projects").closest("article")!.textContent).toBe(snapshot);
+      expect(screen.getByRole("region", { name: "Reporting context" }).textContent).toBe(reportingContext);
+      expect(screen.getByRole("region", { name: "Reporting context" })).toHaveTextContent("30 days");
+      const destinations = screen.getAllByRole("link").filter((link) => link.getAttribute("href")?.startsWith("/admin/dashboard?"));
+      expect(destinations.length).toBeGreaterThan(10);
+      for (const link of destinations) {
+        const params = new URLSearchParams(link.getAttribute("href")!.split("?")[1]);
+        expect(params.get("periodDays")).toBe("90");
+        expect(params.get("comparison")).toBe("off");
+      }
+      await user.click(screen.getByRole("link", { name: "Finance details" }));
+      await waitFor(() => expect(screen.getByRole("heading", { name: "Finance", level: 2 })).toHaveFocus());
+      expect(read.mock.calls.some(([path]) => path.startsWith("/admin/dashboard/projects?periodDays=90&module=finance&"))).toBe(true);
+      expect(screen.getByRole("combobox", { name: "Reporting period" })).toHaveValue("90");
+    } finally {
+      unmount();
+      pendingOverview.resolve({ ...superAdminDashboardOverviewFixture, period: { ...superAdminDashboardOverviewFixture.period, days: 90 } });
+      queryClient.clear();
+    }
   });
 
   it("keeps the verified executive view mounted while rapid period requests resolve out of order", async () => {
@@ -638,7 +748,7 @@ describe("Super Admin dashboard page", () => {
     const headline = await screen.findByRole("region", { name: "Organization headline metrics" });
     const projectsMetric = within(headline).getByText("Total projects").closest("article")!;
     expect(within(projectsMetric).getByText("30")).toBeVisible();
-    const activityHost = screen.getByRole("img", { name: /Recorded cost postings by UTC day/ });
+    const activityHost = screen.getByRole("img", { name: /Recorded expenses over time\./ });
     await waitFor(() => expect(dashboardChartRuntimeMock.init).toHaveBeenCalledTimes(4));
     const activityInstance = dashboardChartRuntimeMock.instances.get("dashboard-recorded-cost-activity")!;
     const initialUpdates = activityInstance.update.mock.calls.length;
@@ -655,7 +765,7 @@ describe("Super Admin dashboard page", () => {
 
     act(() => sevenDayRequest.resolve(sevenDayData));
     await waitFor(() => expect(within(projectsMetric).getByText("7")).toBeVisible());
-    expect(screen.getByRole("img", { name: /Recorded cost postings by UTC day/ })).toBe(activityHost);
+    expect(screen.getByRole("img", { name: /Recorded expenses over time\./ })).toBe(activityHost);
     expect(screen.queryByText("Refreshing dashboard…")).not.toBeInTheDocument();
     expect(dashboardChartRuntimeMock.init).toHaveBeenCalledTimes(4);
     expect(dashboardChartRuntimeMock.instances.get("dashboard-recorded-cost-activity")).toBe(activityInstance);
@@ -728,5 +838,126 @@ describe("Super Admin dashboard page", () => {
     expect(await screen.findByText("The organization dashboard could not be loaded.")).toBeVisible();
     expect(screen.getByRole("button", { name: "Try again" })).toBeVisible();
     expect(screen.queryByText("Updated")).not.toBeInTheDocument();
+  });
+
+  it("downloads the active tab's displayed report with exact dates, filters, page scope and safe project text", async () => {
+    const name = '=SUM(A1), "Atrium"\nLevel 2';
+    installDashboardApi({ projects: {
+      ...superAdminDashboardProjectsPageFixture,
+      observedAt: "2026-08-30T12:31:00.000Z",
+      items: [{ ...superAdminDashboardProjectsPageFixture.items[0], projectName: name }],
+      pagination: { limit: 20, offset: 20, total: 43, hasMore: true }
+    } });
+    const createObjectURL = vi.fn((_blob: Blob) => "blob:page-dashboard-report");
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal("URL", class extends URL { static createObjectURL = createObjectURL; static revokeObjectURL = revokeObjectURL; });
+    let clicked: HTMLAnchorElement | undefined;
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) { clicked = this; });
+    const user = userEvent.setup();
+    renderDashboard("/admin/dashboard?tab=finance&periodDays=30&comparison=off&search=Atrium&offset=20&sort=name_asc");
+    const button = await screen.findByRole("button", { name: "Export Report" });
+    await waitFor(() => expect(button).toBeEnabled());
+    await user.click(button);
+    expect(await screen.findByText("Dashboard report downloaded.")).toBeInTheDocument();
+    expect(clicked?.download).toMatch(/^Lisno-finance-report-\d{4}-\d{2}-\d{2}\.csv$/);
+    expect(clicked?.isConnected).toBe(false);
+    const csv = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = () => reject(reader.error);
+      reader.readAsText(createObjectURL.mock.calls[0][0]);
+    });
+    expect(csv).toContain('"Active tab","finance"');
+    expect(csv).toContain('"Requested period (days)",30');
+    expect(csv).toContain('"Comparison","Disabled"');
+    expect(csv).toContain('"search","Atrium"');
+    expect(csv).toContain('"sort","name_asc"');
+    expect(csv).toContain('"Period start (UTC)","2026-08-01T00:00:00.000Z"');
+    expect(csv).toContain('"Observed at (UTC)","2026-08-30T12:30:00.000Z"');
+    expect(csv).toContain('"Observed at (UTC)","2026-08-30T12:31:00.000Z"');
+    expect(csv).toContain('"Current page only; not the full matching dataset."');
+    expect(csv).toContain('"Page offset (zero-based)",20');
+    expect(csv).toContain('"Rows loaded",1');
+    expect(csv).toContain('"Total matching records",43');
+    expect(csv).toContain('"Recorded expenses (INR)"');
+    expect(csv).toContain('"2026-08-30",2500');
+    expect(csv).toContain('"\'=SUM(A1), ""Atrium""\nLevel 2"');
+    expect(csv).not.toContain("/admin/projects/");
+    expect(csv).not.toContain("Vendor classification requests");
+    await waitFor(() => expect(revokeObjectURL).toHaveBeenCalledWith("blob:page-dashboard-report"), { timeout: 2000 });
+  });
+
+  it("disables export until both the selected period summary and its priority page are ready", async () => {
+    const overview90 = deferred<SuperAdminDashboardOverview>();
+    const projects90 = deferred<SuperAdminDashboardProjectsPage>();
+    vi.spyOn(apiClient, "get").mockImplementation(async (path) => {
+      if (path === "/admin/dashboard/overview?periodDays=30") return superAdminDashboardOverviewFixture as never;
+      if (path === "/admin/dashboard/overview?periodDays=90") return overview90.promise as never;
+      if (path.startsWith("/admin/dashboard/projects?periodDays=30&")) return superAdminDashboardProjectsPageFixture as never;
+      if (path.startsWith("/admin/dashboard/projects?periodDays=90&")) return projects90.promise as never;
+      throw new Error(`Unexpected dashboard request: ${path}`);
+    });
+    const download = vi.spyOn(dashboardReport, "downloadDashboardReport").mockImplementation(() => undefined);
+    const user = userEvent.setup();
+    renderDashboard();
+    const button = await screen.findByRole("button", { name: "Export Report" });
+    await waitFor(() => expect(button).toBeEnabled());
+    await user.selectOptions(screen.getByRole("combobox", { name: "Reporting period" }), "90");
+    expect(button).toBeDisabled();
+    expect(screen.getByText(/Loading the selected period/)).toBeVisible();
+    await user.click(button);
+    expect(download).not.toHaveBeenCalled();
+    const period = { days: 90 as const, startAt: "2026-06-02T00:00:00.000Z", endAt: "2026-08-30T12:30:00.000Z" };
+    act(() => overview90.resolve({ ...superAdminDashboardOverviewFixture, period }));
+    await waitFor(() => expect(screen.queryByText(/Loading the selected period/)).not.toBeInTheDocument());
+    expect(button).toBeDisabled();
+    act(() => projects90.resolve({ ...superAdminDashboardProjectsPageFixture, period }));
+    await waitFor(() => expect(button).toBeEnabled());
+    await user.click(button);
+    expect(download).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ requestedPeriodDays: 90, sections: expect.arrayContaining([
+      expect.objectContaining({ id: "summary", period }), expect.objectContaining({ id: "priority-projects", period })
+    ]) }));
+  });
+
+  it("exports an independently failed priority section as unavailable while retaining verified summary data", async () => {
+    vi.spyOn(apiClient, "get").mockImplementation(async (path) => {
+      if (path.startsWith("/admin/dashboard/overview?")) return superAdminDashboardOverviewFixture as never;
+      throw new Error("Priority request failed");
+    });
+    const download = vi.spyOn(dashboardReport, "downloadDashboardReport").mockImplementation(() => undefined);
+    renderDashboard();
+    await screen.findByText("Priority projects are unavailable. Other dashboard sections remain available.");
+    const button = screen.getByRole("button", { name: "Export Report" });
+    expect(button).toBeEnabled();
+    await userEvent.setup().click(button);
+    expect(download).toHaveBeenCalledWith(expect.objectContaining({ sections: expect.arrayContaining([
+      expect.objectContaining({ id: "summary", state: "ready", observedAt: superAdminDashboardOverviewFixture.observedAt }),
+      expect.objectContaining({ id: "priority-projects", state: "unavailable", observedAt: null, period: null, tables: [] })
+    ]) }));
+  });
+
+  it.each([false, true])("exports design responses with their source availability (unavailable: %s)", async (unavailable) => {
+    const overview = structuredClone(superAdminDashboardOverviewFixture);
+    overview.governance.pendingDesignResponses = 3;
+    if (unavailable) overview.dataQuality = { status: "partial", totalIssueCount: 1, unavailableMetricKeys: ["governance.pendingDesignResponses"], issues: [] };
+    installDashboardApi({ overview });
+    const download = vi.spyOn(dashboardReport, "downloadDashboardReport").mockImplementation(() => undefined);
+    renderDashboard();
+    const button = await screen.findByRole("button", { name: "Export Report" });
+    await waitFor(() => expect(button).toBeEnabled());
+    await userEvent.setup().click(button);
+    const actions = download.mock.calls[0][0].sections.find((section) => section.id === "summary")!.tables.find((table) => table.title === "Pending actions")!;
+    expect(actions.rows).toContainEqual(["Pending design responses", unavailable ? "Not available" : 3, unavailable ? "Unavailable" : "Requires review", unavailable ? "Authoritative data is unavailable for this metric." : ""]);
+  });
+
+  it("reports download failure without claiming a successful export", async () => {
+    installDashboardApi();
+    vi.spyOn(dashboardReport, "downloadDashboardReport").mockImplementation(() => { throw new Error("Browser download unavailable"); });
+    renderDashboard();
+    const button = await screen.findByRole("button", { name: "Export Report" });
+    await waitFor(() => expect(button).toBeEnabled());
+    await userEvent.setup().click(button);
+    expect(await screen.findByText("The report could not be downloaded. Try again.")).toBeVisible();
+    expect(screen.queryByText("Dashboard report downloaded.")).not.toBeInTheDocument();
   });
 });

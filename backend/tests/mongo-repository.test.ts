@@ -899,6 +899,9 @@ describe("Mongo repository contracts", () => {
     };
     const first = queryFor(document(2, true));
     const second = queryFor(document(3, false));
+    vi.spyOn(UserModel, "findById")
+      .mockReturnValueOnce(queryFor(document(1, true)).query as never)
+      .mockReturnValueOnce(queryFor(document(2, true)).query as never);
     const update = vi.spyOn(UserModel, "findOneAndUpdate")
       .mockReturnValueOnce(first.modelResult as never)
       .mockReturnValueOnce(second.modelResult as never);
@@ -939,7 +942,8 @@ describe("Mongo repository contracts", () => {
       {
         $set: {
           active: false,
-          updatedAt: new Date("2026-08-17T12:00:00.000Z")
+          updatedAt: new Date("2026-08-17T12:00:00.000Z"),
+          sessionVersion: 2
         },
         $inc: { version: 1 }
       },

@@ -1,6 +1,7 @@
 import type { ErrorRequestHandler, RequestHandler } from "express";
 
 import type { ApiErrorResponse } from "../contracts/http.js";
+import { StorageCapacityError } from "../storage/storage-capacity.js";
 
 export class ApiError extends Error {
   constructor(
@@ -27,6 +28,8 @@ export const errorHandler: ErrorRequestHandler = (error, _request, response, _ne
   const apiError =
     error instanceof ApiError
       ? error
+      : error instanceof StorageCapacityError
+        ? new ApiError(507, "INSUFFICIENT_STORAGE", error.message, undefined, { "Retry-After": "60" })
       : isBodyParserSyntaxError(error)
         ? new ApiError(
             400,

@@ -216,7 +216,7 @@ describe("InvitationAcceptancePage", () => {
     expect(screen.queryByText(/provider detail/i)).not.toBeInTheDocument();
   });
 
-  it("validates 12–128 matching passwords, associates errors, focuses them, and toggles visibility", async () => {
+  it("validates 12-character minimum and byte-bounded matching passwords, associates errors, focuses them, and toggles visibility", async () => {
     installInspection();
     const user = userEvent.setup();
     renderPage();
@@ -257,7 +257,7 @@ describe("InvitationAcceptancePage", () => {
     await user.clear(confirmation);
     await user.type(confirmation, "A".repeat(129));
     await user.click(screen.getByRole("button", { name: "Accept invitation" }));
-    expect(screen.getByText("Password must be at most 128 characters.")).toBeVisible();
+    expect(screen.getByText("Password must be at most 72 UTF-8 bytes. Accented characters and emoji use more than one byte.")).toBeVisible();
   });
 
   it("submits one acceptance while pending and never installs an authenticated session", async () => {

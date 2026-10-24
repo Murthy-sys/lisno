@@ -120,7 +120,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     async (reason: "logout" | "expired") => {
       const previousReview = authStateRef.current.session?.reviewSession ?? captureLoginReviewSession();
       const generation = supersedeRestore();
-      const reviewCleanup = clearLoginReviewSession(previousReview);
       acceptedTokenRef.current = null;
       pendingTokenRef.current = null;
       tokenStorage.clear();
@@ -129,6 +128,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         status: reason === "logout" ? "signing_out" : "unauthenticated",
         session: null
       });
+      const reviewCleanup = clearLoginReviewSession(previousReview);
       try {
         await Promise.all([clearAuthenticatedCache(generation), reviewCleanup]);
       } catch {
@@ -156,13 +156,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const previousReview = authStateRef.current.session?.reviewSession ?? captureLoginReviewSession();
     const generation = supersedeRestore();
     if (clearCurrentCache) {
+      tokenStorage.invalidate();
       externalReviewRestoreRef.current = { generation, id: captureLoginReviewSession()?.id ?? null };
     }
     acceptedTokenRef.current = null;
     pendingTokenRef.current = null;
     if (!token) {
-      void clearLoginReviewSession(previousReview);
       commitAuthState({ status: "unauthenticated", session: null });
+      void clearLoginReviewSession(previousReview);
       return;
     }
 
@@ -341,13 +342,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = useCallback(
     async (credentials: Credentials) =>
-      (await establishSession(() => apiClient.post<AuthPayload>("/auth/login", credentials))).user,
+      (await establishSession(() => apiClient.postPublic<AuthPayload>("/auth/login", credentials))).user,
     [establishSession]
   );
 
   const signupClient = useCallback(
     async (input: ClientSignupInput) =>
-      (await establishSession(() => apiClient.post<AuthPayload>("/auth/client-signup", input))).user,
+      (await establishSession(() => apiClient.postPublic<AuthPayload>("/auth/client-signup", input))).user,
     [establishSession]
   );
 
@@ -419,9 +420,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const current = authStateRef.current;
       const recovering = externalReviewRestoreRef.current;
       const ownsRecovery = current.status === "restoring" && recovering?.generation === generationRef.current;
-      if (mountedRef.current && ownsRecovery && !tokenStorage.get()) {
-        // The other tab may abandon its login before publishing a marker.
-        // Finish the owned recovery instead of leaving this tab restoring.
+      if (mountedRef.current && (current.status === "authenticated" || current.status === "restoring") && !tokenStorage.get()) {
+        // Remote logout must immediately hide private UI and clear its cache,
+        // including a tab that has already finished restoring.
         void terminateSession("logout");
         return;
       }

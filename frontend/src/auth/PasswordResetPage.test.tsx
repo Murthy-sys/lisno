@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import axe from "axe-core";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { HttpResponse, http } from "msw";
 import { StrictMode } from "react";
@@ -238,7 +238,7 @@ describe("PasswordResetPage", () => {
     ).toEqual([]);
   });
 
-  it("validates 12–128 matching passwords, focuses errors, and toggles visibility", async () => {
+  it("validates 12-character minimum and byte-bounded matching passwords, focuses errors, and toggles visibility", async () => {
     installInspection();
     const user = userEvent.setup();
     renderPage();
@@ -270,7 +270,22 @@ describe("PasswordResetPage", () => {
     await user.clear(confirmation);
     await user.type(confirmation, "A".repeat(129));
     await user.click(screen.getByRole("button", { name: "Update password" }));
-    expect(screen.getByText("Password must be at most 128 characters.")).toBeVisible();
+    expect(screen.getByText("Password must be at most 72 UTF-8 bytes. Accented characters and emoji use more than one byte.")).toBeVisible();
+  });
+
+  it.each(["é".repeat(37), "🙂".repeat(19)])("explains oversized multibyte passwords accessibly before sending", async value => {
+    installInspection();
+    const complete = vi.fn();
+    server.use(http.post("/api/v1/auth/password-reset/complete", complete));
+    renderPage();
+    const password = await screen.findByLabelText("New password");
+    fireEvent.change(password, { target: { value } });
+    fireEvent.change(screen.getByLabelText("Confirm new password"), { target: { value } });
+    await userEvent.click(screen.getByRole("button", { name: "Update password" }));
+    expect(password).toHaveFocus();
+    expect(password).toHaveAttribute("aria-invalid", "true");
+    expect(password).toHaveAccessibleDescription(/72 UTF-8 bytes/);
+    expect(complete).not.toHaveBeenCalled();
   });
 
   it("completes once while pending, clears inputs, and does not create a session or redirect", async () => {
@@ -309,8 +324,8 @@ describe("PasswordResetPage", () => {
     ).toHaveAttribute("href", "/login");
     expect(window.location.pathname).toBe("/reset-password");
     expect(tokenStorage.get()).toBeNull();
-    expect(password).toHaveValue("");
-    expect(confirmation).toHaveValue("");
+    expect(password).not.toBeInTheDocument();
+    expect(confirmation).not.toBeInTheDocument();
     expect(completeCalls).toBe(1);
   });
 

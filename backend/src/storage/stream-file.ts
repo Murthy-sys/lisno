@@ -3,10 +3,12 @@ import { constants } from "node:fs";
 import { open, unlink } from "node:fs/promises";
 import { Writable, type Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
+import { guardStorageWrite, type StorageWriteGuard } from "./storage-capacity.js";
 
 /** Exclusive, private, bounded-memory writes; rejection leaves no partial target. */
 export async function writePrivateStream(filename: string, source: Readable, options: {
   signal?: AbortSignal; maxBytes?: number; expectedBytes?: number; sha256?: string;
+  capacityGuard?: StorageWriteGuard;
 } = {}) {
   source.once("error", () => {});
   let handle: Awaited<ReturnType<typeof open>> | undefined;
@@ -25,7 +27,7 @@ export async function writePrivateStream(filename: string, source: Readable, opt
         done(Object.assign(new Error("The file exceeds its allowed byte size."), { code: "FILE_SIZE_LIMIT" })); return;
       }
       hash.update(chunk);
-      pendingWrite = (async () => {
+      pendingWrite = (options.capacityGuard ?? guardStorageWrite)(filename, chunk.length, async () => {
         let offset = 0;
         while (offset < chunk.length) {
           options.signal?.throwIfAborted();
@@ -33,7 +35,7 @@ export async function writePrivateStream(filename: string, source: Readable, opt
           if (!bytesWritten) throw new Error("File write did not advance.");
           offset += bytesWritten;
         }
-      })();
+      });
       pendingWrite.then(() => done(), error => done(error as Error));
     } });
     await pipeline(source, destination, { signal: options.signal });

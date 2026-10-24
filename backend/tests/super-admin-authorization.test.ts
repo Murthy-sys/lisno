@@ -741,6 +741,13 @@ const taskInput = {
 };
 
 describe("Projects and Tasks operations", () => {
+  it("keeps Procurement project reads scoped without exposing unrelated project details", async () => {
+    const { app } = setup();
+    const list = await authenticatedRequest(app, "GET", "/api/v1/projects?limit=20&offset=0", actors.procurement).expect(200);
+    expect(list.body.data.items).toEqual([]);
+    await authenticatedRequest(app, "GET", "/api/v1/projects/project-aurora-villa", actors.procurement).expect(404);
+  });
+
   it("gives Super Admin global project and task-event reads with endpoint redaction", async () => {
     const { app, calls } = setupWithRepositoryCounters();
 
@@ -829,6 +836,9 @@ describe("Projects and Tasks operations", () => {
     ] as const;
 
     for (const [method, path, body] of operations) {
+      // Procurement project reads are permitted, with assignment/grant scope
+      // enforced by the project service. All mutations remain denied here.
+      if (actor === actors.procurement && method === "GET" && (path.startsWith("/api/v1/projects?") || path === "/api/v1/projects/project-aurora-villa")) continue;
       const before = snapshotRepositoryCalls(calls);
       await authenticatedRequest(app, method, path, actor, body).expect(403);
       expectDeniedBeforeServiceRepositoryEntry(calls, before);
@@ -1932,7 +1942,8 @@ describe("Task 6 router service-entry boundary", () => {
      * its own shared KPI" covers that boundary instead.
      */
     const gateDeniedCases = taskSixRouterServiceEntryCases.filter(
-      (entry) => !entry.label.startsWith("KPI ")
+      (entry) => !entry.label.startsWith("KPI ") &&
+        !(actor === actors.procurement && ["project list", "project detail"].includes(entry.label))
     );
     for (const entry of gateDeniedCases) {
       const before = snapshotServiceEntries(calls);

@@ -252,7 +252,7 @@ const overviewForMotionPeriod = (
     }))
   };
 };
-const overview = qaState === "empty"
+const overview: typeof superAdminDashboardOverviewFixture = qaState === "empty"
   ? {
       ...superAdminDashboardOverviewFixture,
       projects: { ...superAdminDashboardOverviewFixture.projects, total: 0, createdInPeriod: 0, planning: 0, active: 0, onHold: 0, completed: 0, liveOverdue: 0, completedLate: 0, atRisk: 0, completionRate: { numerator: 0, denominator: 0, rateBps: null } },
@@ -315,6 +315,7 @@ window.fetch = async (input) => {
     "projects.design_workflow.payments.read",
     "estimation.client_response_tasks.read"
   ]) });
+  if (path.includes("/admin/ai-estimator-knowledge/basket-requests")) return Response.json({ data: { items: [], pagination: { total: 7, limit: 1, offset: 0, hasMore: true } } });
   if (path.includes("/design-workflow/payment-confirmations")) return Response.json({ data: [] });
   if (path.includes("/admin/dashboard/overview")) {
     if (qaState === "loading" || qaState === "background-refresh") {
@@ -340,15 +341,40 @@ window.fetch = async (input) => {
       ));
       return Response.json({ data: overviewForMotionPeriod(responseOverview, periodDays) });
     }
-    return Response.json({ data: overview });
+    const days = normalizeMotionPeriodDays(new URL(path, window.location.origin).searchParams.get("periodDays"));
+    const resolved = overview.comparison ? overviewForMotionPeriod(overview, days) : { ...overview, period: overviewForMotionPeriod(superAdminDashboardOverviewFixture, days).period };
+    if (qaState === "reference") {
+      // Synthetic, reconciled daily costs for visual inspection of a populated time series.
+      const total = resolved.comparison?.metrics.recorded_expenses_paise.current ?? 0;
+      const weights = resolved.trends.map((_, index) => 1 + ((index * 7 + Math.floor(index / 6) * 11) % 25));
+      const weightSum = weights.reduce((sum, weight) => sum + weight, 0);
+      let assigned = 0;
+      resolved.trends = resolved.trends.map((bucket, index) => {
+        const amount = index === weights.length - 1 ? total - assigned : Math.floor(total * weights[index] / weightSum);
+        assigned += amount;
+        return { ...bucket, ledgerExpensesPostedPaise: amount };
+      });
+      if (resolved.comparison) resolved.comparison.currentBuckets = resolved.comparison.currentBuckets.map((bucket, index) => ({ ...bucket, recordedExpensesPaise: resolved.trends[index].ledgerExpensesPostedPaise }));
+    }
+    return Response.json({ data: resolved });
   }
   if (path.includes("/admin/dashboard/projects")) {
     if (qaState === "project-page-failure") {
       return Response.json({ error: { code: "PROJECT_PAGE_UNAVAILABLE", message: "Project details could not be loaded." } }, { status: 500 });
     }
-    return Response.json({ data: projectPage });
+    const requestUrl = new URL(path, window.location.origin);
+    const days = normalizeMotionPeriodDays(requestUrl.searchParams.get("periodDays"));
+    const limit = Number(requestUrl.searchParams.get("limit") ?? 20);
+    const offset = Number(requestUrl.searchParams.get("offset") ?? 0);
+    const search = requestUrl.searchParams.get("search")?.toLowerCase();
+    const status = requestUrl.searchParams.get("projectStatus");
+    const items = projectPage.items.filter((row) => (!search || row.projectName.toLowerCase().includes(search)) && (!status || row.projectStatus === status));
+    return Response.json({ data: { ...projectPage, period: overviewForMotionPeriod(superAdminDashboardOverviewFixture, days).period, items: items.slice(offset, offset + limit), pagination: { limit, offset, total: items.length, hasMore: offset + limit < items.length } } });
   }
-  if (path.includes("/admin/dashboard/workforce")) return Response.json({ data: workforcePage });
+  if (path.includes("/admin/dashboard/workforce")) {
+    const days = normalizeMotionPeriodDays(new URL(path, window.location.origin).searchParams.get("periodDays"));
+    return Response.json({ data: { ...workforcePage, period: overviewForMotionPeriod(superAdminDashboardOverviewFixture, days).period } });
+  }
   return Response.json({ error: { code: "QA_REQUEST_BLOCKED", message: "The deterministic QA harness blocks non-dashboard requests." } }, { status: 404 });
 };
 

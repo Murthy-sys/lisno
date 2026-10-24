@@ -204,7 +204,11 @@ describe("Procurement vendor profile", () => {
       }
     }
     expect(screen.getByRole("textbox", { name: "Turnover (Verified) (INR)" })).toHaveValue("");
-    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    const save = screen.getByRole("button", { name: "Save changes" });
+    // Detail and basket catalogue load independently; a populated form can
+    // still be waiting for the catalogue before submission is enabled.
+    await waitFor(() => expect(save).toBeEnabled());
+    await user.click(save);
     await waitFor(() => expect(view.saved).toHaveBeenCalledOnce());
     expect(writes[0]).toMatchObject({ expectedVersion: 1, procurementProfile: {
       vendorType: branch.startsWith("supplier") ? "supplier" : "execution", executionType: branch.startsWith("supplier") ? null : branch === "both" ? ["labor", "material_labour"] : [branch],

@@ -9,7 +9,7 @@ import { BackButton } from "../../ui/BackButton";
 import { Button, Field } from "../../ui/primitives";
 import { colors, fonts, radii, spacing } from "../../ui/tokens";
 import { AuthFrame } from "./AuthFrame";
-import { firstIssue, newPasswordSchema } from "./validation";
+import { firstIssue, newPasswordSchema, PASSWORD_HINT } from "./validation";
 
 type TokenFlow = "reset" | "invitation";
 
@@ -84,7 +84,7 @@ export function TokenPasswordScreen({ flow }: { readonly flow: TokenFlow }) {
     <AuthFrame
       eyebrow={copy.eyebrow}
       title={status === "complete" ? "You’re ready" : copy.title}
-      subtitle="Use a unique password of at least 12 characters."
+      subtitle={PASSWORD_HINT}
       back={back.visible ? <BackButton onPress={back.onBack} disabled={back.disabled} accessibilityLabel="Back to sign in" accessibilityHint="Returns to sign in and closes this secure link." /> : null}
     >
       {status === "inspecting" ? <Text accessibilityLiveRegion="polite" style={styles.notice}>Checking secure link…</Text> : null}

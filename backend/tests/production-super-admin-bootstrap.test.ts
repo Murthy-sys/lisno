@@ -283,6 +283,16 @@ afterAll(async () => {
 });
 
 describe("production Super Admin bootstrap for the existing lisno database", () => {
+  it.each(["a".repeat(73), "é".repeat(37), "😀".repeat(19)])("rejects bcrypt-truncated credentials before inspection or writes", async password => {
+    await expectBootstrapError(() => parseProductionSuperAdminBootstrapConfig({ argv: [], environment: environment({ PRODUCTION_SUPER_ADMIN_PASSWORD: password }) }), "INVALID_CONFIGURATION");
+    const config = parseProductionSuperAdminBootstrapConfig({ argv: [], environment: environment() });
+    await expectBootstrapError(runProductionSuperAdminBootstrap({ ...config, password }, { connection: {} as never }), "INVALID_CONFIGURATION");
+  });
+
+  it.each(["a".repeat(72), "é".repeat(36), "😀".repeat(18)])("accepts an exact 72-byte password in validated configuration", password => {
+    expect(parseProductionSuperAdminBootstrapConfig({ argv: [], environment: environment({ PRODUCTION_SUPER_ADMIN_PASSWORD: password }) }).password).toBe(password);
+  });
+
   it("fails closed on arguments, target, fingerprint, maintenance, and private inputs", async () => {
     const cases: Array<{
       argv?: string[];

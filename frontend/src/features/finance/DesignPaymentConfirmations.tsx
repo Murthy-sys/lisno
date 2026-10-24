@@ -1,5 +1,6 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useId, useRef, useState, type FormEvent } from "react";
+import { Link } from "react-router-dom";
 
 import { ApiError } from "../../api/client";
 import { useAuth } from "../../auth/AuthProvider";
@@ -40,7 +41,7 @@ export function ProjectInitialPaymentStatus({ workflow }: { workflow: DesignWork
   </section>;
 }
 
-export function DesignPaymentConfirmations() {
+export function DesignPaymentConfirmations({ summaryHref }: { summaryHref?: string } = {}) {
   const { user, authorization } = useAuth();
   const canRead = (user?.role === "finance_head" || user?.role === "super_admin") && hasFrontendPermission(authorization, "projects.design_workflow.payments.read");
   const canRecord = useCanRecordPayment();
@@ -51,6 +52,14 @@ export function DesignPaymentConfirmations() {
     refetchInterval: 60_000
   });
   if (!canRead) return null;
+  if (summaryHref) return <section className="dashboard-payment-summary" aria-label="Initial payment confirmations">
+    <Link to={summaryHref} id="dashboard-payment-action" data-dashboard-origin="dashboard-payment-action">
+      <span className="dashboard-payment-mark" aria-hidden="true">₹</span>
+      <span>{query.data ? <strong>{query.data.filter((project) => !project.confirmedAt).length}</strong> : null}<span>Awaiting initial payment confirmation</span><small>Review receipts and final-estimate attestations</small></span>
+    </Link>
+    {query.isPending ? <p role="status">Loading payment confirmations…</p> : null}
+    {query.isError ? <div role="alert"><p>Payment confirmations could not be refreshed.</p><Button variant="secondary" onClick={() => void query.refetch()}>Reload confirmations</Button></div> : null}
+  </section>;
   return <Surface as="section" className="design-payment-confirmations" aria-label="Initial payment confirmations">
     <h2>Initial payment confirmations</h2>
     <p>Verify the receipt before confirming payment. For pre/post-estimation projects, Super Admin confirms payment after final approval to enable work-order issuance. Earlier projects keep their existing payment workflow.</p>
