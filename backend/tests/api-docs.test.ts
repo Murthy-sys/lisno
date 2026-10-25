@@ -26,6 +26,18 @@ function componentSchemas(): Record<string, OpenApiObject> {
 }
 
 describe("OpenAPI and Swagger UI", () => {
+  it("documents Client-screen visibility as Overview configuration and server-owned estimate output", () => {
+    const schemas = componentSchemas();
+    const overview = (schemas.KnowledgeSectionPayload!.anyOf as OpenApiObject[]).find((entry) =>
+      (entry.properties as OpenApiObject)?.clientVisible !== undefined);
+    expect(overview).toHaveProperty("properties.clientVisible.type", "boolean");
+    expect(overview).toHaveProperty("properties.clientVisible.default", true);
+    expect(schemas.EstimatorCatalogueLine).toHaveProperty("properties.clientVisible.readOnly", true);
+    expect(schemas.EstimatorCatalogueLine!.required).toContain("clientVisible");
+    expect(schemas.ClientEstimateSnapshot).toHaveProperty("properties.lineItems.items.properties.clientVisible.default", true);
+    expect(schemas.ConfiguredEstimateLineInput).not.toHaveProperty("properties.clientVisible");
+  });
+
   it("documents optional current-line margin application and saved source prices without weakening bulk commands", () => {
     const schemas = componentSchemas();
     expect(schemas.KnowledgeApplySubBasketMarginsRequest!.required).toEqual(["mode", "versionToken"]);

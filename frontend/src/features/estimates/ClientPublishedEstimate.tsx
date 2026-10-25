@@ -19,6 +19,7 @@ export const clientEstimateMoney = (value: number) => `₹${value.toLocaleString
 export function ClientPublishedEstimate({ estimate, decisionBlocked = false }: { estimate: EstimateQueueItem; decisionBlocked?: boolean }) {
   const reviewSectionRef = useRef<HTMLElement>(null);
   const review = estimate.publishedReview;
+  const displayedItemCount = review?.snapshot.lineItems.filter((item) => item.included).length ?? 0;
   if (!review || estimate.reviewSourceIssue) return <div className="client-commercial-state" role="status">
     <strong>Submitted estimate unavailable</strong>
     <p>The submitted version could not be verified. Please ask your Sales team to submit the estimate again.</p>
@@ -32,7 +33,7 @@ export function ClientPublishedEstimate({ estimate, decisionBlocked = false }: {
       <span className="client-commercial-status">{review.status === "approved" ? "Approved" : review.status === "changes_requested" ? "Changes requested" : review.status === "superseded" ? "Review withdrawn" : "Awaiting your review"}</span>
     </div>
     <p>{review.snapshot.clientName} · {review.snapshot.location}</p>
-    <p className="client-commercial-review__hint">{review.snapshot.lineItems.filter((item) => item.included).length} items · GST included</p>
+    <p className="client-commercial-review__hint">{displayedItemCount ? `${displayedItemCount} ${displayedItemCount === 1 ? "item" : "items"} shown · ` : ""}GST included</p>
     {review.phase === "post" ? <PreEstimateComparison estimate={estimate} /> : null}
     <PublishedEstimateDetails snapshot={review.snapshot} />
     <ClientEstimateDecision key={`${review.id}:${review.version}`} estimate={estimate} review={review} decisionBlocked={decisionBlocked || (review.phase === "post" && (!estimate.preApprovedReview || !estimate.changesFromPre))} fallbackRef={reviewSectionRef} />
@@ -103,7 +104,7 @@ function PublishedEstimateDetails({ snapshot }: { snapshot: EstimateClientReview
           </div>)}
         </div>
       </details>)}
-      {!included.length ? <p>No item breakdown is available in this submitted estimate.</p> : null}
+      {!included.length ? <p>View the PDF/quotation for the item breakdown.</p> : null}
       <dl className="client-commercial-totals">
         <div><dt>Subtotal</dt><dd>{clientEstimateMoney(snapshot.subtotalPaise === undefined ? snapshot.subtotal : snapshot.subtotalPaise / 100)}</dd></div>
         <div><dt>GST</dt><dd>{clientEstimateMoney(snapshot.gstPaise === undefined ? snapshot.gst : snapshot.gstPaise / 100)}</dd></div>

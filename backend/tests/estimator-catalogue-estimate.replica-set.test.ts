@@ -1,5 +1,5 @@
 import { normalizeDesignRules, designRulesDigest } from "../src/domain/main-line-design-rules.js";
-import { resolveCurrentMainLineDesignRules } from "../src/services/estimator-catalogue.service.js";
+import { resolveCurrentMainLineDesignRules, resolveEstimatorCatalogueLines } from "../src/services/estimator-catalogue.service.js";
 import { assertCurrentConfiguredPublication, toEstimateSnapshot } from "../src/services/estimate-publication.service.js";
 import express from "express";
 import request from "supertest";
@@ -132,6 +132,89 @@ async function seedFixtureItem(input: FixtureItem) {
 }
 
 describe("estimator configured catalogue and estimate", { timeout: 30_000 }, () => {
+  it("keeps screen-hidden rows internally available, freezes visibility, and preserves every amount", async () => {
+    await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: "overview-a" }, { $set: { "payload.clientVisible": false } });
+    await AiEstimatorKnowledgeMainLineModel.collection.updateOne({ _id: "line-a" }, { $set: { estimationVisibility: "external" } });
+    const resolved = await resolveEstimatorCatalogueLines(["line-a", "line-b"]);
+    expect(resolved.get("line-a")!.line.clientVisible).toBe(false);
+    expect(resolved.get("line-b")!.line.clientVisible).toBe(true);
+    const { server } = app();
+    const path = "/api/v1/leads/lead-client-visibility/estimate";
+    const lines = [configuredLine({ rateSource: "manual", pricingMode: "sub_vendor" }), configuredLine({
+      catalogueId: "line-b", mainLineId: "line-b", mainBasketId: "basket-b", subBasketId: "sub-b", revisionId: "revision-b",
+      uomId: "uom-ea", quantity: 2, ratePaise: 5003, rateSource: "manual", pricingMode: "sub_vendor"
+    })];
+    const saved = await request(server).put(path).set(bearer("estimator"))
+      .send(estimateInput(lines, ["basket-a", "basket-b"])).expect(200);
+    expect(saved.body.data.lineItems).toHaveLength(2);
+    expect(saved.body.data.lineItems.map((line: { clientVisible: boolean }) => line.clientVisible)).toEqual([false, true]);
+    const stored = await EstimateModel.findById(saved.body.data.id).lean();
+    expect(stored).toMatchObject({ subtotalPaise: 26255, gstPaise: 4726, totalPaise: 30981 });
+    const frozen = toEstimateSnapshot(stored as never, { clientName: "Client", projectName: "Project", location: "City" } as never);
+    expect(frozen.lineItems).toHaveLength(2);
+    expect(frozen.lineItems[0]).toMatchObject({ mainLineName: "Wiring", clientVisible: false, amountPaise: 16249 });
+    expect(frozen.lineItems[1]).toMatchObject({ mainLineName: "Cabinet", clientVisible: true, amountPaise: 10006 });
+    expect(frozen).toMatchObject({ subtotalPaise: 26255, gstPaise: 4726, totalPaise: 30981 });
+    await assertCurrentConfiguredPublication(stored as never);
+    await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: "overview-a" }, { $set: { "payload.clientVisible": true } });
+    await expect(assertCurrentConfiguredPublication(stored as never)).rejects.toMatchObject({ code: "ESTIMATE_CONFIGURATION_CHANGED" });
+    const refreshed = await request(server).get(path).set(bearer("estimator")).expect(200);
+    expect(refreshed.body.data.lineItems[0].clientVisible).toBe(true);
+    expect((await EstimateModel.findById(saved.body.data.id).lean())!.lineItems[0].clientVisible).toBe(false);
+    expect(frozen.lineItems[0]!.clientVisible).toBe(false);
+    expect(refreshed.body.data.totalPaise).toBe(stored!.totalPaise);
+  });
+
+  it("uses the same latest saved Draft Overview for visibility and UOM and snapshots that source", async () => {
+    await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: "overview-a" }, { $set: { "payload.clientVisible": true } });
+    await AiEstimatorKnowledgeRevisionModel.collection.insertOne({ _id: "visibility-draft", mainLineId: "line-a", status: "draft", version: 2 } as never);
+    await AiEstimatorKnowledgeMainLineModel.collection.updateOne({ _id: "line-a" }, { $set: { draftRevisionId: "visibility-draft" } });
+    await AiEstimatorKnowledgeSectionModel.collection.insertOne({ _id: "overview-visibility-draft", mainLineId: "line-a",
+      revisionId: "visibility-draft", sectionKey: "overview", payload: { uomId: "uom-sq", clientVisible: false } } as never);
+    expect((await resolveEstimatorCatalogueLines(["line-a"])).get("line-a")!.line)
+      .toMatchObject({ revisionId: "visibility-draft", revisionVersion: 2, clientVisible: false, uom: { id: "uom-sq" } });
+    const saved = await request(app().server).put("/api/v1/leads/lead-visibility-draft/estimate").set(bearer("estimator"))
+      .send(estimateInput([configuredLine({ revisionId: "visibility-draft" })])).expect(200);
+    expect(saved.body.data.lineItems[0]).toMatchObject({ revisionId: "visibility-draft", sourceRevisionVersion: 2, clientVisible: false });
+  });
+
+  it("rejects caller-forged visibility and keeps absent historical flags visible without writes on read", async () => {
+    const { server } = app();
+    const path = "/api/v1/leads/lead-visibility-authority/estimate";
+    for (const clientVisible of [false, true]) {
+      await request(server).put(path).set(bearer("estimator"))
+        .send(estimateInput([configuredLine({ clientVisible })])).expect(400);
+    }
+    expect(await EstimateModel.countDocuments({ leadId: "lead-visibility-authority" })).toBe(0);
+    const saved = await request(server).put(path).set(bearer("estimator"))
+      .send(estimateInput([configuredLine()])).expect(200);
+    await EstimateModel.collection.updateOne({ _id: saved.body.data.id }, { $unset: { "lineItems.0.clientVisible": "" } });
+    const historical = await EstimateModel.findById(saved.body.data.id).lean();
+    expect(historical!.lineItems[0]).not.toHaveProperty("clientVisible");
+    await assertCurrentConfiguredPublication(historical as never);
+    const frozen = toEstimateSnapshot(historical as never, { clientName: "Client", projectName: "Project", location: "City" } as never);
+    expect(frozen.lineItems[0]).not.toHaveProperty("clientVisible");
+    const refreshed = await request(server).get(path).set(bearer("estimator")).expect(200);
+    expect(refreshed.body.data.lineItems[0].clientVisible).toBe(true);
+    expect((await EstimateModel.findById(saved.body.data.id).lean())!.lineItems[0]).not.toHaveProperty("clientVisible");
+  });
+
+  it("requires saving a changed visibility choice before high-value submission without repricing", async () => {
+    const { server, publication } = app();
+    const path = "/api/v1/leads/lead-visibility-submit/estimate";
+    const line = configuredLine({ rateSource: "manual", ratePaise: 200_000_000, quantity: 1 });
+    const saved = await request(server).put(path).set(bearer("estimator")).send(estimateInput([line])).expect(200);
+    await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: "overview-a" }, { $set: { "payload.clientVisible": false } });
+    const rejected = await request(server).post(`${path}/submit`).set(bearer("estimator")).expect(409);
+    expect(rejected.body.error.code).toBe("ESTIMATE_CONFIGURATION_CHANGED");
+    const resaved = await request(server).put(path).set(bearer("estimator"))
+      .send(estimateInput([line], ["basket-a"], saved.body.data.version)).expect(200);
+    expect(resaved.body.data.lineItems[0]).toMatchObject({ clientVisible: false, ratePaise: 200_000_000, amountPaise: 200_000_000 });
+    expect(resaved.body.data.totalPaise).toBe(saved.body.data.totalPaise);
+    await request(server).post(`${path}/submit`).set(bearer("estimator")).expect(200);
+    expect(publication.publishEstimateToClient).not.toHaveBeenCalled();
+  });
+
   it("snapshots Design rules for manual-price lines and freezes public notes independently from later Configuration", async () => {
     const rules = normalizeDesignRules({ answers: { stockCheck: true, maintenanceAccess: true, vendorPreDiscussed: true },
       discussedVendorId: "internal-vendor", details: { vendorPreDiscussed: "INTERNAL DISCUSSION", maintenanceAccess: "Keep the service hatch accessible." } });

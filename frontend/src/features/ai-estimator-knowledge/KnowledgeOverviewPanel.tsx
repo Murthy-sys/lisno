@@ -1,8 +1,8 @@
 import { Box, Plus } from "lucide-react";
-import { useMemo, type RefObject } from "react";
+import { useId, useMemo, type RefObject } from "react";
 
 import { Button } from "../../components/ui/Button";
-import { Field, Select } from "../../components/ui/Field";
+import { Field, Radio, Select } from "../../components/ui/Field";
 import { Surface } from "../../components/ui/Surface";
 import { KnowledgeCardHeading } from "./KnowledgeCardHeading";
 import type { KnowledgeProposedMasterChoice } from "./KnowledgeSurfaceMultiSelect";
@@ -75,6 +75,8 @@ export function KnowledgeOverviewPanel({
   saving = false,
   surfacesDirty = false
 }: KnowledgeOverviewPanelProps) {
+  const visibilityId = useId();
+  const clientVisible = overviewPayload.clientVisible !== false;
   const surfaceIds = Array.isArray(overviewPayload.surfaceIds)
     ? overviewPayload.surfaceIds.filter((id): id is string => typeof id === "string")
     : [];
@@ -147,6 +149,21 @@ export function KnowledgeOverviewPanel({
             ) : null}
           </div>
         </div>
+        <fieldset className="ui-fieldset knowledge-overview__client-visibility" role="radiogroup" disabled={!editable || saving} aria-describedby={`${visibilityId}-help`}>
+          <legend>Is this main line needed for the client?</legend>
+          <div className="ui-radio-group">
+            {([true, false] as const).map((value) => <label className="knowledge-overview__visibility-option" key={String(value)}>
+              <Radio name={`${visibilityId}-client-visible`} value={String(value)} checked={clientVisible === value}
+                onChange={() => {
+                  if (!editable || saving) return;
+                  onOverviewDirty("clientVisible");
+                  onOverviewPayloadChange({ ...overviewPayload, clientVisible: value });
+                }} />
+              {value ? "Yes" : "No"}
+            </label>)}
+          </div>
+          <p id={`${visibilityId}-help`} className="knowledge-overview__source-state">No keeps this main line internal on the client estimate screen. It remains included in the total and PDF/quotation.</p>
+        </fieldset>
       </Surface>
 
       <Surface as="section" className="knowledge-overview__summary-panel knowledge-overview__configuration-card" aria-label={presentation === "procurement-basket" ? "Applicable surfaces" : "Surfaces"}>

@@ -28,6 +28,7 @@ export interface EstimationCatalogueMainLine {
   itemType?: "main_line";
   name: string;
   estimateNotes?: string[];
+  clientVisible?: boolean;
   displayOrder: number;
   revisionId: string;
   itemStatus?: "draft" | "active" | "inactive";

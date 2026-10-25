@@ -969,6 +969,7 @@ function mapSnapshot(row: Row): EstimateClientReviewSnapshot {
     lineItems: arrayField(row, "lineItems").map((lineItem) => {
       const common = {
         ...(lineItem.id === undefined ? {} : { id: nullableStringField(lineItem, "id") }),
+        ...(lineItem.clientVisible === undefined ? {} : { clientVisible: booleanField(lineItem, "clientVisible") }),
         catalogueId: stringField(lineItem, "catalogueId"),
         roomName: stringField(lineItem, "roomName"),
         unit: stringField(lineItem, "unit"),

@@ -2251,6 +2251,7 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
             amount: { type: "number", minimum: 0, nullable: true }, amountPaise: { type: "integer", minimum: 0, nullable: true },
             mainBasketId: { type: "string" }, subBasketId: { type: "string", nullable: true }, mainLineId: { type: "string" },
             itemType: { type: "string", enum: ["main_line", "temporary"], description: "Absent on historical configured lines, which are Main Lines." },
+            clientVisible: { type: "boolean", default: true, description: "Frozen Client-screen visibility. Missing historical values mean visible. PDFs, quotations and totals retain every included line." },
             classification: { type: "string", enum: ["standard", "special"], description: "Frozen item classification. Standard uses Sub-Vendor when an explicit pricing mode is present. Historical missing classifications display as Standard without repricing." },
             pricingMode: { type: "string", enum: ["pmc", "sub_vendor", "in_house"], description: "Frozen selected pricing mode. Absent historical modes remain unknown." },
             selectedInHouseComponentIds: { type: "array", maxItems: 50, uniqueItems: true, items: { type: "string", minLength: 1, maxLength: 128 }, description: "Frozen component selection for this estimate line. Newly configured components are not added to this selection." },
@@ -2325,10 +2326,11 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
     },
     EstimatorCatalogueLine: {
       type: "object", additionalProperties: false,
-      required: ["id", "mainLineId", "basketId", "subBasketId", "itemType", "name", "displayOrder", "revisionId", "itemStatus", "revisionStatus", "itemVersion", "revisionVersion", "inHouseBaseRatePaise", "modeBaseRatesPaise", "uom"],
+      required: ["id", "mainLineId", "basketId", "subBasketId", "itemType", "clientVisible", "name", "displayOrder", "revisionId", "itemStatus", "revisionStatus", "itemVersion", "revisionVersion", "inHouseBaseRatePaise", "modeBaseRatesPaise", "uom"],
       properties: {
         id: { type: "string" }, mainLineId: { type: "string" }, basketId: { type: "string" },
         subBasketId: { type: "string", nullable: true }, itemType: { type: "string", enum: ["main_line", "temporary"] },
+        clientVisible: { type: "boolean", default: true, readOnly: true, description: "Current saved Overview choice for the Client estimate screen only. Internal estimating, PDF output and totals are unchanged." },
         name: { type: "string" },
         displayOrder: { type: "integer" }, revisionId: { type: "string" },
         itemStatus: { type: "string", enum: ["draft", "active", "inactive"] },

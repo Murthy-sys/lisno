@@ -46,6 +46,48 @@ function renderPanel(overrides: Partial<KnowledgeOverviewPanelProps> = {}) {
 }
 
 describe("KnowledgeOverviewPanel", () => {
+  it("defaults client visibility to Yes without changing legacy Overview payloads", () => {
+    const props = renderPanel();
+    const visibility = screen.getByRole("radiogroup", { name: "Is this main line needed for the client?" });
+    expect(within(visibility).getByRole("radio", { name: "Yes" })).toBeChecked();
+    expect(within(visibility).getByRole("radio", { name: "No" })).not.toBeChecked();
+    expect(visibility).toHaveAccessibleDescription("No keeps this main line internal on the client estimate screen. It remains included in the total and PDF/quotation.");
+    expect(props.onOverviewPayloadChange).not.toHaveBeenCalled();
+    expect(props.onOverviewDirty).not.toHaveBeenCalled();
+  });
+
+  it("changes client visibility by keyboard while preserving every other Overview value", async () => {
+    const user = userEvent.setup(); const props = renderPanel();
+    screen.getByRole("radio", { name: "Yes" }).focus();
+    await user.keyboard("{ArrowRight}");
+    expect(props.onOverviewDirty).toHaveBeenCalledExactlyOnceWith("clientVisible");
+    expect(props.onOverviewPayloadChange).toHaveBeenCalledExactlyOnceWith({ ...overviewPayload, clientVisible: false });
+    props.rerender(<main><KnowledgeOverviewPanel {...props} overviewPayload={{ ...overviewPayload, clientVisible: false }} /></main>);
+    expect(screen.getByRole("radio", { name: "No" })).toBeChecked();
+    screen.getByRole("radio", { name: "No" }).focus();
+    await user.keyboard("{ArrowLeft}");
+    expect(props.onOverviewPayloadChange).toHaveBeenLastCalledWith({ ...overviewPayload, clientVisible: true });
+    expect(props.onOverviewDirty).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([{ editable: false, saving: false }, { editable: true, saving: true }])("disables client visibility for readonly or saving Overview (%j)", async (state) => {
+    const user = userEvent.setup(); const props = renderPanel({ ...state, overviewPayload: { ...overviewPayload, clientVisible: false } });
+    expect(screen.getByRole("radio", { name: "No" })).toBeChecked();
+    for (const name of ["Yes", "No"]) expect(screen.getByRole("radio", { name })).toBeDisabled();
+    await user.click(screen.getByRole("radio", { name: "Yes" }));
+    expect(props.onOverviewPayloadChange).not.toHaveBeenCalled();
+    expect(props.onOverviewDirty).not.toHaveBeenCalled();
+  });
+
+  it("keeps the same client visibility control in shared proposal Overview", async () => {
+    const user = userEvent.setup(); const props = renderPanel({ presentation: "procurement-basket", proposalActions: true,
+      overviewPayload: { ...overviewPayload, clientVisible: false } });
+    expect(screen.getByRole("radio", { name: "No" })).toBeChecked();
+    await user.click(screen.getByRole("radio", { name: "Yes" }));
+    expect(props.onOverviewPayloadChange).toHaveBeenCalledExactlyOnceWith({ ...overviewPayload, clientVisible: true });
+    expect(props.onOverviewDirty).toHaveBeenCalledExactlyOnceWith("clientVisible");
+  });
+
   it("offers named proposal actions and selects a proposed UOM without changing hidden fields", async () => {
     const user = userEvent.setup();
     const proposedUom = { id: "proposal-uom", name: "Panel bundle", decimalScale: 1 };
@@ -111,7 +153,7 @@ describe("KnowledgeOverviewPanel", () => {
     expect(screen.getByRole("button", { name: "Remove Unavailable value from Main Line" })).toBeDisabled();
   });
 
-  it("shows only UOM and Surface configuration without context or saved section summaries", async () => {
+  it("shows UOM, client visibility and Surface configuration without context or saved section summaries", async () => {
     renderPanel();
 
     expect(screen.getByRole("combobox", { name: "Unit of measure (UOM)" })).toBeVisible();
@@ -127,7 +169,7 @@ describe("KnowledgeOverviewPanel", () => {
     ]);
     expect(within(table).queryByRole("checkbox")).not.toBeInTheDocument();
     expect(screen.getAllByRole("combobox")).toHaveLength(1);
-    expect(screen.queryByRole("radiogroup")).not.toBeInTheDocument();
+    expect(screen.getByRole("radiogroup", { name: "Is this main line needed for the client?" })).toBeVisible();
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^Open /u })).not.toBeInTheDocument();
     expect(document.querySelector(".knowledge-overview__context")).not.toBeInTheDocument();

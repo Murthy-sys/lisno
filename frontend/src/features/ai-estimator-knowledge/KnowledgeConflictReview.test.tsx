@@ -203,6 +203,13 @@ describe("KnowledgeConflictReview Budgeting projection", () => {
 });
 
 describe("KnowledgeConflictReview Mode Overview projection", () => {
+  it.each([[undefined, "Yes"], [true, "Yes"], [false, "No"]] as const)("shows server client visibility %s as %s in Overview conflict review", (clientVisible, expected) => {
+    render(<KnowledgeConflictReview sectionKey="overview" localVersion={2} serverVersion={3}
+      payload={clientVisible === undefined ? {} : { clientVisible }} masters={{}} relationshipBaskets={[]} relationshipItems={[]} />);
+    const review = screen.getByRole("region", { name: "Latest Overview server version" });
+    expect(within(review).getByText("Client estimate screen").parentElement).toHaveTextContent(`Client estimate screen${expected}`);
+  });
+
   it("compares the resolved Priority label without exposing other Overview values or raw IDs", () => {
     render(
       <KnowledgeConflictReview

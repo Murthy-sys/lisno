@@ -44,6 +44,7 @@ const estimateClientReviewLineItemSchema = new Schema(
     id: { type: String, default: null, immutable: true },
     source: { type: String, enum: ["legacy", "configuration"], default: undefined, immutable: true },
     itemType: { type: String, enum: ["main_line", "temporary"], default: undefined, immutable: true },
+    clientVisible: { type: Boolean, cast: false, default: undefined, immutable: true },
     classification: { type: String, enum: ["standard", "special"], default: undefined, immutable: true },
     pricingMode: { type: String, enum: ["pmc", "sub_vendor", "in_house"], default: undefined, immutable: true },
     rateSource: { type: String, enum: ["configuration", "manual"], default: undefined, immutable: true },

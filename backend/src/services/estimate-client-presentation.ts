@@ -13,7 +13,8 @@ const paise = z.number().int().safe().nonnegative();
 const commonLine = {
   id: z.string().nullable().optional(), catalogueId: z.string().min(1),
   roomName: z.string().min(1), unit: z.string().min(1),
-  rate: money, quantity: money, included: z.boolean(), amount: money
+  rate: money, quantity: money, included: z.boolean(), amount: money,
+  clientVisible: z.boolean().optional()
 };
 const legacyLine = z.object({ ...commonLine, source: z.literal("legacy").optional(), specification: z.string().min(1) });
 const configuredLine = z.object({
@@ -66,6 +67,21 @@ function timestamp(value: unknown): string | null {
   if (!(typeof value === "string" || value instanceof Date)) return null;
   const date = new Date(value);
   return Number.isFinite(date.getTime()) ? date.toISOString() : null;
+}
+
+/** Screen-only projection; the stored approval and its quotation retain every line. */
+function clientScreenSnapshot(snapshot: z.infer<typeof snapshotSchema>) {
+  return {
+    ...snapshot,
+    lineItems: snapshot.lineItems.filter((line) => line.clientVisible !== false).map((line) => line.source === "configuration"
+      ? { ...line, classification: line.classification ?? "standard" as const }
+      : line),
+    selectedMainBasketClassifications: snapshot.selectedMainBasketIds?.map((mainBasketId) => ({
+      mainBasketId,
+      classification: snapshot.selectedMainBasketClassifications?.find((entry) =>
+        entry.mainBasketId === mainBasketId)?.classification ?? "standard" as const
+    })) ?? []
+  };
 }
 
 /** Only the immutable published proposal supplies Client commercial fields. */
@@ -125,17 +141,7 @@ export function presentClientEstimate(
     !Number.isSafeInteger(round.sendGeneration) || round.sendGeneration < 1
   ));
   const reviewSourceIssue = sourceConflict ? "source_conflict" : !parsed.success ? "missing_snapshot" : null;
-  const snapshot = reviewSourceIssue === null && parsed.success ? {
-    ...parsed.data,
-    lineItems: parsed.data.lineItems.map((line) => line.source === "configuration"
-      ? { ...line, classification: line.classification ?? "standard" as const }
-      : line),
-    selectedMainBasketClassifications: parsed.data.selectedMainBasketIds?.map((mainBasketId) => ({
-      mainBasketId,
-      classification: parsed.data.selectedMainBasketClassifications?.find((entry) =>
-        entry.mainBasketId === mainBasketId)?.classification ?? "standard" as const
-    })) ?? []
-  } : null;
+  const snapshot = reviewSourceIssue === null && parsed.success ? clientScreenSnapshot(parsed.data) : null;
   const publishedReview: ClientPublishedEstimateReview | null = snapshot && round ? {
     ...(collaborative ? { phase: round.phase, requirementsVersion: round.requirementsVersion } : {}),
     id: String(round._id ?? round.id), version: round.version,
@@ -155,7 +161,7 @@ export function presentClientEstimate(
     preRound.decision === "approve" && String(preRound._id ?? preRound.id) === estimate.estimation.preApproval?.reviewRoundId &&
     preRound.estimateVersion === estimate.estimation.preApproval?.estimateVersion &&
     preRound.projectId === projectId && String(preRound.estimateId) === String(estimate._id ?? estimate.id)
-    ? { reviewRoundId: String(preRound._id ?? preRound.id), estimateVersion: preRound.estimateVersion, snapshot: preSnapshot.data }
+    ? { reviewRoundId: String(preRound._id ?? preRound.id), estimateVersion: preRound.estimateVersion, snapshot: clientScreenSnapshot(preSnapshot.data) }
     : null;
   return {
     id: String(estimate._id ?? estimate.id), leadId: String(estimate.leadId), projectId,

@@ -71,6 +71,8 @@ export interface EstimateClientReviewSnapshot {
     id?: string | null;
     source?: "legacy" | "configuration";
     itemType?: ConfiguredEstimateItemType;
+    /** Client screen only; absent historical values remain visible. */
+    clientVisible?: boolean;
     classification?: EstimateClassification;
     pricingMode?: EstimatePricingMode;
     rateSource?: EstimateRateSource;

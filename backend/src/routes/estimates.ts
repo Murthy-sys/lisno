@@ -794,6 +794,7 @@ function currentConfiguredFields(source: {
     designRulesDigest: source.line.designRulesDigest,
     estimateNotes: source.line.estimateNotes,
     itemType: source.line.itemType,
+    clientVisible: source.line.clientVisible,
     mainBasketId: source.line.basketId,
     subBasketId: source.line.subBasketId,
     mainLineId: source.line.mainLineId,
@@ -830,7 +831,8 @@ async function assertEstimateCurrentConfiguration(
         "This Main Line has no current Configuration. Correct it before submitting the estimate.");
     }
     const fields = currentConfiguredFields(source);
-    if (Object.entries(fields).some(([field, value]) => !["designRules", "designRulesDigest", "estimateNotes"].includes(field) && line[field] !== value) ||
+    if (Object.entries(fields).some(([field, value]) => !["designRules", "designRulesDigest", "estimateNotes"].includes(field) &&
+      (field === "clientVisible" ? line[field] !== false : line[field]) !== value) ||
       designRulesDigest(line.designRules) !== source.line.designRulesDigest ||
       JSON.stringify(line.estimateNotes ?? []) !== JSON.stringify(source.line.estimateNotes) ||
       !estimateConfigurationRateMatches(line, source.line.modeBaseRatesPaise, source.line.inHouseComponents)) {
@@ -912,6 +914,7 @@ function savedConfiguredSnapshot(prior: Record<string, unknown>): {
       id: String(prior.mainLineId), mainLineId: String(prior.mainLineId),
       basketId: String(prior.mainBasketId),
       subBasketId: directTemporary ? null : String(prior.subBasketId), itemType,
+      clientVisible: prior.clientVisible !== false,
       name: String(prior.mainLineName), displayOrder: 0, revisionId: String(prior.revisionId),
       uom: { id: String(prior.uomId), code: String(prior.uomCode), name: String(prior.uomName),
         decimalScale: Number(prior.uomDecimalScale) }

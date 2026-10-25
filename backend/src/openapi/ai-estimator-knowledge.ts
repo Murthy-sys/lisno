@@ -1760,7 +1760,7 @@ function nullableRef(name: string): OpenApiObject {
 function sectionPayloadKeys(sectionKey: string): readonly string[] {
   const keys: Readonly<Record<string, readonly string[]>> = {
     design: ["itemNature", "answers", "details", "discussedVendorId", "poApprovalChecklist"],
-    overview: ["description", "uomId", "priorityId", "surfaceIds", "modeIds", "sectionApplicability"],
+    overview: ["description", "uomId", "priorityId", "surfaceIds", "modeIds", "sectionApplicability", "clientVisible"],
     pricing: ["specifications", "brands", "technicalDescription", "qualityLevel", "internalVendorNotes", "priceEntries"],
     "quantity-margin": ["quantitySlabs", "slabRates", "gapBehavior", "startMarginBps", "bottomMarginBps", "pmcMarkupBps", "wastageBps", "previewInputs"],
     scope: ["modeIds", "surfaceIds", "exclusions"],
@@ -1776,6 +1776,10 @@ function sectionPayloadProperties(sectionKey: string): Readonly<Record<string, u
   const properties = Object.fromEntries(
     sectionPayloadKeys(sectionKey).map((key) => [key, {}])
   );
+  if (sectionKey === "overview") {
+    properties.clientVisible = { type: "boolean", default: true,
+      description: "Whether this line appears on the Client estimate screen. Does not change internal visibility, totals, quotations or PDFs. Missing legacy values mean Yes." };
+  }
   if (sectionKey === "design") {
     properties.itemNature = { type: "string", enum: ["standard", "custom"], default: "standard" };
     properties.answers = { type: "object", additionalProperties: false,

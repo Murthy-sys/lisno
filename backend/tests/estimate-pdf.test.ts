@@ -161,6 +161,33 @@ describe("estimate PDF catalogue", () => {
 });
 
 describe("estimate PDF service", () => {
+  it("keeps screen-hidden configured lines and their amounts in both quotation PDF profiles", async () => {
+    const service = createEstimatePdfService({ logoSvg: backendLogo });
+    const hiddenLine = {
+      source: "configuration" as const, clientVisible: false, catalogueId: "hidden-lighting", roomName: "Living room",
+      specification: null, unit: "nos", rate: 121.25, ratePaise: 12_125, quantity: 1, included: true,
+      amount: 121.25, amountPaise: 12_125, mainBasketId: "lighting", mainBasketName: "Lighting",
+      subBasketName: "Decorative fixtures", mainLineName: "Screen-hidden accent lighting",
+      estimateNotes: ["Include all mounting accessories in the quotation."]
+    };
+    const visibleLine = { ...hiddenLine, clientVisible: true, catalogueId: "visible-lighting", mainLineName: "Visible ceiling lighting",
+      rate: 70.03, ratePaise: 7_003, amount: 70.03, amountPaise: 7_003, estimateNotes: [] };
+    const quoted: EstimatePdfInput = { ...fixture, lineItems: [hiddenLine, visibleLine],
+      subtotal: 191.28, subtotalPaise: 19_128, gst: 34.43, gstPaise: 3_443, total: 225.71, totalPaise: 22_571 };
+    for (const profile of ["standard", "compact_client_delivery"] as const) {
+      const result = await readPdf((await service.generate(quoted, { profile })).bytes);
+      expect(result.text).toContain("Screen-hidden accent lighting");
+      expect(result.text).toContain("Visible ceiling lighting");
+      expect(result.text).toContain("mounting accessories");
+      expect(result.text).toContain("INR 121.25");
+      expect(result.text).toContain("INR 191.28");
+      expect(result.text).toContain("INR 34.43");
+      expect(result.text).toContain("INR 225.71");
+    }
+    expect(quoted.lineItems).toHaveLength(2);
+    expect(hiddenLine.clientVisible).toBe(false);
+  });
+
   it("renders configured basket and line snapshots and rejects an incomplete selected rate", async () => {
     const service = createEstimatePdfService({ logoSvg: backendLogo });
     const configured: EstimatePdfInput = {

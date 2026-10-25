@@ -40,6 +40,20 @@ function settings(baseRatePaise: number, impactBps: number, minimumMarkupBps: nu
 }
 
 describe("projectKnowledgeSavedSummary", () => {
+  it.each([[undefined, "Yes"], [true, "Yes"], [false, "No"]] as const)("shows effective client visibility %s as %s without a generic review warning", (clientVisible, expected) => {
+    const payload: KnowledgeJsonObject = clientVisible === undefined ? {} : { clientVisible };
+    const result = projectKnowledgeSavedSummary(input({ sections: { overview: payload } })).overview;
+    const visibility = { key: "client-visible", label: "Client estimate screen", value: expected };
+    expect(result).toEqual({ details: [visibility], preview: [visibility] });
+    expect(values(result)).not.toContain("needs review");
+    expect(payload).toEqual(clientVisible === undefined ? {} : { clientVisible });
+  });
+
+  it("does not describe malformed saved visibility as a valid Yes or No", () => {
+    const result = projectKnowledgeSavedSummary(input({ sections: { overview: { clientVisible: "false" } } })).overview;
+    expect(result.details).toContainEqual({ key: "client-visible", label: "Client estimate screen", value: "Saved configuration needs review" });
+  });
+
   it("shows each saved component independently and never repeats retained legacy costs or scope", () => {
     const result = projectKnowledgeSavedSummary(input({ sections: { overview: { uomId: "uom-private" }, advanced: {
       modeCalculations: { pmc: null, sub_vendor: null, in_house_labor: settings(9999900, 1000, 2000, 3000), in_house_material: null },
@@ -68,7 +82,8 @@ describe("projectKnowledgeSavedSummary", () => {
     const result = projectKnowledgeSavedSummary(input({
       sections: { overview: {}, advanced: {}, recommendations: {} }, quality: quality([])
     }));
-    expect(result.overview).toEqual({ details: [], preview: [] });
+    const visibility = { key: "client-visible", label: "Client estimate screen", value: "Yes" };
+    expect(result.overview).toEqual({ details: [visibility], preview: [visibility] });
     expect(result.recommendations).toEqual({ details: [], preview: [] });
     expect(result.quality).toEqual({ details: [], preview: [] });
     expect(result.mode.details).toEqual([
@@ -84,7 +99,8 @@ describe("projectKnowledgeSavedSummary", () => {
     const result = projectKnowledgeSavedSummary(input({ sections: { overview: { uomId: "uom-private", surfaceIds: ["surface-private", "surface-missing"] } } })).overview;
     expect(result.preview).toEqual([
       { key: "uom", label: "UOM", value: "Square metre" },
-      { key: "surfaces", label: "Surfaces", value: "Ceiling, Name unavailable" }
+      { key: "surfaces", label: "Surfaces", value: "Ceiling, Name unavailable" },
+      { key: "client-visible", label: "Client estimate screen", value: "Yes" }
     ]);
     expect(values(result)).toContain("Ceiling · Examples: Paint and gypsum");
     expect(values(result)).not.toContain("Floor");

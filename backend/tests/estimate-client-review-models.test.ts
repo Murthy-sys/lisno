@@ -123,6 +123,7 @@ describe("EstimateClientReviewRound persistence model", () => {
       lineItems: [{
         id: "line-configured", source: "configuration", catalogueId: "ml-lower-case",
         classification: "special",
+        clientVisible: false,
         roomId: "room-a", roomName: "Living Room", specification: null,
         unit: "sqft", rate: 48.5, ratePaise: 4_850, quantity: 2.5,
         included: true, amount: 121.25, amountPaise: 12_125,
@@ -153,11 +154,17 @@ describe("EstimateClientReviewRound persistence model", () => {
     }
     expect(EstimateClientReviewRoundModel.schema.path("estimateSnapshot.lineItems.pricingMode").options.immutable).toBe(true);
     expect(EstimateClientReviewRoundModel.schema.path("estimateSnapshot.lineItems.rateSource").options.immutable).toBe(true);
+    expect(EstimateClientReviewRoundModel.schema.path("estimateSnapshot.lineItems.clientVisible").options.immutable).toBe(true);
+    for (const clientVisible of ["false", 0, 1]) {
+      await expect(round({ estimateSnapshot: { ...configured,
+        lineItems: [{ ...configured.lineItems[0], clientVisible }] } }).validate()).rejects.toThrow();
+    }
     const historical = round({ estimateSnapshot: {
       ...configured, selectedMainBasketClassifications: undefined,
-      lineItems: [{ ...configured.lineItems[0], classification: undefined }]
+      lineItems: [{ ...configured.lineItems[0], classification: undefined, clientVisible: undefined }]
     } });
     await expect(historical.validate()).resolves.toBeUndefined();
+    expect(historical.toObject().estimateSnapshot.lineItems[0]).not.toHaveProperty("clientVisible");
     expect(historical.toObject().estimateSnapshot).not.toHaveProperty("selectedMainBasketClassifications");
     expect(historical.toObject().estimateSnapshot.lineItems[0]).not.toHaveProperty("classification");
     await expect(round({ estimateSnapshot: {

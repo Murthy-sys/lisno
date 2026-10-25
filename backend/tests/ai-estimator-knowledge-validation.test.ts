@@ -11,6 +11,17 @@ import {
 } from "../src/domain/ai-estimator-knowledge-validation.js";
 
 describe("AI estimator knowledge validation", () => {
+  it("allows optional boolean Client-screen visibility in Overview without changing legacy payloads", () => {
+    for (const payload of [{}, { clientVisible: true }, { clientVisible: false }]) {
+      expect(validateKnowledgeSectionPayload("overview", payload)).toEqual([]);
+    }
+    for (const clientVisible of [null, "false", "true", 0, 1, [], {}]) {
+      expect(validateKnowledgeSectionPayload("overview", { clientVisible }))
+        .toContainEqual(expect.objectContaining({ path: "payload.clientVisible", code: "INVALID_TYPE" }));
+    }
+    expect(validateKnowledgeSectionPayload("advanced", { clientVisible: false })).not.toEqual([]);
+  });
+
   it("accepts fractional sampling percentages without relaxing numeric cost or count invariants", () => {
     const check = { id: "fixture-check", type: "boolean", label: "Are fixtures secure?",
       sampling: { method: "percentage", value: 10.5, unit: "installed fixtures" } };

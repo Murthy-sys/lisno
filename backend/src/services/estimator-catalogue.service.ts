@@ -23,6 +23,7 @@ export interface EstimatorCatalogueLine {
   basketId: string;
   subBasketId: string | null;
   itemType: "main_line" | "temporary";
+  clientVisible: boolean;
   name: string;
   displayOrder: number;
   designRules: DesignRules;
@@ -505,6 +506,7 @@ async function projectLines(
   const designByRevision = new Map(designSections.map((section) => [String(section.revisionId), section]));
   const revisionById = new Map(revisions.map((revision) => [String(revision._id), revision]));
   const uomIdByRevision = new Map<string, string>();
+  const clientVisibilityByRevision = new Map<string, boolean>();
   const modeBasesByRevision = new Map<string, EstimateModeBaseRatesPaise>();
   for (const overview of overviews) {
     const revisionId = String(overview.revisionId);
@@ -512,6 +514,7 @@ async function projectLines(
     if (String(revisionById.get(revisionId)?.mainLineId) !== String(overview.mainLineId) ||
         typeof payload?.uomId !== "string" || !payload.uomId) continue;
     uomIdByRevision.set(revisionId, payload.uomId);
+    clientVisibilityByRevision.set(revisionId, payload.clientVisible !== false);
   }
   for (const advanced of advancedSections) {
     const revisionId = String(advanced.revisionId);
@@ -549,6 +552,7 @@ async function projectLines(
       id, mainLineId: id, basketId: String(raw.basketId),
       subBasketId: raw.subBasketId ? String(raw.subBasketId) : null,
       itemType: raw.itemType === "temporary" ? "temporary" : "main_line",
+      clientVisible: clientVisibilityByRevision.get(revisionId) ?? true,
       name: String(raw.name), displayOrder: Number(raw.displayOrder), revisionId,
       itemStatus: raw.status as EstimatorCatalogueLine["itemStatus"],
       revisionStatus: source.status,

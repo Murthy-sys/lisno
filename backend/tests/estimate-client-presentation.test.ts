@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { presentClientEstimate } from "../src/services/estimate-client-presentation.js";
+import { newEstimationLifecycle } from "../src/domain/estimation-lifecycle.js";
 
 const actor = { id: "client-a", name: "Client A", email: "a@example.test", role: "client" } as const;
 const lead = { _id: "lead-a", projectId: "project-a", clientEmail: actor.email, projectName: "Draft label" };
@@ -10,8 +11,63 @@ const snapshot = {
 };
 const estimate = { _id: "estimate-a", leadId: "lead-a", projectId: "project-a", status: "sent_to_client", version: 3, total: 99999, rooms: [{ id: "original-room", length: 3 }], scopes: ["original-scope"], reviews: [{ note: "Internal note" }] };
 const round = { _id: "round-a", estimateId: "estimate-a", leadId: "lead-a", projectId: "project-a", status: "pending", estimateVersion: 3, version: 1, sendGeneration: 2, recipientEmailNormalized: actor.email, createdAt: new Date("2026-09-30T00:00:00Z"), estimateSnapshot: snapshot };
+const visibilityLine = (id: string, clientVisible?: boolean, amountPaise = 10_000) => ({
+  id, source: "configuration", catalogueId: id, roomId: "original-room", roomName: "Room A", specification: null,
+  unit: "sqft", quantity: 1, rate: amountPaise / 100, ratePaise: amountPaise, amount: amountPaise / 100, amountPaise, included: true,
+  mainBasketId: "basket", subBasketId: "sub", mainLineId: id, revisionId: `revision-${id}`, uomId: "uom",
+  mainBasketName: "Published basket", subBasketName: "Published Sub-basket", mainLineName: `Name ${id}`, uomName: "Square feet",
+  ...(clientVisible === undefined ? {} : { clientVisible })
+});
+const visibilitySnapshot = (lineItems: ReturnType<typeof visibilityLine>[]) => {
+  const subtotalPaise = lineItems.filter(line => line.included).reduce((sum, line) => sum + line.amountPaise, 0);
+  return { ...snapshot, lineItems, subtotal: subtotalPaise / 100, subtotalPaise, gst: 0, gstPaise: 0, total: subtotalPaise / 100, totalPaise: subtotalPaise,
+    selectedMainBasketIds: ["basket"], selectedMainBasketClassifications: [{ mainBasketId: "basket", classification: "standard" }] };
+};
 
 describe("published Client estimate presentation", () => {
+  it("hides only frozen No rows from screen payloads while retaining full totals, defaults and stored rows", () => {
+    const full = visibilitySnapshot([visibilityLine("visible-default"), visibilityLine("visible-yes", true), visibilityLine("hidden-no", false),
+      { ...visibilityLine("hidden-unselected", false), included: false }]);
+    const original = structuredClone(full);
+    const result = presentClientEstimate(actor, { ...estimate, lineItems: [{ ...visibilityLine("visible-default", false) }] }, lead, { ...round, estimateSnapshot: full })!;
+    expect(result.lineItems.map((line: { id: string }) => line.id)).toEqual(["visible-default", "visible-yes"]);
+    expect(result.publishedReview.snapshot.lineItems).toEqual(result.lineItems);
+    expect(result).toMatchObject({ subtotalPaise: 30_000, totalPaise: 30_000, publishedReview: { canDecide: true, snapshot: { totalPaise: 30_000 } },
+      selectedMainBasketIds: ["basket"], selectedMainBasketClassifications: [{ mainBasketId: "basket", classification: "standard" }] });
+    expect(JSON.stringify(result)).not.toContain("hidden-no");
+    expect(JSON.stringify(result)).not.toContain("hidden-unselected");
+    expect(full).toEqual(original);
+  });
+
+  it("keeps an all-hidden publication reviewable with its complete total and no displayed lines", () => {
+    const full = visibilitySnapshot([visibilityLine("hidden-no", false)]);
+    const result = presentClientEstimate(actor, estimate, lead, { ...round, estimateSnapshot: full });
+    expect(result).toMatchObject({ lineItems: [], totalPaise: 10_000, reviewSourceIssue: null,
+      publishedReview: { canDecide: true, snapshot: { lineItems: [], totalPaise: 10_000 } } });
+  });
+
+  it.each(["false", 0, null, {}])("fails closed for malformed frozen visibility: %j", clientVisible => {
+    const full = visibilitySnapshot([visibilityLine("invalid")]);
+    const invalid = { ...full, lineItems: [{ ...full.lineItems[0], clientVisible }] };
+    expect(presentClientEstimate(actor, estimate, lead, { ...round, estimateSnapshot: invalid }))
+      .toMatchObject({ reviewSourceIssue: "missing_snapshot", publishedReview: null, lineItems: [] });
+  });
+
+  it("projects both approved and current snapshots before comparing rows without changing their stored history", () => {
+    const before = visibilitySnapshot([visibilityLine("visible"), visibilityLine("hidden-changed", false), visibilityLine("hidden-removed", false)]);
+    const after = visibilitySnapshot([visibilityLine("visible"), visibilityLine("hidden-changed", false, 15_000), visibilityLine("hidden-added", false, 5_000)]);
+    const beforeOriginal = structuredClone(before); const afterOriginal = structuredClone(after);
+    const preRound = { ...round, _id: "pre-round", estimateVersion: 2, status: "approved", decision: "approve", estimateSnapshot: before };
+    const current = { ...estimate, version: 4, estimation: { ...newEstimationLifecycle(), phase: "post", status: "sent_to_client",
+      preApproval: { reviewRoundId: "pre-round", estimateVersion: 2, approvedAt: "2026-09-29T00:00:00Z" }, pendingReviewRoundId: "round-a" } };
+    const result = presentClientEstimate(actor, current, lead, { ...round, estimateVersion: 4, estimateSnapshot: after }, { id: "project-a", clientId: actor.id }, preRound)!;
+    expect(result.preApprovedReview.snapshot.lineItems.map((line: { id: string }) => line.id)).toEqual(["visible"]);
+    expect(result.publishedReview.snapshot.lineItems.map((line: { id: string }) => line.id)).toEqual(["visible"]);
+    expect(result.changesFromPre).toEqual({ addedLineIds: [], removedLineIds: [], changedLineIds: [], scopeChanged: false, noChanges: true, beforeTotal: 300, afterTotal: 300 });
+    expect(JSON.stringify(result)).not.toContain("hidden-");
+    expect(before).toEqual(beforeOriginal); expect(after).toEqual(afterOriginal);
+  });
+
   it("reads configured labels and paise only from the immutable review snapshot", () => {
     const configured = {
       ...snapshot, subtotal: 121.25, gst: 21.83, total: 143.08,

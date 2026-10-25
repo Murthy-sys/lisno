@@ -392,7 +392,7 @@ export function validateQualityParameter(
 
 const ALLOWED_SECTION_KEYS: Record<KnowledgeSectionKey, ReadonlySet<string>> = {
   design: new Set(["itemNature", "answers", "details", "discussedVendorId", "poApprovalChecklist"]),
-  overview: new Set(["description", "uomId", "priorityId", "surfaceIds", "modeIds", "sectionApplicability"]),
+  overview: new Set(["description", "uomId", "priorityId", "surfaceIds", "modeIds", "sectionApplicability", "clientVisible"]),
   pricing: new Set(["specifications", "brands", "technicalDescription", "qualityLevel", "internalVendorNotes", "priceEntries"]),
   "quantity-margin": new Set(["quantitySlabs", "slabRates", "gapBehavior", "startMarginBps", "bottomMarginBps", "pmcMarkupBps", "wastageBps", "previewInputs"]),
   scope: new Set(["modeIds", "surfaceIds", "exclusions"]),
@@ -875,6 +875,9 @@ function validateOverviewPayload(
   record: Record<string, unknown>
 ): KnowledgeValidationIssue[] {
   const issues: KnowledgeValidationIssue[] = [];
+  if ("clientVisible" in record) {
+    validateBoolean(record.clientVisible, "payload.clientVisible", issues);
+  }
   if ("description" in record) {
     validateNullableText(record.description, "payload.description", issues, AI_ESTIMATOR_KNOWLEDGE_MAX_TEXT);
   }

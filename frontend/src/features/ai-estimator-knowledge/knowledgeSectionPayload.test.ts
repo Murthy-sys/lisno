@@ -6,6 +6,15 @@ import {
 } from "./knowledgeSectionPayload";
 
 describe("knowledge section update payloads", () => {
+  it("rebases explicit client visibility while preserving newer unrelated Overview fields", () => {
+    const latest = { clientVisible: true, uomId: "newer-unit", surfaceIds: ["newer-surface"], hidden: { keep: true } };
+    const local = { clientVisible: false, uomId: "stale-unit", surfaceIds: [] };
+    expect(knowledgeOverviewPayloadForUpdate(latest, local, new Set(["clientVisible"]))).toEqual({ ...latest, clientVisible: false });
+    expect(knowledgeOverviewPayloadForUpdate({ ...latest, clientVisible: false }, { clientVisible: true }, new Set(["clientVisible"]))).toEqual(latest);
+    expect(knowledgeOverviewPayloadForUpdate({ ...latest, clientVisible: false }, { uomId: "local-unit" }, new Set(["uomId"])))
+      .toEqual({ ...latest, clientVisible: false, uomId: "local-unit" });
+  });
+
   it("rebases only edited Overview values onto the latest compatibility payload", () => {
     const latest = {
       description: "Latest description",

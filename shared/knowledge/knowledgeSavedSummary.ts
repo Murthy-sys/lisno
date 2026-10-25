@@ -141,11 +141,15 @@ function overview(input: SavedSummaryProjectionInput): SavedSummaryContent {
   const preview: SavedSummaryRow[] = details.filter(item => item.key === "uom");
   const surfaces = details.filter(item => /^surface-\d+$/u.test(item.key));
   if (surfaces.length) preview.push(row("surfaces", "Surfaces", namesPreview(surfaces.map(item => item.value))));
+  const visibility = row("client-visible", "Client estimate screen",
+    payload.clientVisible === false ? "No" : payload.clientVisible === undefined || payload.clientVisible === true ? "Yes" : NEEDS_REVIEW);
+  details.push(visibility);
   preview.push(...details.filter(item => item.key.endsWith("-review")));
-  if (Object.keys(payload).some(key => present(payload[key]) && !["uomId", "surfaceIds"].includes(key) && (!Array.isArray(payload[key]) || payload[key].length > 0))) {
+  if (Object.keys(payload).some(key => present(payload[key]) && !["uomId", "surfaceIds", "clientVisible"].includes(key) && (!Array.isArray(payload[key]) || payload[key].length > 0))) {
     review(details, "overview-review", "Overview", true);
     preview.push(details[details.length - 1]!);
   }
+  preview.push(visibility);
   return content(details, preview);
 }
 

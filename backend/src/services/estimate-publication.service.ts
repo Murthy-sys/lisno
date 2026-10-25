@@ -505,6 +505,7 @@ export function toEstimateSnapshot(
     lineItems: estimate.lineItems.map((line, index) => ({
       source: line.source,
       itemType: line.itemType,
+      ...(line.clientVisible === undefined ? {} : { clientVisible: line.clientVisible }),
       classification: line.source === "configuration"
         ? line.classification === "special" ? "special" : "standard"
         : line.classification,
@@ -652,6 +653,7 @@ export async function assertCurrentConfiguredPublication(
     const stored = line as unknown as Record<string, unknown>;
     const expected: Record<string, unknown> = {
       itemType: source.line.itemType,
+      clientVisible: source.line.clientVisible,
       mainBasketId: source.line.basketId,
       subBasketId: source.line.subBasketId,
       mainLineId: source.line.mainLineId,
@@ -669,7 +671,8 @@ export async function assertCurrentConfiguredPublication(
       uomName: source.line.uom.name,
       unit: source.line.uom.name
     };
-    if (Object.entries(expected).some(([field, value]) => stored[field] !== value) ||
+    if (Object.entries(expected).some(([field, value]) =>
+      (field === "clientVisible" ? stored[field] !== false : stored[field]) !== value) ||
       designRulesDigest(stored.designRules) !== source.line.designRulesDigest ||
       JSON.stringify(line.estimateNotes ?? []) !== JSON.stringify(source.line.estimateNotes) ||
       !estimateConfigurationRateMatches(line, source.line.modeBaseRatesPaise, source.line.inHouseComponents)) {

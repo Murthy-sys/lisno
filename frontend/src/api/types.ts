@@ -285,6 +285,7 @@ export interface EstimateClientReviewSnapshot {
     roomName: string;
     specification: string | null;
     estimateNotes?: string[];
+    clientVisible?: boolean;
     unit: string;
     rate: number | null;
     ratePaise?: number | null;

@@ -21,7 +21,7 @@ function amount(exact: unknown, rupees: unknown): number | null {
   return paise(converted) && converted / 100 === rupees ? converted : null;
 }
 
-/** Narrow immutable snapshot projection. No working-copy, Configuration or private metadata fallback. */
+/** Validate the full immutable quotation before projecting its screen-visible lines. */
 export function projectPricingFromPublication(input: { estimateId: string; projectId: string; round: Row; snapshot: Row; approved: boolean }): AssistantProjectPricing | null {
   const { round, snapshot } = input;
   const publishedAt = date(round.createdAt);
@@ -31,25 +31,32 @@ export function projectPricingFromPublication(input: { estimateId: string; proje
   const included = snapshot.lineItems.filter((line: Row) => line.included === true);
   if (!included.length) return null;
   const lines: AssistantProjectPricing["lines"] = [];
+  const ids = new Set<string>();
+  let visibleCount = 0;
   let sum = 0;
   for (let index = 0; index < included.length; index++) {
     const line = included[index] as Row;
     const ratePaise = amount(line.ratePaise, line.rate), amountPaise = amount(line.amountPaise, line.amount);
     const label = line.source === "configuration" ? line.mainLineName : line.specification;
-    if (ratePaise === null || amountPaise === null || typeof label !== "string" || !label.trim() || label.length > 300 ||
+    if (line.clientVisible !== undefined && typeof line.clientVisible !== "boolean" ||
+        ratePaise === null || amountPaise === null || typeof label !== "string" || !label.trim() || label.length > 300 ||
         typeof line.quantity !== "number" || !Number.isFinite(line.quantity) || line.quantity < 0 ||
         typeof line.unit !== "string" || !line.unit.trim() || line.unit.length > 80 || /[\u0000-\u001f\u007f]/u.test(label + line.unit)) return null;
     sum += amountPaise;
     if (!Number.isSafeInteger(sum)) return null;
     const id = typeof line.id === "string" && line.id ? line.id : `published-line-${index + 1}`;
-    if (id.length > 200 || /[\u0000-\u001f\u007f]/u.test(id)) return null;
-    if (lines.length < 100) lines.push({ id, label, quantity: String(line.quantity), unit: line.unit, ratePaise, amountPaise });
+    if (id.length > 200 || /[\u0000-\u001f\u007f]/u.test(id) || ids.has(id)) return null;
+    ids.add(id);
+    if (line.clientVisible !== false) {
+      visibleCount++;
+      if (lines.length < 100) lines.push({ id, label, quantity: String(line.quantity), unit: line.unit, ratePaise, amountPaise });
+    }
   }
-  if (sum !== totals[0] || new Set(lines.map(line => line.id)).size !== lines.length) return null;
+  if (sum !== totals[0]) return null;
   return { policy: "published-project-estimate-v1", currency: "INR", state: input.approved ? "approved" : "published",
     estimateId: input.estimateId, estimateVersion: round.estimateVersion, reviewRoundId: String(round._id), reviewVersion: round.version,
     publishedAt, source: { id: String(round._id), label: input.approved ? "Approved project estimate" : "Published project estimate", href: null },
-    lines, lineCount: included.length, hasMoreLines: included.length > lines.length, subtotalPaise: totals[0]!, gstPaise: totals[1]!, totalPaise: totals[2]! };
+    lines, lineCount: visibleCount, hasMoreLines: visibleCount > lines.length, subtotalPaise: totals[0]!, gstPaise: totals[1]!, totalPaise: totals[2]! };
 }
 
 export async function readAssistantProjectEstimate(context: AssistantContext, input: { basis: Basis }, tx?: ChatTransaction): Promise<AssistantProjectEstimate> {
@@ -101,7 +108,9 @@ export async function readAssistantProjectEstimate(context: AssistantContext, in
       baseline = lineage.baseline;
     } catch (error) { if (!(error instanceof ApiError)) throw error; return finish(null, "source_conflict", witness); }
   }
-  const report = projectPricingFromPublication({ estimateId: selected.id, projectId, round, snapshot: presented.publishedReview.snapshot, approved });
+  // Authorization and source validation above still use the Client presentation.
+  // Reconcile all approved amounts before omitting screen-hidden row details.
+  const report = projectPricingFromPublication({ estimateId: selected.id, projectId, round, snapshot: round.estimateSnapshot, approved });
   if (report && baseline && (report.subtotalPaise !== baseline.approvedSubtotalPaise || report.gstPaise !== baseline.approvedGstPaise || report.totalPaise !== baseline.approvedContractTotalPaise)) return finish(null, "source_conflict", witness);
   return finish(report, report ? null : "incomplete", witness);
 }
