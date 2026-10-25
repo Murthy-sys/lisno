@@ -74,6 +74,7 @@ export interface EstimateClientReviewSnapshot {
     classification?: EstimateClassification;
     pricingMode?: EstimatePricingMode;
     rateSource?: EstimateRateSource;
+    selectedInHouseComponentIds?: string[];
     catalogueId: string;
     roomId?: string;
     roomName: string;

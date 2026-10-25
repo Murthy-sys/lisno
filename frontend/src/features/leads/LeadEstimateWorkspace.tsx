@@ -15,7 +15,7 @@ import { calculateEstimateTotals, resolveRate } from "./estimateEngine";
 import { estimateBuilderSections } from "./estimateBuilderCatalogue";
 import { EstimateBuilder, type BuilderLine, type BuilderRoom, type BuilderSection } from "./EstimateBuilder";
 import { ConfiguredEstimateBuilder } from "./ConfiguredEstimateBuilder";
-import { buildConfiguredLines, configuredLineAmountPaise, configuredLinePreviewAmountPaise, configuredQuantityUnits, deselectConfiguredRecommendationSources, parseSellingRate, restoreConfiguredLine, updateConfiguredLinePricing, type ConfiguredLineDraft } from "./configuredEstimate";
+import { configuredInHouseSelectionIssue, buildConfiguredLines, configuredLineAmountPaise, configuredLinePreviewAmountPaise, configuredQuantityUnits, deselectConfiguredRecommendationSources, parseSellingRate, restoreConfiguredLine, updateConfiguredLinePricing, type ConfiguredLineDraft } from "./configuredEstimate";
 import { estimationCatalogueKeys, getEstimationCatalogue, getEstimationCatalogueRecommendations } from "./estimationCatalogueApi";
 import { MainBasketSelectionCard } from "./MainBasketSelectionCard";
 import { buildRoomRecommendations, partitionRoomRecommendationSources, recommendationSourceIdentity, recommendationLines, recommendationTargetIdentity, type RecommendationLine, type RecommendationDecision, type RecommendedLineTarget } from "./roomRecommendations";
@@ -382,6 +382,7 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo }: { leadId: string; re
   const incompleteSelectedConfiguredLines = selectedConfiguredLines.filter((line) => configuredLineAmountPaise(line) === null);
   const hasIncompleteConfiguredTotal = incompleteSelectedConfiguredLines.length > 0;
   const invalidSelectedAmountCount = incompleteSelectedConfiguredLines.filter((line) => parseSellingRate(line.rateInput).kind !== "blank").length;
+  const invalidComponentLines = configuredLines.filter((line) => line.included && configuredInHouseSelectionIssue(line));
   const invalidConfiguredLines = configuredLines.filter((line) => line.included || line.persistedId).filter((line) => {
     const rate = parseSellingRate(line.rateInput);
     const quantityUnits = configuredQuantityUnits(line.quantity, line.uomDecimalScale, line.included);
@@ -463,6 +464,7 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo }: { leadId: string; re
         ...(supportsExpandedCatalogue ? { itemType: line.itemType } : {}),
         classification: line.classification ?? "standard",
         ...(line.pricingMode !== undefined ? { pricingMode: line.pricingMode } : {}),
+        ...(line.selectedInHouseComponentIds !== undefined ? { selectedInHouseComponentIds: line.selectedInHouseComponentIds } : {}),
         ...(line.rateSource !== undefined ? { rateSource: line.rateSource } : {}),
         id: line.persistedId, catalogueId: line.mainLineId,
         roomId: line.roomId, roomName: line.roomName, mainBasketId: line.mainBasketId,
@@ -527,6 +529,7 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo }: { leadId: string; re
         snapshot.itemVersion === line.itemVersion && snapshot.revisionVersion === line.revisionVersion;
       const pricingUnchanged = submitted && submitted.classification === (line.classification ?? "standard") &&
         submitted.pricingMode === line.pricingMode && submitted.rateSource === line.rateSource &&
+        JSON.stringify(submitted.selectedInHouseComponentIds) === JSON.stringify(line.selectedInHouseComponentIds) &&
         submitted.ratePaise === parseSellingRate(line.rateInput).paise;
       return stored ? {
         ...line,
@@ -553,6 +556,7 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo }: { leadId: string; re
         ...(pricingUnchanged ? {
           classification: stored.classification ?? line.classification,
           pricingMode: stored.pricingMode ?? line.pricingMode,
+          selectedInHouseComponentIds: stored.selectedInHouseComponentIds ?? line.selectedInHouseComponentIds,
           rateSource: stored.rateSource ?? line.rateSource
         } : {})
       } : line;
@@ -871,7 +875,7 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo }: { leadId: string; re
     updateLine(id, change);
   };
   const includedItemCount = selectedLines.length + selectedConfiguredLines.length;
-  const hasInvalidInput = invalidConfiguredLines.length > 0 || changedUomConfiguredLines.length > 0;
+  const hasInvalidInput = invalidComponentLines.length > 0 || invalidConfiguredLines.length > 0 || changedUomConfiguredLines.length > 0;
   const hasMissingRate = incompleteConfiguredLines.length > 0;
   const totalLabel = (value: number) => hasIncompleteConfiguredTotal ? "Incomplete" : money(value);
   const estimateVersionConflict = (workingVersion.current !== undefined && saved.data?.version !== undefined && workingVersion.current !== saved.data.version) || [save.error, submit.error].some((error) =>
@@ -1070,6 +1074,7 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo }: { leadId: string; re
     {tab === "summary" ? <section className="estimate-panel estimate-summary"><h2>Estimate summary</h2>{rooms.map((room) => <div className="estimate-summary-row" key={room.id}><span><RoomIcon typeId={room.typeId} /> <strong>{room.label}</strong><small>{lines.filter((line) => line.roomName === room.label && line.included).length + configuredLines.filter((line) => line.roomId === room.id && line.included).length} selected items</small></span><strong>{roomTotalLabel(room.id)}</strong></div>)}{hasMissingRate ? <p role="status">Total incomplete: enter the selling rate for {incompleteConfiguredLines.length} selected items.</p> : null}{invalidSelectedAmountCount ? <p role="status">Total incomplete: correct the quantity or price for {invalidSelectedAmountCount} selected items.</p> : null}<div className="estimate-total-card"><span>Sub-total <strong>{totalLabel(totals.subtotal)}</strong></span><span>GST @ 18% <strong>{totalLabel(totals.gst)}</strong></span><span>Total (incl. GST) <strong>{totalLabel(totals.total)}</strong></span></div></section> : null}
     {tab === "proposal" ? <section className="estimate-panel estimate-proposal"><header><p className="eyebrow">Lisno interior proposal</p><h2>{leadItem.projectName}</h2><p>Prepared for {leadItem.clientName}</p></header>{rooms.map((room) => <article key={room.id}><h3><RoomIcon typeId={room.typeId} /> {room.label}</h3>{selectedLines.filter((line) => line.roomName === room.label).map((line) => <div key={line.id}><span>{catalogueRows.find((row) => row.id === line.catalogueId)?.description ?? line.catalogueId}<small>{line.specification} · {line.quantity} {line.unit}</small></span><strong>{money(Math.round(line.quantity * line.rate))}</strong></div>)}{selectedConfiguredLines.filter((line) => line.roomId === room.id).map((line) => <div key={line.key}><span>{line.mainLineName}<small>{line.mainBasketName}{line.subBasketName ? ` / ${line.subBasketName}` : ""} · {line.itemType === "temporary" ? "Temporary item" : "Main Line"} · {line.quantity} {line.uomName} · {parseSellingRate(line.rateInput).kind === "blank" ? "Rate required" : `₹${line.rateInput} per ${line.uomName}`}</small></span><strong>{configuredLineAmountPaise(line) === null ? "Incomplete" : moneyPaise(configuredLineAmountPaise(line) ?? 0)}</strong></div>)}</article>)}{hasMissingRate ? <p role="status">This proposal is incomplete until every selected item has a selling rate.</p> : null}{invalidSelectedAmountCount ? <p role="status">This proposal is incomplete until the highlighted quantities or prices are corrected.</p> : null}<div className="estimate-total-card"><span>Sub-total <strong>{totalLabel(totals.subtotal)}</strong></span><span>GST @ 18% <strong>{totalLabel(totals.gst)}</strong></span><span>Total (incl. GST) <strong>{totalLabel(totals.total)}</strong></span></div><p className="estimate-terms">Valid for 30 days. Rates subject to material market changes. Final scope on site measurement. GST as applicable.</p></section> : null}
     {tab !== "configure" ? <footer className="estimate-workspace__footer"><div><strong>{hasIncompleteConfiguredTotal ? "Total incomplete" : `${money(totals.total)} total`}</strong><span>{includedItemCount} selected line {includedItemCount === 1 ? "item" : "items"} across {rooms.length} {rooms.length === 1 ? "room" : "rooms"} · {saved.data?.status?.replaceAll("_", " ") ?? "draft"}</span></div><div className="estimate-actions">{draftEditable ? <button type="button" className="button button--secondary" disabled={!editable || bedroomSetupRequired || save.isPending || submit.isPending || hasInvalidInput || unavailableConfiguredLines.length > 0 || legacyIncompatibleConfiguredLines.length > 0 || estimateVersionConflict} onClick={() => save.mutate()}>{save.isPending ? "Saving…" : "Save draft"}</button> : null}{draftEditable ? <button type="button" className="button button--primary estimate-continue" disabled={!editable || publicationBlocked || bedroomSetupRequired || !includedItemCount || hasInvalidInput || hasMissingRate || unavailableConfiguredLines.length > 0 || legacyIncompatibleConfiguredLines.length > 0 || save.isPending || submit.isPending || estimateVersionConflict} onClick={() => submit.mutate()}>{submit.isPending ? "Submitting…" : lifecycle?.phase === "post" ? "Submit final estimate" : collaborative ? "Submit pre-estimate" : "Submit estimate"}</button> : null}{saved.data?.status === "ready_for_client" ? <button type="button" className="button button--primary" disabled={sendToClient.isPending || publicationBlocked || saved.isError} onClick={() => sendToClient.mutate()}>{sendToClient.isPending ? "Sending…" : "Send to client"}</button> : null}</div></footer> : null}
+    {invalidComponentLines.length ? <p className="estimate-notice estimate-notice--error" role="alert">Choose valid In-house components for every included In-house line before saving.</p> : null}
     {invalidConfiguredLines.length ? <p className="estimate-notice estimate-notice--error" role="alert">Correct the highlighted rate or quantity before saving.</p> : null}
     {unavailableConfiguredLines.length ? <p className="estimate-notice estimate-notice--error" role="alert">A Main Line is no longer available in Configuration. Refresh available items or remove it before saving.</p> : null}
     {changedUomConfiguredLines.length ? <p className="estimate-notice estimate-notice--error" role="alert">Configuration changed a line's unit. Re-enter its quantity in the builder before saving.</p> : null}

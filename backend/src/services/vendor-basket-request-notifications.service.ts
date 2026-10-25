@@ -59,12 +59,14 @@ export async function appendSubmittedBasketNotification(input: SubmittedBasketNo
     { $setOnInsert: {
       _id: `basket-request-notification-${randomUUID()}`,
       recipientId: recipient.id, requestId: request.id, proposalId: request.proposalId ?? null,
+      ...(request.kind === "configuration_sub_basket" ? { requestKind: request.kind } : {}),
       targetKind: target.kind,
       targetParentBasketId: target.kind === "new_sub_basket" ? target.basketId : null,
       targetParentName: target.kind === "new_sub_basket" ? request.targetParentName ?? null : null,
       proposedName: request.proposedName, vendorName: request.vendorName,
       requesterId: requester.id,
-      requesterName: requester.name.normalize("NFKC").trim().replace(/\s+/gu, " ").slice(0, 240) || "Procurement",
+      requesterName: requester.name.normalize("NFKC").trim().replace(/\s+/gu, " ").slice(0, 240)
+        || (request.kind === "configuration_sub_basket" ? "Configuration" : "Procurement"),
       createdAt: new Date(request.createdAt), readAt: null
     } },
     { upsert: true, session, runValidators: true }

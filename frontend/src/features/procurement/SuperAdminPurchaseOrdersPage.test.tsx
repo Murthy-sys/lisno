@@ -123,6 +123,25 @@ beforeEach(() => {
 });
 
 describe("Super Admin purchase order approval", () => {
+  it("distinguishes repeated In-house labor and material scopes in the saved request", async () => {
+    const source = modeSnapshot.mode.preview!;
+    const scopes = ["component-private-one", "component-private-two"].flatMap((componentId, index) => (["in_house_labor", "in_house_material"] as const).map(scope => ({
+      ...source.settings.scopes[0]!, scope, componentId, componentBasketId: modeSnapshot.mainBasketId!, componentSubBasketId: index === 0 ? modeSnapshot.subBasketId : "another-sub-basket"
+    })));
+    const snapshot: PurchaseOrderRequestModeSnapshot = { ...modeSnapshot, mode: { ...modeSnapshot.mode, preview: { ...source, mode: "in_house", settings: { ...source.settings, scopes } } } };
+    const request = { ...capturedRequest, revisions: capturedRequest.revisions.map(revision => ({ ...revision, modeSnapshots: [snapshot] })) };
+    server.use(http.get("/api/v1/admin/purchase-order-requests/pending", () => HttpResponse.json({ data: { items: [request], total: 1, limit: 50, offset: 0 } })));
+    const user = userEvent.setup(); renderWithQuery(<SuperAdminPurchaseOrdersPage />);
+    await user.click(await screen.findByRole("button", { name: /Aurora Villa/ }));
+    const reconciliation = screen.getByRole("article", { name: "Kitchen cabinetry mode and vendor reconciliation" });
+    await user.click(within(reconciliation).getByText("Calculation, source and vendor line evidence"));
+    for (const label of ["Cabinetry / Base cabinets · Labour", "Cabinetry / Base cabinets · Material", "Component 2 · Labour", "Component 2 · Material"]) {
+      expect(within(reconciliation).getByText(label)).toBeVisible();
+    }
+    expect(reconciliation).not.toHaveTextContent("component-private");
+    expect(reconciliation).not.toHaveTextContent("another-sub-basket");
+  });
+
   it("preserves a negative frozen Sub-Vendor balance as signed internal evidence", async () => {
     const subVendorSnapshot: PurchaseOrderRequestModeSnapshot = { ...modeSnapshot, mode: { ...modeSnapshot.mode,
       options: [{ key: "sub_vendor", label: "Sub-Vendor" }],

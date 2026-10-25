@@ -7,6 +7,7 @@ import interiorImage from "../../assets/projects-living-room.webp";
 import type { EstimationCatalogue } from "./estimationCatalogueApi";
 import type { EstimateClassification } from "./leadsApi";
 import { configuredLineAmountPaise, configuredLinePreviewAmountPaise, configuredModeBaseRate, configuredQuantityUnits, estimatePricingModeLabels, parseSellingRate, type ConfiguredLineDraft } from "./configuredEstimate";
+import { EstimateInHouseComponents } from "./EstimateInHouseComponents";
 import { EstimatorRecommendations, type RecommendationReadState } from "./EstimatorRecommendations";
 import type { RoomRecommendationView, RecommendedLineTarget } from "./roomRecommendations";
 
@@ -381,6 +382,7 @@ function ConfiguredLineRow({ line, inheritedClassification = "standard", editabl
           {!referenceMode ? "Choose pricing mode" : baseRate === null ? "Base price not configured" : `Base price: ${moneyPaise(baseRate)} / ${line.uomName}`}
         </p> : null}
       </div>
+      <EstimateInHouseComponents line={line} editable={editable} onChange={(selectedInHouseComponentIds) => onUpdateLine(line.key, { selectedInHouseComponentIds })} />
     </div> : null}
     {rateRequired || rateInvalid ? <p id={`${inputId}-message`} className="configured-estimate-line__message">{rateRequired ? "Rate required" : "Enter a non-negative rate with up to two decimal places."}</p> : null}
     {quantityInvalid ? <p className="configured-estimate-line__message">Quantity must match {line.uomName} precision.</p> : null}

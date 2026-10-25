@@ -1560,3 +1560,104 @@ async function seedConfiguration() {
     { _id: "overview-temp-direct", mainLineId: "line-temp-direct", revisionId: "revision-temp-direct", sectionKey: "overview", applicability: "applicable", payload: { uomId: "uom-ea" } }
   ] as never[]);
 }
+
+describe("estimate In-house component selections", { timeout: 30_000 }, () => {
+  const settings = (baseRatePaise: number) => ({ baseRatePaise, lowQuantityLimit: "10", impactBps: 1000, minimumMarkupBps: 1000, startingMarkupBps: 2500 });
+  const components = () => [{ id: "component-electrical", basketId: "basket-a", subBasketId: "sub-a", inclusions: [], exclusions: [], labor: settings(1001), material: settings(2002) },
+    { id: "component-joinery", basketId: "basket-b", subBasketId: "sub-b", inclusions: [], exclusions: [], labor: settings(3003), material: settings(4004) }];
+  async function configure(inHouseComponents: unknown = components()) {
+    await AiEstimatorKnowledgeSectionModel.collection.insertOne({ _id: "component-mode", mainLineId: "line-a", revisionId: "revision-a", sectionKey: "advanced", applicability: "configured",
+      payload: { inHouseComponents, modeCalculations: { pmc: settings(700), sub_vendor: settings(800), in_house: settings(99999) } } } as never);
+  }
+  const line = (overrides: Record<string, unknown> = {}) => configuredLine({ classification: "special", pricingMode: "in_house", rateSource: "configuration", ratePaise: 3003,
+    selectedInHouseComponentIds: ["component-electrical"], itemVersion: 1, revisionVersion: 1, ...overrides });
+
+  it("projects cross-catalogue component labels and only each component's base sum", async () => {
+    await configure();
+    const response = await request(app().server).get("/api/v1/estimation/catalogue?limit=100").set(bearer("estimator")).expect(200);
+    const projected = response.body.data.items.flatMap((basket: any) => basket.subBaskets.flatMap((sub: any) => sub.mainLines)).find((entry: any) => entry.id === "line-a");
+    expect(projected).toMatchObject({ inHouseBaseRatePaise: null, modeBaseRatesPaise: { in_house: null }, inHouseComponents: [
+      { id: "component-electrical", basketName: "Electrical", subBasketName: "Shared", baseRatePaise: 3003 },
+      { id: "component-joinery", basketName: "Joinery", subBasketName: "Shared", baseRatePaise: 7007 }
+    ] });
+    expect(projected.inHouseComponents[0]).not.toHaveProperty("labor");
+  });
+  it("requires deliberate IDs, persists them, and freezes the selection in client snapshots", async () => {
+    await configure();
+    const { server } = app();
+    for (const ids of [undefined, [], ["missing"], ["component-electrical", "component-electrical"]]) {
+      const response = await request(server).put("/api/v1/leads/components-invalid/estimate").set(bearer("estimator"))
+        .send(estimateInput([line({ selectedInHouseComponentIds: ids })]));
+      expect([400, 409]).toContain(response.status);
+    }
+    const saved = await request(server).put("/api/v1/leads/components-valid/estimate").set(bearer("estimator"))
+      .send(estimateInput([line()])).expect(200);
+    expect(saved.body.data.lineItems[0]).toMatchObject({ selectedInHouseComponentIds: ["component-electrical"], ratePaise: 3003 });
+    const stored = await EstimateModel.findById(saved.body.data.id).lean();
+    const frozen = toEstimateSnapshot(stored as never, { clientName: "Fixture client", projectName: "Fixture project", location: "Fixture city" } as never);
+    expect(frozen.lineItems[0]).toHaveProperty("selectedInHouseComponentIds", ["component-electrical"]);
+    await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: "component-mode" }, { $set: { "payload.inHouseComponents": [components()[1]] } });
+    await expect(assertCurrentConfiguredPublication(stored as never)).rejects.toMatchObject({ code: "ESTIMATE_CONFIGURATION_CHANGED" });
+    expect(frozen.lineItems[0]).toHaveProperty("selectedInHouseComponentIds", ["component-electrical"]);
+  });
+  it("validates exact selected sum and rejects a deactivated component parent even for manual rates", async () => {
+    await configure();
+    const { server } = app();
+    await request(server).put("/api/v1/leads/components-sum/estimate").set(bearer("estimator"))
+      .send(estimateInput([line({ selectedInHouseComponentIds: ["component-joinery"], ratePaise: 3003 })])).expect(409);
+    const saved = await request(server).put("/api/v1/leads/components-sum/estimate").set(bearer("estimator"))
+      .send(estimateInput([line({ selectedInHouseComponentIds: ["component-joinery", "component-electrical"], ratePaise: 10010 })])).expect(200);
+    expect(saved.body.data.lineItems[0].selectedInHouseComponentIds).toEqual(["component-joinery", "component-electrical"]);
+    await AiEstimatorKnowledgeBasketModel.collection.updateOne({ _id: "basket-b" }, { $set: { status: "inactive" } });
+    await request(server).put("/api/v1/leads/components-unavailable/estimate").set(bearer("estimator"))
+      .send(estimateInput([line({ selectedInHouseComponentIds: ["component-joinery"], rateSource: "manual", ratePaise: 500 })])).expect(409);
+  });
+  it("serializes high-value submission with selected component basket deactivation", async () => {
+    await configure();
+    const { server, publication } = app();
+    const path = "/api/v1/leads/components-submit-race/estimate";
+    const saved = await request(server).put(path).set(bearer("estimator"))
+      .send(estimateInput([line({ selectedInHouseComponentIds: ["component-joinery"], rateSource: "manual", ratePaise: 200_000_000, quantity: 1 })])).expect(200);
+    const session = await AiEstimatorKnowledgeBasketModel.db.startSession();
+    let componentFenceReached = false;
+    const originalFence = AiEstimatorKnowledgeBasketModel.findOneAndUpdate.bind(AiEstimatorKnowledgeBasketModel);
+    const fence = vi.spyOn(AiEstimatorKnowledgeBasketModel, "findOneAndUpdate").mockImplementation((...args) => {
+      if ((args[0] as { _id?: string })._id === "basket-b") componentFenceReached = true;
+      return originalFence(...args);
+    });
+    try {
+      session.startTransaction();
+      await AiEstimatorKnowledgeBasketModel.collection.updateOne({ _id: "basket-b" }, { $set: { status: "inactive" } }, { session });
+      let settled = false;
+      const submitting = request(server).post(`${path}/submit`).set(bearer("estimator"))
+        .then((response) => { settled = true; return response; });
+      await expect.poll(() => componentFenceReached, { timeout: 5000 }).toBe(true);
+      expect(settled).toBe(false);
+      await session.commitTransaction();
+      const result = await submitting;
+      expect(result.status).toBe(409);
+      expect(result.body.error.code).toBe("ESTIMATE_COMPONENT_SELECTION_INVALID");
+      expect(await EstimateModel.findById(saved.body.data.id).lean()).toMatchObject({ status: "draft", version: saved.body.data.version });
+      expect(publication.publishEstimateToClient).not.toHaveBeenCalled();
+    } finally {
+      fence.mockRestore();
+      if (session.inTransaction()) await session.abortTransaction();
+      await session.endSession();
+    }
+  });
+  it("does not price retained components in a not-applicable section", async () => {
+    await configure();
+    await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: "component-mode" }, { $set: { applicability: "not_applicable" } });
+    await request(app().server).put("/api/v1/leads/components-not-applicable/estimate").set(bearer("estimator"))
+      .send(estimateInput([line()])).expect(409);
+  });
+  it("keeps manual pricing possible for known components with blank settings without deriving a cost", async () => {
+    await configure([{ ...components()[0], material: null }]);
+    const { server } = app();
+    await request(server).put("/api/v1/leads/components-blank-config/estimate").set(bearer("estimator"))
+      .send(estimateInput([line({ ratePaise: null })])).expect(409);
+    const saved = await request(server).put("/api/v1/leads/components-blank-manual/estimate").set(bearer("estimator"))
+      .send(estimateInput([line({ rateSource: "manual", ratePaise: 500 })])).expect(200);
+    expect(saved.body.data.lineItems[0]).toMatchObject({ rateSource: "manual", ratePaise: 500, selectedInHouseComponentIds: ["component-electrical"] });
+  });
+});

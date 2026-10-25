@@ -67,6 +67,141 @@ function api() {
   return app;
 }
 
+describe("Configuration Sub-Basket approval requests", { timeout: 30_000 }, () => {
+  async function setup() {
+    const services = fixture();
+    const parent = await services.reference.createBasket(ADMIN, { name: "Component materials" });
+    return { ...services, parent, command: { basketId: parent.id, name: "  Gypsum   boards  ", description: "  Boards and related supplies.  ", idempotencyKey: "config-sub-request-one" } };
+  }
+
+  it("saves only a pending request and notification, with normalized metadata and idempotent replay", async () => {
+    const { service, parent, command } = await setup();
+    const pending = await service.createConfigurationSubBasket(ADMIN, command);
+    expect(pending).toMatchObject({ kind: "configuration_sub_basket", target: { kind: "new_sub_basket", basketId: parent.id }, targetParentName: parent.name,
+      proposedName: "Gypsum boards", description: "Boards and related supplies.", requesterId: ADMIN.id, vendorName: null, vendorId: null,
+      status: "pending", version: 1, basketId: null, subBasketId: null, mainLineId: null });
+    expect(await service.createConfigurationSubBasket(ADMIN, command)).toEqual(pending);
+    await expect(service.createConfigurationSubBasket(ADMIN, { ...command, description: "Different description" })).rejects.toMatchObject({ code: "IDEMPOTENCY_CONFLICT" });
+    expect(await AiEstimatorKnowledgeBasketModel.countDocuments()).toBe(1);
+    expect(await AiEstimatorKnowledgeSubBasketModel.countDocuments()).toBe(0);
+    expect(await AiEstimatorKnowledgeMainLineModel.countDocuments()).toBe(0);
+    expect(await VendorBasketRequestNotificationModel.countDocuments({ requestId: pending.id, recipientId: ADMIN.id, requestKind: "configuration_sub_basket", vendorName: null })).toBe(1);
+    expect(await AuditEventModel.countDocuments({ entityId: pending.id, action: "vendor_basket_request_created" })).toBe(1);
+    expect((await service.listForAdmin(ADMIN, "pending", { limit: 20, offset: 0 })).items).toEqual([pending]);
+  });
+
+  it("creates exactly the requested group under its stored parent only after explicit approval", async () => {
+    const { service, parent, command } = await setup();
+    const pending = await service.createConfigurationSubBasket(ADMIN, command);
+    const decision = { decision: "fulfill" as const, expectedVersion: pending.version, idempotencyKey: "config-sub-approval" };
+    const saved = await service.decide(ADMIN, pending.id, decision);
+    expect(saved).toMatchObject({ kind: "configuration_sub_basket", status: "fulfilled", basketId: parent.id, mainLineId: null, version: 2 });
+    expect(await AiEstimatorKnowledgeSubBasketModel.findById(saved.subBasketId).lean()).toMatchObject({ basketId: parent.id, name: "Gypsum boards", description: "Boards and related supplies." });
+    expect(await service.decide(ADMIN, pending.id, decision)).toEqual(saved);
+    expect(await AiEstimatorKnowledgeSubBasketModel.countDocuments()).toBe(1);
+    expect(await AiEstimatorKnowledgeBasketModel.countDocuments()).toBe(1);
+    expect(await AiEstimatorKnowledgeMainLineModel.countDocuments()).toBe(0);
+    expect(await AiEstimatorKnowledgeRevisionModel.countDocuments()).toBe(0);
+    expect(await AuditEventModel.countDocuments({ entityId: saved.subBasketId, action: "ai_estimator_knowledge_sub_basket_created" })).toBe(1);
+  });
+
+  it("keeps approval pending on overrides, stale versions, unavailable parent or duplicate catalog identity", async () => {
+    const { service, reference, parent, command } = await setup();
+    const pending = await service.createConfigurationSubBasket(ADMIN, command);
+    const decision = { decision: "fulfill" as const, expectedVersion: pending.version, idempotencyKey: "config-sub-invalid-approval" };
+    await expect(service.decide(ADMIN, pending.id, { ...decision, configuration: { subBasketName: "Replacement", mainLineName: "Not allowed" } })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    await expect(service.decide(ADMIN, pending.id, { ...decision, expectedVersion: 9 })).rejects.toMatchObject({ code: "VERSION_CONFLICT" });
+    await AiEstimatorKnowledgeBasketModel.updateOne({ _id: parent.id }, { $set: { status: "inactive" } });
+    await expect(service.decide(ADMIN, pending.id, decision)).rejects.toMatchObject({ code: "PARENT_BASKET_UNAVAILABLE" });
+    await AiEstimatorKnowledgeBasketModel.updateOne({ _id: parent.id }, { $set: { status: "active" } });
+    await reference.createSubBasket(ADMIN, parent.id, { name: "Gypsum boards" });
+    await expect(service.decide(ADMIN, pending.id, decision)).rejects.toMatchObject({ code: "DUPLICATE_IDENTITY" });
+    expect(await VendorBasketRequestModel.findById(pending.id).lean()).toMatchObject({ status: "pending", version: 1, basketId: null, subBasketId: null, decidedAt: null });
+    expect(await AiEstimatorKnowledgeMainLineModel.countDocuments()).toBe(0);
+  });
+
+  it("rejects without creating a catalog group, and permits a later corrected request", async () => {
+    const { service, command } = await setup();
+    const pending = await service.createConfigurationSubBasket(ADMIN, command);
+    const result = await service.decide(ADMIN, pending.id, { decision: "reject", expectedVersion: 1, reason: "Clarify the scope", idempotencyKey: "config-sub-reject" });
+    expect(result).toMatchObject({ status: "rejected", reason: "Clarify the scope", basketId: null, subBasketId: null });
+    expect(await AiEstimatorKnowledgeSubBasketModel.countDocuments()).toBe(0);
+    expect((await service.createConfigurationSubBasket(ADMIN, { ...command, idempotencyKey: "config-sub-corrected" })).status).toBe("pending");
+  });
+
+  it("rolls back failed approval and commits only one group when decisions compete", async () => {
+    const { service, command, audit } = await setup();
+    const pending = await service.createConfigurationSubBasket(ADMIN, command);
+    const failing = createVendorBasketRequestService({ audit: { appendInMongoTransaction: async (entry, session) => {
+      if (entry.action === "vendor_basket_request_fulfilled") throw new Error("decision audit unavailable");
+      return audit.appendInMongoTransaction(entry, session);
+    } } });
+    const decision = { decision: "fulfill" as const, expectedVersion: 1, idempotencyKey: "config-sub-decision-failure" };
+    await expect(failing.decide(ADMIN, pending.id, decision)).rejects.toThrow("decision audit unavailable");
+    expect(await VendorBasketRequestModel.findById(pending.id).lean()).toMatchObject({ status: "pending", version: 1 });
+    expect(await AiEstimatorKnowledgeSubBasketModel.countDocuments()).toBe(0);
+    expect(await AuditEventModel.countDocuments({ action: "ai_estimator_knowledge_sub_basket_created" })).toBe(0);
+    const results = await Promise.allSettled([service.decide(ADMIN, pending.id, decision), service.decide(ADMIN, pending.id, { ...decision, idempotencyKey: "config-sub-competing-decision" })]);
+    expect(results.filter(result => result.status === "fulfilled")).toHaveLength(1);
+    expect((results.find(result => result.status === "rejected") as PromiseRejectedResult).reason).toMatchObject({ code: "VERSION_CONFLICT" });
+    expect(await AiEstimatorKnowledgeSubBasketModel.countDocuments()).toBe(1);
+    expect(await AiEstimatorKnowledgeMainLineModel.countDocuments()).toBe(0);
+  });
+
+  it("does not submit against inactive or missing parents", async () => {
+    const { service, parent, command } = await setup();
+    await AiEstimatorKnowledgeBasketModel.updateOne({ _id: parent.id }, { $set: { status: "inactive" } });
+    await expect(service.createConfigurationSubBasket(ADMIN, command)).rejects.toMatchObject({ code: "PARENT_BASKET_UNAVAILABLE" });
+    await expect(service.createConfigurationSubBasket(ADMIN, { ...command, basketId: "missing-parent" })).rejects.toMatchObject({ code: "PARENT_BASKET_UNAVAILABLE" });
+    expect(await VendorBasketRequestModel.countDocuments()).toBe(0);
+    expect(await VendorBasketRequestNotificationModel.countDocuments()).toBe(0);
+  });
+
+  it("serializes duplicate submissions, permits identical names under different parents, and blocks existing groups", async () => {
+    const { service, reference, command } = await setup();
+    const outcomes = await Promise.allSettled([service.createConfigurationSubBasket(ADMIN, command), service.createConfigurationSubBasket(ADMIN, { ...command, idempotencyKey: "config-sub-race-two" })]);
+    expect(outcomes.filter(result => result.status === "fulfilled")).toHaveLength(1);
+    expect((outcomes.find(result => result.status === "rejected") as PromiseRejectedResult).reason).toMatchObject({ code: "REQUEST_PENDING" });
+    const other = await reference.createBasket(ADMIN, { name: "Other materials" });
+    await service.createConfigurationSubBasket(ADMIN, { ...command, basketId: other.id, idempotencyKey: "config-sub-other-parent" });
+    await reference.createSubBasket(ADMIN, other.id, { name: "Existing group" });
+    await expect(service.createConfigurationSubBasket(ADMIN, { ...command, basketId: other.id, name: "Existing group", idempotencyKey: "config-sub-existing" })).rejects.toMatchObject({ code: "SUB_BASKET_EXISTS" });
+    expect(await VendorBasketRequestModel.countDocuments()).toBe(2);
+  });
+
+  it("checks current authorization before replay and exposes only a strict Super Admin route", async () => {
+    const { service, command } = await setup();
+    const app = api(); const path = "/api/v1/admin/ai-estimator-knowledge/sub-basket-requests";
+    await request(app).post(path).set("Authorization", "Bearer procurement").send(command).expect(403);
+    for (const invalid of [{ ...command, description: " " }, { ...command, vendorId: "vendor" }, { ...command, basketId: "" }, { ...command, description: "x".repeat(4001) }]) {
+      await request(app).post(path).set("Authorization", "Bearer admin").send(invalid).expect(400);
+    }
+    const result = await request(app).post(path).set("Authorization", "Bearer admin").send(command).expect(201);
+    expect(result.headers["cache-control"]).toBe("private, no-store");
+    await UserModel.updateOne({ _id: ADMIN.id }, { $set: { active: false } });
+    await expect(service.createConfigurationSubBasket(ADMIN, command)).rejects.toMatchObject({ code: "INVALID_TOKEN" });
+  });
+
+  it("rolls back submission if notification or audit cannot commit", async () => {
+    const { command } = await setup();
+    const service = createVendorBasketRequestService({ audit: { appendInMongoTransaction: async () => { throw new Error("request audit unavailable"); } } });
+    await expect(service.createConfigurationSubBasket(ADMIN, command)).rejects.toThrow("request audit unavailable");
+    expect(await VendorBasketRequestModel.countDocuments()).toBe(0);
+    expect(await VendorBasketRequestNotificationModel.countDocuments()).toBe(0);
+    expect(await AiEstimatorKnowledgeSubBasketModel.countDocuments()).toBe(0);
+  });
+
+  it("does not submit when target-aware request indexes are unavailable", async () => {
+    const { service, command } = await setup();
+    await VendorBasketRequestModel.collection.dropIndex("vendor_basket_request_pending_vendor_target");
+    try {
+      await expect(service.createConfigurationSubBasket(ADMIN, command)).rejects.toMatchObject({ code: "PROPOSAL_TARGET_SETUP_UNAVAILABLE" });
+      expect(await VendorBasketRequestModel.countDocuments()).toBe(0);
+      expect(await VendorBasketRequestNotificationModel.countDocuments()).toBe(0);
+    } finally { await VendorBasketRequestModel.syncIndexes(); }
+  });
+});
+
 describe("Configuration Main Basket requests", { timeout: 30_000 }, () => {
   it("filters only the authenticated requester's items before counting and paging, including legacy rows", async () => {
     const { service } = fixture();

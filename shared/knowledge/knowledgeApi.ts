@@ -35,6 +35,11 @@ import type {
   KnowledgeSurfaceListResponse
 } from "./knowledgeTypes";
 import type { VendorEffectiveStatus } from "./vendorInduction";
+import type {
+  KnowledgeApplySubBasketMarginsInput,
+  KnowledgeApplySubBasketMarginsResult,
+  KnowledgeSubBasketMarginSummary
+} from "./knowledgeSubBasketMarginTypes";
 
 const ADMIN_PREFIX = "/admin/ai-estimator-knowledge";
 const CONTEXT_PATH = "/ai-estimator-knowledge/context";
@@ -134,6 +139,7 @@ export interface KnowledgeContextRequest {
   readonly modeId?: string;
   readonly modeKind?: KnowledgeModeKind;
   readonly executionSource?: KnowledgeExecutionSource;
+  readonly selectedInHouseComponentIds?: readonly string[];
 }
 
 export interface KnowledgePreviewRequest {
@@ -301,7 +307,7 @@ export interface KnowledgeDuplicateInput {
 }
 
 export interface KnowledgeTransport {
-  get<T>(path: string, options?: { readonly signal?: AbortSignal }): Promise<T>;
+  get<T>(path: string, options?: { readonly signal?: AbortSignal; readonly showGlobalLoader?: boolean }): Promise<T>;
   post<T>(path: string, body?: unknown, options?: { readonly signal?: AbortSignal; readonly showGlobalLoader?: boolean }): Promise<T>;
   put<T>(path: string, body?: unknown): Promise<T>;
   patch<T>(path: string, body?: unknown): Promise<T>;
@@ -576,6 +582,24 @@ function getKnowledgeBasketQuality(basketId: string): Promise<KnowledgeBasketQua
   return apiClient.get<KnowledgeBasketQuality>(`${ADMIN_PREFIX}/baskets/${segment(basketId)}/quality`);
 }
 
+function getKnowledgeSubBasketMargins(basketId: string, subBasketId: string): Promise<KnowledgeSubBasketMarginSummary> {
+  return apiClient.get<KnowledgeSubBasketMarginSummary>(
+    `${ADMIN_PREFIX}/baskets/${segment(basketId)}/sub-baskets/${segment(subBasketId)}/margins`,
+    { showGlobalLoader: false }
+  );
+}
+
+function applyKnowledgeSubBasketMargins(
+  basketId: string,
+  subBasketId: string,
+  input: KnowledgeApplySubBasketMarginsInput
+): Promise<KnowledgeApplySubBasketMarginsResult> {
+  return apiClient.post<KnowledgeApplySubBasketMarginsResult>(
+    `${ADMIN_PREFIX}/baskets/${segment(basketId)}/sub-baskets/${segment(subBasketId)}/margins/apply`,
+    input
+  );
+}
+
 function getKnowledgeSubBasketDeletionImpact(
   basketId: string,
   subBasketId: string
@@ -651,6 +675,8 @@ return {
   listKnowledgeSubBaskets,
   createKnowledgeSubBasket,
   updateKnowledgeSubBasket,
+  getKnowledgeSubBasketMargins,
+  applyKnowledgeSubBasketMargins,
   getKnowledgeBasketQuality,
   getKnowledgeSubBasketDeletionImpact,
   permanentlyDeleteKnowledgeSubBasket,

@@ -13,8 +13,9 @@ import { KNOWLEDGE_WORKSPACE_SECTION_LABELS, formatKnowledgeDateTime } from "../
 import { KNOWLEDGE_WORKSPACE_SECTION_KEYS, countConfiguredWorkspaceTabs } from "../../../../shared/knowledge/knowledgeWorkspaceSections";
 import { validateKnowledgeSection } from "../../../../shared/knowledge/knowledgeSectionValidation";
 import { modeCalculationsIssues } from "../../../../shared/knowledge/knowledgeModeCalculation";
+import { inHouseComponentsIssues } from "../../../../shared/knowledge/knowledgeInHouseComponents";
 import { modeDescriptionIssues } from "../../../../shared/knowledge/knowledgeModeDescription";
-import { parseKnowledgeModeConfigurations } from "../../../../shared/knowledge/knowledgeModeConfiguration";
+import { nativeModeConfigurations } from "./knowledgeModeNativeModel";
 import { pmcMarginRangeIssues, subVendorMarginRangeIssues } from "../../../../shared/knowledge/knowledgePmcMargin";
 import { projectKnowledgeSavedSummary } from "../../../../shared/knowledge/knowledgeSavedSummary";
 import type { SavedSummaryGroupKey } from "../../../../shared/knowledge/knowledgeSavedSummaryTypes";
@@ -151,7 +152,7 @@ function Workspace({ mainLineId, onBack, onOpenItem, context }: Omit<Props, "ses
     const issues = Object.entries(current).flatMap(([key, draft]) => {
       if (!draft) return [];
       const general = validateKnowledgeSection(key as MobileSectionKey, draft.payload, { currentMainLineId: mainLineId, uoms: masters.uoms ?? [], vendors: masters.vendors ?? [], uomCatalogStatus: catalogsReady ? "ready" : "error", vendorCatalogStatus: catalogsReady ? "ready" : "error" });
-      return key === "advanced" ? [...general, ...parseKnowledgeModeConfigurations(draft.payload.modeConfigurations, masters.modes ?? []).issues, ...modeCalculationsIssues(draft.payload), ...modeDescriptionIssues(draft.payload.modeDescription), ...pmcMarginRangeIssues(draft.payload), ...subVendorMarginRangeIssues(draft.payload)] : general;
+      return key === "advanced" ? [...general, ...inHouseComponentsIssues(draft.payload), ...nativeModeConfigurations(draft.payload, masters.modes ?? []).issues, ...modeCalculationsIssues(draft.payload), ...modeDescriptionIssues(draft.payload.modeDescription), ...pmcMarginRangeIssues(draft.payload), ...subVendorMarginRangeIssues(draft.payload)] : general;
     });
     if (!editorValid || issues.length) { setError(issues.map(issue => issue.message).slice(0, 5).join("\n") || "Complete the highlighted fields before saving."); return false; }
     busyRef.current = true; setBusy(true); setError("");
@@ -288,7 +289,7 @@ function Workspace({ mainLineId, onBack, onOpenItem, context }: Omit<Props, "ses
         : loading ? <BrandLoader label={`Loading ${WORKSPACE_LABELS[active]}`} tone="dark" />
           : failed ? <StateView title="Section could not be loaded" message="Your saved configuration is retained. Retry before editing." actionLabel="Retry section" onAction={() => { keys.forEach(key => void sectionQueries[MOBILE_SECTION_KEYS.indexOf(key)]?.refetch()); }} />
             : active === "overview" ? <KnowledgeOverviewEditor key={`${revisionId}:${editorGeneration}`} {...editorProps} payload={sectionPayload("overview")} onChange={value => change("overview", value)} />
-              : active === "mode" ? <KnowledgeModeEditor key={`${revisionId}:${editorGeneration}`} {...editorProps} payload={sectionPayload("advanced")} onChange={value => change("advanced", value)} pricingPayload={sectionPayload("pricing")} onPricingChange={value => change("pricing", value)} overviewPayload={saved.overview?.payload ?? {}} referencedSpecificationIds={saved.pricing?.referenceState?.specificationIds ?? []} />
+              : active === "mode" ? <KnowledgeModeEditor key={`${revisionId}:${editorGeneration}`} {...editorProps} payload={sectionPayload("advanced")} onChange={value => change("advanced", value)} pricingPayload={sectionPayload("pricing")} onPricingChange={value => change("pricing", value)} overviewPayload={saved.overview?.payload ?? {}} referencedSpecificationIds={saved.pricing?.referenceState?.specificationIds ?? []} inHouseSummary={summary.mode.details.filter(row => row.key.startsWith("in-house-component"))} />
                 : <KnowledgeRecommendationsEditor key={`${revisionId}:${editorGeneration}`} {...editorProps} payload={sectionPayload("recommendations")} onChange={value => change("recommendations", value)} />}
     <KnowledgeDisclosure title="Quick summary" summary="Saved configuration details">
       {[["Main Basket", item.basketName], ["Sub-Basket", item.subBasketName ?? "Not assigned"], ["Main Line", item.mainLineName]].map(([label, value]) => <View key={label} style={styles.summaryRow}><Text style={[styles.text, { flex: 1 }]}>{label}</Text><Text style={[styles.subtitle, { flex: 1 }]}>{value}</Text></View>)}

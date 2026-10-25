@@ -122,6 +122,11 @@ export interface PurchaseOrderModeDecision {
   updatedAt: string;
   integrityBasis?: PurchaseOrderModeIntegrityBasis;
 }
+export interface PurchaseOrderComponentIdentity {
+  componentId?: string;
+  componentBasketId?: string;
+  componentSubBasketId?: string | null;
+}
 export interface PurchaseOrderModePreview {
   formulaVersion: string;
   mode: PurchaseOrderModeKey;
@@ -140,14 +145,14 @@ export interface PurchaseOrderModePreview {
   quantityRule: { slabId: string; minimumQuantity: string; maximumQuantity: string | null; adjustmentBps: number } | null;
   procurementQuantitySuggestion: string | null;
   settings: {
-    scopes: Array<{ scope: "pmc" | "sub_vendor" | "in_house_labor" | "in_house_material";
+    scopes: Array<PurchaseOrderComponentIdentity & { scope: "pmc" | "sub_vendor" | "in_house_labor" | "in_house_material";
       source: "scoped" | "legacy_shared" | "legacy_in_house" | null;
       baseRatePaise: number; lowQuantityLimit: string; impactBps: number;
       minimumMarkupBps: number; startingMarkupBps: number }>;
     configuredMarginBps: number | null;
     markupBasis: "starting" | "minimum";
   };
-  components: Array<{ scope: "labor" | "material"; adjustedCostPaise: number; sellingPaise: number; floorSellingPaise: number }>;
+  components: Array<PurchaseOrderComponentIdentity & { scope: "labor" | "material"; adjustedCostPaise: number; sellingPaise: number; floorSellingPaise: number }>;
 }
 export interface PurchaseOrderModePriceReference {
   state: "ready" | "unavailable";
@@ -174,7 +179,7 @@ export interface PurchaseOrderModeResolution {
   priceReferences?: Record<string, PurchaseOrderModePriceReference>;
   integrity?: PurchaseOrderModeIntegrity;
 }
-export interface PurchaseOrderModeCalculationStage {
+export interface PurchaseOrderModeCalculationStage extends PurchaseOrderComponentIdentity {
   scope: "pmc" | "sub_vendor" | "in_house_labor" | "in_house_material";
   baseRatePaise: number;
   baseSubtotalPaise: number;

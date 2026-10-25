@@ -43,6 +43,7 @@ export interface ConfiguredEstimateLineInput {
   itemType?: "main_line" | "temporary";
   classification?: EstimateClassification;
   pricingMode?: EstimatePricingMode;
+  selectedInHouseComponentIds?: string[];
   rateSource?: EstimateRateSource;
   id?: string;
   catalogueId: string;

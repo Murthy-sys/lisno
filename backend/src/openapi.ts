@@ -2253,6 +2253,7 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
             itemType: { type: "string", enum: ["main_line", "temporary"], description: "Absent on historical configured lines, which are Main Lines." },
             classification: { type: "string", enum: ["standard", "special"], description: "Frozen item classification. Standard uses Sub-Vendor when an explicit pricing mode is present. Historical missing classifications display as Standard without repricing." },
             pricingMode: { type: "string", enum: ["pmc", "sub_vendor", "in_house"], description: "Frozen selected pricing mode. Absent historical modes remain unknown." },
+            selectedInHouseComponentIds: { type: "array", maxItems: 50, uniqueItems: true, items: { type: "string", minLength: 1, maxLength: 128 }, description: "Frozen component selection for this estimate line. Newly configured components are not added to this selection." },
             rateSource: { type: "string", enum: ["configuration", "manual"], description: "Frozen origin of the saved selling rate. Published amounts never follow later Configuration changes." },
             revisionId: { type: "string" }, uomId: { type: "string" }, mainBasketName: { type: "string" },
             sourceItemStatus: { type: "string", enum: ["draft", "active", "inactive"] },
@@ -2344,6 +2345,13 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
             in_house: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER, nullable: true }
           }
         },
+        inHouseComponents: { type: "array", maxItems: 50, description: "Present for component-based In-house configuration. Estimates must explicitly select component IDs; no selection never means all.", items: {
+          type: "object", additionalProperties: false, required: ["id", "basketId", "basketName", "subBasketId", "subBasketName", "baseRatePaise"],
+          properties: { id: { type: "string" }, basketId: { type: "string" }, basketName: { type: "string" },
+            subBasketId: { type: "string", nullable: true }, subBasketName: { type: "string", nullable: true },
+            baseRatePaise: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER, nullable: true },
+            unavailableReason: { type: "string", nullable: true, description: "A non-null reason prevents selection, including manually priced lines. A null base rate alone can still be priced manually." } }
+        } },
         uom: { $ref: "#/components/schemas/EstimatorCatalogueUom" }
       }
     },
@@ -2447,6 +2455,7 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
         itemType: { type: "string", enum: ["main_line", "temporary"], default: "main_line", description: "Optional for older clients; Main Lines require a real Sub Basket. Only temporary items may have null Sub Basket." },
         classification: { type: "string", enum: ["standard", "special"], description: "Estimator-selected type. Omission preserves a saved value or defaults a new line to Standard." },
         pricingMode: { type: "string", enum: ["pmc", "sub_vendor", "in_house"], description: "Selected pricing mode. Standard with an explicit mode requires sub_vendor; Special permits all three. Omission preserves a saved mode and does not infer one for historical prices." },
+        selectedInHouseComponentIds: { type: "array", maxItems: 50, uniqueItems: true, items: { type: "string", minLength: 1, maxLength: 128 }, description: "Component IDs selected for this In-house estimate line. Included component-based In-house lines require a nonempty valid selection, including manually priced lines. Missing or empty does not select all components." },
         rateSource: { type: "string", enum: ["configuration", "manual"], description: "Configuration requires a selected mode and a rate matching its current saved base and source versions. Stale values produce a refreshable conflict. Manual preserves an entered override. On omission, a changed entered rate becomes manual; otherwise saved metadata is preserved." },
         revisionId: { type: "string" }, uomId: { type: "string" },
         itemVersion: { type: "integer", minimum: 1, description: "Required with revisionVersion for explicit configuration-derived pricing and new Draft or Inactive items. Older callers preserving an unchanged configuration-derived rate may use its prior saved source version; stale versions conflict." },

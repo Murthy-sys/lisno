@@ -1,3 +1,4 @@
+import { fenceEstimateInHouseComponentReferences } from "./estimator-catalogue.service.js";
 import { designRulesDigest } from "../domain/main-line-design-rules.js";
 import { effectiveCommercialStatus, estimateCommercialStatusFields, type EstimationLifecycle } from "../domain/estimation-lifecycle.js";
 import { currentFinalDesignBinding, fenceCollaborativeEstimate, requireEstimateStaffActor } from "./estimate-collaboration-policy.service.js";
@@ -509,6 +510,7 @@ export function toEstimateSnapshot(
         : line.classification,
       pricingMode: line.pricingMode,
       rateSource: line.rateSource,
+      ...(line.selectedInHouseComponentIds === undefined ? {} : { selectedInHouseComponentIds: line.selectedInHouseComponentIds }),
       catalogueId: line.catalogueId,
       roomId: line.roomId,
       roomName: line.roomName,
@@ -642,6 +644,7 @@ export async function assertCurrentConfiguredPublication(
   const lines = estimate.lineItems.filter((line) => line.source === "configuration");
   if (lines.length === 0) return;
   const current = await resolveEstimatorCatalogueLines(lines.map((line) => String(line.mainLineId)), session);
+  if (session) await fenceEstimateInHouseComponentReferences(lines, current, session);
   for (const line of lines) {
     const source = current.get(String(line.mainLineId));
     if (!source) throw new ApiError(409, "ESTIMATE_CONFIGURATION_UNAVAILABLE",
@@ -669,7 +672,7 @@ export async function assertCurrentConfiguredPublication(
     if (Object.entries(expected).some(([field, value]) => stored[field] !== value) ||
       designRulesDigest(stored.designRules) !== source.line.designRulesDigest ||
       JSON.stringify(line.estimateNotes ?? []) !== JSON.stringify(source.line.estimateNotes) ||
-      !estimateConfigurationRateMatches(line, source.line.modeBaseRatesPaise)) {
+      !estimateConfigurationRateMatches(line, source.line.modeBaseRatesPaise, source.line.inHouseComponents)) {
       throw new ApiError(409, "ESTIMATE_CONFIGURATION_CHANGED",
         "Configuration changed. Save the estimate with its current Main Line values before sending it.");
     }

@@ -1,9 +1,46 @@
 import { buildConfiguredLines, configuredLineAmountPaise, deselectConfiguredRecommendationSources, parseSellingRate, updateConfiguredLinePricing } from "./configuredEstimate";
 import { getEstimateRoomDefinitions, mergeSelectedRoomDefinitions, parseBedroomCount } from "./estimateRoomOptions";
 import { estimateEditable, previewEstimateTotals, refreshStaffForm, restoreStaffForm, staffFormInput, validateStaffForm } from "./staffEstimateModel";
-import { catalogueFixture, estimateFixture, leadFixture, lifecycleFixture } from "./__tests__/fixtures";
+import { catalogueFixture, componentCatalogueFixture, componentLineFixture, estimateFixture, leadFixture, lifecycleFixture } from "./__tests__/fixtures";
 
 describe("native estimate authoring model", () => {
+ it("preserves component selection, price and version pins through restore, refresh and transport", () => {
+  const catalogue = componentCatalogueFixture();
+  const restored = restoreStaffForm(estimateFixture({ lineItems: [componentLineFixture] }), leadFixture, catalogue);
+  const form = refreshStaffForm(restored, catalogue);
+  expect(form.lines[0]).toMatchObject({ rateInput: "111.11", selectedInHouseComponentIds: ["component-one"], revisionId: "revision-current", itemVersion: 3, revisionVersion: 5, inHouseComponents: catalogue.items[0]!.subBaskets[0]!.mainLines[0]!.inHouseComponents, inHouseComponentsNeedReview: false });
+  expect(staffFormInput(form).lineItems[0]).toMatchObject({ selectedInHouseComponentIds: ["component-one"], ratePaise: 11111, rateSource: "configuration", itemVersion: 3, revisionVersion: 5 });
+  expect(validateStaffForm(form)).toBeNull();
+  expect(updateConfiguredLinePricing(form.lines[0]!, { rateInput: "999", quantity: 4 })).toBe(form.lines[0]);
+  const missing = refreshStaffForm(form, { items: [], ineligibleLineCount: 1 });
+  expect(missing.lines[0]).toMatchObject({ sourceMissing: true, rateInput: "111.11", selectedInHouseComponentIds: ["component-one"] });
+ });
+ it("blocks unsupported component selection and routes changed or incomplete selections to web review", () => {
+  const catalogue = componentCatalogueFixture();
+  const fresh = buildConfiguredLines(catalogue, [{ id: "room-one", label: "Kitchen" }], new Set(["basket-one"]), [])[0]!;
+  expect(updateConfiguredLinePricing(fresh, { pricingMode: "in_house" })).toBe(fresh);
+  for (const saved of [{ ...componentLineFixture, selectedInHouseComponentIds: [] }, { ...componentLineFixture, selectedInHouseComponentIds: ["removed"] }, { ...componentLineFixture, revisionVersion: 4 }]) {
+   const form = restoreStaffForm(estimateFixture({ lineItems: [saved] }), leadFixture, catalogue);
+   expect(validateStaffForm(form)).toContain("web estimate workspace");
+   expect(form.lines[0]?.rateInput).toBe("111.11");
+   expect(staffFormInput(form).lineItems[0]).toMatchObject({ revisionVersion: saved.revisionVersion, selectedInHouseComponentIds: saved.selectedInHouseComponentIds });
+  }
+  const zero = restoreStaffForm(estimateFixture({ lineItems: [{ ...componentLineFixture, selectedInHouseComponentIds: ["component-two"], ratePaise: 0 }] }), leadFixture, catalogue);
+  expect(validateStaffForm(zero)).toBeNull();
+  expect(staffFormInput(zero).lineItems[0]).toMatchObject({ selectedInHouseComponentIds: ["component-two"], ratePaise: 0 });
+ });
+ it("preserves valid saved manual component prices when configured costs are blank", () => {
+  const catalogue = componentCatalogueFixture();
+  const component = catalogue.items[0]!.subBaskets[0]!.mainLines[0]!.inHouseComponents![0]!;
+  component.baseRatePaise = null;
+  const estimate = estimateFixture({ lineItems: [{ ...componentLineFixture, rateSource: "manual" as const, ratePaise: 500 }] });
+  const manual = restoreStaffForm(estimate, leadFixture, catalogue);
+  expect(validateStaffForm(manual)).toBeNull();
+  expect(staffFormInput(manual).lineItems[0]).toMatchObject({ selectedInHouseComponentIds: ["component-one"], rateSource: "manual", ratePaise: 500 });
+  expect(validateStaffForm(restoreStaffForm(estimateFixture({ lineItems: [componentLineFixture] }), leadFixture, catalogue))).toContain("web estimate workspace");
+  component.unavailableReason = "Unavailable Main Basket";
+  expect(validateStaffForm(restoreStaffForm(estimate, leadFixture, catalogue))).toContain("web estimate workspace");
+ });
  it.each([["1BHK", null, 1], ["2BHK", null, 2], ["2.5BHK", null, 2], ["4BHK", null, 4], ["Villa", 6, 6], ["Duplex", 3, 3], ["Penthouse", 5, 5]] as const)("offers optional bedroom, balcony and bathroom entries for %s", (type, count, expected) => {
   const rooms = getEstimateRoomDefinitions(type, count); expect(rooms.filter((room) => /^Bedroom \d+$/.test(room.label))).toHaveLength(expected);
   expect(rooms.filter((room) => /Bedroom \d+ Balcony/.test(room.label))).toHaveLength(expected); expect(rooms.filter((room) => /Bedroom \d+ Bathroom/.test(room.label))).toHaveLength(expected);

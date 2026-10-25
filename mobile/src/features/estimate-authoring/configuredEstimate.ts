@@ -1,5 +1,5 @@
 // Native counterpart of the web configured estimate model; retain integer-paise pricing and source identities.
-import type { EstimationCatalogue, EstimationCatalogueBasket, EstimationCatalogueMainLine, EstimationCatalogueSubBasket, EstimationCatalogueTemporaryItem, EstimationModeBaseRatesPaise } from "./catalogueTypes";
+import type { EstimationCatalogue, EstimationCatalogueBasket, EstimationCatalogueMainLine, EstimationCatalogueSubBasket, EstimationCatalogueTemporaryItem, EstimationInHouseComponent, EstimationModeBaseRatesPaise } from "./catalogueTypes";
 import type { ConfiguredEstimateLine, EstimateClassification, EstimatePricingMode, EstimateRateSource } from "./types";
 
 export interface ConfiguredEstimateRoom {
@@ -39,6 +39,9 @@ export interface ConfiguredLineDraft {
   uomDecimalScale: number;
   inHouseBaseRatePaise?: number | null | undefined;
   modeBaseRatesPaise?: EstimationModeBaseRatesPaise | undefined;
+  inHouseComponents?: EstimationInHouseComponent[] | undefined;
+  selectedInHouseComponentIds?: string[] | undefined;
+  inHouseComponentsNeedReview?: boolean | undefined;
   quantity: number;
   rateInput: string;
   included: boolean;
@@ -60,12 +63,17 @@ export function configuredModeBaseRate(line: Pick<ConfiguredLineDraft, "modeBase
   return typeof rate === "number" && Number.isSafeInteger(rate) && rate >= 0 ? rate : null;
 }
 
+export function hasNativeReadOnlyInHousePricing(line: ConfiguredLineDraft): boolean {
+  return line.pricingMode === "in_house" && (line.inHouseComponents !== undefined || line.selectedInHouseComponentIds !== undefined);
+}
+
 /** Only deliberate mode/type changes adopt a configured rate. Historical prices stay manual. */
 export function updateConfiguredLinePricing(
   line: ConfiguredLineDraft,
   change: Partial<ConfiguredLineDraft>,
   inheritedClassification: EstimateClassification = "standard"
 ): ConfiguredLineDraft {
+  if (hasNativeReadOnlyInHousePricing(line) || change.pricingMode === "in_house" && line.inHouseComponents !== undefined) return line;
   const classification = line.classification ?? inheritedClassification;
   const explicitTypeOrMode = change.classification !== undefined || change.pricingMode !== undefined;
   const next = { ...line, ...(explicitTypeOrMode ? { classification } : {}), ...change };
@@ -162,6 +170,7 @@ export function restoreConfiguredLine(line: ConfiguredEstimateLine): ConfiguredL
     classification: line.classification ?? "standard",
     pricingMode: line.pricingMode,
     rateSource: line.rateSource ?? "manual",
+    selectedInHouseComponentIds: line.selectedInHouseComponentIds?.slice(),
     subBasketId: line.subBasketId,
     subBasketName: line.subBasketName,
     mainLineId: line.mainLineId,
@@ -169,6 +178,8 @@ export function restoreConfiguredLine(line: ConfiguredEstimateLine): ConfiguredL
     mainLineName: line.mainLineName,
     estimateNotes: line.estimateNotes,
     revisionId: line.revisionId,
+    itemVersion: line.itemVersion ?? line.sourceItemVersion,
+    revisionVersion: line.revisionVersion ?? line.sourceRevisionVersion,
     sourceItemStatus: line.sourceItemStatus,
     sourceRevisionStatus: line.sourceRevisionStatus,
     sourceItemVersion: line.sourceItemVersion,
@@ -217,6 +228,7 @@ function newLine(
     uomDecimalScale: mainLine.uom.decimalScale,
     inHouseBaseRatePaise,
     modeBaseRatesPaise: mainLine.modeBaseRatesPaise,
+    inHouseComponents: mainLine.inHouseComponents,
     pricingMode: "sub_vendor",
     rateSource: "configuration",
     quantity: 1,
@@ -245,10 +257,16 @@ export function buildConfiguredLines(
     ].map((fresh) => {
       const saved = prior.get(fresh.key);
       if (!saved) return fresh;
-      if (preservePersisted && saved.persistedId) return {
+      const componentPricing = saved.pricingMode === "in_house" && (fresh.inHouseComponents !== undefined || hasNativeReadOnlyInHousePricing(saved));
+      if (preservePersisted && saved.persistedId || componentPricing) return {
         ...saved,
         modeBaseRatesPaise: fresh.modeBaseRatesPaise,
         inHouseBaseRatePaise: fresh.inHouseBaseRatePaise,
+        inHouseComponents: fresh.inHouseComponents ?? saved.inHouseComponents,
+        inHouseComponentsNeedReview: componentPricing && (!saved.selectedInHouseComponentIds?.length ||
+          saved.revisionId !== fresh.revisionId || saved.itemVersion !== fresh.itemVersion || saved.revisionVersion !== fresh.revisionVersion ||
+          saved.uomId !== fresh.uomId || saved.uomDecimalScale !== fresh.uomDecimalScale ||
+          saved.selectedInHouseComponentIds.some(id => !fresh.inHouseComponents?.some(component => component.id === id && !component.unavailableReason && (saved.rateSource !== "configuration" || component.baseRatePaise !== null)))),
         sourceMissing: saved.mainBasketId !== fresh.mainBasketId ||
           saved.subBasketId !== fresh.subBasketId || saved.itemType !== fresh.itemType
       };
@@ -258,6 +276,7 @@ export function buildConfiguredLines(
         persistedId: saved.persistedId,
         quantity: saved.quantity,
         pricingMode: saved.pricingMode,
+        selectedInHouseComponentIds: saved.selectedInHouseComponentIds,
         rateSource: saved.rateSource ?? "manual",
         rateInput: saved.rateSource === "configuration" && saved.pricingMode
           ? formatRateInput(configuredModeBaseRate(fresh, saved.pricingMode)) : saved.rateInput,
@@ -279,7 +298,7 @@ export function buildConfiguredLines(
     if (!seen.has(line.key) && roomIds.has(line.roomId) && (line.persistedId || line.included ||
       line.classification !== undefined || line.rateSource === "manual" || line.quantity !== 1)) {
       next.push({ ...line, sourceMissing: true, modeBaseRatesPaise: undefined,
-        rateInput: !preservePersisted && line.rateSource === "configuration" ? "" : line.rateInput });
+        rateInput: !preservePersisted && !hasNativeReadOnlyInHousePricing(line) && line.rateSource === "configuration" ? "" : line.rateInput });
     }
   }
   return next;

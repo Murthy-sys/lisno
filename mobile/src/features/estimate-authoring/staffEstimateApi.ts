@@ -15,9 +15,12 @@ export const staffEstimateQueueKey = (scope: Scope, path: string) => privateQuer
 const id = z.string().min(1);
 const money = z.number().finite().nonnegative();
 const paise = z.number().int().safe().nonnegative();
+const componentId = z.string().trim().min(1).max(128);
+const selectedComponentIds = z.array(componentId).max(50).refine(ids => new Set(ids).size === ids.length);
 const status = z.enum(["draft", "pending_manager_assignment", "pending_designer_approval", "designer_changes_requested", "ready_for_client", "sent_to_client", "client_changes_requested", "client_approved"]);
 const reviewSchema = z.object({ id, version: z.number().int().positive(), status: z.enum(["pending", "approved", "changes_requested", "superseded"]), deliveryStatus: z.enum(["queued", "sending", "sent", "failed", "disabled"]), deliveryAttemptCount: z.number().int().nonnegative(), deliveredAt: z.string().nullable() }).passthrough();
 const configuredMetadata = {
+  selectedInHouseComponentIds: selectedComponentIds.optional(),
   itemType: z.enum(["main_line", "temporary"]).optional(), classification: z.enum(["standard", "special"]).optional(), pricingMode: z.enum(["pmc", "sub_vendor", "in_house"]).optional(), rateSource: z.enum(["manual", "configuration"]).optional(),
   itemVersion: z.number().int().positive().optional(), revisionVersion: z.number().int().positive().optional(), recommendationSourceMainLineIds: z.array(id).optional(), estimateNotes: z.array(z.string()).optional(),
   configurationUomChanged: z.boolean().optional(), configurationSourceUnavailable: z.boolean().optional(), previousUomName: z.string().optional()
@@ -99,6 +102,7 @@ export async function getAssignableEstimateDesigners(runtime: MobileRuntime, sig
   return result.data;
 }
 const catalogueLine = z.object({ ...configuredMetadata, id, mainLineId: id, basketId: id, subBasketId: id.nullable(), name: z.string(), displayOrder: z.number(), revisionId: id,
+  inHouseComponents: z.array(z.object({ id: componentId, basketId: id, subBasketId: id.nullable(), basketName: z.string(), subBasketName: z.string().nullable(), baseRatePaise: paise.nullable(), unavailableReason: z.string().nullable().optional() }).passthrough()).max(50).refine(rows => new Set(rows.map(row => row.id)).size === rows.length).optional(),
   itemVersion: z.number().int().positive().optional(), revisionVersion: z.number().int().positive().optional(),
   uom: z.object({ id, code: z.string(), name: z.string(), decimalScale: z.number().int().min(0).max(6) }),
   modeBaseRatesPaise: z.object({ pmc: paise.nullable(), sub_vendor: paise.nullable(), in_house: paise.nullable() }).optional()

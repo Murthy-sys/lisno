@@ -82,6 +82,38 @@ function itemDetail(overrides: Partial<KnowledgeItemDetail> = {}): KnowledgeItem
 }
 
 describe("knowledge mutation cache synchronization", () => {
+  it.each(["basket", "sub-basket"])("invalidates only affected margin summaries after %s changes", async (kind) => {
+    const client = queryClient();
+    const affected = knowledgeQueryKeys.subBasketMargins("basket-1", "sub-1");
+    const unrelated = knowledgeQueryKeys.subBasketMargins("basket-2", "sub-2");
+    client.setQueryData(affected, { versionToken: "old" });
+    client.setQueryData(unrelated, { versionToken: "unrelated" });
+    if (kind === "basket") await syncKnowledgeBasketMutation(client, {
+      ...actor, id: "basket-1", name: "Renamed", description: null, displayOrder: 1, status: "active", version: 3
+    });
+    else await refreshKnowledgeSubBasketCatalog(client, "basket-1");
+    expect(client.getQueryState(affected)?.isInvalidated).toBe(true);
+    expect(client.getQueryState(unrelated)?.isInvalidated).toBe(false);
+    client.clear();
+  });
+
+  it("removes deleted Sub-Basket margin summaries while retaining other parents", async () => {
+    const client = queryClient();
+    const deleted = knowledgeQueryKeys.subBasketMargins("basket-1", "sub-1");
+    const retained = knowledgeQueryKeys.subBasketMargins("basket-2", "sub-2");
+    client.setQueryData(deleted, { versionToken: "old" });
+    client.setQueryData(retained, { versionToken: "retained" });
+    await syncKnowledgeSubBasketDeletion(client, {
+      basketId: "basket-1", subBasketId: "sub-1", deleted: true, deletedAt: "2026-10-25T00:00:00.000Z",
+      deletedMainLineIds: [], deletedReferenceCount: 0
+    });
+    expect(client.getQueryData(deleted)).toBeUndefined();
+    expect(client.getQueryData(retained)).toEqual({ versionToken: "retained" });
+    await syncKnowledgeBasketDeletion(client, "basket-2");
+    expect(client.getQueryData(retained)).toBeUndefined();
+    client.clear();
+  });
+
   it("refreshes client requirements after Main Line metadata changes without modifying published quotation caches", async () => {
     const client = queryClient();
     const requirementKey = estimateRequirementsKeys.detail("project-one");

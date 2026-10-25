@@ -3,7 +3,7 @@ import type { KnowledgeConfigurationContext, KnowledgeModeCalculationSettings } 
 import { canonicalizeScaledDecimal, calculateProcurementQuantity, multiplyMoneyByQuantity, parseScaledDecimal } from "./ai-estimator-knowledge-calculation.js";
 import { buildKnowledgeConfigurationContext } from "./ai-estimator-knowledge-configuration-context.js";
 import { MAX_FINANCE_AMOUNT_PAISE } from "./project-finance.js";
-import { calculateKnowledgeInHousePrice, calculateKnowledgeModeBaseRate, calculateKnowledgeModePrice, calculateKnowledgePmcPrice,
+import { calculateKnowledgeModeBaseRate, calculateKnowledgeModePrice, calculateKnowledgePmcPrice,
   calculateKnowledgeSubVendorPrice, KNOWLEDGE_LOW_QUANTITY_IMPACT_BPS } from "./ai-estimator-knowledge-mode-calculation.js";
 
 export const PURCHASE_ORDER_MODE_KEYS = ["pmc", "sub_vendor", "in_house"] as const;
@@ -77,6 +77,7 @@ export type PurchaseOrderModeDraftPreviewInput = z.infer<typeof purchaseOrderMod
 export interface PurchaseOrderModeSourceLine {
   key: string;
   included: boolean;
+  selectedInHouseComponentIds?: string[];
   source?: "configuration" | "legacy";
   amountPaise: number | null;
   mainBasketId?: string;
@@ -124,18 +125,21 @@ export interface PurchaseOrderModePreview {
   quantityRule: { slabId: string; minimumQuantity: string; maximumQuantity: string | null; adjustmentBps: number } | null;
   procurementQuantitySuggestion: string | null;
   settings: {
-    scopes: Array<{ scope: "pmc" | "sub_vendor" | "in_house_labor" | "in_house_material";
+    scopes: Array<{ componentId?: string; componentBasketId?: string; componentSubBasketId?: string | null; scope: "pmc" | "sub_vendor" | "in_house_labor" | "in_house_material";
       source: "scoped" | "legacy_shared" | "legacy_in_house" | null;
       baseRatePaise: number; lowQuantityLimit: string; impactBps: number;
       minimumMarkupBps: number; startingMarkupBps: number }>;
     configuredMarginBps: number | null;
     markupBasis: "starting" | "minimum";
   };
-  components: Array<{ scope: "labor" | "material"; adjustedCostPaise: number; sellingPaise: number; floorSellingPaise: number }>;
+  components: Array<{ componentId?: string; componentBasketId?: string; componentSubBasketId?: string | null; scope: "labor" | "material"; adjustedCostPaise: number; sellingPaise: number; floorSellingPaise: number }>;
 }
 
 /** Transient calculation evidence; never persisted or included in preparation digests. */
 export interface PurchaseOrderModeCalculationStage {
+  componentId?: string;
+  componentBasketId?: string;
+  componentSubBasketId?: string | null;
   scope: "pmc" | "sub_vendor" | "in_house_labor" | "in_house_material";
   baseRatePaise: number;
   baseSubtotalPaise: number;
@@ -268,6 +272,8 @@ export function suggestStandardSubVendorCost(input: {
 
 /** Applies Configuration's existing mode formulas to one explicitly confirmed line quantity. */
 export function analyzePurchaseOrderModeSettings(input: {
+  selectedInHouseComponentIds?: string[];
+  inHouseComponentReferencesAvailable?: boolean;
   advanced: Record<string, unknown>;
   quantityMargin?: Record<string, unknown>;
   uom: { id: string; name: string; decimalScale: number };
@@ -285,15 +291,17 @@ export function analyzePurchaseOrderModeSettings(input: {
     { key: "in_house", label: "In-house", modeKind: "execution", executionSource: "in_house" }
   ] as const;
   for (const selector of selectors) {
-    const context = buildKnowledgeConfigurationContext({ advanced: input.advanced, uom: input.uom,
+    const context = buildKnowledgeConfigurationContext({ advanced: input.advanced, uom: input.uom, selectedInHouseComponentIds: input.selectedInHouseComponentIds,
       modeKind: selector.modeKind, executionSource: selector.executionSource });
     contexts.set(selector.key, context);
     const validMargin = selector.key === "pmc" ? validPmcMargin(input.advanced.pmcMarginBps)
       : selector.key === "sub_vendor" ? validSubVendorMargin(input.advanced.subVendorMarginBps) : true;
-    const available = context.state === "ready" && validMargin;
+    const referencesAvailable = selector.key !== "in_house" || input.inHouseComponentReferencesAvailable !== false;
+    const available = context.state === "ready" && validMargin && referencesAvailable;
     availability.push({ key: selector.key, label: selector.label, available,
       issues: available ? [] : [
         ...context.issues.map((issue) => ({ code: issue.code, message: modeIssueMessage(issue.code) })),
+        ...(!referencesAvailable ? [{ code: "IN_HOUSE_COMPONENT_REFERENCE_UNAVAILABLE", message: "A selected In-house component's Main Basket or Sub Basket is unavailable." }] : []),
         ...(!validMargin ? [{ code: selector.key === "pmc" ? "PMC_MARGIN_INVALID" : "SUB_VENDOR_MARGIN_INVALID",
           message: selector.key === "pmc" ? "The saved PMC margin must be between 10% and 20%."
             : "The saved Sub-Vendor margin must be between 0% and 95% in 5% steps." }] : [])
@@ -305,7 +313,7 @@ export function analyzePurchaseOrderModeSettings(input: {
     return { options, availability, issues: [{ code: "MODE_NOT_CONFIGURED", message: "This mode is not valid in the saved Configuration revision." }], preview: null };
   }
   const selector = selectors.find((entry) => entry.key === input.mode)!;
-  const context = buildKnowledgeConfigurationContext({ advanced: input.advanced, uom: input.uom,
+  const context = buildKnowledgeConfigurationContext({ advanced: input.advanced, uom: input.uom, selectedInHouseComponentIds: input.selectedInHouseComponentIds,
     modeKind: selector.modeKind, executionSource: selector.executionSource, quantity: input.quantity });
   const issues = context.issues.map((issue) => ({ code: issue.code, message: modeIssueMessage(issue.code) }));
   if (issues.length) return { options, availability, issues, preview: null };
@@ -350,28 +358,29 @@ export function analyzePurchaseOrderModeSettings(input: {
         settings: snapshotSettings(context, result.subVendorMarginBps, markupBasis), components: []
       } };
     }
-    const labor = scopes.get("in_house_labor")!;
-    const material = scopes.get("in_house_material")!;
-    const result = calculateKnowledgeInHousePrice({ labor: labor!, material: material!, quantity,
-      quantityScale: input.uom.decimalScale, markupBasis, discountBps });
-    const adjustedCostPaise = safeSum(result.labor.revisedAmountPaise, result.material.revisedAmountPaise);
-    const floorSellingPaise = safeSum(result.labor.floorPricePaise, result.material.floorPricePaise);
-    const baseCostPaise = safeSum(
-      baseAmount(labor!, quantity, input.uom.decimalScale),
-      baseAmount(material!, quantity, input.uom.decimalScale)
-    );
+    const costs = context.calculations.map((calculation) => {
+      if (!calculation.settings) throw new Error("The selected In-house component is incomplete.");
+      const result = calculateKnowledgeModePrice({ ...calculation.settings, quantity,
+        quantityScale: input.uom.decimalScale, markupBasis, discountBps });
+      return { calculation, result, base: baseAmount(calculation.settings, quantity, input.uom.decimalScale) };
+    });
+    const sum = (values: number[]) => values.reduce(safeSum, 0);
+    const adjustedCostPaise = sum(costs.map(({ result }) => result.revisedAmountPaise));
+    const baseCostPaise = sum(costs.map(({ base }) => base));
     return { options, availability, issues: [], preview: {
       formulaVersion: "mode-margin-v2", mode: input.mode, quantity, quantityScale: input.uom.decimalScale,
       baseCostPaise, adjustedCostPaise, lowQuantityImpactPaise: adjustedCostPaise - baseCostPaise,
-      appliedImpactBps: null, sellingPaise: result.totalPaise, finalVendorChargesPaise: null,
-      floorSellingPaise, marginBps: null,
-      discountBps, discountAmountPaise: safeSum(result.labor.discount?.amountPaise ?? 0, result.material.discount?.amountPaise ?? 0),
+      appliedImpactBps: null, sellingPaise: sum(costs.map(({ result }) => result.totalPaise)), finalVendorChargesPaise: null,
+      floorSellingPaise: sum(costs.map(({ result }) => result.floorPricePaise)), marginBps: null,
+      discountBps, discountAmountPaise: sum(costs.map(({ result }) => result.discount?.amountPaise ?? 0)),
       quantityRule: rules.slab, procurementQuantitySuggestion: rules.suggestion,
       settings: snapshotSettings(context, null, markupBasis),
-      components: [
-        { scope: "labor", adjustedCostPaise: result.labor.revisedAmountPaise, sellingPaise: result.labor.totalPaise, floorSellingPaise: result.labor.floorPricePaise },
-        { scope: "material", adjustedCostPaise: result.material.revisedAmountPaise, sellingPaise: result.material.totalPaise, floorSellingPaise: result.material.floorPricePaise }
-      ]
+      components: costs.map(({ calculation, result }) => ({
+        ...(calculation.componentId === undefined ? {} : { componentId: calculation.componentId,
+          componentBasketId: calculation.componentBasketId, componentSubBasketId: calculation.componentSubBasketId }),
+        scope: calculation.scope === "in_house_labor" ? "labor" as const : "material" as const,
+        adjustedCostPaise: result.revisedAmountPaise, sellingPaise: result.totalPaise, floorSellingPaise: result.floorPricePaise
+      }))
     } };
   } catch (error) {
     return { options, availability, issues: [{ code: "MODE_CALCULATION_INVALID", message: error instanceof Error ? error.message : "The saved mode cannot be calculated." }], preview: null };
@@ -406,19 +415,25 @@ export function buildPurchaseOrderModeCalculationStages(preview: PurchaseOrderMo
       floorSellingPaise: null, totalPaise: result.totalPaise, marginBps: result.subVendorMarginBps
     })];
   } else {
-    stages = (["in_house_labor", "in_house_material"] as const).map((name) => {
-      const scope = settings.get(name);
-      if (!scope) throw new Error("The In-house preview has incomplete frozen calculation settings.");
+    const costs = preview.settings.scopes.filter((row) => row.scope === "in_house_labor" || row.scope === "in_house_material");
+    const identities = new Set(costs.map((row) => JSON.stringify([row.componentId ?? null, row.scope])));
+    if (costs.length < 2 || costs.length % 2 !== 0 || identities.size !== costs.length || costs.some((row) =>
+      !identities.has(JSON.stringify([row.componentId ?? null, row.scope === "in_house_labor" ? "in_house_material" : "in_house_labor"])))) {
+      throw new Error("The In-house preview has incomplete frozen calculation settings.");
+    }
+    stages = costs.map((scope) => {
+      const name = scope.scope;
       const result = calculateKnowledgeModePrice({ ...scope, quantity, quantityScale,
         markupBasis: preview.settings.markupBasis, discountBps: preview.discountBps });
-      return calculationStage(name, scope, quantity, quantityScale, {
+      return { ...(scope.componentId === undefined ? {} : { componentId: scope.componentId,
+        componentBasketId: scope.componentBasketId, componentSubBasketId: scope.componentSubBasketId }), ...calculationStage(name, scope, quantity, quantityScale, {
         appliedImpactBps: result.appliedImpactBps, revisedUnitRatePaise: result.revisedUnitRatePaise,
         revisedAmountPaise: result.revisedAmountPaise, totalBeforeDiscountPaise: result.discount?.totalBeforeDiscountPaise ?? result.totalPaise,
         discountBasisPaise: result.discount?.totalBeforeDiscountPaise ?? result.totalPaise,
         discountAmountPaise: result.discount?.amountPaise ?? 0,
         floorSellingPaise: result.floorPricePaise, totalPaise: result.totalPaise,
         marginBps: preview.settings.markupBasis === "minimum" ? scope.minimumMarkupBps : scope.startingMarkupBps
-      });
+      }) };
     });
   }
   if (stages.reduce((sum, row) => safeSum(sum, row.sellingPaise), 0) !== preview.sellingPaise ||
@@ -459,6 +474,8 @@ function snapshotSettings(
 ): PurchaseOrderModePreview["settings"] {
   return { configuredMarginBps, markupBasis, scopes: context.calculations.flatMap((calculation) =>
     calculation.settings ? [{ scope: calculation.scope, source: calculation.source,
+      ...(calculation.componentId === undefined ? {} : { componentId: calculation.componentId,
+        componentBasketId: calculation.componentBasketId, componentSubBasketId: calculation.componentSubBasketId }),
       baseRatePaise: calculation.settings.baseRatePaise, lowQuantityLimit: calculation.settings.lowQuantityLimit,
       impactBps: calculation.settings.impactBps, minimumMarkupBps: calculation.settings.minimumMarkupBps,
       startingMarkupBps: calculation.settings.startingMarkupBps }] : []) };
@@ -505,6 +522,8 @@ function quantityRules(payload: Record<string, unknown>, quantity: string, scale
 }
 function modeIssueMessage(code: string): string {
   const messages: Record<string, string> = {
+    IN_HOUSE_COMPONENT_SELECTION_REQUIRED: "The approved estimate must explicitly select available In-house components.",
+    INVALID_IN_HOUSE_COMPONENTS: "The saved In-house components need correction before pricing.",
     CALCULATION_NOT_CONFIGURED: "No calculation is configured for this mode in the approved revision.",
     CONFLICTING_SCOPE_SELECTION: "The saved mode scope contains conflicting selections.",
     INVALID_QUANTITY_PRECISION: "The quantity exceeds the approved UOM precision.",

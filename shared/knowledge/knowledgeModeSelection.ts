@@ -34,7 +34,7 @@ export function modeSelectionForPayload(
   const pmc = Boolean(primary.pmc || completeCalculation(calculations?.pmc) || completePmcMargin);
   const subVendor = Boolean(primary.execution.sub_vendor || hasSubVendorScope || completeCalculation(calculations?.sub_vendor) ||
     completeSubVendorMargin);
-  const inHouse = Boolean(primary.execution.in_house ||
+  const inHouse = Boolean(Object.hasOwn(payload, "inHouseComponents") || primary.execution.in_house ||
     (hasSplitInHouse
       ? completeCalculation(calculations?.in_house_labor) || completeCalculation(calculations?.in_house_material)
       : completeCalculation(calculations?.in_house)));

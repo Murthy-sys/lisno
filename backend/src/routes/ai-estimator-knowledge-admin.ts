@@ -546,6 +546,23 @@ export function createAiEstimatorKnowledgeAdminRouter(
     ))
   );
   router.get(
+    `${prefix}/baskets/:basketId/sub-baskets/:subBasketId/margins`,
+    protectedRoute,
+    requireOperation("GET /admin/ai-estimator-knowledge/baskets/:basketId/sub-baskets/:subBasketId/margins"),
+    handler(async (request) => services.item.getSubBasketMargins(
+      request.authenticatedUser!, String(request.params.basketId), String(request.params.subBasketId)
+    ))
+  );
+  router.post(
+    `${prefix}/baskets/:basketId/sub-baskets/:subBasketId/margins/apply`,
+    protectedRoute,
+    requireOperation("POST /admin/ai-estimator-knowledge/baskets/:basketId/sub-baskets/:subBasketId/margins/apply"),
+    validateBody(z.object({ mode: z.enum(["pmc", "sub_vendor", "in_house"]), versionToken: z.string().regex(/^[a-f0-9]{64}$/u) }).strict()),
+    handler(async (request) => services.item.applySubBasketMargins(
+      request.authenticatedUser!, String(request.params.basketId), String(request.params.subBasketId), request.body
+    ))
+  );
+  router.get(
     `${prefix}/baskets/:basketId/sub-baskets/:subBasketId/deletion-impact`,
     protectedRoute,
     requireOperation("GET /admin/ai-estimator-knowledge/baskets/:basketId/sub-baskets/:subBasketId/deletion-impact"),

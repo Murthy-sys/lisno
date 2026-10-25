@@ -1,3 +1,5 @@
+import { inHouseComponentsIssues } from "../../../../shared/knowledge/knowledgeInHouseComponents";
+import { KnowledgeInHouseComponents, type InHousePendingCalculations } from "./KnowledgeInHouseComponents";
 import {
   useQuery,
   useQueryClient,
@@ -74,7 +76,7 @@ const MODE_SECTION_LABELS = {
 } as const satisfies Readonly<Record<ModeSectionKey, string>>;
 
 const PENDING_DESCRIPTION_MESSAGE = "Save or cancel the paragraph before saving Mode.";
-const ADVANCED_EDITABLE_FIELDS = ["modeConfigurations", "modeDescription", "modeCalculation", "pmcMarginBps", "pmcMinimumMarginBps", "subVendorMarginBps", "subVendorMinimumMarginBps"] as const;
+const ADVANCED_EDITABLE_FIELDS = ["inHouseComponents", "modeConfigurations", "modeDescription", "modeCalculation", "pmcMarginBps", "pmcMinimumMarginBps", "subVendorMarginBps", "subVendorMinimumMarginBps"] as const;
 type AdvancedEditableField = (typeof ADVANCED_EDITABLE_FIELDS)[number];
 
 interface ModeDraft {
@@ -121,6 +123,7 @@ export interface KnowledgeModePanelProps {
   readonly relationshipBaskets: readonly KnowledgeBasket[];
   readonly relationshipItems: readonly KnowledgeItemListItem[];
   readonly editable: boolean;
+  readonly onRequestDraft?: () => void;
   readonly legacyModeCatalogState: KnowledgeLegacyModeCatalogState;
   readonly uomCatalogState?: KnowledgeBudgetCatalogState;
   readonly onDirtyChange: (dirty: boolean) => void;
@@ -145,6 +148,7 @@ export const KnowledgeModePanel = forwardRef<
     relationshipBaskets,
     relationshipItems,
     editable,
+    onRequestDraft,
     legacyModeCatalogState,
     uomCatalogState = { status: "ready" },
     onDirtyChange,
@@ -171,6 +175,8 @@ export const KnowledgeModePanel = forwardRef<
   const setCalculationValid = useCallback((scope: ModeCalculationScope, valid: boolean) => {
     setCalculationValidity((current) => current[scope] === valid ? current : { ...current, [scope]: valid });
   }, []);
+  const [componentsValid, setComponentsValid] = useState(true);
+  const [componentPending, setComponentPending] = useState<InHousePendingCalculations>({});
   const [descriptionPending, setDescriptionPending] = useState(false);
   const [pendingCalculationSaveVersion, setPendingCalculationSaveVersion] = useState(0);
   const [pendingDescription, setPendingDescription] = useState<string | null>(null);
@@ -281,8 +287,8 @@ export const KnowledgeModePanel = forwardRef<
     pricingBaseline: drafts.pricing.pendingBaseline,
     pricingDraft: drafts.pricing.pendingPayload,
     mainLineName: item.mainLineName, modes: masters.modes,
-    pendingDescription, pendingCalculations, uomLabel: calculationUom.label
-  }) : [], [editable, draftSourceKey, sourceKey, drafts, item.mainLineName, masters.modes, pendingDescription, pendingCalculations, calculationUom.label]);
+    pendingDescription, pendingCalculations, componentPending, relationshipBaskets, relationshipItems, uomLabel: calculationUom.label
+  }) : [], [editable, draftSourceKey, sourceKey, drafts, item.mainLineName, masters.modes, pendingDescription, pendingCalculations, componentPending, relationshipBaskets, relationshipItems, calculationUom.label]);
   useEffect(() => { onPendingChanges?.({ sourceKey, groups: pendingGroups }); }, [onPendingChanges, sourceKey, pendingGroups]);
   useEffect(() => () => { onPendingChanges?.({ sourceKey, groups: [] }); }, [onPendingChanges, sourceKey]);
 
@@ -391,6 +397,7 @@ export const KnowledgeModePanel = forwardRef<
     setDescriptionPending(false);
     setPendingDescription(null);
     setPendingCalculations({});
+    setComponentPending({});
     setDescriptionResetVersion((current) => current + 1);
     setDrafts({
       advanced: advancedQuery.data
@@ -403,7 +410,7 @@ export const KnowledgeModePanel = forwardRef<
     setConflict(null);
   }, [advancedQuery.data, pricingQuery.data]);
 
-  const save = useCallback(async (): Promise<boolean> => {
+  const save = useCallback(async (advancedPayload?: KnowledgeJsonObject): Promise<boolean> => {
     if (!editable || saving) return false;
     if (descriptionPending) {
       setDrafts((current) => ({ ...current, advanced: {
@@ -413,7 +420,8 @@ export const KnowledgeModePanel = forwardRef<
       } }));
       return false;
     }
-    const snapshot = drafts;
+    const snapshot = advancedPayload ? { ...drafts, advanced: { ...drafts.advanced, payload: advancedPayload,
+      dirty: true, valid: drafts.advanced.valid && componentsValid && !inHouseComponentsIssues(advancedPayload).length } } : drafts;
     const dirtySections = MODE_SECTION_KEYS.filter(
       (sectionKey) => snapshot[sectionKey].dirty
     );
@@ -422,7 +430,7 @@ export const KnowledgeModePanel = forwardRef<
     const invalidSections = dirtySections.filter((sectionKey) => {
       const draft = snapshot[sectionKey];
       if (draft.envelopeVersion === null || !draft.valid) return true;
-      if (sectionKey === "advanced") return false;
+      if (sectionKey === "advanced") return !componentsValid || inHouseComponentsIssues(draft.payload).length > 0;
       return validateKnowledgeBrands(draft.payload.brands).length > 0
         || parseKnowledgeSpecifications(
           draft.payload.specifications,
@@ -491,7 +499,7 @@ export const KnowledgeModePanel = forwardRef<
               ...current,
               [sectionKey]: draftFromEnvelope(saved)
             }));
-            if (sectionKey === "advanced") { setPendingCalculations({}); setPendingDescription(null); setPendingCalculationSaveVersion((version) => version + 1); }
+            if (sectionKey === "advanced") { setComponentPending({}); setPendingCalculations({}); setPendingDescription(null); setPendingCalculationSaveVersion((version) => version + 1); }
           }
           committedAnySection = true;
         } catch (failure) {
@@ -567,7 +575,7 @@ export const KnowledgeModePanel = forwardRef<
       setSavingSection(null);
       setSaving(false);
     }
-  }, [dataSource, descriptionPending, drafts, editable, mainLineId, onAnnouncement, queryClient, revisionId, saving, sourceKey]);
+  }, [dataSource, componentsValid, descriptionPending, drafts, editable, mainLineId, onAnnouncement, queryClient, revisionId, saving, sourceKey]);
 
   useImperativeHandle(ref, () => ({ save, discard }), [discard, save]);
 
@@ -599,6 +607,11 @@ export const KnowledgeModePanel = forwardRef<
           message={`${label} is unavailable for this revision.`}
         />
       );
+    }
+    // Initialize the editor from its saved envelope, not the empty draft used
+    // between a revision's query result and the draft hydration effect.
+    if (draftSourceKey !== sourceKey || draft.envelopeVersion === null) {
+      return <PageState key={sectionKey} state="loading" message={`Loading ${label}…`} />;
     }
 
     return (
@@ -659,7 +672,7 @@ export const KnowledgeModePanel = forwardRef<
         <KnowledgeModeConfigurationBuilder
           payload={drafts.advanced.payload}
           mainLineName={item.mainLineName}
-          descriptionResetKey={`${revisionId}-${descriptionResetVersion}`}
+          descriptionResetKey={`${revisionId}-${descriptionResetVersion}-${Object.hasOwn(drafts.advanced.payload, "inHouseComponents") ? "components" : "legacy"}`}
           onPendingDescriptionChange={setDescriptionPending}
           onPendingDescriptionTextChange={publishDescription}
           modes={masters.modes ?? []}
@@ -671,6 +684,21 @@ export const KnowledgeModePanel = forwardRef<
           onDirty={markAdvancedConfigurationDirty}
           onValidationChange={setAdvancedValid}
           calculationValidity={calculationValidity}
+          inHouseComponentsValid={componentsValid}
+          inHouseComponents={<KnowledgeInHouseComponents key={`${sourceKey}:${descriptionResetVersion}`} payload={drafts.advanced.payload} item={item}
+            baskets={relationshipBaskets} dataSource={dataSource} uom={calculationUom} readOnly={!editable || saving}
+            onRequestDraft={saving ? undefined : onRequestDraft}
+            validationAttempt={drafts.advanced.validationAttempt} pendingSaveVersion={pendingCalculationSaveVersion} issues={drafts.advanced.serverIssues}
+            onValidationChange={setComponentsValid} onPendingChange={setComponentPending}
+            onChange={(payload) => { setPayload("advanced", payload); markAdvancedConfigurationDirty(); }}
+            onSaveComponent={async (payload) => {
+              // A legacy editor can own unfinished text that has not entered the payload.
+              // Validate first so conversion cannot unmount that editor and lose its text.
+              if (!drafts.advanced.valid || !componentsValid || descriptionPending) return save(payload);
+              setPayload("advanced", payload); markAdvancedConfigurationDirty();
+              return save(payload);
+            }} />}
+
           inHouseTotal={(active) => <KnowledgeInHouseTotal key={`${uomScopeKey}-${descriptionResetVersion}-total`}
             active={active} uom={calculationUom}
             labor={modeCalculationsForPayload(drafts.advanced.payload).in_house_labor}
@@ -869,7 +897,9 @@ function rebaseDraftAfterConflict(
     ...(server.sectionKey === "pricing"
       ? pricingRebase!.fields
       : {
-          ...Object.fromEntries(draft.editedAdvancedFields.map((field) => [field, draft.payload[field] ?? (field === "modeConfigurations" ? [] : null)])),
+          ...Object.fromEntries(draft.editedAdvancedFields.map((field) => [field, field === "inHouseComponents"
+            ? applyPendingEdit(server.payload.inHouseComponents ?? [], draft.pendingBaseline?.inHouseComponents ?? [], draft.payload.inHouseComponents ?? []) ?? []
+            : draft.payload[field] ?? (field === "modeConfigurations" ? [] : null)])),
           ...(draft.editedCalculationScopes.length ? { modeCalculations: {
             ...modeCalculationsForStorage(server.payload),
             ...Object.fromEntries(draft.editedCalculationScopes.map((scope) => [scope, modeCalculationsForPayload(draft.payload)[scope]]))

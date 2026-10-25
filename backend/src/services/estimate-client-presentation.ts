@@ -24,6 +24,7 @@ const configuredLine = z.object({
   classification: z.enum(["standard", "special"]).optional(),
   pricingMode: z.enum(ESTIMATE_PRICING_MODES).optional(),
   rateSource: z.enum(ESTIMATE_RATE_SOURCES).optional(),
+  selectedInHouseComponentIds: z.array(z.string().min(1).max(128)).max(50).refine((ids) => new Set(ids).size === ids.length).optional(),
   roomId: z.string().min(1), mainBasketId: z.string().min(1),
   subBasketId: z.string().min(1).nullable(), mainLineId: z.string().min(1),
   revisionId: z.string().min(1), uomId: z.string().min(1),

@@ -576,6 +576,8 @@ describe("isolated full basket proposals", { timeout: 45_000 }, () => {
     detail = (await service.saveSection(AUTHOR, "procurement", detail.id, prepared.lineId, "advanced", {
       expectedVersion: detail.version, applicability: "configured", payload: {
         dependencies: [{ id: oldBasketId, targetBasketId: oldBasketId, targetMainLineId: peerId, reason: peerId, active: true }],
+        inHouseComponents: [{ id: "stable-component", basketId: oldBasketId, subBasketId: peerSub.resource!.resourceId,
+          inclusions: [], exclusions: [], labor: null, material: null }],
         modeConfigurations: [{ id: "pmc-mode", modeKind: "pmc", fields: [{ id: "fixture-field", type: "dropdown", label: oldBasketId, options: [peerId] }] }]
       }
     })).detail;
@@ -603,6 +605,7 @@ describe("isolated full basket proposals", { timeout: 45_000 }, () => {
     const advanced = await service.resource(AUTHOR, "procurement", revised.id, copiedLine.sections.advanced!);
     expect((advanced.payload as ProposalSectionValue).payload).toMatchObject({
       dependencies: [{ id: oldBasketId, targetBasketId: revised.basketId, targetMainLineId: copiedPeer.resourceId, reason: peerId }],
+      inHouseComponents: [{ id: "stable-component", basketId: revised.basketId, subBasketId: copiedPeer.parentId, labor: null, material: null }],
       modeConfigurations: [{ fields: [{ label: oldBasketId, options: [peerId] }] }]
     });
     const recommendations = await service.resource(AUTHOR, "procurement", revised.id, copiedLine.sections.recommendations!);

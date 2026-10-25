@@ -1,6 +1,6 @@
 import type { EstimationPreparationSource } from "../../api/types";
 import { apiClient } from "../../api/client";
-import type { PurchaseOrderModeResolution } from "./purchaseOrderApi";
+import type { PurchaseOrderComponentIdentity, PurchaseOrderModeResolution } from "./purchaseOrderApi";
 
 export interface BasketEstimateSource {
   estimateId: string;
@@ -56,7 +56,7 @@ export interface StandardBasketLineCost {
   state: "suggested" | "observed_unverified" | "saved" | "unavailable";
   mode: "pmc" | "sub_vendor" | "in_house" | null;
   calculationQuantity: string | null;
-  baseRates: Array<{ scope: "pmc" | "sub_vendor" | "in_house_labor" | "in_house_material"; ratePaise: number }>;
+  baseRates: Array<PurchaseOrderComponentIdentity & { scope: "pmc" | "sub_vendor" | "in_house_labor" | "in_house_material"; ratePaise: number }>;
   baseCostPaise: number | null;
   adjustedCostPaise: number | null;
   issues: Array<{ code: string; message: string }>;

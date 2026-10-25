@@ -22,6 +22,7 @@ export interface ConfiguredEstimateLineInput {
   classification?: EstimateClassification | undefined;
   pricingMode?: EstimatePricingMode | undefined;
   rateSource?: EstimateRateSource | undefined;
+  selectedInHouseComponentIds?: string[] | undefined;
   id?: string | undefined;
   catalogueId: string;
   roomId: string;

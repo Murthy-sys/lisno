@@ -41,7 +41,9 @@ vi.mock("./knowledgeApi", async (importOriginal) => {
     listKnowledgeItems: vi.fn(),
     listKnowledgeBaskets: vi.fn(),
     listKnowledgeSubBaskets: vi.fn(),
+    getKnowledgeSubBasketMargins: vi.fn(),
     createKnowledgeMainLine: vi.fn(),
+    createKnowledgeRevision: vi.fn(),
     listKnowledgeMasters: vi.fn(),
     createKnowledgeMaster: vi.fn(),
     createKnowledgeSurface: vi.fn(),
@@ -323,6 +325,10 @@ beforeEach(() => {
   vi.mocked(knowledgeApi.getKnowledgeBasketQuality).mockResolvedValue({ basketId: "basket-1", basketName: "Carpentry", basketStatus: "active", version: 1, revisionId: null, revisionNumber: 0, contentDigest: null, parameters: [], updatedAt: null });
 
   vi.clearAllMocks();
+  vi.mocked(knowledgeApi.getKnowledgeSubBasketMargins).mockImplementation(async (basketId, subBasketId) => {
+    const empty = { ranges: [], mismatchCount: null, mismatches: [], canApply: false, unavailableReason: "No margins configured." };
+    return { basketId, subBasketId, source: null, totalMainLines: 0, versionToken: "empty", modes: { pmc: empty, sub_vendor: empty, in_house: empty } };
+  });
   vi.mocked(authorization.hasFrontendPermission).mockReturnValue(true);
   vi.mocked(knowledgeApi.listKnowledgeMasters).mockResolvedValue({ items: [], pagination: page });
   vi.mocked(knowledgeApi.listKnowledgeBaskets).mockResolvedValue({ items: [], pagination: page });
@@ -332,6 +338,63 @@ beforeEach(() => {
   vi.mocked(knowledgeApi.getKnowledgeItem).mockResolvedValue(item);
   vi.mocked(knowledgeApi.getKnowledgeHistory).mockResolvedValue({ items: [revision], pagination: page });
   vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_lineId, _revisionId, sectionKey) => section(sectionKey));
+});
+
+describe("In-house component entry from an active revision", () => {
+  const active: KnowledgeItemDetail = { ...item, status: "active", draftRevision: null, draftRevisionId: null,
+    activeRevision: { ...revision, status: "active" }, activeRevisionId: revision.id, allowedActions: ["create_revision"] };
+  const settings = { baseRatePaise: 3000, lowQuantityLimit: "100", impactBps: 1500, minimumMarkupBps: 1500, startingMarkupBps: 2500 };
+
+  function setup(current: KnowledgeItemDetail = active) {
+    vi.mocked(knowledgeApi.getKnowledgeItem).mockResolvedValue(current);
+    vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_id, revisionId, key) => ({
+      ...section(key, key === "advanced" ? { modeCalculations: { in_house_labor: settings, in_house_material: settings } } : {}), revisionId
+    }));
+    renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
+  }
+
+  it("keeps Add component discoverable and uses the existing explicit draft command", async () => {
+    const user = userEvent.setup();
+    setup();
+    const draft = { ...revision, id: "revision-2", revisionNumber: 2 };
+    const updated: KnowledgeItemDetail = { ...active, draftRevision: draft, draftRevisionId: draft.id, version: 5, allowedActions: ["update_section"] };
+    vi.mocked(knowledgeApi.createKnowledgeRevision).mockImplementation(async () => {
+      vi.mocked(knowledgeApi.getKnowledgeItem).mockResolvedValue(updated);
+      return updated;
+    });
+    await user.click(await screen.findByRole("tab", { name: "Mode" }));
+    const add = await screen.findByRole("button", { name: "Add component" });
+    const inHouse = screen.getByRole("region", { name: "In-house" });
+    expect(within(inHouse).getAllByRole("textbox", { name: "Base Rate (₹)" })[0]).toBeDisabled();
+    await user.click(add);
+    const dialog = screen.getByRole("alertdialog", { name: "Create a Draft revision?" });
+    expect(knowledgeApi.createKnowledgeRevision).not.toHaveBeenCalled();
+    expect(knowledgeApi.updateKnowledgeSection).not.toHaveBeenCalled();
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(knowledgeApi.createKnowledgeRevision).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Add component" }));
+    await user.type(screen.getByRole("textbox", { name: "Reason" }), "Configure independent In-house components");
+    await user.click(screen.getByRole("button", { name: "Create Draft" }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+    expect(knowledgeApi.createKnowledgeRevision).toHaveBeenCalledWith("line-1", { expectedVersion: 4, reason: "Configure independent In-house components" });
+    await user.click(await screen.findByRole("button", { name: "Add component" }));
+    expect(await screen.findByRole("dialog", { name: "Add In-house component" })).toBeVisible();
+    expect(screen.getByRole("combobox", { name: "Main basket" })).toBeVisible();
+    expect(screen.getByRole("combobox", { name: "Sub-basket" })).toBeVisible();
+    expect(knowledgeApi.updateKnowledgeSection).not.toHaveBeenCalled();
+  });
+
+  it.each(["create", "update", "backend", "archived"] as const)("does not expose draft creation without %s authorization", async (blocked) => {
+    const user = userEvent.setup();
+    vi.mocked(authorization.hasFrontendPermission).mockImplementation((_authorization, permission) =>
+      !(["create", "update"].includes(blocked) && permission === `ai_estimator_knowledge.configuration.${blocked}`));
+    setup({ ...active, ...(blocked === "backend" ? { allowedActions: [] } : {}), ...(blocked === "archived" ? { status: "archived" } : {}) });
+    await user.click(await screen.findByRole("tab", { name: "Mode" }));
+    await screen.findByRole("region", { name: "In-house" });
+    expect(screen.queryByRole("button", { name: "Add component" })).not.toBeInTheDocument();
+    expect(knowledgeApi.createKnowledgeRevision).not.toHaveBeenCalled();
+    expect(knowledgeApi.updateKnowledgeSection).not.toHaveBeenCalled();
+  });
 });
 
 describe("workspace hierarchy summary", () => {

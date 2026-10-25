@@ -1,3 +1,7 @@
+import { readInHouseComponents } from "../domain/ai-estimator-knowledge-in-house-components.js";
+import type { KnowledgeApplySubBasketMarginsInput, KnowledgeApplySubBasketMarginsResult, KnowledgeSubBasketMarginSummary } from "../contracts/ai-estimator-knowledge-sub-basket-margins.js";
+import { SUB_BASKET_MARGIN_MODES, withSubBasketMarginDefaults } from "../domain/ai-estimator-knowledge-sub-basket-margins.js";
+import { marginPayload, readSubBasketMarginSnapshot } from "./ai-estimator-knowledge-sub-basket-margins.js";
 import { normalizeDesignRules } from "../domain/main-line-design-rules.js";
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
@@ -169,6 +173,9 @@ export interface AiEstimatorKnowledgeMainLineDeletionResult {
 }
 
 export interface AiEstimatorKnowledgeItemService {
+  getSubBasketMargins(actor: PublicUser, basketId: string, subBasketId: string): Promise<KnowledgeSubBasketMarginSummary>;
+  applySubBasketMargins(actor: PublicUser, basketId: string, subBasketId: string, input: KnowledgeApplySubBasketMarginsInput): Promise<KnowledgeApplySubBasketMarginsResult>;
+
   listMainLines(
     actor: PublicUser,
     basketId: string,
@@ -251,7 +258,327 @@ export function createAiEstimatorKnowledgeItemService(
   const now = dependencies.now ?? systemClock;
   const uuid = dependencies.uuid ?? randomUUID;
 
+  async function createRevisionInSession(actor: PublicUser, mainLineId: string, input: KnowledgeExpectedVersionInput, session: ClientSession): Promise<void> {
+    const storedActor = await actorGuard.requireMutationActor(actor, session);
+    const line = asRow(
+      await AiEstimatorKnowledgeMainLineModel.findById(mainLineId)
+        .session(session)
+        .lean()
+        .exec()
+    );
+    if (!line || line.status === "archived") notFound();
+    if (requiredInteger(line.version) !== input.expectedVersion) versionConflict();
+    if (optionalString(line.draftRevisionId)) {
+      throw new ApiError(409, "DRAFT_ALREADY_EXISTS", "Continue editing the existing Draft revision.");
+    }
+    const sourceRevisionId = optionalString(line.activeRevisionId);
+    if (!sourceRevisionId) {
+      throw new ApiError(409, "ACTIVE_REVISION_REQUIRED", "No Active revision is available to copy.");
+    }
+    const latest = asRow(
+      await AiEstimatorKnowledgeRevisionModel.findOne({ mainLineId })
+        .sort({ revisionNumber: -1, _id: 1 })
+        .session(session)
+        .lean()
+        .exec()
+    );
+    const occurredAt = now();
+    const revisionId = knowledgeId("revision", uuid());
+    const revisionNumber = requiredInteger(latest?.revisionNumber) + 1;
+    const sourceSectionDocuments = await AiEstimatorKnowledgeSectionModel.find({
+      mainLineId,
+      revisionId: sourceRevisionId
+    }).session(session).lean().exec();
+    const sourcePriceDocuments = await AiEstimatorKnowledgePriceVersionModel.find({
+      mainLineId,
+      revisionId: sourceRevisionId
+    }).sort({ priceEntryId: 1, versionNumber: 1, _id: 1 }).session(session).lean().exec();
+    const sourceSections = sourceSectionDocuments.map((row) => asRow(row)!);
+    // Reject malformed history before cloning child records or appending their audits.
+    const inheritedAdvanced = payloadFor(sourceSections.find((row) => row.sectionKey === "advanced"));
+    const inheritedIssues = validateKnowledgeSectionPayload("advanced", inheritedAdvanced)
+      .filter(({ code }) => code !== "INVALID_LISNO_MARGIN_INCREMENT" && code !== "CONFLICTING_SCOPE_SELECTION");
+    if (inheritedIssues.length > 0) invalidRevisionSectionRules(inheritedIssues);
+    const priceReferences = await cloneRevisionPrices({
+      sourcePrices: sourcePriceDocuments.map((row) => asRow(row)!),
+      targetMainLineId: mainLineId,
+      targetRevisionId: revisionId,
+      actorId: storedActor.id,
+      occurredAt,
+      session,
+      uuid,
+      audit: dependencies.audit,
+      reviewRequired: false,
+      remapPriceEntryIds: false
+    });
+    const copiedSections = copyRevisionSections(
+      sourceSections, priceReferences, uuid, false, line.itemType === "temporary"
+    );
+    await removeMissingCopiedRelationships(copiedSections, session);
+    await coordinateCopiedBasketReferences(copiedSections, session);
+    await coordinateCopiedSurfaceReferences(copiedSections, session, false);
+    const completeness = completenessForRows(mainLineId, copiedSections);
+    await AiEstimatorKnowledgeRevisionModel.create([{
+      _id: revisionId,
+      mainLineId,
+      revisionNumber,
+      status: "draft",
+      sourceRevisionId,
+      contentDigest: null,
+      completeness,
+      version: 1,
+      createdById: storedActor.id,
+      updatedById: storedActor.id,
+      createdAt: occurredAt,
+      updatedAt: occurredAt
+    }], { session });
+    await AiEstimatorKnowledgeSectionModel.insertMany(
+      AI_ESTIMATOR_KNOWLEDGE_SECTION_KEYS.map((sectionKey) => {
+        const source = copiedSections.find((row) => row.sectionKey === sectionKey);
+        const copiedSection = new AiEstimatorKnowledgeSectionModel({
+          _id: knowledgeId(`section-${sectionKey}`, uuid()),
+          mainLineId,
+          revisionId,
+          sectionKey,
+          applicability: source?.applicability ?? "not_configured",
+          payload: structuredClone(payloadFor(source)),
+          version: 1,
+          createdById: storedActor.id,
+          updatedById: storedActor.id,
+          createdAt: occurredAt,
+          updatedAt: occurredAt
+        });
+        // Only this unchanged Active-to-Draft copy may retain historical values for repair.
+        // Normal section saves, activation and duplication keep strict validation.
+        if (sectionKey === "advanced") {
+          copiedSection.$locals.allowInheritedScopeSelectionConflict = true;
+          copiedSection.$locals.inheritedLisnoMarginPayload = structuredClone(payloadFor(source));
+        }
+        return copiedSection;
+      }),
+      { session }
+    );
+    const updated = await AiEstimatorKnowledgeMainLineModel.findOneAndUpdate(
+      { _id: mainLineId, version: input.expectedVersion, draftRevisionId: null },
+      {
+        $set: { draftRevisionId: revisionId, updatedById: storedActor.id, updatedAt: occurredAt },
+        $inc: { version: 1 }
+      },
+      { new: true, session }
+    ).lean().exec();
+    if (!updated) versionConflict();
+    await dependencies.audit.appendInMongoTransaction({
+      actorId: storedActor.id,
+      action: "ai_estimator_knowledge_revision_created",
+      entityType: "ai_estimator_knowledge_revision",
+      entityId: revisionId,
+      occurredAt: occurredAt.toISOString(),
+      newValues: { mainLineId, sourceRevisionId, revisionNumber, aggregateVersion: input.expectedVersion + 1 }
+    }, session);
+  }
+
+  async function updateSectionInSession(actor: PublicUser, mainLineId: string, revisionId: string, sectionKey: KnowledgeSectionKey, input: KnowledgeSectionUpdateInput, session: ClientSession, marginDefaults?: Row): Promise<{ section: Row; aggregateVersion: number }> {
+    validateSectionPayloadOrThrow(sectionKey, input.payload);
+    const storedActor = await actorGuard.requireMutationActor(actor, session);
+    const lineDocument = await AiEstimatorKnowledgeMainLineModel.findById(mainLineId)
+      .session(session).lean().exec();
+    const revisionDocument = await AiEstimatorKnowledgeRevisionModel.findOne({ _id: revisionId, mainLineId })
+      .session(session).lean().exec();
+    const sectionDocument = await AiEstimatorKnowledgeSectionModel.findOne({ mainLineId, revisionId, sectionKey })
+      .session(session).lean().exec();
+    const line = asRow(lineDocument);
+    const revision = asRow(revisionDocument);
+    let section = asRow(sectionDocument);
+    if (!line || !revision) notFound();
+    const lazyDesignSection = !section && sectionKey === "design";
+    if (lazyDesignSection) section = virtualDesignSection(mainLineId, revisionId, revision);
+    if (!section) notFound();
+    if (line.itemType === "temporary" && !TEMPORARY_ITEM_SECTIONS.includes(sectionKey)) {
+      throw new ApiError(400, "VALIDATION_ERROR", "Temporary items support only Overview, Mode, Recommendation & Exclusions, Quality Parameters and Design.");
+    }
+    const temporaryRecommendations = line.itemType === "temporary" && sectionKey === "recommendations";
+    if (revision.status !== "draft" || line.draftRevisionId !== revisionId) immutableHistory();
+    if (requiredInteger(section.version) !== input.expectedVersion) versionConflict();
+    const expectedAggregateVersion = input.expectedAggregateVersion ?? requiredInteger(line.version);
+    if (requiredInteger(line.version) !== expectedAggregateVersion) versionConflict();
+
+    const occurredAt = now();
+    if (lazyDesignSection) {
+      const [created] = await AiEstimatorKnowledgeSectionModel.create([{
+        _id: knowledgeId("section-design", uuid()), mainLineId, revisionId, sectionKey,
+        applicability: "not_configured", payload: {}, version: 1,
+        createdById: storedActor.id, updatedById: storedActor.id,
+        createdAt: occurredAt, updatedAt: occurredAt
+      }], { session });
+      section = asRow(created.toObject())!;
+    }
+    const previousPayload = payloadFor(section);
+    const persistedPayload = sectionKey === "pricing"
+      ? await materializePriceCommands({
+          mainLineId,
+          revisionId,
+          payload: input.payload,
+          previousPayload,
+          actorId: storedActor.id,
+          occurredAt,
+          session,
+          uuid,
+          audit: dependencies.audit
+        })
+      : sectionKey === "design"
+        ? normalizeDesignRules(input.payload) as unknown as Row
+      : sectionKey === "advanced"
+        ? preserveModeConfigurationCompatibility(previousPayload, input.payload)
+      : sectionKey === "recommendations"
+        ? normalizeRecommendationPayload(input.payload)
+        : structuredClone(input.payload);
+    await coordinateNewDesignVendorReference(sectionKey, previousPayload, persistedPayload, session);
+    await coordinateNewBasketReferences(
+      sectionKey,
+      previousPayload,
+      persistedPayload,
+      session
+    );
+    await coordinateNewModeConfigurationReferences(
+      sectionKey,
+      previousPayload,
+      persistedPayload,
+      session
+    );
+    await coordinateNewPriorityReferences(
+      sectionKey,
+      previousPayload,
+      persistedPayload,
+      session
+    );
+    await coordinateNewSurfaceReferences(
+      sectionKey,
+      previousPayload,
+      persistedPayload,
+      session
+    );
+    await coordinateNewSlabRateUomReferences(
+      sectionKey,
+      previousPayload,
+      persistedPayload,
+      session
+    );
+    /* Temporary recommendations are now applicable, including when an old
+       client echoes their historical "not applicable" section flag. */
+    const storedApplicability: KnowledgeSectionApplicability =
+      input.applicability === "not_applicable" && !temporaryRecommendations
+        ? "not_applicable"
+        : hasKnowledgeSectionContent(persistedPayload)
+          ? "configured"
+          : "not_configured";
+    const updatedSection = await AiEstimatorKnowledgeSectionModel.findOneAndUpdate(
+      { _id: section._id, version: input.expectedVersion, revisionId },
+      {
+        $set: {
+          applicability: storedApplicability,
+          payload: persistedPayload,
+          updatedById: storedActor.id,
+          updatedAt: occurredAt
+        },
+        $inc: { version: 1 }
+      },
+      { new: true, runValidators: true, session }
+    ).lean().exec();
+    if (!updatedSection) versionConflict();
+    const updatedLine = await AiEstimatorKnowledgeMainLineModel.findOneAndUpdate(
+      { _id: mainLineId, version: expectedAggregateVersion, draftRevisionId: revisionId },
+      { $set: { updatedById: storedActor.id, updatedAt: occurredAt }, $inc: { version: 1 } },
+      { new: true, session }
+    ).lean().exec();
+    if (!updatedLine) versionConflict();
+
+    const rows = (await AiEstimatorKnowledgeSectionModel.find({ mainLineId, revisionId })
+      .session(session).lean().exec()).map((row) => asRow(row)!);
+    await validateRevisionRelationships(mainLineId, rows, session, {
+      updatedSectionKey: sectionKey,
+      previousPayload
+    });
+    const completeness = completenessForRows(mainLineId, rows);
+    await AiEstimatorKnowledgeRevisionModel.updateOne(
+      { _id: revisionId, status: "draft" },
+      {
+        $set: { completeness, updatedById: storedActor.id, updatedAt: occurredAt },
+        $inc: { version: 1 }
+      },
+      { session }
+    ).exec();
+    await dependencies.audit.appendInMongoTransaction({
+      actorId: storedActor.id,
+      action: "ai_estimator_knowledge_section_updated",
+      entityType: "ai_estimator_knowledge_section",
+      entityId: requiredString(section._id),
+      occurredAt: occurredAt.toISOString(),
+      oldValues: { mainLineId, revisionId, sectionKey, sectionVersion: input.expectedVersion, aggregateVersion: expectedAggregateVersion },
+      newValues: { sectionVersion: input.expectedVersion + 1, aggregateVersion: expectedAggregateVersion + 1, applicability: storedApplicability, ...(marginDefaults ? { marginDefaults } : {}) }
+    }, session);
+    return {
+      section: asRow(updatedSection)!,
+      aggregateVersion: requiredInteger(asRow(updatedLine)!.version)
+    };
+  }
+
   return {
+    async getSubBasketMargins(actor, basketId, subBasketId) {
+      return mongoose.connection.transaction(async (session) => {
+        await actorGuard.requireReadActor(actor, session);
+        return (await readSubBasketMarginSnapshot(basketId, subBasketId, session)).summary;
+      });
+    },
+
+    async applySubBasketMargins(actor, basketId, subBasketId, input) {
+      if (!SUB_BASKET_MARGIN_MODES.includes(input.mode) || !/^[a-f0-9]{64}$/u.test(input.versionToken)) {
+        throw new ApiError(400, "VALIDATION_ERROR", "Select a margin type and refresh the Sub-Basket before applying defaults.");
+      }
+      return mongoose.connection.transaction(async (session) => {
+        await actorGuard.requireMutationActor(actor, session);
+        await coordinateMainLineBasketDependency(basketId, session);
+        const snapshot = await readSubBasketMarginSnapshot(basketId, subBasketId, session);
+        if (snapshot.summary.versionToken !== input.versionToken) {
+          throw new ApiError(409, "VERSION_CONFLICT", "The Sub-Basket changed. Refresh its margins and review the mismatches again.");
+        }
+        const selected = snapshot.summary.modes[input.mode];
+        if (selected.mismatchCount === 0 && !selected.unavailableReason) return { updatedMainLineIds: [], summary: snapshot.summary };
+        if (!selected.canApply) throw new ApiError(409, "SUB_BASKET_MARGINS_UNAVAILABLE", selected.unavailableReason ?? "The first main line has no valid default margins.");
+        // Coordinate every reviewed line, including the source and currently matching
+        // siblings, so concurrent changes cannot silently invalidate the full review.
+        for (const { line } of snapshot.lines) {
+          const locked = await AiEstimatorKnowledgeMainLineModel.updateOne(
+            { _id: line._id, version: line.version, basketId, subBasketId },
+            { $inc: { dependencyEpoch: 1 } }, { session, timestamps: false }
+          ).exec();
+          if (locked.matchedCount !== 1) versionConflict();
+        }
+        const targetIds = new Set(selected.mismatches.map(({ mainLineId }) => mainLineId));
+        const updatedMainLineIds: string[] = [];
+        for (const entry of snapshot.lines) {
+          const mainLineId = String(entry.line._id);
+          if (!targetIds.has(mainLineId)) continue;
+          if (!entry.line.draftRevisionId) {
+            await createRevisionInSession(actor, mainLineId, { expectedVersion: requiredInteger(entry.line.version) }, session);
+          }
+          const line = asRow(await AiEstimatorKnowledgeMainLineModel.findById(mainLineId).session(session).lean().exec());
+          if (!line) notFound();
+          const revisionId = requiredString(line.draftRevisionId);
+          const section = asRow(await AiEstimatorKnowledgeSectionModel.findOne({ mainLineId, revisionId, sectionKey: "advanced" }).session(session).lean().exec());
+          if (!section) notFound();
+          const payload = withSubBasketMarginDefaults(marginPayload(section), input.mode, selected.ranges, { basketId, subBasketId });
+          if (!payload) throw new ApiError(409, "SUB_BASKET_MARGINS_UNAVAILABLE", "The saved In-house calculations need review.");
+          await updateSectionInSession(actor, mainLineId, revisionId, "advanced", {
+            expectedVersion: requiredInteger(section.version), expectedAggregateVersion: requiredInteger(line.version),
+            applicability: section.applicability as KnowledgeSectionApplicability, payload
+          }, session, { basketId, subBasketId, mode: input.mode, sourceMainLineId: snapshot.summary.source!.mainLineId,
+            sourceRevisionId: snapshot.lines[0]!.revision!._id, ranges: selected.ranges });
+          updatedMainLineIds.push(mainLineId);
+        }
+        return { updatedMainLineIds, summary: (await readSubBasketMarginSnapshot(basketId, subBasketId, session)).summary };
+      });
+    },
+
     async listMainLines(actor, basketId, filters, pagination) {
       await actorGuard.requireReadActor(actor);
       const filter: Row = { basketId };
@@ -490,7 +817,7 @@ export function createAiEstimatorKnowledgeItemService(
       );
       if (hasJoinedFilters) {
         const documents = await AiEstimatorKnowledgeMainLineModel.find(filter)
-          .sort({ updatedAt: -1, _id: 1 })
+          .sort({ displayOrder: 1, _id: 1 })
           .lean()
           .exec();
         const summaries = await buildItemSummaries(documents.map((document) => asRow(document)!));
@@ -502,7 +829,7 @@ export function createAiEstimatorKnowledgeItemService(
       }
       const [documents, total] = await Promise.all([
         AiEstimatorKnowledgeMainLineModel.find(filter)
-          .sort({ updatedAt: -1, _id: 1 })
+          .sort({ displayOrder: 1, _id: 1 })
           .skip(pagination.offset)
           .limit(pagination.limit)
           .lean()
@@ -535,124 +862,7 @@ export function createAiEstimatorKnowledgeItemService(
     },
 
     async createRevision(actor, mainLineId, input) {
-      await mongoose.connection.transaction(async (session) => {
-        const storedActor = await actorGuard.requireMutationActor(actor, session);
-        const line = asRow(
-          await AiEstimatorKnowledgeMainLineModel.findById(mainLineId)
-            .session(session)
-            .lean()
-            .exec()
-        );
-        if (!line || line.status === "archived") notFound();
-        if (requiredInteger(line.version) !== input.expectedVersion) versionConflict();
-        if (optionalString(line.draftRevisionId)) {
-          throw new ApiError(409, "DRAFT_ALREADY_EXISTS", "Continue editing the existing Draft revision.");
-        }
-        const sourceRevisionId = optionalString(line.activeRevisionId);
-        if (!sourceRevisionId) {
-          throw new ApiError(409, "ACTIVE_REVISION_REQUIRED", "No Active revision is available to copy.");
-        }
-        const latest = asRow(
-          await AiEstimatorKnowledgeRevisionModel.findOne({ mainLineId })
-            .sort({ revisionNumber: -1, _id: 1 })
-            .session(session)
-            .lean()
-            .exec()
-        );
-        const occurredAt = now();
-        const revisionId = knowledgeId("revision", uuid());
-        const revisionNumber = requiredInteger(latest?.revisionNumber) + 1;
-        const sourceSectionDocuments = await AiEstimatorKnowledgeSectionModel.find({
-          mainLineId,
-          revisionId: sourceRevisionId
-        }).session(session).lean().exec();
-        const sourcePriceDocuments = await AiEstimatorKnowledgePriceVersionModel.find({
-          mainLineId,
-          revisionId: sourceRevisionId
-        }).sort({ priceEntryId: 1, versionNumber: 1, _id: 1 }).session(session).lean().exec();
-        const sourceSections = sourceSectionDocuments.map((row) => asRow(row)!);
-        // Reject malformed history before cloning child records or appending their audits.
-        const inheritedAdvanced = payloadFor(sourceSections.find((row) => row.sectionKey === "advanced"));
-        const inheritedIssues = validateKnowledgeSectionPayload("advanced", inheritedAdvanced)
-          .filter(({ code }) => code !== "INVALID_LISNO_MARGIN_INCREMENT" && code !== "CONFLICTING_SCOPE_SELECTION");
-        if (inheritedIssues.length > 0) invalidRevisionSectionRules(inheritedIssues);
-        const priceReferences = await cloneRevisionPrices({
-          sourcePrices: sourcePriceDocuments.map((row) => asRow(row)!),
-          targetMainLineId: mainLineId,
-          targetRevisionId: revisionId,
-          actorId: storedActor.id,
-          occurredAt,
-          session,
-          uuid,
-          audit: dependencies.audit,
-          reviewRequired: false,
-          remapPriceEntryIds: false
-        });
-        const copiedSections = copyRevisionSections(
-          sourceSections, priceReferences, uuid, false, line.itemType === "temporary"
-        );
-        await removeMissingCopiedRelationships(copiedSections, session);
-        await coordinateCopiedBasketReferences(copiedSections, session);
-        await coordinateCopiedSurfaceReferences(copiedSections, session, false);
-        const completeness = completenessForRows(mainLineId, copiedSections);
-        await AiEstimatorKnowledgeRevisionModel.create([{
-          _id: revisionId,
-          mainLineId,
-          revisionNumber,
-          status: "draft",
-          sourceRevisionId,
-          contentDigest: null,
-          completeness,
-          version: 1,
-          createdById: storedActor.id,
-          updatedById: storedActor.id,
-          createdAt: occurredAt,
-          updatedAt: occurredAt
-        }], { session });
-        await AiEstimatorKnowledgeSectionModel.insertMany(
-          AI_ESTIMATOR_KNOWLEDGE_SECTION_KEYS.map((sectionKey) => {
-            const source = copiedSections.find((row) => row.sectionKey === sectionKey);
-            const copiedSection = new AiEstimatorKnowledgeSectionModel({
-              _id: knowledgeId(`section-${sectionKey}`, uuid()),
-              mainLineId,
-              revisionId,
-              sectionKey,
-              applicability: source?.applicability ?? "not_configured",
-              payload: structuredClone(payloadFor(source)),
-              version: 1,
-              createdById: storedActor.id,
-              updatedById: storedActor.id,
-              createdAt: occurredAt,
-              updatedAt: occurredAt
-            });
-            // Only this unchanged Active-to-Draft copy may retain historical values for repair.
-            // Normal section saves, activation and duplication keep strict validation.
-            if (sectionKey === "advanced") {
-              copiedSection.$locals.allowInheritedScopeSelectionConflict = true;
-              copiedSection.$locals.inheritedLisnoMarginPayload = structuredClone(payloadFor(source));
-            }
-            return copiedSection;
-          }),
-          { session }
-        );
-        const updated = await AiEstimatorKnowledgeMainLineModel.findOneAndUpdate(
-          { _id: mainLineId, version: input.expectedVersion, draftRevisionId: null },
-          {
-            $set: { draftRevisionId: revisionId, updatedById: storedActor.id, updatedAt: occurredAt },
-            $inc: { version: 1 }
-          },
-          { new: true, session }
-        ).lean().exec();
-        if (!updated) versionConflict();
-        await dependencies.audit.appendInMongoTransaction({
-          actorId: storedActor.id,
-          action: "ai_estimator_knowledge_revision_created",
-          entityType: "ai_estimator_knowledge_revision",
-          entityId: revisionId,
-          occurredAt: occurredAt.toISOString(),
-          newValues: { mainLineId, sourceRevisionId, revisionNumber, aggregateVersion: input.expectedVersion + 1 }
-        }, session);
-      });
+      await mongoose.connection.transaction((session) => createRevisionInSession(actor, mainLineId, input, session));
       return getItemAfterMutation(actor, mainLineId, actorGuard);
     },
 
@@ -674,149 +884,8 @@ export function createAiEstimatorKnowledgeItemService(
 
     async updateSection(actor, mainLineId, revisionId, sectionKey, input) {
       validateSectionPayloadOrThrow(sectionKey, input.payload);
-      const mutation = await mongoose.connection.transaction(async (session) => {
-        const storedActor = await actorGuard.requireMutationActor(actor, session);
-        const lineDocument = await AiEstimatorKnowledgeMainLineModel.findById(mainLineId)
-          .session(session).lean().exec();
-        const revisionDocument = await AiEstimatorKnowledgeRevisionModel.findOne({ _id: revisionId, mainLineId })
-          .session(session).lean().exec();
-        const sectionDocument = await AiEstimatorKnowledgeSectionModel.findOne({ mainLineId, revisionId, sectionKey })
-          .session(session).lean().exec();
-        const line = asRow(lineDocument);
-        const revision = asRow(revisionDocument);
-        let section = asRow(sectionDocument);
-        if (!line || !revision) notFound();
-        const lazyDesignSection = !section && sectionKey === "design";
-        if (lazyDesignSection) section = virtualDesignSection(mainLineId, revisionId, revision);
-        if (!section) notFound();
-        if (line.itemType === "temporary" && !TEMPORARY_ITEM_SECTIONS.includes(sectionKey)) {
-          throw new ApiError(400, "VALIDATION_ERROR", "Temporary items support only Overview, Mode, Recommendation & Exclusions, Quality Parameters and Design.");
-        }
-        const temporaryRecommendations = line.itemType === "temporary" && sectionKey === "recommendations";
-        if (revision.status !== "draft" || line.draftRevisionId !== revisionId) immutableHistory();
-        if (requiredInteger(section.version) !== input.expectedVersion) versionConflict();
-        const expectedAggregateVersion = input.expectedAggregateVersion ?? requiredInteger(line.version);
-        if (requiredInteger(line.version) !== expectedAggregateVersion) versionConflict();
-
-        const occurredAt = now();
-        if (lazyDesignSection) {
-          const [created] = await AiEstimatorKnowledgeSectionModel.create([{
-            _id: knowledgeId("section-design", uuid()), mainLineId, revisionId, sectionKey,
-            applicability: "not_configured", payload: {}, version: 1,
-            createdById: storedActor.id, updatedById: storedActor.id,
-            createdAt: occurredAt, updatedAt: occurredAt
-          }], { session });
-          section = asRow(created.toObject())!;
-        }
-        const previousPayload = payloadFor(section);
-        const persistedPayload = sectionKey === "pricing"
-          ? await materializePriceCommands({
-              mainLineId,
-              revisionId,
-              payload: input.payload,
-              previousPayload,
-              actorId: storedActor.id,
-              occurredAt,
-              session,
-              uuid,
-              audit: dependencies.audit
-            })
-          : sectionKey === "design"
-            ? normalizeDesignRules(input.payload) as unknown as Row
-          : sectionKey === "advanced"
-            ? preserveModeConfigurationCompatibility(previousPayload, input.payload)
-          : sectionKey === "recommendations"
-            ? normalizeRecommendationPayload(input.payload)
-            : structuredClone(input.payload);
-        await coordinateNewDesignVendorReference(sectionKey, previousPayload, persistedPayload, session);
-        await coordinateNewBasketReferences(
-          sectionKey,
-          previousPayload,
-          persistedPayload,
-          session
-        );
-        await coordinateNewModeConfigurationReferences(
-          sectionKey,
-          previousPayload,
-          persistedPayload,
-          session
-        );
-        await coordinateNewPriorityReferences(
-          sectionKey,
-          previousPayload,
-          persistedPayload,
-          session
-        );
-        await coordinateNewSurfaceReferences(
-          sectionKey,
-          previousPayload,
-          persistedPayload,
-          session
-        );
-        await coordinateNewSlabRateUomReferences(
-          sectionKey,
-          previousPayload,
-          persistedPayload,
-          session
-        );
-        /* Temporary recommendations are now applicable, including when an old
-           client echoes their historical "not applicable" section flag. */
-        const storedApplicability: KnowledgeSectionApplicability =
-          input.applicability === "not_applicable" && !temporaryRecommendations
-            ? "not_applicable"
-            : hasKnowledgeSectionContent(persistedPayload)
-              ? "configured"
-              : "not_configured";
-        const updatedSection = await AiEstimatorKnowledgeSectionModel.findOneAndUpdate(
-          { _id: section._id, version: input.expectedVersion, revisionId },
-          {
-            $set: {
-              applicability: storedApplicability,
-              payload: persistedPayload,
-              updatedById: storedActor.id,
-              updatedAt: occurredAt
-            },
-            $inc: { version: 1 }
-          },
-          { new: true, runValidators: true, session }
-        ).lean().exec();
-        if (!updatedSection) versionConflict();
-        const updatedLine = await AiEstimatorKnowledgeMainLineModel.findOneAndUpdate(
-          { _id: mainLineId, version: expectedAggregateVersion, draftRevisionId: revisionId },
-          { $set: { updatedById: storedActor.id, updatedAt: occurredAt }, $inc: { version: 1 } },
-          { new: true, session }
-        ).lean().exec();
-        if (!updatedLine) versionConflict();
-
-        const rows = (await AiEstimatorKnowledgeSectionModel.find({ mainLineId, revisionId })
-          .session(session).lean().exec()).map((row) => asRow(row)!);
-        await validateRevisionRelationships(mainLineId, rows, session, {
-          updatedSectionKey: sectionKey,
-          previousPayload
-        });
-        const completeness = completenessForRows(mainLineId, rows);
-        await AiEstimatorKnowledgeRevisionModel.updateOne(
-          { _id: revisionId, status: "draft" },
-          {
-            $set: { completeness, updatedById: storedActor.id, updatedAt: occurredAt },
-            $inc: { version: 1 }
-          },
-          { session }
-        ).exec();
-        await dependencies.audit.appendInMongoTransaction({
-          actorId: storedActor.id,
-          action: "ai_estimator_knowledge_section_updated",
-          entityType: "ai_estimator_knowledge_section",
-          entityId: requiredString(section._id),
-          occurredAt: occurredAt.toISOString(),
-          oldValues: { mainLineId, revisionId, sectionKey, sectionVersion: input.expectedVersion, aggregateVersion: expectedAggregateVersion },
-          newValues: { sectionVersion: input.expectedVersion + 1, aggregateVersion: expectedAggregateVersion + 1, applicability: storedApplicability }
-        }, session);
-        return {
-          section: asRow(updatedSection)!,
-          aggregateVersion: requiredInteger(asRow(updatedLine)!.version)
-        };
-      });
+      const mutation = await mongoose.connection.transaction((session) =>
+        updateSectionInSession(actor, mainLineId, revisionId, sectionKey, input, session));
       const section = sectionKey === "pricing"
         ? await enrichPricingSectionDto(mutation.section)
         : sectionDto(mutation.section);
@@ -1975,6 +2044,20 @@ function preserveModeConfigurationCompatibility(
   previousPayload: Row,
   nextPayload: Row
 ): Row {
+  const previousComponents = readInHouseComponents(previousPayload);
+  const nextComponents = readInHouseComponents(nextPayload);
+  if (previousComponents !== undefined && nextComponents === undefined) {
+    throw new ApiError(409, "IN_HOUSE_COMPONENTS_REQUIRED", "Keep the component configuration explicit after conversion; remove individual components instead.");
+  }
+  if (previousComponents && nextComponents) {
+    const previousById = new Map(previousComponents.map((component) => [component.id, component]));
+    for (const component of nextComponents) {
+      const previous = previousById.get(component.id);
+      if (previous && (previous.basketId !== component.basketId || previous.subBasketId !== component.subBasketId)) {
+        throw new ApiError(409, "IN_HOUSE_COMPONENT_IDENTITY_IMMUTABLE", "A saved component must keep its Main Basket and Sub Basket. Add a new component for another scope.");
+      }
+    }
+  }
   if (!Array.isArray(nextPayload.modeConfigurations)) {
     return structuredClone(nextPayload);
   }
@@ -2974,6 +3057,10 @@ async function relationshipBasketIds(rows: Row[], session: ClientSession): Promi
   const subBasketIds = new Set<string>();
   for (const row of rows) {
     const payload = payloadFor(row);
+    for (const component of structuredRows(payload.inHouseComponents)) {
+      addOptionalId(basketIds, component.basketId);
+      addOptionalId(subBasketIds, component.subBasketId);
+    }
     for (const field of ["exclusions", "dependencies", "recommendations", "budgetAlterations"] as const) {
       for (const relation of structuredRows(payload[field])) {
         addOptionalId(basketIds, relation.targetBasketId);
@@ -3100,6 +3187,7 @@ async function validateRevisionRelationships(
   await validateRevisionMasterReferences(rows, session, context);
   await validateRevisionSectionRules(rows, session, context);
   await validateScopeBasketReferences(rows, session);
+  await validateInHouseComponentReferences(mainLineId, rows, session);
   if (!context || context.updatedSectionKey === "recommendations") {
     await validateBudgetAlterationReferences(mainLineId, rows, session);
   }
@@ -4097,4 +4185,19 @@ export function normalizeKnowledgeProposalSectionPayload(sectionKey: KnowledgeSe
   if (sectionKey === "pricing") return preserveTypedSpecificationCompatibility(previousPayload, payload);
   if (sectionKey === "recommendations") return normalizeRecommendationPayload(payload);
   return structuredClone(payload);
+}
+
+async function validateInHouseComponentReferences(mainLineId: string, rows: Row[], session: ClientSession): Promise<void> {
+  const components = rows.flatMap((row) => row.sectionKey === "advanced" ? readInHouseComponents(payloadFor(row)) ?? [] : []);
+  if (!components.length) return;
+  const owner = await AiEstimatorKnowledgeMainLineModel.findById(mainLineId).select({ basketId: 1 }).session(session).lean().exec();
+  for (const component of components) {
+    const parent = await AiEstimatorKnowledgeBasketModel.exists({ _id: component.basketId, status: { $ne: "archived" } }).session(session);
+    if (!parent) invalidKnowledgeReference("In-house component Main Basket");
+    if (component.subBasketId === null) {
+      if (component.id !== "legacy-in-house" || String(owner?.basketId) !== component.basketId) invalidKnowledgeReference("legacy In-house component Main Basket");
+    } else if (!await AiEstimatorKnowledgeSubBasketModel.exists({ _id: component.subBasketId, basketId: component.basketId, status: { $ne: "archived" } }).session(session)) {
+      invalidKnowledgeReference("In-house component Sub Basket");
+    }
+  }
 }

@@ -227,6 +227,7 @@ export async function refreshKnowledgeSubBasketCatalog(
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.mainLineLists(basketId) }, { throwOnError: true }),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.subBasketLists(basketId) }, { throwOnError: true }),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.basketDeletionImpact(basketId) }, { throwOnError: true }),
+    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.subBasketMarginSummaries(basketId) }, { throwOnError: true }),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.subBasketDeletionImpacts(basketId) }, { throwOnError: true }),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.histories() }, { throwOnError: true }),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.activationReviews() }, { throwOnError: true }),
@@ -248,6 +249,7 @@ export async function refreshKnowledgeMainLineCatalog(queryClient: QueryClient):
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.mainLineLists() }, { throwOnError: true }),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.items() }, { throwOnError: true }),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.basketDeletionImpacts() }, { throwOnError: true }),
+    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.subBasketMarginSummaries() }),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.subBasketDeletionImpacts() }, { throwOnError: true }),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.histories() }, { throwOnError: true }),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.activationReviews() }, { throwOnError: true }),
@@ -324,6 +326,7 @@ export async function syncKnowledgeBasketMutation(
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.items() }, { throwOnError: true }),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.basketQualities() }, { throwOnError: true }),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.basketDeletionImpacts() }, { throwOnError: true }),
+    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.subBasketMarginSummaries(basket.id) }, { throwOnError: true }),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.subBasketDeletionImpacts(basket.id) }, { throwOnError: true }),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.mainLineLists() }, { throwOnError: true }),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.contexts() }, { throwOnError: true }),
@@ -392,6 +395,7 @@ export async function syncKnowledgeSubBasketDeletion(
     queryClient.removeQueries({ queryKey: ["ai-estimator-knowledge", "history", mainLineId] });
     queryClient.removeQueries({ queryKey: ["ai-estimator-knowledge", "activation-review", mainLineId] });
   }
+  queryClient.removeQueries({ queryKey: knowledgeQueryKeys.subBasketMargins(result.basketId, result.subBasketId) });
   queryClient.removeQueries({ queryKey: knowledgeQueryKeys.subBasketDeletionImpact(result.basketId, result.subBasketId) });
   await refreshKnowledgeSubBasketCatalog(queryClient, result.basketId);
 }
@@ -432,6 +436,7 @@ export async function invalidateKnowledgeSectionMutation(
 ): Promise<void> {
   await Promise.allSettled([
     invalidateTemporaryMainLineDetails(queryClient),
+    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.subBasketMarginSummaries() }),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.subBasketDeletionImpacts() }),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.basketDeletionImpacts() }),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.itemLists() }),
@@ -452,6 +457,25 @@ export async function invalidateKnowledgeSectionMutation(
     queryClient.invalidateQueries({ queryKey: procurementBasketKeys.lists() }),
     queryClient.invalidateQueries({ queryKey: procurementBasketKeys.details() })
   ]);
+}
+
+/** Refresh saved current configuration consumers once after a bulk margin mutation. */
+export async function syncKnowledgeSubBasketMargins(
+  queryClient: QueryClient,
+  mainLineIds: readonly string[]
+): Promise<boolean> {
+  const keys = [
+    knowledgeQueryKeys.itemLists(), knowledgeQueryKeys.mainLineLists(),
+    knowledgeQueryKeys.histories(), knowledgeQueryKeys.activationReviews(), knowledgeQueryKeys.contexts(),
+    knowledgeQueryKeys.previews(), knowledgeQueryKeys.subBasketDeletionImpacts(),
+    ...mainLineIds.map((id) => knowledgeQueryKeys.item(id)),
+    estimateRequirementsKeys.all, estimationCatalogueKeys.all,
+    projectDesignRequirementsKeys.all, projectWorkflowKeys.all,
+    procurementBasketKeys.lists(), procurementBasketKeys.details(),
+    ["procurement", "project-items"]
+  ];
+  const refreshed = await Promise.allSettled(keys.map((queryKey) => queryClient.invalidateQueries({ queryKey }, { throwOnError: true })));
+  return refreshed.every((result) => result.status === "fulfilled");
 }
 
 export async function syncKnowledgeSectionMutation(
@@ -490,6 +514,7 @@ export async function syncKnowledgeBasketDeletion(
         : current.pagination
     });
   }
+  queryClient.removeQueries({ queryKey: knowledgeQueryKeys.subBasketMarginSummaries(basketId) });
   queryClient.removeQueries({ queryKey: knowledgeQueryKeys.subBasketLists(basketId) });
   queryClient.removeQueries({ queryKey: knowledgeQueryKeys.subBasketDeletionImpacts(basketId) });
   queryClient.removeQueries({
@@ -540,6 +565,7 @@ export async function syncKnowledgeMainLineDeletion(
   const refreshOptions = options.throwOnError ? { throwOnError: true } : undefined;
   const refreshes = [
     invalidateTemporaryMainLineDetails(queryClient, refreshOptions),
+    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.subBasketMarginSummaries() }),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.subBasketDeletionImpacts() }, refreshOptions),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.basketDeletionImpacts() }, refreshOptions),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.itemLists() }, refreshOptions),
@@ -575,6 +601,7 @@ export async function syncKnowledgeLifecycleMutation(
 
   await Promise.all([
     invalidateTemporaryMainLineDetails(queryClient),
+    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.subBasketMarginSummaries() }),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.subBasketDeletionImpacts() }),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.basketDeletionImpacts() }),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.itemLists() }),

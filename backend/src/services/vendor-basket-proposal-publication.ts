@@ -245,6 +245,12 @@ async function validateRelationships(snapshot: ProposalPublicationSnapshot, byLi
     for (const relation of itemRelationsForRows(mainLineId, sections)) if (relation.dependency) edges.push({ fromId: mainLineId, toId: relation.targetMainLineId });
     if (targetSection && targetSection.mainLineId !== mainLineId) continue;
     const editedSections = targetSection ? sections.filter((section) => section.sectionKey === targetSection.sectionKey) : sections;
+    for (const component of rows(sectionPayload(editedSections, "advanced").inHouseComponents)) {
+      if (!await basketExists(component.basketId)) unavailable();
+      if (component.subBasketId === null) {
+        if (component.id !== "legacy-in-house" || component.basketId !== ownBasket) unavailable();
+      } else if (!await subExists(component.subBasketId, component.basketId)) unavailable();
+    }
     for (const relation of itemRelationsForRows(mainLineId, editedSections)) {
       if (relation.targetMainLineId === mainLineId) throw new ApiError(409, "DEPENDENCY_CYCLE", "An estimation item cannot reference itself.");
       const own = ownLines.get(relation.targetMainLineId);

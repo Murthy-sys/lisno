@@ -718,6 +718,7 @@ export interface ApprovedProcurementSnapshot {
 }
 
 export interface ApprovedProcurementSourceLine extends ApprovedEstimateSelection {
+  selectedInHouseComponentIds?: string[];
   key: string;
   sectionId: string;
   sectionLabel: string;
@@ -1612,6 +1613,10 @@ function approvedSnapshotLines(
       ? line.subBasketName === null ? null : requiredStoredText(line.subBasketName)
       : undefined;
     const mainLineName = configured ? requiredStoredText(line.mainLineName) : undefined;
+    if (line.selectedInHouseComponentIds !== undefined && (!Array.isArray(line.selectedInHouseComponentIds) ||
+      line.selectedInHouseComponentIds.length > 50 || line.selectedInHouseComponentIds.some((id) => typeof id !== "string" || !id || id.length > 128) ||
+      new Set(line.selectedInHouseComponentIds).size !== line.selectedInHouseComponentIds.length ||
+      line.selectedInHouseComponentIds.length > 0 && line.pricingMode !== "in_house")) procurementLineageConflict();
     return {
       key,
       sectionId,
@@ -1619,6 +1624,7 @@ function approvedSnapshotLines(
       ...readApprovedEstimateSelection(line.classification, line.pricingMode),
       ...(configured ? {
         source: "configuration" as const,
+        ...(line.selectedInHouseComponentIds === undefined ? {} : { selectedInHouseComponentIds: [...line.selectedInHouseComponentIds as string[]] }),
         ...(line.itemType === undefined ? {} : { itemType: line.itemType as "main_line" | "temporary" }),
         roomId,
         mainBasketId: sectionId,

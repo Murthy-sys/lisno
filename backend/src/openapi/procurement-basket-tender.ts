@@ -55,7 +55,7 @@ const standardLineCost = object({ state: { type: "string", enum: ["suggested", "
   mode: { type: "string", enum: ["pmc", "sub_vendor", "in_house"], nullable: true },
   calculationQuantity: { type: "string", nullable: true },
   baseRates: { type: "array", items: object({ scope: { type: "string", enum: ["pmc", "sub_vendor", "in_house_labor", "in_house_material"] },
-    ratePaise: paise }) }, baseCostPaise: { ...paise, nullable: true }, adjustedCostPaise: { ...paise, nullable: true },
+    ratePaise: paise, componentId: id, componentBasketId: id, componentSubBasketId: { ...id, nullable: true } }, ["scope", "ratePaise"]) }, baseCostPaise: { ...paise, nullable: true }, adjustedCostPaise: { ...paise, nullable: true },
   issues: { type: "array", items: ref("ProjectPurchaseOrderModeIssue") } });
 const basketSummary = { id, name: { type: "string" }, classification,
   automaticSubVendor: { type: "boolean" }, boqReady: { type: "boolean" },

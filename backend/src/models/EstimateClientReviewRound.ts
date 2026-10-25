@@ -47,6 +47,7 @@ const estimateClientReviewLineItemSchema = new Schema(
     classification: { type: String, enum: ["standard", "special"], default: undefined, immutable: true },
     pricingMode: { type: String, enum: ["pmc", "sub_vendor", "in_house"], default: undefined, immutable: true },
     rateSource: { type: String, enum: ["configuration", "manual"], default: undefined, immutable: true },
+    selectedInHouseComponentIds: { type: [String], default: undefined, immutable: true, validate: (ids: string[] | undefined) => ids === undefined || ids.length <= 50 && new Set(ids).size === ids.length },
     catalogueId: { type: String, required: true, immutable: true },
     roomId: { type: String, default: undefined, immutable: true },
     roomName: { type: String, required: true, immutable: true },

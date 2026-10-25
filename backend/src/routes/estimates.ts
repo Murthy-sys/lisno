@@ -1,3 +1,4 @@
+import { fenceEstimateInHouseComponentReferences } from "../services/estimator-catalogue.service.js";
 import { normalizeDesignRules, designRulesDigest, designRuleEstimateNotes } from "../domain/main-line-design-rules.js";
 import { ProjectModel } from "../models/Project.js";
 import { EstimateClientReviewRoundModel } from "../models/EstimateClientReviewRound.js";
@@ -58,6 +59,7 @@ const configuredEstimateLineSchema = z.object({
   classification: estimateClassificationSchema.optional(),
   pricingMode: z.enum(ESTIMATE_PRICING_MODES).optional(),
   rateSource: z.enum(ESTIMATE_RATE_SOURCES).optional(),
+  selectedInHouseComponentIds: z.array(stableIdSchema).max(50).refine((ids) => new Set(ids).size === ids.length, "Select each component once.").optional(),
   mainLineId: stableIdSchema, revisionId: stableIdSchema, uomId: stableIdSchema,
   recommendationSourceMainLineIds: z.array(stableIdSchema).optional(),
   itemVersion: z.number().int().positive().safe().optional(),
@@ -439,9 +441,14 @@ export function createEstimatesRouter(
         const pricingMode = line.pricingMode ?? prior?.pricingMode as EstimatePricingMode | undefined;
         const rateSource = line.rateSource ?? (prior && line.ratePaise !== prior.ratePaise
           ? "manual" : prior?.rateSource as EstimateRateSource | undefined);
-        const pricing = { classification, pricingMode, rateSource, ratePaise: line.ratePaise };
+        const selectedInHouseComponentIds = pricingMode === "in_house"
+          ? line.selectedInHouseComponentIds ?? prior?.selectedInHouseComponentIds as string[] | undefined : undefined;
+        const pricing = { classification, pricingMode, rateSource, ratePaise: line.ratePaise, selectedInHouseComponentIds };
         if (!estimatePricingMetadataIsValid(pricing)) {
           throw new ApiError(400, "ESTIMATE_PRICING_MODE_INVALID", "Select a valid pricing mode for this item type.");
+        }
+        if (!estimateConfigurationRateMatches({ ...pricing, rateSource: "manual" }, snapshot.line.modeBaseRatesPaise, snapshot.line.inHouseComponents)) {
+          throw new ApiError(409, "ESTIMATE_COMPONENT_SELECTION_INVALID", "Select the available In-house components for this estimate line before saving.");
         }
         if (rateSource === "configuration") {
           // Only older callers preserving a saved origin may reuse its saved version metadata.
@@ -450,7 +457,7 @@ export function createEstimatesRouter(
           if (line.mainBasketId !== snapshot.line.basketId || line.subBasketId !== snapshot.line.subBasketId ||
             line.itemType !== snapshot.line.itemType || line.revisionId !== snapshot.line.revisionId ||
             itemVersion !== snapshot.line.itemVersion || revisionVersion !== snapshot.line.revisionVersion ||
-            !estimateConfigurationRateMatches(pricing, snapshot.line.modeBaseRatesPaise)) {
+            !estimateConfigurationRateMatches(pricing, snapshot.line.modeBaseRatesPaise, snapshot.line.inHouseComponents)) {
             throw new ApiError(409, "ESTIMATE_CONFIGURATION_CHANGED",
               "Configuration pricing changed. Refresh the catalogue and review the selected mode price before saving.");
           }
@@ -468,6 +475,7 @@ export function createEstimatesRouter(
           classification,
           ...(pricingMode === undefined ? {} : { pricingMode }),
           ...(rateSource === undefined ? {} : { rateSource }),
+          ...(selectedInHouseComponentIds === undefined ? {} : { selectedInHouseComponentIds }),
           ...(line.recommendationSourceMainLineIds !== undefined
             ? { recommendationSourceMainLineIds: line.recommendationSourceMainLineIds } : {}),
           ...currentConfiguredFields(snapshot),
@@ -477,6 +485,7 @@ export function createEstimatesRouter(
           amountPaise, amount: amountPaise === null ? null : amountPaise / 100
         };
       });
+      await fenceEstimateInHouseComponentReferences(lineItems, configured, session);
       const subtotalPaise = lineItems.reduce((sum, line) => {
         const next = sum + (line.amountPaise ?? 0);
         if (!Number.isSafeInteger(next)) throw new ApiError(400, "ESTIMATE_AMOUNT_INVALID", "The estimate total is too large.");
@@ -813,6 +822,7 @@ async function assertEstimateCurrentConfiguration(
       line && typeof line === "object" && line.source === "configuration") : [];
   if (saved.length === 0) return;
   const current = await resolveEstimatorCatalogueLines(saved.map((line) => String(line.mainLineId)), session);
+  if (session) await fenceEstimateInHouseComponentReferences(saved, current, session);
   for (const line of saved) {
     const source = current.get(String(line.mainLineId));
     if (!source) {
@@ -823,7 +833,7 @@ async function assertEstimateCurrentConfiguration(
     if (Object.entries(fields).some(([field, value]) => !["designRules", "designRulesDigest", "estimateNotes"].includes(field) && line[field] !== value) ||
       designRulesDigest(line.designRules) !== source.line.designRulesDigest ||
       JSON.stringify(line.estimateNotes ?? []) !== JSON.stringify(source.line.estimateNotes) ||
-      !estimateConfigurationRateMatches(line, source.line.modeBaseRatesPaise)) {
+      !estimateConfigurationRateMatches(line, source.line.modeBaseRatesPaise, source.line.inHouseComponents)) {
       throw new ApiError(409, "ESTIMATE_CONFIGURATION_CHANGED",
         "Configuration changed. Save the estimate with its current Main Line values before continuing.");
     }

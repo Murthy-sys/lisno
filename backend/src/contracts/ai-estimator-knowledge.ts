@@ -595,7 +595,12 @@ export interface KnowledgeConfigurationContext {
   };
   state: "ready" | "selection_required" | "not_configured" | "invalid";
   issues: Array<{ code: string; scope: KnowledgeCalculationScope | null }>;
+  inHouseComponents?: Array<{ id: string; basketId: string; subBasketId: string | null;
+    inclusions: Array<{ id: string; name: string }>; exclusions: Array<{ id: string; name: string }> }>;
   calculations: Array<{
+    componentId?: string;
+    componentBasketId?: string;
+    componentSubBasketId?: string | null;
     scope: KnowledgeCalculationScope;
     source: "scoped" | "legacy_shared" | "legacy_in_house" | null;
     settings: Required<KnowledgeModeCalculationSettings> | null;

@@ -1,4 +1,4 @@
-import type { EstimationCatalogue, EstimationCatalogueBasket, EstimationCatalogueMainLine, EstimationCatalogueSubBasket, EstimationCatalogueTemporaryItem, EstimationModeBaseRatesPaise } from "./estimationCatalogueApi";
+import type { EstimationCatalogue, EstimationCatalogueBasket, EstimationCatalogueMainLine, EstimationCatalogueSubBasket, EstimationCatalogueTemporaryItem, EstimationModeBaseRatesPaise, EstimationInHouseComponent } from "./estimationCatalogueApi";
 import type { ConfiguredEstimateLine, EstimateClassification, EstimatePricingMode, EstimateRateSource } from "./leadsApi";
 
 export interface ConfiguredEstimateRoom {
@@ -17,6 +17,7 @@ export interface ConfiguredLineDraft {
   itemType: "main_line" | "temporary";
   classification?: EstimateClassification;
   pricingMode?: EstimatePricingMode;
+  selectedInHouseComponentIds?: string[];
   rateSource?: EstimateRateSource;
   subBasketId: string | null;
   subBasketName: string | null;
@@ -37,6 +38,7 @@ export interface ConfiguredLineDraft {
   uomName: string;
   uomDecimalScale: number;
   inHouseBaseRatePaise?: number | null;
+  inHouseComponents?: EstimationInHouseComponent[];
   modeBaseRatesPaise?: EstimationModeBaseRatesPaise;
   quantity: number;
   rateInput: string;
@@ -54,9 +56,30 @@ export const estimatePricingModeLabels: Record<EstimatePricingMode, string> = {
   pmc: "PMC", sub_vendor: "Sub-Vendor", in_house: "In-house"
 };
 
-export function configuredModeBaseRate(line: Pick<ConfiguredLineDraft, "modeBaseRatesPaise">, mode: EstimatePricingMode): number | null {
+export function configuredModeBaseRate(line: Pick<ConfiguredLineDraft, "modeBaseRatesPaise" | "inHouseComponents" | "selectedInHouseComponentIds">, mode: EstimatePricingMode): number | null {
+  if (mode === "in_house" && line.inHouseComponents !== undefined) {
+    const selected = line.selectedInHouseComponentIds ?? [];
+    if (!selected.length || new Set(selected).size !== selected.length) return null;
+    let total = 0;
+    for (const id of selected) {
+      const matches = line.inHouseComponents.filter((component) => component.id === id);
+      const rate = matches.length === 1 && !matches[0]!.unavailableReason ? matches[0]!.baseRatePaise : null;
+      if (rate === null || !Number.isSafeInteger(rate) || rate < 0) return null;
+      total += rate;
+      if (!Number.isSafeInteger(total)) return null;
+    }
+    return total;
+  }
   const rate = line.modeBaseRatesPaise?.[mode];
   return typeof rate === "number" && Number.isSafeInteger(rate) && rate >= 0 ? rate : null;
+}
+
+export function configuredInHouseSelectionIssue(line: Pick<ConfiguredLineDraft, "pricingMode" | "inHouseComponents" | "selectedInHouseComponentIds" | "modeBaseRatesPaise" | "rateSource">): string | null {
+  if (line.pricingMode !== "in_house" || line.inHouseComponents === undefined) return null;
+  if (!line.selectedInHouseComponentIds?.length) return "Choose at least one In-house component.";
+  const selected = line.selectedInHouseComponentIds;
+  if (new Set(selected).size !== selected.length || selected.some((id) => line.inHouseComponents!.filter((component) => component.id === id && !component.unavailableReason).length !== 1)) return "Review unavailable selected In-house components.";
+  return line.rateSource === "configuration" && configuredModeBaseRate(line, "in_house") === null ? "Configure costs for the selected In-house components, or enter a manual rate." : null;
 }
 
 /** Only deliberate mode/type changes adopt a configured rate. Historical prices stay manual. */
@@ -71,7 +94,10 @@ export function updateConfiguredLinePricing(
   const mode = change.classification === "standard" && classification === "special"
     ? "sub_vendor"
     : change.pricingMode !== undefined && change.pricingMode !== line.pricingMode ? change.pricingMode : undefined;
-  if (mode) return { ...next, pricingMode: mode, rateSource: "configuration", rateInput: formatRateInput(configuredModeBaseRate(line, mode)) };
+  if (mode) return { ...next, pricingMode: mode, rateSource: "configuration", rateInput: formatRateInput(configuredModeBaseRate(next, mode)) };
+  if (change.selectedInHouseComponentIds !== undefined && next.pricingMode === "in_house" && next.rateSource === "configuration") {
+    return { ...next, rateInput: formatRateInput(configuredModeBaseRate(next, "in_house")) };
+  }
   if (change.rateInput !== undefined) return { ...next, rateSource: "manual" };
   return next;
 }
@@ -160,6 +186,7 @@ export function restoreConfiguredLine(line: ConfiguredEstimateLine): ConfiguredL
     itemType: line.itemType ?? "main_line",
     classification: line.classification ?? "standard",
     pricingMode: line.pricingMode,
+    selectedInHouseComponentIds: line.selectedInHouseComponentIds,
     rateSource: line.rateSource ?? "manual",
     subBasketId: line.subBasketId,
     subBasketName: line.subBasketName,
@@ -215,6 +242,8 @@ function newLine(
     uomName: mainLine.uom.name,
     uomDecimalScale: mainLine.uom.decimalScale,
     inHouseBaseRatePaise,
+    inHouseComponents: mainLine.inHouseComponents,
+    ...(mainLine.inHouseComponents !== undefined ? { selectedInHouseComponentIds: [] } : {}),
     modeBaseRatesPaise: mainLine.modeBaseRatesPaise,
     pricingMode: "sub_vendor",
     rateSource: "configuration",
@@ -248,6 +277,7 @@ export function buildConfiguredLines(
         ...saved,
         modeBaseRatesPaise: fresh.modeBaseRatesPaise,
         inHouseBaseRatePaise: fresh.inHouseBaseRatePaise,
+        inHouseComponents: fresh.inHouseComponents,
         sourceMissing: saved.mainBasketId !== fresh.mainBasketId ||
           saved.subBasketId !== fresh.subBasketId || saved.itemType !== fresh.itemType
       };
@@ -257,9 +287,10 @@ export function buildConfiguredLines(
         persistedId: saved.persistedId,
         quantity: saved.quantity,
         pricingMode: saved.pricingMode,
+        selectedInHouseComponentIds: saved.selectedInHouseComponentIds,
         rateSource: saved.rateSource ?? "manual",
         rateInput: saved.rateSource === "configuration" && saved.pricingMode
-          ? formatRateInput(configuredModeBaseRate(fresh, saved.pricingMode)) : saved.rateInput,
+          ? formatRateInput(configuredModeBaseRate({ ...fresh, selectedInHouseComponentIds: saved.selectedInHouseComponentIds }, saved.pricingMode)) : saved.rateInput,
         included: saved.included,
         recommendationSourceMainLineIds: saved.recommendationSourceMainLineIds,
         classification: saved.classification,

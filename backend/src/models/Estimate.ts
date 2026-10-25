@@ -16,6 +16,7 @@ const estimateLineSchema = new Schema({
   classification: { type: String, enum: ["standard", "special"], default: undefined },
   pricingMode: { type: String, enum: ["pmc", "sub_vendor", "in_house"], default: undefined },
   rateSource: { type: String, enum: ["configuration", "manual"], default: undefined },
+  selectedInHouseComponentIds: { type: [String], default: undefined, validate: (ids: string[] | undefined) => ids === undefined || ids.length <= 50 && new Set(ids).size === ids.length },
   catalogueId: { type: String, required: true },
   roomId: { type: String, default: null }, roomName: { type: String, required: true },
   mainBasketId: { type: String, default: null }, subBasketId: { type: String, default: null },

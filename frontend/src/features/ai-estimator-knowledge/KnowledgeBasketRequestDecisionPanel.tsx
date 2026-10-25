@@ -46,21 +46,24 @@ export function KnowledgeBasketRequestDecisionPanel({ request, decision: decisio
   const [refreshWarning, setRefreshWarning] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const fulfill = decisionKind === "fulfill";
+  const configurationSubBasket = request.kind === "configuration_sub_basket";
+  const targetParentId = request.target?.kind === "new_sub_basket" ? request.target.basketId : null;
   const baskets = useQuery({
     queryKey: [...knowledgeQueryKeys.basketLists(), "request-approval-catalog"],
     queryFn: () => collectAllKnowledgeMasterPages((page) => listKnowledgeBaskets(page), "Main Basket"),
     enabled: fulfill && !saved,
     refetchOnMount: "always"
   });
-  const basket = baskets.data?.items.find((entry) => identity(entry.name) === identity(request.proposedName));
+  const basket = baskets.data?.items.find((entry) => configurationSubBasket ? entry.id === targetParentId : identity(entry.name) === identity(request.proposedName));
   const subBaskets = useQuery({
     queryKey: [...knowledgeQueryKeys.subBasketLists(basket?.id ?? ""), "request-approval-catalog"],
     queryFn: () => collectAllKnowledgeMasterPages((page) => listKnowledgeSubBaskets(basket!.id, page), "Sub Basket"),
-    enabled: fulfill && setup && basket?.status === "active" && !saved,
+    enabled: fulfill && (setup || configurationSubBasket) && basket?.status === "active" && !saved,
     refetchOnMount: "always"
   });
   const availableSubBaskets = subBaskets.data?.items.filter((entry) => entry.basketId === basket?.id) ?? [];
   const existingSubBasket = availableSubBaskets.find((entry) => entry.id === subBasketId);
+  const duplicateRequestedSubBasket = configurationSubBasket && availableSubBaskets.some(entry => identity(entry.name) === identity(request.proposedName));
   const existingChoice = Boolean(basket && subBasketChoice === "existing");
   const normalizedSubName = normalizeName(subBasketName);
   const normalizedMainName = normalizeName(mainLineName);
@@ -69,8 +72,9 @@ export function KnowledgeBasketRequestDecisionPanel({ request, decision: decisio
     : !normalizedSubName || normalizedSubName.length > 240 ? "Enter a Sub Basket name between 1 and 240 characters." : undefined;
   const mainError = setup && (mainLineName !== "" && (!normalizedMainName || normalizedMainName.length > 240))
     ? "Enter a Main Line name between 1 and 240 characters, or leave it empty." : undefined;
-  const catalogReady = !fulfill || (baskets.isSuccess && !baskets.isFetching && basket?.status !== "inactive"
-    && (!setup || !basket || (subBaskets.isSuccess && !subBaskets.isFetching)));
+  const catalogReady = !fulfill || (baskets.isSuccess && !baskets.isFetching && (configurationSubBasket
+    ? basket?.status === "active" && subBaskets.isSuccess && !subBaskets.isFetching && !duplicateRequestedSubBasket
+    : basket?.status !== "inactive" && (!setup || !basket || (subBaskets.isSuccess && !subBaskets.isFetching))));
 
   async function refreshSaved(result: VendorBasketRequest) {
     setRefreshing(true);
@@ -110,7 +114,7 @@ export function KnowledgeBasketRequestDecisionPanel({ request, decision: decisio
       input: {
         decision: decisionKind, expectedVersion: request.version, idempotencyKey: commandKey.current,
         reason: fulfill ? null : reason.trim(),
-        ...(fulfill && setup ? { configuration: {
+        ...(fulfill && setup && !configurationSubBasket ? { configuration: {
           ...(existingChoice ? { subBasketId } : { subBasketName: normalizedSubName }),
           ...(normalizedMainName ? { mainLineName: normalizedMainName } : {})
         } } : {})
@@ -127,15 +131,15 @@ export function KnowledgeBasketRequestDecisionPanel({ request, decision: decisio
     commandKey.current = procurementRequestKey();
     mutation.reset();
     void baskets.refetch();
-    if (setup && basket) void subBaskets.refetch();
+    if ((setup || configurationSubBasket) && basket) void subBaskets.refetch();
   }
 
   const savedSubLabel = saved?.subBasketId && submission?.input.configuration
     && (!submission.input.configuration.subBasketId || submission.input.configuration.subBasketId === saved.subBasketId)
     ? submission.subBasketLabel : saved?.subBasketId;
 
-  return <ContextPanel title={fulfill ? "Review Main Basket request" : "Reject Main Basket request"}
-    eyebrow="Configuration" description={`${request.proposedName} · ${request.vendorName}`}
+  return <ContextPanel title={configurationSubBasket ? fulfill ? "Review Sub-Basket request" : "Reject Sub-Basket request" : fulfill ? "Review Main Basket request" : "Reject Main Basket request"}
+    eyebrow="Configuration" description={[request.proposedName, configurationSubBasket ? request.targetParentName ?? targetParentId : request.vendorName].filter(Boolean).join(" · ")}
     onClose={onClose} busy={mutation.isPending && !saved} width="medium" className="knowledge-basket-requests__panel"
     fallbackFocusRef={fallbackFocusRef}
     dirty={!saved && Boolean(reason || setup || submission)}>
@@ -143,17 +147,24 @@ export function KnowledgeBasketRequestDecisionPanel({ request, decision: decisio
       <p role="status">{saved.status === "fulfilled" ? "Request approved and Configuration saved." : "Request rejected."}</p>
       {saved.status === "fulfilled" ? <>
         <dl className="knowledge-basket-requests__hierarchy">
-          <div><dt>Main Basket</dt><dd>{saved.proposedName}</dd></div>
-          {saved.subBasketId ? <div><dt>Sub Basket</dt><dd>{savedSubLabel}</dd></div> : null}
+          <div><dt>Main Basket</dt><dd>{configurationSubBasket ? saved.targetParentName ?? saved.basketId : saved.proposedName}</dd></div>
+          {saved.subBasketId ? <div><dt>Sub Basket</dt><dd>{configurationSubBasket ? saved.proposedName : savedSubLabel}</dd></div> : null}
           {saved.mainLineId ? <div><dt>Main Line</dt><dd>{submission?.input.configuration?.mainLineName ?? saved.mainLineId} <span className="knowledge-basket-requests__draft">Draft</span></dd></div> : null}
         </dl>
-        <p>Procurement can refresh the vendor form, select the approved Main Basket and Sub Basket, and finish saving the vendor.</p>
+        <p>{configurationSubBasket ? "The approved Sub-Basket can now be selected from the component catalog." : "Procurement can refresh the vendor form, select the approved Main Basket and Sub Basket, and finish saving the vendor."}</p>
         {saved.mainLineId ? <p><a href={`/admin/configuration/estimation/items/${encodeURIComponent(saved.mainLineId)}`}>Open Main Line</a> to finish configuration before activation.</p> : null}
       </> : null}
       {refreshWarning ? <InlineMessage tone="warning" action={<Button variant="secondary" busy={refreshing} onClick={() => void refreshSaved(saved)}>Retry refresh</Button>}>Your decision was saved, but some lists could not refresh. Do not submit another approval.</InlineMessage> : null}
       <div className="knowledge-basket-requests__dialog-actions"><Button onClick={requestClose}>Done</Button></div>
     </div> : <form className="knowledge-basket-requests__decision" onSubmit={submit} noValidate>
-      {fulfill ? <>
+      {configurationSubBasket ? <p>{request.description}</p> : null}
+      {fulfill && configurationSubBasket ? <>
+        <p>Approve this Sub-Basket under {request.targetParentName ?? targetParentId}. Its saved name and description will be added to Configuration.</p>
+        {baskets.isPending || (basket?.status === "active" && subBaskets.isPending) ? <p role="status">Checking the catalog…</p> : null}
+        {baskets.isError || subBaskets.isError ? <InlineMessage tone="error" action={<Button variant="secondary" onClick={() => { void baskets.refetch(); if (basket?.status === "active") void subBaskets.refetch(); }}>Retry catalog</Button>}>The catalog could not be checked. Retry before approving.</InlineMessage> : null}
+        {baskets.isSuccess && basket?.status !== "active" ? <InlineMessage tone="error">The requested Main Basket is unavailable. Resolve it in Configuration before approving.</InlineMessage> : null}
+        {duplicateRequestedSubBasket ? <InlineMessage tone="error">This Sub-Basket already exists under the requested Main Basket. Review the existing catalog entry before deciding this request.</InlineMessage> : null}
+      </> : fulfill ? <>
         <p>Approve the requested Main Basket. Procurement will select it for the vendor afterwards.</p>
         {baskets.isPending ? <p role="status">Checking Main Baskets…</p> : null}
         {baskets.isError ? <InlineMessage tone="error" action={<Button variant="secondary" onClick={() => void baskets.refetch()}>Retry Main Baskets</Button>}>{errorMessage(baskets.error, "Main Baskets could not be checked. Try again before approving.")}</InlineMessage> : null}

@@ -399,7 +399,7 @@ const ALLOWED_SECTION_KEYS: Record<KnowledgeSectionKey, ReadonlySet<string>> = {
   recommendations: new Set(["recommendations", "exclusions", "budgetAlterations"]),
   quality: new Set(["parameters"]),
   execution: new Set(["steps", "productivity"]),
-  advanced: new Set(["dependencies", "modeOverrides", "revisionLineage", "modeConfigurations", "modeDescription", "modeCalculation", "modeCalculations", "pmcMarginBps", "pmcMinimumMarginBps", "subVendorMarginBps", "subVendorMinimumMarginBps"])
+  advanced: new Set(["dependencies", "modeOverrides", "revisionLineage", "modeConfigurations", "modeDescription", "modeCalculation", "modeCalculations", "inHouseComponents", "pmcMarginBps", "pmcMinimumMarginBps", "subVendorMarginBps", "subVendorMinimumMarginBps"])
 };
 
 function inspectBoundedValue(
@@ -1646,6 +1646,33 @@ function validateAdvancedPayload(
   record: Record<string, unknown>
 ): KnowledgeValidationIssue[] {
   const issues: KnowledgeValidationIssue[] = [];
+  if (Object.hasOwn(record, "inHouseComponents")) {
+    const path = "payload.inHouseComponents";
+    const rows = validateObjectArray(record.inHouseComponents, path, issues);
+    if (rows.length > 50) issues.push({ path, code: "TOO_MANY_ITEMS", message: "Use at most 50 In-house components." });
+    const ids = new Set<string>();
+    const references = new Set<string>();
+    rows.forEach((row, index) => {
+      const rowPath = `${path}.${index}`;
+      const keys = ["id", "basketId", "subBasketId", "inclusions", "exclusions", "labor", "material"];
+      validateExactRowKeys(row, keys, keys, rowPath, issues);
+      for (const key of ["id", "basketId", "subBasketId"] as const) {
+        if (key === "subBasketId" && row[key] === null) continue;
+        const value = row[key];
+        if (typeof value !== "string" || !value || value.length > 128 || value !== value.trim()) {
+          issues.push({ path: `${rowPath}.${key}`, code: "INVALID_REFERENCE", message: "Components require trimmed stable IDs of at most 128 characters." });
+        }
+      }
+      if (row.subBasketId === null && row.id !== "legacy-in-house") {
+        issues.push({ path: `${rowPath}.subBasketId`, code: "INVALID_REFERENCE", message: "Only the preserved legacy In-house component may omit a Sub Basket." });
+      }
+      addUniqueString(row.id, ids, `${rowPath}.id`, "DUPLICATE_ID", issues);
+      addUniqueString(JSON.stringify([row.basketId, row.subBasketId]), references, `${rowPath}.subBasketId`, "DUPLICATE_COMPONENT", issues);
+      for (const list of ["inclusions", "exclusions"] as const) validateModeScopeItems(row[list], `${rowPath}.${list}`, issues);
+      validateModeScopeSelections(row, rowPath, issues);
+      for (const scope of ["labor", "material"] as const) validateModeCalculationSettings(row[scope], `${rowPath}.${scope}`, issues, { grossMargin: true });
+    });
+  }
   validatePmcMarginRange(record, issues);
   validateSubVendorLisnoMarginRange(record, issues);
   if (record.modeCalculation !== undefined) validateModeCalculationSettings(record.modeCalculation, "payload.modeCalculation", issues);
@@ -1656,11 +1683,11 @@ function validateAdvancedPayload(
       issues.push(invalidTypeIssue("payload.modeCalculations", "an object with PMC, Sub-Vendor, Labor cost, and Material cost settings"));
     } else {
       const settings = row as Record<string, unknown>;
-      const required = Object.hasOwn(settings, "in_house_labor") || Object.hasOwn(settings, "in_house_material")
+      const required = Object.hasOwn(record, "inHouseComponents") ? ["pmc", "sub_vendor"] : Object.hasOwn(settings, "in_house_labor") || Object.hasOwn(settings, "in_house_material")
         ? ["pmc", "sub_vendor", "in_house_labor", "in_house_material"] : ["pmc", "sub_vendor", "in_house"];
       validateExactRowKeys(settings, scopes, required, "payload.modeCalculations", issues);
       for (const scope of scopes) {
-        if (Object.hasOwn(settings, scope)) validateModeCalculationSettings(
+        if (Object.hasOwn(settings, scope) && !(Object.hasOwn(record, "inHouseComponents") && scope.startsWith("in_house"))) validateModeCalculationSettings(
           settings[scope],
           `payload.modeCalculations.${scope}`,
           issues,
@@ -1711,14 +1738,15 @@ function validateAdvancedPayload(
     validateRevisionLineage(record.revisionLineage, issues);
   }
   if ("modeConfigurations" in record) {
-    validateModeConfigurations(record.modeConfigurations, issues);
+    validateModeConfigurations(record.modeConfigurations, issues, Object.hasOwn(record, "inHouseComponents"));
   }
   return issues;
 }
 
 function validateModeConfigurations(
   value: unknown,
-  issues: KnowledgeValidationIssue[]
+  issues: KnowledgeValidationIssue[],
+  hasComponentScopes = false
 ): void {
   const path = "payload.modeConfigurations";
   const configurations = validateObjectArray(value, path, issues);
@@ -1818,14 +1846,15 @@ function validateModeConfigurations(
       configuration.modeKind === "pmc" ||
       (configuration.modeKind === "execution" && configuration.executionSource === "in_house")
     );
+    const obsoleteInHouseScope = hasComponentScopes && configuration.modeKind === "execution" && configuration.executionSource === "in_house";
     for (const list of ["inclusions", "exclusions"] as const) {
-      if (!(list in configuration)) continue;
+      if (obsoleteInHouseScope || !(list in configuration)) continue;
       if (!ownsScope) {
         issues.push(irrelevantFieldIssue(`${configurationPath}.${list}`));
       }
       validateModeScopeItems(configuration[list], `${configurationPath}.${list}`, issues);
     }
-    if (ownsScope) {
+    if (ownsScope && !obsoleteInHouseScope) {
       validateModeScopeSelections(configuration, configurationPath, issues);
     }
     validateModeConfigurationFields(

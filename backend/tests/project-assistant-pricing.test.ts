@@ -28,6 +28,24 @@ describe("assistant exact Configuration selling prices", () => {
     (item.advanced!.modeCalculations as any).in_house_material = null;
     expect(() => assistantSellingAmount(item, "in_house", "1")).toThrow();
   });
+  it.each([undefined, [], [{ id: "selected", basketId: "external", subBasketId: "scope", basketName: "External", subBasketName: "Scope", available: false }]])(
+    "refuses selected component costs when catalogue metadata is missing or unavailable: %j", async (metadata) => {
+      const item = source();
+      item.advanced!.inHouseComponents = [{ id: "selected", basketId: "external", subBasketId: "scope", inclusions: [], exclusions: [], labor: settings(2300), material: settings(4700) }];
+      item.candidate.inHouseComponents = metadata;
+      expect(() => assistantSellingAmount(item, "in_house", "11", ["selected"])).toThrow("unavailable");
+      const quote = await calculateAssistantAddition({ lines: [line("ceiling", { pricingMode: "in_house", selectedInHouseComponentIds: ["selected"] })] }, approved(), reads([item]));
+      expect(quote.totalPaise).toBeNull();
+      expect(quote.lines[0]!.amountPaise).toBeNull();
+      expect(quote.missingInputs.length).toBeGreaterThan(0);
+    }
+  );
+  it("prices only selected available component metadata even when another component is unavailable", () => {
+    const item = source();
+    item.advanced!.inHouseComponents = ["selected", "unselected"].map((id) => ({ id, basketId: "external", subBasketId: `scope-${id}`, inclusions: [], exclusions: [], labor: settings(2300), material: settings(4700) }));
+    item.candidate.inHouseComponents = ["selected", "unselected"].map((id) => ({ id, basketId: "external", subBasketId: `scope-${id}`, basketName: "External", subBasketName: "Scope", available: id === "selected" }));
+    expect(assistantSellingAmount(item, "in_house", "11", ["selected"])).toBe(96250);
+  });
   it("uses separate saved PMC/Sub-Vendor margins, refuses absent values, and never supplies discounts", () => {
     const item = source(); (item.advanced!.modeCalculations as any).pmc.startingMarkupBps = 9000;
     expect(assistantSellingAmount(item, "pmc", "11")).toBe(97059);

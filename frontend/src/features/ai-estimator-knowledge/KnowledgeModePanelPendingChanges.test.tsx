@@ -3,6 +3,7 @@ import { createRef, StrictMode, type ComponentProps } from "react";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { authorizationFor } from "../../test/authFixtures";
 import { ApiError } from "../../api/client";
 import { KnowledgeModePanel, type KnowledgeModePanelHandle } from "./KnowledgeModePanel";
 import * as api from "./knowledgeApi";
@@ -11,6 +12,7 @@ import { knowledgeQueryKeys } from "./knowledgeQueryKeys";
 import type { KnowledgePendingChangesSnapshot } from "./knowledgePendingChanges";
 import type { KnowledgeItemDetail, KnowledgeJsonObject, KnowledgeSectionEnvelope, KnowledgeSectionKey } from "./knowledgeTypes";
 
+vi.mock("../../auth/AuthProvider", () => ({ useAuth: () => ({ user: { id: "admin", role: "super_admin" }, authorization: authorizationFor("super_admin") }) }));
 vi.mock("./knowledgeApi", async (original) => ({ ...await original<typeof import("./knowledgeApi")>(), getKnowledgeSection: vi.fn(), getKnowledgeItem: vi.fn(), updateKnowledgeSection: vi.fn() }));
 const metadata = { createdById: "actor", updatedById: "actor", createdAt: "2026-09-09T00:00:00Z", updatedAt: "2026-09-09T00:00:00Z" };
 const item: KnowledgeItemDetail = { id: "item-1", mainLineId: "item-1", mainLineName: "Gypsum ceiling", basketId: "basket-1", basketName: "POP / Gypsum", completionRequired: false, description: null, status: "draft", activeRevisionId: null, draftRevisionId: "revision-1", revisionNumber: 1, uomId: null, priorityId: null, modeIds: [], surfaceIds: [], vendorIds: [], completeness: { percentage: 0, sections: [], blockers: [], warnings: [] }, allowedActions: ["update_section"], activeRevision: null, draftRevision: null, blockers: [], warnings: [], version: 10, ...metadata };
@@ -74,11 +76,11 @@ describe("Mode pending publication lifecycle", () => {
   });
 
   it("publishes only the independent Sub-Vendor margin edit and clears it after confirmed save", async () => {
-    const user = userEvent.setup();
     vi.mocked(api.getKnowledgeSection).mockImplementation(async (_id, revision, key) => section(key, key === "advanced"
       ? { pmcMarginBps: 1_200, subVendorMarginBps: 1_500 } : key === "pricing" ? savedPricing : {}, 1, revision));
     const panel = setup();
-    await user.click(await screen.findByRole("checkbox", { name: "Execution" }));
+    expect(await screen.findByRole("checkbox", { name: "Execution" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Sub-Vendor" })).toBeChecked();
     expect(panel.latest()?.groups).toEqual([]);
     fireEvent.change(screen.getByRole("spinbutton", { name: "Max. Lisno Margin (%)" }), { target: { value: "20" } });
     expect(screen.getByRole("spinbutton", { name: "Max. PMC Margin (%)" })).toHaveValue(12);
@@ -97,7 +99,8 @@ describe("Mode pending publication lifecycle", () => {
     vi.mocked(api.getKnowledgeSection).mockImplementation(async (_id, revision, key) => section(key, key === "advanced"
       ? { pmcMarginBps: 1_200, subVendorMarginBps: 1_500 } : key === "pricing" ? savedPricing : {}, 1, revision));
     const panel = setup();
-    await user.click(await screen.findByRole("checkbox", { name: "Execution" }));
+    expect(await screen.findByRole("checkbox", { name: "Execution" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Sub-Vendor" })).toBeChecked();
     fireEvent.change(screen.getByRole("spinbutton", { name: "Max. Lisno Margin (%)" }), { target: { value: "20" } });
     vi.mocked(api.updateKnowledgeSection).mockRejectedValueOnce(new ApiError(409, "VERSION_CONFLICT", "Updated elsewhere."));
     vi.mocked(api.getKnowledgeSection).mockImplementation(async (_id, revision, key) => section(key, key === "advanced"
@@ -123,7 +126,8 @@ describe("Mode pending publication lifecycle", () => {
     vi.mocked(api.getKnowledgeSection).mockImplementation(async (_id, revision, key) => section(key, key === "advanced"
       ? { subVendorMinimumMarginBps: 1_500, subVendorMarginBps: 2_000 } : {}, 1, revision));
     const panel = setup();
-    await user.click(await screen.findByRole("checkbox", { name: "Execution" }));
+    expect(await screen.findByRole("checkbox", { name: "Execution" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Sub-Vendor" })).toBeChecked();
     fireEvent.change(screen.getByRole("spinbutton", { name: label }), { target: { value } });
     expect(panel.latest()?.groups[0]?.entries[0]?.incomplete).toBeUndefined();
     vi.mocked(api.updateKnowledgeSection).mockRejectedValueOnce(new ApiError(409, "VERSION_CONFLICT", "Updated elsewhere."));
@@ -159,7 +163,8 @@ describe("Mode pending publication lifecycle", () => {
       ? { pmcMarginBps: 1_400, ...server } : {}, 2, revision));
     await act(async () => { expect(await panel.ref.current?.save()).toBe(false); });
     await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Keep editing" }));
-    await user.click(screen.getByRole("checkbox", { name: "Execution" }));
+    expect(screen.getByRole("checkbox", { name: "Execution" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Sub-Vendor" })).toBeChecked();
     fireEvent.change(screen.getByRole("spinbutton", { name: edited }), { target: { value } });
     const entry = panel.latest()?.groups.find((group) => group.key === "sub_vendor:margin")?.entries[0];
     expect(entry?.fields).toEqual([{ key: edited.startsWith("Min.") ? "minimum" : "maximum",
@@ -386,4 +391,84 @@ describe("proposal Mode data source", () => {
     expect(api.updateKnowledgeSection).not.toHaveBeenCalled();
     expect(panel.queryClient.getQueryCache().getAll().every(query => query.queryKey[0] === "vendor-basket-proposals")).toBe(true);
   });
+});
+
+describe("component creation uses the parent Mode save", () => {
+  const calculations = { baseRatePaise: 1000, lowQuantityLimit: "10", impactBps: 1000, minimumMarkupBps: 1500, startingMarkupBps: 2000 };
+  const initialComponent = { id: "existing", basketId: "basket-1", subBasketId: "sub-existing", inclusions: [], exclusions: [], labor: calculations, material: calculations };
+  function componentPanel(advanced: KnowledgeJsonObject = { inHouseComponents: [] }) {
+    vi.mocked(api.getKnowledgeSection).mockImplementation(async (_id, revision, key) => section(key, key === "advanced" ? advanced : savedPricing, 1, revision));
+    const dataSource: KnowledgeEditorDataSource = { ...liveKnowledgeEditorDataSource, getSubBasketCatalog: vi.fn().mockResolvedValue({ items: [
+      { id: "sub-existing", basketId: "basket-1", name: "Existing work", version: 1 }, { id: "sub-new", basketId: "basket-1", name: "New work", version: 1 }
+    ], pagination: { hasMore: false, total: 2, offset: 0, limit: 100 } }) };
+    return setup({ dataSource, relationshipBaskets: [{ id: "basket-1", name: "POP / Gypsum", status: "active" } as ComponentProps<typeof KnowledgeModePanel>["relationshipBaskets"][number]] });
+  }
+  async function selectComponent() {
+    if (!screen.queryByRole("button", { name: "Add component" })) {
+      fireEvent.click(screen.getByRole("checkbox", { name: "Execution" }));
+      fireEvent.click(screen.getByRole("checkbox", { name: "In-house" }));
+    }
+    fireEvent.click(await screen.findByRole("button", { name: "Add component" }));
+    await screen.findByRole("option", { name: "New work" });
+    fireEvent.change(screen.getByRole("combobox", { name: "Sub-basket" }), { target: { value: "sub-new" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save component" }));
+  }
+  it("persists a blank component and other pending specification edits with CAS versions", async () => {
+    componentPanel();
+    fireEvent.change(await openSavedSpecificationEditor(), { target: { value: "Keep this pending edit" } });
+    await selectComponent();
+    await waitFor(() => expect(api.updateKnowledgeSection).toHaveBeenCalledTimes(2));
+    const calls = vi.mocked(api.updateKnowledgeSection).mock.calls;
+    expect(calls[0]![2]).toBe("advanced");
+    expect(calls[0]![3]).toMatchObject({ expectedVersion: 1, expectedAggregateVersion: 10, payload: { inHouseComponents: [{ id: expect.any(String), basketId: "basket-1", subBasketId: "sub-new", inclusions: [], exclusions: [], labor: null, material: null }] } });
+    expect(calls[1]![3]).toMatchObject({ expectedVersion: 1, expectedAggregateVersion: 11, payload: { specifications: [{ description: "Keep this pending edit" }] } });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Add In-house component" })).not.toBeInTheDocument());
+  });
+  it("blocks adding while another component has incomplete input and keeps it after the panel closes", async () => {
+    componentPanel({ inHouseComponents: [initialComponent] });
+    await screen.findByRole("button", { name: "Edit Specification 1" });
+    fireEvent.click(await screen.findByRole("button", { name: "POP / Gypsum / Existing work" }));
+    const region = screen.getByRole("region", { name: "POP / Gypsum / Existing work" });
+    fireEvent.change(within(region).getAllByRole("textbox", { name: "Base Rate (₹)" })[0]!, { target: { value: "unfinished" } });
+    await selectComponent();
+    await screen.findByText(/component could not be saved/);
+    expect(api.updateKnowledgeSection).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(within(region).getAllByRole("textbox", { name: "Base Rate (₹)" })[0]).toHaveValue("unfinished");
+    expect(screen.queryByRole("button", { name: "POP / Gypsum / New work" })).not.toBeInTheDocument();
+  });
+  it("rebases independent remote component edits without replacing local costs or new remote rows", async () => {
+    const user = userEvent.setup();
+    const second = { ...initialComponent, id: "second", subBasketId: "sub-new" };
+    const panel = componentPanel({ inHouseComponents: [initialComponent, second] });
+    fireEvent.click(await screen.findByRole("button", { name: "POP / Gypsum / Existing work" }));
+    const region = screen.getByRole("region", { name: "POP / Gypsum / Existing work" });
+    fireEvent.change(within(region).getAllByRole("textbox", { name: "Base Rate (₹)" })[0]!, { target: { value: "42" } });
+    vi.mocked(api.updateKnowledgeSection).mockRejectedValueOnce(new ApiError(409, "VERSION_CONFLICT", "Updated elsewhere."));
+    const remote = { ...second, labor: { ...calculations, baseRatePaise: 9900 } };
+    const third = { ...initialComponent, id: "third", basketId: "basket-2", subBasketId: "sub-third" };
+    vi.mocked(api.getKnowledgeSection).mockImplementation(async (_id, revision, key) => section(key, key === "advanced" ? { inHouseComponents: [initialComponent, remote, third] } : savedPricing, 2, revision));
+    await act(async () => { expect(await panel.ref.current?.save()).toBe(false); });
+    await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Keep editing" }));
+    await act(async () => { expect(await panel.ref.current?.save()).toBe(true); });
+    expect(vi.mocked(api.updateKnowledgeSection).mock.calls[1]![3]).toMatchObject({ expectedVersion: 2, payload: { inHouseComponents: [
+      { id: "existing", labor: { baseRatePaise: 4200 } }, { id: "second", labor: { baseRatePaise: 9900 } }, { id: "third" }
+    ] } });
+  });
+
+  it("does not convert or unmount a legacy calculator while it owns invalid pending text", async () => {
+    componentPanel({ modeCalculations: { pmc: null, sub_vendor: null, in_house_labor: calculations, in_house_material: calculations } });
+    await screen.findByRole("button", { name: "Edit Specification 1" });
+    expect(screen.getByRole("checkbox", { name: "Execution" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "In-house" })).toBeChecked();
+    const labor = screen.getByRole("region", { name: "Labor cost calculations" });
+    fireEvent.change(within(labor).getByRole("textbox", { name: "Base Rate (₹)" }), { target: { value: "unfinished legacy" } });
+    await selectComponent();
+    await screen.findByText(/component could not be saved/);
+    expect(api.updateKnowledgeSection).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(within(screen.getByRole("region", { name: "Labor cost calculations" })).getByRole("textbox", { name: "Base Rate (₹)" })).toHaveValue("unfinished legacy");
+    expect(screen.queryByRole("button", { name: "POP / Gypsum / New work" })).not.toBeInTheDocument();
+  });
+
 });

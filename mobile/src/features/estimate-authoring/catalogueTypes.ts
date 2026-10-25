@@ -1,6 +1,15 @@
 import type { EstimatePricingMode } from "./types";
 export interface Pagination { offset: number; hasMore: boolean; }
 export type EstimationModeBaseRatesPaise = Record<EstimatePricingMode, number | null>;
+export interface EstimationInHouseComponent {
+  id: string;
+  basketId: string;
+  subBasketId: string | null;
+  basketName: string;
+  subBasketName: string | null;
+  baseRatePaise: number | null;
+  unavailableReason?: string | null | undefined;
+}
 
 export interface EstimationCatalogueUom {
   id: string;
@@ -25,6 +34,7 @@ export interface EstimationCatalogueMainLine {
   revisionVersion?: number | undefined;
   inHouseBaseRatePaise?: number | null | undefined;
   modeBaseRatesPaise?: EstimationModeBaseRatesPaise | undefined;
+  inHouseComponents?: EstimationInHouseComponent[] | undefined;
   uom: EstimationCatalogueUom;
 }
 

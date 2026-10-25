@@ -982,6 +982,7 @@ function mapSnapshot(row: Row): EstimateClientReviewSnapshot {
         classification: lineItem.classification === "special" ? "special" as const : "standard" as const,
         ...(lineItem.pricingMode === undefined ? {} : { pricingMode: stringField(lineItem, "pricingMode") as EstimatePricingMode }),
         ...(lineItem.rateSource === undefined ? {} : { rateSource: stringField(lineItem, "rateSource") as EstimateRateSource }),
+        ...(lineItem.selectedInHouseComponentIds === undefined ? {} : { selectedInHouseComponentIds: lineItem.selectedInHouseComponentIds as string[] }),
         specification: null,
         rate: lineItem.rate === null ? null : numberField(lineItem, "rate"),
         amount: lineItem.amount === null ? null : numberField(lineItem, "amount"),

@@ -84,6 +84,42 @@ beforeEach(() => {
 });
 
 describe("Super Admin Main Basket requests", () => {
+  it("reviews and approves a Configuration Sub-Basket using only its saved details", async () => {
+    const subRequest: VendorBasketRequest = { ...request, kind: "configuration_sub_basket", vendorId: null, vendorName: null,
+      target: { kind: "new_sub_basket", basketId: basket.id }, targetParentName: basket.name, proposedName: "Boards", description: "Board supplies" };
+    rows = [subRequest];
+    server.use(http.get("/api/v1/admin/ai-estimator-knowledge/baskets", () => response(page([basket]))),
+      http.post("/api/v1/admin/ai-estimator-knowledge/basket-requests/:requestId/decision", async ({ request: incoming }) => {
+        const body = await incoming.json() as Record<string, unknown>; decisions.push(body);
+        rows = [{ ...subRequest, status: "fulfilled", version: 3, basketId: basket.id, subBasketId: "new-boards" }];
+        return response(rows[0]);
+      }));
+    const user = userEvent.setup(); renderWithQuery(<KnowledgeBasketRequestReview />);
+    await user.click(await screen.findByRole("button", { name: "Review and approve" }));
+    const dialog = screen.getByRole("dialog", { name: "Review Sub-Basket request" });
+    expect(dialog).toHaveTextContent("Board supplies");
+    expect(within(dialog).queryByRole("checkbox", { name: "Set up Sub Basket and Main Line" })).not.toBeInTheDocument();
+    await waitFor(() => expect(within(dialog).getByRole("button", { name: "Approve request" })).toBeEnabled());
+    await user.click(within(dialog).getByRole("button", { name: "Approve request" }));
+    await screen.findByText("Boards is approved and available in the component catalog.");
+    expect(decisions).toEqual([{ decision: "fulfill", expectedVersion: 2, idempotencyKey: expect.any(String), reason: null }]);
+    expect(dialog).toHaveTextContent("Main BasketPainting");
+    expect(dialog).toHaveTextContent("Sub BasketBoards");
+    expect(dialog).not.toHaveTextContent("Procurement can refresh");
+  });
+
+  it.each(["unavailable", "duplicate"])("blocks Configuration Sub-Basket approval when the catalog is %s", async (state) => {
+    rows = [{ ...request, kind: "configuration_sub_basket", vendorId: null, vendorName: null,
+      target: { kind: "new_sub_basket", basketId: basket.id }, targetParentName: basket.name, proposedName: subBasket.name, description: "Saved description" }];
+    server.use(http.get("/api/v1/admin/ai-estimator-knowledge/baskets", () => response(page(state === "unavailable" ? [] : [basket]))));
+    const user = userEvent.setup(); renderWithQuery(<KnowledgeBasketRequestReview />);
+    await user.click(await screen.findByRole("button", { name: "Review and approve" }));
+    const dialog = screen.getByRole("dialog", { name: "Review Sub-Basket request" });
+    await within(dialog).findByText(state === "unavailable" ? "The requested Main Basket is unavailable. Resolve it in Configuration before approving." : "This Sub-Basket already exists under the requested Main Basket. Review the existing catalog entry before deciding this request.");
+    expect(within(dialog).getByRole("button", { name: "Approve request" })).toBeDisabled();
+    expect(decisions).toHaveLength(0);
+  });
+
   it("routes a hierarchy intake to compact review and describes draft-only approval", async () => {
     rows = [{ ...request, kind: "configuration_proposal", proposalId: "intake-one", requestMode: "hierarchy_intake", proposalCounts: { subBaskets: 1, mainLines: 2 } }];
     const user = userEvent.setup(); renderWithQuery(<KnowledgeBasketRequestReview />);

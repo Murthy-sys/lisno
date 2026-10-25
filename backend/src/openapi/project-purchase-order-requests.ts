@@ -93,6 +93,7 @@ export const PROJECT_PURCHASE_ORDER_REQUEST_SCHEMAS = {
       ratePaise: paise }) }
   }),
   ProjectPurchaseOrderModeCalculationStage: object({
+    componentId: id, componentBasketId: id, componentSubBasketId: { ...id, nullable: true },
     scope: { type: "string", enum: ["pmc", "sub_vendor", "in_house_labor", "in_house_material"] },
     baseRatePaise: paise, baseSubtotalPaise: paise, lowQuantityLimit: { type: "string" },
     configuredImpactBps: { type: "integer", minimum: 0 }, thresholdMet: { type: "boolean" },
@@ -101,7 +102,7 @@ export const PROJECT_PURCHASE_ORDER_REQUEST_SCHEMAS = {
     marginBps: { type: "integer", minimum: 0 }, marginAmountPaise: paise,
     sellingBeforeDiscountPaise: paise, discountBasisPaise: paise, discountAmountPaise: paise,
     floorSellingPaise: { ...paise, nullable: true }, sellingPaise: paise
-  }),
+  }, ["scope", "baseRatePaise", "baseSubtotalPaise", "lowQuantityLimit", "configuredImpactBps", "thresholdMet", "appliedImpactBps", "adjustedUnitRatePaise", "adjustedCostPaise", "lowQuantityImpactPaise", "marginBps", "marginAmountPaise", "sellingBeforeDiscountPaise", "discountBasisPaise", "discountAmountPaise", "floorSellingPaise", "sellingPaise"]),
   ProjectPurchaseOrderModeDraftPreview: object({
     projectId: id, estimateSource: source, sourceLineItemKey: id,
     decisionVersion: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER - 1 },

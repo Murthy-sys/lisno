@@ -28,7 +28,8 @@ export const aiEstimatorKnowledgeContextRequestSchema = z
     surfaceId: stableIdSchema.optional(),
     modeId: stableIdSchema.optional(),
     modeKind: z.enum(AI_ESTIMATOR_KNOWLEDGE_MODE_KINDS).optional(),
-    executionSource: z.enum(AI_ESTIMATOR_KNOWLEDGE_EXECUTION_SOURCES).optional()
+    executionSource: z.enum(AI_ESTIMATOR_KNOWLEDGE_EXECUTION_SOURCES).optional(),
+    selectedInHouseComponentIds: z.array(stableIdSchema).max(50).refine((ids) => new Set(ids).size === ids.length).optional()
   })
   .strict()
   .refine(

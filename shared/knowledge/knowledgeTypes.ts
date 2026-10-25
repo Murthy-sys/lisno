@@ -509,9 +509,19 @@ export interface KnowledgeConfigurationContext {
     readonly exclusions: readonly { readonly id: string; readonly name: string }[];
   };
   readonly state: "ready" | "selection_required" | "not_configured" | "invalid";
+  readonly inHouseComponents?: readonly {
+    readonly id: string;
+    readonly basketId: string;
+    readonly subBasketId: string | null;
+    readonly inclusions: readonly { readonly id: string; readonly name: string }[];
+    readonly exclusions: readonly { readonly id: string; readonly name: string }[];
+  }[];
   readonly issues: readonly { readonly code: string; readonly scope: KnowledgeCalculationScope | null }[];
   readonly calculations: readonly {
     readonly scope: KnowledgeCalculationScope;
+    readonly componentId?: string;
+    readonly componentBasketId?: string;
+    readonly componentSubBasketId?: string | null;
     readonly source: "scoped" | "legacy_shared" | "legacy_in_house" | null;
     readonly settings: {
       readonly baseRatePaise: number;

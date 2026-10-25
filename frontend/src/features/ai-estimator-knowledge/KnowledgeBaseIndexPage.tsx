@@ -47,6 +47,7 @@ import { syncKnowledgeBasketDeletion, syncKnowledgeBasketMutation } from "./know
 import { knowledgeQueryKeys } from "./knowledgeQueryKeys";
 import { KNOWLEDGE_ITEM_STATUS_LABELS } from "./knowledgePresentation";
 import { KnowledgeBasketManagementDialog } from "./KnowledgeBasketManagementDialog";
+import { KnowledgeSubBasketMargins } from "./KnowledgeSubBasketMargins";
 import { KnowledgeBasketCard } from "./KnowledgeBasketCard";
 import { KnowledgeBasketRequestReview } from "./KnowledgeBasketRequestReview";
 import { CreateKnowledgeItemDialog } from "./CreateKnowledgeItemDialog";
@@ -764,6 +765,9 @@ export function KnowledgeBaseIndexPage() {
                     name={subBasketName}
                     panelId={subPanelId}
                     imageUrl={null}
+                    headerDetails={<KnowledgeSubBasketMargins basketId={basketId} subBasketId={subBasketId}
+                      subBasketName={subBasketName} enabled={expanded}
+                      readOnly={!canUpdate || auth.user?.role !== "super_admin" || basketRecord?.status === "archived"} />}
                     countText={`${subItems.length} ${subItems.length === 1 ? "item" : "items"} on this page`}
                     expanded={subExpanded}
                     onToggle={() => toggleSubBasket(subBasketId)}

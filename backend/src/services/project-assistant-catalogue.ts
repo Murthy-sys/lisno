@@ -58,7 +58,10 @@ export async function readAssistantLines(ids: readonly string[], session?: Clien
       mainLineId: id, mainBasketId: value.line.basketId, subBasketId: value.line.subBasketId,
       name: value.line.name, basketName: value.mainBasketName, subBasketName: value.subBasketName,
       revisionId: value.line.revisionId, revisionVersion: value.line.revisionVersion, itemVersion: value.line.itemVersion,
-      uom: { ...value.line.uom }, available
+      uom: { ...value.line.uom }, available,
+      ...(value.line.inHouseComponents === undefined ? {} : { inHouseComponents: value.line.inHouseComponents.map(({ id, basketId, subBasketId, basketName, subBasketName, baseRatePaise }) => ({
+        id, basketId, subBasketId, basketName, subBasketName, available: baseRatePaise !== null
+      })) })
     };
     lines.set(id, { candidate, advanced: advanced ? object(advanced.payload) : null, temporary: value.line.itemType === "temporary" });
   }

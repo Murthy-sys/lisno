@@ -1,5 +1,5 @@
 import { ApiProtocolError } from "../../core/http/apiClient";
-import { buildConfiguredLines, configuredLineAmountPaise, configuredQuantityUnits, parseSellingRate, restoreConfiguredLine, type ConfiguredLineDraft } from "./configuredEstimate";
+import { buildConfiguredLines, configuredLineAmountPaise, configuredQuantityUnits, hasNativeReadOnlyInHousePricing, parseSellingRate, restoreConfiguredLine, type ConfiguredLineDraft } from "./configuredEstimate";
 import type { EstimationCatalogue } from "./catalogueTypes";
 import { parseBedroomCount, requiresBedroomCount } from "./estimateRoomOptions";
 import type { ConfiguredEstimateLine, EstimateClassification, EstimateDraft, EstimateDraftInput, LegacyEstimateLine, StaffLead } from "./types";
@@ -40,6 +40,7 @@ export function validateStaffForm(form: StaffEstimateForm, submitting = false): 
     if (Boolean(room.length.trim()) !== Boolean(room.width.trim())) return `Enter both length and width for ${room.label}, or leave both empty.`;
   }
   for (const line of form.lines.filter((item) => item.included || item.persistedId)) {
+    if (hasNativeReadOnlyInHousePricing(line) && (line.inHouseComponentsNeedReview || !line.selectedInHouseComponentIds?.length)) return `${line.mainLineName}: review In-house components in the web estimate workspace before saving.`;
     if (line.sourceMissing) return `${line.mainLineName}: the current Configuration source is unavailable. Refresh or remove this saved item.`;
     if (line.uomNeedsQuantityReview) return `${line.mainLineName}: confirm the quantity for its updated unit.`;
     if (parseSellingRate(line.rateInput).kind === "invalid" || configuredQuantityUnits(line.quantity, line.uomDecimalScale, line.included) === null) return `${line.mainLineName}: enter a valid quantity and selling rate (up to 2 decimals).`;
@@ -66,6 +67,7 @@ export function staffFormInput(form: StaffEstimateForm, expectedVersion?: number
         mainBasketId: line.mainBasketId, subBasketId: line.subBasketId, revisionId: line.revisionId, uomId: line.uomId,
         ...(line.itemVersion === undefined ? {} : { itemVersion: line.itemVersion }), ...(line.revisionVersion === undefined ? {} : { revisionVersion: line.revisionVersion }),
         ...(line.recommendationSourceMainLineIds === undefined ? {} : { recommendationSourceMainLineIds: line.recommendationSourceMainLineIds }),
+        ...(line.selectedInHouseComponentIds === undefined ? {} : { selectedInHouseComponentIds: line.selectedInHouseComponentIds.slice() }),
         quantity: line.quantity, included: line.included, ratePaise: parseSellingRate(line.rateInput).paise
       }))
     ]

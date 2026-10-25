@@ -14,6 +14,8 @@ import {
   knowledgeModeFieldTypeLabel,
   knowledgeModeFieldValueLabel,
   parseKnowledgeModeConfigurations,
+  currentModeConfigurationIssues,
+  retainObsoleteInHouseScope,
   partitionKnowledgeModeConfigurations,
   withKnowledgeModeConfigurations,
   type KnowledgeExecutionSource,
@@ -38,6 +40,8 @@ export interface KnowledgeModeConfigurationBuilderProps {
   readonly payload: KnowledgeJsonObject;
   readonly mainLineName: string;
   readonly calculation?: (scope: ModeCalculationScope, active: boolean, marginControl?: ReactNode) => ReactNode;
+  readonly inHouseComponents?: ReactNode;
+  readonly inHouseComponentsValid?: boolean;
   readonly inHouseTotal?: (active: boolean) => ReactNode;
   readonly calculationValidity?: Readonly<Record<ModeCalculationScope, boolean>>;
   readonly descriptionResetKey?: string;
@@ -65,6 +69,8 @@ export function KnowledgeModeConfigurationBuilder({
   mainLineName,
   calculation,
   inHouseTotal,
+  inHouseComponents,
+  inHouseComponentsValid = true,
   calculationValidity = { pmc: true, sub_vendor: true, in_house_labor: true, in_house_material: true },
   descriptionResetKey = "default",
   onPendingDescriptionChange = ignorePendingDescription,
@@ -91,8 +97,8 @@ export function KnowledgeModeConfigurationBuilder({
   const description = typeof payload.modeDescription === "string"
     ? syncModeDescription(payload.modeDescription, partitioned.primary.pmc, undefined, inHouseConfiguration) : generatedDescription;
   const issues = useMemo(
-    () => [...parsed.issues, ...modeDescriptionIssues(payload.modeDescription == null || typeof payload.modeDescription === "string" ? description : payload.modeDescription), ...modeCalculationsIssues(payload), ...pmcMarginRangeIssues(payload), ...subVendorMarginRangeIssues(payload), ...serverIssues],
-    [parsed.issues, description, payload, serverIssues]
+    () => [...currentModeConfigurationIssues(payload, modes), ...modeDescriptionIssues(payload.modeDescription == null || typeof payload.modeDescription === "string" ? description : payload.modeDescription), ...modeCalculationsIssues(payload), ...pmcMarginRangeIssues(payload), ...subVendorMarginRangeIssues(payload), ...serverIssues],
+    [modes, description, payload, serverIssues]
   );
   const recoveries = [
     ...partitioned.recovery,
@@ -150,8 +156,8 @@ export function KnowledgeModeConfigurationBuilder({
     .filter(({ executionSource }) => visibleExecutionSources[executionSource])
     .map(({ label }) => label).join(" + ");
   const showSubVendorScope = visibleModes.execution && visibleExecutionSources.sub_vendor;
-  const invalidCalculationScope = MODE_CALCULATION_SCOPES.find((scope) => !calculationValidity[scope]);
-  const calculationValid = invalidCalculationScope === undefined;
+  const invalidCalculationScope = MODE_CALCULATION_SCOPES.find((scope) => !(Object.hasOwn(payload, "inHouseComponents") && scope.startsWith("in_house")) && !calculationValidity[scope]);
+  const calculationValid = invalidCalculationScope === undefined && inHouseComponentsValid;
 
   useEffect(() => {
     onValidationChange(issues.length === 0 && !paragraphPending && calculationValid);
@@ -165,7 +171,8 @@ export function KnowledgeModeConfigurationBuilder({
     lastValidationAttempt.current = validationAttempt;
     if (paragraphPending || issues[0]?.path === "modeDescription") showMode("pmc");
     const firstIssue = paragraphPending ? { path: "modeDescription", message: "Save or cancel the description." }
-      : invalidCalculationScope ? { path: `modeCalculations.${invalidCalculationScope}`, message: "Review the calculation inputs." } : issues[0]!;
+      : invalidCalculationScope ? { path: `modeCalculations.${invalidCalculationScope}`, message: "Review the calculation inputs." } : issues[0] ?? { path: "inHouseComponents", message: "Review the In-house component fields." };
+    if (firstIssue.path.startsWith("inHouseComponents")) showExecutionSource("in_house");
     if (firstIssue.path === "pmcMarginBps" || firstIssue.path === "pmcMinimumMarginBps") showMode("pmc");
     selectConfigurationForIssue(
       firstIssue,
@@ -180,7 +187,7 @@ export function KnowledgeModeConfigurationBuilder({
 
   function updateConfigurations(next: readonly KnowledgeModeConfiguration[]) {
     onDirty();
-    const nextPayload = withKnowledgeModeConfigurations(payload, next);
+    const nextPayload = retainObsoleteInHouseScope(payload, withKnowledgeModeConfigurations(payload, next));
     onChange(typeof payload.modeDescription === "string" ? {
       ...nextPayload,
       modeDescription: syncModeDescription(
@@ -503,6 +510,8 @@ export function KnowledgeModeConfigurationBuilder({
                     </section>
                     {!calculation ? subVendorMarginControl : calculationSlot("sub_vendor")}
                   </> : <>
+                    {inHouseComponents}
+                    {!Object.hasOwn(payload, "inHouseComponents") ? <>
                     <section aria-label="In-house scope">
                       <div className="knowledge-mode-configuration__mode-content">
                         <div className="knowledge-pmc-scope knowledge-in-house-scope">
@@ -523,6 +532,7 @@ export function KnowledgeModeConfigurationBuilder({
                     {calculationSlot("in_house_labor")}
                     {calculationSlot("in_house_material")}
                     {inHouseTotal?.(active)}
+                    </> : null}
                   </>}
                 </div>
               </section>;

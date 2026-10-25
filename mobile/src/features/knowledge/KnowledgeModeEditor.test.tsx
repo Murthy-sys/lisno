@@ -23,6 +23,28 @@ async function showExecution() {
 
 describe("native Mode editing", () => {
   beforeEach(() => jest.clearAllMocks());
+  it("shows component costs read-only and preserves them while editing PMC despite ignored legacy costs", async () => {
+    const cost = { baseRatePaise: 1200, minimumMarkupBps: 0, startingMarkupBps: 0, lowQuantityLimit: "0", impactBps: 0 };
+    const components = [{ id: "component-one", basketId: "basket-one", subBasketId: "sub-one", inclusions: [], exclusions: [], labor: cost, material: cost }];
+    const ignoredLegacy = { baseRatePaise: "broken" };
+    const retainedScope = { id: "old-in-house", modeKind: "execution", executionSource: "in_house", fields: [], inclusions: "retained old format", exclusions: [{ id: "out", name: "Legacy", selected: true }] };
+    await render(<Harness initial={{ inHouseComponents: components, modeConfigurations: [retainedScope], modeCalculations: { pmc: cost, sub_vendor: cost, in_house_labor: ignoredLegacy } }} />);
+    await showExecution();
+    const inHouse = screen.getByRole("checkbox", { name: "In-house" });
+    if (!inHouse.props.accessibilityState?.checked) await fireEvent.press(inHouse);
+    expect(screen.getByText(/In-house components are shown read-only/)).toBeOnTheScreen();
+    expect(screen.queryByLabelText("In-house Labour Base Rate (₹)")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Test In-house total" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Add In-house Inclusion" })).toBeNull();
+    await fireEvent.changeText(screen.getByLabelText("PMC Base Rate (₹)"), "12");
+    expect(onPayload.mock.lastCall?.[0]).toMatchObject({ inHouseComponents: components, modeCalculations: { in_house_labor: ignoredLegacy, pmc: { baseRatePaise: 1200 } } });
+    expect(onPayload.mock.lastCall?.[0].modeConfigurations).toEqual([retainedScope]);
+    expect(screen.queryByText("Saved Mode configurations needing recovery")).toBeNull();
+    expect(onValidity).toHaveBeenLastCalledWith(true);
+    await fireEvent.press(screen.getByRole("checkbox", { name: "Sub-Vendor Inclusion: Transport" }));
+    expect(onPayload.mock.lastCall?.[0].modeConfigurations).toContainEqual(retainedScope);
+    expect(onValidity).toHaveBeenLastCalledWith(true);
+  });
   it("keeps incomplete money edits, dirty state and hidden modes without losing the draft", async () => {
     await render(<Harness />);
     await fireEvent.changeText(screen.getByLabelText("PMC Base Rate (₹)"), "12.");

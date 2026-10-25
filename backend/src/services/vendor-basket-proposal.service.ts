@@ -802,8 +802,15 @@ function proposalIdentityFields(resource: ProposalResource): Array<{ row: Row; k
   };
   const reference = references[section.sectionKey];
   const rows = reference && section.payload[reference.rows];
-  if (!reference || !Array.isArray(rows)) return [];
-  return rows.flatMap((row: Row) => reference.keys.filter((key) => typeof row[key] === "string").map((key) => ({ row, key })));
+  const result = reference && Array.isArray(rows)
+    ? rows.flatMap((row: Row) => reference.keys.filter((key) => typeof row[key] === "string").map((key) => ({ row, key }))) : [];
+  if (section.sectionKey === "advanced" && Array.isArray(section.payload.inHouseComponents)) {
+    for (const component of section.payload.inHouseComponents) {
+      if (!component || typeof component !== "object" || Array.isArray(component)) continue;
+      for (const key of ["basketId", "subBasketId"]) if (typeof component[key] === "string") result.push({ row: component, key });
+    }
+  }
+  return result;
 }
 function changedFields(before: unknown, after: unknown): string[] {
   const old = before && typeof before === "object" ? before as Row : {}; const next = after && typeof after === "object" ? after as Row : {};

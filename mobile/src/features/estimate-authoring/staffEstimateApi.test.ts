@@ -1,8 +1,17 @@
 import type { MobileRuntime } from "../../runtime/createRuntime";
 import { getStaffCatalogue, getStaffEstimate, getStaffEstimateQueue, parseStaffEstimate, retryEstimateEmail, saveStaffEstimate, staffEstimateKey, submitStaffEstimate } from "./staffEstimateApi";
-import { catalogueFixture, estimateFixture, leadFixture } from "./__tests__/fixtures";
+import { catalogueFixture, componentCatalogueFixture, componentLineFixture, estimateFixture, leadFixture } from "./__tests__/fixtures";
 import { restoreStaffForm, staffFormInput } from "./staffEstimateModel";
 function runtime(get = jest.fn(), post = jest.fn(), put = jest.fn()) { return { api: { authenticated: { get, post, put } } } as unknown as MobileRuntime; }
+it("validates and preserves saved component identities and catalogue metadata including zero rates", async () => {
+ expect(parseStaffEstimate(estimateFixture({ lineItems: [componentLineFixture] })).lineItems[0]).toMatchObject({ selectedInHouseComponentIds: ["component-one"] });
+ expect(() => parseStaffEstimate(estimateFixture({ lineItems: [{ ...componentLineFixture, selectedInHouseComponentIds: ["component-one", "component-one"] }] }))).toThrow("invalid response");
+ const catalogue = componentCatalogueFixture();
+ const get = jest.fn().mockResolvedValue({ ...catalogue, pagination: { offset: 0, hasMore: false } });
+ await expect(getStaffCatalogue(runtime(get))).resolves.toMatchObject(catalogue);
+ catalogue.items[0]!.subBaskets[0]!.mainLines[0]!.inHouseComponents![0]!.baseRatePaise = -1;
+ await expect(getStaffCatalogue(runtime(get))).rejects.toThrow("invalid response");
+});
 it("binds staff reads and acknowledgements to the requested lead and monotonically advancing save version", async () => {
  const get = jest.fn().mockResolvedValue({ ...estimateFixture(), leadId: "other-lead" }); await expect(getStaffEstimate(runtime(get), "lead-one")).rejects.toThrow("invalid response");
  const input = staffFormInput(restoreStaffForm(estimateFixture(), leadFixture, catalogueFixture), 7); const put = jest.fn().mockResolvedValue(estimateFixture({ version: 8 }));

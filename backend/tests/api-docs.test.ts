@@ -1167,7 +1167,7 @@ describe("OpenAPI and Swagger UI", () => {
     }
   });
 
-  it("contains all 458 routes without versioning paths twice", () => {
+  it("contains all 461 routes without versioning paths twice", () => {
     const methods = new Set(["get", "post", "put", "patch", "delete"]);
     const operationCount = Object.values(openApiDocument.paths).reduce(
       (total, pathItem) =>
@@ -1176,7 +1176,7 @@ describe("OpenAPI and Swagger UI", () => {
     );
 
     expect(operationCount).toBe(HUMAN_JWT_OPERATION_LIST.length + 21);
-    expect(operationCount).toBe(458);
+    expect(operationCount).toBe(461);
     expect(Object.keys(openApiDocument.paths).some((path) =>
       path.startsWith("/api/v1")
     )).toBe(false);
@@ -1186,7 +1186,7 @@ describe("OpenAPI and Swagger UI", () => {
     const knowledgeOperations = HUMAN_JWT_OPERATION_LIST.filter(
       ({ availability, key }) => availability === "ai_estimator_knowledge" && !key.includes("/procurement/vendor-kpis") && !key.includes("/procurement/vendor-inductions") && !key.includes("basket-proposals")
     );
-    expect(knowledgeOperations).toHaveLength(70);
+    expect(knowledgeOperations).toHaveLength(73);
 
     for (const registered of knowledgeOperations) {
       const { method, path } = splitHumanOperationKey(registered.key);

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { View } from "react-native";
 import { Button, Field } from "../../ui/primitives";
 import type { EstimationCatalogue } from "./catalogueTypes";
-import { configuredLineAmountPaise, configuredModeBaseRate, deselectConfiguredRecommendationSources, estimatePricingModeLabels, formatRateInput, updateConfiguredLinePricing, type ConfiguredLineDraft } from "./configuredEstimate";
+import { configuredLineAmountPaise, configuredModeBaseRate, deselectConfiguredRecommendationSources, estimatePricingModeLabels, formatRateInput, hasNativeReadOnlyInHousePricing, updateConfiguredLinePricing, type ConfiguredLineDraft } from "./configuredEstimate";
 import type { EstimateClassification, EstimatePricingMode } from "./types";
 import { estimatePaise, type StaffEstimateForm } from "./staffEstimateModel";
 import { EstimateChoice, EstimateSection, EstimateSelect, EstimateText, estimateStyles as styles } from "./EstimateUI";
@@ -35,6 +35,7 @@ export function EstimateItemEditor({ form, activeRoomId, onRoomChange, disabled,
   const room = form.rooms.find((item) => item.id === activeRoomId) ?? form.rooms[0];
   const lines = form.lines.filter((line) => line.roomId === room?.id && (!selectedOnly || line.included) && [line.mainLineName, line.mainBasketName, line.subBasketName].some((value) => value?.toLowerCase().includes(search.toLowerCase())));
   function update(line: ConfiguredLineDraft, change: Partial<ConfiguredLineDraft>) {
+    if (hasNativeReadOnlyInHousePricing(line)) return;
     const next = change.included === false ? deselectConfiguredRecommendationSources(form.lines, new Set([line.key])) : form.lines.map((item) => item.key === line.key ? updateConfiguredLinePricing(item, change, form.classifications[line.mainBasketId] ?? "standard") : item);
     onChange({ ...form, lines: next });
   }
@@ -45,20 +46,29 @@ export function EstimateItemEditor({ form, activeRoomId, onRoomChange, disabled,
     {!lines.length && !form.legacyLines.length ? <EstimateText>No matching items. Select rooms and Main Baskets first.</EstimateText> : null}
     {lines.map((line) => {
       const classification = line.classification ?? form.classifications[line.mainBasketId] ?? "standard";
+      const componentPricing = hasNativeReadOnlyInHousePricing(line);
+      const lineDisabled = disabled || componentPricing;
       return <EstimateSection key={line.key} title={line.mainLineName}>
         <EstimateText>{line.mainBasketName}{line.subBasketName ? ` / ${line.subBasketName}` : ""} · {line.itemType === "temporary" ? "Temporary item" : "Main Line"} · {line.uomName}</EstimateText>
-        {line.sourceMissing ? <EstimateText error>Current Configuration is unavailable or this item's basket changed. Remove it or refresh Configuration before saving.</EstimateText> : <EstimateChoice label={`Include ${line.mainLineName}`} multiple selected={line.included} disabled={disabled} onPress={() => update(line, { included: !line.included })} />}
+        {componentPricing ? <><EstimateText>In-house component pricing is read-only here. Review components and pricing in the web estimate workspace.</EstimateText>
+          {line.selectedInHouseComponentIds?.map((id, index) => {
+            const component = line.inHouseComponents?.find(row => row.id === id);
+            return <EstimateText key={id}>{component ? `${component.basketName} / ${component.subBasketName ?? "Existing In-house settings"}` : `Selected component ${index + 1}`}</EstimateText>;
+          })}
+          {line.inHouseComponentsNeedReview ? <EstimateText error>Component settings have changed or need a selection. Review this item on the web before saving.</EstimateText> : null}
+        </> : line.inHouseComponents !== undefined ? <EstimateText>Choose In-house components and pricing in the web estimate workspace.</EstimateText> : null}
+        {line.sourceMissing ? <EstimateText error>Current Configuration is unavailable or this item's basket changed. Remove it or refresh Configuration before saving.</EstimateText> : <EstimateChoice label={`Include ${line.mainLineName}`} multiple selected={line.included} disabled={lineDisabled} onPress={() => update(line, { included: !line.included })} />}
         {line.included && !line.sourceMissing ? <>
-          <EstimateSelect label={`${line.mainLineName} type`} value={classification} allowEmpty={false} disabled={disabled} options={[{ value: "standard", label: "Standard" }, { value: "special", label: "Special" }]} onChange={(value) => update(line, { classification: value as EstimateClassification })} />
-          {classification === "special" ? <EstimateSelect label={`${line.mainLineName} pricing mode`} value={line.pricingMode ?? ""} allowEmpty={false} disabled={disabled} options={Object.entries(estimatePricingModeLabels).map(([value, label]) => ({ value, label }))} onChange={(value) => update(line, { pricingMode: value as EstimatePricingMode })} /> : <EstimateText>Standard · Sub-Vendor pricing</EstimateText>}
-          <NumberField label={`${line.mainLineName} quantity (${line.uomName})`} value={line.quantity} disabled={disabled} onChange={(quantity) => update(line, { quantity })} />
-          {line.uomNeedsQuantityReview ? <><EstimateText error>The unit changed from {line.previousUomName ?? "the previous unit"} to {line.uomName}. Review and confirm the quantity.</EstimateText><Button label={`Confirm ${line.mainLineName} quantity`} disabled={disabled} onPress={() => update(line, { uomNeedsQuantityReview: false })} /></> : null}
-          <Field label={`${line.mainLineName} selling rate (₹)`} value={line.rateInput} keyboardType="decimal-pad" editable={!disabled} onChangeText={(rateInput) => update(line, { rateInput })} />
+          <EstimateSelect label={`${line.mainLineName} type`} value={classification} allowEmpty={false} disabled={lineDisabled} options={[{ value: "standard", label: "Standard" }, { value: "special", label: "Special" }]} onChange={(value) => update(line, { classification: value as EstimateClassification })} />
+          {classification === "special" ? <EstimateSelect label={`${line.mainLineName} pricing mode`} value={line.pricingMode ?? ""} allowEmpty={false} disabled={lineDisabled} options={Object.entries(estimatePricingModeLabels).filter(([value]) => value !== "in_house" || line.inHouseComponents === undefined || componentPricing).map(([value, label]) => ({ value, label }))} onChange={(value) => update(line, { pricingMode: value as EstimatePricingMode })} /> : <EstimateText>Standard · Sub-Vendor pricing</EstimateText>}
+          <NumberField label={`${line.mainLineName} quantity (${line.uomName})`} value={line.quantity} disabled={lineDisabled} onChange={(quantity) => update(line, { quantity })} />
+          {line.uomNeedsQuantityReview ? <><EstimateText error>The unit changed from {line.previousUomName ?? "the previous unit"} to {line.uomName}. Review and confirm the quantity.</EstimateText><Button label={`Confirm ${line.mainLineName} quantity`} disabled={lineDisabled} onPress={() => update(line, { uomNeedsQuantityReview: false })} /></> : null}
+          <Field label={`${line.mainLineName} selling rate (₹)`} value={line.rateInput} keyboardType="decimal-pad" editable={!lineDisabled} onChangeText={(rateInput) => update(line, { rateInput })} />
           <EstimateText>Rate source: {line.rateSource === "configuration" ? "Configuration" : "Manual"}. Amount: {estimatePaise(configuredLineAmountPaise(line))}</EstimateText>
-          <Button label={`Use Configuration rate for ${line.mainLineName}`} variant="quiet" disabled={disabled || !line.pricingMode} onPress={() => onChange({ ...form, lines: form.lines.map((item) => item.key === line.key ? { ...item, rateSource: "configuration", rateInput: formatRateInput(configuredModeBaseRate(item, item.pricingMode!)) } : item) })} />
+          <Button label={`Use Configuration rate for ${line.mainLineName}`} variant="quiet" disabled={lineDisabled || !line.pricingMode} onPress={() => onChange({ ...form, lines: form.lines.map((item) => item.key === line.key ? { ...item, rateSource: "configuration", rateInput: formatRateInput(configuredModeBaseRate(item, item.pricingMode!)) } : item) })} />
           {line.estimateNotes?.map((note, index) => <EstimateText key={index}>{note}</EstimateText>)}
         </> : null}
-        {line.persistedId || line.sourceMissing ? <Button label={`Remove saved ${line.mainLineName}`} variant="quiet" disabled={disabled} onPress={() => onChange({ ...form, lines: form.lines.filter((item) => item.key !== line.key) })} /> : null}
+        {line.persistedId || line.sourceMissing ? <Button label={`Remove saved ${line.mainLineName}`} variant="quiet" disabled={lineDisabled} onPress={() => onChange({ ...form, lines: form.lines.filter((item) => item.key !== line.key) })} /> : null}
       </EstimateSection>;
     })}
     {form.legacyLines.map((line, index) => ({ line, index })).filter(({ line }) => line.roomName === room?.label).map(({ line, index }) => <EstimateSection key={line.id ?? `${line.catalogueId}:${index}`} title={line.specification}>

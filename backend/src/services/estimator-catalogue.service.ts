@@ -1,3 +1,5 @@
+import { lockInHouseComponentReferences } from "./ai-estimator-knowledge-in-house-components.service.js";
+import { readInHouseComponents, inHouseComponentBaseRate } from "../domain/ai-estimator-knowledge-in-house-components.js";
 import { normalizeDesignRules, validateDesignRules, designRulesDigest, designRuleEstimateNotes, type DesignRules } from "../domain/main-line-design-rules.js";
 import type mongoose from "mongoose";
 
@@ -31,6 +33,8 @@ export interface EstimatorCatalogueLine {
   revisionStatus: "draft" | "active";
   itemVersion: number;
   revisionVersion: number;
+  inHouseComponents?: Array<{ id: string; basketId: string; subBasketId: string | null;
+    basketName: string; subBasketName: string | null; baseRatePaise: number | null; unavailableReason?: string | null }>;
   inHouseBaseRatePaise: number | null;
   modeBaseRatesPaise: EstimateModeBaseRatesPaise;
   uom: { id: string; code: string; name: string; decimalScale: number };
@@ -474,6 +478,7 @@ async function projectLines(
   const advancedQuery = AiEstimatorKnowledgeSectionModel.find({
     revisionId: { $in: revisionIds }, sectionKey: "advanced"
   }).select({ revisionId: 1, mainLineId: 1, applicability: 1,
+    "payload.inHouseComponents": 1,
     "payload.modeCalculations.pmc.baseRatePaise": 1,
     "payload.modeCalculations.sub_vendor.baseRatePaise": 1,
     "payload.modeCalculations.in_house_labor": 1,
@@ -487,6 +492,16 @@ async function projectLines(
   const overviews = await overviewQuery.lean().exec();
   const advancedSections = await advancedQuery.lean().exec();
   const designSections = await designQuery.lean().exec();
+  const componentRows = advancedSections.flatMap((section) => readInHouseComponents(section.payload) ?? []);
+  const componentBasketQuery = AiEstimatorKnowledgeBasketModel.find({ _id: { $in: [...new Set(componentRows.map((row) => row.basketId))] }, status: "active" }).select({ _id: 1, name: 1 });
+  const componentSubBasketQuery = AiEstimatorKnowledgeSubBasketModel.find({ _id: { $in: [...new Set(componentRows.flatMap((row) => row.subBasketId ? [row.subBasketId] : []))] }, status: { $ne: "archived" } }).select({ _id: 1, basketId: 1, name: 1 });
+  if (session) { componentBasketQuery.session(session); componentSubBasketQuery.session(session); }
+  const componentBaskets = new Map((await componentBasketQuery.lean().exec()).map((row) => [String(row._id), row]));
+  const componentSubBaskets = new Map((await componentSubBasketQuery.lean().exec()).map((row) => [String(row._id), row]));
+  const componentRowsByRevision = new Map(advancedSections.map((section) => [String(section.revisionId), readInHouseComponents(section.payload)]));
+  const availableComponentRevisionIds = new Set(advancedSections.filter((section) => section.applicability === "configured" &&
+    revisions.some((revision) => String(revision._id) === String(section.revisionId) && String(revision.mainLineId) === String(section.mainLineId)))
+    .map((section) => String(section.revisionId)));
   const designByRevision = new Map(designSections.map((section) => [String(section.revisionId), section]));
   const revisionById = new Map(revisions.map((revision) => [String(revision._id), revision]));
   const uomIdByRevision = new Map<string, string>();
@@ -538,6 +553,18 @@ async function projectLines(
       itemStatus: raw.status as EstimatorCatalogueLine["itemStatus"],
       revisionStatus: source.status,
       itemVersion: Number(raw.version), revisionVersion: Number(revision.version),
+      ...(componentRowsByRevision.get(revisionId) === undefined ? {} : { inHouseComponents: (componentRowsByRevision.get(revisionId) ?? []).map((component) => {
+        const basket = componentBaskets.get(component.basketId);
+        const subBasket = component.subBasketId ? componentSubBaskets.get(component.subBasketId) : undefined;
+        const available = availableComponentRevisionIds.has(revisionId) && !!basket && (component.subBasketId === null
+          ? component.id === "legacy-in-house" && component.basketId === String(raw.basketId)
+          : String(subBasket?.basketId) === component.basketId);
+        return { id: component.id, basketId: component.basketId, subBasketId: component.subBasketId,
+          basketName: basket ? String(basket.name) : "Unavailable Main Basket",
+          subBasketName: component.subBasketId === null ? null : subBasket ? String(subBasket.name) : "Unavailable Sub Basket",
+          baseRatePaise: available ? inHouseComponentBaseRate(component) : null,
+          unavailableReason: available ? null : "The component configuration, Main Basket, or Sub Basket is unavailable." };
+      }) }),
       inHouseBaseRatePaise: modeBasesByRevision.get(revisionId)?.in_house ?? null,
       modeBaseRatesPaise: modeBasesByRevision.get(revisionId) ?? estimateModeBaseRatesPaise(null),
       uom: { id: uomId!, code: String(uom.code), name: String(uom.name), decimalScale: Number(uom.decimalScale) }
@@ -554,4 +581,18 @@ function hasReadyOverviewAndMode(completeness: unknown): boolean {
     entry && typeof entry === "object" && typeof entry.sectionKey === "string" &&
     entry.state === "complete").map((entry) => entry.sectionKey));
   return complete.has("overview") && (complete.has("advanced") || complete.has("pricing"));
+}
+
+export async function fenceEstimateInHouseComponentReferences(
+  lines: readonly { source?: unknown; mainLineId?: unknown; pricingMode?: unknown; selectedInHouseComponentIds?: unknown }[],
+  current: ReadonlyMap<string, ResolvedEstimatorCatalogueLine>, session: mongoose.ClientSession
+): Promise<void> {
+  const selected = lines.flatMap((line) => {
+    if (line.source !== "configuration" || line.pricingMode !== "in_house" || !Array.isArray(line.selectedInHouseComponentIds)) return [];
+    const ids = new Set(line.selectedInHouseComponentIds);
+    return current.get(String(line.mainLineId))?.line.inHouseComponents?.filter((component) => ids.has(component.id)) ?? [];
+  });
+  if ((await lockInHouseComponentReferences(selected, session)).size) {
+    throw new ApiError(409, "ESTIMATE_COMPONENT_SELECTION_INVALID", "An In-house component's Main Basket or Sub Basket is unavailable. Refresh the catalogue before continuing.");
+  }
 }

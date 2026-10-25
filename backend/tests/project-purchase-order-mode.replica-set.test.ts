@@ -1219,3 +1219,39 @@ describe("transactional procurement mode decisions", () => {
     expect(saved).toMatchObject({ version: 1, revisionDigest: revision.contentDigest });
   });
 });
+
+describe("approved In-house component scope", { timeout: 30000 }, () => {
+  it("carries approved IDs into procurement, excludes newly added components, and blocks removed selections", async () => {
+    const { AiEstimatorKnowledgeBasketModel } = await import("../src/models/AiEstimatorKnowledgeBasket.js");
+    const { AiEstimatorKnowledgeSubBasketModel } = await import("../src/models/AiEstimatorKnowledgeSubBasket.js");
+    await AiEstimatorKnowledgeBasketModel.collection.insertOne({ _id: "component-basket", name: "Component basket", status: "active", version: 1 } as never);
+    await AiEstimatorKnowledgeSubBasketModel.collection.insertMany([
+      { _id: "component-sub-a", basketId: "component-basket", name: "Selected" },
+      { _id: "component-sub-b", basketId: "component-basket", name: "Excluded" }
+    ] as never[]);
+    const component = (id: string, subBasketId: string, base: number) => ({ id, basketId: "component-basket", subBasketId,
+      inclusions: [], exclusions: [], labor: { ...settings, baseRatePaise: base }, material: { ...settings, baseRatePaise: base } });
+    const selected = component("selected", "component-sub-a", 1000);
+    const excluded = component("excluded", "component-sub-b", 9000);
+    await saveCurrentDraft({ ...advanced, inHouseComponents: [selected, excluded] });
+    await EstimateClientReviewRoundModel.collection.updateOne({ _id: "mode-round" }, { $set: {
+      "estimateSnapshot.lineItems.0.classification": "special", "estimateSnapshot.lineItems.0.pricingMode": "in_house",
+      "estimateSnapshot.lineItems.0.rateSource": "manual", "estimateSnapshot.lineItems.0.selectedInHouseComponentIds": ["selected"]
+    } });
+    const { procurementItemSourceSnapshot } = await import("../src/services/procurement.service.js");
+    const approved = await mongoose.connection.transaction((session) => procurementItemSourceSnapshot("mode-project", session));
+    expect(approved.allLineItems[0]).toHaveProperty("selectedInHouseComponentIds", ["selected"]);
+    const proposal = new Map([["approved-line", { mode: "in_house" as const, quantity: "2", discountBps: 0, markupBasis: "starting" as const, exceptionReason: null }]]);
+    const first = await mongoose.connection.transaction((session) => resolvePurchaseOrderModes("mode-project", approved, session, { at, proposals: proposal }));
+    expect(first.get("approved-line")).toMatchObject({ state: "ready", preview: { baseCostPaise: 4000,
+      settings: { scopes: [{ componentId: "selected", scope: "in_house_labor" }, { componentId: "selected", scope: "in_house_material" }] } } });
+    await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: "revision-b-advanced" }, { $set: { "payload.inHouseComponents": [excluded] } });
+    const missing = await mongoose.connection.transaction((session) => resolvePurchaseOrderModes("mode-project", approved, session, { at, proposals: proposal }));
+    expect(missing.get("approved-line")?.preview).toBeNull();
+    expect(missing.get("approved-line")?.options.some((option) => option.key === "in_house")).toBe(false);
+    await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: "revision-b-advanced" }, { $set: { "payload.inHouseComponents": [selected, excluded] } });
+    await AiEstimatorKnowledgeBasketModel.collection.updateOne({ _id: "component-basket" }, { $set: { status: "inactive" } });
+    const inactive = await mongoose.connection.transaction((session) => resolvePurchaseOrderModes("mode-project", approved, session, { at, proposals: proposal }));
+    expect(inactive.get("approved-line")?.preview).toBeNull();
+  });
+});

@@ -1,9 +1,11 @@
 import { model, models, Schema } from "./mongoose.js";
 
-function vendorContextRequired(this: { proposalId?: string | null; getUpdate?: () => { $setOnInsert?: { proposalId?: string | null } } }): boolean {
+function vendorContextRequired(this: { proposalId?: string | null; requestKind?: string; getUpdate?: () => { $setOnInsert?: { proposalId?: string | null; requestKind?: string } } }): boolean {
   // Notifications are inserted through a validated, idempotent upsert. Query
   // validators read the insertion payload; document validators read the field.
-  return !(this.proposalId ?? this.getUpdate?.()?.$setOnInsert?.proposalId);
+  const inserted = this.getUpdate?.()?.$setOnInsert;
+  return !(this.proposalId ?? inserted?.proposalId)
+    && (this.requestKind ?? inserted?.requestKind) !== "configuration_sub_basket";
 }
 
 const schema = new Schema({
@@ -11,6 +13,7 @@ const schema = new Schema({
   recipientId: { type: String, ref: "User", required: true, immutable: true },
   requestId: { type: String, ref: "VendorBasketRequest", required: true, immutable: true },
   proposalId: { type: String, default: null, immutable: true },
+  requestKind: { type: String, enum: ["configuration_sub_basket"], immutable: true },
   targetKind: { type: String, enum: ["new_main_basket", "new_sub_basket"], required: true, immutable: true },
   targetParentBasketId: { type: String, default: null, immutable: true },
   targetParentName: { type: String, default: null, maxlength: 240, immutable: true },

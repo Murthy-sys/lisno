@@ -29,7 +29,7 @@ export interface ProcurementBasketLineStandardCostDto {
   state: "suggested" | "observed_unverified" | "saved" | "unavailable";
   mode: "pmc" | "sub_vendor" | "in_house" | null;
   calculationQuantity: string | null;
-  baseRates: Array<{ scope: "pmc" | "sub_vendor" | "in_house_labor" | "in_house_material"; ratePaise: number }>;
+  baseRates: Array<{ componentId?: string; componentBasketId?: string; componentSubBasketId?: string | null; scope: "pmc" | "sub_vendor" | "in_house_labor" | "in_house_material"; ratePaise: number }>;
   baseCostPaise: number | null;
   adjustedCostPaise: number | null;
   issues: Array<{ code: string; message: string }>;
@@ -184,7 +184,7 @@ function projectStandardLineCost(line: PurchaseOrderPreparationEstimateLine,
   const suggestedPreview = automaticSubVendor || !mode?.decision ? line.standardSuggestion?.preview : null;
   if (savedPreview) return {
     state: "saved", mode: savedPreview.mode, calculationQuantity: savedPreview.quantity,
-    baseRates: savedPreview.settings.scopes.map(row => ({ scope: row.scope, ratePaise: row.baseRatePaise })),
+    baseRates: savedPreview.settings.scopes.map(row => ({ scope: row.scope, ratePaise: row.baseRatePaise, ...(row.componentId === undefined ? {} : { componentId: row.componentId, componentBasketId: row.componentBasketId, componentSubBasketId: row.componentSubBasketId }) })),
     baseCostPaise: savedPreview.baseCostPaise, adjustedCostPaise: savedPreview.adjustedCostPaise, issues: []
   };
   if (suggestedPreview) return {

@@ -666,6 +666,9 @@ export function KnowledgeItemWorkspacePage() {
                 relationshipBaskets={relationshipBasketsQuery.data?.items ?? []}
                 relationshipItems={relationshipItemsQuery.data?.items ?? []}
                 editable={editable}
+                onRequestDraft={canCreate && canUpdate && revision.status === "active" && item.status !== "archived"
+                  && item.allowedActions.includes("create_revision") && !itemQuery.isError
+                  ? () => guard.requestNavigation(() => setCommand("revision")) : undefined}
                 legacyModeCatalogState={legacyModeCatalogState}
                 uomCatalogState={uomCatalogState}
                 onDirtyChange={setModeDirty}

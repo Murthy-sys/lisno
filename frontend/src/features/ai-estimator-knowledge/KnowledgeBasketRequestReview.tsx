@@ -84,7 +84,7 @@ function KnowledgeBasketRequestReviewSession({ navigationKey, requestId, canDeci
   const SelectedWorkspace = proposalSelection?.requestMode === "hierarchy_intake" ? ProposalIntakeWorkspace : ProposalWorkspace;
   return <Surface as="section" className="knowledge-basket-requests" aria-label="Main Basket requests" padding="compact">
     <div className="knowledge-basket-requests__heading">
-      <div><h2>Main Basket requests</h2><p>Review Main Baskets and Sub-Baskets requested for Procurement vendors.</p></div>
+      <div><h2>Main Basket requests</h2><p>Review Main Baskets and Sub-Baskets requested for Procurement and Configuration.</p></div>
       <div className="knowledge-basket-requests__filters" role="group" aria-label="Request status">
         <Button ref={pendingRef} variant={status === "pending" ? "primary" : "secondary"} aria-pressed={status === "pending"} onClick={() => { setStatus("pending"); setOffset(0); }}>Pending</Button>
         <Button variant={status === "" ? "primary" : "secondary"} aria-pressed={status === ""} onClick={() => { setStatus(""); setOffset(0); }}>All</Button>
@@ -104,6 +104,7 @@ function KnowledgeBasketRequestReviewSession({ navigationKey, requestId, canDeci
       <div className="knowledge-basket-requests__request">
         <strong>{request.proposedName}</strong>
         {request.target?.kind === "new_sub_basket" ? <small>Sub-Basket under {request.targetParentName ?? request.target.basketId}</small> : null}
+        {request.kind === "configuration_sub_basket" ? <small>Configuration request</small> : null}
         {request.kind === "configuration_proposal" ? <small>{request.requestMode === "hierarchy_intake" ? "Basket request" : "Full configuration"}{request.proposalCounts ? ` · ${request.proposalCounts.subBaskets} Sub-Baskets · ${request.proposalCounts.mainLines} Main Lines` : ""}</small> : null}
         {request.vendorName ? <span>{request.vendorName}{request.vendorId ? ` · ${request.vendorId}` : " · Vendor not saved"}</span> : null}
         <small>Requested by {request.requesterId} · <time dateTime={request.createdAt}>{new Date(request.createdAt).toLocaleDateString()}</time> · {request.requestMode === "hierarchy_intake" ? proposalStatusLabel(request.status, request.requestMode) : request.status}</small>
@@ -131,7 +132,7 @@ function KnowledgeBasketRequestReviewSession({ navigationKey, requestId, canDeci
       onClose={() => setSelection(null)}
       onRefreshRequests={() => { setSelection(null); void query.refetch(); }}
       onDecided={(result) => setNotice(result.status === "fulfilled"
-        ? `${result.proposedName} is available in Configuration. Procurement can select it for the vendor.`
+        ? result.kind === "configuration_sub_basket" ? `${result.proposedName} is approved and available in the component catalog.` : `${result.proposedName} is available in Configuration. Procurement can select it for the vendor.`
         : `${result.proposedName} request rejected.`)}
     /> : null}
     {history ? <Dialog title="Basket request history" onClose={() => setHistory(null)}><div className="ui-dialog__body"><p><strong>{history.proposedName}</strong>{history.vendorName ? ` · ${history.vendorName}` : ""}</p><p>Status: {history.status}</p>{history.reason ? <p>Reason: {history.reason}</p> : null}{history.basketId ? <p>Configuration basket: {history.basketId}</p> : null}</div><div className="ui-dialog__actions"><Button onClick={() => setHistory(null)}>Close history</Button></div></Dialog> : null}

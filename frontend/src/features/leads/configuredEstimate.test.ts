@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { buildConfiguredLines, configuredLineAmountPaise, configuredLineKey, configuredLinePreviewAmountPaise, configuredQuantityUnits, deselectConfiguredRecommendationSources, parseSellingRate, restoreConfiguredLine, updateConfiguredLinePricing } from "./configuredEstimate";
+import { configuredInHouseSelectionIssue, buildConfiguredLines, configuredLineAmountPaise, configuredLineKey, configuredLinePreviewAmountPaise, configuredQuantityUnits, deselectConfiguredRecommendationSources, parseSellingRate, restoreConfiguredLine, updateConfiguredLinePricing } from "./configuredEstimate";
 import type { EstimationCatalogue } from "./estimationCatalogueApi";
 
 const catalogue: EstimationCatalogue = {
@@ -317,5 +317,51 @@ describe("configured estimate line state", () => {
       ...temporaryCatalogue.items[0]!.subBaskets[0]!, temporaryItems: [{ ...temporaryCatalogue.items[0]!.directTemporaryItems![0]!, subBasketId: "sub-a" }]
     }] }] }, rooms, new Set(["basket-a"]), [savedDirect]);
     expect(moved.find((line) => line.key === savedDirect.key)).toMatchObject({ persistedId: "saved-direct", itemType: "temporary", subBasketId: "sub-a", subBasketName: "Wardrobes", sourceMissing: true });
+  });
+});
+
+describe("In-house estimate component selection", () => {
+  const components = [
+    { id: "labor", basketId: "basket-a", basketName: "Joinery", subBasketId: "sub-a", subBasketName: "Wardrobes", baseRatePaise: 1200 },
+    { id: "finish", basketId: "paint", basketName: "Painting", subBasketId: "finish", subBasketName: "Finish", baseRatePaise: 800 }
+  ];
+  function line() {
+    const catalog = structuredClone(catalogue);
+    catalog.items[0]!.subBaskets[0]!.mainLines[0]!.inHouseComponents = components;
+    catalog.items[0]!.subBaskets[0]!.mainLines[0]!.modeBaseRatesPaise = { pmc: null, sub_vendor: null, in_house: 99999 };
+    return { catalog, draft: buildConfiguredLines(catalog, [{ id: "room-a", label: "Bedroom" }], new Set(["basket-a"]), [])[0]! };
+  }
+  it("requires explicit selection and sums only the selected configured rates", () => {
+    const { draft } = line();
+    const inHouse = updateConfiguredLinePricing(draft, { pricingMode: "in_house" });
+    expect(inHouse.selectedInHouseComponentIds).toEqual([]);
+    expect(inHouse.rateInput).toBe("");
+    const one = updateConfiguredLinePricing(inHouse, { selectedInHouseComponentIds: ["labor"] });
+    expect(one.rateInput).toBe("12");
+    const both = updateConfiguredLinePricing(one, { selectedInHouseComponentIds: ["labor", "finish"] });
+    expect(both.rateInput).toBe("20");
+    expect(updateConfiguredLinePricing(both, { selectedInHouseComponentIds: [] }).rateInput).toBe("");
+  });
+  it("preserves explicit selection through catalog refresh and never selects a newly added component", () => {
+    const { catalog, draft } = line();
+    const chosen = updateConfiguredLinePricing(updateConfiguredLinePricing(draft, { pricingMode: "in_house" }), { selectedInHouseComponentIds: ["labor"] });
+    catalog.items[0]!.subBaskets[0]!.mainLines[0]!.inHouseComponents = [...components, { ...components[0]!, id: "new", baseRatePaise: 10000 }];
+    const refreshed = buildConfiguredLines(catalog, [{ id: "room-a", label: "Bedroom" }], new Set(["basket-a"]), [chosen])[0]!;
+    expect(refreshed.selectedInHouseComponentIds).toEqual(["labor"]);
+    expect(refreshed.rateInput).toBe("12");
+    catalog.items[0]!.subBaskets[0]!.mainLines[0]!.inHouseComponents = [components[1]!];
+    const removed = buildConfiguredLines(catalog, [{ id: "room-a", label: "Bedroom" }], new Set(["basket-a"]), [refreshed])[0]!;
+    expect(removed.selectedInHouseComponentIds).toEqual(["labor"]);
+    expect(removed.rateInput).toBe("");
+  });
+  it("allows manual pricing for selected blank costs but still rejects missing, unknown, or duplicate IDs", () => {
+    const { draft } = line();
+    const manual = { ...draft, pricingMode: "in_house" as const, rateSource: "manual" as const, rateInput: "75", inHouseComponents: [{ ...components[0]!, baseRatePaise: null }], selectedInHouseComponentIds: ["labor"] };
+    expect(configuredInHouseSelectionIssue(manual)).toBeNull();
+    expect(configuredInHouseSelectionIssue({ ...manual, rateSource: "configuration" })).toMatch(/Configure costs/);
+    expect(configuredInHouseSelectionIssue({ ...manual, selectedInHouseComponentIds: [] })).toMatch(/Choose/);
+    expect(configuredInHouseSelectionIssue({ ...manual, selectedInHouseComponentIds: ["removed"] })).toMatch(/unavailable/);
+    expect(configuredInHouseSelectionIssue({ ...manual, selectedInHouseComponentIds: ["labor", "labor"] })).toMatch(/unavailable/);
+    expect(updateConfiguredLinePricing(manual, { selectedInHouseComponentIds: [] }).rateInput).toBe("75");
   });
 });

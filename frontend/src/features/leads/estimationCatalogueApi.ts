@@ -10,6 +10,16 @@ export interface EstimationCatalogueUom {
   decimalScale: number;
 }
 
+export interface EstimationInHouseComponent {
+  id: string;
+  basketId: string;
+  basketName: string;
+  subBasketId: string | null;
+  subBasketName: string | null;
+  baseRatePaise: number | null;
+  unavailableReason?: string | null;
+}
+
 export interface EstimationCatalogueMainLine {
   id: string;
   mainLineId: string;
@@ -25,6 +35,7 @@ export interface EstimationCatalogueMainLine {
   itemVersion?: number;
   revisionVersion?: number;
   inHouseBaseRatePaise?: number | null;
+  inHouseComponents?: EstimationInHouseComponent[];
   modeBaseRatesPaise?: EstimationModeBaseRatesPaise;
   uom: EstimationCatalogueUom;
 }

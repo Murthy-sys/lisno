@@ -8,7 +8,7 @@ import { StaffEstimateWorkspace } from "./StaffEstimateWorkspace";
 import { StaffEstimateQueue } from "./StaffEstimateQueue";
 import { StaffEstimateLifecycle } from "./StaffEstimateLifecycle";
 import { staffEstimateKey } from "./staffEstimateApi";
-import { actor, catalogueFixture, estimateFixture, leadFixture, lifecycleFixture, lineFixture } from "./__tests__/fixtures";
+import { actor, catalogueFixture, componentCatalogueFixture, componentLineFixture, estimateFixture, leadFixture, lifecycleFixture, lineFixture } from "./__tests__/fixtures";
 import { requirementsFixture } from "./__tests__/requirementsFixtures";
 import type { EstimateDraft, EstimateDraftInput } from "./types";
 
@@ -39,6 +39,41 @@ async function mount(ui: ReactElement) { const client = new QueryClient({ defaul
 async function confirmAlert(label: string) { const buttons = jest.mocked(Alert.alert).mock.calls.at(-1)?.[2]; const action = buttons?.find((button) => button.text === label); expect(action).toBeTruthy(); await act(async () => action?.onPress?.()); }
 beforeEach(() => { jest.clearAllMocks(); jest.spyOn(Alert, "alert").mockImplementation(() => undefined); });
 afterEach(() => jest.restoreAllMocks());
+
+it("keeps saved component pricing read-only and transports the selected identities unchanged", async () => {
+ const api = setup(estimateFixture({ lineItems: [componentLineFixture] }));
+ const original = api.get.getMockImplementation()!;
+ api.get.mockImplementation(async (path: string) => path.startsWith("/estimation/catalogue?") ? { ...componentCatalogueFixture(), pagination: { offset: 0, hasMore: false } } : original(path));
+ await mount(<StaffEstimateWorkspace leadId="lead-one" session={actor()} />);
+ await screen.findByRole("button", { name: "Save draft" });
+ await fireEvent.press(screen.getByRole("radio", { name: "3 Estimate items" }));
+ await screen.findByText(/In-house component pricing is read-only here/);
+ expect(screen.getByText("Cabinetry / Storage")).toBeOnTheScreen();
+ expect(screen.getByLabelText("Old cabinet name selling rate (₹)")).toHaveDisplayValue("111.11");
+ expect(screen.getByLabelText("Old cabinet name selling rate (₹)")).toBeDisabled();
+ expect(screen.getByLabelText("Old cabinet name quantity (Square feet)")).toBeDisabled();
+ expect(screen.getByRole("combobox", { name: "Old cabinet name pricing mode" })).toBeDisabled();
+ expect(screen.getByRole("button", { name: "Use Configuration rate for Old cabinet name" })).toBeDisabled();
+ expect(screen.getByRole("button", { name: "Remove saved Old cabinet name" })).toBeDisabled();
+ await fireEvent.press(screen.getByRole("button", { name: "Save draft" }));
+ await waitFor(() => expect(api.put).toHaveBeenCalledTimes(1));
+ expect(api.put.mock.calls[0]![1].lineItems[0]).toMatchObject({ selectedInHouseComponentIds: ["component-one"], ratePaise: 11111, pricingMode: "in_house", revisionId: "revision-current", revisionVersion: 5 });
+});
+
+it("keeps other pricing modes editable while hiding unsupported native component selection", async () => {
+ const api = setup();
+ const original = api.get.getMockImplementation()!;
+ api.get.mockImplementation(async (path: string) => path.startsWith("/estimation/catalogue?") ? { ...componentCatalogueFixture(), pagination: { offset: 0, hasMore: false } } : original(path));
+ await mount(<StaffEstimateWorkspace leadId="lead-one" session={actor()} />);
+ await screen.findByRole("button", { name: "Save draft" });
+ await fireEvent.press(screen.getByRole("radio", { name: "3 Estimate items" }));
+ await screen.findByText("Choose In-house components and pricing in the web estimate workspace.");
+ const mode = screen.getByRole("combobox", { name: "Oak cabinet pricing mode" });
+ expect(mode).toBeEnabled();
+ await fireEvent.press(mode);
+ expect(screen.getByRole("radio", { name: "PMC" })).toBeOnTheScreen();
+ expect(screen.queryByRole("radio", { name: "In-house" })).toBeNull();
+});
 
 it("authors a new configured estimate through rooms, scope, items and generation using stable source IDs", async () => {
  const api = setup(null); await mount(<StaffEstimateWorkspace leadId="lead-one" session={actor()} />);

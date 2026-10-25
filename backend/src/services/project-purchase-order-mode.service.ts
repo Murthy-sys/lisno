@@ -1,3 +1,5 @@
+import { readInHouseComponents, selectedInHouseComponents } from "../domain/ai-estimator-knowledge-in-house-components.js";
+import { lockInHouseComponentReferences } from "./ai-estimator-knowledge-in-house-components.service.js";
 import { createHash, randomUUID } from "node:crypto";
 import mongoose, { type ClientSession } from "mongoose";
 import { createKnowledgeRevisionDigest } from "../domain/ai-estimator-knowledge-completeness.js";
@@ -322,7 +324,11 @@ export async function resolvePurchaseOrderModes(
       decimalScale: Number(uomRow.decimalScale) };
     const advanced = sectionPayload(sectionMap.get("advanced"));
     const quantityMargin = sectionPayload(sectionMap.get("quantity-margin"));
-    const analysis = analyzePurchaseOrderModeSettings({ advanced, quantityMargin,
+    const components = readInHouseComponents(advanced);
+    const selectedComponents = components === undefined ? [] : selectedInHouseComponents(components, line.selectedInHouseComponentIds) ?? [];
+    const unavailableComponentIds = await lockInHouseComponentReferences(selectedComponents, session);
+    const analysis = analyzePurchaseOrderModeSettings({ advanced, quantityMargin, selectedInHouseComponentIds: line.selectedInHouseComponentIds,
+      inHouseComponentReferencesAvailable: unavailableComponentIds.size === 0,
       uom, mode: selected?.mode ?? null,
       quantity: selected?.quantity ?? null, discountBps: selected?.discountBps ?? 0,
       markupBasis: selected?.markupBasis ?? "starting" });

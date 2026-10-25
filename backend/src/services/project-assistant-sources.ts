@@ -91,6 +91,7 @@ async function readApproved(context: AssistantContext, tx?: ChatTransaction): Pr
     for (const line of configured) allRooms.set(line.roomId, { id: line.roomId, name: line.roomName });
     return finish({ state: "approved", totalPaise: approval.baseline.approvedContractTotalPaise, rooms: [...allRooms.values()],
       lines: configured.map(line => ({ mainLineId: line.mainLineId, roomId: line.roomId, included: line.included,
+        ...(line.selectedInHouseComponentIds === undefined ? {} : { selectedInHouseComponentIds: line.selectedInHouseComponentIds }),
         pricingMode: line.pricingMode ?? ((line.classification ?? "standard") === "standard" ? "sub_vendor" : null) })) }, witness,
       { estimateId: selected.id, estimateVersion: approval.estimateVersion, roundId: String(round._id), sourceKeys: lines.flatMap((line, index) => line.included
         ? [approvedEstimateLineItemKey({ id: line.id, index, estimateId: selected.id, estimateVersion: approval.estimateVersion })] : []) });

@@ -1,0 +1,8 @@
+.estimate-in-house-components { flex: 1 1 100%; min-width: 0; margin: 8px 0 0; padding: 8px 0 0; border: 0; border-top: 1px solid var(--border, #d7d9d1); }
+.estimate-in-house-components legend { padding: 0; font-weight: 650; font-size: 0.8125rem; }
+.estimate-in-house-components > p { margin: 4px 0 10px; font-size: 0.75rem; }
+.estimate-in-house-components > label { display: flex; align-items: flex-start; gap: 9px; padding-block: 7px; font-size: 0.8125rem; }
+.estimate-in-house-components > label > span { display: flex; flex: 1; justify-content: space-between; align-items: baseline; gap: 4px 16px; min-width: 0; overflow-wrap: anywhere; }
+.estimate-in-house-components input { flex: 0 0 auto; width: 16px; height: 16px; margin-top: 2px; accent-color: #52633e; }
+.estimate-in-house-components small { display: block; color: var(--text-muted, #697160); margin-top: 3px; font-size: 0.75rem; }
+@media (max-width: 600px) { .estimate-in-house-components > label > span { display: block; } }
