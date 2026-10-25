@@ -36,6 +36,8 @@ describe("knowledge API", () => {
     expect(get).toHaveBeenCalledWith("/admin/ai-estimator-knowledge/baskets/basket%2Fone/sub-baskets/sub%2Fceiling/margins", { showGlobalLoader: false });
     await applyKnowledgeSubBasketMargins("basket/one", "sub/ceiling", { mode: "in_house", versionToken: "snapshot-17" });
     expect(post).toHaveBeenCalledWith("/admin/ai-estimator-knowledge/baskets/basket%2Fone/sub-baskets/sub%2Fceiling/margins/apply", { mode: "in_house", versionToken: "snapshot-17" });
+    await applyKnowledgeSubBasketMargins("basket/one", "sub/ceiling", { mode: "pmc", versionToken: "snapshot-18", targetMainLineId: "line/one" });
+    expect(post).toHaveBeenLastCalledWith("/admin/ai-estimator-knowledge/baskets/basket%2Fone/sub-baskets/sub%2Fceiling/margins/apply", { mode: "pmc", versionToken: "snapshot-18", targetMainLineId: "line/one" });
   });
   it("requests the global vendor overview independently of filtered table pages", async () => {
     const get = vi.spyOn(apiClient, "get").mockResolvedValue({});

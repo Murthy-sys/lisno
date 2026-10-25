@@ -26,6 +26,20 @@ function componentSchemas(): Record<string, OpenApiObject> {
 }
 
 describe("OpenAPI and Swagger UI", () => {
+  it("documents optional current-line margin application and saved source prices without weakening bulk commands", () => {
+    const schemas = componentSchemas();
+    expect(schemas.KnowledgeApplySubBasketMarginsRequest!.required).toEqual(["mode", "versionToken"]);
+    expect(schemas.KnowledgeApplySubBasketMarginsRequest).toHaveProperty("properties.targetMainLineId.maxLength", 128);
+    expect(schemas.KnowledgeApplySubBasketMarginsRequest!.additionalProperties).toBe(false);
+    expect(schemas.KnowledgeSubBasketMarginSummary!.required).not.toContain("sourceConfiguration");
+    expect(schemas.KnowledgeSubBasketMarginSummary).toHaveProperty("properties.sourceConfiguration.nullable", true);
+    expect(schemas.KnowledgeSubBasketSourceConfiguration!.required).toEqual(["revisionId", "revisionStatus", "itemVersion", "revisionVersion", "sectionVersion", "uom", "modes"]);
+    expect(schemas.KnowledgeSubBasketSourceConfiguration).toHaveProperty("properties.modes.required", ["pmc", "sub_vendor", "in_house"]);
+    expect(schemas.KnowledgeDefaultModeCalculation!.required).toEqual(["scope", "baseRatePaise", "lowQuantityLimit", "impactBps"]);
+    expect(schemas.KnowledgeDefaultModeCalculation).toHaveProperty("properties.impactBps.nullable", true);
+    expect(schemas.KnowledgeDefaultModeCalculation).toHaveProperty("properties.component.required", ["id", "basketId", "subBasketId"]);
+    expect(schemas.KnowledgeDefaultModeCalculation!.additionalProperties).toBe(false);
+  });
   it("documents vendor-independent proposals and authenticated request filters without loosening legacy creation", () => {
     const schemas = componentSchemas();
     const paths = openApiDocument.paths as Record<string, Record<string, OpenApiObject>>;

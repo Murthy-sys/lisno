@@ -1,6 +1,6 @@
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Copy, Pencil, Plus, ShieldCheck, Trash2 } from "lucide-react";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 
 import { ApiError } from "../../api/client";
@@ -35,6 +35,7 @@ import { KnowledgeMainLineNameDialog } from "./KnowledgeMainLineNameDialog";
 import { KnowledgeSurfaceEditorDialog } from "./KnowledgeSurfaceEditorDialog";
 import { KnowledgeBasketQualityPanel, type KnowledgeBasketQualityPanelHandle, type KnowledgeQualitySaveCommandState } from "./KnowledgeBasketQualityPanel";
 import { KnowledgeModePanel, type KnowledgeModePanelHandle } from "./KnowledgeModePanel";
+import { KnowledgeModeDefaults } from "./KnowledgeModeDefaults";
 import { KnowledgeDesignRulesPanel, type KnowledgeDesignRulesPanelHandle } from "./KnowledgeDesignRulesPanel";
 import { KnowledgeConflictReview } from "./KnowledgeConflictReview";
 import { KnowledgeRevisionHistory } from "./KnowledgeRevisionHistory";
@@ -42,6 +43,7 @@ import { KnowledgeSavedConfigurationSummary } from "./KnowledgeSavedConfiguratio
 import { KnowledgeReferenceContextRail } from "./KnowledgeReferenceContextRail";
 import { latestKnowledgeSectionSave } from "./knowledgeLastSaved";
 import { pendingValuesEqual } from "./knowledgePendingChanges";
+import { KnowledgeWorkspaceRail } from "./KnowledgeWorkspaceRail";
 import { KnowledgeWorkspaceStatus, type KnowledgeWorkspaceSaveCommand } from "./KnowledgeWorkspaceStatus";
 import { KnowledgePinnedSave, useKnowledgePinnedSave } from "./KnowledgePinnedSave";
 import {
@@ -106,54 +108,6 @@ function latestSaveAcrossSectionQueries(
   return latestKnowledgeSectionSave(results.map(({ data }) => data));
 }
 
-function KnowledgeWorkspaceRail({ children }: { readonly children: ReactNode }) {
-  const rail = useRef<HTMLDivElement>(null);
-  const [tooTall, setTooTall] = useState(false);
-  useLayoutEffect(() => {
-    const element = rail.current;
-    if (!element) return;
-    const layout = element.parentElement;
-    const history = element.querySelector<HTMLElement>(":scope > .knowledge-workspace-history-rail");
-    let frame = 0;
-    const measure = () => {
-      const viewportHeight = window.visualViewport?.height ?? window.innerHeight;
-      const fallback = viewportHeight * 0.6;
-      const styles = getComputedStyle(element);
-      const desktop = styles.getPropertyValue("--knowledge-rail-stacked").trim() !== "1";
-      const gap = parseFloat(styles.rowGap) || 16;
-      const inset = parseFloat(styles.getPropertyValue("--knowledge-rail-inset")) || 8;
-      const historyHeight = history?.getBoundingClientRect().height ?? 0;
-      const top = Math.max(inset, layout?.getBoundingClientRect().top ?? inset);
-      // Leave room for workspace bottom padding as well as the viewport edge.
-      const bottomSpace = 32;
-      const available = viewportHeight - top - historyHeight - gap - bottomSpace;
-      const cap = Math.floor(desktop && available >= Math.min(160, fallback) ? available : fallback);
-      const value = `${Math.max(1, cap)}px`;
-      if (element.style.getPropertyValue("--knowledge-summary-max-block-size") !== value) {
-        element.style.setProperty("--knowledge-summary-max-block-size", value);
-      }
-      setTooTall(desktop && historyHeight + gap + cap > viewportHeight - inset - bottomSpace);
-    };
-    const scheduleMeasure = () => {
-      cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(measure);
-    };
-    measure();
-    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(scheduleMeasure);
-    if (history) observer?.observe(history);
-    if (layout) observer?.observe(layout);
-    window.addEventListener("resize", scheduleMeasure);
-    window.visualViewport?.addEventListener("resize", scheduleMeasure);
-    return () => {
-      observer?.disconnect();
-      cancelAnimationFrame(frame);
-      window.removeEventListener("resize", scheduleMeasure);
-      window.visualViewport?.removeEventListener("resize", scheduleMeasure);
-      element.style.removeProperty("--knowledge-summary-max-block-size");
-    };
-  }, []);
-  return <div ref={rail} className={`knowledge-workspace-rail${tooTall ? " knowledge-workspace-rail--long" : ""}`}>{children}</div>;
-}
 
 export function KnowledgeItemWorkspacePage() {
   const { itemId = "" } = useParams();
@@ -582,13 +536,13 @@ export function KnowledgeItemWorkspacePage() {
     : pageSaveCommand;
   const referenceSection = activeSection === "recommendations" || activeSection === "quality" ? activeSection : undefined;
   const savedDetails = <>
-    <KnowledgeRevisionHistory
+    {activeSection === "mode" ? <KnowledgeModeDefaults item={item} /> : <KnowledgeRevisionHistory
       entries={historyQuery.data?.items}
       loading={historyQuery.isPending}
       refreshing={historyQuery.isFetching}
       error={historyQuery.error instanceof Error ? historyQuery.error : null}
       onRetry={() => void historyQuery.refetch()}
-    />
+    />}
     <KnowledgeSavedConfigurationSummary item={item} revisionId={revision?.id} masters={masters}
       baskets={relationshipBasketsQuery.data?.items ?? []} items={relationshipItemsQuery.data?.allItems ?? []}
       referenceStates={{
@@ -738,7 +692,7 @@ export function KnowledgeItemWorkspacePage() {
         {referenceSection ? <KnowledgeReferenceContextRail key={pendingSession.sourceKey} section={referenceSection}
           item={item} revisionId={revision?.id} uoms={masters.uoms ?? []} uomState={uomCatalogState}
           dirty={activeDirty} saving={activeSaving}>{savedDetails}</KnowledgeReferenceContextRail>
-          : <KnowledgeWorkspaceRail>{savedDetails}</KnowledgeWorkspaceRail>}
+          : <KnowledgeWorkspaceRail section={activeSection}>{savedDetails}</KnowledgeWorkspaceRail>}
       </div>
 
       {guard.dialogOpen ? <KnowledgeUnsavedChangesDialog onSave={() => void guard.saveAndContinue()} onDiscard={designUnknownOutcome && isMetadataSection ? guard.stayHere : guard.discardAndContinue} onStay={guard.stayHere} busy={guard.busy || (isMetadataSection && activeSaving)} error={guard.error} blockingReason={designUnknownOutcome && isMetadataSection ? "A Design save is unconfirmed. Stay here and load the current saved values before leaving." : undefined} /> : null}

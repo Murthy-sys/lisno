@@ -6,6 +6,7 @@ import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError } from "../../api/client";
+import type { KnowledgeSubBasketMarginSummary } from "../../../../shared/knowledge/knowledgeSubBasketMarginTypes";
 import * as authorization from "../../auth/authorization";
 import { KnowledgeBaseIndexPage } from "./KnowledgeBaseIndexPage";
 import { KnowledgeItemWorkspacePage } from "./KnowledgeItemWorkspacePage";
@@ -42,6 +43,7 @@ vi.mock("./knowledgeApi", async (importOriginal) => {
     listKnowledgeBaskets: vi.fn(),
     listKnowledgeSubBaskets: vi.fn(),
     getKnowledgeSubBasketMargins: vi.fn(),
+    applyKnowledgeSubBasketMargins: vi.fn(),
     createKnowledgeMainLine: vi.fn(),
     createKnowledgeRevision: vi.fn(),
     listKnowledgeMasters: vi.fn(),
@@ -338,6 +340,69 @@ beforeEach(() => {
   vi.mocked(knowledgeApi.getKnowledgeItem).mockResolvedValue(item);
   vi.mocked(knowledgeApi.getKnowledgeHistory).mockResolvedValue({ items: [revision], pagination: page });
   vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_lineId, _revisionId, sectionKey) => section(sectionKey));
+});
+
+describe("Mode sidebar compact default margins", () => {
+  it("shows all three read-only margin rows only in Mode and preserves normal editing and saving", async () => {
+    const user = userEvent.setup();
+    const currentItem = { ...item, subBasketId: "joinery", subBasketName: "Interior joinery" };
+    const calculation = { baseRatePaise: 6500, lowQuantityLimit: "10", impactBps: 1000, minimumMarkupBps: 2000, startingMarkupBps: 3000 };
+    const advanced = { pmcMinimumMarginBps: 1000, pmcMarginBps: 1500,
+      modeCalculations: { pmc: calculation, sub_vendor: null, in_house_labor: null, in_house_material: null } };
+    const saved = { mismatchCount: 0, mismatches: [], canApply: false, unavailableReason: null };
+    const defaults: KnowledgeSubBasketMarginSummary = {
+      basketId: "basket-1", subBasketId: "joinery", source: { mainLineId: "source", mainLineName: "Default panelling" }, versionToken: "source-token", totalMainLines: 3,
+      modes: {
+        pmc: { ...saved, ranges: [{ key: "margin", minimumBps: 1200, maximumBps: 1800 }] },
+        sub_vendor: { ...saved, ranges: [{ key: "margin", minimumBps: 2500, maximumBps: 3500 }] },
+        in_house: { ...saved, ranges: [{ key: "labor", minimumBps: 2000, maximumBps: 3000 }, { key: "material", minimumBps: 2000, maximumBps: 3000 }] }
+      }
+    };
+    vi.mocked(knowledgeApi.getKnowledgeSubBasketMargins).mockResolvedValue(defaults);
+    vi.mocked(knowledgeApi.getKnowledgeItem).mockResolvedValue(currentItem);
+    vi.mocked(knowledgeApi.listKnowledgeMasters).mockImplementation(async (kind) => ({ items: kind === "uoms" ? [squareFoot] : [], pagination: page }));
+    vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_line, revisionId, key) => ({
+      ...section(key, key === "advanced" ? advanced : key === "overview" ? { uomId: squareFoot.id } : key === "pricing" ? configuredPricingPayload() : {}), revisionId
+    }));
+    vi.mocked(knowledgeApi.updateKnowledgeSection).mockImplementation(async (_line, revisionId, key, input) => ({
+      ...mutationSection(key, input.payload), revisionId
+    }));
+    renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
+    expect(await screen.findByRole("heading", { name: "Revision history" })).toBeVisible();
+    expect(knowledgeApi.getKnowledgeSubBasketMargins).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("tab", { name: "Mode" }));
+    const panel = await screen.findByRole("region", { name: "Sub-basket defaults" });
+    expect(await within(panel).findByText("12% - 18%")).toBeVisible();
+    expect(within(panel).getByText("25% - 35%")).toBeVisible();
+    expect(within(panel).getByText("20% - 30%")).toBeVisible();
+    expect(within(panel).getByText("PMC margin:")).toBeVisible();
+    expect(within(panel).getByText("Sub-vendor margin:")).toBeVisible();
+    expect(within(panel).getByText("In-house margin:")).toBeVisible();
+    expect(within(panel).queryByRole("combobox")).not.toBeInTheDocument();
+    expect(within(panel).queryByRole("button")).not.toBeInTheDocument();
+    expect(within(panel).queryByRole("heading")).not.toBeInTheDocument();
+    expect(panel).not.toHaveTextContent(/Default panelling|Base rate|Low quantity|Impact|Apply|Draft/);
+    expect(screen.queryByRole("heading", { name: "Revision history" })).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Quick summary" })).toBeVisible();
+    expect(knowledgeApi.applyKnowledgeSubBasketMargins).not.toHaveBeenCalled();
+    expect(knowledgeApi.createKnowledgeRevision).not.toHaveBeenCalled();
+
+    const base = await screen.findByRole("textbox", { name: "Base Rate (₹)" });
+    expect(base).toHaveValue("65.00");
+    await user.clear(base);
+    await user.type(base, "66");
+    expect(panel).toHaveTextContent("12% - 18%");
+    await user.click(screen.getByRole("button", { name: "Save Mode" }));
+    await waitFor(() => expect(knowledgeApi.updateKnowledgeSection).toHaveBeenCalledWith("line-1", "revision-1", "advanced", expect.objectContaining({
+      expectedVersion: 2, expectedAggregateVersion: item.version,
+      payload: expect.objectContaining({ modeCalculations: expect.objectContaining({ pmc: expect.objectContaining({ baseRatePaise: 6600 }) }) })
+    })));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save Mode" })).toBeDisabled());
+    expect(knowledgeApi.applyKnowledgeSubBasketMargins).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("tab", { name: "Overview" }));
+    expect(await screen.findByRole("heading", { name: "Revision history" })).toBeVisible();
+    expect(screen.queryByRole("region", { name: "Sub-basket defaults" })).not.toBeInTheDocument();
+  });
 });
 
 describe("In-house component entry from an active revision", () => {

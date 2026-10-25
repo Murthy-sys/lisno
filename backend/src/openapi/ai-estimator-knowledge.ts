@@ -467,7 +467,8 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
     })
   }),
   KnowledgeApplySubBasketMarginsRequest: strictObject(["mode", "versionToken"], {
-    mode: { type: "string", enum: ["pmc", "sub_vendor", "in_house"] }, versionToken: { type: "string", pattern: "^[a-f0-9]{64}$" }
+    mode: { type: "string", enum: ["pmc", "sub_vendor", "in_house"] }, versionToken: { type: "string", pattern: "^[a-f0-9]{64}$" },
+    targetMainLineId: { ...id, description: "Apply margins only to this current main line in the Sub-Basket. Omit to retain bulk mismatch application." }
   }),
   KnowledgeSubBasketMarginRange: strictObject(["key", "minimumBps", "maximumBps"], {
     component: strictObject(["basketId", "subBasketId"], { basketId: id, subBasketId: { ...id, nullable: true }, name: { type: "string" } }),
@@ -483,9 +484,23 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
     mismatches: { type: "array", items: ref("KnowledgeSubBasketMarginMismatch") }, canApply: { type: "boolean" },
     unavailableReason: { type: "string", nullable: true }
   }),
+  KnowledgeDefaultModeCalculation: strictObject(["scope", "baseRatePaise", "lowQuantityLimit", "impactBps"], {
+    scope: { type: "string", enum: ["pmc", "sub_vendor", "in_house", "in_house_labor", "in_house_material"] },
+    component: strictObject(["id", "basketId", "subBasketId"], { id, basketId: id, subBasketId: { ...id, nullable: true }, name: { type: "string" } }),
+    baseRatePaise: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER, nullable: true },
+    lowQuantityLimit: { type: "string", maxLength: 64, nullable: true },
+    impactBps: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER - 10_000, nullable: true, description: "The saved impact only; absent settings remain null." }
+  }),
+  KnowledgeSubBasketSourceConfiguration: strictObject(["revisionId", "revisionStatus", "itemVersion", "revisionVersion", "sectionVersion", "uom", "modes"], {
+    revisionId: id, revisionStatus: { type: "string", enum: ["draft", "active"] }, itemVersion: version, revisionVersion: version, sectionVersion: version,
+    uom: { ...strictObject(["id", "code", "name", "decimalScale"], { id, code: { type: "string" }, name: { type: "string" }, decimalScale: { type: "integer", minimum: 0, maximum: 3 } }), nullable: true },
+    modes: strictObject(["pmc", "sub_vendor", "in_house"], Object.fromEntries(["pmc", "sub_vendor", "in_house"].map((mode) => [mode,
+      strictObject(["calculations"], { calculations: { type: "array", items: ref("KnowledgeDefaultModeCalculation") } })])))
+  }),
   KnowledgeSubBasketMarginSummary: strictObject(["basketId", "subBasketId", "source", "totalMainLines", "versionToken", "modes"], {
     basketId: id, subBasketId: id,
     source: { ...strictObject(["mainLineId", "mainLineName"], { mainLineId: id, mainLineName: { type: "string" } }), nullable: true },
+    sourceConfiguration: nullableRef("KnowledgeSubBasketSourceConfiguration"),
     totalMainLines: { type: "integer", minimum: 0 }, versionToken: { type: "string", pattern: "^[a-f0-9]{64}$" },
     modes: strictObject(["pmc", "sub_vendor", "in_house"], {
       pmc: ref("KnowledgeSubBasketMarginState"), sub_vendor: ref("KnowledgeSubBasketMarginState"), in_house: ref("KnowledgeSubBasketMarginState")

@@ -1,0 +1,16 @@
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .ui-surface.knowledge-mode-defaults {
+  min-inline-size: 0;
+  padding: var(--knowledge-card-padding, var(--space-4));
+  border: 1px solid var(--role-line, var(--color-border));
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--role-ink, var(--color-text)) 5%, var(--role-deck, var(--color-bg)));
+  box-shadow: none;
+}
+.knowledge-mode-defaults__list { display: grid; gap: 10px; margin: 0; font-size: 0.75rem; line-height: 1.6; }
+.knowledge-mode-defaults__list > div { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 2px 10px; }
+.knowledge-mode-defaults__list dt { color: var(--color-text-muted); }
+.knowledge-mode-defaults__list dd { min-inline-size: 0; margin: 0; font-weight: 500; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.knowledge-mode-defaults__in-house { display: grid; gap: 8px; max-block-size: min(45vh, 28rem); max-block-size: min(45dvh, 28rem); overflow-y: auto; overscroll-behavior: contain; }
+.knowledge-mode-defaults__in-house:focus-visible { outline: 2px solid var(--role-focus, var(--color-focus-ring)); outline-offset: 2px; }
+.knowledge-mode-defaults__component { display: grid; gap: 2px; }
+.knowledge-mode-defaults__component-name { font-weight: 400; color: var(--color-text-muted); }

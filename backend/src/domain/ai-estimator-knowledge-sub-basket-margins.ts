@@ -1,4 +1,4 @@
-import type { KnowledgeSubBasketMarginMode, KnowledgeSubBasketMarginRange } from "../contracts/ai-estimator-knowledge-sub-basket-margins.js";
+import type { KnowledgeDefaultModeCalculation, KnowledgeSubBasketMarginMode, KnowledgeSubBasketMarginRange } from "../contracts/ai-estimator-knowledge-sub-basket-margins.js";
 import { readInHouseComponents } from "./ai-estimator-knowledge-in-house-components.js";
 
 type Row = Record<string, unknown>;
@@ -72,35 +72,116 @@ export function comparableInHouseMarginRanges(source: readonly KnowledgeSubBaske
   return { source: comparable.map((range) => defaults.get(`${componentKey(range, owner)}:${range.key}`)!), target: comparable };
 }
 
-/** Copy margins only. Callers must validate the complete resulting advanced payload before saving. */
-export function withSubBasketMarginDefaults(payload: Row, mode: KnowledgeSubBasketMarginMode, ranges: readonly KnowledgeSubBasketMarginRange[], owner?: Owner): Row | null {
+/** Copy margins only. Callers validate the complete result before saving. */
+export function withSubBasketMarginDefaults(
+  payload: Row, mode: KnowledgeSubBasketMarginMode, ranges: readonly KnowledgeSubBasketMarginRange[], owner?: Owner,
+  options: { allowIncompleteMargins?: boolean } = {}
+): Row | null {
+  if (!validSubBasketMarginRanges(ranges, mode)) return null;
   if (mode === "pmc") return { ...payload, pmcMinimumMarginBps: ranges[0]!.minimumBps, pmcMarginBps: ranges[0]!.maximumBps };
   if (mode === "sub_vendor") return { ...payload, subVendorMinimumMarginBps: ranges[0]!.minimumBps, subVendorMarginBps: ranges[0]!.maximumBps };
+  const pairFor = (identity: Owner): readonly KnowledgeSubBasketMarginRange[] =>
+    configuredInHouseMarginRanges(ranges, owner ?? identity).filter((range) => componentKey(range, owner ?? identity) === JSON.stringify([identity.basketId, identity.subBasketId]));
   if (Object.hasOwn(payload, "inHouseComponents")) {
-    const components = readInHouseComponents(payload);
+    // The explicit single-line action may repair margin fields, but never missing cost objects.
+    const components = options.allowIncompleteMargins
+      ? Array.isArray(payload.inHouseComponents) && payload.inHouseComponents.every((entry) => object(entry)) ? payload.inHouseComponents as Row[] : null
+      : readInHouseComponents(payload) as unknown as Row[] | null;
     if (!components || !owner) return null;
-    return { ...payload, inHouseComponents: components.map((component) => {
+    let matched = 0;
+    let missingCosts = false;
+    const patched = components.map((component) => {
       const ownRanges = subBasketMarginRanges({ inHouseComponents: [component] }, "in_house");
-      const comparison = comparableInHouseMarginRanges(ranges, ownRanges, owner);
-      if (comparison.target.length !== 2 || !component.labor || !component.material) return component;
-      const labor = comparison.source.find(({ key }) => key === "labor")!;
-      const material = comparison.source.find(({ key }) => key === "material")!;
+      const source = options.allowIncompleteMargins
+        ? pairFor({ basketId: String(component.basketId), subBasketId: component.subBasketId === null ? null : String(component.subBasketId) })
+        : comparableInHouseMarginRanges(ranges, ownRanges, owner).source;
+      if (source.length !== 2) return component;
+      const labor = object(component.labor);
+      const material = object(component.material);
+      if (!labor || !material) { missingCosts = true; return component; }
+      matched++;
       return { ...component,
-        labor: { ...component.labor, minimumMarkupBps: labor.minimumBps, startingMarkupBps: labor.maximumBps },
-        material: { ...component.material, minimumMarkupBps: material.minimumBps, startingMarkupBps: material.maximumBps } };
-    }) };
+        labor: withMargins(labor, source.find(({ key }) => key === "labor")!),
+        material: withMargins(material, source.find(({ key }) => key === "material")!) };
+    });
+    if (options.allowIncompleteMargins && (!matched || missingCosts)) return null;
+    return { ...payload, inHouseComponents: patched };
   }
   const applicable = ranges.some(({ component }) => component) && owner
-    ? comparableInHouseMarginRanges(ranges, subBasketMarginRanges(payload, "in_house"), owner).source : ranges;
+    ? options.allowIncompleteMargins ? pairFor(owner) : comparableInHouseMarginRanges(ranges, subBasketMarginRanges(payload, "in_house"), owner).source
+    : ranges;
   if (applicable.length !== 2) return null;
+  const laborMargin = applicable.find(({ key }) => key === "labor")!;
+  const materialMargin = applicable.find(({ key }) => key === "material")!;
+  const map = object(payload.modeCalculations);
+  const hasSplit = map && (Object.hasOwn(map, "in_house_labor") || Object.hasOwn(map, "in_house_material"));
+  if (!hasSplit) {
+    const single = calculation(payload, "in_house_labor");
+    // A global legacy calculator has different pricing-consumer semantics. Materializing
+    // scoped rates during a margin-only operation could change PMC/Sub-vendor prices.
+    if (!Object.hasOwn(payload, "modeCalculations")) return null;
+    if (!single || laborMargin.minimumBps !== materialMargin.minimumBps || laborMargin.maximumBps !== materialMargin.maximumBps) return null;
+    // A saved single cost remains a single cost. Creating two scopes would double its base rate.
+    return { ...payload, modeCalculations: {
+      ...map,
+      in_house: withMargins(single, laborMargin)
+    } };
+  }
   const labor = calculation(payload, "in_house_labor");
   const material = calculation(payload, "in_house_material");
   if (!labor || !material) return null;
-  const map = object(payload.modeCalculations) ?? {};
-  return { ...payload, modeCalculations: {
-    ...map,
-    ...(!Object.hasOwn(payload, "modeCalculations") ? { pmc: calculation(payload, "pmc"), sub_vendor: calculation(payload, "sub_vendor") } : {}),
-    in_house_labor: { ...labor, minimumMarkupBps: applicable.find(({ key }) => key === "labor")!.minimumBps, startingMarkupBps: applicable.find(({ key }) => key === "labor")!.maximumBps },
-    in_house_material: { ...material, minimumMarkupBps: applicable.find(({ key }) => key === "material")!.minimumBps, startingMarkupBps: applicable.find(({ key }) => key === "material")!.maximumBps }
-  } };
+  return { ...payload, modeCalculations: { ...map,
+    in_house_labor: withMargins(labor, laborMargin), in_house_material: withMargins(material, materialMargin) } };
+}
+
+/** Explain why a margin-only patch cannot safely represent the target's saved costs. */
+export function subBasketMarginPatchUnavailableReason(payload: Row, ranges: readonly KnowledgeSubBasketMarginRange[], owner?: Owner): string {
+  if (!Object.hasOwn(payload, "inHouseComponents")) {
+    if (!Object.hasOwn(payload, "modeCalculations") && object(payload.modeCalculation)) {
+      return "Save scoped In-house cost settings first. Applying defaults to shared legacy settings could change other mode prices.";
+    }
+    const map = object(payload.modeCalculations);
+    if (map && object(map.in_house) && !Object.hasOwn(map, "in_house_labor") && !Object.hasOwn(map, "in_house_material")) {
+      const applicable = ranges.filter(({ component }) => !component || (owner && component.basketId === owner.basketId && component.subBasketId === owner.subBasketId));
+      const labor = applicable.find(({ key }) => key === "labor");
+      const material = applicable.find(({ key }) => key === "material");
+      if (labor && material && (labor.minimumBps !== material.minimumBps || labor.maximumBps !== material.maximumBps)) {
+        return "The default labor and material margins differ. Configure separate labor and material cost settings before applying these defaults.";
+      }
+    }
+  }
+  return "Save matching labor and material calculation settings on this main line before applying In-house margins.";
+}
+
+function withMargins(settings: Row, range: KnowledgeSubBasketMarginRange): Row {
+  return { ...settings, minimumMarkupBps: range.minimumBps, startingMarkupBps: range.maximumBps };
+}
+
+/** Read-only saved prices. Never substitute simulator defaults or expand a legacy single cost. */
+export function subBasketDefaultModeCalculations(payload: Row): Record<KnowledgeSubBasketMarginMode, { calculations: KnowledgeDefaultModeCalculation[] }> {
+  const project = (scope: KnowledgeDefaultModeCalculation["scope"], value: unknown,
+    component?: KnowledgeDefaultModeCalculation["component"]): KnowledgeDefaultModeCalculation => {
+    const row = object(value);
+    const base = row?.baseRatePaise;
+    const limit = row?.lowQuantityLimit;
+    const impact = row?.impactBps;
+    return { scope, ...(component ? { component } : {}),
+      baseRatePaise: typeof base === "number" && Number.isSafeInteger(base) && base >= 0 ? base : null,
+      lowQuantityLimit: typeof limit === "string" && limit.length <= 64 && /^(?:0|[1-9]\d*)(?:\.\d+)?$/u.test(limit) ? limit : null,
+      impactBps: typeof impact === "number" && Number.isSafeInteger(impact) && impact >= 0 && impact <= Number.MAX_SAFE_INTEGER - 10_000 ? impact : null };
+  };
+  const modes = { pmc: { calculations: [project("pmc", calculation(payload, "pmc"))] },
+    sub_vendor: { calculations: [project("sub_vendor", calculation(payload, "sub_vendor"))] },
+    in_house: { calculations: [] as KnowledgeDefaultModeCalculation[] } };
+  if (Object.hasOwn(payload, "inHouseComponents")) {
+    modes.in_house.calculations = (readInHouseComponents(payload) ?? []).flatMap((component) => (["labor", "material"] as const).map((key) =>
+      project(`in_house_${key}`, component[key], { id: component.id, basketId: component.basketId, subBasketId: component.subBasketId })));
+  } else {
+    const map = object(payload.modeCalculations);
+    const hasSplit = map && (Object.hasOwn(map, "in_house_labor") || Object.hasOwn(map, "in_house_material"));
+    modes.in_house.calculations = hasSplit
+      ? [project("in_house_labor", calculation(payload, "in_house_labor")), project("in_house_material", calculation(payload, "in_house_material"))]
+      : [project("in_house", calculation(payload, "in_house_labor"))];
+  }
+  return modes;
 }

@@ -154,7 +154,10 @@ describe("AI Estimator Knowledge HTTP routes", () => {
     const command = { mode: "pmc", versionToken: "a".repeat(64) };
     await request(app).post(`${path}/apply`).set(headers).send(command).expect(200);
     expect(testServices.item.applySubBasketMargins).toHaveBeenCalledWith(superAdmin, "basket-1", "child-1", command);
-    for (const invalid of [{ ...command, mode: "other" }, { ...command, versionToken: "stale" }, { ...command, sourceMainLineId: "injected" }, { mode: "pmc" }]) {
+    const targeted = { ...command, targetMainLineId: "current-main-line" };
+    await request(app).post(`${path}/apply`).set(headers).send(targeted).expect(200);
+    expect(testServices.item.applySubBasketMargins).toHaveBeenCalledWith(superAdmin, "basket-1", "child-1", targeted);
+    for (const invalid of [{ ...command, targetMainLineId: " " }, { ...command, targetMainLineId: "x".repeat(129) }, { ...command, targetMainLineId: 42 }, { ...command, mode: "other" }, { ...command, versionToken: "stale" }, { ...command, sourceMainLineId: "injected" }, { mode: "pmc" }]) {
       await request(app).post(`${path}/apply`).set(headers).send(invalid).expect(400);
     }
     for (const role of ROLE_CODES.filter((value) => value !== "super_admin")) {
@@ -162,7 +165,7 @@ describe("AI Estimator Knowledge HTTP routes", () => {
       await request(denied).get(path).set(headers).expect(403);
       await request(denied).post(`${path}/apply`).set(headers).send(command).expect(403);
     }
-    expect(testServices.item.applySubBasketMargins).toHaveBeenCalledTimes(1);
+    expect(testServices.item.applySubBasketMargins).toHaveBeenCalledTimes(2);
   });
 
   it("validates the full vendor profile and exposes detail only to Super Admin and Procurement", async () => {

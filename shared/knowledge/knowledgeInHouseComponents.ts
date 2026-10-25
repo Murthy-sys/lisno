@@ -1,6 +1,6 @@
 import { modeCalculationIssues, modeCalculationsForPayload, type ModeCalculationSettings } from "./knowledgeModeCalculation";
 import { parseKnowledgeModeConfigurations, partitionKnowledgeModeConfigurations } from "./knowledgeModeConfiguration";
-import { normalizePmcScopeName, parsePmcScopeItems, type KnowledgePmcScopeItem } from "./knowledgePmcScope";
+import { inHouseScopeStarterItems, normalizePmcScopeName, parsePmcScopeItems, type KnowledgePmcScopeItem } from "./knowledgePmcScope";
 import type { KnowledgeJsonObject, KnowledgeJsonValue } from "./knowledgeTypes";
 
 export const MAX_IN_HOUSE_COMPONENTS = 50;
@@ -84,16 +84,33 @@ export function withInHouseComponents(payload: KnowledgeJsonObject, components: 
   })) };
 }
 
-/** Materialize existing settings only when the user first adds a component. */
-export function legacyInHouseComponent(payload: KnowledgeJsonObject, owner: { readonly basketId: string; readonly subBasketId?: string | null }): KnowledgeInHouseComponent | null {
+/** Copy configuration content without changing either component's catalogue or estimate identity. */
+export function copyInHouseComponentConfiguration(
+  payload: KnowledgeJsonObject,
+  sourceId: string,
+  targetId: string
+): KnowledgeJsonObject | null {
+  if (sourceId === targetId || !Object.hasOwn(payload, "inHouseComponents")) return null;
+  const parsed = parseInHouseComponents(payload.inHouseComponents);
+  if (parsed.issues.length) return null;
+  const source = parsed.components.find(({ id }) => id === sourceId);
+  const target = parsed.components.find(({ id }) => id === targetId);
+  if (!source || !target) return null;
+  return withInHouseComponents(payload, parsed.components.map((component) => component.id === targetId
+    ? { ...component, inclusions: source.inclusions, exclusions: source.exclusions, labor: source.labor, material: source.material }
+    : component));
+}
+
+/** Preserve the whole existing editor on first addition, including unconfigured sections. */
+export function legacyInHouseComponent(payload: KnowledgeJsonObject, owner: { readonly basketId: string; readonly subBasketId?: string | null }): KnowledgeInHouseComponent {
   const costs = modeCalculationsForPayload(payload);
   const scoped = payload.modeCalculations;
   const hasSplitCosts = scoped !== null && typeof scoped === "object" && !Array.isArray(scoped)
     && (Object.hasOwn(scoped, "in_house_labor") || Object.hasOwn(scoped, "in_house_material"));
   const configuration = partitionKnowledgeModeConfigurations(parseKnowledgeModeConfigurations(payload.modeConfigurations).configurations).primary.execution.in_house;
-  if (costs.in_house_labor == null && costs.in_house_material == null && !configuration) return null;
   return { id: LEGACY_IN_HOUSE_COMPONENT_ID, basketId: owner.basketId, subBasketId: owner.subBasketId ?? null,
-    inclusions: configuration?.inclusions?.map((item) => ({ ...item })) ?? [], exclusions: configuration?.exclusions?.map((item) => ({ ...item })) ?? [],
+    inclusions: (configuration?.inclusions ?? inHouseScopeStarterItems("inclusions")).map((item) => ({ ...item })),
+    exclusions: (configuration?.exclusions ?? inHouseScopeStarterItems("exclusions")).map((item) => ({ ...item })),
     labor: costs.in_house_labor as unknown as ModeCalculationSettings | null,
     // An older single cost is not a second Material expense. Its split needs review.
     material: hasSplitCosts ? costs.in_house_material as unknown as ModeCalculationSettings | null : null };

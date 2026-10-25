@@ -557,7 +557,7 @@ export function createAiEstimatorKnowledgeAdminRouter(
     `${prefix}/baskets/:basketId/sub-baskets/:subBasketId/margins/apply`,
     protectedRoute,
     requireOperation("POST /admin/ai-estimator-knowledge/baskets/:basketId/sub-baskets/:subBasketId/margins/apply"),
-    validateBody(z.object({ mode: z.enum(["pmc", "sub_vendor", "in_house"]), versionToken: z.string().regex(/^[a-f0-9]{64}$/u) }).strict()),
+    validateBody(z.object({ mode: z.enum(["pmc", "sub_vendor", "in_house"]), versionToken: z.string().regex(/^[a-f0-9]{64}$/u), targetMainLineId: stableIdSchema.optional() }).strict()),
     handler(async (request) => services.item.applySubBasketMargins(
       request.authenticatedUser!, String(request.params.basketId), String(request.params.subBasketId), request.body
     ))

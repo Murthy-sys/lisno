@@ -30,15 +30,19 @@ function setup(payload: KnowledgeJsonObject = {}, overrides: Partial<ComponentPr
 }
 
 describe("In-house component editor", () => {
-  it("selects a Main basket then a scoped Sub-basket and saves blank independent fields", async () => {
-    const user = userEvent.setup(); const onSaveComponent = vi.fn<(value: KnowledgeJsonObject) => Promise<boolean>>(async () => true); const view = setup({}, { onSaveComponent });
+  it.each([false, true])("selects a Main basket then a scoped Sub-basket without reconstructing explicit storage (explicit=%s)", async (explicit) => {
+    const user = userEvent.setup(); const onSaveComponent = vi.fn<(value: KnowledgeJsonObject) => Promise<boolean>>(async () => true); const view = setup(explicit ? { inHouseComponents: [] } : {}, { onSaveComponent });
     await user.click(screen.getByRole("button", { name: "Add component" }));
     await user.selectOptions(screen.getByRole("combobox", { name: "Main basket" }), "b2");
     await screen.findByRole("option", { name: "Paint s1" });
     await user.selectOptions(screen.getByRole("combobox", { name: "Sub-basket" }), "s1");
     await user.click(screen.getByRole("button", { name: "Save component" }));
     await waitFor(() => expect(onSaveComponent).toHaveBeenCalledTimes(1));
-    expect(onSaveComponent.mock.calls[0]).toEqual([{ inHouseComponents: [{ id: expect.any(String), basketId: "b2", subBasketId: "s1", inclusions: [], exclusions: [], labor: null, material: null }] }]);
+    const newComponent = { id: expect.any(String), basketId: "b2", subBasketId: "s1", inclusions: [], exclusions: [], labor: null, material: null };
+    const preserved = { id: "legacy-in-house", basketId: "b1", subBasketId: "existing", labor: null, material: null,
+      inclusions: ["Supplier", "Execution", "Labour"].map((name) => ({ id: expect.any(String), name, selected: false })),
+      exclusions: ["Supplier", "Execution", "Labour"].map((name) => ({ id: expect.any(String), name, selected: false })) };
+    expect(onSaveComponent.mock.calls[0]).toEqual([{ inHouseComponents: explicit ? [newComponent] : [preserved, newComponent] }]);
     expect(view.getSubBasketCatalog).toHaveBeenCalledWith("b2");
   });
 

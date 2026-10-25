@@ -113,6 +113,9 @@ export function KnowledgeModeConfigurationBuilder({
     })
   ];
   const [paragraphPending, setParagraphPending] = useState(false);
+  const [inclusionPending, setInclusionPending] = useState(false);
+  const [exclusionPending, setExclusionPending] = useState(false);
+  const inHouseScopePending = !Object.hasOwn(payload, "inHouseComponents") && (inclusionPending || exclusionPending);
   const handlePendingDescriptionChange = useCallback((pending: boolean) => {
     setParagraphPending(pending);
     onPendingDescriptionChange(pending);
@@ -160,17 +163,18 @@ export function KnowledgeModeConfigurationBuilder({
   const calculationValid = invalidCalculationScope === undefined && inHouseComponentsValid;
 
   useEffect(() => {
-    onValidationChange(issues.length === 0 && !paragraphPending && calculationValid);
-  }, [issues.length, onValidationChange, paragraphPending, calculationValid]);
+    onValidationChange(issues.length === 0 && !paragraphPending && !inHouseScopePending && calculationValid);
+  }, [issues.length, onValidationChange, paragraphPending, inHouseScopePending, calculationValid]);
   useEffect(() => {
     if (validationAttempt === 0) {
       lastValidationAttempt.current = 0;
       return;
     }
-    if (validationAttempt <= lastValidationAttempt.current || (!issues.length && !paragraphPending && calculationValid)) return;
+    if (validationAttempt <= lastValidationAttempt.current || (!issues.length && !paragraphPending && !inHouseScopePending && calculationValid)) return;
     lastValidationAttempt.current = validationAttempt;
     if (paragraphPending || issues[0]?.path === "modeDescription") showMode("pmc");
     const firstIssue = paragraphPending ? { path: "modeDescription", message: "Save or cancel the description." }
+      : inHouseScopePending ? { path: "inHouseComponents", message: "Add or cancel the pending Inclusion or Exclusion before adding a component." }
       : invalidCalculationScope ? { path: `modeCalculations.${invalidCalculationScope}`, message: "Review the calculation inputs." } : issues[0] ?? { path: "inHouseComponents", message: "Review the In-house component fields." };
     if (firstIssue.path.startsWith("inHouseComponents")) showExecutionSource("in_house");
     if (firstIssue.path === "pmcMarginBps" || firstIssue.path === "pmcMinimumMarginBps") showMode("pmc");
@@ -183,7 +187,7 @@ export function KnowledgeModeConfigurationBuilder({
     globalThis.setTimeout(() => {
       focusIssue(firstIssue, fieldRefs.current, validationSummaryRef.current);
     }, 0);
-  }, [issues, paragraphPending, calculationValid, invalidCalculationScope, parsed.configurations, showMode, showExecutionSource, validationAttempt, visibleModes]);
+  }, [issues, paragraphPending, inHouseScopePending, calculationValid, invalidCalculationScope, parsed.configurations, showMode, showExecutionSource, validationAttempt, visibleModes]);
 
   function updateConfigurations(next: readonly KnowledgeModeConfiguration[]) {
     onDirty();
@@ -520,6 +524,7 @@ export function KnowledgeModeConfigurationBuilder({
                               key={list}
                               list={list}
                               contextLabel="In-house"
+                              onPendingChange={list === "inclusions" ? setInclusionPending : setExclusionPending}
                               items={inHouseScopeItems(list)}
                               oppositeItems={inHouseScopeItems(list === "inclusions" ? "exclusions" : "inclusions")}
                               readOnly={readOnly}

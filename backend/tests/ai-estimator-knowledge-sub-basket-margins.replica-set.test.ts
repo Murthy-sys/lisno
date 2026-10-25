@@ -8,6 +8,7 @@ import { AiEstimatorKnowledgePriceVersionModel } from "../src/models/AiEstimator
 import { AiEstimatorKnowledgeRevisionModel } from "../src/models/AiEstimatorKnowledgeRevision.js";
 import { AiEstimatorKnowledgeSectionModel } from "../src/models/AiEstimatorKnowledgeSection.js";
 import { AiEstimatorKnowledgeSubBasketModel } from "../src/models/AiEstimatorKnowledgeSubBasket.js";
+import { AiEstimatorKnowledgeUomModel } from "../src/models/AiEstimatorKnowledgeUom.js";
 import { createMemoryRepository } from "../src/repositories/memory.js";
 import { createAiEstimatorKnowledgeItemService } from "../src/services/ai-estimator-knowledge-item.service.js";
 import { createAiEstimatorKnowledgeReferenceService } from "../src/services/ai-estimator-knowledge-reference.service.js";
@@ -18,7 +19,7 @@ const actor = { id: "margin-admin", name: "Margin Administrator", email: "margin
 const actorGuard = { requireReadActor: async () => actor, requireMutationActor: async () => actor };
 const models = [AuditEventModel, AiEstimatorKnowledgeBasketModel, AiEstimatorKnowledgeDisplayOrderSequenceModel,
   AiEstimatorKnowledgeMainLineModel, AiEstimatorKnowledgePriceVersionModel, AiEstimatorKnowledgeRevisionModel,
-  AiEstimatorKnowledgeSectionModel, AiEstimatorKnowledgeSubBasketModel];
+  AiEstimatorKnowledgeSectionModel, AiEstimatorKnowledgeSubBasketModel, AiEstimatorKnowledgeUomModel];
 let replica: Awaited<ReturnType<typeof startMongoReplicaSet>>;
 let base: ReturnType<typeof harness>;
 beforeAll(async () => {
@@ -60,6 +61,163 @@ async function section(id: string, revisionId?: string) {
   return base.item.getSection(actor, id, revisionId ?? item.draftRevisionId ?? item.activeRevisionId!, "advanced");
 }
 async function snapshot() { return Promise.all(models.map((model) => model.find().sort({ _id: 1 }).lean())); }
+
+describe("current-main-line default Mode configuration", { timeout: 30_000 }, () => {
+  async function sourceUom(source: Awaited<ReturnType<typeof create>>) {
+    const uom = await base.reference.createMaster(actor, "uoms", { code: "SFT", name: "Square feet", decimalScale: 2 });
+    await AiEstimatorKnowledgeSectionModel.updateOne({ mainLineId: source.mainLineId, revisionId: source.draftRevisionId, sectionKey: "overview" },
+      { $set: { payload: { uomId: uom.id }, applicability: "configured" }, $inc: { version: 1 } });
+    return uom;
+  }
+
+  it("projects source revision prices and inherited UOM in the reviewed snapshot", async () => {
+    const { basket, sub, source } = await fixture();
+    const uom = await sourceUom(source);
+    await AiEstimatorKnowledgeSectionModel.updateOne({ mainLineId: source.mainLineId, sectionKey: "advanced" }, { $unset: { "payload.modeCalculations.pmc.impactBps": "" } });
+    const sourceSection = await section(source.mainLineId);
+    const summary = await base.item.getSubBasketMargins(actor, basket.id, sub.id);
+    expect(summary.sourceConfiguration).toMatchObject({ revisionId: source.draftRevisionId, revisionStatus: "draft", itemVersion: source.version,
+      sectionVersion: sourceSection.version, uom: { id: uom.id, code: "SFT", name: "Square feet", decimalScale: 2 },
+      modes: { pmc: { calculations: [{ scope: "pmc", baseRatePaise: 10000, lowQuantityLimit: "8", impactBps: null }] },
+        in_house: { calculations: [{ scope: "in_house_labor", baseRatePaise: 11000 }, { scope: "in_house_material", baseRatePaise: 51000 }] } } });
+    await AiEstimatorKnowledgeUomModel.updateOne({ _id: uom.id }, { $set: { status: "inactive" } });
+    expect((await base.item.getSubBasketMargins(actor, basket.id, sub.id)).sourceConfiguration?.uom).toBeNull();
+  });
+
+  it("labels source components even when their costs are blank and no margin pair is comparable", async () => {
+    const { basket, sub, source } = await fixture();
+    const current = await section(source.mainLineId);
+    await base.item.updateSection(actor, source.mainLineId, source.draftRevisionId!, "advanced", { expectedVersion: current.version,
+      payload: { ...current.payload, inHouseComponents: [{ id: "blank-component", basketId: basket.id, subBasketId: sub.id, inclusions: [], exclusions: [], labor: null, material: null }] } });
+    const summary = await base.item.getSubBasketMargins(actor, basket.id, sub.id);
+    expect(summary.modes.in_house.mismatchCount).toBeNull();
+    expect(summary.sourceConfiguration?.modes.in_house.calculations).toEqual([
+      { scope: "in_house_labor", component: { id: "blank-component", basketId: basket.id, subBasketId: sub.id, name: "Ceilings / POP" }, baseRatePaise: null, lowQuantityLimit: null, impactBps: null },
+      { scope: "in_house_material", component: { id: "blank-component", basketId: basket.id, subBasketId: sub.id, name: "Ceilings / POP" }, baseRatePaise: null, lowQuantityLimit: null, impactBps: null }
+    ]);
+  });
+
+  it.each(["overview_payload", "overview_version", "uom_name", "uom_scale", "uom_status", "uom_version"])("rejects a stale current-line review after source %s changes", async (change) => {
+    const { basket, sub, source, target } = await fixture();
+    const uom = await sourceUom(source);
+    const reviewed = await base.item.getSubBasketMargins(actor, basket.id, sub.id);
+    if (change.startsWith("overview")) await AiEstimatorKnowledgeSectionModel.updateOne({ mainLineId: source.mainLineId, sectionKey: "overview" },
+      change === "overview_version" ? { $inc: { version: 1 } } : { $set: { "payload.description": "Changed source overview" } });
+    else await AiEstimatorKnowledgeUomModel.updateOne({ _id: uom.id }, change === "uom_version" ? { $inc: { version: 1 } }
+      : { $set: change === "uom_name" ? { name: "Updated unit" } : change === "uom_scale" ? { decimalScale: 3 } : { status: "inactive" } });
+    const before = await snapshot();
+    await expect(base.item.applySubBasketMargins(actor, basket.id, sub.id, { mode: "pmc", versionToken: reviewed.versionToken, targetMainLineId: target.mainLineId }))
+      .rejects.toMatchObject({ code: "VERSION_CONFLICT" });
+    expect(await snapshot()).toEqual(before);
+  });
+
+  it("updates only the selected line despite another blocked mismatched sibling", async () => {
+    const { basket, sub, target } = await fixture();
+    const sibling = await create(basket.id, sub.id, "Sibling requiring review", payload(true), 3);
+    await AiEstimatorKnowledgeSectionModel.updateOne({ mainLineId: sibling.mainLineId, sectionKey: "advanced" }, { $set: { "payload.modeCalculations.pmc": "legacy invalid value" } });
+    const siblingBefore = await section(sibling.mainLineId);
+    const summary = await base.item.getSubBasketMargins(actor, basket.id, sub.id);
+    expect(summary.modes.in_house.canApply).toBe(false);
+    const result = await base.item.applySubBasketMargins(actor, basket.id, sub.id, { mode: "in_house", versionToken: summary.versionToken, targetMainLineId: target.mainLineId });
+    expect(result.updatedMainLineIds).toEqual([target.mainLineId]);
+    expect(await section(sibling.mainLineId)).toEqual(siblingBefore);
+    expect(result.summary.modes.in_house.mismatches).toMatchObject([{ mainLineId: sibling.mainLineId }]);
+    expect((await section(target.mainLineId)).payload).toEqual({ ...payload(true), modeCalculations: { ...payload(true).modeCalculations,
+      in_house_labor: settings(31000, 2500, 3500), in_house_material: settings(71000, 2000, 3000) } });
+  });
+
+  it.each(["pmc", "sub_vendor"] as const)("fills blank current %s margins while preserving bulk skip behavior and absent calculators", async (mode) => {
+    const { basket, sub, target } = await fixture();
+    const blank = await base.item.createMainLine(actor, basket.id, { name: "Blank current main line", subBasketId: sub.id });
+    const summary = await base.item.getSubBasketMargins(actor, basket.id, sub.id);
+    expect(summary.modes[mode].mismatches.map(({ mainLineId }) => mainLineId)).toEqual([target.mainLineId]);
+    const result = await base.item.applySubBasketMargins(actor, basket.id, sub.id, { mode, versionToken: summary.versionToken, targetMainLineId: blank.mainLineId });
+    expect(result.updatedMainLineIds).toEqual([blank.mainLineId]);
+    const saved = await section(blank.mainLineId);
+    expect(saved.applicability).toBe("configured");
+    expect(saved.payload).toEqual(mode === "pmc" ? { pmcMinimumMarginBps: 1200, pmcMarginBps: 1800 } : { subVendorMinimumMarginBps: 1500, subVendorMarginBps: 2500 });
+    expect(result.summary.modes[mode].mismatches.map(({ mainLineId }) => mainLineId)).toEqual([target.mainLineId]);
+    expect((await base.item.applySubBasketMargins(actor, basket.id, sub.id, { mode, versionToken: result.summary.versionToken, targetMainLineId: blank.mainLineId })).updatedMainLineIds).toEqual([]);
+  });
+
+  it("validates exact current membership before no-op and leaves the source unchanged", async () => {
+    const { basket, sub, source } = await fixture();
+    const otherSub = await base.reference.createSubBasket(actor, basket.id, { name: "Walls" });
+    const foreign = await create(basket.id, otherSub.id, "Foreign line");
+    const archived = await create(basket.id, sub.id, "Archived line");
+    await AiEstimatorKnowledgeMainLineModel.updateOne({ _id: archived.mainLineId }, { $set: { status: "archived" } });
+    const summary = await base.item.getSubBasketMargins(actor, basket.id, sub.id);
+    const before = await section(source.mainLineId);
+    for (const targetMainLineId of ["missing-main-line", foreign.mainLineId, archived.mainLineId]) {
+      await expect(base.item.applySubBasketMargins(actor, basket.id, sub.id, { mode: "pmc", versionToken: summary.versionToken, targetMainLineId })).rejects.toMatchObject({ status: 404 });
+    }
+    expect((await base.item.applySubBasketMargins(actor, basket.id, sub.id, { mode: "pmc", versionToken: summary.versionToken, targetMainLineId: source.mainLineId })).updatedMainLineIds).toEqual([]);
+    expect(await section(source.mainLineId)).toEqual(before);
+  });
+
+  it("creates a draft only for the current active target, preserving published history and its siblings", async () => {
+    const { basket, sub, target } = await fixture();
+    const sibling = await create(basket.id, sub.id, "Other mismatch");
+    await AiEstimatorKnowledgeRevisionModel.updateOne({ _id: target.draftRevisionId }, { $set: { status: "active", contentDigest: "historic-target" } });
+    await AiEstimatorKnowledgeMainLineModel.updateOne({ _id: target.mainLineId }, { $set: { status: "active", activeRevisionId: target.draftRevisionId, draftRevisionId: null } });
+    const before = await AiEstimatorKnowledgeSectionModel.find({ revisionId: target.draftRevisionId }).sort({ _id: 1 }).lean();
+    const siblingBefore = await section(sibling.mainLineId);
+    const summary = await base.item.getSubBasketMargins(actor, basket.id, sub.id);
+    const result = await base.item.applySubBasketMargins(actor, basket.id, sub.id, { mode: "pmc", versionToken: summary.versionToken, targetMainLineId: target.mainLineId });
+    expect(result.updatedMainLineIds).toEqual([target.mainLineId]);
+    const after = await base.item.getItem(actor, target.mainLineId);
+    expect(after.activeRevisionId).toBe(target.draftRevisionId);
+    expect(after.draftRevisionId).toBeTruthy();
+    expect(after.draftRevisionId).not.toBe(target.draftRevisionId);
+    expect(await AiEstimatorKnowledgeSectionModel.find({ revisionId: target.draftRevisionId }).sort({ _id: 1 }).lean()).toEqual(before);
+    expect(await section(sibling.mainLineId)).toEqual(siblingBefore);
+  });
+
+  it.each(["root", "scoped"])("preserves a %s legacy target and blocks unsafe defaults without writes", async (kind) => {
+    const { basket, sub, source, target } = await fixture();
+    const single = settings(45678, 1000, 2000);
+    const legacy = kind === "root" ? { modeCalculation: single } : { modeCalculations: { pmc: null, sub_vendor: settings(98765, 1000, 2000), in_house: single } };
+    const targetSection = await section(target.mainLineId);
+    await base.item.updateSection(actor, target.mainLineId, target.draftRevisionId!, "advanced", { expectedVersion: targetSection.version, payload: legacy });
+    const asymmetric = await base.item.getSubBasketMargins(actor, basket.id, sub.id);
+    const before = await snapshot();
+    expect(asymmetric.modes.in_house.mismatches[0]?.blockedReason).toMatch(kind === "root" ? /Save scoped In-house cost settings first/ : /default labor and material margins differ/);
+    await expect(base.item.applySubBasketMargins(actor, basket.id, sub.id, { mode: "in_house", versionToken: asymmetric.versionToken, targetMainLineId: target.mainLineId }))
+      .rejects.toMatchObject({ code: "SUB_BASKET_MARGINS_UNAVAILABLE", message: expect.stringMatching(kind === "root" ? /Save scoped In-house cost settings first/ : /default labor and material margins differ/) });
+    expect(await snapshot()).toEqual(before);
+    const sourceSection = await section(source.mainLineId);
+    const original = payload();
+    await base.item.updateSection(actor, source.mainLineId, source.draftRevisionId!, "advanced", { expectedVersion: sourceSection.version,
+      payload: { ...original, modeCalculations: { ...original.modeCalculations, in_house_material: settings(51000, 2500, 3500) } } });
+    const reviewed = await base.item.getSubBasketMargins(actor, basket.id, sub.id);
+    if (kind === "root") {
+      const beforeEqualDefaults = await snapshot();
+      expect(reviewed.modes.in_house.mismatches[0]?.blockedReason).toMatch(/Save scoped In-house cost settings first/);
+      await expect(base.item.applySubBasketMargins(actor, basket.id, sub.id, { mode: "in_house", versionToken: reviewed.versionToken, targetMainLineId: target.mainLineId }))
+        .rejects.toMatchObject({ code: "SUB_BASKET_MARGINS_UNAVAILABLE", message: expect.stringMatching(/Save scoped In-house cost settings first/) });
+      expect(await snapshot()).toEqual(beforeEqualDefaults);
+      return;
+    }
+    await base.item.applySubBasketMargins(actor, basket.id, sub.id, { mode: "in_house", versionToken: reviewed.versionToken, targetMainLineId: target.mainLineId });
+    expect((await section(target.mainLineId)).payload).toEqual({ ...legacy, modeCalculations: {
+      pmc: null, sub_vendor: settings(98765, 1000, 2000), in_house: settings(45678, 2500, 3500)
+    } });
+  });
+
+  it("repairs blank current In-house margins only when both saved costs exist", async () => {
+    const { basket, sub, target } = await fixture();
+    await AiEstimatorKnowledgeSectionModel.updateOne({ mainLineId: target.mainLineId, sectionKey: "advanced" }, { $unset: { "payload.modeCalculations.in_house_labor.minimumMarkupBps": "" } });
+    const summary = await base.item.getSubBasketMargins(actor, basket.id, sub.id);
+    expect(summary.modes.in_house.mismatchCount).toBe(0);
+    await base.item.applySubBasketMargins(actor, basket.id, sub.id, { mode: "in_house", versionToken: summary.versionToken, targetMainLineId: target.mainLineId });
+    expect((await section(target.mainLineId)).payload).toHaveProperty("modeCalculations.in_house_labor", settings(31000, 2500, 3500));
+    await AiEstimatorKnowledgeSectionModel.updateOne({ mainLineId: target.mainLineId, sectionKey: "advanced" }, { $set: { "payload.modeCalculations.in_house_material": null } });
+    const missing = await base.item.getSubBasketMargins(actor, basket.id, sub.id);
+    const before = await snapshot();
+    await expect(base.item.applySubBasketMargins(actor, basket.id, sub.id, { mode: "in_house", versionToken: missing.versionToken, targetMainLineId: target.mainLineId })).rejects.toMatchObject({ code: "SUB_BASKET_MARGINS_UNAVAILABLE" });
+    expect(await snapshot()).toEqual(before);
+  });
+});
 
 describe("Sub-Basket first-main-line margins", { timeout: 30_000 }, () => {
   it("compares and applies independent component defaults by basket/Sub-basket while skipping blank and unmatched components", async () => {

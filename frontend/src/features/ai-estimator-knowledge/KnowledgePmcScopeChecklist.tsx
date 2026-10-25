@@ -20,9 +20,10 @@ interface Props {
   readonly contextLabel?: string;
   readonly readOnly: boolean;
   readonly onChange: (items: readonly KnowledgePmcScopeItem[]) => void;
+  readonly onPendingChange?: (pending: boolean) => void;
 }
 
-export function KnowledgePmcScopeChecklist({ list, items, oppositeItems, contextLabel, readOnly, onChange }: Props) {
+export function KnowledgePmcScopeChecklist({ list, items, oppositeItems, contextLabel, readOnly, onChange, onPendingChange }: Props) {
   const id = useId();
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState("");
@@ -37,6 +38,11 @@ export function KnowledgePmcScopeChecklist({ list, items, oppositeItems, context
   const oppositeTitle = list === "inclusions" ? "Exclusions" : "Inclusions";
   const oppositeSelectedNames = new Set(oppositeItems.filter((item) => item.selected).map((item) => normalizePmcScopeName(item.name)));
   const atLimit = items.length >= MAX_PMC_SCOPE_ITEMS;
+  const pendingCallback = useRef(onPendingChange);
+  pendingCallback.current = onPendingChange;
+
+  useEffect(() => { pendingCallback.current?.(adding); }, [adding]);
+  useEffect(() => () => pendingCallback.current?.(false), []);
 
   useEffect(() => {
     if (adding) {

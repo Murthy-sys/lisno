@@ -1,6 +1,6 @@
 import { readInHouseComponents } from "../domain/ai-estimator-knowledge-in-house-components.js";
 import type { KnowledgeApplySubBasketMarginsInput, KnowledgeApplySubBasketMarginsResult, KnowledgeSubBasketMarginSummary } from "../contracts/ai-estimator-knowledge-sub-basket-margins.js";
-import { SUB_BASKET_MARGIN_MODES, withSubBasketMarginDefaults } from "../domain/ai-estimator-knowledge-sub-basket-margins.js";
+import { SUB_BASKET_MARGIN_MODES, subBasketMarginPatchUnavailableReason, withSubBasketMarginDefaults } from "../domain/ai-estimator-knowledge-sub-basket-margins.js";
 import { marginPayload, readSubBasketMarginSnapshot } from "./ai-estimator-knowledge-sub-basket-margins.js";
 import { normalizeDesignRules } from "../domain/main-line-design-rules.js";
 import { randomUUID } from "node:crypto";
@@ -531,7 +531,9 @@ export function createAiEstimatorKnowledgeItemService(
     },
 
     async applySubBasketMargins(actor, basketId, subBasketId, input) {
-      if (!SUB_BASKET_MARGIN_MODES.includes(input.mode) || !/^[a-f0-9]{64}$/u.test(input.versionToken)) {
+      if (!SUB_BASKET_MARGIN_MODES.includes(input.mode) || !/^[a-f0-9]{64}$/u.test(input.versionToken)
+        || (input.targetMainLineId !== undefined && (typeof input.targetMainLineId !== "string" || !input.targetMainLineId.length
+          || input.targetMainLineId.length > 128 || input.targetMainLineId.trim() !== input.targetMainLineId))) {
         throw new ApiError(400, "VALIDATION_ERROR", "Select a margin type and refresh the Sub-Basket before applying defaults.");
       }
       return mongoose.connection.transaction(async (session) => {
@@ -542,8 +544,33 @@ export function createAiEstimatorKnowledgeItemService(
           throw new ApiError(409, "VERSION_CONFLICT", "The Sub-Basket changed. Refresh its margins and review the mismatches again.");
         }
         const selected = snapshot.summary.modes[input.mode];
-        if (selected.mismatchCount === 0 && !selected.unavailableReason) return { updatedMainLineIds: [], summary: snapshot.summary };
-        if (!selected.canApply) throw new ApiError(409, "SUB_BASKET_MARGINS_UNAVAILABLE", selected.unavailableReason ?? "The first main line has no valid default margins.");
+        const targeted = input.targetMainLineId !== undefined;
+        const target = targeted ? snapshot.lines.find(({ line }) => line._id === input.targetMainLineId) : undefined;
+        if (targeted && !target) throw new ApiError(404, "NOT_FOUND", "This main line is no longer in the selected Sub-Basket.");
+        if (target && target.line._id === snapshot.summary.source?.mainLineId) return { updatedMainLineIds: [], summary: snapshot.summary };
+        const patch = (section: Row) => {
+          if (section.applicability === "not_applicable") throw new ApiError(409, "SUB_BASKET_MARGINS_UNAVAILABLE", "The Mode section is marked not applicable. Review this main line before applying defaults.");
+          const payload = withSubBasketMarginDefaults(marginPayload(section), input.mode, selected.ranges, { basketId, subBasketId }, { allowIncompleteMargins: targeted });
+          if (!payload) throw new ApiError(409, "SUB_BASKET_MARGINS_UNAVAILABLE", subBasketMarginPatchUnavailableReason(marginPayload(section), selected.ranges, { basketId, subBasketId }));
+          validateSectionPayloadOrThrow("advanced", payload);
+          return payload;
+        };
+        if (targeted) {
+          if (selected.mismatchCount === null) throw new ApiError(409, "SUB_BASKET_MARGINS_UNAVAILABLE", selected.unavailableReason ?? "The first main line has no valid default margins.");
+          if (!target!.revision || !target!.section) throw new ApiError(409, "SUB_BASKET_MARGINS_UNAVAILABLE", "The saved Mode section could not be resolved. Open this main line and save its Mode settings.");
+          if (isDeepStrictEqual(patch(target!.section), marginPayload(target!.section))) return { updatedMainLineIds: [], summary: snapshot.summary };
+        } else {
+          if (selected.mismatchCount === 0 && !selected.unavailableReason) return { updatedMainLineIds: [], summary: snapshot.summary };
+          if (!selected.canApply) throw new ApiError(409, "SUB_BASKET_MARGINS_UNAVAILABLE", selected.unavailableReason ?? "The first main line has no valid default margins.");
+        }
+        // The saved UOM displayed with the source prices belongs to the reviewed snapshot.
+        if (snapshot.sourceUom) {
+          const locked = await AiEstimatorKnowledgeUomModel.updateOne(
+            { _id: snapshot.sourceUom._id, version: snapshot.sourceUom.version, status: snapshot.sourceUom.status },
+            { $inc: { dependencyEpoch: 1 } }, { session, timestamps: false }
+          ).exec();
+          if (locked.matchedCount !== 1) versionConflict();
+        }
         // Coordinate every reviewed line, including the source and currently matching
         // siblings, so concurrent changes cannot silently invalidate the full review.
         for (const { line } of snapshot.lines) {
@@ -553,7 +580,7 @@ export function createAiEstimatorKnowledgeItemService(
           ).exec();
           if (locked.matchedCount !== 1) versionConflict();
         }
-        const targetIds = new Set(selected.mismatches.map(({ mainLineId }) => mainLineId));
+        const targetIds = new Set(targeted ? [input.targetMainLineId!] : selected.mismatches.map(({ mainLineId }) => mainLineId));
         const updatedMainLineIds: string[] = [];
         for (const entry of snapshot.lines) {
           const mainLineId = String(entry.line._id);
@@ -566,8 +593,7 @@ export function createAiEstimatorKnowledgeItemService(
           const revisionId = requiredString(line.draftRevisionId);
           const section = asRow(await AiEstimatorKnowledgeSectionModel.findOne({ mainLineId, revisionId, sectionKey: "advanced" }).session(session).lean().exec());
           if (!section) notFound();
-          const payload = withSubBasketMarginDefaults(marginPayload(section), input.mode, selected.ranges, { basketId, subBasketId });
-          if (!payload) throw new ApiError(409, "SUB_BASKET_MARGINS_UNAVAILABLE", "The saved In-house calculations need review.");
+          const payload = patch(section);
           await updateSectionInSession(actor, mainLineId, revisionId, "advanced", {
             expectedVersion: requiredInteger(section.version), expectedAggregateVersion: requiredInteger(line.version),
             applicability: section.applicability as KnowledgeSectionApplicability, payload

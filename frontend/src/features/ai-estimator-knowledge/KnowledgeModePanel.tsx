@@ -123,6 +123,7 @@ export interface KnowledgeModePanelProps {
   readonly relationshipBaskets: readonly KnowledgeBasket[];
   readonly relationshipItems: readonly KnowledgeItemListItem[];
   readonly editable: boolean;
+  readonly locked?: boolean;
   readonly onRequestDraft?: () => void;
   readonly legacyModeCatalogState: KnowledgeLegacyModeCatalogState;
   readonly uomCatalogState?: KnowledgeBudgetCatalogState;
@@ -148,6 +149,7 @@ export const KnowledgeModePanel = forwardRef<
     relationshipBaskets,
     relationshipItems,
     editable,
+    locked = false,
     onRequestDraft,
     legacyModeCatalogState,
     uomCatalogState = { status: "ready" },
@@ -264,7 +266,8 @@ export const KnowledgeModePanel = forwardRef<
     });
   }, [advancedQuery.data, pricingQuery.data, descriptionPending, sourceKey]);
 
-  const dirty = descriptionPending || MODE_SECTION_KEYS.some((sectionKey) => drafts[sectionKey].dirty);
+  const dirty = descriptionPending || Object.values(pendingCalculations).some(Boolean) || Object.values(componentPending).some(Boolean)
+    || MODE_SECTION_KEYS.some((sectionKey) => drafts[sectionKey].dirty);
   const busy = advancedQuery.isFetching || pricingQuery.isFetching || overviewQuery.isFetching;
   const savedUomId = overviewQuery.data?.payload.uomId;
   const savedUom = (masters.uoms ?? []).find((uom) => uom.id === savedUomId) ?? proposedUoms.find(uom => uom.id === savedUomId);
@@ -411,7 +414,7 @@ export const KnowledgeModePanel = forwardRef<
   }, [advancedQuery.data, pricingQuery.data]);
 
   const save = useCallback(async (advancedPayload?: KnowledgeJsonObject): Promise<boolean> => {
-    if (!editable || saving) return false;
+    if (!editable || saving || locked) return false;
     if (descriptionPending) {
       setDrafts((current) => ({ ...current, advanced: {
         ...current.advanced,
@@ -575,7 +578,7 @@ export const KnowledgeModePanel = forwardRef<
       setSavingSection(null);
       setSaving(false);
     }
-  }, [dataSource, componentsValid, descriptionPending, drafts, editable, mainLineId, onAnnouncement, queryClient, revisionId, saving, sourceKey]);
+  }, [dataSource, componentsValid, descriptionPending, drafts, editable, locked, mainLineId, onAnnouncement, queryClient, revisionId, saving, sourceKey]);
 
   useImperativeHandle(ref, () => ({ save, discard }), [discard, save]);
 
@@ -678,7 +681,7 @@ export const KnowledgeModePanel = forwardRef<
           modes={masters.modes ?? []}
           legacyModeCatalogState={legacyModeCatalogState}
           serverIssues={drafts.advanced.serverIssues}
-          readOnly={!editable || saving}
+          readOnly={!editable || saving || locked}
           validationAttempt={drafts.advanced.validationAttempt}
           onChange={(payload) => setPayload("advanced", payload)}
           onDirty={markAdvancedConfigurationDirty}
@@ -686,8 +689,8 @@ export const KnowledgeModePanel = forwardRef<
           calculationValidity={calculationValidity}
           inHouseComponentsValid={componentsValid}
           inHouseComponents={<KnowledgeInHouseComponents key={`${sourceKey}:${descriptionResetVersion}`} payload={drafts.advanced.payload} item={item}
-            baskets={relationshipBaskets} dataSource={dataSource} uom={calculationUom} readOnly={!editable || saving}
-            onRequestDraft={saving ? undefined : onRequestDraft}
+            baskets={relationshipBaskets} dataSource={dataSource} uom={calculationUom} readOnly={!editable || saving || locked}
+            onRequestDraft={saving || locked ? undefined : onRequestDraft}
             validationAttempt={drafts.advanced.validationAttempt} pendingSaveVersion={pendingCalculationSaveVersion} issues={drafts.advanced.serverIssues}
             onValidationChange={setComponentsValid} onPendingChange={setComponentPending}
             onChange={(payload) => { setPayload("advanced", payload); markAdvancedConfigurationDirty(); }}
@@ -718,7 +721,7 @@ export const KnowledgeModePanel = forwardRef<
             issuePath={`modeCalculations.${scope}`}
             value={modeCalculationsForPayload(drafts.advanced.payload)[scope]}
             uom={{ ...calculationUom, scopeKey: `${calculationUom.scopeKey}:${scope}` }}
-            readOnly={!editable || saving}
+            readOnly={!editable || saving || locked}
             validationAttempt={drafts.advanced.validationAttempt}
             issues={drafts.advanced.serverIssues}
             onChange={(modeCalculation) => setPayload("advanced", withModeCalculation(drafts.advanced.payload, scope, modeCalculation))}
@@ -740,7 +743,7 @@ export const KnowledgeModePanel = forwardRef<
             savedBrands={drafts.pricing.pendingBaseline?.brands}
             priceEntries={drafts.pricing.payload.priceEntries}
             referencedSpecificationIds={drafts.pricing.specificationReferenceIds}
-            readOnly={!editable || saving}
+            readOnly={!editable || saving || locked}
             issues={pricingConfigurationIssues}
             validationAttempt={drafts.pricing.validationAttempt}
             onChange={setPricingSpecificationConfiguration}
