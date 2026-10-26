@@ -1,3 +1,4 @@
+import type { EstimateComponentPricing, ESTIMATE_COMPONENT_PRICING_BASIS } from "../../../../shared/estimation/estimateComponentPricing";
 import type { EstimateDimensions, EstimateDimensionRule } from "../../../../shared/estimation/estimateDimensions";
 import { apiClient } from "../../api/client";
 import type { KnowledgeModeTier } from "../../../../shared/knowledge/knowledgeModeTiers";
@@ -11,16 +12,20 @@ export interface EstimateTierSource {
 }
 
 export interface EstimateTierChoice {
+  pricingBasis?: typeof ESTIMATE_COMPONENT_PRICING_BASIS;
+  componentPricing?: EstimateComponentPricing;
   modeTier: KnowledgeModeTier;
   available: boolean;
   unavailableReason: string | null;
   ratePaise: number | null;
   amountPaise: number | null;
   source: EstimateTierSource | null;
-  inHouseComponents?: Array<{ id: string; label: string; ratePaise: number | null; available: boolean }>;
+  inHouseComponents?: Array<{ id: string; label: string; ratePaise: number | null; amountPaise?: number | null; available: boolean }>;
 }
 
 export interface EstimateTierLine {
+  pricingBasis?: typeof ESTIMATE_COMPONENT_PRICING_BASIS;
+  componentPricing?: EstimateComponentPricing;
   id: string;
   mainLineId: string;
   mainLineName: string;

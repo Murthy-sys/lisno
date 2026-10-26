@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { renderWithQuery } from "../../test/render";
 import { ClientPublishedEstimate } from "./ClientPublishedEstimate";
 import type { EstimateQueueItem } from "./estimateWorkflowApi";
+import { componentPricingFixture } from "../leads/estimateComponentPricing.testFixtures";
 
 function projectedEstimate(showLine: boolean): EstimateQueueItem {
   return {
@@ -26,6 +27,18 @@ function projectedEstimate(showLine: boolean): EstimateQueueItem {
 }
 
 describe("client screen visibility projection", () => {
+  it("displays a frozen component amount with no rate and does not use working values", () => {
+    const estimate = projectedEstimate(true);
+    const line = estimate.publishedReview!.snapshot.lineItems[0]!;
+    Object.assign(line, { pricingMode: "in_house", rateSource: "configuration", pricingBasis: "in_house_components_v1",
+      rate: null, ratePaise: null, quantity: 2, amount: 783.33, amountPaise: 78333, componentPricing: componentPricingFixture() });
+    estimate.lineItems = [{ ...line, rate: 5, ratePaise: 500, amount: 10, amountPaise: 1000 }] as EstimateQueueItem["lineItems"];
+    renderWithQuery(<ClientPublishedEstimate estimate={estimate} />);
+    expect(screen.getByText("2 sq ft × Calculated from components")).toBeVisible();
+    expect(screen.getByText("Component selling amounts for Wall painting · ₹783.33")).toBeVisible();
+    expect(screen.queryByText(/Rate unavailable/)).not.toBeInTheDocument();
+  });
+
   it("labels the frozen tier without repricing from the working estimate", () => {
     const estimate = projectedEstimate(true);
     estimate.publishedReview!.snapshot.lineItems[0]!.modeTier = "premium";

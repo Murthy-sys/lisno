@@ -1,9 +1,21 @@
 import { buildConfiguredLines, configuredLineAmountPaise, deselectConfiguredRecommendationSources, parseSellingRate, updateConfiguredLinePricing } from "./configuredEstimate";
 import { getEstimateRoomDefinitions, mergeSelectedRoomDefinitions, parseBedroomCount } from "./estimateRoomOptions";
 import { estimateEditable, previewEstimateTotals, refreshStaffForm, restoreStaffForm, staffFormInput, validateStaffForm } from "./staffEstimateModel";
-import { catalogueFixture, componentCatalogueFixture, componentLineFixture, estimateFixture, leadFixture, lifecycleFixture } from "./__tests__/fixtures";
+import { catalogueFixture, componentCatalogueFixture, componentLineFixture, componentAmountLineFixture, estimateFixture, leadFixture, lifecycleFixture } from "./__tests__/fixtures";
 
 describe("native estimate authoring model", () => {
+ it("preserves exact component totals and fingerprint through read-only native restore, refresh and save", () => {
+  const catalogue = componentCatalogueFixture();
+  const form = refreshStaffForm(restoreStaffForm(estimateFixture({ lineItems: [componentAmountLineFixture] }), leadFixture, catalogue), catalogue);
+  expect(configuredLineAmountPaise(form.lines[0]!)).toBe(78333);
+  expect(previewEstimateTotals(form)).toEqual({ subtotalPaise: 78333, gstPaise: 14100, totalPaise: 92433 });
+  expect(validateStaffForm(form, true)).toBeNull();
+  expect(staffFormInput(form).lineItems[0]).toMatchObject({ ratePaise: null, pricingBasis: "in_house_components_v1", componentPricingFingerprint: "a".repeat(64) });
+  expect(staffFormInput(form).lineItems[0]).not.toHaveProperty("componentPricing");
+  expect(updateConfiguredLinePricing(form.lines[0]!, { quantity: 5 })).toBe(form.lines[0]);
+  expect(configuredLineAmountPaise({ ...form.lines[0]!, quantity: 3 })).toBeNull();
+  expect(configuredLineAmountPaise({ ...form.lines[0]!, included: false })).toBe(0);
+ });
  it("preserves component selection, price and version pins through restore, refresh and transport", () => {
   const catalogue = componentCatalogueFixture();
   const restored = restoreStaffForm(estimateFixture({ lineItems: [componentLineFixture] }), leadFixture, catalogue);

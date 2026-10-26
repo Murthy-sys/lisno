@@ -13,6 +13,32 @@ export type MainBasketClassification = "standard" | "special";
 export type ProcurementEstimateMode = "in_house" | "sub_vendor" | "pmc";
 export type ProcurementEstimateModeGroupKey = ProcurementEstimateMode | "unrecorded";
 
+export interface ProcurementInHouseComponentBreakdown {
+  complete: boolean;
+  unavailableSourceLineItemKeys: string[];
+  adjustedCostPaise: number | null;
+  sellingPaise: number | null;
+  subBaskets: Array<{
+    basketId: string;
+    basketName: string | null;
+    subBasketId: string | null;
+    subBasketName: string | null;
+    adjustedCostPaise: number;
+    sellingPaise: number;
+    contributions: Array<{
+      sourceLineItemKey: string;
+      componentId: string;
+      roomId: string | null;
+      quantity: string;
+      unit: string;
+      laborAdjustedCostPaise: number;
+      materialAdjustedCostPaise: number;
+      laborSellingPaise: number;
+      materialSellingPaise: number;
+    }>;
+  }>;
+}
+
 export interface ProcurementEstimateModeSelection {
   approvedClassification: MainBasketClassification | null;
   approvedPricingMode: ProcurementEstimateMode | null;
@@ -40,6 +66,7 @@ export interface ProcurementModeBasketSubset extends ProcurementModeGroupMetrics
 }
 
 export interface ProcurementBasketModeGroup extends ProcurementModeGroupMetrics {
+  inHouseComponentBreakdown?: ProcurementInHouseComponentBreakdown;
   mode: ProcurementEstimateModeGroupKey;
   basketCount: number;
   baskets: ProcurementModeBasketSubset[];
@@ -118,6 +145,7 @@ export interface SavedBasketBaseRate {
 }
 
 export interface ProcurementBasketDetail extends ProcurementBasketSummary {
+  inHouseComponentBreakdown?: ProcurementInHouseComponentBreakdown;
   preparationSource?: EstimationPreparationSource;
   projectId: string;
   estimateSource: BasketEstimateSource;

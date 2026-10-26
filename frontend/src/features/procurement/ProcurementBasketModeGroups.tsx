@@ -1,3 +1,4 @@
+import { ProcurementComponentBreakdown } from "./ProcurementComponentBreakdown";
 import { useId, useRef, useState } from "react";
 
 import { formatPaise } from "../finance/ProjectFinancePanel";
@@ -126,6 +127,7 @@ export function ProcurementBasketModeGroups({ groups, preferences, onPreferences
             <span className="procurement-mode__disclosure"><Symbol kind="chevron" /></span>
           </button></h3>
           <div id={`${id}-${group.mode}`} hidden={!expanded}>
+            <ProcurementComponentBreakdown breakdown={group.inHouseComponentBreakdown} sources={new Map(group.baskets.flatMap(basket => basket.sourceLineItemKeys.map(key => [key, `Open source in ${basket.name}`] as const)))} onOpenSource={key => { const basket = group.baskets.find(entry => entry.sourceLineItemKeys.includes(key)); if (basket) onOpen(basket.id); }} />
             {visible.length ? <div className="procurement-mode__cards">{visible.map((basket) => <BasketCard key={`${group.mode}:${basket.id}`} basket={basket} mode={group.mode} onOpen={onOpen} />)}</div>
               : <p className="procurement-mode__group-empty">{group.baskets.length ? "No matching baskets in this mode." : "No items in this mode."}</p>}
           </div>

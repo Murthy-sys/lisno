@@ -6,3 +6,17 @@
 .estimate-in-house-components input { flex: 0 0 auto; width: 16px; height: 16px; margin-top: 2px; accent-color: #52633e; }
 .estimate-in-house-components small { display: block; color: var(--text-muted, #697160); margin-top: 3px; font-size: 0.75rem; }
 @media (max-width: 600px) { .estimate-in-house-components > label > span { display: block; } }
+.estimate-component-breakdown { min-width: 0; padding-block: 12px; border-top: 1px solid var(--border, #d7d9d1); font-size: .8125rem; }
+.estimate-component-breakdown summary { cursor: pointer; font-weight: 650; padding-block: 8px; overflow-wrap: anywhere; }
+.estimate-component-breakdown summary:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
+.estimate-component-breakdown p { color: var(--text-muted, #697160); margin-block: 4px 10px; }
+.estimate-component-breakdown__row { padding-block: 10px; border-top: 1px solid var(--border, #d7d9d1); overflow-wrap: anywhere; }
+.estimate-component-breakdown dl { display: flex; flex-wrap: wrap; gap: 12px 24px; margin: 8px 0 0; }
+.estimate-component-breakdown dl > div { min-width: 6rem; }
+.estimate-component-breakdown dd { margin: 3px 0 0; font-variant-numeric: tabular-nums; font-weight: 650; }
+.estimate-component-breakdown ul { margin: 0; padding-left: 18px; }
+.estimate-component-breakdown li { padding-block: 6px; overflow-wrap: anywhere; }
+.estimate-component-breakdown li strong { display: block; font-variant-numeric: tabular-nums; }
+.configured-estimate-line__component-rate { font-size: .75rem; color: var(--text-muted, #697160); }
+
+.client-commercial-line > .estimate-component-breakdown { grid-column: 1 / -1; }

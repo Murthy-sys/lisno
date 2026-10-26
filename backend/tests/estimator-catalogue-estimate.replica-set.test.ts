@@ -91,6 +91,17 @@ const estimateInput = (lineItems: unknown[], selectedMainBasketIds = ["basket-a"
   selectedMainBasketIds, lineItems, ...(expectedVersion === undefined ? {} : { expectedVersion })
 });
 
+async function previewedComponentLine(server: ReturnType<typeof app>["server"], leadId: string, line: Record<string, any>) {
+  const response = await request(server).post(`/api/v1/leads/${leadId}/estimate/in-house-preview`).set(bearer("estimator")).send({ lines: [{
+    key: `${line.roomId}:${line.mainLineId}`, mainLineId: line.mainLineId, roomId: line.roomId, pricingMode: "in_house", rateSource: "configuration",
+    modeTier: line.modeTier ?? "signature", selectedInHouseComponentIds: line.selectedInHouseComponentIds, quantity: line.quantity,
+    revisionId: line.revisionId, itemVersion: line.itemVersion, revisionVersion: line.revisionVersion, uomId: line.uomId,
+    ...(line.dimensions ? { dimensions: line.dimensions, expectedDimensionRule: line.expectedDimensionRule } : {})
+  }] }).expect(200);
+  expect(response.body.data.lines[0].state).toBe("ready");
+  return { ...line, ratePaise: null, pricingBasis: "in_house_components_v1", componentPricingFingerprint: response.body.data.lines[0].componentPricing.inputFingerprint };
+}
+
 type FixtureItem = {
   id: string;
   status: "draft" | "active" | "inactive" | "archived";
@@ -1674,8 +1685,8 @@ describe("estimate In-house component selections", { timeout: 30_000 }, () => {
       expect([400, 409]).toContain(response.status);
     }
     const saved = await request(server).put("/api/v1/leads/components-valid/estimate").set(bearer("estimator"))
-      .send(estimateInput([line()])).expect(200);
-    expect(saved.body.data.lineItems[0]).toMatchObject({ selectedInHouseComponentIds: ["component-electrical"], ratePaise: 3003 });
+      .send(estimateInput([await previewedComponentLine(server, "components-valid", line())])).expect(200);
+    expect(saved.body.data.lineItems[0]).toMatchObject({ selectedInHouseComponentIds: ["component-electrical"], ratePaise: null, pricingBasis: "in_house_components_v1" });
     const stored = await EstimateModel.findById(saved.body.data.id).lean();
     const frozen = toEstimateSnapshot(stored as never, { clientName: "Fixture client", projectName: "Fixture project", location: "Fixture city" } as never);
     expect(frozen.lineItems[0]).toHaveProperty("selectedInHouseComponentIds", ["component-electrical"]);
@@ -1689,7 +1700,7 @@ describe("estimate In-house component selections", { timeout: 30_000 }, () => {
     await request(server).put("/api/v1/leads/components-sum/estimate").set(bearer("estimator"))
       .send(estimateInput([line({ selectedInHouseComponentIds: ["component-joinery"], ratePaise: 3003 })])).expect(409);
     const saved = await request(server).put("/api/v1/leads/components-sum/estimate").set(bearer("estimator"))
-      .send(estimateInput([line({ selectedInHouseComponentIds: ["component-joinery", "component-electrical"], ratePaise: 10010 })])).expect(200);
+      .send(estimateInput([await previewedComponentLine(server, "components-sum", line({ selectedInHouseComponentIds: ["component-joinery", "component-electrical"] }))])).expect(200);
     expect(saved.body.data.lineItems[0].selectedInHouseComponentIds).toEqual(["component-joinery", "component-electrical"]);
     await AiEstimatorKnowledgeBasketModel.collection.updateOne({ _id: "basket-b" }, { $set: { status: "inactive" } });
     await request(server).put("/api/v1/leads/components-unavailable/estimate").set(bearer("estimator"))
@@ -1820,12 +1831,12 @@ describe("estimate per-line Mode tiers", { timeout: 30_000 }, () => {
     } });
     const { server } = app(); const path = "/api/v1/leads/tier-components/estimate";
     const signature = line({ classification: "special", pricingMode: "in_house", modeTier: "signature", ratePaise: 3003, selectedInHouseComponentIds: ["shared-component"] });
-    const saved = await request(server).put(path).set(bearer("estimator")).send(estimateInput([signature])).expect(200);
+    const saved = await request(server).put(path).set(bearer("estimator")).send(estimateInput([await previewedComponentLine(server, "tier-components", signature)])).expect(200);
     const { selectedInHouseComponentIds: _ids, ...withoutSelection } = signature;
     const missing = await request(server).put(path).set(bearer("estimator")).send(estimateInput([{ ...withoutSelection, modeTier: "premium", ratePaise: 7007 }], ["basket-a"], saved.body.data.version)).expect(409);
     expect(missing.body.error.code).toBe("ESTIMATE_COMPONENT_SELECTION_INVALID");
-    const changed = await request(server).put(path).set(bearer("estimator")).send(estimateInput([{ ...signature, modeTier: "premium", ratePaise: 7007 }], ["basket-a"], saved.body.data.version)).expect(200);
-    expect(changed.body.data.lineItems[0]).toMatchObject({ modeTier: "premium", ratePaise: 7007, selectedInHouseComponentIds: ["shared-component"] });
+    const changed = await request(server).put(path).set(bearer("estimator")).send(estimateInput([await previewedComponentLine(server, "tier-components", { ...signature, modeTier: "premium" })], ["basket-a"], saved.body.data.version)).expect(200);
+    expect(changed.body.data.lineItems[0]).toMatchObject({ modeTier: "premium", ratePaise: null, pricingBasis: "in_house_components_v1", selectedInHouseComponentIds: ["shared-component"] });
     expect((await AiEstimatorKnowledgeBasketModel.findById("basket-b").lean())?.dependencyEpoch).toBeGreaterThan(0);
     await AiEstimatorKnowledgeBasketModel.collection.updateOne({ _id: "basket-b" }, { $set: { status: "inactive" } });
     await request(server).put(path).set(bearer("estimator")).send(estimateInput([{ ...signature, modeTier: "premium", rateSource: "manual", ratePaise: 9999 }], ["basket-a"], changed.body.data.version)).expect(409);

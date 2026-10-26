@@ -1,4 +1,5 @@
 import { ApiProtocolError } from "../../core/http/apiClient";
+import { estimateComponentPricingMatchesLine } from "../../../../shared/estimation/estimateComponentPricing";
 import { buildConfiguredLines, configuredLineAmountPaise, configuredQuantityUnits, hasNativeReadOnlyInHousePricing, parseSellingRate, restoreConfiguredLine, type ConfiguredLineDraft } from "./configuredEstimate";
 import type { EstimationCatalogue } from "./catalogueTypes";
 import { parseBedroomCount, requiresBedroomCount } from "./estimateRoomOptions";
@@ -40,6 +41,7 @@ export function validateStaffForm(form: StaffEstimateForm, submitting = false): 
     if (Boolean(room.length.trim()) !== Boolean(room.width.trim())) return `Enter both length and width for ${room.label}, or leave both empty.`;
   }
   for (const line of form.lines.filter((item) => item.included || item.persistedId)) {
+    if (line.included && line.pricingBasis !== undefined && !estimateComponentPricingMatchesLine({ ...line, source: "configuration" })) return `${line.mainLineName}: review component pricing in the web estimate workspace before saving.`;
     if (line.nativeDimensionsNeedReview) return `${line.mainLineName}: review Length, Width and Height in the web estimate workspace before saving.`;
     if (line.nativeTierNeedsReview) return `${line.mainLineName}: review the selected configuration tier in the web estimate workspace before saving.`;
     if ((line.modeTier ?? "signature") === "signature" && hasNativeReadOnlyInHousePricing(line) && (line.inHouseComponentsNeedReview || !line.selectedInHouseComponentIds?.length)) return `${line.mainLineName}: review In-house components in the web estimate workspace before saving.`;
@@ -73,6 +75,7 @@ export function staffFormInput(form: StaffEstimateForm, expectedVersion?: number
         ...(line.itemVersion === undefined ? {} : { itemVersion: line.itemVersion }), ...(line.revisionVersion === undefined ? {} : { revisionVersion: line.revisionVersion }),
         ...(line.recommendationSourceMainLineIds === undefined ? {} : { recommendationSourceMainLineIds: line.recommendationSourceMainLineIds }),
         ...(line.selectedInHouseComponentIds === undefined ? {} : { selectedInHouseComponentIds: line.selectedInHouseComponentIds.slice() }),
+        ...(line.included && line.pricingBasis && line.componentPricing ? { pricingBasis: line.pricingBasis, componentPricingFingerprint: line.componentPricing.inputFingerprint } : {}),
         quantity: line.quantity, included: line.included, ratePaise: parseSellingRate(line.rateInput).paise
       }))
     ]

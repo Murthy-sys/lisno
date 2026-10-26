@@ -1,3 +1,4 @@
+import { ESTIMATE_COMPONENT_PRICING_BASIS, readEstimateComponentPricing } from "../domain/estimate-component-pricing.js";
 import { ESTIMATE_DIMENSION_INPUT_UNITS, ESTIMATE_DIMENSION_QUANTITY_UNITS } from "../domain/estimate-dimensions.js";
 import { KNOWLEDGE_MODE_TIERS } from "../domain/ai-estimator-knowledge-mode-tiers.js";
 import { randomUUID } from "node:crypto";
@@ -28,6 +29,8 @@ const estimateLineSchema = new Schema({
   pricingMode: { type: String, enum: ["pmc", "sub_vendor", "in_house"], default: undefined },
   modeTier: { type: String, enum: KNOWLEDGE_MODE_TIERS, default: undefined },
   rateSource: { type: String, enum: ["configuration", "manual"], default: undefined },
+  pricingBasis: { type: String, enum: [ESTIMATE_COMPONENT_PRICING_BASIS], default: undefined },
+  componentPricing: { type: Schema.Types.Mixed, default: undefined, validate: (value: unknown) => value === undefined || readEstimateComponentPricing(value) !== null },
   selectedInHouseComponentIds: { type: [String], default: undefined, validate: (ids: string[] | undefined) => ids === undefined || ids.length <= 50 && new Set(ids).size === ids.length },
   catalogueId: { type: String, required: true },
   roomId: { type: String, default: null }, roomName: { type: String, required: true },

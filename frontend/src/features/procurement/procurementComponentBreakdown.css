@@ -1,0 +1,10 @@
+.procurement-component-breakdown { min-width: 0; padding-block: 16px; border-top: 1px solid var(--border, #d7d9d1); }
+.procurement-component-breakdown h3 { margin: 0 0 8px; font-size: 1rem; }
+.procurement-component-breakdown p { font-size: .8125rem; margin-block: 6px; }
+.procurement-component-breakdown details { border-top: 1px solid var(--border, #d7d9d1); margin-top: 12px; }
+.procurement-component-breakdown summary { padding-block: 12px; cursor: pointer; overflow-wrap: anywhere; font-weight: 650; }
+.procurement-component-breakdown summary:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
+.procurement-component-breakdown dl { display: flex; flex-wrap: wrap; gap: 12px 24px; font-size: .8125rem; }
+.procurement-component-breakdown dd { margin: 4px 0 0; font-variant-numeric: tabular-nums; font-weight: 650; }
+.procurement-component-breakdown li { padding-block: 10px; overflow-wrap: anywhere; }
+.procurement-component-breakdown ul { padding-left: 18px; }

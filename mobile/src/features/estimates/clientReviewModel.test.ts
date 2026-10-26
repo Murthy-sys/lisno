@@ -1,4 +1,5 @@
 import { ApiProtocolError } from "../../core/http/apiClient";
+import { componentAmountLineFixture } from "../estimate-authoring/__tests__/fixtures";
 import {
   canDecideClientEstimate,
   clientEstimateMoney,
@@ -28,6 +29,17 @@ const estimate = (id: string, projectId: string | null, status: string, designPl
 });
 
 describe("client review contracts", () => {
+  it("allows a frozen exact component amount without a fabricated unit rate", () => {
+    const row = estimate("estimate-one", "project-one", "sent_to_client");
+    const [parsed] = parseClientEstimates([{ ...row, publishedReview: { ...row.publishedReview, snapshot: {
+      ...row.publishedReview.snapshot, lineItems: [componentAmountLineFixture], subtotalPaise: 78333, gstPaise: 14100, totalPaise: 92433
+    } } }]);
+    expect(canDecideClientEstimate(parsed!)).toBe(true);
+    expect(parsed!.lineItems[0]).toMatchObject({ rate: null, ratePaise: null, amountPaise: 78333, componentPricing: { totalPaise: 78333 } });
+    expect(() => parseClientEstimates([{ ...row, publishedReview: { ...row.publishedReview, snapshot: {
+      ...row.publishedReview.snapshot, lineItems: [{ ...componentAmountLineFixture, amountPaise: 1 }]
+    } } }])).toThrow();
+  });
   it("joins estimates to projects by stable ID and keeps a pre-approval estimate without a project", () => {
     const rows = parseClientEstimates([
       estimate("estimate-one", "project-one", "client_approved", "ready_for_client"),

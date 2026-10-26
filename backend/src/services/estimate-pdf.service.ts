@@ -1,3 +1,4 @@
+import { estimateComponentLineAmountIsValid, type EstimateComponentPricing, type ESTIMATE_COMPONENT_PRICING_BASIS } from "../domain/estimate-component-pricing.js";
 import { estimateDimensionSnapshotValid, type EstimateDimensionMetadata } from "../domain/estimate-dimension-snapshot.js";
 import { readFile } from "node:fs/promises";
 
@@ -12,6 +13,13 @@ export interface EstimatePdfLine extends EstimateDimensionMetadata {
   source?: "legacy" | "configuration";
   itemType?: "main_line" | "temporary";
   modeTier?: KnowledgeModeTier;
+  pricingMode?: "pmc" | "sub_vendor" | "in_house";
+  rateSource?: "configuration" | "manual";
+  pricingBasis?: typeof ESTIMATE_COMPONENT_PRICING_BASIS;
+  componentPricing?: EstimateComponentPricing;
+  selectedInHouseComponentIds?: string[];
+  sourceItemVersion?: number;
+  sourceRevisionVersion?: number;
   catalogueId: string;
   roomId?: string;
   roomName: string;
@@ -262,7 +270,7 @@ function lineCellText(line: EstimatePdfLine) {
     quantity: `${new Intl.NumberFormat("en-IN", {
       maximumFractionDigits: line.source === "configuration" ? 6 : 2
     }).format(line.quantity)} ${line.unit}`,
-    rate: formatInr(line.ratePaise == null ? requiredPdfMoney(line.rate) : line.ratePaise / 100),
+    rate: estimateComponentLineAmountIsValid(line) ? "From components" : formatInr(line.ratePaise == null ? requiredPdfMoney(line.rate) : line.ratePaise / 100),
     total: formatInr(line.amountPaise == null ? requiredPdfMoney(line.amount) : line.amountPaise / 100)
   };
 }
@@ -565,7 +573,7 @@ function groupedIncludedLines(input: EstimatePdfInput) {
 
   for (const line of input.lineItems.filter((item) => item.included)) {
     if (line.source === "configuration" &&
-      (!Number.isSafeInteger(line.ratePaise) || !Number.isSafeInteger(line.amountPaise))) {
+      (!Number.isSafeInteger(line.ratePaise) || !Number.isSafeInteger(line.amountPaise)) && !estimateComponentLineAmountIsValid(line)) {
       throw new TypeError("An included configured estimate line needs an entered rate before PDF generation.");
     }
     const entry = line.source === "configuration" ? undefined : estimatePdfCatalogue.get(line.catalogueId);

@@ -140,6 +140,7 @@ export const PROJECT_PURCHASE_ORDER_REQUEST_SCHEMAS = {
     items: { type: "array", items: ref("ProjectPurchaseOrderPreparationItem") } }),
   ProjectPurchaseOrderPreparationEstimateLine: object({
     estimateMode: ref("ProcurementEstimateMode"),
+    selectedInHouseComponentIds: { type: "array", maxItems: 50, uniqueItems: true, items: id },
     key: id, included: { type: "boolean" }, source: { type: "string", enum: ["configuration", "legacy"] },
     itemType: { type: "string", enum: ["main_line", "temporary"] },
     mainBasketClassification: { type: "string", enum: ["standard", "special"] },

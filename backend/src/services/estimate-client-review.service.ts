@@ -1,3 +1,4 @@
+import { ESTIMATE_COMPONENT_PRICING_BASIS, readEstimateComponentPricing } from "../domain/estimate-component-pricing.js";
 import { estimateDimensionSnapshotFields, estimateDimensionSnapshotValid } from "../domain/estimate-dimension-snapshot.js";
 import { effectiveCommercialStatus } from "../domain/estimation-lifecycle.js";
 import type { EstimatePricingMode, EstimateRateSource } from "../domain/estimate-mode-pricing.js";
@@ -989,6 +990,7 @@ function mapSnapshot(row: Row): EstimateClientReviewSnapshot {
         ...(lineItem.pricingMode === undefined ? {} : { pricingMode: stringField(lineItem, "pricingMode") as EstimatePricingMode }),
         ...(lineItem.rateSource === undefined ? {} : { rateSource: stringField(lineItem, "rateSource") as EstimateRateSource }),
         ...(lineItem.selectedInHouseComponentIds === undefined ? {} : { selectedInHouseComponentIds: lineItem.selectedInHouseComponentIds as string[] }),
+        ...(lineItem.pricingBasis === ESTIMATE_COMPONENT_PRICING_BASIS ? { pricingBasis: ESTIMATE_COMPONENT_PRICING_BASIS, componentPricing: readEstimateComponentPricing(lineItem.componentPricing)! } : {}),
         specification: null,
         rate: lineItem.rate === null ? null : numberField(lineItem, "rate"),
         amount: lineItem.amount === null ? null : numberField(lineItem, "amount"),

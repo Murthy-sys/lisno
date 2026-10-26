@@ -1,5 +1,6 @@
 import { ESTIMATE_DIMENSION_INPUT_UNITS, ESTIMATE_DIMENSION_QUANTITY_UNITS } from "./domain/estimate-dimensions.js";
 import { ESTIMATE_TIER_SCHEMAS, ESTIMATE_TIER_REQUESTS, ESTIMATE_TIER_RESPONSES } from "./openapi/estimate-tiers.js";
+import { ESTIMATE_COMPONENT_PRICING_SCHEMAS, ESTIMATE_COMPONENT_PRICING_REQUESTS, ESTIMATE_COMPONENT_PRICING_RESPONSES } from "./openapi/estimate-component-pricing.js";
 import { KNOWLEDGE_MODE_TIERS } from "./domain/ai-estimator-knowledge-mode-tiers.js";
 import { DESIGN_REQUIREMENTS_SCHEMAS } from "./openapi/design-requirements.js";
 import { VENDOR_BASKET_REQUEST_NOTIFICATION_SCHEMAS, VENDOR_BASKET_REQUEST_NOTIFICATION_RESPONSES, VENDOR_BASKET_REQUEST_NOTIFICATION_QUERIES, VENDOR_BASKET_REQUEST_NOTIFICATION_BODIES } from "./openapi/vendor-basket-request-notifications.js";
@@ -139,6 +140,7 @@ const genericJsonRequestBody: OpenApiRequestBody = {
 const requestBodiesByOperation: Readonly<Record<string, OpenApiRequestBody>> = {
   ...ESTIMATE_COLLABORATION_REQUESTS,
   ...ESTIMATE_TIER_REQUESTS,
+  ...ESTIMATE_COMPONENT_PRICING_REQUESTS,
   "POST /client/ask-lisno": jsonRequest("AskLisnoRequest"),
   "POST /estimates/:estimateId/design-plan-documents/prepare": jsonRequest("PlanDocumentPrepare"),
   ...CHAT_REQUEST_BODIES,
@@ -248,6 +250,7 @@ const operationsWithoutBodies = new Set<string>([
 const responseSchemaByOperation: Readonly<Record<string, string>> = {
   ...ESTIMATE_COLLABORATION_RESPONSES,
   ...ESTIMATE_TIER_RESPONSES,
+  ...ESTIMATE_COMPONENT_PRICING_RESPONSES,
   "POST /client/ask-lisno": "AskLisnoResponse",
   "GET /estimation/catalogue": "EstimatorCataloguePage",
   "GET /estimation/catalogue/recommendations": "EstimatorCatalogueRecommendationRead",
@@ -1616,6 +1619,7 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
   return {
     ...ESTIMATE_COLLABORATION_SCHEMAS,
     ...ESTIMATE_TIER_SCHEMAS,
+    ...ESTIMATE_COMPONENT_PRICING_SCHEMAS,
     EstimateDimensions: { type: "object", additionalProperties: false, required: ["length", "width", "height"],
       description: "Positive decimal measurements in the configured UOM's linear unit. All three are recorded; quantity is Length × Width, never multiplied by Height.",
       properties: Object.fromEntries(["length", "width", "height"].map(key => [key, { type: "string", maxLength: 32, pattern: "^(0|[1-9][0-9]*)(\\.[0-9]{1,6})?$" }])) },
@@ -2267,6 +2271,8 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
             catalogueId: { type: "string" }, roomId: { type: "string" }, roomName: { type: "string" },
             specification: { type: "string", nullable: true }, unit: { type: "string" },
             rate: { type: "number", minimum: 0, nullable: true }, ratePaise: { type: "integer", minimum: 0, nullable: true },
+            pricingBasis: { type: "string", enum: ["in_house_components_v1"] },
+            componentPricing: { $ref: "#/components/schemas/EstimateComponentPricing" },
             quantity: { type: "number", minimum: 0 }, included: { type: "boolean" },
             amount: { type: "number", minimum: 0, nullable: true }, amountPaise: { type: "integer", minimum: 0, nullable: true },
             mainBasketId: { type: "string" }, subBasketId: { type: "string", nullable: true }, mainLineId: { type: "string" },
@@ -2482,6 +2488,8 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
       type: "object", additionalProperties: false,
       required: ["source", "catalogueId", "roomId", "roomName", "mainBasketId", "subBasketId", "mainLineId", "revisionId", "uomId", "quantity", "included", "ratePaise"],
       properties: {
+        pricingBasis: { type: "string", enum: ["in_house_components_v1"], description: "Explicit In-house component calculation basis. Other modes and manual pricing retain their unit-rate behavior." },
+        componentPricingFingerprint: { type: "string", pattern: "^[a-f0-9]{64}$", description: "Expected server preview fingerprint. The server recomputes exact component amounts; client totals are never accepted." },
         dimensions: { $ref: "#/components/schemas/EstimateDimensions" },
         expectedDimensionRule: { allOf: [{ $ref: "#/components/schemas/EstimateDimensionRule" }], description: "Required with explicit measurements when dimensions are mandatory. Must exactly match the current server rule so stale unit or precision changes cannot reinterpret inputs. It is an expectation, not persisted authority." },
         source: { type: "string", enum: ["configuration"] }, id: { type: "string" },
@@ -2498,7 +2506,7 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
         revisionVersion: { type: "integer", minimum: 1, description: "Required with itemVersion for explicit configuration-derived pricing and new Draft or Inactive items. Must identify the current saved Configuration revision for configuration-derived rates." },
         quantity: { type: "number", minimum: 0, description: "When dimensions are mandatory, the server calculates quantity from Length × Width and ignores this supplied quantity. Omitted measurements may reuse unchanged saved dimensions only when this value is unchanged." }, included: { type: "boolean" },
         ratePaise: { type: "integer", minimum: 0, nullable: true,
-          description: "Customer rate in integer paise. Configuration-derived rates must match the selected mode's current base. Null keeps an included draft line incomplete." }
+          description: "Customer unit rate in integer paise. Existing configuration-derived unit rates must match their current base. Null is valid with a validated In-house component basis and exact server amount; otherwise an included line remains incomplete." }
       }
     },
     EstimateLineInput: {

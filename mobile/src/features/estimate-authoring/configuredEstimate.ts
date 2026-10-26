@@ -1,4 +1,5 @@
 import { estimateDimensionRulesEqual, estimateLineDimensionsValid, type EstimateDimensions, type EstimateDimensionRule } from "../../../../shared/estimation/estimateDimensions";
+import { estimateComponentPricingMatchesLine, type EstimateComponentPricing, type ESTIMATE_COMPONENT_PRICING_BASIS } from "../../../../shared/estimation/estimateComponentPricing";
 // Native counterpart of the web configured estimate model; retain integer-paise pricing and source identities.
 import type { EstimationCatalogue, EstimationCatalogueBasket, EstimationCatalogueMainLine, EstimationCatalogueSubBasket, EstimationCatalogueTemporaryItem, EstimationInHouseComponent, EstimationModeBaseRatesPaise } from "./catalogueTypes";
 import type { ConfiguredEstimateLine, EstimateClassification, EstimateModeTier, EstimatePricingMode, EstimateRateSource } from "./types";
@@ -49,6 +50,8 @@ export interface ConfiguredLineDraft {
   modeBaseRatesPaise?: EstimationModeBaseRatesPaise | undefined;
   inHouseComponents?: EstimationInHouseComponent[] | undefined;
   selectedInHouseComponentIds?: string[] | undefined;
+  pricingBasis?: typeof ESTIMATE_COMPONENT_PRICING_BASIS | undefined;
+  componentPricing?: EstimateComponentPricing | undefined;
   inHouseComponentsNeedReview?: boolean | undefined;
   quantity: number;
   rateInput: string;
@@ -154,6 +157,9 @@ export function configuredLineAmountPaise(line: ConfiguredLineDraft): number | n
 
 export function configuredLinePreviewAmountPaise(line: ConfiguredLineDraft): number | null {
   if (line.uomNeedsQuantityReview) return null;
+  if (line.pricingBasis !== undefined || line.componentPricing !== undefined) {
+    return estimateComponentPricingMatchesLine({ ...line, source: "configuration" }) ? line.componentPricing!.totalPaise : null;
+  }
   const rate = parseSellingRate(line.rateInput);
   if (rate.kind !== "value") return null;
   const units = configuredQuantityUnits(line.quantity, line.uomDecimalScale, true);
@@ -193,6 +199,9 @@ export function restoreConfiguredLine(line: ConfiguredEstimateLine): ConfiguredL
     nativeTierNeedsReview: line.configurationTierUnavailable === true,
     rateSource: line.rateSource ?? "manual",
     selectedInHouseComponentIds: line.selectedInHouseComponentIds?.slice(),
+    pricingBasis: line.pricingBasis,
+    componentPricing: line.componentPricing,
+    inHouseComponentsNeedReview: line.pricingBasis !== undefined && !estimateComponentPricingMatchesLine(line),
     subBasketId: line.subBasketId,
     subBasketName: line.subBasketName,
     mainLineId: line.mainLineId,
@@ -311,7 +320,7 @@ export function buildConfiguredLines(
         modeBaseRatesPaise: fresh.modeBaseRatesPaise,
         inHouseBaseRatePaise: fresh.inHouseBaseRatePaise,
         inHouseComponents: fresh.inHouseComponents ?? saved.inHouseComponents,
-        inHouseComponentsNeedReview: componentPricing && (!saved.selectedInHouseComponentIds?.length ||
+        inHouseComponentsNeedReview: componentPricing && (saved.inHouseComponentsNeedReview || !saved.selectedInHouseComponentIds?.length ||
           saved.revisionId !== fresh.revisionId || saved.itemVersion !== fresh.itemVersion || saved.revisionVersion !== fresh.revisionVersion ||
           saved.uomId !== fresh.uomId || saved.uomDecimalScale !== fresh.uomDecimalScale ||
           saved.selectedInHouseComponentIds.some(id => !fresh.inHouseComponents?.some(component => component.id === id && !component.unavailableReason && (saved.rateSource !== "configuration" || component.baseRatePaise !== null)))),

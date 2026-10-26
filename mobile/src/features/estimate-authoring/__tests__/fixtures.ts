@@ -14,6 +14,12 @@ export function componentCatalogueFixture(): EstimationCatalogue {
  return catalogue;
 }
 export const componentLineFixture: ConfiguredEstimateLine = { ...lineFixture, pricingMode: "in_house", rateSource: "configuration", selectedInHouseComponentIds: ["component-one"], revisionId: "revision-current", itemVersion: 3, revisionVersion: 5 };
+export const componentAmountLineFixture: ConfiguredEstimateLine = { ...componentLineFixture, pricingBasis: "in_house_components_v1",
+ rate: null, ratePaise: null, quantity: 2, amount: 783.33, amountPaise: 78333, sourceItemVersion: 3, sourceRevisionVersion: 5,
+ componentPricing: { formulaVersion: "in_house_components_v1", mainLineId: "main-one", revisionId: "revision-current", sourceItemVersion: 3, sourceRevisionVersion: 5,
+  modeTier: "signature", quantity: "2", uom: { id: "uom-one", name: "Square feet", code: "SFT", decimalScale: 2 },
+  selectedComponentIds: ["component-one"], components: [{ id: "component-one", basketId: "basket-one", subBasketId: "sub-one", basketName: "Cabinetry", subBasketName: "Storage",
+   laborSellingPaise: 25000, materialSellingPaise: 53333, totalPaise: 78333 }], totalPaise: 78333, inputFingerprint: "a".repeat(64) } };
 export const lifecycleFixture: EstimationLifecycle = { workflowVersion: 2, phase: "pre", status: "draft", requirementsVersion: 3, editClosedAt: null, preApproval: null, finalApproval: null, designScopeRevision: 2, approvedDesignScopeRevision: null, pendingReviewRoundId: null, preparationSnapshotId: null };
 export function estimateFixture(patch: Partial<EstimateDraft> = {}): EstimateDraft {
  return { id: "estimate-one", version: 7, propertyType: "2BHK", bedroomCount: null, projectId: "project-one", rooms: [{ id: "room-one", typeId: "kitchen", label: "Kitchen", sqft: 120, length: 12, width: 10 }], scopes: [], selectedMainBasketIds: ["basket-one"], selectedMainBasketClassifications: [{ mainBasketId: "basket-one", classification: "special" }], lineItems: [{ ...lineFixture }], subtotal: 277.78, gst: 50, total: 327.78, subtotalPaise: 27778, gstPaise: 5000, totalPaise: 32778, status: "draft", approvalRequired: false, ...patch };

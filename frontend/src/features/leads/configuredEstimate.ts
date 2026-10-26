@@ -1,3 +1,4 @@
+import { ESTIMATE_COMPONENT_PRICING_BASIS, estimateComponentPricingMatchesLine, readEstimateComponentPricing, type EstimateComponentPricing } from "../../../../shared/estimation/estimateComponentPricing";
 import { calculateDimensionQuantity, estimateDimensionRulesEqual, type EstimateDimensions, type EstimateDimensionRule } from "../../../../shared/estimation/estimateDimensions";
 import type { KnowledgeModeTier } from "../../../../shared/knowledge/knowledgeModeTiers";
 import type { EstimationCatalogue, EstimationCatalogueBasket, EstimationCatalogueMainLine, EstimationCatalogueSubBasket, EstimationCatalogueTemporaryItem, EstimationModeBaseRatesPaise, EstimationInHouseComponent, EstimationTierPricing } from "./estimationCatalogueApi";
@@ -24,6 +25,11 @@ export interface ConfiguredLineDraft {
   tierPricing?: Partial<Record<KnowledgeModeTier, EstimationTierPricing>>;
   selectedInHouseComponentIds?: string[];
   rateSource?: EstimateRateSource;
+  pricingBasis?: typeof ESTIMATE_COMPONENT_PRICING_BASIS;
+  componentPricing?: EstimateComponentPricing;
+  componentPricingState?: "loading" | "ready" | "incomplete" | "error";
+  componentPricingIssue?: string;
+  componentPricingRetry?: () => void;
   subBasketId: string | null;
   subBasketName: string | null;
   mainLineId: string;
@@ -140,7 +146,9 @@ export function updateConfiguredLinePricing(
   const classification = line.classification ?? inheritedClassification;
   const explicitTypeOrMode = change.classification !== undefined || change.pricingMode !== undefined;
   const tierChanged = change.modeTier !== undefined && change.modeTier !== (line.modeTier ?? "signature");
+  const pricingInputsChanged = ["quantity", "dimensions", "dimensionsNeedReview", "modeTier", "pricingMode", "classification", "selectedInHouseComponentIds", "rateInput", "included"].some(key => Object.hasOwn(change, key));
   const next = withSelectedTierPricing({ ...line, ...(explicitTypeOrMode ? { classification } : {}), ...change,
+    ...(pricingInputsChanged ? { pricingBasis: undefined, componentPricing: undefined, componentPricingState: undefined, componentPricingIssue: undefined } : {}),
     ...(tierChanged ? { selectedInHouseComponentIds: [] } : {}) });
   if (tierChanged) {
     const pricingMode = next.pricingMode ?? (classification === "standard" ? "sub_vendor" : undefined);
@@ -203,6 +211,42 @@ export function parseSellingRate(input: string): ParsedRate {
     : { kind: "invalid", paise: null };
 }
 
+export function configuredUsesComponentPricing(line: Pick<ConfiguredLineDraft, "pricingMode" | "rateSource" | "inHouseComponents" | "pricingBasis">): boolean {
+  return line.pricingMode === "in_house" && line.rateSource === "configuration" &&
+    (line.inHouseComponents !== undefined || line.pricingBasis === ESTIMATE_COMPONENT_PRICING_BASIS);
+}
+
+export function configuredComponentPricing(line: ConfiguredLineDraft): EstimateComponentPricing | null {
+  return configuredUsesComponentPricing(line) && estimateComponentPricingMatchesLine({ ...line, source: "configuration" })
+    ? readEstimateComponentPricing(line.componentPricing) : null;
+}
+
+/** Attribution follows component targets, while source rows keep their catalogue identity. */
+export function configuredAttributedAmountPaise(lines: readonly ConfiguredLineDraft[], basketId: string, subBasketId?: string | null): number | null {
+  let total = 0n;
+  const matches = (basket: string, subBasket: string | null) => basket === basketId && (subBasketId === undefined || subBasket === subBasketId);
+  for (const line of lines) {
+    if (!line.included) continue;
+    if (!configuredUsesComponentPricing(line)) {
+      if (!matches(line.mainBasketId, line.subBasketId)) continue;
+      const amount = configuredLineAmountPaise(line);
+      if (amount === null) return null;
+      total += BigInt(amount);
+    } else {
+      const pricing = configuredComponentPricing(line);
+      if (!pricing) {
+        const selected = line.inHouseComponents?.filter(component => line.selectedInHouseComponentIds?.includes(component.id));
+        if (selected?.some(component => matches(component.basketId, component.subBasketId)) ||
+            (!selected?.length && matches(line.mainBasketId, line.subBasketId))) return null;
+        continue;
+      }
+      for (const component of pricing.components) if (matches(component.basketId, component.subBasketId)) total += BigInt(component.totalPaise);
+    }
+    if (total > BigInt(Number.MAX_SAFE_INTEGER)) return null;
+  }
+  return Number(total);
+}
+
 export function configuredLineAmountPaise(line: ConfiguredLineDraft): number | null {
   if (!line.included) return 0;
   return configuredLinePreviewAmountPaise(line);
@@ -210,6 +254,7 @@ export function configuredLineAmountPaise(line: ConfiguredLineDraft): number | n
 
 export function configuredLinePreviewAmountPaise(line: ConfiguredLineDraft): number | null {
   if (line.uomNeedsQuantityReview || configuredDimensionsIssue(line)) return null;
+  if (configuredUsesComponentPricing(line)) return configuredComponentPricing(line)?.totalPaise ?? null;
   const rate = parseSellingRate(line.rateInput);
   if (rate.kind !== "value") return null;
   const units = configuredQuantityUnits(line.quantity, line.uomDecimalScale, true);
@@ -244,6 +289,8 @@ export function restoreConfiguredLine(line: ConfiguredEstimateLine): ConfiguredL
     modeTier: line.modeTier ?? "signature",
     selectedInHouseComponentIds: line.selectedInHouseComponentIds,
     rateSource: line.rateSource ?? "manual",
+    pricingBasis: line.pricingBasis,
+    componentPricing: readEstimateComponentPricing(line.componentPricing) ?? undefined,
     subBasketId: line.subBasketId,
     subBasketName: line.subBasketName,
     mainLineId: line.mainLineId,
@@ -357,6 +404,8 @@ export function buildConfiguredLines(
       return {
         ...selectedFresh,
         persistedId: saved.persistedId,
+        pricingBasis: saved.pricingBasis,
+        componentPricing: saved.componentPricing,
         dimensions: saved.dimensions ? { ...saved.dimensions } : undefined,
         dimensionRule: fresh.dimensionsMandatory ? fresh.dimensionRule : saved.dimensions ? saved.dimensionRule ?? fresh.dimensionRule : fresh.dimensionRule,
         dimensionsNeedReview,

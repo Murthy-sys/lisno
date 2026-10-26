@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../../api/client";
 import { ClientEstimateTiers } from "./ClientEstimateTiers";
 import * as api from "./estimateTiersApi";
+import { componentPricingFixture } from "../leads/estimateComponentPricing.testFixtures";
 
 vi.mock("./estimateTiersApi", async original => ({ ...await original<typeof import("./estimateTiersApi")>(), getEstimateTiers: vi.fn(), updateEstimateTier: vi.fn() }));
 const source = { revisionId: "revision-1", itemVersion: 4, revisionVersion: 2, uomId: "sq-ft" };
@@ -35,6 +36,20 @@ const tier = (name: string) => screen.getByRole("radio", { name: new RegExp(`^${
 beforeEach(() => vi.clearAllMocks());
 
 describe("client working estimate tiers", () => {
+  it("shows exact component selling amounts for null-rate In-house choices and saved details", async () => {
+    const detail = fixture(); const line = detail.lines[0]!;
+    const pricing = componentPricingFixture("main-line");
+    Object.assign(line, { pricingMode: "in_house", ratePaise: null, amountPaise: 78333,
+      pricingBasis: "in_house_components_v1", componentPricing: pricing, selectedInHouseComponentIds: ["component-a"] });
+    Object.assign(line.choices[0]!, { ratePaise: null, amountPaise: 78333, pricingBasis: "in_house_components_v1", componentPricing: pricing,
+      inHouseComponents: [{ id: "component-a", label: "Finishes / Ceiling", ratePaise: 30000, amountPaise: 78333, available: true }] });
+    setup(detail); await screen.findByText("Ceiling");
+    expect(tier("Signature")).toHaveAccessibleName("Signature ₹783.33 · component amount");
+    expect(screen.getByRole("checkbox", { name: "Finishes / Ceiling ₹783.33 for this quantity" })).toBeChecked();
+    expect(screen.getByText("Component selling amounts for Ceiling in Living · ₹783.33")).toBeVisible();
+    expect(api.updateEstimateTier).not.toHaveBeenCalled();
+  });
+
   it("shows all three choices, read-only server prices and unavailable options", async () => {
     setup(); await screen.findByText("Ceiling");
     expect(tier("Signature")).toBeChecked(); expect(tier("Functional")).toBeDisabled();

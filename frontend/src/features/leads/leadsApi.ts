@@ -1,4 +1,5 @@
 import type { EstimateDimensions, EstimateDimensionRule } from "../../../../shared/estimation/estimateDimensions";
+import type { EstimateComponentPricing, ESTIMATE_COMPONENT_PRICING_BASIS } from "../../../../shared/estimation/estimateComponentPricing";
 import type { KnowledgeModeTier } from "../../../../shared/knowledge/knowledgeModeTiers";
 import { apiClient, type PaginatedData } from "../../api/client";
 import type {
@@ -47,6 +48,8 @@ export interface ConfiguredEstimateLineInput {
   pricingMode?: EstimatePricingMode;
   modeTier?: KnowledgeModeTier;
   selectedInHouseComponentIds?: string[];
+  pricingBasis?: typeof ESTIMATE_COMPONENT_PRICING_BASIS;
+  componentPricingFingerprint?: string;
   rateSource?: EstimateRateSource;
   id?: string;
   catalogueId: string;
@@ -70,6 +73,7 @@ export interface ConfiguredEstimateLineInput {
 export type EstimateLineInput = LegacyEstimateLineInput | ConfiguredEstimateLineInput;
 
 export interface ConfiguredEstimateLine extends Omit<ConfiguredEstimateLineInput, "itemType"> {
+  componentPricing?: EstimateComponentPricing;
   dimensionsMandatory?: boolean;
   dimensionRule?: EstimateDimensionRule | null;
   dimensionsNeedReview?: boolean;

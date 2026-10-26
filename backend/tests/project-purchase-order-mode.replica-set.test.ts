@@ -1221,6 +1221,61 @@ describe("transactional procurement mode decisions", () => {
 });
 
 describe("approved In-house component scope", { timeout: 30000 }, () => {
+  it("projects current foreign component targets from approved selections without changing source ownership or another project", async () => {
+    const { AiEstimatorKnowledgeBasketModel } = await import("../src/models/AiEstimatorKnowledgeBasket.js");
+    const { AiEstimatorKnowledgeSubBasketModel } = await import("../src/models/AiEstimatorKnowledgeSubBasket.js");
+    await AiEstimatorKnowledgeBasketModel.collection.insertOne({ _id: "foreign-component-basket", name: "Finishing", status: "active", version: 1 } as never);
+    await AiEstimatorKnowledgeSubBasketModel.collection.insertOne({ _id: "foreign-component-sub", basketId: "foreign-component-basket", name: "Decorative finish", status: "active" } as never);
+    await saveCurrentDraft({ ...advanced, inHouseComponents: [{ id: "finish-component", basketId: "foreign-component-basket", subBasketId: "foreign-component-sub",
+      inclusions: [], exclusions: [], labor: { ...settings, baseRatePaise: 1000 }, material: { ...settings, baseRatePaise: 2000 } }] });
+    await EstimateClientReviewRoundModel.collection.updateOne({ _id: "mode-round" }, { $set: {
+      "estimateSnapshot.lineItems.0.classification": "special", "estimateSnapshot.lineItems.0.pricingMode": "in_house",
+      "estimateSnapshot.lineItems.0.rateSource": "manual", "estimateSnapshot.lineItems.0.selectedInHouseComponentIds": ["finish-component"],
+      "estimateSnapshot.selectedMainBasketClassifications": [{ mainBasketId: "basket-a", classification: "special" }]
+    } });
+    await seedSecondApprovedProject();
+    await EstimateClientReviewRoundModel.collection.updateOne({ _id: "mode-round-b" }, { $set: {
+      "estimateSnapshot.selectedMainBasketClassifications": [{ mainBasketId: "basket-a", classification: "special" }]
+    } });
+    const baskets = createProcurementBasketService();
+    const initial = await baskets.get(buyer, "mode-project", "basket-a");
+    expect(initial.inHouseComponentBreakdown).toMatchObject({ complete: false, unavailableSourceLineItemKeys: ["approved-line"] });
+    const saved = await service.save(buyer, "mode-project", { sourceLineItemKey: "approved-line", expectedVersion: 0,
+      expectedEstimateSource, expectedRevisionDigest: initial.lines[0]!.mode!.revision!.contentDigest,
+      idempotencyKey: "component-breakdown-a", mode: "in_house", quantity: "2", discountBps: 0, markupBasis: "starting", exceptionReason: null });
+    const otherInitial = await baskets.get(buyer, "mode-project-b", "basket-a");
+    await service.save(buyer, "mode-project-b", { sourceLineItemKey: "approved-line", expectedVersion: 0,
+      expectedEstimateSource: { estimateId: "mode-estimate-b", estimateVersion: 1, estimateReviewRoundId: "mode-round-b" },
+      expectedRevisionDigest: otherInitial.lines[0]!.mode!.revision!.contentDigest,
+      idempotencyKey: "component-breakdown-b", mode: "in_house", quantity: "3", discountBps: 0, markupBasis: "starting", exceptionReason: null });
+    const detail = await baskets.get(buyer, "mode-project", "basket-a");
+    expect(detail.inHouseComponentBreakdown).toMatchObject({ complete: true, adjustedCostPaise: 6600, sellingPaise: 8250,
+      subBaskets: [{ basketId: "foreign-component-basket", basketName: "Finishing", subBasketId: "foreign-component-sub", subBasketName: "Decorative finish",
+        contributions: [{ sourceLineItemKey: "approved-line", componentId: "finish-component", quantity: "2" }] }] });
+    expect(detail).toMatchObject({ id: "basket-a", approvedEstimatePaise: 100000, adjustedCostPaise: 6600, committedNetPaise: 0 });
+    expect(detail.lines[0]).toMatchObject({ sourceLineItemKey: "approved-line", subBasketId: "sub-a" });
+    expect((await baskets.get(buyer, "mode-project-b", "basket-a")).inHouseComponentBreakdown)
+      .toMatchObject({ adjustedCostPaise: 9000, sellingPaise: 11250, subBaskets: [{ contributions: [{ quantity: "3" }] }] });
+    const list = await baskets.list(buyer, "mode-project");
+    expect(list.modeGroups[0]!.inHouseComponentBreakdown).toEqual(detail.inHouseComponentBreakdown);
+    expect(list.baskets[0]).not.toHaveProperty("inHouseComponentBreakdown");
+    await AiEstimatorKnowledgeSubBasketModel.collection.updateOne({ _id: "foreign-component-sub" }, { $set: { name: "Renamed finish" } });
+    const renamed = await baskets.get(buyer, "mode-project", "basket-a");
+    expect(renamed.inHouseComponentBreakdown!.subBaskets[0]!.subBasketName).toBe("Renamed finish");
+    expect(renamed.preparationDigest).toBe(detail.preparationDigest);
+    await service.save(buyer, "mode-project", { sourceLineItemKey: "approved-line", expectedVersion: saved.version,
+      expectedEstimateSource, expectedRevisionDigest: renamed.lines[0]!.mode!.revision!.contentDigest,
+      idempotencyKey: "component-breakdown-pmc", mode: "pmc", quantity: "2", discountBps: 0, markupBasis: "starting", exceptionReason: null });
+    const changed = await baskets.get(buyer, "mode-project", "basket-a");
+    expect(changed).not.toHaveProperty("inHouseComponentBreakdown");
+    expect(changed.lines[0]!.mode!.preview!.mode).toBe("pmc");
+    expect(changed.approvedEstimatePaise).toBe(100000);
+    expect((await baskets.get(buyer, "mode-project-b", "basket-a")).inHouseComponentBreakdown?.adjustedCostPaise).toBe(9000);
+    await AiEstimatorKnowledgeSubBasketModel.collection.updateOne({ _id: "foreign-component-sub" }, { $set: { basketId: "wrong-parent" } });
+    expect((await baskets.get(buyer, "mode-project-b", "basket-a")).inHouseComponentBreakdown)
+      .toMatchObject({ complete: false, adjustedCostPaise: null, subBaskets: [], unavailableSourceLineItemKeys: ["approved-line"] });
+  });
+
   it("retains the approved tier and resolves its current component costs without borrowing Signature or legacy budgets", async () => {
     const { AiEstimatorKnowledgeBasketModel } = await import("../src/models/AiEstimatorKnowledgeBasket.js");
     const { AiEstimatorKnowledgeSubBasketModel } = await import("../src/models/AiEstimatorKnowledgeSubBasket.js");

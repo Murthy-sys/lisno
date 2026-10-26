@@ -41,6 +41,7 @@ export interface PurchaseOrderPreparationSection {
 /** The immutable approved-round order is retained; child purchase items are linked by source key. */
 export interface PurchaseOrderPreparationEstimateLine extends EstimateDimensionMetadata {
   modeTier?: KnowledgeModeTier;
+  selectedInHouseComponentIds?: string[];
   /** Read-only approved estimate selection; not the current commercial mode decision. */
   estimateMode?: ProcurementEstimateMode;
   key: string;

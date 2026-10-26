@@ -1,3 +1,4 @@
+import type { EstimateComponentPricing, ESTIMATE_COMPONENT_PRICING_BASIS } from "../../../shared/estimation/estimateComponentPricing";
 import type { EstimateDimensions, EstimateDimensionRule } from "../../../shared/estimation/estimateDimensions";
 import type { KnowledgeModeTier } from "../../../shared/knowledge/knowledgeModeTiers";
 import type {
@@ -304,6 +305,8 @@ export interface EstimateClientReviewSnapshot {
     dimensionRule?: EstimateDimensionRule | null;
     dimensions?: EstimateDimensions;
     rateSource?: "configuration" | "manual";
+    pricingBasis?: typeof ESTIMATE_COMPONENT_PRICING_BASIS;
+    componentPricing?: EstimateComponentPricing;
     subBasketId?: string | null;
     mainLineId?: string;
     revisionId?: string;

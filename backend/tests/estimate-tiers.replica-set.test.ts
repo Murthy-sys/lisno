@@ -155,7 +155,7 @@ describe("client working estimate tier selection", () => {
       "lineItems.0.selectedInHouseComponentIds": ["same-local-id"] } });
     await expect(service.select(client, "tier-project", "line-one", command)).rejects.toMatchObject({ code: "ESTIMATE_TIER_UNAVAILABLE" });
     const saved = await service.select(client, "tier-project", "line-one", { ...command, selectedInHouseComponentIds: ["same-local-id"] });
-    expect(saved.lines[0]).toMatchObject({ modeTier: "premium", ratePaise: 6000, amountPaise: 12000, selectedInHouseComponentIds: ["same-local-id"] });
+    expect(saved.lines[0]).toMatchObject({ modeTier: "premium", ratePaise: null, amountPaise: 16500, pricingBasis: "in_house_components_v1", selectedInHouseComponentIds: ["same-local-id"] });
   });
 });
 

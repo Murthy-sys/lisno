@@ -1,3 +1,4 @@
+import type { EstimateComponentPricing, ESTIMATE_COMPONENT_PRICING_BASIS } from "./estimate-component-pricing.js";
 import type { EstimateDimensions, EstimateDimensionRule } from "./estimate-dimensions.js";
 import type { EstimatePricingMode, EstimateRateSource } from "./estimate-mode-pricing.js";
 import type { KnowledgeModeTier } from "./ai-estimator-knowledge-mode-tiers.js";
@@ -83,6 +84,8 @@ export interface EstimateClientReviewSnapshot {
     pricingMode?: EstimatePricingMode;
     rateSource?: EstimateRateSource;
     selectedInHouseComponentIds?: string[];
+    pricingBasis?: typeof ESTIMATE_COMPONENT_PRICING_BASIS;
+    componentPricing?: EstimateComponentPricing;
     catalogueId: string;
     roomId?: string;
     roomName: string;

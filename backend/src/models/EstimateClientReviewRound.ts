@@ -1,3 +1,4 @@
+import { ESTIMATE_COMPONENT_PRICING_BASIS, estimateComponentLineAmountIsValid, readEstimateComponentPricing } from "../domain/estimate-component-pricing.js";
 import { estimateDimensionSnapshotValid } from "../domain/estimate-dimension-snapshot.js";
 import { estimatePricingMetadataIsValid } from "../domain/estimate-mode-pricing.js";
 import { KNOWLEDGE_MODE_TIERS } from "../domain/ai-estimator-knowledge-mode-tiers.js";
@@ -54,6 +55,8 @@ const estimateClientReviewLineItemSchema = new Schema(
     dimensionRule: { type: Schema.Types.Mixed, default: undefined, immutable: true },
     pricingMode: { type: String, enum: ["pmc", "sub_vendor", "in_house"], default: undefined, immutable: true },
     rateSource: { type: String, enum: ["configuration", "manual"], default: undefined, immutable: true },
+    pricingBasis: { type: String, enum: [ESTIMATE_COMPONENT_PRICING_BASIS], default: undefined, immutable: true },
+    componentPricing: { type: Schema.Types.Mixed, default: undefined, immutable: true, validate: (value: unknown) => value === undefined || readEstimateComponentPricing(value) !== null },
     selectedInHouseComponentIds: { type: [String], default: undefined, immutable: true, validate: (ids: string[] | undefined) => ids === undefined || ids.length <= 50 && new Set(ids).size === ids.length },
     catalogueId: { type: String, required: true, immutable: true },
     roomId: { type: String, default: undefined, immutable: true },
@@ -88,6 +91,8 @@ const estimateClientReviewLineItemSchema = new Schema(
 
 estimateClientReviewLineItemSchema.pre("validate", function validateFrozenLine() {
   const configured = this.get("source") === "configuration";
+  const componentAmount = estimateComponentLineAmountIsValid(this.toObject());
+  if (this.get("pricingBasis") !== undefined && !componentAmount) this.invalidate("componentPricing", "Published component calculation evidence is invalid.");
   if (!estimateDimensionSnapshotValid({ dimensionsMandatory: this.get("dimensionsMandatory"), dimensions: this.get("dimensions"),
     dimensionRule: this.get("dimensionRule"), quantity: this.get("quantity"), included: this.get("included"),
     uomId: this.get("uomId"), uomDecimalScale: this.get("uomDecimalScale") })) this.invalidate("dimensions", "Published dimensions or calculated quantity are invalid.");
@@ -118,7 +123,7 @@ estimateClientReviewLineItemSchema.pre("validate", function validateFrozenLine()
   }
   for (const field of ["rate", "amount"] as const) {
     const value = this.get(field);
-    if (value === null && configured && this.get("included") !== true) continue;
+    if (value === null && configured && (this.get("included") !== true || field === "rate" && componentAmount)) continue;
     if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
       this.invalidate(field, "Published estimate amount is invalid.");
     }
@@ -126,7 +131,7 @@ estimateClientReviewLineItemSchema.pre("validate", function validateFrozenLine()
   if (configured) {
     for (const field of ["ratePaise", "amountPaise"] as const) {
       const value = this.get(field);
-      if (value === null && this.get("included") !== true) continue;
+      if (value === null && (this.get("included") !== true || field === "ratePaise" && componentAmount)) continue;
       if (!exactNonnegativePaise(value)) {
         this.invalidate(field, "Published configured estimate paise must be exact.");
       }

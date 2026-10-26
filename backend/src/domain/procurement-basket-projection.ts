@@ -3,6 +3,7 @@ import type { ProjectPurchaseOrderPreparationDto, PurchaseOrderPreparationEstima
 import { MAX_FINANCE_AMOUNT_PAISE } from "./project-finance.js";
 import { DEFAULT_PROCUREMENT_BASKET_PROJECT_RATE, type ProcurementBasketProjectRate } from "./procurement-basket-base-rate.js";
 import type { ProcurementEstimateMode } from "./procurement-basket-mode-groups.js";
+import { projectInHouseComponentBreakdown, type ProcurementInHouseComponentBreakdown, type ProcurementComponentTargetNames } from "./procurement-in-house-components.js";
 
 export interface ProcurementBasketLineDto {
   estimateMode?: ProcurementEstimateMode;
@@ -61,6 +62,7 @@ export interface ProcurementBasketSummaryDto {
 }
 
 export interface ProcurementBasketDetailDto extends ProcurementBasketSummaryDto {
+  inHouseComponentBreakdown?: ProcurementInHouseComponentBreakdown;
   projectId: string;
   estimateSource: ProjectPurchaseOrderPreparationDto["estimateSource"];
   preparationSource?: ProjectPurchaseOrderPreparationDto["preparationSource"];
@@ -70,7 +72,8 @@ export interface ProcurementBasketDetailDto extends ProcurementBasketSummaryDto 
 
 /** The approved preparation is the only estimate source. Modes are internal benchmarks, never vendor payable amounts. */
 export function projectProcurementBaskets(preparation: ProjectPurchaseOrderPreparationDto,
-  committedBySourceLine: ReadonlyMap<string, number> = new Map()): ProcurementBasketDetailDto[] {
+  committedBySourceLine: ReadonlyMap<string, number> = new Map(),
+  componentTargetNames: ProcurementComponentTargetNames = new Map()): ProcurementBasketDetailDto[] {
   const groups = new Map<string, { name: string; classification: "standard" | "special";
     automaticSubVendor: boolean;
     lines: PurchaseOrderPreparationEstimateLine[] }>();
@@ -153,6 +156,7 @@ export function projectProcurementBaskets(preparation: ProjectPurchaseOrderPrepa
           preview: line.mode.preview ?? null, integrity: line.mode.integrity ?? null } : null })
       })).sort((left, right) => left.sourceLineItemKey.localeCompare(right.sourceLineItemKey))
     })).digest("hex");
+    const inHouseComponentBreakdown = projectInHouseComponentBreakdown(group.lines, componentTargetNames);
     return {
       id, name: group.name, classification: group.classification, automaticSubVendor: group.automaticSubVendor,
       boqReady, standardCost, projectId: preparation.projectId,
@@ -162,7 +166,7 @@ export function projectProcurementBaskets(preparation: ProjectPurchaseOrderPrepa
       approvedEstimatePaise: safeSum(included.map(line => line.amountPaise!)),
       baseCostPaise, adjustedCostPaise, workingTotalPaise, workingTotalComplete,
       committedNetPaise: safeSum(group.lines.map(line => committedBySourceLine.get(line.key) ?? 0)),
-      state, lines
+      state, lines, ...(inHouseComponentBreakdown ? { inHouseComponentBreakdown } : {})
     };
   }).sort((left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id));
 }

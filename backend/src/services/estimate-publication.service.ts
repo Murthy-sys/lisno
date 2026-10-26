@@ -1,3 +1,5 @@
+import { ESTIMATE_COMPONENT_PRICING_BASIS, estimateComponentLineAmountIsValid, readEstimateComponentPricing } from "../domain/estimate-component-pricing.js";
+import { currentEstimateComponentPricingMatches } from "./estimate-component-pricing.service.js";
 import { estimateDimensionRulesEqual } from "../domain/estimate-dimensions.js";
 import { estimateDimensionSnapshotFields, estimateDimensionSnapshotValid } from "../domain/estimate-dimension-snapshot.js";
 import { estimatorCatalogueTierPricing, fenceEstimateInHouseComponentReferences } from "./estimator-catalogue.service.js";
@@ -516,6 +518,7 @@ export function toEstimateSnapshot(
       ...(line.modeTier === undefined ? {} : { modeTier: line.modeTier }),
       ...estimateDimensionSnapshotFields(line),
       rateSource: line.rateSource,
+      ...(line.pricingBasis === undefined ? {} : { pricingBasis: line.pricingBasis, componentPricing: readEstimateComponentPricing(line.componentPricing)! }),
       ...(line.selectedInHouseComponentIds === undefined ? {} : { selectedInHouseComponentIds: line.selectedInHouseComponentIds }),
       catalogueId: line.catalogueId,
       roomId: line.roomId,
@@ -574,7 +577,7 @@ export function assertPublishableConfiguredLines(estimate: PublicationEstimate):
   if (configured.some((line) =>
     !estimateDimensionSnapshotValid(line) ||
     line.modeTier !== undefined && !isKnowledgeModeTier(line.modeTier) ||
-    !Number.isSafeInteger(line.ratePaise) ||
+    (!Number.isSafeInteger(line.ratePaise) && !estimateComponentLineAmountIsValid(line)) ||
     !Number.isSafeInteger(line.amountPaise) ||
     Number(line.ratePaise) < 0 || Number(line.amountPaise) < 0 ||
     !line.mainBasketId || !configuredEstimateParentIsValid(line) || !line.mainLineId ||
@@ -582,7 +585,7 @@ export function assertPublishableConfiguredLines(estimate: PublicationEstimate):
     !line.mainBasketName || !line.mainLineName ||
     !line.uomName || line.catalogueId !== line.mainLineId ||
     line.specification !== null ||
-    line.rate !== Number(line.ratePaise) / 100 ||
+    (line.rate !== Number(line.ratePaise) / 100 && !estimateComponentLineAmountIsValid(line)) ||
     line.amount !== Number(line.amountPaise) / 100
   ) || ![estimate.subtotalPaise, estimate.gstPaise, estimate.totalPaise].every(Number.isSafeInteger) ||
     estimate.subtotalPaise !== estimate.lineItems.reduce((sum, line) =>
@@ -685,7 +688,9 @@ export async function assertCurrentConfiguredPublication(
       source.line.dimensionsMandatory && (!estimateDimensionRulesEqual(line.dimensionRule, source.line.dimensionRule) || !estimateDimensionSnapshotValid(line)) ||
       designRulesDigest(stored.designRules) !== source.line.designRulesDigest ||
       JSON.stringify(line.estimateNotes ?? []) !== JSON.stringify(source.line.estimateNotes) ||
-      !tierPricing || !estimateConfigurationRateMatches(line, tierPricing.modeBaseRatesPaise, tierPricing.inHouseComponents)) {
+      !tierPricing || (line.pricingBasis === ESTIMATE_COMPONENT_PRICING_BASIS
+        ? !await currentEstimateComponentPricingMatches(line, source, session)
+        : line.included !== false && !estimateConfigurationRateMatches(line, tierPricing.modeBaseRatesPaise, tierPricing.inHouseComponents))) {
       throw new ApiError(409, "ESTIMATE_CONFIGURATION_CHANGED",
         "Configuration changed. Save the estimate with its current Main Line values before sending it.");
     }

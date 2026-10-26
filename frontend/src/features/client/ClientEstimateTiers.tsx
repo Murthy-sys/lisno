@@ -1,3 +1,5 @@
+import { ESTIMATE_COMPONENT_PRICING_BASIS, readEstimateComponentPricing } from "../../../../shared/estimation/estimateComponentPricing";
+import { EstimateComponentBreakdown } from "../leads/EstimateComponentBreakdown";
 import { calculateDimensionQuantity, estimateDimensionRulesEqual, type EstimateDimensions, type EstimateDimensionRule } from "../../../../shared/estimation/estimateDimensions";
 import { EstimateDimensionsFields, emptyEstimateDimensions } from "../leads/EstimateDimensionsFields";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -35,6 +37,12 @@ const money = (value: number | null) => value !== null && Number.isSafeInteger(v
 const sameSource = (left: EstimateTierSource, right: EstimateTierSource | null | undefined) => Boolean(right
   && left.revisionId === right.revisionId && left.itemVersion === right.itemVersion
   && left.revisionVersion === right.revisionVersion && left.uomId === right.uomId);
+const componentAmount = (line: EstimateTierLine, value: EstimateTierLine | EstimateTierChoice) => {
+  if (line.pricingMode !== "in_house" || value.pricingBasis !== ESTIMATE_COMPONENT_PRICING_BASIS) return null;
+  const pricing = readEstimateComponentPricing(value.componentPricing);
+  return pricing && pricing.mainLineId === line.mainLineId && Number(pricing.quantity) === line.quantity &&
+    pricing.modeTier === value.modeTier && pricing.totalPaise === value.amountPaise ? pricing : null;
+};
 
 export function ClientEstimateTiers({ projectId }: { projectId: string }) {
   const client = useQueryClient();
@@ -171,16 +179,17 @@ export function ClientEstimateTiers({ projectId }: { projectId: string }) {
             const option = line.choices.find(row => row.modeTier === modeTier);
             return <label key={modeTier}><input type="radio" name={`client-tier-${line.id}`} checked={tier === modeTier} disabled={!option?.available || !option.source}
               onChange={() => { if (option) select(line, option); }} /><span>{KNOWLEDGE_MODE_TIER_LABELS[modeTier]}<small>{option?.available
-                ? option.ratePaise === null ? "Select components" : `${money(option.ratePaise)} / ${line.uomName}`
+                ? componentAmount(line, option) ? `${money(option.amountPaise)} · component amount` : option.ratePaise === null ? "Select components" : `${money(option.ratePaise)} / ${line.uomName}`
                 : option?.unavailableReason ?? "Not configured"}</small></span></label>;
           })}
         </fieldset>
         {line.pricingMode === "in_house" && choice?.inHouseComponents !== undefined ? <fieldset className="client-estimate-tiers__components" disabled={disabled} aria-label={`In-house components for ${label}`}><legend>Included components</legend>
           {choice.inHouseComponents.map(component => <label key={component.id}><input type="checkbox" checked={selected.includes(component.id)} disabled={!component.available && !selected.includes(component.id)}
-            onChange={event => select(line, choice, event.target.checked ? [...selected, component.id] : selected.filter(id => id !== component.id))} /><span>{component.label} <small>{component.available ? money(component.ratePaise) : "Unavailable"}</small></span></label>)}
+            onChange={event => select(line, choice, event.target.checked ? [...selected, component.id] : selected.filter(id => id !== component.id))} /><span>{component.label} <small>{component.available ? component.amountPaise !== undefined ? `${money(component.amountPaise)} for this quantity` : `${money(component.ratePaise)} base reference` : "Unavailable"}</small></span></label>)}
           {selected.filter(id => !choice.inHouseComponents!.some(component => component.id === id)).map((id, index) => <label key={id}><input type="checkbox" checked onChange={() => select(line, choice, selected.filter(value => value !== id))} /><span>Unavailable selected component {index + 1}</span></label>)}
           {editing && !validComponents(line, choice, selected) ? <p>Choose at least one available component with configured pricing.</p> : null}
         </fieldset> : null}
+        {componentAmount(line, line) ? <EstimateComponentBreakdown pricing={componentAmount(line, line)!} label={label} /> : null}
         {editing ? <p>{line.pricingMode === "in_house" && choice?.inHouseComponents !== undefined ? "The server will calculate the amount for your selected components when saved." : `Selected amount: ${money(choice?.amountPaise ?? null)}`}</p> : null}
       </div>;
     })}
@@ -198,5 +207,5 @@ export function ClientEstimateTiers({ projectId }: { projectId: string }) {
 
 function validComponents(line: EstimateTierLine | undefined, choice: EstimateTierChoice, selected: readonly string[]) {
   if (!line || line.pricingMode !== "in_house" || choice.inHouseComponents === undefined) return Boolean(line);
-  return selected.length > 0 && new Set(selected).size === selected.length && selected.every(id => choice.inHouseComponents!.some(component => component.id === id && component.available && component.ratePaise !== null));
+  return selected.length > 0 && new Set(selected).size === selected.length && selected.every(id => choice.inHouseComponents!.some(component => component.id === id && component.available && (component.amountPaise !== undefined ? component.amountPaise !== null : component.ratePaise !== null)));
 }

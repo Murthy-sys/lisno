@@ -1,3 +1,5 @@
+import { ESTIMATE_COMPONENT_PRICING_BASIS, readEstimateComponentPricing } from "../../../../shared/estimation/estimateComponentPricing";
+import { EstimateComponentBreakdown } from "../leads/EstimateComponentBreakdown";
 import { KNOWLEDGE_MODE_TIER_LABELS } from "../../../../shared/knowledge/knowledgeModeTiers";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRef, useState, type RefObject } from "react";
@@ -90,6 +92,7 @@ function PublishedEstimateDetails({ snapshot }: { snapshot: EstimateClientReview
     }
     group.items.push(item);
   }
+  const pricing = (item: typeof included[number]) => item.pricingBasis === ESTIMATE_COMPONENT_PRICING_BASIS && item.pricingMode === "in_house" && item.rateSource === "configuration" && readEstimateComponentPricing(item.componentPricing)?.totalPaise === item.amountPaise ? readEstimateComponentPricing(item.componentPricing) : null;
   const amount = (value: typeof included[number]) => value.amountPaise === undefined
     ? value.amount : value.amountPaise === null ? null : value.amountPaise / 100;
   return <details className="client-commercial-details" open>
@@ -100,8 +103,9 @@ function PublishedEstimateDetails({ snapshot }: { snapshot: EstimateClientReview
         <div className="client-commercial-lines">
           {group.items.map((item, index) => <div className="client-commercial-line" key={`${item.catalogueId}:${item.roomName}:${index}`}>
             <div><strong>{item.source === "configuration" ? item.mainLineName ?? (item.itemType === "temporary" ? "Temporary item" : "Main Line") : catalogue.get(item.catalogueId)?.description ?? item.catalogueId}</strong><span>{item.source === "configuration" ? configuredDetails(item) : item.roomName}</span>{item.source === "configuration" ? <span>Configuration tier: {KNOWLEDGE_MODE_TIER_LABELS[item.modeTier ?? "signature"]}</span> : null}{item.dimensions ? <span>Dimensions: {item.dimensions.length} × {item.dimensions.width} × {item.dimensions.height}{item.dimensionRule ? ` ${item.dimensionRule.inputUnit}` : ""} (L × W × H){item.dimensionsMandatory ? " · Quantity = L × W" : " · Recorded measurements"}</span> : null}{item.specification ? <span>{item.specification}</span> : null}{item.estimateNotes?.map((note, noteIndex) => <span key={noteIndex}>{note}</span>)}</div>
-            <div className="client-commercial-line__quantity"><span>Quantity / rate</span><span>{item.quantity} {item.source === "configuration" ? item.uomName ?? item.unit : item.unit} × {item.rate === null ? "Rate unavailable" : clientEstimateMoney(item.ratePaise === undefined || item.ratePaise === null ? item.rate : item.ratePaise / 100)}</span></div>
+            <div className="client-commercial-line__quantity"><span>Quantity / rate</span><span>{item.quantity} {item.source === "configuration" ? item.uomName ?? item.unit : item.unit} × {pricing(item) ? "Calculated from components" : item.rate === null ? "Rate unavailable" : clientEstimateMoney(item.ratePaise === undefined || item.ratePaise === null ? item.rate : item.ratePaise / 100)}</span></div>
             <strong className="client-commercial-line__amount">{amount(item) === null ? "Amount unavailable" : clientEstimateMoney(amount(item)!)}</strong>
+            {pricing(item) ? <EstimateComponentBreakdown pricing={pricing(item)!} label={item.mainLineName ?? "Main Line"} /> : null}
           </div>)}
         </div>
       </details>)}

@@ -1,3 +1,5 @@
+import { ESTIMATE_COMPONENT_PRICING_BASIS, estimateComponentLineAmountIsValid, type EstimateComponentPricingLine, type EstimateInHousePreviewResult } from "../domain/estimate-component-pricing.js";
+import { estimateInHousePreviewSchema, resolveEstimateComponentPricing, currentEstimateComponentPricingMatches } from "../services/estimate-component-pricing.service.js";
 import { ESTIMATE_DIMENSION_INPUT_UNITS, ESTIMATE_DIMENSION_QUANTITY_UNITS, calculateDimensionQuantity, canonicalEstimateDimensions, estimateDimensionRulesEqual, estimateLineDimensionsValid, readEstimateDimensionRule } from "../domain/estimate-dimensions.js";
 import { KNOWLEDGE_MODE_TIERS, isKnowledgeModeTier, type KnowledgeModeTier } from "../domain/ai-estimator-knowledge-mode-tiers.js";
 import { fenceEstimateInHouseComponentReferences } from "../services/estimator-catalogue.service.js";
@@ -62,6 +64,8 @@ const configuredEstimateLineSchema = z.object({
   pricingMode: z.enum(ESTIMATE_PRICING_MODES).optional(),
   modeTier: z.enum(KNOWLEDGE_MODE_TIERS).optional(),
   rateSource: z.enum(ESTIMATE_RATE_SOURCES).optional(),
+  pricingBasis: z.literal(ESTIMATE_COMPONENT_PRICING_BASIS).optional(),
+  componentPricingFingerprint: z.string().regex(/^[a-f0-9]{64}$/u).optional(),
   selectedInHouseComponentIds: z.array(stableIdSchema).max(50).refine((ids) => new Set(ids).size === ids.length, "Select each component once.").optional(),
   mainLineId: stableIdSchema, revisionId: stableIdSchema, uomId: stableIdSchema,
   recommendationSourceMainLineIds: z.array(stableIdSchema).optional(),
@@ -308,7 +312,8 @@ export function createEstimatesRouter(
       estimate = { ...estimate, lineItems,
         isIncomplete: estimate.isIncomplete === true || lineItems.some((line) =>
           line.source === "configuration" &&
-          (line.configurationSourceUnavailable === true || line.configurationUomChanged === true || line.configurationDimensionsChanged === true)) };
+          (line.configurationSourceUnavailable === true || line.configurationUomChanged === true || line.configurationDimensionsChanged === true ||
+            line.pricingBasis === ESTIMATE_COMPONENT_PRICING_BASIS && !estimateComponentLineAmountIsValid(line))) };
     }
     const [clientReview, clientFeedback] = await Promise.all([
       reviews.currentSummaryForEstimate(actor, String(estimate.id)),
@@ -340,6 +345,43 @@ export function createEstimatesRouter(
       return { ...await estimatorEstimate(req.authenticatedUser!, estimate), lead: lead ? { ...lead, id: lead._id, _id: undefined } : null };
     })) });
   } catch (error) { next(error); } });
+  router.post("/leads/:leadId/estimate/in-house-preview", protectedRoute,
+    requireOperation("POST /leads/:leadId/estimate/in-house-preview"), validateBody(estimateInHousePreviewSchema), async (req, res, next) => { try {
+      const actor = req.authenticatedUser!;
+      const lead = await leads.get(actor, req.params.leadId as string);
+      const estimate = await EstimateModel.findOne({ leadId: lead.id }).lean();
+      if (estimate) {
+        if (!canStaffEditEstimate(actor, estimate)) throw estimateNotFound();
+        await requireEstimateStaffActor(actor.id, estimate, undefined, actor.role);
+        assertEstimateEditable(estimate);
+      } else {
+        const currentActor = await UserModel.findOne({ _id: actor.id, active: true, role: actor.role }).lean();
+        if (!currentActor || currentActor.role !== "estimator_sales" || lead.ownerId !== String(currentActor._id)) throw estimateNotFound();
+      }
+      const input = req.body as z.infer<typeof estimateInHousePreviewSchema>;
+      const current = await resolveEstimatorCatalogueLines(input.lines.map(line => line.mainLineId));
+      const results: EstimateInHousePreviewResult[] = [];
+      for (const line of input.lines) {
+        try {
+          const source = current.get(line.mainLineId);
+          if (!source || source.line.revisionId !== line.revisionId || source.line.itemVersion !== line.itemVersion ||
+            source.line.revisionVersion !== line.revisionVersion || source.line.uom.id !== line.uomId) {
+            throw new ApiError(409, "ESTIMATE_CONFIGURATION_CHANGED", "Configuration changed. Refresh this line before calculating it.");
+          }
+          const prior = estimate?.lineItems.find(row => row.source === "configuration" && row.roomId === line.roomId && row.mainLineId === line.mainLineId);
+          const measurements = configuredLineMeasurements({ ...line, included: true }, prior as Record<string, unknown> | undefined, source.line);
+          scaledQuantity(measurements.quantity, source.line.uom.decimalScale, true);
+          const componentPricing = await resolveEstimateComponentPricing(source, line.modeTier, measurements.quantity, line.selectedInHouseComponentIds);
+          results.push({ key: line.key, state: "ready", componentPricing, issues: [] });
+        } catch (error) {
+          if (!(error instanceof ApiError)) throw error;
+          const conflict = ["ESTIMATE_CONFIGURATION_CHANGED", "ESTIMATE_DIMENSIONS_CONFIGURATION_CHANGED"].includes(error.code);
+          results.push({ key: line.key, state: conflict ? "conflict" : "incomplete", componentPricing: null, issues: [{ code: error.code, message: error.message }] });
+        }
+      }
+      res.set("Cache-Control", "no-store").json({ data: { lines: results } });
+    } catch (error) { next(error); } });
+
   router.put("/leads/:leadId/estimate", protectedRoute, requireOperation("PUT /leads/:leadId/estimate"), validateBody(estimateSchema), async (req, res, next) => { try {
     const lead = await leads.get(req.authenticatedUser!, req.params.leadId as string);
     let savedEstimate: Record<string, unknown>;
@@ -407,7 +449,7 @@ export function createEstimatesRouter(
       // Design obligations also apply to configured lines with a manual selling price.
       await fenceEstimateConfigurationDependencies(inputLines, session);
       const configured = await resolveEstimatorCatalogueLines(configuredMainLineIds, session);
-      const lineItems = inputLines.map((line, index) => {
+      const lineItems = await mapSequential(inputLines, async (line, index) => {
         if (line.source !== "configuration") {
           const candidates = previousLines.filter((prior) => prior.source !== "configuration" &&
             (line.id ? prior.id === line.id : prior.catalogueId === line.catalogueId && prior.roomName === line.roomName && prior.specification === line.specification));
@@ -455,6 +497,9 @@ export function createEstimatesRouter(
         }
         const classification = line.classification ?? (prior?.classification === "special" ? "special" : "standard");
         const pricingMode = line.pricingMode ?? prior?.pricingMode as EstimatePricingMode | undefined;
+        if (prior?.pricingBasis === ESTIMATE_COMPONENT_PRICING_BASIS && line.included && line.pricingMode !== "pmc" && line.pricingMode !== "sub_vendor" && line.rateSource === undefined && line.pricingBasis === undefined) {
+          throw new ApiError(409, "ESTIMATE_COMPONENT_PRICING_REQUIRED", "Refresh the component-calculated line before saving it.");
+        }
         const rateSource = line.rateSource ?? (prior && line.ratePaise !== prior.ratePaise
           ? "manual" : prior?.rateSource as EstimateRateSource | undefined);
         const modeTier = line.modeTier ?? prior?.modeTier ?? "signature";
@@ -470,6 +515,8 @@ export function createEstimatesRouter(
         if (!estimateConfigurationRateMatches({ ...pricing, rateSource: "manual" }, tierPricing.modeBaseRatesPaise, tierPricing.inHouseComponents)) {
           throw new ApiError(409, "ESTIMATE_COMPONENT_SELECTION_INVALID", "Select the available In-house components for this estimate line before saving.");
         }
+        const componentCalculated = line.included && pricingMode === "in_house" && rateSource === "configuration" && tierPricing.inHouseComponents !== undefined;
+        if (line.included && line.pricingBasis !== undefined && !componentCalculated) throw new ApiError(400, "ESTIMATE_COMPONENT_PRICING_INVALID", "Component pricing only applies to selected In-house configuration lines.");
         if (rateSource === "configuration") {
           // Only older callers preserving a saved origin may reuse its saved version metadata.
           const itemVersion = line.itemVersion ?? (line.rateSource === undefined ? prior?.sourceItemVersion : undefined);
@@ -477,7 +524,7 @@ export function createEstimatesRouter(
           if (line.mainBasketId !== snapshot.line.basketId || line.subBasketId !== snapshot.line.subBasketId ||
             line.itemType !== snapshot.line.itemType || line.revisionId !== snapshot.line.revisionId ||
             itemVersion !== snapshot.line.itemVersion || revisionVersion !== snapshot.line.revisionVersion ||
-            !estimateConfigurationRateMatches(pricing, tierPricing.modeBaseRatesPaise, tierPricing.inHouseComponents)) {
+            (line.included && !componentCalculated && !estimateConfigurationRateMatches(pricing, tierPricing.modeBaseRatesPaise, tierPricing.inHouseComponents))) {
             throw new ApiError(409, "ESTIMATE_CONFIGURATION_CHANGED",
               "Configuration pricing changed. Refresh the catalogue and review the selected mode price before saving.");
           }
@@ -485,7 +532,11 @@ export function createEstimatesRouter(
         const quantityScale = snapshot.line.uom.decimalScale;
         const measurements = configuredLineMeasurements(line, prior, snapshot.line);
         const quantityUnits = scaledQuantity(measurements.quantity, quantityScale, line.included);
-        const amountPaise = line.included && line.ratePaise === null
+        const componentPricing = componentCalculated ? await resolveEstimateComponentPricing(snapshot, modeTier as KnowledgeModeTier, measurements.quantity, selectedInHouseComponentIds, session) : undefined;
+        if (componentPricing && (line.pricingBasis !== ESTIMATE_COMPONENT_PRICING_BASIS || line.ratePaise !== null || line.componentPricingFingerprint !== componentPricing.inputFingerprint)) {
+          throw new ApiError(409, "ESTIMATE_COMPONENT_PRICING_CHANGED", "Review the current component calculation before saving this In-house line.");
+        }
+        const amountPaise = componentPricing ? componentPricing.totalPaise : line.included && line.ratePaise === null
           ? null : line.included
             ? calculateAmountPaise(line.ratePaise!, quantityUnits, quantityScale)
             : 0;
@@ -500,6 +551,7 @@ export function createEstimatesRouter(
           ...(line.recommendationSourceMainLineIds !== undefined
             ? { recommendationSourceMainLineIds: line.recommendationSourceMainLineIds } : {}),
           ...currentConfiguredFields(snapshot, modeTier as KnowledgeModeTier),
+          ...(componentPricing ? { pricingBasis: ESTIMATE_COMPONENT_PRICING_BASIS, componentPricing } : {}),
           specification: null, unit: snapshot.line.uom.name,
           ratePaise: line.ratePaise, rate: line.ratePaise === null ? null : line.ratePaise / 100,
           ...(measurements.dimensionRule === undefined ? {} : { dimensionRule: measurements.dimensionRule }),
@@ -521,7 +573,7 @@ export function createEstimatesRouter(
       if (!Number.isSafeInteger(gstPaise) || !Number.isSafeInteger(totalPaise)) {
         throw new ApiError(400, "ESTIMATE_AMOUNT_INVALID", "The estimate total is too large.");
       }
-      const isIncomplete = lineItems.some((line) => line.source === "configuration" && line.included && line.ratePaise === null);
+      const isIncomplete = lineItems.some((line) => line.source === "configuration" && line.included && line.ratePaise === null && !estimateComponentLineAmountIsValid(line));
       const leadProjectId = lead.projectId ?? null;
       const estimateProjectId = estimate?.projectId ?? null;
       if (
@@ -623,7 +675,7 @@ export function createEstimatesRouter(
     const estimate = await EstimateModel.findOne(filter).lean();
     if (!estimate || !canStaffEditEstimate(req.authenticatedUser!, estimate)) throw estimateNotFound();
     if (estimate.lineItems.some((line: { source?: string; included?: boolean; ratePaise?: number | null }) =>
-      line.source === "configuration" && line.included && line.ratePaise == null)) {
+      line.source === "configuration" && line.included && line.ratePaise == null && !estimateComponentLineAmountIsValid(line))) {
       throw new ApiError(409, "ESTIMATE_INCOMPLETE", "Enter all selected selling rates before downloading a proposal PDF.");
     }
     if (isEditableEstimateStatus(effectiveCommercialStatus(estimate))) await assertEstimateCurrentConfiguration(estimate);
@@ -864,7 +916,9 @@ async function assertEstimateCurrentConfiguration(
       line.included === true && !estimateLineDimensionsValid(line) ||
       designRulesDigest(line.designRules) !== source.line.designRulesDigest ||
       JSON.stringify(line.estimateNotes ?? []) !== JSON.stringify(source.line.estimateNotes) ||
-      !tierPricing || !estimateConfigurationRateMatches(line, tierPricing.modeBaseRatesPaise, tierPricing.inHouseComponents)) {
+      !tierPricing || (line.pricingBasis === ESTIMATE_COMPONENT_PRICING_BASIS
+        ? !await currentEstimateComponentPricingMatches(line, source, session)
+        : line.included !== false && !estimateConfigurationRateMatches(line, tierPricing.modeBaseRatesPaise, tierPricing.inHouseComponents))) {
       throw new ApiError(409, "ESTIMATE_CONFIGURATION_CHANGED",
         "Configuration changed. Save the estimate with its current Main Line values before continuing.");
     }
@@ -951,7 +1005,7 @@ function savedConfiguredSnapshot(prior: Record<string, unknown>): {
   };
 }
 
-function configuredLineMeasurements(line: z.infer<typeof configuredEstimateLineSchema>, prior: Record<string, unknown> | undefined,
+function configuredLineMeasurements(line: Pick<z.infer<typeof configuredEstimateLineSchema>, "dimensions" | "expectedDimensionRule" | "quantity" | "included" | "itemVersion" | "revisionVersion" | "revisionId" | "uomId">, prior: Record<string, unknown> | undefined,
   source: EstimatorCatalogueLine): { quantity: number; dimensions?: unknown; dimensionRule?: unknown } {
   const mandatory = source.dimensionsMandatory;
   if (mandatory && !source.dimensionRule) throw new ApiError(409, "ESTIMATE_DIMENSIONS_UOM_UNSUPPORTED", "This item requires a supported area UOM before its quantity can be calculated.");
@@ -1010,9 +1064,15 @@ function assertEstimateReadyToSubmit(lines: readonly {
   source?: string; included?: boolean; ratePaise?: number | null; amountPaise?: number | null;
 }[]): void {
   if (lines.some((line) => line.source === "configuration" && line.included &&
-    (!Number.isSafeInteger(line.ratePaise) || !Number.isSafeInteger(line.amountPaise)))) {
+    (!Number.isSafeInteger(line.ratePaise) || !Number.isSafeInteger(line.amountPaise)) && !estimateComponentLineAmountIsValid(line))) {
     throw new ApiError(409, "ESTIMATE_INCOMPLETE", "Enter a valid selling rate for every selected item before submitting.");
   }
+}
+
+async function mapSequential<T, U>(rows: readonly T[], transform: (row: T, index: number) => Promise<U>): Promise<U[]> {
+  const results: U[] = [];
+  for (const [index, row] of rows.entries()) results.push(await transform(row, index));
+  return results;
 }
 
 function isEstimateWriteConflict(error: unknown): boolean {

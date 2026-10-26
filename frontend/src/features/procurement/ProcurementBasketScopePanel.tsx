@@ -1,3 +1,4 @@
+import { ProcurementComponentBreakdown } from "./ProcurementComponentBreakdown";
 import { useQuery } from "@tanstack/react-query";
 
 import { useAuth } from "../../auth/AuthProvider";
@@ -72,7 +73,7 @@ export function ProcurementBasketScopePanel({ projectId, projectName, basket, fr
               ? "Configuration price needs review before BOQ."
               : standard ? lineCost?.issues[0]?.message ?? line.mode?.issues[0]?.message : line.mode?.issues[0]?.message;
           return <tbody key={line.sourceLineItemKey}>
-            <tr className="procurement-basket__scope-source-row">
+            <tr className="procurement-basket__scope-source-row" id={`procurement-source-${encodeURIComponent(line.sourceLineItemKey)}`} tabIndex={-1}>
               <th scope="row"><strong>{line.mainLineName}</strong>
                 <small className="procurement-basket__estimate-mode">Estimate mode: {procurementEstimateModeLabels[line.estimateMode?.mode ?? "unrecorded"]}
                   {line.estimateMode?.approvedClassification ? ` · ${line.estimateMode.approvedClassification === "standard" ? "Standard" : "Special"}` : ""}
@@ -97,6 +98,7 @@ export function ProcurementBasketScopePanel({ projectId, projectName, basket, fr
       </table>
     </div> : <p className="procurement-basket__scope-empty">No priced approved source lines are available in this basket.</p>}
 
+    <ProcurementComponentBreakdown breakdown={basket.inHouseComponentBreakdown} sources={new Map(basket.lines.map(line => [line.sourceLineItemKey, `${line.mainLineName} · ${line.roomName}`]))} />
     <footer className="procurement-basket__scope-total"><span>Total ({includedLines.length} items)</span><strong>{total}</strong></footer>
   </section>;
 }

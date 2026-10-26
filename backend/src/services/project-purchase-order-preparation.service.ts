@@ -302,6 +302,7 @@ function preparationEstimateLine(line: ApprovedProcurementSourceLine, itemIds: s
   return {
     key: line.key, included: line.included, source: line.source === "configuration" ? "configuration" : "legacy",
     ...(line.modeTier === undefined ? {} : { modeTier: line.modeTier }),
+    ...(line.selectedInHouseComponentIds === undefined ? {} : { selectedInHouseComponentIds: [...line.selectedInHouseComponentIds] }),
     ...estimateDimensionSnapshotFields(line),
     estimateMode: resolveProcurementEstimateMode(line, line.source === "configuration" &&
       mainBasketClassificationExplicit && mainBasketClassification === "standard"),

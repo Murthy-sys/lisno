@@ -2173,9 +2173,12 @@ it("saves and restores only explicitly selected In-house component IDs", async (
     { id: "paint", basketId: "basket-paint", basketName: "Painting", subBasketId: "sub-paint", subBasketName: "Finish", baseRatePaise: 800 }
   ];
   const catalogue = { items: [{ id: "basket-pop", name: "POP / Gypsum", displayOrder: 1, subBaskets: [{ id: "sub-na", basketId: "basket-pop", name: "NA", displayOrder: 1,
-    mainLines: [{ id: "line-pop", mainLineId: "line-pop", basketId: "basket-pop", subBasketId: "sub-na", name: "POP false ceiling", displayOrder: 1, revisionId: "revision-pop",
+    mainLines: [{ id: "line-pop", mainLineId: "line-pop", basketId: "basket-pop", subBasketId: "sub-na", name: "POP false ceiling", displayOrder: 1, revisionId: "revision-pop", itemVersion: 1, revisionVersion: 1,
       modeBaseRatesPaise: { sub_vendor: 10000, in_house: null }, inHouseComponents: components,
       uom: { id: "uom-sq", code: "SQFT", name: "sq ft", decimalScale: 2 } }] }] }], pagination: { limit: 100, offset: 0, total: 1, hasMore: false }, ineligibleLineCount: 0 };
+  const pricingFor = (line: Record<string, unknown>) => ({ formulaVersion: "in_house_components_v1", mainLineId: "line-pop", revisionId: "revision-pop", sourceItemVersion: 1, sourceRevisionVersion: 1,
+    modeTier: "signature", quantity: String(line.quantity), uom: { id: "uom-sq", code: "SQFT", name: "sq ft", decimalScale: 2 }, selectedComponentIds: ["base"],
+    components: [{ id: "base", basketId: "basket-pop", subBasketId: "sub-na", basketName: "Ceilings", subBasketName: "Framework", laborSellingPaise: 500, materialSellingPaise: 1001, totalPaise: 1501 }], totalPaise: 1501, inputFingerprint: "a".repeat(64) });
   let savedEstimate: Record<string, unknown> | null = null;
   const saves: Array<Record<string, unknown>> = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
@@ -2184,11 +2187,15 @@ it("saves and restores only explicitly selected In-house component IDs", async (
     if (url.endsWith("/leads/lead-1/estimate") && method === "GET") return response(savedEstimate);
     if (url.includes("/estimation/catalogue?")) return response(catalogue);
     if (url.includes("/estimation/catalogue/recommendations?")) return response({ sources: [] });
+    if (url.endsWith("/leads/lead-1/estimate/in-house-preview") && method === "POST") {
+      const request = JSON.parse(String(init?.body));
+      return response({ lines: request.lines.map((line: Record<string, unknown>) => ({ key: line.key, state: "ready", componentPricing: pricingFor(line), issues: [] })) });
+    }
     if (url.endsWith("/leads/lead-1/estimate") && method === "PUT") {
       const payload = JSON.parse(String(init?.body)) as Record<string, unknown>;
       saves.push(payload);
-      savedEstimate = { ...payload, id: "estimate-components", version: saves.length, status: "draft", approvalRequired: false, subtotal: 12, gst: 2.16, total: 14.16,
-        lineItems: (payload.lineItems as Array<Record<string, unknown>>).map((line) => ({ ...line, id: "saved-pop", mainBasketName: "POP / Gypsum", subBasketName: "NA", mainLineName: "POP false ceiling", uomCode: "SQFT", uomName: "sq ft", uomDecimalScale: 2, unit: "sq ft", rate: 12, amountPaise: 1200, amount: 12 })) };
+      savedEstimate = { ...payload, id: "estimate-components", version: saves.length, status: "draft", approvalRequired: false, subtotal: 15.01, gst: 2.70, total: 17.71,
+        lineItems: (payload.lineItems as Array<Record<string, unknown>>).map((line) => ({ ...line, id: "saved-pop", mainBasketName: "POP / Gypsum", subBasketName: "NA", mainLineName: "POP false ceiling", uomCode: "SQFT", uomName: "sq ft", uomDecimalScale: 2, unit: "sq ft", rate: null, ratePaise: null, amountPaise: 1501, amount: 15.01, sourceItemVersion: 1, sourceRevisionVersion: 1, componentPricing: pricingFor(line) })) };
       return response(savedEstimate);
     }
     throw new Error(`Unexpected request: ${method} ${url}`);
@@ -2207,10 +2214,12 @@ it("saves and restores only explicitly selected In-house component IDs", async (
   expect(within(choices).getByRole("checkbox", { name: /Ceilings \/ Framework/ })).not.toBeChecked();
   expect(screen.getByRole("button", { name: "Save draft" })).toBeDisabled();
   await user.click(within(choices).getByRole("checkbox", { name: /Ceilings \/ Framework/ }));
-  expect(screen.getByRole("textbox", { name: /Selling rate.*POP false ceiling/ })).toHaveValue("12");
+  expect(screen.getByRole("textbox", { name: /Selling rate.*POP false ceiling/ })).toHaveValue("");
+  await waitFor(() => expect(screen.getByRole("button", { name: "Save draft" })).toBeEnabled());
+  expect(screen.getByLabelText(/Amount for.*POP false ceiling/)).toHaveTextContent("₹15.01");
   await user.click(screen.getByRole("button", { name: "Save draft" }));
   await screen.findByText("Estimate draft saved.");
-  expect((saves[0]!.lineItems as unknown[])[0]).toMatchObject({ selectedInHouseComponentIds: ["base"], ratePaise: 1200, rateSource: "configuration" });
+  expect((saves[0]!.lineItems as unknown[])[0]).toMatchObject({ selectedInHouseComponentIds: ["base"], ratePaise: null, rateSource: "configuration", pricingBasis: "in_house_components_v1", componentPricingFingerprint: "a".repeat(64) });
   view.unmount();
   components.push({ ...components[1]!, id: "new", subBasketName: "Added later" });
   renderWorkspace();

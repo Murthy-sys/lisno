@@ -1,3 +1,5 @@
+import { ESTIMATE_COMPONENT_PRICING_BASIS, estimateComponentLineAmountIsValid } from "../domain/estimate-component-pricing.js";
+import { calculateEstimateComponentPricing, readCurrentEstimateComponentConfiguration, resolveEstimateComponentPricing, currentEstimateComponentPricingMatches } from "./estimate-component-pricing.service.js";
 import mongoose, { type ClientSession } from "mongoose";
 import { z } from "zod";
 import { canonicalEstimateDimensions, calculateDimensionQuantity, estimateDimensionRulesEqual, estimateLineDimensionsValid, readEstimateDimensionRule, ESTIMATE_DIMENSION_INPUT_UNITS, ESTIMATE_DIMENSION_QUANTITY_UNITS } from "../domain/estimate-dimensions.js";
@@ -102,16 +104,26 @@ function amountFor(ratePaise: number, quantity: unknown, decimalScale: number): 
   return value <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(value) : null;
 }
 
-function choicesFor(line: Row, source?: Source) {
+async function choicesFor(line: Row, source?: Source, session?: ClientSession) {
   const mode = modeOf(line);
-  return KNOWLEDGE_MODE_TIERS.map(modeTier => {
+  const choices = [];
+  for (const modeTier of KNOWLEDGE_MODE_TIERS) {
     const pricing = source ? estimatorCatalogueTierPricing(source.line, modeTier) : null;
     const matchingUom = source?.line.uom.id === line.uomId;
     const components = mode === "in_house" ? pricing?.inHouseComponents : undefined;
+    let componentConfiguration: Awaited<ReturnType<typeof readCurrentEstimateComponentConfiguration>> | null = null;
+    if (components !== undefined && source && matchingUom) {
+      try { componentConfiguration = await readCurrentEstimateComponentConfiguration(source, modeTier, session); } catch { /* Show unavailable choices without borrowing another tier. */ }
+    }
+    const componentAmount = (selected: unknown) => {
+      if (!source || !componentConfiguration) return null;
+      try { return calculateEstimateComponentPricing(source, modeTier, line.quantity, selected, componentConfiguration); } catch { return null; }
+    };
     const componentChoices = components?.map(component => ({ id: component.id,
       label: [component.basketName, component.subBasketName].filter(Boolean).join(" / "),
       ratePaise: !component.unavailableReason && validMoney(component.baseRatePaise) ? component.baseRatePaise : null,
-      available: !component.unavailableReason && validMoney(component.baseRatePaise) }));
+      available: !component.unavailableReason && componentAmount([component.id]) !== null,
+      amountPaise: componentAmount([component.id])?.totalPaise ?? null }));
     const ratePaise = components !== undefined
       ? tierOf(line) === modeTier ? selectedInHouseBaseRate(components, line.selectedInHouseComponentIds) : null
       : mode && pricing ? pricing.modeBaseRatesPaise[mode] : null;
@@ -120,13 +132,16 @@ function choicesFor(line: Row, source?: Source) {
     const unavailableReason = !source ? "Configuration is unavailable." : !matchingUom ? "Ask Sales to review the changed unit and quantity." :
       !pricing ? "This tier is not configured for this main line." : !mode ? "Ask Sales to choose a pricing mode." :
       !hasCost ? "Price is not configured for this tier." : null;
-    return { modeTier, available, unavailableReason,
-      ratePaise: available && validMoney(ratePaise) ? ratePaise : null,
-      amountPaise: available && validMoney(ratePaise) ? amountFor(ratePaise, line.quantity, source!.line.uom.decimalScale) : null,
+    const componentPricing = components !== undefined && tierOf(line) === modeTier ? componentAmount(line.selectedInHouseComponentIds) : null;
+    choices.push({ modeTier, available, unavailableReason,
+      ...(componentPricing ? { pricingBasis: ESTIMATE_COMPONENT_PRICING_BASIS, componentPricing } : {}),
+      ratePaise: components === undefined && available && validMoney(ratePaise) ? ratePaise : null,
+      amountPaise: components !== undefined ? componentPricing?.totalPaise ?? null : available && validMoney(ratePaise) ? amountFor(ratePaise, line.quantity, source!.line.uom.decimalScale) : null,
       source: source ? { revisionId: source.line.revisionId, itemVersion: source.line.itemVersion,
         revisionVersion: source.line.revisionVersion, uomId: source.line.uom.id } : null,
-      ...(componentChoices === undefined ? {} : { inHouseComponents: componentChoices }) };
-  });
+      ...(componentChoices === undefined ? {} : { inHouseComponents: componentChoices }) });
+  }
+  return choices;
 }
 
 async function present(context: Awaited<ReturnType<typeof scope>>, session?: ClientSession) {
@@ -135,11 +150,11 @@ async function present(context: Awaited<ReturnType<typeof scope>>, session?: Cli
   const current = await resolveEstimatorCatalogueLines(savedLines.map(line => String(line.mainLineId)), session);
   // An unresolved current source cannot establish client visibility. Keep its cost in the total,
   // but let staff repair it without exposing a formerly visible line to the client.
-  const lines = savedLines.filter(line => !context.client || current.has(line.mainLineId) &&
-    line.clientVisible !== false && current.get(line.mainLineId)!.line.clientVisible !== false)
-    .map(line => {
+  const lines = [];
+  for (const line of savedLines.filter(line => !context.client || current.has(line.mainLineId) &&
+    line.clientVisible !== false && current.get(line.mainLineId)!.line.clientVisible !== false)) {
       const source = current.get(line.mainLineId);
-      return { id: String(line.id), mainLineId: String(line.mainLineId), mainLineName: source?.line.name ?? line.mainLineName,
+      lines.push({ id: String(line.id), mainLineId: String(line.mainLineId), mainLineName: source?.line.name ?? line.mainLineName,
         roomName: line.roomName, quantity: line.quantity, uomName: line.uomName ?? line.unit,
         dimensionsMandatory: source?.line.dimensionsMandatory === true,
         dimensionRule: source?.line.dimensionsMandatory ? source.line.dimensionRule ?? null : readEstimateDimensionRule(line.dimensionRule),
@@ -147,9 +162,10 @@ async function present(context: Awaited<ReturnType<typeof scope>>, session?: Cli
         dimensionsNeedReview: source ? dimensionsNeedReview(line, source) : true,
         pricingMode: modeOf(line), modeTier: tierOf(line), ratePaise: validMoney(line.ratePaise) ? line.ratePaise : null,
         amountPaise: validMoney(line.amountPaise) ? line.amountPaise : null,
+        ...(estimateComponentLineAmountIsValid(line) ? { pricingBasis: ESTIMATE_COMPONENT_PRICING_BASIS, componentPricing: line.componentPricing } : {}),
         ...(line.selectedInHouseComponentIds === undefined ? {} : { selectedInHouseComponentIds: line.selectedInHouseComponentIds }),
-        choices: choicesFor(line, source) };
-    });
+        choices: await choicesFor(line, source, session) });
+    }
   const totalPaise = estimate?.totalPaise ?? (typeof estimate?.total === "number" ? Math.round(estimate.total * 100) : null);
   return { projectId: String(context.project._id), estimateId: estimate ? String(estimate._id) : null,
     estimateVersion: estimate?.version ?? null, ...editing(context), totalPaise: validMoney(totalPaise) ? totalPaise : null,
@@ -248,6 +264,9 @@ export function createEstimateTiersService({ audit }: { audit: AuditService }) {
           // Measurement edits never silently replace a manual rate or a saved component choice.
           // Configured rates must still agree with the current chosen tier before changing money.
           if (rateSource === "configuration") {
+            if (line.pricingBasis === ESTIMATE_COMPONENT_PRICING_BASIS && !await currentEstimateComponentPricingMatches(line, source, session)) {
+              throw new ApiError(409, "ESTIMATE_DIMENSIONS_PRICE_CHANGED", "The configured component price changed. Ask Sales to review this line before saving dimensions.");
+            }
             const configuredRate = mode && pricing ? mode === "in_house" && pricing.inHouseComponents !== undefined
               ? selectedInHouseBaseRate(pricing.inHouseComponents, selected) : pricing.modeBaseRatesPaise[mode] : null;
             if (validMoney(ratePaise) && (!pricing || configuredRate !== ratePaise)) {
@@ -255,7 +274,10 @@ export function createEstimateTiersService({ audit }: { audit: AuditService }) {
             }
           }
         }
-        const amountPaise = ratePaise === null ? null : amountFor(ratePaise, quantity, source.line.uom.decimalScale);
+        const componentPricing = mode === "in_house" && rateSource === "configuration" && pricing?.inHouseComponents !== undefined
+          ? await resolveEstimateComponentPricing(source, selectedTier, quantity, selected, session) : undefined;
+        if (componentPricing) ratePaise = null;
+        const amountPaise = componentPricing ? componentPricing.totalPaise : ratePaise === null ? null : amountFor(ratePaise, quantity, source.line.uom.decimalScale);
         if (ratePaise !== null && amountPaise === null) return unavailable();
         const nextLine: Row = { ...line, modeTier: selectedTier, rateSource, ratePaise, rate: ratePaise === null ? null : ratePaise / 100,
           quantity, amountPaise, amount: amountPaise === null ? null : amountPaise / 100, revisionId: source.line.revisionId,
@@ -266,6 +288,9 @@ export function createEstimateTiersService({ audit }: { audit: AuditService }) {
           uomDecimalScale: source.line.uom.decimalScale, uomName: source.line.uom.name, unit: source.line.uom.name,
           dimensionsMandatory: source.line.dimensionsMandatory === true,
           designRules: source.line.designRules, designRulesDigest: source.line.designRulesDigest, estimateNotes: source.line.estimateNotes };
+        delete nextLine.pricingBasis;
+        delete nextLine.componentPricing;
+        if (componentPricing) { nextLine.pricingBasis = ESTIMATE_COMPONENT_PRICING_BASIS; nextLine.componentPricing = componentPricing; }
         if (source.line.dimensionsMandatory) nextLine.dimensionRule = source.line.dimensionRule;
         if (dimensions !== undefined) nextLine.dimensions = dimensions;
         delete nextLine.selectedInHouseComponentIds;
@@ -286,7 +311,7 @@ export function createEstimateTiersService({ audit }: { audit: AuditService }) {
         const values: Row = { lineItems, subtotalPaise, gstPaise, totalPaise,
           subtotal: subtotalPaise / 100, gst: gstPaise / 100, total: totalPaise / 100,
           isIncomplete: lineItems.some((entry: Row) => entry.included && entry.source === "configuration" &&
-            (!validMoney(entry.ratePaise) || !validMoney(entry.amountPaise) || !estimateLineDimensionsValid(entry))), status: "draft" };
+            ((!validMoney(entry.ratePaise) || !validMoney(entry.amountPaise)) && !estimateComponentLineAmountIsValid(entry) || !estimateLineDimensionsValid(entry))), status: "draft" };
         if (isCollaborativeEstimate(estimate)) {
           values["estimation.status"] = "draft";
           values.status = estimate.estimation.preApproval ? "client_approved" : "draft";
