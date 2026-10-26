@@ -1,4 +1,5 @@
 import type { QueryClient } from "@tanstack/react-query";
+import type { KnowledgeModeTier } from "../../../../shared/knowledge/knowledgeModeTiers";
 import {
   getKnowledgeItem, getKnowledgeSection, updateKnowledgeSection,
   getKnowledgeBasketQuality, updateKnowledgeBasketQuality,
@@ -12,6 +13,8 @@ import type { KnowledgeBasketQuality, KnowledgeItemDetail, KnowledgeSectionMutat
 /** Explicitly scopes every editor read, write and cache operation to its owner. */
 export interface KnowledgeEditorDataSource {
   readonly scopeKey: string;
+  readonly modeTier?: KnowledgeModeTier;
+  readonly supportsLiveConfigurationRequests?: boolean;
   readonly supportsLegacyQuality: boolean;
   readonly itemKey: (mainLineId: string) => readonly unknown[];
   readonly sectionKey: (...args: Parameters<typeof knowledgeQueryKeys.section>) => readonly unknown[];

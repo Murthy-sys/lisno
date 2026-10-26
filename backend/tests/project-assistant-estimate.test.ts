@@ -51,9 +51,54 @@ describe("immutable customer estimate projection", () => {
     const report = projectPricingFromPublication({ estimateId: "e", projectId: "a", round: round(), snapshot: s, approved: true });
     expect(report).toMatchObject({ lineCount: 101, hasMoreLines: true, totalPaise: 202000 }); expect(report?.lines).toHaveLength(100);
   });
+  it("validates every quoted amount but emits only visible lines and visible pagination counts", () => {
+    const s: any = snapshot();
+    s.lineItems = [
+      { ...configuredLine(), id: "hidden-line", mainLineName: "Hidden name", clientVisible: false },
+      { ...configuredLine(), id: "visible-default" }, { ...configuredLine(), id: "visible-yes", clientVisible: true }
+    ];
+    Object.assign(s, { subtotal: 60, subtotalPaise: 6000, gst: 0, gstPaise: 0, total: 60, totalPaise: 6000 });
+    const original = structuredClone(s);
+    const report = projectPricingFromPublication({ estimateId: "e", projectId: "a", round: round(), snapshot: s, approved: true });
+    expect(report).toMatchObject({ lineCount: 2, hasMoreLines: false, totalPaise: 6000 });
+    expect(report?.lines.map(line => line.id)).toEqual(["visible-default", "visible-yes"]);
+    expect(JSON.stringify(report)).not.toMatch(/Hidden name|hidden-line|clientVisible/);
+    expect(s).toEqual(original);
+    s.lineItems[0].amount = 19; s.lineItems[0].amountPaise = 1900;
+    expect(projectPricingFromPublication({ estimateId: "e", projectId: "a", round: round(), snapshot: s, approved: true })).toBeNull();
+  });
+  it("returns the complete verified total when every included line is hidden", () => {
+    const s = { ...snapshot(), lineItems: [{ ...configuredLine(), clientVisible: false }] };
+    expect(projectPricingFromPublication({ estimateId: "e", projectId: "a", round: round(), snapshot: s, approved: true }))
+      .toMatchObject({ lines: [], lineCount: 0, hasMoreLines: false, subtotalPaise: 2000, gstPaise: 360, totalPaise: 2360 });
+  });
+  it.each(["false", 0, null, {}])("rejects malformed frozen visibility instead of showing a row: %j", clientVisible => {
+    const s = { ...snapshot(), lineItems: [{ ...configuredLine(), clientVisible }] };
+    expect(projectPricingFromPublication({ estimateId: "e", projectId: "a", round: round(), snapshot: s, approved: false })).toBeNull();
+  });
+  it("does not let hidden rows consume the visible line limit or bypass identity checks", () => {
+    const s: any = snapshot();
+    s.lineItems = Array.from({ length: 102 }, (_, index) => ({ ...configuredLine(), id: `line-${index}`, clientVisible: index > 0 }));
+    Object.assign(s, { subtotal: 2040, subtotalPaise: 204000, gst: 0, gstPaise: 0, total: 2040, totalPaise: 204000 });
+    const report = projectPricingFromPublication({ estimateId: "e", projectId: "a", round: round(), snapshot: s, approved: true });
+    expect(report).toMatchObject({ lineCount: 101, hasMoreLines: true, totalPaise: 204000 });
+    expect(report?.lines).toHaveLength(100); expect(report?.lines[0].id).toBe("line-1");
+    s.lineItems[101].id = "line-0";
+    expect(projectPricingFromPublication({ estimateId: "e", projectId: "a", round: round(), snapshot: s, approved: true })).toBeNull();
+  });
 });
 
 describe("published estimate read boundary", () => {
+  it("reconciles an authorized full round before returning an all-hidden screen projection", async () => {
+    const f = fixture(); f.rounds[0].estimateSnapshot.lineItems[0].clientVisible = false;
+    const result = await f.read();
+    expect(result).toMatchObject({ unavailableReason: null, report: { lines: [], lineCount: 0, hasMoreLines: false, totalPaise: 2360, state: "approved" } });
+    expect(JSON.stringify(result)).not.toContain("Published ceiling");
+    expect(f.rounds[0].estimateSnapshot.lineItems).toHaveLength(1);
+    f.rounds[0].estimateSnapshot.lineItems[0].amount = 19;
+    f.rounds[0].estimateSnapshot.lineItems[0].amountPaise = 1900;
+    expect((await f.read()).report).toBeNull();
+  });
   it("reads approval lineage and immutable snapshot only", async () => {
     const f = fixture(); const result = await f.read();
     expect(result.report).toMatchObject({ totalPaise: 2360, state: "approved", estimateVersion: 3 });
@@ -94,4 +139,15 @@ describe("published estimate read boundary", () => {
     await f.repository.updateUser("client-a", 1, { active: false, updatedAt: f.clock().toISOString() });
     await expect(service.projectEstimate!({ basis: "current" })).rejects.toMatchObject({ status: 404 });
   });
+});
+
+
+it("does not report a forged dimension-owned frozen quantity", () => {
+  const frozen = snapshot();
+  Object.assign(frozen.lineItems[0]!, { dimensionsMandatory: true, dimensions: { length: "2", width: "1", height: "9" },
+    dimensionRule: { formula: "length_width", inputUnit: "ft", quantityUnit: "sq_ft", uomId: "uom", decimalScale: 2 }, uomDecimalScale: 2 });
+  const input = { estimateId: "estimate-a", projectId: "a", round: round(), snapshot: frozen, approved: true };
+  expect(projectPricingFromPublication(input)?.lines[0]?.quantity).toBe("2");
+  frozen.lineItems[0]!.quantity = 18;
+  expect(projectPricingFromPublication(input)).toBeNull();
 });

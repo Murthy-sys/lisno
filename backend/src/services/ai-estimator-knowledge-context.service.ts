@@ -71,6 +71,7 @@ export interface AiEstimatorKnowledgeContextRequest {
   readonly modeId?: string;
   readonly modeKind?: KnowledgeModeKind;
   readonly executionSource?: KnowledgeExecutionSource;
+  readonly selectedInHouseComponentIds?: string[];
 }
 
 export interface AiEstimatorKnowledgeContextService {
@@ -384,6 +385,7 @@ async function resolveContext(
       uom: sections.get("overview")?.applicability === "configured" && uom
         ? { id: requiredString(uom._id), name: requiredString(uom.name), decimalScale: requiredInteger(uom.decimalScale) }
         : null,
+      selectedInHouseComponentIds: input.selectedInHouseComponentIds,
       modeKind: input.modeKind,
       executionSource: input.executionSource,
       quantity: input.quantity

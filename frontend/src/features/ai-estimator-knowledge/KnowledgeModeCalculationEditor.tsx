@@ -18,6 +18,7 @@ export interface KnowledgeModeCalculationUom {
 }
 
 interface Props {
+  readonly emptyDefaults?: boolean;
   readonly scope?: ModeCalculationScope;
   readonly pmcMarginBps?: KnowledgeJsonValue;
   readonly pmcMinimumMarginBps?: KnowledgeJsonValue;
@@ -39,10 +40,16 @@ interface Props {
   readonly onPendingInputChange?: (pending: KnowledgePendingCalculation | null) => void;
 }
 
-export function KnowledgeModeCalculationEditor({ value, uom, readOnly, validationAttempt, issues, onChange, onDirty, onValidationChange, onPendingInputChange, pendingSaveVersion = 0, active = true, contextLabel, issuePath = "modeCalculation", scope, pmcMarginBps, pmcMinimumMarginBps, subVendorMarginBps, subVendorMinimumMarginBps, marginControl }: Props) {
-  const [draft, setDraft] = useState(() => modeCalculationDraft(value));
+export function KnowledgeModeCalculationEditor({ emptyDefaults = false, value, uom, readOnly, validationAttempt, issues, onChange, onDirty, onValidationChange, onPendingInputChange, pendingSaveVersion = 0, active = true, contextLabel, issuePath = "modeCalculation", scope, pmcMarginBps, pmcMinimumMarginBps, subVendorMarginBps, subVendorMinimumMarginBps, marginControl }: Props) {
+  const draftForValue = () => value == null && emptyDefaults
+    ? { baseRate: "", lowQuantityLimit: "", impactRate: "",
+        // PMC and Sub-Vendor use their separate margin controls; these required legacy fields are hidden.
+        minimumRate: scope === "pmc" || scope === "sub_vendor" ? "0" : "",
+        startingRate: scope === "pmc" || scope === "sub_vendor" ? "0" : "" }
+    : modeCalculationDraft(value);
+  const [draft, setDraft] = useState(draftForValue);
   const [locallyEdited, setLocallyEdited] = useState(false);
-  const baselineDraft = useRef(modeCalculationDraft(value));
+  const baselineDraft = useRef(draftForValue());
   const [touched, setTouched] = useState(value != null);
   const [simulator, setSimulator] = useState<{ scopeKey: string; initialDraft: KnowledgeModeCalculationDraft; pmcMarginBps?: KnowledgeJsonValue; pmcMinimumMarginBps?: KnowledgeJsonValue; subVendorMarginBps?: KnowledgeJsonValue; subVendorMinimumMarginBps?: KnowledgeJsonValue } | null>(null);
   const previousValue = useRef(JSON.stringify(value));
@@ -55,16 +62,16 @@ export function KnowledgeModeCalculationEditor({ value, uom, readOnly, validatio
   useEffect(() => {
     const serialized = JSON.stringify(value);
     if (serialized !== previousValue.current) {
-      setDraft(modeCalculationDraft(value));
+      setDraft(draftForValue());
       setLocallyEdited(false);
-      baselineDraft.current = modeCalculationDraft(value);
+      baselineDraft.current = draftForValue();
       setTouched(value != null);
       previousValue.current = serialized;
     }
   }, [value]);
   useEffect(() => {
     setLocallyEdited(false);
-    baselineDraft.current = modeCalculationDraft(value);
+    baselineDraft.current = draftForValue();
   }, [pendingSaveVersion]);
   const pendingCallbackRef = useRef(onPendingInputChange);
   pendingCallbackRef.current = onPendingInputChange;

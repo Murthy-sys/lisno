@@ -213,3 +213,11 @@
 {"_e":"metro:instantiate","_t":1790362421500,"atlas":false,"workers":7,"host":null,"port":null}
 {"_e":"metro:bundling:started","_t":1790362421998,"id":"1","platform":"android","environment":null,"entry":"node_modules/expo-router/entry.js"}
 {"_e":"metro:bundling:done","_t":1790362435186,"id":"1","total":2833,"ms":13188.469166}
+{"_e":"root:init","_t":1793002259417,"format":"v0-jsonl","version":"57.0.26"}
+{"_e":"env:mode","_t":1793002259697,"nodeEnv":"production","babelEnv":"production","mode":"production"}
+{"_e":"env:load","_t":1793002259699,"mode":"production","files":["../../../.env.local"],"env":{"EXPO_PUBLIC_API_ENV":"remote","EXPO_PUBLIC_LOCAL_API_URL":"http://10.0.2.2:3000/api/v1","EXPO_PUBLIC_REMOTE_API_URL":"https://lisno.onrender.com/api/v1","LISNO_ALLOW_LOCAL_HTTP":"0","LISNO_APP_VARIANT":"development"}}
+{"_e":"devserver:start","_t":1793002259866,"mode":"production","web":true,"baseUrl":"","asyncRoutes":false,"routerRoot":"../../../src/app","serverComponents":false,"serverActions":false,"serverRendering":false,"apiRoutes":false,"exporting":true}
+{"_e":"metro:config","_t":1793002260043,"serverRoot":"../../..","projectRoot":"../../..","exporting":true,"flags":{"autolinkingModuleResolution":false,"serverActions":false,"serverComponents":false,"reactCompiler":true,"optimizeGraph":false,"treeshaking":false,"logbox":false}}
+{"_e":"metro:instantiate","_t":1793002260146,"atlas":false,"workers":7,"host":null,"port":null}
+{"_e":"metro:bundling:started","_t":1793002260655,"id":"1","platform":"android","environment":null,"entry":"node_modules/expo-router/entry.js"}
+{"_e":"metro:bundling:done","_t":1793002288448,"id":"1","total":3047,"ms":27793.010917}

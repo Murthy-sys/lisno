@@ -1,4 +1,8 @@
+import { ESTIMATE_COMPONENT_PRICING_BASIS, estimateComponentLineAmountIsValid, readEstimateComponentPricing, type EstimateComponentPricing } from "../domain/estimate-component-pricing.js";
+import { estimateDimensionSnapshotValid } from "../domain/estimate-dimension-snapshot.js";
+import { canonicalEstimateDimensions, readEstimateDimensionRule, type EstimateDimensions, type EstimateDimensionRule } from "../domain/estimate-dimensions.js";
 import { effectiveCommercialStatus, isCollaborativeEstimate } from "../domain/estimation-lifecycle.js";
+import { KNOWLEDGE_MODE_TIERS } from "../domain/ai-estimator-knowledge-mode-tiers.js";
 import { ESTIMATE_PRICING_MODES, ESTIMATE_RATE_SOURCES, estimatePricingMetadataIsValid } from "../domain/estimate-mode-pricing.js";
 import { z } from "zod";
 
@@ -13,7 +17,8 @@ const paise = z.number().int().safe().nonnegative();
 const commonLine = {
   id: z.string().nullable().optional(), catalogueId: z.string().min(1),
   roomName: z.string().min(1), unit: z.string().min(1),
-  rate: money, quantity: money, included: z.boolean(), amount: money
+  rate: money, quantity: money, included: z.boolean(), amount: money,
+  clientVisible: z.boolean().optional()
 };
 const legacyLine = z.object({ ...commonLine, source: z.literal("legacy").optional(), specification: z.string().min(1) });
 const configuredLine = z.object({
@@ -22,8 +27,17 @@ const configuredLine = z.object({
   estimateNotes: z.array(z.string().max(4000)).max(4).optional(),
   itemType: z.enum(["main_line", "temporary"]).optional(),
   classification: z.enum(["standard", "special"]).optional(),
+  modeTier: z.enum(KNOWLEDGE_MODE_TIERS).optional(),
+  dimensionsMandatory: z.boolean().optional(),
+  dimensions: z.custom<EstimateDimensions>(value => canonicalEstimateDimensions(value) !== null).optional(),
+  dimensionRule: z.custom<EstimateDimensionRule>(value => readEstimateDimensionRule(value) !== null).nullable().optional(),
   pricingMode: z.enum(ESTIMATE_PRICING_MODES).optional(),
   rateSource: z.enum(ESTIMATE_RATE_SOURCES).optional(),
+  pricingBasis: z.literal(ESTIMATE_COMPONENT_PRICING_BASIS).optional(),
+  componentPricing: z.custom<EstimateComponentPricing>(value => readEstimateComponentPricing(value) !== null).optional(),
+  sourceItemVersion: z.number().int().positive().safe().optional(),
+  sourceRevisionVersion: z.number().int().positive().safe().optional(),
+  selectedInHouseComponentIds: z.array(z.string().min(1).max(128)).max(50).refine((ids) => new Set(ids).size === ids.length).optional(),
   roomId: z.string().min(1), mainBasketId: z.string().min(1),
   subBasketId: z.string().min(1).nullable(), mainLineId: z.string().min(1),
   revisionId: z.string().min(1), uomId: z.string().min(1),
@@ -31,8 +45,13 @@ const configuredLine = z.object({
   mainBasketName: z.string().min(1), subBasketName: z.string().min(1).nullable(),
   mainLineName: z.string().min(1), uomName: z.string().min(1),
   ratePaise: paise.nullable(), amountPaise: paise.nullable()
-}).refine((line) => configuredEstimateParentIsValid(line) && estimatePricingMetadataIsValid(line) && line.catalogueId === line.mainLineId &&
-  (!line.included || line.ratePaise !== null && line.amountPaise !== null));
+}).refine((line) => estimateDimensionSnapshotValid(line) && configuredEstimateParentIsValid(line) && estimatePricingMetadataIsValid(line) && line.catalogueId === line.mainLineId &&
+  (line.pricingBasis === undefined || estimateComponentLineAmountIsValid(line)) &&
+  (!line.included || line.ratePaise !== null && line.amountPaise !== null || estimateComponentLineAmountIsValid(line))).transform(line => {
+    if (line.pricingBasis === ESTIMATE_COMPONENT_PRICING_BASIS) return line;
+    const { sourceItemVersion: _itemVersion, sourceRevisionVersion: _revisionVersion, ...legacy } = line;
+    return legacy;
+  });
 const snapshotSchema = z.object({
   rooms: z.array(z.record(z.unknown())).optional(), bedroomCount: z.number().int().nullable().optional(), scopes: z.array(z.string()).optional(),
   clientName: z.string().min(1), projectName: z.string().min(1),
@@ -65,6 +84,21 @@ function timestamp(value: unknown): string | null {
   if (!(typeof value === "string" || value instanceof Date)) return null;
   const date = new Date(value);
   return Number.isFinite(date.getTime()) ? date.toISOString() : null;
+}
+
+/** Screen-only projection; the stored approval and its quotation retain every line. */
+function clientScreenSnapshot(snapshot: z.infer<typeof snapshotSchema>) {
+  return {
+    ...snapshot,
+    lineItems: snapshot.lineItems.filter((line) => line.clientVisible !== false).map((line) => line.source === "configuration"
+      ? { ...line, classification: line.classification ?? "standard" as const }
+      : line),
+    selectedMainBasketClassifications: snapshot.selectedMainBasketIds?.map((mainBasketId) => ({
+      mainBasketId,
+      classification: snapshot.selectedMainBasketClassifications?.find((entry) =>
+        entry.mainBasketId === mainBasketId)?.classification ?? "standard" as const
+    })) ?? []
+  };
 }
 
 /** Only the immutable published proposal supplies Client commercial fields. */
@@ -124,17 +158,7 @@ export function presentClientEstimate(
     !Number.isSafeInteger(round.sendGeneration) || round.sendGeneration < 1
   ));
   const reviewSourceIssue = sourceConflict ? "source_conflict" : !parsed.success ? "missing_snapshot" : null;
-  const snapshot = reviewSourceIssue === null && parsed.success ? {
-    ...parsed.data,
-    lineItems: parsed.data.lineItems.map((line) => line.source === "configuration"
-      ? { ...line, classification: line.classification ?? "standard" as const }
-      : line),
-    selectedMainBasketClassifications: parsed.data.selectedMainBasketIds?.map((mainBasketId) => ({
-      mainBasketId,
-      classification: parsed.data.selectedMainBasketClassifications?.find((entry) =>
-        entry.mainBasketId === mainBasketId)?.classification ?? "standard" as const
-    })) ?? []
-  } : null;
+  const snapshot = reviewSourceIssue === null && parsed.success ? clientScreenSnapshot(parsed.data) : null;
   const publishedReview: ClientPublishedEstimateReview | null = snapshot && round ? {
     ...(collaborative ? { phase: round.phase, requirementsVersion: round.requirementsVersion } : {}),
     id: String(round._id ?? round.id), version: round.version,
@@ -154,7 +178,7 @@ export function presentClientEstimate(
     preRound.decision === "approve" && String(preRound._id ?? preRound.id) === estimate.estimation.preApproval?.reviewRoundId &&
     preRound.estimateVersion === estimate.estimation.preApproval?.estimateVersion &&
     preRound.projectId === projectId && String(preRound.estimateId) === String(estimate._id ?? estimate.id)
-    ? { reviewRoundId: String(preRound._id ?? preRound.id), estimateVersion: preRound.estimateVersion, snapshot: preSnapshot.data }
+    ? { reviewRoundId: String(preRound._id ?? preRound.id), estimateVersion: preRound.estimateVersion, snapshot: clientScreenSnapshot(preSnapshot.data) }
     : null;
   return {
     id: String(estimate._id ?? estimate.id), leadId: String(estimate.leadId), projectId,
@@ -203,9 +227,11 @@ export function comparePublishedEstimateSnapshots(before: Row, after: Row) {
   const current = new Map<string, Row>((after.lineItems ?? []).filter((line: Row) => line.included).map((line: Row) => [String(line.id), line]));
   const addedLineIds = [...current.keys()].filter((id) => !previous.has(id));
   const removedLineIds = [...previous.keys()].filter((id) => !current.has(id));
-  const fields = ["roomId", "roomName", "specification", "mainLineName", "mainBasketId", "unit", "quantity", "rate", "amount", "estimateNotes"];
-  const changedLineIds = [...current.keys()].filter((id) => previous.has(id) && fields.some((field) =>
-    !isDeepStrictEqual(previous.get(id)![field] ?? null, current.get(id)![field] ?? null)));
+  const fields = ["roomId", "roomName", "specification", "mainLineName", "mainBasketId", "unit", "quantity", "rate", "amount", "estimateNotes", "selectedInHouseComponentIds", "pricingBasis", "componentPricing", "dimensions", "dimensionRule"];
+  const changedLineIds = [...current.keys()].filter((id) => previous.has(id) && (
+    fields.some((field) => !isDeepStrictEqual(previous.get(id)![field] ?? null, current.get(id)![field] ?? null)) ||
+    (previous.get(id)!.modeTier ?? "signature") !== (current.get(id)!.modeTier ?? "signature") ||
+    (previous.get(id)!.dimensionsMandatory ?? false) !== (current.get(id)!.dimensionsMandatory ?? false)));
   const scopeChanged = ["propertyType", "bedroomCount", "rooms", "scopes", "selectedMainBasketIds"].some((field) =>
     !isDeepStrictEqual(before[field] ?? null, after[field] ?? null));
   return { addedLineIds, removedLineIds, changedLineIds, scopeChanged,

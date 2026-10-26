@@ -45,6 +45,11 @@ export const knowledgeQueryKeys = {
     ["ai-estimator-knowledge", "activation-review"] as const,
   activationReview: (itemId: string, revisionId: string) =>
     ["ai-estimator-knowledge", "activation-review", itemId, revisionId] as const,
+  subBasketMarginSummaries: (basketId?: string) => basketId
+    ? ["ai-estimator-knowledge", "sub-basket-margins", basketId] as const
+    : ["ai-estimator-knowledge", "sub-basket-margins"] as const,
+  subBasketMargins: (basketId: string, subBasketId: string) =>
+    ["ai-estimator-knowledge", "sub-basket-margins", basketId, subBasketId] as const,
   subBasketLists: (basketId: string) => ["ai-estimator-knowledge", "sub-baskets", basketId] as const,
   subBasketDeletionImpacts: (basketId?: string) => basketId
     ? ["ai-estimator-knowledge", "sub-basket-deletion-impact", basketId] as const

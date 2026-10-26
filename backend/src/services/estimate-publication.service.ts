@@ -1,8 +1,14 @@
+import { ESTIMATE_COMPONENT_PRICING_BASIS, estimateComponentLineAmountIsValid, readEstimateComponentPricing } from "../domain/estimate-component-pricing.js";
+import { currentEstimateComponentPricingMatches } from "./estimate-component-pricing.service.js";
+import { estimateDimensionRulesEqual } from "../domain/estimate-dimensions.js";
+import { estimateDimensionSnapshotFields, estimateDimensionSnapshotValid } from "../domain/estimate-dimension-snapshot.js";
+import { estimatorCatalogueTierPricing, fenceEstimateInHouseComponentReferences } from "./estimator-catalogue.service.js";
 import { designRulesDigest } from "../domain/main-line-design-rules.js";
 import { effectiveCommercialStatus, estimateCommercialStatusFields, type EstimationLifecycle } from "../domain/estimation-lifecycle.js";
 import { currentFinalDesignBinding, fenceCollaborativeEstimate, requireEstimateStaffActor } from "./estimate-collaboration-policy.service.js";
 import { assertEstimateRequirementsResolved } from "./estimate-requirements.service.js";
 import { estimateConfigurationRateMatches } from "../domain/estimate-mode-pricing.js";
+import { isKnowledgeModeTier } from "../domain/ai-estimator-knowledge-mode-tiers.js";
 import { createMongoRepository } from "../repositories/mongo.js";
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
@@ -504,11 +510,16 @@ export function toEstimateSnapshot(
     lineItems: estimate.lineItems.map((line, index) => ({
       source: line.source,
       itemType: line.itemType,
+      ...(line.clientVisible === undefined ? {} : { clientVisible: line.clientVisible }),
       classification: line.source === "configuration"
         ? line.classification === "special" ? "special" : "standard"
         : line.classification,
       pricingMode: line.pricingMode,
+      ...(line.modeTier === undefined ? {} : { modeTier: line.modeTier }),
+      ...estimateDimensionSnapshotFields(line),
       rateSource: line.rateSource,
+      ...(line.pricingBasis === undefined ? {} : { pricingBasis: line.pricingBasis, componentPricing: readEstimateComponentPricing(line.componentPricing)! }),
+      ...(line.selectedInHouseComponentIds === undefined ? {} : { selectedInHouseComponentIds: line.selectedInHouseComponentIds }),
       catalogueId: line.catalogueId,
       roomId: line.roomId,
       roomName: line.roomName,
@@ -564,7 +575,9 @@ export function assertPublishableConfiguredLines(estimate: PublicationEstimate):
   const configured = estimate.lineItems.filter((line) => line.source === "configuration" && line.included);
   if (configured.length === 0) return;
   if (configured.some((line) =>
-    !Number.isSafeInteger(line.ratePaise) ||
+    !estimateDimensionSnapshotValid(line) ||
+    line.modeTier !== undefined && !isKnowledgeModeTier(line.modeTier) ||
+    (!Number.isSafeInteger(line.ratePaise) && !estimateComponentLineAmountIsValid(line)) ||
     !Number.isSafeInteger(line.amountPaise) ||
     Number(line.ratePaise) < 0 || Number(line.amountPaise) < 0 ||
     !line.mainBasketId || !configuredEstimateParentIsValid(line) || !line.mainLineId ||
@@ -572,7 +585,7 @@ export function assertPublishableConfiguredLines(estimate: PublicationEstimate):
     !line.mainBasketName || !line.mainLineName ||
     !line.uomName || line.catalogueId !== line.mainLineId ||
     line.specification !== null ||
-    line.rate !== Number(line.ratePaise) / 100 ||
+    (line.rate !== Number(line.ratePaise) / 100 && !estimateComponentLineAmountIsValid(line)) ||
     line.amount !== Number(line.amountPaise) / 100
   ) || ![estimate.subtotalPaise, estimate.gstPaise, estimate.totalPaise].every(Number.isSafeInteger) ||
     estimate.subtotalPaise !== estimate.lineItems.reduce((sum, line) =>
@@ -642,13 +655,16 @@ export async function assertCurrentConfiguredPublication(
   const lines = estimate.lineItems.filter((line) => line.source === "configuration");
   if (lines.length === 0) return;
   const current = await resolveEstimatorCatalogueLines(lines.map((line) => String(line.mainLineId)), session);
+  if (session) await fenceEstimateInHouseComponentReferences(lines, current, session);
   for (const line of lines) {
     const source = current.get(String(line.mainLineId));
     if (!source) throw new ApiError(409, "ESTIMATE_CONFIGURATION_UNAVAILABLE",
       "This Main Line has no current Configuration. Correct it before sending the estimate.");
     const stored = line as unknown as Record<string, unknown>;
+    const tierPricing = estimatorCatalogueTierPricing(source.line, line.modeTier ?? "signature");
     const expected: Record<string, unknown> = {
       itemType: source.line.itemType,
+      clientVisible: source.line.clientVisible,
       mainBasketId: source.line.basketId,
       subBasketId: source.line.subBasketId,
       mainLineId: source.line.mainLineId,
@@ -666,10 +682,15 @@ export async function assertCurrentConfiguredPublication(
       uomName: source.line.uom.name,
       unit: source.line.uom.name
     };
-    if (Object.entries(expected).some(([field, value]) => stored[field] !== value) ||
+    if (Object.entries(expected).some(([field, value]) =>
+      (field === "clientVisible" ? stored[field] !== false : stored[field]) !== value) ||
+      (line.dimensionsMandatory === true) !== (source.line.dimensionsMandatory === true) ||
+      source.line.dimensionsMandatory && (!estimateDimensionRulesEqual(line.dimensionRule, source.line.dimensionRule) || !estimateDimensionSnapshotValid(line)) ||
       designRulesDigest(stored.designRules) !== source.line.designRulesDigest ||
       JSON.stringify(line.estimateNotes ?? []) !== JSON.stringify(source.line.estimateNotes) ||
-      !estimateConfigurationRateMatches(line, source.line.modeBaseRatesPaise)) {
+      !tierPricing || (line.pricingBasis === ESTIMATE_COMPONENT_PRICING_BASIS
+        ? !await currentEstimateComponentPricingMatches(line, source, session)
+        : line.included !== false && !estimateConfigurationRateMatches(line, tierPricing.modeBaseRatesPaise, tierPricing.inHouseComponents))) {
       throw new ApiError(409, "ESTIMATE_CONFIGURATION_CHANGED",
         "Configuration changed. Save the estimate with its current Main Line values before sending it.");
     }

@@ -1,10 +1,21 @@
+import { ESTIMATE_COMPONENT_PRICING_BASIS, readEstimateComponentPricing } from "../domain/estimate-component-pricing.js";
+import { ESTIMATE_DIMENSION_INPUT_UNITS, ESTIMATE_DIMENSION_QUANTITY_UNITS } from "../domain/estimate-dimensions.js";
+import { KNOWLEDGE_MODE_TIERS } from "../domain/ai-estimator-knowledge-mode-tiers.js";
 import { randomUUID } from "node:crypto";
 
 import { model, models, Schema } from "./mongoose.js";
 import { DESIGN_PLAN_STATUSES } from "../domain/project-workflow.js";
 import { estimationLifecycleSchema } from "./EstimationLifecycle.js";
 
+const dimensionsSchema = new Schema({ length: { type: String, required: true }, width: { type: String, required: true }, height: { type: String, required: true } }, { _id: false, strict: "throw" });
+const dimensionRuleSchema = new Schema({ formula: { type: String, enum: ["length_width"], required: true },
+  inputUnit: { type: String, enum: ESTIMATE_DIMENSION_INPUT_UNITS, required: true }, quantityUnit: { type: String, enum: ESTIMATE_DIMENSION_QUANTITY_UNITS, required: true },
+  uomId: { type: String, required: true }, decimalScale: { type: Number, min: 0, max: 3, validate: Number.isSafeInteger, required: true }
+}, { _id: false, strict: "throw" });
 const estimateLineSchema = new Schema({
+  dimensionsMandatory: { type: Boolean, cast: false, default: undefined },
+  dimensionRule: { type: dimensionRuleSchema, default: undefined },
+  dimensions: { type: dimensionsSchema, default: undefined },
   id: {
     type: String,
     required: true,
@@ -13,9 +24,14 @@ const estimateLineSchema = new Schema({
   },
   source: { type: String, enum: ["legacy", "configuration"] },
   itemType: { type: String, enum: ["main_line", "temporary"] },
+  clientVisible: { type: Boolean, cast: false, default: undefined },
   classification: { type: String, enum: ["standard", "special"], default: undefined },
   pricingMode: { type: String, enum: ["pmc", "sub_vendor", "in_house"], default: undefined },
+  modeTier: { type: String, enum: KNOWLEDGE_MODE_TIERS, default: undefined },
   rateSource: { type: String, enum: ["configuration", "manual"], default: undefined },
+  pricingBasis: { type: String, enum: [ESTIMATE_COMPONENT_PRICING_BASIS], default: undefined },
+  componentPricing: { type: Schema.Types.Mixed, default: undefined, validate: (value: unknown) => value === undefined || readEstimateComponentPricing(value) !== null },
+  selectedInHouseComponentIds: { type: [String], default: undefined, validate: (ids: string[] | undefined) => ids === undefined || ids.length <= 50 && new Set(ids).size === ids.length },
   catalogueId: { type: String, required: true },
   roomId: { type: String, default: null }, roomName: { type: String, required: true },
   mainBasketId: { type: String, default: null }, subBasketId: { type: String, default: null },

@@ -1,5 +1,6 @@
 import { ApiProtocolError } from "../../core/http/apiClient";
-import { buildConfiguredLines, configuredLineAmountPaise, configuredQuantityUnits, parseSellingRate, restoreConfiguredLine, type ConfiguredLineDraft } from "./configuredEstimate";
+import { estimateComponentPricingMatchesLine } from "../../../../shared/estimation/estimateComponentPricing";
+import { buildConfiguredLines, configuredLineAmountPaise, configuredQuantityUnits, hasNativeReadOnlyInHousePricing, parseSellingRate, restoreConfiguredLine, type ConfiguredLineDraft } from "./configuredEstimate";
 import type { EstimationCatalogue } from "./catalogueTypes";
 import { parseBedroomCount, requiresBedroomCount } from "./estimateRoomOptions";
 import type { ConfiguredEstimateLine, EstimateClassification, EstimateDraft, EstimateDraftInput, LegacyEstimateLine, StaffLead } from "./types";
@@ -40,6 +41,10 @@ export function validateStaffForm(form: StaffEstimateForm, submitting = false): 
     if (Boolean(room.length.trim()) !== Boolean(room.width.trim())) return `Enter both length and width for ${room.label}, or leave both empty.`;
   }
   for (const line of form.lines.filter((item) => item.included || item.persistedId)) {
+    if (line.included && line.pricingBasis !== undefined && !estimateComponentPricingMatchesLine({ ...line, source: "configuration" })) return `${line.mainLineName}: review component pricing in the web estimate workspace before saving.`;
+    if (line.nativeDimensionsNeedReview) return `${line.mainLineName}: review Length, Width and Height in the web estimate workspace before saving.`;
+    if (line.nativeTierNeedsReview) return `${line.mainLineName}: review the selected configuration tier in the web estimate workspace before saving.`;
+    if ((line.modeTier ?? "signature") === "signature" && hasNativeReadOnlyInHousePricing(line) && (line.inHouseComponentsNeedReview || !line.selectedInHouseComponentIds?.length)) return `${line.mainLineName}: review In-house components in the web estimate workspace before saving.`;
     if (line.sourceMissing) return `${line.mainLineName}: the current Configuration source is unavailable. Refresh or remove this saved item.`;
     if (line.uomNeedsQuantityReview) return `${line.mainLineName}: confirm the quantity for its updated unit.`;
     if (parseSellingRate(line.rateInput).kind === "invalid" || configuredQuantityUnits(line.quantity, line.uomDecimalScale, line.included) === null) return `${line.mainLineName}: enter a valid quantity and selling rate (up to 2 decimals).`;
@@ -62,10 +67,15 @@ export function staffFormInput(form: StaffEstimateForm, expectedVersion?: number
       ...form.legacyLines.map(({ id, catalogueId, roomName, specification, unit, rate, quantity, included }) => ({ source: "legacy" as const, ...(id ? { id } : {}), catalogueId, roomName, specification, unit, rate, quantity, included })),
       ...form.lines.filter((line) => line.included || line.persistedId).map((line) => ({ source: "configuration" as const, itemType: line.itemType,
         classification: line.classification ?? form.classifications[line.mainBasketId] ?? "standard", pricingMode: line.pricingMode, rateSource: line.rateSource,
+        ...(line.modeTier === undefined ? {} : { modeTier: line.modeTier }),
+        ...(line.dimensions === undefined ? {} : { dimensions: { ...line.dimensions },
+          ...(line.dimensionsMandatory && line.dimensionRule ? { expectedDimensionRule: { ...line.dimensionRule } } : {}) }),
         ...(line.persistedId ? { id: line.persistedId } : {}), catalogueId: line.mainLineId, mainLineId: line.mainLineId, roomId: line.roomId, roomName: line.roomName,
         mainBasketId: line.mainBasketId, subBasketId: line.subBasketId, revisionId: line.revisionId, uomId: line.uomId,
         ...(line.itemVersion === undefined ? {} : { itemVersion: line.itemVersion }), ...(line.revisionVersion === undefined ? {} : { revisionVersion: line.revisionVersion }),
         ...(line.recommendationSourceMainLineIds === undefined ? {} : { recommendationSourceMainLineIds: line.recommendationSourceMainLineIds }),
+        ...(line.selectedInHouseComponentIds === undefined ? {} : { selectedInHouseComponentIds: line.selectedInHouseComponentIds.slice() }),
+        ...(line.included && line.pricingBasis && line.componentPricing ? { pricingBasis: line.pricingBasis, componentPricingFingerprint: line.componentPricing.inputFingerprint } : {}),
         quantity: line.quantity, included: line.included, ratePaise: parseSellingRate(line.rateInput).paise
       }))
     ]

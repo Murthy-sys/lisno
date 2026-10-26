@@ -1,4 +1,6 @@
 export const EXISTING_AUDIT_ACTIONS = [
+  "estimate_tier_selected",
+  "estimate_dimensions_updated",
   "design_requirement_action_recorded",
   "final_estimate_approved",
   "estimate_review_withdrawn",

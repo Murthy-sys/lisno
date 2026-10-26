@@ -318,3 +318,15 @@ describe("Mode pending change projection", () => {
     expect(JSON.stringify(visiblePendingContent(unavailable))).not.toContain("private-");
   });
 });
+
+it("projects component costs separately with incomplete raw input and no retained legacy values", () => {
+  const settings = { ...calculation, impactBps: 1000 };
+  const component = { id: "component-id", basketId: "basket-id", subBasketId: "sub-id", inclusions: [], exclusions: [], labor: settings, material: settings };
+  const saved = { inHouseComponents: [component], modeCalculations: { in_house_labor: settings, in_house_material: settings } };
+  const raw = modeCalculationDraft(settings);
+  const result = project(saved, saved, { componentPending: { "component-id:labor": { baselineDraft: raw, draft: { ...raw, baseRate: "unfinished" }, invalidFields: ["baseRate"] } } });
+  expect(result).toHaveLength(1);
+  expect(result[0]).toMatchObject({ label: "In-house · Main basket / Sub-basket component 1", entries: [{ title: "Labour cost", incomplete: true, fields: [{ key: "baseRate", value: "unfinished" }] }] });
+  expect(JSON.stringify(visiblePendingContent(result))).not.toContain("component-id");
+  expect(project(saved, saved, { componentPending: { "component-id:labor": { baselineDraft: raw, draft: { ...raw, baseRate: "120" }, invalidFields: [] } } })).toEqual([]);
+});

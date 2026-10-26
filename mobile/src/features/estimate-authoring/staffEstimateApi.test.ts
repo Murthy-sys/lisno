@@ -1,8 +1,30 @@
 import type { MobileRuntime } from "../../runtime/createRuntime";
 import { getStaffCatalogue, getStaffEstimate, getStaffEstimateQueue, parseStaffEstimate, retryEstimateEmail, saveStaffEstimate, staffEstimateKey, submitStaffEstimate } from "./staffEstimateApi";
-import { catalogueFixture, estimateFixture, leadFixture } from "./__tests__/fixtures";
+import { catalogueFixture, componentCatalogueFixture, componentLineFixture, componentAmountLineFixture, estimateFixture, leadFixture } from "./__tests__/fixtures";
 import { restoreStaffForm, staffFormInput } from "./staffEstimateModel";
 function runtime(get = jest.fn(), post = jest.fn(), put = jest.fn()) { return { api: { authenticated: { get, post, put } } } as unknown as MobileRuntime; }
+it("validates exact component snapshots without accepting stale or forged totals", () => {
+ expect(parseStaffEstimate(estimateFixture({ lineItems: [componentAmountLineFixture] })).lineItems[0]).toEqual(componentAmountLineFixture);
+ for (const change of [{ amountPaise: 78334 }, { quantity: 3 }, { pricingMode: "pmc" }, { rateSource: "manual" }, { componentPricing: { ...componentAmountLineFixture.componentPricing, totalPaise: 1 } }]) {
+  expect(() => parseStaffEstimate({ ...estimateFixture(), lineItems: [{ ...componentAmountLineFixture, ...change }] })).toThrow("invalid response");
+ }
+});
+it("retains a valid stored amount when the editable response reports newer Configuration metadata", () => {
+ const stale = { ...componentAmountLineFixture, revisionId: "new-revision", itemVersion: 4, sourceItemVersion: 4 };
+ const saved = parseStaffEstimate(estimateFixture({ lineItems: [stale] }));
+ expect(saved.lineItems[0]).toMatchObject({ amountPaise: 78333, componentPricing: { revisionId: "revision-current" } });
+ const form = restoreStaffForm(saved, leadFixture);
+ expect(form.lines[0]?.inHouseComponentsNeedReview).toBe(true);
+});
+it("validates and preserves saved component identities and catalogue metadata including zero rates", async () => {
+ expect(parseStaffEstimate(estimateFixture({ lineItems: [componentLineFixture] })).lineItems[0]).toMatchObject({ selectedInHouseComponentIds: ["component-one"] });
+ expect(() => parseStaffEstimate(estimateFixture({ lineItems: [{ ...componentLineFixture, selectedInHouseComponentIds: ["component-one", "component-one"] }] }))).toThrow("invalid response");
+ const catalogue = componentCatalogueFixture();
+ const get = jest.fn().mockResolvedValue({ ...catalogue, pagination: { offset: 0, hasMore: false } });
+ await expect(getStaffCatalogue(runtime(get))).resolves.toMatchObject(catalogue);
+ catalogue.items[0]!.subBaskets[0]!.mainLines[0]!.inHouseComponents![0]!.baseRatePaise = -1;
+ await expect(getStaffCatalogue(runtime(get))).rejects.toThrow("invalid response");
+});
 it("binds staff reads and acknowledgements to the requested lead and monotonically advancing save version", async () => {
  const get = jest.fn().mockResolvedValue({ ...estimateFixture(), leadId: "other-lead" }); await expect(getStaffEstimate(runtime(get), "lead-one")).rejects.toThrow("invalid response");
  const input = staffFormInput(restoreStaffForm(estimateFixture(), leadFixture, catalogueFixture), 7); const put = jest.fn().mockResolvedValue(estimateFixture({ version: 8 }));
@@ -31,4 +53,25 @@ it("uses scoped keys and the queue's own lead identity without requiring unautho
  const get = jest.fn().mockResolvedValue([{ ...estimateFixture(), lead: { ...leadFixture, id: undefined, _id: "lead-one" } }]);
  expect(await getStaffEstimateQueue(runtime(get), "/estimates/review-queue")).toMatchObject([{ leadId: "lead-one", lead: { id: "lead-one" } }]); expect(get).toHaveBeenCalledTimes(1);
  expect(staffEstimateKey({ environmentId: "env-a", userId: "staff-a" }, "lead-one")).not.toEqual(staffEstimateKey({ environmentId: "env-b", userId: "staff-a" }, "lead-one"));
+});
+
+
+it("retains valid selected tiers and rejects malformed tier metadata", () => {
+ for (const modeTier of ["signature", "premium", "functional"] as const) {
+  expect(parseStaffEstimate(estimateFixture({ lineItems: [{ ...componentLineFixture, modeTier }] })).lineItems[0]).toMatchObject({ modeTier });
+ }
+ for (const modeTier of [null, "unknown", 1]) {
+  expect(() => parseStaffEstimate({ ...estimateFixture(), lineItems: [{ ...componentLineFixture, modeTier }] })).toThrow("invalid response");
+ }
+});
+
+
+it("preserves dimension inputs and server provenance while rejecting malformed metadata", () => {
+ const dimensions = { length: "1.25", width: "2", height: "9" };
+ const dimensionRule = { formula: "length_width" as const, inputUnit: "ft" as const, quantityUnit: "sq_ft" as const, uomId: "uom-one", decimalScale: 2 };
+ const saved = { ...componentLineFixture, dimensionsMandatory: true, dimensions, dimensionRule };
+ expect(parseStaffEstimate(estimateFixture({ lineItems: [saved] })).lineItems[0]).toMatchObject({ dimensions, dimensionRule });
+ for (const invalid of [{ dimensionsMandatory: "true" }, { dimensions: { ...dimensions, height: "" } }, { dimensionRule: { ...dimensionRule, inputUnit: "m" } }]) {
+  expect(() => parseStaffEstimate({ ...estimateFixture(), lineItems: [{ ...saved, ...invalid }] })).toThrow("invalid response");
+ }
 });

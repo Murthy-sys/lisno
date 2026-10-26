@@ -1,3 +1,5 @@
+import { isKnowledgeModeTier } from "./ai-estimator-knowledge-mode-tiers.js";
+import { hasInHouseComponents, selectedInHouseComponents, selectedInHouseBaseRate, type InHouseComponentRate } from "./ai-estimator-knowledge-in-house-components.js";
 export const ESTIMATE_PRICING_MODES = ["pmc", "sub_vendor", "in_house"] as const;
 export const ESTIMATE_RATE_SOURCES = ["configuration", "manual"] as const;
 export type EstimatePricingMode = (typeof ESTIMATE_PRICING_MODES)[number];
@@ -23,26 +25,35 @@ export function estimateModeBaseRatesPaise(payload: unknown): EstimateModeBaseRa
     inHouse = labor !== null && material !== null && Number.isSafeInteger(labor + material)
       ? labor + material : null;
   }
-  return { pmc: base(scopes?.pmc), sub_vendor: base(scopes?.sub_vendor), in_house: inHouse };
+  return { pmc: base(scopes?.pmc), sub_vendor: base(scopes?.sub_vendor), in_house: hasInHouseComponents(payload) ? null : inHouse };
 }
 
 export function estimatePricingMetadataIsValid(line: {
-  classification?: unknown; pricingMode?: unknown; rateSource?: unknown;
+  classification?: unknown; pricingMode?: unknown; rateSource?: unknown; modeTier?: unknown;
 }): boolean {
   const modeValid = line.pricingMode === undefined ||
     ESTIMATE_PRICING_MODES.some((mode) => mode === line.pricingMode);
   const sourceValid = line.rateSource === undefined ||
     ESTIMATE_RATE_SOURCES.some((source) => source === line.rateSource);
-  return modeValid && sourceValid &&
+  return modeValid && sourceValid && (line.modeTier === undefined || isKnowledgeModeTier(line.modeTier)) &&
     (line.rateSource !== "configuration" || line.pricingMode !== undefined) &&
     (line.pricingMode === undefined || line.classification === "special" || line.pricingMode === "sub_vendor");
 }
 
 /** Missing configured prices match only null, never zero or an entered historical rate. */
 export function estimateConfigurationRateMatches(line: {
-  classification?: unknown; pricingMode?: unknown; rateSource?: unknown; ratePaise?: unknown;
-}, bases: EstimateModeBaseRatesPaise): boolean {
+  classification?: unknown; pricingMode?: unknown; rateSource?: unknown; modeTier?: unknown; ratePaise?: unknown; selectedInHouseComponentIds?: unknown;
+}, bases: EstimateModeBaseRatesPaise, components?: readonly InHouseComponentRate[]): boolean {
   if (!estimatePricingMetadataIsValid(line)) return false;
-  return line.rateSource !== "configuration" ||
-    line.ratePaise === bases[line.pricingMode as EstimatePricingMode];
+  const hasSelection = Array.isArray(line.selectedInHouseComponentIds) && line.selectedInHouseComponentIds.length > 0;
+  if (line.pricingMode !== "in_house" && hasSelection) return false;
+  if (line.pricingMode === "in_house" && components !== undefined) {
+    const selected = selectedInHouseComponents(components, line.selectedInHouseComponentIds);
+    if (!selected || selected.some((component) => component.unavailableReason != null)) return false;
+    if (line.rateSource !== "configuration") return true;
+    const base = selectedInHouseBaseRate(components, line.selectedInHouseComponentIds);
+    return base !== null && (line.rateSource !== "configuration" || line.ratePaise === base);
+  }
+  if (hasSelection) return false;
+  return line.rateSource !== "configuration" || line.ratePaise === bases[line.pricingMode as EstimatePricingMode];
 }

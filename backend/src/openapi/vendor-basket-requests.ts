@@ -15,7 +15,7 @@ export const VENDOR_BASKET_REQUEST_SCHEMAS = {
     properties: { requestMode: { type: "string", enum: ["hierarchy_intake", "full_configuration"] }, target: { oneOf: [
         { type: "object", additionalProperties: false, required: ["kind"], properties: { kind: { type: "string", enum: ["new_main_basket"] } } },
         { type: "object", additionalProperties: false, required: ["kind", "basketId"], properties: { kind: { type: "string", enum: ["new_sub_basket"] }, basketId: id } }
-      ] }, targetParentName: { type: "string", nullable: true }, kind: { type: "string", enum: ["configuration_proposal", "name_only"] }, proposalId: { ...id, nullable: true },
+      ] }, targetParentName: { type: "string", nullable: true }, kind: { type: "string", enum: ["configuration_proposal", "name_only", "configuration_sub_basket"] }, description: { type: "string", maxLength: 4000, nullable: true }, proposalId: { ...id, nullable: true },
       proposalCounts: { type: "object", properties: { subBaskets: { type: "integer" }, mainLines: { type: "integer" } } },
       id, requesterId: id, vendorId: { ...id, nullable: true }, vendorName: { type: "string", nullable: true },
       proposedName: { type: "string" }, status: { type: "string", enum: ["pending", "fulfilled", "rejected"] },
@@ -27,6 +27,11 @@ export const VENDOR_BASKET_REQUEST_SCHEMAS = {
     required: ["vendorName", "proposedName", "idempotencyKey"],
     properties: { vendorId: { ...id, nullable: true }, vendorName: { type: "string", minLength: 1, maxLength: 240 },
       proposedName: { type: "string", minLength: 1, maxLength: 240 },
+      idempotencyKey: { type: "string", pattern: "^[A-Za-z0-9_-]{8,128}$" } } },
+  KnowledgeConfigurationSubBasketRequestCreate: { type: "object", additionalProperties: false,
+    required: ["basketId", "name", "description", "idempotencyKey"],
+    properties: { basketId: id, name: { type: "string", minLength: 1, maxLength: 240 },
+      description: { type: "string", minLength: 1, maxLength: 4000 },
       idempotencyKey: { type: "string", pattern: "^[A-Za-z0-9_-]{8,128}$" } } },
   KnowledgeVendorBasketRequestDecision: { type: "object", additionalProperties: false,
     required: ["decision", "expectedVersion", "idempotencyKey"],
@@ -51,11 +56,13 @@ export const VENDOR_BASKET_REQUEST_SCHEMAS = {
 } as const;
 
 export const VENDOR_BASKET_REQUEST_BODIES = {
+  "POST /admin/ai-estimator-knowledge/sub-basket-requests": body("KnowledgeConfigurationSubBasketRequestCreate"),
   "POST /procurement/vendor-basket-requests": body("KnowledgeVendorBasketRequestCreate"),
   "POST /admin/ai-estimator-knowledge/basket-requests/:requestId/decision": body("KnowledgeVendorBasketRequestDecision")
 } as const;
 
 export const VENDOR_BASKET_REQUEST_RESPONSES = {
+  "POST /admin/ai-estimator-knowledge/sub-basket-requests": "KnowledgeVendorBasketRequest",
   "POST /procurement/vendor-basket-requests": "KnowledgeVendorBasketRequest",
   "GET /procurement/vendor-basket-requests/mine": "KnowledgeVendorBasketRequestPage",
   "GET /admin/ai-estimator-knowledge/basket-requests": "KnowledgeVendorBasketRequestPage",

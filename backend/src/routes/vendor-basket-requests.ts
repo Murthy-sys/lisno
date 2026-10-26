@@ -16,6 +16,12 @@ const createSchema = z.object({
   proposedName: boundedName,
   idempotencyKey
 }).strict();
+const configurationSubBasketSchema = z.object({
+  basketId: z.string().trim().min(1).max(128),
+  name: boundedName,
+  description: z.string().transform(value => value.normalize("NFKC").trim()).pipe(z.string().min(1).max(4000)),
+  idempotencyKey
+}).strict();
 const decisionSchema = z.object({
   decision: z.enum(["fulfill", "reject"]),
   expectedVersion: z.number().int().min(1),
@@ -50,6 +56,13 @@ export function createVendorBasketRequestRouter(auth: AuthService,
   const minePath = `${requestPath}/mine`;
   const adminPath = "/admin/ai-estimator-knowledge/basket-requests";
   const decisionPath = `${adminPath}/:requestId/decision`;
+  const subBasketRequestPath = "/admin/ai-estimator-knowledge/sub-basket-requests";
+
+  router.post(subBasketRequestPath, protectedRoute, requireOperation(`POST ${subBasketRequestPath}`), validateBody(configurationSubBasketSchema),
+    async (request, response, next) => {
+      try { response.set("Cache-Control", "private, no-store").status(201).json({ data: await service.createConfigurationSubBasket(request.authenticatedUser!, request.body) }); }
+      catch (error) { next(error); }
+    });
 
   router.post(requestPath, protectedRoute, requireOperation(`POST ${requestPath}`), validateBody(createSchema),
     async (request, response, next) => {

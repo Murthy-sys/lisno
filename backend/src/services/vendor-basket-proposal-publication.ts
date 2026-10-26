@@ -1,4 +1,5 @@
 import mongoose, { type ClientSession, type Model } from "mongoose";
+import { knowledgeModeTierPayloads } from "../domain/ai-estimator-knowledge-mode-tiers.js";
 
 import { PROPOSAL_LIMITS, type ProposalFinding, type ProposalPublicationSnapshot, type ProposalPublishedMapping, type ProposalResource } from "../contracts/vendor-basket-proposal.js";
 import { AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY } from "../domain/ai-estimator-knowledge-fixed-gst.js";
@@ -245,6 +246,13 @@ async function validateRelationships(snapshot: ProposalPublicationSnapshot, byLi
     for (const relation of itemRelationsForRows(mainLineId, sections)) if (relation.dependency) edges.push({ fromId: mainLineId, toId: relation.targetMainLineId });
     if (targetSection && targetSection.mainLineId !== mainLineId) continue;
     const editedSections = targetSection ? sections.filter((section) => section.sectionKey === targetSection.sectionKey) : sections;
+    for (const component of knowledgeModeTierPayloads(sectionPayload(editedSections, "advanced"))
+      .flatMap(entry => rows(entry.payload.inHouseComponents))) {
+      if (!await basketExists(component.basketId)) unavailable();
+      if (component.subBasketId === null) {
+        if (component.id !== "legacy-in-house" || component.basketId !== ownBasket) unavailable();
+      } else if (!await subExists(component.subBasketId, component.basketId)) unavailable();
+    }
     for (const relation of itemRelationsForRows(mainLineId, editedSections)) {
       if (relation.targetMainLineId === mainLineId) throw new ApiError(409, "DEPENDENCY_CYCLE", "An estimation item cannot reference itself.");
       const own = ownLines.get(relation.targetMainLineId);
@@ -269,7 +277,8 @@ async function validateRelationships(snapshot: ProposalPublicationSnapshot, byLi
     }
   }
   const activeLines = await AiEstimatorKnowledgeMainLineModel.find({ status: "active", activeRevisionId: { $ne: null } }).select({ activeRevisionId: 1 }).session(session).lean().exec();
-  const activeSections = await AiEstimatorKnowledgeSectionModel.find({ revisionId: { $in: activeLines.map((line) => line.activeRevisionId) }, sectionKey: { $in: ["advanced", "scope"] }, applicability: "configured" }).session(session).lean().exec();
+  const activeSections = await AiEstimatorKnowledgeSectionModel.find({ revisionId: { $in: activeLines.map((line) => line.activeRevisionId) }, sectionKey: { $in: ["advanced", "scope"] },
+    $or: [{ applicability: "configured" }, { "payload.tierConfigurations": { $exists: true } }] }).session(session).lean().exec();
   for (const section of activeSections) for (const relation of itemRelationsForRows(String(section.mainLineId), [section])) if (relation.dependency) edges.push({ fromId: String(section.mainLineId), toId: relation.targetMainLineId });
   if (validateAcyclicGraph([...new Set(edges.flatMap((edge) => [edge.fromId, edge.toId]))], edges).length) throw new ApiError(409, "DEPENDENCY_CYCLE", "Estimation item dependencies are invalid.");
 }

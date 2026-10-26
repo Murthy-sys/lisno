@@ -1,3 +1,4 @@
+import { hasInHouseComponents, readInHouseComponents, selectedInHouseComponents } from "./ai-estimator-knowledge-in-house-components.js";
 import type {
   KnowledgeCalculationScope,
   KnowledgeConfigurationContext,
@@ -17,6 +18,7 @@ export function buildKnowledgeConfigurationContext(input: {
   modeKind?: KnowledgeModeKind;
   executionSource?: KnowledgeExecutionSource;
   quantity?: string;
+  selectedInHouseComponentIds?: readonly string[];
 }): KnowledgeConfigurationContext {
   const { advanced, uom, modeKind, executionSource } = input;
   const context: KnowledgeConfigurationContext = {
@@ -34,7 +36,7 @@ export function buildKnowledgeConfigurationContext(input: {
   // PMC remains the shared source for PMC/Sub-Vendor. In-house owns an independent
   // scope so editing it cannot change the established PMC/Sub-Vendor wording.
   const inHouseScope = modeKind === "execution" && executionSource === "in_house";
-  const scopeRows = Array.isArray(advanced.modeConfigurations)
+  const scopeRows = !(inHouseScope && hasInHouseComponents(advanced)) && Array.isArray(advanced.modeConfigurations)
     ? advanced.modeConfigurations.map(asRow).filter((row) => row?.active !== false && (
       inHouseScope
         ? row?.modeKind === "execution" && row.executionSource === "in_house"
@@ -82,10 +84,35 @@ export function buildKnowledgeConfigurationContext(input: {
     catch { context.issues.push({ code: "INVALID_QUANTITY_PRECISION", scope: null }); }
   }
 
-  for (const scope of scopes) {
-    const resolved = resolveSettings(advanced, scope);
+  type CalculationInput = { scope: KnowledgeCalculationScope; resolved: ReturnType<typeof resolveSettings>;
+    componentId?: string; componentBasketId?: string; componentSubBasketId?: string | null };
+  let calculationInputs: CalculationInput[] = scopes.map((scope) => ({ scope, resolved: resolveSettings(advanced, scope) }));
+  if (inHouseScope && hasInHouseComponents(advanced)) {
+    const components = readInHouseComponents(advanced);
+    if (components === null) {
+      context.state = "invalid";
+      context.issues.push({ code: "INVALID_IN_HOUSE_COMPONENTS", scope: null });
+      return context;
+    }
+    const selected = selectedInHouseComponents(components ?? [], input.selectedInHouseComponentIds);
+    if (!selected) {
+      context.state = "selection_required";
+      context.issues.push({ code: "IN_HOUSE_COMPONENT_SELECTION_REQUIRED", scope: null });
+      return context;
+    }
+    context.inHouseComponents = selected.map((component) => ({ id: component.id, basketId: component.basketId,
+      subBasketId: component.subBasketId,
+      inclusions: component.inclusions.filter((item) => item.selected).map(({ id, name }) => ({ id, name })),
+      exclusions: component.exclusions.filter((item) => item.selected).map(({ id, name }) => ({ id, name })) }));
+    calculationInputs = selected.flatMap((component) => (["labor", "material"] as const).map((cost) => ({
+      scope: `in_house_${cost}` as KnowledgeCalculationScope,
+      componentId: component.id, componentBasketId: component.basketId, componentSubBasketId: component.subBasketId,
+      resolved: { value: component[cost], source: "scoped" as const }
+    })));
+  }
+  for (const { scope, resolved, ...identity } of calculationInputs) {
     const entry: KnowledgeConfigurationContext["calculations"][number] = {
-      scope, source: resolved.source, settings: null, maximumDiscountBps: null
+      ...identity, scope, source: resolved.source, settings: null, maximumDiscountBps: null
     };
     context.calculations.push(entry);
     if (resolved.value == null) {

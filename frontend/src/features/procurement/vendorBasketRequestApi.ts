@@ -7,7 +7,8 @@ export interface VendorBasketRequest {
   readonly requestMode?: ProposalRequestMode;
   readonly target?: ProposalTarget;
   readonly targetParentName?: string | null;
-  kind?: "configuration_proposal" | "name_only";
+  kind?: "configuration_proposal" | "name_only" | "configuration_sub_basket";
+  description?: string | null;
   proposalId?: string | null;
   proposalCounts?: { subBaskets: number; mainLines: number };
   id: string;
@@ -50,6 +51,17 @@ export function createVendorBasketRequest(input: {
   idempotencyKey: string;
 }): Promise<VendorBasketRequest> {
   return apiClient.post("/procurement/vendor-basket-requests", input);
+}
+
+export interface CreateConfigurationSubBasketRequestInput {
+  basketId: string;
+  name: string;
+  description: string;
+  idempotencyKey: string;
+}
+
+export function createConfigurationSubBasketRequest(input: CreateConfigurationSubBasketRequestInput): Promise<VendorBasketRequest> {
+  return apiClient.post("/admin/ai-estimator-knowledge/sub-basket-requests", input);
 }
 
 export function listOwnVendorBasketRequests(limit = 20, offset = 0, filters: OwnVendorBasketRequestFilters = {}, signal?: AbortSignal): Promise<PaginatedData<VendorBasketRequest>> {

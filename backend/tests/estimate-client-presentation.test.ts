@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { presentClientEstimate } from "../src/services/estimate-client-presentation.js";
+import { comparePublishedEstimateSnapshots, presentClientEstimate } from "../src/services/estimate-client-presentation.js";
+import { newEstimationLifecycle } from "../src/domain/estimation-lifecycle.js";
 
 const actor = { id: "client-a", name: "Client A", email: "a@example.test", role: "client" } as const;
 const lead = { _id: "lead-a", projectId: "project-a", clientEmail: actor.email, projectName: "Draft label" };
@@ -10,8 +11,81 @@ const snapshot = {
 };
 const estimate = { _id: "estimate-a", leadId: "lead-a", projectId: "project-a", status: "sent_to_client", version: 3, total: 99999, rooms: [{ id: "original-room", length: 3 }], scopes: ["original-scope"], reviews: [{ note: "Internal note" }] };
 const round = { _id: "round-a", estimateId: "estimate-a", leadId: "lead-a", projectId: "project-a", status: "pending", estimateVersion: 3, version: 1, sendGeneration: 2, recipientEmailNormalized: actor.email, createdAt: new Date("2026-09-30T00:00:00Z"), estimateSnapshot: snapshot };
+const visibilityLine = (id: string, clientVisible?: boolean, amountPaise = 10_000) => ({
+  id, source: "configuration", catalogueId: id, roomId: "original-room", roomName: "Room A", specification: null,
+  unit: "sqft", quantity: 1, rate: amountPaise / 100, ratePaise: amountPaise, amount: amountPaise / 100, amountPaise, included: true,
+  mainBasketId: "basket", subBasketId: "sub", mainLineId: id, revisionId: `revision-${id}`, uomId: "uom",
+  mainBasketName: "Published basket", subBasketName: "Published Sub-basket", mainLineName: `Name ${id}`, uomName: "Square feet",
+  ...(clientVisible === undefined ? {} : { clientVisible })
+});
+const visibilitySnapshot = (lineItems: ReturnType<typeof visibilityLine>[]) => {
+  const subtotalPaise = lineItems.filter(line => line.included).reduce((sum, line) => sum + line.amountPaise, 0);
+  return { ...snapshot, lineItems, subtotal: subtotalPaise / 100, subtotalPaise, gst: 0, gstPaise: 0, total: subtotalPaise / 100, totalPaise: subtotalPaise,
+    selectedMainBasketIds: ["basket"], selectedMainBasketClassifications: [{ mainBasketId: "basket", classification: "standard" }] };
+};
 
 describe("published Client estimate presentation", () => {
+  it("retains the frozen selected tier and detects tier-only changes without repricing history", () => {
+    const full = visibilitySnapshot([{ ...visibilityLine("tier-line"), modeTier: "premium" } as ReturnType<typeof visibilityLine>]);
+    const frozen = structuredClone(full);
+    const result = presentClientEstimate(actor, { ...estimate, lineItems: [{ ...visibilityLine("tier-line"), modeTier: "functional" }] }, lead, { ...round, estimateSnapshot: full })!;
+    expect(result.publishedReview.snapshot.lineItems[0]).toMatchObject({ modeTier: "premium", amountPaise: 10_000 });
+    expect(full).toEqual(frozen);
+    const legacy = visibilitySnapshot([visibilityLine("tier-line")]);
+    expect(comparePublishedEstimateSnapshots(legacy, full)).toMatchObject({ changedLineIds: ["tier-line"], noChanges: false });
+    expect(comparePublishedEstimateSnapshots(legacy, { ...legacy, lineItems: [{ ...legacy.lineItems[0], modeTier: "signature" }] })).toMatchObject({ changedLineIds: [], noChanges: true });
+  });
+
+  it("fails closed for malformed frozen tier values", () => {
+    const full = visibilitySnapshot([{ ...visibilityLine("tier-line"), modeTier: "unsupported" } as ReturnType<typeof visibilityLine>]);
+    const result = presentClientEstimate(actor, estimate, lead, { ...round, estimateSnapshot: full });
+    expect(result?.publishedReview).toBeNull();
+    expect(result?.lineItems).toEqual([]);
+  });
+
+  it("hides only frozen No rows from screen payloads while retaining full totals, defaults and stored rows", () => {
+    const full = visibilitySnapshot([visibilityLine("visible-default"), visibilityLine("visible-yes", true), visibilityLine("hidden-no", false),
+      { ...visibilityLine("hidden-unselected", false), included: false }]);
+    const original = structuredClone(full);
+    const result = presentClientEstimate(actor, { ...estimate, lineItems: [{ ...visibilityLine("visible-default", false) }] }, lead, { ...round, estimateSnapshot: full })!;
+    expect(result.lineItems.map((line: { id: string }) => line.id)).toEqual(["visible-default", "visible-yes"]);
+    expect(result.publishedReview.snapshot.lineItems).toEqual(result.lineItems);
+    expect(result).toMatchObject({ subtotalPaise: 30_000, totalPaise: 30_000, publishedReview: { canDecide: true, snapshot: { totalPaise: 30_000 } },
+      selectedMainBasketIds: ["basket"], selectedMainBasketClassifications: [{ mainBasketId: "basket", classification: "standard" }] });
+    expect(JSON.stringify(result)).not.toContain("hidden-no");
+    expect(JSON.stringify(result)).not.toContain("hidden-unselected");
+    expect(full).toEqual(original);
+  });
+
+  it("keeps an all-hidden publication reviewable with its complete total and no displayed lines", () => {
+    const full = visibilitySnapshot([visibilityLine("hidden-no", false)]);
+    const result = presentClientEstimate(actor, estimate, lead, { ...round, estimateSnapshot: full });
+    expect(result).toMatchObject({ lineItems: [], totalPaise: 10_000, reviewSourceIssue: null,
+      publishedReview: { canDecide: true, snapshot: { lineItems: [], totalPaise: 10_000 } } });
+  });
+
+  it.each(["false", 0, null, {}])("fails closed for malformed frozen visibility: %j", clientVisible => {
+    const full = visibilitySnapshot([visibilityLine("invalid")]);
+    const invalid = { ...full, lineItems: [{ ...full.lineItems[0], clientVisible }] };
+    expect(presentClientEstimate(actor, estimate, lead, { ...round, estimateSnapshot: invalid }))
+      .toMatchObject({ reviewSourceIssue: "missing_snapshot", publishedReview: null, lineItems: [] });
+  });
+
+  it("projects both approved and current snapshots before comparing rows without changing their stored history", () => {
+    const before = visibilitySnapshot([visibilityLine("visible"), visibilityLine("hidden-changed", false), visibilityLine("hidden-removed", false)]);
+    const after = visibilitySnapshot([visibilityLine("visible"), visibilityLine("hidden-changed", false, 15_000), visibilityLine("hidden-added", false, 5_000)]);
+    const beforeOriginal = structuredClone(before); const afterOriginal = structuredClone(after);
+    const preRound = { ...round, _id: "pre-round", estimateVersion: 2, status: "approved", decision: "approve", estimateSnapshot: before };
+    const current = { ...estimate, version: 4, estimation: { ...newEstimationLifecycle(), phase: "post", status: "sent_to_client",
+      preApproval: { reviewRoundId: "pre-round", estimateVersion: 2, approvedAt: "2026-09-29T00:00:00Z" }, pendingReviewRoundId: "round-a" } };
+    const result = presentClientEstimate(actor, current, lead, { ...round, estimateVersion: 4, estimateSnapshot: after }, { id: "project-a", clientId: actor.id }, preRound)!;
+    expect(result.preApprovedReview.snapshot.lineItems.map((line: { id: string }) => line.id)).toEqual(["visible"]);
+    expect(result.publishedReview.snapshot.lineItems.map((line: { id: string }) => line.id)).toEqual(["visible"]);
+    expect(result.changesFromPre).toEqual({ addedLineIds: [], removedLineIds: [], changedLineIds: [], scopeChanged: false, noChanges: true, beforeTotal: 300, afterTotal: 300 });
+    expect(JSON.stringify(result)).not.toContain("hidden-");
+    expect(before).toEqual(beforeOriginal); expect(after).toEqual(afterOriginal);
+  });
+
   it("reads configured labels and paise only from the immutable review snapshot", () => {
     const configured = {
       ...snapshot, subtotal: 121.25, gst: 21.83, total: 143.08,
@@ -160,4 +234,21 @@ describe("published Client estimate presentation", () => {
     expect(presentClientEstimate(actor, estimate, lead, { ...round, estimateSnapshot: { total: 123 } })).toMatchObject({ publishedReview: null, reviewSourceIssue: "missing_snapshot" });
     expect(presentClientEstimate(actor, { ...estimate, status: "draft" }, lead, null)).toBeNull();
   });
+});
+
+
+it("freezes dimensions, rejects forged quantities, and detects geometry-only review changes", () => {
+  const measured = { ...visibilityLine("measured"), uomDecimalScale: 2, dimensionsMandatory: true,
+    dimensions: { length: "2", width: "0.5", height: "9" },
+    dimensionRule: { formula: "length_width", inputUnit: "ft", quantityUnit: "sq_ft", uomId: "uom", decimalScale: 2 } };
+  const full = visibilitySnapshot([measured]);
+  const current = { ...estimate, lineItems: [{ ...measured, dimensions: { length: "1", width: "1", height: "8" } }] };
+  const result = presentClientEstimate(actor, current, lead, { ...round, estimateSnapshot: full });
+  expect(result?.publishedReview?.snapshot.lineItems[0]).toMatchObject({ quantity: 1, dimensions: measured.dimensions, dimensionRule: measured.dimensionRule });
+  expect(comparePublishedEstimateSnapshots(full, { ...full, lineItems: current.lineItems })).toMatchObject({ changedLineIds: ["measured"] });
+  const invalid = { ...full, lineItems: [{ ...measured, quantity: 9 }] };
+  expect(presentClientEstimate(actor, estimate, lead, { ...round, estimateSnapshot: invalid })?.publishedReview).toBeNull();
+  expect(presentClientEstimate(actor, estimate, lead, { ...round, estimateSnapshot: { ...full, lineItems: [{ ...measured, included: false, dimensions: undefined, quantity: 0 }] } })?.publishedReview).not.toBeNull();
+  const inactive = { ...full, lineItems: [{ ...measured, dimensionsMandatory: false, quantity: 9 }] };
+  expect(presentClientEstimate(actor, estimate, lead, { ...round, estimateSnapshot: inactive })?.publishedReview).not.toBeNull();
 });

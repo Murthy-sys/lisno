@@ -31,6 +31,8 @@ export const {
   previewKnowledge,
   resolveKnowledgeContext,
   listKnowledgeSubBaskets,
+  getKnowledgeSubBasketMargins,
+  applyKnowledgeSubBasketMargins,
   createKnowledgeSubBasket,
   updateKnowledgeSubBasket,
   getKnowledgeBasketQuality,

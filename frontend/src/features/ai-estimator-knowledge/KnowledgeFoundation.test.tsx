@@ -16,14 +16,17 @@ import {
   KNOWLEDGE_WORKSPACE_SECTION_KEYS,
   KNOWLEDGE_WORKSPACE_TAB_KEYS,
   KNOWLEDGE_WORKSPACE_TAB_LABELS,
+  knowledgeWorkspaceSectionsForTiers,
   type KnowledgeWorkspaceTabKey
 } from "./knowledgeWorkspaceSections";
 
 function SectionHarness({
   disabledSections,
+  sections,
   panelBusy = false
 }: {
   readonly disabledSections?: readonly KnowledgeWorkspaceTabKey[];
+  readonly sections?: readonly KnowledgeWorkspaceTabKey[];
   readonly panelBusy?: boolean;
 }) {
   const [section, setSection] =
@@ -33,6 +36,7 @@ function SectionHarness({
       activeSection={section}
       onSectionChange={setSection}
       disabledSections={disabledSections}
+      sections={sections}
       panelBusy={panelBusy}
     >
       <h2>{KNOWLEDGE_WORKSPACE_TAB_LABELS[section]} settings</h2>
@@ -93,7 +97,7 @@ describe("knowledge feature foundation", () => {
       "quality"
     ]);
     expect(KNOWLEDGE_WORKSPACE_TAB_KEYS).toEqual([
-      ...KNOWLEDGE_WORKSPACE_SECTION_KEYS, "design", "basket-closure-priority"
+      "overview", "mode", "premium-mode", "functional-mode", "recommendations", "quality", "design", "basket-closure-priority"
     ]);
     expect(Object.keys(KNOWLEDGE_WORKSPACE_BACKEND_SECTIONS)).toEqual([
       "overview",
@@ -110,7 +114,7 @@ describe("knowledge feature foundation", () => {
       within(tablist).getAllByRole("tab").map((tab) => tab.textContent)
     ).toEqual([
       "Overview",
-      "Mode",
+      "Signature mode",
       "Recommendation & Exclusions",
       "Quality Parameter",
       "Design",
@@ -130,7 +134,7 @@ describe("knowledge feature foundation", () => {
       within(selector).getAllByRole("option").map((option) => option.textContent)
     ).toEqual([
       "Overview",
-      "Mode",
+      "Signature mode",
       "Recommendation & Exclusions",
       "Quality Parameter",
       "Design",
@@ -141,14 +145,14 @@ describe("knowledge feature foundation", () => {
     overview.focus();
     await user.keyboard("{ArrowRight}");
 
-    const mode = screen.getByRole("tab", { name: "Mode" });
+    const mode = screen.getByRole("tab", { name: "Signature mode" });
     const panel = screen.getByRole("tabpanel");
     expect(mode).toHaveFocus();
     expect(mode).toHaveAttribute("aria-selected", "true");
     expect(mode).toHaveAttribute("aria-controls", panel.id);
     expect(panel).toHaveAttribute("aria-labelledby", mode.id);
-    expect(panel).toHaveAccessibleName("Mode");
-    expect(screen.getByRole("heading", { name: "Mode settings" })).toBeVisible();
+    expect(panel).toHaveAccessibleName("Signature mode");
+    expect(screen.getByRole("heading", { name: "Signature mode settings" })).toBeVisible();
     expect(panel).not.toHaveAttribute("aria-busy");
 
     await user.keyboard("{End}");
@@ -171,6 +175,23 @@ describe("knowledge feature foundation", () => {
     expect(panel).toHaveAccessibleName("Basket closure priority");
   });
 
+  it("orders selected tiers in desktop and mobile navigation while skipping hidden tiers", async () => {
+    const user = userEvent.setup();
+    const sections = knowledgeWorkspaceSectionsForTiers(["premium", "functional"]);
+    render(<SectionHarness sections={sections} />);
+    expect(screen.queryByRole("tab", { name: "Signature mode" })).not.toBeInTheDocument();
+    expect(within(screen.getByRole("tablist")).getAllByRole("tab").slice(0, 4).map(tab => tab.textContent))
+      .toEqual(["Overview", "Premium mode", "Functional mode", "Recommendation & Exclusions"]);
+    screen.getByRole("tab", { name: "Overview" }).focus();
+    await user.keyboard("{ArrowRight}");
+    expect(screen.getByRole("tab", { name: "Premium mode" })).toHaveFocus();
+    await user.keyboard("{ArrowRight}");
+    expect(screen.getByRole("tabpanel", { name: "Functional mode" })).toBeVisible();
+    await user.selectOptions(screen.getByRole("combobox", { name: "Configuration section" }), "premium-mode");
+    expect(screen.getByRole("tabpanel", { name: "Premium mode" })).toBeVisible();
+    expect(knowledgeWorkspaceSectionsForTiers([])).toEqual(["overview", "recommendations", "quality", "design", "basket-closure-priority"]);
+  });
+
   it("announces only the active panel as busy without changing tab ownership", () => {
     render(<SectionHarness panelBusy />);
 
@@ -186,9 +207,9 @@ describe("knowledge feature foundation", () => {
     render(<SectionHarness disabledSections={["mode"]} />);
 
     const overview = screen.getByRole("tab", { name: "Overview" });
-    const mode = screen.getByRole("tab", { name: "Mode" });
+    const mode = screen.getByRole("tab", { name: "Signature mode" });
     expect(mode).toBeDisabled();
-    expect(screen.getByRole("option", { name: "Mode" })).toBeDisabled();
+    expect(screen.getByRole("option", { name: "Signature mode" })).toBeDisabled();
 
     overview.focus();
     await user.keyboard("{ArrowRight}");

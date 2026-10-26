@@ -238,7 +238,7 @@ describe("authorization policy", () => {
       if (role === "super_admin") continue;
       const historicalPermissions = ROLE_PERMISSIONS[role].filter(
         (permission) =>
-          !permission.startsWith("projects.client_invitation.") && !permission.startsWith("estimation.requirements.") && !["identity.project_invitation.accept", "estimation.review.withdraw", "estimation.preparation.release"].includes(permission) &&
+          !permission.startsWith("projects.client_invitation.") && !permission.startsWith("estimation.requirements.") && !permission.startsWith("estimation.tiers.") && !permission.startsWith("estimation.dimensions.") && !["identity.project_invitation.accept", "estimation.review.withdraw", "estimation.preparation.release"].includes(permission) &&
           !(role === "designer" && ["estimation.lead.read", "estimation.estimate.read", "estimation.estimate.save", "estimation.estimate.submit", "estimation.estimate.send_client"].includes(permission)) &&
           permission !== "ask_lisno.request" && !permission.startsWith("chat.") && !permission.startsWith("execution.") && !permission.startsWith("procurement.vendor_access.") &&
           permission !== "projects.design_requirements.act" &&
@@ -280,13 +280,16 @@ describe("authorization policy", () => {
         permissionsForRows([...COMMON_ROWS, ...ADDITIONAL_ROWS[role]])
       );
     }
-    expect(PERMISSION_CODES).toHaveLength(196);
-    expect(new Set(PERMISSION_CODES).size).toBe(196);
+    expect(PERMISSION_CODES).toHaveLength(199);
+    expect(new Set(PERMISSION_CODES).size).toBe(199);
     expect(ROLE_PERMISSIONS.super_admin).toEqual(PERMISSION_CODES);
   });
 
   it("restricts estimate collaboration and project invitations to their participating roles", () => {
     const grants = {
+      "estimation.dimensions.update": ["client", "designer", "estimator_sales", "super_admin"],
+      "estimation.tiers.read": ["client", "designer", "estimator_sales", "super_admin"],
+      "estimation.tiers.select": ["client", "designer", "estimator_sales", "super_admin"],
       "projects.client_invitation.read": ["admin", "estimator_sales", "super_admin"],
       "projects.client_invitation.manage": ["admin", "estimator_sales", "super_admin"],
       "identity.project_invitation.accept": ["client", "super_admin"],

@@ -1,3 +1,6 @@
+import type { EstimateComponentPricing, ESTIMATE_COMPONENT_PRICING_BASIS } from "../../../shared/estimation/estimateComponentPricing";
+import type { EstimateDimensions, EstimateDimensionRule } from "../../../shared/estimation/estimateDimensions";
+import type { KnowledgeModeTier } from "../../../shared/knowledge/knowledgeModeTiers";
 import type {
   ProjectModule,
   RequestableProjectModule,
@@ -285,6 +288,7 @@ export interface EstimateClientReviewSnapshot {
     roomName: string;
     specification: string | null;
     estimateNotes?: string[];
+    clientVisible?: boolean;
     unit: string;
     rate: number | null;
     ratePaise?: number | null;
@@ -296,7 +300,13 @@ export interface EstimateClientReviewSnapshot {
     itemType?: "main_line" | "temporary";
     classification?: "standard" | "special";
     pricingMode?: "pmc" | "sub_vendor" | "in_house";
+    modeTier?: KnowledgeModeTier;
+    dimensionsMandatory?: boolean;
+    dimensionRule?: EstimateDimensionRule | null;
+    dimensions?: EstimateDimensions;
     rateSource?: "configuration" | "manual";
+    pricingBasis?: typeof ESTIMATE_COMPONENT_PRICING_BASIS;
+    componentPricing?: EstimateComponentPricing;
     subBasketId?: string | null;
     mainLineId?: string;
     revisionId?: string;

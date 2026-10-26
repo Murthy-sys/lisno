@@ -239,6 +239,14 @@ describe("collaborative estimate lifecycle on a replica set", () => {
     const before = { rooms: [{ id: "room", label: "Bedroom" }], lineItems: [{ id: "stable", included: true, quantity: 2, rate: 100 }] };
     expect(estimatePhysicalScopeChanged(before, { ...before, lineItems: [{ ...before.lineItems[0], rate: 120 }] })).toBe(false);
     expect(estimatePhysicalScopeChanged(before, { ...before, lineItems: [{ ...before.lineItems[0], quantity: 3 }] })).toBe(true);
+    expect(estimatePhysicalScopeChanged(before, { ...before, lineItems: [{ ...before.lineItems[0], modeTier: "signature" }] })).toBe(false);
+    expect(estimatePhysicalScopeChanged(before, { ...before, lineItems: [{ ...before.lineItems[0], modeTier: "premium" }] })).toBe(true);
+    expect(estimatePhysicalScopeChanged(before, { ...before, lineItems: [{ ...before.lineItems[0], selectedInHouseComponentIds: ["a"] }] })).toBe(true);
+    const selected = { ...before, lineItems: [{ ...before.lineItems[0], selectedInHouseComponentIds: ["b", "a"] }] };
+    expect(estimatePhysicalScopeChanged(selected, { ...selected, lineItems: [{ ...selected.lineItems[0], selectedInHouseComponentIds: ["a", "b"] }] })).toBe(false);
+    const measured = { ...before, lineItems: [{ ...before.lineItems[0], quantity: 12, dimensionsMandatory: true, dimensions: { length: "2", width: "6", height: "8" } }] };
+    expect(estimatePhysicalScopeChanged(measured, { ...measured, lineItems: [{ ...measured.lineItems[0], dimensions: { length: "3", width: "4", height: "8" } }] })).toBe(true);
+    expect(estimatePhysicalScopeChanged(measured, { ...measured, lineItems: [{ ...measured.lineItems[0], dimensions: { length: "2", width: "6", height: "9" } }] })).toBe(true);
   });
 
   it("retains legacy line identity when a preceding line is removed and rejects stale saves", async () => {

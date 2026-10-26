@@ -6,6 +6,29 @@ import {
 } from "./knowledgeSectionPayload";
 
 describe("knowledge section update payloads", () => {
+  it("rebases only the edited dimensions flag and preserves newer unit and visibility settings", () => {
+    const latest = { dimensionsMandatory: true, uomId: "new-area-unit", clientVisible: false, applicableTiers: ["premium"] };
+    expect(knowledgeOverviewPayloadForUpdate(latest, { dimensionsMandatory: false, uomId: "stale" }, new Set(["dimensionsMandatory"])))
+      .toEqual({ ...latest, dimensionsMandatory: false });
+    expect(knowledgeOverviewPayloadForUpdate(latest, { uomId: "changed" }, new Set(["uomId"])))
+      .toEqual({ ...latest, uomId: "changed" });
+  });
+  it("saves only edited tier selection, including none, while retaining server Overview data", () => {
+    const server = { applicableTiers: ["signature", "premium"], clientVisible: false, uomId: "latest" };
+    expect(knowledgeOverviewPayloadForUpdate(server, { applicableTiers: [], uomId: "stale" }, new Set(["applicableTiers"])))
+      .toEqual({ ...server, applicableTiers: [] });
+    expect(knowledgeOverviewPayloadForUpdate(server, { uomId: "local" }, new Set(["uomId"])))
+      .toEqual({ ...server, uomId: "local" });
+  });
+  it("rebases explicit client visibility while preserving newer unrelated Overview fields", () => {
+    const latest = { clientVisible: true, uomId: "newer-unit", surfaceIds: ["newer-surface"], hidden: { keep: true } };
+    const local = { clientVisible: false, uomId: "stale-unit", surfaceIds: [] };
+    expect(knowledgeOverviewPayloadForUpdate(latest, local, new Set(["clientVisible"]))).toEqual({ ...latest, clientVisible: false });
+    expect(knowledgeOverviewPayloadForUpdate({ ...latest, clientVisible: false }, { clientVisible: true }, new Set(["clientVisible"]))).toEqual(latest);
+    expect(knowledgeOverviewPayloadForUpdate({ ...latest, clientVisible: false }, { uomId: "local-unit" }, new Set(["uomId"])))
+      .toEqual({ ...latest, clientVisible: false, uomId: "local-unit" });
+  });
+
   it("rebases only edited Overview values onto the latest compatibility payload", () => {
     const latest = {
       description: "Latest description",

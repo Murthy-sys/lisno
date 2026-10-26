@@ -1,4 +1,7 @@
+import { ESTIMATE_COMPONENT_PRICING_BASIS, estimateComponentLineAmountIsValid, readEstimateComponentPricing } from "../domain/estimate-component-pricing.js";
+import { estimateDimensionSnapshotValid } from "../domain/estimate-dimension-snapshot.js";
 import { estimatePricingMetadataIsValid } from "../domain/estimate-mode-pricing.js";
+import { KNOWLEDGE_MODE_TIERS } from "../domain/ai-estimator-knowledge-mode-tiers.js";
 import {
   ESTIMATE_CLIENT_DECISIONS,
   ESTIMATE_CLIENT_DECISION_NOTE_MAX,
@@ -44,9 +47,17 @@ const estimateClientReviewLineItemSchema = new Schema(
     id: { type: String, default: null, immutable: true },
     source: { type: String, enum: ["legacy", "configuration"], default: undefined, immutable: true },
     itemType: { type: String, enum: ["main_line", "temporary"], default: undefined, immutable: true },
+    clientVisible: { type: Boolean, cast: false, default: undefined, immutable: true },
     classification: { type: String, enum: ["standard", "special"], default: undefined, immutable: true },
+    modeTier: { type: String, enum: KNOWLEDGE_MODE_TIERS, default: undefined, immutable: true },
+    dimensionsMandatory: { type: Boolean, cast: false, default: undefined, immutable: true },
+    dimensions: { type: Schema.Types.Mixed, default: undefined, immutable: true },
+    dimensionRule: { type: Schema.Types.Mixed, default: undefined, immutable: true },
     pricingMode: { type: String, enum: ["pmc", "sub_vendor", "in_house"], default: undefined, immutable: true },
     rateSource: { type: String, enum: ["configuration", "manual"], default: undefined, immutable: true },
+    pricingBasis: { type: String, enum: [ESTIMATE_COMPONENT_PRICING_BASIS], default: undefined, immutable: true },
+    componentPricing: { type: Schema.Types.Mixed, default: undefined, immutable: true, validate: (value: unknown) => value === undefined || readEstimateComponentPricing(value) !== null },
+    selectedInHouseComponentIds: { type: [String], default: undefined, immutable: true, validate: (ids: string[] | undefined) => ids === undefined || ids.length <= 50 && new Set(ids).size === ids.length },
     catalogueId: { type: String, required: true, immutable: true },
     roomId: { type: String, default: undefined, immutable: true },
     roomName: { type: String, required: true, immutable: true },
@@ -80,6 +91,11 @@ const estimateClientReviewLineItemSchema = new Schema(
 
 estimateClientReviewLineItemSchema.pre("validate", function validateFrozenLine() {
   const configured = this.get("source") === "configuration";
+  const componentAmount = estimateComponentLineAmountIsValid(this.toObject());
+  if (this.get("pricingBasis") !== undefined && !componentAmount) this.invalidate("componentPricing", "Published component calculation evidence is invalid.");
+  if (!estimateDimensionSnapshotValid({ dimensionsMandatory: this.get("dimensionsMandatory"), dimensions: this.get("dimensions"),
+    dimensionRule: this.get("dimensionRule"), quantity: this.get("quantity"), included: this.get("included"),
+    uomId: this.get("uomId"), uomDecimalScale: this.get("uomDecimalScale") })) this.invalidate("dimensions", "Published dimensions or calculated quantity are invalid.");
   const required = configured
     ? ["roomId", "mainBasketId", "mainLineId", "revisionId", "uomId", "mainBasketName", "mainLineName", "uomName"]
     : ["specification"];
@@ -93,7 +109,7 @@ estimateClientReviewLineItemSchema.pre("validate", function validateFrozenLine()
     subBasketName: this.get("subBasketName")
   })) this.invalidate("subBasketId", "Published configured estimate Sub Basket identity is inconsistent.");
   if (configured && !estimatePricingMetadataIsValid({
-    classification: this.get("classification"), pricingMode: this.get("pricingMode"), rateSource: this.get("rateSource")
+    classification: this.get("classification"), pricingMode: this.get("pricingMode"), rateSource: this.get("rateSource"), modeTier: this.get("modeTier")
   })) this.invalidate("pricingMode", "Published configured estimate pricing metadata is inconsistent.");
   if (configured) {
     const provenance = ["sourceItemStatus", "sourceRevisionStatus", "sourceItemVersion", "sourceRevisionVersion"] as const;
@@ -107,7 +123,7 @@ estimateClientReviewLineItemSchema.pre("validate", function validateFrozenLine()
   }
   for (const field of ["rate", "amount"] as const) {
     const value = this.get(field);
-    if (value === null && configured && this.get("included") !== true) continue;
+    if (value === null && configured && (this.get("included") !== true || field === "rate" && componentAmount)) continue;
     if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
       this.invalidate(field, "Published estimate amount is invalid.");
     }
@@ -115,7 +131,7 @@ estimateClientReviewLineItemSchema.pre("validate", function validateFrozenLine()
   if (configured) {
     for (const field of ["ratePaise", "amountPaise"] as const) {
       const value = this.get(field);
-      if (value === null && this.get("included") !== true) continue;
+      if (value === null && (this.get("included") !== true || field === "ratePaise" && componentAmount)) continue;
       if (!exactNonnegativePaise(value)) {
         this.invalidate(field, "Published configured estimate paise must be exact.");
       }

@@ -10,6 +10,7 @@ import { PROPOSAL_LIMITS } from "../contracts/vendor-basket-proposal.js";
 import { AI_ESTIMATOR_KNOWLEDGE_SECTION_KEYS, createKnowledgeContentDigest, normalizeKnowledgeIdentity, type KnowledgeSectionKey } from "../domain/ai-estimator-knowledge.js";
 import { deriveKnowledgeCompleteness } from "../domain/ai-estimator-knowledge-completeness.js";
 import { validateKnowledgeSectionPayload } from "../domain/ai-estimator-knowledge-validation.js";
+import { knowledgeModeTierPayloads } from "../domain/ai-estimator-knowledge-mode-tiers.js";
 import { ApiError } from "../middleware/errors.js";
 import { VendorBasketProposalModel } from "../models/VendorBasketProposal.js";
 import { VendorBasketProposalResourceModel } from "../models/VendorBasketProposalResource.js";
@@ -251,13 +252,19 @@ export function createVendorBasketProposalService(dependencies: Dependencies) {
       await assertProposalMasterAvailable(kind, masterId, payload, proposalMasters(loaded.resources), session);
       const resource = await append(proposalId, masterId, resourceKind, null, payload, (previous?.version ?? 0) + 1, actor, session, loaded.head.id);
       const resources = loaded.resources.filter((row) => row.resourceId !== masterId).concat(resource);
-      // A precision change may invalidate quantities on any referencing line.
-      if (previous && kind === "uoms" && previous.payload.decimalScale !== payload.decimalScale) {
+      // Precision affects every quantity; unit identity also defines mandatory measurements.
+      const scaleChanged = previous?.payload.decimalScale !== payload.decimalScale;
+      const unitIdentityChanged = previous?.payload.name !== payload.name || previous?.payload.code !== payload.code;
+      if (previous && kind === "uoms" && (scaleChanged || unitIdentityChanged)) {
         const snapshot = publicationSnapshot({ ...loaded, resources });
-        for (const section of resources.filter((row) => proposalMasterReferenceFields(row).some((ref) => ref.row[ref.key] === masterId))) {
+        for (const section of resources.filter((row) => {
+          if (!proposalMasterReferenceFields(row).some((ref) => ref.row[ref.key] === masterId)) return false;
+          const sectionValue = row.kind === "section" ? row.payload as ProposalSectionValue : null;
+          return scaleChanged || sectionValue?.sectionKey === "overview" && sectionValue.payload.dimensionsMandatory === true;
+        })) {
           const findings = await validateProposalSnapshot(snapshot, session, { forSave: true, saveTarget: {
             kind: "section", mainLineId: section.parentId!, sectionKey: (section.payload as ProposalSectionValue).sectionKey } });
-          if (findings.length) throw new ApiError(422, "PROPOSAL_CONFIGURATION_INVALID", "Update quantities that use this UOM before changing its decimal places.",
+          if (findings.length) throw new ApiError(422, "PROPOSAL_CONFIGURATION_INVALID", "Review affected measurements and quantities before changing this UOM.",
             Object.fromEntries(findings.map((finding, index) => [`${finding.resourceId}.${finding.path ?? index}`, finding.message])));
         }
       }
@@ -801,9 +808,20 @@ function proposalIdentityFields(resource: ProposalResource): Array<{ row: Row; k
     advanced: { rows: "dependencies", keys: ["targetBasketId", "targetMainLineId"] }
   };
   const reference = references[section.sectionKey];
-  const rows = reference && section.payload[reference.rows];
-  if (!reference || !Array.isArray(rows)) return [];
-  return rows.flatMap((row: Row) => reference.keys.filter((key) => typeof row[key] === "string").map((key) => ({ row, key })));
+  const payloads = section.sectionKey === "advanced" || section.sectionKey === "pricing"
+    ? knowledgeModeTierPayloads(section.payload).map(entry => entry.payload) : [section.payload];
+  const result: Array<{ row: Row; key: string }> = [];
+  for (const payload of payloads) {
+    const rows = reference && payload[reference.rows];
+    if (reference && Array.isArray(rows)) result.push(...rows.flatMap((row: Row) =>
+      reference.keys.filter(key => typeof row[key] === "string").map(key => ({ row, key }))));
+    if (section.sectionKey !== "advanced" || !Array.isArray(payload.inHouseComponents)) continue;
+    for (const component of payload.inHouseComponents) {
+      if (!component || typeof component !== "object" || Array.isArray(component)) continue;
+      for (const key of ["basketId", "subBasketId"]) if (typeof component[key] === "string") result.push({ row: component, key });
+    }
+  }
+  return result;
 }
 function changedFields(before: unknown, after: unknown): string[] {
   const old = before && typeof before === "object" ? before as Row : {}; const next = after && typeof after === "object" ? after as Row : {};

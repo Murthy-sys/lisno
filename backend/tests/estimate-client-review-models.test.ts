@@ -123,6 +123,10 @@ describe("EstimateClientReviewRound persistence model", () => {
       lineItems: [{
         id: "line-configured", source: "configuration", catalogueId: "ml-lower-case",
         classification: "special",
+        modeTier: "premium",
+        dimensionsMandatory: true, dimensions: { length: "1.25", width: "2", height: "9" },
+      dimensionRule: { formula: "length_width", inputUnit: "ft", quantityUnit: "sq_ft", uomId: "uom-sqft", decimalScale: 2 }, uomDecimalScale: 2,
+        clientVisible: false,
         roomId: "room-a", roomName: "Living Room", specification: null,
         unit: "sqft", rate: 48.5, ratePaise: 4_850, quantity: 2.5,
         included: true, amount: 121.25, amountPaise: 12_125,
@@ -146,18 +150,32 @@ describe("EstimateClientReviewRound persistence model", () => {
       await expect(modeDocument.validate()).resolves.toBeUndefined();
       expect(modeDocument.toObject().estimateSnapshot.lineItems[0]).toMatchObject({ pricingMode, rateSource: "configuration" });
     }
-    for (const metadata of [{ pricingMode: "unknown" }, { rateSource: "unknown" },
+    for (const metadata of [{ modeTier: "unknown" }, { pricingMode: "unknown" }, { rateSource: "unknown" },
       { rateSource: "configuration" }, { classification: "standard", pricingMode: "pmc" }]) {
       await expect(round({ estimateSnapshot: { ...configured,
         lineItems: [{ ...configured.lineItems[0], ...metadata }] } }).validate()).rejects.toThrow();
     }
     expect(EstimateClientReviewRoundModel.schema.path("estimateSnapshot.lineItems.pricingMode").options.immutable).toBe(true);
+    expect(EstimateClientReviewRoundModel.schema.path("estimateSnapshot.lineItems.modeTier").options.immutable).toBe(true);
+    for (const field of ["dimensionsMandatory", "dimensions", "dimensionRule"]) expect(EstimateClientReviewRoundModel.schema.path(`estimateSnapshot.lineItems.${field}`).options.immutable).toBe(true);
+    for (const invalid of [{ dimensionsMandatory: "true" }, { dimensions: { length: "1.25", width: "2", height: "" } }, { quantity: 22.5 }, { uomDecimalScale: 1 }, { dimensionRule: { ...configured.lineItems[0]!.dimensionRule, inputUnit: "m" } }]) {
+      await expect(round({ estimateSnapshot: { ...configured, lineItems: [{ ...configured.lineItems[0], ...invalid }] } }).validate()).rejects.toThrow();
+    }
+    await expect(round({ estimateSnapshot: { ...configured, lineItems: [{ ...configured.lineItems[0], included: false, dimensions: undefined, quantity: 0 }] } }).validate()).resolves.toBeUndefined();
+    await expect(round({ estimateSnapshot: { ...configured, lineItems: [{ ...configured.lineItems[0], dimensionsMandatory: false, quantity: 10 }] } }).validate()).resolves.toBeUndefined();
+
     expect(EstimateClientReviewRoundModel.schema.path("estimateSnapshot.lineItems.rateSource").options.immutable).toBe(true);
+    expect(EstimateClientReviewRoundModel.schema.path("estimateSnapshot.lineItems.clientVisible").options.immutable).toBe(true);
+    for (const clientVisible of ["false", 0, 1]) {
+      await expect(round({ estimateSnapshot: { ...configured,
+        lineItems: [{ ...configured.lineItems[0], clientVisible }] } }).validate()).rejects.toThrow();
+    }
     const historical = round({ estimateSnapshot: {
       ...configured, selectedMainBasketClassifications: undefined,
-      lineItems: [{ ...configured.lineItems[0], classification: undefined }]
+      lineItems: [{ ...configured.lineItems[0], classification: undefined, clientVisible: undefined }]
     } });
     await expect(historical.validate()).resolves.toBeUndefined();
+    expect(historical.toObject().estimateSnapshot.lineItems[0]).not.toHaveProperty("clientVisible");
     expect(historical.toObject().estimateSnapshot).not.toHaveProperty("selectedMainBasketClassifications");
     expect(historical.toObject().estimateSnapshot.lineItems[0]).not.toHaveProperty("classification");
     await expect(round({ estimateSnapshot: {

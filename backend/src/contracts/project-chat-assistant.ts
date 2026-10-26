@@ -31,6 +31,7 @@ export interface AssistantFact {
   source: AssistantSourceReference;
 }
 export interface AssistantCatalogueCandidate {
+  inHouseComponents?: Array<{ id: string; basketId: string; subBasketId: string | null; basketName: string; subBasketName: string | null; available: boolean }>;
   mainLineId: string;
   mainBasketId: string;
   subBasketId: string | null;
@@ -54,6 +55,7 @@ export interface AssistantRecommendation {
   unavailableChildCount: number;
 }
 export interface AssistantAdditionLineInput {
+  selectedInHouseComponentIds?: string[];
   mainLineId: string;
   roomId: string | null;
   quantity: string | null;
@@ -64,6 +66,7 @@ export interface AssistantAdditionLineInput {
 }
 export interface AssistantAdditionRequest { lines: AssistantAdditionLineInput[] }
 export interface AssistantPriceLine {
+  selectedInHouseComponentIds?: string[];
   mainLineId: string;
   roomId: string | null;
   name: string;

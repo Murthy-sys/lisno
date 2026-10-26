@@ -23,6 +23,7 @@ vi.mock("./knowledgeApi", async (importOriginal) => ({
   listKnowledgeItems: vi.fn(),
   listKnowledgeBaskets: vi.fn(),
   listKnowledgeSubBaskets: vi.fn(),
+    getKnowledgeSubBasketMargins: vi.fn(),
   listKnowledgeMasters: vi.fn(),
   getKnowledgeItem: vi.fn(),
   permanentlyDeleteKnowledgeMainLine: vi.fn()
@@ -127,6 +128,10 @@ async function enterReason(user: ReturnType<typeof userEvent.setup>, dialog: HTM
 
 beforeEach(() => {
   vi.resetAllMocks();
+  vi.mocked(knowledgeApi.getKnowledgeSubBasketMargins).mockImplementation(async (basketId, subBasketId) => {
+    const empty = { ranges: [], mismatchCount: null, mismatches: [], canApply: false, unavailableReason: "No margins configured." };
+    return { basketId, subBasketId, source: null, totalMainLines: 0, versionToken: "empty", modes: { pmc: empty, sub_vendor: empty, in_house: empty } };
+  });
   auth.role = "super_admin";
   auth.lifecycle = true;
   vi.mocked(knowledgeApi.listKnowledgeMasters).mockResolvedValue({ items: [], pagination });

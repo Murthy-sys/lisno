@@ -1,6 +1,16 @@
-import type { EstimatePricingMode } from "./types";
+import type { EstimateDimensionRule } from "../../../../shared/estimation/estimateDimensions";
+import type { EstimateModeTier, EstimatePricingMode } from "./types";
 export interface Pagination { offset: number; hasMore: boolean; }
 export type EstimationModeBaseRatesPaise = Record<EstimatePricingMode, number | null>;
+export interface EstimationInHouseComponent {
+  id: string;
+  basketId: string;
+  subBasketId: string | null;
+  basketName: string;
+  subBasketName: string | null;
+  baseRatePaise: number | null;
+  unavailableReason?: string | null | undefined;
+}
 
 export interface EstimationCatalogueUom {
   id: string;
@@ -19,12 +29,16 @@ export interface EstimationCatalogueMainLine {
   estimateNotes?: string[] | undefined;
   displayOrder: number;
   revisionId: string;
+  applicableTiers?: EstimateModeTier[] | undefined;
+  dimensionsMandatory?: boolean | undefined;
+  dimensionRule?: EstimateDimensionRule | null | undefined;
   itemStatus?: "draft" | "active" | "inactive" | undefined;
   revisionStatus?: "draft" | "active" | undefined;
   itemVersion?: number | undefined;
   revisionVersion?: number | undefined;
   inHouseBaseRatePaise?: number | null | undefined;
   modeBaseRatesPaise?: EstimationModeBaseRatesPaise | undefined;
+  inHouseComponents?: EstimationInHouseComponent[] | undefined;
   uom: EstimationCatalogueUom;
 }
 

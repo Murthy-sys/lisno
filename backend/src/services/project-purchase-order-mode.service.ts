@@ -1,3 +1,6 @@
+import { readInHouseComponents, selectedInHouseComponents } from "../domain/ai-estimator-knowledge-in-house-components.js";
+import { isKnowledgeModeTier, knowledgeModeTierPayload, projectKnowledgeModeTierSection } from "../domain/ai-estimator-knowledge-mode-tiers.js";
+import { lockInHouseComponentReferences } from "./ai-estimator-knowledge-in-house-components.service.js";
 import { createHash, randomUUID } from "node:crypto";
 import mongoose, { type ClientSession } from "mongoose";
 import { createKnowledgeRevisionDigest } from "../domain/ai-estimator-knowledge-completeness.js";
@@ -320,9 +323,23 @@ export async function resolvePurchaseOrderModes(
     }
     const uom = { id: line.uomId, code: String(uomRow.code), name: String(uomRow.name),
       decimalScale: Number(uomRow.decimalScale) };
-    const advanced = sectionPayload(sectionMap.get("advanced"));
+    const modeTier = line.modeTier ?? "signature";
+    const overview = sectionPayload(sectionMap.get("overview"));
+    const applicableTiers = overview.applicableTiers === undefined ? ["signature"]
+      : Array.isArray(overview.applicableTiers) && overview.applicableTiers.every(isKnowledgeModeTier) ? overview.applicableTiers : [];
+    const advancedSection = sectionMap.get("advanced")!;
+    if (!isKnowledgeModeTier(modeTier) || !applicableTiers.includes(modeTier) ||
+      modeTier !== "signature" && projectKnowledgeModeTierSection(advancedSection, modeTier).applicability !== "configured") {
+      result.set(line.key, unavailable("CONFIGURATION_TIER_UNAVAILABLE", "The selected estimate tier is unavailable in the current Configuration revision.", revision));
+      continue;
+    }
+    const advanced = knowledgeModeTierPayload(sectionPayload(advancedSection), modeTier);
     const quantityMargin = sectionPayload(sectionMap.get("quantity-margin"));
-    const analysis = analyzePurchaseOrderModeSettings({ advanced, quantityMargin,
+    const components = readInHouseComponents(advanced);
+    const selectedComponents = components === undefined ? [] : selectedInHouseComponents(components, line.selectedInHouseComponentIds) ?? [];
+    const unavailableComponentIds = await lockInHouseComponentReferences(selectedComponents, session);
+    const analysis = analyzePurchaseOrderModeSettings({ advanced, quantityMargin, selectedInHouseComponentIds: line.selectedInHouseComponentIds,
+      inHouseComponentReferencesAvailable: unavailableComponentIds.size === 0,
       uom, mode: selected?.mode ?? null,
       quantity: selected?.quantity ?? null, discountBps: selected?.discountBps ?? 0,
       markupBasis: selected?.markupBasis ?? "starting" });
@@ -344,7 +361,7 @@ export async function resolvePurchaseOrderModes(
     const issues: PurchaseOrderModeIssue[] = [...analysis.issues];
     const childRefs: Record<string, PurchaseOrderModePriceReference> = {};
     for (const child of childrenByKey.get(line.key) ?? []) {
-      childRefs[child.id] = resolvePriceReference(child, pricesByRevision.get(selectedRevisionId) ?? [], taxesById, at);
+      childRefs[child.id] = resolvePriceReference(child, modeTier === "signature" ? pricesByRevision.get(selectedRevisionId) ?? [] : [], taxesById, at);
     }
     if (digestMismatch) {
       const basis = decision?.integrityBasis;

@@ -26,6 +26,70 @@ function componentSchemas(): Record<string, OpenApiObject> {
 }
 
 describe("OpenAPI and Swagger UI", () => {
+  it("documents server-owned dimension rules, measured quantities and optional legacy defaults", () => {
+    const schemas = componentSchemas();
+    const overview = (schemas.KnowledgeSectionPayload!.anyOf as OpenApiObject[]).find(entry => (entry.properties as OpenApiObject)?.dimensionsMandatory !== undefined);
+    expect(overview).toHaveProperty("properties.dimensionsMandatory", expect.objectContaining({ type: "boolean", default: false }));
+    expect(schemas.EstimateDimensions).toHaveProperty("required", ["length", "width", "height"]);
+    expect(schemas.EstimateDimensionRule).toHaveProperty("properties.formula.enum", ["length_width"]);
+    expect(schemas.EstimateDimensionRule).toHaveProperty("properties.inputUnit.enum", ["ft", "m", "cm", "mm", "in", "yd"]);
+    expect(schemas.EstimatorCatalogueLine!.required).toEqual(expect.arrayContaining(["dimensionsMandatory", "dimensionRule"]));
+    expect(schemas.ConfiguredEstimateLineInput).toHaveProperty("properties.dimensions.$ref", "#/components/schemas/EstimateDimensions");
+    expect(schemas.ConfiguredEstimateLineInput).not.toHaveProperty("properties.dimensionsMandatory");
+    expect(schemas.ConfiguredEstimateLineInput).not.toHaveProperty("properties.dimensionRule");
+    expect(schemas.ClientEstimateSnapshot).toHaveProperty("properties.lineItems.items.properties.dimensionRule.nullable", true);
+  });
+  it("documents per-line estimate tiers with independent catalogue pricing and frozen review selection", () => {
+    const schemas = componentSchemas();
+    expect(schemas.EstimatorCatalogueLine!.required).toEqual(expect.arrayContaining(["applicableTiers", "tierPricing"]));
+    expect(schemas.EstimatorCatalogueLine).toHaveProperty("properties.applicableTiers.items.enum", ["signature", "premium", "functional"]);
+    expect(schemas.EstimatorCatalogueLine).toHaveProperty("properties.tierPricing.additionalProperties", false);
+    for (const tier of ["signature", "premium", "functional"]) expect(schemas.EstimatorCatalogueLine).toHaveProperty(`properties.tierPricing.properties.${tier}.required`, ["modeBaseRatesPaise"]);
+    expect(schemas.ConfiguredEstimateLineInput).toHaveProperty("properties.modeTier.default", "signature");
+    expect(schemas.ClientEstimateSnapshot).toHaveProperty("properties.lineItems.items.properties.modeTier.enum", ["signature", "premium", "functional"]);
+    expect(schemas.ConfiguredEstimateLineInput!.required).not.toContain("modeTier");
+  });
+
+  it("documents scoped Mode tiers without accepting whole namespace maps", () => {
+    const schemas = componentSchemas();
+    const overview = (schemas.KnowledgeSectionPayload!.anyOf as OpenApiObject[]).find(entry => (entry.properties as OpenApiObject)?.applicableTiers !== undefined);
+    expect(overview).toHaveProperty("properties.applicableTiers.items.enum", ["signature", "premium", "functional"]);
+    expect(overview).toHaveProperty("properties.applicableTiers.uniqueItems", true);
+    expect(schemas.KnowledgeSectionUpdateRequest).toHaveProperty("properties.modeTier.default", "signature");
+    expect(schemas.KnowledgeSectionEnvelope).toHaveProperty("properties.modeTier.enum", ["signature", "premium", "functional"]);
+    expect(schemas.KnowledgeSectionMutationEnvelope).toHaveProperty("properties.modeTier.enum", ["signature", "premium", "functional"]);
+    for (const payload of schemas.KnowledgeSectionPayload!.anyOf as OpenApiObject[]) expect(payload).not.toHaveProperty("properties.tierConfigurations");
+    const paths = openApiDocument.paths as Record<string, Record<string, OpenApiObject>>;
+    const operation = paths["/admin/ai-estimator-knowledge/main-lines/{mainLineId}/revisions/{revisionId}/sections/{sectionKey}"]!.get!;
+    expect(operation.parameters).toEqual(expect.arrayContaining([expect.objectContaining({ name: "modeTier", in: "query", required: false })]));
+  });
+
+  it("documents Client-screen visibility as Overview configuration and server-owned estimate output", () => {
+    const schemas = componentSchemas();
+    const overview = (schemas.KnowledgeSectionPayload!.anyOf as OpenApiObject[]).find((entry) =>
+      (entry.properties as OpenApiObject)?.clientVisible !== undefined);
+    expect(overview).toHaveProperty("properties.clientVisible.type", "boolean");
+    expect(overview).toHaveProperty("properties.clientVisible.default", true);
+    expect(schemas.EstimatorCatalogueLine).toHaveProperty("properties.clientVisible.readOnly", true);
+    expect(schemas.EstimatorCatalogueLine!.required).toContain("clientVisible");
+    expect(schemas.ClientEstimateSnapshot).toHaveProperty("properties.lineItems.items.properties.clientVisible.default", true);
+    expect(schemas.ConfiguredEstimateLineInput).not.toHaveProperty("properties.clientVisible");
+  });
+
+  it("documents optional current-line margin application and saved source prices without weakening bulk commands", () => {
+    const schemas = componentSchemas();
+    expect(schemas.KnowledgeApplySubBasketMarginsRequest!.required).toEqual(["mode", "versionToken"]);
+    expect(schemas.KnowledgeApplySubBasketMarginsRequest).toHaveProperty("properties.targetMainLineId.maxLength", 128);
+    expect(schemas.KnowledgeApplySubBasketMarginsRequest!.additionalProperties).toBe(false);
+    expect(schemas.KnowledgeSubBasketMarginSummary!.required).not.toContain("sourceConfiguration");
+    expect(schemas.KnowledgeSubBasketMarginSummary).toHaveProperty("properties.sourceConfiguration.nullable", true);
+    expect(schemas.KnowledgeSubBasketSourceConfiguration!.required).toEqual(["revisionId", "revisionStatus", "itemVersion", "revisionVersion", "sectionVersion", "uom", "modes"]);
+    expect(schemas.KnowledgeSubBasketSourceConfiguration).toHaveProperty("properties.modes.required", ["pmc", "sub_vendor", "in_house"]);
+    expect(schemas.KnowledgeDefaultModeCalculation!.required).toEqual(["scope", "baseRatePaise", "lowQuantityLimit", "impactBps"]);
+    expect(schemas.KnowledgeDefaultModeCalculation).toHaveProperty("properties.impactBps.nullable", true);
+    expect(schemas.KnowledgeDefaultModeCalculation).toHaveProperty("properties.component.required", ["id", "basketId", "subBasketId"]);
+    expect(schemas.KnowledgeDefaultModeCalculation!.additionalProperties).toBe(false);
+  });
   it("documents vendor-independent proposals and authenticated request filters without loosening legacy creation", () => {
     const schemas = componentSchemas();
     const paths = openApiDocument.paths as Record<string, Record<string, OpenApiObject>>;
@@ -1167,7 +1231,7 @@ describe("OpenAPI and Swagger UI", () => {
     }
   });
 
-  it("contains all 458 routes without versioning paths twice", () => {
+  it("contains all 465 routes without versioning paths twice", () => {
     const methods = new Set(["get", "post", "put", "patch", "delete"]);
     const operationCount = Object.values(openApiDocument.paths).reduce(
       (total, pathItem) =>
@@ -1176,7 +1240,7 @@ describe("OpenAPI and Swagger UI", () => {
     );
 
     expect(operationCount).toBe(HUMAN_JWT_OPERATION_LIST.length + 21);
-    expect(operationCount).toBe(458);
+    expect(operationCount).toBe(465);
     expect(Object.keys(openApiDocument.paths).some((path) =>
       path.startsWith("/api/v1")
     )).toBe(false);
@@ -1186,7 +1250,7 @@ describe("OpenAPI and Swagger UI", () => {
     const knowledgeOperations = HUMAN_JWT_OPERATION_LIST.filter(
       ({ availability, key }) => availability === "ai_estimator_knowledge" && !key.includes("/procurement/vendor-kpis") && !key.includes("/procurement/vendor-inductions") && !key.includes("basket-proposals")
     );
-    expect(knowledgeOperations).toHaveLength(70);
+    expect(knowledgeOperations).toHaveLength(73);
 
     for (const registered of knowledgeOperations) {
       const { method, path } = splitHumanOperationKey(registered.key);

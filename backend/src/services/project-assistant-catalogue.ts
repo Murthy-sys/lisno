@@ -8,7 +8,7 @@ import { AiEstimatorKnowledgeRevisionModel } from "../models/AiEstimatorKnowledg
 import { AiEstimatorKnowledgeSectionModel } from "../models/AiEstimatorKnowledgeSection.js";
 import { AiEstimatorKnowledgeSubBasketModel } from "../models/AiEstimatorKnowledgeSubBasket.js";
 import { AiEstimatorKnowledgeUomModel } from "../models/AiEstimatorKnowledgeUom.js";
-import { readEstimatorCatalogueRecommendations, resolveEstimatorCatalogueLines } from "./estimator-catalogue.service.js";
+import { estimatorCatalogueTierPricing, readEstimatorCatalogueRecommendations, resolveEstimatorCatalogueLines } from "./estimator-catalogue.service.js";
 import { sourceWitness } from "./project-assistant-context.js";
 import type { AssistantPricingSource } from "./project-assistant-pricing.js";
 
@@ -53,14 +53,18 @@ export async function readAssistantLines(ids: readonly string[], session?: Clien
     const complete = Array.isArray(completeness?.sections) ? new Set(completeness.sections.flatMap(value => {
       const entry = object(value); return entry?.state === "complete" && typeof entry.sectionKey === "string" ? [entry.sectionKey] : [];
     })) : new Set<string>();
-    const available = value.line.itemType === "main_line" && complete.has("overview") && complete.has("advanced") && Boolean(advanced) && uom?.status === "active";
+    const available = value.line.itemType === "main_line" && complete.has("overview") && complete.has("advanced") && Boolean(advanced) && uom?.status === "active"
+      && estimatorCatalogueTierPricing(value.line, "signature") !== null;
     const candidate: AssistantCatalogueCandidate = {
       mainLineId: id, mainBasketId: value.line.basketId, subBasketId: value.line.subBasketId,
       name: value.line.name, basketName: value.mainBasketName, subBasketName: value.subBasketName,
       revisionId: value.line.revisionId, revisionVersion: value.line.revisionVersion, itemVersion: value.line.itemVersion,
-      uom: { ...value.line.uom }, available
+      uom: { ...value.line.uom }, available,
+      ...(value.line.inHouseComponents === undefined ? {} : { inHouseComponents: value.line.inHouseComponents.map(({ id, basketId, subBasketId, basketName, subBasketName, baseRatePaise }) => ({
+        id, basketId, subBasketId, basketName, subBasketName, available: baseRatePaise !== null
+      })) })
     };
-    lines.set(id, { candidate, advanced: advanced ? object(advanced.payload) : null, temporary: value.line.itemType === "temporary" });
+    lines.set(id, { candidate, advanced: advanced ? object(advanced.payload) : null, temporary: value.line.itemType === "temporary", dimensionsMandatory: value.line.dimensionsMandatory === true });
   }
   return { lines, freshness };
 }

@@ -6,7 +6,8 @@ export interface VendorBasketRequestDto {
   readonly target?: ProposalTarget;
   readonly targetParentName?: string | null;
   readonly id: string;
-  readonly kind?: "configuration_proposal";
+  readonly kind?: "configuration_proposal" | "configuration_sub_basket";
+  readonly description?: string | null;
   readonly proposalId?: string;
   readonly proposalCounts?: { readonly subBaskets: number; readonly mainLines: number };
   readonly requesterId: string;
@@ -28,6 +29,13 @@ export interface CreateVendorBasketRequestInput {
   readonly vendorId?: string | null;
   readonly vendorName: string;
   readonly proposedName: string;
+  readonly idempotencyKey: string;
+}
+
+export interface CreateConfigurationSubBasketRequestInput {
+  readonly basketId: string;
+  readonly name: string;
+  readonly description: string;
   readonly idempotencyKey: string;
 }
 

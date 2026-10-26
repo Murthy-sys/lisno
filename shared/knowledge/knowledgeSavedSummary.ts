@@ -1,5 +1,7 @@
 import { BUDGET_ACTIONS, budgetAlterationIssues, recommendationItemRequiresCompletion, recommendationTargetKind } from "./knowledgeBudgetAlterations";
 import { modeCalculationIssues, modeCalculationsForPayload } from "./knowledgeModeCalculation";
+import { parseInHouseComponents } from "./knowledgeInHouseComponents";
+import { applicableKnowledgeTiers, KNOWLEDGE_MODE_TIER_LABELS } from "./knowledgeModeTiers";
 import { pmcMarginRange, pmcMarginRangeIssues, subVendorMarginRange, subVendorMarginRangeIssues } from "./knowledgePmcMargin";
 import { formatKnowledgeMoney } from "./knowledgePresentation";
 import { validateQualityParametersForSave } from "./knowledgeQuality";
@@ -140,11 +142,21 @@ function overview(input: SavedSummaryProjectionInput): SavedSummaryContent {
   const preview: SavedSummaryRow[] = details.filter(item => item.key === "uom");
   const surfaces = details.filter(item => /^surface-\d+$/u.test(item.key));
   if (surfaces.length) preview.push(row("surfaces", "Surfaces", namesPreview(surfaces.map(item => item.value))));
+  const visibility = row("client-visible", "Client estimate screen",
+    payload.clientVisible === false ? "No" : payload.clientVisible === undefined || payload.clientVisible === true ? "Yes" : NEEDS_REVIEW);
+  details.push(visibility);
+  const dimensions = row("dimensions-mandatory", "Dimensions mandatory", payload.dimensionsMandatory === true ? "Yes · Length × Width" : payload.dimensionsMandatory === undefined || payload.dimensionsMandatory === false ? "No" : NEEDS_REVIEW);
+  details.push(dimensions);
+  if (Object.hasOwn(payload, "applicableTiers")) details.push(row("applicable-tiers", "Applicable tiers",
+    applicableKnowledgeTiers(payload).map(tier => KNOWLEDGE_MODE_TIER_LABELS[tier]).join(", ") || "None"));
   preview.push(...details.filter(item => item.key.endsWith("-review")));
-  if (Object.keys(payload).some(key => present(payload[key]) && !["uomId", "surfaceIds"].includes(key) && (!Array.isArray(payload[key]) || payload[key].length > 0))) {
+  if (Object.keys(payload).some(key => present(payload[key]) && !["uomId", "surfaceIds", "clientVisible", "applicableTiers", "dimensionsMandatory"].includes(key) && (!Array.isArray(payload[key]) || payload[key].length > 0))) {
     review(details, "overview-review", "Overview", true);
     preview.push(details[details.length - 1]!);
   }
+  preview.push(visibility);
+  preview.push(dimensions);
+  preview.push(...details.filter(item => item.key === "applicable-tiers"));
   return content(details, preview);
 }
 
@@ -216,6 +228,7 @@ function savedModeConfigurationRows(input: SavedSummaryProjectionInput, payload:
   const configurations = objectRows(payload.modeConfigurations, details, "mode-configurations", "Mode configurations");
   const seen = new Set<string>();
   configurations.forEach((configuration, index) => {
+    if (Object.hasOwn(payload, "inHouseComponents") && configuration.modeKind === "execution" && configuration.executionSource === "in_house") return;
     const key = `mode-configuration-${index}`;
     const group = savedModeGroup(input, configuration, seen);
     details.push(row(key, `Mode configuration ${index + 1}`, group));
@@ -277,10 +290,33 @@ function mode(input: SavedSummaryProjectionInput): SavedSummaryContent {
   const statuses: SavedSummaryRow[] = payload ? [
     savedModeRow("pmc-status", "PMC", calculations?.pmc, "modeCalculations.pmc", pmcMargin, uom),
     savedModeRow("sub-vendor-status", "Sub-Vendor", calculations?.sub_vendor, "modeCalculations.sub_vendor", subVendorMargin, uom),
-    savedModeRow("in-house-labor-status", "In-house Labor", calculations?.in_house_labor, "modeCalculations.in_house_labor", savedGrossMargin(calculations?.in_house_labor), uom),
-    savedModeRow("in-house-material-status", "In-house Material", calculations?.in_house_material, "modeCalculations.in_house_material", savedGrossMargin(calculations?.in_house_material), uom)
+    ...(!Object.hasOwn(payload, "inHouseComponents") ? [
+      savedModeRow("in-house-labor-status", "In-house Labor", calculations?.in_house_labor, "modeCalculations.in_house_labor", savedGrossMargin(calculations?.in_house_labor), uom),
+      savedModeRow("in-house-material-status", "In-house Material", calculations?.in_house_material, "modeCalculations.in_house_material", savedGrossMargin(calculations?.in_house_material), uom)
+    ] : [])
   ] : [];
   const details = [...statuses];
+  if (payload && Object.hasOwn(payload, "inHouseComponents")) {
+    const parsed = parseInHouseComponents(payload.inHouseComponents);
+    if (parsed.issues.length) review(details, "in-house-components-review", "In-house components");
+    if (!parsed.components.length) details.push(row("in-house-components-empty", "In-house components", NOT_CONFIGURED));
+    parsed.components.forEach((component, index) => {
+      const key = `in-house-component-${component.id || index}`;
+      const basketName = input.baskets.find(({ id }) => id === component.basketId)?.name.trim() || NAME_UNAVAILABLE;
+      const subBasketName = component.subBasketId === null ? "Existing In-house settings"
+        : input.subBaskets.find(({ id, basketId }) => id === component.subBasketId && basketId === component.basketId)?.name.trim()
+          || input.items.find(({ subBasketId, basketId }) => subBasketId === component.subBasketId && basketId === component.basketId)?.subBasketName?.trim() || NAME_UNAVAILABLE;
+      const group = `In-house · ${basketName} / ${subBasketName}`;
+      details.push(row(key, `In-house component ${index + 1}`, `${basketName} / ${subBasketName}`));
+      for (const [cost, label] of [["labor", "Labour"], ["material", "Material"]] as const) {
+        const settings = component[cost] as unknown as KnowledgeJsonValue;
+        const status = savedModeRow(`${key}-${cost}`, `${group} · ${label}`, settings, `modeCalculations.in_house_${cost}`, savedGrossMargin(settings), uom);
+        statuses.push(status);
+        details.push(status);
+      }
+      savedModeScopeRows(details, { inclusions: component.inclusions.map((item) => ({ ...item })), exclusions: component.exclusions.map((item) => ({ ...item })) }, key, group);
+    });
+  }
   if (payload) savedModeConfigurationRows(input, payload, details);
   if (pricing) savedModePricingRows(pricing, details);
   return { details, preview: statuses.length ? statuses : details.slice(0, 3).map(item => ({ ...item, value: concise(item.value) })) };

@@ -3,7 +3,7 @@ import { Pressable, Text, View } from "react-native";
 import { Button, DetailIcon, Field, IconButton } from "./knowledgeDetailUi";
 import { knowledgeRowId } from "../../../../shared/knowledge/knowledgeId";
 import type { KnowledgeJsonObject, KnowledgeJsonValue } from "../../../../shared/knowledge/knowledgeTypes";
-import { parseKnowledgeModeConfigurations, partitionKnowledgeModeConfigurations, type KnowledgeModeConfiguration } from "../../../../shared/knowledge/knowledgeModeConfiguration";
+import { partitionKnowledgeModeConfigurations, type KnowledgeModeConfiguration } from "../../../../shared/knowledge/knowledgeModeConfiguration";
 import { generateModeDescription, modeDescriptionIssues, syncModeDescription } from "../../../../shared/knowledge/knowledgeModeDescription";
 import { modeSelectionForPayload } from "../../../../shared/knowledge/knowledgeModeSelection";
 import { MODE_CALCULATION_SCOPES, MODE_CALCULATION_LABELS, modeCalculationsForPayload, modeCalculationsIssues, parseModeCalculationDraft, parseModeQuantity, type ModeCalculationScope } from "../../../../shared/knowledge/knowledgeModeCalculation";
@@ -13,13 +13,17 @@ import { inHouseScopeStarterItems, subVendorScopeStarterItems, MAX_PMC_SCOPE_ITE
 import { parseKnowledgeSpecifications, validateKnowledgeBrands } from "../../../../shared/knowledge/knowledgeSpecificationConfiguration";
 import type { KnowledgeModeEditorProps } from "./knowledgeEditorContracts";
 import { KnowledgeCard, KnowledgeChoice, KnowledgeModal, KnowledgeText, knowledgeStyles } from "./knowledgeDetailUi";
-import { isKnowledgeObject, knowledgeText, nativeCalculationChange, nativeCalculationDraft, nativePercentage } from "./knowledgeModeNativeModel";
+import { isKnowledgeObject, knowledgeText, nativeCalculationChange, nativeCalculationDraft, nativeModeConfigurations, nativePercentage } from "./knowledgeModeNativeModel";
 import { KnowledgeModeSimulator, type SimulatorScope } from "./KnowledgeModeSimulator";
 import { KnowledgeSpecificationsEditor } from "./KnowledgeSpecificationsEditor";
+import { projectKnowledgeSavedSummary } from "../../../../shared/knowledge/knowledgeSavedSummary";
+import { inHouseComponentsIssues } from "../../../../shared/knowledge/knowledgeInHouseComponents";
 import { ModeSection, modeStyles } from "./KnowledgeModePresentation";
 
-export function KnowledgeModeEditor({ item, payload, onChange, pricingPayload, onPricingChange, overviewPayload, context, masters, catalogsReady, readOnly, onValidityChange, referencedSpecificationIds = [] }: KnowledgeModeEditorProps) {
-  const parsed = parseKnowledgeModeConfigurations(payload.modeConfigurations, masters.modes ?? []);
+export function KnowledgeModeEditor({ item, payload, onChange, pricingPayload, onPricingChange, overviewPayload, context, masters, catalogsReady, readOnly, onValidityChange, referencedSpecificationIds = [], inHouseSummary }: KnowledgeModeEditorProps) {
+  const componentInHouse = Object.hasOwn(payload, "inHouseComponents");
+  const componentSummary = componentInHouse ? inHouseSummary ?? projectKnowledgeSavedSummary({ sections: { advanced: payload, overview: overviewPayload }, masters, baskets: [], items: [], subBaskets: [] }).mode.details.filter(row => row.key.startsWith("in-house-component")) : [];
+  const parsed = nativeModeConfigurations(payload, masters.modes ?? []);
   const partition = partitionKnowledgeModeConfigurations(parsed.configurations);
   const values = modeCalculationsForPayload(payload);
   const [visible, setVisible] = useState(() => {
@@ -36,16 +40,16 @@ export function KnowledgeModeEditor({ item, payload, onChange, pricingPayload, o
   const drafts = Object.fromEntries(MODE_CALCULATION_SCOPES.map(scope => [scope, nativeCalculationDraft(values[scope])])) as Parameters<typeof KnowledgeModeSimulator>[0]["initialDrafts"];
   const descriptionSource = typeof payload.modeDescription === "string" ? payload.modeDescription : generateModeDescription(item.mainLineName, partition.primary.pmc, partition.primary.execution.in_house);
   const description = descriptionBackup === null ? syncModeDescription(descriptionSource, partition.primary.pmc, undefined, partition.primary.execution.in_house) : descriptionSource;
-  const issues = [...parsed.issues, ...modeDescriptionIssues(payload.modeDescription), ...modeCalculationsIssues(payload), ...pmcMarginRangeIssues(payload), ...subVendorMarginRangeIssues(payload), ...validateKnowledgeBrands(pricingPayload.brands), ...parseKnowledgeSpecifications(pricingPayload.specifications, pricingPayload.brands ?? []).issues];
+  const issues = [...parsed.issues, ...inHouseComponentsIssues(payload), ...modeDescriptionIssues(payload.modeDescription), ...modeCalculationsIssues(payload), ...pmcMarginRangeIssues(payload), ...subVendorMarginRangeIssues(payload), ...validateKnowledgeBrands(pricingPayload.brands), ...parseKnowledgeSpecifications(pricingPayload.specifications, pricingPayload.brands ?? []).issues];
   // Decimal-scale validation is additional to JSON shape validation and applies to hidden scopes too.
-  const inputIssues = MODE_CALCULATION_SCOPES.flatMap(scope => values[scope] == null ? [] : Object.values(parseModeCalculationDraft(drafts[scope], uom.scale ?? 6, scope !== "pmc" && scope !== "sub_vendor").errors));
+  const inputIssues = MODE_CALCULATION_SCOPES.flatMap(scope => values[scope] == null || componentInHouse && scope.startsWith("in_house") ? [] : Object.values(parseModeCalculationDraft(drafts[scope], uom.scale ?? 6, scope !== "pmc" && scope !== "sub_vendor").errors));
   const valid = issues.length === 0 && inputIssues.length === 0 && descriptionBackup === null;
   useEffect(() => onValidityChange?.(valid), [valid, onValidityChange]);
   const rawRows = Array.isArray(payload.modeConfigurations) ? payload.modeConfigurations : [];
   function updateRows(rows: readonly KnowledgeJsonValue[]) {
     if (readOnly) return;
     const next = { ...payload, modeConfigurations: [...rows] };
-    const nextPartition = partitionKnowledgeModeConfigurations(parseKnowledgeModeConfigurations(next.modeConfigurations, masters.modes ?? []).configurations);
+    const nextPartition = partitionKnowledgeModeConfigurations(nativeModeConfigurations(next, masters.modes ?? []).configurations);
     onChange(typeof payload.modeDescription === "string" ? { ...next, modeDescription: syncModeDescription(payload.modeDescription, nextPartition.primary.pmc, partition.primary.pmc, nextPartition.primary.execution.in_house, partition.primary.execution.in_house) } : next);
   }
   function updateScope(source: "sub_vendor" | "in_house", list: KnowledgePmcScopeList, rows: readonly KnowledgeJsonValue[]) {
@@ -127,7 +131,10 @@ export function KnowledgeModeEditor({ item, payload, onChange, pricingPayload, o
       <KnowledgeText>Execution source. Select one or both; each keeps its own settings.</KnowledgeText>
       <View style={modeStyles.selectorRow}><View style={modeStyles.selector}><KnowledgeChoice multiple label="Sub-Vendor" selected={visible.sub_vendor} onPress={() => setVisible(previous => ({ ...previous, sub_vendor: !previous.sub_vendor }))} /></View><View style={modeStyles.selector}><KnowledgeChoice multiple label="In-house" selected={visible.in_house} onPress={() => setVisible(previous => ({ ...previous, in_house: !previous.in_house }))} /></View></View>
       {visible.sub_vendor ? section("sub_vendor", "Sub-Vendor", <>{scopeLists("sub_vendor")}{calculation("sub_vendor")}</>) : null}
-      {visible.in_house ? section("in_house", "In-house", <>{scopeLists("in_house")}{calculation("in_house_labor")}{calculation("in_house_material")}<Button label="Test In-house total" variant="secondary" onPress={() => setSimulation("in_house_total")} /></>) : null}
+      {visible.in_house ? section("in_house", "In-house", componentInHouse ? <>
+        <KnowledgeText>In-house components are shown read-only. Manage components, scopes and pricing in the web Configuration workspace.</KnowledgeText>
+        {componentSummary.map(row => <View key={row.key}><Text style={knowledgeStyles.subtitle}>{row.label}</Text><KnowledgeText>{row.value}</KnowledgeText></View>)}
+      </> : <>{scopeLists("in_house")}{calculation("in_house_labor")}{calculation("in_house_material")}<Button label="Test In-house total" variant="secondary" onPress={() => setSimulation("in_house_total")} /></>) : null}
     </>) : null}
     </View>
     {recoveries.length ? <KnowledgeCard title="Saved Mode configurations needing recovery"><KnowledgeText>These historical definitions remain separate until explicitly moved or removed.</KnowledgeText>
@@ -141,7 +148,7 @@ export function KnowledgeModeEditor({ item, payload, onChange, pricingPayload, o
       </KnowledgeCard>)}
     </KnowledgeCard> : null}
     <KnowledgeSpecificationsEditor payload={pricingPayload} onChange={onPricingChange} readOnly={readOnly} protectedIds={referencedSpecificationIds} />
-    {simulation ? <KnowledgeModeSimulator key={`${context.scopeKey}:${simulation}:${uom.id}`} scope={simulation} context={context} payload={payload} initialDrafts={drafts} uom={uom} onClose={() => setSimulation(null)} /> : null}
+    {simulation && !(componentInHouse && simulation.startsWith("in_house")) ? <KnowledgeModeSimulator key={`${context.scopeKey}:${simulation}:${uom.id}`} scope={simulation} context={context} payload={payload} initialDrafts={drafts} uom={uom} onClose={() => setSimulation(null)} /> : null}
     {removeRecovery !== null ? <KnowledgeModal title="Remove saved configuration?" onClose={() => setRemoveRecovery(null)}><KnowledgeText>Its components will be removed from the draft. Calculation and margin settings remain.</KnowledgeText><Button label="Remove configuration" variant="danger" disabled={readOnly} onPress={() => { updateRows(rawRows.filter((_, index) => index !== removeRecovery)); setRemoveRecovery(null); }} /></KnowledgeModal> : null}
   </View>;
 }

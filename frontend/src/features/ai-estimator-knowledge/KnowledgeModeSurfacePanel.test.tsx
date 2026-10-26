@@ -39,6 +39,44 @@ function renderPanel(
 }
 
 describe("KnowledgeModeSurfacePanel", () => {
+  it("keeps Configuration artwork decorative and surface selection keyboard-operable", async () => {
+    const user = userEvent.setup();
+    const { props } = renderPanel({ presentation: "configuration" }, { inLandmark: true });
+    expect(screen.getByRole("rowheader", { name: "Wall surface" })).toBeVisible();
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
+
+    const selector = screen.getByRole("button", { name: "Applicable surfaces" });
+    selector.focus();
+    await user.keyboard("{Enter}");
+    const search = screen.getByRole("searchbox", { name: "Search surfaces" });
+    expect(search).toHaveFocus();
+    await user.type(search, "Floor");
+    await user.keyboard("{ArrowDown}{Enter}");
+    expect(props.onChange).toHaveBeenCalledExactlyOnceWith([floorSurface.id, wallSurface.id]);
+    await user.keyboard("{Escape}");
+    expect(selector).toHaveFocus();
+    expect(selector).toHaveAttribute("aria-expanded", "false");
+
+    const results = await axe.run(document.body, {
+      rules: { "color-contrast": { enabled: false } }
+    });
+    expect(results.violations).toEqual([]);
+  });
+
+  it("locks Configuration creation, editing and detachment while saving", async () => {
+    const user = userEvent.setup();
+    const onEditSurface = vi.fn();
+    const { props } = renderPanel({ presentation: "configuration", saving: true, onEditSurface });
+    for (const name of ["Applicable surfaces", "Add Surface", "Create Surface", "Edit reusable surface Wall surface", "Remove Wall surface from Main Line"]) {
+      const button = screen.getByRole("button", { name });
+      expect(button).toBeDisabled();
+      await user.click(button);
+    }
+    expect(props.onChange).not.toHaveBeenCalled();
+    expect(props.onQuickAdd).not.toHaveBeenCalled();
+    expect(onEditSurface).not.toHaveBeenCalled();
+  });
+
   it("labels proposed surface rows and permits line unselection without routing them to shared editing", async () => {
     const user = userEvent.setup();
     const proposed = { id: "proposal-surface", name: "Acoustic panel", description: "Timber backing" };
@@ -85,9 +123,9 @@ describe("KnowledgeModeSurfacePanel", () => {
     expect(screen.getByText(status === "loading" ? "Loading surfaces…" : "Surfaces could not be loaded.")).toBeVisible();
   });
 
-  it("keeps Procurement surface inspection read-only without hiding saved rows", async () => {
+  it.each(["procurement-basket", "configuration"] as const)("keeps %s surface inspection read-only without hiding saved rows", async presentation => {
     const user = userEvent.setup();
-    const { props } = renderPanel({ presentation: "procurement-basket", readOnly: true });
+    const { props } = renderPanel({ presentation, readOnly: true });
     expect(screen.getByRole("table", { name: "Selected surface details" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Remove Wall surface from Main Line" })).toBeDisabled();
     await user.click(screen.getByRole("button", { name: "Applicable surfaces" }));
@@ -132,13 +170,13 @@ describe("KnowledgeModeSurfacePanel", () => {
     expect(screen.queryByRole("button", { name: "Create Surface" })).not.toBeInTheDocument();
   });
 
-  it("shows retained Overview rows in selection order and only edits known non-archived reusable surfaces", async () => {
+  it.each(["overview", "configuration"] as const)("shows retained %s rows in selection order and only edits known non-archived reusable surfaces", async presentation => {
     const user = userEvent.setup();
     const retired = { ...floorSurface, status: "inactive" as const };
     const archived = { ...surface("surface-archived", "Archived ceiling"), status: "archived" as const };
     const onEditSurface = vi.fn();
     const { props } = renderPanel({
-      presentation: "overview",
+      presentation,
       selectedIds: [retired.id, "surface-unknown", archived.id, wallSurface.id],
       surfaces: [wallSurface, retired, archived],
       onEditSurface
@@ -164,11 +202,11 @@ describe("KnowledgeModeSurfacePanel", () => {
     expect(onEditSurface).toHaveBeenCalledOnce();
   });
 
-  it("allows Overview unselection without reusable edit permission and keeps both create shortcuts on the same workflow", async () => {
+  it.each(["overview", "configuration"] as const)("allows %s unselection without reusable edit permission and keeps both create shortcuts on the same workflow", async presentation => {
     const user = userEvent.setup();
     const counterSurface = surface("surface-counter-returned", "Counter surface");
     const { props } = renderPanel({
-      presentation: "overview",
+      presentation,
       onQuickAdd: vi.fn((select) => select(counterSurface))
     });
 
@@ -182,9 +220,12 @@ describe("KnowledgeModeSurfacePanel", () => {
     expect(props.onChange).toHaveBeenLastCalledWith([]);
   });
 
-  it.each(["loading", "error"] as const)("does not offer Overview row actions while the catalog is %s", (status) => {
+  it.each([
+    ["overview", "loading"], ["overview", "error"],
+    ["configuration", "loading"], ["configuration", "error"]
+  ] as const)("does not offer %s row actions while the catalog is %s", (presentation, status) => {
     renderPanel({
-      presentation: "overview",
+      presentation,
       catalogState: { status },
       onEditSurface: vi.fn()
     });
@@ -196,8 +237,8 @@ describe("KnowledgeModeSurfacePanel", () => {
     expect(screen.getByRole("button", { name: "Create Surface" })).toBeDisabled();
   });
 
-  it("keeps the empty Overview table honest without adding categories or selection checkboxes", () => {
-    renderPanel({ presentation: "overview", selectedIds: [] });
+  it.each(["overview", "configuration"] as const)("keeps the empty %s table honest without adding categories or selection checkboxes", presentation => {
+    renderPanel({ presentation, selectedIds: [] });
 
     expect(screen.getByRole("table", { name: "Selected surface details" })).toHaveTextContent("No surfaces selected.");
     expect(screen.queryByRole("button", { name: /Remove .* from Main Line/u })).not.toBeInTheDocument();

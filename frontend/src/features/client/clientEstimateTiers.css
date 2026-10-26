@@ -1,0 +1,20 @@
+.client-estimate-tiers { display: grid; gap: var(--space-4); min-width: 0; padding-block: var(--space-5); border-block: 1px solid var(--color-border); }
+.client-estimate-tiers h2, .client-estimate-tiers h3, .client-estimate-tiers p, .client-estimate-tiers dl { margin: 0; }
+.client-estimate-tiers h2 { font: var(--type-section-title); }
+.client-estimate-tiers h3 { font: var(--type-heading-3); }
+.client-estimate-tiers p { line-height: 1.6; }
+.client-estimate-tiers__header, .client-estimate-tiers__line-heading { display: flex; flex-wrap: wrap; justify-content: space-between; gap: var(--space-3); }
+.client-estimate-tiers__header > div { flex: 1 1 24rem; }
+.client-estimate-tiers dt, .client-estimate-tiers small { color: var(--color-text-muted); font-size: var(--text-sm); }
+.client-estimate-tiers dd { margin: var(--space-1) 0 0; font: var(--type-heading-3); font-variant-numeric: tabular-nums; }
+.client-estimate-tiers__line { display: grid; gap: var(--space-3); border-block-start: 1px solid var(--color-border); padding-block-start: var(--space-4); min-width: 0; }
+.client-estimate-tiers__line-heading > * { min-width: 0; overflow-wrap: anywhere; }
+.client-estimate-tiers__choices, .client-estimate-tiers__components { margin: 0; padding: 0; border: 0; display: flex; flex-wrap: wrap; gap: var(--space-4); }
+.client-estimate-tiers legend { margin-block-end: var(--space-2); font-weight: 600; }
+.client-estimate-tiers__choices > label, .client-estimate-tiers__components > label { display: flex; align-items: start; gap: var(--space-2); max-width: 100%; }
+.client-estimate-tiers__choices input[type="radio"], .client-estimate-tiers__components input[type="checkbox"] { flex: 0 0 auto; margin-block-start: .25rem; accent-color: var(--color-text); }
+.client-estimate-tiers__choices > label > span, .client-estimate-tiers__components > label > span { overflow-wrap: anywhere; }
+.client-estimate-tiers small { display: block; line-height: 1.5; }
+.client-estimate-tiers__actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); }
+.client-estimate-tiers__actions p { flex-basis: 100%; }
+@media (max-width: 600px) { .client-estimate-tiers__choices { flex-direction: column; gap: var(--space-3); } .client-estimate-tiers__line-heading > p { flex-basis: 100%; } }

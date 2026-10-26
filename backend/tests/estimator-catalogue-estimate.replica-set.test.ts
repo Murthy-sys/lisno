@@ -1,5 +1,5 @@
 import { normalizeDesignRules, designRulesDigest } from "../src/domain/main-line-design-rules.js";
-import { resolveCurrentMainLineDesignRules } from "../src/services/estimator-catalogue.service.js";
+import { resolveCurrentMainLineDesignRules, resolveEstimatorCatalogueLines } from "../src/services/estimator-catalogue.service.js";
 import { assertCurrentConfiguredPublication, toEstimateSnapshot } from "../src/services/estimate-publication.service.js";
 import express from "express";
 import request from "supertest";
@@ -91,6 +91,17 @@ const estimateInput = (lineItems: unknown[], selectedMainBasketIds = ["basket-a"
   selectedMainBasketIds, lineItems, ...(expectedVersion === undefined ? {} : { expectedVersion })
 });
 
+async function previewedComponentLine(server: ReturnType<typeof app>["server"], leadId: string, line: Record<string, any>) {
+  const response = await request(server).post(`/api/v1/leads/${leadId}/estimate/in-house-preview`).set(bearer("estimator")).send({ lines: [{
+    key: `${line.roomId}:${line.mainLineId}`, mainLineId: line.mainLineId, roomId: line.roomId, pricingMode: "in_house", rateSource: "configuration",
+    modeTier: line.modeTier ?? "signature", selectedInHouseComponentIds: line.selectedInHouseComponentIds, quantity: line.quantity,
+    revisionId: line.revisionId, itemVersion: line.itemVersion, revisionVersion: line.revisionVersion, uomId: line.uomId,
+    ...(line.dimensions ? { dimensions: line.dimensions, expectedDimensionRule: line.expectedDimensionRule } : {})
+  }] }).expect(200);
+  expect(response.body.data.lines[0].state).toBe("ready");
+  return { ...line, ratePaise: null, pricingBasis: "in_house_components_v1", componentPricingFingerprint: response.body.data.lines[0].componentPricing.inputFingerprint };
+}
+
 type FixtureItem = {
   id: string;
   status: "draft" | "active" | "inactive" | "archived";
@@ -132,6 +143,89 @@ async function seedFixtureItem(input: FixtureItem) {
 }
 
 describe("estimator configured catalogue and estimate", { timeout: 30_000 }, () => {
+  it("keeps screen-hidden rows internally available, freezes visibility, and preserves every amount", async () => {
+    await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: "overview-a" }, { $set: { "payload.clientVisible": false } });
+    await AiEstimatorKnowledgeMainLineModel.collection.updateOne({ _id: "line-a" }, { $set: { estimationVisibility: "external" } });
+    const resolved = await resolveEstimatorCatalogueLines(["line-a", "line-b"]);
+    expect(resolved.get("line-a")!.line.clientVisible).toBe(false);
+    expect(resolved.get("line-b")!.line.clientVisible).toBe(true);
+    const { server } = app();
+    const path = "/api/v1/leads/lead-client-visibility/estimate";
+    const lines = [configuredLine({ rateSource: "manual", pricingMode: "sub_vendor" }), configuredLine({
+      catalogueId: "line-b", mainLineId: "line-b", mainBasketId: "basket-b", subBasketId: "sub-b", revisionId: "revision-b",
+      uomId: "uom-ea", quantity: 2, ratePaise: 5003, rateSource: "manual", pricingMode: "sub_vendor"
+    })];
+    const saved = await request(server).put(path).set(bearer("estimator"))
+      .send(estimateInput(lines, ["basket-a", "basket-b"])).expect(200);
+    expect(saved.body.data.lineItems).toHaveLength(2);
+    expect(saved.body.data.lineItems.map((line: { clientVisible: boolean }) => line.clientVisible)).toEqual([false, true]);
+    const stored = await EstimateModel.findById(saved.body.data.id).lean();
+    expect(stored).toMatchObject({ subtotalPaise: 26255, gstPaise: 4726, totalPaise: 30981 });
+    const frozen = toEstimateSnapshot(stored as never, { clientName: "Client", projectName: "Project", location: "City" } as never);
+    expect(frozen.lineItems).toHaveLength(2);
+    expect(frozen.lineItems[0]).toMatchObject({ mainLineName: "Wiring", clientVisible: false, amountPaise: 16249 });
+    expect(frozen.lineItems[1]).toMatchObject({ mainLineName: "Cabinet", clientVisible: true, amountPaise: 10006 });
+    expect(frozen).toMatchObject({ subtotalPaise: 26255, gstPaise: 4726, totalPaise: 30981 });
+    await assertCurrentConfiguredPublication(stored as never);
+    await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: "overview-a" }, { $set: { "payload.clientVisible": true } });
+    await expect(assertCurrentConfiguredPublication(stored as never)).rejects.toMatchObject({ code: "ESTIMATE_CONFIGURATION_CHANGED" });
+    const refreshed = await request(server).get(path).set(bearer("estimator")).expect(200);
+    expect(refreshed.body.data.lineItems[0].clientVisible).toBe(true);
+    expect((await EstimateModel.findById(saved.body.data.id).lean())!.lineItems[0].clientVisible).toBe(false);
+    expect(frozen.lineItems[0]!.clientVisible).toBe(false);
+    expect(refreshed.body.data.totalPaise).toBe(stored!.totalPaise);
+  });
+
+  it("uses the same latest saved Draft Overview for visibility and UOM and snapshots that source", async () => {
+    await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: "overview-a" }, { $set: { "payload.clientVisible": true } });
+    await AiEstimatorKnowledgeRevisionModel.collection.insertOne({ _id: "visibility-draft", mainLineId: "line-a", status: "draft", version: 2 } as never);
+    await AiEstimatorKnowledgeMainLineModel.collection.updateOne({ _id: "line-a" }, { $set: { draftRevisionId: "visibility-draft" } });
+    await AiEstimatorKnowledgeSectionModel.collection.insertOne({ _id: "overview-visibility-draft", mainLineId: "line-a",
+      revisionId: "visibility-draft", sectionKey: "overview", payload: { uomId: "uom-sq", clientVisible: false } } as never);
+    expect((await resolveEstimatorCatalogueLines(["line-a"])).get("line-a")!.line)
+      .toMatchObject({ revisionId: "visibility-draft", revisionVersion: 2, clientVisible: false, uom: { id: "uom-sq" } });
+    const saved = await request(app().server).put("/api/v1/leads/lead-visibility-draft/estimate").set(bearer("estimator"))
+      .send(estimateInput([configuredLine({ revisionId: "visibility-draft" })])).expect(200);
+    expect(saved.body.data.lineItems[0]).toMatchObject({ revisionId: "visibility-draft", sourceRevisionVersion: 2, clientVisible: false });
+  });
+
+  it("rejects caller-forged visibility and keeps absent historical flags visible without writes on read", async () => {
+    const { server } = app();
+    const path = "/api/v1/leads/lead-visibility-authority/estimate";
+    for (const clientVisible of [false, true]) {
+      await request(server).put(path).set(bearer("estimator"))
+        .send(estimateInput([configuredLine({ clientVisible })])).expect(400);
+    }
+    expect(await EstimateModel.countDocuments({ leadId: "lead-visibility-authority" })).toBe(0);
+    const saved = await request(server).put(path).set(bearer("estimator"))
+      .send(estimateInput([configuredLine()])).expect(200);
+    await EstimateModel.collection.updateOne({ _id: saved.body.data.id }, { $unset: { "lineItems.0.clientVisible": "" } });
+    const historical = await EstimateModel.findById(saved.body.data.id).lean();
+    expect(historical!.lineItems[0]).not.toHaveProperty("clientVisible");
+    await assertCurrentConfiguredPublication(historical as never);
+    const frozen = toEstimateSnapshot(historical as never, { clientName: "Client", projectName: "Project", location: "City" } as never);
+    expect(frozen.lineItems[0]).not.toHaveProperty("clientVisible");
+    const refreshed = await request(server).get(path).set(bearer("estimator")).expect(200);
+    expect(refreshed.body.data.lineItems[0].clientVisible).toBe(true);
+    expect((await EstimateModel.findById(saved.body.data.id).lean())!.lineItems[0]).not.toHaveProperty("clientVisible");
+  });
+
+  it("requires saving a changed visibility choice before high-value submission without repricing", async () => {
+    const { server, publication } = app();
+    const path = "/api/v1/leads/lead-visibility-submit/estimate";
+    const line = configuredLine({ rateSource: "manual", ratePaise: 200_000_000, quantity: 1 });
+    const saved = await request(server).put(path).set(bearer("estimator")).send(estimateInput([line])).expect(200);
+    await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: "overview-a" }, { $set: { "payload.clientVisible": false } });
+    const rejected = await request(server).post(`${path}/submit`).set(bearer("estimator")).expect(409);
+    expect(rejected.body.error.code).toBe("ESTIMATE_CONFIGURATION_CHANGED");
+    const resaved = await request(server).put(path).set(bearer("estimator"))
+      .send(estimateInput([line], ["basket-a"], saved.body.data.version)).expect(200);
+    expect(resaved.body.data.lineItems[0]).toMatchObject({ clientVisible: false, ratePaise: 200_000_000, amountPaise: 200_000_000 });
+    expect(resaved.body.data.totalPaise).toBe(saved.body.data.totalPaise);
+    await request(server).post(`${path}/submit`).set(bearer("estimator")).expect(200);
+    expect(publication.publishEstimateToClient).not.toHaveBeenCalled();
+  });
+
   it("snapshots Design rules for manual-price lines and freezes public notes independently from later Configuration", async () => {
     const rules = normalizeDesignRules({ answers: { stockCheck: true, maintenanceAccess: true, vendorPreDiscussed: true },
       discussedVendorId: "internal-vendor", details: { vendorPreDiscussed: "INTERNAL DISCUSSION", maintenanceAccess: "Keep the service hatch accessible." } });
@@ -1560,3 +1654,297 @@ async function seedConfiguration() {
     { _id: "overview-temp-direct", mainLineId: "line-temp-direct", revisionId: "revision-temp-direct", sectionKey: "overview", applicability: "applicable", payload: { uomId: "uom-ea" } }
   ] as never[]);
 }
+
+describe("estimate In-house component selections", { timeout: 30_000 }, () => {
+  const settings = (baseRatePaise: number) => ({ baseRatePaise, lowQuantityLimit: "10", impactBps: 1000, minimumMarkupBps: 1000, startingMarkupBps: 2500 });
+  const components = () => [{ id: "component-electrical", basketId: "basket-a", subBasketId: "sub-a", inclusions: [], exclusions: [], labor: settings(1001), material: settings(2002) },
+    { id: "component-joinery", basketId: "basket-b", subBasketId: "sub-b", inclusions: [], exclusions: [], labor: settings(3003), material: settings(4004) }];
+  async function configure(inHouseComponents: unknown = components()) {
+    await AiEstimatorKnowledgeSectionModel.collection.insertOne({ _id: "component-mode", mainLineId: "line-a", revisionId: "revision-a", sectionKey: "advanced", applicability: "configured",
+      payload: { inHouseComponents, modeCalculations: { pmc: settings(700), sub_vendor: settings(800), in_house: settings(99999) } } } as never);
+  }
+  const line = (overrides: Record<string, unknown> = {}) => configuredLine({ classification: "special", pricingMode: "in_house", rateSource: "configuration", ratePaise: 3003,
+    selectedInHouseComponentIds: ["component-electrical"], itemVersion: 1, revisionVersion: 1, ...overrides });
+
+  it("projects cross-catalogue component labels and only each component's base sum", async () => {
+    await configure();
+    const response = await request(app().server).get("/api/v1/estimation/catalogue?limit=100").set(bearer("estimator")).expect(200);
+    const projected = response.body.data.items.flatMap((basket: any) => basket.subBaskets.flatMap((sub: any) => sub.mainLines)).find((entry: any) => entry.id === "line-a");
+    expect(projected).toMatchObject({ inHouseBaseRatePaise: null, modeBaseRatesPaise: { in_house: null }, inHouseComponents: [
+      { id: "component-electrical", basketName: "Electrical", subBasketName: "Shared", baseRatePaise: 3003 },
+      { id: "component-joinery", basketName: "Joinery", subBasketName: "Shared", baseRatePaise: 7007 }
+    ] });
+    expect(projected.inHouseComponents[0]).not.toHaveProperty("labor");
+  });
+  it("requires deliberate IDs, persists them, and freezes the selection in client snapshots", async () => {
+    await configure();
+    const { server } = app();
+    for (const ids of [undefined, [], ["missing"], ["component-electrical", "component-electrical"]]) {
+      const response = await request(server).put("/api/v1/leads/components-invalid/estimate").set(bearer("estimator"))
+        .send(estimateInput([line({ selectedInHouseComponentIds: ids })]));
+      expect([400, 409]).toContain(response.status);
+    }
+    const saved = await request(server).put("/api/v1/leads/components-valid/estimate").set(bearer("estimator"))
+      .send(estimateInput([await previewedComponentLine(server, "components-valid", line())])).expect(200);
+    expect(saved.body.data.lineItems[0]).toMatchObject({ selectedInHouseComponentIds: ["component-electrical"], ratePaise: null, pricingBasis: "in_house_components_v1" });
+    const stored = await EstimateModel.findById(saved.body.data.id).lean();
+    const frozen = toEstimateSnapshot(stored as never, { clientName: "Fixture client", projectName: "Fixture project", location: "Fixture city" } as never);
+    expect(frozen.lineItems[0]).toHaveProperty("selectedInHouseComponentIds", ["component-electrical"]);
+    await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: "component-mode" }, { $set: { "payload.inHouseComponents": [components()[1]] } });
+    await expect(assertCurrentConfiguredPublication(stored as never)).rejects.toMatchObject({ code: "ESTIMATE_CONFIGURATION_CHANGED" });
+    expect(frozen.lineItems[0]).toHaveProperty("selectedInHouseComponentIds", ["component-electrical"]);
+  });
+  it("validates exact selected sum and rejects a deactivated component parent even for manual rates", async () => {
+    await configure();
+    const { server } = app();
+    await request(server).put("/api/v1/leads/components-sum/estimate").set(bearer("estimator"))
+      .send(estimateInput([line({ selectedInHouseComponentIds: ["component-joinery"], ratePaise: 3003 })])).expect(409);
+    const saved = await request(server).put("/api/v1/leads/components-sum/estimate").set(bearer("estimator"))
+      .send(estimateInput([await previewedComponentLine(server, "components-sum", line({ selectedInHouseComponentIds: ["component-joinery", "component-electrical"] }))])).expect(200);
+    expect(saved.body.data.lineItems[0].selectedInHouseComponentIds).toEqual(["component-joinery", "component-electrical"]);
+    await AiEstimatorKnowledgeBasketModel.collection.updateOne({ _id: "basket-b" }, { $set: { status: "inactive" } });
+    await request(server).put("/api/v1/leads/components-unavailable/estimate").set(bearer("estimator"))
+      .send(estimateInput([line({ selectedInHouseComponentIds: ["component-joinery"], rateSource: "manual", ratePaise: 500 })])).expect(409);
+  });
+  it("serializes high-value submission with selected component basket deactivation", async () => {
+    await configure();
+    const { server, publication } = app();
+    const path = "/api/v1/leads/components-submit-race/estimate";
+    const saved = await request(server).put(path).set(bearer("estimator"))
+      .send(estimateInput([line({ selectedInHouseComponentIds: ["component-joinery"], rateSource: "manual", ratePaise: 200_000_000, quantity: 1 })])).expect(200);
+    const session = await AiEstimatorKnowledgeBasketModel.db.startSession();
+    let componentFenceReached = false;
+    const originalFence = AiEstimatorKnowledgeBasketModel.findOneAndUpdate.bind(AiEstimatorKnowledgeBasketModel);
+    const fence = vi.spyOn(AiEstimatorKnowledgeBasketModel, "findOneAndUpdate").mockImplementation((...args) => {
+      if ((args[0] as { _id?: string })._id === "basket-b") componentFenceReached = true;
+      return originalFence(...args);
+    });
+    try {
+      session.startTransaction();
+      await AiEstimatorKnowledgeBasketModel.collection.updateOne({ _id: "basket-b" }, { $set: { status: "inactive" } }, { session });
+      let settled = false;
+      const submitting = request(server).post(`${path}/submit`).set(bearer("estimator"))
+        .then((response) => { settled = true; return response; });
+      await expect.poll(() => componentFenceReached, { timeout: 5000 }).toBe(true);
+      expect(settled).toBe(false);
+      await session.commitTransaction();
+      const result = await submitting;
+      expect(result.status).toBe(409);
+      expect(result.body.error.code).toBe("ESTIMATE_COMPONENT_SELECTION_INVALID");
+      expect(await EstimateModel.findById(saved.body.data.id).lean()).toMatchObject({ status: "draft", version: saved.body.data.version });
+      expect(publication.publishEstimateToClient).not.toHaveBeenCalled();
+    } finally {
+      fence.mockRestore();
+      if (session.inTransaction()) await session.abortTransaction();
+      await session.endSession();
+    }
+  });
+  it("does not price retained components in a not-applicable section", async () => {
+    await configure();
+    await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: "component-mode" }, { $set: { applicability: "not_applicable" } });
+    await request(app().server).put("/api/v1/leads/components-not-applicable/estimate").set(bearer("estimator"))
+      .send(estimateInput([line()])).expect(409);
+  });
+  it("keeps manual pricing possible for known components with blank settings without deriving a cost", async () => {
+    await configure([{ ...components()[0], material: null }]);
+    const { server } = app();
+    await request(server).put("/api/v1/leads/components-blank-config/estimate").set(bearer("estimator"))
+      .send(estimateInput([line({ ratePaise: null })])).expect(409);
+    const saved = await request(server).put("/api/v1/leads/components-blank-manual/estimate").set(bearer("estimator"))
+      .send(estimateInput([line({ rateSource: "manual", ratePaise: 500 })])).expect(200);
+    expect(saved.body.data.lineItems[0]).toMatchObject({ rateSource: "manual", ratePaise: 500, selectedInHouseComponentIds: ["component-electrical"] });
+  });
+});
+
+describe("estimate per-line Mode tiers", { timeout: 30_000 }, () => {
+  const settings = (baseRatePaise: number) => ({ baseRatePaise, lowQuantityLimit: "10", impactBps: 1000, minimumMarkupBps: 1000, startingMarkupBps: 2500 });
+  const mode = (rate: number) => ({ modeCalculations: { pmc: settings(rate + 10), sub_vendor: settings(rate), in_house_labor: settings(rate + 20), in_house_material: settings(rate + 30) } });
+  async function configure() {
+    await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: "overview-a" }, { $set: { "payload.applicableTiers": ["signature", "premium", "functional"] } });
+    await AiEstimatorKnowledgeSectionModel.collection.insertOne({ _id: "tier-mode", mainLineId: "line-a", revisionId: "revision-a", sectionKey: "advanced", applicability: "configured", payload: {
+      ...mode(1101), tierConfigurations: { premium: { applicability: "configured", payload: mode(2102) }, functional: { applicability: "configured", payload: mode(3103) } }
+    } } as never);
+  }
+  const line = (overrides: Record<string, unknown> = {}) => configuredLine({ pricingMode: "sub_vendor", rateSource: "configuration", itemVersion: 1, revisionVersion: 1, modeTier: "premium", ratePaise: 2102, ...overrides });
+
+  it("projects asymmetric configured prices without falling back to Signature for a missing or deselected tier", async () => {
+    await configure();
+    const source = (await resolveEstimatorCatalogueLines(["line-a"])).get("line-a")!.line;
+    expect(source.applicableTiers).toEqual(["signature", "premium", "functional"]);
+    expect(source.modeBaseRatesPaise).toEqual({ pmc: 1111, sub_vendor: 1101, in_house: 2252 });
+    expect(source.tierPricing.premium?.modeBaseRatesPaise).toEqual({ pmc: 2112, sub_vendor: 2102, in_house: 4254 });
+    expect(source.tierPricing.functional?.modeBaseRatesPaise.sub_vendor).toBe(3103);
+    const { estimatorCatalogueTierPricing } = await import("../src/services/estimator-catalogue.service.js");
+    expect(estimatorCatalogueTierPricing(source, "premium")?.modeBaseRatesPaise.sub_vendor).toBe(2102);
+    await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: "tier-mode" }, { $unset: { "payload.tierConfigurations.premium": "" } });
+    const missing = (await resolveEstimatorCatalogueLines(["line-a"])).get("line-a")!.line;
+    expect(estimatorCatalogueTierPricing(missing, "premium")).toBeNull();
+    await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: "overview-a" }, { $set: { "payload.applicableTiers": [] } });
+    const deselected = (await resolveEstimatorCatalogueLines(["line-a"])).get("line-a")!.line;
+    expect(deselected.modeBaseRatesPaise.sub_vendor).toBe(1101);
+    expect(deselected.tierPricing).toEqual({});
+    expect(estimatorCatalogueTierPricing(deselected)).toBeNull();
+  });
+
+  it("saves different tiers for the same Main Line in different rooms and preserves omitted tiers on older-client updates", async () => {
+    await configure();
+    const { server } = app(); const path = "/api/v1/leads/per-room-tiers/estimate";
+    const lines = [line(), line({ roomId: "room-two", roomName: "Bedroom", modeTier: "functional", ratePaise: 3103, quantity: 2 })];
+    const rooms = [{ id: "room-one", label: "Living room" }, { id: "room-two", label: "Bedroom" }];
+    const saved = await request(server).put(path).set(bearer("estimator")).send({ ...estimateInput(lines), rooms }).expect(200);
+    expect(saved.body.data).toMatchObject({ subtotalPaise: 8834, gstPaise: 1590, totalPaise: 10424,
+      lineItems: [{ modeTier: "premium", ratePaise: 2102, amountPaise: 2628 }, { modeTier: "functional", ratePaise: 3103, amountPaise: 6206 }] });
+    expect(new Set(saved.body.data.lineItems.map((entry: { id: string }) => entry.id)).size).toBe(2);
+    const olderInput = lines.map(({ modeTier: _tier, ...entry }) => entry);
+    const retained = await request(server).put(path).set(bearer("estimator")).send({ ...estimateInput(olderInput, ["basket-a"], saved.body.data.version), rooms }).expect(200);
+    expect(retained.body.data.lineItems.map((entry: { modeTier: string }) => entry.modeTier)).toEqual(["premium", "functional"]);
+    const reloaded = await request(server).get(path).set(bearer("estimator")).expect(200);
+    expect(reloaded.body.data.lineItems.map((entry: { modeTier: string }) => entry.modeTier)).toEqual(["premium", "functional"]);
+    const stored = await EstimateModel.findById(saved.body.data.id).lean();
+    await assertCurrentConfiguredPublication(stored as never);
+    const snapshot = toEstimateSnapshot(stored as never, { clientName: "Client", projectName: "Project", location: "City" } as never);
+    expect(snapshot.lineItems.map(entry => entry.modeTier)).toEqual(["premium", "functional"]);
+  });
+
+  it("rejects forged rates, invalid tiers and deselected tier saves and submission without mutating the estimate", async () => {
+    await configure();
+    const { server } = app(); const path = "/api/v1/leads/forged-tier-price/estimate";
+    await request(server).put(path).set(bearer("estimator")).send(estimateInput([line({ modeTier: "unknown" })])).expect(400);
+    await request(server).put(path).set(bearer("estimator")).send(estimateInput([line({ ratePaise: 1101 })])).expect(409);
+    const saved = await request(server).put(path).set(bearer("estimator")).send(estimateInput([line()])).expect(200);
+    const before = await EstimateModel.findById(saved.body.data.id).lean();
+    await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: "overview-a" }, { $set: { "payload.applicableTiers": ["signature"] } });
+    const rejected = await request(server).put(path).set(bearer("estimator")).send(estimateInput([line()], ["basket-a"], saved.body.data.version)).expect(409);
+    expect(rejected.body.error.code).toBe("ESTIMATE_MODE_TIER_UNAVAILABLE");
+    await request(server).post(`${path}/submit`).set(bearer("estimator")).expect(409);
+    expect(await EstimateModel.findById(saved.body.data.id).lean()).toEqual(before);
+    const reloaded = await request(server).get(path).set(bearer("estimator")).expect(200);
+    expect(reloaded.body.data.lineItems[0]).toMatchObject({ modeTier: "premium", ratePaise: 2102, configurationTierUnavailable: true });
+  });
+
+  it("requires explicit destination components on tier changes even when component IDs collide", async () => {
+    await configure();
+    const component = (basketId: string, subBasketId: string, labor: number, material: number) => ({ id: "shared-component", basketId, subBasketId, inclusions: [], exclusions: [], labor: settings(labor), material: settings(material) });
+    await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: "tier-mode" }, { $set: {
+      "payload.inHouseComponents": [component("basket-a", "sub-a", 1001, 2002)],
+      "payload.tierConfigurations.premium.payload.inHouseComponents": [component("basket-b", "sub-b", 3003, 4004)]
+    } });
+    const { server } = app(); const path = "/api/v1/leads/tier-components/estimate";
+    const signature = line({ classification: "special", pricingMode: "in_house", modeTier: "signature", ratePaise: 3003, selectedInHouseComponentIds: ["shared-component"] });
+    const saved = await request(server).put(path).set(bearer("estimator")).send(estimateInput([await previewedComponentLine(server, "tier-components", signature)])).expect(200);
+    const { selectedInHouseComponentIds: _ids, ...withoutSelection } = signature;
+    const missing = await request(server).put(path).set(bearer("estimator")).send(estimateInput([{ ...withoutSelection, modeTier: "premium", ratePaise: 7007 }], ["basket-a"], saved.body.data.version)).expect(409);
+    expect(missing.body.error.code).toBe("ESTIMATE_COMPONENT_SELECTION_INVALID");
+    const changed = await request(server).put(path).set(bearer("estimator")).send(estimateInput([await previewedComponentLine(server, "tier-components", { ...signature, modeTier: "premium" })], ["basket-a"], saved.body.data.version)).expect(200);
+    expect(changed.body.data.lineItems[0]).toMatchObject({ modeTier: "premium", ratePaise: null, pricingBasis: "in_house_components_v1", selectedInHouseComponentIds: ["shared-component"] });
+    expect((await AiEstimatorKnowledgeBasketModel.findById("basket-b").lean())?.dependencyEpoch).toBeGreaterThan(0);
+    await AiEstimatorKnowledgeBasketModel.collection.updateOne({ _id: "basket-b" }, { $set: { status: "inactive" } });
+    await request(server).put(path).set(bearer("estimator")).send(estimateInput([{ ...signature, modeTier: "premium", rateSource: "manual", ratePaise: 9999 }], ["basket-a"], changed.body.data.version)).expect(409);
+  });
+
+  it("includes Premium-only ready Drafts while retaining the existing missing-UOM exclusion", async () => {
+    const revisionId = await seedFixtureItem({ id: "premium-only", status: "draft", subBasketId: "sub-a", completeSections: ["overview"] });
+    await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: "overview-premium-only" }, { $set: { "payload.applicableTiers": ["premium"] } });
+    await AiEstimatorKnowledgeSectionModel.collection.insertOne({ _id: "premium-only-mode", mainLineId: "premium-only", revisionId, sectionKey: "advanced", applicability: "not_configured",
+      payload: { tierConfigurations: { premium: { applicability: "configured", payload: mode(2102) } } } } as never);
+    const source = (await resolveEstimatorCatalogueLines(["premium-only"])).get("premium-only")!.line;
+    expect(source).toMatchObject({ applicableTiers: ["premium"], modeBaseRatesPaise: { pmc: null, sub_vendor: null, in_house: null }, tierPricing: { premium: { modeBaseRatesPaise: { sub_vendor: 2102 } } } });
+    const { server } = app();
+    const payload = line({ mainLineId: "premium-only", catalogueId: "premium-only", revisionId, uomId: "uom-ea", quantity: 2, itemVersion: 2, revisionVersion: 3 });
+    await request(server).put("/api/v1/leads/premium-draft/estimate").set(bearer("estimator")).send(estimateInput([payload])).expect(200);
+    await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: "overview-premium-only" }, { $set: { "payload.uomId": null } });
+    expect((await resolveEstimatorCatalogueLines(["premium-only"])).has("premium-only")).toBe(false);
+  });
+});
+
+describe("estimate Main Line dimensions", { timeout: 30_000 }, () => {
+  const dimensions = { length: "2.50", width: "3.002", height: "50" };
+  const expectedDimensionRule = { formula: "length_width", inputUnit: "m", quantityUnit: "sq_m", uomId: "uom-sq", decimalScale: 2 };
+  const measuredLine = (overrides: Record<string, unknown> = {}) => configuredLine({ itemVersion: 1, revisionVersion: 1, rateSource: "manual", dimensions, expectedDimensionRule, quantity: 999, ...overrides });
+  async function requireDimensions(value = true) {
+    await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: "overview-a" }, { $set: { "payload.dimensionsMandatory": value } });
+  }
+  it("defaults legacy configuration to manual quantity and derives mandatory quantities from the saved UOM", async () => {
+    expect((await resolveEstimatorCatalogueLines(["line-a"])).get("line-a")!.line).toMatchObject({ dimensionsMandatory: false, dimensionRule: null });
+    await requireDimensions();
+    expect((await resolveEstimatorCatalogueLines(["line-a"])).get("line-a")!.line).toMatchObject({ dimensionsMandatory: true,
+      dimensionRule: { formula: "length_width", inputUnit: "m", quantityUnit: "sq_m", uomId: "uom-sq", decimalScale: 2 } });
+    const { server } = app(); const path = "/api/v1/leads/dimension-derived/estimate";
+    const saved = await request(server).put(path).set(bearer("estimator")).send(estimateInput([measuredLine()])).expect(200);
+    expect(saved.body.data.lineItems[0]).toMatchObject({ quantity: 7.51, amountPaise: 97622, rateSource: "manual", dimensionsMandatory: true,
+      dimensions: { length: "2.5", width: "3.002", height: "50" }, dimensionRule: { inputUnit: "m", quantityUnit: "sq_m" } });
+    expect((await request(server).get(path).set(bearer("estimator")).expect(200)).body.data.lineItems[0]).toMatchObject({ quantity: 7.51, configurationDimensionsChanged: false });
+    const { dimensions: _measurements, ...older } = measuredLine({ quantity: 7.51 });
+    const inherited = await request(server).put(path).set(bearer("estimator")).send(estimateInput([older], ["basket-a"], saved.body.data.version)).expect(200);
+    expect(inherited.body.data.lineItems[0].dimensions).toEqual({ length: "2.5", width: "3.002", height: "50" });
+    await request(server).put(path).set(bearer("estimator")).send(estimateInput([{ ...older, quantity: 40 }], ["basket-a"], inherited.body.data.version)).expect(400);
+    expect((await EstimateModel.findById(saved.body.data.id).lean())!.version).toBe(inherited.body.data.version);
+  });
+  it("requires all three positive measurements and current source pins even for manual rates", async () => {
+    await requireDimensions(); const { server } = app(); const path = "/api/v1/leads/dimension-required/estimate";
+    for (const dimensions of [undefined, { length: "1", width: "2" }, { length: "1", width: "2", height: "0" }, { length: "1", width: "2.1234567", height: "3" }]) {
+      await request(server).put(path).set(bearer("estimator")).send(estimateInput([measuredLine({ dimensions })])).expect(400);
+    }
+    await request(server).put(path).set(bearer("estimator")).send(estimateInput([measuredLine({ itemVersion: undefined })])).expect(409);
+    await request(server).put(path).set(bearer("estimator")).send(estimateInput([measuredLine({ revisionVersion: 2 })])).expect(409);
+    for (const forbidden of [{ dimensionRule: { formula: "length_width" } }, { dimensionsMandatory: false }]) await request(server).put(path)
+      .set(bearer("estimator")).send(estimateInput([measuredLine(forbidden)])).expect(400);
+    expect(await EstimateModel.countDocuments()).toBe(0);
+  });
+  it("keeps measurements independent for the same Main Line in different rooms and permits excluded incomplete rows", async () => {
+    await requireDimensions(); const { server } = app();
+    const saved = await request(server).put("/api/v1/leads/dimension-rooms/estimate").set(bearer("estimator")).send({ ...estimateInput([
+      measuredLine(), measuredLine({ roomId: "room-two", roomName: "Bedroom", dimensions: { length: "3", width: "4", height: "9" } }),
+      measuredLine({ roomId: "room-three", roomName: "Study", included: false, dimensions: undefined, quantity: 0 })
+    ]), rooms: [{ id: "room-one", label: "Living room" }, { id: "room-two", label: "Bedroom" }, { id: "room-three", label: "Study" }] }).expect(200);
+    expect(saved.body.data.lineItems.map((line: { quantity: number }) => line.quantity)).toEqual([7.51, 12, 0]);
+    expect(saved.body.data.lineItems[2]).toMatchObject({ dimensionsMandatory: true, amountPaise: 0 });
+    expect(saved.body.data.lineItems[2]).not.toHaveProperty("dimensions");
+  });
+  it("requires explicit measurement review when UOM rules change and keeps saved quantities untouched on read", async () => {
+    await requireDimensions(); const { server } = app(); const path = "/api/v1/leads/dimension-rule-change/estimate";
+    const saved = await request(server).put(path).set(bearer("estimator")).send(estimateInput([measuredLine()])).expect(200);
+    await AiEstimatorKnowledgeUomModel.collection.updateOne({ _id: "uom-sq" }, { $set: { decimalScale: 1 } });
+    const refreshed = await request(server).get(path).set(bearer("estimator")).expect(200);
+    expect(refreshed.body.data).toMatchObject({ isIncomplete: true, lineItems: [{ quantity: 7.51, configurationDimensionsChanged: true, dimensionRule: { decimalScale: 1 } }] });
+    expect((await EstimateModel.findById(saved.body.data.id).lean())!.lineItems[0]).toMatchObject({ quantity: 7.51, dimensionRule: { decimalScale: 2 } });
+    const { dimensions: _measurements, ...older } = measuredLine({ quantity: 7.51 });
+    await request(server).put(path).set(bearer("estimator")).send(estimateInput([older], ["basket-a"], saved.body.data.version)).expect(400);
+    const reviewed = await request(server).put(path).set(bearer("estimator")).send(estimateInput([measuredLine({ expectedDimensionRule: { ...expectedDimensionRule, decimalScale: 1 } })], ["basket-a"], saved.body.data.version)).expect(200);
+    expect(reviewed.body.data.lineItems[0]).toMatchObject({ quantity: 7.5, dimensionRule: { decimalScale: 1 } });
+  });
+  it("retains measurement unit history after switching No while returning quantity to manual control", async () => {
+    await requireDimensions(); const { server } = app(); const path = "/api/v1/leads/dimension-inactive-history/estimate";
+    const saved = await request(server).put(path).set(bearer("estimator")).send(estimateInput([measuredLine()])).expect(200);
+    await requireDimensions(false);
+    const { dimensions: _measurements, ...manual } = measuredLine({ quantity: 17 });
+    const inactive = await request(server).put(path).set(bearer("estimator")).send(estimateInput([manual], ["basket-a"], saved.body.data.version)).expect(200);
+    expect(inactive.body.data.lineItems[0]).toMatchObject({ quantity: 17, dimensionsMandatory: false, dimensionRule: { inputUnit: "m" }, dimensions: { length: "2.5", width: "3.002", height: "50" } });
+    expect((await request(server).get(path).set(bearer("estimator")).expect(200)).body.data.lineItems[0]).toMatchObject({ quantity: 17, configurationDimensionsChanged: false, dimensionRule: { inputUnit: "m" } });
+    await assertCurrentConfiguredPublication(await EstimateModel.findById(saved.body.data.id).lean() as never);
+  });
+  it("rejects a same-ID UOM unit rename until explicit measurement inputs acknowledge the new rule", async () => {
+    await requireDimensions(); const { server } = app(); const path = "/api/v1/leads/dimension-unit-race/estimate";
+    await request(server).put(path).set(bearer("estimator")).send(estimateInput([measuredLine({ expectedDimensionRule: undefined })])).expect(409);
+    await AiEstimatorKnowledgeUomModel.collection.updateOne({ _id: "uom-sq" }, { $set: { code: "SQFT", name: "Square foot" } });
+    const stale = await request(server).put(path).set(bearer("estimator")).send(estimateInput([measuredLine()])).expect(409);
+    expect(stale.body.error.code).toBe("ESTIMATE_DIMENSIONS_CONFIGURATION_CHANGED");
+    expect(await EstimateModel.countDocuments()).toBe(0);
+    const saved = await request(server).put(path).set(bearer("estimator")).send(estimateInput([measuredLine({
+      expectedDimensionRule: { ...expectedDimensionRule, inputUnit: "ft", quantityUnit: "sq_ft" }
+    })])).expect(200);
+    expect(saved.body.data.lineItems[0]).toMatchObject({ quantity: 7.51, dimensionRule: { inputUnit: "ft", quantityUnit: "sq_ft" } });
+    expect(saved.body.data.lineItems[0]).not.toHaveProperty("expectedDimensionRule");
+  });
+  it("fails closed for an unsupported current required UOM and invalidated source versions", async () => {
+    await requireDimensions(); const { server } = app(); const path = "/api/v1/leads/dimension-unavailable/estimate";
+    await AiEstimatorKnowledgeUomModel.collection.updateOne({ _id: "uom-sq" }, { $set: { code: "EA", name: "Each" } });
+    expect((await resolveEstimatorCatalogueLines(["line-a"])).get("line-a")!.line).toMatchObject({ dimensionsMandatory: true, dimensionRule: null });
+    const failed = await request(server).put(path).set(bearer("estimator")).send(estimateInput([measuredLine()])).expect(409);
+    expect(failed.body.error.code).toBe("ESTIMATE_DIMENSIONS_UOM_UNSUPPORTED");
+    await AiEstimatorKnowledgeUomModel.collection.updateOne({ _id: "uom-sq" }, { $set: { code: "SQM", name: "Square metre" } });
+    await AiEstimatorKnowledgeMainLineModel.collection.updateOne({ _id: "line-a" }, { $inc: { version: 1 } });
+    await request(server).put(path).set(bearer("estimator")).send(estimateInput([measuredLine()])).expect(409);
+    expect(await EstimateModel.countDocuments()).toBe(0);
+  });
+});

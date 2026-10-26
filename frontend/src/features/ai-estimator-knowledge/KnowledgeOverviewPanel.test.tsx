@@ -46,6 +46,166 @@ function renderPanel(overrides: Partial<KnowledgeOverviewPanelProps> = {}) {
 }
 
 describe("KnowledgeOverviewPanel", () => {
+  it("explains Configuration visibility accurately when the keyboard changes the client choice", async () => {
+    const user = userEvent.setup();
+    const props = renderPanel({ presentation: "configuration", showDimensions: true, showApplicableTiers: true });
+    const visibility = screen.getByRole("radiogroup", { name: "Is this main line needed for the client?" });
+    expect(visibility).toHaveAccessibleDescription("Include this main line in the client estimate screen.");
+    within(visibility).getByRole("radio", { name: "Yes" }).focus();
+    await user.keyboard("{ArrowRight}");
+    expect(props.onOverviewDirty).toHaveBeenCalledExactlyOnceWith("clientVisible");
+    expect(props.onOverviewPayloadChange).toHaveBeenCalledExactlyOnceWith({ ...overviewPayload, clientVisible: false });
+
+    props.rerender(<main><KnowledgeOverviewPanel {...props} overviewPayload={{ ...overviewPayload, clientVisible: false }} /></main>);
+    expect(visibility).toHaveAccessibleDescription("No keeps this main line internal on the client estimate screen. It remains included in the total and PDF/quotation.");
+    expect(within(visibility).getByRole("radio", { name: "No" })).toBeChecked();
+  });
+
+  it("uses the saved metric unit in Configuration guidance and preserves an explicit empty tier choice", async () => {
+    const user = userEvent.setup();
+    const metricPayload = { ...overviewPayload, uomId: squareMetre.id, applicableTiers: [] };
+    const props = renderPanel({
+      presentation: "configuration", showDimensions: true, showApplicableTiers: true,
+      overviewPayload: metricPayload,
+      masters: { ...masters, uoms: [{ ...squareMetre, code: "SQM", decimalScale: 2 }] }
+    });
+    const dimensions = screen.getByRole("radiogroup", { name: "Dimensions mandatory?" });
+    expect(dimensions).toHaveAccessibleDescription("Require Length, Width and Height from Sales or the client. If Yes, requires Length, Width and Height in m. Quantity = Length × Width in Square metre. Height is recorded separately.");
+    await user.click(within(dimensions).getByRole("radio", { name: "Yes" }));
+    expect(props.onOverviewPayloadChange).toHaveBeenLastCalledWith({ ...metricPayload, dimensionsMandatory: true });
+    expect(props.onOverviewDirty).toHaveBeenLastCalledWith("dimensionsMandatory");
+
+    const tiers = screen.getByRole("group", { name: "Applicable tiers" });
+    expect(tiers).toHaveAccessibleDescription("Save Overview to update the Mode tabs. Hiding a tier keeps its saved configuration.");
+    within(tiers).getAllByRole("checkbox").forEach(checkbox => expect(checkbox).not.toBeChecked());
+    within(tiers).getByRole("checkbox", { name: "Functional" }).focus();
+    await user.keyboard(" ");
+    expect(props.onOverviewPayloadChange).toHaveBeenLastCalledWith({ ...metricPayload, applicableTiers: ["functional"] });
+    expect(props.onOverviewDirty).toHaveBeenLastCalledWith("applicableTiers");
+
+    const result = await axe.run(document.body, { rules: { "color-contrast": { enabled: false } } });
+    expect(result.violations).toEqual([]);
+  });
+
+  it.each([{ editable: false }, { saving: true }])("locks all Configuration settings while preserving their descriptions (%j)", state => {
+    renderPanel({ presentation: "configuration", showDimensions: true, showApplicableTiers: true, ...state,
+      masters: { ...masters, uoms: [{ ...squareFoot, code: "SQFT", decimalScale: 2 }] } });
+    expect(screen.getByRole("combobox", { name: "Unit of measure (UOM)" })).toBeDisabled();
+    screen.getAllByRole("radio").forEach(radio => expect(radio).toBeDisabled());
+    screen.getAllByRole("checkbox").forEach(checkbox => expect(checkbox).toBeDisabled());
+    expect(screen.getByRole("radiogroup", { name: "Dimensions mandatory?" })).toHaveAccessibleDescription(/Length, Width and Height in ft/u);
+  });
+
+  it("retains incompatible dimension warnings in Configuration and allows clearing the requirement", async () => {
+    const payload = { ...overviewPayload, dimensionsMandatory: true };
+    const props = renderPanel({ presentation: "configuration", showDimensions: true, overviewPayload: payload,
+      masters: { ...masters, uoms: [{ ...squareFoot, code: "RFT", name: "Running feet", decimalScale: 2 }] } });
+    const dimensions = screen.getByRole("radiogroup", { name: "Dimensions mandatory?" });
+    expect(within(dimensions).getByRole("radio", { name: "Yes" })).toBeDisabled();
+    expect(dimensions).toHaveAccessibleDescription(/Select a supported area UOM/u);
+    expect(within(dimensions).getByRole("alert")).toHaveTextContent("The saved dimensions setting needs a supported area UOM");
+    await userEvent.setup().click(within(dimensions).getByRole("radio", { name: "No" }));
+    expect(props.onOverviewPayloadChange).toHaveBeenCalledExactlyOnceWith({ ...payload, dimensionsMandatory: false });
+  });
+
+  it("keeps legacy dimensions optional and enables the requirement using the configured area unit", async () => {
+    const props = renderPanel({ showDimensions: true, masters: { ...masters, uoms: [{ ...squareFoot, decimalScale: 2 }] } });
+    const group = screen.getByRole("radiogroup", { name: "Dimensions mandatory?" });
+    expect(within(group).getByRole("radio", { name: "No" })).toBeChecked();
+    expect(group).toHaveTextContent("Length, Width and Height in ft");
+    expect(group).toHaveTextContent("Height is recorded separately");
+    expect(props.onOverviewDirty).not.toHaveBeenCalled();
+    await userEvent.setup().click(within(group).getByRole("radio", { name: "Yes" }));
+    expect(props.onOverviewDirty).toHaveBeenCalledExactlyOnceWith("dimensionsMandatory");
+    expect(props.onOverviewPayloadChange).toHaveBeenCalledExactlyOnceWith({ ...overviewPayload, dimensionsMandatory: true });
+  });
+
+  it("prevents enabling area calculations for a running-feet UOM but permits removing an obsolete requirement", async () => {
+    const props = renderPanel({ showDimensions: true, overviewPayload: { ...overviewPayload, dimensionsMandatory: true },
+      masters: { ...masters, uoms: [{ ...squareFoot, code: "RFT", name: "Running feet", decimalScale: 2 }] } });
+    const group = screen.getByRole("radiogroup", { name: "Dimensions mandatory?" });
+    expect(within(group).getByRole("radio", { name: "Yes" })).toBeDisabled();
+    expect(within(group).getByRole("alert")).toHaveTextContent("supported area UOM");
+    await userEvent.setup().click(within(group).getByRole("radio", { name: "No" }));
+    expect(props.onOverviewPayloadChange).toHaveBeenLastCalledWith({ ...overviewPayload, dimensionsMandatory: false });
+  });
+
+  it.each([{ editable: false }, { saving: true }])("locks the dimensions setting when Overview cannot be edited (%j)", state => {
+    renderPanel({ showDimensions: true, ...state, masters: { ...masters, uoms: [{ ...squareFoot, decimalScale: 2 }] } });
+    const group = screen.getByRole("radiogroup", { name: "Dimensions mandatory?" });
+    within(group).getAllByRole("radio").forEach(radio => expect(radio).toBeDisabled());
+  });
+
+  it("defaults Configuration tiers to Signature and saves an explicit empty selection without changing other fields", async () => {
+    const user = userEvent.setup(); const props = renderPanel({ showApplicableTiers: true });
+    const tiers = screen.getByRole("group", { name: "Applicable tiers" });
+    expect(within(tiers).getByRole("checkbox", { name: "Signature" })).toBeChecked();
+    expect(within(tiers).getByRole("checkbox", { name: "Premium" })).not.toBeChecked();
+    expect(within(tiers).getByRole("checkbox", { name: "Functional" })).not.toBeChecked();
+    expect(props.onOverviewDirty).not.toHaveBeenCalled();
+    await user.click(within(tiers).getByRole("checkbox", { name: "Signature" }));
+    expect(props.onOverviewDirty).toHaveBeenCalledExactlyOnceWith("applicableTiers");
+    expect(props.onOverviewPayloadChange).toHaveBeenCalledExactlyOnceWith({ ...overviewPayload, applicableTiers: [] });
+    props.rerender(<main><KnowledgeOverviewPanel {...props} overviewPayload={{ ...overviewPayload, applicableTiers: [] }} /></main>);
+    expect(within(tiers).getByRole("checkbox", { name: "Signature" })).not.toBeChecked();
+    await user.click(within(tiers).getByRole("checkbox", { name: "Premium" }));
+    expect(props.onOverviewPayloadChange).toHaveBeenLastCalledWith({ ...overviewPayload, applicableTiers: ["premium"] });
+  });
+
+  it.each([{ editable: false }, { saving: true }])("locks applicable tier choices when Overview is not editable (%j)", async state => {
+    const user = userEvent.setup(); const props = renderPanel({ showApplicableTiers: true, ...state });
+    const tiers = screen.getByRole("group", { name: "Applicable tiers" });
+    within(tiers).getAllByRole("checkbox").forEach(checkbox => expect(checkbox).toBeDisabled());
+    await user.click(within(tiers).getByRole("checkbox", { name: "Premium" }));
+    expect(props.onOverviewPayloadChange).not.toHaveBeenCalled();
+  });
+
+  it("keeps tier choices out of generic and proposal Overview panels", () => {
+    renderPanel({ proposalActions: true, presentation: "procurement-basket" });
+    expect(screen.queryByRole("group", { name: "Applicable tiers" })).not.toBeInTheDocument();
+  });
+  it("defaults client visibility to Yes without changing legacy Overview payloads", () => {
+    const props = renderPanel();
+    const visibility = screen.getByRole("radiogroup", { name: "Is this main line needed for the client?" });
+    expect(within(visibility).getByRole("radio", { name: "Yes" })).toBeChecked();
+    expect(within(visibility).getByRole("radio", { name: "No" })).not.toBeChecked();
+    expect(visibility).toHaveAccessibleDescription("No keeps this main line internal on the client estimate screen. It remains included in the total and PDF/quotation.");
+    expect(props.onOverviewPayloadChange).not.toHaveBeenCalled();
+    expect(props.onOverviewDirty).not.toHaveBeenCalled();
+  });
+
+  it("changes client visibility by keyboard while preserving every other Overview value", async () => {
+    const user = userEvent.setup(); const props = renderPanel();
+    screen.getByRole("radio", { name: "Yes" }).focus();
+    await user.keyboard("{ArrowRight}");
+    expect(props.onOverviewDirty).toHaveBeenCalledExactlyOnceWith("clientVisible");
+    expect(props.onOverviewPayloadChange).toHaveBeenCalledExactlyOnceWith({ ...overviewPayload, clientVisible: false });
+    props.rerender(<main><KnowledgeOverviewPanel {...props} overviewPayload={{ ...overviewPayload, clientVisible: false }} /></main>);
+    expect(screen.getByRole("radio", { name: "No" })).toBeChecked();
+    screen.getByRole("radio", { name: "No" }).focus();
+    await user.keyboard("{ArrowLeft}");
+    expect(props.onOverviewPayloadChange).toHaveBeenLastCalledWith({ ...overviewPayload, clientVisible: true });
+    expect(props.onOverviewDirty).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([{ editable: false, saving: false }, { editable: true, saving: true }])("disables client visibility for readonly or saving Overview (%j)", async (state) => {
+    const user = userEvent.setup(); const props = renderPanel({ ...state, overviewPayload: { ...overviewPayload, clientVisible: false } });
+    expect(screen.getByRole("radio", { name: "No" })).toBeChecked();
+    for (const name of ["Yes", "No"]) expect(screen.getByRole("radio", { name })).toBeDisabled();
+    await user.click(screen.getByRole("radio", { name: "Yes" }));
+    expect(props.onOverviewPayloadChange).not.toHaveBeenCalled();
+    expect(props.onOverviewDirty).not.toHaveBeenCalled();
+  });
+
+  it("keeps the same client visibility control in shared proposal Overview", async () => {
+    const user = userEvent.setup(); const props = renderPanel({ presentation: "procurement-basket", proposalActions: true,
+      overviewPayload: { ...overviewPayload, clientVisible: false } });
+    expect(screen.getByRole("radio", { name: "No" })).toBeChecked();
+    await user.click(screen.getByRole("radio", { name: "Yes" }));
+    expect(props.onOverviewPayloadChange).toHaveBeenCalledExactlyOnceWith({ ...overviewPayload, clientVisible: true });
+    expect(props.onOverviewDirty).toHaveBeenCalledExactlyOnceWith("clientVisible");
+  });
+
   it("offers named proposal actions and selects a proposed UOM without changing hidden fields", async () => {
     const user = userEvent.setup();
     const proposedUom = { id: "proposal-uom", name: "Panel bundle", decimalScale: 1 };
@@ -111,7 +271,7 @@ describe("KnowledgeOverviewPanel", () => {
     expect(screen.getByRole("button", { name: "Remove Unavailable value from Main Line" })).toBeDisabled();
   });
 
-  it("shows only UOM and Surface configuration without context or saved section summaries", async () => {
+  it("shows UOM, client visibility and Surface configuration without context or saved section summaries", async () => {
     renderPanel();
 
     expect(screen.getByRole("combobox", { name: "Unit of measure (UOM)" })).toBeVisible();
@@ -127,7 +287,7 @@ describe("KnowledgeOverviewPanel", () => {
     ]);
     expect(within(table).queryByRole("checkbox")).not.toBeInTheDocument();
     expect(screen.getAllByRole("combobox")).toHaveLength(1);
-    expect(screen.queryByRole("radiogroup")).not.toBeInTheDocument();
+    expect(screen.getByRole("radiogroup", { name: "Is this main line needed for the client?" })).toBeVisible();
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^Open /u })).not.toBeInTheDocument();
     expect(document.querySelector(".knowledge-overview__context")).not.toBeInTheDocument();
@@ -148,9 +308,9 @@ describe("KnowledgeOverviewPanel", () => {
     expect(result.violations).toEqual([]);
   });
 
-  it("changes or clears UOM while preserving Surface selections and hidden Overview values", async () => {
+  it.each(["default", "configuration"] as const)("changes or clears UOM while preserving Surface selections and hidden Overview values (%s)", async presentation => {
     const user = userEvent.setup();
-    const props = renderPanel();
+    const props = renderPanel({ presentation });
     const uom = screen.getByRole("combobox", { name: "Unit of measure (UOM)" });
 
     await user.selectOptions(uom, squareMetre.id);
@@ -185,9 +345,9 @@ describe("KnowledgeOverviewPanel", () => {
     expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
   });
 
-  it("selects returned quick-add IDs and marks only the corresponding configuration dirty", async () => {
+  it.each(["default", "configuration"] as const)("selects returned quick-add IDs and marks only the corresponding configuration dirty (%s)", async presentation => {
     const user = userEvent.setup();
-    const props = renderPanel();
+    const props = renderPanel({ presentation });
 
     await user.click(screen.getByRole("button", { name: "Add Unit" }));
     expect(props.onQuickAddUom).toHaveBeenCalledOnce();

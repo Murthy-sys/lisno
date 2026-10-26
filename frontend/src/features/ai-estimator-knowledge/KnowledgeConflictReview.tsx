@@ -1,3 +1,5 @@
+import { parseInHouseComponents } from "../../../../shared/knowledge/knowledgeInHouseComponents";
+import { applicableKnowledgeTiers, KNOWLEDGE_MODE_TIER_LABELS } from "../../../../shared/knowledge/knowledgeModeTiers";
 import { Surface } from "../../components/ui/Surface";
 import { readSpecificationBrandIds } from "./knowledgeSpecificationConfiguration";
 import { BUDGET_ACTIONS, budgetAlterationRows, recommendationTargetKind } from "./knowledgeBudgetAlterations";
@@ -144,6 +146,7 @@ function advancedValues(
     ["sub_vendor", "Execution · Sub-Vendor"],
     ["in_house", "Execution · In-house"]
   ] as const) {
+    if (source === "in_house" && Object.hasOwn(payload, "inHouseComponents")) continue;
     const configuration = partitioned.primary.execution[source];
     if (configuration) values.push(...modeDefinitionValues(label, configuration));
   }
@@ -172,9 +175,29 @@ function advancedValues(
         : typeof value === "object" ? "Invalid value" : formatPrimitive(key, value) });
     }
   }
-  const { modeConfigurations: _privateModeConfigurations, modeDescription: _modeDescription,
+  if (Object.hasOwn(payload, "inHouseComponents")) {
+    for (const component of parseInHouseComponents(payload.inHouseComponents).components) {
+      const basket = context.relationshipBaskets.find(({ id }) => id === component.basketId)?.name ?? "Unavailable Main basket";
+      const sub = component.subBasketId === null ? "Current In-house configuration" : context.relationshipItems.find((item) => item.basketId === component.basketId && item.subBasketId === component.subBasketId)?.subBasketName ?? "Sub-basket component";
+      const prefix = `In-house · ${basket} / ${sub}`;
+      for (const list of ["inclusions", "exclusions"] as const) for (const entry of component[list]) values.push({ label: `${prefix} · ${list === "inclusions" ? "Inclusion" : "Exclusion"} · ${entry.name}`, value: entry.selected ? "Selected" : "Not selected" });
+      for (const cost of ["labor", "material"] as const) {
+        const settings = component[cost];
+        const label = `${prefix} · ${cost === "labor" ? "Labour cost" : "Material cost"}`;
+        if (!settings) { values.push({ label, value: "Not configured" }); continue; }
+        for (const [key, title] of [["baseRatePaise", "Base Rate"], ["lowQuantityLimit", "Low Quantity Limit"], ["impactBps", "Impact"], ["minimumMarkupBps", "Min. Gross Margin"], ["startingMarkupBps", "Starting Gross Margin"]] as const) values.push({ label: `${label} · ${title}`, value: formatPrimitive(key, settings[key] ?? null) });
+      }
+    }
+  }
+  const { inHouseComponents: _components, modeConfigurations: _privateModeConfigurations, modeDescription: _modeDescription,
     pmcMinimumMarginBps: _minimumPmcMargin, pmcMarginBps: _maximumPmcMargin,
-    subVendorMinimumMarginBps: _minimumMargin, subVendorMarginBps: _maximumMargin, ...otherAdvanced } = payload;
+    subVendorMinimumMarginBps: _minimumMargin, subVendorMarginBps: _maximumMargin, ...remainingAdvanced } = payload;
+  const otherAdvanced: Record<string, KnowledgeJsonValue> = { ...remainingAdvanced };
+  if (Object.hasOwn(payload, "inHouseComponents") && otherAdvanced.modeCalculations && typeof otherAdvanced.modeCalculations === "object" && !Array.isArray(otherAdvanced.modeCalculations)) {
+    const { in_house: _legacy, in_house_labor: _labor, in_house_material: _material, ...current } = otherAdvanced.modeCalculations as KnowledgeJsonObject;
+    otherAdvanced.modeCalculations = current;
+    delete otherAdvanced.modeCalculation;
+  }
   return [...values, ...projectValues(otherAdvanced, {
     ...context,
     rootPayload: otherAdvanced
@@ -220,14 +243,20 @@ function definitionConflictValues(
   ];
 }
 
-export type KnowledgeOverviewConflictField = "uomId" | "surfaceIds" | "priorityId";
+export type KnowledgeOverviewConflictField = "uomId" | "surfaceIds" | "priorityId" | "clientVisible" | "applicableTiers" | "dimensionsMandatory";
 
 function overviewValues(
   payload: KnowledgeJsonObject,
   masters: Readonly<Partial<Record<KnowledgeMasterType, readonly KnowledgeMaster[]>>>,
-  fields: readonly KnowledgeOverviewConflictField[] = ["uomId", "surfaceIds"]
+  fields: readonly KnowledgeOverviewConflictField[] = ["uomId", "surfaceIds", "clientVisible", "applicableTiers", "dimensionsMandatory"]
 ): readonly ConflictReviewValue[] {
   const values: Readonly<Record<KnowledgeOverviewConflictField, ConflictReviewValue>> = {
+    dimensionsMandatory: { label: "Dimensions mandatory", value: payload.dimensionsMandatory === true ? "Yes · Length × Width" : payload.dimensionsMandatory === undefined || payload.dimensionsMandatory === false ? "No" : "Saved configuration needs review" },
+    applicableTiers: { label: "Applicable tiers", value: applicableKnowledgeTiers(payload).map(tier => KNOWLEDGE_MODE_TIER_LABELS[tier]).join(", ") || "None" },
+    clientVisible: {
+      label: "Client estimate screen",
+      value: payload.clientVisible === false ? "No" : payload.clientVisible === undefined || payload.clientVisible === true ? "Yes" : "Saved configuration needs review"
+    },
     uomId: {
       label: "Unit of measure (UOM)",
       value: resolveMaster(payload.uomId, masters.uoms)

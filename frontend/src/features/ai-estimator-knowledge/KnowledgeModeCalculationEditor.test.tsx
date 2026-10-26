@@ -69,6 +69,27 @@ afterEach(() => { vi.useRealTimers(); });
 describe("Mode calculation configuration and simulator", () => {
   beforeEach(() => { vi.clearAllMocks(); vi.mocked(previewKnowledge).mockResolvedValue(response()); });
 
+  it.each(["pmc", "sub_vendor"] as const)("saves visible empty-tier %s inputs without requiring hidden legacy margins", (scope) => {
+    const { props } = setup({ scope, emptyDefaults: true });
+    for (const name of ["Base Rate (₹)", "Low Quantity Limit", "Impact (%)"]) expect(field(name)).toHaveValue("");
+    expect(props.onChange).not.toHaveBeenCalled();
+    expect(screen.queryByRole("textbox", { name: "Min. Gross Margin (%)" })).not.toBeInTheDocument();
+    change("Base Rate (₹)", "125"); change("Low Quantity Limit", "15"); change("Impact (%)", "10");
+    expect(props.onValidationChange).toHaveBeenLastCalledWith(true);
+    expect(props.onChange).toHaveBeenLastCalledWith({ baseRatePaise: 12500, lowQuantityLimit: "15", impactBps: 1000, minimumMarkupBps: 0, startingMarkupBps: 0 });
+  });
+
+  it("keeps visible In-house margins empty and required for a new tier", () => {
+    const { props } = setup({ scope: "in_house_labor", emptyDefaults: true });
+    expect(field("Min. Gross Margin (%)")).toHaveValue("");
+    expect(field("Starting Gross Margin (%)")).toHaveValue("");
+    change("Base Rate (₹)", "125"); change("Low Quantity Limit", "15"); change("Impact (%)", "10");
+    expect(props.onChange).not.toHaveBeenCalled();
+    expect(props.onValidationChange).toHaveBeenLastCalledWith(false);
+    change("Min. Gross Margin (%)", "25"); change("Starting Gross Margin (%)", "35");
+    expect(props.onChange).toHaveBeenLastCalledWith({ baseRatePaise: 12500, lowQuantityLimit: "15", impactBps: 1000, minimumMarkupBps: 2500, startingMarkupBps: 3500 });
+  });
+
   it.each(["in_house_labor", "in_house_material"] as const)("automatically previews %s on opening and after editable inputs or basis change", async (scope) => {
     vi.useFakeTimers();
     const { props } = setup({ scope, value: settings });

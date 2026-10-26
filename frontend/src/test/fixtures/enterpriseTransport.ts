@@ -1,3 +1,6 @@
+import { createEnterpriseComponentAmounts } from "./enterpriseComponentAmountsData";
+import type { EstimateDraftInput } from "../../features/leads/leadsApi";
+import type { EstimateInHousePreviewLine } from "../../../../shared/estimation/estimateComponentPricing";
 import { tokenStorage } from "../../api/client";
 import { ROLE_CODES, type Role, type PermissionCode } from "../../api/authorization-contract";
 import { authorizationFor } from "../authFixtures";
@@ -144,6 +147,10 @@ async function jsonBody(input: RequestInfo | URL, init?: RequestInit): Promise<u
 export function installEnterpriseTransport(scenario: EnterpriseScenario) {
   const requests: EnterpriseRequest[] = [];
   const scenarioParams = new URL(scenario.route, window.location.origin).searchParams;
+  const componentAmounts = scenarioParams.get("qaComponentAmounts") === "ready" ? createEnterpriseComponentAmounts() : null;
+  let componentPreviewFailure = false;
+  const componentPreviewState = (event: Event) => { componentPreviewFailure = (event as CustomEvent<{ fail?: boolean }>).detail?.fail === true; };
+  if (componentAmounts) window.addEventListener("enterprise-qa-component-preview", componentPreviewState);
   const estimateModesReady = scenarioParams.get("qaEstimateModes") === "ready";
   const estimateModes = estimateModesReady && scenario.state === "populated"
     ? createEnterpriseEstimateModes({ basketCards: scenarioParams.get("qaBasketCards") === "ready",
@@ -198,6 +205,17 @@ export function installEnterpriseTransport(scenario: EnterpriseScenario) {
     const inHouseReady = new URL(scenario.route, window.location.origin).searchParams.get("qaInHouse") === "ready";
     const procurementModesReady = new URL(scenario.route, window.location.origin).searchParams.get("qaProcurementModes") === "ready";
     const standardBasketReady = new URL(scenario.route, window.location.origin).searchParams.get("qaStandardBasket") === "ready";
+    if (componentAmounts && method === "POST" && path === "/leads/lead-1/estimate/in-house-preview") {
+      if (scenario.role !== "estimator_sales") { log(method, path, 403); return failure(403, "FORBIDDEN", "Estimator access is required."); }
+      if (componentPreviewFailure) { log(method, path, 503); return failure(503, "SYNTHETIC_UNAVAILABLE", "Synthetic component preview unavailable."); }
+      const data = componentAmounts.preview(await jsonBody(input, init) as { lines: EstimateInHousePreviewLine[] });
+      log(method, path, 200); return Response.json({ data });
+    }
+    if (componentAmounts && method === "PUT" && path === "/leads/lead-1/estimate") {
+      if (scenario.role !== "estimator_sales") { log(method, path, 403); return failure(403, "FORBIDDEN", "Estimator access is required."); }
+      try { const data = componentAmounts.save(await jsonBody(input, init) as EstimateDraftInput); log(method, path, 200); return Response.json({ data }); }
+      catch (error) { log(method, path, 409); return failure(409, "SYNTHETIC_VERSION_CONFLICT", String(error)); }
+    }
     if (method === "PUT" && path === "/leads/lead-1/estimate" && estimateModes) {
       if (scenario.role !== "estimator_sales") { log(method, path, 403); return failure(403, "FORBIDDEN", "Estimator access is required."); }
       try {
@@ -297,7 +315,7 @@ export function installEnterpriseTransport(scenario: EnterpriseScenario) {
         ? { items: [], unreadCount: 0, pagination: { limit: 20, offset: Number(url.searchParams.get("offset") ?? 0), total: 0, hasMore: false } }
         : failure(403, "FORBIDDEN", "Super Admin access is required.")
       : undefined;
-    const data = basketNotifications ?? readRecommendationChat(path) ?? estimateModes?.read(path, url.searchParams) ?? enterpriseDataFor(path, url.searchParams, scenario, projectRates);
+    const data = componentAmounts?.read(path) ?? basketNotifications ?? readRecommendationChat(path) ?? estimateModes?.read(path, url.searchParams) ?? enterpriseDataFor(path, url.searchParams, scenario, projectRates);
     if (data === undefined) { log(method, path, 501, true); return failure(501, "UNEXPECTED_QA_REQUEST", `No synthetic response registered for ${path}.`); }
     if (scenario.state === "loading") { log(method, path, 0); return new Promise<Response>((_resolve, reject) => { const signal = init?.signal ?? (input instanceof Request ? input.signal : undefined); if (signal?.aborted) reject(new DOMException("Aborted", "AbortError")); signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true }); }); }
     if (scenario.state === "error") { log(method, path, 503); return failure(503, "SYNTHETIC_UNAVAILABLE", "Synthetic QA: this information could not be loaded."); }
@@ -309,5 +327,5 @@ export function installEnterpriseTransport(scenario: EnterpriseScenario) {
   XMLHttpRequest.prototype.setRequestHeader = function() {};
   XMLHttpRequest.prototype.send = function() { const request = xhrRequests.get(this) ?? { method: "UNKNOWN", path: "unknown-upload" }; log(request.method, request.path, 0); queueMicrotask(() => this.dispatchEvent(new ProgressEvent("error"))); };
   XMLHttpRequest.prototype.abort = function() { this.dispatchEvent(new ProgressEvent("abort")); };
-  return { requests, restore: () => { for (const stop of chatStreamStops) stop(); window.removeEventListener("enterprise-qa-estimate-mode-rates", updateEstimateConfiguration); window.fetch = originals.fetch; tokenStorage.get = originals.get; tokenStorage.set = originals.set; tokenStorage.clear = originals.clear; XMLHttpRequest.prototype.open = originals.open; XMLHttpRequest.prototype.send = originals.send; XMLHttpRequest.prototype.setRequestHeader = originals.setRequestHeader; XMLHttpRequest.prototype.abort = originals.abort; alert.remove(); } };
+  return { requests, restore: () => { window.removeEventListener("enterprise-qa-component-preview", componentPreviewState); for (const stop of chatStreamStops) stop(); window.removeEventListener("enterprise-qa-estimate-mode-rates", updateEstimateConfiguration); window.fetch = originals.fetch; tokenStorage.get = originals.get; tokenStorage.set = originals.set; tokenStorage.clear = originals.clear; XMLHttpRequest.prototype.open = originals.open; XMLHttpRequest.prototype.send = originals.send; XMLHttpRequest.prototype.setRequestHeader = originals.setRequestHeader; XMLHttpRequest.prototype.abort = originals.abort; alert.remove(); } };
 }

@@ -1,3 +1,4 @@
+import type { KnowledgeModeTier } from "./knowledgeModeTiers";
 import type {
   KnowledgeBasket,
   KnowledgeBasketQuality,
@@ -35,6 +36,11 @@ import type {
   KnowledgeSurfaceListResponse
 } from "./knowledgeTypes";
 import type { VendorEffectiveStatus } from "./vendorInduction";
+import type {
+  KnowledgeApplySubBasketMarginsInput,
+  KnowledgeApplySubBasketMarginsResult,
+  KnowledgeSubBasketMarginSummary
+} from "./knowledgeSubBasketMarginTypes";
 
 const ADMIN_PREFIX = "/admin/ai-estimator-knowledge";
 const CONTEXT_PATH = "/ai-estimator-knowledge/context";
@@ -113,6 +119,7 @@ export interface KnowledgeMainLineListParams {
 }
 
 export interface KnowledgeSectionUpdate<TPayload extends KnowledgeJsonObject> {
+  readonly modeTier?: KnowledgeModeTier;
   readonly expectedVersion: number;
   readonly expectedAggregateVersion?: number;
   readonly applicability?: "configured" | "not_configured" | "not_applicable";
@@ -134,6 +141,7 @@ export interface KnowledgeContextRequest {
   readonly modeId?: string;
   readonly modeKind?: KnowledgeModeKind;
   readonly executionSource?: KnowledgeExecutionSource;
+  readonly selectedInHouseComponentIds?: readonly string[];
 }
 
 export interface KnowledgePreviewRequest {
@@ -301,7 +309,7 @@ export interface KnowledgeDuplicateInput {
 }
 
 export interface KnowledgeTransport {
-  get<T>(path: string, options?: { readonly signal?: AbortSignal }): Promise<T>;
+  get<T>(path: string, options?: { readonly signal?: AbortSignal; readonly showGlobalLoader?: boolean }): Promise<T>;
   post<T>(path: string, body?: unknown, options?: { readonly signal?: AbortSignal; readonly showGlobalLoader?: boolean }): Promise<T>;
   put<T>(path: string, body?: unknown): Promise<T>;
   patch<T>(path: string, body?: unknown): Promise<T>;
@@ -335,10 +343,11 @@ function getKnowledgeHistory(
 function getKnowledgeSection<TPayload extends KnowledgeJsonObject>(
   mainLineId: string,
   revisionId: string,
-  sectionKey: KnowledgeSectionKey
+  sectionKey: KnowledgeSectionKey,
+  options?: { readonly modeTier?: KnowledgeModeTier }
 ): Promise<KnowledgeSectionEnvelope<TPayload>> {
   return apiClient.get<KnowledgeSectionEnvelope<TPayload>>(
-    `${ADMIN_PREFIX}/main-lines/${segment(mainLineId)}/revisions/${segment(revisionId)}/sections/${segment(sectionKey)}`
+    `${ADMIN_PREFIX}/main-lines/${segment(mainLineId)}/revisions/${segment(revisionId)}/sections/${segment(sectionKey)}${options?.modeTier ? `?modeTier=${segment(options.modeTier)}` : ""}`
   );
 }
 
@@ -576,6 +585,24 @@ function getKnowledgeBasketQuality(basketId: string): Promise<KnowledgeBasketQua
   return apiClient.get<KnowledgeBasketQuality>(`${ADMIN_PREFIX}/baskets/${segment(basketId)}/quality`);
 }
 
+function getKnowledgeSubBasketMargins(basketId: string, subBasketId: string, options?: { readonly modeTier?: KnowledgeModeTier }): Promise<KnowledgeSubBasketMarginSummary> {
+  return apiClient.get<KnowledgeSubBasketMarginSummary>(
+    `${ADMIN_PREFIX}/baskets/${segment(basketId)}/sub-baskets/${segment(subBasketId)}/margins${options?.modeTier ? `?modeTier=${segment(options.modeTier)}` : ""}`,
+    { showGlobalLoader: false }
+  );
+}
+
+function applyKnowledgeSubBasketMargins(
+  basketId: string,
+  subBasketId: string,
+  input: KnowledgeApplySubBasketMarginsInput
+): Promise<KnowledgeApplySubBasketMarginsResult> {
+  return apiClient.post<KnowledgeApplySubBasketMarginsResult>(
+    `${ADMIN_PREFIX}/baskets/${segment(basketId)}/sub-baskets/${segment(subBasketId)}/margins/apply`,
+    input
+  );
+}
+
 function getKnowledgeSubBasketDeletionImpact(
   basketId: string,
   subBasketId: string
@@ -651,6 +678,8 @@ return {
   listKnowledgeSubBaskets,
   createKnowledgeSubBasket,
   updateKnowledgeSubBasket,
+  getKnowledgeSubBasketMargins,
+  applyKnowledgeSubBasketMargins,
   getKnowledgeBasketQuality,
   getKnowledgeSubBasketDeletionImpact,
   permanentlyDeleteKnowledgeSubBasket,

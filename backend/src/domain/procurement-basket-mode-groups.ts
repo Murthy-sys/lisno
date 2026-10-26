@@ -1,4 +1,5 @@
 import { MAX_FINANCE_AMOUNT_PAISE } from "./project-finance.js";
+import { combineInHouseComponentBreakdowns, type ProcurementInHouseComponentBreakdown } from "./procurement-in-house-components.js";
 import { procurementBasketLineBoqReady, type ProcurementBasketDetailDto,
   type ProcurementBasketLineDto } from "./procurement-basket-projection.js";
 
@@ -33,6 +34,7 @@ export interface ProcurementBasketModeSubset extends ProcurementBasketModeMetric
   sourceLineItemKeys: string[];
 }
 export interface ProcurementBasketModeGroup extends ProcurementBasketModeMetrics {
+  inHouseComponentBreakdown?: ProcurementInHouseComponentBreakdown;
   mode: ProcurementBasketDisplayMode;
   basketCount: number;
   baskets: ProcurementBasketModeSubset[];
@@ -119,7 +121,10 @@ export function projectProcurementBasketModeGroups(baskets: readonly Procurement
     const boqReadyLineCount = sumCounts(subsets.map(subset => subset.boqReadyLineCount));
     const unpricedLineCount = sumCounts(subsets.map(subset => subset.unpricedLineCount));
     const pricedTotal = sumPaise(subsets.flatMap(subset => subset.currentCostPaise === null ? [] : [subset.currentCostPaise]));
+    const inHouseComponentBreakdown = mode === "in_house" ? combineInHouseComponentBreakdowns(baskets.flatMap(basket =>
+      basket.inHouseComponentBreakdown ? [basket.inHouseComponentBreakdown] : [])) : undefined;
     return { mode, baskets: subsets, basketCount: subsets.length, includedLineCount, boqReadyLineCount,
+      ...(inHouseComponentBreakdown ? { inHouseComponentBreakdown } : {}),
       readinessPercent: includedLineCount ? Math.round(boqReadyLineCount * 100 / includedLineCount) : null,
       approvedEstimatePaise: sumPaise(subsets.map(subset => subset.approvedEstimatePaise)),
       currentCostPaise: unpricedLineCount ? null : pricedTotal, currentCostComplete: unpricedLineCount === 0,

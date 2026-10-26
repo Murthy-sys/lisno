@@ -1,4 +1,6 @@
+import type { EstimateDimensionMetadata } from "./estimate-dimension-snapshot.js";
 import type { EstimationPreparationSource } from "./estimation-lifecycle.js";
+import type { KnowledgeModeTier } from "./ai-estimator-knowledge-mode-tiers.js";
 import type { ProcurementReferenceStatus } from "./project-procurement.js";
 import type { PurchaseOrderModeResolution, PurchaseOrderModeStandardSuggestion } from "./project-purchase-order-mode.js";
 import type { ProcurementBasketProjectRate } from "./procurement-basket-base-rate.js";
@@ -37,7 +39,9 @@ export interface PurchaseOrderPreparationSection {
 }
 
 /** The immutable approved-round order is retained; child purchase items are linked by source key. */
-export interface PurchaseOrderPreparationEstimateLine {
+export interface PurchaseOrderPreparationEstimateLine extends EstimateDimensionMetadata {
+  modeTier?: KnowledgeModeTier;
+  selectedInHouseComponentIds?: string[];
   /** Read-only approved estimate selection; not the current commercial mode decision. */
   estimateMode?: ProcurementEstimateMode;
   key: string;

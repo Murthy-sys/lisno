@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 
 import type { PurchaseOrderModeDraftPreview, PurchaseOrderModeKey, PurchaseOrderModePriceReference, PurchaseOrderModeResolution, PurchaseOrderPreparationEstimateLine, PurchaseOrderPreparationItem, SavePurchaseOrderModeDecisionInput } from "./purchaseOrderApi";
 import { formatPaise } from "../finance/ProjectFinancePanel";
+import { purchaseOrderComponentKey, purchaseOrderComponentLabel, type PurchaseOrderComponentNames } from "./purchaseOrderComponentPresentation";
 
 export interface PurchaseOrderModeDraft {
   modeKind: "" | "pmc" | "execution" | "exception";
@@ -74,10 +75,11 @@ function selectedMode(draft: PurchaseOrderModeDraft): PurchaseOrderModeKey | nul
 
 function percent(bps: number) { return `${bps / 100}%`; }
 
-function DraftCalculation({ state, lineLabel, unverified }: {
+function DraftCalculation({ state, lineLabel, unverified, componentNames }: {
   state: { status: "loading" | "ready" | "error"; result?: PurchaseOrderModeDraftPreview; error?: string };
   lineLabel: string;
   unverified: boolean;
+  componentNames: PurchaseOrderComponentNames;
 }) {
   const result = state.result;
   const preview = state.status === "ready" ? result?.preview : null;
@@ -97,8 +99,8 @@ function DraftCalculation({ state, lineLabel, unverified }: {
         <div><dt>Low quantity impact</dt><dd>{formatPaise(preview.lowQuantityImpactPaise)}</dd></div>
         <div><dt>Discount</dt><dd>{percent(preview.discountBps)} · {formatPaise(preview.discountAmountPaise)}</dd></div>
       </dl>
-      <div className="purchase-orders__draft-preview-stages">{(result?.scopes ?? []).map((stage) => <section key={stage.scope} className="purchase-orders__draft-preview-stage">
-        <h5>{stage.scope === "pmc" ? "PMC" : stage.scope === "sub_vendor" ? "Execution / Sub-vendor" : stage.scope === "in_house_labor" ? "Execution / In-house labor" : "Execution / In-house material"}</h5>
+      <div className="purchase-orders__draft-preview-stages">{(result?.scopes ?? []).map((stage) => <section key={purchaseOrderComponentKey(stage)} className="purchase-orders__draft-preview-stage">
+        <h5>{purchaseOrderComponentLabel(stage, result?.scopes ?? [], stage.scope === "pmc" ? "PMC" : stage.scope === "sub_vendor" ? "Execution / Sub-vendor" : stage.scope === "in_house_labor" ? "Execution / In-house labor" : "Execution / In-house material", componentNames)}</h5>
         <dl>
           <div><dt>Base rate × quantity</dt><dd>{formatPaise(stage.baseRatePaise)} × {preview.quantity} = {formatPaise(stage.baseSubtotalPaise)}</dd></div>
           <div><dt>Low quantity threshold</dt><dd>At or below {stage.lowQuantityLimit} {result?.uom?.code ?? "units"} · {stage.thresholdMet ? "Met" : "Not met"}</dd></div>
@@ -349,7 +351,7 @@ function LineDetail({ line, items, canManage, frozen, canManageItems, itemsBusy,
         {dirty ? <button type="button" className="purchase-orders__text-action" disabled={modeBusy} onClick={() => { onDiscardMode(); setValidation(""); }}>Discard changes</button> : null}
       </div> : null}
     </div> : null}
-    {dirty && selectedMode(draft) && draftPreview && !modeConflict ? <DraftCalculation state={draftPreview} lineLabel={lineLabel} unverified={unverified} /> : null}
+    {dirty && selectedMode(draft) && draftPreview && !modeConflict ? <DraftCalculation state={draftPreview} lineLabel={lineLabel} unverified={unverified} componentNames={line} /> : null}
     {mode.preview ? <div className="purchase-orders__benchmark" aria-label={`${mode.decision?.integrityBasis ? "Saved unverified" : "Saved configured"} calculation for ${lineLabel}`}>
       <div className="purchase-orders__benchmark-title"><strong>{unverified ? "Saved unverified benchmark" : dirty ? "Saved configured benchmark" : "Configured benchmark"}</strong><small>{mode.preview.quantity} {mode.uom?.code ?? line.unit} · {mode.preview.formulaVersion}</small></div>
       {dirty ? <p>This is the saved calculation. The changed mode or quantity has not been saved.</p> : null}
@@ -363,10 +365,10 @@ function LineDetail({ line, items, canManage, frozen, canManageItems, itemsBusy,
         {mode.preview.quantityRule ? <div><dt>Quantity slab</dt><dd>{mode.preview.quantityRule.minimumQuantity}–{mode.preview.quantityRule.maximumQuantity ?? "above"} {mode.uom?.code ?? line.unit} · {mode.preview.quantityRule.adjustmentBps / 100}%</dd></div> : null}
         {mode.preview.procurementQuantitySuggestion ? <div><dt>Suggested procurement quantity</dt><dd>{mode.preview.procurementQuantitySuggestion} {mode.uom?.code ?? line.unit}</dd></div> : null}
       </dl>
-      {mode.preview.components.length ? <p>In-house components: {mode.preview.components.map((component) => `${component.scope} ${formatPaise(component.adjustedCostPaise)} cost / ${formatPaise(component.sellingPaise)} selling`).join(" · ")}</p> : null}
+      {mode.preview.components.length ? <p>In-house components: {mode.preview.components.map((component) => `${purchaseOrderComponentLabel(component, mode.preview!.components, component.scope, line)} ${formatPaise(component.adjustedCostPaise)} cost / ${formatPaise(component.sellingPaise)} selling`).join(" · ")}</p> : null}
       <details className="purchase-orders__benchmark-settings"><summary>Saved mode settings and low quantity limits</summary>
-        <ul>{mode.preview.settings.scopes.map((scope) => <li key={scope.scope}>
-          <strong>{scope.scope.replaceAll("_", " ")}</strong> · base {formatPaise(scope.baseRatePaise)} · low quantity at or below {scope.lowQuantityLimit} {mode.uom?.code ?? line.unit} · impact {scope.impactBps / 100}% · minimum markup {scope.minimumMarkupBps / 100}% · starting markup {scope.startingMarkupBps / 100}%
+        <ul>{mode.preview.settings.scopes.map((scope) => <li key={purchaseOrderComponentKey(scope)}>
+          <strong>{purchaseOrderComponentLabel(scope, mode.preview!.settings.scopes, scope.scope.replaceAll("_", " "), line)}</strong> · base {formatPaise(scope.baseRatePaise)} · low quantity at or below {scope.lowQuantityLimit} {mode.uom?.code ?? line.unit} · impact {scope.impactBps / 100}% · minimum markup {scope.minimumMarkupBps / 100}% · starting markup {scope.startingMarkupBps / 100}%
         </li>)}</ul>
       </details>
       <p>Internal calculation only. The supplier is paid from the quoted order lines below.</p>

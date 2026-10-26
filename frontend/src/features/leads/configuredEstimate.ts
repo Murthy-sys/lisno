@@ -1,4 +1,7 @@
-import type { EstimationCatalogue, EstimationCatalogueBasket, EstimationCatalogueMainLine, EstimationCatalogueSubBasket, EstimationCatalogueTemporaryItem, EstimationModeBaseRatesPaise } from "./estimationCatalogueApi";
+import { ESTIMATE_COMPONENT_PRICING_BASIS, estimateComponentPricingMatchesLine, readEstimateComponentPricing, type EstimateComponentPricing } from "../../../../shared/estimation/estimateComponentPricing";
+import { calculateDimensionQuantity, estimateDimensionRulesEqual, type EstimateDimensions, type EstimateDimensionRule } from "../../../../shared/estimation/estimateDimensions";
+import type { KnowledgeModeTier } from "../../../../shared/knowledge/knowledgeModeTiers";
+import type { EstimationCatalogue, EstimationCatalogueBasket, EstimationCatalogueMainLine, EstimationCatalogueSubBasket, EstimationCatalogueTemporaryItem, EstimationModeBaseRatesPaise, EstimationInHouseComponent, EstimationTierPricing } from "./estimationCatalogueApi";
 import type { ConfiguredEstimateLine, EstimateClassification, EstimatePricingMode, EstimateRateSource } from "./leadsApi";
 
 export interface ConfiguredEstimateRoom {
@@ -17,7 +20,16 @@ export interface ConfiguredLineDraft {
   itemType: "main_line" | "temporary";
   classification?: EstimateClassification;
   pricingMode?: EstimatePricingMode;
+  modeTier?: KnowledgeModeTier;
+  applicableTiers?: KnowledgeModeTier[];
+  tierPricing?: Partial<Record<KnowledgeModeTier, EstimationTierPricing>>;
+  selectedInHouseComponentIds?: string[];
   rateSource?: EstimateRateSource;
+  pricingBasis?: typeof ESTIMATE_COMPONENT_PRICING_BASIS;
+  componentPricing?: EstimateComponentPricing;
+  componentPricingState?: "loading" | "ready" | "incomplete" | "error";
+  componentPricingIssue?: string;
+  componentPricingRetry?: () => void;
   subBasketId: string | null;
   subBasketName: string | null;
   mainLineId: string;
@@ -37,7 +49,12 @@ export interface ConfiguredLineDraft {
   uomName: string;
   uomDecimalScale: number;
   inHouseBaseRatePaise?: number | null;
+  inHouseComponents?: EstimationInHouseComponent[];
   modeBaseRatesPaise?: EstimationModeBaseRatesPaise;
+  dimensionsMandatory?: boolean;
+  dimensionRule?: EstimateDimensionRule | null;
+  dimensions?: EstimateDimensions;
+  dimensionsNeedReview?: boolean;
   quantity: number;
   rateInput: string;
   included: boolean;
@@ -54,9 +71,65 @@ export const estimatePricingModeLabels: Record<EstimatePricingMode, string> = {
   pmc: "PMC", sub_vendor: "Sub-Vendor", in_house: "In-house"
 };
 
-export function configuredModeBaseRate(line: Pick<ConfiguredLineDraft, "modeBaseRatesPaise">, mode: EstimatePricingMode): number | null {
-  const rate = line.modeBaseRatesPaise?.[mode];
+type TierPricingSource = Pick<ConfiguredLineDraft, "modeTier" | "applicableTiers" | "tierPricing" | "modeBaseRatesPaise" | "inHouseComponents">;
+
+/** Only legacy Signature may read the pre-tier catalogue fields. */
+export function configuredTierPricing(line: TierPricingSource, modeTier: KnowledgeModeTier = line.modeTier ?? "signature"): EstimationTierPricing | undefined {
+  if (!(line.applicableTiers ?? ["signature"]).includes(modeTier)) return undefined;
+  if (line.tierPricing !== undefined) return line.tierPricing[modeTier];
+  if (modeTier !== "signature") return undefined;
+  return { modeBaseRatesPaise: line.modeBaseRatesPaise ?? { pmc: null, sub_vendor: null, in_house: null }, inHouseComponents: line.inHouseComponents };
+}
+
+function withSelectedTierPricing(line: ConfiguredLineDraft): ConfiguredLineDraft {
+  const pricing = configuredTierPricing(line);
+  return { ...line, modeBaseRatesPaise: pricing?.modeBaseRatesPaise, inHouseComponents: pricing?.inHouseComponents,
+    inHouseBaseRatePaise: pricing?.modeBaseRatesPaise.in_house ?? null };
+}
+
+export function configuredTierUnavailableReason(line: TierPricingSource, modeTier: KnowledgeModeTier, mode?: EstimatePricingMode): string | null {
+  if (!(line.applicableTiers ?? ["signature"]).includes(modeTier)) return "Not applicable";
+  const pricing = configuredTierPricing(line, modeTier);
+  if (!pricing) return "Not configured";
+  const available = (selectedMode: EstimatePricingMode) => selectedMode === "in_house" && pricing.inHouseComponents !== undefined
+    ? pricing.inHouseComponents.some(component => !component.unavailableReason && typeof component.baseRatePaise === "number" && Number.isSafeInteger(component.baseRatePaise) && component.baseRatePaise >= 0)
+    : typeof pricing.modeBaseRatesPaise[selectedMode] === "number" && Number.isSafeInteger(pricing.modeBaseRatesPaise[selectedMode]) && pricing.modeBaseRatesPaise[selectedMode]! >= 0;
+  return (mode ? available(mode) : (["pmc", "sub_vendor", "in_house"] as const).some(available)) ? null : "Price not configured";
+}
+
+export function configuredModeBaseRate(line: TierPricingSource & Pick<ConfiguredLineDraft, "selectedInHouseComponentIds">, mode: EstimatePricingMode): number | null {
+  const pricing = configuredTierPricing(line);
+  if (!pricing) return null;
+  if (mode === "in_house" && pricing.inHouseComponents !== undefined) {
+    const selected = line.selectedInHouseComponentIds ?? [];
+    if (!selected.length || new Set(selected).size !== selected.length) return null;
+    let total = 0;
+    for (const id of selected) {
+      const matches = pricing.inHouseComponents.filter((component) => component.id === id);
+      const rate = matches.length === 1 && !matches[0]!.unavailableReason ? matches[0]!.baseRatePaise : null;
+      if (rate === null || !Number.isSafeInteger(rate) || rate < 0) return null;
+      total += rate;
+      if (!Number.isSafeInteger(total)) return null;
+    }
+    return total;
+  }
+  const rate = pricing.modeBaseRatesPaise[mode];
   return typeof rate === "number" && Number.isSafeInteger(rate) && rate >= 0 ? rate : null;
+}
+
+export function configuredInHouseSelectionIssue(line: Pick<ConfiguredLineDraft, "pricingMode" | "inHouseComponents" | "selectedInHouseComponentIds" | "modeBaseRatesPaise" | "rateSource" | "modeTier" | "tierPricing" | "applicableTiers">): string | null {
+  if (line.pricingMode !== "in_house" || line.inHouseComponents === undefined) return null;
+  if (!line.selectedInHouseComponentIds?.length) return "Choose at least one In-house component.";
+  const selected = line.selectedInHouseComponentIds;
+  if (new Set(selected).size !== selected.length || selected.some((id) => line.inHouseComponents!.filter((component) => component.id === id && !component.unavailableReason).length !== 1)) return "Review unavailable selected In-house components.";
+  return line.rateSource === "configuration" && configuredModeBaseRate(line, "in_house") === null ? "Configure costs for the selected In-house components, or enter a manual rate." : null;
+}
+
+export function configuredDimensionsIssue(line: Pick<ConfiguredLineDraft, "dimensionsMandatory" | "dimensionRule" | "dimensions" | "dimensionsNeedReview">): string | null {
+  if (!line.dimensionsMandatory) return null;
+  if (!line.dimensionRule) return "Configure a matching area unit before entering dimensions.";
+  if (line.dimensionsNeedReview) return "Review and confirm dimensions for the current measurement rule.";
+  return calculateDimensionQuantity(line.dimensionRule, line.dimensions) ? null : "Enter valid length, width and height before saving.";
 }
 
 /** Only deliberate mode/type changes adopt a configured rate. Historical prices stay manual. */
@@ -65,13 +138,29 @@ export function updateConfiguredLinePricing(
   change: Partial<ConfiguredLineDraft>,
   inheritedClassification: EstimateClassification = "standard"
 ): ConfiguredLineDraft {
+  if (line.dimensionsMandatory) {
+    const measured = change.dimensions !== undefined || change.dimensionsNeedReview === false;
+    const { quantity: _ignoredQuantity, ...rest } = change;
+    change = { ...rest, ...(measured ? { quantity: calculateDimensionQuantity(line.dimensionRule, change.dimensions ?? line.dimensions)?.quantity ?? line.quantity } : {}) };
+  }
   const classification = line.classification ?? inheritedClassification;
   const explicitTypeOrMode = change.classification !== undefined || change.pricingMode !== undefined;
-  const next = { ...line, ...(explicitTypeOrMode ? { classification } : {}), ...change };
+  const tierChanged = change.modeTier !== undefined && change.modeTier !== (line.modeTier ?? "signature");
+  const pricingInputsChanged = ["quantity", "dimensions", "dimensionsNeedReview", "modeTier", "pricingMode", "classification", "selectedInHouseComponentIds", "rateInput", "included"].some(key => Object.hasOwn(change, key));
+  const next = withSelectedTierPricing({ ...line, ...(explicitTypeOrMode ? { classification } : {}), ...change,
+    ...(pricingInputsChanged ? { pricingBasis: undefined, componentPricing: undefined, componentPricingState: undefined, componentPricingIssue: undefined } : {}),
+    ...(tierChanged ? { selectedInHouseComponentIds: [] } : {}) });
+  if (tierChanged) {
+    const pricingMode = next.pricingMode ?? (classification === "standard" ? "sub_vendor" : undefined);
+    return { ...next, pricingMode, rateSource: "configuration", rateInput: formatRateInput(pricingMode ? configuredModeBaseRate(next, pricingMode) : null) };
+  }
   const mode = change.classification === "standard" && classification === "special"
     ? "sub_vendor"
     : change.pricingMode !== undefined && change.pricingMode !== line.pricingMode ? change.pricingMode : undefined;
-  if (mode) return { ...next, pricingMode: mode, rateSource: "configuration", rateInput: formatRateInput(configuredModeBaseRate(line, mode)) };
+  if (mode) return { ...next, pricingMode: mode, rateSource: "configuration", rateInput: formatRateInput(configuredModeBaseRate(next, mode)) };
+  if (change.selectedInHouseComponentIds !== undefined && next.pricingMode === "in_house" && next.rateSource === "configuration") {
+    return { ...next, rateInput: formatRateInput(configuredModeBaseRate(next, "in_house")) };
+  }
   if (change.rateInput !== undefined) return { ...next, rateSource: "manual" };
   return next;
 }
@@ -122,13 +211,50 @@ export function parseSellingRate(input: string): ParsedRate {
     : { kind: "invalid", paise: null };
 }
 
+export function configuredUsesComponentPricing(line: Pick<ConfiguredLineDraft, "pricingMode" | "rateSource" | "inHouseComponents" | "pricingBasis">): boolean {
+  return line.pricingMode === "in_house" && line.rateSource === "configuration" &&
+    (line.inHouseComponents !== undefined || line.pricingBasis === ESTIMATE_COMPONENT_PRICING_BASIS);
+}
+
+export function configuredComponentPricing(line: ConfiguredLineDraft): EstimateComponentPricing | null {
+  return configuredUsesComponentPricing(line) && estimateComponentPricingMatchesLine({ ...line, source: "configuration" })
+    ? readEstimateComponentPricing(line.componentPricing) : null;
+}
+
+/** Attribution follows component targets, while source rows keep their catalogue identity. */
+export function configuredAttributedAmountPaise(lines: readonly ConfiguredLineDraft[], basketId: string, subBasketId?: string | null): number | null {
+  let total = 0n;
+  const matches = (basket: string, subBasket: string | null) => basket === basketId && (subBasketId === undefined || subBasket === subBasketId);
+  for (const line of lines) {
+    if (!line.included) continue;
+    if (!configuredUsesComponentPricing(line)) {
+      if (!matches(line.mainBasketId, line.subBasketId)) continue;
+      const amount = configuredLineAmountPaise(line);
+      if (amount === null) return null;
+      total += BigInt(amount);
+    } else {
+      const pricing = configuredComponentPricing(line);
+      if (!pricing) {
+        const selected = line.inHouseComponents?.filter(component => line.selectedInHouseComponentIds?.includes(component.id));
+        if (selected?.some(component => matches(component.basketId, component.subBasketId)) ||
+            (!selected?.length && matches(line.mainBasketId, line.subBasketId))) return null;
+        continue;
+      }
+      for (const component of pricing.components) if (matches(component.basketId, component.subBasketId)) total += BigInt(component.totalPaise);
+    }
+    if (total > BigInt(Number.MAX_SAFE_INTEGER)) return null;
+  }
+  return Number(total);
+}
+
 export function configuredLineAmountPaise(line: ConfiguredLineDraft): number | null {
   if (!line.included) return 0;
   return configuredLinePreviewAmountPaise(line);
 }
 
 export function configuredLinePreviewAmountPaise(line: ConfiguredLineDraft): number | null {
-  if (line.uomNeedsQuantityReview) return null;
+  if (line.uomNeedsQuantityReview || configuredDimensionsIssue(line)) return null;
+  if (configuredUsesComponentPricing(line)) return configuredComponentPricing(line)?.totalPaise ?? null;
   const rate = parseSellingRate(line.rateInput);
   if (rate.kind !== "value") return null;
   const units = configuredQuantityUnits(line.quantity, line.uomDecimalScale, true);
@@ -160,7 +286,11 @@ export function restoreConfiguredLine(line: ConfiguredEstimateLine): ConfiguredL
     itemType: line.itemType ?? "main_line",
     classification: line.classification ?? "standard",
     pricingMode: line.pricingMode,
+    modeTier: line.modeTier ?? "signature",
+    selectedInHouseComponentIds: line.selectedInHouseComponentIds,
     rateSource: line.rateSource ?? "manual",
+    pricingBasis: line.pricingBasis,
+    componentPricing: readEstimateComponentPricing(line.componentPricing) ?? undefined,
     subBasketId: line.subBasketId,
     subBasketName: line.subBasketName,
     mainLineId: line.mainLineId,
@@ -175,6 +305,10 @@ export function restoreConfiguredLine(line: ConfiguredEstimateLine): ConfiguredL
     uomId: line.uomId,
     uomName: line.uomName,
     uomDecimalScale: line.uomDecimalScale,
+    dimensionsMandatory: line.dimensionsMandatory,
+    dimensionRule: line.dimensionRule,
+    dimensions: line.dimensions ? { ...line.dimensions } : undefined,
+    dimensionsNeedReview: line.dimensionsNeedReview ?? line.configurationDimensionsChanged,
     quantity: line.quantity,
     rateInput: formatRateInput(line.ratePaise),
     included: line.included,
@@ -193,7 +327,7 @@ function newLine(
   const inHouseBaseRatePaise = typeof mainLine.inHouseBaseRatePaise === "number" &&
     Number.isSafeInteger(mainLine.inHouseBaseRatePaise) && mainLine.inHouseBaseRatePaise >= 0
     ? mainLine.inHouseBaseRatePaise : null;
-  return {
+  return withSelectedTierPricing({
     key: configuredLineKey(room.id, mainLine.mainLineId),
     roomId: room.id,
     roomName: room.label,
@@ -214,15 +348,22 @@ function newLine(
     uomId: mainLine.uom.id,
     uomName: mainLine.uom.name,
     uomDecimalScale: mainLine.uom.decimalScale,
+    modeTier: "signature",
+    applicableTiers: mainLine.applicableTiers,
+    tierPricing: mainLine.tierPricing,
     inHouseBaseRatePaise,
+    inHouseComponents: mainLine.inHouseComponents,
+    ...(mainLine.inHouseComponents !== undefined ? { selectedInHouseComponentIds: [] } : {}),
     modeBaseRatesPaise: mainLine.modeBaseRatesPaise,
     pricingMode: "sub_vendor",
     rateSource: "configuration",
-    quantity: 1,
+    dimensionsMandatory: mainLine.dimensionsMandatory,
+    dimensionRule: mainLine.dimensionRule,
+    quantity: mainLine.dimensionsMandatory ? Number.NaN : 1,
     rateInput: formatRateInput(configuredModeBaseRate(mainLine, "sub_vendor")),
     included: false,
     sourceMissing: false
-  };
+  });
 }
 
 export function buildConfiguredLines(
@@ -244,22 +385,36 @@ export function buildConfiguredLines(
     ].map((fresh) => {
       const saved = prior.get(fresh.key);
       if (!saved) return fresh;
+      const selectedFresh = withSelectedTierPricing({ ...fresh, modeTier: saved.modeTier ?? "signature" });
       if (preservePersisted && saved.persistedId) return {
         ...saved,
-        modeBaseRatesPaise: fresh.modeBaseRatesPaise,
-        inHouseBaseRatePaise: fresh.inHouseBaseRatePaise,
+        applicableTiers: fresh.applicableTiers,
+        tierPricing: fresh.tierPricing,
+        modeBaseRatesPaise: selectedFresh.modeBaseRatesPaise,
+        inHouseBaseRatePaise: selectedFresh.inHouseBaseRatePaise,
+        inHouseComponents: selectedFresh.inHouseComponents,
         sourceMissing: saved.mainBasketId !== fresh.mainBasketId ||
           saved.subBasketId !== fresh.subBasketId || saved.itemType !== fresh.itemType
       };
-      const uomChanged = saved.uomId !== fresh.uomId;
+      const uomChanged = saved.uomId !== fresh.uomId || Boolean(fresh.dimensionsMandatory && saved.uomDecimalScale !== fresh.uomDecimalScale);
+      const dimensionsNeedReview = Boolean(fresh.dimensionsMandatory && (saved.dimensionsNeedReview ||
+        saved.dimensionsMandatory !== true || !estimateDimensionRulesEqual(saved.dimensionRule, fresh.dimensionRule)));
+      const measuredQuantity = fresh.dimensionsMandatory && !dimensionsNeedReview
+        ? calculateDimensionQuantity(fresh.dimensionRule, saved.dimensions)?.quantity : undefined;
       return {
-        ...fresh,
+        ...selectedFresh,
         persistedId: saved.persistedId,
-        quantity: saved.quantity,
+        pricingBasis: saved.pricingBasis,
+        componentPricing: saved.componentPricing,
+        dimensions: saved.dimensions ? { ...saved.dimensions } : undefined,
+        dimensionRule: fresh.dimensionsMandatory ? fresh.dimensionRule : saved.dimensions ? saved.dimensionRule ?? fresh.dimensionRule : fresh.dimensionRule,
+        dimensionsNeedReview,
+        quantity: measuredQuantity ?? saved.quantity,
         pricingMode: saved.pricingMode,
+        selectedInHouseComponentIds: saved.selectedInHouseComponentIds,
         rateSource: saved.rateSource ?? "manual",
         rateInput: saved.rateSource === "configuration" && saved.pricingMode
-          ? formatRateInput(configuredModeBaseRate(fresh, saved.pricingMode)) : saved.rateInput,
+          ? formatRateInput(configuredModeBaseRate({ ...selectedFresh, selectedInHouseComponentIds: saved.selectedInHouseComponentIds }, saved.pricingMode)) : saved.rateInput,
         included: saved.included,
         recommendationSourceMainLineIds: saved.recommendationSourceMainLineIds,
         classification: saved.classification,
@@ -277,7 +432,7 @@ export function buildConfiguredLines(
   for (const line of previous) {
     if (!seen.has(line.key) && roomIds.has(line.roomId) && (line.persistedId || line.included ||
       line.classification !== undefined || line.rateSource === "manual" || line.quantity !== 1)) {
-      next.push({ ...line, sourceMissing: true, modeBaseRatesPaise: undefined,
+      next.push({ ...line, sourceMissing: true, modeBaseRatesPaise: undefined, tierPricing: {}, inHouseComponents: undefined,
         rateInput: !preservePersisted && line.rateSource === "configuration" ? "" : line.rateInput });
     }
   }

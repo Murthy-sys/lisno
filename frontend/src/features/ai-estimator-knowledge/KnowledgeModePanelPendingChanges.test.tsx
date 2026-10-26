@@ -3,6 +3,7 @@ import { createRef, StrictMode, type ComponentProps } from "react";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { authorizationFor } from "../../test/authFixtures";
 import { ApiError } from "../../api/client";
 import { KnowledgeModePanel, type KnowledgeModePanelHandle } from "./KnowledgeModePanel";
 import * as api from "./knowledgeApi";
@@ -11,6 +12,7 @@ import { knowledgeQueryKeys } from "./knowledgeQueryKeys";
 import type { KnowledgePendingChangesSnapshot } from "./knowledgePendingChanges";
 import type { KnowledgeItemDetail, KnowledgeJsonObject, KnowledgeSectionEnvelope, KnowledgeSectionKey } from "./knowledgeTypes";
 
+vi.mock("../../auth/AuthProvider", () => ({ useAuth: () => ({ user: { id: "admin", role: "super_admin" }, authorization: authorizationFor("super_admin") }) }));
 vi.mock("./knowledgeApi", async (original) => ({ ...await original<typeof import("./knowledgeApi")>(), getKnowledgeSection: vi.fn(), getKnowledgeItem: vi.fn(), updateKnowledgeSection: vi.fn() }));
 const metadata = { createdById: "actor", updatedById: "actor", createdAt: "2026-09-09T00:00:00Z", updatedAt: "2026-09-09T00:00:00Z" };
 const item: KnowledgeItemDetail = { id: "item-1", mainLineId: "item-1", mainLineName: "Gypsum ceiling", basketId: "basket-1", basketName: "POP / Gypsum", completionRequired: false, description: null, status: "draft", activeRevisionId: null, draftRevisionId: "revision-1", revisionNumber: 1, uomId: null, priorityId: null, modeIds: [], surfaceIds: [], vendorIds: [], completeness: { percentage: 0, sections: [], blockers: [], warnings: [] }, allowedActions: ["update_section"], activeRevision: null, draftRevision: null, blockers: [], warnings: [], version: 10, ...metadata };
@@ -74,11 +76,11 @@ describe("Mode pending publication lifecycle", () => {
   });
 
   it("publishes only the independent Sub-Vendor margin edit and clears it after confirmed save", async () => {
-    const user = userEvent.setup();
     vi.mocked(api.getKnowledgeSection).mockImplementation(async (_id, revision, key) => section(key, key === "advanced"
       ? { pmcMarginBps: 1_200, subVendorMarginBps: 1_500 } : key === "pricing" ? savedPricing : {}, 1, revision));
     const panel = setup();
-    await user.click(await screen.findByRole("checkbox", { name: "Execution" }));
+    expect(await screen.findByRole("checkbox", { name: "Execution" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Sub-Vendor" })).toBeChecked();
     expect(panel.latest()?.groups).toEqual([]);
     fireEvent.change(screen.getByRole("spinbutton", { name: "Max. Lisno Margin (%)" }), { target: { value: "20" } });
     expect(screen.getByRole("spinbutton", { name: "Max. PMC Margin (%)" })).toHaveValue(12);
@@ -97,7 +99,8 @@ describe("Mode pending publication lifecycle", () => {
     vi.mocked(api.getKnowledgeSection).mockImplementation(async (_id, revision, key) => section(key, key === "advanced"
       ? { pmcMarginBps: 1_200, subVendorMarginBps: 1_500 } : key === "pricing" ? savedPricing : {}, 1, revision));
     const panel = setup();
-    await user.click(await screen.findByRole("checkbox", { name: "Execution" }));
+    expect(await screen.findByRole("checkbox", { name: "Execution" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Sub-Vendor" })).toBeChecked();
     fireEvent.change(screen.getByRole("spinbutton", { name: "Max. Lisno Margin (%)" }), { target: { value: "20" } });
     vi.mocked(api.updateKnowledgeSection).mockRejectedValueOnce(new ApiError(409, "VERSION_CONFLICT", "Updated elsewhere."));
     vi.mocked(api.getKnowledgeSection).mockImplementation(async (_id, revision, key) => section(key, key === "advanced"
@@ -123,7 +126,8 @@ describe("Mode pending publication lifecycle", () => {
     vi.mocked(api.getKnowledgeSection).mockImplementation(async (_id, revision, key) => section(key, key === "advanced"
       ? { subVendorMinimumMarginBps: 1_500, subVendorMarginBps: 2_000 } : {}, 1, revision));
     const panel = setup();
-    await user.click(await screen.findByRole("checkbox", { name: "Execution" }));
+    expect(await screen.findByRole("checkbox", { name: "Execution" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Sub-Vendor" })).toBeChecked();
     fireEvent.change(screen.getByRole("spinbutton", { name: label }), { target: { value } });
     expect(panel.latest()?.groups[0]?.entries[0]?.incomplete).toBeUndefined();
     vi.mocked(api.updateKnowledgeSection).mockRejectedValueOnce(new ApiError(409, "VERSION_CONFLICT", "Updated elsewhere."));
@@ -159,7 +163,8 @@ describe("Mode pending publication lifecycle", () => {
       ? { pmcMarginBps: 1_400, ...server } : {}, 2, revision));
     await act(async () => { expect(await panel.ref.current?.save()).toBe(false); });
     await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Keep editing" }));
-    await user.click(screen.getByRole("checkbox", { name: "Execution" }));
+    expect(screen.getByRole("checkbox", { name: "Execution" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Sub-Vendor" })).toBeChecked();
     fireEvent.change(screen.getByRole("spinbutton", { name: edited }), { target: { value } });
     const entry = panel.latest()?.groups.find((group) => group.key === "sub_vendor:margin")?.entries[0];
     expect(entry?.fields).toEqual([{ key: edited.startsWith("Min.") ? "minimum" : "maximum",
@@ -386,4 +391,229 @@ describe("proposal Mode data source", () => {
     expect(api.updateKnowledgeSection).not.toHaveBeenCalled();
     expect(panel.queryClient.getQueryCache().getAll().every(query => query.queryKey[0] === "vendor-basket-proposals")).toBe(true);
   });
+});
+
+describe("component creation uses the parent Mode save", () => {
+  const calculations = { baseRatePaise: 1000, lowQuantityLimit: "10", impactBps: 1000, minimumMarkupBps: 1500, startingMarkupBps: 2000 };
+  const initialComponent = { id: "existing", basketId: "basket-1", subBasketId: "sub-existing", inclusions: [], exclusions: [], labor: calculations, material: calculations };
+  function componentPanel(advanced: KnowledgeJsonObject = { inHouseComponents: [] }) {
+    vi.mocked(api.getKnowledgeSection).mockImplementation(async (_id, revision, key) => section(key, key === "advanced" ? advanced : savedPricing, 1, revision));
+    const dataSource: KnowledgeEditorDataSource = { ...liveKnowledgeEditorDataSource, getSubBasketCatalog: vi.fn().mockResolvedValue({ items: [
+      { id: "sub-existing", basketId: "basket-1", name: "Existing work", version: 1 }, { id: "sub-new", basketId: "basket-1", name: "New work", version: 1 }
+    ], pagination: { hasMore: false, total: 2, offset: 0, limit: 100 } }) };
+    return setup({ dataSource, relationshipBaskets: [{ id: "basket-1", name: "POP / Gypsum", status: "active" } as ComponentProps<typeof KnowledgeModePanel>["relationshipBaskets"][number]] });
+  }
+  async function selectComponent() {
+    if (!screen.queryByRole("button", { name: "Add component" })) {
+      fireEvent.click(screen.getByRole("checkbox", { name: "Execution" }));
+      fireEvent.click(screen.getByRole("checkbox", { name: "In-house" }));
+    }
+    fireEvent.click(await screen.findByRole("button", { name: "Add component" }));
+    await screen.findByRole("option", { name: "New work" });
+    fireEvent.change(screen.getByRole("combobox", { name: "Sub-basket" }), { target: { value: "sub-new" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save component" }));
+  }
+  it("persists a blank component and other pending specification edits with CAS versions", async () => {
+    componentPanel();
+    fireEvent.change(await openSavedSpecificationEditor(), { target: { value: "Keep this pending edit" } });
+    await selectComponent();
+    await waitFor(() => expect(api.updateKnowledgeSection).toHaveBeenCalledTimes(2));
+    const calls = vi.mocked(api.updateKnowledgeSection).mock.calls;
+    expect(calls[0]![2]).toBe("advanced");
+    expect(calls[0]![3]).toMatchObject({ expectedVersion: 1, expectedAggregateVersion: 10, payload: { inHouseComponents: [{ id: expect.any(String), basketId: "basket-1", subBasketId: "sub-new", inclusions: [], exclusions: [], labor: null, material: null }] } });
+    expect(calls[1]![3]).toMatchObject({ expectedVersion: 1, expectedAggregateVersion: 11, payload: { specifications: [{ description: "Keep this pending edit" }] } });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Add In-house component" })).not.toBeInTheDocument());
+  });
+  it("blocks adding while another component has incomplete input and keeps it after the panel closes", async () => {
+    componentPanel({ inHouseComponents: [initialComponent] });
+    await screen.findByRole("button", { name: "Edit Specification 1" });
+    fireEvent.click(await screen.findByRole("button", { name: "POP / Gypsum / Existing work" }));
+    const region = screen.getByRole("region", { name: "POP / Gypsum / Existing work" });
+    fireEvent.change(within(region).getAllByRole("textbox", { name: "Base Rate (₹)" })[0]!, { target: { value: "unfinished" } });
+    await selectComponent();
+    await screen.findByText(/component could not be saved/);
+    expect(api.updateKnowledgeSection).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(within(region).getAllByRole("textbox", { name: "Base Rate (₹)" })[0]).toHaveValue("unfinished");
+    expect(screen.queryByRole("button", { name: "POP / Gypsum / New work" })).not.toBeInTheDocument();
+  });
+  it("rebases independent remote component edits without replacing local costs or new remote rows", async () => {
+    const user = userEvent.setup();
+    const second = { ...initialComponent, id: "second", subBasketId: "sub-new" };
+    const panel = componentPanel({ inHouseComponents: [initialComponent, second] });
+    fireEvent.click(await screen.findByRole("button", { name: "POP / Gypsum / Existing work" }));
+    const region = screen.getByRole("region", { name: "POP / Gypsum / Existing work" });
+    fireEvent.change(within(region).getAllByRole("textbox", { name: "Base Rate (₹)" })[0]!, { target: { value: "42" } });
+    vi.mocked(api.updateKnowledgeSection).mockRejectedValueOnce(new ApiError(409, "VERSION_CONFLICT", "Updated elsewhere."));
+    const remote = { ...second, labor: { ...calculations, baseRatePaise: 9900 } };
+    const third = { ...initialComponent, id: "third", basketId: "basket-2", subBasketId: "sub-third" };
+    vi.mocked(api.getKnowledgeSection).mockImplementation(async (_id, revision, key) => section(key, key === "advanced" ? { inHouseComponents: [initialComponent, remote, third] } : savedPricing, 2, revision));
+    await act(async () => { expect(await panel.ref.current?.save()).toBe(false); });
+    await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Keep editing" }));
+    await act(async () => { expect(await panel.ref.current?.save()).toBe(true); });
+    expect(vi.mocked(api.updateKnowledgeSection).mock.calls[1]![3]).toMatchObject({ expectedVersion: 2, payload: { inHouseComponents: [
+      { id: "existing", labor: { baseRatePaise: 4200 } }, { id: "second", labor: { baseRatePaise: 9900 } }, { id: "third" }
+    ] } });
+  });
+
+  function replacementFixture() {
+    const source = { ...initialComponent, id: "legacy-in-house",
+      inclusions: [{ id: "source-inclusion", name: "Delivery", selected: true }],
+      exclusions: [{ id: "source-exclusion", name: "Painting", selected: false }],
+      labor: { ...calculations, baseRatePaise: 2300 }, material: { ...calculations, baseRatePaise: 4700, impactBps: 0 } };
+    const target = { ...initialComponent, id: "replacement-target", subBasketId: "sub-new",
+      inclusions: [{ id: "target-inclusion", name: "Old target scope", selected: false }],
+      exclusions: [{ id: "target-exclusion", name: "Old exclusion", selected: true }],
+      labor: { ...calculations, baseRatePaise: 9900 }, material: { ...calculations, baseRatePaise: 8800 } };
+    const advanced = { pmcMinimumMarginBps: 1200, pmcMarginBps: 1500,
+      modeCalculations: { pmc: calculations, sub_vendor: calculations, in_house: { ...calculations, baseRatePaise: 6500 } },
+      modeConfigurations: [{ id: "retained-scope", modeKind: "execution", executionSource: "in_house", fields: [],
+        inclusions: [{ id: "retained-inclusion", name: "Original saved scope", selected: true }], exclusions: [] }],
+      inHouseComponents: [source, target] };
+    const replaced = { ...target, inclusions: source.inclusions, exclusions: source.exclusions, labor: source.labor, material: source.material };
+    return { source, target, advanced, replaced };
+  }
+
+  async function replaceFromExisting() {
+    const target = await screen.findByRole("region", { name: "POP / Gypsum / New work" });
+    const action = within(target).getByRole("button", { name: "Use existing configuration" });
+    await waitFor(() => expect(action).toBeEnabled());
+    fireEvent.click(action);
+    return target;
+  }
+
+  it("stages an atomic existing configuration move and preserves it through a failed Save Mode retry with the same CAS", async () => {
+    const { advanced, replaced } = replacementFixture();
+    const original = structuredClone(advanced);
+    const panel = componentPanel(advanced);
+    const targetRegion = await replaceFromExisting();
+    expect(api.updateKnowledgeSection).not.toHaveBeenCalled();
+    expect(panel.latest()?.groups.length).toBeGreaterThan(0);
+    expect(screen.queryByRole("region", { name: "Existing In-house configuration" })).not.toBeInTheDocument();
+    expect(within(targetRegion).getAllByRole("textbox", { name: "Base Rate (₹)" }).map((input) => (input as HTMLInputElement).value)).toEqual(["23.00", "47.00"]);
+    vi.mocked(api.updateKnowledgeSection).mockRejectedValueOnce(new Error("Save failed. Retry the same changes."));
+
+    await act(async () => { expect(await panel.ref.current?.save()).toBe(false); });
+    expect(panel.latest()?.groups.length).toBeGreaterThan(0);
+    expect(screen.queryByRole("region", { name: "Existing In-house configuration" })).not.toBeInTheDocument();
+    expect(within(targetRegion).getAllByRole("textbox", { name: "Base Rate (₹)" }).map((input) => (input as HTMLInputElement).value)).toEqual(["23.00", "47.00"]);
+    await act(async () => { expect(await panel.ref.current?.save()).toBe(true); });
+
+    const calls = vi.mocked(api.updateKnowledgeSection).mock.calls;
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).toEqual(calls[1]);
+    expect(calls[1]).toEqual([item.mainLineId, "revision-1", "advanced", {
+      expectedVersion: 1, expectedAggregateVersion: 10, applicability: "configured",
+      payload: { ...advanced, inHouseComponents: [replaced] }
+    }]);
+    expect(advanced).toEqual(original);
+    expect(panel.latest()?.groups).toEqual([]);
+  });
+
+  it("supports optional manual removal and clears the removed source's unfinished inputs without changing other components", async () => {
+    const user = userEvent.setup(); const { advanced, target } = replacementFixture();
+    const sibling = { ...initialComponent, id: "retained-sibling", basketId: "basket-2", subBasketId: "sibling-sub" };
+    const original = { ...advanced, inHouseComponents: [...advanced.inHouseComponents, sibling] };
+    const panel = componentPanel(original);
+    const destination = await screen.findByRole("region", { name: "POP / Gypsum / New work" });
+    const source = screen.getByRole("region", { name: "Existing In-house configuration" });
+    fireEvent.change(within(source).getAllByRole("textbox", { name: "Base Rate (₹)" })[0]!, { target: { value: "unfinished source cost" } });
+    await user.click(within(source).getByRole("button", { name: "Add Inclusion" }));
+    await user.type(within(source).getByRole("textbox", { name: "Inclusion name" }), "Unfinished source scope");
+    await waitFor(() => expect(within(destination).getByRole("button", { name: "Use existing configuration" })).toBeDisabled());
+    await user.click(within(source).getByRole("button", { name: "Remove existing configuration" }));
+    expect(screen.queryByRole("region", { name: "Existing In-house configuration" })).not.toBeInTheDocument();
+    expect(api.updateKnowledgeSection).not.toHaveBeenCalled();
+    await waitFor(() => expect(JSON.stringify(panel.latest())).not.toContain("unfinished source cost"));
+    await act(async () => { expect(await panel.ref.current?.save()).toBe(true); });
+    expect(api.updateKnowledgeSection).toHaveBeenCalledExactlyOnceWith(item.mainLineId, "revision-1", "advanced", {
+      expectedVersion: 1, expectedAggregateVersion: 10, applicability: "configured",
+      payload: { ...original, inHouseComponents: [target, sibling] }
+    });
+    expect(panel.latest()?.groups).toEqual([]);
+    expect(screen.queryByRole("region", { name: "Existing In-house configuration" })).not.toBeInTheDocument();
+  });
+
+  it("restores the original and destination values when the atomic move is discarded", async () => {
+    const user = userEvent.setup(); const { advanced } = replacementFixture();
+    const panel = componentPanel(advanced);
+    await replaceFromExisting();
+    expect(screen.queryByRole("region", { name: "Existing In-house configuration" })).not.toBeInTheDocument();
+    expect(panel.latest()?.groups.length).toBeGreaterThan(0);
+    act(() => panel.ref.current?.discard());
+    const restoredSource = await screen.findByRole("region", { name: "Existing In-house configuration" });
+    expect(within(restoredSource).getAllByRole("textbox", { name: "Base Rate (₹)" }).map((input) => (input as HTMLInputElement).value)).toEqual(["23.00", "47.00"]);
+    const destination = screen.getByRole("region", { name: "POP / Gypsum / New work" });
+    await user.click(within(destination).getByRole("button", { name: "POP / Gypsum / New work" }));
+    expect(within(destination).getAllByRole("textbox", { name: "Base Rate (₹)" }).map((input) => (input as HTMLInputElement).value)).toEqual(["99.00", "88.00"]);
+    expect(within(destination).getByText("Old target scope")).toBeVisible();
+    expect(within(destination).getByText("Old exclusion")).toBeVisible();
+    expect(panel.latest()?.groups).toEqual([]);
+    expect(api.updateKnowledgeSection).not.toHaveBeenCalled();
+  });
+
+  it("keeps the source deleted and target identity intact across a conflict while preserving unrelated remote edits", async () => {
+    const user = userEvent.setup();
+    const { source, advanced, replaced } = replacementFixture();
+    const panel = componentPanel(advanced);
+    await replaceFromExisting();
+    const remoteSource = { ...source, labor: { ...source.labor, baseRatePaise: 12300 } };
+    const remoteSibling = { ...initialComponent, id: "remote-component", basketId: "basket-2", subBasketId: "remote-sub" };
+    const remote = { ...advanced, pmcMarginBps: 1800, inHouseComponents: [remoteSource, advanced.inHouseComponents[1]!, remoteSibling] };
+    vi.mocked(api.updateKnowledgeSection).mockRejectedValueOnce(new ApiError(409, "VERSION_CONFLICT", "Updated elsewhere."));
+    vi.mocked(api.getKnowledgeSection).mockImplementation(async (_id, revision, key) => section(key, key === "advanced" ? remote : savedPricing, 2, revision));
+    vi.mocked(api.getKnowledgeItem).mockResolvedValue({ ...item, version: 17 });
+
+    await act(async () => { expect(await panel.ref.current?.save()).toBe(false); });
+    expect(vi.mocked(api.updateKnowledgeSection).mock.calls[0]?.[3]).toMatchObject({ expectedVersion: 1, expectedAggregateVersion: 10 });
+    await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Keep editing" }));
+    expect(panel.latest()?.groups.length).toBeGreaterThan(0);
+    expect(screen.queryByRole("region", { name: "Existing In-house configuration" })).not.toBeInTheDocument();
+    await act(async () => { expect(await panel.ref.current?.save()).toBe(true); });
+
+    expect(api.updateKnowledgeSection).toHaveBeenLastCalledWith(item.mainLineId, "revision-1", "advanced", {
+      expectedVersion: 2, expectedAggregateVersion: 17, applicability: "configured",
+      payload: { ...remote, inHouseComponents: [replaced, remoteSibling] }
+    });
+    expect(panel.latest()?.groups).toEqual([]);
+  });
+
+  it("does not convert or unmount a legacy calculator while it owns invalid pending text", async () => {
+    componentPanel({ modeCalculations: { pmc: null, sub_vendor: null, in_house_labor: calculations, in_house_material: calculations } });
+    await screen.findByRole("button", { name: "Edit Specification 1" });
+    expect(screen.getByRole("checkbox", { name: "Execution" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "In-house" })).toBeChecked();
+    const labor = screen.getByRole("region", { name: "Labor cost calculations" });
+    fireEvent.change(within(labor).getByRole("textbox", { name: "Base Rate (₹)" }), { target: { value: "unfinished legacy" } });
+    await selectComponent();
+    await screen.findByText(/component could not be saved/);
+    expect(api.updateKnowledgeSection).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(within(screen.getByRole("region", { name: "Labor cost calculations" })).getByRole("textbox", { name: "Base Rate (₹)" })).toHaveValue("unfinished legacy");
+    expect(screen.queryByRole("button", { name: "POP / Gypsum / New work" })).not.toBeInTheDocument();
+  });
+
+  it.each(["Inclusion", "Exclusion"])("preserves unfinished legacy %s text and blocks first conversion until cancelled", async (list) => {
+    componentPanel({});
+    await screen.findByRole("button", { name: "Edit Specification 1" });
+    fireEvent.click(screen.getByRole("checkbox", { name: "Execution" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "In-house" }));
+    const legacyScope = screen.getByRole("region", { name: "In-house scope" });
+    fireEvent.click(within(legacyScope).getByRole("button", { name: `Add ${list}` }));
+    fireEvent.change(within(legacyScope).getByRole("textbox", { name: `${list} name` }), { target: { value: "Keep this unfinished scope" } });
+    await selectComponent();
+    await screen.findByText(/component could not be saved/);
+    expect(api.updateKnowledgeSection).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(within(screen.getByRole("region", { name: "In-house scope" })).getByRole("textbox", { name: `${list} name` })).toHaveValue("Keep this unfinished scope");
+    expect(screen.queryByRole("region", { name: "Existing In-house configuration" })).not.toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Labor cost calculations" })).toBeVisible();
+    fireEvent.click(within(legacyScope).getByRole("button", { name: "Cancel" }));
+    await selectComponent();
+    await waitFor(() => expect(api.updateKnowledgeSection).toHaveBeenCalledTimes(1));
+    const preserved = await screen.findByRole("region", { name: "Existing In-house configuration" });
+    expect(within(preserved).getAllByRole("textbox", { name: "Base Rate (₹)" })).toHaveLength(2);
+    expect(JSON.stringify(vi.mocked(api.updateKnowledgeSection).mock.calls[0]?.[3].payload)).not.toContain("Keep this unfinished scope");
+  });
+
 });

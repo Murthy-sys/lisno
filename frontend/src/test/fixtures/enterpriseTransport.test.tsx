@@ -48,6 +48,35 @@ const routes: [string, Role][] = [
   ["/admin/configuration/estimation", "super_admin"], ["/admin/configuration/estimation/items/line-1", "super_admin"], ["/admin/configuration/estimation/reusable-values", "super_admin"]
 ];
 describe("synthetic enterprise route harness", () => {
+  it("renders component estimate previews, retries failures and saves exact null-rate amounts", async () => {
+    const user = userEvent.setup();
+    mount("/estimator-sales/leads/lead-1/estimate?qaComponentAmounts=ready", "estimator_sales");
+    await screen.findByRole("heading", { name: "Select estimate items" });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save draft" })).toBeEnabled());
+    expect(screen.getByRole("region", { name: "In-house amounts by component Sub-Basket" })).toHaveTextContent("₹1,233.33");
+    window.dispatchEvent(new CustomEvent("enterprise-qa-component-preview", { detail: { fail: true } }));
+    await user.click(screen.getByRole("button", { name: /Increase quantity for.*Ceiling framework/ }));
+    await screen.findAllByText("Component amounts could not be calculated. Your inputs are preserved.");
+    expect(screen.getByRole("button", { name: "Save draft" })).toBeDisabled();
+    window.dispatchEvent(new CustomEvent("enterprise-qa-component-preview", { detail: { fail: false } }));
+    await user.click(screen.getByRole("button", { name: "Retry component calculation for Ceiling framework" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save draft" })).toBeEnabled());
+    await user.click(screen.getByRole("button", { name: "Save draft" }));
+    await screen.findByText("Estimate draft saved.");
+    expect(transport!.requests.filter(request => request.unexpected)).toEqual([]);
+  });
+
+  it("renders Procurement component targets and links them to the original source basket", async () => {
+    const user = userEvent.setup();
+    mount("/procurement/projects/project-one?qaComponentAmounts=ready", "procurement");
+    const group = await screen.findByRole("region", { name: "Current In-house component costs by Sub-Basket" });
+    expect(group).toHaveTextContent("1,150");
+    await user.click(within(group).getByText(/Finishes \/ Ceiling/));
+    await user.click(within(group).getAllByRole("button", { name: "Open source in Joinery" })[0]!);
+    await screen.findByRole("heading", { name: "Joinery" });
+    expect(await screen.findByRole("region", { name: "Current In-house component costs by Sub-Basket" })).toHaveTextContent("Ceiling framework");
+    expect(transport!.requests.filter(request => request.unexpected)).toEqual([]);
+  });
   it("gates the recommendation scrolling fixture without changing mode or basket defaults", async () => {
     const read = async <T,>(path: string) => (await (await fetch(`/api/v1${path}`)).json()).data as T;
     for (const query of ["qaRecommendationScroll=ready", "qaEstimateModes=ready", "qaEstimateModes=ready&qaBasketCards=ready"]) {

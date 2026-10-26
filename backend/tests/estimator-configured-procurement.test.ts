@@ -271,3 +271,19 @@ describe("configured Procurement approval lineage", () => {
       expect.objectContaining({ code: "PROCUREMENT_APPROVAL_SOURCE_CONFLICT" }));
   });
 });
+
+
+it("keeps frozen dimension lineage and approved quantity rather than current draft measurements", () => {
+  const fixture = approvedProject({ projectId: "project-dimensions", estimateId: "estimate-dimensions", basketId: "basket", basketName: "Ceilings", lineId: "ceiling", lineAmountPaise: 1000 });
+  const metadata = { dimensionsMandatory: true, dimensions: { length: "2", width: "0.5", height: "9" },
+    dimensionRule: { formula: "length_width", inputUnit: "ft", quantityUnit: "sq_ft", uomId: "sqft", decimalScale: 2 }, uomId: "sqft", uomDecimalScale: 2 };
+  const approved = fixture.approvedRounds[0]!.estimateSnapshot.lineItems[0]!;
+  Object.assign(approved, metadata);
+  fixture.estimate.lineItems = [{ ...approved, quantity: 100 }];
+  const source = approvedProcurementSnapshotFromRows(fixture.estimate, fixture.approvedRounds);
+  expect(source.allLineItems[0]).toMatchObject({ quantity: 1, ...metadata });
+  Object.assign(approved, { quantity: 99 });
+  expect(() => approvedProcurementSnapshotFromRows(fixture.estimate, fixture.approvedRounds)).toThrow();
+  Object.assign(approved, { dimensionsMandatory: false });
+  expect(approvedProcurementSnapshotFromRows(fixture.estimate, fixture.approvedRounds).allLineItems[0]).toMatchObject({ quantity: 99, dimensionsMandatory: false, dimensions: metadata.dimensions });
+});

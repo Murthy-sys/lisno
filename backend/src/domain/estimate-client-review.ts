@@ -1,4 +1,7 @@
+import type { EstimateComponentPricing, ESTIMATE_COMPONENT_PRICING_BASIS } from "./estimate-component-pricing.js";
+import type { EstimateDimensions, EstimateDimensionRule } from "./estimate-dimensions.js";
 import type { EstimatePricingMode, EstimateRateSource } from "./estimate-mode-pricing.js";
+import type { KnowledgeModeTier } from "./ai-estimator-knowledge-mode-tiers.js";
 
 import { createHash } from "node:crypto";
 
@@ -71,9 +74,18 @@ export interface EstimateClientReviewSnapshot {
     id?: string | null;
     source?: "legacy" | "configuration";
     itemType?: ConfiguredEstimateItemType;
+    /** Client screen only; absent historical values remain visible. */
+    clientVisible?: boolean;
     classification?: EstimateClassification;
+    modeTier?: KnowledgeModeTier;
+    dimensionsMandatory?: boolean;
+    dimensions?: EstimateDimensions;
+    dimensionRule?: EstimateDimensionRule | null;
     pricingMode?: EstimatePricingMode;
     rateSource?: EstimateRateSource;
+    selectedInHouseComponentIds?: string[];
+    pricingBasis?: typeof ESTIMATE_COMPONENT_PRICING_BASIS;
+    componentPricing?: EstimateComponentPricing;
     catalogueId: string;
     roomId?: string;
     roomName: string;

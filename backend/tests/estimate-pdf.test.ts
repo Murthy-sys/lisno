@@ -161,6 +161,35 @@ describe("estimate PDF catalogue", () => {
 });
 
 describe("estimate PDF service", () => {
+  it("keeps screen-hidden configured lines and their amounts in both quotation PDF profiles", async () => {
+    const service = createEstimatePdfService({ logoSvg: backendLogo });
+    const hiddenLine = {
+      source: "configuration" as const, modeTier: "premium" as const, clientVisible: false, catalogueId: "hidden-lighting", roomName: "Living room",
+      specification: null, unit: "nos", rate: 121.25, ratePaise: 12_125, quantity: 1, included: true,
+      amount: 121.25, amountPaise: 12_125, mainBasketId: "lighting", mainBasketName: "Lighting",
+      subBasketName: "Decorative fixtures", mainLineName: "Screen-hidden accent lighting",
+      estimateNotes: ["Include all mounting accessories in the quotation."]
+    };
+    const visibleLine = { ...hiddenLine, modeTier: "functional" as const, clientVisible: true, catalogueId: "visible-lighting", mainLineName: "Visible ceiling lighting",
+      rate: 70.03, ratePaise: 7_003, amount: 70.03, amountPaise: 7_003, estimateNotes: [] };
+    const quoted: EstimatePdfInput = { ...fixture, lineItems: [hiddenLine, visibleLine],
+      subtotal: 191.28, subtotalPaise: 19_128, gst: 34.43, gstPaise: 3_443, total: 225.71, totalPaise: 22_571 };
+    for (const profile of ["standard", "compact_client_delivery"] as const) {
+      const result = await readPdf((await service.generate(quoted, { profile })).bytes);
+      expect(result.text).toContain("Screen-hidden accent lighting");
+      expect(result.text).toContain("Visible ceiling lighting");
+      expect(result.text).toContain("Tier: Premium");
+      expect(result.text).toContain("Tier: Functional");
+      expect(result.text).toContain("mounting accessories");
+      expect(result.text).toContain("INR 121.25");
+      expect(result.text).toContain("INR 191.28");
+      expect(result.text).toContain("INR 34.43");
+      expect(result.text).toContain("INR 225.71");
+    }
+    expect(quoted.lineItems).toHaveLength(2);
+    expect(hiddenLine.clientVisible).toBe(false);
+  });
+
   it("renders configured basket and line snapshots and rejects an incomplete selected rate", async () => {
     const service = createEstimatePdfService({ logoSvg: backendLogo });
     const configured: EstimatePdfInput = {
@@ -179,6 +208,7 @@ describe("estimate PDF service", () => {
     expect(result.text).toContain("Original basket");
     expect(result.text).toContain("Original child");
     expect(result.text).toContain("Original console");
+    expect(result.text).toContain("Tier: Signature");
     expect(result.text).toContain("INR 143.08");
     expect(result.text).toContain("subject to availability");
     expect(result.text).toContain("Allow servicing access.");
@@ -454,4 +484,25 @@ describe("estimate PDF service", () => {
     expect(pdf.text).toContain(`Page 1 of ${pdf.pageCount}`);
     expect(pdf.text).toContain(`Page ${pdf.pageCount} of ${pdf.pageCount}`);
   });
+});
+
+
+it("prints frozen dimensions and exact derived precision in both PDF profiles", async () => {
+  const service = createEstimatePdfService({ logoSvg: backendLogo });
+  const measured: EstimatePdfInput = { ...fixture, subtotal: 1.24, gst: .22, total: 1.46, subtotalPaise: 124, gstPaise: 22, totalPaise: 146,
+    lineItems: [{ source: "configuration", catalogueId: "measured", mainLineName: "Measured ceiling", mainBasketName: "Ceilings", roomName: "Hall", specification: null,
+      unit: "sqft", uomId: "sqft", uomDecimalScale: 3, quantity: 1.235, included: true, rate: 1, ratePaise: 100, amount: 1.24, amountPaise: 124,
+      dimensionsMandatory: true, dimensions: { length: "1.2345", width: "1", height: "9" }, dimensionRule: { formula: "length_width", inputUnit: "ft", quantityUnit: "sq_ft", uomId: "sqft", decimalScale: 3 } }] };
+  for (const profile of ["standard", "compact_client_delivery"] as const) {
+    const pdf = await readPdf((await service.generate(measured, { profile })).bytes);
+    expect(pdf.text).toContain("1.235 sqft");
+    expect(pdf.text).toContain("L 1.2345");
+    expect(pdf.text.replace(/\s+/g, " ")).toContain("H 9 ft");
+    expect(pdf.text).toContain("quantity = L");
+    expect(pdf.text).toContain("INR 1.46");
+  }
+  await expect(service.generate({ ...measured, lineItems: [{ ...measured.lineItems[0]!, quantity: 11.111 }] })).rejects.toThrow("dimensions");
+  const inactive = await readPdf((await service.generate({ ...measured, lineItems: [{ ...measured.lineItems[0]!, dimensionsMandatory: false, quantity: 11.111 }] })).bytes);
+  expect(inactive.text).toContain("Recorded dimensions");
+  expect(inactive.text).toContain("11.111 sqft");
 });

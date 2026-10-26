@@ -40,6 +40,48 @@ function settings(baseRatePaise: number, impactBps: number, minimumMarkupBps: nu
 }
 
 describe("projectKnowledgeSavedSummary", () => {
+  it.each([[true, "Yes · Length × Width"], [false, "No"]] as const)("summarizes dimensions mandatory %s", (dimensionsMandatory, expected) => {
+    const result = projectKnowledgeSavedSummary(input({ sections: { overview: { dimensionsMandatory } } })).overview;
+    expect(result.details).toContainEqual({ key: "dimensions-mandatory", label: "Dimensions mandatory", value: expected });
+    expect(values(result)).not.toContain("needs review");
+  });
+  it.each([[[], "None"], [["signature", "functional"], "Signature, Functional"]] as const)("summarizes saved applicable tiers %j", (tiers, expected) => {
+    const result = projectKnowledgeSavedSummary(input({ sections: { overview: { applicableTiers: [...tiers] } } })).overview;
+    expect(result.details).toContainEqual({ key: "applicable-tiers", label: "Applicable tiers", value: expected });
+    expect(values(result)).not.toContain("needs review");
+  });
+  it.each([[undefined, "Yes"], [true, "Yes"], [false, "No"]] as const)("shows effective client visibility %s as %s without a generic review warning", (clientVisible, expected) => {
+    const payload: KnowledgeJsonObject = clientVisible === undefined ? {} : { clientVisible };
+    const result = projectKnowledgeSavedSummary(input({ sections: { overview: payload } })).overview;
+    const visibility = { key: "client-visible", label: "Client estimate screen", value: expected };
+    expect(result).toEqual({ details: [visibility, { key: "dimensions-mandatory", label: "Dimensions mandatory", value: "No" }], preview: [visibility, { key: "dimensions-mandatory", label: "Dimensions mandatory", value: "No" }] });
+    expect(values(result)).not.toContain("needs review");
+    expect(payload).toEqual(clientVisible === undefined ? {} : { clientVisible });
+  });
+
+  it("does not describe malformed saved visibility as a valid Yes or No", () => {
+    const result = projectKnowledgeSavedSummary(input({ sections: { overview: { clientVisible: "false" } } })).overview;
+    expect(result.details).toContainEqual({ key: "client-visible", label: "Client estimate screen", value: "Saved configuration needs review" });
+  });
+
+  it("shows each saved component independently and never repeats retained legacy costs or scope", () => {
+    const result = projectKnowledgeSavedSummary(input({ sections: { overview: { uomId: "uom-private" }, advanced: {
+      modeCalculations: { pmc: null, sub_vendor: null, in_house_labor: settings(9999900, 1000, 2000, 3000), in_house_material: null },
+      modeConfigurations: [{ id: "legacy-scope", modeKind: "execution", executionSource: "in_house", fields: [], inclusions: [{ id: "obsolete", name: "Old root inclusion", selected: true }], exclusions: [] }],
+      inHouseComponents: [{ id: "component-one", basketId: basket.id, subBasketId: subBasket.id,
+        inclusions: [{ id: "scope-one", name: "Component labour", selected: true }], exclusions: [],
+        labor: settings(12300, 1000, 1500, 2500), material: settings(45600, 1000, 2000, 3000) },
+      { id: "component-two", basketId: basket.id, subBasketId: "missing-sub", inclusions: [], exclusions: [], labor: null, material: null }]
+    } } })).mode;
+    expect(values(result)).toContain("Finishes / Wall work");
+    expect(values(result)).toContain("Component labour · Selected");
+    expect(values(result)).toContain("Finishes / Name unavailable");
+    expect(values(result)).not.toContain("Old root inclusion");
+    expect(values(result)).not.toContain("99,999");
+    expect(values(result)).not.toContain("component-one");
+    expect(result.preview.map(({ label }) => label)).toEqual(["PMC", "Sub-Vendor", "In-house · Finishes / Wall work · Labour", "In-house · Finishes / Wall work · Material", "In-house · Finishes / Name unavailable · Labour", "In-house · Finishes / Name unavailable · Material"]);
+  });
+
   it("does not invent values for missing sources", () => {
     for (const group of Object.values(projectKnowledgeSavedSummary(input()))) {
       expect(group).toEqual({ details: [], preview: [] });
@@ -50,7 +92,9 @@ describe("projectKnowledgeSavedSummary", () => {
     const result = projectKnowledgeSavedSummary(input({
       sections: { overview: {}, advanced: {}, recommendations: {} }, quality: quality([])
     }));
-    expect(result.overview).toEqual({ details: [], preview: [] });
+    const visibility = { key: "client-visible", label: "Client estimate screen", value: "Yes" };
+    const dimensions = { key: "dimensions-mandatory", label: "Dimensions mandatory", value: "No" };
+    expect(result.overview).toEqual({ details: [visibility, dimensions], preview: [visibility, dimensions] });
     expect(result.recommendations).toEqual({ details: [], preview: [] });
     expect(result.quality).toEqual({ details: [], preview: [] });
     expect(result.mode.details).toEqual([
@@ -66,7 +110,8 @@ describe("projectKnowledgeSavedSummary", () => {
     const result = projectKnowledgeSavedSummary(input({ sections: { overview: { uomId: "uom-private", surfaceIds: ["surface-private", "surface-missing"] } } })).overview;
     expect(result.preview).toEqual([
       { key: "uom", label: "UOM", value: "Square metre" },
-      { key: "surfaces", label: "Surfaces", value: "Ceiling, Name unavailable" }
+      { key: "surfaces", label: "Surfaces", value: "Ceiling, Name unavailable" },
+      { key: "client-visible", label: "Client estimate screen", value: "Yes" }
     ]);
     expect(values(result)).toContain("Ceiling · Examples: Paint and gypsum");
     expect(values(result)).not.toContain("Floor");

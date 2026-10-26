@@ -9,6 +9,7 @@ import { renderWithQuery } from "../../test/render";
 import { server } from "../../test/server";
 import { ClientEstimateRequirements } from "./ClientEstimateRequirements";
 import { estimateRequirementsKeys, type EstimateRequirement, type EstimateRequirementsDetail } from "./estimateRequirementsApi";
+import { estimateTiersKeys } from "./estimateTiersApi";
 
 const path = "/api/v1/projects/project-one/estimate-requirements";
 const request: EstimateRequirement = {
@@ -161,6 +162,7 @@ describe("ClientEstimateRequirements", () => {
     expect(screen.queryByRole("form")).not.toBeInTheDocument();
     expect(screen.getByText(request.text)).toBeVisible();
     expect(invalidate).toHaveBeenCalledWith({ queryKey: estimateRequirementsKeys.detail("project-one") });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: estimateTiersKeys.detail("project-one") });
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ["client", "estimates"] });
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ["client", "projects"] });
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ["leads"] });

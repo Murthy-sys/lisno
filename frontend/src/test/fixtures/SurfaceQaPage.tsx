@@ -1,3 +1,6 @@
+import { KnowledgeOverviewPanel } from "../../features/ai-estimator-knowledge/KnowledgeOverviewPanel";
+import "../../features/ai-estimator-knowledge/knowledge-configuration-ui.css";
+import "../../features/vendor-basket-proposals/procurement-main-basket.css";
 import { KnowledgeModeSurfacePanel } from "../../features/ai-estimator-knowledge/KnowledgeModeSurfacePanel";
 import { KnowledgeReusableValuesPage } from "../../features/ai-estimator-knowledge/KnowledgeReusableValuesPage";
 import { KnowledgeSurfaceEditorDialog } from "../../features/ai-estimator-knowledge/KnowledgeSurfaceEditorDialog";
@@ -5,6 +8,9 @@ import type { KnowledgeMaster, KnowledgeSurface } from "../../features/ai-estima
 import "../../features/ai-estimator-knowledge/ai-estimator-knowledge.css";
 
 export type SurfaceQaState =
+  | "overview-procurement"
+  | "overview-loading"
+  | "overview-error"
   | "panel"
   | "panel-loading"
   | "panel-error"
@@ -18,6 +24,9 @@ export type SurfaceQaState =
   | "management-empty";
 
 export const SURFACE_QA_STATES: readonly SurfaceQaState[] = [
+  "overview-procurement",
+  "overview-loading",
+  "overview-error",
   "panel",
   "panel-loading",
   "panel-error",
@@ -87,6 +96,20 @@ export const retiredSurface = surface(
 const surfaces = [wallSurface, counterSurface, longSurface, retiredSurface];
 
 export function SurfaceQaPage({ state }: { readonly state: SurfaceQaState }) {
+  if (state === "overview-procurement" || state === "overview-loading" || state === "overview-error") {
+    const procurement = state === "overview-procurement";
+    const reference = { status: procurement ? "ready" as const : state === "overview-loading" ? "loading" as const : "error" as const, onRetry: () => undefined };
+    return <section className={`knowledge-workspace-section knowledge-workspace-section--overview${procurement ? " basket-proposal--procurement-reference" : ""}`}>
+      <KnowledgeOverviewPanel presentation={procurement ? "procurement-basket" : "configuration"}
+        showDimensions={!procurement} showApplicableTiers={!procurement}
+        overviewPayload={{ uomId: squareFoot.id, surfaceIds: [wallSurface.id] }}
+        masters={{ uoms: [{ ...squareFoot, code: "SQFT", decimalScale: 2 }], surfaces }}
+        referenceStates={{ masters: { uoms: reference, surfaces: reference } }}
+        editable={!procurement} canQuickAdd={!procurement}
+        onOverviewPayloadChange={() => undefined} onOverviewDirty={() => undefined}
+        onQuickAddUom={() => undefined} onQuickAddSurface={() => undefined} />
+    </section>;
+  }
   if (state === "management" || state === "management-empty") {
     return <KnowledgeReusableValuesPage />;
   }

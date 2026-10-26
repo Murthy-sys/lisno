@@ -59,6 +59,7 @@ vi.mock("./knowledgeApi", async (importOriginal) => {
     listKnowledgeItems: vi.fn(),
     listKnowledgeBaskets: vi.fn(),
     listKnowledgeSubBaskets: vi.fn(),
+    getKnowledgeSubBasketMargins: vi.fn(),
     listKnowledgeMasters: vi.fn(),
     getKnowledgeBasketDeletionImpact: vi.fn(),
     getKnowledgeSubBasketDeletionImpact: vi.fn(),
@@ -312,6 +313,10 @@ beforeEach(() => {
     pagination: { ...pagination, limit: 20, total: 2 }
   });
   vi.mocked(knowledgeApi.listKnowledgeSubBaskets).mockResolvedValue({ items: [], pagination });
+  vi.mocked(knowledgeApi.getKnowledgeSubBasketMargins).mockImplementation(async (basketId, subBasketId) => {
+    const empty = { ranges: [], mismatchCount: null, mismatches: [], canApply: false, unavailableReason: "No main lines configured." };
+    return { basketId, subBasketId, source: null, totalMainLines: 0, versionToken: "empty", modes: { pmc: empty, sub_vendor: empty, in_house: empty } };
+  });
   mockMasters({ priorities: [highPriority, lowPriority], uoms: [squareFoot, runningMetre] });
   vi.mocked(knowledgeApi.getKnowledgeBasketDeletionImpact).mockImplementation(async (basketId) => ({
     basketId,
@@ -324,6 +329,31 @@ beforeEach(() => {
 });
 
 describe("Knowledge Base index page", () => {
+  it("shows full Sub-Basket margin counts beside the name without expanding its item disclosure", async () => {
+    const user = userEvent.setup();
+    mockDeletionHierarchy();
+    vi.mocked(knowledgeApi.getKnowledgeSubBasketMargins).mockImplementation(async (basketId, subBasketId) => {
+      const mode = { ranges: [{ key: "margin" as const, minimumBps: 1200, maximumBps: 1800 }], mismatchCount: 9, mismatches: [], canApply: true, unavailableReason: null };
+      return { basketId, subBasketId, source: { mainLineId: "off-page-first", mainLineName: "First configured line" }, totalMainLines: 24, versionToken: "version-current", modes: { pmc: mode, sub_vendor: mode, in_house: mode } };
+    });
+    renderIndex();
+    await screen.findByRole("button", { name: carpentry.name });
+    expect(knowledgeApi.getKnowledgeSubBasketMargins).not.toHaveBeenCalled();
+    await openMainBaskets(carpentry.name);
+    const parent = basketPanel(carpentry.name);
+    const sub = within(parent).getByRole("region", { name: panelGroup.name });
+    const toggle = within(sub).getByRole("button", { name: panelGroup.name });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    const control = await within(sub).findByRole("button", { name: /PMC default margins.*9 mismatched/ });
+    expect(control).toHaveTextContent("12% / Max. 18%");
+    expect(within(sub).getByText("1 item on this page")).toBeVisible();
+    expect(vi.mocked(knowledgeApi.getKnowledgeSubBasketMargins).mock.calls.every(([id]) => id === carpentry.id)).toBe(true);
+    await user.click(control);
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByRole("dialog", { name: "PMC default margins" })).toHaveTextContent("First configured line");
+    expect(screen.getByText(/Compared across all 24 main lines/)).toBeVisible();
+  });
+
   it("starts with collapsed photo cards and reads only the opened parent catalog", async () => {
     const user = userEvent.setup();
     renderIndex();

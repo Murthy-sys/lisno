@@ -11,6 +11,7 @@ import { dashboardKeys } from "../admin/dashboard/superAdminDashboardApi";
 import { formatBps, formatPaise } from "../finance/ProjectFinancePanel";
 import { projectStatusKeys } from "../project-status/projectStatusApi";
 import { procurementError } from "./procurementPresentation";
+import { purchaseOrderComponentKey, purchaseOrderComponentLabel } from "./purchaseOrderComponentPresentation";
 import {
   decideProjectPurchaseOrderRequest, getPendingProjectPurchaseOrderRequests, purchaseOrderKeys,
   type ProjectPurchaseOrderRequest, type PurchaseOrderRequestLine, type PurchaseOrderRequestModeSnapshot
@@ -101,7 +102,7 @@ function ModeSnapshotReview({ snapshot, lines }: { snapshot: PurchaseOrderReques
           <div><dt>Calculation version</dt><dd>{preview?.formulaVersion ?? "Unavailable"}</dd></div>
         </dl>
         {preview?.settings.scopes.length ? <div className="purchase-orders__mode-settings"><h6>Saved mode settings</h6>
-          <ul>{preview.settings.scopes.map((setting) => <li key={setting.scope}><strong>{setting.scope.replaceAll("_", " ")}</strong>
+          <ul>{preview.settings.scopes.map((setting) => <li key={purchaseOrderComponentKey(setting)}><strong>{purchaseOrderComponentLabel(setting, preview.settings.scopes, setting.scope.replaceAll("_", " "), snapshot)}</strong>
             <span>{setting.source ? `${setting.source.replaceAll("_", " ")} rate` : "Rate source unavailable"} {formatPaise(setting.baseRatePaise)} · Low quantity limit {setting.lowQuantityLimit} · Impact {formatBps(setting.impactBps)} · Starting markup {formatBps(setting.startingMarkupBps)} · Minimum markup {formatBps(setting.minimumMarkupBps)}</span></li>)}</ul>
           {preview.settings.configuredMarginBps !== null ? <p>Configured margin {formatBps(preview.settings.configuredMarginBps)} · {preview.settings.markupBasis} markup basis</p> : null}
         </div> : null}

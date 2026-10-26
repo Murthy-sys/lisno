@@ -77,6 +77,8 @@ function services() {
     archiveMaster: vi.fn(async () => ({ id: "master-1", status: "archived" }))
   } as unknown as AiEstimatorKnowledgeReferenceService;
   const item = {
+    getSubBasketMargins: vi.fn(async () => ({ basketId: "basket-1", subBasketId: "child-1", versionToken: "a".repeat(64) })),
+    applySubBasketMargins: vi.fn(async () => ({ updatedMainLineIds: ["line-2"], summary: {} })),
     listMainLines: vi.fn(async () => ({ items: [], total: 0 })),
     createMainLine: vi.fn(async () => ({ id: "line-1" })),
     updateMainLine: vi.fn(async () => ({ id: "line-1" })),
@@ -142,6 +144,30 @@ function appFor(testServices: AiEstimatorKnowledgeAdminRouterServices, actor?: P
 }
 
 describe("AI Estimator Knowledge HTTP routes", () => {
+  it("exposes Sub-Basket margin defaults only to Configuration administrators and validates exact apply commands", async () => {
+    const testServices = services();
+    const app = appFor(testServices);
+    const path = "/api/v1/admin/ai-estimator-knowledge/baskets/basket-1/sub-baskets/child-1/margins";
+    const headers = { Authorization: "Bearer super-admin-token" };
+    await request(app).get(path).set(headers).expect(200);
+    expect(testServices.item.getSubBasketMargins).toHaveBeenCalledWith(superAdmin, "basket-1", "child-1", undefined);
+    const command = { mode: "pmc", versionToken: "a".repeat(64) };
+    await request(app).post(`${path}/apply`).set(headers).send(command).expect(200);
+    expect(testServices.item.applySubBasketMargins).toHaveBeenCalledWith(superAdmin, "basket-1", "child-1", command);
+    const targeted = { ...command, targetMainLineId: "current-main-line" };
+    await request(app).post(`${path}/apply`).set(headers).send(targeted).expect(200);
+    expect(testServices.item.applySubBasketMargins).toHaveBeenCalledWith(superAdmin, "basket-1", "child-1", targeted);
+    for (const invalid of [{ ...command, targetMainLineId: " " }, { ...command, targetMainLineId: "x".repeat(129) }, { ...command, targetMainLineId: 42 }, { ...command, mode: "other" }, { ...command, versionToken: "stale" }, { ...command, sourceMainLineId: "injected" }, { mode: "pmc" }]) {
+      await request(app).post(`${path}/apply`).set(headers).send(invalid).expect(400);
+    }
+    for (const role of ROLE_CODES.filter((value) => value !== "super_admin")) {
+      const denied = appFor(testServices, { ...superAdmin, role });
+      await request(denied).get(path).set(headers).expect(403);
+      await request(denied).post(`${path}/apply`).set(headers).send(command).expect(403);
+    }
+    expect(testServices.item.applySubBasketMargins).toHaveBeenCalledTimes(2);
+  });
+
   it("validates the full vendor profile and exposes detail only to Super Admin and Procurement", async () => {
     const testServices = services();
     const app = appFor(testServices);

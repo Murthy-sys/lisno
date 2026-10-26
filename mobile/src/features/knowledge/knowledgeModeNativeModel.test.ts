@@ -1,7 +1,14 @@
 import { modeCalculationsIssues, modeCalculationsForPayload } from "../../../../shared/knowledge/knowledgeModeCalculation";
-import { nativeCalculationChange, nativeCalculationDraft, nativePercentage, patchKnowledgeRow } from "./knowledgeModeNativeModel";
+import { nativeCalculationChange, nativeCalculationDraft, nativeModeConfigurations, nativePercentage, patchKnowledgeRow } from "./knowledgeModeNativeModel";
 
 describe("native Mode draft preservation", () => {
+  it("ignores only obsolete component-owned In-house lists and preserves validation of other records", () => {
+    const old = { id: "old-in-house", modeKind: "execution", executionSource: "in_house", fields: [], inclusions: "retained", exclusions: false };
+    expect(nativeModeConfigurations({ inHouseComponents: [], modeConfigurations: [old] }).issues).toEqual([]);
+    expect(nativeModeConfigurations({ modeConfigurations: [old] }).issues.length).toBeGreaterThan(0);
+    expect(nativeModeConfigurations({ inHouseComponents: [], modeConfigurations: [{ ...old, fields: "invalid" }] }).issues.length).toBeGreaterThan(0);
+    expect(nativeModeConfigurations({ inHouseComponents: [], modeConfigurations: [{ ...old, modeKind: "pmc", executionSource: undefined }] } as never).issues.length).toBeGreaterThan(0);
+  });
   it("retains incomplete decimals and invalid values until they are corrected", () => {
     const initial = { retainedRoot: { note: "keep" }, modeCalculations: { future_scope: { keep: true }, pmc: null, sub_vendor: null, in_house_labor: null, in_house_material: null } };
     const draft = { baseRate: "12.", lowQuantityLimit: "15", impactRate: "10", minimumRate: "25", startingRate: "35" };

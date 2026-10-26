@@ -1,3 +1,4 @@
+import { parseInHouseComponents } from "../../../../shared/knowledge/knowledgeInHouseComponents";
 import { modeCalculationDraft, modeCalculationsForPayload, parseModeQuantity, MODE_CALCULATION_SCOPES, type ModeCalculationScope } from "./knowledgeModeCalculation";
 import { generateModeDescription, syncModeDescription } from "./knowledgeModeDescription";
 import { knowledgeModeFieldTypeLabel, parseKnowledgeModeConfigurations, partitionKnowledgeModeConfigurations, type KnowledgeModeConfiguration } from "./knowledgeModeConfiguration";
@@ -6,7 +7,7 @@ import { pmcMarginRange, pmcMarginRangeIssues, subVendorMarginRange, subVendorMa
 import { formatKnowledgePercentage, parseRupeeInputToPaise } from "./knowledgePresentation";
 import { pairPendingRows, pendingObjectRows, pendingRowsReordered, pendingText, pendingValuesEqual, type KnowledgePendingChangeEntry, type KnowledgePendingChangeField, type KnowledgePendingChangeGroup } from "./knowledgePendingChanges";
 import type { KnowledgeModeCalculationDraft } from "./KnowledgeModeCalculationTable";
-import type { KnowledgeJsonObject, KnowledgeMaster } from "./knowledgeTypes";
+import type { KnowledgeJsonObject, KnowledgeMaster, KnowledgeBasket, KnowledgeItemListItem } from "./knowledgeTypes";
 import { readSpecificationBrandIds } from "./knowledgeSpecificationConfiguration";
 
 export interface KnowledgePendingCalculation {
@@ -23,6 +24,9 @@ export interface KnowledgeModePendingChangesInput {
   readonly modes?: readonly KnowledgeMaster[];
   readonly pendingDescription?: string | null;
   readonly pendingCalculations?: Readonly<Partial<Record<ModeCalculationScope, KnowledgePendingCalculation | null>>>;
+  readonly componentPending?: Readonly<Record<string, KnowledgePendingCalculation | null>>;
+  readonly relationshipBaskets?: readonly KnowledgeBasket[];
+  readonly relationshipItems?: readonly KnowledgeItemListItem[];
   readonly uomLabel?: string;
 }
 
@@ -112,7 +116,7 @@ export function projectKnowledgeModePendingChanges(input: KnowledgeModePendingCh
     }
     const oldInHouse = oldPrimary.execution.in_house;
     const inHouse = primary.execution.in_house;
-    for (const list of PMC_SCOPE_LISTS) {
+    if (!Object.hasOwn(after, "inHouseComponents")) for (const list of PMC_SCOPE_LISTS) {
       add(`in_house:${list}`, `Execution · In-house · ${list === "inclusions" ? "Inclusions" : "Exclusions"}`, rows(
         (oldInHouse?.[list] ?? []).map((row) => ({ ...row })),
         (inHouse?.[list] ?? []).map((row) => ({ ...row })), `in_house:${list}`, "name", list === "inclusions" ? "Inclusion" : "Exclusion",
@@ -149,9 +153,37 @@ export function projectKnowledgeModePendingChanges(input: KnowledgeModePendingCh
     );
     const currentDescription = input.pendingDescription ?? description(after, input.mainLineName, pmc, inHouse);
     if (expectedDescription.trim() !== currentDescription.trim()) add("mode:paragraph", "Mode · PMC · Description", [{ key: "mode:paragraph", title: "Description", kind: "updated", fields: [field("paragraph", "Description", currentDescription)], ...(!currentDescription.trim() ? { incomplete: true } : {}) }]);
+    const oldComponents = parseInHouseComponents(before.inHouseComponents).components;
+    const components = parseInHouseComponents(after.inHouseComponents).components;
+    for (const component of [...oldComponents.filter((entry) => !components.some(({ id }) => id === entry.id)), ...components]) {
+      const old = oldComponents.find(({ id }) => id === component.id);
+      const current = components.find(({ id }) => id === component.id);
+      const title = `${input.relationshipBaskets?.find(({ id }) => id === component.basketId)?.name ?? "Main basket"} / ${component.subBasketId === null ? "Current In-house configuration" : input.relationshipItems?.find((item) => item.basketId === component.basketId && item.subBasketId === component.subBasketId)?.subBasketName ?? `Sub-basket component ${(current ? components : oldComponents).findIndex(({ id }) => id === component.id) + 1}`}`;
+      if (!current) { add(`in-house-component:${component.id}`, `In-house · ${title}`, [{ key: component.id, title: "Component", kind: "removed", fields: [] }]); continue; }
+      const entries: KnowledgePendingChangeEntry[] = [];
+      if (!old) entries.push({ key: `${component.id}:added`, title: "Component", kind: "added", fields: [] });
+      for (const list of PMC_SCOPE_LISTS) entries.push(...rows((old?.[list] ?? []).map((row) => ({ ...row })), current[list].map((row) => ({ ...row })), `${component.id}:${list}`, "name", list === "inclusions" ? "Inclusion" : "Exclusion", { name: "Name", selected: "State" }, { format: (name, value) => name === "selected" ? value ? "Selected" : "Not selected" : value }));
+      for (const cost of ["labor", "material"] as const) {
+        const pending = input.componentPending?.[`${component.id}:${cost}`];
+        const blank = { baseRate: "", lowQuantityLimit: "", impactRate: "", minimumRate: "", startingRate: "" };
+        const baseline = pending?.baselineDraft ?? (old?.[cost] ? modeCalculationDraft(old[cost] as unknown as KnowledgeJsonObject) : blank);
+        const draft = pending?.draft ?? (current[cost] ? modeCalculationDraft(current[cost] as unknown as KnowledgeJsonObject) : blank);
+        const fields = (Object.keys(calculationFields) as (keyof KnowledgeModeCalculationDraft)[]).flatMap((name) => {
+          const oldNumber = name === "lowQuantityLimit" ? parseModeQuantity(baseline[name], 64) : parseRupeeInputToPaise(baseline[name]);
+          const currentNumber = name === "lowQuantityLimit" ? parseModeQuantity(draft[name], 64) : parseRupeeInputToPaise(draft[name]);
+          const equalNumber = typeof oldNumber === "string" && typeof currentNumber === "string" ? oldNumber === currentNumber
+            : typeof oldNumber === "object" && typeof currentNumber === "object" && oldNumber.status === "valid" && currentNumber.status === "valid" && oldNumber.paise === currentNumber.paise;
+          return baseline[name] === draft[name] || (!pending?.invalidFields.includes(name) && equalNumber) ? [] : [field(name,
+            name === "minimumRate" ? "Min. Gross Margin (%)" : name === "startingRate" ? "Starting Gross Margin (%)" : calculationFields[name], draft[name])];
+        });
+        if (fields.length) entries.push({ key: `${component.id}:${cost}`, title: cost === "labor" ? "Labour cost" : "Material cost", kind: old ? "updated" : "added", fields, ...(pending?.invalidFields.length ? { incomplete: true } : {}) });
+      }
+      add(`in-house-component:${component.id}`, `In-house · ${title}`, entries);
+    }
     const oldCalculations = modeCalculationsForPayload(before);
     const calculations = modeCalculationsForPayload(after);
     for (const scope of MODE_CALCULATION_SCOPES) {
+      if (Object.hasOwn(after, "inHouseComponents") && scope.startsWith("in_house")) continue;
       const pending = input.pendingCalculations?.[scope];
       const baseline = pending?.baselineDraft ?? modeCalculationDraft(oldCalculations[scope]);
       const current = pending?.draft ?? modeCalculationDraft(calculations[scope]);

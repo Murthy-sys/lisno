@@ -1,3 +1,7 @@
+import { resolveEstimateDimensionRule, type EstimateDimensionRule } from "../domain/estimate-dimensions.js";
+import { KNOWLEDGE_MODE_TIERS, isKnowledgeModeTier, knowledgeModeTierPayloads, projectKnowledgeModeTierSection, type KnowledgeModeTier } from "../domain/ai-estimator-knowledge-mode-tiers.js";
+import { lockInHouseComponentReferences } from "./ai-estimator-knowledge-in-house-components.service.js";
+import { readInHouseComponents, inHouseComponentBaseRate } from "../domain/ai-estimator-knowledge-in-house-components.js";
 import { normalizeDesignRules, validateDesignRules, designRulesDigest, designRuleEstimateNotes, type DesignRules } from "../domain/main-line-design-rules.js";
 import type mongoose from "mongoose";
 
@@ -15,12 +19,21 @@ import { AiEstimatorKnowledgeUomModel } from "../models/AiEstimatorKnowledgeUom.
 import { UserModel } from "../models/User.js";
 import type { PublicUser } from "./auth.service.js";
 
+export interface EstimatorCatalogueTierPricing {
+  modeBaseRatesPaise: EstimateModeBaseRatesPaise;
+  inHouseComponents?: Array<{ id: string; basketId: string; subBasketId: string | null;
+    basketName: string; subBasketName: string | null; baseRatePaise: number | null; unavailableReason?: string | null }>;
+}
+
 export interface EstimatorCatalogueLine {
   id: string;
   mainLineId: string;
   basketId: string;
   subBasketId: string | null;
   itemType: "main_line" | "temporary";
+  clientVisible: boolean;
+  dimensionsMandatory: boolean;
+  dimensionRule: EstimateDimensionRule | null;
   name: string;
   displayOrder: number;
   designRules: DesignRules;
@@ -31,9 +44,23 @@ export interface EstimatorCatalogueLine {
   revisionStatus: "draft" | "active";
   itemVersion: number;
   revisionVersion: number;
+  applicableTiers: KnowledgeModeTier[];
+  tierPricing: Partial<Record<KnowledgeModeTier, EstimatorCatalogueTierPricing>>;
+  inHouseComponents?: EstimatorCatalogueTierPricing["inHouseComponents"];
   inHouseBaseRatePaise: number | null;
   modeBaseRatesPaise: EstimateModeBaseRatesPaise;
   uom: { id: string; code: string; name: string; decimalScale: number };
+}
+
+/** An explicit missing/deselected tier never borrows Signature settings. */
+export function estimatorCatalogueTierPricing(
+  line: Pick<EstimatorCatalogueLine, "modeBaseRatesPaise" | "inHouseComponents"> & Partial<Pick<EstimatorCatalogueLine, "applicableTiers" | "tierPricing">>,
+  modeTier: unknown = "signature"
+): EstimatorCatalogueTierPricing | null {
+  if (!isKnowledgeModeTier(modeTier)) return null;
+  if (line.applicableTiers === undefined && line.tierPricing === undefined) return modeTier === "signature"
+    ? { modeBaseRatesPaise: line.modeBaseRatesPaise, ...(line.inHouseComponents === undefined ? {} : { inHouseComponents: line.inHouseComponents }) } : null;
+  return line.applicableTiers?.includes(modeTier) ? line.tierPricing?.[modeTier] ?? null : null;
 }
 
 export interface EstimatorCatalogueSubBasket {
@@ -473,37 +500,42 @@ async function projectLines(
   }).select({ revisionId: 1, mainLineId: 1, payload: 1 });
   const advancedQuery = AiEstimatorKnowledgeSectionModel.find({
     revisionId: { $in: revisionIds }, sectionKey: "advanced"
-  }).select({ revisionId: 1, mainLineId: 1, applicability: 1,
-    "payload.modeCalculations.pmc.baseRatePaise": 1,
-    "payload.modeCalculations.sub_vendor.baseRatePaise": 1,
-    "payload.modeCalculations.in_house_labor": 1,
-    "payload.modeCalculations.in_house_material": 1,
-    "payload.modeCalculations.in_house.baseRatePaise": 1 });
+  }).select({ revisionId: 1, mainLineId: 1, sectionKey: 1, applicability: 1, payload: 1 });
+  const pricingQuery = AiEstimatorKnowledgeSectionModel.find({ revisionId: { $in: revisionIds }, sectionKey: "pricing" })
+    .select({ revisionId: 1, mainLineId: 1, sectionKey: 1, applicability: 1, "payload.tierConfigurations": 1 });
   const designQuery = AiEstimatorKnowledgeSectionModel.find({ revisionId: { $in: revisionIds }, sectionKey: "design" })
     .select({ revisionId: 1, mainLineId: 1, payload: 1 });
-  if (session) { revisionQuery.session(session); overviewQuery.session(session); advancedQuery.session(session); designQuery.session(session); }
+  if (session) { revisionQuery.session(session); overviewQuery.session(session); advancedQuery.session(session); pricingQuery.session(session); designQuery.session(session); }
   // Keep reads sequential when this resolver runs inside an estimate-save transaction.
   const revisions = await revisionQuery.lean().exec();
   const overviews = await overviewQuery.lean().exec();
   const advancedSections = await advancedQuery.lean().exec();
+  const pricingSections = await pricingQuery.lean().exec();
   const designSections = await designQuery.lean().exec();
+  const componentRows = advancedSections.flatMap(section => knowledgeModeTierPayloads(section.payload).flatMap(tier => readInHouseComponents(tier.payload) ?? []));
+  const componentBasketQuery = AiEstimatorKnowledgeBasketModel.find({ _id: { $in: [...new Set(componentRows.map((row) => row.basketId))] }, status: "active" }).select({ _id: 1, name: 1 });
+  const componentSubBasketQuery = AiEstimatorKnowledgeSubBasketModel.find({ _id: { $in: [...new Set(componentRows.flatMap((row) => row.subBasketId ? [row.subBasketId] : []))] }, status: { $ne: "archived" } }).select({ _id: 1, basketId: 1, name: 1 });
+  if (session) { componentBasketQuery.session(session); componentSubBasketQuery.session(session); }
+  const componentBaskets = new Map((await componentBasketQuery.lean().exec()).map((row) => [String(row._id), row]));
+  const componentSubBaskets = new Map((await componentSubBasketQuery.lean().exec()).map((row) => [String(row._id), row]));
+  const advancedByRevision = new Map(advancedSections.map(section => [String(section.revisionId), section]));
+  const pricingByRevision = new Map(pricingSections.map(section => [String(section.revisionId), section]));
   const designByRevision = new Map(designSections.map((section) => [String(section.revisionId), section]));
   const revisionById = new Map(revisions.map((revision) => [String(revision._id), revision]));
   const uomIdByRevision = new Map<string, string>();
-  const modeBasesByRevision = new Map<string, EstimateModeBaseRatesPaise>();
+  const clientVisibilityByRevision = new Map<string, boolean>();
+  const dimensionsMandatoryByRevision = new Map<string, boolean>();
+  const applicableTiersByRevision = new Map<string, KnowledgeModeTier[]>();
   for (const overview of overviews) {
     const revisionId = String(overview.revisionId);
     const payload = overview.payload as Record<string, unknown> | null;
     if (String(revisionById.get(revisionId)?.mainLineId) !== String(overview.mainLineId) ||
         typeof payload?.uomId !== "string" || !payload.uomId) continue;
     uomIdByRevision.set(revisionId, payload.uomId);
-  }
-  for (const advanced of advancedSections) {
-    const revisionId = String(advanced.revisionId);
-    const revision = revisionById.get(revisionId);
-    if (!revision || String(revision.mainLineId) !== String(advanced.mainLineId) ||
-      advanced.applicability !== "configured") continue;
-    modeBasesByRevision.set(revisionId, estimateModeBaseRatesPaise(advanced.payload));
+    clientVisibilityByRevision.set(revisionId, payload.clientVisible !== false);
+    dimensionsMandatoryByRevision.set(revisionId, payload.dimensionsMandatory === true);
+    applicableTiersByRevision.set(revisionId, !Object.hasOwn(payload, "applicableTiers") ? ["signature"]
+      : Array.isArray(payload.applicableTiers) ? KNOWLEDGE_MODE_TIERS.filter(tier => (payload.applicableTiers as unknown[]).includes(tier)) : []);
   }
   const uomQuery = AiEstimatorKnowledgeUomModel.find({
     _id: { $in: [...new Set(uomIdByRevision.values())] }, status: { $in: ["active", "inactive"] }
@@ -519,9 +551,16 @@ async function projectLines(
     const revision = revisionById.get(revisionId);
     const uomId = uomIdByRevision.get(revisionId);
     const uom = uomId ? uomById.get(uomId) : undefined;
+    const applicableTiers = applicableTiersByRevision.get(revisionId) ?? [];
+    const advanced = advancedByRevision.get(revisionId);
+    const pricing = pricingByRevision.get(revisionId);
+    const sectionConfigured = (section: typeof advanced | undefined, tier: KnowledgeModeTier) => Boolean(section &&
+      String(section.mainLineId) === id && projectKnowledgeModeTierSection(section, tier).applicability === "configured");
+    const additionalModeReady = applicableTiers.some(tier => tier !== "signature" &&
+      (sectionConfigured(advanced, tier) || sectionConfigured(pricing, tier)));
     if (String(revision?.mainLineId) !== id || revision?.status !== source.status ||
       !Number.isSafeInteger(revision.version) || Number(revision.version) < 1 ||
-      (raw.status !== "active" && !hasReadyOverviewAndMode(revision.completeness)) || !uom ||
+      (raw.status !== "active" && !hasReadyOverviewAndMode(revision.completeness, additionalModeReady)) || !uom ||
       typeof uom.code !== "string" || !uom.code ||
       typeof uom.name !== "string" || !uom.name ||
       !Number.isSafeInteger(uom.decimalScale) || Number(uom.decimalScale) < 0 || Number(uom.decimalScale) > 3) continue;
@@ -529,29 +568,71 @@ async function projectLines(
     // Malformed current rules must fail closed, never silently remove obligations.
     if (design && (String(design.mainLineId) !== id || validateDesignRules(design.payload).length > 0)) continue;
     const designRules = normalizeDesignRules(design?.payload);
+    const projectTier = (tier: KnowledgeModeTier): EstimatorCatalogueTierPricing => {
+      const section = advanced && String(advanced.mainLineId) === id ? projectKnowledgeModeTierSection(advanced, tier) : undefined;
+      const configured = section?.applicability === "configured";
+      const components = section ? readInHouseComponents(section.payload) : undefined;
+      return {
+        modeBaseRatesPaise: estimateModeBaseRatesPaise(configured ? section!.payload : null),
+        ...(components === undefined ? {} : { inHouseComponents: (components ?? []).map(component => {
+          const basket = componentBaskets.get(component.basketId);
+          const subBasket = component.subBasketId ? componentSubBaskets.get(component.subBasketId) : undefined;
+          const available = configured && !!basket && (component.subBasketId === null
+            ? component.id === "legacy-in-house" && component.basketId === String(raw.basketId)
+            : String(subBasket?.basketId) === component.basketId);
+          return { id: component.id, basketId: component.basketId, subBasketId: component.subBasketId,
+            basketName: basket ? String(basket.name) : "Unavailable Main Basket",
+            subBasketName: component.subBasketId === null ? null : subBasket ? String(subBasket.name) : "Unavailable Sub Basket",
+            baseRatePaise: available ? inHouseComponentBaseRate(component) : null,
+            unavailableReason: available ? null : "The component configuration, Main Basket, or Sub Basket is unavailable." };
+        }) })
+      };
+    };
+    const signaturePricing = projectTier("signature");
+    const tierPricing = Object.fromEntries(applicableTiers.filter(tier => tier === "signature" ||
+      sectionConfigured(advanced, tier) || sectionConfigured(pricing, tier)).map(tier => [tier, projectTier(tier)]));
     projected.set(id, {
       designRules, designRulesDigest: designRulesDigest(designRules), estimateNotes: designRuleEstimateNotes(designRules),
       id, mainLineId: id, basketId: String(raw.basketId),
       subBasketId: raw.subBasketId ? String(raw.subBasketId) : null,
       itemType: raw.itemType === "temporary" ? "temporary" : "main_line",
+      clientVisible: clientVisibilityByRevision.get(revisionId) ?? true,
       name: String(raw.name), displayOrder: Number(raw.displayOrder), revisionId,
       itemStatus: raw.status as EstimatorCatalogueLine["itemStatus"],
       revisionStatus: source.status,
       itemVersion: Number(raw.version), revisionVersion: Number(revision.version),
-      inHouseBaseRatePaise: modeBasesByRevision.get(revisionId)?.in_house ?? null,
-      modeBaseRatesPaise: modeBasesByRevision.get(revisionId) ?? estimateModeBaseRatesPaise(null),
+      dimensionsMandatory: dimensionsMandatoryByRevision.get(revisionId) === true,
+      dimensionRule: dimensionsMandatoryByRevision.get(revisionId) === true ? resolveEstimateDimensionRule({ ...uom, id: uomId }) : null,
+      applicableTiers, tierPricing,
+      ...signaturePricing,
+      inHouseBaseRatePaise: signaturePricing.modeBaseRatesPaise.in_house,
       uom: { id: uomId!, code: String(uom.code), name: String(uom.name), decimalScale: Number(uom.decimalScale) }
     });
   }
   return projected;
 }
 
-function hasReadyOverviewAndMode(completeness: unknown): boolean {
+function hasReadyOverviewAndMode(completeness: unknown, additionalModeReady = false): boolean {
   if (!completeness || typeof completeness !== "object") return false;
   const sections = (completeness as { sections?: unknown }).sections;
   if (!Array.isArray(sections)) return false;
   const complete = new Set(sections.filter((entry): entry is { sectionKey: string; state: string } =>
     entry && typeof entry === "object" && typeof entry.sectionKey === "string" &&
     entry.state === "complete").map((entry) => entry.sectionKey));
-  return complete.has("overview") && (complete.has("advanced") || complete.has("pricing"));
+  return complete.has("overview") && (complete.has("advanced") || complete.has("pricing") || additionalModeReady);
+}
+
+export async function fenceEstimateInHouseComponentReferences(
+  lines: readonly { source?: unknown; mainLineId?: unknown; pricingMode?: unknown; modeTier?: unknown; selectedInHouseComponentIds?: unknown }[],
+  current: ReadonlyMap<string, ResolvedEstimatorCatalogueLine>, session: mongoose.ClientSession
+): Promise<void> {
+  const selected = lines.flatMap((line) => {
+    if (line.source !== "configuration" || line.pricingMode !== "in_house" || !Array.isArray(line.selectedInHouseComponentIds)) return [];
+    const ids = new Set(line.selectedInHouseComponentIds);
+    const source = current.get(String(line.mainLineId))?.line;
+    return source ? estimatorCatalogueTierPricing(source, line.modeTier ?? "signature")?.inHouseComponents?.filter(component => ids.has(component.id)) ?? [] : [];
+  });
+  if ((await lockInHouseComponentReferences(selected, session)).size) {
+    throw new ApiError(409, "ESTIMATE_COMPONENT_SELECTION_INVALID", "An In-house component's Main Basket or Sub Basket is unavailable. Refresh the catalogue before continuing.");
+  }
 }

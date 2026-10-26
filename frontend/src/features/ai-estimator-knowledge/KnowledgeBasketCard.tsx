@@ -11,13 +11,14 @@ type KnowledgeBasketCardProps = {
   toggleRef?: Ref<HTMLButtonElement>;
   creationActions?: ReactNode;
   actions?: ReactNode;
+  headerDetails?: ReactNode;
   description?: string;
   children: ReactNode;
 };
 
 export function KnowledgeBasketCard({
   variant, name, panelId, imageUrl, countText, expanded, onToggle,
-  toggleRef, creationActions, actions, description, children
+  toggleRef, creationActions, actions, headerDetails, description, children
 }: KnowledgeBasketCardProps) {
   const [failedImage, setFailedImage] = useState<string | null>(null);
   const headingId = `${panelId}-heading`;
@@ -63,11 +64,12 @@ export function KnowledgeBasketCard({
         {creationActions ? <div className="knowledge-basket-card__creation-actions">{creationActions}</div> : null}
         {actions ? <div className="knowledge-basket-card__actions">{actions}</div> : null}
       </div> : null}
-    </div> : <div className="knowledge-basket-card__header knowledge-basket-card__group-header">
+    </div> : <div className="knowledge-basket-card__header knowledge-basket-card__group-header" data-has-details={Boolean(headerDetails) || undefined}>
       <div className="knowledge-basket-card__content">
         {variant === "sub" ? <span className="knowledge-basket-card__kind">Sub-Basket</span> : null}
         {heading}
       </div>
+      {headerDetails ? <div className="knowledge-basket-card__details">{headerDetails}</div> : null}
       <p className="knowledge-basket-card__count">{countText}</p>
       {actions ? <div className="knowledge-basket-card__actions">{actions}</div> : null}
     </div>}

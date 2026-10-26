@@ -54,6 +54,7 @@ export function KnowledgeRevisionHistory({
     <Surface
       as="section"
       className="knowledge-history knowledge-workspace-history-rail"
+      data-knowledge-rail-header
       aria-labelledby="knowledge-history-title"
       aria-busy={refreshing || undefined}
     >

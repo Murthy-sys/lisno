@@ -1,3 +1,4 @@
+import { KNOWLEDGE_MODE_TIERS } from "../domain/ai-estimator-knowledge-mode-tiers.js";
 import { DESIGN_RULE_KEYS } from "../domain/main-line-design-rules.js";
 import {
 } from "../contracts/ai-estimator-knowledge.js";
@@ -42,6 +43,7 @@ const admin = "/admin/ai-estimator-knowledge";
 const masterFamilies = ["uoms", "vendors", "taxes", "priorities", "surfaces", "modes"] as const;
 
 export const AI_ESTIMATOR_KNOWLEDGE_REQUEST_BODIES: Readonly<Record<string, OpenApiObject>> = {
+  [`POST ${admin}/baskets/:basketId/sub-baskets/:subBasketId/margins/apply`]: jsonRequest("KnowledgeApplySubBasketMarginsRequest"),
   [`POST ${admin}/quality-control-options`]: jsonRequest("KnowledgeQualityControlOptionCreateRequest"),
   [`POST ${admin}/baskets`]: jsonRequest("KnowledgeBasketCreateRequest"),
   [`PATCH ${admin}/baskets/:basketId`]: jsonRequest("KnowledgeBasketUpdateRequest"),
@@ -89,6 +91,8 @@ export const AI_ESTIMATOR_KNOWLEDGE_RESPONSE_SCHEMAS: Readonly<Record<string, st
   [`GET ${admin}/baskets/:basketId/sub-baskets`]: "KnowledgeSubBasketPage",
   [`POST ${admin}/baskets/:basketId/sub-baskets`]: "KnowledgeSubBasket",
   [`PATCH ${admin}/baskets/:basketId/sub-baskets/:subBasketId`]: "KnowledgeSubBasket",
+  [`GET ${admin}/baskets/:basketId/sub-baskets/:subBasketId/margins`]: "KnowledgeSubBasketMarginSummary",
+  [`POST ${admin}/baskets/:basketId/sub-baskets/:subBasketId/margins/apply`]: "KnowledgeApplySubBasketMarginsResult",
   [`GET ${admin}/baskets/:basketId/sub-baskets/:subBasketId/deletion-impact`]: "KnowledgeSubBasketDeletionImpact",
   [`DELETE ${admin}/baskets/:basketId/sub-baskets/:subBasketId`]: "KnowledgePermanentDeleteSubBasketResult",
   [`GET ${admin}/baskets`]: "KnowledgeBasketPage",
@@ -139,6 +143,8 @@ export const AI_ESTIMATOR_KNOWLEDGE_OPERATION_SUMMARIES: Readonly<Record<string,
   [`GET ${admin}/baskets/:basketId/sub-baskets`]: "List a Main Basket’s Sub Baskets",
   [`POST ${admin}/baskets/:basketId/sub-baskets`]: "Create a Sub Basket",
   [`PATCH ${admin}/baskets/:basketId/sub-baskets/:subBasketId`]: "Rename a Sub Basket with contextual lifecycle validation",
+  [`GET ${admin}/baskets/:basketId/sub-baskets/:subBasketId/margins`]: "Read first-main-line margin defaults and full Sub Basket mismatches",
+  [`POST ${admin}/baskets/:basketId/sub-baskets/:subBasketId/margins/apply`]: "Apply reviewed first-main-line margin defaults to mismatched Main Lines atomically",
   [`GET ${admin}/baskets/:basketId/sub-baskets/:subBasketId/deletion-impact`]: "Preview permanent Sub Basket deletion",
   [`DELETE ${admin}/baskets/:basketId/sub-baskets/:subBasketId`]: "Permanently delete a Sub Basket and its contents",
   [`GET ${admin}/baskets`]: "List knowledge Baskets",
@@ -202,6 +208,8 @@ const masterStatusParameter = {
 export const AI_ESTIMATOR_KNOWLEDGE_QUERY_PARAMETERS: Readonly<
   Record<string, readonly OpenApiObject[]>
 > = {
+  [`GET ${admin}/main-lines/:mainLineId/revisions/:revisionId/sections/:sectionKey`]: [{ name: "modeTier", in: "query", required: false, schema: { type: "string", enum: [...KNOWLEDGE_MODE_TIERS], default: "signature" }, description: "Tier scope for advanced and pricing. Other sections support Signature only." }],
+  [`GET ${admin}/baskets/:basketId/sub-baskets/:subBasketId/margins`]: [{ name: "modeTier", in: "query", required: false, schema: { type: "string", enum: [...KNOWLEDGE_MODE_TIERS], default: "signature" } }],
   [`GET ${admin}/quality-control-options`]: [{
     name: "kind",
     in: "query",
@@ -461,6 +469,49 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
       revisionNumber: { type: "integer", minimum: 1 }, contentDigest: { type: "string", pattern: "^[a-f0-9]{64}$" }
     })
   }),
+  KnowledgeApplySubBasketMarginsRequest: strictObject(["mode", "versionToken"], {
+    mode: { type: "string", enum: ["pmc", "sub_vendor", "in_house"] }, versionToken: { type: "string", pattern: "^[a-f0-9]{64}$" },
+    targetMainLineId: { ...id, description: "Apply margins only to this current main line in the Sub-Basket. Omit to retain bulk mismatch application." }
+  }),
+  KnowledgeSubBasketMarginRange: strictObject(["key", "minimumBps", "maximumBps"], {
+    component: strictObject(["basketId", "subBasketId"], { basketId: id, subBasketId: { ...id, nullable: true }, name: { type: "string" } }),
+    key: { type: "string", enum: ["margin", "labor", "material"] },
+    minimumBps: { type: "integer", minimum: 0, nullable: true }, maximumBps: { type: "integer", minimum: 0, nullable: true }
+  }),
+  KnowledgeSubBasketMarginMismatch: strictObject(["mainLineId", "mainLineName", "ranges", "blockedReason"], {
+    mainLineId: id, mainLineName: { type: "string" }, ranges: { type: "array", items: ref("KnowledgeSubBasketMarginRange") },
+    blockedReason: { type: "string", nullable: true }
+  }),
+  KnowledgeSubBasketMarginState: strictObject(["ranges", "mismatchCount", "mismatches", "canApply", "unavailableReason"], {
+    ranges: { type: "array", items: ref("KnowledgeSubBasketMarginRange") }, mismatchCount: { type: "integer", minimum: 0, nullable: true },
+    mismatches: { type: "array", items: ref("KnowledgeSubBasketMarginMismatch") }, canApply: { type: "boolean" },
+    unavailableReason: { type: "string", nullable: true }
+  }),
+  KnowledgeDefaultModeCalculation: strictObject(["scope", "baseRatePaise", "lowQuantityLimit", "impactBps"], {
+    scope: { type: "string", enum: ["pmc", "sub_vendor", "in_house", "in_house_labor", "in_house_material"] },
+    component: strictObject(["id", "basketId", "subBasketId"], { id, basketId: id, subBasketId: { ...id, nullable: true }, name: { type: "string" } }),
+    baseRatePaise: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER, nullable: true },
+    lowQuantityLimit: { type: "string", maxLength: 64, nullable: true },
+    impactBps: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER - 10_000, nullable: true, description: "The saved impact only; absent settings remain null." }
+  }),
+  KnowledgeSubBasketSourceConfiguration: strictObject(["revisionId", "revisionStatus", "itemVersion", "revisionVersion", "sectionVersion", "uom", "modes"], {
+    revisionId: id, revisionStatus: { type: "string", enum: ["draft", "active"] }, itemVersion: version, revisionVersion: version, sectionVersion: version,
+    uom: { ...strictObject(["id", "code", "name", "decimalScale"], { id, code: { type: "string" }, name: { type: "string" }, decimalScale: { type: "integer", minimum: 0, maximum: 3 } }), nullable: true },
+    modes: strictObject(["pmc", "sub_vendor", "in_house"], Object.fromEntries(["pmc", "sub_vendor", "in_house"].map((mode) => [mode,
+      strictObject(["calculations"], { calculations: { type: "array", items: ref("KnowledgeDefaultModeCalculation") } })])))
+  }),
+  KnowledgeSubBasketMarginSummary: strictObject(["basketId", "subBasketId", "source", "totalMainLines", "versionToken", "modes"], {
+    basketId: id, subBasketId: id,
+    source: { ...strictObject(["mainLineId", "mainLineName"], { mainLineId: id, mainLineName: { type: "string" } }), nullable: true },
+    sourceConfiguration: nullableRef("KnowledgeSubBasketSourceConfiguration"),
+    totalMainLines: { type: "integer", minimum: 0 }, versionToken: { type: "string", pattern: "^[a-f0-9]{64}$" },
+    modes: strictObject(["pmc", "sub_vendor", "in_house"], {
+      pmc: ref("KnowledgeSubBasketMarginState"), sub_vendor: ref("KnowledgeSubBasketMarginState"), in_house: ref("KnowledgeSubBasketMarginState")
+    })
+  }),
+  KnowledgeApplySubBasketMarginsResult: strictObject(["updatedMainLineIds", "summary"], {
+    updatedMainLineIds: { type: "array", items: id }, summary: ref("KnowledgeSubBasketMarginSummary")
+  }),
   KnowledgeSubBasketCreateRequest: strictObject(["name"], { name: masterProperties.name }),
   KnowledgeSubBasketUpdateRequest: strictObject(["expectedVersion", "name"], {
     expectedVersion: version,
@@ -594,6 +645,7 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
     {
       expectedVersion: version,
       expectedAggregateVersion: version,
+      modeTier: { type: "string", enum: [...KNOWLEDGE_MODE_TIERS], default: "signature", description: "Save only this tier. The server retains all other tiers. Premium and Functional start empty." },
       applicability: sectionApplicability,
       payload: ref("KnowledgeSectionPayload")
     }
@@ -1151,6 +1203,16 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
     }),
     description: "In-house simulator settings. Selling price is adjusted cost divided by one minus the selected gross margin. Impact applies at or below the low-quantity limit."
   },
+  KnowledgeInHouseComponent: strictObject(["id", "basketId", "subBasketId", "inclusions", "exclusions", "labor", "material"], {
+    id: { ...id, maxLength: 128 }, basketId: { ...id, maxLength: 128 }, subBasketId: { ...id, maxLength: 128, nullable: true, description: "Null is reserved for legacy-in-house in the owning Main Basket." },
+    inclusions: { type: "array", items: strictObject(["id", "name", "selected"], { id, name: shortText, selected: { type: "boolean" } }) },
+    exclusions: { type: "array", items: strictObject(["id", "name", "selected"], { id, name: shortText, selected: { type: "boolean" } }) },
+    labor: nullableRef("KnowledgeInHouseModeCalculationSettings"), material: nullableRef("KnowledgeInHouseModeCalculationSettings")
+  }),
+  KnowledgeModeCalculationsWithComponents: strictObject(["pmc", "sub_vendor"], {
+    pmc: nullableRef("KnowledgeModeCalculationSettings"), sub_vendor: nullableRef("KnowledgeModeCalculationSettings"),
+    in_house: {}, in_house_labor: {}, in_house_material: {}
+  }),
   KnowledgeModeCalculations: {
     oneOf: [
       strictObject(["pmc", "sub_vendor", "in_house_labor", "in_house_material"], {
@@ -1296,6 +1358,7 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
     ...strictObject(["mainBasketId", "mainLineId"], {
       mainBasketId: id,
       mainLineId: id,
+      selectedInHouseComponentIds: { type: "array", maxItems: 50, uniqueItems: true, items: id },
       specificationId: {
         ...id,
         description: "Optional descriptive-guidance selector. It filters returned Specification guidance only and never changes price resolution."
@@ -1537,6 +1600,7 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
       revisionId: id,
       sectionKey: { type: "string", enum: [...AI_ESTIMATOR_KNOWLEDGE_SECTION_KEYS] },
       applicability: sectionApplicability,
+      modeTier: { type: "string", enum: [...KNOWLEDGE_MODE_TIERS] },
       payload: ref("KnowledgeSectionPayload"),
       referenceState: ref("KnowledgeSectionReferenceState"),
       version,
@@ -1551,6 +1615,7 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
       revisionId: id,
       sectionKey: { type: "string", enum: [...AI_ESTIMATOR_KNOWLEDGE_SECTION_KEYS] },
       applicability: sectionApplicability,
+      modeTier: { type: "string", enum: [...KNOWLEDGE_MODE_TIERS] },
       payload: ref("KnowledgeSectionPayload"),
       referenceState: ref("KnowledgeSectionReferenceState"),
       version,
@@ -1628,7 +1693,13 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
         code: { type: "string" },
         scope: { type: "string", enum: ["pmc", "sub_vendor", "in_house_labor", "in_house_material", null], nullable: true }
       }) },
-      calculations: { type: "array", maxItems: 2, items: strictObject(["scope", "source", "settings", "maximumDiscountBps"], {
+      inHouseComponents: { type: "array", maxItems: 50, items: strictObject(["id", "basketId", "subBasketId", "inclusions", "exclusions"], {
+        id, basketId: id, subBasketId: { ...id, nullable: true },
+        inclusions: { type: "array", items: strictObject(["id", "name"], { id, name: shortText }) },
+        exclusions: { type: "array", items: strictObject(["id", "name"], { id, name: shortText }) }
+      }) },
+      calculations: { type: "array", maxItems: 100, items: strictObject(["scope", "source", "settings", "maximumDiscountBps"], {
+        componentId: id, componentBasketId: id, componentSubBasketId: { ...id, nullable: true },
         scope: { type: "string", enum: ["pmc", "sub_vendor", "in_house_labor", "in_house_material"] },
         source: { type: "string", enum: ["scoped", "legacy_shared", "legacy_in_house", null], nullable: true },
         settings: { ...strictObject(["baseRatePaise", "lowQuantityLimit", "impactBps", "minimumMarkupBps", "startingMarkupBps"], {
@@ -1695,14 +1766,14 @@ function nullableRef(name: string): OpenApiObject {
 function sectionPayloadKeys(sectionKey: string): readonly string[] {
   const keys: Readonly<Record<string, readonly string[]>> = {
     design: ["itemNature", "answers", "details", "discussedVendorId", "poApprovalChecklist"],
-    overview: ["description", "uomId", "priorityId", "surfaceIds", "modeIds", "sectionApplicability"],
+    overview: ["description", "uomId", "priorityId", "surfaceIds", "modeIds", "sectionApplicability", "clientVisible", "applicableTiers", "dimensionsMandatory"],
     pricing: ["specifications", "brands", "technicalDescription", "qualityLevel", "internalVendorNotes", "priceEntries"],
     "quantity-margin": ["quantitySlabs", "slabRates", "gapBehavior", "startMarginBps", "bottomMarginBps", "pmcMarkupBps", "wastageBps", "previewInputs"],
     scope: ["modeIds", "surfaceIds", "exclusions"],
     recommendations: ["recommendations", "exclusions", "budgetAlterations"],
     quality: ["parameters"],
     execution: ["steps", "productivity"],
-    advanced: ["dependencies", "modeOverrides", "revisionLineage", "modeConfigurations", "modeDescription", "modeCalculation", "modeCalculations", "pmcMarginBps", "pmcMinimumMarginBps", "subVendorMarginBps", "subVendorMinimumMarginBps"]
+    advanced: ["dependencies", "modeOverrides", "revisionLineage", "modeConfigurations", "modeDescription", "modeCalculation", "modeCalculations", "inHouseComponents", "pmcMarginBps", "pmcMinimumMarginBps", "subVendorMarginBps", "subVendorMinimumMarginBps"]
   };
   return keys[sectionKey] ?? [];
 }
@@ -1711,6 +1782,12 @@ function sectionPayloadProperties(sectionKey: string): Readonly<Record<string, u
   const properties = Object.fromEntries(
     sectionPayloadKeys(sectionKey).map((key) => [key, {}])
   );
+  if (sectionKey === "overview") {
+    properties.dimensionsMandatory = { type: "boolean", default: false, description: "Require positive Length, Width and Height at estimation. Quantity is Length × Width in the configured supported area UOM; Height is recorded only." };
+    properties.applicableTiers = { type: "array", maxItems: 3, uniqueItems: true, items: { type: "string", enum: [...KNOWLEDGE_MODE_TIERS] }, description: "Absent means Signature. An empty array hides all Mode tier tabs while retaining their saved configuration." };
+    properties.clientVisible = { type: "boolean", default: true,
+      description: "Whether this line appears on the Client estimate screen. Does not change internal visibility, totals, quotations or PDFs. Missing legacy values mean Yes." };
+  }
   if (sectionKey === "design") {
     properties.itemNature = { type: "string", enum: ["standard", "custom"], default: "standard" };
     properties.answers = { type: "object", additionalProperties: false,
@@ -1759,7 +1836,10 @@ function sectionPayloadProperties(sectionKey: string): Readonly<Record<string, u
     properties.modeDescription = { type: "string", minLength: 1, maxLength: 4_000, nullable: true };
     properties.modeCalculation = { ...nullableRef("KnowledgeModeCalculationSettings"), deprecated: true,
       description: "Legacy shared settings, retained for compatibility. New edits use modeCalculations." };
-    properties.modeCalculations = ref("KnowledgeModeCalculations");
+    properties.modeCalculations = { anyOf: [ref("KnowledgeModeCalculations"), ref("KnowledgeModeCalculationsWithComponents")],
+      description: "When inHouseComponents is present, old In-house fields are preserved but are no longer used or validated as current costs." };
+    properties.inHouseComponents = { type: "array", maxItems: 50, items: ref("KnowledgeInHouseComponent"),
+      description: "Independent component scopes with stable IDs and unique Main Basket/Sub Basket references. Absent retains legacy pricing. Present requires an explicit estimate selection; empty never restores legacy costs." };
     properties.pmcMarginBps = {
       type: "integer", minimum: 1_000, maximum: 2_000, nullable: true,
       description: "Maximum PMC margin in integer basis points, from 10% to 20% inclusive. When pmcMinimumMarginBps is absent, legacy data reads as an equal Min./Max. pair without a write. An explicit minimum requires a complete ordered pair or both values empty."

@@ -1,14 +1,25 @@
+import { estimateComponentLineAmountIsValid, type EstimateComponentPricing, type ESTIMATE_COMPONENT_PRICING_BASIS } from "../domain/estimate-component-pricing.js";
+import { estimateDimensionSnapshotValid, type EstimateDimensionMetadata } from "../domain/estimate-dimension-snapshot.js";
 import { readFile } from "node:fs/promises";
 
 import PDFDocument from "pdfkit";
 import sharp from "sharp";
 
 import { estimatePdfCatalogue } from "../domain/estimate-pdf-catalogue.js";
+import { isKnowledgeModeTier, type KnowledgeModeTier } from "../domain/ai-estimator-knowledge-mode-tiers.js";
 
-export interface EstimatePdfLine {
+export interface EstimatePdfLine extends EstimateDimensionMetadata {
   estimateNotes?: readonly string[];
   source?: "legacy" | "configuration";
   itemType?: "main_line" | "temporary";
+  modeTier?: KnowledgeModeTier;
+  pricingMode?: "pmc" | "sub_vendor" | "in_house";
+  rateSource?: "configuration" | "manual";
+  pricingBasis?: typeof ESTIMATE_COMPONENT_PRICING_BASIS;
+  componentPricing?: EstimateComponentPricing;
+  selectedInHouseComponentIds?: string[];
+  sourceItemVersion?: number;
+  sourceRevisionVersion?: number;
   catalogueId: string;
   roomId?: string;
   roomName: string;
@@ -242,18 +253,24 @@ function lineDescription(line: EstimatePdfLine): string {
 }
 
 function lineCellText(line: EstimatePdfLine) {
+  if (!estimateDimensionSnapshotValid(line)) throw new Error("The recorded estimate dimensions or calculated quantity are invalid.");
+  const measurements = line.dimensions
+    ? `${line.dimensionsMandatory ? "Dimensions" : "Recorded dimensions"}: L ${line.dimensions.length} × W ${line.dimensions.width} × H ${line.dimensions.height}${line.dimensionRule ? ` ${line.dimensionRule.inputUnit}` : ""}${line.dimensionsMandatory ? "; quantity = L × W" : ""}`
+    : null;
+  if (line.modeTier !== undefined && !isKnowledgeModeTier(line.modeTier)) throw new Error("The selected estimate tier is invalid.");
+  const tierLabel = line.modeTier === "premium" ? "Premium" : line.modeTier === "functional" ? "Functional" : "Signature";
   const description = line.source === "configuration"
-    ? [lineDescription(line), line.itemType === "temporary"
+    ? [lineDescription(line), `Tier: ${tierLabel}`, line.itemType === "temporary"
       ? ["Temporary item", line.subBasketName].filter(Boolean).join(" · ")
-      : line.subBasketName, ...(line.estimateNotes ?? [])].filter(Boolean).join("\n")
+      : line.subBasketName, measurements, ...(line.estimateNotes ?? [])].filter(Boolean).join("\n")
     : [lineDescription(line), line.specification].filter(Boolean).join("\n");
   return {
     description,
     room: line.roomName,
     quantity: `${new Intl.NumberFormat("en-IN", {
-      maximumFractionDigits: 2
+      maximumFractionDigits: line.source === "configuration" ? 6 : 2
     }).format(line.quantity)} ${line.unit}`,
-    rate: formatInr(line.ratePaise == null ? requiredPdfMoney(line.rate) : line.ratePaise / 100),
+    rate: estimateComponentLineAmountIsValid(line) ? "From components" : formatInr(line.ratePaise == null ? requiredPdfMoney(line.rate) : line.ratePaise / 100),
     total: formatInr(line.amountPaise == null ? requiredPdfMoney(line.amount) : line.amountPaise / 100)
   };
 }
@@ -556,7 +573,7 @@ function groupedIncludedLines(input: EstimatePdfInput) {
 
   for (const line of input.lineItems.filter((item) => item.included)) {
     if (line.source === "configuration" &&
-      (!Number.isSafeInteger(line.ratePaise) || !Number.isSafeInteger(line.amountPaise))) {
+      (!Number.isSafeInteger(line.ratePaise) || !Number.isSafeInteger(line.amountPaise)) && !estimateComponentLineAmountIsValid(line)) {
       throw new TypeError("An included configured estimate line needs an entered rate before PDF generation.");
     }
     const entry = line.source === "configuration" ? undefined : estimatePdfCatalogue.get(line.catalogueId);

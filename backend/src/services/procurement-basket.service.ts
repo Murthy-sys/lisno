@@ -1,9 +1,12 @@
 import mongoose, { type ClientSession } from "mongoose";
 import { projectProcurementBaskets, type ProcurementBasketDetailDto, type ProcurementBasketSummaryDto } from "../domain/procurement-basket-projection.js";
 import { projectProcurementBasketModeGroups, type ProcurementBasketModeGroup } from "../domain/procurement-basket-mode-groups.js";
+import { isApprovedInHouseComponentSource, procurementComponentTargetKey } from "../domain/procurement-in-house-components.js";
 import { ApiError } from "../middleware/errors.js";
 import { ProjectPurchaseOrderModel } from "../models/ProjectPurchaseOrder.js";
 import { ProjectPurchaseOrderRevisionModel } from "../models/ProjectPurchaseOrderRevision.js";
+import { AiEstimatorKnowledgeBasketModel } from "../models/AiEstimatorKnowledgeBasket.js";
+import { AiEstimatorKnowledgeSubBasketModel } from "../models/AiEstimatorKnowledgeSubBasket.js";
 import type { PublicUser } from "./auth.service.js";
 import { assertProcurementProjectAccess } from "./procurement.service.js";
 import { buildProjectPurchaseOrderPreparation } from "./project-purchase-order-preparation.service.js";
@@ -24,7 +27,7 @@ export function createProcurementBasketService(): ProcurementBasketService {
         return { projectId, estimateSource: preparation.estimateSource,
           modeGroups: projectProcurementBasketModeGroups(baskets, committedBySourceLine),
           baskets: baskets.map(({ lines: _lines, projectId: _projectId, estimateSource: _estimateSource,
-            preparationDigest: _preparationDigest, ...summary }) => summary) };
+            preparationDigest: _preparationDigest, inHouseComponentBreakdown: _componentBreakdown, ...summary }) => summary) };
       });
     },
     get(actor, projectId, basketId) {
@@ -58,7 +61,27 @@ async function preparedBasketRead(projectId: string, session: ClientSession) {
     if (sum > BigInt(Number.MAX_SAFE_INTEGER)) throw new ApiError(409, "PROCUREMENT_BASKET_COMMITMENT_CONFLICT", "Approved commitments exceed the supported range.");
     committedBySourceLine.set(sourceLineItemKey, Number(sum));
   }
-  return { preparation, committedBySourceLine, baskets: projectProcurementBaskets(preparation, committedBySourceLine) };
+  const targets = preparation.estimateLines.filter(isApprovedInHouseComponentSource).flatMap(line =>
+    line.mode?.state === "ready" && line.mode.preview?.mode === "in_house" ? line.mode.preview.components : [])
+    .filter(component => component.componentId && component.componentBasketId);
+  const basketIds = [...new Set(targets.map(component => component.componentBasketId!))];
+  const subBasketIds = [...new Set(targets.flatMap(component => component.componentSubBasketId ? [component.componentSubBasketId] : []))];
+  // Read target labels in the same snapshot; a source Main Line may reference another basket.
+  const componentBaskets = basketIds.length ? await AiEstimatorKnowledgeBasketModel.find({ _id: { $in: basketIds }, status: { $ne: "archived" } })
+    .select({ _id: 1, name: 1 }).session(session).lean() : [];
+  const componentSubBaskets = subBasketIds.length ? await AiEstimatorKnowledgeSubBasketModel.find({ _id: { $in: subBasketIds }, status: { $ne: "archived" } })
+    .select({ _id: 1, basketId: 1, name: 1 }).session(session).lean() : [];
+  const basketNames = new Map(componentBaskets.map(row => [String(row._id), String(row.name)]));
+  const subBaskets = new Map(componentSubBaskets.map(row => [String(row._id), row]));
+  const componentTargetNames = new Map(targets.map(component => {
+    const basketId = component.componentBasketId!;
+    const subBasketId = component.componentSubBasketId ?? null;
+    const subBasket = subBasketId ? subBaskets.get(subBasketId) : undefined;
+    const basketName = basketNames.get(basketId) ?? null;
+    return [procurementComponentTargetKey(basketId, subBasketId), { basketName,
+      subBasketName: basketName && subBasket && String(subBasket.basketId) === basketId ? String(subBasket.name) : null }];
+  }));
+  return { preparation, committedBySourceLine, baskets: projectProcurementBaskets(preparation, committedBySourceLine, componentTargetNames) };
 }
 
 const transaction = <T>(operation: (session: ClientSession) => Promise<T>) =>

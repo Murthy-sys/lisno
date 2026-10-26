@@ -1,4 +1,5 @@
 import { ApiProtocolError } from "../../core/http/apiClient";
+import { componentAmountLineFixture } from "../estimate-authoring/__tests__/fixtures";
 import {
   canDecideClientEstimate,
   clientEstimateMoney,
@@ -28,6 +29,17 @@ const estimate = (id: string, projectId: string | null, status: string, designPl
 });
 
 describe("client review contracts", () => {
+  it("allows a frozen exact component amount without a fabricated unit rate", () => {
+    const row = estimate("estimate-one", "project-one", "sent_to_client");
+    const [parsed] = parseClientEstimates([{ ...row, publishedReview: { ...row.publishedReview, snapshot: {
+      ...row.publishedReview.snapshot, lineItems: [componentAmountLineFixture], subtotalPaise: 78333, gstPaise: 14100, totalPaise: 92433
+    } } }]);
+    expect(canDecideClientEstimate(parsed!)).toBe(true);
+    expect(parsed!.lineItems[0]).toMatchObject({ rate: null, ratePaise: null, amountPaise: 78333, componentPricing: { totalPaise: 78333 } });
+    expect(() => parseClientEstimates([{ ...row, publishedReview: { ...row.publishedReview, snapshot: {
+      ...row.publishedReview.snapshot, lineItems: [{ ...componentAmountLineFixture, amountPaise: 1 }]
+    } } }])).toThrow();
+  });
   it("joins estimates to projects by stable ID and keeps a pre-approval estimate without a project", () => {
     const rows = parseClientEstimates([
       estimate("estimate-one", "project-one", "client_approved", "ready_for_client"),
@@ -136,4 +148,26 @@ describe("client review contracts", () => {
       } }]
     })).toThrow(ApiProtocolError);
   });
+});
+
+
+it("retains the frozen client tier metadata and fails closed for malformed tiers", () => {
+ const row = estimate("estimate-one", "project-one", "client_approved");
+ for (const modeTier of ["signature", "premium", "functional"] as const) {
+  const payload = { ...row, publishedReview: { ...row.publishedReview, snapshot: { ...row.publishedReview.snapshot, lineItems: [{ ...row.publishedReview.snapshot.lineItems[0], source: "configuration", modeTier }] } } };
+  expect(parseClientEstimates([payload])[0]?.publishedReview?.snapshot.lineItems[0]).toMatchObject({ modeTier });
+ }
+ expect(() => parseClientEstimates([{ ...row, publishedReview: { ...row.publishedReview, snapshot: { ...row.publishedReview.snapshot, lineItems: [{ ...row.publishedReview.snapshot.lineItems[0], modeTier: "unknown" }] } } }])).toThrow();
+});
+
+
+it("preserves frozen dimension provenance and rejects mismatched calculated quantity", () => {
+ const row = estimate("estimate-one", "project-one", "client_approved");
+ const measured = { ...row.publishedReview.snapshot.lineItems[0], source: "configuration", uomId: "sqft", uomDecimalScale: 2,
+  dimensionsMandatory: true, dimensions: { length: "2", width: "0.5", height: "9" },
+  dimensionRule: { formula: "length_width", inputUnit: "ft", quantityUnit: "sq_ft", uomId: "sqft", decimalScale: 2 } };
+ const payload = { ...row, publishedReview: { ...row.publishedReview, snapshot: { ...row.publishedReview.snapshot, lineItems: [measured] } } };
+ expect(parseClientEstimates([payload])[0]?.publishedReview?.snapshot.lineItems[0]).toMatchObject({ quantity: 1, dimensions: measured.dimensions });
+ expect(() => parseClientEstimates([{ ...payload, publishedReview: { ...payload.publishedReview, snapshot: { ...payload.publishedReview.snapshot, lineItems: [{ ...measured, quantity: 99 }] } } }])).toThrow();
+ expect(parseClientEstimates([{ ...payload, publishedReview: { ...payload.publishedReview, snapshot: { ...payload.publishedReview.snapshot, lineItems: [{ ...measured, dimensionsMandatory: false, quantity: 99 }] } } }])[0]?.publishedReview?.snapshot.lineItems[0]).toMatchObject({ quantity: 99, dimensions: measured.dimensions });
 });

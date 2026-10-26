@@ -1,3 +1,5 @@
+import { canonicalEstimateDimensions, readEstimateDimensionRule, estimateLineDimensionsValid, type EstimateDimensions, type EstimateDimensionRule } from "../../../../shared/estimation/estimateDimensions";
+import { ESTIMATE_COMPONENT_PRICING_BASIS, readEstimateComponentPricing, estimateComponentLineAmountIsValid, type EstimateComponentPricing } from "../../../../shared/estimation/estimateComponentPricing";
 import { z } from "zod";
 
 import { ApiProtocolError } from "../../core/http/apiClient";
@@ -25,13 +27,29 @@ const lineItemSchema = z.object({
   subBasketName: optionalText,
   mainLineName: z.string().optional(),
   itemType: z.enum(["main_line", "temporary"]).optional(),
+  modeTier: z.enum(["signature", "premium", "functional"]).optional(),
+  pricingMode: z.enum(["pmc", "sub_vendor", "in_house"]).optional(),
+  rateSource: z.enum(["configuration", "manual"]).optional(),
+  pricingBasis: z.literal(ESTIMATE_COMPONENT_PRICING_BASIS).optional(),
+  componentPricing: z.custom<EstimateComponentPricing>(value => readEstimateComponentPricing(value) !== null).optional(),
+  mainLineId: z.string().optional(),
+  revisionId: z.string().optional(),
+  sourceItemVersion: z.number().int().positive().optional(),
+  sourceRevisionVersion: z.number().int().positive().optional(),
+  selectedInHouseComponentIds: z.array(z.string()).max(50).optional(),
+  dimensionsMandatory: z.boolean().optional(),
+  dimensions: z.custom<EstimateDimensions>(value => canonicalEstimateDimensions(value) !== null).optional(),
+  dimensionRule: z.custom<EstimateDimensionRule>(value => readEstimateDimensionRule(value) !== null).nullable().optional(),
+  uomId: z.string().optional(),
+  uomDecimalScale: z.number().int().min(0).max(6).optional(),
   quantity: z.number().finite().nonnegative(),
   rate: nullableMoney,
   ratePaise: paise.nullable().optional(),
   amount: nullableMoney,
   amountPaise: paise.nullable().optional(),
   included: z.boolean()
-});
+}).refine(line => (line.included === false && line.dimensions === undefined || estimateLineDimensionsValid(line)) &&
+  (line.pricingBasis === undefined && line.componentPricing === undefined || estimateComponentLineAmountIsValid(line)));
 const snapshotSchema = z.object({
   projectName: z.string(), clientName: z.string(), location: z.string(),
   propertyType: z.string().optional(),
@@ -254,7 +272,7 @@ export function canDecideClientEstimate(estimate: ClientEstimate): boolean {
   const review = estimate.publishedReview;
   return !estimate.reviewSourceIssue && estimate.status === "sent_to_client" && Boolean(review?.canDecide) &&
     review?.status === "pending" && estimate.version === review.estimateVersion && estimate.total !== null && estimate.subtotal !== null && estimate.gst !== null &&
-    review.snapshot.lineItems.filter((line) => line.included).every((line) => publishedMoney(line.rate, line.ratePaise) !== null && publishedMoney(line.amount, line.amountPaise) !== null) &&
+    review.snapshot.lineItems.filter((line) => line.included).every((line) => (estimateComponentLineAmountIsValid(line) || publishedMoney(line.rate, line.ratePaise) !== null) && publishedMoney(line.amount, line.amountPaise) !== null) &&
     (review.phase !== "post" || Boolean(estimate.preApprovedReview && estimate.changesFromPre && publishedMoney(estimate.preApprovedReview.snapshot.total, estimate.preApprovedReview.snapshot.totalPaise) !== null));
 }
 

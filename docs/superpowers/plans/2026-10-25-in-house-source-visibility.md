@@ -1,0 +1,9 @@
+# In-house source visibility plan
+
+Implementation and verification complete. Delivery uses a guarded copy of the nine files below; no deployment or live data mutation.
+
+1. Audited legacy conversion, editor visibility, presentation defaults and pending state. Complete.
+2. Root updated shared first-add preservation, source default-expanded state/copy eligibility/calculator defaults, and legacy checklist pending validation. Storage shape, exact saved prices and explicit-array semantics remain unchanged.
+3. Frontend test owner updated component, transfer and Mode pending integration coverage: 63/63 pass. Adjacent Builder/calculator/total tests: 63/63 pass. Backend shared-contract tests: 49/49 pass. Frontend TypeScript, backend typecheck and production frontend build pass; build retains the existing large-chunk warning.
+4. Independent runtime review found no actionable defects. Browser QA on isolated Vite4194 using actual ModePanel and local mock saves verified blank/default source survives Add and reload; saved Labour45/Material95 with unequal thresholds, margins and scope survives Add; copy action replaces the target exactly; Save/reload retains source and copied values. Desktop layout and 390px copy dialog inspected, fixture errors0. Native pointer drag was not manually repeated; rendered drag/drop regression tests exercise the same overwrite handler. No live API was called. Temporary tab and server closed.
+5. Delivery files: shared knowledgeInHouseComponents.ts; frontend KnowledgeInHouseComponents.tsx and KnowledgeModeConfigurationBuilder.tsx; three focused frontend test files; backend in-house-components test; this plan and separate spec. Original hashes must match before any write, and existing files are backed up. No dependency, schema, API, migration or server-process changes.

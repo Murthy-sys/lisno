@@ -1,4 +1,5 @@
-import type { KnowledgeJsonObject, KnowledgeJsonValue } from "../../../../shared/knowledge/knowledgeTypes";
+import type { KnowledgeJsonObject, KnowledgeJsonValue, KnowledgeMaster } from "../../../../shared/knowledge/knowledgeTypes";
+import { parseKnowledgeModeConfigurations } from "../../../../shared/knowledge/knowledgeModeConfiguration";
 import type { KnowledgeModeCalculationDraft } from "../../../../shared/knowledge/knowledgeCalculationTypes";
 import { modeCalculationDraft, modeCalculationsForStorage, parseModeQuantity, type ModeCalculationScope } from "../../../../shared/knowledge/knowledgeModeCalculation";
 import { formatPaiseForRupeeInput, parseRupeeInputToPaise } from "../../../../shared/knowledge/knowledgePresentation";
@@ -6,6 +7,17 @@ import { formatPaiseForRupeeInput, parseRupeeInputToPaise } from "../../../../sh
 export const isKnowledgeObject = (value: KnowledgeJsonValue | undefined): value is KnowledgeJsonObject => value !== null && typeof value === "object" && !Array.isArray(value);
 export const knowledgeText = (value: KnowledgeJsonValue | undefined): string => typeof value === "string" ? value : "";
 export const calculationFields = { baseRate: "baseRatePaise", lowQuantityLimit: "lowQuantityLimit", impactRate: "impactBps", minimumRate: "minimumMarkupBps", startingRate: "startingMarkupBps" } as const;
+
+/** Components own In-house scope; inspect retained legacy records without their obsolete lists. */
+export function nativeModeConfigurations(payload: KnowledgeJsonObject, modes: readonly KnowledgeMaster[] = []) {
+  const rows = payload.modeConfigurations;
+  if (!Object.hasOwn(payload, "inHouseComponents") || !Array.isArray(rows)) return parseKnowledgeModeConfigurations(rows, modes);
+  return parseKnowledgeModeConfigurations(rows.map(row => {
+    if (!isKnowledgeObject(row) || row.modeKind !== "execution" || row.executionSource !== "in_house") return row;
+    const { inclusions: _inclusions, exclusions: _exclusions, ...record } = row;
+    return record;
+  }), modes);
+}
 
 /** Retain incomplete native numeric input in the draft instead of reverting to defaults. */
 export function nativeCalculationDraft(value: KnowledgeJsonValue | undefined): KnowledgeModeCalculationDraft {

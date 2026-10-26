@@ -85,6 +85,17 @@ async function vendor() {
 }
 
 describe("proposal-scoped UOMs and surfaces", { timeout: 45_000 }, () => {
+  it("validates required dimensions against private UOM names before those masters are published", async () => {
+    const { service } = fixture(); let { detail, lineId, uomId } = await setup(service);
+    await expect(section(service, detail, lineId, "overview", { uomId, dimensionsMandatory: true })).rejects.toMatchObject({ code: "PROPOSAL_CONFIGURATION_INVALID" });
+    detail = (await service.saveMaster(AUTHOR, "procurement", detail.id, "uoms", uomId, { ...command(detail), name: "Square foot", decimalScale: 2 })).detail;
+    detail = await section(service, detail, lineId, "overview", { uomId, dimensionsMandatory: true });
+    expect((await savedSection(service, detail, lineId, "overview")).payload).toMatchObject({ uomId, dimensionsMandatory: true });
+    await expect(service.saveMaster(AUTHOR, "procurement", detail.id, "uoms", uomId, { ...command(detail), name: "Each", decimalScale: 2 }))
+      .rejects.toMatchObject({ code: "PROPOSAL_CONFIGURATION_INVALID" });
+    expect((await service.masters(AUTHOR, "procurement", detail.id, "uoms", paging)).items[0]!.payload.name).toBe("Square foot");
+    expect(await AiEstimatorKnowledgeUomModel.countDocuments()).toBe(0);
+  });
   it("keeps both kinds private, rejects foreign readers/references and protects referenced removal", async () => {
     const { service } = fixture(); const own = await setup(service); const foreign = await setup(service, OTHER);
     expect((await service.masters(AUTHOR, "procurement", own.detail.id, "uoms", paging)).items[0]).toMatchObject({ resourceId: own.uomId, payload: { decimalScale: 2 } });

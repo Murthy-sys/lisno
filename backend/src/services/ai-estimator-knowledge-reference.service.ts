@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { ADDITIONAL_KNOWLEDGE_MODE_TIERS } from "../domain/ai-estimator-knowledge-mode-tiers.js";
 import mongoose, { type ClientSession, type Model } from "mongoose";
 
 import type { ProcurementVendorProfileInput, ProcurementVendorSummary, ProcurementVendorDetailFields, ProcurementVendorDirectoryOverview } from "../contracts/procurement-vendor.js";
@@ -600,6 +601,7 @@ export function createAiEstimatorKnowledgeReferenceService(
         }
         const snapshot = await subBasketDeletionSnapshot(parent, group, session);
         requireNoVendorBasketReferences(snapshot.impact.vendorReferenceCount);
+        await requireNoInHouseComponentReferences({ basketId, subBasketId }, snapshot.mainLineIds, session);
         if (snapshot.impact.impactToken !== input.impactToken) {
           throw new ApiError(409, "DELETION_IMPACT_CHANGED", "Sub Basket contents or references changed. Review a fresh deletion preview.");
         }
@@ -853,6 +855,7 @@ export function createAiEstimatorKnowledgeReferenceService(
          * concurrent Main Line write; writing to the Main Line collection
          * ahead of it would decide the race on the wrong document.
          */
+        await requireNoInHouseComponentReferences({ basketId }, mainLineIds, session);
         const dependencyEpoch = safeDependencyEpoch(current.dependencyEpoch);
         const dependencyEpochFilter = dependencyEpoch === 0
           ? { $or: [{ dependencyEpoch: 0 }, { dependencyEpoch: { $exists: false } }] }
@@ -1860,7 +1863,9 @@ async function requireNoMasterReferences(masterType: AiEstimatorKnowledgeMasterT
       "payload.modeConfigurations.modeId"
     ]
   };
-  if (revisionIds.length > 0 && await AiEstimatorKnowledgeSectionModel.exists({ revisionId: { $in: revisionIds }, $or: sectionPaths[masterType].map((path) => ({ [path]: id })) }).session(session)) {
+  const paths = sectionPaths[masterType].flatMap(path => [path, ...ADDITIONAL_KNOWLEDGE_MODE_TIERS
+    .map(tier => path.replace(/^payload\./u, `payload.tierConfigurations.${tier}.payload.`))]);
+  if (revisionIds.length > 0 && await AiEstimatorKnowledgeSectionModel.exists({ revisionId: { $in: revisionIds }, $or: paths.map((path) => ({ [path]: id })) }).session(session)) {
     referenceConflict("Knowledge master has an active or Draft section reference.");
   }
   const priceField: Partial<Record<AiEstimatorKnowledgeMasterType, string>> = { uoms: "uomId", vendors: "vendorId", taxes: "taxRuleId", modes: "modeId" };
@@ -2051,3 +2056,13 @@ function subBasketParentMismatch(): never {
 function referenceConflict(message: string): never { throw new ApiError(409, "ACTIVE_REFERENCE_CONFLICT", message); }
 function canonicalPriorityImmutable(): never { throw new ApiError(409, "CANONICAL_PRIORITY_IMMUTABLE", "Canonical Priority identity and availability are system managed."); }
 function canonicalTaxPolicyImmutable(): never { throw new ApiError(409, "CANONICAL_TAX_POLICY_IMMUTABLE", "The fixed GST policy is system managed and cannot be changed through generic Tax operations."); }
+
+async function requireNoInHouseComponentReferences(target: { basketId: string; subBasketId?: string }, excludedMainLineIds: readonly string[], session: ClientSession): Promise<void> {
+  const referenced = await AiEstimatorKnowledgeSectionModel.exists({
+    sectionKey: "advanced", mainLineId: { $nin: excludedMainLineIds },
+    $or: ["payload.inHouseComponents", ...ADDITIONAL_KNOWLEDGE_MODE_TIERS
+      .map(tier => `payload.tierConfigurations.${tier}.payload.inHouseComponents`)]
+      .map(path => ({ [path]: { $elemMatch: target } }))
+  }).session(session);
+  if (referenced) throw new ApiError(409, "IN_HOUSE_COMPONENT_REFERENCE_EXISTS", "This Main Basket or Sub Basket is referenced by an In-house component and cannot be deleted.");
+}

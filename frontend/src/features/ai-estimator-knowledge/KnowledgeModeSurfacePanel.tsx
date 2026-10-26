@@ -3,6 +3,7 @@ import { useId, type RefObject } from "react";
 
 import { Button } from "../../components/ui/Button";
 import { KnowledgeCardHeading } from "./KnowledgeCardHeading";
+import { KnowledgeOverviewIcon, KnowledgeSurfaceArtwork } from "./KnowledgeOverviewArtwork";
 import type { KnowledgeMaster } from "./knowledgeTypes";
 import { KnowledgeSurfaceMultiSelect, type KnowledgeProposedMasterChoice } from "./KnowledgeSurfaceMultiSelect";
 
@@ -23,7 +24,7 @@ export interface KnowledgeModeSurfacePanelProps {
   readonly proposedSurfaces?: readonly KnowledgeProposedMasterChoice[];
   readonly proposalActions?: boolean;
   readonly quickAddButtonRef?: RefObject<HTMLButtonElement | null>;
-  readonly presentation?: "default" | "overview" | "procurement-basket";
+  readonly presentation?: "default" | "overview" | "procurement-basket" | "configuration";
   readonly selectedIds: readonly string[];
   readonly surfaces: readonly KnowledgeMaster[];
   readonly catalogState: KnowledgeSurfaceCatalogState;
@@ -63,7 +64,8 @@ export function KnowledgeModeSurfacePanel({
     || sectionState.status !== "ready"
     || catalogState.status !== "ready";
   const procurementBasket = presentation === "procurement-basket";
-  const overview = presentation === "overview" || procurementBasket;
+  const configuration = presentation === "configuration";
+  const overview = presentation === "overview" || configuration || procurementBasket;
   const canAddSurface = canQuickAdd && !readOnly;
   const selectionReady = sectionState.status === "ready" && catalogState.status === "ready";
   const stateLabel = readOnly ? (
@@ -82,7 +84,7 @@ export function KnowledgeModeSurfacePanel({
     <div className={`knowledge-mode-surfaces${overview ? " knowledge-mode-surfaces--overview" : ""}`} aria-labelledby="knowledge-mode-surfaces-heading">
       <KnowledgeCardHeading
         className="knowledge-mode-surfaces__heading"
-        icon={<UserRound />}
+        icon={configuration ? <KnowledgeOverviewIcon symbol="surfaces" /> : <UserRound />}
         titleId="knowledge-mode-surfaces-heading"
         title={procurementBasket ? "Applicable surfaces" : "Surfaces"}
         description="Select every surface where this Main Line can be used."
@@ -93,7 +95,7 @@ export function KnowledgeModeSurfacePanel({
               <Button
                 ref={quickAddButtonRef}
                 variant="primary"
-                leadingIcon={proposalActions ? undefined : <Plus />}
+                leadingIcon={proposalActions ? undefined : configuration ? <KnowledgeOverviewIcon symbol="plus" /> : <Plus />}
                 disabled={controlsDisabled}
                 onClick={addSurface}
               >
@@ -110,7 +112,7 @@ export function KnowledgeModeSurfacePanel({
           masters={surfaces}
           proposedMasters={proposedSurfaces}
           label="Applicable surfaces"
-          placeholder="Select surfaces"
+          placeholder={configuration ? "Select a surface" : "Select surfaces"}
           searchable
           describedBy={error ? errorId : undefined}
           invalid={Boolean(error)}
@@ -122,7 +124,7 @@ export function KnowledgeModeSurfacePanel({
           <Button
             type="button"
             variant="secondary"
-            leadingIcon={proposalActions ? undefined : <Plus />}
+            leadingIcon={configuration ? <KnowledgeOverviewIcon symbol="plus" /> : <Plus />}
             className={overview ? "knowledge-overview-surfaces__create" : undefined}
             aria-label={overview ? "Create Surface" : undefined}
             title={overview ? "Create Surface" : undefined}
@@ -160,17 +162,25 @@ export function KnowledgeModeSurfacePanel({
               const sharedSurface = surfaces.find(({ id }) => id === surfaceId);
               const surface = sharedSurface ?? proposedSurfaces.find(({ id }) => id === surfaceId);
               const name = surface?.name ?? "Unavailable value";
+              const identity = <>
+                <span>{name}</span>
+                {surface && !sharedSurface ? <span className="knowledge-overview-surfaces__surface-status">Proposed</span> : null}
+                {sharedSurface && sharedSurface.status !== "active" ? (
+                  <span className="knowledge-overview-surfaces__surface-status">
+                    {sharedSurface.status === "archived" ? "Archived" : "Inactive"}
+                  </span>
+                ) : null}
+              </>;
               return (
                 <tr key={surfaceId}>
                   <td className="knowledge-overview-surfaces__number">{index + 1}</td>
                   <th scope="row">
-                    <span>{name}</span>
-                    {surface && !sharedSurface ? <span className="knowledge-overview-surfaces__surface-status">Proposed</span> : null}
-                    {sharedSurface && sharedSurface.status !== "active" ? (
-                      <span className="knowledge-overview-surfaces__surface-status">
-                        {sharedSurface.status === "archived" ? "Archived" : "Inactive"}
+                    {configuration ? (
+                      <span className="knowledge-overview-surfaces__identity">
+                        {surface ? <KnowledgeSurfaceArtwork /> : null}
+                        <span>{identity}</span>
                       </span>
-                    ) : null}
+                    ) : identity}
                   </th>
                   <td className="knowledge-overview-surfaces__description">
                     {surface
@@ -182,7 +192,7 @@ export function KnowledgeModeSurfacePanel({
                       {sharedSurface && sharedSurface.status !== "archived" && onEditSurface && !readOnly ? (
                         <Button
                           variant="quiet"
-                          className="knowledge-overview-surfaces__row-action"
+                          className={`knowledge-overview-surfaces__row-action${configuration ? " knowledge-overview-surfaces__row-action--edit" : ""}`}
                           aria-label={`Edit reusable surface ${name}`}
                           title={`Edit reusable surface ${name}`}
                           leadingIcon={<SurfaceActionIcon action="edit" />}
@@ -192,10 +202,10 @@ export function KnowledgeModeSurfacePanel({
                       ) : null}
                       <Button
                         variant="quiet"
-                        className="knowledge-overview-surfaces__row-action"
+                        className={`knowledge-overview-surfaces__row-action${configuration ? " knowledge-overview-surfaces__row-action--remove" : ""}`}
                         aria-label={`Remove ${name} from Main Line`}
                         title={surface ? `Remove ${name} from Main Line` : "Unavailable surfaces cannot be removed"}
-                        leadingIcon={<SurfaceActionIcon action="remove" />}
+                        leadingIcon={<SurfaceActionIcon action="remove" removalGlyph={configuration ? "bin" : "cross"} />}
                         disabled={controlsDisabled || readOnly || !surface}
                         onClick={() => onChange(selectedIds.filter((id) => id !== surfaceId))}
                       />
@@ -264,11 +274,16 @@ export function KnowledgeModeSurfacePanel({
   );
 }
 
-function SurfaceActionIcon({ action }: { readonly action: "edit" | "remove" }) {
+function SurfaceActionIcon({ action, removalGlyph = "cross" }: {
+  readonly action: "edit" | "remove";
+  readonly removalGlyph?: "cross" | "bin";
+}) {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" focusable="false" aria-hidden="true">
       {action === "edit" ? (
         <><path d="m15 5 4 4M4 20l5-1L20 8a2.8 2.8 0 0 0-4-4L5 15l-1 5Z" /><path d="M13 20h7" /></>
+      ) : removalGlyph === "bin" ? (
+        <><path d="M4 6h16M9 6V3h6v3M6 6l1 15h10l1-15M10 10v7M14 10v7" /></>
       ) : <><path d="m7 7 10 10M17 7 7 17" /></>}
     </svg>
   );

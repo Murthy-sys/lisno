@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { apiClient } from "../../api/client";
 import {
+  getKnowledgeSubBasketMargins,
+  applyKnowledgeSubBasketMargins,
   createKnowledgeSurface,
   createKnowledgeSubBasket,
   createKnowledgeMainLine,
@@ -27,6 +29,16 @@ import {
 afterEach(() => vi.restoreAllMocks());
 
 describe("knowledge API", () => {
+  it("encodes margin parent/child paths and preserves mode and snapshot token", async () => {
+    const get = vi.spyOn(apiClient, "get").mockResolvedValue({});
+    const post = vi.spyOn(apiClient, "post").mockResolvedValue({});
+    await getKnowledgeSubBasketMargins("basket/one", "sub/ceiling");
+    expect(get).toHaveBeenCalledWith("/admin/ai-estimator-knowledge/baskets/basket%2Fone/sub-baskets/sub%2Fceiling/margins", { showGlobalLoader: false });
+    await applyKnowledgeSubBasketMargins("basket/one", "sub/ceiling", { mode: "in_house", versionToken: "snapshot-17" });
+    expect(post).toHaveBeenCalledWith("/admin/ai-estimator-knowledge/baskets/basket%2Fone/sub-baskets/sub%2Fceiling/margins/apply", { mode: "in_house", versionToken: "snapshot-17" });
+    await applyKnowledgeSubBasketMargins("basket/one", "sub/ceiling", { mode: "pmc", versionToken: "snapshot-18", targetMainLineId: "line/one" });
+    expect(post).toHaveBeenLastCalledWith("/admin/ai-estimator-knowledge/baskets/basket%2Fone/sub-baskets/sub%2Fceiling/margins/apply", { mode: "pmc", versionToken: "snapshot-18", targetMainLineId: "line/one" });
+  });
   it("requests the global vendor overview independently of filtered table pages", async () => {
     const get = vi.spyOn(apiClient, "get").mockResolvedValue({});
     await listKnowledgeMasters("vendors", { includeDirectoryOverview: true, limit: 1, offset: 0 });

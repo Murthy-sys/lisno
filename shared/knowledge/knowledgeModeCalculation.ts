@@ -44,6 +44,7 @@ export function withModeCalculation(payload: KnowledgeJsonObject, scope: ModeCal
 
 export function modeCalculationsIssues(payload: KnowledgeJsonObject) {
   const issues = modeCalculationIssues(payload.modeCalculation);
+  const componentInHouse = Object.hasOwn(payload, "inHouseComponents");
   if (!Object.hasOwn(payload, "modeCalculations")) return issues;
   const scoped = calculationMap(payload);
   if (!scoped) {
@@ -52,11 +53,13 @@ export function modeCalculationsIssues(payload: KnowledgeJsonObject) {
   for (const key of Object.keys(scoped)) {
     if (key !== "in_house" && !MODE_CALCULATION_SCOPES.includes(key as ModeCalculationScope)) issues.push({ path: `modeCalculations.${key}`, message: "Unknown calculation Mode." });
   }
-  const required = hasInHouseCosts(scoped) ? MODE_CALCULATION_SCOPES : ["pmc", "sub_vendor", "in_house"] as const;
+  const required = componentInHouse ? ["pmc", "sub_vendor"] as const
+    : hasInHouseCosts(scoped) ? MODE_CALCULATION_SCOPES : ["pmc", "sub_vendor", "in_house"] as const;
   for (const scope of required) {
     if (!Object.hasOwn(scoped, scope)) issues.push({ path: `modeCalculations.${scope}`, message: `${scope === "in_house" ? "In-house" : MODE_CALCULATION_LABELS[scope]} calculation settings are missing.` });
   }
   for (const scope of [...MODE_CALCULATION_SCOPES, "in_house"] as const) {
+    if (componentInHouse && scope.startsWith("in_house")) continue;
     if (Object.hasOwn(scoped, scope)) issues.push(...modeCalculationIssues(scoped[scope], `modeCalculations.${scope}`));
   }
   return issues;

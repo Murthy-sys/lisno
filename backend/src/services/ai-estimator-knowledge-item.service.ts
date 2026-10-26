@@ -1,3 +1,9 @@
+import { resolveEstimateDimensionRule } from "../domain/estimate-dimensions.js";
+import { isKnowledgeModeTier, isKnowledgeModeSection, knowledgeModeTierPayload, knowledgeModeTierPayloads, projectKnowledgeModeTierSection, mergeKnowledgeModeTierPayload, expandKnowledgeModeTierRows, type KnowledgeModeTier } from "../domain/ai-estimator-knowledge-mode-tiers.js";
+import { readInHouseComponents } from "../domain/ai-estimator-knowledge-in-house-components.js";
+import type { KnowledgeApplySubBasketMarginsInput, KnowledgeApplySubBasketMarginsResult, KnowledgeSubBasketMarginSummary } from "../contracts/ai-estimator-knowledge-sub-basket-margins.js";
+import { SUB_BASKET_MARGIN_MODES, subBasketMarginPatchUnavailableReason, withSubBasketMarginDefaults } from "../domain/ai-estimator-knowledge-sub-basket-margins.js";
+import { marginPayload, readSubBasketMarginSnapshot } from "./ai-estimator-knowledge-sub-basket-margins.js";
 import { normalizeDesignRules } from "../domain/main-line-design-rules.js";
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
@@ -137,6 +143,7 @@ export interface KnowledgeMainLineDeleteInput extends KnowledgeExpectedVersionIn
 }
 
 export interface KnowledgeSectionUpdateInput {
+  readonly modeTier?: KnowledgeModeTier;
   readonly expectedVersion: number;
   readonly expectedAggregateVersion?: number;
   readonly applicability?: KnowledgeSectionApplicability;
@@ -169,6 +176,9 @@ export interface AiEstimatorKnowledgeMainLineDeletionResult {
 }
 
 export interface AiEstimatorKnowledgeItemService {
+  getSubBasketMargins(actor: PublicUser, basketId: string, subBasketId: string, modeTier?: KnowledgeModeTier): Promise<KnowledgeSubBasketMarginSummary>;
+  applySubBasketMargins(actor: PublicUser, basketId: string, subBasketId: string, input: KnowledgeApplySubBasketMarginsInput): Promise<KnowledgeApplySubBasketMarginsResult>;
+
   listMainLines(
     actor: PublicUser,
     basketId: string,
@@ -210,7 +220,8 @@ export interface AiEstimatorKnowledgeItemService {
     actor: PublicUser,
     mainLineId: string,
     revisionId: string,
-    sectionKey: KnowledgeSectionKey
+    sectionKey: KnowledgeSectionKey,
+    modeTier?: KnowledgeModeTier
   ): Promise<KnowledgeSectionEnvelope<Row>>;
   updateSection(
     actor: PublicUser,
@@ -251,7 +262,363 @@ export function createAiEstimatorKnowledgeItemService(
   const now = dependencies.now ?? systemClock;
   const uuid = dependencies.uuid ?? randomUUID;
 
+  async function createRevisionInSession(actor: PublicUser, mainLineId: string, input: KnowledgeExpectedVersionInput, session: ClientSession): Promise<void> {
+    const storedActor = await actorGuard.requireMutationActor(actor, session);
+    const line = asRow(
+      await AiEstimatorKnowledgeMainLineModel.findById(mainLineId)
+        .session(session)
+        .lean()
+        .exec()
+    );
+    if (!line || line.status === "archived") notFound();
+    if (requiredInteger(line.version) !== input.expectedVersion) versionConflict();
+    if (optionalString(line.draftRevisionId)) {
+      throw new ApiError(409, "DRAFT_ALREADY_EXISTS", "Continue editing the existing Draft revision.");
+    }
+    const sourceRevisionId = optionalString(line.activeRevisionId);
+    if (!sourceRevisionId) {
+      throw new ApiError(409, "ACTIVE_REVISION_REQUIRED", "No Active revision is available to copy.");
+    }
+    const latest = asRow(
+      await AiEstimatorKnowledgeRevisionModel.findOne({ mainLineId })
+        .sort({ revisionNumber: -1, _id: 1 })
+        .session(session)
+        .lean()
+        .exec()
+    );
+    const occurredAt = now();
+    const revisionId = knowledgeId("revision", uuid());
+    const revisionNumber = requiredInteger(latest?.revisionNumber) + 1;
+    const sourceSectionDocuments = await AiEstimatorKnowledgeSectionModel.find({
+      mainLineId,
+      revisionId: sourceRevisionId
+    }).session(session).lean().exec();
+    const sourcePriceDocuments = await AiEstimatorKnowledgePriceVersionModel.find({
+      mainLineId,
+      revisionId: sourceRevisionId
+    }).sort({ priceEntryId: 1, versionNumber: 1, _id: 1 }).session(session).lean().exec();
+    const sourceSections = sourceSectionDocuments.map((row) => asRow(row)!);
+    // Reject malformed history before cloning child records or appending their audits.
+    const inheritedAdvanced = payloadFor(sourceSections.find((row) => row.sectionKey === "advanced"));
+    const inheritedIssues = validateKnowledgeSectionPayload("advanced", inheritedAdvanced)
+      .filter(({ code }) => code !== "INVALID_LISNO_MARGIN_INCREMENT" && code !== "CONFLICTING_SCOPE_SELECTION");
+    if (inheritedIssues.length > 0) invalidRevisionSectionRules(inheritedIssues);
+    const priceReferences = await cloneRevisionPrices({
+      sourcePrices: sourcePriceDocuments.map((row) => asRow(row)!),
+      targetMainLineId: mainLineId,
+      targetRevisionId: revisionId,
+      actorId: storedActor.id,
+      occurredAt,
+      session,
+      uuid,
+      audit: dependencies.audit,
+      reviewRequired: false,
+      remapPriceEntryIds: false
+    });
+    const copiedSections = copyRevisionSections(
+      sourceSections, priceReferences, uuid, false, line.itemType === "temporary"
+    );
+    await removeMissingCopiedRelationships(copiedSections, session);
+    await coordinateCopiedBasketReferences(copiedSections, session);
+    await coordinateCopiedSurfaceReferences(copiedSections, session, false);
+    const completeness = completenessForRows(mainLineId, copiedSections);
+    await AiEstimatorKnowledgeRevisionModel.create([{
+      _id: revisionId,
+      mainLineId,
+      revisionNumber,
+      status: "draft",
+      sourceRevisionId,
+      contentDigest: null,
+      completeness,
+      version: 1,
+      createdById: storedActor.id,
+      updatedById: storedActor.id,
+      createdAt: occurredAt,
+      updatedAt: occurredAt
+    }], { session });
+    await AiEstimatorKnowledgeSectionModel.insertMany(
+      AI_ESTIMATOR_KNOWLEDGE_SECTION_KEYS.map((sectionKey) => {
+        const source = copiedSections.find((row) => row.sectionKey === sectionKey);
+        const copiedSection = new AiEstimatorKnowledgeSectionModel({
+          _id: knowledgeId(`section-${sectionKey}`, uuid()),
+          mainLineId,
+          revisionId,
+          sectionKey,
+          applicability: source?.applicability ?? "not_configured",
+          payload: structuredClone(payloadFor(source)),
+          version: 1,
+          createdById: storedActor.id,
+          updatedById: storedActor.id,
+          createdAt: occurredAt,
+          updatedAt: occurredAt
+        });
+        // Only this unchanged Active-to-Draft copy may retain historical values for repair.
+        // Normal section saves, activation and duplication keep strict validation.
+        if (sectionKey === "advanced") {
+          copiedSection.$locals.allowInheritedScopeSelectionConflict = true;
+          copiedSection.$locals.inheritedLisnoMarginPayload = structuredClone(payloadFor(source));
+        }
+        return copiedSection;
+      }),
+      { session }
+    );
+    const updated = await AiEstimatorKnowledgeMainLineModel.findOneAndUpdate(
+      { _id: mainLineId, version: input.expectedVersion, draftRevisionId: null },
+      {
+        $set: { draftRevisionId: revisionId, updatedById: storedActor.id, updatedAt: occurredAt },
+        $inc: { version: 1 }
+      },
+      { new: true, session }
+    ).lean().exec();
+    if (!updated) versionConflict();
+    await dependencies.audit.appendInMongoTransaction({
+      actorId: storedActor.id,
+      action: "ai_estimator_knowledge_revision_created",
+      entityType: "ai_estimator_knowledge_revision",
+      entityId: revisionId,
+      occurredAt: occurredAt.toISOString(),
+      newValues: { mainLineId, sourceRevisionId, revisionNumber, aggregateVersion: input.expectedVersion + 1 }
+    }, session);
+  }
+
+  async function updateSectionInSession(actor: PublicUser, mainLineId: string, revisionId: string, sectionKey: KnowledgeSectionKey, input: KnowledgeSectionUpdateInput, session: ClientSession, marginDefaults?: Row): Promise<{ section: Row; aggregateVersion: number }> {
+    const modeTier = validateModeTierRequest(sectionKey, input.modeTier, input.payload);
+    validateSectionPayloadOrThrow(sectionKey, input.payload);
+    const storedActor = await actorGuard.requireMutationActor(actor, session);
+    const lineDocument = await AiEstimatorKnowledgeMainLineModel.findById(mainLineId)
+      .session(session).lean().exec();
+    const revisionDocument = await AiEstimatorKnowledgeRevisionModel.findOne({ _id: revisionId, mainLineId })
+      .session(session).lean().exec();
+    const sectionDocument = await AiEstimatorKnowledgeSectionModel.findOne({ mainLineId, revisionId, sectionKey })
+      .session(session).lean().exec();
+    const line = asRow(lineDocument);
+    const revision = asRow(revisionDocument);
+    let section = asRow(sectionDocument);
+    if (!line || !revision) notFound();
+    const lazyDesignSection = !section && sectionKey === "design";
+    if (lazyDesignSection) section = virtualDesignSection(mainLineId, revisionId, revision);
+    if (!section) notFound();
+    if (line.itemType === "temporary" && !TEMPORARY_ITEM_SECTIONS.includes(sectionKey)) {
+      throw new ApiError(400, "VALIDATION_ERROR", "Temporary items support only Overview, Mode, Recommendation & Exclusions, Quality Parameters and Design.");
+    }
+    const temporaryRecommendations = line.itemType === "temporary" && sectionKey === "recommendations";
+    if (revision.status !== "draft" || line.draftRevisionId !== revisionId) immutableHistory();
+    if (requiredInteger(section.version) !== input.expectedVersion) versionConflict();
+    const expectedAggregateVersion = input.expectedAggregateVersion ?? requiredInteger(line.version);
+    if (requiredInteger(line.version) !== expectedAggregateVersion) versionConflict();
+
+    const occurredAt = now();
+    if (lazyDesignSection) {
+      const [created] = await AiEstimatorKnowledgeSectionModel.create([{
+        _id: knowledgeId("section-design", uuid()), mainLineId, revisionId, sectionKey,
+        applicability: "not_configured", payload: {}, version: 1,
+        createdById: storedActor.id, updatedById: storedActor.id,
+        createdAt: occurredAt, updatedAt: occurredAt
+      }], { session });
+      section = asRow(created.toObject())!;
+    }
+    const previousRootPayload = payloadFor(section);
+    const previousPayload = isKnowledgeModeSection(sectionKey) ? knowledgeModeTierPayload(previousRootPayload, modeTier) : previousRootPayload;
+    const persistedPayload = sectionKey === "pricing" && modeTier === "signature"
+      ? await materializePriceCommands({
+          mainLineId,
+          revisionId,
+          payload: input.payload,
+          previousPayload,
+          actorId: storedActor.id,
+          occurredAt,
+          session,
+          uuid,
+          audit: dependencies.audit
+        })
+      : sectionKey === "pricing"
+        ? preserveTypedSpecificationCompatibility(previousPayload, input.payload)
+      : sectionKey === "design"
+        ? normalizeDesignRules(input.payload) as unknown as Row
+      : sectionKey === "advanced"
+        ? preserveModeConfigurationCompatibility(previousPayload, input.payload)
+      : sectionKey === "recommendations"
+        ? normalizeRecommendationPayload(input.payload)
+        : structuredClone(input.payload);
+    if (sectionKey === "overview") await fenceDimensionUom(persistedPayload, session);
+    await coordinateNewDesignVendorReference(sectionKey, previousPayload, persistedPayload, session);
+    await coordinateNewBasketReferences(
+      sectionKey,
+      previousPayload,
+      persistedPayload,
+      session
+    );
+    await coordinateNewModeConfigurationReferences(
+      sectionKey,
+      previousPayload,
+      persistedPayload,
+      session
+    );
+    await coordinateNewPriorityReferences(
+      sectionKey,
+      previousPayload,
+      persistedPayload,
+      session
+    );
+    await coordinateNewSurfaceReferences(
+      sectionKey,
+      previousPayload,
+      persistedPayload,
+      session
+    );
+    await coordinateNewSlabRateUomReferences(
+      sectionKey,
+      previousPayload,
+      persistedPayload,
+      session
+    );
+    /* Temporary recommendations are now applicable, including when an old
+       client echoes their historical "not applicable" section flag. */
+    const storedApplicability: KnowledgeSectionApplicability =
+      input.applicability === "not_applicable" && !temporaryRecommendations
+        ? "not_applicable"
+        : hasKnowledgeSectionContent(persistedPayload)
+          ? "configured"
+          : "not_configured";
+    const storedPayload = isKnowledgeModeSection(sectionKey)
+      ? mergeKnowledgeModeTierPayload(previousRootPayload, modeTier, persistedPayload, storedApplicability) : persistedPayload;
+    validatePreservedModeNamespaces(sectionKey, storedPayload, previousRootPayload, modeTier);
+    const updatedSection = await AiEstimatorKnowledgeSectionModel.findOneAndUpdate(
+      { _id: section._id, version: input.expectedVersion, revisionId },
+      {
+        $set: {
+          applicability: modeTier === "signature" ? storedApplicability : section.applicability,
+          payload: storedPayload,
+          updatedById: storedActor.id,
+          updatedAt: occurredAt
+        },
+        $inc: { version: 1 }
+      },
+      { new: true, runValidators: true, session }
+    ).lean().exec();
+    if (!updatedSection) versionConflict();
+    const updatedLine = await AiEstimatorKnowledgeMainLineModel.findOneAndUpdate(
+      { _id: mainLineId, version: expectedAggregateVersion, draftRevisionId: revisionId },
+      { $set: { updatedById: storedActor.id, updatedAt: occurredAt }, $inc: { version: 1 } },
+      { new: true, session }
+    ).lean().exec();
+    if (!updatedLine) versionConflict();
+
+    const rows = (await AiEstimatorKnowledgeSectionModel.find({ mainLineId, revisionId })
+      .session(session).lean().exec()).map((row) => asRow(row)!);
+    await validateRevisionRelationships(mainLineId, rows, session, {
+      updatedSectionKey: sectionKey,
+      updatedModeTier: modeTier,
+      previousPayload: previousRootPayload
+    });
+    const completeness = completenessForRows(mainLineId, rows);
+    await AiEstimatorKnowledgeRevisionModel.updateOne(
+      { _id: revisionId, status: "draft" },
+      {
+        $set: { completeness, updatedById: storedActor.id, updatedAt: occurredAt },
+        $inc: { version: 1 }
+      },
+      { session }
+    ).exec();
+    await dependencies.audit.appendInMongoTransaction({
+      actorId: storedActor.id,
+      action: "ai_estimator_knowledge_section_updated",
+      entityType: "ai_estimator_knowledge_section",
+      entityId: requiredString(section._id),
+      occurredAt: occurredAt.toISOString(),
+      oldValues: { mainLineId, revisionId, sectionKey, sectionVersion: input.expectedVersion, aggregateVersion: expectedAggregateVersion },
+      newValues: { sectionVersion: input.expectedVersion + 1, aggregateVersion: expectedAggregateVersion + 1, modeTier, applicability: storedApplicability, ...(marginDefaults ? { marginDefaults } : {}) }
+    }, session);
+    return {
+      section: asRow(updatedSection)!,
+      aggregateVersion: requiredInteger(asRow(updatedLine)!.version)
+    };
+  }
+
   return {
+    async getSubBasketMargins(actor, basketId, subBasketId, modeTier = "signature") {
+      if (!isKnowledgeModeTier(modeTier)) invalid("modeTier", "Select a valid Mode tier.");
+      return mongoose.connection.transaction(async (session) => {
+        await actorGuard.requireReadActor(actor, session);
+        return (await readSubBasketMarginSnapshot(basketId, subBasketId, session, modeTier)).summary;
+      });
+    },
+
+    async applySubBasketMargins(actor, basketId, subBasketId, input) {
+      if (!SUB_BASKET_MARGIN_MODES.includes(input.mode) || !/^[a-f0-9]{64}$/u.test(input.versionToken)
+        || (input.targetMainLineId !== undefined && (typeof input.targetMainLineId !== "string" || !input.targetMainLineId.length
+          || input.targetMainLineId.length > 128 || input.targetMainLineId.trim() !== input.targetMainLineId))) {
+        throw new ApiError(400, "VALIDATION_ERROR", "Select a margin type and refresh the Sub-Basket before applying defaults.");
+      }
+      return mongoose.connection.transaction(async (session) => {
+        await actorGuard.requireMutationActor(actor, session);
+        await coordinateMainLineBasketDependency(basketId, session);
+        const snapshot = await readSubBasketMarginSnapshot(basketId, subBasketId, session);
+        if (snapshot.summary.versionToken !== input.versionToken) {
+          throw new ApiError(409, "VERSION_CONFLICT", "The Sub-Basket changed. Refresh its margins and review the mismatches again.");
+        }
+        const selected = snapshot.summary.modes[input.mode];
+        const targeted = input.targetMainLineId !== undefined;
+        const target = targeted ? snapshot.lines.find(({ line }) => line._id === input.targetMainLineId) : undefined;
+        if (targeted && !target) throw new ApiError(404, "NOT_FOUND", "This main line is no longer in the selected Sub-Basket.");
+        if (target && target.line._id === snapshot.summary.source?.mainLineId) return { updatedMainLineIds: [], summary: snapshot.summary };
+        const patch = (section: Row) => {
+          if (section.applicability === "not_applicable") throw new ApiError(409, "SUB_BASKET_MARGINS_UNAVAILABLE", "The Mode section is marked not applicable. Review this main line before applying defaults.");
+          const payload = withSubBasketMarginDefaults(knowledgeModeTierPayload(marginPayload(section)), input.mode, selected.ranges, { basketId, subBasketId }, { allowIncompleteMargins: targeted });
+          if (!payload) throw new ApiError(409, "SUB_BASKET_MARGINS_UNAVAILABLE", subBasketMarginPatchUnavailableReason(marginPayload(section), selected.ranges, { basketId, subBasketId }));
+          validateSectionPayloadOrThrow("advanced", payload);
+          return payload;
+        };
+        if (targeted) {
+          if (selected.mismatchCount === null) throw new ApiError(409, "SUB_BASKET_MARGINS_UNAVAILABLE", selected.unavailableReason ?? "The first main line has no valid default margins.");
+          if (!target!.revision || !target!.section) throw new ApiError(409, "SUB_BASKET_MARGINS_UNAVAILABLE", "The saved Mode section could not be resolved. Open this main line and save its Mode settings.");
+          if (isDeepStrictEqual(patch(target!.section), knowledgeModeTierPayload(marginPayload(target!.section)))) return { updatedMainLineIds: [], summary: snapshot.summary };
+        } else {
+          if (selected.mismatchCount === 0 && !selected.unavailableReason) return { updatedMainLineIds: [], summary: snapshot.summary };
+          if (!selected.canApply) throw new ApiError(409, "SUB_BASKET_MARGINS_UNAVAILABLE", selected.unavailableReason ?? "The first main line has no valid default margins.");
+        }
+        // The saved UOM displayed with the source prices belongs to the reviewed snapshot.
+        if (snapshot.sourceUom) {
+          const locked = await AiEstimatorKnowledgeUomModel.updateOne(
+            { _id: snapshot.sourceUom._id, version: snapshot.sourceUom.version, status: snapshot.sourceUom.status },
+            { $inc: { dependencyEpoch: 1 } }, { session, timestamps: false }
+          ).exec();
+          if (locked.matchedCount !== 1) versionConflict();
+        }
+        // Coordinate every reviewed line, including the source and currently matching
+        // siblings, so concurrent changes cannot silently invalidate the full review.
+        for (const { line } of snapshot.lines) {
+          const locked = await AiEstimatorKnowledgeMainLineModel.updateOne(
+            { _id: line._id, version: line.version, basketId, subBasketId },
+            { $inc: { dependencyEpoch: 1 } }, { session, timestamps: false }
+          ).exec();
+          if (locked.matchedCount !== 1) versionConflict();
+        }
+        const targetIds = new Set(targeted ? [input.targetMainLineId!] : selected.mismatches.map(({ mainLineId }) => mainLineId));
+        const updatedMainLineIds: string[] = [];
+        for (const entry of snapshot.lines) {
+          const mainLineId = String(entry.line._id);
+          if (!targetIds.has(mainLineId)) continue;
+          if (!entry.line.draftRevisionId) {
+            await createRevisionInSession(actor, mainLineId, { expectedVersion: requiredInteger(entry.line.version) }, session);
+          }
+          const line = asRow(await AiEstimatorKnowledgeMainLineModel.findById(mainLineId).session(session).lean().exec());
+          if (!line) notFound();
+          const revisionId = requiredString(line.draftRevisionId);
+          const section = asRow(await AiEstimatorKnowledgeSectionModel.findOne({ mainLineId, revisionId, sectionKey: "advanced" }).session(session).lean().exec());
+          if (!section) notFound();
+          const payload = patch(section);
+          await updateSectionInSession(actor, mainLineId, revisionId, "advanced", {
+            expectedVersion: requiredInteger(section.version), expectedAggregateVersion: requiredInteger(line.version),
+            applicability: section.applicability as KnowledgeSectionApplicability, payload
+          }, session, { basketId, subBasketId, mode: input.mode, sourceMainLineId: snapshot.summary.source!.mainLineId,
+            sourceRevisionId: snapshot.lines[0]!.revision!._id, ranges: selected.ranges });
+          updatedMainLineIds.push(mainLineId);
+        }
+        return { updatedMainLineIds, summary: (await readSubBasketMarginSnapshot(basketId, subBasketId, session)).summary };
+      });
+    },
+
     async listMainLines(actor, basketId, filters, pagination) {
       await actorGuard.requireReadActor(actor);
       const filter: Row = { basketId };
@@ -490,7 +857,7 @@ export function createAiEstimatorKnowledgeItemService(
       );
       if (hasJoinedFilters) {
         const documents = await AiEstimatorKnowledgeMainLineModel.find(filter)
-          .sort({ updatedAt: -1, _id: 1 })
+          .sort({ displayOrder: 1, _id: 1 })
           .lean()
           .exec();
         const summaries = await buildItemSummaries(documents.map((document) => asRow(document)!));
@@ -502,7 +869,7 @@ export function createAiEstimatorKnowledgeItemService(
       }
       const [documents, total] = await Promise.all([
         AiEstimatorKnowledgeMainLineModel.find(filter)
-          .sort({ updatedAt: -1, _id: 1 })
+          .sort({ displayOrder: 1, _id: 1 })
           .skip(pagination.offset)
           .limit(pagination.limit)
           .lean()
@@ -535,128 +902,12 @@ export function createAiEstimatorKnowledgeItemService(
     },
 
     async createRevision(actor, mainLineId, input) {
-      await mongoose.connection.transaction(async (session) => {
-        const storedActor = await actorGuard.requireMutationActor(actor, session);
-        const line = asRow(
-          await AiEstimatorKnowledgeMainLineModel.findById(mainLineId)
-            .session(session)
-            .lean()
-            .exec()
-        );
-        if (!line || line.status === "archived") notFound();
-        if (requiredInteger(line.version) !== input.expectedVersion) versionConflict();
-        if (optionalString(line.draftRevisionId)) {
-          throw new ApiError(409, "DRAFT_ALREADY_EXISTS", "Continue editing the existing Draft revision.");
-        }
-        const sourceRevisionId = optionalString(line.activeRevisionId);
-        if (!sourceRevisionId) {
-          throw new ApiError(409, "ACTIVE_REVISION_REQUIRED", "No Active revision is available to copy.");
-        }
-        const latest = asRow(
-          await AiEstimatorKnowledgeRevisionModel.findOne({ mainLineId })
-            .sort({ revisionNumber: -1, _id: 1 })
-            .session(session)
-            .lean()
-            .exec()
-        );
-        const occurredAt = now();
-        const revisionId = knowledgeId("revision", uuid());
-        const revisionNumber = requiredInteger(latest?.revisionNumber) + 1;
-        const sourceSectionDocuments = await AiEstimatorKnowledgeSectionModel.find({
-          mainLineId,
-          revisionId: sourceRevisionId
-        }).session(session).lean().exec();
-        const sourcePriceDocuments = await AiEstimatorKnowledgePriceVersionModel.find({
-          mainLineId,
-          revisionId: sourceRevisionId
-        }).sort({ priceEntryId: 1, versionNumber: 1, _id: 1 }).session(session).lean().exec();
-        const sourceSections = sourceSectionDocuments.map((row) => asRow(row)!);
-        // Reject malformed history before cloning child records or appending their audits.
-        const inheritedAdvanced = payloadFor(sourceSections.find((row) => row.sectionKey === "advanced"));
-        const inheritedIssues = validateKnowledgeSectionPayload("advanced", inheritedAdvanced)
-          .filter(({ code }) => code !== "INVALID_LISNO_MARGIN_INCREMENT" && code !== "CONFLICTING_SCOPE_SELECTION");
-        if (inheritedIssues.length > 0) invalidRevisionSectionRules(inheritedIssues);
-        const priceReferences = await cloneRevisionPrices({
-          sourcePrices: sourcePriceDocuments.map((row) => asRow(row)!),
-          targetMainLineId: mainLineId,
-          targetRevisionId: revisionId,
-          actorId: storedActor.id,
-          occurredAt,
-          session,
-          uuid,
-          audit: dependencies.audit,
-          reviewRequired: false,
-          remapPriceEntryIds: false
-        });
-        const copiedSections = copyRevisionSections(
-          sourceSections, priceReferences, uuid, false, line.itemType === "temporary"
-        );
-        await removeMissingCopiedRelationships(copiedSections, session);
-        await coordinateCopiedBasketReferences(copiedSections, session);
-        await coordinateCopiedSurfaceReferences(copiedSections, session, false);
-        const completeness = completenessForRows(mainLineId, copiedSections);
-        await AiEstimatorKnowledgeRevisionModel.create([{
-          _id: revisionId,
-          mainLineId,
-          revisionNumber,
-          status: "draft",
-          sourceRevisionId,
-          contentDigest: null,
-          completeness,
-          version: 1,
-          createdById: storedActor.id,
-          updatedById: storedActor.id,
-          createdAt: occurredAt,
-          updatedAt: occurredAt
-        }], { session });
-        await AiEstimatorKnowledgeSectionModel.insertMany(
-          AI_ESTIMATOR_KNOWLEDGE_SECTION_KEYS.map((sectionKey) => {
-            const source = copiedSections.find((row) => row.sectionKey === sectionKey);
-            const copiedSection = new AiEstimatorKnowledgeSectionModel({
-              _id: knowledgeId(`section-${sectionKey}`, uuid()),
-              mainLineId,
-              revisionId,
-              sectionKey,
-              applicability: source?.applicability ?? "not_configured",
-              payload: structuredClone(payloadFor(source)),
-              version: 1,
-              createdById: storedActor.id,
-              updatedById: storedActor.id,
-              createdAt: occurredAt,
-              updatedAt: occurredAt
-            });
-            // Only this unchanged Active-to-Draft copy may retain historical values for repair.
-            // Normal section saves, activation and duplication keep strict validation.
-            if (sectionKey === "advanced") {
-              copiedSection.$locals.allowInheritedScopeSelectionConflict = true;
-              copiedSection.$locals.inheritedLisnoMarginPayload = structuredClone(payloadFor(source));
-            }
-            return copiedSection;
-          }),
-          { session }
-        );
-        const updated = await AiEstimatorKnowledgeMainLineModel.findOneAndUpdate(
-          { _id: mainLineId, version: input.expectedVersion, draftRevisionId: null },
-          {
-            $set: { draftRevisionId: revisionId, updatedById: storedActor.id, updatedAt: occurredAt },
-            $inc: { version: 1 }
-          },
-          { new: true, session }
-        ).lean().exec();
-        if (!updated) versionConflict();
-        await dependencies.audit.appendInMongoTransaction({
-          actorId: storedActor.id,
-          action: "ai_estimator_knowledge_revision_created",
-          entityType: "ai_estimator_knowledge_revision",
-          entityId: revisionId,
-          occurredAt: occurredAt.toISOString(),
-          newValues: { mainLineId, sourceRevisionId, revisionNumber, aggregateVersion: input.expectedVersion + 1 }
-        }, session);
-      });
+      await mongoose.connection.transaction((session) => createRevisionInSession(actor, mainLineId, input, session));
       return getItemAfterMutation(actor, mainLineId, actorGuard);
     },
 
-    async getSection(actor, mainLineId, revisionId, sectionKey) {
+    async getSection(actor, mainLineId, revisionId, sectionKey, modeTier = "signature") {
+      validateModeTierRequest(sectionKey, modeTier);
       await actorGuard.requireReadActor(actor);
       let section = asRow(
         await AiEstimatorKnowledgeSectionModel.findOne({ mainLineId, revisionId, sectionKey }).lean().exec()
@@ -667,159 +918,21 @@ export function createAiEstimatorKnowledgeItemService(
         if (revision && line) section = virtualDesignSection(mainLineId, revisionId, revision);
       }
       if (!section) notFound();
-      return sectionKey === "pricing"
-        ? enrichPricingSectionDto(section)
-        : sectionDto(section);
+      const projected = projectKnowledgeModeTierSection(section, modeTier);
+      return sectionKey === "pricing" && modeTier === "signature"
+        ? enrichPricingSectionDto(projected)
+        : { ...sectionDto(projected), ...(modeTier !== "signature" ? { modeTier } : {}) };
     },
 
     async updateSection(actor, mainLineId, revisionId, sectionKey, input) {
       validateSectionPayloadOrThrow(sectionKey, input.payload);
-      const mutation = await mongoose.connection.transaction(async (session) => {
-        const storedActor = await actorGuard.requireMutationActor(actor, session);
-        const lineDocument = await AiEstimatorKnowledgeMainLineModel.findById(mainLineId)
-          .session(session).lean().exec();
-        const revisionDocument = await AiEstimatorKnowledgeRevisionModel.findOne({ _id: revisionId, mainLineId })
-          .session(session).lean().exec();
-        const sectionDocument = await AiEstimatorKnowledgeSectionModel.findOne({ mainLineId, revisionId, sectionKey })
-          .session(session).lean().exec();
-        const line = asRow(lineDocument);
-        const revision = asRow(revisionDocument);
-        let section = asRow(sectionDocument);
-        if (!line || !revision) notFound();
-        const lazyDesignSection = !section && sectionKey === "design";
-        if (lazyDesignSection) section = virtualDesignSection(mainLineId, revisionId, revision);
-        if (!section) notFound();
-        if (line.itemType === "temporary" && !TEMPORARY_ITEM_SECTIONS.includes(sectionKey)) {
-          throw new ApiError(400, "VALIDATION_ERROR", "Temporary items support only Overview, Mode, Recommendation & Exclusions, Quality Parameters and Design.");
-        }
-        const temporaryRecommendations = line.itemType === "temporary" && sectionKey === "recommendations";
-        if (revision.status !== "draft" || line.draftRevisionId !== revisionId) immutableHistory();
-        if (requiredInteger(section.version) !== input.expectedVersion) versionConflict();
-        const expectedAggregateVersion = input.expectedAggregateVersion ?? requiredInteger(line.version);
-        if (requiredInteger(line.version) !== expectedAggregateVersion) versionConflict();
-
-        const occurredAt = now();
-        if (lazyDesignSection) {
-          const [created] = await AiEstimatorKnowledgeSectionModel.create([{
-            _id: knowledgeId("section-design", uuid()), mainLineId, revisionId, sectionKey,
-            applicability: "not_configured", payload: {}, version: 1,
-            createdById: storedActor.id, updatedById: storedActor.id,
-            createdAt: occurredAt, updatedAt: occurredAt
-          }], { session });
-          section = asRow(created.toObject())!;
-        }
-        const previousPayload = payloadFor(section);
-        const persistedPayload = sectionKey === "pricing"
-          ? await materializePriceCommands({
-              mainLineId,
-              revisionId,
-              payload: input.payload,
-              previousPayload,
-              actorId: storedActor.id,
-              occurredAt,
-              session,
-              uuid,
-              audit: dependencies.audit
-            })
-          : sectionKey === "design"
-            ? normalizeDesignRules(input.payload) as unknown as Row
-          : sectionKey === "advanced"
-            ? preserveModeConfigurationCompatibility(previousPayload, input.payload)
-          : sectionKey === "recommendations"
-            ? normalizeRecommendationPayload(input.payload)
-            : structuredClone(input.payload);
-        await coordinateNewDesignVendorReference(sectionKey, previousPayload, persistedPayload, session);
-        await coordinateNewBasketReferences(
-          sectionKey,
-          previousPayload,
-          persistedPayload,
-          session
-        );
-        await coordinateNewModeConfigurationReferences(
-          sectionKey,
-          previousPayload,
-          persistedPayload,
-          session
-        );
-        await coordinateNewPriorityReferences(
-          sectionKey,
-          previousPayload,
-          persistedPayload,
-          session
-        );
-        await coordinateNewSurfaceReferences(
-          sectionKey,
-          previousPayload,
-          persistedPayload,
-          session
-        );
-        await coordinateNewSlabRateUomReferences(
-          sectionKey,
-          previousPayload,
-          persistedPayload,
-          session
-        );
-        /* Temporary recommendations are now applicable, including when an old
-           client echoes their historical "not applicable" section flag. */
-        const storedApplicability: KnowledgeSectionApplicability =
-          input.applicability === "not_applicable" && !temporaryRecommendations
-            ? "not_applicable"
-            : hasKnowledgeSectionContent(persistedPayload)
-              ? "configured"
-              : "not_configured";
-        const updatedSection = await AiEstimatorKnowledgeSectionModel.findOneAndUpdate(
-          { _id: section._id, version: input.expectedVersion, revisionId },
-          {
-            $set: {
-              applicability: storedApplicability,
-              payload: persistedPayload,
-              updatedById: storedActor.id,
-              updatedAt: occurredAt
-            },
-            $inc: { version: 1 }
-          },
-          { new: true, runValidators: true, session }
-        ).lean().exec();
-        if (!updatedSection) versionConflict();
-        const updatedLine = await AiEstimatorKnowledgeMainLineModel.findOneAndUpdate(
-          { _id: mainLineId, version: expectedAggregateVersion, draftRevisionId: revisionId },
-          { $set: { updatedById: storedActor.id, updatedAt: occurredAt }, $inc: { version: 1 } },
-          { new: true, session }
-        ).lean().exec();
-        if (!updatedLine) versionConflict();
-
-        const rows = (await AiEstimatorKnowledgeSectionModel.find({ mainLineId, revisionId })
-          .session(session).lean().exec()).map((row) => asRow(row)!);
-        await validateRevisionRelationships(mainLineId, rows, session, {
-          updatedSectionKey: sectionKey,
-          previousPayload
-        });
-        const completeness = completenessForRows(mainLineId, rows);
-        await AiEstimatorKnowledgeRevisionModel.updateOne(
-          { _id: revisionId, status: "draft" },
-          {
-            $set: { completeness, updatedById: storedActor.id, updatedAt: occurredAt },
-            $inc: { version: 1 }
-          },
-          { session }
-        ).exec();
-        await dependencies.audit.appendInMongoTransaction({
-          actorId: storedActor.id,
-          action: "ai_estimator_knowledge_section_updated",
-          entityType: "ai_estimator_knowledge_section",
-          entityId: requiredString(section._id),
-          occurredAt: occurredAt.toISOString(),
-          oldValues: { mainLineId, revisionId, sectionKey, sectionVersion: input.expectedVersion, aggregateVersion: expectedAggregateVersion },
-          newValues: { sectionVersion: input.expectedVersion + 1, aggregateVersion: expectedAggregateVersion + 1, applicability: storedApplicability }
-        }, session);
-        return {
-          section: asRow(updatedSection)!,
-          aggregateVersion: requiredInteger(asRow(updatedLine)!.version)
-        };
-      });
-      const section = sectionKey === "pricing"
-        ? await enrichPricingSectionDto(mutation.section)
-        : sectionDto(mutation.section);
+      const mutation = await mongoose.connection.transaction((session) =>
+        updateSectionInSession(actor, mainLineId, revisionId, sectionKey, input, session));
+      const modeTier = input.modeTier ?? "signature";
+      const projected = projectKnowledgeModeTierSection(mutation.section, modeTier);
+      const section = sectionKey === "pricing" && modeTier === "signature"
+        ? await enrichPricingSectionDto(projected)
+        : { ...sectionDto(projected), ...(modeTier !== "signature" ? { modeTier } : {}) };
       return { ...section, aggregateVersion: mutation.aggregateVersion };
     },
 
@@ -1050,6 +1163,7 @@ export async function activateKnowledgeRevisionInSession(options: {
   if (requiredInteger(line.version) !== expectedVersion) versionConflict();
   if (line.draftRevisionId !== revisionId || revision.status !== "draft") immutableHistory();
   const rows = sectionDocuments.map((row) => asRow(row)!);
+  await fenceDimensionUom(payloadFor(rows.find(row => row.sectionKey === "overview")), session);
   await validateRevisionRelationships(mainLineId, rows, session, undefined, options.pendingGraph);
   const completeness = completenessForRows(mainLineId, rows);
   const graphIssues = sectionGraphIssues(rows);
@@ -1817,11 +1931,32 @@ async function assertResolvableRetainedPriceWindows(input: {
   }
 }
 
+/** Preserve the existing historical Lisno exception only for an untouched namespace.
+ * The edited tier and every tier during activation still use strict validation. */
+function validatePreservedModeNamespaces(sectionKey: KnowledgeSectionKey, payload: Row, previous: Row, editedTier: KnowledgeModeTier): void {
+  if (sectionKey !== "advanced") return validateSectionPayloadOrThrow(sectionKey, payload);
+  const issues = validateKnowledgeSectionPayload(sectionKey, payload).filter(issue => {
+    if (issue.code !== "INVALID_LISNO_MARGIN_INCREMENT") return true;
+    const match = /^payload\.tierConfigurations\.(premium|functional)\.payload(?:\.|$)/u.exec(issue.path);
+    const issueTier = (match?.[1] ?? "signature") as KnowledgeModeTier;
+    return issueTier === editedTier || !isDeepStrictEqual(knowledgeModeTierPayload(previous, issueTier), knowledgeModeTierPayload(payload, issueTier));
+  });
+  if (issues.length) throw new ApiError(400, "VALIDATION_ERROR", "Request validation failed.", Object.fromEntries(issues.map(issue => [issue.path, issue.message])));
+}
+
+function validateModeTierRequest(sectionKey: KnowledgeSectionKey, value?: KnowledgeModeTier, payload?: Row): KnowledgeModeTier {
+  const modeTier = value ?? "signature";
+  if (!isKnowledgeModeTier(modeTier) || (modeTier !== "signature" && !isKnowledgeModeSection(sectionKey))) invalid("modeTier", "Mode tiers are available only for advanced and pricing sections.");
+  if (payload && Object.hasOwn(payload, "tierConfigurations")) invalid("payload.tierConfigurations", "Save one selected Mode tier at a time.");
+  if (modeTier !== "signature" && Array.isArray(payload?.priceEntries) && payload.priceEntries.length) invalid("payload.priceEntries", "Legacy budget entries are available only in Signature.");
+  return modeTier;
+}
+
 export function hasKnowledgeSectionContent(payload: unknown): boolean {
   return payload !== null &&
     typeof payload === "object" &&
     !Array.isArray(payload) &&
-    Object.keys(payload as Record<string, unknown>).length > 0;
+    Object.keys(payload as Record<string, unknown>).some(key => key !== "tierConfigurations");
 }
 
 function invalidBudgetSource(commandIndex: number): never {
@@ -1975,6 +2110,20 @@ function preserveModeConfigurationCompatibility(
   previousPayload: Row,
   nextPayload: Row
 ): Row {
+  const previousComponents = readInHouseComponents(previousPayload);
+  const nextComponents = readInHouseComponents(nextPayload);
+  if (previousComponents !== undefined && nextComponents === undefined) {
+    throw new ApiError(409, "IN_HOUSE_COMPONENTS_REQUIRED", "Keep the component configuration explicit after conversion; remove individual components instead.");
+  }
+  if (previousComponents && nextComponents) {
+    const previousById = new Map(previousComponents.map((component) => [component.id, component]));
+    for (const component of nextComponents) {
+      const previous = previousById.get(component.id);
+      if (previous && (previous.basketId !== component.basketId || previous.subBasketId !== component.subBasketId)) {
+        throw new ApiError(409, "IN_HOUSE_COMPONENT_IDENTITY_IMMUTABLE", "A saved component must keep its Main Basket and Sub Basket. Add a new component for another scope.");
+      }
+    }
+  }
   if (!Array.isArray(nextPayload.modeConfigurations)) {
     return structuredClone(nextPayload);
   }
@@ -2466,7 +2615,17 @@ function completenessInputs(rows: Row[]): KnowledgeCompletenessSectionInput[] {
   return rows.map((row) => {
     const sectionKey = requiredString(row.sectionKey) as KnowledgeSectionKey;
     const payload = payloadFor(row);
-    const validationFindings = activationCompletenessFindings(sectionKey, payload);
+    const validationFindings = knowledgeModeTierPayloads(payload).flatMap(({ modeTier, payload: tierPayload }) =>
+      activationCompletenessFindings(sectionKey, tierPayload).map(finding => ({ ...finding,
+        ...(modeTier === "signature" ? {} : { message: `${modeTier}: ${finding.message}` }) })));
+    if (sectionKey === "advanced") {
+      const overview = payloadFor(rows.find(row => row.sectionKey === "overview"));
+      const selected = Object.hasOwn(overview, "applicableTiers") ? stringArray(overview.applicableTiers) : ["signature"];
+      for (const tier of selected) if (tier !== "signature" && isKnowledgeModeTier(tier) && !rows.some(row =>
+        isKnowledgeModeSection(row.sectionKey) && hasKnowledgeSectionContent(knowledgeModeTierPayload(row.payload, tier)))) {
+        validationFindings.push({ code: "MODE_TIER_NOT_CONFIGURED", message: `${tier} Mode is not configured.`, blocking: false });
+      }
+    }
     return {
       sectionKey,
       applicability: requiredString(row.applicability) as KnowledgeSectionApplicability,
@@ -2540,6 +2699,7 @@ interface KnowledgeItemEdge {
 
 interface RevisionRelationshipValidationContext {
   readonly updatedSectionKey: KnowledgeSectionKey;
+  readonly updatedModeTier?: KnowledgeModeTier;
   readonly previousPayload: Row;
 }
 
@@ -2917,8 +3077,8 @@ async function removeMissingCopiedRelationships(rows: Row[], session: ClientSess
   const mainLineIds = new Set<string>();
   const subBasketIds = new Set<string>();
   const fields = ["exclusions", "dependencies", "recommendations", "budgetAlterations"] as const;
-  for (const row of rows) {
-    const payload = payloadFor(row);
+  for (const payload of rows.flatMap(row => [payloadFor(row), ...(isKnowledgeModeSection(row.sectionKey)
+    ? knowledgeModeTierPayloads(row.payload).slice(1).map(tier => tier.payload) : [])])) {
     for (const field of fields) {
       for (const relation of structuredRows(payload[field])) {
         addOptionalId(basketIds, relation.targetBasketId);
@@ -2951,8 +3111,8 @@ async function removeMissingCopiedRelationships(rows: Row[], session: ClientSess
   }
   if (!missingBasketIds.size && !missingMainLineIds.size && !missingSubBasketIds.size) return;
 
-  for (const row of rows) {
-    const payload = payloadFor(row);
+  for (const payload of rows.flatMap(row => [payloadFor(row), ...(isKnowledgeModeSection(row.sectionKey)
+    ? knowledgeModeTierPayloads(row.payload).slice(1).map(tier => tier.payload) : [])])) {
     for (const field of fields) {
       if (!Array.isArray(payload[field])) continue;
       payload[field] = payload[field].filter((candidate: unknown) => {
@@ -2972,8 +3132,12 @@ async function relationshipBasketIds(rows: Row[], session: ClientSession): Promi
   const basketIds = new Set<string>();
   const mainLineIds = new Set<string>();
   const subBasketIds = new Set<string>();
-  for (const row of rows) {
+  for (const row of expandKnowledgeModeTierRows(rows)) {
     const payload = payloadFor(row);
+    for (const component of structuredRows(payload.inHouseComponents)) {
+      addOptionalId(basketIds, component.basketId);
+      addOptionalId(subBasketIds, component.subBasketId);
+    }
     for (const field of ["exclusions", "dependencies", "recommendations", "budgetAlterations"] as const) {
       for (const relation of structuredRows(payload[field])) {
         addOptionalId(basketIds, relation.targetBasketId);
@@ -3083,7 +3247,7 @@ function legacyModeConfigurationIds(
 ): Set<string> {
   if (sectionKey !== "advanced") return new Set();
   return new Set(
-    structuredRows(payload.modeConfigurations)
+    knowledgeModeTierPayloads(payload).flatMap(({ payload: tierPayload }) => [...structuredRows(tierPayload.modeConfigurations), ...activeStructuredRows(tierPayload.modeOverrides)])
       .map((entry) => optionalString(entry.modeId))
       .filter((modeId): modeId is string => Boolean(modeId))
   );
@@ -3096,10 +3260,11 @@ async function validateRevisionRelationships(
   context?: RevisionRelationshipValidationContext,
   pendingGraph?: ReadonlyMap<string, Row[]>
 ): Promise<void> {
-  validateStoredRevisionPayloads(rows, context?.updatedSectionKey);
+  validateStoredRevisionPayloads(rows, context);
   await validateRevisionMasterReferences(rows, session, context);
   await validateRevisionSectionRules(rows, session, context);
   await validateScopeBasketReferences(rows, session);
+  await validateInHouseComponentReferences(mainLineId, rows, session);
   if (!context || context.updatedSectionKey === "recommendations") {
     await validateBudgetAlterationReferences(mainLineId, rows, session);
   }
@@ -3153,7 +3318,7 @@ async function validateRevisionRelationships(
     : await AiEstimatorKnowledgeSectionModel.find({
         revisionId: { $in: activeRevisionIds },
         sectionKey: { $in: ["recommendations", "advanced"] },
-        applicability: "configured"
+        $or: [{ applicability: "configured" }, { "payload.tierConfigurations": { $exists: true } }]
       }).select({ mainLineId: 1, sectionKey: 1, payload: 1 }).session(session).lean().exec();
   const activeEdges = activeRelationshipSections.flatMap((section) => {
     const row = asRow(section)!;
@@ -3177,7 +3342,7 @@ async function validateRevisionRelationships(
 }
 
 export interface KnowledgeProposalMasterResolver {
-  readonly uom: (id: string) => { readonly decimalScale: number } | undefined;
+  readonly uom: (id: string) => { readonly decimalScale: number; readonly code?: string; readonly name?: string } | undefined;
   readonly hasSurface: (id: string) => boolean;
 }
 
@@ -3190,7 +3355,7 @@ async function validateRevisionMasterReferences(
   const overview = payloadFor(rows.find((row) => row.sectionKey === "overview"));
   const scope = payloadFor(rows.find((row) => row.sectionKey === "scope"));
   const recommendations = payloadFor(rows.find((row) => row.sectionKey === "recommendations"));
-  const advanced = payloadFor(rows.find((row) => row.sectionKey === "advanced"));
+  const advancedPayloads = knowledgeModeTierPayloads(payloadFor(rows.find((row) => row.sectionKey === "advanced")));
   const execution = payloadFor(rows.find((row) => row.sectionKey === "execution"));
 
   const uomIds = new Set<string>();
@@ -3208,14 +3373,14 @@ async function validateRevisionMasterReferences(
     ...stringArray(overview.modeIds),
     ...stringArray(scope.modeIds)
   ]);
-  for (const entry of activeStructuredRows(advanced.modeOverrides)) {
+  for (const entry of advancedPayloads.flatMap(({ payload }) => activeStructuredRows(payload.modeOverrides))) {
     addOptionalId(modeIds, entry.modeId);
   }
-  const legacyModeConfigurationReferences = structuredRows(advanced.modeConfigurations)
+  const legacyModeConfigurationReferences = advancedPayloads.flatMap(({ modeTier, payload }) => structuredRows(payload.modeConfigurations)
     .map((entry, index) => ({
       modeId: optionalString(entry.modeId),
-      path: `payload.modeConfigurations.${index}.modeId`
-    }))
+      path: `${modeTier === "signature" ? "payload" : `payload.tierConfigurations.${modeTier}.payload`}.modeConfigurations.${index}.modeId`
+    })))
     .filter((entry): entry is { modeId: string; path: string } => Boolean(entry.modeId));
   for (const entry of legacyModeConfigurationReferences) modeIds.add(entry.modeId);
 
@@ -3260,6 +3425,12 @@ async function validateRevisionMasterReferences(
   }
 }
 
+async function fenceDimensionUom(overview: Row, session: ClientSession): Promise<void> {
+  if (overview.dimensionsMandatory !== true || !optionalString(overview.uomId)) return;
+  await AiEstimatorKnowledgeUomModel.updateOne({ _id: overview.uomId, status: "active" },
+    { $inc: { dependencyEpoch: 1 } }, { session, timestamps: false });
+}
+
 async function validateRevisionSectionRules(
   rows: Row[],
   session: ClientSession,
@@ -3273,6 +3444,13 @@ async function validateRevisionSectionRules(
   const execution = payloadFor(rows.find((row) => row.sectionKey === "execution"));
 
   const overviewUomId = optionalString(overview.uomId);
+  if (overview.dimensionsMandatory === true) {
+    const uom = overviewUomId ? masters?.uom(overviewUomId) ?? asRow(await AiEstimatorKnowledgeUomModel.findOne({ _id: overviewUomId, status: "active" })
+      .select({ _id: 1, code: 1, name: 1, decimalScale: 1 }).session(session).lean().exec()) : null;
+    if (!uom || !resolveEstimateDimensionRule({ ...uom, id: overviewUomId })) issues.push(validationIssue(
+      "payload.dimensionsMandatory", "UNSUPPORTED_DIMENSION_UOM", "Dimensions require a supported area UOM (square feet, metres, centimetres, millimetres, inches or yards)."
+    ));
+  }
 
   if (quantityMarginSection?.applicability === "configured") {
     const slabValue = quantityMargin.quantitySlabs;
@@ -3447,10 +3625,13 @@ async function slabRateRevisionIssues(
   return issues;
 }
 
-function validateStoredRevisionPayloads(rows: Row[], updatedSectionKey?: KnowledgeSectionKey): void {
+function validateStoredRevisionPayloads(rows: Row[], context?: RevisionRelationshipValidationContext): void {
+  const updatedSectionKey = context?.updatedSectionKey;
   for (const row of rows) {
     const sectionKey = requiredString(row.sectionKey) as KnowledgeSectionKey;
-    if (sectionKey === "advanced" && updatedSectionKey && updatedSectionKey !== "advanced") {
+    if (sectionKey === "advanced" && updatedSectionKey === "advanced" && context?.updatedModeTier) {
+      validatePreservedModeNamespaces(sectionKey, payloadFor(row), context.previousPayload, context.updatedModeTier);
+    } else if (sectionKey === "advanced" && updatedSectionKey && updatedSectionKey !== "advanced") {
       // Editing another section must leave historical margins available for later repair.
       // The advanced payload is unchanged here; activation has no updated-section context.
       const issues = validateKnowledgeSectionPayload(sectionKey, payloadFor(row))
@@ -3662,6 +3843,10 @@ export function itemRelationsForRows(mainLineId: string, rows: Row[]): Array<{
   targetBasketId: string | null;
   dependency: boolean;
 }> {
+  if (rows.some(row => isKnowledgeModeSection(row.sectionKey) && Object.hasOwn(payloadFor(row), "tierConfigurations"))) {
+    const relations = expandKnowledgeModeTierRows(rows).flatMap(row => itemRelationsForRows(mainLineId, [row]));
+    return [...new Map(relations.map(relation => [JSON.stringify([relation.targetMainLineId, relation.targetBasketId, relation.dependency]), relation])).values()];
+  }
   const relations: Array<{
     targetMainLineId: string;
     targetBasketId: string | null;
@@ -3716,7 +3901,7 @@ async function hasInboundReference(mainLineId: string, session: ClientSession): 
   const sections = await AiEstimatorKnowledgeSectionModel.find({
     revisionId: { $in: activeRevisionIds },
     sectionKey: { $in: ["scope", "recommendations", "advanced"] },
-    applicability: "configured"
+    $or: [{ applicability: "configured" }, { "payload.tierConfigurations": { $exists: true } }]
   }).select({ mainLineId: 1, sectionKey: 1, payload: 1 }).session(session).lean().exec();
   return sections.some((section) => {
     const row = asRow(section)!;
@@ -4093,8 +4278,29 @@ export async function validateKnowledgeProposalPriceCommands(payload: Row, sessi
  * saving isolated proposal resources. This helper performs no persistence. */
 export function normalizeKnowledgeProposalSectionPayload(sectionKey: KnowledgeSectionKey, payload: Row, previousPayload: Row): Row {
   if (sectionKey === "design") return normalizeDesignRules(payload) as unknown as Row;
-  if (sectionKey === "advanced") return preserveModeConfigurationCompatibility(previousPayload, payload);
-  if (sectionKey === "pricing") return preserveTypedSpecificationCompatibility(previousPayload, payload);
+  if (isKnowledgeModeSection(sectionKey)) {
+    if (Object.hasOwn(payload, "tierConfigurations") && !isDeepStrictEqual(payload.tierConfigurations, previousPayload.tierConfigurations)) {
+      invalid("payload.tierConfigurations", "Additional Mode tiers are retained by the server. Proposal edits update Signature only.");
+    }
+    const normalize = sectionKey === "advanced" ? preserveModeConfigurationCompatibility : preserveTypedSpecificationCompatibility;
+    const next = normalize(knowledgeModeTierPayload(previousPayload), knowledgeModeTierPayload(payload));
+    return { ...next, ...(Object.hasOwn(previousPayload, "tierConfigurations") ? { tierConfigurations: structuredClone(previousPayload.tierConfigurations) } : {}) };
+  }
   if (sectionKey === "recommendations") return normalizeRecommendationPayload(payload);
   return structuredClone(payload);
+}
+
+async function validateInHouseComponentReferences(mainLineId: string, rows: Row[], session: ClientSession): Promise<void> {
+  const components = expandKnowledgeModeTierRows(rows).flatMap((row) => row.sectionKey === "advanced" ? readInHouseComponents(payloadFor(row)) ?? [] : []);
+  if (!components.length) return;
+  const owner = await AiEstimatorKnowledgeMainLineModel.findById(mainLineId).select({ basketId: 1 }).session(session).lean().exec();
+  for (const component of components) {
+    const parent = await AiEstimatorKnowledgeBasketModel.exists({ _id: component.basketId, status: { $ne: "archived" } }).session(session);
+    if (!parent) invalidKnowledgeReference("In-house component Main Basket");
+    if (component.subBasketId === null) {
+      if (component.id !== "legacy-in-house" || String(owner?.basketId) !== component.basketId) invalidKnowledgeReference("legacy In-house component Main Basket");
+    } else if (!await AiEstimatorKnowledgeSubBasketModel.exists({ _id: component.subBasketId, basketId: component.basketId, status: { $ne: "archived" } }).session(session)) {
+      invalidKnowledgeReference("In-house component Sub Basket");
+    }
+  }
 }

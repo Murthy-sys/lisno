@@ -1,10 +1,11 @@
 import { createHash, randomUUID } from "node:crypto";
 import mongoose, { type ClientSession } from "mongoose";
 
-import type { CreateVendorBasketRequestInput, DecideVendorBasketRequestInput, VendorBasketRequestConfiguration, VendorBasketRequestDto, VendorBasketRequestStatus } from "../contracts/vendor-basket-request.js";
+import type { CreateConfigurationSubBasketRequestInput, CreateVendorBasketRequestInput, DecideVendorBasketRequestInput, VendorBasketRequestConfiguration, VendorBasketRequestDto, VendorBasketRequestStatus } from "../contracts/vendor-basket-request.js";
 import { normalizeKnowledgeIdentity } from "../domain/ai-estimator-knowledge.js";
 import { ApiError } from "../middleware/errors.js";
 import { AiEstimatorKnowledgeBasketModel } from "../models/AiEstimatorKnowledgeBasket.js";
+import { AiEstimatorKnowledgeSubBasketModel } from "../models/AiEstimatorKnowledgeSubBasket.js";
 import { AiEstimatorKnowledgeVendorModel } from "../models/AiEstimatorKnowledgeVendor.js";
 import { VendorBasketRequestModel } from "../models/VendorBasketRequest.js";
 import type { PaginationInput } from "../repositories/types.js";
@@ -16,6 +17,7 @@ import type { PublicUser } from "./auth.service.js";
 import { systemClock, type Clock } from "./workflow.js";
 
 import { appendSubmittedBasketNotification } from "./vendor-basket-request-notifications.service.js";
+import { requireTargetRequestIndexes } from "./vendor-basket-request-indexes.js";
 
 type RequestRow = Record<string, unknown>;
 
@@ -39,6 +41,63 @@ export function createVendorBasketRequestService(dependencies: {
   const startSession = dependencies.startSession ?? (() => mongoose.startSession());
 
   return {
+    async createConfigurationSubBasket(actor: PublicUser, input: CreateConfigurationSubBasketRequestInput): Promise<VendorBasketRequestDto> {
+      await aiEstimatorKnowledgeActorGuard.requireReadActor(actor);
+      const basketId = typeof input.basketId === "string" ? input.basketId.trim() : "";
+      const proposedName = cleanName(input.name);
+      const description = typeof input.description === "string" ? input.description.normalize("NFKC").trim() : "";
+      if (!basketId || basketId.length > 128 || !description || description.length > 4000
+        || typeof input.idempotencyKey !== "string" || !/^[A-Za-z0-9_-]{8,128}$/u.test(input.idempotencyKey)) {
+        throw new ApiError(400, "VALIDATION_ERROR", "Select a Main Basket and enter a description of up to 4000 characters.");
+      }
+      const proposedNameNormalized = normalizeKnowledgeIdentity(proposedName);
+      const fingerprint = digest({ kind: "configuration_sub_basket", basketId, proposedName, description });
+      const previous = await VendorBasketRequestModel.findOne({ requesterId: actor.id, idempotencyKey: input.idempotencyKey }).lean().exec();
+      if (previous) return replayRequest(previous as RequestRow, fingerprint);
+      await requireTargetRequestIndexes(VendorBasketRequestModel.collection);
+      try {
+        return await inTransaction(startSession, async session => {
+          const authorized = await aiEstimatorKnowledgeActorGuard.requireMutationActor(actor, session);
+          const replay = await VendorBasketRequestModel.findOne({ requesterId: authorized.id, idempotencyKey: input.idempotencyKey }).session(session).lean().exec();
+          if (replay) return replayRequest(replay as RequestRow, fingerprint);
+          const parent = await AiEstimatorKnowledgeBasketModel.findOneAndUpdate(
+            { _id: basketId, status: "active" }, { $inc: { dependencyEpoch: 1 } },
+            { session, returnDocument: "after", runValidators: true, timestamps: false }
+          ).select({ name: 1 }).lean().exec();
+          if (!parent) throw new ApiError(409, "PARENT_BASKET_UNAVAILABLE", "The Main Basket is no longer available. Refresh the catalog before requesting a Sub-Basket.");
+          if (await AiEstimatorKnowledgeSubBasketModel.exists({ basketId, nameNormalized: proposedNameNormalized }).session(session)) {
+            throw new ApiError(409, "SUB_BASKET_EXISTS", "This Sub-Basket already exists in the selected Main Basket. Refresh the catalog and select it.");
+          }
+          if (await VendorBasketRequestModel.exists({ targetParentBasketId: basketId, proposedNameNormalized, status: "pending" }).session(session)) {
+            throw new ApiError(409, "REQUEST_PENDING", "A request for this Sub-Basket is already pending approval.");
+          }
+          const createdAt = now();
+          const [record] = await VendorBasketRequestModel.create([{
+            _id: `vendor-basket-request-${createId()}`, requesterId: authorized.id,
+            kind: "configuration_sub_basket", description, vendorId: null, vendorKey: "scope:configuration", vendorName: null, vendorNameNormalized: null,
+            proposedName, proposedNameNormalized, targetKind: "new_sub_basket", targetParentBasketId: basketId, targetParentName: String(parent.name),
+            status: "pending", version: 1, basketId: null, subBasketId: null, mainLineId: null, reason: null,
+            idempotencyKey: input.idempotencyKey, requestFingerprint: fingerprint, decisionIdempotencyKey: null, decisionFingerprint: null,
+            createdAt, decidedAt: null, decidedById: null
+          }], { session });
+          if (!record) throw new Error("Sub-Basket request creation did not complete.");
+          const result = vendorBasketRequestDto(record.toObject() as RequestRow);
+          await appendSubmittedBasketNotification({ request: result, requester: actor }, session);
+          await dependencies.audit.appendInMongoTransaction({
+            actorId: authorized.id, action: "vendor_basket_request_created", entityType: "vendor_basket_request",
+            entityId: result.id, occurredAt: createdAt.toISOString(),
+            newValues: { kind: "configuration_sub_basket", targetParentBasketId: basketId, proposedName, description, status: "pending", version: 1 }
+          }, session);
+          return result;
+        });
+      } catch (error) {
+        if (!duplicateKey(error)) throw error;
+        const replay = await VendorBasketRequestModel.findOne({ requesterId: actor.id, idempotencyKey: input.idempotencyKey }).lean().exec();
+        if (replay) return replayRequest(replay as RequestRow, fingerprint);
+        throw new ApiError(409, "REQUEST_PENDING", "A request for this Sub-Basket is already pending approval.");
+      }
+    },
+
     async create(actor: PublicUser, input: CreateVendorBasketRequestInput): Promise<VendorBasketRequestDto> {
       requireProcurementRole(actor);
       const currentActor = await aiEstimatorKnowledgeVendorActorGuard.requireReadActor(actor);
@@ -144,6 +203,9 @@ export function createVendorBasketRequestService(dependencies: {
             if (current.kind === "configuration_proposal") {
               throw new ApiError(409, "PROPOSAL_REVIEW_REQUIRED", "Open the full configuration proposal to review and decide this request.");
             }
+            if (current.kind === "configuration_sub_basket" && configuration) {
+              throw new ApiError(400, "VALIDATION_ERROR", "This request approves only its saved Sub-Basket details. Configuration overrides are not allowed.", { configuration: "Remove the configuration override." });
+            }
             if (current.decisionIdempotencyKey === input.idempotencyKey) {
               if (current.decisionFingerprint !== fingerprint) idempotencyConflict();
               return vendorBasketRequestDto(current);
@@ -164,8 +226,24 @@ export function createVendorBasketRequestService(dependencies: {
             let subBasketId: string | null = null;
             let mainLineId: string | null = null;
             if (input.decision === "fulfill") {
-              basketId = await findOrCreateBasket(current, authorized.id, decidedAt, session, createId, dependencies.audit);
-              if (configuration) {
+              if (current.kind === "configuration_sub_basket") {
+                basketId = String(current.targetParentBasketId);
+                const parent = await AiEstimatorKnowledgeBasketModel.findOneAndUpdate(
+                  { _id: basketId, status: "active" }, { $inc: { dependencyEpoch: 1 } },
+                  { session, returnDocument: "after", runValidators: true, timestamps: false }
+                ).select({ _id: 1 }).lean().exec();
+                if (!parent) throw new ApiError(409, "PARENT_BASKET_UNAVAILABLE", "The requested Main Basket is no longer available. Resolve it before approving.");
+                const hierarchy = await createKnowledgeHierarchyInSession({
+                  actorId: authorized.id, basketId, occurredAt: decidedAt, session, uuid: createId,
+                  audit: dependencies.audit, sourceRequestId: requestId, mainLineId: null,
+                  input: { subBasketName: String(current.proposedName) },
+                  newSubBasketDescription: String(current.description), requireNewSubBasket: true
+                });
+                subBasketId = hierarchy.subBasketId;
+              } else {
+                basketId = await findOrCreateBasket(current, authorized.id, decidedAt, session, createId, dependencies.audit);
+              }
+              if (configuration && current.kind !== "configuration_sub_basket") {
                 const hierarchy = await createKnowledgeHierarchyInSession({
                   actorId: authorized.id, basketId, occurredAt: decidedAt, session, uuid: createId,
                   audit: dependencies.audit, sourceRequestId: requestId,
@@ -238,6 +316,7 @@ async function findOrCreateBasket(request: RequestRow, actorId: string, timestam
 export function vendorBasketRequestDto(row: RequestRow): VendorBasketRequestDto {
   return { target: row.targetKind === "new_sub_basket" ? { kind: "new_sub_basket", basketId: String(row.targetParentBasketId) } : { kind: "new_main_basket" },
     targetParentName: row.targetParentName == null ? null : String(row.targetParentName), id: String(row._id), requesterId: String(row.requesterId),
+    ...(row.kind === "configuration_sub_basket" ? { kind: "configuration_sub_basket" as const, description: row.description == null ? null : String(row.description) } : {}),
     ...(row.kind === "configuration_proposal" ? { kind: "configuration_proposal" as const,
       requestMode: row.requestMode === "hierarchy_intake" ? "hierarchy_intake" as const : "full_configuration" as const,
       proposalId: String(row.proposalId), proposalCounts: row.proposalCounts as { subBaskets: number; mainLines: number } } : {}),

@@ -1,3 +1,5 @@
+import type { EstimateDimensions, EstimateDimensionRule } from "../../../../shared/estimation/estimateDimensions";
+import type { EstimateComponentPricing, ESTIMATE_COMPONENT_PRICING_BASIS } from "../../../../shared/estimation/estimateComponentPricing";
 export type LeadStage = "new_lead" | "contacted" | "site_visit" | "design_meeting" | "estimate_in_progress" | "estimate_sent" | "negotiation" | "won" | "lost";
 export interface StaffLead { stage?: LeadStage | undefined; nextAction?: string | undefined; nextActionAt?: string | undefined; createdAt?: string | undefined; updatedAt?: string | undefined; budgetMin?: number | null | undefined; budgetMax?: number | null | undefined; id: string; clientName: string; clientEmail: string; clientMobile: string; projectName: string; propertyType: string; location: string; projectId?: string | null | undefined; bedroomCount?: number | null | undefined; estimationWorkflowVersion?: number | undefined; }
 export interface EstimateReviewSummary { id: string; version: number; status: "pending" | "approved" | "changes_requested" | "superseded"; deliveryStatus: "queued" | "sending" | "sent" | "failed" | "disabled"; deliveryAttemptCount: number; deliveredAt: string | null; }
@@ -13,6 +15,7 @@ export interface LegacyEstimateLineInput {
 }
 
 export type EstimateClassification = "standard" | "special";
+export type EstimateModeTier = "signature" | "premium" | "functional";
 export type EstimatePricingMode = "pmc" | "sub_vendor" | "in_house";
 export type EstimateRateSource = "configuration" | "manual";
 
@@ -21,7 +24,15 @@ export interface ConfiguredEstimateLineInput {
   itemType?: "main_line" | "temporary" | undefined;
   classification?: EstimateClassification | undefined;
   pricingMode?: EstimatePricingMode | undefined;
+  modeTier?: EstimateModeTier | undefined;
+  dimensionsMandatory?: boolean | undefined;
+  dimensions?: EstimateDimensions | undefined;
+  expectedDimensionRule?: EstimateDimensionRule | undefined;
+  dimensionRule?: EstimateDimensionRule | null | undefined;
   rateSource?: EstimateRateSource | undefined;
+  selectedInHouseComponentIds?: string[] | undefined;
+  pricingBasis?: typeof ESTIMATE_COMPONENT_PRICING_BASIS | undefined;
+  componentPricingFingerprint?: string | undefined;
   id?: string | undefined;
   catalogueId: string;
   roomId: string;
@@ -42,6 +53,7 @@ export interface ConfiguredEstimateLineInput {
 export type EstimateLineInput = LegacyEstimateLineInput | ConfiguredEstimateLineInput;
 
 export interface ConfiguredEstimateLine extends Omit<ConfiguredEstimateLineInput, "itemType"> {
+  componentPricing?: EstimateComponentPricing | undefined;
   estimateNotes?: string[] | undefined;
   itemType?: "main_line" | "temporary" | undefined;
   id: string;
@@ -57,6 +69,8 @@ export interface ConfiguredEstimateLine extends Omit<ConfiguredEstimateLineInput
   sourceRevisionVersion?: number | undefined;
   configurationUomChanged?: boolean | undefined;
   configurationSourceUnavailable?: boolean | undefined;
+  configurationTierUnavailable?: boolean | undefined;
+  configurationDimensionsChanged?: boolean | undefined;
   previousUomName?: string | undefined;
   unit: string;
   specification: null;
