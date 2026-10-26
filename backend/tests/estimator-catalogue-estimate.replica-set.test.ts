@@ -1,6 +1,8 @@
 import { normalizeDesignRules, designRulesDigest } from "../src/domain/main-line-design-rules.js";
 import { resolveCurrentMainLineDesignRules, resolveEstimatorCatalogueLines } from "../src/services/estimator-catalogue.service.js";
-import { assertCurrentConfiguredPublication, toEstimateSnapshot } from "../src/services/estimate-publication.service.js";
+import { assertCurrentConfiguredPublication, assertPublishableConfiguredLines, toEstimateSnapshot } from "../src/services/estimate-publication.service.js";
+import { presentClientEstimate } from "../src/services/estimate-client-presentation.js";
+import { EstimateClientReviewRoundModel } from "../src/models/EstimateClientReviewRound.js";
 import express from "express";
 import request from "supertest";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -91,13 +93,17 @@ const estimateInput = (lineItems: unknown[], selectedMainBasketIds = ["basket-a"
   selectedMainBasketIds, lineItems, ...(expectedVersion === undefined ? {} : { expectedVersion })
 });
 
-async function previewedComponentLine(server: ReturnType<typeof app>["server"], leadId: string, line: Record<string, any>) {
-  const response = await request(server).post(`/api/v1/leads/${leadId}/estimate/in-house-preview`).set(bearer("estimator")).send({ lines: [{
+function componentPreviewInput(line: Record<string, any>) {
+  return { lines: [{
     key: `${line.roomId}:${line.mainLineId}`, mainLineId: line.mainLineId, roomId: line.roomId, pricingMode: "in_house", rateSource: "configuration",
     modeTier: line.modeTier ?? "signature", selectedInHouseComponentIds: line.selectedInHouseComponentIds, quantity: line.quantity,
     revisionId: line.revisionId, itemVersion: line.itemVersion, revisionVersion: line.revisionVersion, uomId: line.uomId,
     ...(line.dimensions ? { dimensions: line.dimensions, expectedDimensionRule: line.expectedDimensionRule } : {})
-  }] }).expect(200);
+  }] };
+}
+async function previewedComponentLine(server: ReturnType<typeof app>["server"], leadId: string, line: Record<string, any>) {
+  const response = await request(server).post(`/api/v1/leads/${leadId}/estimate/in-house-preview`).set(bearer("estimator"))
+    .send(componentPreviewInput(line)).expect(200);
   expect(response.body.data.lines[0].state).toBe("ready");
   return { ...line, ratePaise: null, pricingBasis: "in_house_components_v1", componentPricingFingerprint: response.body.data.lines[0].componentPricing.inputFingerprint };
 }
@@ -1665,6 +1671,97 @@ describe("estimate In-house component selections", { timeout: 30_000 }, () => {
   }
   const line = (overrides: Record<string, unknown> = {}) => configuredLine({ classification: "special", pricingMode: "in_house", rateSource: "configuration", ratePaise: 3003,
     selectedInHouseComponentIds: ["component-electrical"], itemVersion: 1, revisionVersion: 1, ...overrides });
+
+  it("keeps previews read-only and rejects unauthorized or foreign-estimate actors", async () => {
+    await configure();
+    const { server } = app();
+    const path = "/api/v1/leads/components-private-preview/estimate";
+    const priced = await previewedComponentLine(server, "components-private-preview", line());
+    await request(server).put(path).set(bearer("estimator")).send(estimateInput([priced])).expect(200);
+    const capture = async () => {
+      const db = EstimateModel.db.db!;
+      const collections = (await db.listCollections().toArray()).map(row => row.name).sort();
+      return Promise.all(collections.map(async name => ({ name, rows: await db.collection(name).find({}).sort({ _id: 1 }).toArray() })));
+    };
+    const before = await capture();
+    const preview = await request(server).post(`${path}/in-house-preview`).set(bearer("estimator"))
+      .send(componentPreviewInput(line())).expect(200);
+    expect(preview.body.data.lines[0]).toMatchObject({ state: "ready", componentPricing: { totalPaise: 5506 } });
+    expect(preview.headers["cache-control"]).toBe("no-store");
+    await request(server).post(`${path}/in-house-preview`).send(componentPreviewInput(line())).expect(401);
+    for (const actor of ["procurement", "client"] as const) {
+      await request(server).post(`${path}/in-house-preview`).set(bearer(actor)).send(componentPreviewInput(line())).expect(403);
+    }
+    await request(server).post(`${path}/in-house-preview`).set(bearer("otherEstimator")).send(componentPreviewInput(line())).expect(404);
+    expect(await capture()).toEqual(before);
+  });
+
+  it("rejects stale or quantity-mismatched fingerprints without changing the saved estimate", async () => {
+    await configure();
+    const { server } = app();
+    const path = "/api/v1/leads/components-stale-preview/estimate";
+    const priced = await previewedComponentLine(server, "components-stale-preview", line());
+    const saved = await request(server).put(path).set(bearer("estimator")).send(estimateInput([priced])).expect(200);
+    const before = await EstimateModel.findById(saved.body.data.id).lean();
+    const changedQuantity = await request(server).put(path).set(bearer("estimator"))
+      .send(estimateInput([{ ...priced, quantity: 2 }], ["basket-a"], saved.body.data.version)).expect(409);
+    expect(changedQuantity.body.error.code).toBe("ESTIMATE_COMPONENT_PRICING_CHANGED");
+    await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: "component-mode" }, { $set: { "payload.inHouseComponents.0.labor.impactBps": 1500 } });
+    const stale = await request(server).put(path).set(bearer("estimator"))
+      .send(estimateInput([priced], ["basket-a"], saved.body.data.version)).expect(409);
+    expect(stale.body.error.code).toBe("ESTIMATE_COMPONENT_PRICING_CHANGED");
+    expect(await EstimateModel.findById(saved.body.data.id).lean()).toEqual(before);
+    const refreshed = await previewedComponentLine(server, "components-stale-preview", line());
+    expect(refreshed.componentPricingFingerprint).not.toBe(priced.componentPricingFingerprint);
+    await request(server).put(path).set(bearer("estimator"))
+      .send(estimateInput([refreshed], ["basket-a"], saved.body.data.version)).expect(200);
+  });
+
+  it("freezes an exact null-rate total and exposes only its saved selling breakdown to clients", async () => {
+    const selected = components()[0];
+    await configure([{ ...selected, labor: { ...settings(10000), lowQuantityLimit: "0", startingMarkupBps: 2000 },
+      material: { ...settings(20000), lowQuantityLimit: "0", startingMarkupBps: 2500 } }]);
+    const { server } = app();
+    const priced = await previewedComponentLine(server, "components-frozen-selling", line({ quantity: 2 }));
+    const saved = await request(server).put("/api/v1/leads/components-frozen-selling/estimate").set(bearer("estimator"))
+      .send(estimateInput([priced])).expect(200);
+    const stored = (await EstimateModel.findById(saved.body.data.id).lean())!;
+    expect(stored.lineItems[0]).toMatchObject({ rate: null, ratePaise: null, amountPaise: 78333,
+      componentPricing: { totalPaise: 78333, components: [{ laborSellingPaise: 25000, materialSellingPaise: 53333 }] } });
+    expect(() => assertPublishableConfiguredLines(stored as never)).not.toThrow();
+    await assertCurrentConfiguredPublication(stored as never);
+    const lead = { _id: stored.leadId, clientName: "Fixture client", clientEmail: actors.client.email, projectName: "Fixture project", location: "Fixture city" };
+    const frozen = toEstimateSnapshot(stored as never, lead as never);
+    const round = new EstimateClientReviewRoundModel({ _id: "components-frozen-round", estimateId: stored._id,
+      leadId: stored.leadId, projectId: null, estimateVersion: stored.version, sendGeneration: 1, dedupeKey: "a".repeat(64),
+      recipientEmail: actors.client.email, recipientEmailNormalized: actors.client.email, estimateSnapshot: frozen,
+      pdfFilename: "component-estimate.pdf", pdfMimeType: "application/pdf", pdfByteSize: 100,
+      pdfSha256: "b".repeat(64), pdfStorageReference: "synthetic/components-frozen-round.pdf", deliveryStatus: "disabled",
+      deliveryAttemptGeneration: 1, deliveryAttemptCount: 0, assignedAdminId: "synthetic-admin", status: "pending", version: 1,
+      createdAt: new Date("2026-10-26T00:00:00Z") });
+    await expect(round.validate()).resolves.toBeUndefined();
+    const before = structuredClone(frozen);
+    await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: "component-mode" }, { $set: { "payload.inHouseComponents.0.labor.baseRatePaise": 90000 } });
+    const client = presentClientEstimate(actors.client, { ...stored, status: "sent_to_client" }, lead, round.toObject());
+    expect(client).toMatchObject({ reviewSourceIssue: null, publishedReview: { snapshot: { lineItems: [{
+      ratePaise: null, amountPaise: 78333, sourceItemVersion: 1, sourceRevisionVersion: 1,
+      componentPricing: { totalPaise: 78333, components: [{ laborSellingPaise: 25000, materialSellingPaise: 53333 }] }
+    }] } } });
+    expect(JSON.stringify(client)).not.toMatch(/baseRatePaise|startingMarkupBps|minimumMarkupBps|impactBps|lowQuantityLimit/);
+    expect(frozen).toEqual(before);
+  });
+
+  it("does not accept preview commands for other estimate pricing modes", async () => {
+    await configure();
+    const { server } = app();
+    for (const pricingMode of ["pmc", "sub_vendor"]) {
+      const input = componentPreviewInput(line());
+      input.lines[0].pricingMode = pricingMode;
+      await request(server).post("/api/v1/leads/components-mode-guard/estimate/in-house-preview")
+        .set(bearer("estimator")).send(input).expect(400);
+    }
+    expect(await EstimateModel.countDocuments()).toBe(0);
+  });
 
   it("projects cross-catalogue component labels and only each component's base sum", async () => {
     await configure();

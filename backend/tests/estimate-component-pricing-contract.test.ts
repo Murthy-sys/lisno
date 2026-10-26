@@ -1,6 +1,9 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { ESTIMATE_COMPONENT_PRICING_BASIS, readEstimateComponentPricing, estimateComponentLineAmountIsValid, type EstimateComponentPricing } from "../src/domain/estimate-component-pricing.js";
+import { assertPublishableConfiguredLines, toEstimateSnapshot } from "../src/services/estimate-publication.service.js";
+import { createEstimatePdfService, type EstimatePdfInput } from "../src/services/estimate-pdf.service.js";
+import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
 
 const snapshot = (): EstimateComponentPricing => ({ formulaVersion: ESTIMATE_COMPONENT_PRICING_BASIS,
   mainLineId: "line-a", revisionId: "revision-a", sourceItemVersion: 2, sourceRevisionVersion: 3,
@@ -38,5 +41,51 @@ describe("exact component selling evidence", () => {
       { components: [{ ...snapshot().components[0], totalPaise: Number.MAX_SAFE_INTEGER + 1 }] }]) {
       expect(readEstimateComponentPricing({ ...snapshot(), ...change })).toBeNull();
     }
+  });
+});
+
+const publicationFixture = () => ({
+  _id: "estimate-a", leadId: "lead-a", ownerId: "estimator-a", projectId: null, version: 2, status: "draft",
+  propertyType: "villa", approvalRequired: false, reviews: [], notifications: [],
+  subtotal: 783.33, gst: 141, total: 924.33, subtotalPaise: 78333, gstPaise: 14100, totalPaise: 92433,
+  lineItems: [{ ...line(), source: "configuration" as const, pricingMode: "in_house" as const,
+    rateSource: "configuration" as const, modeTier: "signature" as const, included: true,
+    id: "estimate-line-a", catalogueId: "line-a", itemType: "main_line" as const, classification: "special" as const,
+    roomId: "room-a", roomName: "Living Room", mainBasketId: "basket-a", subBasketId: "sub-a",
+    mainBasketName: "Source basket", subBasketName: "Source sub-basket", mainLineName: "Ceiling framework",
+    uomName: "sq ft", uomCode: "SQFT", unit: "sq ft", specification: null }]
+});
+const publicationLead = { _id: "lead-a", ownerId: "estimator-a", projectId: null,
+  clientName: "Synthetic Client", clientEmail: "client@example.test", projectName: "Synthetic Project", location: "Pune" };
+const pdfFixture = (): EstimatePdfInput => ({ ...publicationFixture(), id: "estimate-a", lead: publicationLead });
+
+describe("component evidence at publication and PDF boundaries", () => {
+  it("publishes the exact saved selling amount with no inferred unit rate", () => {
+    const estimate = publicationFixture();
+    expect(() => assertPublishableConfiguredLines(estimate)).not.toThrow();
+    const frozen = toEstimateSnapshot(estimate, publicationLead).lineItems[0];
+    expect(frozen).toMatchObject({ rate: null, ratePaise: null, amountPaise: 78333, componentPricing: snapshot() });
+    expect(JSON.stringify(frozen)).not.toMatch(/adjustedCost|startingMarkup|floorSelling|baseRate/u);
+  });
+  it("rejects malformed declared evidence even if a legacy rate was also supplied", async () => {
+    const estimate = publicationFixture();
+    Object.assign(estimate.lineItems[0], { rate: 391.66, ratePaise: 39166,
+      componentPricing: { ...snapshot(), totalPaise: 78334 } });
+    expect(() => assertPublishableConfiguredLines(estimate)).toThrow(/Complete every included/u);
+    await expect(createEstimatePdfService().generate({ ...estimate, id: estimate._id, lead: publicationLead }))
+      .rejects.toThrow(/valid saved component amounts/u);
+  });
+  it("renders the frozen exact total and a component label in the customer PDF", async () => {
+    const generated = await createEstimatePdfService().generate(pdfFixture());
+    const pdf = await getDocument({ data: new Uint8Array(generated.bytes), useSystemFonts: true }).promise;
+    try {
+      let text = "";
+      for (let index = 1; index <= pdf.numPages; index += 1) {
+        const content = await (await pdf.getPage(index)).getTextContent();
+        text += content.items.flatMap(item => "str" in item ? [item.str] : []).join(" ");
+      }
+      expect(text.replace(/\s+/gu, " ")).toContain("From components");
+      expect(text).toContain("783.33");
+    } finally { await pdf.destroy(); }
   });
 });

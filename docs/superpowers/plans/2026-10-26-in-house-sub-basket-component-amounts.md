@@ -1,6 +1,6 @@
 # In-house Sub-Basket component amounts: task plan
 
-Status: approved; Mode A selected. T0–T1 complete. Implementation phase T2–T5 in progress with separate estimate-backend, Procurement-backend and frontend agents; primary owns shared contracts, mobile compatibility, API inventory and integration. Baseline: 132 backend tests and 66 frontend tests passed. Initial worktree evidence is captured under `/tmp/lisno-in-house-sub-basket-amounts/`; product paths were clean.
+Status: approved; Mode A selected. T0–T7 complete. Implementation, integrity review, rendered checks and integrated verification are complete with the existing failures, timeout diagnostics and skipped checks recorded below. No new persistent test failures were identified. Baseline: 132 backend tests and 66 frontend tests passed. Initial worktree evidence is captured under `/tmp/lisno-in-house-sub-basket-amounts/`; product paths were clean. Final review compares initial revision `26e63050103423f3b276a2194053a25e765809d0` through the worktree because an external commit captured most implementation while verification was running.
 
 Approved source: [In-house amounts from Sub-Basket components](../specs/2026-10-26-in-house-sub-basket-component-amounts-design.md), approved by the user on 2026-10-26 with the clarification below. The specification's earlier awaiting-approval label describes its creation stage; this plan records the subsequent approval without rewriting the approved document.
 
@@ -43,7 +43,7 @@ Use existing shared estimation types where suitable; add a small `shared/estimat
 
 ## Dependency-ordered tasks and ownership
 
-Only one parent implementation phase is in progress at a time. Task statuses below are all pending approval/execution choice.
+Only one parent phase is in progress at a time. Approval and Mode A selection are complete; the status above tracks execution.
 
 ### T0. Capture baseline and unchanged-mode fixtures
 
@@ -179,4 +179,29 @@ No migration/backfill is planned. No commits, pushes, deployment, production wri
 
 Return to the primary agent before changing another mode's formula/workflow, weakening an authorization or stale-version check, altering historical commercial source ownership, introducing a dependency or inventing an allocation for unavailable history. Resolve routine implementation details within the approved contract; seek user input only for a material change to that contract.
 
-Final handoff will identify affected files, the In-house-only behavior, exact tests/builds/rendered checks, any remaining failures/limitations and temporary artifact paths. This plan creates no implementation authority until its approval and the execution-mode choice are complete.
+Final handoff identifies affected files, the In-house-only behavior, exact tests/builds/rendered checks, any remaining failures/limitations and temporary artifact paths. The specification, task plan and Mode A gates were completed before implementation.
+
+## Execution evidence
+
+The shared selling-only snapshot is mirrored between `shared/estimation/estimateComponentPricing.ts` and the backend domain; a parity test prevents drift. The preview performs no writes, and saves recompute/fence current source settings and require the matching fingerprint. Exact totals remain independent of a fabricated unit rate. Native preserves this basis read-only; frozen customer projections and PDFs use stored selling evidence.
+
+The integration review found two Procurement reconciliation edges, both fixed and regression-tested: zero-approved-value lines are excluded according to existing actionable-line rules, and automatic Standard pricing continues to use its existing Sub-Vendor source. The new component breakdown follows the canonical current-cost source. No remaining confirmed findings were reported by the integrity reviewer.
+
+The user-reported Render TS7006 failure at `backend/src/routes/estimates.ts:371` was reproduced locally. Giving the saved-line lookup callback an explicit `Record<string, unknown>` type fixed it; `npm run build` passed. Publication and PDF boundaries also reject malformed declared component snapshots even if a legacy unit rate is present.
+
+Focused evidence, with logs under `/tmp/lisno-in-house-sub-basket-amounts/`:
+
+- Catalogue/estimate replica suite: **71 passed**, including authorization, read-only preview, stale fingerprint, immutable snapshot and customer-safe projection tests.
+- Tier and publication replica suites: **23 and 24 passed**; Procurement replica suites: **46 passed**.
+- Component contract/publication/PDF tests: **10 passed**; Procurement domain suites after review fixes: **54 passed**; API docs/route registry: **111 passed**.
+- Web product tests: **133 passed**, new enterprise interaction scenarios: **2 passed**, typecheck passed.
+- Native authoring/customer tests: **57 passed**, typecheck passed, Android export passed. The two native operation/permission drift failures reproduce on the isolated initial revision and remain outside this change.
+- Enterprise harness baseline at the exact initial revision: **60 passed, 3 failed**. Current harness: **62 passed, the same 3 failed**. These cover an old workflow-button expectation and duplicate Procurement gallery articles, not the new component scenarios.
+- Final web suite, `npm test -- --maxWorkers=4`: **5,548 passed, 102 failed**, across 353 passing and 11 failing files. Every failing test name and count reproduces on the exact initial revision; the targeted baseline has 391 passing and 102 failing tests, while the same current files have 393 passing and 102 failing tests because of the two new passing interaction scenarios. `frontend-baseline-comparison.json` records the exact comparison and log paths.
+- Final backend and web `npm run typecheck` and `npm run build`: **passed**. The web build retains existing large-chunk warnings; no dependency or bundle architecture change was introduced here.
+- Final backend suite, `npm test -- --maxWorkers=4`: **6,362 passed, 20 failed, 24 skipped**, across 299 passing, 9 failing and 3 skipped files, in 497.03 seconds. Thirteen failures across seven files reproduce with identical names on the exact initial revision (`backend-baseline-failures.log`: 373 passed, 13 failed). Seven additional failures in the dashboard and assigned-project visibility suites began with five-second timeouts and cascaded; controlled runs of those two files with `--maxWorkers=1 --testTimeout=20000` passed **57/57 on both current and baseline revisions**. The original full-suite failures remain recorded, rather than counted as a clean full-suite pass.
+- The 24 skipped backend tests belong to three Python assistant bridge/rules suites gated by an unavailable configured interpreter. Those checks were not executed. OCR/model tests and a full native suite were outside the changed slice; native focused checks, contract drift check, typecheck and Android export were run as planned. There is no repository lint script.
+- Final `git diff --check`: **passed**. `git status --short` showed only the 14 remaining task paths, including this record. Complete final logs use the `final-` prefix under the evidence directory; controlled timeout results use `backend-late-`, and baseline comparisons use `frontend-baseline-comparison.json` and `backend-baseline-failures.log`.
+- Rendered synthetic estimate and Procurement checks at **320, 390, 768 and 1440px**: no document overflow, no runtime errors after correcting the QA vendor fixture, no unexpected application API requests, exact amount reconciliation, working keyboard disclosures, quantity/mode changes, save, and failure/retry. No accessibility violations in changed content; two unchanged Procurement desktop sidebar links have contrast 4.43:1. Details and screenshots are in `browser-verification.json` and the adjacent PNGs.
+
+No dependencies, lockfile changes, migrations, seeds, deployment, production mutation, commits, pushes or external delivery were performed by this task. Local Vite and browser QA sessions were stopped. Ignored build/export outputs and temporary test evidence are verification artifacts, not deliverables to commit.

@@ -576,6 +576,7 @@ export function assertPublishableConfiguredLines(estimate: PublicationEstimate):
   if (configured.length === 0) return;
   if (configured.some((line) =>
     !estimateDimensionSnapshotValid(line) ||
+    line.pricingBasis !== undefined && !estimateComponentLineAmountIsValid(line) ||
     line.modeTier !== undefined && !isKnowledgeModeTier(line.modeTier) ||
     (!Number.isSafeInteger(line.ratePaise) && !estimateComponentLineAmountIsValid(line)) ||
     !Number.isSafeInteger(line.amountPaise) ||

@@ -1,7 +1,7 @@
 import type { EstimateComponentPricing, EstimateInHousePreviewLine } from "../../../../shared/estimation/estimateComponentPricing";
 import type { ConfiguredEstimateLine, ConfiguredEstimateLineInput, EstimateDraft, EstimateDraftInput } from "../../features/leads/leadsApi";
 import type { EstimationCatalogueBasket } from "../../features/leads/estimationCatalogueApi";
-import type { ProcurementBasketDetail, ProcurementBasketList, ProcurementInHouseComponentBreakdown } from "../../features/procurement/procurementBasketApi";
+import type { ProcurementBasketDetail, ProcurementBasketList, ProcurementInHouseComponentBreakdown, ProcurementVendorCandidates } from "../../features/procurement/procurementBasketApi";
 
 /** Synthetic values for the explicitly requested browser QA scenario. Never a production price source. */
 export function createEnterpriseComponentAmounts() {
@@ -103,7 +103,11 @@ export function createEnterpriseComponentAmounts() {
       if (path === "/procurement/projects/project-one/baskets") return list;
       if (path === "/procurement/projects/project-one/baskets/basket-source") return detail;
       if (path === "/projects/project-one/design-requirements") return { version: 0, sourceToken: "synthetic-empty", entries: [], blockers: [], canReadInternal: false };
-      if (path.startsWith("/procurement/projects/project-one/baskets/basket-source/")) return [];
+      if (path === "/procurement/projects/project-one/baskets/basket-source/enquiries") return [];
+      if (path === "/procurement/projects/project-one/baskets/basket-source/vendor-candidates") return {
+        projectCity: { name: "Bengaluru", key: "bengaluru" }, items: [], total: 0, matchingVendorCount: 0,
+        blockedReasonCounts: {}, limit: 50, offset: 0
+      } satisfies ProcurementVendorCandidates;
       return undefined;
     },
     preview(body: { lines: EstimateInHousePreviewLine[] }) { return { lines: body.lines.map(line => ({ key: line.key, state: "ready", componentPricing: pricing(line), issues: [] })) }; },

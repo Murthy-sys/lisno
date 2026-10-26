@@ -392,7 +392,8 @@ export function buildConfiguredLines(
         tierPricing: fresh.tierPricing,
         modeBaseRatesPaise: selectedFresh.modeBaseRatesPaise,
         inHouseBaseRatePaise: selectedFresh.inHouseBaseRatePaise,
-        inHouseComponents: selectedFresh.inHouseComponents,
+        // Historical amounts use their saved pricing basis, never newly available live components.
+        inHouseComponents: undefined,
         sourceMissing: saved.mainBasketId !== fresh.mainBasketId ||
           saved.subBasketId !== fresh.subBasketId || saved.itemType !== fresh.itemType
       };

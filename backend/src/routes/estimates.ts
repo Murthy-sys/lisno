@@ -368,7 +368,8 @@ export function createEstimatesRouter(
             source.line.revisionVersion !== line.revisionVersion || source.line.uom.id !== line.uomId) {
             throw new ApiError(409, "ESTIMATE_CONFIGURATION_CHANGED", "Configuration changed. Refresh this line before calculating it.");
           }
-          const prior = estimate?.lineItems.find(row => row.source === "configuration" && row.roomId === line.roomId && row.mainLineId === line.mainLineId);
+          const prior = estimate?.lineItems.find((row: Record<string, unknown>) =>
+            row.source === "configuration" && row.roomId === line.roomId && row.mainLineId === line.mainLineId);
           const measurements = configuredLineMeasurements({ ...line, included: true }, prior as Record<string, unknown> | undefined, source.line);
           scaledQuantity(measurements.quantity, source.line.uom.decimalScale, true);
           const componentPricing = await resolveEstimateComponentPricing(source, line.modeTier, measurements.quantity, line.selectedInHouseComponentIds);

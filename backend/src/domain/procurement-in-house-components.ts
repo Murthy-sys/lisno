@@ -34,7 +34,8 @@ export const procurementComponentTargetKey = (basketId: string, subBasketId: str
 
 export function isApprovedInHouseComponentSource(line: PurchaseOrderPreparationEstimateLine): boolean {
   const selection = line.estimateMode;
-  return line.source === "configuration" && line.included && selection?.provenance === "line" &&
+  // Match the existing actionable population used by basket and mode-group totals.
+  return line.source === "configuration" && line.included && line.amountPaise !== null && line.amountPaise > 0 && selection?.provenance === "line" &&
     selection.mode === "in_house" && selection.approvedPricingMode === "in_house" && selection.issues.length === 0;
 }
 
