@@ -156,7 +156,11 @@ export function projectProcurementBaskets(preparation: ProjectPurchaseOrderPrepa
           preview: line.mode.preview ?? null, integrity: line.mode.integrity ?? null } : null })
       })).sort((left, right) => left.sourceLineItemKey.localeCompare(right.sourceLineItemKey))
     })).digest("hex");
-    const inHouseComponentBreakdown = projectInHouseComponentBreakdown(group.lines, componentTargetNames);
+    // Standard baskets use a saved mode only when automatic Sub-Vendor pricing is off.
+    // Keep attribution aligned with that canonical cost source, including unavailable saved decisions.
+    const componentCostLines = group.lines.filter(line => group.classification === "special" ||
+      !group.automaticSubVendor && line.mode?.decision?.mode === "in_house");
+    const inHouseComponentBreakdown = projectInHouseComponentBreakdown(componentCostLines, componentTargetNames);
     return {
       id, name: group.name, classification: group.classification, automaticSubVendor: group.automaticSubVendor,
       boqReady, standardCost, projectId: preparation.projectId,

@@ -1,6 +1,6 @@
 import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { configuredAttributedAmountPaise, configuredComponentPricing, configuredLineAmountPaise, updateConfiguredLinePricing } from "./configuredEstimate";
+import { buildConfiguredLines, configuredAttributedAmountPaise, configuredComponentPricing, configuredLineAmountPaise, updateConfiguredLinePricing } from "./configuredEstimate";
 import { componentDraftFixture } from "./estimateComponentPricing.testFixtures";
 import { EstimateComponentPricingStatus, EstimateSubBasketAmounts } from "./EstimateComponentBreakdown";
 
@@ -20,6 +20,18 @@ describe("In-house exact component amount", () => {
     expect(configuredLineAmountPaise(pmc)).toBe(2000);
     expect(configuredComponentPricing(updateConfiguredLinePricing(line, { quantity: 4 }))).toBeNull();
     expect(configuredLineAmountPaise({ ...line, pricingMode: "sub_vendor", rateInput: "80" })).toBe(16000);
+  });
+  it("does not activate current components on an approved legacy In-house line", () => {
+    const legacy = { ...componentDraftFixture(), persistedId: "saved-line", pricingBasis: undefined, componentPricing: undefined, rateInput: "300" };
+    const catalogue = { ineligibleLineCount: 0, items: [{ id: "basket-source", name: "Joinery", displayOrder: 1, subBaskets: [{ id: "sub-source", basketId: "basket-source", name: "Wardrobe", displayOrder: 1,
+      mainLines: [{ id: "line-a", mainLineId: "line-a", basketId: "basket-source", subBasketId: "sub-source", name: "Current line", displayOrder: 1, revisionId: "new-revision", itemVersion: 8, revisionVersion: 5,
+        inHouseComponents: legacy.inHouseComponents, uom: { id: "uom-a", name: "sq ft", code: "SQFT", decimalScale: 2 } }] }] }] };
+    const [restored] = buildConfiguredLines(catalogue, [{ id: "room-a", label: "Bedroom" }], new Set(["basket-source"]), [legacy], true);
+    expect(configuredLineAmountPaise(restored!)).toBe(60000);
+    expect(restored!.componentPricing).toBeUndefined();
+    expect(restored!.mainLineName).toBe("Main Line A");
+    const [frozen] = buildConfiguredLines(catalogue, [{ id: "room-a", label: "Bedroom" }], new Set(["basket-source"]), [{ ...componentDraftFixture(), persistedId: "saved-component" }], true);
+    expect(configuredLineAmountPaise(frozen!)).toBe(78333);
   });
   it("adds same-target contributions from different Main Lines even when component IDs repeat", () => {
     render(<EstimateSubBasketAmounts lines={[componentDraftFixture(), componentDraftFixture("line-b", 3, 45000)]} />);

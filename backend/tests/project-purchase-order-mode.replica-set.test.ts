@@ -1231,6 +1231,7 @@ describe("approved In-house component scope", { timeout: 30000 }, () => {
     await EstimateClientReviewRoundModel.collection.updateOne({ _id: "mode-round" }, { $set: {
       "estimateSnapshot.lineItems.0.classification": "special", "estimateSnapshot.lineItems.0.pricingMode": "in_house",
       "estimateSnapshot.lineItems.0.rateSource": "manual", "estimateSnapshot.lineItems.0.selectedInHouseComponentIds": ["finish-component"],
+      "estimateSnapshot.selectedMainBasketIds": ["basket-a"],
       "estimateSnapshot.selectedMainBasketClassifications": [{ mainBasketId: "basket-a", classification: "special" }]
     } });
     await seedSecondApprovedProject();

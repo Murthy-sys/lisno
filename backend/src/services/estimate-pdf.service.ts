@@ -572,6 +572,9 @@ function groupedIncludedLines(input: EstimatePdfInput) {
   const groups = new Map<string, { label: string; lines: EstimatePdfLine[] }>();
 
   for (const line of input.lineItems.filter((item) => item.included)) {
+    if (line.pricingBasis !== undefined && !estimateComponentLineAmountIsValid(line)) {
+      throw new TypeError("An included component-priced estimate line needs valid saved component amounts before PDF generation.");
+    }
     if (line.source === "configuration" &&
       (!Number.isSafeInteger(line.ratePaise) || !Number.isSafeInteger(line.amountPaise)) && !estimateComponentLineAmountIsValid(line)) {
       throw new TypeError("An included configured estimate line needs an entered rate before PDF generation.");

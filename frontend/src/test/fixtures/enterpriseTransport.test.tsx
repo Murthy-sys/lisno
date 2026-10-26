@@ -68,13 +68,16 @@ describe("synthetic enterprise route harness", () => {
 
   it("renders Procurement component targets and links them to the original source basket", async () => {
     const user = userEvent.setup();
-    mount("/procurement/projects/project-one?qaComponentAmounts=ready", "procurement");
+    const { client } = mount("/procurement/projects/project-one?qaComponentAmounts=ready", "procurement");
     const group = await screen.findByRole("region", { name: "Current In-house component costs by Sub-Basket" });
     expect(group).toHaveTextContent("1,150");
     await user.click(within(group).getByText(/Finishes \/ Ceiling/));
     await user.click(within(group).getAllByRole("button", { name: "Open source in Joinery" })[0]!);
     await screen.findByRole("heading", { name: "Joinery" });
+    await screen.findByText("No vendors are classified for this main basket.");
+    await waitFor(() => expect(client.isFetching()).toBe(0));
     expect(await screen.findByRole("region", { name: "Current In-house component costs by Sub-Basket" })).toHaveTextContent("Ceiling framework");
+    expect(screen.getByRole("button", { name: "Send bid invitations" })).toBeDisabled();
     expect(transport!.requests.filter(request => request.unexpected)).toEqual([]);
   });
   it("gates the recommendation scrolling fixture without changing mode or basket defaults", async () => {
