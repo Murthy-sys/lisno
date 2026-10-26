@@ -1,3 +1,4 @@
+import { KNOWLEDGE_MODE_TIERS } from "../domain/ai-estimator-knowledge-mode-tiers.js";
 import { Router, type RequestHandler } from "express";
 import { z } from "zod";
 
@@ -227,11 +228,20 @@ const revisionCreateSchema = z
   })
   .strict();
 
+const modeTierQuerySchema = z.object({ modeTier: z.enum(KNOWLEDGE_MODE_TIERS).optional() }).strict();
+
+function parseModeTierQuery(query: unknown) {
+  const parsed = modeTierQuerySchema.safeParse(query);
+  if (!parsed.success) throw new ApiError(400, "VALIDATION_ERROR", "Select a valid Mode tier.", { modeTier: "Expected Signature, Premium or Functional." });
+  return parsed.data.modeTier;
+}
+
 const sectionUpdateSchema = z
   .object({
     expectedVersion: expectedVersionSchema,
     expectedAggregateVersion: expectedVersionSchema.optional(),
     applicability: z.enum(AI_ESTIMATOR_KNOWLEDGE_SECTION_APPLICABILITY).optional(),
+    modeTier: z.enum(KNOWLEDGE_MODE_TIERS).optional(),
     payload: z.record(z.string(), z.unknown())
   })
   .strict();
@@ -550,7 +560,7 @@ export function createAiEstimatorKnowledgeAdminRouter(
     protectedRoute,
     requireOperation("GET /admin/ai-estimator-knowledge/baskets/:basketId/sub-baskets/:subBasketId/margins"),
     handler(async (request) => services.item.getSubBasketMargins(
-      request.authenticatedUser!, String(request.params.basketId), String(request.params.subBasketId)
+      request.authenticatedUser!, String(request.params.basketId), String(request.params.subBasketId), parseModeTierQuery(request.query)
     ))
   );
   router.post(
@@ -648,7 +658,7 @@ export function createAiEstimatorKnowledgeAdminRouter(
     protectedRoute,
     requireOperation("GET /admin/ai-estimator-knowledge/main-lines/:mainLineId/revisions/:revisionId/sections/:sectionKey"),
     validateSectionKey,
-    handler(async (request) => services.item.getSection(request.authenticatedUser!, String(request.params.mainLineId), String(request.params.revisionId), request.params.sectionKey as KnowledgeSectionKey))
+    handler(async (request) => services.item.getSection(request.authenticatedUser!, String(request.params.mainLineId), String(request.params.revisionId), request.params.sectionKey as KnowledgeSectionKey, parseModeTierQuery(request.query)))
   );
   router.put(
     `${prefix}/main-lines/:mainLineId/revisions/:revisionId/sections/:sectionKey`,

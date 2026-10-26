@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { estimateModeBaseRatesPaise, estimateConfigurationRateMatches } from "../src/domain/estimate-mode-pricing.js";
+import { estimateModeBaseRatesPaise, estimateConfigurationRateMatches, estimatePricingMetadataIsValid } from "../src/domain/estimate-mode-pricing.js";
 
 describe("configured estimate mode bases", () => {
+  it("validates tier metadata independently from pricing mode and keeps legacy Signature omissions", () => {
+    for (const modeTier of [undefined, "signature", "premium", "functional"]) expect(estimatePricingMetadataIsValid({ modeTier })).toBe(true);
+    for (const modeTier of [null, "unknown", "Signature", [], 1]) expect(estimatePricingMetadataIsValid({ modeTier })).toBe(false);
+  });
+
   it.each([undefined, null, {}, [], { modeCalculations: [] }])("keeps missing data unpriced: %j", (payload) => {
     expect(estimateModeBaseRatesPaise(payload)).toEqual({ pmc: null, sub_vendor: null, in_house: null });
   });

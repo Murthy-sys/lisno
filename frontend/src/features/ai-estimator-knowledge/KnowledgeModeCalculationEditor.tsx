@@ -42,7 +42,10 @@ interface Props {
 
 export function KnowledgeModeCalculationEditor({ emptyDefaults = false, value, uom, readOnly, validationAttempt, issues, onChange, onDirty, onValidationChange, onPendingInputChange, pendingSaveVersion = 0, active = true, contextLabel, issuePath = "modeCalculation", scope, pmcMarginBps, pmcMinimumMarginBps, subVendorMarginBps, subVendorMinimumMarginBps, marginControl }: Props) {
   const draftForValue = () => value == null && emptyDefaults
-    ? { baseRate: "", lowQuantityLimit: "", impactRate: "", minimumRate: "", startingRate: "" }
+    ? { baseRate: "", lowQuantityLimit: "", impactRate: "",
+        // PMC and Sub-Vendor use their separate margin controls; these required legacy fields are hidden.
+        minimumRate: scope === "pmc" || scope === "sub_vendor" ? "0" : "",
+        startingRate: scope === "pmc" || scope === "sub_vendor" ? "0" : "" }
     : modeCalculationDraft(value);
   const [draft, setDraft] = useState(draftForValue);
   const [locallyEdited, setLocallyEdited] = useState(false);

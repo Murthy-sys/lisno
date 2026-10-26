@@ -1,3 +1,5 @@
+import type { EstimateDimensionRule } from "../../../../shared/estimation/estimateDimensions";
+import type { KnowledgeModeTier } from "../../../../shared/knowledge/knowledgeModeTiers";
 import { ApiError, apiClient, type Pagination } from "../../api/client";
 import type { EstimatePricingMode } from "./leadsApi";
 
@@ -20,6 +22,11 @@ export interface EstimationInHouseComponent {
   unavailableReason?: string | null;
 }
 
+export interface EstimationTierPricing {
+  modeBaseRatesPaise: EstimationModeBaseRatesPaise;
+  inHouseComponents?: EstimationInHouseComponent[];
+}
+
 export interface EstimationCatalogueMainLine {
   id: string;
   mainLineId: string;
@@ -29,12 +36,16 @@ export interface EstimationCatalogueMainLine {
   name: string;
   estimateNotes?: string[];
   clientVisible?: boolean;
+  dimensionsMandatory?: boolean;
+  dimensionRule?: EstimateDimensionRule | null;
   displayOrder: number;
   revisionId: string;
   itemStatus?: "draft" | "active" | "inactive";
   revisionStatus?: "draft" | "active";
   itemVersion?: number;
   revisionVersion?: number;
+  applicableTiers?: KnowledgeModeTier[];
+  tierPricing?: Partial<Record<KnowledgeModeTier, EstimationTierPricing>>;
   inHouseBaseRatePaise?: number | null;
   inHouseComponents?: EstimationInHouseComponent[];
   modeBaseRatesPaise?: EstimationModeBaseRatesPaise;

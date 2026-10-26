@@ -1,3 +1,4 @@
+import { isKnowledgeModeTier } from "./ai-estimator-knowledge-mode-tiers.js";
 import { hasInHouseComponents, selectedInHouseComponents, selectedInHouseBaseRate, type InHouseComponentRate } from "./ai-estimator-knowledge-in-house-components.js";
 export const ESTIMATE_PRICING_MODES = ["pmc", "sub_vendor", "in_house"] as const;
 export const ESTIMATE_RATE_SOURCES = ["configuration", "manual"] as const;
@@ -28,20 +29,20 @@ export function estimateModeBaseRatesPaise(payload: unknown): EstimateModeBaseRa
 }
 
 export function estimatePricingMetadataIsValid(line: {
-  classification?: unknown; pricingMode?: unknown; rateSource?: unknown;
+  classification?: unknown; pricingMode?: unknown; rateSource?: unknown; modeTier?: unknown;
 }): boolean {
   const modeValid = line.pricingMode === undefined ||
     ESTIMATE_PRICING_MODES.some((mode) => mode === line.pricingMode);
   const sourceValid = line.rateSource === undefined ||
     ESTIMATE_RATE_SOURCES.some((source) => source === line.rateSource);
-  return modeValid && sourceValid &&
+  return modeValid && sourceValid && (line.modeTier === undefined || isKnowledgeModeTier(line.modeTier)) &&
     (line.rateSource !== "configuration" || line.pricingMode !== undefined) &&
     (line.pricingMode === undefined || line.classification === "special" || line.pricingMode === "sub_vendor");
 }
 
 /** Missing configured prices match only null, never zero or an entered historical rate. */
 export function estimateConfigurationRateMatches(line: {
-  classification?: unknown; pricingMode?: unknown; rateSource?: unknown; ratePaise?: unknown; selectedInHouseComponentIds?: unknown;
+  classification?: unknown; pricingMode?: unknown; rateSource?: unknown; modeTier?: unknown; ratePaise?: unknown; selectedInHouseComponentIds?: unknown;
 }, bases: EstimateModeBaseRatesPaise, components?: readonly InHouseComponentRate[]): boolean {
   if (!estimatePricingMetadataIsValid(line)) return false;
   const hasSelection = Array.isArray(line.selectedInHouseComponentIds) && line.selectedInHouseComponentIds.length > 0;

@@ -1,0 +1,8 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - main [ref=e3]:
+      - heading "Opening your workspace" [level=1] [ref=e7]
+    - status "Application announcements" [ref=e11]
+    - region "Notifications"
+  - status "Content status":
+    - generic: Restoring your session…

@@ -40,7 +40,7 @@ export async function assertProposalMasterAvailable(kind: ProposalMasterKind, id
   if (localConflict || sharedConflict) throw new ApiError(409, "DUPLICATE_IDENTITY", `A ${kind === "uoms" ? "UOM" : "Surface"} already uses this name or code. Rename the proposed value or select the existing shared value.`, { name: "This name or code is already in use." });
 }
 export function proposalMasterResolver(resources: readonly ProposalMasterResource[]): KnowledgeProposalMasterResolver {
-  const uoms = new Map(resources.filter((resource) => resource.kind === "uom").map((resource) => [resource.resourceId, Object.freeze({ decimalScale: resource.payload.decimalScale! })]));
+  const uoms = new Map(resources.filter((resource) => resource.kind === "uom").map((resource) => [resource.resourceId, Object.freeze({ decimalScale: resource.payload.decimalScale!, code: resource.payload.code, name: resource.payload.name })]));
   const surfaces = new Set(resources.filter((resource) => resource.kind === "surface").map((resource) => resource.resourceId));
   return Object.freeze({ uom: (id: string) => uoms.get(id), hasSurface: (id: string) => surfaces.has(id) });
 }

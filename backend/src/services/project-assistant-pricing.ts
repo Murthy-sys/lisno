@@ -1,4 +1,5 @@
 import { hasInHouseComponents, readInHouseComponents, selectedInHouseComponents } from "../domain/ai-estimator-knowledge-in-house-components.js";
+import type { KnowledgeModeTier } from "../domain/ai-estimator-knowledge-mode-tiers.js";
 import { z } from "zod";
 import type { AssistantAdditionRequest, AssistantCatalogueCandidate, AssistantCommercialSnapshot, AssistantPriceLine, AssistantRecommendation } from "../contracts/project-chat-assistant.js";
 import type { KnowledgeModeCalculationSettings } from "../contracts/ai-estimator-knowledge.js";
@@ -12,12 +13,13 @@ export interface AssistantPricingSource {
   /** Server-only, never spread into a tool result. */
   advanced: Record<string, unknown> | null;
   temporary: boolean;
+  dimensionsMandatory?: boolean;
 }
 export interface AssistantApprovedScope {
   state: "none" | "approved" | "unavailable";
   totalPaise: number | null;
   rooms: { id: string; name: string }[];
-  lines: { selectedInHouseComponentIds?: string[]; mainLineId: string; roomId: string; pricingMode: "pmc" | "sub_vendor" | "in_house" | null; included: boolean }[];
+  lines: { dimensionsMandatory?: boolean; modeTier?: KnowledgeModeTier; selectedInHouseComponentIds?: string[]; mainLineId: string; roomId: string; pricingMode: "pmc" | "sub_vendor" | "in_house" | null; included: boolean }[];
 }
 export interface AssistantPricingReads {
   lines(ids: string[]): Promise<Map<string, AssistantPricingSource>>;
@@ -40,6 +42,7 @@ function sum(values: number[]): number {
 
 /** All arithmetic is canonical Configuration selling arithmetic, with no model-provided prices. */
 export function assistantSellingAmount(source: AssistantPricingSource, mode: AssistantPriceLine["pricingMode"], quantity: string, selectedInHouseComponentIds?: string[]): number {
+  if (source.dimensionsMandatory) throw new Error("Enter dimensions in the estimate workspace.");
   if (!source.candidate.available || source.temporary || !source.advanced) throw new Error("Current calculation unavailable");
   const advanced = source.advanced;
   const modes = object(advanced.modeCalculations);
@@ -136,6 +139,13 @@ export async function calculateAssistantAddition(request: AssistantAdditionReque
     const candidate = source?.candidate;
     const missing: string[] = [];
     const included = approved.lines.filter(line => line.included && line.mainLineId === input.mainLineId && (input.roomId === null || line.roomId === input.roomId));
+    // This bounded addition tool has no tier selector. Never substitute Signature for an approved tier.
+    if (source?.dimensionsMandatory || approved.lines.some(line => line.included && line.mainLineId === input.mainLineId && line.dimensionsMandatory === true)) {
+      missing.push("This item requires length, width and height. The estimating team must enter its dimensions in the estimate workspace; a quantity alone cannot be priced.");
+    }
+    if (approved.lines.some(line => line.included && line.mainLineId === input.mainLineId && (line.modeTier ?? "signature") !== "signature")) {
+      missing.push("This approved item uses a selected configuration tier. The estimating team must price its additions in the estimate workspace.");
+    }
     const existingModes = new Set(included.flatMap(line => line.pricingMode ? [line.pricingMode] : []));
     const mode = input.pricingMode ?? (existingModes.size === 1 ? [...existingModes][0]! : "sub_vendor");
     if (input.pricingMode === null && included.some(line => line.pricingMode === null)) missing.push("Confirm the pricing mode for this existing approved item.");

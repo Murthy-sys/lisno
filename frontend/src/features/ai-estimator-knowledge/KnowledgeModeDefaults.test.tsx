@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import axe from "axe-core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { KnowledgeSubBasketMarginSummary } from "../../../../shared/knowledge/knowledgeSubBasketMarginTypes";
@@ -49,7 +49,35 @@ describe("Compact default margins", () => {
     expect(within(panel).queryByRole("heading")).not.toBeInTheDocument();
     expect(panel).not.toHaveTextContent(/POP false ceiling|Saved Draft|Base rate|UOM|Low quantity|Impact|₹|Applying|first main line/i);
     expect(api.applyKnowledgeSubBasketMargins).not.toHaveBeenCalled();
+    expect(api.getKnowledgeSubBasketMargins).toHaveBeenCalledWith("gypsum", "ceiling", { modeTier: "signature" });
     expect((await axe.run(panel, { rules: { "color-contrast": { enabled: false } } })).violations).toEqual([]);
+  });
+
+  it("isolates tier queries and never displays Signature margins while an empty tier loads", async () => {
+    let resolvePremium!: (value: KnowledgeSubBasketMarginSummary) => void;
+    const premium = new Promise<KnowledgeSubBasketMarginSummary>(resolve => { resolvePremium = resolve; });
+    const unconfigured = { ranges: [], mismatchCount: null, mismatches: [], canApply: false, unavailableReason: "Not configured" };
+    const empty: KnowledgeSubBasketMarginSummary = { ...fixture(), sourceConfiguration: null,
+      modes: { pmc: unconfigured, sub_vendor: unconfigured, in_house: unconfigured } };
+    vi.mocked(api.getKnowledgeSubBasketMargins).mockImplementation((_basketId, _subBasketId, options) => options?.modeTier === "premium" ? premium
+      : Promise.resolve(options?.modeTier === "functional" ? empty : fixture()));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+    const panel = (modeTier: "signature" | "premium" | "functional") => <QueryClientProvider client={client}><KnowledgeModeDefaults item={item} modeTier={modeTier} /></QueryClientProvider>;
+    const view = render(panel("signature"));
+    expect(await screen.findByText("12.5% - 18%")).toBeVisible();
+    view.rerender(panel("premium"));
+    expect(screen.queryByText("12.5% - 18%")).not.toBeInTheDocument();
+    expect(screen.getAllByText("Loading…")).toHaveLength(3);
+    await waitFor(() => expect(api.getKnowledgeSubBasketMargins).toHaveBeenCalledWith("gypsum", "ceiling", { modeTier: "premium" }));
+    resolvePremium(empty);
+    expect(await screen.findAllByText("Not configured")).toHaveLength(3);
+    view.rerender(panel("functional"));
+    expect(await screen.findAllByText("Not configured")).toHaveLength(3);
+    expect(api.getKnowledgeSubBasketMargins).toHaveBeenCalledWith("gypsum", "ceiling", { modeTier: "functional" });
+    view.rerender(panel("signature"));
+    expect(await screen.findByText("12.5% - 18%")).toBeVisible();
+    expect(api.getKnowledgeSubBasketMargins).toHaveBeenCalledTimes(3);
+    expect(api.applyKnowledgeSubBasketMargins).not.toHaveBeenCalled();
   });
 
   it("keeps unequal Labour and Material ranges explicit", async () => {

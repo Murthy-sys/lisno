@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { presentClientEstimate } from "../src/services/estimate-client-presentation.js";
+import { comparePublishedEstimateSnapshots, presentClientEstimate } from "../src/services/estimate-client-presentation.js";
 import { newEstimationLifecycle } from "../src/domain/estimation-lifecycle.js";
 
 const actor = { id: "client-a", name: "Client A", email: "a@example.test", role: "client" } as const;
@@ -25,6 +25,24 @@ const visibilitySnapshot = (lineItems: ReturnType<typeof visibilityLine>[]) => {
 };
 
 describe("published Client estimate presentation", () => {
+  it("retains the frozen selected tier and detects tier-only changes without repricing history", () => {
+    const full = visibilitySnapshot([{ ...visibilityLine("tier-line"), modeTier: "premium" } as ReturnType<typeof visibilityLine>]);
+    const frozen = structuredClone(full);
+    const result = presentClientEstimate(actor, { ...estimate, lineItems: [{ ...visibilityLine("tier-line"), modeTier: "functional" }] }, lead, { ...round, estimateSnapshot: full })!;
+    expect(result.publishedReview.snapshot.lineItems[0]).toMatchObject({ modeTier: "premium", amountPaise: 10_000 });
+    expect(full).toEqual(frozen);
+    const legacy = visibilitySnapshot([visibilityLine("tier-line")]);
+    expect(comparePublishedEstimateSnapshots(legacy, full)).toMatchObject({ changedLineIds: ["tier-line"], noChanges: false });
+    expect(comparePublishedEstimateSnapshots(legacy, { ...legacy, lineItems: [{ ...legacy.lineItems[0], modeTier: "signature" }] })).toMatchObject({ changedLineIds: [], noChanges: true });
+  });
+
+  it("fails closed for malformed frozen tier values", () => {
+    const full = visibilitySnapshot([{ ...visibilityLine("tier-line"), modeTier: "unsupported" } as ReturnType<typeof visibilityLine>]);
+    const result = presentClientEstimate(actor, estimate, lead, { ...round, estimateSnapshot: full });
+    expect(result?.publishedReview).toBeNull();
+    expect(result?.lineItems).toEqual([]);
+  });
+
   it("hides only frozen No rows from screen payloads while retaining full totals, defaults and stored rows", () => {
     const full = visibilitySnapshot([visibilityLine("visible-default"), visibilityLine("visible-yes", true), visibilityLine("hidden-no", false),
       { ...visibilityLine("hidden-unselected", false), included: false }]);
@@ -216,4 +234,21 @@ describe("published Client estimate presentation", () => {
     expect(presentClientEstimate(actor, estimate, lead, { ...round, estimateSnapshot: { total: 123 } })).toMatchObject({ publishedReview: null, reviewSourceIssue: "missing_snapshot" });
     expect(presentClientEstimate(actor, { ...estimate, status: "draft" }, lead, null)).toBeNull();
   });
+});
+
+
+it("freezes dimensions, rejects forged quantities, and detects geometry-only review changes", () => {
+  const measured = { ...visibilityLine("measured"), uomDecimalScale: 2, dimensionsMandatory: true,
+    dimensions: { length: "2", width: "0.5", height: "9" },
+    dimensionRule: { formula: "length_width", inputUnit: "ft", quantityUnit: "sq_ft", uomId: "uom", decimalScale: 2 } };
+  const full = visibilitySnapshot([measured]);
+  const current = { ...estimate, lineItems: [{ ...measured, dimensions: { length: "1", width: "1", height: "8" } }] };
+  const result = presentClientEstimate(actor, current, lead, { ...round, estimateSnapshot: full });
+  expect(result?.publishedReview?.snapshot.lineItems[0]).toMatchObject({ quantity: 1, dimensions: measured.dimensions, dimensionRule: measured.dimensionRule });
+  expect(comparePublishedEstimateSnapshots(full, { ...full, lineItems: current.lineItems })).toMatchObject({ changedLineIds: ["measured"] });
+  const invalid = { ...full, lineItems: [{ ...measured, quantity: 9 }] };
+  expect(presentClientEstimate(actor, estimate, lead, { ...round, estimateSnapshot: invalid })?.publishedReview).toBeNull();
+  expect(presentClientEstimate(actor, estimate, lead, { ...round, estimateSnapshot: { ...full, lineItems: [{ ...measured, included: false, dimensions: undefined, quantity: 0 }] } })?.publishedReview).not.toBeNull();
+  const inactive = { ...full, lineItems: [{ ...measured, dimensionsMandatory: false, quantity: 9 }] };
+  expect(presentClientEstimate(actor, estimate, lead, { ...round, estimateSnapshot: inactive })?.publishedReview).not.toBeNull();
 });

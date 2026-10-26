@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { KnowledgeModeTier } from "./ai-estimator-knowledge-mode-tiers.js";
 import type { KnowledgeConfigurationContext, KnowledgeModeCalculationSettings } from "../contracts/ai-estimator-knowledge.js";
 import { canonicalizeScaledDecimal, calculateProcurementQuantity, multiplyMoneyByQuantity, parseScaledDecimal } from "./ai-estimator-knowledge-calculation.js";
 import { buildKnowledgeConfigurationContext } from "./ai-estimator-knowledge-configuration-context.js";
@@ -75,6 +76,7 @@ export const purchaseOrderModePreviewSchema = z.object({
 export type PurchaseOrderModeDraftPreviewInput = z.infer<typeof purchaseOrderModePreviewSchema>;
 
 export interface PurchaseOrderModeSourceLine {
+  modeTier?: KnowledgeModeTier;
   key: string;
   included: boolean;
   selectedInHouseComponentIds?: string[];

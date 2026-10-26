@@ -392,6 +392,9 @@ describe("estimate client review scoped queries", () => {
     const original = detailRow();
     const direct = {
       id: "temporary-line", source: "configuration", itemType: "temporary",
+      modeTier: "functional",
+      dimensionsMandatory: false, dimensions: { length: "1.25", width: "2", height: "9" },
+      dimensionRule: { formula: "length_width", inputUnit: "ft", quantityUnit: "sq_ft", uomId: "historical-sqft", decimalScale: 2 },
       catalogueId: "temporary-a", roomId: "room-a", roomName: "Living Room",
       specification: null, unit: "nos", rate: 70.03, ratePaise: 7_003,
       quantity: 1, included: true, amount: 70.03, amountPaise: 7_003,
@@ -412,6 +415,9 @@ describe("estimate client review scoped queries", () => {
       .detail(actors.admin, "round-1");
     expect(detail.estimateSnapshot.lineItems[0]).toMatchObject({
       id: "temporary-line", itemType: "temporary", subBasketId: null,
+      modeTier: "functional",
+      dimensionsMandatory: false, dimensions: { length: "1.25", width: "2", height: "9" },
+      dimensionRule: { formula: "length_width", inputUnit: "ft", quantityUnit: "sq_ft", uomId: "historical-sqft", decimalScale: 2 },
       subBasketName: null, mainLineId: "temporary-a", amountPaise: 7_003,
       sourceItemStatus: "inactive", sourceRevisionStatus: "draft",
       sourceItemVersion: 7, sourceRevisionVersion: 3

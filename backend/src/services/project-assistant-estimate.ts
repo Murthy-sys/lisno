@@ -1,3 +1,4 @@
+import { estimateDimensionSnapshotValid } from "../domain/estimate-dimension-snapshot.js";
 import type { AssistantProjectEstimate, AssistantProjectPricing } from "../contracts/project-chat-assistant.js";
 import { currentEstimationApproval, isCollaborativeEstimate } from "../domain/estimation-lifecycle.js";
 import { ApiError } from "../middleware/errors.js";
@@ -38,7 +39,7 @@ export function projectPricingFromPublication(input: { estimateId: string; proje
     const line = included[index] as Row;
     const ratePaise = amount(line.ratePaise, line.rate), amountPaise = amount(line.amountPaise, line.amount);
     const label = line.source === "configuration" ? line.mainLineName : line.specification;
-    if (line.clientVisible !== undefined && typeof line.clientVisible !== "boolean" ||
+    if (!estimateDimensionSnapshotValid(line) || line.clientVisible !== undefined && typeof line.clientVisible !== "boolean" ||
         ratePaise === null || amountPaise === null || typeof label !== "string" || !label.trim() || label.length > 300 ||
         typeof line.quantity !== "number" || !Number.isFinite(line.quantity) || line.quantity < 0 ||
         typeof line.unit !== "string" || !line.unit.trim() || line.unit.length > 80 || /[\u0000-\u001f\u007f]/u.test(label + line.unit)) return null;

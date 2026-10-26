@@ -3,6 +3,7 @@ import type { ClientSession } from "mongoose";
 import type { KnowledgeSubBasketMarginMode, KnowledgeSubBasketMarginState, KnowledgeSubBasketMarginSummary, KnowledgeSubBasketSourceConfiguration } from "../contracts/ai-estimator-knowledge-sub-basket-margins.js";
 import { createKnowledgeContentDigest } from "../domain/ai-estimator-knowledge.js";
 import { selectCurrentMainLineRevision } from "../domain/ai-estimator-knowledge-current-revision.js";
+import { knowledgeModeTierPayload, projectKnowledgeModeTierSection, type KnowledgeModeTier } from "../domain/ai-estimator-knowledge-mode-tiers.js";
 import { SUB_BASKET_MARGIN_MODES, comparableInHouseMarginRanges, configuredInHouseMarginRanges, subBasketMarginRanges, subBasketDefaultModeCalculations, subBasketMarginPatchUnavailableReason, validSubBasketMarginRanges, withSubBasketMarginDefaults } from "../domain/ai-estimator-knowledge-sub-basket-margins.js";
 import { validateKnowledgeSectionPayload } from "../domain/ai-estimator-knowledge-validation.js";
 import { ApiError } from "../middleware/errors.js";
@@ -26,7 +27,7 @@ function unavailable(line: SubBasketMarginLine): string | null {
 }
 
 /** Load a consistent full Sub-Basket, including lines outside the visible index page. */
-export async function readSubBasketMarginSnapshot(basketId: string, subBasketId: string, session: ClientSession): Promise<{
+export async function readSubBasketMarginSnapshot(basketId: string, subBasketId: string, session: ClientSession, modeTier: KnowledgeModeTier = "signature"): Promise<{
   summary: KnowledgeSubBasketMarginSummary; lines: SubBasketMarginLine[]; sourceUom: Row | null;
 }> {
   const basket = await AiEstimatorKnowledgeBasketModel.findOne({ _id: basketId, status: { $ne: "archived" } }).session(session).lean().exec() as Row | null;
@@ -47,6 +48,9 @@ export async function readSubBasketMarginSnapshot(basketId: string, subBasketId:
       section: section && section.mainLineId === line._id ? section : null };
   });
   const source = lines[0];
+  const tierSection = (section: Row | null): Row | null => section ? projectKnowledgeModeTierSection(section, modeTier) : null;
+  const tierPayload = (section: Row | null): Row => knowledgeModeTierPayload(marginPayload(section), modeTier);
+  const sourceSection = tierSection(source?.section ?? null);
   const sourceOverview = source?.revision ? await AiEstimatorKnowledgeSectionModel.findOne({
     mainLineId: source.line._id, revisionId: source.revision._id, sectionKey: "overview"
   }).session(session).lean().exec() as Row | null : null;
@@ -57,28 +61,28 @@ export async function readSubBasketMarginSnapshot(basketId: string, subBasketId:
     && typeof sourceUom.decimalScale === "number" && Number.isSafeInteger(sourceUom.decimalScale) && sourceUom.decimalScale >= 0 && sourceUom.decimalScale <= 3
     ? { id: String(sourceUom._id), code: sourceUom.code, name: sourceUom.name, decimalScale: sourceUom.decimalScale } : null;
   const sourceConfiguration: KnowledgeSubBasketSourceConfiguration | null = source?.revision && source.section
-    && source.section.applicability === "configured" ? {
+    && sourceSection?.applicability === "configured" ? {
       revisionId: String(source.revision._id), revisionStatus: source.revision.status as "draft" | "active",
       itemVersion: Number(source.line.version), revisionVersion: Number(source.revision.version), sectionVersion: Number(source.section.version),
-      uom, modes: subBasketDefaultModeCalculations(marginPayload(source.section))
+      uom, modes: subBasketDefaultModeCalculations(tierPayload(source.section))
     } : null;
   const owner = { basketId, subBasketId };
   const modes = Object.fromEntries(SUB_BASKET_MARGIN_MODES.map((mode): [KnowledgeSubBasketMarginMode, KnowledgeSubBasketMarginState] => {
-    const sourcePayload = marginPayload(source?.section ?? null);
+    const sourcePayload = tierPayload(source?.section ?? null);
     const savedRanges = subBasketMarginRanges(sourcePayload, mode);
     const ranges = mode === "in_house" && Object.hasOwn(sourcePayload, "inHouseComponents")
       ? configuredInHouseMarginRanges(savedRanges, owner) : savedRanges;
     const sourceReason = !source ? "No main lines are available in this Sub-Basket."
-      : unavailable(source) ?? (!validSubBasketMarginRanges(ranges, mode) ? "Save valid margins on the first main line before applying defaults." : null);
+      : unavailable({ ...source, section: sourceSection }) ?? (!validSubBasketMarginRanges(ranges, mode) ? "Save valid margins on the first main line before applying defaults." : null);
     if (sourceReason) return [mode, { ranges, mismatchCount: null, mismatches: [], canApply: false, unavailableReason: sourceReason }];
     const mismatches = lines.slice(1).flatMap((entry) => {
-      const payload = marginPayload(entry.section);
+      const payload = tierPayload(entry.section);
       const savedTargetRanges = subBasketMarginRanges(payload, mode);
       const comparison = mode === "in_house" ? comparableInHouseMarginRanges(ranges, savedTargetRanges, owner)
         : { source: ranges, target: savedTargetRanges };
       const targetRanges = comparison.target;
       // Missing or incomplete saved margins are not differences from the default.
-      if (unavailable(entry) || !validSubBasketMarginRanges(targetRanges, mode)) return [];
+      if (unavailable({ ...entry, section: tierSection(entry.section) }) || !validSubBasketMarginRanges(targetRanges, mode)) return [];
       if (targetRanges.every((range, index) => range.minimumBps === comparison.source[index]!.minimumBps && range.maximumBps === comparison.source[index]!.maximumBps)) return [];
       const patched = withSubBasketMarginDefaults(payload, mode, ranges, owner);
       const blockedReason = !patched ? subBasketMarginPatchUnavailableReason(payload, ranges, owner)
@@ -106,7 +110,7 @@ export async function readSubBasketMarginSnapshot(basketId: string, subBasketId:
   return { lines, sourceUom, summary: {
     basketId, subBasketId, source: source ? { mainLineId: String(source.line._id), mainLineName: String(source.line.name) } : null,
     sourceConfiguration, totalMainLines: lines.length,
-    versionToken: createKnowledgeContentDigest({ basketId, basketVersion: basket.version, basketStatus: basket.status,
+    versionToken: createKnowledgeContentDigest({ modeTier, basketId, basketVersion: basket.version, basketStatus: basket.status,
       subBasketId, subBasketVersion: subBasket.version,
       sourceOverview: sourceOverview ? { id: sourceOverview._id, version: sourceOverview.version, applicability: sourceOverview.applicability, payload: sourceOverview.payload } : null,
       sourceUom: sourceUom ? { id: sourceUom._id, version: sourceUom.version, status: sourceUom.status,

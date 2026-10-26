@@ -6,6 +6,20 @@ import {
 } from "./knowledgeSectionPayload";
 
 describe("knowledge section update payloads", () => {
+  it("rebases only the edited dimensions flag and preserves newer unit and visibility settings", () => {
+    const latest = { dimensionsMandatory: true, uomId: "new-area-unit", clientVisible: false, applicableTiers: ["premium"] };
+    expect(knowledgeOverviewPayloadForUpdate(latest, { dimensionsMandatory: false, uomId: "stale" }, new Set(["dimensionsMandatory"])))
+      .toEqual({ ...latest, dimensionsMandatory: false });
+    expect(knowledgeOverviewPayloadForUpdate(latest, { uomId: "changed" }, new Set(["uomId"])))
+      .toEqual({ ...latest, uomId: "changed" });
+  });
+  it("saves only edited tier selection, including none, while retaining server Overview data", () => {
+    const server = { applicableTiers: ["signature", "premium"], clientVisible: false, uomId: "latest" };
+    expect(knowledgeOverviewPayloadForUpdate(server, { applicableTiers: [], uomId: "stale" }, new Set(["applicableTiers"])))
+      .toEqual({ ...server, applicableTiers: [] });
+    expect(knowledgeOverviewPayloadForUpdate(server, { uomId: "local" }, new Set(["uomId"])))
+      .toEqual({ ...server, uomId: "local" });
+  });
   it("rebases explicit client visibility while preserving newer unrelated Overview fields", () => {
     const latest = { clientVisible: true, uomId: "newer-unit", surfaceIds: ["newer-surface"], hidden: { keep: true } };
     const local = { clientVisible: false, uomId: "stale-unit", surfaceIds: [] };

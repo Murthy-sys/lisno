@@ -650,15 +650,26 @@ export function enterpriseDataFor(path: string, params: URLSearchParams, scenari
   if (path === `${prefix}/basket-requests`) return page([]);
   const temporaryKnowledge = new URLSearchParams(scenario.route.split("?")[1]).get("qaTemporary") === "ready";
   const renameKnowledge = new URLSearchParams(scenario.route.split("?")[1]).get("qaRename") === "ready";
+  const overviewState = new URLSearchParams(scenario.route.split("?")[1]).get("qaOverview");
+  const overviewSurface = { ...knowledge.wallSurface, id: "surface-ceiling", code: "CEILING", name: "Ceiling", description: "Ceiling" };
+  const overviewSurfaces = [overviewSurface,
+    { ...overviewSurface, id: "surface-long", name: "Ceiling finish with a deliberately long presentation label", description: "A long description that must wrap without obscuring either row action.", status: "inactive" as const },
+    { ...overviewSurface, id: "surface-archived", name: "Archived surface", status: "archived" as const }
+  ];
   const baseKnowledgeItem = temporaryKnowledge ? { ...knowledge.item, itemType: "temporary" as const, completionRequired: true } : knowledge.item;
   const knowledgeItem = renameKnowledge ? { ...baseKnowledgeItem, subBasketId: "sub-joinery", subBasketName: "Joinery" } : baseKnowledgeItem;
   if (path === `${prefix}/items`) return { ...page([knowledgeItem]), facets: {} };
-  if (path === `${prefix}/main-lines/line-1`) return knowledgeItem;
+  if (path === `${prefix}/main-lines/line-1`) return overviewState === "readonly" ? {
+    ...knowledgeItem, status: "active", draftRevisionId: null, draftRevision: null,
+    activeRevisionId: "revision-1", activeRevision: { ...knowledge.revision, status: "active" }
+  } : knowledgeItem;
   if (path === `${prefix}/baskets`) return page([{ id: "basket-1", name: "Carpentry", description: "Furniture and interior timber work", displayOrder: 1, status: "active", version: 1, itemCount: 1, createdAt: knowledge.item.createdAt, updatedAt: knowledge.item.updatedAt }]);
   if (path === `${prefix}/main-lines`) return page([{ id: "line-1", name: "Wall panelling", basketId: "basket-1", status: "active", version: 1, displayOrder: 1 }]);
-  if (path === `${prefix}/uoms`) return page([knowledge.squareFoot, knowledge.squareMetre]);
+  if (path === `${prefix}/uoms`) return page(overviewState
+    ? [{ ...knowledge.squareFoot, name: "sq-ft" }, knowledge.squareMetre, { ...knowledge.squareFoot, id: "uom-running-foot", code: "RFT", name: "Running foot" }]
+    : [knowledge.squareFoot, knowledge.squareMetre]);
   if (path === `${prefix}/priorities`) return page(knowledge.canonicalPriorities);
-  if (path === `${prefix}/surfaces`) return page([knowledge.wallSurface]);
+  if (path === `${prefix}/surfaces`) return page(overviewState ? overviewSurfaces : [knowledge.wallSurface]);
   if (path === `${prefix}/modes`) return page([{ ...knowledge.squareFoot, id: "mode-in-house", masterType: "modes", code: "IN_HOUSE", name: "In-house", modeKind: "in_house" }]);
   if (path === `${prefix}/taxes`) return page([{ ...knowledge.squareFoot, id: "gst-18", masterType: "taxes", code: "GST_18", name: "GST 18%", rateBps: 1800 }]);
   if (path === `${prefix}/baskets/basket-1/main-lines`) return page([{ ...knowledgeItem, name: knowledgeItem.mainLineName }]);
@@ -667,6 +678,13 @@ export function enterpriseDataFor(path: string, params: URLSearchParams, scenari
   if (path === `${prefix}/quality-control-options`) return { items: [] };
   if (/^\/admin\/ai-estimator-knowledge\/main-lines\/line-1\/revisions\/revision-1\/sections\//.test(path)) {
     const sectionKey = path.split("/").at(-1) as KnowledgeSectionKey;
+    if (overviewState && sectionKey === "overview") return knowledge.section("overview", {
+      uomId: overviewState === "unsupported" ? "uom-running-foot" : knowledge.squareFoot.id,
+      surfaceIds: overviewState === "empty" ? [] : overviewState === "retained"
+        ? [overviewSurface.id, "surface-long", "surface-archived", "surface-unavailable"] : [overviewSurface.id],
+      clientVisible: true, dimensionsMandatory: overviewState === "unsupported",
+      applicableTiers: overviewState === "no-tiers" ? [] : ["signature"]
+    });
     if (temporaryKnowledge && sectionKey === "recommendations") return knowledge.section("recommendations", {
       recommendations: [{ id: "synthetic-recommendation", name: "Moisture barrier", priorityId: "priority-high", reason: "Protect the timber during installation", dependency: false, active: true }],
       exclusions: [{ id: "synthetic-exclusion", name: "Existing floor finish", reason: "Retain the installed finish", active: true }]

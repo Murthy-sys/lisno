@@ -1221,6 +1221,50 @@ describe("transactional procurement mode decisions", () => {
 });
 
 describe("approved In-house component scope", { timeout: 30000 }, () => {
+  it("retains the approved tier and resolves its current component costs without borrowing Signature or legacy budgets", async () => {
+    const { AiEstimatorKnowledgeBasketModel } = await import("../src/models/AiEstimatorKnowledgeBasket.js");
+    const { AiEstimatorKnowledgeSubBasketModel } = await import("../src/models/AiEstimatorKnowledgeSubBasket.js");
+    await AiEstimatorKnowledgeBasketModel.collection.insertOne({ _id: "tier-component-basket", name: "Component basket", status: "active", version: 1 } as never);
+    await AiEstimatorKnowledgeSubBasketModel.collection.insertOne({ _id: "tier-component-sub", basketId: "tier-component-basket", name: "Finish" } as never);
+    const component = (labor: number, material: number) => ({ id: "same-id", basketId: "tier-component-basket", subBasketId: "tier-component-sub",
+      inclusions: [{ id: "included", name: "Tier scope", selected: true }], exclusions: [],
+      labor: { ...settings, baseRatePaise: labor }, material: { ...settings, baseRatePaise: material } });
+    await saveCurrentDraft({ ...advanced, inHouseComponents: [component(9900, 8800)], tierConfigurations: {
+      premium: { applicability: "configured", payload: { ...advanced, inHouseComponents: [component(4500, 9500)] } }
+    } });
+    await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: "revision-b-overview" }, { $set: { "payload.applicableTiers": ["signature", "premium"] } });
+    await AiEstimatorKnowledgePriceVersionModel.collection.updateOne({ _id: "price-version" }, { $set: { revisionId: "revision-b" } });
+    await EstimateClientReviewRoundModel.collection.updateOne({ _id: "mode-round" }, { $set: {
+      "estimateSnapshot.lineItems.0.modeTier": "premium", "estimateSnapshot.lineItems.0.classification": "special",
+      "estimateSnapshot.lineItems.0.pricingMode": "in_house", "estimateSnapshot.lineItems.0.rateSource": "manual",
+      "estimateSnapshot.lineItems.0.selectedInHouseComponentIds": ["same-id"]
+    } });
+    const { procurementItemSourceSnapshot } = await import("../src/services/procurement.service.js");
+    const approved = await mongoose.connection.transaction(session => procurementItemSourceSnapshot("mode-project", session));
+    expect(approved.allLineItems[0]).toMatchObject({ modeTier: "premium", selectedInHouseComponentIds: ["same-id"] });
+    const proposals = new Map([["approved-line", { mode: "in_house" as const, quantity: "2", discountBps: 0, markupBasis: "starting" as const, exceptionReason: null }]]);
+    const children = [{ id: "child-a", sourceLineItemKey: "approved-line", vendorId: "vendor-a", uomId: "mode-uom" }];
+    const resolved = await mongoose.connection.transaction(session => resolvePurchaseOrderModes("mode-project", approved, session, { at, proposals, children }));
+    expect(resolved.get("approved-line")).toMatchObject({ state: "ready", preview: { baseCostPaise: 28_000,
+      settings: { scopes: [{ componentId: "same-id", baseRatePaise: 4500 }, { componentId: "same-id", baseRatePaise: 9500 }] } } });
+    expect(resolved.get("approved-line")?.priceReferences["child-a"]?.unitPricePaise).toBeNull();
+    expect(resolved.get("approved-line")?.priceReferences["child-a"]?.issues.length).toBeGreaterThan(0);
+    await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: "revision-b-advanced" }, { $set: { "payload.tierConfigurations.premium.payload.inHouseComponents": [] } });
+    const missing = await mongoose.connection.transaction(session => resolvePurchaseOrderModes("mode-project", approved, session, { at, proposals }));
+    expect(missing.get("approved-line")?.preview).toBeNull();
+    expect(missing.get("approved-line")?.availability.find(mode => mode.key === "in_house")?.available).toBe(false);
+  });
+
+  it.each(["missing", "deselected"])("does not fall back to configured Signature when the approved tier is %s", async condition => {
+    await saveCurrentDraft({ ...advanced, ...(condition === "deselected" ? { tierConfigurations: {
+      functional: { applicability: "configured", payload: advanced }
+    } } : {}) });
+    await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: "revision-b-overview" }, { $set: { "payload.applicableTiers": condition === "missing" ? ["signature", "functional"] : ["signature"] } });
+    const selected = { ...source, allLineItems: source.allLineItems.map(line => ({ ...line, modeTier: "functional" as const })) };
+    const resolved = await mongoose.connection.transaction(session => resolvePurchaseOrderModes("mode-project", selected, session, { at }));
+    expect(resolved.get("approved-line")).toMatchObject({ state: "unavailable", preview: null, options: [], issues: [{ code: "CONFIGURATION_TIER_UNAVAILABLE" }] });
+  });
+
   it("carries approved IDs into procurement, excludes newly added components, and blocks removed selections", async () => {
     const { AiEstimatorKnowledgeBasketModel } = await import("../src/models/AiEstimatorKnowledgeBasket.js");
     const { AiEstimatorKnowledgeSubBasketModel } = await import("../src/models/AiEstimatorKnowledgeSubBasket.js");

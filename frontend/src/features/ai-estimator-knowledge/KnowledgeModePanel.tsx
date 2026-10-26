@@ -165,7 +165,8 @@ export const KnowledgeModePanel = forwardRef<
 ) {
   const queryClient = useQueryClient();
   const mainLineId = item.mainLineId;
-  const sourceKey = pendingChangesSourceKey ?? `${mainLineId}:${revisionId}:mode`;
+  const sourceKey = pendingChangesSourceKey ?? `${dataSource.scopeKey}:${mainLineId}:${revisionId}:mode`;
+  const emptyCalculationDefaults = dataSource.modeTier !== undefined && dataSource.modeTier !== "signature";
   const [draftSourceKey, setDraftSourceKey] = useState(sourceKey);
   const currentSource = useRef(sourceKey);
   currentSource.current = sourceKey;
@@ -230,8 +231,12 @@ export const KnowledgeModePanel = forwardRef<
   }
 
   useEffect(() => {
+    aggregateBaselineRef.current = { revisionId, version: item.version };
     setDraftSourceKey(sourceKey);
     setDrafts(createEmptyModeDrafts());
+    setComponentPending({});
+    setComponentsValid(true);
+    setCalculationValidity({ pmc: true, sub_vendor: true, in_house_labor: true, in_house_material: true });
     setPendingDescription(null);
     setPendingCalculations({});
     setDescriptionPending(false);
@@ -271,7 +276,7 @@ export const KnowledgeModePanel = forwardRef<
   const busy = advancedQuery.isFetching || pricingQuery.isFetching || overviewQuery.isFetching;
   const savedUomId = overviewQuery.data?.payload.uomId;
   const savedUom = (masters.uoms ?? []).find((uom) => uom.id === savedUomId) ?? proposedUoms.find(uom => uom.id === savedUomId);
-  const uomScopeKey = `${mainLineId}:${revisionId}`;
+  const uomScopeKey = `${dataSource.scopeKey}:${mainLineId}:${revisionId}`;
   const calculationUom: KnowledgeModeCalculationUom = overviewQuery.isError
     ? { scopeKey: uomScopeKey, label: "Unavailable", message: "Could not load the UOM saved in Overview.", onRetry: () => void overviewQuery.refetch() }
     : !overviewQuery.data || uomCatalogState.status === "loading"
@@ -689,6 +694,7 @@ export const KnowledgeModePanel = forwardRef<
           calculationValidity={calculationValidity}
           inHouseComponentsValid={componentsValid}
           inHouseComponents={<KnowledgeInHouseComponents key={`${sourceKey}:${descriptionResetVersion}`} payload={drafts.advanced.payload} item={item}
+            emptyCalculationDefaults={emptyCalculationDefaults}
             baskets={relationshipBaskets} dataSource={dataSource} uom={calculationUom} readOnly={!editable || saving || locked}
             onRequestDraft={saving || locked ? undefined : onRequestDraft}
             validationAttempt={drafts.advanced.validationAttempt} pendingSaveVersion={pendingCalculationSaveVersion} issues={drafts.advanced.serverIssues}
@@ -729,6 +735,7 @@ export const KnowledgeModePanel = forwardRef<
             onValidationChange={(valid) => setCalculationValid(scope, valid)}
             onPendingInputChange={calculationPublishers[scope]}
             pendingSaveVersion={pendingCalculationSaveVersion}
+            emptyDefaults={emptyCalculationDefaults}
           />}
         />
       )}

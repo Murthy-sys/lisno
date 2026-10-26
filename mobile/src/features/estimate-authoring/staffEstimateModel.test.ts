@@ -86,3 +86,79 @@ describe("native estimate authoring model", () => {
   expect(next.map((line) => line.included)).toEqual([false, false, true]);
  });
 });
+
+
+describe("native selected-tier compatibility", () => {
+ it.each(["premium", "functional"] as const)("preserves %s prices and component IDs without adopting Signature on refresh", modeTier => {
+  for (const pricingMode of ["pmc", "sub_vendor", "in_house"] as const) {
+   const catalogue = componentCatalogueFixture();
+   const source = catalogue.items[0]!.subBaskets[0]!.mainLines[0]!;
+   source.applicableTiers = ["signature", "premium", "functional"];
+   source.inHouseComponents = []; // Signature's components cannot validate another tier.
+   const saved = { ...componentLineFixture, modeTier, pricingMode, ratePaise: 45678, selectedInHouseComponentIds: pricingMode === "in_house" ? ["premium-component"] : undefined };
+   const form = refreshStaffForm(restoreStaffForm(estimateFixture({ lineItems: [saved] }), leadFixture, catalogue), catalogue);
+   expect(form.lines[0]).toMatchObject({ modeTier, pricingMode, rateInput: "456.78", revisionId: saved.revisionId, nativeTierNeedsReview: false });
+   expect(updateConfiguredLinePricing(form.lines[0]!, { rateInput: "234.56", quantity: 99, pricingMode: "sub_vendor" })).toBe(form.lines[0]);
+   expect(staffFormInput(form).lineItems[0]).toMatchObject({ modeTier, pricingMode, ratePaise: 45678, revisionVersion: 5, ...(saved.selectedInHouseComponentIds ? { selectedInHouseComponentIds: saved.selectedInHouseComponentIds } : {}) });
+   expect(validateStaffForm(form)).toBeNull();
+   expect(refreshStaffForm(form, { items: [], ineligibleLineCount: 1 }).lines[0]?.rateInput).toBe("456.78");
+   source.revisionVersion = 6;
+   const changed = refreshStaffForm(form, catalogue);
+   expect(changed.lines[0]).toMatchObject({ rateInput: "456.78", revisionVersion: 5, nativeTierNeedsReview: true });
+   expect(validateStaffForm(changed)).toContain("web estimate workspace");
+  }
+ });
+ it("blocks unavailable tiers and preserves an explicit Signature through transport", () => {
+  const catalogue = componentCatalogueFixture();
+  catalogue.items[0]!.subBaskets[0]!.mainLines[0]!.applicableTiers = ["signature"];
+  const unavailable = restoreStaffForm(estimateFixture({ lineItems: [{ ...componentLineFixture, modeTier: "premium" as const }] }), leadFixture, catalogue);
+  expect(validateStaffForm(unavailable)).toContain("selected configuration tier");
+  const signature = restoreStaffForm(estimateFixture({ lineItems: [{ ...componentLineFixture, modeTier: "signature" as const }] }), leadFixture, catalogue);
+  expect(staffFormInput(signature).lineItems[0]).toMatchObject({ modeTier: "signature", ratePaise: 11111 });
+  catalogue.items[0]!.subBaskets[0]!.mainLines[0]!.applicableTiers = ["premium"];
+  expect(validateStaffForm(refreshStaffForm(signature, catalogue))).toContain("selected configuration tier");
+  const fresh = buildConfiguredLines(catalogue, signature.rooms, new Set(["basket-one"]), [])[0]!;
+  expect(updateConfiguredLinePricing(fresh, { included: true })).toBe(fresh);
+ });
+});
+
+
+describe("native dimension-owned quantity compatibility", () => {
+ const rule = { formula: "length_width" as const, inputUnit: "ft" as const, quantityUnit: "sq_ft" as const, uomId: "uom-one", decimalScale: 2 };
+ const dimensions = { length: "1.25", width: "2", height: "9" };
+ it("retains measurements, exact quantity and source pins and prevents scalar editing", () => {
+  const catalogue = componentCatalogueFixture();
+  Object.assign(catalogue.items[0]!.subBaskets[0]!.mainLines[0]!, { dimensionsMandatory: true, dimensionRule: rule });
+  const saved = { ...componentLineFixture, pricingMode: "sub_vendor" as const, selectedInHouseComponentIds: undefined, dimensionsMandatory: true, dimensions, dimensionRule: rule };
+  const form = refreshStaffForm(restoreStaffForm(estimateFixture({ lineItems: [saved] }), leadFixture, catalogue), catalogue);
+  expect(form.lines[0]).toMatchObject({ quantity: 2.5, rateInput: "111.11", dimensions, dimensionRule: rule, nativeDimensionsNeedReview: false });
+  expect(updateConfiguredLinePricing(form.lines[0]!, { quantity: 99 })).toBe(form.lines[0]);
+  expect(validateStaffForm(form)).toBeNull();
+  expect(staffFormInput(form).lineItems[0]).toMatchObject({ dimensions, quantity: 2.5, revisionId: "revision-current", itemVersion: 3, revisionVersion: 5 });
+  expect(staffFormInput(form).lineItems[0]).not.toHaveProperty("dimensionRule");
+  expect(staffFormInput(form).lineItems[0]).not.toHaveProperty("dimensionsMandatory");
+  expect(staffFormInput(form).lineItems[0]).toMatchObject({ expectedDimensionRule: rule });
+  catalogue.items[0]!.subBaskets[0]!.mainLines[0]!.dimensionRule = { ...rule, decimalScale: 3 };
+  const changed = refreshStaffForm(form, catalogue);
+  expect(changed.lines[0]).toMatchObject({ dimensions, dimensionRule: rule, quantity: 2.5, nativeDimensionsNeedReview: true });
+  expect(validateStaffForm(changed)).toContain("web estimate workspace");
+ });
+ it("routes newly mandatory or invalid saved measurements to web without fabricating inputs", () => {
+  const catalogue = componentCatalogueFixture();
+  Object.assign(catalogue.items[0]!.subBaskets[0]!.mainLines[0]!, { dimensionsMandatory: true, dimensionRule: rule });
+  for (const saved of [componentLineFixture, { ...componentLineFixture, dimensionsMandatory: true, dimensions, dimensionRule: rule, quantity: 99 }]) {
+   const form = restoreStaffForm(estimateFixture({ lineItems: [saved] }), leadFixture, catalogue);
+   expect(validateStaffForm(form)).toContain("web estimate workspace");
+   expect(form.lines[0]?.quantity).toBe(saved.quantity);
+  }
+  const fresh = buildConfiguredLines(catalogue, [{ id: "room-one", label: "Kitchen" }], new Set(["basket-one"]), [])[0]!;
+  expect(updateConfiguredLinePricing(fresh, { included: true })).toBe(fresh);
+ });
+ it("retains inactive measurements and original units without owning manual quantity", () => {
+  const saved = { ...componentLineFixture, pricingMode: "sub_vendor" as const, selectedInHouseComponentIds: undefined, dimensionsMandatory: false, dimensions, dimensionRule: rule, quantity: 20 };
+  const form = restoreStaffForm(estimateFixture({ lineItems: [saved] }), leadFixture, catalogueFixture);
+  expect(form.lines[0]).toMatchObject({ dimensions, dimensionRule: rule, quantity: 20 });
+  expect(updateConfiguredLinePricing(form.lines[0]!, { quantity: 25 }).quantity).toBe(25);
+  expect(staffFormInput(form).lineItems[0]).toMatchObject({ dimensions, quantity: 20 });
+ });
+});

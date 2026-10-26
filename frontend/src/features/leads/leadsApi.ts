@@ -1,3 +1,5 @@
+import type { EstimateDimensions, EstimateDimensionRule } from "../../../../shared/estimation/estimateDimensions";
+import type { KnowledgeModeTier } from "../../../../shared/knowledge/knowledgeModeTiers";
 import { apiClient, type PaginatedData } from "../../api/client";
 import type {
   DesignPlanStatus,
@@ -43,6 +45,7 @@ export interface ConfiguredEstimateLineInput {
   itemType?: "main_line" | "temporary";
   classification?: EstimateClassification;
   pricingMode?: EstimatePricingMode;
+  modeTier?: KnowledgeModeTier;
   selectedInHouseComponentIds?: string[];
   rateSource?: EstimateRateSource;
   id?: string;
@@ -57,6 +60,8 @@ export interface ConfiguredEstimateLineInput {
   itemVersion?: number;
   revisionVersion?: number;
   uomId: string;
+  dimensions?: EstimateDimensions;
+  expectedDimensionRule?: EstimateDimensionRule;
   quantity: number;
   ratePaise: number | null;
   included: boolean;
@@ -65,6 +70,10 @@ export interface ConfiguredEstimateLineInput {
 export type EstimateLineInput = LegacyEstimateLineInput | ConfiguredEstimateLineInput;
 
 export interface ConfiguredEstimateLine extends Omit<ConfiguredEstimateLineInput, "itemType"> {
+  dimensionsMandatory?: boolean;
+  dimensionRule?: EstimateDimensionRule | null;
+  dimensionsNeedReview?: boolean;
+  configurationDimensionsChanged?: boolean;
   estimateNotes?: string[];
   clientVisible?: boolean;
   itemType?: "main_line" | "temporary";

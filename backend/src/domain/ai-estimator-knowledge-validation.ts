@@ -1,3 +1,4 @@
+import { ADDITIONAL_KNOWLEDGE_MODE_TIERS, isKnowledgeModeSection, isKnowledgeModeTier, knowledgeModeTierPayload } from "./ai-estimator-knowledge-mode-tiers.js";
 import { validateDesignRules } from "./main-line-design-rules.js";
 import type {
   KnowledgeQualityPerformer,
@@ -392,14 +393,14 @@ export function validateQualityParameter(
 
 const ALLOWED_SECTION_KEYS: Record<KnowledgeSectionKey, ReadonlySet<string>> = {
   design: new Set(["itemNature", "answers", "details", "discussedVendorId", "poApprovalChecklist"]),
-  overview: new Set(["description", "uomId", "priorityId", "surfaceIds", "modeIds", "sectionApplicability", "clientVisible"]),
-  pricing: new Set(["specifications", "brands", "technicalDescription", "qualityLevel", "internalVendorNotes", "priceEntries"]),
+  overview: new Set(["description", "uomId", "priorityId", "surfaceIds", "modeIds", "sectionApplicability", "clientVisible", "applicableTiers", "dimensionsMandatory"]),
+  pricing: new Set(["tierConfigurations", "specifications", "brands", "technicalDescription", "qualityLevel", "internalVendorNotes", "priceEntries"]),
   "quantity-margin": new Set(["quantitySlabs", "slabRates", "gapBehavior", "startMarginBps", "bottomMarginBps", "pmcMarkupBps", "wastageBps", "previewInputs"]),
   scope: new Set(["modeIds", "surfaceIds", "exclusions"]),
   recommendations: new Set(["recommendations", "exclusions", "budgetAlterations"]),
   quality: new Set(["parameters"]),
   execution: new Set(["steps", "productivity"]),
-  advanced: new Set(["dependencies", "modeOverrides", "revisionLineage", "modeConfigurations", "modeDescription", "modeCalculation", "modeCalculations", "inHouseComponents", "pmcMarginBps", "pmcMinimumMarginBps", "subVendorMarginBps", "subVendorMinimumMarginBps"])
+  advanced: new Set(["tierConfigurations", "dependencies", "modeOverrides", "revisionLineage", "modeConfigurations", "modeDescription", "modeCalculation", "modeCalculations", "inHouseComponents", "pmcMarginBps", "pmcMinimumMarginBps", "subVendorMarginBps", "subVendorMinimumMarginBps"])
 };
 
 function inspectBoundedValue(
@@ -474,7 +475,32 @@ export function validateKnowledgeSectionPayload(
       }
     });
   }
-  inspectBoundedValue(payload, "payload", 0, issues, finiteDecimalPaths);
+  // Each namespace has the same depth limit; the combined document retains the byte bound.
+  inspectBoundedValue(isKnowledgeModeSection(sectionKey) ? knowledgeModeTierPayload(record) : payload, "payload", 0, issues, finiteDecimalPaths);
+  if (isKnowledgeModeSection(sectionKey) && Object.hasOwn(record, "tierConfigurations")) {
+    const tiers = record.tierConfigurations;
+    if (!tiers || typeof tiers !== "object" || Array.isArray(tiers)) {
+      issues.push({ path: "payload.tierConfigurations", code: "INVALID_PAYLOAD", message: "Tier configurations must be an object." });
+    } else for (const [tier, value] of Object.entries(tiers as Record<string, unknown>)) {
+      const path = `payload.tierConfigurations.${tier}`;
+      if (!ADDITIONAL_KNOWLEDGE_MODE_TIERS.some(known => known === tier)) {
+        issues.push({ path, code: "UNKNOWN_FIELD", message: "Only Premium and Functional have separate stored configurations." });
+        continue;
+      }
+      if (!value || typeof value !== "object" || Array.isArray(value)) {
+        issues.push({ path, code: "INVALID_PAYLOAD", message: "A tier requires applicability and payload." }); continue;
+      }
+      const branch = value as Record<string, unknown>;
+      for (const key of Object.keys(branch)) if (key !== "applicability" && key !== "payload") issues.push({ path: `${path}.${key}`, code: "UNKNOWN_FIELD", message: "Unknown tier configuration field." });
+      if (!AI_ESTIMATOR_KNOWLEDGE_SECTION_APPLICABILITY.includes(branch.applicability as any)) issues.push({ path: `${path}.applicability`, code: "INVALID_APPLICABILITY", message: "Tier applicability is invalid." });
+      const nested = branch.payload;
+      if (nested && typeof nested === "object" && Object.hasOwn(nested, "tierConfigurations")) {
+        issues.push({ path: `${path}.payload.tierConfigurations`, code: "UNKNOWN_FIELD", message: "Tier configurations cannot be nested." }); continue;
+      }
+      issues.push(...validateKnowledgeSectionPayload(sectionKey, nested).map(issue => ({ ...issue, path: `${path}.${issue.path}` })));
+      if (sectionKey === "pricing" && nested && typeof nested === "object" && Array.isArray((nested as any).priceEntries) && (nested as any).priceEntries.length) issues.push({ path: `${path}.payload.priceEntries`, code: "SIGNATURE_ONLY", message: "Legacy budget entries are available only in Signature." });
+    }
+  }
 
   if (sectionKey === "pricing") {
     issues.push(...validatePricingPayload(record));
@@ -875,6 +901,12 @@ function validateOverviewPayload(
   record: Record<string, unknown>
 ): KnowledgeValidationIssue[] {
   const issues: KnowledgeValidationIssue[] = [];
+  if ("applicableTiers" in record) {
+    if (!Array.isArray(record.applicableTiers) || record.applicableTiers.length > 3 || record.applicableTiers.some(tier => !isKnowledgeModeTier(tier)) || new Set(record.applicableTiers).size !== record.applicableTiers.length) {
+      issues.push({ path: "payload.applicableTiers", code: "INVALID_MODE_TIERS", message: "Select unique Signature, Premium or Functional tiers." });
+    }
+  }
+  if ("dimensionsMandatory" in record) validateBoolean(record.dimensionsMandatory, "payload.dimensionsMandatory", issues);
   if ("clientVisible" in record) {
     validateBoolean(record.clientVisible, "payload.clientVisible", issues);
   }

@@ -1,3 +1,4 @@
+import { canonicalEstimateDimensions, readEstimateDimensionRule, type EstimateDimensions, type EstimateDimensionRule } from "../../../../shared/estimation/estimateDimensions";
 import { z } from "zod";
 import { ApiProtocolError } from "../../core/http/apiClient";
 import { privateQueryKey } from "../../core/query/queryClient";
@@ -20,6 +21,12 @@ const selectedComponentIds = z.array(componentId).max(50).refine(ids => new Set(
 const status = z.enum(["draft", "pending_manager_assignment", "pending_designer_approval", "designer_changes_requested", "ready_for_client", "sent_to_client", "client_changes_requested", "client_approved"]);
 const reviewSchema = z.object({ id, version: z.number().int().positive(), status: z.enum(["pending", "approved", "changes_requested", "superseded"]), deliveryStatus: z.enum(["queued", "sending", "sent", "failed", "disabled"]), deliveryAttemptCount: z.number().int().nonnegative(), deliveredAt: z.string().nullable() }).passthrough();
 const configuredMetadata = {
+  dimensionsMandatory: z.boolean().optional(),
+  dimensions: z.custom<EstimateDimensions>(value => canonicalEstimateDimensions(value) !== null).optional(),
+  dimensionRule: z.custom<EstimateDimensionRule>(value => readEstimateDimensionRule(value) !== null).nullable().optional(),
+  configurationDimensionsChanged: z.boolean().optional(),
+  modeTier: z.enum(["signature", "premium", "functional"]).optional(),
+  configurationTierUnavailable: z.boolean().optional(),
   selectedInHouseComponentIds: selectedComponentIds.optional(),
   itemType: z.enum(["main_line", "temporary"]).optional(), classification: z.enum(["standard", "special"]).optional(), pricingMode: z.enum(["pmc", "sub_vendor", "in_house"]).optional(), rateSource: z.enum(["manual", "configuration"]).optional(),
   itemVersion: z.number().int().positive().optional(), revisionVersion: z.number().int().positive().optional(), recommendationSourceMainLineIds: z.array(id).optional(), estimateNotes: z.array(z.string()).optional(),
@@ -101,7 +108,7 @@ export async function getAssignableEstimateDesigners(runtime: MobileRuntime, sig
   if (!result.success) throw new ApiProtocolError();
   return result.data;
 }
-const catalogueLine = z.object({ ...configuredMetadata, id, mainLineId: id, basketId: id, subBasketId: id.nullable(), name: z.string(), displayOrder: z.number(), revisionId: id,
+const catalogueLine = z.object({ applicableTiers: z.array(z.enum(["signature", "premium", "functional"])).optional(), ...configuredMetadata, id, mainLineId: id, basketId: id, subBasketId: id.nullable(), name: z.string(), displayOrder: z.number(), revisionId: id,
   inHouseComponents: z.array(z.object({ id: componentId, basketId: id, subBasketId: id.nullable(), basketName: z.string(), subBasketName: z.string().nullable(), baseRatePaise: paise.nullable(), unavailableReason: z.string().nullable().optional() }).passthrough()).max(50).refine(rows => new Set(rows.map(row => row.id)).size === rows.length).optional(),
   itemVersion: z.number().int().positive().optional(), revisionVersion: z.number().int().positive().optional(),
   uom: z.object({ id, code: z.string(), name: z.string(), decimalScale: z.number().int().min(0).max(6) }),

@@ -87,4 +87,25 @@ describe("In-house component revision references", { timeout: 30000 }, () => {
     const section = await AiEstimatorKnowledgeSectionModel.findOne({ mainLineId: line.mainLineId, sectionKey: "advanced" }).lean();
     expect(Boolean(exists)).toBe(Array.isArray(section?.payload?.inHouseComponents) && section.payload.inHouseComponents.length === 1);
   });
+  it.each(["premium", "functional"] as const)("protects component references retained only in a deselected %s tier", async (modeTier) => {
+    const { line, external, externalSub } = await fixture();
+    await item.updateSection(actor, line.mainLineId, line.draftRevisionId!, "advanced", {
+      expectedVersion: 1, expectedAggregateVersion: line.version, modeTier,
+      payload: { inHouseComponents: [component(external.id, externalSub.id)] }
+    });
+    const overview = await item.getSection(actor, line.mainLineId, line.draftRevisionId!, "overview");
+    const current = await item.getItem(actor, line.mainLineId);
+    await item.updateSection(actor, line.mainLineId, line.draftRevisionId!, "overview", {
+      expectedVersion: overview.version, expectedAggregateVersion: current.version, payload: { applicableTiers: ["signature"] }
+    });
+    expect((await item.getSection(actor, line.mainLineId, line.draftRevisionId!, "advanced")).payload.inHouseComponents).toBeUndefined();
+    const impact = await reference.getSubBasketDeletionImpact(actor, external.id, externalSub.id);
+    await expect(reference.permanentlyDeleteSubBasket(actor, external.id, externalSub.id, {
+      expectedVersion: externalSub.version, impactToken: impact.impactToken, confirmationName: externalSub.name, reason: "Remove fixture"
+    })).rejects.toMatchObject({ code: "IN_HOUSE_COMPONENT_REFERENCE_EXISTS" });
+    await expect(reference.permanentlyDeleteBasket(actor, external.id, {
+      expectedVersion: external.version, confirmationName: external.name, reason: "Remove fixture"
+    })).rejects.toMatchObject({ code: "IN_HOUSE_COMPONENT_REFERENCE_EXISTS" });
+    expect(await AiEstimatorKnowledgeSubBasketModel.exists({ _id: externalSub.id })).toBeTruthy();
+  });
 });

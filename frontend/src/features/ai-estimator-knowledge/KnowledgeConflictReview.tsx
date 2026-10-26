@@ -1,4 +1,5 @@
 import { parseInHouseComponents } from "../../../../shared/knowledge/knowledgeInHouseComponents";
+import { applicableKnowledgeTiers, KNOWLEDGE_MODE_TIER_LABELS } from "../../../../shared/knowledge/knowledgeModeTiers";
 import { Surface } from "../../components/ui/Surface";
 import { readSpecificationBrandIds } from "./knowledgeSpecificationConfiguration";
 import { BUDGET_ACTIONS, budgetAlterationRows, recommendationTargetKind } from "./knowledgeBudgetAlterations";
@@ -242,14 +243,16 @@ function definitionConflictValues(
   ];
 }
 
-export type KnowledgeOverviewConflictField = "uomId" | "surfaceIds" | "priorityId" | "clientVisible";
+export type KnowledgeOverviewConflictField = "uomId" | "surfaceIds" | "priorityId" | "clientVisible" | "applicableTiers" | "dimensionsMandatory";
 
 function overviewValues(
   payload: KnowledgeJsonObject,
   masters: Readonly<Partial<Record<KnowledgeMasterType, readonly KnowledgeMaster[]>>>,
-  fields: readonly KnowledgeOverviewConflictField[] = ["uomId", "surfaceIds", "clientVisible"]
+  fields: readonly KnowledgeOverviewConflictField[] = ["uomId", "surfaceIds", "clientVisible", "applicableTiers", "dimensionsMandatory"]
 ): readonly ConflictReviewValue[] {
   const values: Readonly<Record<KnowledgeOverviewConflictField, ConflictReviewValue>> = {
+    dimensionsMandatory: { label: "Dimensions mandatory", value: payload.dimensionsMandatory === true ? "Yes · Length × Width" : payload.dimensionsMandatory === undefined || payload.dimensionsMandatory === false ? "No" : "Saved configuration needs review" },
+    applicableTiers: { label: "Applicable tiers", value: applicableKnowledgeTiers(payload).map(tier => KNOWLEDGE_MODE_TIER_LABELS[tier]).join(", ") || "None" },
     clientVisible: {
       label: "Client estimate screen",
       value: payload.clientVisible === false ? "No" : payload.clientVisible === undefined || payload.clientVisible === true ? "Yes" : "Saved configuration needs review"

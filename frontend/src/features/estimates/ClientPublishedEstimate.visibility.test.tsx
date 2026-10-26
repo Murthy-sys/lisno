@@ -26,6 +26,17 @@ function projectedEstimate(showLine: boolean): EstimateQueueItem {
 }
 
 describe("client screen visibility projection", () => {
+  it("labels the frozen tier without repricing from the working estimate", () => {
+    const estimate = projectedEstimate(true);
+    estimate.publishedReview!.snapshot.lineItems[0]!.modeTier = "premium";
+    estimate.lineItems = [{ ...estimate.publishedReview!.snapshot.lineItems[0]!, modeTier: "functional", rate: 1, ratePaise: 100, amount: 1, amountPaise: 100 }] as EstimateQueueItem["lineItems"];
+    renderWithQuery(<ClientPublishedEstimate estimate={estimate} />);
+    expect(screen.getByText("Configuration tier: Premium")).toBeVisible();
+    expect(screen.queryByText("Configuration tier: Functional")).not.toBeInTheDocument();
+    expect(screen.getByText("1 sq ft × ₹100")).toBeVisible();
+    expect(screen.queryByRole("radio")).not.toBeInTheDocument();
+  });
+
   it("keeps the published total when the server sends only part of the quotation breakdown", () => {
     renderWithQuery(<ClientPublishedEstimate estimate={projectedEstimate(true)} />);
     const review = screen.getByRole("region", { name: "Submitted estimate" });
@@ -45,4 +56,14 @@ describe("client screen visibility projection", () => {
     expect(screen.getByText("₹413")).toBeVisible();
     expect(screen.getByRole("button", { name: "Approve estimate" })).toBeEnabled();
   });
+});
+
+it("displays recorded dimensions from the frozen snapshot without adopting working measurements", () => {
+  const estimate = projectedEstimate(true);
+  Object.assign(estimate.publishedReview!.snapshot.lineItems[0]!, { dimensionsMandatory: true, dimensions: { length: "2", width: "3", height: "4" },
+    dimensionRule: { formula: "length_width", inputUnit: "ft", quantityUnit: "sq_ft", uomId: "unit", decimalScale: 2 } });
+  estimate.lineItems = [{ ...estimate.publishedReview!.snapshot.lineItems[0]!, dimensions: { length: "9", width: "9", height: "9" } }] as EstimateQueueItem["lineItems"];
+  renderWithQuery(<ClientPublishedEstimate estimate={estimate} />);
+  expect(screen.getByText("Dimensions: 2 × 3 × 4 ft (L × W × H) · Quantity = L × W")).toBeVisible();
+  expect(screen.queryByText(/9 × 9 × 9/)).not.toBeInTheDocument();
 });

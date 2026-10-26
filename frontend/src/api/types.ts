@@ -1,3 +1,5 @@
+import type { EstimateDimensions, EstimateDimensionRule } from "../../../shared/estimation/estimateDimensions";
+import type { KnowledgeModeTier } from "../../../shared/knowledge/knowledgeModeTiers";
 import type {
   ProjectModule,
   RequestableProjectModule,
@@ -297,6 +299,10 @@ export interface EstimateClientReviewSnapshot {
     itemType?: "main_line" | "temporary";
     classification?: "standard" | "special";
     pricingMode?: "pmc" | "sub_vendor" | "in_house";
+    modeTier?: KnowledgeModeTier;
+    dimensionsMandatory?: boolean;
+    dimensionRule?: EstimateDimensionRule | null;
+    dimensions?: EstimateDimensions;
     rateSource?: "configuration" | "manual";
     subBasketId?: string | null;
     mainLineId?: string;

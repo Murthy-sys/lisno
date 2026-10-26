@@ -1,4 +1,6 @@
+import type { EstimateDimensions, EstimateDimensionRule } from "./estimate-dimensions.js";
 import type { EstimatePricingMode, EstimateRateSource } from "./estimate-mode-pricing.js";
+import type { KnowledgeModeTier } from "./ai-estimator-knowledge-mode-tiers.js";
 
 import { createHash } from "node:crypto";
 
@@ -74,6 +76,10 @@ export interface EstimateClientReviewSnapshot {
     /** Client screen only; absent historical values remain visible. */
     clientVisible?: boolean;
     classification?: EstimateClassification;
+    modeTier?: KnowledgeModeTier;
+    dimensionsMandatory?: boolean;
+    dimensions?: EstimateDimensions;
+    dimensionRule?: EstimateDimensionRule | null;
     pricingMode?: EstimatePricingMode;
     rateSource?: EstimateRateSource;
     selectedInHouseComponentIds?: string[];

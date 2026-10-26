@@ -22,6 +22,7 @@ interface ReferenceState {
 }
 
 export interface KnowledgeSavedSummaryInput extends Pick<SavedSummaryProjectionInput, "masters" | "baskets" | "items"> {
+  readonly modeLabel?: string;
   readonly dataSource?: KnowledgeEditorDataSource;
   readonly item: KnowledgeItemDetail;
   readonly revisionId?: string;
@@ -134,7 +135,7 @@ export function useKnowledgeSavedSummary(input: KnowledgeSavedSummaryInput): rea
   const projected = projectKnowledgeSavedSummary({ sections, quality: qualityMatches ? quality : undefined, qualityOptions,
     masters: Object.fromEntries(Object.entries(input.masters).filter(([type]) => !referenceStates?.masters?.[type as KnowledgeMasterType]?.denied)),
     baskets: relationshipsDenied ? [] : input.baskets, items, subBaskets });
-  const labels = { overview: "Overview", mode: "Mode", recommendations: "Recommendation & Exclusions", quality: "Quality Parameters" };
+  const labels = { overview: "Overview", mode: input.modeLabel ?? "Mode", recommendations: "Recommendation & Exclusions", quality: "Quality Parameters" };
   return (Object.keys(labels) as SavedSummaryGroupKey[]).map((key) => ({
     ...projected[key], key, label: labels[key], notices: notices[key],
     emptyMessage: key !== "quality" && !revisionId ? "No revision available"

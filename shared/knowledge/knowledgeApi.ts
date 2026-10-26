@@ -1,3 +1,4 @@
+import type { KnowledgeModeTier } from "./knowledgeModeTiers";
 import type {
   KnowledgeBasket,
   KnowledgeBasketQuality,
@@ -118,6 +119,7 @@ export interface KnowledgeMainLineListParams {
 }
 
 export interface KnowledgeSectionUpdate<TPayload extends KnowledgeJsonObject> {
+  readonly modeTier?: KnowledgeModeTier;
   readonly expectedVersion: number;
   readonly expectedAggregateVersion?: number;
   readonly applicability?: "configured" | "not_configured" | "not_applicable";
@@ -341,10 +343,11 @@ function getKnowledgeHistory(
 function getKnowledgeSection<TPayload extends KnowledgeJsonObject>(
   mainLineId: string,
   revisionId: string,
-  sectionKey: KnowledgeSectionKey
+  sectionKey: KnowledgeSectionKey,
+  options?: { readonly modeTier?: KnowledgeModeTier }
 ): Promise<KnowledgeSectionEnvelope<TPayload>> {
   return apiClient.get<KnowledgeSectionEnvelope<TPayload>>(
-    `${ADMIN_PREFIX}/main-lines/${segment(mainLineId)}/revisions/${segment(revisionId)}/sections/${segment(sectionKey)}`
+    `${ADMIN_PREFIX}/main-lines/${segment(mainLineId)}/revisions/${segment(revisionId)}/sections/${segment(sectionKey)}${options?.modeTier ? `?modeTier=${segment(options.modeTier)}` : ""}`
   );
 }
 
@@ -582,9 +585,9 @@ function getKnowledgeBasketQuality(basketId: string): Promise<KnowledgeBasketQua
   return apiClient.get<KnowledgeBasketQuality>(`${ADMIN_PREFIX}/baskets/${segment(basketId)}/quality`);
 }
 
-function getKnowledgeSubBasketMargins(basketId: string, subBasketId: string): Promise<KnowledgeSubBasketMarginSummary> {
+function getKnowledgeSubBasketMargins(basketId: string, subBasketId: string, options?: { readonly modeTier?: KnowledgeModeTier }): Promise<KnowledgeSubBasketMarginSummary> {
   return apiClient.get<KnowledgeSubBasketMarginSummary>(
-    `${ADMIN_PREFIX}/baskets/${segment(basketId)}/sub-baskets/${segment(subBasketId)}/margins`,
+    `${ADMIN_PREFIX}/baskets/${segment(basketId)}/sub-baskets/${segment(subBasketId)}/margins${options?.modeTier ? `?modeTier=${segment(options.modeTier)}` : ""}`,
     { showGlobalLoader: false }
   );
 }

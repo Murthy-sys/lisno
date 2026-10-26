@@ -1,3 +1,4 @@
+import { KNOWLEDGE_MODE_TIER_LABELS } from "../../../../shared/knowledge/knowledgeModeTiers";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useRef, useState, type RefObject } from "react";
 
@@ -46,7 +47,7 @@ function PreEstimateComparison({ estimate }: { estimate: EstimateQueueItem }) {
   const changes = estimate.changesFromPre;
   if (!before || !after || !changes) return <p role="status">The comparison with your approved pre-estimate is unavailable. Ask your team to verify it before approving.</p>;
   const describe = (line: EstimateClientReviewSnapshot["lineItems"][number] | undefined) => line
-    ? `${line.mainLineName ?? line.specification ?? "Estimate item"} · ${line.roomName} · ${line.quantity} ${line.uomName ?? line.unit}`
+    ? `${line.mainLineName ?? line.specification ?? "Estimate item"} · ${line.roomName} · ${line.quantity} ${line.uomName ?? line.unit}${line.dimensions ? ` · Dimensions ${line.dimensions.length} × ${line.dimensions.width} × ${line.dimensions.height}${line.dimensionRule ? ` ${line.dimensionRule.inputUnit}` : ""} (L × W × H)` : ""}`
     : "Item details unavailable";
   const row = (snapshot: EstimateClientReviewSnapshot, id: string) => snapshot.lineItems.find((line) => line.id === id);
   return <div className="client-commercial-state" aria-label="Changes from pre-estimate">
@@ -98,7 +99,7 @@ function PublishedEstimateDetails({ snapshot }: { snapshot: EstimateClientReview
         <summary><span>{group.label}</span><strong>{clientEstimateMoney(group.items.reduce((total, item) => total + (amount(item) ?? 0), 0))}</strong></summary>
         <div className="client-commercial-lines">
           {group.items.map((item, index) => <div className="client-commercial-line" key={`${item.catalogueId}:${item.roomName}:${index}`}>
-            <div><strong>{item.source === "configuration" ? item.mainLineName ?? (item.itemType === "temporary" ? "Temporary item" : "Main Line") : catalogue.get(item.catalogueId)?.description ?? item.catalogueId}</strong><span>{item.source === "configuration" ? configuredDetails(item) : item.roomName}</span>{item.specification ? <span>{item.specification}</span> : null}{item.estimateNotes?.map((note, noteIndex) => <span key={noteIndex}>{note}</span>)}</div>
+            <div><strong>{item.source === "configuration" ? item.mainLineName ?? (item.itemType === "temporary" ? "Temporary item" : "Main Line") : catalogue.get(item.catalogueId)?.description ?? item.catalogueId}</strong><span>{item.source === "configuration" ? configuredDetails(item) : item.roomName}</span>{item.source === "configuration" ? <span>Configuration tier: {KNOWLEDGE_MODE_TIER_LABELS[item.modeTier ?? "signature"]}</span> : null}{item.dimensions ? <span>Dimensions: {item.dimensions.length} × {item.dimensions.width} × {item.dimensions.height}{item.dimensionRule ? ` ${item.dimensionRule.inputUnit}` : ""} (L × W × H){item.dimensionsMandatory ? " · Quantity = L × W" : " · Recorded measurements"}</span> : null}{item.specification ? <span>{item.specification}</span> : null}{item.estimateNotes?.map((note, noteIndex) => <span key={noteIndex}>{note}</span>)}</div>
             <div className="client-commercial-line__quantity"><span>Quantity / rate</span><span>{item.quantity} {item.source === "configuration" ? item.uomName ?? item.unit : item.unit} × {item.rate === null ? "Rate unavailable" : clientEstimateMoney(item.ratePaise === undefined || item.ratePaise === null ? item.rate : item.ratePaise / 100)}</span></div>
             <strong className="client-commercial-line__amount">{amount(item) === null ? "Amount unavailable" : clientEstimateMoney(amount(item)!)}</strong>
           </div>)}

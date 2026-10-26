@@ -1,3 +1,4 @@
+import { estimateDimensionSnapshotFields } from "../domain/estimate-dimension-snapshot.js";
 import { createHash } from "node:crypto";
 import { resolveProcurementEstimateMode } from "../domain/procurement-basket-mode-groups.js";
 import mongoose, { type ClientSession } from "mongoose";
@@ -300,6 +301,8 @@ function preparationEstimateLine(line: ApprovedProcurementSourceLine, itemIds: s
   currentSubBasketName: string | null, includeSpecification = false): PurchaseOrderPreparationEstimateLine {
   return {
     key: line.key, included: line.included, source: line.source === "configuration" ? "configuration" : "legacy",
+    ...(line.modeTier === undefined ? {} : { modeTier: line.modeTier }),
+    ...estimateDimensionSnapshotFields(line),
     estimateMode: resolveProcurementEstimateMode(line, line.source === "configuration" &&
       mainBasketClassificationExplicit && mainBasketClassification === "standard"),
     ...(line.itemType ? { itemType: line.itemType } : {}),

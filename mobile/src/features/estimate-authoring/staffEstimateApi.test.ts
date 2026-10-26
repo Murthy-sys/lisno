@@ -41,3 +41,24 @@ it("uses scoped keys and the queue's own lead identity without requiring unautho
  expect(await getStaffEstimateQueue(runtime(get), "/estimates/review-queue")).toMatchObject([{ leadId: "lead-one", lead: { id: "lead-one" } }]); expect(get).toHaveBeenCalledTimes(1);
  expect(staffEstimateKey({ environmentId: "env-a", userId: "staff-a" }, "lead-one")).not.toEqual(staffEstimateKey({ environmentId: "env-b", userId: "staff-a" }, "lead-one"));
 });
+
+
+it("retains valid selected tiers and rejects malformed tier metadata", () => {
+ for (const modeTier of ["signature", "premium", "functional"] as const) {
+  expect(parseStaffEstimate(estimateFixture({ lineItems: [{ ...componentLineFixture, modeTier }] })).lineItems[0]).toMatchObject({ modeTier });
+ }
+ for (const modeTier of [null, "unknown", 1]) {
+  expect(() => parseStaffEstimate({ ...estimateFixture(), lineItems: [{ ...componentLineFixture, modeTier }] })).toThrow("invalid response");
+ }
+});
+
+
+it("preserves dimension inputs and server provenance while rejecting malformed metadata", () => {
+ const dimensions = { length: "1.25", width: "2", height: "9" };
+ const dimensionRule = { formula: "length_width" as const, inputUnit: "ft" as const, quantityUnit: "sq_ft" as const, uomId: "uom-one", decimalScale: 2 };
+ const saved = { ...componentLineFixture, dimensionsMandatory: true, dimensions, dimensionRule };
+ expect(parseStaffEstimate(estimateFixture({ lineItems: [saved] })).lineItems[0]).toMatchObject({ dimensions, dimensionRule });
+ for (const invalid of [{ dimensionsMandatory: "true" }, { dimensions: { ...dimensions, height: "" } }, { dimensionRule: { ...dimensionRule, inputUnit: "m" } }]) {
+  expect(() => parseStaffEstimate({ ...estimateFixture(), lineItems: [{ ...saved, ...invalid }] })).toThrow("invalid response");
+ }
+});

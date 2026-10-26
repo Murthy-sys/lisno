@@ -1,3 +1,5 @@
+import { EstimateDimensionsFields } from "./EstimateDimensionsFields";
+import { KNOWLEDGE_MODE_TIERS, KNOWLEDGE_MODE_TIER_LABELS } from "../../../../shared/knowledge/knowledgeModeTiers";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { LucideIcon } from "lucide-react";
@@ -6,7 +8,7 @@ import ceilingImage from "../../assets/project-card-default.jpg";
 import interiorImage from "../../assets/projects-living-room.webp";
 import type { EstimationCatalogue } from "./estimationCatalogueApi";
 import type { EstimateClassification } from "./leadsApi";
-import { configuredLineAmountPaise, configuredLinePreviewAmountPaise, configuredModeBaseRate, configuredQuantityUnits, estimatePricingModeLabels, parseSellingRate, type ConfiguredLineDraft } from "./configuredEstimate";
+import { configuredDimensionsIssue, configuredLineAmountPaise, configuredLinePreviewAmountPaise, configuredModeBaseRate, configuredTierUnavailableReason, configuredQuantityUnits, estimatePricingModeLabels, parseSellingRate, type ConfiguredLineDraft } from "./configuredEstimate";
 import { EstimateInHouseComponents } from "./EstimateInHouseComponents";
 import { EstimatorRecommendations, type RecommendationReadState } from "./EstimatorRecommendations";
 import type { RoomRecommendationView, RecommendedLineTarget } from "./roomRecommendations";
@@ -329,7 +331,7 @@ function ConfiguredLineRow({ line, inheritedClassification = "standard", editabl
   }, [menuOpen]);
   const rate = parseSellingRate(line.rateInput);
   const amount = configuredLinePreviewAmountPaise(line);
-  const amountTooLarge = !line.uomNeedsQuantityReview && amount === null && rate.kind === "value"
+  const amountTooLarge = !line.uomNeedsQuantityReview && !configuredDimensionsIssue(line) && amount === null && rate.kind === "value"
     && configuredQuantityUnits(line.quantity, line.uomDecimalScale, true) !== null;
   const quantityInvalid = configuredQuantityUnits(line.quantity, line.uomDecimalScale, line.included) === null;
   const rateRequired = line.included && rate.kind === "blank";
@@ -352,7 +354,7 @@ function ConfiguredLineRow({ line, inheritedClassification = "standard", editabl
       <span className="configured-estimate-line__copy"><strong>{line.mainLineName}</strong><small>{line.uomName}</small>{line.estimateNotes?.map((note, index) => <small key={index}>{note}</small>)}{sourceStatus === "draft" || sourceStatus === "inactive" ? <small className="configured-estimate-line__source">{sourceStatus === "draft" ? "Draft" : "Inactive"} source</small> : null}</span>
     </label>
     <div className="configured-estimate-line__fields">
-      <label className="configured-estimate-line__quantity"><span>Quantity ({line.uomName})</span><span className="configured-estimate-line__stepper"><button type="button" aria-label={`Decrease quantity for ${label}`} disabled={!editable || !Number.isFinite(line.quantity) || line.quantity <= (line.included ? step : 0)} onClick={() => changeQuantity(-1)}>−</button><input type="number" min={line.included ? step : 0} step={step} value={Number.isFinite(line.quantity) ? line.quantity : ""} disabled={!editable} aria-label={`Quantity (${line.uomName}) for ${label}`} aria-invalid={quantityInvalid || amountTooLarge} aria-describedby={amountTooLarge ? `${inputId}-amount-overflow` : undefined} onChange={(event) => onUpdateLine(line.key, { quantity: event.target.value === "" ? Number.NaN : Number(event.target.value) })} /><button type="button" aria-label={`Increase quantity for ${label}`} disabled={!editable} onClick={() => changeQuantity(1)}>+</button></span></label>
+      {line.dimensionsMandatory ? <div className="configured-estimate-line__quantity configured-estimate-line__quantity--calculated"><span>Quantity ({line.uomName})</span><output aria-label={`Quantity (${line.uomName}) for ${label}`}>{Number.isFinite(line.quantity) && !configuredDimensionsIssue(line) ? line.quantity : "Pending"}</output></div> : <label className="configured-estimate-line__quantity"><span>Quantity ({line.uomName})</span><span className="configured-estimate-line__stepper"><button type="button" aria-label={`Decrease quantity for ${label}`} disabled={!editable || !Number.isFinite(line.quantity) || line.quantity <= (line.included ? step : 0)} onClick={() => changeQuantity(-1)}>−</button><input type="number" min={line.included ? step : 0} step={step} value={Number.isFinite(line.quantity) ? line.quantity : ""} disabled={!editable} aria-label={`Quantity (${line.uomName}) for ${label}`} aria-invalid={quantityInvalid || amountTooLarge} aria-describedby={amountTooLarge ? `${inputId}-amount-overflow` : undefined} onChange={(event) => onUpdateLine(line.key, { quantity: event.target.value === "" ? Number.NaN : Number(event.target.value) })} /><button type="button" aria-label={`Increase quantity for ${label}`} disabled={!editable} onClick={() => changeQuantity(1)}>+</button></span></label>}
       <label className="configured-estimate-line__rate" htmlFor={inputId}><span aria-hidden="true">Price (₹/{line.uomName})</span><span className="sr-only">Selling rate (₹/{line.uomName}) for {label}</span><input id={inputId} type="text" inputMode="decimal" value={line.rateInput} disabled={!editable} aria-label={`Selling rate (₹/${line.uomName}) for ${label}`} aria-invalid={rateInvalid || rateRequired || amountTooLarge} aria-describedby={amountTooLarge ? `${inputId}-amount-overflow` : rateInvalid || rateRequired ? `${inputId}-message` : undefined} onChange={(event) => onUpdateLine(line.key, { rateInput: event.target.value })} /></label>
       <div className="configured-estimate-line__amount"><span>Amount{line.included ? "" : " · Not included"}</span><output aria-label={line.included ? `Amount for ${label}` : `Preview amount for ${label}, not included in totals`} aria-describedby={amountTooLarge ? `${inputId}-amount-overflow` : undefined}>{amountTooLarge ? "Too large" : amount === null ? "Pending" : moneyPaise(amount)}</output></div>
       <div className="configured-estimate-line__more" onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); closeMenu(true); } }} onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget) && !menuRef.current?.contains(event.relatedTarget)) closeMenu(); }}>
@@ -364,11 +366,23 @@ function ConfiguredLineRow({ line, inheritedClassification = "standard", editabl
           else if (!event.shiftKey && event.target === actions.at(-1)) { event.preventDefault(); closeMenu(true); }
         }}>
           <button type="button" disabled={!editable} onClick={() => { onUpdateLine(line.key, { included: !line.included }); closeMenu(true); }}>{line.included ? "Remove from estimate" : "Add to estimate"}</button>
-          <button type="button" disabled={!editable} onClick={() => { onUpdateLine(line.key, { quantity: 1 }); closeMenu(true); }}>Reset quantity</button>
+          {!line.dimensionsMandatory ? <button type="button" disabled={!editable} onClick={() => { onUpdateLine(line.key, { quantity: 1 }); closeMenu(true); }}>Reset quantity</button> : null}
         </div>, document.body) : null}
       </div>
     </div>
+    {line.dimensionsMandatory ? <EstimateDimensionsFields label={label} dimensions={line.dimensions} rule={line.dimensionRule} quantityUnit={line.uomName} disabled={!editable}
+      needsReview={line.dimensionsNeedReview} onChange={dimensions => onUpdateLine(line.key, { dimensions })}
+      onConfirm={() => onUpdateLine(line.key, { dimensionsNeedReview: false, uomNeedsQuantityReview: false, previousUomName: undefined })} /> : null}
     {line.included ? <div className="configured-estimate-line__options">
+      {editable ? <fieldset className="estimate-classification configured-estimate-line__tiers" aria-label={`Configuration tier for ${label}`}>
+        <legend>Configuration tier</legend>
+        {KNOWLEDGE_MODE_TIERS.map(modeTier => {
+          const reason = configuredTierUnavailableReason(line, modeTier, referenceMode);
+          return <label key={modeTier} title={reason ?? undefined}><input type="radio" name={`line-tier-${line.key}`} checked={(line.modeTier ?? "signature") === modeTier}
+            disabled={Boolean(reason)} aria-label={`${KNOWLEDGE_MODE_TIER_LABELS[modeTier]} tier for ${label}`}
+            onChange={() => onUpdateLine(line.key, { modeTier })} /><span>{KNOWLEDGE_MODE_TIER_LABELS[modeTier]}{reason ? ` · ${reason}` : ""}</span></label>;
+        })}
+      </fieldset> : <p className="configured-estimate-line__classification-readonly">Configuration tier: <strong>{KNOWLEDGE_MODE_TIER_LABELS[line.modeTier ?? "signature"]}</strong></p>}
       {editable ? <fieldset className="estimate-classification configured-estimate-line__classification" aria-label={`Item type for ${label}`}>
         <legend>Item type</legend>
         {(["standard", "special"] as const).map((value) => <label key={value}><input type="radio" name={`line-classification-${line.key}`} value={value} checked={classification === value} aria-label={`${value === "standard" ? "Standard" : "Special"} item type for ${label}`} onChange={() => onUpdateLine(line.key, { classification: value })} /><span>{value === "standard" ? "Standard" : "Special"}</span></label>)}
@@ -385,8 +399,8 @@ function ConfiguredLineRow({ line, inheritedClassification = "standard", editabl
       <EstimateInHouseComponents line={line} editable={editable} onChange={(selectedInHouseComponentIds) => onUpdateLine(line.key, { selectedInHouseComponentIds })} />
     </div> : null}
     {rateRequired || rateInvalid ? <p id={`${inputId}-message`} className="configured-estimate-line__message">{rateRequired ? "Rate required" : "Enter a non-negative rate with up to two decimal places."}</p> : null}
-    {quantityInvalid ? <p className="configured-estimate-line__message">Quantity must match {line.uomName} precision.</p> : null}
+    {quantityInvalid && !line.dimensionsMandatory ? <p className="configured-estimate-line__message">Quantity must match {line.uomName} precision.</p> : null}
     {amountTooLarge ? <p id={`${inputId}-amount-overflow`} className="configured-estimate-line__message">Amount too large for this quantity and price.</p> : null}
-    {line.uomNeedsQuantityReview && !line.sourceMissing ? <p className="configured-estimate-line__message" role="alert">Unit changed{line.previousUomName ? ` from ${line.previousUomName}` : ""} to {line.uomName}. Re-enter the quantity for this unit.</p> : null}
+    {line.uomNeedsQuantityReview && !line.sourceMissing && !line.dimensionsMandatory ? <p className="configured-estimate-line__message" role="alert">Unit changed{line.previousUomName ? ` from ${line.previousUomName}` : ""} to {line.uomName}. Re-enter the quantity for this unit.</p> : null}
   </div>;
 }

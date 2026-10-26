@@ -573,6 +573,25 @@ describe("isolated full basket proposals", { timeout: 45_000 }, () => {
     detail = (await service.saveSection(AUTHOR, "procurement", detail.id, peerId, "overview", {
       expectedVersion: detail.version, applicability: "configured", payload: { uomId: UOM, modeIds: [], surfaceIds: [] }
     })).detail;
+    // Seed a previously retained tier. The Signature-only proposal editor cannot create or replace this map.
+    const storedAdvanced = await VendorBasketProposalResourceModel.findOne({ proposalId: detail.id,
+      parentId: prepared.lineId, kind: "section", "payload.sectionKey": "advanced" }).sort({ resourceVersion: -1 }).lean().exec();
+    if (!storedAdvanced) throw new Error("Missing advanced fixture resource");
+    const retainedPayload = structuredClone(storedAdvanced.payload);
+    retainedPayload.payload.tierConfigurations = { premium: { applicability: "configured", payload: {
+      inHouseComponents: [{ id: "premium-component", basketId: oldBasketId, subBasketId: peerSub.resource!.resourceId,
+        inclusions: [], exclusions: [], labor: null, material: null }]
+    } } };
+    const retainedDigest = createKnowledgeContentDigest(retainedPayload);
+    const retainedBytes = Buffer.byteLength(JSON.stringify(retainedPayload), "utf8");
+    await VendorBasketProposalResourceModel.collection.updateOne({ _id: storedAdvanced._id },
+      { $set: { payload: retainedPayload, digest: retainedDigest, bytes: retainedBytes } });
+    const storedProposal = await VendorBasketProposalModel.findById(detail.id).lean().exec();
+    const working = structuredClone(storedProposal!.working);
+    const retainedRef = working.resources.find((ref: { id: string }) => ref.id === storedAdvanced.resourceId);
+    Object.assign(retainedRef, { digest: retainedDigest, bytes: retainedBytes });
+    working.digest = createKnowledgeContentDigest(working.resources);
+    await VendorBasketProposalModel.updateOne({ _id: detail.id }, { $set: { working } });
     detail = (await service.saveSection(AUTHOR, "procurement", detail.id, prepared.lineId, "advanced", {
       expectedVersion: detail.version, applicability: "configured", payload: {
         dependencies: [{ id: oldBasketId, targetBasketId: oldBasketId, targetMainLineId: peerId, reason: peerId, active: true }],
@@ -606,6 +625,8 @@ describe("isolated full basket proposals", { timeout: 45_000 }, () => {
     expect((advanced.payload as ProposalSectionValue).payload).toMatchObject({
       dependencies: [{ id: oldBasketId, targetBasketId: revised.basketId, targetMainLineId: copiedPeer.resourceId, reason: peerId }],
       inHouseComponents: [{ id: "stable-component", basketId: revised.basketId, subBasketId: copiedPeer.parentId, labor: null, material: null }],
+      tierConfigurations: { premium: { payload: { inHouseComponents: [{ id: "premium-component", basketId: revised.basketId,
+        subBasketId: copiedPeer.parentId, labor: null, material: null }] } } },
       modeConfigurations: [{ fields: [{ label: oldBasketId, options: [peerId] }] }]
     });
     const recommendations = await service.resource(AUTHOR, "procurement", revised.id, copiedLine.sections.recommendations!);

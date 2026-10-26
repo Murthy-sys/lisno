@@ -9,6 +9,7 @@ import { estimateWorkflowKeys } from "../estimates/estimateWorkflowApi";
 import { leadKeys } from "../leads/leadsApi";
 import { projectWorkflowKeys } from "../workflow/projectWorkflowApi";
 import { clientKeys } from "./clientApi";
+import { estimateTiersKeys } from "./estimateTiersApi";
 import {
   createEstimateRequirement,
   estimateRequirementsKeys,
@@ -78,6 +79,7 @@ export function ClientEstimateRequirements({ projectId }: { projectId: string })
       sectionRef.current?.focus();
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: estimateRequirementsKeys.detail(projectId) }),
+        queryClient.invalidateQueries({ queryKey: estimateTiersKeys.detail(projectId) }),
         queryClient.invalidateQueries({ queryKey: estimateWorkflowKeys.client }),
         queryClient.invalidateQueries({ queryKey: clientKeys.projects }),
         queryClient.invalidateQueries({ queryKey: projectWorkflowKeys.all }),

@@ -1,3 +1,6 @@
+import { ESTIMATE_DIMENSION_INPUT_UNITS, ESTIMATE_DIMENSION_QUANTITY_UNITS } from "./domain/estimate-dimensions.js";
+import { ESTIMATE_TIER_SCHEMAS, ESTIMATE_TIER_REQUESTS, ESTIMATE_TIER_RESPONSES } from "./openapi/estimate-tiers.js";
+import { KNOWLEDGE_MODE_TIERS } from "./domain/ai-estimator-knowledge-mode-tiers.js";
 import { DESIGN_REQUIREMENTS_SCHEMAS } from "./openapi/design-requirements.js";
 import { VENDOR_BASKET_REQUEST_NOTIFICATION_SCHEMAS, VENDOR_BASKET_REQUEST_NOTIFICATION_RESPONSES, VENDOR_BASKET_REQUEST_NOTIFICATION_QUERIES, VENDOR_BASKET_REQUEST_NOTIFICATION_BODIES } from "./openapi/vendor-basket-request-notifications.js";
 import { ESTIMATE_COLLABORATION_SCHEMAS, ESTIMATE_COLLABORATION_REQUESTS, ESTIMATE_COLLABORATION_RESPONSES } from "./openapi/estimate-collaboration.js";
@@ -135,6 +138,7 @@ const genericJsonRequestBody: OpenApiRequestBody = {
 
 const requestBodiesByOperation: Readonly<Record<string, OpenApiRequestBody>> = {
   ...ESTIMATE_COLLABORATION_REQUESTS,
+  ...ESTIMATE_TIER_REQUESTS,
   "POST /client/ask-lisno": jsonRequest("AskLisnoRequest"),
   "POST /estimates/:estimateId/design-plan-documents/prepare": jsonRequest("PlanDocumentPrepare"),
   ...CHAT_REQUEST_BODIES,
@@ -243,6 +247,7 @@ const operationsWithoutBodies = new Set<string>([
 
 const responseSchemaByOperation: Readonly<Record<string, string>> = {
   ...ESTIMATE_COLLABORATION_RESPONSES,
+  ...ESTIMATE_TIER_RESPONSES,
   "POST /client/ask-lisno": "AskLisnoResponse",
   "GET /estimation/catalogue": "EstimatorCataloguePage",
   "GET /estimation/catalogue/recommendations": "EstimatorCatalogueRecommendationRead",
@@ -1600,8 +1605,23 @@ function dashboardPageSchema(itemSchema: string): OpenApiSchema {
 function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
   const id = { type: "string", minLength: 1 } as const;
   const dateTime = { type: "string", format: "date-time" } as const;
+  const modeTier = { type: "string", enum: [...KNOWLEDGE_MODE_TIERS], default: "signature" };
+  const tierBaseRates = { type: "object", additionalProperties: false, required: ["pmc", "sub_vendor", "in_house"],
+    properties: Object.fromEntries(["pmc", "sub_vendor", "in_house"].map(mode => [mode, { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER, nullable: true }])) };
+  const tierComponents = { type: "array", maxItems: 50, items: { type: "object", additionalProperties: false,
+    required: ["id", "basketId", "basketName", "subBasketId", "subBasketName", "baseRatePaise"],
+    properties: { id, basketId: id, basketName: { type: "string" }, subBasketId: { ...id, nullable: true },
+      subBasketName: { type: "string", nullable: true }, baseRatePaise: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER, nullable: true },
+      unavailableReason: { type: "string", nullable: true } } } };
   return {
     ...ESTIMATE_COLLABORATION_SCHEMAS,
+    ...ESTIMATE_TIER_SCHEMAS,
+    EstimateDimensions: { type: "object", additionalProperties: false, required: ["length", "width", "height"],
+      description: "Positive decimal measurements in the configured UOM's linear unit. All three are recorded; quantity is Length × Width, never multiplied by Height.",
+      properties: Object.fromEntries(["length", "width", "height"].map(key => [key, { type: "string", maxLength: 32, pattern: "^(0|[1-9][0-9]*)(\\.[0-9]{1,6})?$" }])) },
+    EstimateDimensionRule: { type: "object", additionalProperties: false, required: ["formula", "inputUnit", "quantityUnit", "uomId", "decimalScale"],
+      properties: { formula: { type: "string", enum: ["length_width"] }, inputUnit: { type: "string", enum: [...ESTIMATE_DIMENSION_INPUT_UNITS] },
+        quantityUnit: { type: "string", enum: [...ESTIMATE_DIMENSION_QUANTITY_UNITS] }, uomId: id, decimalScale: { type: "integer", minimum: 0, maximum: 3 } } },
     ...AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS,
     ...PROCUREMENT_VENDOR_SCHEMAS,
     ...VENDOR_KPI_SCHEMAS,
@@ -2251,9 +2271,13 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
             amount: { type: "number", minimum: 0, nullable: true }, amountPaise: { type: "integer", minimum: 0, nullable: true },
             mainBasketId: { type: "string" }, subBasketId: { type: "string", nullable: true }, mainLineId: { type: "string" },
             itemType: { type: "string", enum: ["main_line", "temporary"], description: "Absent on historical configured lines, which are Main Lines." },
+            dimensionsMandatory: { type: "boolean", default: false },
+            dimensions: { $ref: "#/components/schemas/EstimateDimensions" },
+            dimensionRule: { allOf: [{ $ref: "#/components/schemas/EstimateDimensionRule" }], nullable: true, description: "Frozen server-owned measurement rule. Inactive retained dimensions do not determine quantity." },
             clientVisible: { type: "boolean", default: true, description: "Frozen Client-screen visibility. Missing historical values mean visible. PDFs, quotations and totals retain every included line." },
             classification: { type: "string", enum: ["standard", "special"], description: "Frozen item classification. Standard uses Sub-Vendor when an explicit pricing mode is present. Historical missing classifications display as Standard without repricing." },
             pricingMode: { type: "string", enum: ["pmc", "sub_vendor", "in_house"], description: "Frozen selected pricing mode. Absent historical modes remain unknown." },
+            modeTier: { ...modeTier, description: "Frozen selected Mode tier. Absent historical values mean Signature; amounts do not follow later Configuration edits." },
             selectedInHouseComponentIds: { type: "array", maxItems: 50, uniqueItems: true, items: { type: "string", minLength: 1, maxLength: 128 }, description: "Frozen component selection for this estimate line. Newly configured components are not added to this selection." },
             rateSource: { type: "string", enum: ["configuration", "manual"], description: "Frozen origin of the saved selling rate. Published amounts never follow later Configuration changes." },
             revisionId: { type: "string" }, uomId: { type: "string" }, mainBasketName: { type: "string" },
@@ -2326,16 +2350,23 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
     },
     EstimatorCatalogueLine: {
       type: "object", additionalProperties: false,
-      required: ["id", "mainLineId", "basketId", "subBasketId", "itemType", "clientVisible", "name", "displayOrder", "revisionId", "itemStatus", "revisionStatus", "itemVersion", "revisionVersion", "inHouseBaseRatePaise", "modeBaseRatesPaise", "uom"],
+      required: ["id", "mainLineId", "basketId", "subBasketId", "itemType", "clientVisible", "name", "displayOrder", "revisionId", "itemStatus", "revisionStatus", "itemVersion", "revisionVersion", "inHouseBaseRatePaise", "modeBaseRatesPaise", "applicableTiers", "tierPricing", "dimensionsMandatory", "dimensionRule", "uom"],
       properties: {
         id: { type: "string" }, mainLineId: { type: "string" }, basketId: { type: "string" },
         subBasketId: { type: "string", nullable: true }, itemType: { type: "string", enum: ["main_line", "temporary"] },
+        dimensionsMandatory: { type: "boolean", default: false, readOnly: true },
+        dimensionRule: { allOf: [{ $ref: "#/components/schemas/EstimateDimensionRule" }], nullable: true, readOnly: true, description: "Derived from the configured supported area UOM. Null when not required or unsupported; never inferred from unrelated unit names." },
         clientVisible: { type: "boolean", default: true, readOnly: true, description: "Current saved Overview choice for the Client estimate screen only. Internal estimating, PDF output and totals are unchanged." },
         name: { type: "string" },
         displayOrder: { type: "integer" }, revisionId: { type: "string" },
         itemStatus: { type: "string", enum: ["draft", "active", "inactive"] },
         revisionStatus: { type: "string", enum: ["draft", "active"] },
         itemVersion: { type: "integer", minimum: 1 }, revisionVersion: { type: "integer", minimum: 1 },
+        applicableTiers: { type: "array", maxItems: 3, uniqueItems: true, items: modeTier, description: "Current Overview applicability. Missing legacy configuration means Signature; an explicit empty selection remains empty." },
+        tierPricing: { type: "object", additionalProperties: false, properties: Object.fromEntries(KNOWLEDGE_MODE_TIERS.map(tier => [tier, {
+          type: "object", additionalProperties: false, required: ["modeBaseRatesPaise"],
+          properties: { modeBaseRatesPaise: tierBaseRates, inHouseComponents: tierComponents }
+        }])), description: "Pricing and component selection belong to this tier only. Missing entries cannot fall back to Signature. Root pricing fields retain legacy Signature values." },
         inHouseBaseRatePaise: { type: "integer", minimum: 0, nullable: true,
           description: "Combined Labor and Material in-house base rate for the selected source revision, in paise; null when unavailable." },
         modeBaseRatesPaise: {
@@ -2451,18 +2482,21 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
       type: "object", additionalProperties: false,
       required: ["source", "catalogueId", "roomId", "roomName", "mainBasketId", "subBasketId", "mainLineId", "revisionId", "uomId", "quantity", "included", "ratePaise"],
       properties: {
+        dimensions: { $ref: "#/components/schemas/EstimateDimensions" },
+        expectedDimensionRule: { allOf: [{ $ref: "#/components/schemas/EstimateDimensionRule" }], description: "Required with explicit measurements when dimensions are mandatory. Must exactly match the current server rule so stale unit or precision changes cannot reinterpret inputs. It is an expectation, not persisted authority." },
         source: { type: "string", enum: ["configuration"] }, id: { type: "string" },
         catalogueId: { type: "string" }, roomId: { type: "string" }, roomName: { type: "string" },
         mainBasketId: { type: "string" }, subBasketId: { type: "string", nullable: true }, mainLineId: { type: "string" },
         itemType: { type: "string", enum: ["main_line", "temporary"], default: "main_line", description: "Optional for older clients; Main Lines require a real Sub Basket. Only temporary items may have null Sub Basket." },
         classification: { type: "string", enum: ["standard", "special"], description: "Estimator-selected type. Omission preserves a saved value or defaults a new line to Standard." },
         pricingMode: { type: "string", enum: ["pmc", "sub_vendor", "in_house"], description: "Selected pricing mode. Standard with an explicit mode requires sub_vendor; Special permits all three. Omission preserves a saved mode and does not infer one for historical prices." },
+        modeTier: { ...modeTier, description: "Selected tier for this Main Line in this room. Omission preserves a saved tier or defaults a new line to Signature. Only applicable saved tiers are selectable. A changed tier requires an explicit new In-house component selection." },
         selectedInHouseComponentIds: { type: "array", maxItems: 50, uniqueItems: true, items: { type: "string", minLength: 1, maxLength: 128 }, description: "Component IDs selected for this In-house estimate line. Included component-based In-house lines require a nonempty valid selection, including manually priced lines. Missing or empty does not select all components." },
         rateSource: { type: "string", enum: ["configuration", "manual"], description: "Configuration requires a selected mode and a rate matching its current saved base and source versions. Stale values produce a refreshable conflict. Manual preserves an entered override. On omission, a changed entered rate becomes manual; otherwise saved metadata is preserved." },
         revisionId: { type: "string" }, uomId: { type: "string" },
         itemVersion: { type: "integer", minimum: 1, description: "Required with revisionVersion for explicit configuration-derived pricing and new Draft or Inactive items. Older callers preserving an unchanged configuration-derived rate may use its prior saved source version; stale versions conflict." },
         revisionVersion: { type: "integer", minimum: 1, description: "Required with itemVersion for explicit configuration-derived pricing and new Draft or Inactive items. Must identify the current saved Configuration revision for configuration-derived rates." },
-        quantity: { type: "number", minimum: 0 }, included: { type: "boolean" },
+        quantity: { type: "number", minimum: 0, description: "When dimensions are mandatory, the server calculates quantity from Length × Width and ignores this supplied quantity. Omitted measurements may reuse unchanged saved dimensions only when this value is unchanged." }, included: { type: "boolean" },
         ratePaise: { type: "integer", minimum: 0, nullable: true,
           description: "Customer rate in integer paise. Configuration-derived rates must match the selected mode's current base. Null keeps an included draft line incomplete." }
       }

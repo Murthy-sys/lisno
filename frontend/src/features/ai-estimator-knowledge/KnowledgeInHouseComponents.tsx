@@ -34,7 +34,8 @@ function interactiveDragOrigin(target: EventTarget | null) {
   return Boolean(target.closest('input, textarea, select, button, a, label, [role="button"], [role="textbox"], [contenteditable]:not([contenteditable="false"])'));
 }
 
-export function KnowledgeInHouseComponents({ payload, item, baskets, dataSource, uom, readOnly, validationAttempt, pendingSaveVersion, issues, onChange, onSaveComponent, onValidationChange, onPendingChange, onRequestDraft }: {
+export function KnowledgeInHouseComponents({ payload, item, baskets, dataSource, uom, readOnly, validationAttempt, pendingSaveVersion, issues, onChange, onSaveComponent, onValidationChange, onPendingChange, onRequestDraft, emptyCalculationDefaults = false }: {
+  readonly emptyCalculationDefaults?: boolean;
   readonly payload: KnowledgeJsonObject;
   readonly item: KnowledgeItemDetail;
   readonly baskets: readonly KnowledgeBasket[];
@@ -341,7 +342,7 @@ export function KnowledgeInHouseComponents({ payload, item, baskets, dataSource,
             uom={{ ...uom, scopeKey: `${uom.scopeKey}:${component.id}:${cost}` }} readOnly={readOnly} validationAttempt={validationAttempt} issues={issues}
             onChange={(settings) => update({ ...component, [cost]: settings })} onDirty={() => onChange(payload)}
             onValidationChange={validationPublishers[inHouseCalculationKey(component.id, cost)]!}
-            onPendingInputChange={pendingPublishers[inHouseCalculationKey(component.id, cost)]!} pendingSaveVersion={pendingSaveVersion} />)}
+            onPendingInputChange={pendingPublishers[inHouseCalculationKey(component.id, cost)]!} pendingSaveVersion={pendingSaveVersion} emptyDefaults={emptyCalculationDefaults} />)}
           <KnowledgeInHouseTotal active={open} labor={component.labor as unknown as KnowledgeJsonValue} material={component.material as unknown as KnowledgeJsonValue}
             valid={["labor", "material"].every((cost) => validity[inHouseCalculationKey(component.id, cost as "labor" | "material")] !== false)} uom={{ ...uom, scopeKey: `${uom.scopeKey}:${component.id}` }} />
         </div>
@@ -388,7 +389,7 @@ function AddInHouseComponent({ item, baskets, existing, payload, dataSource, rea
   const duplicate = targets.some((component) => component.id !== candidate?.id && component.basketId === basketId && component.subBasketId === subBasketId);
   const selected = catalog.data?.items.find(({ id: value, basketId: parent }) => value === subBasketId && parent === basketId);
   const canSave = Boolean(basket && selected && !duplicate && !catalog.isFetching && !catalog.isError && !readOnly && !saving);
-  const canRequest = dataSource.scopeKey === "live-configuration" && auth.user?.role === "super_admin"
+  const canRequest = (dataSource.scopeKey === "live-configuration" || dataSource.supportsLiveConfigurationRequests === true) && auth.user?.role === "super_admin"
     && hasFrontendPermission(auth.authorization, "ai_estimator_knowledge.configuration.create");
 
   async function save() {

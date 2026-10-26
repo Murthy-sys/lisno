@@ -1,3 +1,4 @@
+import type { KnowledgeModeTier } from "../domain/ai-estimator-knowledge-mode-tiers.js";
 export type { DesignRules, DesignRuleKey } from "../domain/main-line-design-rules.js";
 import type {
   KnowledgeAvailabilityState,
@@ -171,6 +172,7 @@ export interface KnowledgeSectionEnvelope<TPayload = unknown>
   sectionKey: KnowledgeSectionKey;
   applicability: KnowledgeSectionApplicability;
   payload: TPayload;
+  modeTier?: KnowledgeModeTier;
   referenceState?: KnowledgeSectionReferenceState;
 }
 

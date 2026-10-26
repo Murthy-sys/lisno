@@ -1,9 +1,12 @@
-import { fenceEstimateInHouseComponentReferences } from "./estimator-catalogue.service.js";
+import { estimateDimensionRulesEqual } from "../domain/estimate-dimensions.js";
+import { estimateDimensionSnapshotFields, estimateDimensionSnapshotValid } from "../domain/estimate-dimension-snapshot.js";
+import { estimatorCatalogueTierPricing, fenceEstimateInHouseComponentReferences } from "./estimator-catalogue.service.js";
 import { designRulesDigest } from "../domain/main-line-design-rules.js";
 import { effectiveCommercialStatus, estimateCommercialStatusFields, type EstimationLifecycle } from "../domain/estimation-lifecycle.js";
 import { currentFinalDesignBinding, fenceCollaborativeEstimate, requireEstimateStaffActor } from "./estimate-collaboration-policy.service.js";
 import { assertEstimateRequirementsResolved } from "./estimate-requirements.service.js";
 import { estimateConfigurationRateMatches } from "../domain/estimate-mode-pricing.js";
+import { isKnowledgeModeTier } from "../domain/ai-estimator-knowledge-mode-tiers.js";
 import { createMongoRepository } from "../repositories/mongo.js";
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
@@ -510,6 +513,8 @@ export function toEstimateSnapshot(
         ? line.classification === "special" ? "special" : "standard"
         : line.classification,
       pricingMode: line.pricingMode,
+      ...(line.modeTier === undefined ? {} : { modeTier: line.modeTier }),
+      ...estimateDimensionSnapshotFields(line),
       rateSource: line.rateSource,
       ...(line.selectedInHouseComponentIds === undefined ? {} : { selectedInHouseComponentIds: line.selectedInHouseComponentIds }),
       catalogueId: line.catalogueId,
@@ -567,6 +572,8 @@ export function assertPublishableConfiguredLines(estimate: PublicationEstimate):
   const configured = estimate.lineItems.filter((line) => line.source === "configuration" && line.included);
   if (configured.length === 0) return;
   if (configured.some((line) =>
+    !estimateDimensionSnapshotValid(line) ||
+    line.modeTier !== undefined && !isKnowledgeModeTier(line.modeTier) ||
     !Number.isSafeInteger(line.ratePaise) ||
     !Number.isSafeInteger(line.amountPaise) ||
     Number(line.ratePaise) < 0 || Number(line.amountPaise) < 0 ||
@@ -651,6 +658,7 @@ export async function assertCurrentConfiguredPublication(
     if (!source) throw new ApiError(409, "ESTIMATE_CONFIGURATION_UNAVAILABLE",
       "This Main Line has no current Configuration. Correct it before sending the estimate.");
     const stored = line as unknown as Record<string, unknown>;
+    const tierPricing = estimatorCatalogueTierPricing(source.line, line.modeTier ?? "signature");
     const expected: Record<string, unknown> = {
       itemType: source.line.itemType,
       clientVisible: source.line.clientVisible,
@@ -673,9 +681,11 @@ export async function assertCurrentConfiguredPublication(
     };
     if (Object.entries(expected).some(([field, value]) =>
       (field === "clientVisible" ? stored[field] !== false : stored[field]) !== value) ||
+      (line.dimensionsMandatory === true) !== (source.line.dimensionsMandatory === true) ||
+      source.line.dimensionsMandatory && (!estimateDimensionRulesEqual(line.dimensionRule, source.line.dimensionRule) || !estimateDimensionSnapshotValid(line)) ||
       designRulesDigest(stored.designRules) !== source.line.designRulesDigest ||
       JSON.stringify(line.estimateNotes ?? []) !== JSON.stringify(source.line.estimateNotes) ||
-      !estimateConfigurationRateMatches(line, source.line.modeBaseRatesPaise, source.line.inHouseComponents)) {
+      !tierPricing || !estimateConfigurationRateMatches(line, tierPricing.modeBaseRatesPaise, tierPricing.inHouseComponents)) {
       throw new ApiError(409, "ESTIMATE_CONFIGURATION_CHANGED",
         "Configuration changed. Save the estimate with its current Main Line values before sending it.");
     }

@@ -73,7 +73,7 @@ export async function currentFinalDesignBinding(estimate: Row, session: mongoose
     designScopeRevision: lifecycle.designScopeRevision };
 }
 
-/** Prices and Configuration provenance do not alter physical design scope. */
+/** Prices alone do not alter physical scope; tiers and component selections can change materials or work. */
 export function estimatePhysicalScopeChanged(before: Row, after: Row): boolean {
   const scope = (value: Row) => ({
     propertyType: value.propertyType, bedroomCount: value.bedroomCount ?? null,
@@ -81,6 +81,8 @@ export function estimatePhysicalScopeChanged(before: Row, after: Row): boolean {
     lines: (value.lineItems ?? []).filter((line: Row) => line.included).map((line: Row) => ({
       id: line.id, roomId: line.roomId ?? null, roomName: line.roomName,
       mainBasketId: line.mainBasketId ?? null, mainLineId: line.mainLineId ?? line.catalogueId,
+      dimensionsMandatory: line.dimensionsMandatory === true, dimensionRule: line.dimensionRule ?? null, dimensions: line.dimensions ?? null,
+      modeTier: line.modeTier ?? "signature", selectedInHouseComponentIds: [...(line.selectedInHouseComponentIds ?? [])].sort(),
       specification: line.specification ?? null, quantity: line.quantity, unit: line.uomId ?? line.unit
     })).sort((a: Row, b: Row) => String(a.id).localeCompare(String(b.id)))
   });

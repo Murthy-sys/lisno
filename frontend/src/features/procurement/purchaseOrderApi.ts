@@ -1,3 +1,4 @@
+import type { KnowledgeModeTier } from "../../../../shared/knowledge/knowledgeModeTiers";
 import type { EstimationPreparationSource, WorkOrderIssueReadiness } from "../../api/types";
 import { apiClient } from "../../api/client";
 
@@ -221,6 +222,7 @@ export interface PurchaseOrderModeDraftPreview {
   integrity?: PurchaseOrderModeIntegrity;
 }
 export interface PurchaseOrderPreparationEstimateLine {
+  modeTier?: KnowledgeModeTier;
   key: string;
   included: boolean;
   source: "configuration" | "legacy";

@@ -111,6 +111,8 @@ export const PERMISSION_CODES = [
   "projects.client_invitation.read",
   "projects.client_invitation.manage",
   "identity.project_invitation.accept",
+  "estimation.tiers.read",
+  "estimation.tiers.select", "estimation.dimensions.update",
   "estimation.requirements.read",
   "estimation.requirements.create",
   "estimation.requirements.update",

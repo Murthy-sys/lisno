@@ -1,3 +1,5 @@
+import { ESTIMATE_DIMENSION_INPUT_UNITS, ESTIMATE_DIMENSION_QUANTITY_UNITS, calculateDimensionQuantity, canonicalEstimateDimensions, estimateDimensionRulesEqual, estimateLineDimensionsValid, readEstimateDimensionRule } from "../domain/estimate-dimensions.js";
+import { KNOWLEDGE_MODE_TIERS, isKnowledgeModeTier, type KnowledgeModeTier } from "../domain/ai-estimator-knowledge-mode-tiers.js";
 import { fenceEstimateInHouseComponentReferences } from "../services/estimator-catalogue.service.js";
 import { normalizeDesignRules, designRulesDigest, designRuleEstimateNotes } from "../domain/main-line-design-rules.js";
 import { ProjectModel } from "../models/Project.js";
@@ -25,7 +27,7 @@ import { AiEstimatorKnowledgeSubBasketModel } from "../models/AiEstimatorKnowled
 import { AiEstimatorKnowledgeUomModel } from "../models/AiEstimatorKnowledgeUom.js";
 import { LeadModel } from "../models/Lead.js";
 import { UserModel } from "../models/User.js";
-import { resolveEstimatorCatalogueLines, type EstimatorCatalogueLine } from "../services/estimator-catalogue.service.js";
+import { estimatorCatalogueTierPricing, resolveEstimatorCatalogueLines, type EstimatorCatalogueLine } from "../services/estimator-catalogue.service.js";
 import type { AuditService } from "../services/audit.service.js";
 import type { AuthService } from "../services/auth.service.js";
 import type { EstimateDesignService } from "../services/estimate-design.service.js";
@@ -58,12 +60,17 @@ const configuredEstimateLineSchema = z.object({
   itemType: z.enum(["main_line", "temporary"]).default("main_line"),
   classification: estimateClassificationSchema.optional(),
   pricingMode: z.enum(ESTIMATE_PRICING_MODES).optional(),
+  modeTier: z.enum(KNOWLEDGE_MODE_TIERS).optional(),
   rateSource: z.enum(ESTIMATE_RATE_SOURCES).optional(),
   selectedInHouseComponentIds: z.array(stableIdSchema).max(50).refine((ids) => new Set(ids).size === ids.length, "Select each component once.").optional(),
   mainLineId: stableIdSchema, revisionId: stableIdSchema, uomId: stableIdSchema,
   recommendationSourceMainLineIds: z.array(stableIdSchema).optional(),
   itemVersion: z.number().int().positive().safe().optional(),
   revisionVersion: z.number().int().positive().safe().optional(),
+  dimensions: z.object({ length: z.string().max(32), width: z.string().max(32), height: z.string().max(32) }).strict().optional(),
+  expectedDimensionRule: z.object({ formula: z.literal("length_width"), inputUnit: z.enum(ESTIMATE_DIMENSION_INPUT_UNITS),
+    quantityUnit: z.enum(ESTIMATE_DIMENSION_QUANTITY_UNITS), uomId: stableIdSchema, decimalScale: z.number().int().min(0).max(3)
+  }).strict().refine(value => readEstimateDimensionRule(value) !== null).optional(),
   quantity: z.number().finite().nonnegative(), included: z.boolean(),
   ratePaise: z.number().int().nonnegative().safe().nullable()
 }).strict().superRefine((line, context) => {
@@ -279,12 +286,21 @@ export function createEstimatesRouter(
         if (line.source !== "configuration") return line;
         const source = latest.get(String(line.mainLineId));
         if (!source) return { ...line, configurationSourceUnavailable: true };
+        const modeTier = line.modeTier ?? "signature";
+        const configurationTierUnavailable = estimatorCatalogueTierPricing(source.line, modeTier) === null;
+        const configurationDimensionsChanged = (line.dimensionsMandatory === true) !== source.line.dimensionsMandatory ||
+          source.line.dimensionsMandatory && !estimateDimensionRulesEqual(line.dimensionRule, source.line.dimensionRule) ||
+          line.included === true && !estimateLineDimensionsValid({ ...line, dimensionsMandatory: source.line.dimensionsMandatory,
+            dimensionRule: source.line.dimensionRule, uomId: source.line.uom.id, uomDecimalScale: source.line.uom.decimalScale });
         const configurationUomChanged = line.uomId !== source.line.uom.id ||
           line.uomDecimalScale !== source.line.uom.decimalScale;
         return {
           ...line,
-          ...currentConfiguredFields(source),
-          configurationSourceUnavailable: false,
+          ...currentConfiguredFields(source, modeTier as KnowledgeModeTier),
+          ...(!source.line.dimensionsMandatory && line.dimensionRule ? { dimensionRule: line.dimensionRule } : {}),
+          configurationSourceUnavailable: configurationTierUnavailable,
+          configurationTierUnavailable,
+          configurationDimensionsChanged,
           configurationUomChanged,
           ...(configurationUomChanged ? { previousUomName: String(line.uomName ?? line.unit ?? "") } : {})
         };
@@ -292,7 +308,7 @@ export function createEstimatesRouter(
       estimate = { ...estimate, lineItems,
         isIncomplete: estimate.isIncomplete === true || lineItems.some((line) =>
           line.source === "configuration" &&
-          (line.configurationSourceUnavailable === true || line.configurationUomChanged === true)) };
+          (line.configurationSourceUnavailable === true || line.configurationUomChanged === true || line.configurationDimensionsChanged === true)) };
     }
     const [clientReview, clientFeedback] = await Promise.all([
       reviews.currentSummaryForEstimate(actor, String(estimate.id)),
@@ -441,13 +457,17 @@ export function createEstimatesRouter(
         const pricingMode = line.pricingMode ?? prior?.pricingMode as EstimatePricingMode | undefined;
         const rateSource = line.rateSource ?? (prior && line.ratePaise !== prior.ratePaise
           ? "manual" : prior?.rateSource as EstimateRateSource | undefined);
+        const modeTier = line.modeTier ?? prior?.modeTier ?? "signature";
+        const tierChanged = modeTier !== (prior?.modeTier ?? "signature");
         const selectedInHouseComponentIds = pricingMode === "in_house"
-          ? line.selectedInHouseComponentIds ?? prior?.selectedInHouseComponentIds as string[] | undefined : undefined;
-        const pricing = { classification, pricingMode, rateSource, ratePaise: line.ratePaise, selectedInHouseComponentIds };
+          ? line.selectedInHouseComponentIds ?? (tierChanged ? undefined : prior?.selectedInHouseComponentIds as string[] | undefined) : undefined;
+        const pricing = { classification, pricingMode, modeTier, rateSource, ratePaise: line.ratePaise, selectedInHouseComponentIds };
         if (!estimatePricingMetadataIsValid(pricing)) {
           throw new ApiError(400, "ESTIMATE_PRICING_MODE_INVALID", "Select a valid pricing mode for this item type.");
         }
-        if (!estimateConfigurationRateMatches({ ...pricing, rateSource: "manual" }, snapshot.line.modeBaseRatesPaise, snapshot.line.inHouseComponents)) {
+        const tierPricing = estimatorCatalogueTierPricing(snapshot.line, modeTier);
+        if (!tierPricing) throw new ApiError(409, "ESTIMATE_MODE_TIER_UNAVAILABLE", "This tier is no longer applicable or configured for this Main Line. Refresh the catalogue and choose an available tier.");
+        if (!estimateConfigurationRateMatches({ ...pricing, rateSource: "manual" }, tierPricing.modeBaseRatesPaise, tierPricing.inHouseComponents)) {
           throw new ApiError(409, "ESTIMATE_COMPONENT_SELECTION_INVALID", "Select the available In-house components for this estimate line before saving.");
         }
         if (rateSource === "configuration") {
@@ -457,13 +477,14 @@ export function createEstimatesRouter(
           if (line.mainBasketId !== snapshot.line.basketId || line.subBasketId !== snapshot.line.subBasketId ||
             line.itemType !== snapshot.line.itemType || line.revisionId !== snapshot.line.revisionId ||
             itemVersion !== snapshot.line.itemVersion || revisionVersion !== snapshot.line.revisionVersion ||
-            !estimateConfigurationRateMatches(pricing, snapshot.line.modeBaseRatesPaise, snapshot.line.inHouseComponents)) {
+            !estimateConfigurationRateMatches(pricing, tierPricing.modeBaseRatesPaise, tierPricing.inHouseComponents)) {
             throw new ApiError(409, "ESTIMATE_CONFIGURATION_CHANGED",
               "Configuration pricing changed. Refresh the catalogue and review the selected mode price before saving.");
           }
         }
         const quantityScale = snapshot.line.uom.decimalScale;
-        const quantityUnits = scaledQuantity(line.quantity, quantityScale, line.included);
+        const measurements = configuredLineMeasurements(line, prior, snapshot.line);
+        const quantityUnits = scaledQuantity(measurements.quantity, quantityScale, line.included);
         const amountPaise = line.included && line.ratePaise === null
           ? null : line.included
             ? calculateAmountPaise(line.ratePaise!, quantityUnits, quantityScale)
@@ -478,10 +499,11 @@ export function createEstimatesRouter(
           ...(selectedInHouseComponentIds === undefined ? {} : { selectedInHouseComponentIds }),
           ...(line.recommendationSourceMainLineIds !== undefined
             ? { recommendationSourceMainLineIds: line.recommendationSourceMainLineIds } : {}),
-          ...currentConfiguredFields(snapshot),
+          ...currentConfiguredFields(snapshot, modeTier as KnowledgeModeTier),
           specification: null, unit: snapshot.line.uom.name,
           ratePaise: line.ratePaise, rate: line.ratePaise === null ? null : line.ratePaise / 100,
-          quantity: line.quantity, included: line.included,
+          ...(measurements.dimensionRule === undefined ? {} : { dimensionRule: measurements.dimensionRule }),
+          quantity: measurements.quantity, ...(measurements.dimensions === undefined ? {} : { dimensions: measurements.dimensions }), included: line.included,
           amountPaise, amount: amountPaise === null ? null : amountPaise / 100
         };
       });
@@ -788,13 +810,16 @@ function currentConfiguredFields(source: {
   line: EstimatorCatalogueLine;
   mainBasketName: string;
   subBasketName: string | null;
-}) {
+}, modeTier: KnowledgeModeTier = "signature") {
   return {
+    modeTier,
     designRules: source.line.designRules,
     designRulesDigest: source.line.designRulesDigest,
     estimateNotes: source.line.estimateNotes,
     itemType: source.line.itemType,
     clientVisible: source.line.clientVisible,
+    dimensionsMandatory: source.line.dimensionsMandatory,
+    dimensionRule: source.line.dimensionRule,
     mainBasketId: source.line.basketId,
     subBasketId: source.line.subBasketId,
     mainLineId: source.line.mainLineId,
@@ -830,12 +855,16 @@ async function assertEstimateCurrentConfiguration(
       throw new ApiError(409, "ESTIMATE_CONFIGURATION_UNAVAILABLE",
         "This Main Line has no current Configuration. Correct it before submitting the estimate.");
     }
-    const fields = currentConfiguredFields(source);
-    if (Object.entries(fields).some(([field, value]) => !["designRules", "designRulesDigest", "estimateNotes"].includes(field) &&
-      (field === "clientVisible" ? line[field] !== false : line[field]) !== value) ||
+    const modeTier = line.modeTier ?? "signature";
+    const tierPricing = estimatorCatalogueTierPricing(source.line, modeTier);
+    const fields = currentConfiguredFields(source, modeTier as KnowledgeModeTier);
+    if (Object.entries(fields).some(([field, value]) => !["designRules", "designRulesDigest", "estimateNotes", "dimensionRule"].includes(field) &&
+      (field === "clientVisible" ? line[field] !== false : field === "dimensionsMandatory" ? line[field] === true : field === "modeTier" ? line[field] ?? "signature" : line[field]) !== value) ||
+      source.line.dimensionsMandatory && !estimateDimensionRulesEqual(line.dimensionRule, source.line.dimensionRule) ||
+      line.included === true && !estimateLineDimensionsValid(line) ||
       designRulesDigest(line.designRules) !== source.line.designRulesDigest ||
       JSON.stringify(line.estimateNotes ?? []) !== JSON.stringify(source.line.estimateNotes) ||
-      !estimateConfigurationRateMatches(line, source.line.modeBaseRatesPaise, source.line.inHouseComponents)) {
+      !tierPricing || !estimateConfigurationRateMatches(line, tierPricing.modeBaseRatesPaise, tierPricing.inHouseComponents)) {
       throw new ApiError(409, "ESTIMATE_CONFIGURATION_CHANGED",
         "Configuration changed. Save the estimate with its current Main Line values before continuing.");
     }
@@ -889,7 +918,7 @@ async function fenceEstimateConfigurationDependencies(lines: unknown, session: m
 }
 
 function savedConfiguredSnapshot(prior: Record<string, unknown>): {
-  line: Omit<EstimatorCatalogueLine, "itemStatus" | "revisionStatus" | "itemVersion" | "revisionVersion" | "inHouseBaseRatePaise" | "modeBaseRatesPaise">;
+  line: Omit<EstimatorCatalogueLine, "itemStatus" | "revisionStatus" | "itemVersion" | "revisionVersion" | "inHouseBaseRatePaise" | "modeBaseRatesPaise" | "applicableTiers" | "tierPricing" | "dimensionsMandatory" | "dimensionRule">;
   mainBasketName: string; subBasketName: string | null;
 } {
   const strings = ["mainBasketId", "mainLineId", "revisionId", "uomId",
@@ -901,7 +930,7 @@ function savedConfiguredSnapshot(prior: Record<string, unknown>): {
   const directTemporary = itemType === "temporary" &&
     prior.subBasketId === null && prior.subBasketName === null;
   if (strings.some((field) => typeof prior[field] !== "string" || !prior[field]) ||
-    !itemType || (!hasSubBasket && !directTemporary) ||
+    !isKnowledgeModeTier(prior.modeTier ?? "signature") || !itemType || (!hasSubBasket && !directTemporary) ||
     !Number.isInteger(prior.uomDecimalScale) || Number(prior.uomDecimalScale) < 0 || Number(prior.uomDecimalScale) > 3) {
     throw new ApiError(409, "ESTIMATE_LINE_SNAPSHOT_INVALID", "This saved line needs review before it can be edited.");
   }
@@ -920,6 +949,33 @@ function savedConfiguredSnapshot(prior: Record<string, unknown>): {
         decimalScale: Number(prior.uomDecimalScale) }
     }
   };
+}
+
+function configuredLineMeasurements(line: z.infer<typeof configuredEstimateLineSchema>, prior: Record<string, unknown> | undefined,
+  source: EstimatorCatalogueLine): { quantity: number; dimensions?: unknown; dimensionRule?: unknown } {
+  const mandatory = source.dimensionsMandatory;
+  if (mandatory && !source.dimensionRule) throw new ApiError(409, "ESTIMATE_DIMENSIONS_UOM_UNSUPPORTED", "This item requires a supported area UOM before its quantity can be calculated.");
+  const ruleChanged = !!prior && ((prior.dimensionsMandatory === true) !== mandatory || mandatory && !estimateDimensionRulesEqual(prior.dimensionRule, source.dimensionRule));
+  if (mandatory && line.dimensions !== undefined && !estimateDimensionRulesEqual(line.expectedDimensionRule, source.dimensionRule)) {
+    throw new ApiError(409, "ESTIMATE_DIMENSIONS_CONFIGURATION_CHANGED", "The measurement unit or precision changed. Refresh and confirm the dimensions before saving.");
+  }
+  if (line.dimensions !== undefined || mandatory && line.included || ruleChanged) {
+    const itemVersion = line.itemVersion ?? prior?.sourceItemVersion;
+    const revisionVersion = line.revisionVersion ?? prior?.sourceRevisionVersion;
+    if (line.revisionId !== source.revisionId || itemVersion !== source.itemVersion || revisionVersion !== source.revisionVersion || line.uomId !== source.uom.id) {
+      throw new ApiError(409, "ESTIMATE_DIMENSIONS_CONFIGURATION_CHANGED", "The measurement configuration changed. Refresh and confirm the dimensions before saving.");
+    }
+  }
+  let dimensions: unknown = line.dimensions;
+  if (dimensions !== undefined) {
+    dimensions = canonicalEstimateDimensions(dimensions);
+    if (!dimensions) throw new ApiError(400, "ESTIMATE_DIMENSIONS_INVALID", "Enter positive Length, Width and Height with at most six decimal places.");
+  } else if (prior?.dimensions !== undefined && (!mandatory || !ruleChanged && line.quantity === prior.quantity)) dimensions = prior.dimensions;
+  if (!mandatory) return { quantity: line.quantity, ...(dimensions === undefined ? {} : { dimensions }), ...(prior?.dimensionRule ? { dimensionRule: prior.dimensionRule } : {}) };
+  if (dimensions === undefined && !line.included) return { quantity: line.quantity };
+  const calculated = calculateDimensionQuantity(source.dimensionRule, dimensions);
+  if (!calculated) throw new ApiError(400, "ESTIMATE_DIMENSIONS_REQUIRED", "Enter valid Length, Width and Height to calculate this item's quantity.");
+  return { quantity: calculated.quantity, dimensions: calculated.dimensions };
 }
 
 function scaledQuantity(quantity: number, decimalScale: number, included: boolean): number {

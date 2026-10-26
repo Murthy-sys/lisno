@@ -1,4 +1,7 @@
+import { estimateDimensionSnapshotValid } from "../domain/estimate-dimension-snapshot.js";
+import { canonicalEstimateDimensions, readEstimateDimensionRule, type EstimateDimensions, type EstimateDimensionRule } from "../domain/estimate-dimensions.js";
 import { effectiveCommercialStatus, isCollaborativeEstimate } from "../domain/estimation-lifecycle.js";
+import { KNOWLEDGE_MODE_TIERS } from "../domain/ai-estimator-knowledge-mode-tiers.js";
 import { ESTIMATE_PRICING_MODES, ESTIMATE_RATE_SOURCES, estimatePricingMetadataIsValid } from "../domain/estimate-mode-pricing.js";
 import { z } from "zod";
 
@@ -23,6 +26,10 @@ const configuredLine = z.object({
   estimateNotes: z.array(z.string().max(4000)).max(4).optional(),
   itemType: z.enum(["main_line", "temporary"]).optional(),
   classification: z.enum(["standard", "special"]).optional(),
+  modeTier: z.enum(KNOWLEDGE_MODE_TIERS).optional(),
+  dimensionsMandatory: z.boolean().optional(),
+  dimensions: z.custom<EstimateDimensions>(value => canonicalEstimateDimensions(value) !== null).optional(),
+  dimensionRule: z.custom<EstimateDimensionRule>(value => readEstimateDimensionRule(value) !== null).nullable().optional(),
   pricingMode: z.enum(ESTIMATE_PRICING_MODES).optional(),
   rateSource: z.enum(ESTIMATE_RATE_SOURCES).optional(),
   selectedInHouseComponentIds: z.array(z.string().min(1).max(128)).max(50).refine((ids) => new Set(ids).size === ids.length).optional(),
@@ -33,7 +40,7 @@ const configuredLine = z.object({
   mainBasketName: z.string().min(1), subBasketName: z.string().min(1).nullable(),
   mainLineName: z.string().min(1), uomName: z.string().min(1),
   ratePaise: paise.nullable(), amountPaise: paise.nullable()
-}).refine((line) => configuredEstimateParentIsValid(line) && estimatePricingMetadataIsValid(line) && line.catalogueId === line.mainLineId &&
+}).refine((line) => estimateDimensionSnapshotValid(line) && configuredEstimateParentIsValid(line) && estimatePricingMetadataIsValid(line) && line.catalogueId === line.mainLineId &&
   (!line.included || line.ratePaise !== null && line.amountPaise !== null));
 const snapshotSchema = z.object({
   rooms: z.array(z.record(z.unknown())).optional(), bedroomCount: z.number().int().nullable().optional(), scopes: z.array(z.string()).optional(),
@@ -210,9 +217,11 @@ export function comparePublishedEstimateSnapshots(before: Row, after: Row) {
   const current = new Map<string, Row>((after.lineItems ?? []).filter((line: Row) => line.included).map((line: Row) => [String(line.id), line]));
   const addedLineIds = [...current.keys()].filter((id) => !previous.has(id));
   const removedLineIds = [...previous.keys()].filter((id) => !current.has(id));
-  const fields = ["roomId", "roomName", "specification", "mainLineName", "mainBasketId", "unit", "quantity", "rate", "amount", "estimateNotes"];
-  const changedLineIds = [...current.keys()].filter((id) => previous.has(id) && fields.some((field) =>
-    !isDeepStrictEqual(previous.get(id)![field] ?? null, current.get(id)![field] ?? null)));
+  const fields = ["roomId", "roomName", "specification", "mainLineName", "mainBasketId", "unit", "quantity", "rate", "amount", "estimateNotes", "selectedInHouseComponentIds", "dimensions", "dimensionRule"];
+  const changedLineIds = [...current.keys()].filter((id) => previous.has(id) && (
+    fields.some((field) => !isDeepStrictEqual(previous.get(id)![field] ?? null, current.get(id)![field] ?? null)) ||
+    (previous.get(id)!.modeTier ?? "signature") !== (current.get(id)!.modeTier ?? "signature") ||
+    (previous.get(id)!.dimensionsMandatory ?? false) !== (current.get(id)!.dimensionsMandatory ?? false)));
   const scopeChanged = ["propertyType", "bedroomCount", "rooms", "scopes", "selectedMainBasketIds"].some((field) =>
     !isDeepStrictEqual(before[field] ?? null, after[field] ?? null));
   return { addedLineIds, removedLineIds, changedLineIds, scopeChanged,

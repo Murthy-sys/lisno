@@ -32,6 +32,7 @@ export function PublishedEstimateItems({ snapshot }: { readonly snapshot: Client
             {line.itemType === "temporary" ? <Text style={styles.copy}>Temporary item</Text> : null}
             {line.specification ? <Text style={styles.copy}>{line.specification}</Text> : null}
             {line.estimateNotes?.map((note, noteIndex) => <Text key={noteIndex} style={styles.copy}>{note}</Text>)}
+            {line.dimensions ? <Text style={styles.copy}>Recorded dimensions: L {line.dimensions.length} × W {line.dimensions.width} × H {line.dimensions.height}{line.dimensionRule ? ` ${line.dimensionRule.inputUnit}` : ""}{line.dimensionsMandatory ? "; quantity = L × W" : ""}</Text> : null}
             <Text style={styles.copy}>{line.quantity} {line.uomName ?? line.unit ?? ""} × {rate === null ? "Rate unavailable" : clientEstimateMoney(rate)}</Text>
           </View>
           <Text style={styles.amount}>{amount === null ? "Amount unavailable" : clientEstimateMoney(amount)}</Text>

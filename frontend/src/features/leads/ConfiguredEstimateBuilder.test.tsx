@@ -145,7 +145,7 @@ describe("ConfiguredEstimateBuilder", () => {
     expect(screen.queryByRole("group", { name: "Options for POP false ceiling" })).not.toBeInTheDocument();
     expect(trigger).toHaveFocus();
     await user.tab();
-    expect(screen.getByRole("radio", { name: /Standard item type for.*POP false ceiling/ })).toHaveFocus();
+    expect(screen.getByRole("radio", { name: /Signature tier for.*POP false ceiling/ })).toHaveFocus();
     await user.click(trigger);
     await user.click(screen.getByRole("button", { name: "Reset quantity" }));
     expect(screen.getByRole("spinbutton", { name: /Quantity.*POP false ceiling/ })).toHaveValue(1);
@@ -622,5 +622,50 @@ describe("ConfiguredEstimateBuilder", () => {
       .getByRole("button", { name: /Painting/ }));
     expect(screen.getByRole("region", { name: "Painting" })).toBeVisible();
     expect(screen.getByRole("searchbox", { name: "Search estimate items" })).toHaveValue("");
+  });
+});
+
+
+it("switches only one line's tier, adopts its price and shows unavailable choices without fallback", async () => {
+  const user = userEvent.setup(); const current = structuredClone(catalogue);
+  const source = current.items[0]!.subBaskets[0]!.mainLines[0]!;
+  source.applicableTiers = ["signature", "premium", "functional"];
+  source.tierPricing = { signature: { modeBaseRatesPaise: source.modeBaseRatesPaise! }, premium: { modeBaseRatesPaise: { pmc: 100, sub_vendor: 12500, in_house: null } } };
+  const initial = buildConfiguredLines(current, rooms, new Set(["basket-pop"]), []).map(line => ({ ...line, included: true }));
+  const changed = vi.fn();
+  render(<LiveBuilder initialLines={initial} availableCatalogue={current} onLinesChange={changed} />);
+  const premium = screen.getByRole("radio", { name: /Premium tier for.*POP false ceiling/ });
+  expect(screen.getByRole("radio", { name: /Functional tier for.*POP false ceiling/ })).toBeDisabled();
+  await user.click(premium);
+  expect(premium).toBeChecked();
+  expect(screen.getByRole("textbox", { name: /Selling rate.*POP false ceiling/ })).toHaveValue("125");
+  expect(changed.mock.lastCall?.[0].find((line: ConfiguredLineDraft) => line.mainLineId === "line-cove")).toMatchObject({ modeTier: "signature", rateInput: "105" });
+});
+
+
+describe("mandatory row dimensions", () => {
+  function measuredLine() {
+    return { ...buildConfiguredLines(catalogue, rooms, new Set(["basket-pop"]), [])[0]!, included: true,
+      dimensionsMandatory: true, dimensionRule: { formula: "length_width" as const, inputUnit: "ft" as const, quantityUnit: "sq_ft" as const, uomId: "uom-sq", decimalScale: 2 },
+      dimensions: { length: "2", width: "3", height: "4" }, quantity: 6 };
+  }
+  it("replaces direct quantity controls, records height and calculates length × width", async () => {
+    const onLinesChange = vi.fn(); render(<LiveBuilder initialLines={[measuredLine()]} onLinesChange={onLinesChange} />);
+    expect(screen.queryByRole("spinbutton", { name: /Quantity/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Increase quantity/ })).not.toBeInTheDocument();
+    fireEvent.change(screen.getByRole("textbox", { name: /Length \(ft\)/ }), { target: { value: "5.5" } });
+    expect(screen.getByLabelText(/Calculated quantity for/)).toHaveTextContent("16.5");
+    fireEvent.change(screen.getByRole("textbox", { name: /Height \(ft\)/ }), { target: { value: "99" } });
+    expect(onLinesChange.mock.lastCall![0][0]).toMatchObject({ quantity: 16.5, dimensions: { height: "99" } });
+    await userEvent.click(screen.getByRole("button", { name: /More options/ }));
+    expect(screen.queryByRole("button", { name: "Reset quantity" })).not.toBeInTheDocument();
+  });
+  it("requires rule confirmation and respects read-only controls", async () => {
+    const view = render(<LiveBuilder initialLines={[{ ...measuredLine(), dimensionsNeedReview: true }]} />);
+    expect(screen.getByLabelText(/Calculated quantity for/)).toHaveTextContent("Pending");
+    await userEvent.click(screen.getByRole("button", { name: /Confirm dimensions for/ }));
+    expect(screen.getByLabelText(/Calculated quantity for/)).toHaveTextContent("6");
+    view.unmount(); render(<LiveBuilder initialLines={[measuredLine()]} editable={false} />);
+    expect(screen.getByRole("textbox", { name: /Length \(ft\)/ })).toBeDisabled();
   });
 });

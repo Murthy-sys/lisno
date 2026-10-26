@@ -10,7 +10,7 @@ import {
 import { Field, Select } from "../../components/ui/Field";
 import {
   KNOWLEDGE_WORKSPACE_TAB_LABELS,
-  KNOWLEDGE_WORKSPACE_TAB_KEYS,
+  knowledgeWorkspaceSectionsForTiers,
   type KnowledgeWorkspaceTabKey
 } from "./knowledgeWorkspaceSections";
 
@@ -28,7 +28,7 @@ export function KnowledgeSectionNavigation({
   onSectionChange,
   children,
   disabledSections = [],
-  sections = KNOWLEDGE_WORKSPACE_TAB_KEYS,
+  sections = knowledgeWorkspaceSectionsForTiers(["signature"]),
   panelBusy = false
 }: KnowledgeSectionNavigationProps) {
   const id = useId().replace(/:/g, "");

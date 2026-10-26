@@ -11,6 +11,12 @@ import {
 } from "../src/domain/ai-estimator-knowledge-validation.js";
 
 describe("AI estimator knowledge validation", () => {
+  it("accepts an optional strict boolean dimension requirement in Overview only", () => {
+    for (const payload of [{}, { dimensionsMandatory: true }, { dimensionsMandatory: false }]) expect(validateKnowledgeSectionPayload("overview", payload)).toEqual([]);
+    for (const dimensionsMandatory of [null, "true", "false", 0, 1, {}, []]) expect(validateKnowledgeSectionPayload("overview", { dimensionsMandatory }))
+      .toContainEqual(expect.objectContaining({ path: "payload.dimensionsMandatory", code: "INVALID_TYPE" }));
+    expect(validateKnowledgeSectionPayload("advanced", { dimensionsMandatory: true })).not.toEqual([]);
+  });
   it("allows optional boolean Client-screen visibility in Overview without changing legacy payloads", () => {
     for (const payload of [{}, { clientVisible: true }, { clientVisible: false }]) {
       expect(validateKnowledgeSectionPayload("overview", payload)).toEqual([]);

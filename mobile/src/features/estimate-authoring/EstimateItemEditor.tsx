@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { View } from "react-native";
 import { Button, Field } from "../../ui/primitives";
 import type { EstimationCatalogue } from "./catalogueTypes";
-import { configuredLineAmountPaise, configuredModeBaseRate, deselectConfiguredRecommendationSources, estimatePricingModeLabels, formatRateInput, hasNativeReadOnlyInHousePricing, updateConfiguredLinePricing, type ConfiguredLineDraft } from "./configuredEstimate";
+import { configuredLineAmountPaise, configuredModeBaseRate, deselectConfiguredRecommendationSources, estimatePricingModeLabels, formatRateInput, hasNativeReadOnlyDimensionQuantity, hasNativeReadOnlyTierPricing, hasNativeReadOnlyInHousePricing, updateConfiguredLinePricing, type ConfiguredLineDraft } from "./configuredEstimate";
 import type { EstimateClassification, EstimatePricingMode } from "./types";
 import { estimatePaise, type StaffEstimateForm } from "./staffEstimateModel";
 import { EstimateChoice, EstimateSection, EstimateSelect, EstimateText, estimateStyles as styles } from "./EstimateUI";
@@ -35,7 +35,7 @@ export function EstimateItemEditor({ form, activeRoomId, onRoomChange, disabled,
   const room = form.rooms.find((item) => item.id === activeRoomId) ?? form.rooms[0];
   const lines = form.lines.filter((line) => line.roomId === room?.id && (!selectedOnly || line.included) && [line.mainLineName, line.mainBasketName, line.subBasketName].some((value) => value?.toLowerCase().includes(search.toLowerCase())));
   function update(line: ConfiguredLineDraft, change: Partial<ConfiguredLineDraft>) {
-    if (hasNativeReadOnlyInHousePricing(line)) return;
+    if (hasNativeReadOnlyDimensionQuantity(line) || hasNativeReadOnlyTierPricing(line) || hasNativeReadOnlyInHousePricing(line)) return;
     const next = change.included === false ? deselectConfiguredRecommendationSources(form.lines, new Set([line.key])) : form.lines.map((item) => item.key === line.key ? updateConfiguredLinePricing(item, change, form.classifications[line.mainBasketId] ?? "standard") : item);
     onChange({ ...form, lines: next });
   }
@@ -47,9 +47,16 @@ export function EstimateItemEditor({ form, activeRoomId, onRoomChange, disabled,
     {lines.map((line) => {
       const classification = line.classification ?? form.classifications[line.mainBasketId] ?? "standard";
       const componentPricing = hasNativeReadOnlyInHousePricing(line);
-      const lineDisabled = disabled || componentPricing;
+      const tierPricing = hasNativeReadOnlyTierPricing(line);
+      const dimensionQuantity = hasNativeReadOnlyDimensionQuantity(line);
+      const lineDisabled = disabled || componentPricing || tierPricing || dimensionQuantity;
       return <EstimateSection key={line.key} title={line.mainLineName}>
         <EstimateText>{line.mainBasketName}{line.subBasketName ? ` / ${line.subBasketName}` : ""} · {line.itemType === "temporary" ? "Temporary item" : "Main Line"} · {line.uomName}</EstimateText>
+        {dimensionQuantity ? <><EstimateText>Quantity is calculated from Length × Width. Enter or change dimensions in the web estimate workspace.</EstimateText>
+          {line.nativeDimensionsNeedReview ? <EstimateText error>Dimensions or their configuration need review before saving.</EstimateText> : null}</> : null}
+        {line.dimensions ? <EstimateText>Recorded dimensions: L {line.dimensions.length} × W {line.dimensions.width} × H {line.dimensions.height}{line.dimensionRule ? ` ${line.dimensionRule.inputUnit}` : ""}</EstimateText> : null}
+        {tierPricing ? <><EstimateText>{line.modeTier === "premium" ? "Premium" : line.modeTier === "functional" ? "Functional" : "Signature"} tier pricing is read-only here. Change tiers and pricing in the web estimate workspace.</EstimateText>
+          {line.nativeTierNeedsReview ? <EstimateText error>Configuration has changed or the tier is unavailable. Review this item on the web before saving.</EstimateText> : null}</> : null}
         {componentPricing ? <><EstimateText>In-house component pricing is read-only here. Review components and pricing in the web estimate workspace.</EstimateText>
           {line.selectedInHouseComponentIds?.map((id, index) => {
             const component = line.inHouseComponents?.find(row => row.id === id);

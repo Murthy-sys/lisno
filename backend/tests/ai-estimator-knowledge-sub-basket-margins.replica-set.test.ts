@@ -70,6 +70,54 @@ describe("current-main-line default Mode configuration", { timeout: 30_000 }, ()
     return uom;
   }
 
+  it("reads the selected tier from the same first main line without changing Signature defaults", async () => {
+    const { basket, sub, source, target } = await fixture();
+    const premium = { ...payload(), pmcMinimumMarginBps: 1500, pmcMarginBps: 2000,
+      subVendorMinimumMarginBps: 3000, subVendorMarginBps: 4500,
+      modeCalculations: { ...payload().modeCalculations, in_house_labor: settings(46000, 1500, 4500) } };
+    await AiEstimatorKnowledgeSectionModel.updateOne({ mainLineId: source.mainLineId, sectionKey: "advanced" },
+      { $set: { "payload.tierConfigurations.premium": { applicability: "configured", payload: premium } } });
+    await AiEstimatorKnowledgeSectionModel.updateOne({ mainLineId: target.mainLineId, sectionKey: "advanced" },
+      { $set: { "payload.tierConfigurations.premium": { applicability: "configured", payload: payload(true) } } });
+    const before = await snapshot();
+    const signature = await base.item.getSubBasketMargins(actor, basket.id, sub.id);
+    const selected = await base.item.getSubBasketMargins(actor, basket.id, sub.id, "premium");
+    expect(selected.source).toEqual(signature.source);
+    expect(selected.source?.mainLineId).toBe(source.mainLineId);
+    expect(selected.modes.pmc.ranges).toEqual([{ key: "margin", minimumBps: 1500, maximumBps: 2000 }]);
+    expect(selected.modes.sub_vendor.ranges).toEqual([{ key: "margin", minimumBps: 3000, maximumBps: 4500 }]);
+    expect(selected.modes.pmc.mismatches).toMatchObject([{ mainLineId: target.mainLineId }]);
+    expect(selected.sourceConfiguration?.modes.in_house.calculations[0]?.baseRatePaise).toBe(46000);
+    expect(signature.modes.pmc.ranges).toEqual([{ key: "margin", minimumBps: 1200, maximumBps: 1800 }]);
+    expect(selected.versionToken).not.toBe(signature.versionToken);
+    await expect(base.item.applySubBasketMargins(actor, basket.id, sub.id, { mode: "pmc", versionToken: selected.versionToken }))
+      .rejects.toMatchObject({ code: "VERSION_CONFLICT" });
+    expect(await snapshot()).toEqual(before);
+  });
+
+  it.each(["premium", "functional"] as const)("keeps an empty first-line %s tier empty instead of falling back to Signature or the next line", async (modeTier) => {
+    const { basket, sub, source, target } = await fixture();
+    await AiEstimatorKnowledgeSectionModel.updateOne({ mainLineId: target.mainLineId, sectionKey: "advanced" },
+      { $set: { [`payload.tierConfigurations.${modeTier}`]: { applicability: "configured", payload: payload() } } });
+    const selected = await base.item.getSubBasketMargins(actor, basket.id, sub.id, modeTier);
+    expect(selected.source?.mainLineId).toBe(source.mainLineId);
+    expect(selected.sourceConfiguration).toBeNull();
+    for (const mode of ["pmc", "sub_vendor", "in_house"] as const) {
+      expect(selected.modes[mode]).toMatchObject({ mismatchCount: null, mismatches: [], canApply: false });
+      expect(selected.modes[mode].ranges.every(range => range.minimumBps === null && range.maximumBps === null)).toBe(true);
+    }
+  });
+
+  it("uses the selected tier's applicability independently of the Signature section", async () => {
+    const { basket, sub, source } = await fixture();
+    await AiEstimatorKnowledgeSectionModel.updateOne({ mainLineId: source.mainLineId, sectionKey: "advanced" },
+      { $set: { applicability: "not_applicable", "payload.tierConfigurations.functional": { applicability: "configured", payload: payload() } } });
+    const selected = await base.item.getSubBasketMargins(actor, basket.id, sub.id, "functional");
+    expect(selected.sourceConfiguration?.revisionId).toBe(source.draftRevisionId);
+    expect(selected.modes.pmc.mismatchCount).toBe(0);
+    expect((await base.item.getSubBasketMargins(actor, basket.id, sub.id)).modes.pmc.mismatchCount).toBeNull();
+  });
+
   it("projects source revision prices and inherited UOM in the reviewed snapshot", async () => {
     const { basket, sub, source } = await fixture();
     const uom = await sourceUom(source);

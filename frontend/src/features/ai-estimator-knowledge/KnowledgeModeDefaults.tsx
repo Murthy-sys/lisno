@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 
 import type { KnowledgeSubBasketMarginRange, KnowledgeSubBasketMarginSummary } from "../../../../shared/knowledge/knowledgeSubBasketMarginTypes";
+import type { KnowledgeModeTier } from "../../../../shared/knowledge/knowledgeModeTiers";
 import { Surface } from "../../components/ui/Surface";
 import { getKnowledgeSubBasketMargins } from "./knowledgeApi";
 import { knowledgeQueryKeys } from "./knowledgeQueryKeys";
@@ -17,12 +18,14 @@ const equalRange = (left: KnowledgeSubBasketMarginRange, right: KnowledgeSubBask
 
 export interface KnowledgeModeDefaultsProps {
   readonly item: KnowledgeItemDetail;
+  readonly modeTier?: KnowledgeModeTier;
 }
 
-export function KnowledgeModeDefaults({ item }: KnowledgeModeDefaultsProps) {
+export function KnowledgeModeDefaults({ item, modeTier = "signature" }: KnowledgeModeDefaultsProps) {
+  const baseKey = knowledgeQueryKeys.subBasketMargins(item.basketId, item.subBasketId ?? "");
   const query = useQuery({
-    queryKey: knowledgeQueryKeys.subBasketMargins(item.basketId, item.subBasketId ?? ""),
-    queryFn: () => getKnowledgeSubBasketMargins(item.basketId, item.subBasketId!),
+    queryKey: modeTier === "signature" ? baseKey : [...baseKey, "tier", modeTier],
+    queryFn: () => getKnowledgeSubBasketMargins(item.basketId, item.subBasketId!, { modeTier }),
     enabled: Boolean(item.subBasketId)
   });
   const summary = item.subBasketId && !query.isError ? query.data : undefined;

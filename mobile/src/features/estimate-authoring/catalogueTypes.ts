@@ -1,4 +1,5 @@
-import type { EstimatePricingMode } from "./types";
+import type { EstimateDimensionRule } from "../../../../shared/estimation/estimateDimensions";
+import type { EstimateModeTier, EstimatePricingMode } from "./types";
 export interface Pagination { offset: number; hasMore: boolean; }
 export type EstimationModeBaseRatesPaise = Record<EstimatePricingMode, number | null>;
 export interface EstimationInHouseComponent {
@@ -28,6 +29,9 @@ export interface EstimationCatalogueMainLine {
   estimateNotes?: string[] | undefined;
   displayOrder: number;
   revisionId: string;
+  applicableTiers?: EstimateModeTier[] | undefined;
+  dimensionsMandatory?: boolean | undefined;
+  dimensionRule?: EstimateDimensionRule | null | undefined;
   itemStatus?: "draft" | "active" | "inactive" | undefined;
   revisionStatus?: "draft" | "active" | undefined;
   itemVersion?: number | undefined;

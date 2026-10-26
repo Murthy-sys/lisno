@@ -79,6 +79,18 @@ describe("assistant exact Configuration selling prices", () => {
 });
 
 describe("assistant recommendations and immutable approved allowances", () => {
+  it.each(["premium", "functional"] as const)("does not price an approved %s item from Signature settings", async modeTier => {
+    const approval = approved();
+    approval.lines = [{ mainLineId: "ceiling", roomId: "hall", included: true, pricingMode: "sub_vendor", modeTier }];
+    const result = await calculateAssistantAddition({ lines: [line()] }, approval, reads());
+    expect(result.lines[0]).toMatchObject({ amountPaise: null });
+    expect(result.lines[0]?.missingInputs.join(" ")).toContain("selected configuration tier");
+    expect(result.totalPaise).toBeNull();
+    const otherRoom = await calculateAssistantAddition({ lines: [line("ceiling", { roomId: "bedroom", pricingMode: "sub_vendor" })] }, approval, reads());
+    expect(otherRoom.lines[0]?.amountPaise).toBeNull();
+    expect(otherRoom.lines[0]?.missingInputs.join(" ")).toContain("selected configuration tier");
+  });
+
   it("expands all Sub Basket children, does not infer quantity, separates optional charges, and labels partial totals", async () => {
     const result = await calculateAssistantAddition({ lines: [line(), line("paint", { quantity: "2", optional: true })] }, approved(), reads([source(), source("cove"), source("paint"), source("trim")], [rule("ceiling", ["cove", "trim"], { targetKind: "sub_basket" }), rule("ceiling", ["paint"], { requirement: "can", ruleId: "paint-optional" })]));
     expect(result.state).toBe("partial"); expect(result.totalPaise).toBeNull(); expect(result.subtotalPaise).toBe(95333); expect(result.optionalSubtotalPaise).toBe(19067);
@@ -111,5 +123,26 @@ describe("assistant recommendations and immutable approved allowances", () => {
     const baseline = approved(); baseline.lines = [{ mainLineId: "cove", roomId: "hall", pricingMode: "sub_vendor", included: true }];
     const result = await calculateAssistantAddition({ lines: [line(), line("paint", { optional: true })] }, baseline, reads([source(), source("paint"), source("trim")], [rule("ceiling", ["cove"]), rule("paint", ["trim"])]));
     expect(result.lines.map(line => line.mainLineId)).not.toContain("cove"); expect(result.lines.find(line => line.mainLineId === "trim")?.optional).toBe(true); expect(result.state).toBe("complete");
+  });
+});
+
+
+describe("dimension-owned assistant quantities", () => {
+  it("refuses a scalar quantity when the current configuration requires dimensions", async () => {
+    const measured = source("ceiling", { dimensionsMandatory: true });
+    expect(() => assistantSellingAmount(measured, "sub_vendor", "11")).toThrow("dimensions");
+    const result = await calculateAssistantAddition({ lines: [line()] }, approved(), reads([measured]));
+    expect(result.lines[0]?.amountPaise).toBeNull();
+    expect(result.lines[0]?.missingInputs.join(" ")).toContain("length, width and height");
+    expect(result.totalPaise).toBeNull();
+  });
+  it("does not bypass frozen required dimensions through a different room or changed current configuration", async () => {
+    const approval = approved();
+    approval.lines = [{ mainLineId: "ceiling", roomId: "hall", included: true, pricingMode: "sub_vendor", dimensionsMandatory: true }];
+    const result = await calculateAssistantAddition({ lines: [line("ceiling", { roomId: "bedroom", pricingMode: "sub_vendor" })] }, approval, reads());
+    expect(result.lines[0]?.amountPaise).toBeNull();
+    expect(result.totalPaise).toBeNull();
+    approval.lines[0]!.dimensionsMandatory = false;
+    expect((await calculateAssistantAddition({ lines: [line()] }, approval, reads())).lines[0]?.amountPaise).not.toBeNull();
   });
 });

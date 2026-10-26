@@ -33,6 +33,7 @@ function installApi(rows: EstimateQueueItem[], options: { requirements?: Estimat
     if (url.endsWith("/auth/authorization")) return Response.json({ data: authorizationFor("client") });
     if (url.endsWith(`/projects/${project.id}`)) return Response.json({ data: { ...project, ...(options.requirements ? { estimationWorkflowVersion: 2 } : {}) } });
     if (url.endsWith(`/projects/${project.id}/estimate-requirements`) && options.requirements) return Response.json({ data: options.requirements });
+    if (url.endsWith(`/projects/${project.id}/estimate-tiers`)) return Response.json({ data: { projectId: project.id, estimateId: rows[0]?.id ?? null, estimateVersion: 1, editingAllowed: false, editingBlockReason: "review_pending", totalPaise: 88500, isIncomplete: false, lines: [] } });
     if (url.endsWith("/client/estimates")) {
       if (options.pending) return options.pending;
       const status = options.getError?.();

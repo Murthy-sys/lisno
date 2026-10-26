@@ -375,6 +375,9 @@ describe("ordinary transactional Estimate publication", () => {
   it("publishes configured identity and exact paise, and rechecks null rates inside the transaction", async () => {
     const configuredLine = {
       id: "configured-line", source: "configuration", catalogueId: "main-line-lower",
+      modeTier: "premium",
+      dimensionsMandatory: true, dimensions: { length: "1.25", width: "2", height: "9" },
+      dimensionRule: { formula: "length_width", inputUnit: "ft", quantityUnit: "sq_ft", uomId: "uom-sqft", decimalScale: 2 }, uomDecimalScale: 2,
       roomId: "room-a", roomName: "Living Room", specification: null,
       unit: "sqft", rate: 48.5, ratePaise: 4_850, quantity: 2.5,
       included: true, amount: 121.25, amountPaise: 12_125,

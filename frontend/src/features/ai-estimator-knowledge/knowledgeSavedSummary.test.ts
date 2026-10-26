@@ -40,11 +40,21 @@ function settings(baseRatePaise: number, impactBps: number, minimumMarkupBps: nu
 }
 
 describe("projectKnowledgeSavedSummary", () => {
+  it.each([[true, "Yes · Length × Width"], [false, "No"]] as const)("summarizes dimensions mandatory %s", (dimensionsMandatory, expected) => {
+    const result = projectKnowledgeSavedSummary(input({ sections: { overview: { dimensionsMandatory } } })).overview;
+    expect(result.details).toContainEqual({ key: "dimensions-mandatory", label: "Dimensions mandatory", value: expected });
+    expect(values(result)).not.toContain("needs review");
+  });
+  it.each([[[], "None"], [["signature", "functional"], "Signature, Functional"]] as const)("summarizes saved applicable tiers %j", (tiers, expected) => {
+    const result = projectKnowledgeSavedSummary(input({ sections: { overview: { applicableTiers: [...tiers] } } })).overview;
+    expect(result.details).toContainEqual({ key: "applicable-tiers", label: "Applicable tiers", value: expected });
+    expect(values(result)).not.toContain("needs review");
+  });
   it.each([[undefined, "Yes"], [true, "Yes"], [false, "No"]] as const)("shows effective client visibility %s as %s without a generic review warning", (clientVisible, expected) => {
     const payload: KnowledgeJsonObject = clientVisible === undefined ? {} : { clientVisible };
     const result = projectKnowledgeSavedSummary(input({ sections: { overview: payload } })).overview;
     const visibility = { key: "client-visible", label: "Client estimate screen", value: expected };
-    expect(result).toEqual({ details: [visibility], preview: [visibility] });
+    expect(result).toEqual({ details: [visibility, { key: "dimensions-mandatory", label: "Dimensions mandatory", value: "No" }], preview: [visibility, { key: "dimensions-mandatory", label: "Dimensions mandatory", value: "No" }] });
     expect(values(result)).not.toContain("needs review");
     expect(payload).toEqual(clientVisible === undefined ? {} : { clientVisible });
   });
@@ -83,7 +93,8 @@ describe("projectKnowledgeSavedSummary", () => {
       sections: { overview: {}, advanced: {}, recommendations: {} }, quality: quality([])
     }));
     const visibility = { key: "client-visible", label: "Client estimate screen", value: "Yes" };
-    expect(result.overview).toEqual({ details: [visibility], preview: [visibility] });
+    const dimensions = { key: "dimensions-mandatory", label: "Dimensions mandatory", value: "No" };
+    expect(result.overview).toEqual({ details: [visibility, dimensions], preview: [visibility, dimensions] });
     expect(result.recommendations).toEqual({ details: [], preview: [] });
     expect(result.quality).toEqual({ details: [], preview: [] });
     expect(result.mode.details).toEqual([

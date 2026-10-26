@@ -1,5 +1,7 @@
+import { estimateDimensionSnapshotFields, estimateDimensionSnapshotValid } from "../domain/estimate-dimension-snapshot.js";
 import { effectiveCommercialStatus } from "../domain/estimation-lifecycle.js";
 import type { EstimatePricingMode, EstimateRateSource } from "../domain/estimate-mode-pricing.js";
+import type { KnowledgeModeTier } from "../domain/ai-estimator-knowledge-mode-tiers.js";
 import type mongoose from "mongoose";
 
 import {
@@ -967,6 +969,7 @@ function mapSnapshot(row: Row): EstimateClientReviewSnapshot {
     ...(Array.isArray(row.scopes) ? { scopes: row.scopes as string[] } : {}),
     ...(row.bedroomCount === undefined ? {} : { bedroomCount: row.bedroomCount === null ? null : numberField(row, "bedroomCount") }),
     lineItems: arrayField(row, "lineItems").map((lineItem) => {
+      if (!estimateDimensionSnapshotValid(lineItem)) throw new Error("Published dimensions or calculated quantity are invalid.");
       const common = {
         ...(lineItem.id === undefined ? {} : { id: nullableStringField(lineItem, "id") }),
         ...(lineItem.clientVisible === undefined ? {} : { clientVisible: booleanField(lineItem, "clientVisible") }),
@@ -981,6 +984,8 @@ function mapSnapshot(row: Row): EstimateClientReviewSnapshot {
         source: "configuration" as const,
         ...(lineItem.itemType === undefined ? {} : { itemType: stringField(lineItem, "itemType") as "main_line" | "temporary" }),
         classification: lineItem.classification === "special" ? "special" as const : "standard" as const,
+        ...(lineItem.modeTier === undefined ? {} : { modeTier: stringField(lineItem, "modeTier") as KnowledgeModeTier }),
+        ...estimateDimensionSnapshotFields(lineItem),
         ...(lineItem.pricingMode === undefined ? {} : { pricingMode: stringField(lineItem, "pricingMode") as EstimatePricingMode }),
         ...(lineItem.rateSource === undefined ? {} : { rateSource: stringField(lineItem, "rateSource") as EstimateRateSource }),
         ...(lineItem.selectedInHouseComponentIds === undefined ? {} : { selectedInHouseComponentIds: lineItem.selectedInHouseComponentIds as string[] }),

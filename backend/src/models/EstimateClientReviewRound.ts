@@ -1,4 +1,6 @@
+import { estimateDimensionSnapshotValid } from "../domain/estimate-dimension-snapshot.js";
 import { estimatePricingMetadataIsValid } from "../domain/estimate-mode-pricing.js";
+import { KNOWLEDGE_MODE_TIERS } from "../domain/ai-estimator-knowledge-mode-tiers.js";
 import {
   ESTIMATE_CLIENT_DECISIONS,
   ESTIMATE_CLIENT_DECISION_NOTE_MAX,
@@ -46,6 +48,10 @@ const estimateClientReviewLineItemSchema = new Schema(
     itemType: { type: String, enum: ["main_line", "temporary"], default: undefined, immutable: true },
     clientVisible: { type: Boolean, cast: false, default: undefined, immutable: true },
     classification: { type: String, enum: ["standard", "special"], default: undefined, immutable: true },
+    modeTier: { type: String, enum: KNOWLEDGE_MODE_TIERS, default: undefined, immutable: true },
+    dimensionsMandatory: { type: Boolean, cast: false, default: undefined, immutable: true },
+    dimensions: { type: Schema.Types.Mixed, default: undefined, immutable: true },
+    dimensionRule: { type: Schema.Types.Mixed, default: undefined, immutable: true },
     pricingMode: { type: String, enum: ["pmc", "sub_vendor", "in_house"], default: undefined, immutable: true },
     rateSource: { type: String, enum: ["configuration", "manual"], default: undefined, immutable: true },
     selectedInHouseComponentIds: { type: [String], default: undefined, immutable: true, validate: (ids: string[] | undefined) => ids === undefined || ids.length <= 50 && new Set(ids).size === ids.length },
@@ -82,6 +88,9 @@ const estimateClientReviewLineItemSchema = new Schema(
 
 estimateClientReviewLineItemSchema.pre("validate", function validateFrozenLine() {
   const configured = this.get("source") === "configuration";
+  if (!estimateDimensionSnapshotValid({ dimensionsMandatory: this.get("dimensionsMandatory"), dimensions: this.get("dimensions"),
+    dimensionRule: this.get("dimensionRule"), quantity: this.get("quantity"), included: this.get("included"),
+    uomId: this.get("uomId"), uomDecimalScale: this.get("uomDecimalScale") })) this.invalidate("dimensions", "Published dimensions or calculated quantity are invalid.");
   const required = configured
     ? ["roomId", "mainBasketId", "mainLineId", "revisionId", "uomId", "mainBasketName", "mainLineName", "uomName"]
     : ["specification"];
@@ -95,7 +104,7 @@ estimateClientReviewLineItemSchema.pre("validate", function validateFrozenLine()
     subBasketName: this.get("subBasketName")
   })) this.invalidate("subBasketId", "Published configured estimate Sub Basket identity is inconsistent.");
   if (configured && !estimatePricingMetadataIsValid({
-    classification: this.get("classification"), pricingMode: this.get("pricingMode"), rateSource: this.get("rateSource")
+    classification: this.get("classification"), pricingMode: this.get("pricingMode"), rateSource: this.get("rateSource"), modeTier: this.get("modeTier")
   })) this.invalidate("pricingMode", "Published configured estimate pricing metadata is inconsistent.");
   if (configured) {
     const provenance = ["sourceItemStatus", "sourceRevisionStatus", "sourceItemVersion", "sourceRevisionVersion"] as const;

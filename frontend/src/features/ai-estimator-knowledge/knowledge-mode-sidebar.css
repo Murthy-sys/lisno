@@ -1,9 +1,9 @@
 /* Mode reference: retain the saved-data sidebar and its existing scroll behavior. */
-.knowledge-page.knowledge-page--item-workspace[data-workspace-section="mode"] .knowledge-workspace-history-rail ol {
+.knowledge-page.knowledge-page--item-workspace[data-workspace-section$="mode"] .knowledge-workspace-history-rail ol {
   gap: 6px;
 }
 
-.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace[data-workspace-section="mode"] .knowledge-workspace-history-rail .knowledge-history__entry {
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace[data-workspace-section$="mode"] .knowledge-workspace-history-rail .knowledge-history__entry {
   position: relative;
   grid-template-columns: 16px minmax(0, 1fr);
   gap: 8px;
@@ -12,7 +12,7 @@
   background: transparent;
 }
 
-.knowledge-page[data-workspace-section="mode"] .knowledge-history__entry:not(:last-child)::after {
+.knowledge-page[data-workspace-section$="mode"] .knowledge-history__entry:not(:last-child)::after {
   position: absolute;
   inset-inline-start: 7px;
   inset-block-start: 21px;
@@ -22,12 +22,12 @@
   content: "";
 }
 
-.knowledge-page[data-workspace-section="mode"] .knowledge-history__entry--active:not(:last-child)::after {
+.knowledge-page[data-workspace-section$="mode"] .knowledge-history__entry--active:not(:last-child)::after {
   background: var(--button-primary-bg);
   opacity: 0.6;
 }
 
-.knowledge-page[data-workspace-section="mode"] .knowledge-history__entry-icon {
+.knowledge-page[data-workspace-section$="mode"] .knowledge-history__entry-icon {
   position: relative;
   z-index: 1;
   justify-content: center;
@@ -41,40 +41,40 @@
   background: var(--role-ink-muted, var(--color-text-muted));
 }
 
-.knowledge-page[data-workspace-section="mode"] .knowledge-history__entry--active .knowledge-history__entry-icon {
+.knowledge-page[data-workspace-section$="mode"] .knowledge-history__entry--active .knowledge-history__entry-icon {
   background: var(--button-primary-bg);
 }
 
-.knowledge-page[data-workspace-section="mode"] .knowledge-history__entry-icon svg {
+.knowledge-page[data-workspace-section$="mode"] .knowledge-history__entry-icon svg {
   display: none;
 }
 
-.knowledge-page[data-workspace-section="mode"] .knowledge-history__entry-body {
+.knowledge-page[data-workspace-section$="mode"] .knowledge-history__entry-body {
   gap: 3px;
   padding: 10px;
   border-radius: var(--radius-control);
   background: var(--role-deck-tint, var(--color-surface-subtle));
 }
 
-.knowledge-page[data-workspace-section="mode"] .knowledge-history__entry-heading {
+.knowledge-page[data-workspace-section$="mode"] .knowledge-history__entry-heading {
   gap: 4px;
   font-size: 0.8125rem;
   line-height: 1.4;
 }
 
-.knowledge-page[data-workspace-section="mode"] .knowledge-history__meta {
+.knowledge-page[data-workspace-section$="mode"] .knowledge-history__meta {
   font-size: 0.75rem;
   line-height: 1.5;
 }
 
-.knowledge-page[data-workspace-section="mode"] .knowledge-hierarchy-summary > h2 {
+.knowledge-page[data-workspace-section$="mode"] .knowledge-hierarchy-summary > h2 {
   display: flex;
   align-items: center;
   gap: 10px;
   font-size: 1rem;
 }
 
-.knowledge-page[data-workspace-section="mode"] .knowledge-hierarchy-summary > h2::before {
+.knowledge-page[data-workspace-section$="mode"] .knowledge-hierarchy-summary > h2::before {
   flex: 0 0 32px;
   inline-size: 32px;
   block-size: 32px;
@@ -83,11 +83,11 @@
   content: "";
 }
 
-.knowledge-page[data-workspace-section="mode"] .knowledge-hierarchy-summary dl {
+.knowledge-page[data-workspace-section$="mode"] .knowledge-hierarchy-summary dl {
   gap: 0;
 }
 
-.knowledge-page[data-workspace-section="mode"] .knowledge-hierarchy-summary dl > div {
+.knowledge-page[data-workspace-section$="mode"] .knowledge-hierarchy-summary dl > div {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 8px;
@@ -95,17 +95,17 @@
   border-block-end: 1px solid var(--role-line, var(--color-border));
 }
 
-.knowledge-page[data-workspace-section="mode"] .knowledge-hierarchy-summary dl > div:last-child {
+.knowledge-page[data-workspace-section$="mode"] .knowledge-hierarchy-summary dl > div:last-child {
   border-block-end: 0;
 }
 
-.knowledge-page[data-workspace-section="mode"] .knowledge-hierarchy-summary :is(dt, dd) {
+.knowledge-page[data-workspace-section$="mode"] .knowledge-hierarchy-summary :is(dt, dd) {
   display: block;
   font-size: 0.75rem;
   line-height: 1.5;
 }
 
-.knowledge-page[data-workspace-section="mode"] .knowledge-hierarchy-summary .knowledge-saved-summary__rows dt::after {
+.knowledge-page[data-workspace-section$="mode"] .knowledge-hierarchy-summary .knowledge-saved-summary__rows dt::after {
   content: none;
 }
 

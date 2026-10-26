@@ -1,3 +1,4 @@
+import { canonicalEstimateDimensions, readEstimateDimensionRule, estimateLineDimensionsValid, type EstimateDimensions, type EstimateDimensionRule } from "../../../../shared/estimation/estimateDimensions";
 import { z } from "zod";
 
 import { ApiProtocolError } from "../../core/http/apiClient";
@@ -25,13 +26,19 @@ const lineItemSchema = z.object({
   subBasketName: optionalText,
   mainLineName: z.string().optional(),
   itemType: z.enum(["main_line", "temporary"]).optional(),
+  modeTier: z.enum(["signature", "premium", "functional"]).optional(),
+  dimensionsMandatory: z.boolean().optional(),
+  dimensions: z.custom<EstimateDimensions>(value => canonicalEstimateDimensions(value) !== null).optional(),
+  dimensionRule: z.custom<EstimateDimensionRule>(value => readEstimateDimensionRule(value) !== null).nullable().optional(),
+  uomId: z.string().optional(),
+  uomDecimalScale: z.number().int().min(0).max(6).optional(),
   quantity: z.number().finite().nonnegative(),
   rate: nullableMoney,
   ratePaise: paise.nullable().optional(),
   amount: nullableMoney,
   amountPaise: paise.nullable().optional(),
   included: z.boolean()
-});
+}).refine(line => line.included === false && line.dimensions === undefined || estimateLineDimensionsValid(line));
 const snapshotSchema = z.object({
   projectName: z.string(), clientName: z.string(), location: z.string(),
   propertyType: z.string().optional(),

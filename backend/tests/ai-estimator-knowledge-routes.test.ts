@@ -150,7 +150,7 @@ describe("AI Estimator Knowledge HTTP routes", () => {
     const path = "/api/v1/admin/ai-estimator-knowledge/baskets/basket-1/sub-baskets/child-1/margins";
     const headers = { Authorization: "Bearer super-admin-token" };
     await request(app).get(path).set(headers).expect(200);
-    expect(testServices.item.getSubBasketMargins).toHaveBeenCalledWith(superAdmin, "basket-1", "child-1");
+    expect(testServices.item.getSubBasketMargins).toHaveBeenCalledWith(superAdmin, "basket-1", "child-1", undefined);
     const command = { mode: "pmc", versionToken: "a".repeat(64) };
     await request(app).post(`${path}/apply`).set(headers).send(command).expect(200);
     expect(testServices.item.applySubBasketMargins).toHaveBeenCalledWith(superAdmin, "basket-1", "child-1", command);

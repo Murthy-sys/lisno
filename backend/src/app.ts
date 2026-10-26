@@ -201,6 +201,7 @@ import {
 import { createUserInvitationService } from "./services/user-invitation.service.js";
 import { createProjectClientInvitationService } from "./services/project-client-invitation.service.js";
 import { createProjectClientInvitationsRouter } from "./routes/project-client-invitations.js";
+import { createEstimateTiersRouter } from "./routes/estimate-tiers.js";
 import { createEstimateRequirementsRouter } from "./routes/estimate-requirements.js";
 import { createEstimateCollaborationRouter } from "./routes/estimate-collaboration.js";
 import { systemClock, type Clock } from "./services/workflow.js";
@@ -620,6 +621,7 @@ export function createApp(dependencies: AppDependencies) {
   app.use("/api/v1", createAuthRouter(authService, authRateLimit, profilePhotoService));
   app.use("/api/v1", createProjectClientInvitationsRouter(authService, projectClientInvitations, (_req, _res, next) => next(), invitationDeliveryRateLimit));
   app.use("/api/v1", createEstimateRequirementsRouter(authService, auditService));
+  app.use("/api/v1", createEstimateTiersRouter(authService, auditService));
   app.use("/api/v1", createEstimateCollaborationRouter(authService, auditService));
   app.use("/api/v1", createProfilePhotosRouter(authService, profilePhotoService));
   app.use("/api/v1", createNotificationsRouter(authService, notifications, notificationStream));

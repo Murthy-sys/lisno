@@ -111,7 +111,7 @@ createRoot(document.getElementById("root")!).render(
       <AuthProvider>
         <FeedbackProvider>
           <main className="app-main ui-app-shell" data-role="super_admin">
-            <div className={management
+            <div style={state.startsWith("overview-") ? { gridColumn: "1 / -1", padding: 24 } : undefined} className={management
               ? "knowledge-page"
               : "knowledge-page knowledge-page--item-workspace"}>
               <SurfaceQaPage state={state} />

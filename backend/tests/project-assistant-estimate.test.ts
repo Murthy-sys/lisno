@@ -140,3 +140,14 @@ describe("published estimate read boundary", () => {
     await expect(service.projectEstimate!({ basis: "current" })).rejects.toMatchObject({ status: 404 });
   });
 });
+
+
+it("does not report a forged dimension-owned frozen quantity", () => {
+  const frozen = snapshot();
+  Object.assign(frozen.lineItems[0]!, { dimensionsMandatory: true, dimensions: { length: "2", width: "1", height: "9" },
+    dimensionRule: { formula: "length_width", inputUnit: "ft", quantityUnit: "sq_ft", uomId: "uom", decimalScale: 2 }, uomDecimalScale: 2 });
+  const input = { estimateId: "estimate-a", projectId: "a", round: round(), snapshot: frozen, approved: true };
+  expect(projectPricingFromPublication(input)?.lines[0]?.quantity).toBe("2");
+  frozen.lineItems[0]!.quantity = 18;
+  expect(projectPricingFromPublication(input)).toBeNull();
+});

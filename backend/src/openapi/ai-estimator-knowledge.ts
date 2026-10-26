@@ -1,3 +1,4 @@
+import { KNOWLEDGE_MODE_TIERS } from "../domain/ai-estimator-knowledge-mode-tiers.js";
 import { DESIGN_RULE_KEYS } from "../domain/main-line-design-rules.js";
 import {
 } from "../contracts/ai-estimator-knowledge.js";
@@ -207,6 +208,8 @@ const masterStatusParameter = {
 export const AI_ESTIMATOR_KNOWLEDGE_QUERY_PARAMETERS: Readonly<
   Record<string, readonly OpenApiObject[]>
 > = {
+  [`GET ${admin}/main-lines/:mainLineId/revisions/:revisionId/sections/:sectionKey`]: [{ name: "modeTier", in: "query", required: false, schema: { type: "string", enum: [...KNOWLEDGE_MODE_TIERS], default: "signature" }, description: "Tier scope for advanced and pricing. Other sections support Signature only." }],
+  [`GET ${admin}/baskets/:basketId/sub-baskets/:subBasketId/margins`]: [{ name: "modeTier", in: "query", required: false, schema: { type: "string", enum: [...KNOWLEDGE_MODE_TIERS], default: "signature" } }],
   [`GET ${admin}/quality-control-options`]: [{
     name: "kind",
     in: "query",
@@ -642,6 +645,7 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
     {
       expectedVersion: version,
       expectedAggregateVersion: version,
+      modeTier: { type: "string", enum: [...KNOWLEDGE_MODE_TIERS], default: "signature", description: "Save only this tier. The server retains all other tiers. Premium and Functional start empty." },
       applicability: sectionApplicability,
       payload: ref("KnowledgeSectionPayload")
     }
@@ -1596,6 +1600,7 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
       revisionId: id,
       sectionKey: { type: "string", enum: [...AI_ESTIMATOR_KNOWLEDGE_SECTION_KEYS] },
       applicability: sectionApplicability,
+      modeTier: { type: "string", enum: [...KNOWLEDGE_MODE_TIERS] },
       payload: ref("KnowledgeSectionPayload"),
       referenceState: ref("KnowledgeSectionReferenceState"),
       version,
@@ -1610,6 +1615,7 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
       revisionId: id,
       sectionKey: { type: "string", enum: [...AI_ESTIMATOR_KNOWLEDGE_SECTION_KEYS] },
       applicability: sectionApplicability,
+      modeTier: { type: "string", enum: [...KNOWLEDGE_MODE_TIERS] },
       payload: ref("KnowledgeSectionPayload"),
       referenceState: ref("KnowledgeSectionReferenceState"),
       version,
@@ -1760,7 +1766,7 @@ function nullableRef(name: string): OpenApiObject {
 function sectionPayloadKeys(sectionKey: string): readonly string[] {
   const keys: Readonly<Record<string, readonly string[]>> = {
     design: ["itemNature", "answers", "details", "discussedVendorId", "poApprovalChecklist"],
-    overview: ["description", "uomId", "priorityId", "surfaceIds", "modeIds", "sectionApplicability", "clientVisible"],
+    overview: ["description", "uomId", "priorityId", "surfaceIds", "modeIds", "sectionApplicability", "clientVisible", "applicableTiers", "dimensionsMandatory"],
     pricing: ["specifications", "brands", "technicalDescription", "qualityLevel", "internalVendorNotes", "priceEntries"],
     "quantity-margin": ["quantitySlabs", "slabRates", "gapBehavior", "startMarginBps", "bottomMarginBps", "pmcMarkupBps", "wastageBps", "previewInputs"],
     scope: ["modeIds", "surfaceIds", "exclusions"],
@@ -1777,6 +1783,8 @@ function sectionPayloadProperties(sectionKey: string): Readonly<Record<string, u
     sectionPayloadKeys(sectionKey).map((key) => [key, {}])
   );
   if (sectionKey === "overview") {
+    properties.dimensionsMandatory = { type: "boolean", default: false, description: "Require positive Length, Width and Height at estimation. Quantity is Length × Width in the configured supported area UOM; Height is recorded only." };
+    properties.applicableTiers = { type: "array", maxItems: 3, uniqueItems: true, items: { type: "string", enum: [...KNOWLEDGE_MODE_TIERS] }, description: "Absent means Signature. An empty array hides all Mode tier tabs while retaining their saved configuration." };
     properties.clientVisible = { type: "boolean", default: true,
       description: "Whether this line appears on the Client estimate screen. Does not change internal visibility, totals, quotations or PDFs. Missing legacy values mean Yes." };
   }
