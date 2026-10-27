@@ -1,6 +1,7 @@
 import {
   AUTHORIZATION_POLICY_VERSION,
-  ROLE_CODES,
+  ACTIVE_ROLE_CODES,
+  isActiveFrontendRole,
   WORKER_ROLES,
   type AuthorizationSnapshot,
   type PermissionCode,
@@ -60,7 +61,7 @@ export const FEATURE_DESTINATIONS = Object.freeze([
     "admin",
     "designer",
     "procurement",
-    "program_manager",
+    "site_manager",
     "design_manager",
     "design_head"
   ]),
@@ -70,7 +71,7 @@ export const FEATURE_DESTINATIONS = Object.freeze([
   destination("estimates", "Estimates & design review", "estimation.client_estimate.list", ["client"]),
   destination("performance", "My performance", "organization.user_kpi.read", ["designer", ...WORK_ROLES]),
   destination("work", "Work", "workflow.tasks.read", WORK_ROLES),
-  destination("execution", "Execution", "execution.tracker.read", ["super_admin", "program_manager", "procurement", "site_manager"]),
+  destination("execution", "Execution", "execution.tracker.read", ["super_admin", "procurement", "site_manager"]),
   destination("vendor-work", "My work", "procurement.vendor_work.read", ["vendor"]),
   destination("work-order-approvals", "Work order approvals", "procurement.work_order_approval.read", ["site_manager", "designer", "procurement", "finance_head", "super_admin"]),
   destination("purchase-orders", "Purchase orders", "procurement.purchase_orders.approve", ["super_admin"]),
@@ -88,7 +89,7 @@ export const FEATURE_DESTINATIONS = Object.freeze([
     "super_admin"
   ]),
   destination("finance", "Finance", "finance.bucket.read", ["finance_head", "super_admin"]),
-  destination("messages", "Messages", "chat.read", ROLE_CODES),
+  destination("messages", "Messages", "chat.read", ACTIVE_ROLE_CODES),
   destination("ask-lisno", "Ask Lisno", "ask_lisno.request", ["client"]),
   destination("users", "Users", "identity.users.read", ["super_admin"]),
   destination(
@@ -119,8 +120,8 @@ export const FEATURE_DESTINATIONS = Object.freeze([
     "finance_head",
     "site_manager"
   ]),
-  destination("notifications", "Notifications", "chat.read", ROLE_CODES),
-  destination("notifications", "Notifications", "execution.notifications.read", ROLE_CODES),
+  destination("notifications", "Notifications", "chat.read", ACTIVE_ROLE_CODES),
+  destination("notifications", "Notifications", "execution.notifications.read", ACTIVE_ROLE_CODES),
   destination("notifications", "Notifications", "ai_estimator_knowledge.configuration.read", ["super_admin"])
 ] satisfies readonly FeatureDestination[]);
 
@@ -141,7 +142,7 @@ const LANDING_BY_ROLE = Object.freeze({
   procurement: "work",
   program_manager: "execution",
   finance_head: "work",
-  site_manager: "work",
+  site_manager: "execution",
   worker_electrician: "work",
   worker_plumber: "work",
   worker_carpenter: "work",
@@ -162,7 +163,7 @@ const DOMAIN_BY_ROLE = Object.freeze({
   procurement: "procurement",
   program_manager: "projects",
   finance_head: "finance",
-  site_manager: null,
+  site_manager: "projects",
   worker_electrician: null,
   worker_plumber: null,
   worker_carpenter: null,
@@ -188,6 +189,7 @@ function isCompatibleSnapshot(
   authorization: AuthorizationSnapshot | null
 ): authorization is AuthorizationSnapshot {
   return (
+    isActiveFrontendRole(role) &&
     authorization !== null &&
     authorization.role === role &&
     authorization.policyVersion === AUTHORIZATION_POLICY_VERSION

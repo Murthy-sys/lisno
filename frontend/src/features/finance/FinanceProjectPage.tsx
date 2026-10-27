@@ -1,3 +1,4 @@
+import { PMCounterpartPanel } from "../project-manager/PMCounterpartPanel";
 import { ProjectChatNavigation } from "../messages";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 
@@ -20,6 +21,7 @@ export function FinanceProjectPage() {
 
   return (
     <section className="finance-project-page" aria-labelledby="finance-project-title">
+      <PMCounterpartPanel projectId={projectId ?? ""} />
       <PageHeader
         id="finance-project-title"
         eyebrow="Project finance"

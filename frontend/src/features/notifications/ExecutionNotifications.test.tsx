@@ -10,7 +10,7 @@ import { notificationApi } from "./notificationApi";
 import { NotificationProvider } from "./NotificationProvider";
 import { NotificationBell } from "./NotificationBell";
 
-const fixture = vi.hoisted(() => ({ role: "vendor" as "vendor" | "program_manager" | "super_admin", id: "vendor-user", permitted: true, chat: false, connection: "live" }));
+const fixture = vi.hoisted(() => ({ role: "vendor" as "vendor" | "site_manager" | "super_admin", id: "vendor-user", permitted: true, chat: false, connection: "live" }));
 vi.mock("../../auth/AuthProvider", () => ({ useAuth: () => ({ status: "authenticated", user: { id: fixture.id, role: fixture.role }, authorization: authorizationFor(fixture.role, [...(fixture.permitted ? ["execution.notifications.read" as const] : []), ...(fixture.chat ? ["chat.read" as const] : [])]) }) }));
 vi.mock("../execution/ExecutionLiveProvider", () => ({ useExecutionConnection: () => fixture.connection }));
 vi.mock("./notificationStream", () => ({ runNotificationStream: async () => undefined }));

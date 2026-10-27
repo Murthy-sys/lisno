@@ -11,6 +11,7 @@ import type { KnowledgePreviewRequest } from "../../features/ai-estimator-knowle
 import type { KnowledgePreview } from "../../features/ai-estimator-knowledge/knowledgeTypes";
 import { createEnterpriseEstimateModes } from "./enterpriseEstimateModesData";
 import { chatTestPage, chatTestPolicy, chatTestSummary } from "../../features/messages/projectChatFixtures";
+import { createEnterpriseMessages } from "./enterpriseMessagesData";
 
 export type EnterpriseState = "populated" | "empty" | "error" | "denied" | "loading" | "mutation-error";
 export interface EnterpriseScenario { route: string; role: Role; state: EnterpriseState; }
@@ -147,6 +148,7 @@ async function jsonBody(input: RequestInfo | URL, init?: RequestInit): Promise<u
 export function installEnterpriseTransport(scenario: EnterpriseScenario) {
   const requests: EnterpriseRequest[] = [];
   const scenarioParams = new URL(scenario.route, window.location.origin).searchParams;
+  const messages = scenarioParams.get("qaMessages") === "ready" ? createEnterpriseMessages({ role: scenario.role, state: scenario.state, writable: scenarioParams.get("qaChatHours") !== "closed" }) : null;
   const componentAmounts = scenarioParams.get("qaComponentAmounts") === "ready" ? createEnterpriseComponentAmounts() : null;
   let componentPreviewFailure = false;
   const componentPreviewState = (event: Event) => { componentPreviewFailure = (event as CustomEvent<{ fail?: boolean }>).detail?.fail === true; };
@@ -163,6 +165,14 @@ export function installEnterpriseTransport(scenario: EnterpriseScenario) {
     capabilities: { canSend: false, canManageParticipants: false, canManageIssues: false, canRenameProject: false }
   });
   const chatStreamStops = new Set<() => void>();
+  const readProjectManager = (path: string): unknown => {
+    if (scenario.role !== "site_manager") return undefined;
+    if (path === "/notifications") return { items: [], unreadCount: 0, pagination: { limit: 20, offset: 0, total: 0, hasMore: false } };
+    if (path === "/project-manager/projects") return { items: [], total: 0,
+      counts: { active: 0, atRisk: 0, critical: 0, setup: 0, onTrack: 0, incomplete: 0 },
+      alerts: [], alertTotal: 0, calculatedAt: "2026-10-27T09:00:00.000Z" };
+    return undefined;
+  };
   const readRecommendationChat = (path: string): unknown => {
     if (!recommendationChatReady) return undefined;
     if (path === "/chat/availability") return { timezone: "Asia/Kolkata", writable: false, nextOpenAt: null, nextChangeAt: "2099-01-01T00:00:00.000Z" };
@@ -202,6 +212,24 @@ export function installEnterpriseTransport(scenario: EnterpriseScenario) {
     const url = new URL(raw, window.location.origin);
     const method = (init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
     const path = url.pathname.replace(/^\/api\/v1(?=\/|$)/, "");
+    if (messages) {
+      const stream = method === "GET" ? messages.stream(path, init?.signal ?? (input instanceof Request ? input.signal : undefined)) : undefined;
+      if (stream) { log(method, path, stream.status); return stream; }
+      const data = method === "GET" ? messages.read(path, url.searchParams) : messages.mutate(method, path, await jsonBody(input, init));
+      if (data !== undefined) {
+        if (method === "GET" && scenario.state === "loading") {
+          log(method, path, 0);
+          return new Promise<Response>((_resolve, reject) => {
+            const signal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
+            if (signal?.aborted) reject(new DOMException("Aborted", "AbortError"));
+            else signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+          });
+        }
+        if (method === "GET" && scenario.state === "error") { log(method, path, 503); return failure(503, "SYNTHETIC_UNAVAILABLE", "Synthetic QA: this information could not be loaded."); }
+        log(method, path, data instanceof Response ? data.status : 200);
+        return data instanceof Response ? data : Response.json({ data });
+      }
+    }
     const inHouseReady = new URL(scenario.route, window.location.origin).searchParams.get("qaInHouse") === "ready";
     const procurementModesReady = new URL(scenario.route, window.location.origin).searchParams.get("qaProcurementModes") === "ready";
     const standardBasketReady = new URL(scenario.route, window.location.origin).searchParams.get("qaStandardBasket") === "ready";
@@ -283,10 +311,11 @@ export function installEnterpriseTransport(scenario: EnterpriseScenario) {
     if (path === "/auth/me") { log(method, path, 200); return Response.json({ data: { id: scenario.role === "designer" ? "user-designer-ananya" : `${scenario.role}-1`, name: "Synthetic workspace reviewer", email: "reviewer@lisno.example", role: scenario.role } }); }
     if (path === "/auth/authorization") {
       const base = authorizationFor(scenario.role);
-      const permissions = scenario.state === "denied" ? ["identity.self.read", "identity.authorization.read"] as const : [...new Set([...base.permissions, ...(extraPermissions[scenario.role] ?? []), ...(recommendationChatReady ? ["chat.read" as const] : [])])];
+      const permissions = scenario.state === "denied" ? ["identity.self.read", "identity.authorization.read"] as const : [...new Set([...base.permissions, ...(extraPermissions[scenario.role] ?? []), ...((recommendationChatReady || messages) && scenario.role !== "program_manager" ? ["chat.read" as const] : [])])];
       log(method, path, 200); return Response.json({ data: authorizationFor(scenario.role, permissions) });
     }
-    if (recommendationChatReady && ["/projects/project-1/chat/events", "/notifications/events"].includes(path)) {
+    if (recommendationChatReady && ["/projects/project-1/chat/events", "/notifications/events"].includes(path) ||
+      scenario.role === "site_manager" && ["/execution/events", "/notifications/events"].includes(path)) {
       const signal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
       let cancel = () => {};
       const stream = new ReadableStream<Uint8Array>({
@@ -315,7 +344,7 @@ export function installEnterpriseTransport(scenario: EnterpriseScenario) {
         ? { items: [], unreadCount: 0, pagination: { limit: 20, offset: Number(url.searchParams.get("offset") ?? 0), total: 0, hasMore: false } }
         : failure(403, "FORBIDDEN", "Super Admin access is required.")
       : undefined;
-    const data = componentAmounts?.read(path) ?? basketNotifications ?? readRecommendationChat(path) ?? estimateModes?.read(path, url.searchParams) ?? enterpriseDataFor(path, url.searchParams, scenario, projectRates);
+    const data = componentAmounts?.read(path) ?? basketNotifications ?? readProjectManager(path) ?? readRecommendationChat(path) ?? estimateModes?.read(path, url.searchParams) ?? enterpriseDataFor(path, url.searchParams, scenario, projectRates);
     if (data === undefined) { log(method, path, 501, true); return failure(501, "UNEXPECTED_QA_REQUEST", `No synthetic response registered for ${path}.`); }
     if (scenario.state === "loading") { log(method, path, 0); return new Promise<Response>((_resolve, reject) => { const signal = init?.signal ?? (input instanceof Request ? input.signal : undefined); if (signal?.aborted) reject(new DOMException("Aborted", "AbortError")); signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true }); }); }
     if (scenario.state === "error") { log(method, path, 503); return failure(503, "SYNTHETIC_UNAVAILABLE", "Synthetic QA: this information could not be loaded."); }
@@ -327,5 +356,5 @@ export function installEnterpriseTransport(scenario: EnterpriseScenario) {
   XMLHttpRequest.prototype.setRequestHeader = function() {};
   XMLHttpRequest.prototype.send = function() { const request = xhrRequests.get(this) ?? { method: "UNKNOWN", path: "unknown-upload" }; log(request.method, request.path, 0); queueMicrotask(() => this.dispatchEvent(new ProgressEvent("error"))); };
   XMLHttpRequest.prototype.abort = function() { this.dispatchEvent(new ProgressEvent("abort")); };
-  return { requests, restore: () => { window.removeEventListener("enterprise-qa-component-preview", componentPreviewState); for (const stop of chatStreamStops) stop(); window.removeEventListener("enterprise-qa-estimate-mode-rates", updateEstimateConfiguration); window.fetch = originals.fetch; tokenStorage.get = originals.get; tokenStorage.set = originals.set; tokenStorage.clear = originals.clear; XMLHttpRequest.prototype.open = originals.open; XMLHttpRequest.prototype.send = originals.send; XMLHttpRequest.prototype.setRequestHeader = originals.setRequestHeader; XMLHttpRequest.prototype.abort = originals.abort; alert.remove(); } };
+  return { requests, restore: () => { messages?.dispose(); window.removeEventListener("enterprise-qa-component-preview", componentPreviewState); for (const stop of chatStreamStops) stop(); window.removeEventListener("enterprise-qa-estimate-mode-rates", updateEstimateConfiguration); window.fetch = originals.fetch; tokenStorage.get = originals.get; tokenStorage.set = originals.set; tokenStorage.clear = originals.clear; XMLHttpRequest.prototype.open = originals.open; XMLHttpRequest.prototype.send = originals.send; XMLHttpRequest.prototype.setRequestHeader = originals.setRequestHeader; XMLHttpRequest.prototype.abort = originals.abort; alert.remove(); } };
 }

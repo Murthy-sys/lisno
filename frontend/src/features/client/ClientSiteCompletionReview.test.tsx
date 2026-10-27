@@ -61,7 +61,7 @@ describe("ClientSiteCompletionReview", () => {
     expect(await screen.findByText("Not specified")).toBeVisible();
   });
 
-  it("enables Client acceptance after Site Manager submission and closes the review after acceptance", async () => {
+  it("enables Client acceptance after Project Manager submission and closes the review after acceptance", async () => {
     let current = pending();
     const decisions: Array<Record<string, unknown>> = [];
     server.use(
@@ -95,7 +95,7 @@ describe("ClientSiteCompletionReview", () => {
     );
     renderWithQuery(<ClientSiteCompletionReview projectId="project-a" />);
     await userEvent.click(await screen.findByRole("button", { name: "Request changes" }));
-    const send = screen.getByRole("button", { name: "Send changes to Site Manager" });
+    const send = screen.getByRole("button", { name: "Send changes to Project Manager" });
     expect(send).toBeDisabled();
     await userEvent.type(screen.getByRole("textbox", { name: "Describe the changes needed" }), "Repair the edge trim");
     await userEvent.click(send);

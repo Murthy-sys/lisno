@@ -3,7 +3,7 @@ import request from "supertest";
 import { describe, expect, it, vi } from "vitest";
 
 import { createApp } from "../src/app.js";
-import { OPERATIONAL_ROLES, ROLE_CODES, type Role } from "../src/domain/roles.js";
+import { ACTIVE_ROLE_CODES, OPERATIONAL_ROLES, ROLE_CODES, type Role } from "../src/domain/roles.js";
 import { createMemoryRepository } from "../src/repositories/memory.js";
 import type {
   ProjectAccessGrantRecord,
@@ -161,7 +161,7 @@ describe("user administration service", () => {
     expect(new Set(superPage.items.map(({ role }) => role))).toEqual(new Set(ROLE_CODES));
     expect(superPage.filterRoles).toEqual(ROLE_CODES);
     expect(superPage.manageableRoles).toEqual(
-      ROLE_CODES.filter((role) => role !== "super_admin" && role !== "vendor")
+      ACTIVE_ROLE_CODES.filter((role) => role !== "super_admin" && role !== "vendor")
     );
 
     expect(JSON.stringify(superPage)).not.toMatch(/password|hash|token|secret/i);
@@ -363,6 +363,69 @@ describe("user administration service", () => {
       version: 1
     });
     await expect(repository.listAuditEvents({ entityId: designer.id })).resolves.toEqual([]);
+  });
+
+  it("rejects legacy-role assignment and directs old accounts through migration without writes", async () => {
+    const seed = emptyAdministrationSeed();
+    const operator = canonicalSuperAdmin(seed);
+    const current = addUser(seed, "current-project-manager", "site_manager");
+    const legacy = addUser(seed, "legacy-project-manager", "program_manager");
+    const { repository, service } = setup(seed);
+    const before = await repository.listUsers();
+    await expect(service.update(publicUser(operator), current.id, { version: 1, role: "program_manager" }))
+      .rejects.toMatchObject({ status: 400, code: "ROLE_NOT_MANAGEABLE" });
+    await expect(service.update(publicUser(operator), legacy.id, { version: 1, role: "site_manager" }))
+      .rejects.toMatchObject({ status: 409, code: "PROJECT_MANAGER_MIGRATION_REQUIRED" });
+    expect(await repository.listUsers()).toEqual(before);
+    expect(await repository.listAuditEvents({})).toEqual([]);
+  });
+
+  it("counts scalar and workflow responsibilities without treating historical rows as current", async () => {
+    const seed = emptyAdministrationSeed();
+    const operator = canonicalSuperAdmin(seed);
+    const manager = addUser(seed, "project-manager-with-work", "site_manager");
+    seed.projects = [
+      { ...structuredClone(demoSeedData.projects[0]!), id: "active-scalar", status: "active", programManagerId: manager.id },
+      { ...structuredClone(demoSeedData.projects[0]!), id: "completed-scalar", status: "completed", programManagerId: manager.id },
+      { ...structuredClone(demoSeedData.projects[0]!), id: "other-scalar", status: "active", programManagerId: "someone-else" }
+    ];
+    seed.projectWorkflowAssignments = [
+      { projectId: "current-work", kind: "site_execution", assigneeRole: "site_manager", assigneeUserId: manager.id, status: "open" },
+      { projectId: "completed-work", kind: "site_execution", assigneeRole: "site_manager", assigneeUserId: manager.id, status: "completed" },
+      { projectId: "superseded-work", kind: "site_execution", assigneeRole: "site_manager", assigneeUserId: manager.id, status: "open", supersededAt: clock().toISOString() },
+      { projectId: "other-work", kind: "site_execution", assigneeRole: "site_manager", assigneeUserId: "someone-else", status: "open" }
+    ];
+    const { repository, service } = setup(seed);
+    expect(await repository.countUserResponsibilities(manager.id)).toMatchObject({ assignedExecutionProjects: 1, assignedWorkflowTasks: 1 });
+    await expect(service.update(publicUser(operator), manager.id, { version: 1, role: "procurement" }))
+      .rejects.toMatchObject({ code: "RESPONSIBILITY_REASSIGNMENT_REQUIRED" });
+    expect(await repository.findUserById(manager.id)).toMatchObject({ role: "site_manager", version: 1, sessionVersion: 1 });
+    await service.update(publicUser(operator), manager.id, { version: 1, active: false });
+    expect(await repository.findUserById(manager.id)).toMatchObject({ active: false, sessionVersion: 2 });
+    await service.update(publicUser(operator), manager.id, { version: 2, active: true });
+    expect(await repository.findUserById(manager.id)).toMatchObject({ active: true, sessionVersion: 3 });
+    expect(await repository.countUserResponsibilities(manager.id)).toMatchObject({ assignedExecutionProjects: 1, assignedWorkflowTasks: 1 });
+  });
+
+  it("blocks changing any active workflow owner role even without a PM scalar", async () => {
+    const seed = emptyAdministrationSeed();
+    const owner = addUser(seed, "procurement-task-owner", "procurement");
+    seed.projectWorkflowAssignments = [{ projectId: "project-a", kind: "procurement", assigneeRole: "procurement", assigneeUserId: owner.id, status: "open" }];
+    const { service } = setup(seed);
+    await expect(service.update(publicUser(canonicalSuperAdmin(seed)), owner.id, { version: 1, role: "site_manager" }))
+      .rejects.toMatchObject({ code: "RESPONSIBILITY_REASSIGNMENT_REQUIRED" });
+  });
+
+  it("rejects repository creation and editing of the retired role", async () => {
+    const seed = emptyAdministrationSeed();
+    const manager = addUser(seed, "canonical-manager", "site_manager");
+    const { repository } = setup(seed);
+    await expect(repository.createUser({ ...manager, id: "new-legacy-user", email: "new-legacy@example.test", role: "program_manager" }))
+      .rejects.toThrow(/legacy Program Manager/);
+    await expect(repository.updateUser(manager.id, 1, { role: "program_manager", updatedAt: clock().toISOString() }))
+      .rejects.toThrow(/legacy Program Manager/);
+    expect(await repository.findUserById("new-legacy-user")).toBeNull();
+    expect(await repository.findUserById(manager.id)).toMatchObject({ role: "site_manager", version: 1 });
   });
 
   it("rejects role change while dependent responsibilities remain", async () => {
@@ -614,7 +677,7 @@ describe("user administration routes", () => {
         // request above is filtered down to a single designer.
         summary: { total: 4, active: 4, inactive: 0, roleCount: 4 },
         filterRoles: ROLE_CODES,
-        manageableRoles: ROLE_CODES.filter((role) => role !== "super_admin" && role !== "vendor")
+        manageableRoles: ACTIVE_ROLE_CODES.filter((role) => role !== "super_admin" && role !== "vendor")
       }
     });
     expect(JSON.stringify(directory.body)).not.toMatch(/password|hash|token|secret/i);

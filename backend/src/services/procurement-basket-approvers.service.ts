@@ -1,3 +1,4 @@
+import { resolveProjectManagerAssignment } from "./project-manager-assignment.service.js";
 import { procurementPreparationProjectFilter } from "./procurement.service.js";
 import type { ClientSession } from "mongoose";
 import { ApiError } from "../middleware/errors.js";
@@ -31,24 +32,23 @@ export async function resolveBasketProjectApprovers(projectId: string, estimateI
   const block = (slot: BasketApproverBlocker["slot"], code: string, message: string) => {
     if (requiredSlots.includes(slot)) result.approverBlockers.push({ slot, code, message });
   };
-  const siteTasks = await ProjectWorkflowTaskModel.find({ projectId, kind: "site_execution" })
-    .session(session).lean() as Row[];
-  const siteTask = siteTasks.length === 1 ? siteTasks[0] : null;
-  if (siteTasks.length > 1 || (siteTask && siteTask.assigneeRole !== "site_manager")) {
-    block("program_manager", "PROCUREMENT_BASKET_SITE_MANAGER_AMBIGUOUS", "Correct the project's conflicting Site Manager assignments before submitting this award.");
-  } else if (!siteTask?.assigneeUserId) {
-    block("program_manager", "PROCUREMENT_BASKET_SITE_MANAGER_REQUIRED", "Assign a Site Manager to this project's Site execution task before submitting this award.");
+  const assignment = await resolveProjectManagerAssignment(projectId, session);
+  if (assignment.state === "conflict") {
+    block("program_manager", "PROCUREMENT_BASKET_SITE_MANAGER_AMBIGUOUS", "Reconcile the Project Manager assignment before submitting this award.");
+  } else if (assignment.state !== "assigned" || !assignment.task || assignment.task.estimateId !== estimateId) {
+    block("program_manager", "PROCUREMENT_BASKET_SITE_MANAGER_REQUIRED", "Assign a Project Manager to this project's current Site task before submitting this award.");
   } else {
-    const user = await UserModel.findOne({ _id: siteTask.assigneeUserId, role: "site_manager", active: true })
+    const user = await UserModel.findOne({ _id: assignment.ownerId, role: "site_manager", active: true })
       .select({ name: 1 }).session(session).lean() as Row | null;
-    if (!user) block("program_manager", "PROCUREMENT_BASKET_SITE_MANAGER_INACTIVE", "Assign an active Site Manager to this project before submitting this award.");
+    if (!user) block("program_manager", "PROCUREMENT_BASKET_SITE_MANAGER_INACTIVE", "Assign an active Project Manager before submitting this award.");
     else {
       result.assignedSiteManager = { id: String(user._id), name: String(user.name) };
       if (fence && requiredSlots.includes("program_manager")) {
-        const locked = await ProjectWorkflowTaskModel.updateOne({ _id: siteTask._id, projectId,
-          kind: "site_execution", assigneeRole: "site_manager", assigneeUserId: user._id },
+        const task = assignment.task;
+        const locked = await ProjectWorkflowTaskModel.updateOne({ _id: task.id, projectId, estimateId,
+          kind: "site_execution", assigneeRole: "site_manager", assigneeUserId: user._id, version: task.version, supersededAt: null },
         { $inc: { awardApprovalEpoch: 1 } }, { session, timestamps: false, runValidators: true });
-        if (locked.modifiedCount !== 1) throw new ApiError(409, "PROCUREMENT_BASKET_PROPOSAL_STALE", "The Site Manager assignment changed. Revise and resubmit this award.");
+        if (locked.modifiedCount !== 1) throw new ApiError(409, "PROCUREMENT_BASKET_PROPOSAL_STALE", "The Project Manager assignment changed. Revise and resubmit this award.");
       }
     }
   }

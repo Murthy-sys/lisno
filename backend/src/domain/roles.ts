@@ -23,6 +23,12 @@ export const ROLE_CODES = [
 
 export type Role = (typeof ROLE_CODES)[number];
 export const roleSchema = z.enum(ROLE_CODES);
+/** Historical role codes remain parseable; new identities use only active codes. */
+export const ACTIVE_ROLE_CODES = ROLE_CODES.filter((role) => role !== "program_manager");
+export type ActiveRole = Exclude<Role, "program_manager">;
+export function isActiveRole(role: unknown): role is ActiveRole {
+  return typeof role === "string" && ACTIVE_ROLE_CODES.some(candidate => candidate === role);
+}
 
 export const ROLE_LABELS = {
   super_admin: "Super Admin",
@@ -32,7 +38,7 @@ export const ROLE_LABELS = {
   procurement: "Procurement",
   program_manager: "Program Manager",
   finance_head: "Finance Manager",
-  site_manager: "Site Manager",
+  site_manager: "Project Manager",
   worker_electrician: "Electrician",
   worker_plumber: "Plumber",
   worker_carpenter: "Carpenter",
@@ -61,7 +67,6 @@ export const OPERATIONAL_ROLES = [
   "estimator_sales",
   "designer",
   "procurement",
-  "program_manager",
   "finance_head",
   "site_manager",
   ...WORKER_ROLES

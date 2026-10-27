@@ -122,7 +122,7 @@ it("requires saved site progress before sending completion and preserves the upd
 it("Client completion decisions use review version rather than parent completion version", async () => {
   const completionReview = { ...site, version: 21, progress: 100, status: "pending_client", review: { id: "site-review-a", projectId: "project-a", version: 3, round: 2, status: "pending", progress: 100, note: "All verified", submittedAt: "2026-10-14T06:00:00Z", sections: [], decision: null } }; get.mockResolvedValue(completionReview); post.mockResolvedValue(completionReview);
   const view = await mount(<Context user={client}>{c => <SiteCompletionPanel context={c} projectId="project-a" />}</Context>);
-  await fireEvent.press(await view.findByRole("button", { name: "Request completion changes" })); await fireEvent.changeText(view.getByLabelText("Describe completion changes needed"), "Kitchen drawer needs alignment"); await fireEvent.press(view.getByRole("button", { name: "Send changes to Site Manager" }));
+  await fireEvent.press(await view.findByRole("button", { name: "Request completion changes" })); await fireEvent.changeText(view.getByLabelText("Describe completion changes needed"), "Kitchen drawer needs alignment"); await fireEvent.press(view.getByRole("button", { name: "Send changes to Project Manager" }));
   expect(post).toHaveBeenCalledWith("/clients/projects/project-a/site-completion/decision", expect.objectContaining({ expectedVersion: 3, decision: "request_changes", reason: "Kitchen drawer needs alignment" }));
 });
 it("Client work decisions require a reason and target the exact review and assignment", async () => {

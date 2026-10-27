@@ -76,3 +76,7 @@ describe("admin identity contracts", () => {
     expect(invitationDeliveryMessage("failed")).toMatch(/delivery failed/i);
   });
 });
+
+it("rejects the retired invitation role even in a stale server options list", () => {
+  expect(validateInvitationDraft({ ...validDraft, role: "program_manager" }, ["program_manager", "site_manager"]).errors.role).toBe("Choose an available role.");
+});

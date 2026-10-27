@@ -57,9 +57,9 @@ beforeEach(() => {
   window.matchMedia = vi.fn().mockImplementation((query: string) => ({ matches: query === "(min-width: 1024px)", addEventListener: vi.fn(), removeEventListener: vi.fn() }));
   vi.spyOn(projectChatApi, "summary").mockImplementation(async id => chatTestSummary({ project: { id, name: id === "project-b" ? "Garden residence" : "Courtyard residence", status: "active" } }));
   vi.spyOn(projectChatApi, "conversations").mockResolvedValue({ items: [
-    { ...chatTestSummary(), lastMessageAt: "2026-09-16T08:00:00Z" },
-    { ...chatTestSummary({ project: { id: "project-b", name: "Garden residence", status: "active" } }), lastMessageAt: null }
-  ], pagination: { offset: 0, limit: 30, total: 2, hasMore: false } });
+    { ...chatTestSummary(), lastMessageAt: "2026-09-16T08:00:00Z", lastMessage: null },
+    { ...chatTestSummary({ project: { id: "project-b", name: "Garden residence", status: "active" } }), lastMessageAt: null, lastMessage: null }
+  ], totals: { unread: 2, critical: 6, important: 4 }, pagination: { offset: 0, limit: 30, total: 2, hasMore: false } });
   vi.spyOn(projectChatApi, "messages");
 });
 
@@ -74,7 +74,7 @@ describe("project messaging layout", () => {
     expect(screen.getByRole("main")).toHaveClass("project-messaging-main");
     expect(screen.getByRole("main")).not.toHaveAttribute("data-role");
     expect(document.querySelector(".ui-app-shell, .ui-mobile-header, .ui-sidebar-rail")).toBeNull();
-    expect(screen.getByRole("heading", { name: "Messages", level: 1 })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Project messages", level: 1 })).toBeVisible();
     expect(projectChatApi.summary).not.toHaveBeenCalled();
     expect(projectChatApi.messages).not.toHaveBeenCalled();
     expect(fixture.streams).toHaveLength(0);
@@ -91,8 +91,8 @@ describe("project messaging layout", () => {
 
   it("preserves list pagination/scroll and focuses the conversation, not the sidebar", async () => {
     vi.mocked(projectChatApi.conversations).mockImplementation(async offset => ({
-      items: offset === 0 ? [{ ...chatTestSummary(), lastMessageAt: null }] : [{ ...chatTestSummary({ project: { id: "project-b", name: "Garden residence", status: "active" } }), lastMessageAt: null }],
-      pagination: { offset, limit: 30, total: 31, hasMore: offset === 0 }
+      items: offset === 0 ? [{ ...chatTestSummary(), lastMessageAt: null, lastMessage: null }] : [{ ...chatTestSummary({ project: { id: "project-b", name: "Garden residence", status: "active" } }), lastMessageAt: null, lastMessage: null }],
+      totals: { unread: 2, critical: 6, important: 4 }, pagination: { offset, limit: 30, total: 31, hasMore: offset === 0 }
     }));
     app();
     await userEvent.click(await screen.findByRole("button", { name: "Next" }));
@@ -102,13 +102,13 @@ describe("project messaging layout", () => {
     await userEvent.click(row);
     const heading = await screen.findByRole("heading", { name: "Garden residence", level: 1 });
     await waitFor(() => expect(heading).toHaveFocus());
-    expect(screen.getByRole("heading", { name: "Messages", level: 2 })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Project messages", level: 2 })).toBeInTheDocument();
     expect(document.querySelector(".project-messaging-list-scroll")).toBe(scroller);
     expect(scroller.scrollTop).toBe(147);
     await userEvent.click(screen.getByRole("link", { name: "Back to conversations" }));
-    expect(await screen.findByRole("heading", { name: "Messages", level: 1 })).toHaveFocus();
+    expect(await screen.findByRole("heading", { name: "Project messages", level: 1 })).toHaveFocus();
     expect(scroller.scrollTop).toBe(147);
-    expect(projectChatApi.conversations).toHaveBeenLastCalledWith(30, expect.anything());
+    expect(projectChatApi.conversations).toHaveBeenLastCalledWith(30, expect.anything(), { search: "", filter: "all" });
   });
 
   it("preserves project drafts with one active stream while switching projects and resizing", async () => {

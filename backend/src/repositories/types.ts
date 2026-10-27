@@ -292,6 +292,8 @@ export interface UserResponsibilityCounts {
   directReports: number;
   linkedClientProjects: number;
   adminInitiatorGrants: number;
+  assignedExecutionProjects: number;
+  assignedWorkflowTasks: number;
 }
 
 export interface ProjectRecord {
@@ -949,11 +951,17 @@ export interface SeedData {
   designRequirementsStates?: DesignRequirementsState[];
   /** Current assignment projection; production reads the canonical workflow task collection. */
   projectWorkflowAssignments?: Array<{
+    id?: string;
+    estimateId?: string;
+    version?: number;
+    designPlanVersion?: number;
+    preparationOnly?: boolean;
     projectId: string;
     kind: import("../domain/project-workflow.js").ProjectWorkflowTaskKind;
     assigneeRole: Role;
     assigneeUserId: string | null;
     supersededAt?: string | null;
+    status?: string;
   }>;
   projectClientInvitations?: ProjectClientInvitationRecord[];
   projectInitiationReceipts?: ProjectInitiationReceipt[];

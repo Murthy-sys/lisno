@@ -12,6 +12,8 @@ import {
 import {
   InvalidAuthorizationSnapshotError,
   InvalidSessionPayloadError,
+  RetiredSessionRoleError,
+  isRetiredSessionUser,
   parseAuthorizationSnapshot,
   parseAuthPayload,
   parsePublicUser
@@ -130,6 +132,10 @@ export class SessionManager {
         controller.abort();
         if (!this.isCurrent(generation)) return this.snapshot;
         this.dependencies.tokenState.clear(generation);
+        if (error instanceof RetiredSessionRoleError) {
+          await this.expireAcceptedSession();
+          return this.snapshot;
+        }
         if (restoreTimedOut || isTransientRestoreError(error)) {
           this.commit("transient_error", null, "connection", generation);
           return this.snapshot;
@@ -185,6 +191,7 @@ export class SessionManager {
         path,
         input
       );
+      if (typeof rawPayload === "object" && rawPayload !== null && "user" in rawPayload && isRetiredSessionUser(rawPayload.user)) throw new RetiredSessionRoleError();
       const invitation = expectedProjectId && typeof rawPayload === "object" && rawPayload !== null && "projectId" in rawPayload ? rawPayload : null;
       const payload = invitation ? parseAuthPayload(Object.fromEntries(Object.entries(invitation).filter(([key]) => key !== "projectId"))) : parseAuthPayload(rawPayload);
       if (!payload) throw new InvalidSessionPayloadError();
@@ -211,7 +218,9 @@ export class SessionManager {
       this.commit("authenticated", session, null, generation);
       return session.user;
     } catch (error) {
-      if (this.isCurrent(generation)) {
+      if (this.isCurrent(generation) && error instanceof RetiredSessionRoleError) {
+        await this.expireAcceptedSession();
+      } else if (this.isCurrent(generation)) {
         this.activeController?.abort();
         this.activeController = null;
         this.dependencies.tokenState.clear(generation);
@@ -318,6 +327,7 @@ export class SessionManager {
         signal
       })
     ]);
+    if (isRetiredSessionUser(rawUser)) throw new RetiredSessionRoleError();
     const user = parsePublicUser(rawUser);
     if (!user) throw new InvalidSessionPayloadError();
     const authorization = parseAuthorizationSnapshot(rawAuthorization, user.role);

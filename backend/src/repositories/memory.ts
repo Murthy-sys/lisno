@@ -1,3 +1,4 @@
+import { projectManagerAssignmentFromProjection } from "../domain/project-manager-assignment-projection.js";
 import { workflowSpacePlanningSource } from "../domain/workflow-space-planning.js";
 import { furnitureUomOption } from "../domain/workflow-uoms.js";
 import { normalizeKnowledgeIdentity } from "../domain/ai-estimator-knowledge.js";
@@ -1162,6 +1163,7 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
     },
 
     async createUser(input: NewUser) {
+      if (input.role === "program_manager") throw new RepositoryConflictError("The legacy Program Manager role cannot create new identities.");
       if ((input.role === "vendor") !== (typeof input.vendorId === "string" && VENDOR_ID_PATTERN.test(input.vendorId))) {
         throw new RepositoryConflictError("Vendor membership is required only for Vendor users.");
       }
@@ -1249,6 +1251,8 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
 
     async countUserResponsibilities(userId) {
       return {
+        assignedExecutionProjects: state.projects.filter(project => project.programManagerId === userId && project.status !== "completed").length,
+        assignedWorkflowTasks: (state.projectWorkflowAssignments ?? []).filter(task => task.assigneeUserId === userId && !task.supersededAt && task.status !== "completed").length,
         ownedActiveLeads: state.leads.filter(
           (lead) => lead.ownerId === userId && lead.stage !== "won" && lead.stage !== "lost"
         ).length,
@@ -1284,6 +1288,7 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
     },
 
     async updateUser(userId, expectedVersion, change) {
+      if (change.role === "program_manager") throw new RepositoryConflictError("The legacy Program Manager role is retired.");
       const index = state.users.findIndex((user) => user.id === userId);
       if (index < 0) {
         throw new RepositoryNotFoundError(`User ${userId} was not found.`);
@@ -1488,8 +1493,8 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
     },
 
     async pageProjectsForUserRead(user, pagination) {
-      if (!user.active) return { items: [], total: 0 };
-      if (user.role !== "program_manager" && user.role !== "procurement") {
+      if (!user.active || user.role === "program_manager") return { items: [], total: 0 };
+      if (user.role !== "site_manager" && user.role !== "procurement") {
         return implementation.pageProjectsForUserInModule(user, "projects", pagination);
       }
       const assignedIds = new Set((state.projectWorkflowAssignments ?? [])
@@ -1500,20 +1505,20 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
         .filter(grant => grant.userId === user.id && grant.module === "procurement" &&
           grantCanSupplyProjectModuleScope(user.role, grant))
         .map(grant => grant.projectId));
-      return paginate(clone(state.projects.filter(project => user.role === "program_manager"
-        ? project.programManagerId === user.id
+      return paginate(clone(state.projects.filter(project => user.role === "site_manager"
+        ? memoryManagerOwnsProject(state, project, user.id)
         : assignedIds.has(project.id) || grantedIds.has(project.id)).sort(byNameThenId)), pagination);
     },
 
     async findProjectForUserRead(user, projectId) {
-      if (!user.active) return null;
-      if (user.role !== "program_manager" && user.role !== "procurement") {
+      if (!user.active || user.role === "program_manager") return null;
+      if (user.role !== "site_manager" && user.role !== "procurement") {
         return (await implementation.listProjectsForUserInModule(user, "projects"))
           .find(project => project.id === projectId) ?? null;
       }
       const project = state.projects.find(row => row.id === projectId);
       if (!project) return null;
-      const allowed = user.role === "program_manager" ? project.programManagerId === user.id
+      const allowed = user.role === "site_manager" ? memoryManagerOwnsProject(state, project, user.id)
         : (state.projectWorkflowAssignments ?? []).some(task => task.projectId === project.id &&
           task.kind === "procurement" && task.assigneeRole === "procurement" &&
           task.assigneeUserId === user.id && task.supersededAt == null) ||
@@ -3421,4 +3426,9 @@ function latestTimestamp(seed: SeedData): number {
     .map((value) => new Date(value).getTime());
 
   return Math.max(0, ...timestamps);
+}
+
+function memoryManagerOwnsProject(state: SeedData, project: ProjectRecord, userId: string): boolean {
+  const ownership = projectManagerAssignmentFromProjection(project, state.projectWorkflowAssignments ?? [], state.estimateSummaries ?? [], state.users);
+  return ownership.state === "assigned" && ownership.ownerId === userId;
 }

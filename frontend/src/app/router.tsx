@@ -1,3 +1,5 @@
+import { ProjectManagerDashboard, ProjectManagerProjectPage } from "../features/project-manager/ProjectManagerWorkspace";
+import { ProjectManagerLeaderboard, ProjectManagerBonus } from "../features/project-manager/PMPerformancePages";
 import {
   createBrowserRouter,
   RouterProvider,
@@ -65,8 +67,6 @@ import { ProcurementRequestsPage } from "../features/procurement/ProcurementRequ
 import { ProcurementVendorDirectory } from "../features/procurement/ProcurementVendorDirectory";
 import { SuperAdminPurchaseOrdersPage } from "../features/procurement/SuperAdminPurchaseOrdersPage";
 import { ExecutionPortfolioPage, ProjectExecutionPage } from "../features/execution/ExecutionWorkspace";
-import { SiteManagerWorkspace } from "../features/site-manager/SiteManagerWorkspace";
-import { SiteManagerProjectPage } from "../features/site-manager/SiteManagerProjectPage";
 import { VendorWorkPage } from "../features/vendor/VendorWorkPage";
 import { VendorKpiStaffPage } from "../features/procurement/VendorKpiStaffPage";
 import { VendorKpiPublicPage } from "../features/procurement/VendorKpiPublicPage";
@@ -146,7 +146,7 @@ const roleHomeContent: Record<Role, RoleHomeContent> = {
     status: "Ready for staged access"
   },
   site_manager: {
-    heading: "Site Manager workspace",
+    heading: "Project Manager workspace",
     eyebrow: "Project execution",
     description: "Your authorized execution work will appear here.",
     status: "Ready for staged access"
@@ -237,13 +237,13 @@ function RoleLanding({ role }: { role: Role }) {
 function CurrentRoleLanding() {
   const auth = useAuth();
 
-  if (auth.user?.role === "site_manager") return <SiteManagerWorkspace />;
+  if (auth.user?.role === "site_manager") return <Navigate to="/execution" replace />;
   return auth.user ? <RoleLanding role={auth.user.role} /> : null;
 }
 
 function ExecutionPortfolioRoute() {
   const { user } = useAuth();
-  return user?.role === "site_manager" ? <Navigate to="/home" replace /> : <ExecutionPortfolioPage />;
+  return user?.role === "site_manager" ? <ProjectManagerDashboard /> : <ExecutionPortfolioPage />;
 }
 
 function LeadEstimateRoute({ editor = false }: { editor?: boolean }) {
@@ -255,7 +255,7 @@ function LeadEstimateRoute({ editor = false }: { editor?: boolean }) {
 function ProjectExecutionRoute() {
   const { user } = useAuth();
   const { projectId } = useParams();
-  return user?.role === "site_manager" ? <SiteManagerProjectPage key={projectId} /> : <ProjectExecutionPage />;
+  return user?.role === "site_manager" ? <ProjectManagerProjectPage key={projectId} /> : <ProjectExecutionPage />;
 }
 
 function LoginRoute() {
@@ -426,6 +426,8 @@ export function AppRoutes() {
         <Route path="/admin/procurement/vendors/:vendorId" element={registeredElement("/admin/procurement/vendors/:vendorId", <VendorKpiStaffPage />)} />
         <Route path="/admin/purchase-orders" element={registeredElement("/admin/purchase-orders", <SuperAdminPurchaseOrdersPage />)} />
         <Route path="/admin/project-completion" element={registeredElement("/admin/project-completion", <ProjectCompletionPage />)} />
+        <Route path="/project-manager/leaderboard" element={registeredElement("/project-manager/leaderboard", <ProjectManagerLeaderboard />)} />
+        <Route path="/project-manager/bonus" element={registeredElement("/project-manager/bonus", <ProjectManagerBonus />)} />
         <Route path="/execution" element={registeredElement("/execution", <ExecutionPortfolioRoute />)} />
         <Route path="/projects/:projectId/execution" element={registeredElement("/projects/:projectId/execution", <ProjectExecutionRoute />)} />
         <Route path="/vendor" element={registeredElement("/vendor", <VendorWorkPage />)} />

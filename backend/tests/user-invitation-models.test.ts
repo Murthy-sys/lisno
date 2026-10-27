@@ -4,7 +4,9 @@ import { AUDIT_ACTIONS } from "../src/domain/audit-actions.js";
 import { ROLE_CODES } from "../src/domain/roles.js";
 import {
   CONTROL_CHARACTERS,
+  ACTIVE_INVITABLE_ROLE_CODES,
   INVITABLE_ROLE_CODES,
+  isActiveInvitableRole,
   USER_INVITATION_DELIVERY_FAILURE_CODE_PATTERN,
   USER_INVITATION_EMAIL_MAX,
   USER_INVITATION_MOBILE_MAX,
@@ -64,6 +66,16 @@ describe("user invitation domain", () => {
     expect(INVITABLE_ROLE_CODES).toEqual(
       ROLE_CODES.filter((role) => role !== "client" && role !== "super_admin")
     );
+  });
+
+  it("keeps stored legacy invitations valid while excluding retired and invalid creation roles", async () => {
+    expect(ACTIVE_INVITABLE_ROLE_CODES).toContain("site_manager");
+    expect(ACTIVE_INVITABLE_ROLE_CODES).not.toContain("program_manager");
+    for (const role of ["program_manager", "client", "super_admin", "unknown", null]) expect(isActiveInvitableRole(role)).toBe(false);
+    expect(isActiveInvitableRole("site_manager")).toBe(true);
+    const legacy = invitation({ role: "program_manager" });
+    await expect(legacy.validate()).resolves.toBeUndefined();
+    expect(legacy.role).toBe("program_manager");
   });
 
   it("trims names and enforces the explicit 1/120 character boundaries", () => {

@@ -2,7 +2,7 @@ import { act, render, screen, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { renderWithQuery } from "../../test/render";
 import { server } from "../../test/server";
@@ -11,7 +11,8 @@ import { procurementProjectIdentityKeys } from "./procurementProjectIdentityApi"
 import { ProcurementProjectIdentityPanel } from "./ProcurementProjectIdentityPanel";
 
 describe("ProcurementProjectIdentityPanel", () => {
-  it("loads the scoped project identity and saves its city and Program Manager with a version", async () => {
+  it("loads the scoped project identity and saves its city and Project Manager with a version", async () => {
+    const invalidate = vi.spyOn(QueryClient.prototype, "invalidateQueries");
     const received: unknown[] = [];
     server.use(
       http.get("/api/v1/admin/projects/project-a/procurement-identity", () => HttpResponse.json({
@@ -33,10 +34,15 @@ describe("ProcurementProjectIdentityPanel", () => {
     const section = screen.getByRole("region", { name: "Procurement project details" });
     await user.click(within(section).getByRole("button", { name: /Procurement project details/ }));
     await user.type(await within(section).findByLabelText("Project city"), "Pune");
-    await user.selectOptions(await within(section).findByLabelText("Program Manager"), "pm-a");
+    await user.selectOptions(await within(section).findByLabelText("Project Manager"), "pm-a");
     await user.click(within(section).getByRole("button", { name: "Save procurement details" }));
     expect(await within(section).findByRole("status")).toHaveTextContent("saved");
     expect(received).toEqual([{ expectedVersion: 1, cityName: "Pune", programManagerId: "pm-a" }]);
+    for (const key of ["admin-projects", "project-workflow", "assigned-projects", "project-manager", "execution", "procurement", "project-chat"]) {
+      expect(invalidate).toHaveBeenCalledWith({ queryKey: [key] });
+    }
+    expect(within(section).queryByText(/above ₹50,000/)).not.toBeInTheDocument();
+    invalidate.mockRestore();
   });
 
   it("holds an unsaved assignment when a newer project identity arrives until the admin reloads it", async () => {
@@ -73,7 +79,7 @@ describe("ProcurementProjectIdentityPanel", () => {
     expect(within(section).getByRole("button", { name: "Save procurement details" })).toBeDisabled();
     await user.click(within(section).getByRole("button", { name: "Load latest details" }));
     expect(city).toHaveValue("Mumbai");
-    expect(within(section).getByLabelText("Program Manager")).toHaveValue("pm-b");
+    expect(within(section).getByLabelText("Project Manager")).toHaveValue("pm-b");
     expect(writes).toBe(0);
   });
 });

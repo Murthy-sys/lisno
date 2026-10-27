@@ -9,9 +9,9 @@ const expectedRoleHomes: Record<Role, string> = {
   estimator_sales: "/estimator-sales",
   designer: "/designer",
   procurement: "/home",
-  program_manager: "/execution",
+  program_manager: "/access-denied",
   finance_head: "/home",
-  site_manager: "/home",
+  site_manager: "/execution",
   worker_electrician: "/home",
   worker_plumber: "/home",
   worker_carpenter: "/home",
@@ -41,7 +41,7 @@ describe("roleHomePath", () => {
 describe("safeReturnPath", () => {
   it.each(ROLE_CODES)("allows only exact staff execution paths for %s", role => {
     for (const path of ["/execution?flag=missing", "/projects/project-a/execution?assignment=work-a"]) {
-      expect(safeReturnPath(role, path)).toBe(["super_admin", "site_manager", "program_manager", "procurement"].includes(role) ? path : roleHomePath(role));
+      expect(safeReturnPath(role, path)).toBe(["super_admin", "site_manager", "procurement"].includes(role) ? path : roleHomePath(role));
     }
     for (const path of ["/execution/private", "/projects/project-a/execution/private", "/projects/a%2fb/execution", "/execution-extra"]) expect(safeReturnPath(role, path)).toBe(roleHomePath(role));
   });

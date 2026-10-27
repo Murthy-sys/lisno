@@ -34,9 +34,9 @@ describe("execution workspace live refresh", () => {
     vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
     vi.spyOn(navigator, "onLine", "get").mockReturnValue(true);
     const client = new QueryClient({defaultOptions:{queries:{retry:false}}});
-    const keys = [["execution", "projects", {projectScope:"current"}], ["execution", "project", "one"], ["site-completion", "one"], ["project-workflow", "operational"], ["project-workflow", "project-status", "one"], ["designer", "kpi", "site-one"]];
+    const keys = [["execution", "projects", {projectScope:"current"}], ["execution", "project", "one"], ["site-completion", "one"], ["project-workflow", "operational"], ["project-workflow", "project-status", "one"], ["designer", "kpi", "site-one"], ["project-manager", "site-one", "/project-manager/projects"]];
     const metadataKeys = [projectReadKeys.list("site-one", "site_manager"), projectReadKeys.detail("one", "site-one", "site_manager")];
-    const unrelatedKey = projectReadKeys.detail("two", "manager-two", "program_manager");
+    const unrelatedKey = projectReadKeys.detail("two", "manager-two", "site_manager");
     client.setQueryData(unrelatedKey, { name: "Unrelated assigned project" });
     client.setQueryData(procurementKeys.projects, { name: "Independent preparation" });
     for (const key of keys) client.setQueryData(key, {version:1});
@@ -50,7 +50,7 @@ describe("execution workspace live refresh", () => {
     for (const key of [...keys, ...metadataKeys]) expect(client.getQueryState(key)?.isInvalidated).toBe(true);
     expect(client.getQueryState(unrelatedKey)?.isInvalidated).toBe(false);
     await act(async () => {stream.onDenied(); stream.onStatus("denied");});
-    for (const key of keys.slice(0,5)) expect(client.getQueryData(key)).toBeUndefined();
+    for (const key of [...keys.slice(0,5), keys[6]]) expect(client.getQueryData(key)).toBeUndefined();
     for (const key of metadataKeys) expect(client.getQueryData(key)).toBeUndefined();
     expect(client.getQueryData(unrelatedKey)).toEqual({ name: "Unrelated assigned project" });
     expect(client.getQueryData(procurementKeys.projects)).toEqual({ name: "Independent preparation" });
@@ -59,11 +59,11 @@ describe("execution workspace live refresh", () => {
     expect(stream.signal.aborted).toBe(true);
   });
 
-  it("removes mounted Program Manager details and pending progress when the stream reports assignment denial", async () => {
+  it("removes mounted Project Manager details and pending progress when the stream reports assignment denial", async () => {
     vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
     vi.spyOn(navigator, "onLine", "get").mockReturnValue(true);
-    auth.user = { id: "manager-one", role: "program_manager" };
-    auth.authorization = authorizationFor("program_manager", ["execution.tracker.read", "projects.read", "projects.design_workflow.read"]);
+    auth.user = { id: "manager-one", role: "site_manager" };
+    auth.authorization = authorizationFor("site_manager", ["execution.tracker.read", "projects.read", "projects.design_workflow.read"]);
     let revoked = false;
     let projectReads = 0;
     const denied = () => HttpResponse.json({ error: { code: "NOT_FOUND", message: "Project assignment removed." } }, { status: 404 });

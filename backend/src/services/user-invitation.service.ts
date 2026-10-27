@@ -4,7 +4,8 @@ import { requireValidNewPassword } from "./password-policy.js";
 
 import { isReservedDemoEmail, isReservedDevelopmentDemoIdentity } from "../domain/demo-identities.js";
 import {
-  INVITABLE_ROLE_CODES,
+  ACTIVE_INVITABLE_ROLE_CODES,
+  isActiveInvitableRole,
   USER_INVITATION_RECIPIENT_COOLDOWN_MS,
   USER_INVITATION_TOKEN_PATTERN,
   VENDOR_ID_PATTERN,
@@ -249,7 +250,7 @@ export function createUserInvitationService(
           return stored ? presentRecord(repository, stored, clock().toISOString()) : dto;
         })),
         total: page.total,
-        invitableRoles: INVITABLE_ROLE_CODES
+        invitableRoles: ACTIVE_INVITABLE_ROLE_CODES
       };
     },
 
@@ -361,6 +362,7 @@ export function createUserInvitationService(
       assertVersion(versionInput.version);
       const discovered = await repository.findUserInvitationById(invitationId);
       if (!discovered) notFound();
+      if (!isActiveInvitableRole(discovered.role)) notActionable();
 
       const rawToken = randomBytes(32).toString("base64url");
       const tokenHash = hashUserInvitationToken(rawToken);
@@ -373,6 +375,7 @@ export function createUserInvitationService(
         if (!current) notFound();
         if (current.emailNormalized !== discovered!.emailNormalized) versionConflict();
         requirePendingVersion(current, versionInput.version);
+        if (!isActiveInvitableRole(current.role)) notActionable();
         if (current.role === "vendor") await assertVendorInvitationTarget(transaction, current.vendorId);
         if (current.authority && !(await invitationAuthorityMatches(transaction, current, true))) notActionable();
         const issuedAt = clock().toISOString();
@@ -627,6 +630,7 @@ async function assertPublicInvitationAvailable(
   now: string
 ): Promise<void> {
   if (
+    !isActiveInvitableRole(invitation.role) ||
     invitation.status !== "pending" ||
     invitation.tokenHash !== tokenHash ||
     Date.parse(invitation.expiresAt) <= Date.parse(now)
@@ -689,7 +693,7 @@ function parseCreateInput(input: CreateUserInvitationInput): NormalizedCreateInp
     ) {
       invalidInvitationInput();
     }
-    if (!INVITABLE_ROLE_CODES.includes(input.role)) invalidInvitationInput();
+    if (!isActiveInvitableRole(input.role)) invalidInvitationInput();
     if (input.role === "vendor" && (typeof input.vendorId !== "string" || !VENDOR_ID_PATTERN.test(input.vendorId))) invalidInvitationInput();
     const name = invitationNameSchema.parse(input.name);
     const email = invitationEmailSchema.parse(input.email);

@@ -30,7 +30,7 @@ function ExecutionSession({children,enabled,actorId,actorRole}:{children:ReactNo
     };
     const refresh=() => {
       if(disposed) return;
-      for(const queryKey of [["execution"],["vendor","work"],["vendor-work","progress"],["site-completion"],["project-workflow","project-status"],["admin","project-completion-tasks"],["project-workflow","operational"],["designer","kpi"]]) {
+      for(const queryKey of [["project-manager"],["execution"],["vendor","work"],["vendor-work","progress"],["site-completion"],["project-workflow","project-status"],["admin","project-completion-tasks"],["project-workflow","operational"],["designer","kpi"]]) {
         void client.invalidateQueries({queryKey});
       }
       void client.invalidateQueries(assignedProjects);
@@ -38,7 +38,7 @@ function ExecutionSession({children,enabled,actorId,actorRole}:{children:ReactNo
     const changed=() => { clearTimeout(refreshTimer); refreshTimer=setTimeout(refresh,80); };
     const status=(value:ExecutionConnection) => { if(!disposed) { current.current=value; setConnection(value); } };
     const clear=() => {
-      for(const queryKey of [["execution"],["vendor","work"],["vendor-work","progress"],["site-completion"],["project-workflow","operational"],["project-workflow","project-status"]]) {
+      for(const queryKey of [["project-manager"],["execution"],["vendor","work"],["vendor-work","progress"],["site-completion"],["project-workflow","operational"],["project-workflow","project-status"]]) {
         void client.cancelQueries({queryKey}); client.removeQueries({queryKey});
       }
     };

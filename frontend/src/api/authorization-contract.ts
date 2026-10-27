@@ -21,6 +21,13 @@ export const ROLE_CODES = [
 
 export type Role = (typeof ROLE_CODES)[number];
 
+/** Historical roles remain readable; active identities use this narrower set. */
+export const ACTIVE_ROLE_CODES = ROLE_CODES.filter(role => role !== "program_manager");
+export type ActiveRole = Exclude<Role, "program_manager">;
+export function isActiveFrontendRole(value: unknown): value is ActiveRole {
+  return typeof value === "string" && ACTIVE_ROLE_CODES.some(role => role === value);
+}
+
 export const ROLE_LABELS = {
   super_admin: "Super Admin",
   admin: "Sales Manager",
@@ -29,7 +36,7 @@ export const ROLE_LABELS = {
   procurement: "Procurement",
   program_manager: "Program Manager",
   finance_head: "Finance Manager",
-  site_manager: "Site Manager",
+  site_manager: "Project Manager",
   worker_electrician: "Electrician",
   worker_plumber: "Plumber",
   worker_carpenter: "Carpenter",
@@ -57,7 +64,6 @@ export const OPERATIONAL_ROLES = [
   "estimator_sales",
   "designer",
   "procurement",
-  "program_manager",
   "finance_head",
   "site_manager",
   ...WORKER_ROLES
@@ -108,6 +114,8 @@ export const REQUESTABLE_MODULES_BY_ROLE = {
 } as const satisfies Record<Role, readonly RequestableProjectModule[]>;
 
 export const PERMISSION_CODES = [
+  "pm.vendor_notices.respond",
+  "pm.workspace.read", "pm.requests.create", "pm.requests.act", "pm.requests.receive", "pm.selections.act", "pm.supply.sign", "pm.vendors.manage", "pm.certifications.act", "pm.client.manage", "pm.snags.manage", "pm.quality.manage", "pm.performance.read", "pm.leaderboard.read", "pm.bonus.read", "pm.evidence.manage", "pm.evidence.read", "pm.notifications.read",
   "projects.client_invitation.read",
   "projects.client_invitation.manage",
   "identity.project_invitation.accept",
@@ -312,7 +320,7 @@ export const PERMISSION_CODES = [
 export type PermissionCode = (typeof PERMISSION_CODES)[number];
 
 export const AUTHORIZATION_POLICY_VERSION =
-  "2026-10-14.main-line-design-rules.v1" as const;
+  "2026-10-27.project-manager-consolidation.v1" as const;
 
 export interface AuthorizationSnapshot {
   readonly role: Role;

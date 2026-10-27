@@ -195,6 +195,7 @@ describe("OperationalTaskQueue", () => {
       name: "Carpentry · Living Room: 65% complete"
     })).toHaveAttribute("aria-valuenow", "65");
     expect(invalidate).toHaveBeenCalledWith({ queryKey: dashboardKeys.all });
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["project-manager"] });
   });
 
   it("refreshes a stale task version before the worker tries again", async () => {
@@ -248,7 +249,7 @@ describe("OperationalTaskQueue", () => {
     expect(invalidate).not.toHaveBeenCalledWith({ queryKey: dashboardKeys.all });
   });
 
-  it("lets the assigned Site Manager save project progress and send already verified Main Lines to the Client", async () => {
+  it("lets the assigned Project Manager save project progress and send already verified Main Lines to the Client", async () => {
     statusAuth.role = "site_manager";
     const siteTask: ProjectWorkflowTask = {
       ...carpenterTask,
@@ -311,7 +312,7 @@ describe("OperationalTaskQueue", () => {
     expect(await within(overview).findByText("Completion is with the Client for review.")).toBeVisible();
   });
 
-  it("keeps legacy Site Manager coordination tasks on their existing update action", async () => {
+  it("keeps legacy Project Manager coordination tasks on their existing update action", async () => {
     statusAuth.role = "site_manager";
     server.use(http.get("/api/v1/workflow-tasks", () => HttpResponse.json({ data: [{
       ...carpenterTask, id: "legacy-site-task", kind: "site_execution", completionAuthority: "legacy_staff",

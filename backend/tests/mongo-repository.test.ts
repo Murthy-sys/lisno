@@ -16,6 +16,7 @@ import { EstimateClientReviewRoundModel } from "../src/models/EstimateClientRevi
 import { EstimateModel } from "../src/models/Estimate.js";
 import { FloorModel } from "../src/models/Floor.js";
 import { LeadModel } from "../src/models/Lead.js";
+import { ProjectWorkflowTaskModel } from "../src/models/ProjectWorkflowTask.js";
 import { ProjectModel } from "../src/models/Project.js";
 import { ProjectAccessGrantModel } from "../src/models/ProjectAccessGrant.js";
 import { TaskModel } from "../src/models/Task.js";
@@ -953,11 +954,11 @@ describe("Mongo repository contracts", () => {
     expect(second.query.session).toHaveBeenCalledWith(session);
   });
 
-  it("counts all nine Mongo responsibilities sequentially in the active session", async () => {
+  it("counts all eleven Mongo responsibilities sequentially in the active session", async () => {
     const session = {} as never;
     let inFlight = 0;
     let maximumInFlight = 0;
-    const queries = Array.from({ length: 9 }, (_, index) => ({
+    const queries = Array.from({ length: 11 }, (_, index) => ({
       session: vi.fn(),
       exec: vi.fn(async () => {
         inFlight += 1;
@@ -973,11 +974,16 @@ describe("Mongo repository contracts", () => {
       .mockReturnValueOnce(queries[2] as never)
       .mockReturnValueOnce(queries[3] as never)
       .mockReturnValueOnce(queries[4] as never)
-      .mockReturnValueOnce(queries[7] as never);
+      .mockReturnValueOnce(queries[7] as never)
+      .mockReturnValueOnce(queries[9] as never);
     vi.spyOn(TaskModel, "countDocuments").mockReturnValueOnce(queries[5] as never);
     vi.spyOn(UserModel, "countDocuments").mockReturnValueOnce(queries[6] as never);
     vi.spyOn(ProjectAccessGrantModel, "countDocuments")
       .mockReturnValueOnce(queries[8] as never);
+    vi.spyOn(ProjectWorkflowTaskModel, "countDocuments").mockReturnValueOnce(queries[10] as never);
+    for (const countQuery of queries.slice(9)) countQuery.session.mockReturnValue({
+      then: (fulfilled: (value: number) => void, rejected: (error: unknown) => void) => countQuery.exec().then(fulfilled, rejected)
+    });
 
     await expect(
       createMongoRepository(session).countUserResponsibilities("user-counted")
@@ -990,7 +996,9 @@ describe("Mongo repository contracts", () => {
       ownedActiveTasks: 6,
       directReports: 7,
       linkedClientProjects: 8,
-      adminInitiatorGrants: 9
+      adminInitiatorGrants: 9,
+      assignedExecutionProjects: 10,
+      assignedWorkflowTasks: 11
     });
     expect(maximumInFlight).toBe(1);
     for (const countQuery of queries) {
@@ -1005,6 +1013,8 @@ describe("Mongo repository contracts", () => {
       status: { $ne: "client_approved" }
     });
     expect(UserModel.countDocuments).toHaveBeenCalledWith({ managerId: "user-counted" });
+    expect(ProjectModel.countDocuments).toHaveBeenCalledWith({ programManagerId: "user-counted", status: { $ne: "completed" } });
+    expect(ProjectWorkflowTaskModel.countDocuments).toHaveBeenCalledWith({ assigneeUserId: "user-counted", supersededAt: null, status: { $ne: "completed" } });
     expect(ProjectAccessGrantModel.countDocuments).toHaveBeenCalledWith({
       userId: "user-counted",
       module: "projects",

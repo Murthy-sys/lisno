@@ -1,3 +1,4 @@
+import { resolveProjectManagerAssignment } from "./project-manager-assignment.service.js";
 import type { ClientSession } from "mongoose";
 import type { ExecutionAction, ExecutionCounts, ExecutionDailyStatus, ExecutionPolicy, ExecutionVendorReport, ExecutionWork } from "../contracts/vendor-execution.js";
 import { approvedEstimateLineItemKey } from "../domain/estimate-line-item.js";
@@ -123,13 +124,13 @@ export async function executionWorkDto(assignment: ExecutionRow, state: Executio
   }
   if (status === "awaiting_verification" && review && at >= executionCutoff(nextExecutionDate(executionLocalDate(new Date(review.submittedAt), policy.timezone)), policy.escalationTime, policy.timezone)) flags.push("verification_overdue");
   const siteManager = await executionCached(cache, `site-manager:${assignment.projectId}`, async () => {
-    const siteTasks = await ProjectWorkflowTaskModel.find({ projectId: assignment.projectId, kind: "site_execution", assigneeRole: "site_manager" }).select({ assigneeUserId: 1 }).limit(2).session(session).lean();
-    return siteTasks.length === 1 && siteTasks[0]?.assigneeUserId ? UserModel.exists({ _id: siteTasks[0].assigneeUserId, role: "site_manager", active: true }).session(session) : null;
+    const manager = await resolveProjectManagerAssignment(assignment.projectId, session);
+    return manager.state === "assigned" ? manager.ownerId : null;
   });
   if (!siteManager && currentOrder && !accepted) flags.push("site_manager_required");
   const allowedActions: ExecutionAction[] = [];
   const editable = Boolean(currentOrder && sourceAvailable && project?.status === "active" && !frozen && !accepted && assignment.status !== "submitted_for_client");
-  const manager = ["site_manager", "program_manager", "super_admin"].includes(actor.role);
+  const manager = ["site_manager", "super_admin"].includes(actor.role);
   if (editable && !state && !legacyReview && manager) allowedActions.push("setup");
   if (editable && state) {
     if (actor.role === "vendor" && editableExecutionStates.includes(state.status) && !state.hold) {

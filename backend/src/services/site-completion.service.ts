@@ -1,3 +1,4 @@
+import { resolveProjectManagerAssignment } from "./project-manager-assignment.service.js";
 import type { ExecutionPolicy } from "../contracts/vendor-execution.js";
 import { VendorExecutionStateModel } from "../models/VendorExecutionState.js";
 import { assertExecutionVerified, currentExecutionVerification, invalidateExecutionVerificationForClientChanges } from "./vendor-execution.service.js";
@@ -69,14 +70,14 @@ async function projectFor(actor: PublicUser, projectId: string, role: "site_mana
 }
 
 async function assignedSiteTask(projectId: string, session: ClientSession): Promise<Row | null> {
-  const tasks = await ProjectWorkflowTaskModel.find({ projectId, kind: "site_execution", assigneeRole: "site_manager" })
-    .select({ assigneeUserId: 1 }).session(session).lean() as Row[];
-  if (tasks.length > 1) conflict("The Site Manager assignment is inconsistent.");
-  return tasks[0] ?? null;
+  const ownership = await resolveProjectManagerAssignment(projectId, session);
+  if (ownership.state === "conflict") conflict("The Project Manager assignment requires reconciliation.");
+  return ownership.state === "assigned" && ownership.task ? { ...ownership.task, _id: ownership.task.id, assigneeUserId: ownership.ownerId } : null;
 }
 
-function eligibility(summary: Awaited<ReturnType<typeof readProjectCompletionSummary>>): string[] {
-  return summary.blockers.filter(item => item.code !== "VENDOR_WORK_PENDING" && item.code !== "SITE_COMPLETION_PENDING").map(item => item.message);
+function eligibility(summary: Awaited<ReturnType<typeof readProjectCompletionSummary>>, returningForCorrection = false): string[] {
+  return summary.blockers.filter(item => item.code !== "VENDOR_WORK_PENDING" && item.code !== "SITE_COMPLETION_PENDING" &&
+    !(returningForCorrection && item.code === "SNAGS_PENDING")).map(item => item.message);
 }
 
 async function latestReview(projectId: string, round: number, session: ClientSession): Promise<Row | null> {
@@ -283,7 +284,7 @@ export function createSiteCompletionService(input: { audit: AuditService; now?: 
             review.version !== fields.expectedVersion || review.clientId !== actor.id) conflict();
         const summary = await readProjectCompletionSummary(projectId, session);
         if ((await assignedSiteTask(projectId, session))?.assigneeUserId !== review.managerId) conflict("The assigned Site Manager changed during Client review.");
-        if (eligibility(summary).length || summary.estimateSource.estimateId !== review.estimateId ||
+        if (eligibility(summary, fields.decision === "request_changes").length || summary.estimateSource.estimateId !== review.estimateId ||
             summary.estimateSource.estimateVersion !== review.estimateVersion ||
             summary.estimateSource.estimateReviewRoundId !== review.estimateReviewRoundId ||
             JSON.stringify(summary.approvedOrders.map(order => order.revisionId)) !== JSON.stringify(review.approvedRevisionIds) ||

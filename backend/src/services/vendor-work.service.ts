@@ -1,3 +1,4 @@
+import { resolveProjectManagerAssignment } from "./project-manager-assignment.service.js";
 import type { ExecutionPolicy } from "../contracts/vendor-execution.js";
 import { VendorExecutionStateModel } from "../models/VendorExecutionState.js";
 import { assertExecutionEditable, assertExecutionVerified, assertNoExecutionActivityForAmendment, currentExecutionVerification, invalidateExecutionVerificationForClientChanges } from "./vendor-execution.service.js";
@@ -139,10 +140,14 @@ async function requireProgressProject(actor: PublicUser, projectId: string, sess
   const project = await ProjectModel.findById(projectId).select({ _id: 1, clientId: 1, programManagerId: 1 }).session(session).lean() as Row | null;
   if (!project) missing();
   if (actor.role === "super_admin") return;
-  if (actor.role === "program_manager" && project.programManagerId === actor.id) return;
+  if (actor.role === "site_manager") {
+    const assignment = await resolveProjectManagerAssignment(projectId, session);
+    if (assignment.state === "assigned" && assignment.ownerId === actor.id) return;
+    forbidden();
+  }
   if (actor.role === "client" && project.clientId === actor.id) return;
-  if (actor.role === "site_manager" || actor.role === "procurement") {
-    const task = await ProjectWorkflowTaskModel.exists({ projectId, kind: actor.role === "site_manager" ? "site_execution" : "procurement", assigneeRole: actor.role, assigneeUserId: actor.id }).session(session);
+  if (actor.role === "procurement") {
+    const task = await ProjectWorkflowTaskModel.exists({ projectId, kind: "procurement", assigneeRole: actor.role, assigneeUserId: actor.id }).session(session);
     if (task) return;
   }
   forbidden();

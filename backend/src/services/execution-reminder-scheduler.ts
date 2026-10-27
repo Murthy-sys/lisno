@@ -1,3 +1,4 @@
+import { resolveProjectManagerAssignment } from "./project-manager-assignment.service.js";
 import mongoose from "mongoose";
 import { randomUUID } from "node:crypto";
 import type { ClientSession } from "mongoose";
@@ -41,11 +42,10 @@ export async function executionEscalationReasons(assignment: ReportingRow, state
   return reasons;
 }
 async function staffRecipients(project: ReportingRow, session?: ClientSession) {
-  const tasks = await ProjectWorkflowTaskModel.find({ projectId: project._id, kind: "site_execution", assigneeRole: "site_manager" }).limit(2).session(session ?? null).lean();
-  const site = tasks.length === 1 ? await UserModel.findOne({ _id: tasks[0]!.assigneeUserId, role: "site_manager", active: true }).session(session ?? null).lean() : null;
-  const manager = project.programManagerId ? await UserModel.findOne({ _id: project.programManagerId, role: "program_manager", active: true }).session(session ?? null).lean() : null;
+  const ownership = await resolveProjectManagerAssignment(String(project._id), session);
+  const manager = ownership.state === "assigned" ? await UserModel.findOne({ _id: ownership.ownerId, role: "site_manager", active: true }).session(session ?? null).lean() : null;
   const admins = await UserModel.find({ role: "super_admin", active: true }).limit(2).session(session ?? null).lean();
-  return { people: [site, manager, ...(admins.length === 1 ? admins : [])].filter(Boolean) as ReportingRow[], missing: [...(!site ? ["Site Manager assignment required"] : []), ...(!manager ? ["Program Manager assignment required"] : [])] };
+  return { people: [manager, ...(admins.length === 1 ? admins : [])].filter(Boolean) as ReportingRow[], missing: manager ? [] : ["Project Manager assignment requires reconciliation"] };
 }
 async function queueNotification(input: { recipientId: string; projectId: string; vendorId: string | null; localDate: string; timezone: string; kind: string; assignmentId: string; reasons: string[]; at: Date }, session: ClientSession, audit: AuditService) {
   const id = `execution-notification:${executionDigest([input.recipientId, input.projectId, input.localDate, input.kind])}`;

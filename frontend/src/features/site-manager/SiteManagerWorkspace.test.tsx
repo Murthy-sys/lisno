@@ -14,7 +14,7 @@ vi.mock("../../auth/AuthProvider", () => ({ useAuth: () => ({ status: "authentic
 vi.mock("../execution/ExecutionLiveProvider", () => ({ useExecutionConnection: () => "live" }));
 beforeEach(() => server.use(http.get("/api/v1/kpis/users/site-one", () => HttpResponse.json({ data: { score: 82, components: [] } }))));
 
-describe("Site Manager home", () => {
+describe("Project Manager home", () => {
   it("shows only one KPI and compact current assigned projects, with search and server pagination", async () => {
     const reads: URL[] = [];
     server.use(http.get("/api/v1/execution/projects", ({ request }) => {

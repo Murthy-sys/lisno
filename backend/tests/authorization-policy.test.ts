@@ -164,7 +164,7 @@ function permissionsForRows(rows: readonly number[]): string[] {
 }
 
 describe("authorization policy", () => {
-  it.each(["procurement", "program_manager"] as const)("grants %s only generic project observer permissions", role => {
+  it.each(["procurement", "site_manager"] as const)("grants %s only generic project observer permissions", role => {
     for (const permission of ["projects.list", "projects.read", "projects.design_workflow.read"] as const) {
       expect(hasPermission(role, permission)).toBe(true);
     }
@@ -230,12 +230,13 @@ describe("authorization policy", () => {
   });
 
   it("permits status reads for every role subject to project participant scope", () => {
-    for (const role of ROLE_CODES) expect(hasPermission(role, "projects.status.read")).toBe(true);
+    for (const role of ROLE_CODES) expect(hasPermission(role, "projects.status.read")).toBe(role !== "program_manager");
   });
 
   it("matches the exact role-to-operation allowlist", () => {
     for (const role of ROLE_CODES) {
       if (role === "super_admin") continue;
+      if (role === "program_manager") { expect(ROLE_PERMISSIONS[role]).toEqual([]); continue; }
       const historicalPermissions = ROLE_PERMISSIONS[role].filter(
         (permission) =>
           !permission.startsWith("projects.client_invitation.") && !permission.startsWith("estimation.requirements.") && !permission.startsWith("estimation.tiers.") && !permission.startsWith("estimation.dimensions.") && !["identity.project_invitation.accept", "estimation.review.withdraw", "estimation.preparation.release"].includes(permission) &&
@@ -247,6 +248,7 @@ describe("authorization policy", () => {
           !VENDOR_DIRECTORY_PERMISSIONS.includes(permission as never) &&
           !VENDOR_KPI_PERMISSIONS.includes(permission as never) &&
           !VENDOR_INDUCTION_PERMISSIONS.includes(permission as never) &&
+          !permission.startsWith("pm.") &&
           !PROCUREMENT_FULFILLMENT_PERMISSIONS.includes(permission as never) &&
           !["projects.procurement_identity.manage", "finance.vendor_invoice.manage", "procurement.vendor_city.manage",
             "procurement.work_order_approval.read", "procurement.work_order_approval.decide"].includes(permission) &&
@@ -277,11 +279,11 @@ describe("authorization policy", () => {
         continue;
       }
       expect(historicalPermissions, role).toEqual(
-        permissionsForRows([...COMMON_ROWS, ...ADDITIONAL_ROWS[role]])
+        [...permissionsForRows([...COMMON_ROWS, ...ADDITIONAL_ROWS[role]]), ...(role === "site_manager" ? ["projects.list", "projects.read"] : [])]
       );
     }
-    expect(PERMISSION_CODES).toHaveLength(199);
-    expect(new Set(PERMISSION_CODES).size).toBe(199);
+    expect(PERMISSION_CODES).toHaveLength(217);
+    expect(new Set(PERMISSION_CODES).size).toBe(217);
     expect(ROLE_PERMISSIONS.super_admin).toEqual(PERMISSION_CODES);
   });
 
@@ -331,7 +333,7 @@ describe("authorization policy", () => {
       expect(hasPermission(role, "identity.self.profile_photo.manage"), role).toBe(
         hasPermission(role, "identity.self.read")
       );
-      expect(hasPermission(role, "identity.self.profile_photo.manage"), role).toBe(true);
+      expect(hasPermission(role, "identity.self.profile_photo.manage"), role).toBe(role !== "program_manager");
     }
   });
 
@@ -353,8 +355,8 @@ describe("authorization policy", () => {
         expect(hasPermission(role, permission), `${role} ${permission}`).toBe(
           ["site_manager", "designer", "procurement", "finance_head", "super_admin"].includes(role));
     }
-    expect(hasPermission("program_manager", "projects.list")).toBe(true);
-    expect(hasPermission("program_manager", "projects.read")).toBe(true);
+    expect(hasPermission("program_manager", "projects.list")).toBe(false);
+    expect(hasPermission("program_manager", "projects.read")).toBe(false);
   });
 
   it("restricts reusable Quality Control option creation to Super Admin", () => {
@@ -462,7 +464,6 @@ describe("authorization policy", () => {
 
   it("grants purchase-order, vendor, Client, progress and completion actions to their exact roles", () => {
     const expectedByRole: Partial<Record<Role, readonly string[]>> = {
-      program_manager: ["procurement.vendor_work.media.read"],
       procurement: ["procurement.purchase_orders.read", "procurement.purchase_orders.manage", "procurement.progress.read", "procurement.vendor_work.media.read"],
       site_manager: ["procurement.progress.read", "procurement.site_completion.manage", "procurement.vendor_work.media.read"],
       vendor: ["procurement.vendor_work.read", "procurement.vendor_work.update", "procurement.vendor_work.media.read", "procurement.vendor_work.media.upload"],

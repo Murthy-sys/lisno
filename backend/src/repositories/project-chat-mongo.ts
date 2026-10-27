@@ -1,3 +1,4 @@
+import { resolveProjectManagerAssignment } from "../services/project-manager-assignment.service.js";
 import { createMongoAssistantOperations } from "./project-assistant-mongo.js";
 import { ProjectChatActionTypeModel, ProjectChatExclusionModel } from "../models/ProjectChatAction.js";
 import { ChatNotificationModel } from "../models/ChatNotification.js";
@@ -149,13 +150,13 @@ function mongoTransaction(app: AppRepository, session: ClientSession): ChatTrans
             const grants = await find<ChatSources["grants"][number]>(ProjectAccessGrantModel, { projectId, active: true });
             const exclusions = await find<ChatExclusion>(ProjectChatExclusionModel, { projectId });
             const selections = await ProjectChatParticipantAssignmentModel.find({ projectId, active: true }).select({ userId: 1 }).session(session).lean();
-            const ids = new Set([project.clientId, project.initiatingDesignerId, project.assignedEstimatorId, project.managerId, ...project.assignedDesignerIds, ...leads.map((lead) => lead.ownerId), ...estimates.flatMap((estimate) => [estimate.ownerId, estimate.assignedDesignerId, estimate.assignedManagerId, estimate.designPlanDesignerId]), ...workflowTasks.map((task) => task.assigneeUserId), ...designTasks.map((task) => task.ownerId), ...grants.map((grant) => grant.userId), ...selections.map((selection) => selection.userId), ...exclusions.map(row => row.userId)].filter(Boolean));
+            const ids = new Set([project.clientId, project.initiatingDesignerId, project.assignedEstimatorId, project.managerId, project.programManagerId, ...project.assignedDesignerIds, ...leads.map((lead) => lead.ownerId), ...estimates.flatMap((estimate) => [estimate.ownerId, estimate.assignedDesignerId, estimate.assignedManagerId, estimate.designPlanDesignerId]), ...workflowTasks.map((task) => task.assigneeUserId), ...designTasks.map((task) => task.ownerId), ...grants.map((grant) => grant.userId), ...selections.map((selection) => selection.userId), ...exclusions.map(row => row.userId)].filter(Boolean));
             const users = await find<UserRecord>(UserModel, { _id: { $in: [...ids] }, active: true });
             const superAdmins = (await UserModel.find({ role: "super_admin", active: true }).limit(2).session(session).lean()).map((row) => record<UserRecord>(row));
             for (const user of superAdmins)
                 if (!users.some((candidate) => candidate.id === user.id))
                     users.push(user);
-            return { project: record<ProjectRecord>(project), users, leads, estimates, workflowTasks, designTasks, grants, exclusions };
+            return { project: record<ProjectRecord>(project), users, leads, estimates, workflowTasks, designTasks, grants, exclusions, projectManagerAssignment: await resolveProjectManagerAssignment(projectId, session) };
         },
         async projectPage(input) {
             const [page] = await ProjectModel.aggregate([
@@ -177,7 +178,7 @@ function mongoTransaction(app: AppRepository, session: ClientSession): ChatTrans
             if (user.role === "super_admin")
                 return (await ProjectModel.find({}).select({ _id: 1 }).session(session).lean()).map((row) => String(row._id));
             const ids = new Set<string>();
-            const projectRows = await ProjectModel.find({ $or: [{ clientId: user.id }, { initiatingDesignerId: user.id }, { assignedDesignerIds: user.id }, { managerId: user.id }, { assignedEstimatorId: user.id }] }).select({ _id: 1 }).session(session).lean();
+            const projectRows = await ProjectModel.find({ $or: [{ clientId: user.id }, { initiatingDesignerId: user.id }, { assignedDesignerIds: user.id }, { managerId: user.id }, { programManagerId: user.id }, { assignedEstimatorId: user.id }] }).select({ _id: 1 }).session(session).lean();
             for (const row of projectRows)
                 ids.add(String(row._id));
             for (const [model, query] of [[ProjectAccessGrantModel, { userId: user.id, active: true }], [ProjectChatParticipantAssignmentModel, { userId: user.id, active: true }], [ProjectWorkflowTaskModel, { assigneeUserId: user.id }], [TaskModel, { ownerId: user.id }], [LeadModel, { ownerId: user.id }]] as const) {

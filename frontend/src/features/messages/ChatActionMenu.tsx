@@ -1,12 +1,12 @@
 import { useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
-import { MoreVertical } from "lucide-react";
+import { ChatIcon } from "./ChatIcon";
 
 export interface ChatMenuItem { label: string; onSelect?: () => void; to?: string; selected?: boolean }
 
 /** A small non-modal action menu. Portalling keeps transcript overflow from clipping it. */
-export function ChatActionMenu({ label, items, icon = <MoreVertical size={20} aria-hidden="true" /> }: { label: string; items: ChatMenuItem[]; icon?: ReactNode }) {
+export function ChatActionMenu({ label, items, icon = <ChatIcon name="more" size={20} aria-hidden="true" /> }: { label: string; items: ChatMenuItem[]; icon?: ReactNode }) {
   const id = useId();
   const trigger = useRef<HTMLButtonElement>(null);
   const menu = useRef<HTMLDivElement>(null);

@@ -95,7 +95,7 @@ export async function requireProjectReadAccess(repository: AppRepository, actor:
   if (currentHumanOperation().operation.permission !== "projects.read") {
     throw new AuthorizationConfigurationError("Project read scope requires the project detail read operation.");
   }
-  if (actor.role !== "procurement" && actor.role !== "program_manager") {
+  if (actor.role !== "procurement" && actor.role !== "site_manager") {
     return requireProjectOperationAccess(repository, actor, projectId);
   }
   const user = await requireActor(repository, actor);

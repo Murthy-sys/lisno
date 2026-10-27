@@ -3,6 +3,7 @@ import type { ChatAssistantResult, ChatAssistantMessageState, ChatAssistantReque
 import { apiClient, ApiError } from "../../api/client";
 import type { ChatActionType, ChatActionTypes, ChatAttachmentPolicy, ChatStagedAttachment, ChatConversationPage, ChatIssueInput, ChatMessage, ChatMessagePage, ChatMessageQuery, ChatParticipantInput, ChatParticipantOptions, ChatParticipantPage, ChatParticipantRevokeInput, ChatReadInput, ChatReadResult, ChatSendInput, ChatSummary, ChatTypingInput, ChatTypingResult } from "./projectChatTypes";
 import type { ChatAvailability, CurrentCriticalTaskReview, DailyCriticalAcknowledgment, DailyCriticalTasks } from "../../../../shared/chat/dailyCriticalTasks";
+import type { ChatConversationFilter } from "./projectChatTypes";
 
 export const chatPath = (projectId: string) => `/projects/${encodeURIComponent(projectId)}/chat`;
 export const chatKeys = {
@@ -54,7 +55,7 @@ export const projectChatApi = {
   participants: (id: string, signal?: AbortSignal) => apiClient.get<ChatParticipantPage>(`${chatPath(id)}/participants`, { ...quiet, signal }),
   options: (id: string, search: string, signal?: AbortSignal) => apiClient.get<ChatParticipantOptions>(`${chatPath(id)}/participant-options?${queryString({ search, limit: 30 })}`, { ...quiet, signal }),
   messages: (id: string, query: ChatMessageQuery, signal?: AbortSignal) => apiClient.get<ChatMessagePage>(`${chatPath(id)}/messages?${queryString({ limit: 40, ...query })}`, { ...quiet, signal }),
-  conversations: (offset: number, signal?: AbortSignal) => apiClient.get<ChatConversationPage>(`/project-messages?${queryString({ limit: 30, offset })}`, { ...quiet, signal }),
+  conversations: (offset: number, signal?: AbortSignal, query: { search?: string; filter?: ChatConversationFilter } = {}) => apiClient.get<ChatConversationPage>(`/project-messages?${queryString({ limit: 30, offset, ...query })}`, { ...quiet, signal }),
   send: (id: string, input: ChatSendInput, signal?: AbortSignal) => apiClient.post<ChatMessage>(`${chatPath(id)}/messages`, input, { ...quiet, signal }),
   issue: (id: string, messageId: string, input: ChatIssueInput, signal?: AbortSignal) => apiClient.patch<ChatMessage>(`${chatPath(id)}/messages/${encodeURIComponent(messageId)}/issue`, input, { ...quiet, signal }),
   selectParticipant: (id: string, input: ChatParticipantInput, signal?: AbortSignal) => apiClient.post<ChatParticipantPage>(`${chatPath(id)}/participants`, input, { ...quiet, signal }),

@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Download, FileText, Play } from "lucide-react";
+import { ChatIcon } from "./ChatIcon";
 import { Dialog } from "../../components/ui/Dialog";
 import { Button } from "../../components/ui/Button";
 import { chatFileSize } from "./chatAttachments";
@@ -15,6 +15,12 @@ interface MediaContextValue {
   open: (attachment: ChatAttachment, download?: boolean) => void;
 }
 const MediaContext = createContext<MediaContextValue | null>(null);
+/** Compact file rows share the conversation's authenticated transfers and cleanup. */
+export function useChatMediaActions() {
+  const media = useContext(MediaContext);
+  if (!media) throw new Error("Chat media actions require ChatMediaProvider.");
+  return { open: media.open };
+}
 export function ChatMediaProvider({ projectId, children }: { projectId: string; children: ReactNode }) {
   const chat = useProjectChat();
   const [previewSlots] = useState(() => new ChatTransferPool(16));
@@ -101,8 +107,8 @@ function AttachmentTile({ attachment }: { attachment: ChatAttachment }) {
   const media = ["image", "audio", "video"].includes(attachment.kind);
   return <div ref={tile} className={`project-chat-attachment project-chat-attachment--${attachment.kind}`}>
     {attachment.kind === "image" ? <button type="button" className="project-chat-attachment__image" aria-label={`View ${attachment.filename}`} onClick={() => context.open(attachment)}>{url && !failed ? <img src={url} alt="" onError={() => setFailed(true)} /> : <span>{failed || !attachment.preview ? "Image preview unavailable" : "Photo"}<small>View original</small></span>}</button> : null}
-    <div className="project-chat-attachment__label"><FileText size={18} aria-hidden="true" /><span><strong title={attachment.filename}>{attachment.filename}</strong><small>{chatFileSize(attachment.byteSize)} · {attachment.kind}</small></span></div>
-    <div className="project-chat-attachment__actions">{media && attachment.kind !== "image" ? <button type="button" onClick={() => context.open(attachment)}><Play size={14} aria-hidden="true" /> Load {attachment.kind}</button> : null}<button type="button" aria-label={`Download ${attachment.filename}`} onClick={() => context.open(attachment, true)}><Download size={14} aria-hidden="true" /> Download</button></div>
+    <div className="project-chat-attachment__label"><ChatIcon name="file" size={18} aria-hidden="true" /><span><strong title={attachment.filename}>{attachment.filename}</strong><small>{chatFileSize(attachment.byteSize)} · {attachment.kind}</small></span></div>
+    <div className="project-chat-attachment__actions">{media && attachment.kind !== "image" ? <button type="button" onClick={() => context.open(attachment)}><ChatIcon name="play" size={14} aria-hidden="true" /> Load {attachment.kind}</button> : null}<button type="button" aria-label={`Download ${attachment.filename}`} onClick={() => context.open(attachment, true)}><ChatIcon name="download" size={14} aria-hidden="true" /> Download</button></div>
   </div>;
 }
 export function ChatMessageAttachments({ attachments, sender, audioTimestamp }: { attachments: ChatAttachment[]; sender?: ChatAudioSender; audioTimestamp?: ReactNode }) {

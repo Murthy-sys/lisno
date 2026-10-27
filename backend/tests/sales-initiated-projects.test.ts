@@ -209,9 +209,9 @@ describe("Sales-initiated projects", () => {
       const { app, seed } = setup();
       const user = seed.users.find((candidate) => candidate.role === role)!;
       await request(app).post("/api/v1/admin/projects")
-        .set("Authorization", bearer(user.id, role)).send(input).expect(403);
+        .set("Authorization", bearer(user.id, role)).send(input).expect(role === "program_manager" ? 401 : 403);
       await request(app).get("/api/v1/admin/sales-managers")
-        .set("Authorization", bearer(user.id, role)).expect(403);
+        .set("Authorization", bearer(user.id, role)).expect(role === "program_manager" ? 401 : 403);
     }
   );
 });

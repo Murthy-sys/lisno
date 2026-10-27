@@ -1,7 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 
-import { ROLE_LABELS } from "../../api/authorization-contract";
+import { isActiveFrontendRole, ROLE_LABELS } from "../../api/authorization-contract";
 import { ApiError } from "../../api/client";
 import type {
   CreateUserInvitationInput,
@@ -86,7 +86,8 @@ function deliveryMessage(invitation: UserInvitationItem): string {
   return "Email delivery failed. You can resend from the invitation list.";
 }
 
-export function InviteUserDialog({ roles, onClose }: InviteUserDialogProps) {
+export function InviteUserDialog({ roles: serverRoles, onClose }: InviteUserDialogProps) {
+  const roles = useMemo(() => serverRoles.filter(isActiveFrontendRole), [serverRoles]);
   const queryClient = useQueryClient();
   const feedback = useFeedback();
   const [values, setValues] = useState<Record<InvitationField, string>>({

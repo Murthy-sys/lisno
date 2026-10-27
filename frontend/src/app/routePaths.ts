@@ -5,10 +5,10 @@ const roleHomePaths: Record<Role, string> = {
   admin: "/admin/projects",
   designer: "/designer",
   procurement: "/home",
-  program_manager: "/execution",
+  program_manager: "/access-denied",
   vendor: "/vendor",
   finance_head: "/home",
-  site_manager: "/home",
+  site_manager: "/execution",
   worker_electrician: "/home",
   worker_plumber: "/home",
   worker_carpenter: "/home",
@@ -62,9 +62,10 @@ export function safeReturnPath(
     const canReturnToProjectMessages = parsed.pathname === "/project-messages" ||
       /^\/projects\/[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\/messages$/u.test(parsed.pathname);
     const canReturnToRoleHome =
-      parsed.pathname === home || (role !== "program_manager" && parsed.pathname.startsWith(`${home}/`));
-    const canReturnToExecution = ["super_admin", "site_manager", "program_manager", "procurement"].includes(role) &&
+      parsed.pathname === home || (role !== "site_manager" && parsed.pathname.startsWith(`${home}/`));
+    const canReturnToExecution = ["super_admin", "site_manager", "procurement"].includes(role) &&
       (parsed.pathname === "/execution" || /^\/projects\/[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\/execution$/u.test(parsed.pathname));
+    const canReturnToProjectManager = role === "site_manager" && ["/home", "/project-manager/leaderboard", "/project-manager/bonus", "/work-order-approvals", "/access-requests/mine"].includes(parsed.pathname);
     const canReturnToClientResponses =
       (role === "admin" || role === "super_admin") &&
       (parsed.pathname === "/admin/client-responses" ||
@@ -100,6 +101,7 @@ export function safeReturnPath(
       hasEncodedTraversal(parsed.pathname) ||
       (!canReturnToRoleHome &&
         !canReturnToExecution &&
+        !canReturnToProjectManager &&
         !canReturnToProjectMessages &&
         !canReturnToClientResponses &&
         !canReturnToDesignApprovals &&

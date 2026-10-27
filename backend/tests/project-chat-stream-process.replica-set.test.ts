@@ -12,7 +12,7 @@ const children = new Set<ChildProcess>();
 const streams = new Set<AbortController>();
 let replica: Awaited<ReturnType<typeof startMongoReplicaSet>>;
 const secret = "chat-process-fixture-secret-at-least-32-characters";
-const roles = { "client-a": "client", "designer-a": "designer", "admin-a": "admin", "site-a": "site_manager" } as const;
+const roles = { "client-a": "client", "designer-a": "designer", "admin-a": "admin", "procurement": "procurement" } as const;
 function token(id: keyof typeof roles, sessionVersion = 1) {
   return jwt.sign({ id, role: roles[id], sessionVersion, iat: Math.floor(Date.now() / 1000), exp: Math.floor(Math.max(Date.now(), Date.parse("2026-09-16T10:00:00.000Z")) / 1000) + 3600 }, secret);
 }
@@ -144,9 +144,9 @@ describe("durable live chat across real Node processes", () => {
     await until(() => client.batches.find((batch) => batch.cursor !== priorCursor && batch.events.length === 0));
     expect(client.events().some((event) => event.type === "read.changed")).toBe(false);
 
-    const participants = await api(server, "admin-a", "/projects/a/chat/participants", { userId: "site-a", reason: "Coordinate this site", idempotencyKey: "select-site-for-stream" });
-    const selection = participants.items.find((person: any) => person.id === "site-a").selection;
-    const site = await open(server, "site-a");
+    const participants = await api(server, "admin-a", "/projects/a/chat/participants", { userId: "procurement", reason: "Coordinate this site", idempotencyKey: "select-site-for-stream" });
+    const selection = participants.items.find((person: any) => person.id === "procurement").selection;
+    const site = await open(server, "procurement");
     await api(server, "admin-a", `/projects/a/chat/participants/${selection.id}/revoke`, { expectedVersion: selection.version, reason: "Site reassigned", idempotencyKey: "revoke-site-for-stream" });
     await until(() => site.states.includes("denied") ? true : undefined);
     await site.read;

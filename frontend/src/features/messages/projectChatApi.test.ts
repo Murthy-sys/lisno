@@ -7,6 +7,23 @@ import { chatTestMessage, chatTestPage, chatTestSummary } from "./projectChatFix
 afterEach(() => vi.unstubAllGlobals());
 
 describe("project chat HTTP contract", () => {
+  it("encodes conversation search and filters in the optional third argument with paging and cancellation", async () => {
+    tokenStorage.set("synthetic-api-test-session");
+    const page = { items: [], pagination: { offset: 30, limit: 30, total: 35, hasMore: false }, totals: { unread: 4, critical: 17, important: 8 } };
+    const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ data: page }));
+    const controller = new AbortController();
+    await expect(projectChatApi.conversations(30, controller.signal, { search: "Courtyard & café / 2", filter: "important" })).resolves.toEqual(page);
+    expect(fetch).toHaveBeenCalledWith("/api/v1/project-messages?limit=30&offset=30&search=Courtyard+%26+caf%C3%A9+%2F+2&filter=important", expect.objectContaining({ method: "GET", signal: controller.signal }));
+    expect(new Headers(fetch.mock.calls[0][1]?.headers).get("Authorization")).toBe("Bearer synthetic-api-test-session");
+    expect(requestActivity.getSnapshot()).toBe(0);
+  });
+  it("preserves the two-argument conversation request without adding search or filter parameters", async () => {
+    const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ data: { items: [], pagination: { offset: 0, limit: 30, total: 0, hasMore: false }, totals: { unread: 0, critical: 0, important: 0 } } }));
+    const controller = new AbortController();
+    await projectChatApi.conversations(0, controller.signal);
+    expect(fetch).toHaveBeenCalledWith("/api/v1/project-messages?limit=30&offset=0", expect.objectContaining({ method: "GET", signal: controller.signal }));
+    expect(requestActivity.getSnapshot()).toBe(0);
+  });
   it("stages a file with the agreed multipart field, upload identity, byte count and local progress", async () => {
     const request = { open: vi.fn(), setRequestHeader: vi.fn(), send: vi.fn(), abort: vi.fn(), upload: { onprogress: null as null | ((event: ProgressEvent) => void) }, onload: null as null | (() => void), status: 201, responseText: JSON.stringify({ data: { clientUploadId: "upload-a" } }), timeout: 0 };
     vi.stubGlobal("XMLHttpRequest", class { constructor() { return request; } });

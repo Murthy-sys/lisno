@@ -26,6 +26,10 @@ const invitationPermissions = [
 ] as const;
 
 describe("parseAuthorizationSnapshot", () => {
+  it("rejects a retired Program Manager session instead of remapping its authority", () => {
+    expect(parseAuthorizationSnapshot({ ...validSnapshot, role: "program_manager" }, "program_manager")).toBeNull();
+    expect(parseAuthorizationSnapshot({ ...validSnapshot, role: "program_manager" }, "site_manager")).toBeNull();
+  });
   it("accepts the current policy identifier and canonicalizes permissions", () => {
     const result = parseAuthorizationSnapshot(
       {

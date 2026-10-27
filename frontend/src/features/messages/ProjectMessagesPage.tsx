@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { ChatIcon } from "./ChatIcon";
 import { useQueryClient } from "@tanstack/react-query";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { Button } from "../../components/ui/Button";
@@ -13,6 +13,7 @@ import { ChatIssueDialog } from "./ChatIssueDialog";
 import { ChatParticipants } from "./ChatParticipants";
 import { ChatTimeline } from "./ChatTimeline";
 import { ChatMediaProvider } from "./ChatMessageAttachments";
+import { ChatProjectDetails } from "./ChatProjectDetails";
 import { ChatTypingIndicator } from "./ChatTypingIndicator";
 import { useChatTypingActivity } from "./useChatTypingActivity";
 import { useOptionalChatSchedule } from "./ChatScheduleProvider";
@@ -25,6 +26,13 @@ import "./projectChat.css";
 
 const filters: Array<{ value: ChatFilter; label: string }> = [{ value: "all", label: "All messages" }, { value: "mentions", label: "Mentions of me" }, { value: "critical", label: "Open Critical" }, { value: "important", label: "Open Important" }, { value: "resolved", label: "Resolved" }];
 const connectionLabels = { connecting: "Connecting…", live: "Live", reconnecting: "Reconnecting…", unavailable: "Live connection unavailable · checking for updates", denied: "Access removed" };
+const detailsQuery = "(min-width: 1440px)";
+function subscribeDetailsWidth(listener: () => void) {
+  const media = window.matchMedia(detailsQuery);
+  media.addEventListener("change", listener);
+  return () => media.removeEventListener("change", listener);
+}
+const hasDetailsWidth = () => window.matchMedia(detailsQuery).matches;
 
 export function ProjectMessagesPage() {
   const { projectId = "" } = useParams();
@@ -49,6 +57,12 @@ function ProjectConversation({ projectId }: { projectId: string }) {
   const { reconcileMessages } = chat;
   useEffect(() => reconcileMessages(projectId, messages), [projectId, messages, reconcileMessages]);
   const [panel, setPanel] = useState<"participants" | null>(null);
+  const wideDetails = useSyncExternalStore(subscribeDetailsWidth, hasDetailsWidth);
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const detailsTrigger = useRef<HTMLButtonElement>(null);
+  const participantsTrigger = useRef<HTMLButtonElement>(null);
+  const detailsRail = useRef<HTMLElement>(null);
+  useEffect(() => { if (wideDetails) setDetailsOpen(false); }, [wideDetails]);
   const [selectedIssue, setSelectedIssue] = useState<ChatMessage | null>(null);
   const [checkingAccess, setCheckingAccess] = useState(false);
   const composerRegion = useRef<HTMLDivElement>(null);
@@ -57,6 +71,12 @@ function ProjectConversation({ projectId }: { projectId: string }) {
   const committedKeys = new Set(messages.filter(message => message.author.id === chat.userId).map(message => message.clientMessageId));
   const visibleAttempts = attempts.filter(attempt => !committedKeys.has(attempt.input.clientMessageId));
   const unavailable = !chat.enabled || chat.denied.has(projectId);
+  useEffect(() => {
+    if (params.get("draft") !== "project-update" || unavailable || !summary.data?.capabilities.canSend) return;
+    if (!draft.body.trim() && !draft.files.length && !draft.reply) chat.setDraft(projectId, { ...draft, body: `Project update: ${summary.data.project.name}\n\nProgress:\nNext steps:\nDecisions needed:` });
+    const next = new URLSearchParams(params); next.delete("draft"); setParams(next, { replace: true });
+    requestAnimationFrame(() => composerRegion.current?.querySelector("textarea")?.focus());
+  }, [params, unavailable, summary.data, draft, chat, projectId, setParams]);
   const typingActivity = useChatTypingActivity(projectId, canWriteNow && !unavailable && chat.connection === "live" && Boolean(summary.data?.capabilities.canSend && participants.data && !participants.isError));
   async function checkAccess() {
     setCheckingAccess(true);
@@ -87,31 +107,41 @@ function ProjectConversation({ projectId }: { projectId: string }) {
   const name = unavailable ? "Conversation unavailable" : summary.data?.project.name ?? "Project conversation";
   const overview = chat.overview[projectId];
   const currentFilter = filters.find(item => item.value === filter)!;
-  return <section className="project-chat-page" aria-labelledby="project-chat-title">
+  function showParticipants() { setDetailsOpen(false); setPanel("participants"); }
+  const details = summary.data && !unavailable ? <ChatProjectDetails
+    summary={summary.data} participants={participants.data} participantsPending={participants.isPending} participantsError={participants.isError}
+    onRetryParticipants={() => void participants.refetch()} messages={messages} historyPending={history.isPending} historyError={history.isError}
+    historyIncomplete={Boolean(history.hasNextPage || history.hasPreviousPage)} filtered={filter !== "all" || Boolean(around)}
+    overview={overview} visible={wideDetails || detailsOpen} onParticipants={showParticipants}
+    onContext={messageId => { setDetailsOpen(false); context(messageId); }} /> : null;
+  return <section className={`project-chat-page${wideDetails && summary.data && !unavailable ? " project-chat-page--details" : ""}`} aria-labelledby="project-chat-title">
     <header className="project-chat-header">
-      <Link to="/project-messages" className="project-chat-icon project-chat-back" aria-label="Back to conversations"><ArrowLeft size={22} aria-hidden="true" /></Link>
+      <Link to="/project-messages" className="project-chat-icon project-chat-back" aria-label="Back to conversations"><ChatIcon name="back" size={22} aria-hidden="true" /></Link>
       <div className="project-chat-identity">
-        <button type="button" className="project-chat-identity__button" disabled={!summary.data || unavailable} onClick={() => setPanel("participants")} aria-label={summary.data && !unavailable ? `${summary.data.participantCount} participants` : "Group information"} aria-haspopup="dialog">
+        <button ref={participantsTrigger} type="button" className="project-chat-identity__button" disabled={!summary.data || unavailable} onClick={showParticipants} aria-label={summary.data && !unavailable ? `${summary.data.participantCount} participants` : "Group information"} aria-haspopup="dialog">
           <span className="project-chat-avatar" aria-hidden="true">{chatInitials(name)}</span>
           <span className="project-chat-identity__copy"><span className="project-chat-identity__name" aria-hidden="true">{name}</span><span className="project-chat-identity__summary">{summary.data && !unavailable ? `${summary.data.participantCount} participants${summary.data.assistant ? " · Lisno AI" : ""}` : "Project messages"}</span></span>
         </button>
         <h1 id="project-chat-title" className="sr-only">{name}</h1>
       </div>
       {summary.data?.capabilities.canRenameProject && !unavailable && canWriteNow ? <button type="button" className="project-chat-icon project-chat-rename" aria-label="Edit project name" onClick={() => setRenameOpen(true)}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><path d="m15 5 4 4M4 20l4-1L20 7a2.8 2.8 0 0 0-4-4L4 15Z" /></svg></button> : null}
+      <div className="project-chat-header__actions">
       {summary.data && !unavailable ? <button type="button" className="project-chat-critical" onClick={() => selectFilter("critical")} aria-label={`Critical ${summary.data.counts.openCritical}`}>Critical {summary.data.counts.openCritical}</button> : null}
+      {summary.data && !unavailable ? <button ref={detailsTrigger} type="button" className="project-chat-icon project-chat-details-trigger" aria-label="Project details" aria-haspopup={wideDetails ? undefined : "dialog"} aria-expanded={wideDetails || detailsOpen} onClick={() => wideDetails ? detailsRail.current?.focus() : setDetailsOpen(true)}><ChatIcon name="details" /></button> : null}
       <ChatActionMenu label="Conversation options" items={[
         ...(!unavailable && summary.data ? filters.map(item => ({ label: item.label, selected: filter === item.value && !around, onSelect: () => selectFilter(item.value) })) : []),
-        ...(!unavailable && summary.data ? [{ label: "Group information", onSelect: () => setPanel("participants") }] : []),
+        ...(!unavailable && summary.data ? [{ label: "Group information", onSelect: showParticipants }] : []),
         ...(overview && !unavailable ? [{ label: overview.label, to: overview.to }] : []),
         { label: "Back to workspace", to: "/" }
       ]} />
       <ProjectStatusButton projectId={projectId} participant={summary.data && !summary.isError && !unavailable ? true : undefined} />
+      </div>
     </header>
     {unavailable ? <div className="project-chat-empty project-chat-state" role="status"><h2>Conversation unavailable</h2><p>Your account does not currently have access to this conversation.</p>{chat.enabled ? <Button variant="secondary" busy={checkingAccess} onClick={() => void checkAccess()}>Check access again</Button> : null}</div> : summary.isPending ? <p role="status" className="project-chat-state project-chat-empty">Loading project conversation…</p> : !summary.data ? <div className="project-chat-empty project-chat-state" role="alert"><p>{chatErrorMessage(summary.error)}</p><Button onClick={() => void summary.refetch()}>Retry conversation</Button></div> : <>
       <div role="status" className={`project-chat-connection${chat.connection === "live" ? " sr-only" : ""}`}><span aria-hidden="true" />{connectionLabels[chat.connection]}</div>
       {summary.isError ? <p role="status" className="project-chat-warning">Project counts may be out of date. Retrying when the connection recovers.</p> : null}
       {!canWriteNow ? <div className="project-chat-warning" role="status">{schedule?.pending ? "Checking chat hours. Sending is paused until availability is confirmed." : schedule?.error ? <>Chat hours could not be checked. Sending is paused. <Button variant="quiet" onClick={() => schedule.refresh()}>Retry chat hours</Button></> : <>Chat is read-only for internal teams from 8:00 PM to 7:30 AM India time. Messages and tasks remain available. {schedule?.nextOpenAt ? <span>Next opening: <time dateTime={schedule.nextOpenAt}>{new Date(schedule.nextOpenAt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", dateStyle: "medium", timeStyle: "short" })}</time>.</span> : null}</>}</div> : null}
-      {around || filter !== "all" ? <div className="project-chat-context-note"><span>{around ? "Viewing an earlier message in context" : currentFilter.label}</span><button type="button" className="project-chat-icon" aria-label="Return to latest messages" onClick={latest}><X size={17} aria-hidden="true" /></button></div> : null}
+      {around || filter !== "all" ? <div className="project-chat-context-note"><span>{around ? "Viewing an earlier message in context" : currentFilter.label}</span><button type="button" className="project-chat-icon" aria-label="Return to latest messages" onClick={latest}><ChatIcon name="close" size={17} aria-hidden="true" /></button></div> : null}
       <ChatMediaProvider key={`${chat.scope}:${projectId}`} projectId={projectId}><div className="project-chat-conversation">
           {history.isError ? <p role="alert" className="project-chat-warning">{history.data ? "Messages may be out of date. " : ""}{chatErrorMessage(history.error)} <Button variant="quiet" onClick={() => void history.refetch()}>Retry messages</Button></p> : null}
           {history.isPending ? <p role="status" className="project-chat-empty">Loading messages…</p> : history.data ? <ChatTimeline key={`${projectId}:${filter}:${around ?? "latest"}`} projectId={projectId} messages={messages} attempts={visibleAttempts} lastRead={summary.data.lastReadSequence} hasOlder={Boolean(history.hasNextPage)} hasNewer={Boolean(history.hasPreviousPage)} filtered={filter !== "all" || Boolean(around)} around={around} latestSequence={summary.data.latestMessageSequence} loadingOlder={history.isFetchingNextPage} loadingNewer={history.isFetchingPreviousPage} canSend={canWriteNow && summary.data.capabilities.canSend} onOlder={() => void history.fetchNextPage()} onNewer={() => void history.fetchPreviousPage()} onLatest={latest} onReply={reply} onContext={context} onIssue={setSelectedIssue} onRetry={attempt => { if (canWriteNow) void chat.send(projectId, attempt.input); }} onEditAttempt={editAttempt} onCancel={attempt => void chat.cancelAttempt(projectId, attempt.input.clientMessageId)} onDiscard={attempt => void chat.cancelAttempt(projectId, attempt.input.clientMessageId, true)} /> : null}
@@ -122,8 +152,10 @@ function ProjectConversation({ projectId }: { projectId: string }) {
             <ChatComposer projectId={projectId} actionTypes={actionTypes.isError ? undefined : actionTypes.data} actionTypesError={actionTypes.isError ? "Actions are temporarily unavailable. Your draft is retained." : undefined} onRetryActionTypes={() => void actionTypes.refetch()} draft={draft} participants={participants.data?.items ?? []} sender={participants.data?.items.find(person => person.id === chat.userId)} onTypingEdit={typingActivity.edit} onTypingStop={typingActivity.stop} disabled={!canWriteNow || !summary.data.capabilities.canSend || !participants.data || participants.isError} onChange={next => chat.setDraft(projectId, next)} onSend={send} policy={attachmentPolicy.data} policyError={attachmentPolicy.isError && !attachmentPolicy.unsupported ? "Attachments are temporarily unavailable." : undefined} onRetryPolicy={() => void attachmentPolicy.refetch()} />
             {!summary.data.capabilities.canSend ? <p role="status">Sending is not available for your current access.</p> : null}
           </div>
-      </div></ChatMediaProvider>
-      {panel ? <Drawer id="project-chat-group-info" open title="Project participants" eyebrow="Group information" variant="contextual" className="project-chat-details" onClose={() => setPanel(null)}>
+      </div>
+      {wideDetails ? <aside ref={detailsRail} tabIndex={-1} className="project-chat-details-rail" aria-label="Project details">{details}</aside> : <Drawer id="project-chat-details-panel" open={detailsOpen} title="Project details" variant="contextual" width="narrow" className="project-chat-details project-chat-details-drawer" onClose={() => setDetailsOpen(false)} returnFocusRef={detailsTrigger}>{details}</Drawer>}
+      </ChatMediaProvider>
+      {panel ? <Drawer id="project-chat-group-info" open title="Project participants" eyebrow="Group information" variant="contextual" className="project-chat-details" onClose={() => setPanel(null)} returnFocusRef={participantsTrigger}>
         {participants.isPending ? <p role="status">Loading participants…</p> : participants.isError ? <p role="alert">{chatErrorMessage(participants.error)} <Button variant="quiet" onClick={() => void participants.refetch()}>Retry</Button></p> : <ChatParticipants projectId={projectId} assistant={participants.data?.assistant ?? summary.data.assistant} participants={participants.data?.items ?? []} removed={participants.data?.removed ?? []} warnings={participants.data?.setupWarnings ?? []} canManage={canWriteNow && summary.data.capabilities.canManageParticipants} />}
       </Drawer> : null}
       {renameOpen ? <ChatProjectNameDialog projectId={projectId} summary={summary.data} onClose={() => setRenameOpen(false)} /> : null}

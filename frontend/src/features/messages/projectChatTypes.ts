@@ -145,12 +145,28 @@ export interface ChatSummary {
   capabilities: { canSend: boolean; canManageParticipants: boolean; canManageIssues: boolean; canRenameProject?: boolean };
   setupWarnings: string[];
 }
+export type ChatConversationFilter = "all" | "unread" | "critical" | "important";
+export interface ChatLastMessage {
+  id: string;
+  author: ChatAuthor;
+  excerpt: string;
+  createdAt: string;
+  attachments: Array<{ id: string; kind: ChatAttachmentKind; filename: string; hasPreview: boolean }>;
+  attachmentCount: number;
+}
+export interface ChatConversationTotals {
+  unread: number;
+  critical: number;
+  important: number;
+}
 export interface ChatConversation extends ChatSummary {
   lastMessageAt: string | null;
+  lastMessage: ChatLastMessage | null;
 }
 export interface ChatConversationPage {
   items: ChatConversation[];
   pagination: { limit: number; offset: number; total: number; hasMore: boolean };
+  totals: ChatConversationTotals;
 }
 export interface ChatParticipantPage {
   assistant?: ChatAssistantParticipant;

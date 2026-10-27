@@ -1,7 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 
-import { ROLE_LABELS, type Role } from "../../api/authorization-contract";
+import { isActiveFrontendRole, ROLE_LABELS, type Role } from "../../api/authorization-contract";
 import { ApiError } from "../../api/client";
 import type {
   ManagedUserMutationResult,
@@ -49,6 +49,8 @@ const responsibilityLabels: Readonly<
     "managed active project remains",
     "managed active projects remain"
   ],
+  assignedExecutionProjects: ["execution project remains assigned", "execution projects remain assigned"],
+  assignedWorkflowTasks: ["workflow task remains assigned", "workflow tasks remain assigned"],
   ownedActiveTasks: ["active task remains assigned", "active tasks remain assigned"],
   directReports: ["direct report remains assigned", "direct reports remain assigned"],
   linkedClientProjects: [
@@ -89,10 +91,11 @@ function successMessage(result: ManagedUserMutationResult) {
 
 export function UserMutationDialog({
   user,
-  manageableRoles,
+  manageableRoles: serverRoles,
   isCurrentPageUser,
   onClose
 }: UserMutationDialogProps) {
+  const manageableRoles = serverRoles.filter(isActiveFrontendRole);
   const queryClient = useQueryClient();
   const feedback = useFeedback();
   const [selectedRole, setSelectedRole] = useState<Role>(user.role);
@@ -267,13 +270,14 @@ export function UserMutationDialog({
             <Select
               {...controlProps}
               data-dialog-initial-focus
-              value={selectedRole}
+              value={manageableRoles.includes(selectedRole as ManageableRole) ? selectedRole : ""}
               disabled={interactionBlocked}
               onChange={(event) => {
                 setError("");
                 setSelectedRole(event.target.value as ManageableRole);
               }}
             >
+              {!manageableRoles.includes(selectedRole as ManageableRole) ? <option value="" disabled>Choose an active role</option> : null}
               {manageableRoles.map((role) => (
                 <option key={role} value={role}>
                   {ROLE_LABELS[role]}

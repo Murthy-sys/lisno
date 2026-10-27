@@ -17,6 +17,7 @@ import { ExecutionDetailPanel } from "./ExecutionDetailPanel";
 import { VendorAccessPanel } from "./VendorAccessPanel";
 import { ExecutionPolicyPanel } from "./ExecutionPolicyPanel";
 import { executionDate, executionLabel, executionStatusLabels, executionTime } from "./executionPresentation";
+import { SiteManagerProjectPage } from "../site-manager/SiteManagerProjectPage";
 import { AssignedProjectOverview } from "../projects/AssignedProjectOverview";
 import { useAssignedProject } from "../projects/projectReadQueries";
 import { ProjectWorkflowPanel } from "../workflow/ProjectWorkflowPanel";
@@ -61,7 +62,7 @@ function ExecutionWorkspace({ projectId, projectName, vendor = false, connection
   function filter(key: keyof ExecutionQuery, value: string) { setFilters(old => ({ ...old, [key]: value || undefined, offset: 0 })); }
   return <section className="execution" aria-label={vendor ? "Vendor execution workspace" : `${projectName ?? "Project"} execution tracker`}>
     {routed ? <NotificationSelection onSelect={setSelected} /> : null}
-    <div className="execution__heading"><div><h2>{vendor ? "Main Line assignments" : "Execution tracker"}</h2><p>Vendor reports, Site Manager verification and Client acceptance remain separate.</p></div><div className="execution__actions"><ExecutionConnection state={connection} /><Button size="compact" variant="secondary" busy={query.isFetching} onClick={() => void query.refetch()}>Refresh</Button>{data?.canManagePolicy && projectId ? <Button size="compact" variant="secondary" onClick={() => setPolicyOpen(true)}>Reporting schedule</Button> : null}</div></div>
+    <div className="execution__heading"><div><h2>{vendor ? "Main Line assignments" : "Execution tracker"}</h2><p>Vendor reports, Project Manager verification and Client acceptance remain separate.</p></div><div className="execution__actions"><ExecutionConnection state={connection} /><Button size="compact" variant="secondary" busy={query.isFetching} onClick={() => void query.refetch()}>Refresh</Button>{data?.canManagePolicy && projectId ? <Button size="compact" variant="secondary" onClick={() => setPolicyOpen(true)}>Reporting schedule</Button> : null}</div></div>
     {data ? <ExecutionSummary counts={data.counts} /> : null}
     {vendor && data?.items.length ? <div className="vendor-work__projects" aria-label="Project status controls">{[...new Map(data.items.map(work => [work.projectId,work.projectName])).entries()].map(([id,name]) => <div key={id}><span>{name}</span><ProjectStatusButton projectId={id} participant /></div>)}</div> : null}
     <div className="execution__toolbar"><div className="execution__filters">
@@ -87,16 +88,16 @@ function WorkRow({ work, vendor, onOpen }: { work: ExecutionWork; vendor: boolea
 
 export function VendorExecutionWorkspace({ renderLegacy, connection }: { renderLegacy?: LegacyRenderer; connection?: ExecutionConnectionState }) { return <ExecutionWorkspace vendor renderLegacy={renderLegacy} connection={connection} />; }
 export function ProjectExecutionTracker({ projectId, projectName, connection }: { projectId: string; projectName?: string; connection?: ExecutionConnectionState }) { return <ExecutionWorkspace projectId={projectId} projectName={projectName} connection={connection} />; }
-export function ProjectExecutionPage({ projectId: suppliedProjectId }: { projectId?: string }) {
+export function ProjectExecutionPage({ projectId: suppliedProjectId, embedded = false }: { projectId?: string; embedded?: boolean }) {
   const auth = useAuth();
   const { projectId: routeProjectId } = useParams();
   const projectId = suppliedProjectId ?? routeProjectId;
-  const details = useAssignedProject(projectId ?? "", auth.user?.role === "program_manager");
-  return <div className="execution"><PageHeader id="project-execution-title" eyebrow="Project execution" title={details.project?.name ?? "Main Line workflow"} description="Track commitments, daily reports and verified completion." />
+  const details = useAssignedProject(projectId ?? "", auth.user?.role === "site_manager");
+  return <div className="execution">{!embedded ? <PageHeader id="project-execution-title" eyebrow="Project execution" title={details.project?.name ?? "Main Line workflow"} description="Track commitments, daily reports and verified completion." /> : null}
     {details.project ? <><AssignedProjectOverview project={details.project} /><ProjectStatusButton projectId={details.project.id} />{hasFrontendPermission(auth.authorization, "projects.design_workflow.read") ? <ProjectWorkflowPanel projectId={details.project.id} showInitialPayment={false} /> : null}</>
       : details.canRead && details.query.isPending ? <PageState state="loading" message="Loading project details…" />
         : details.canRead && details.query.isError ? <PageState state="error" message={procurementError(details.query.error, "Project details could not be loaded.")} action={{ label: "Retry project details", onAction: () => void details.query.refetch() }} /> : null}
-    {projectId ? <><ProjectExecutionTracker projectId={projectId} /><VendorAccessPanel projectId={projectId} /></> : <PageState state="error" message="A project is required to open this tracker." />}</div>;
+    {projectId ? <>{auth.user?.role === "site_manager" ? <SiteManagerProjectPage projectId={projectId} embedded /> : <ProjectExecutionTracker projectId={projectId} />}<VendorAccessPanel projectId={projectId} /></> : <PageState state="error" message="A project is required to open this tracker." />}</div>;
 }
 
 export function ExecutionPortfolioPage() {

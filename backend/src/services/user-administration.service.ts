@@ -1,4 +1,4 @@
-import { ROLE_CODES, type Role } from "../domain/roles.js";
+import { ACTIVE_ROLE_CODES, ROLE_CODES, type Role } from "../domain/roles.js";
 import { ApiError } from "../middleware/errors.js";
 import {
   RepositoryConflictError,
@@ -59,7 +59,7 @@ export interface UserAdministrationService {
 }
 
 const responsibilityRole: Readonly<
-  Record<keyof UserResponsibilityCounts, Role>
+  Record<keyof UserResponsibilityCounts, Role | null>
 > = {
   ownedActiveLeads: "estimator_sales",
   ownedActiveEstimates: "estimator_sales",
@@ -69,12 +69,14 @@ const responsibilityRole: Readonly<
   ownedActiveTasks: "designer",
   directReports: "design_manager",
   linkedClientProjects: "client",
-  adminInitiatorGrants: "admin"
+  adminInitiatorGrants: "admin",
+  assignedExecutionProjects: "site_manager",
+  assignedWorkflowTasks: null
 };
 
 const FILTER_ROLES: readonly Role[] = [...ROLE_CODES];
-const MANAGEABLE_ROLES: readonly Exclude<Role, "super_admin" | "vendor">[] = ROLE_CODES.filter(
-  (role): role is Exclude<Role, "super_admin" | "vendor"> => role !== "super_admin" && role !== "vendor"
+const MANAGEABLE_ROLES: readonly Exclude<Role, "super_admin" | "vendor" | "program_manager">[] = ACTIVE_ROLE_CODES.filter(
+  (role): role is Exclude<Role, "super_admin" | "vendor" | "program_manager"> => role !== "super_admin" && role !== "vendor"
 );
 
 export function createUserAdministrationService(
@@ -118,7 +120,7 @@ export function createUserAdministrationService(
         }
         if (target.version !== input.version) versionConflict();
 
-        if (input.role === "super_admin") {
+        if (input.role === "super_admin" || input.role === "program_manager") {
           throw new ApiError(
             400,
             "ROLE_NOT_MANAGEABLE",
@@ -126,6 +128,9 @@ export function createUserAdministrationService(
           );
         }
 
+        if (target.role === "program_manager" && input.role !== undefined) {
+          throw new ApiError(409, "PROJECT_MANAGER_MIGRATION_REQUIRED", "Use the reviewed Project Manager migration to preserve assignments and approval history.");
+        }
         const roleChanges = input.role !== undefined && input.role !== target.role;
         const activeChanges = input.active !== undefined && input.active !== target.active;
         const deactivates = activeChanges && input.active === false;

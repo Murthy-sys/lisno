@@ -27,9 +27,9 @@ export function buildExecutionCommand(work: ExecutionWork, draft: ExecutionDraft
     if (draft.nextAction.trim()) body.nextAction = draft.nextAction.trim();
   }
   if (draft.action === "submit") {
-    if (!note) throw new Error("Add a completion note for the Site Manager.");
+    if (!note) throw new Error("Add a completion note for the Project Manager.");
     if (work.progress !== 100) throw new Error("Save a daily report at 100% before submitting completion.");
-    if (!work.imageIds.length && !work.evidenceExemption) throw new Error("Add a photo for this round or request a Site Manager photo exemption.");
+    if (!work.imageIds.length && !work.evidenceExemption) throw new Error("Add a photo for this round or request a Project Manager photo exemption.");
     body.imageIds = [...work.imageIds];
   }
   if (["verify", "request_changes"].includes(draft.action)) {

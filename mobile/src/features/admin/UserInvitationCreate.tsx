@@ -40,10 +40,11 @@ export interface UserInvitationCreateProps {
 }
 
 export function UserInvitationCreate({
-  roles,
+  roles: suppliedRoles,
   canCreate,
   onCreated
 }: UserInvitationCreateProps) {
+  const roles = suppliedRoles.filter(role => role !== "program_manager");
   const context = useConfiguredRuntime();
   const invalidate = useInvalidateEvent();
   const [open, setOpen] = useState(false);
@@ -53,7 +54,7 @@ export function UserInvitationCreate({
   const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
-    if (roles.includes(draft.role as InvitableRole)) return;
+    if (roles.some(role => role === draft.role) || roles.length === 0 && draft.role === "") return;
     setDraft((current) => ({ ...current, role: roles[0] ?? "" }));
   }, [draft.role, roles]);
 

@@ -26,7 +26,7 @@ interface Summary {
   vendorWork: { totalAssignments: number; approvedAssignments: number; pendingAssignments: number; openReviews: number };
   siteCompletion: { status: string; progress: number; round: number; reviewId: string | null } | null;
   blockers: Array<{ code: string; message: string; sourceLineItemKey?: string }>;
-  pendingOwner: "procurement" | "super_admin" | "site_manager" | "vendor" | "client" | "none";
+  pendingOwner: "program_manager" | "procurement" | "super_admin" | "site_manager" | "vendor" | "client" | "none";
   readyForCompletion: boolean;
   completedAt: string | null;
 }
@@ -60,7 +60,7 @@ export function ProjectCompletionPage() {
     onSuccess: async (_result, item) => { setSelectedId(null); setNotice(`${item.projectName} marked completed.`); await Promise.all([queryClient.invalidateQueries({ queryKey: queueKey }), queryClient.invalidateQueries({ queryKey: projectStatusKeys.project(item.projectId) }), queryClient.invalidateQueries({ queryKey: ["admin", "projects"] })]); }
   });
   return <section className="project-completion-page" aria-labelledby="project-completion-title">
-    <PageHeader id="project-completion-title" eyebrow="Final approval" title="Project completion" description="Close a project after approved scope is resolved and the Client accepts the Site Manager's completion." breadcrumb={<Link to="/admin/projects">Back to projects</Link>} />
+    <PageHeader id="project-completion-title" eyebrow="Final approval" title="Project completion" description="Close a project after approved scope is resolved and the Client accepts the Project Manager's completion." breadcrumb={<Link to="/admin/projects">Back to projects</Link>} />
     {notice ? <p role="status" className="project-completion-page__notice">{notice}</p> : null}
     {queue.isPending ? <p role="status">Loading final project tasks…</p> : queue.isError && !queueItems.length ? <div role="alert">Final tasks could not be loaded. <button type="button" onClick={() => void queue.refetch()}>Try again</button></div> : !queueItems.length ? <p>No projects are awaiting final completion review.</p> : <div className="project-completion-page__layout">
       <nav aria-label="Projects awaiting completion">{queueItems.map(item => <button type="button" key={item.projectId} className={selectedId === item.projectId ? "is-selected" : ""} onClick={() => { setSelectedId(item.projectId); setExceptionLine(null); setNotice(""); }}><strong>{item.projectName}</strong><span>{item.readyForCompletion ? "Ready for final approval" : `Pending with ${item.pendingOwner.replaceAll("_", " ")}`}</span></button>)}{queue.hasNextPage ? <button type="button" disabled={queue.isFetchingNextPage} onClick={() => void queue.fetchNextPage()}>{queue.isFetchingNextPage ? "Loading more projects…" : "Load more projects"}</button> : null}{queue.isFetchNextPageError ? <p role="alert">More projects could not be loaded. Try again.</p> : null}</nav>

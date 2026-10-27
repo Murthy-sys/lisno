@@ -183,6 +183,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           signal: controller.signal
         })
       ]);
+      if (currentUser.role === "program_manager") {
+        if (mountedRef.current && generationRef.current === generation && tokenStorage.get() === token) {
+          await terminateSession("expired");
+        }
+        return;
+      }
       const nextAuthorization = parseAuthorizationSnapshot(
         rawAuthorization,
         currentUser.role
@@ -240,7 +246,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         sessionControllerRef.current = null;
       }
     }
-  }, [clearAuthenticatedCache, commitAuthState, supersedeRestore]);
+  }, [clearAuthenticatedCache, commitAuthState, supersedeRestore, terminateSession]);
 
   const establishSession = useCallback(
     async <T extends AuthPayload,>(request: () => Promise<T>): Promise<T> => {

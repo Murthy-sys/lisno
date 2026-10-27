@@ -65,7 +65,7 @@ export function useDeliveryGuard(c: DeliveryContext, dirty: boolean, locked: boo
 export function DeliveryFrame({ embedded = false, children }: { embedded?: boolean; children: ReactNode }) { return embedded ? <View style={p.stack}>{children}</View> : <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={p.screen}>{children}</ScrollView>; }
 export const unavailable = (error: unknown) => (error instanceof ApiError || error instanceof TransferHttpError) && [401, 403, 404].includes(error.status);
 export function AccessLost({ title = "Details unavailable" }: { title?: string }) { return <StateView title={title} tone="denied" message="Your current account cannot access this record. Refresh your access before continuing." />; }
-export const label = (value: string) => value.replaceAll("_", " ").replace(/^\w/u, character => character.toUpperCase());
+export const label = (value: string) => ["site_manager", "program_manager"].includes(value) ? "Project Manager" : value.replaceAll("_", " ").replace(/^\w/u, character => character.toUpperCase());
 export const dateTime = (value: string | null | undefined, timezone?: string) => {
   if (!value) return "Not recorded";
   const date = new Date(value); if (!Number.isFinite(date.getTime())) return "Unavailable";

@@ -1,3 +1,4 @@
+import { projectManagerProjectIds } from "../services/project-manager-assignment.service.js";
 import { ProjectClientInvitationModel, ProjectInitiationReceiptModel } from "../models/ProjectClientInvitation.js";
 import { mongoDesignRequirementsSource, mongoDesignRequirementsState, mongoSaveDesignRequirementsState } from "./design-requirements-mongo.js";
 import { activateCollaborativeProjectWorkflow } from "../services/project-workflow.service.js";
@@ -209,7 +210,8 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
 
   const projectFilterForUserRead = async (user: UserRecord): Promise<PlainDocument | null> => {
     if (!user.active) return null;
-    if (user.role === "program_manager") return { programManagerId: user.id };
+    if (user.role === "program_manager") return null;
+    if (user.role === "site_manager") return { _id: { $in: await projectManagerProjectIds(user.id, session) } };
     if (user.role !== "procurement") return projectFilterForUserInModule(user, "projects");
     const taskQuery = ProjectWorkflowTaskModel.find({ kind: "procurement", assigneeRole: "procurement",
       assigneeUserId: user.id, supersededAt: null }).select({ projectId: 1, _id: 0 }).lean();
@@ -1396,6 +1398,7 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
     },
 
     async createUser(input: NewUser) {
+      if (input.role === "program_manager") throw new RepositoryConflictError("The legacy Program Manager role cannot create new identities.");
       if ((input.role === "vendor") !== (typeof input.vendorId === "string" && VENDOR_ID_PATTERN.test(input.vendorId))) {
         throw new RepositoryConflictError("Vendor membership is required only for Vendor users.");
       }
@@ -1569,7 +1572,11 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       if (session) initiatorGrantQuery.session(session);
       const adminInitiatorGrants = await initiatorGrantQuery.exec();
 
+      const assignedExecutionProjects = await ProjectModel.countDocuments({ programManagerId: userId, status: { $ne: "completed" } }).session(session ?? null);
+      const assignedWorkflowTasks = await ProjectWorkflowTaskModel.countDocuments({ assigneeUserId: userId, supersededAt: null, status: { $ne: "completed" } }).session(session ?? null);
       return {
+        assignedExecutionProjects,
+        assignedWorkflowTasks,
         ownedActiveLeads,
         ownedActiveEstimates,
         initiatedActiveProjects,
@@ -1583,6 +1590,7 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
     },
 
     async updateUser(userId, expectedVersion, change) {
+      if (change.role === "program_manager") throw new RepositoryConflictError("The legacy Program Manager role is retired.");
       if (change.role === "vendor") {
         throw new RepositoryConflictError("Vendor membership requires an invitation.");
       }

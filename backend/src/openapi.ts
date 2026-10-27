@@ -9,6 +9,7 @@ import { VENDOR_BASKET_PROPOSAL_SCHEMAS, VENDOR_BASKET_PROPOSAL_BODIES, VENDOR_B
 import { ASK_LISNO_SCHEMAS } from "./openapi/ask-lisno.js";
 import { VENDOR_ACCESS_SCHEMAS, VENDOR_ACCESS_REQUESTS, VENDOR_ACCESS_RESPONSES } from "./openapi/vendor-access.js";
 import { EXECUTION_SCHEMAS, EXECUTION_REQUESTS, EXECUTION_RESPONSES, EXECUTION_QUERIES } from "./openapi/vendor-execution.js";
+import { PROJECT_MANAGER_SCHEMAS, PROJECT_MANAGER_REQUESTS, PROJECT_MANAGER_RESPONSES, PROJECT_MANAGER_QUERIES, PROJECT_MANAGER_SUMMARIES, PROJECT_MANAGER_DESCRIPTIONS } from "./openapi/project-manager.js";
 import { PROCUREMENT_VENDOR_SCHEMAS, PROCUREMENT_VENDOR_REQUESTS, PROCUREMENT_VENDOR_RESPONSES, PROCUREMENT_VENDOR_QUERIES } from "./openapi/procurement-vendor.js";
 import { VENDOR_KPI_SCHEMAS, VENDOR_KPI_REQUESTS, VENDOR_KPI_RESPONSES } from "./openapi/vendor-kpi.js";
 import { VENDOR_INDUCTION_SCHEMAS, VENDOR_INDUCTION_REQUESTS, VENDOR_INDUCTION_RESPONSES } from "./openapi/vendor-induction.js";
@@ -154,6 +155,7 @@ const requestBodiesByOperation: Readonly<Record<string, OpenApiRequestBody>> = {
   ...VENDOR_BASKET_PROPOSAL_BODIES,
   ...VENDOR_WORK_REQUESTS,
   ...EXECUTION_REQUESTS,
+  ...PROJECT_MANAGER_REQUESTS,
   ...VENDOR_ACCESS_REQUESTS,
   ...PROJECT_COMPLETION_REQUESTS,
   ...SITE_COMPLETION_REQUESTS,
@@ -233,6 +235,7 @@ const requestBodiesByOperation: Readonly<Record<string, OpenApiRequestBody>> = {
 };
 
 const operationsWithoutBodies = new Set<string>([
+  "POST /project-manager/notifications/:notificationId/read",
   "PUT /daily-critical-tasks/:localDate/acknowledgment",
   "DELETE /auth/me/profile-photo",
   "PUT /notifications/:notificationId/read",
@@ -267,6 +270,7 @@ const responseSchemaByOperation: Readonly<Record<string, string>> = {
   ...VENDOR_BASKET_PROPOSAL_RESPONSES,
   ...VENDOR_WORK_RESPONSES,
   ...EXECUTION_RESPONSES,
+  ...PROJECT_MANAGER_RESPONSES,
   ...VENDOR_ACCESS_RESPONSES,
   ...PROJECT_COMPLETION_RESPONSES,
   ...SITE_COMPLETION_RESPONSES,
@@ -363,6 +367,7 @@ const attachmentOperations = new Set<string>([
 ]);
 
 const multipartOperations = new Set<string>([
+  "POST /projects/:projectId/pm/evidence/:entityId",
   "POST /admin/ai-estimator-knowledge/vendors/msme-certificate-uploads",
   "POST /admin/ai-estimator-knowledge/vendors/:id/msme-certificate-uploads",
   "PUT /admin/ai-estimator-knowledge/vendors/:id/photo",
@@ -388,6 +393,7 @@ const storedAttachmentContentTypes = [
 ] as const;
 
 const operationSummaries: Readonly<Record<string, string>> = {
+  ...PROJECT_MANAGER_SUMMARIES,
   "GET /estimation/catalogue": "Read the estimator Main Basket catalogue",
   "GET /estimation/catalogue/recommendations": "Read selected catalogue Main Line recommendations",
   "GET /health": "Check API health",
@@ -627,6 +633,7 @@ const queryParametersByOperation: Readonly<
 > = {
   ...CHAT_QUERY_PARAMETERS,
   ...EXECUTION_QUERIES,
+  ...PROJECT_MANAGER_QUERIES,
   "GET /finance/projects": [
     { name: "search", in: "query", required: false, schema: { type: "string", minLength: 1, maxLength: 200 }, description: "Case-insensitive literal search across project and client names." },
     { name: "projectId", in: "query", required: false, schema: { type: "string", minLength: 1, maxLength: 200 }, description: "Stable project ID within the authorized approved-project population." },
@@ -1109,6 +1116,7 @@ export const openApiDocument: LisnoOpenApiDocument = Object.freeze({
   },
   servers: [{ url: "/api/v1", description: "Current Lisno API host" }],
   tags: [
+    tag("Project Manager", "Assigned project operations, source-backed progress, versioned requests, inspections and self-only policy availability."),
     tag("Project messages", "Shared project conversations, selected participants, mentions, and live discussion priorities."),
     tag("Health", "API liveness."),
     tag("Authentication", "Sign-in, verified project invitation acceptance, and current-session identity."),
@@ -1180,7 +1188,7 @@ function humanOperation(operation: HumanJwtOperation): OpenApiOperation {
   return {
     tags: [tagFor(operation)],
     summary: operationSummaries[operation.key] ?? fallbackSummary(method, path),
-    description: protectedDescription(operation),
+    description: [protectedDescription(operation), PROJECT_MANAGER_DESCRIPTIONS[operation.key]].filter(Boolean).join(" "),
     operationId: operationId(method, path),
     security: [{ bearerAuth: [] }],
     ...(parameters.length ? { parameters } : {}),
@@ -1294,6 +1302,13 @@ function requestBodyFor(
 }
 
 function responsesFor(key: HumanJwtOperationKeyShape): Readonly<Record<string, OpenApiResponse>> {
+  if (key === "GET /projects/:projectId/pm/evidence/:evidenceId") {
+    return binaryResponses(["application/octet-stream", "application/pdf", "image/jpeg", "image/png", "image/webp", "image/gif", "image/heic", "image/heif", "image/tiff", "video/mp4", "video/quicktime", "video/webm"], "Validated project-record evidence with its original media type. Current authorized project/record access is required; opaque references only, private no-store, nosniff and attachment disposition.");
+  }
+  if (key === "POST /projects/:projectId/pm/evidence/:entityId") {
+    return { "201": dataResponse("PMEvidenceFiles", "Evidence saved with opaque IDs bound to this project record."), ...standardProtectedErrors,
+      "413": { $ref: "#/components/responses/PayloadTooLarge" }, "415": { $ref: "#/components/responses/UnsupportedMediaType" } };
+  }
   if (key === "GET /projects/:projectId/vendor-work/:assignmentId/images/:imageId") {
     return binaryResponses(["image/jpeg", "image/png", "image/webp"], "Authorized vendor work image from the requested assignment and round. Private, no-store and nosniff.");
   }
@@ -1540,6 +1555,7 @@ function protectedDescription(operation: HumanJwtOperation): string {
 function tagFor(operation: HumanJwtOperation): string {
   if (operation.availability === "project_chat") return "Project messages";
   const { path } = splitHumanOperationKey(operation.key);
+  if (path.startsWith("/project-manager/") || path.includes("/pm/")) return "Project Manager";
   if (path.startsWith("/procurement/vendor-kpis")) return "Vendor KPI";
   if (path.startsWith("/procurement/vendor-inductions")) return "Vendor induction";
   if (operation.availability === "ai_estimator_knowledge") return "AI Estimator Knowledge";
@@ -1642,6 +1658,7 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
     ...VENDOR_BASKET_PROPOSAL_SCHEMAS,
     ...VENDOR_WORK_SCHEMAS,
   ...EXECUTION_SCHEMAS,
+  ...PROJECT_MANAGER_SCHEMAS,
   ...VENDOR_ACCESS_SCHEMAS,
     ...PROJECT_COMPLETION_SCHEMAS,
     ...SITE_COMPLETION_SCHEMAS,

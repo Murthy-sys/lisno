@@ -68,7 +68,7 @@ describe("critical task review once per login", () => {
     expect(screen.getByText("Deadline starts after initial payment confirmation")).toBeVisible();
     expect(screen.queryByText("Overdue workflow task")).not.toBeInTheDocument();
   });
-  it.each(["vendor", "program_manager"])("does not read staff endpoints for a %s without chat permission", role => {
+  it.each(["vendor", "site_manager"])("does not read staff endpoints for a %s without chat permission", role => {
     auth.user.role = role; auth.authorization.permissions = []; renderPrompt();
     expect(screen.getByRole("button", { name: "Refresh chat schedule" })).toBeDisabled();
     expect(projectChatApi.availability).not.toHaveBeenCalled();

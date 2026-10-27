@@ -60,7 +60,7 @@ export function UserInvitationActions({
 
   const isAllowed = (candidate: UserInvitationAction, record = invitation) =>
     record.availableActions.includes(candidate) &&
-    (candidate === "resend" ? canResend : canRevoke);
+    (candidate === "resend" ? canResend && record.role !== "program_manager" : canRevoke);
 
   const mutation = useMutation({
     mutationFn: async (input: Selection) => {

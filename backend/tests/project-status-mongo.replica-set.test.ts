@@ -46,33 +46,34 @@ async function fixture() {
 }
 
 describe("project status Mongo snapshot reads", () => {
-  it("preserves existing explicit Program Manager participant authority until revoked", async () => {
+  it("denies an explicitly selected Project Manager who is not the current assignee", async () => {
     const f = await fixture();
-    await UserModel.create({ ...chatUser("selected-pm", "program_manager"), _id: "selected-pm" });
+    await UserModel.create({ ...chatUser("selected-pm", "site_manager"), _id: "selected-pm" });
     await ProjectModel.updateOne({ _id: "a" }, { $set: { programManagerId: "different-pm" } });
-    const actor = { ...f.actor("client-a"), id: "selected-pm", role: "program_manager" as const };
-    const selection = { id: "selected-pm-membership", projectId: "a", userId: "selected-pm", selectedRole: "program_manager" as const, active: true, version: 1,
+    const actor = { ...f.actor("client-a"), id: "selected-pm", role: "site_manager" as const };
+    const selection = { id: "selected-pm-membership", projectId: "a", userId: "selected-pm", selectedRole: "site_manager" as const, active: true, version: 1,
       selectedBy: { id: "super", name: "Super", role: "super_admin" as const }, selectedAt: CHAT_NOW, reason: "Support", tradeReference: null, revokedBy: null, revokedAt: null, revocationReason: null };
     await expect(f.statusService.get(actor, "a")).rejects.toMatchObject({ status: 404 });
     await f.chatRepository.mutate(tx => tx.saveSelection(selection));
-    expect(await f.statusService.get(actor, "a")).toMatchObject({ projectId: "a" });
+    await expect(f.statusService.get(actor, "a")).rejects.toMatchObject({ status: 404 });
     await expect(f.statusService.get(actor, "b")).rejects.toMatchObject({ status: 404 });
-    await expect(f.service.actionTypes(actor, "a")).rejects.toMatchObject({ status: 403 });
+    await expect(f.service.actionTypes(actor, "a")).rejects.toMatchObject({ status: 404 });
     await f.chatRepository.mutate(tx => tx.saveSelection({ ...selection, active: false, version: 2 }));
     await expect(f.statusService.get(actor, "a")).rejects.toMatchObject({ status: 404 });
   });
 
-  it("uses current exact Program Manager assignment for status while keeping chat denied", async () => {
+  it("uses current exact Project Manager assignment for status and chat", async () => {
     const f = await fixture();
-    await UserModel.create({ ...chatUser("pm-status", "program_manager"), _id: "pm-status" });
-    await UserModel.create({ ...chatUser("other-pm-status", "program_manager"), _id: "other-pm-status" });
+    await UserModel.create({ ...chatUser("pm-status", "site_manager"), _id: "pm-status" });
+    await UserModel.create({ ...chatUser("other-pm-status", "site_manager"), _id: "other-pm-status" });
     await ProjectModel.updateOne({ _id: "a" }, { $set: { programManagerId: "pm-status" } });
-    const actor = { ...f.actor("client-a"), id: "pm-status", role: "program_manager" as const };
+    const actor = { ...f.actor("client-a"), id: "pm-status", role: "site_manager" as const };
     expect(await f.statusService.get(actor, "a")).toMatchObject({ projectId: "a", currentStage: { key: "estimate_approval" } });
     await expect(f.statusService.get(actor, "b")).rejects.toMatchObject({ status: 404 });
-    await expect(f.service.actionTypes(actor, "a")).rejects.toMatchObject({ status: 403 });
+    await expect(f.service.actionTypes(actor, "a")).resolves.toMatchObject({ canCreate: false, items: expect.any(Array) });
     await ProjectModel.updateOne({ _id: "a" }, { $set: { programManagerId: "other-pm-status" } });
     await expect(f.statusService.get(actor, "a")).rejects.toMatchObject({ status: 404 });
+    await expect(f.service.actionTypes(actor, "a")).rejects.toMatchObject({ status: 404 });
     expect(await f.statusService.get({ ...actor, id: "other-pm-status" }, "a")).toMatchObject({ projectId: "a" });
   });
   it("follows pre-approval through design, final approval and exact payment attestation using immutable sources", async () => {

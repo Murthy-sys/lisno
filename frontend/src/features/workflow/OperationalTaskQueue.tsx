@@ -66,7 +66,8 @@ export function OperationalTaskQueue({ role, selectedProjectId, onDirty, onBusy 
           queryKey: projectFinanceKeys.bucket(updated.projectId)
         }),
         queryClient.invalidateQueries({ queryKey: dashboardKeys.all }),
-        queryClient.invalidateQueries({ queryKey: ["execution"] }),
+        queryClient.invalidateQueries({ queryKey: ["project-manager"] }),
+    queryClient.invalidateQueries({ queryKey: ["execution"] }),
         queryClient.invalidateQueries({ queryKey: ["designer", "kpi"] })
       ]);
       setEditingTask(undefined);

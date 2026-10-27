@@ -17,7 +17,7 @@ import {
 import {
   isReservedDevelopmentDemoIdentity
 } from "../domain/demo-identities.js";
-import { roleSchema } from "../domain/roles.js";
+import { isActiveRole, roleSchema } from "../domain/roles.js";
 import {
   type AppRepository,
   type UserRecord
@@ -67,7 +67,7 @@ export interface AuthPayload {
 }
 
 export const AUTHORIZATION_POLICY_VERSION =
-  "2026-10-14.main-line-design-rules.v1" as const;
+  "2026-10-27.project-manager-consolidation.v1" as const;
 
 export interface AuthorizationSnapshot {
   readonly role: Role;
@@ -255,6 +255,7 @@ function deniesHumanAuthentication(
   usesBuiltInDevelopmentSecret: boolean,
   hasIssuedDevelopmentDemoAuthorization: boolean
 ): boolean {
+  if (!isActiveRole(user.role)) return true;
   const isLoopbackPeer = isLoopbackRemoteAddress(context.remoteAddress);
   if (usesBuiltInDevelopmentSecret && !isLoopbackPeer) return true;
   return (

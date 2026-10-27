@@ -18,8 +18,8 @@ afterEach(() => vi.restoreAllMocks());
 beforeEach(async () => {
   await replica.clear();
   await ProjectModel.collection.insertOne({ _id: "project-a", status: "active", assignedDesignerIds: ["designer-a"],
-    purchaseOrderApprovalEpoch: 0 } as never);
-  await EstimateModel.collection.insertOne({ _id: "estimate-a", projectId: "project-a", designPlanDesignerId: "designer-a" } as never);
+    programManagerId: "site-a", procurementIdentityVersion: 1, purchaseOrderApprovalEpoch: 0 } as never);
+  await EstimateModel.collection.insertOne({ _id: "estimate-a", projectId: "project-a", designPlanDesignerId: "designer-a", status: "client_approved", designPlanStatus: "approved", designPlanVersion: 1 } as never);
   await UserModel.create(["site-a", "site-b", "designer-a", "designer-b"].map(id => ({
     _id: id, name: id, email: `${id}@example.test`, emailNormalized: `${id}@example.test`,
     passwordHash: "fixture", active: true, role: id.startsWith("site") ? "site_manager" : "designer"
@@ -30,7 +30,7 @@ beforeEach(async () => {
 });
 
 describe("project-assigned basket approvers", () => {
-  it("resolves existing assignments without a Program Manager and keeps preview read-only", async () => {
+  it("resolves the consolidated Project Manager assignment and keeps preview read-only", async () => {
     const beforeTask = await ProjectWorkflowTaskModel.findById("site-task").lean();
     expect(await resolve()).toEqual({ assignedSiteManager: { id: "site-a", name: "site-a" },
       assignedDesigner: { id: "designer-a", name: "designer-a" }, approverBlockers: [] });
@@ -106,7 +106,7 @@ describe("project-assigned basket approvers", () => {
     await original.call(ProjectWorkflowTaskModel, { _id: "site-task" },
       { $set: { assigneeUserId }, $inc: { version: 1 } });
     release();
-    expect(await pending).toMatchObject({ status: 409, code: assigneeUserId ? "PROCUREMENT_BASKET_PROPOSAL_STALE" : "PROCUREMENT_BASKET_SITE_MANAGER_REQUIRED" });
+    expect(await pending).toMatchObject({ status: 409, code: "PROCUREMENT_BASKET_SITE_MANAGER_AMBIGUOUS" });
     expect(await ProjectWorkflowTaskModel.findById("site-task").lean()).toMatchObject({ assigneeUserId, version: 2, progress: 35, awardApprovalEpoch: 0 });
   });
 });

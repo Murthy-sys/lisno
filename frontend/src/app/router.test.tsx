@@ -97,7 +97,7 @@ const neutralHomeRoles = [
 ] as const satisfies readonly Role[];
 
 const nonAdminClientResponsePresentationCases = ROLE_CODES
-  .filter((role) => role !== "admin" && role !== "super_admin")
+  .filter((role) => role !== "admin" && role !== "super_admin" && role !== "program_manager")
   .flatMap((role) => [
     [role, "/admin/client-responses"],
     [role, "/admin/client-responses/round-1"]
@@ -299,6 +299,9 @@ function installAuthorizationSession(
     if (path === "/api/v1/auth/authorization") {
       return Response.json({ data: authorizationFor(role, permissions) });
     }
+    if (path.startsWith("/api/v1/project-manager/projects")) return Response.json({data:{items:[],total:0,counts:{active:0,atRisk:0,critical:0,setup:0,onTrack:0,incomplete:0},alerts:[],alertTotal:0,calculatedAt:"2026-10-27T08:00:00Z"}});
+    if (path.startsWith("/api/v1/projects/project-one/pm/overview")) return Response.json({data:{project:{id:"project-one",name:"Oak residence",clientName:"Client",location:"City",status:"active",health:"incomplete",plannedEndAt:null,approvedNetPaise:null,issues:[],activeAlerts:0,progress:{basis:"approved_execution_scope_v1",actual:null,planned:null,availability:"no_data",sourceRevision:null,issues:[],requiredLines:0,coveredLines:0,zeroValueLines:0,reportedComplete:0,siteVerified:0,clientAccepted:0}},capabilities:[],calculatedAt:"2026-10-27T08:00:00Z"}});
+    if (path.startsWith("/api/v1/projects/project-one/pm/site")) return Response.json({data:{tab:"site",availability:"no_data",calculatedAt:"2026-10-27T08:00:00Z",items:[],total:0,issues:[],sources:[],people:[],actions:[]}});
     if (path.startsWith("/api/v1/execution/projects")) return Response.json({ data: { items: [], total: 0, limit: 25, offset: 0 } });
     if (path.startsWith("/api/v1/projects/project-one/execution")) return Response.json({ data: { project: { id: "project-one", name: "Oak residence", status: "active", completionAuthority: "vendor_client" }, projectCounts: { total: 0, open: 0, reported: 0, verified: 0, clientAccepted: 0, missing: 0, blocked: 0, overdue: 0, awaitingVerification: 0, setupRequired: 0 }, items: [], total: 0, limit: 25, offset: 0, counts: { total: 0, open: 0, reported: 0, verified: 0, clientAccepted: 0, missing: 0, blocked: 0, overdue: 0, awaitingVerification: 0, setupRequired: 0 }, policy: null, canManagePolicy: false } });
     if (path.startsWith("/api/v1/procurement/suggestion-projects?")) return Response.json({ data: { items: [], total: 0, limit: 20, offset: 0 } });
@@ -613,7 +616,7 @@ describe("role landing staging contract", () => {
 
 describe("public invitation route", () => {
   it("mounts directly while staying outside the protected registry", async () => {
-    expect(ROUTE_REGISTRY).toHaveLength(46);
+    expect(ROUTE_REGISTRY).toHaveLength(48);
     expect(ROUTE_REGISTRY.map(({ path }) => path)).not.toContain(
       "/accept-invitation"
     );
@@ -701,23 +704,23 @@ describe("public password recovery routes", () => {
 });
 
 describe("registered permission routes", () => {
-  it.each(["super_admin", "site_manager", "program_manager", "procurement"] as const)("opens execution oversight and project work for an authorized %s", async role => {
+  it.each(["super_admin", "site_manager", "procurement"] as const)("opens execution oversight and project work for an authorized %s", async role => {
     installAuthorizationSession(role, ["execution.tracker.read"]);
     renderApp(["/projects/project-one/execution"]);
     expect(await screen.findByRole("heading", { name: role === "site_manager" ? "Oak residence" : "Main Line workflow" })).toBeVisible();
   });
-  it("redirects the Site Manager execution portfolio to the focused Home workspace", async () => {
+  it("redirects the legacy Project Manager Home link to the dashboard", async () => {
     installAuthorizationSession("site_manager", ["execution.tracker.read", "workflow.tasks.read"]);
-    const { router } = renderApp(["/execution"]);
-    expect(await screen.findByRole("heading", { name: "Assigned projects" })).toBeVisible();
-    expect(router.state.location.pathname).toBe("/home");
+    const { router } = renderApp(["/home"]);
+    expect(await screen.findByRole("heading", { name: "Dashboard" })).toBeVisible();
+    expect(router.state.location.pathname).toBe("/execution");
     expect(screen.queryByText("Ready for staged access")).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Project execution" })).not.toBeInTheDocument();
   });
-  it("lands the Program Manager on the execution portfolio", async () => {
-    installAuthorizationSession("program_manager", ["execution.tracker.read"]);
+  it("lands the Project Manager on the compact dashboard", async () => {
+    installAuthorizationSession("site_manager", ["execution.tracker.read"]);
     const { router } = renderApp(["/"]);
-    expect(await screen.findByRole("heading", { name: "Project execution" })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Dashboard" })).toBeVisible();
     expect(router.state.location.pathname).toBe("/execution");
   });
   it.each(["vendor", "client", "admin"] as const)("does not expose staff execution to %s even with a misplaced permission", async role => {
@@ -746,10 +749,10 @@ describe("registered permission routes", () => {
       (path) => !(historicalProtectedPaths as readonly string[]).includes(path)
     );
 
-    expect(paths).toHaveLength(historicalProtectedPaths.length + 25);
+    expect(paths).toHaveLength(historicalProtectedPaths.length + 27);
     expect(additions).toEqual([
       "/execution", "/projects/:projectId/execution",
-      "/project-messages", "/projects/:projectId/messages",
+      "/project-messages", "/project-manager/leaderboard", "/project-manager/bonus", "/projects/:projectId/messages",
       "/designer/design-plans",
       "/vendor",
       knowledgeConfigurationPaths[0],
@@ -763,6 +766,7 @@ describe("registered permission routes", () => {
     expect(paths.filter(
       (path) => ![
         "/execution", "/projects/:projectId/execution",
+        "/project-manager/leaderboard", "/project-manager/bonus",
         "/project-messages", "/projects/:projectId/messages",
         "/designer/design-plans",
         "/vendor",
@@ -1028,7 +1032,7 @@ describe("registered permission routes", () => {
       expect(await screen.findByRole("heading", { name: title })).toBeVisible();
       expect(
         screen.getByText(
-          "Knowledge-base changes do not modify current estimates or the existing Sales estimate builder."
+          "Configuration updates apply to current selections. Published estimates and approvals keep their recorded values."
         )
       ).toBeVisible();
       expect(router.state.location.pathname).toBe(path);
@@ -1356,7 +1360,7 @@ describe("protected role routing", () => {
     const user = userEvent.setup();
     renderApp(["/estimator-sales/leads/lead-1/estimate"]);
     await user.click(await screen.findByRole("button", { name: "Select rooms" }));
-    await user.click(screen.getByRole("option", { name: "Master Bedroom" }));
+    await user.click(screen.getByRole("option", { name: "Bedroom 1" }));
     await user.click(screen.getByRole("button", { name: "Done" }));
     await user.click(await screen.findByRole("button", { name: "Add Joinery" }));
     await user.click(screen.getByRole("button", { name: /continue to item selection/i }));

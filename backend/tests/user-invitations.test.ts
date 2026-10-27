@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createApp } from "../src/app.js";
 import { PROJECT_MODULES } from "../src/domain/authorization.js";
 import {
+  ACTIVE_INVITABLE_ROLE_CODES,
   INVITABLE_ROLE_CODES,
   USER_INVITATION_TTL_MS,
   hashUserInvitationToken
@@ -273,6 +274,57 @@ async function invitationAudits(repository: AppRepository) {
   ).items;
 }
 
+describe("Project Manager invitation cutover", () => {
+  it.each(["program_manager", "client", "super_admin", "not_a_role"])("rejects %s creation before token or delivery writes", async role => {
+    const { seed, operator } = standardSeed();
+    const randomBytes = randomSource();
+    const { repository, service, sendInvitation } = setup(seed, { randomBytes });
+    await expect(service.create(publicUser(operator), { ...createInput, role: role as typeof createInput.role }))
+      .rejects.toMatchObject({ status: 400 });
+    expect(randomBytes).not.toHaveBeenCalled();
+    expect(sendInvitation).not.toHaveBeenCalled();
+    expect(await repository.pageUserInvitations({}, { limit: 20, offset: 0 }, NOW)).toMatchObject({ total: 0 });
+    expect(await invitationAudits(repository)).toEqual([]);
+  });
+
+  it("creates and accepts a canonical Project Manager invitation", async () => {
+    const { seed, operator } = standardSeed();
+    const { repository, service, sendInvitation } = setup(seed, { passwordHasher: async () => ACCEPTED_PASSWORD_HASH });
+    const created = await service.create(publicUser(operator), { ...createInput, role: "site_manager" });
+    const rawToken = Buffer.alloc(32, 1).toString("base64url");
+    expect(sendInvitation).toHaveBeenCalledOnce();
+    expect(await service.inspect(rawToken)).toMatchObject({ role: "site_manager" });
+    await service.accept({ rawToken, password: ACCEPTED_PASSWORD });
+    const accepted = await repository.findUserByEmail(createInput.email.trim());
+    expect(accepted).toMatchObject({ role: "site_manager", active: true, sessionVersion: 1 });
+    expect(await repository.findUserInvitationById(created.id)).toMatchObject({ role: "site_manager", status: "accepted", acceptedUserId: accepted!.id });
+  });
+
+  it("denies old tokens and resend without changing history, while allowing explicit revocation", async () => {
+    const { seed, operator } = standardSeed();
+    const record = publicInvitation("legacy-pm", operator, PUBLIC_RAW_TOKEN, { role: "program_manager" });
+    seed.userInvitations = [record];
+    const randomBytes = randomSource();
+    const passwordHasher = vi.fn(async () => ACCEPTED_PASSWORD_HASH);
+    const { repository, service, sendInvitation } = setup(seed, { randomBytes, passwordHasher });
+    const usersBefore = await repository.listUsers();
+    expect(INVITABLE_ROLE_CODES).toContain("program_manager");
+    expect((await service.list(publicUser(operator), {}, { limit: 20, offset: 0 })).invitableRoles).not.toContain("program_manager");
+    await expect(service.inspect(PUBLIC_RAW_TOKEN)).rejects.toMatchObject({ status: 410, code: "INVITATION_UNAVAILABLE" });
+    await expect(service.accept({ rawToken: PUBLIC_RAW_TOKEN, password: ACCEPTED_PASSWORD })).rejects.toMatchObject({ status: 410, code: "INVITATION_UNAVAILABLE" });
+    await expect(service.resend(publicUser(operator), record.id, { version: record.version })).rejects.toMatchObject({ status: 409 });
+    expect(passwordHasher).not.toHaveBeenCalled();
+    expect(randomBytes).not.toHaveBeenCalled();
+    expect(sendInvitation).not.toHaveBeenCalled();
+    expect(await repository.findUserInvitationById(record.id)).toEqual(record);
+    expect(await repository.listUsers()).toEqual(usersBefore);
+    expect(await invitationAudits(repository)).toEqual([]);
+    await service.revoke(publicUser(operator), record.id, { version: record.version });
+    expect(await repository.findUserInvitationById(record.id)).toMatchObject({ role: "program_manager", status: "revoked", tokenHash: null, version: record.version + 1 });
+    expect((await invitationAudits(repository)).map(row => row.action)).toEqual(["user_invitation.revoked"]);
+  });
+});
+
 describe("protected user invitation administration", () => {
   it("fails closed when delivery is disabled before randomness, transaction, audit, or mail work", async () => {
     const { seed, operator } = standardSeed();
@@ -476,7 +528,7 @@ describe("protected user invitation administration", () => {
 
     const page = await service.list(publicUser(operator), {}, { limit: 20, offset: 0 });
     expect(page.total).toBe(6);
-    expect(page.invitableRoles).toEqual(INVITABLE_ROLE_CODES);
+    expect(page.invitableRoles).toEqual(ACTIVE_INVITABLE_ROLE_CODES);
     expect(page.invitableRoles).not.toContain("client");
     expect(page.invitableRoles).not.toContain("super_admin");
     expect(page.items.find(({ id }) => id === "pending")).toMatchObject({
@@ -1720,7 +1772,7 @@ describe("user invitation HTTP integration", () => {
           version: 1
         })],
         pagination: { limit: 10, offset: 0, total: 1, hasMore: false },
-        invitableRoles: INVITABLE_ROLE_CODES
+        invitableRoles: ACTIVE_INVITABLE_ROLE_CODES
       }
     });
     expect(JSON.stringify(listed.body)).not.toMatch(

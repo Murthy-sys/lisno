@@ -133,7 +133,7 @@ async function project(projectId: string, subtotal: number, additionalLines: Ext
   const approvedSubtotal = subtotal + additionalLines.filter(line => line.included).reduce((sum, line) => sum + line.amount, 0);
   await ProjectModel.create({ _id: projectId, name: projectId, clientId: clientActor.id, clientName: "Client", clientEmail: "client@example.test",
     clientEmailNormalized: "client@example.test", clientMobile: "9000000000", clientAddress: "Bengaluru", status: "active",
-    location: "Bengaluru", plannedStartAt: now, plannedEndAt: new Date("2026-12-17T10:00:00.000Z") });
+    programManagerId: siteActor.id, location: "Bengaluru", plannedStartAt: now, plannedEndAt: new Date("2026-12-17T10:00:00.000Z") });
   await EstimateModel.create({ _id: estimateId, leadId: `lead-${projectId}`, ownerId: buyer.id, version: 2,
     status: "client_approved", propertyType: "villa", rooms: [], scopes: [], lineItems,
     subtotal: approvedSubtotal, gst: approvedSubtotal * 0.18, total: approvedSubtotal * 1.18, approvalRequired: false, projectId,

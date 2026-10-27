@@ -1,3 +1,4 @@
+import { projectManagerAssignmentFromProjection } from "./project-manager-assignment-projection.js";
 import type { ChatParticipant, ChatPerson } from "../contracts/project-chat.js";
 import { grantCanSupplyProjectModuleScope } from "./project-access.js";
 import { projectWorkflowBlueprints } from "./project-workflow.js";
@@ -43,11 +44,14 @@ export function resolveChatMembership(sources: ChatSources, selections: readonly
     add(project.initiatingDesignerId, "designer", "project_assignment", project.id);
     for (const id of project.assignedDesignerIds)
         add(id, "designer", "project_assignment", project.id);
+    const projectManager = sources.projectManagerAssignment ?? projectManagerAssignmentFromProjection(project, sources.workflowTasks, sources.estimates, users);
+    if (projectManager.state === "assigned") add(projectManager.ownerId, "site_manager", "project_assignment", project.id);
+    else if (projectManager.state === "conflict") warnings.add("The Project Manager assignment needs administrative review.");
     add(project.managerId, "design_manager", "project_assignment", project.id);
     add(project.assignedEstimatorId, "estimator_sales", "project_assignment", project.id);
     for (const grant of sources.grants) {
         const user = active.get(grant.userId);
-        if (grant.projectId !== project.id || !user || !grantCanSupplyProjectModuleScope(user.role, grant))
+        if (grant.projectId !== project.id || !user || user.role === "site_manager" || user.role === "program_manager" || !grantCanSupplyProjectModuleScope(user.role, grant))
             continue;
         add(user.id, user.role, "access_grant", grant.id);
         if (grant.source === "admin_initiator" && user.role === "admin")
@@ -118,7 +122,7 @@ export function resolveChatMembership(sources: ChatSources, selections: readonly
             if (malformedTrades)
                 warnings.add("Trade assignments need administrative review.");
             for (const task of sources.workflowTasks) {
-                if (task.projectId !== project.id || task.estimateId !== canonical.id || task.designPlanVersion !== canonical.designPlanVersion)
+                if (task.assigneeRole === "site_manager" || task.assigneeRole === "program_manager" || task.projectId !== project.id || task.estimateId !== canonical.id || task.designPlanVersion !== canonical.designPlanVersion)
                     continue;
                 const blueprint = blueprints.find((item) => item.kind === task.kind && item.assigneeRole === task.assigneeRole && item.sourceSectionId === task.sourceSectionId && item.sourceLineItemKey === task.sourceLineItemKey);
                 if (!blueprint || (task.kind === "trade_execution" && malformedTrades))
@@ -128,7 +132,7 @@ export function resolveChatMembership(sources: ChatSources, selections: readonly
         }
     }
     for (const selection of selections) {
-        if (!selection.active || selection.projectId !== project.id || selection.selectedRole === "client" || selection.selectedRole === "super_admin")
+        if (!selection.active || selection.projectId !== project.id || selection.selectedRole === "client" || selection.selectedRole === "super_admin" || selection.selectedRole === "program_manager" || selection.selectedRole === "site_manager")
             continue;
         const user = active.get(selection.userId);
         if (!user || user.role !== selection.selectedRole)
@@ -155,5 +159,5 @@ export function resolveChatMembership(sources: ChatSources, selections: readonly
     return { participants: [...members.values()].sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id)), warnings: [...warnings], selectionManagers, eligibleTrades };
 }
 export function canSelectChatPerson(person: ChatPerson, membership: ChatMembership): boolean {
-    return person.role !== "client" && person.role !== "super_admin" && (!isWorkerRole(person.role) || membership.eligibleTrades.has(person.role));
+    return person.role !== "program_manager" && person.role !== "site_manager" && person.role !== "client" && person.role !== "super_admin" && (!isWorkerRole(person.role) || membership.eligibleTrades.has(person.role));
 }

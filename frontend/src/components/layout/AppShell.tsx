@@ -1,3 +1,4 @@
+import { PMNotifications } from "../../features/project-manager/PMNotifications";
 import { ProcurementVendorDraftProvider } from "../../features/procurement/ProcurementVendorDraftProvider";
 import { ExecutionLiveProvider } from "../../features/execution/ExecutionLiveProvider";
 import { Link, matchPath, Outlet, useLocation } from "react-router-dom";
@@ -39,14 +40,14 @@ export function AppShell() {
     <ProjectChatProvider>
     <div className={messaging ? "project-messaging-app ui-common-shell" : "ui-app-shell ui-common-shell"} data-role={messaging ? undefined : auth.user.role} data-configuration-backdrop={configurationBackdrop ? "true" : undefined}>
       <SkipLink />
-      {!messaging ? <aside className="ui-sidebar-rail" aria-label="Application sidebar">
+      <aside className={messaging ? "project-messaging-navigation-rail" : "ui-sidebar-rail"} aria-label="Application sidebar">
         <Sidebar
           user={auth.user}
           authorization={auth.authorization}
           onLogout={auth.logout}
         />
-      </aside> : null}
-      <WorkspaceTopbar user={auth.user} onLogout={auth.logout} compact={messaging} dailyTasksAction={<DailyCriticalTasksPrompt />}
+      </aside>
+      <WorkspaceTopbar user={auth.user} onLogout={auth.logout} compact={messaging} dailyTasksAction={<><PMNotifications /><DailyCriticalTasksPrompt /></>}
         leading={messaging ? <Link className="workspace-topbar__home" to="/project-messages" aria-label="Project messages"><BrandLogo /></Link> : <>
           <MobileHeader user={auth.user} authorization={auth.authorization} onLogout={auth.logout} />
           <span className="workspace-topbar__mobile-brand"><BrandLogo /></span>

@@ -29,7 +29,7 @@ const award: BasketAward = {
 describe("work order approval queue", () => {
   it.each([
     { slot: "procurement", label: "procurement", paymentRows: ["Advance", "Final"] },
-    { slot: "program_manager", label: "Site Manager", paymentRows: ["Advance"] },
+    { slot: "program_manager", label: "Project Manager", paymentRows: ["Advance"] },
     { slot: "designer", label: "designer", paymentRows: ["Mobilisation"] }
   ] as const)("shows the saved payment rows and posts the current $label slot", async ({ slot, label, paymentRows }) => {
     const decisions: unknown[] = [];

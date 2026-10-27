@@ -446,6 +446,8 @@ describe("memory repository", () => {
     });
     await expect(repository.countActiveUsersByRole("design_manager")).resolves.toBe(2);
     await expect(repository.countUserResponsibilities(targetId)).resolves.toEqual({
+      assignedExecutionProjects: 0,
+      assignedWorkflowTasks: 0,
       ownedActiveLeads: 1,
       ownedActiveEstimates: 1,
       initiatedActiveProjects: 1,

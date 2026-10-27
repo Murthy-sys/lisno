@@ -6,7 +6,7 @@ import { ProjectChatProvider, useChatProjectRegistration, useProjectChat } from 
 import { chatKeys, projectChatApi } from "./projectChatApi";
 import { chatTestSummary } from "./projectChatFixtures";
 import type { runProjectChatStream } from "./projectChatStream";
-import type { ChatEventType } from "./projectChatTypes";
+import type { ChatConversationPage, ChatEventType } from "./projectChatTypes";
 
 type Stream = Parameters<typeof runProjectChatStream>[0];
 const fixture = vi.hoisted(() => ({ streams: [] as Stream[] }));
@@ -21,7 +21,7 @@ vi.mock("./projectChatStream", () => ({ runProjectChatStream: async (stream: Str
 function Conversation() {
   useChatProjectRegistration("project-a");
   const chat = useProjectChat();
-  useQuery({ queryKey: [...chatKeys.list(chat.scope), 0], queryFn: ({ signal }) => projectChatApi.conversations(0, signal) });
+  useQuery({ queryKey: [...chatKeys.list(chat.scope), { search: "", filter: "all", offset: 0 }], queryFn: ({ signal }) => projectChatApi.conversations(0, signal, { search: "", filter: "all" }) });
   return <p>{chat.connection}</p>;
 }
 const settle = () => act(() => vi.advanceTimersByTimeAsync(10));
@@ -32,17 +32,70 @@ async function mount() {
   expect(fixture.streams).toHaveLength(1);
   return { ...view, client };
 }
+function seedListVariants(client: QueryClient) {
+  const scope = client.getQueryCache().getAll().find(query => query.queryKey[2] === "conversations")!.queryKey[1] as string;
+  const queries = [
+    { search: "Courtyard", filter: "unread", offset: 0 },
+    { search: "", filter: "critical", offset: 30 },
+    { search: "Garden", filter: "important", offset: 0 }
+  ];
+  const keys = queries.map(query => [...chatKeys.list(scope), query]);
+  const page: ChatConversationPage = { items: [{ ...chatTestSummary(), lastMessageAt: null, lastMessage: null }], pagination: { offset: 0, limit: 30, total: 1, hasMore: false }, totals: { unread: 1, critical: 3, important: 2 } };
+  keys.forEach(key => client.setQueryData(key, page));
+  const otherScopeKey = [...chatKeys.list("unrelated-session"), queries[0]];
+  client.setQueryData(otherScopeKey, { ...page, items: [{ ...page.items[0], project: { id: "project-b", name: "Other session residence", status: "planning" } }] });
+  return { scope, keys, page, otherScopeKey };
+}
 beforeEach(() => {
   vi.useFakeTimers();
   fixture.streams = [];
   tokenStorage.set("synthetic-refresh-session");
   vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
   vi.spyOn(projectChatApi, "summary").mockResolvedValue(chatTestSummary());
-  vi.spyOn(projectChatApi, "conversations").mockResolvedValue({ items: [{ ...chatTestSummary(), lastMessageAt: null }], pagination: { offset: 0, limit: 30, total: 1, hasMore: false } });
+  vi.spyOn(projectChatApi, "conversations").mockResolvedValue({ items: [{ ...chatTestSummary(), lastMessageAt: null, lastMessage: null }], totals: { unread: 2, critical: 6, important: 4 }, pagination: { offset: 0, limit: 30, total: 1, hasMore: false } });
 });
 afterEach(() => vi.useRealTimers());
 
 describe("project stream query scheduling", () => {
+  it.each(["message.created", "assistant.changed", "issue.changed", "participants.changed", "read.changed", "resync"] as const)("invalidates every search/filter/page variant after %s without crossing session scope", async type => {
+    const { client } = await mount();
+    const { scope, keys, otherScopeKey } = seedListVariants(client);
+    const initial = vi.mocked(projectChatApi.conversations).mock.calls.length;
+    expect(client.getQueryCache().findAll({ queryKey: chatKeys.list(scope) })).toHaveLength(4);
+    act(() => fixture.streams[0].onBatch({
+      events: type === "resync" ? [] : [{ id: type, type, projectId: "project-a", recordId: "record-a", sequence: 8, version: 2, occurredAt: "2026-10-27T08:00:00Z" }],
+      cursor: "changed", hasMore: false, resync: type === "resync"
+    }));
+    await settle();
+    expect(projectChatApi.conversations).toHaveBeenCalledTimes(initial + 1);
+    for (const key of keys) expect(client.getQueryState(key)?.isInvalidated).toBe(true);
+    expect(client.getQueryState(otherScopeKey)?.isInvalidated).toBe(false);
+    expect(client.getQueryData<ChatConversationPage>(otherScopeKey)?.items[0].project.id).toBe("project-b");
+  });
+
+  it("purges every list variant on stream revocation and rejects late filtered results", async () => {
+    const { client } = await mount();
+    const { scope, keys, page, otherScopeKey } = seedListVariants(client);
+    const allKeys = client.getQueryCache().findAll({ queryKey: chatKeys.list(scope) }).map(query => query.queryKey);
+    let pendingSignal!: AbortSignal;
+    let complete!: (value: ChatConversationPage) => void;
+    const request = client.fetchQuery({
+      queryKey: keys[1], staleTime: 0,
+      queryFn: ({ signal }) => { pendingSignal = signal; return new Promise<ChatConversationPage>(resolve => { complete = resolve; }); }
+    }).catch(() => undefined);
+    // The mounted list may start a new read after purge. Keep it pending so a
+    // stale transport fixture cannot conceal whether the old cache was cleared.
+    vi.mocked(projectChatApi.conversations).mockImplementation(() => new Promise(() => {}));
+    act(() => fixture.streams[0].onDenied());
+    expect(pendingSignal.aborted).toBe(true);
+    for (const key of allKeys) expect(client.getQueryData(key)).toBeUndefined();
+    await act(async () => { complete(page); await request; });
+    await settle();
+    for (const key of allKeys) expect(client.getQueryData(key)).toBeUndefined();
+    for (const key of keys) expect(client.getQueryState(key)).toBeUndefined();
+    expect(client.getQueryData<ChatConversationPage>(otherScopeKey)?.items[0].project.id).toBe("project-b");
+  });
+
   it.each(["participants.changed", "resync"])("clears retained assistant prices synchronously on %s", async change => {
     const { client } = await mount();
     const summaryKey = client.getQueryCache().getAll().find(query => query.queryKey.at(-1) === "summary" && query.queryKey[3] === "project-a")!.queryKey;

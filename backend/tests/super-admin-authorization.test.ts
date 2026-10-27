@@ -838,7 +838,7 @@ describe("Projects and Tasks operations", () => {
     for (const [method, path, body] of operations) {
       // Procurement project reads are permitted, with assignment/grant scope
       // enforced by the project service. All mutations remain denied here.
-      if (actor === actors.procurement && method === "GET" && (path.startsWith("/api/v1/projects?") || path === "/api/v1/projects/project-aurora-villa")) continue;
+      if ([actors.procurement, actors.siteManager].includes(actor) && method === "GET" && (path.startsWith("/api/v1/projects?") || path === "/api/v1/projects/project-aurora-villa")) continue;
       const before = snapshotRepositoryCalls(calls);
       await authenticatedRequest(app, method, path, actor, body).expect(403);
       expectDeniedBeforeServiceRepositoryEntry(calls, before);
@@ -1943,7 +1943,7 @@ describe("Task 6 router service-entry boundary", () => {
      */
     const gateDeniedCases = taskSixRouterServiceEntryCases.filter(
       (entry) => !entry.label.startsWith("KPI ") &&
-        !(actor === actors.procurement && ["project list", "project detail"].includes(entry.label))
+        !([actors.procurement, actors.siteManager].includes(actor) && ["project list", "project detail"].includes(entry.label))
     );
     for (const entry of gateDeniedCases) {
       const before = snapshotServiceEntries(calls);

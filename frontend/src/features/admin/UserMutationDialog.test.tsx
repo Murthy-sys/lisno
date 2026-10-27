@@ -39,6 +39,8 @@ const zeroCounts = {
   initiatedActiveProjects: 0,
   assignedActiveProjects: 0,
   managedActiveProjects: 0,
+  assignedExecutionProjects: 0,
+  assignedWorkflowTasks: 0,
   ownedActiveTasks: 0,
   directReports: 0,
   linkedClientProjects: 0,
@@ -127,6 +129,14 @@ async function expectNoAxeViolations() {
 }
 
 describe("UserMutationDialog", () => {
+  it("offers canonical Project Manager but not the retired role from a stale server list", async () => {
+    installSession(actor);
+    server.use(http.get("/api/v1/admin/users", () => HttpResponse.json(directoryResponse([designer], ["designer", "program_manager", "site_manager"]))));
+    const { dialog } = await openDesignerDialog();
+    const roles = within(dialog).getByRole("combobox", { name: "Role" });
+    expect(within(roles).queryByRole("option", { name: "Program Manager" })).not.toBeInTheDocument();
+    expect(within(roles).getByRole("option", { name: "Project Manager" })).toHaveValue("site_manager");
+  });
   it("role change submits one field and version", async () => {
     installSession(actor);
     let current: UserDirectoryItem = designer;
@@ -380,7 +390,7 @@ describe("UserMutationDialog", () => {
       within(dialog).queryByRole("option", { name: "Super Admin" })
     ).not.toBeInTheDocument();
     expect(
-      within(dialog).getByRole("option", { name: "Site Manager" })
+      within(dialog).getByRole("option", { name: "Project Manager" })
     ).toBeInTheDocument();
     expect(
       within(dialog).getByRole("option", { name: "Finance Manager" })

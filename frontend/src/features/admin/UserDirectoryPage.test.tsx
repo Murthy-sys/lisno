@@ -4,6 +4,7 @@ import { http, HttpResponse } from "msw";
 import { describe, expect, it } from "vitest";
 
 import {
+  ACTIVE_ROLE_CODES,
   OPERATIONAL_ROLES,
   ROLE_CODES,
   ROLE_LABELS,
@@ -200,7 +201,7 @@ describe("UserDirectoryPage", () => {
     expect(invitationRequests).toBe(0);
   });
 
-  it("Super Admin sees every role", async () => {
+  it("Super Admin can filter historical roles but only assign active roles", async () => {
     installSession(superAdmin);
     server.use(
       http.get("/api/v1/admin/users", ({ request }) => {
@@ -245,13 +246,15 @@ describe("UserDirectoryPage", () => {
     expect(
       within(roleSelect).getAllByRole("option").map((option) => option.textContent)
     ).toEqual(
-      ROLE_CODES.filter((role) => role !== "super_admin").map(
+      ACTIVE_ROLE_CODES.filter((role) => role !== "super_admin").map(
         (role) => ROLE_LABELS[role]
       )
     );
     expect(
       screen.getByRole("combobox", { name: "Filter by role" })
     ).toContainElement(screen.getByRole("option", { name: "Super Admin" }));
+    expect(within(screen.getByRole("combobox", { name: "Filter by role" })).getByRole("option", { name: "Program Manager" })).toBeInTheDocument();
+    expect(within(roleSelect).queryByRole("option", { name: "Program Manager" })).not.toBeInTheDocument();
   });
 
   it("directory sends canonical filters and pagination", async () => {

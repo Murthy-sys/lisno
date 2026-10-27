@@ -381,7 +381,7 @@ afterEach(() => {
 });
 
 /*
- * Asymmetric on purpose: unequal role counts (two Designers, one Site Manager,
+ * Asymmetric on purpose: unequal role counts (two Designers, one Project Manager,
  * one Super Admin) and one inactive account, so an off-by-one or a status that
  * is only rendered as colour cannot pass. `summary` is the directory-wide,
  * filter-independent aggregate the backend now returns.
@@ -410,7 +410,7 @@ const accessibleDirectoryRows = [
   },
   {
     id: "user-site-manager-accessible",
-    name: "Accessible Site Manager",
+    name: "Accessible Project Manager",
     email: "site-manager-accessible@lisno.example",
     role: "site_manager",
     active: false,
@@ -1091,10 +1091,10 @@ describe("accessibility smoke coverage", () => {
       // No status is carried by colour alone: every badge and chip has text.
       const directory = screen.getByRole("region", { name: "User directory" });
       const inactiveRow = within(directory).getByRole("row", {
-        name: /Accessible Site Manager/
+        name: /Accessible Project Manager/
       });
       expect(within(inactiveRow).getByText("Inactive")).toBeVisible();
-      expect(within(inactiveRow).getByText("Site Manager")).toBeVisible();
+      expect(within(inactiveRow).getByText("Project Manager")).toBeVisible();
       const activeRow = within(directory).getByRole("row", {
         name: /Accessible Designer/
       });

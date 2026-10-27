@@ -163,8 +163,8 @@ it.each([
 
 it("shows the original requester's name to a different staff viewer of the shared answer", async () => {
   const staff: AuthenticatedSession = {
-    user: { id: "staff-priya", name: "Priya Staff", email: "priya@example.invalid", role: "program_manager" },
-    authorization: { role: "program_manager", policyVersion: AUTHORIZATION_POLICY_VERSION, permissions: ["chat.read", "chat.assistant.read"] }
+    user: { id: "staff-priya", name: "Priya Staff", email: "priya@example.invalid", role: "site_manager" },
+    authorization: { role: "site_manager", policyVersion: AUTHORIZATION_POLICY_VERSION, permissions: ["chat.read", "chat.assistant.read"] }
   };
   setRuntimeSession(staff);
   get.mockResolvedValue(fixtures.shared.toneStatus);

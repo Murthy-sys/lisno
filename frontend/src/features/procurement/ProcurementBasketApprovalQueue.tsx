@@ -15,7 +15,7 @@ import { procurementError, procurementRequestKey } from "./procurementPresentati
 import "./procurementBasket.css";
 
 function approvalName(slot: BasketApprovalQueueItem["slot"]): string {
-  return slot === "program_manager" ? "Site Manager" : slot.replaceAll("_", " ");
+  return slot === "program_manager" ? "Project Manager" : slot.replaceAll("_", " ");
 }
 
 function decisionMessage(award: BasketAward, value: "approve" | "reject"): string {

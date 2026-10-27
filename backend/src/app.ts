@@ -1,3 +1,13 @@
+import { createProjectManagerWorkspace } from "./services/project-manager/workspace.js";
+import { createPMEvidenceService } from "./services/project-manager/evidence.js";
+import { createProjectManagerRequestsSupplyService } from "./services/project-manager/requests.js";
+import { createProjectManagerClientService } from "./services/project-manager/client.js";
+import { createProjectManagerVendorsService } from "./services/project-manager/vendors.js";
+import { createProjectManagerQualityService } from "./services/project-manager/quality.js";
+import { createProjectManagerRouter } from "./routes/project-manager.js";
+import { createProjectManagerRequestsRouter } from "./routes/project-manager-requests.js";
+import { createProjectManagerClientRouter } from "./routes/project-manager-client.js";
+import { createProjectManagerVendorsRouter } from "./routes/project-manager-vendors.js";
 import { createVendorBasketRequestNotificationService } from "./services/vendor-basket-request-notifications.service.js";
 import { createVendorBasketRequestNotificationsRouter } from "./routes/vendor-basket-request-notifications.js";
 import { createProcurementVendorAccessRouter } from "./routes/procurement-vendor-access.js";
@@ -469,6 +479,16 @@ export function createApp(dependencies: AppDependencies) {
         lastSchedulerSuccessAt: health.lastSuccessAt, lastSchedulerFailureCode: health.failureCode,
         pendingEmails: health.pending, failedEmails: health.failed };
     } });
+  const pmDependencies = { audit: auditService, now: clock };
+  const pmRequests = createProjectManagerRequestsSupplyService(pmDependencies);
+  const pmClient = createProjectManagerClientService(pmDependencies);
+  const pmVendors = createProjectManagerVendorsService({ ...pmDependencies, execution: executionService });
+  const pmQuality = createProjectManagerQualityService(pmDependencies);
+  const pmWorkspace = createProjectManagerWorkspace({ ...pmDependencies, panels: {
+    procurement: pmRequests.procurement, selections: pmRequests.selections, supply: pmRequests.supply,
+    vendors: pmVendors.vendors, client: pmClient.client, snagging: pmClient.snagging, quality: pmQuality.quality
+  } });
+  const pmEvidence = createPMEvidenceService(storage);
   const vendorOnboarding = createVendorWorkOnboardingService({ repository, audit: auditService, clock,
     deliveryEnabled: dependencies.enableVendorAccessDelivery,
     invitationMailer: dependencies.invitationMailer ?? { deliveryKind: "disabled" },
@@ -713,6 +733,10 @@ export function createApp(dependencies: AppDependencies) {
   app.use("/api/v1", createProjectPurchaseOrderBasketMonitorRouter(authService, projectPurchaseOrderBasketMonitorService));
   app.use("/api/v1", createProjectCompletionRouter(authService, projectCompletionService));
   app.use("/api/v1", createSiteCompletionRouter(authService, siteCompletionService));
+  app.use("/api/v1", createProjectManagerRouter(authService, pmWorkspace, pmEvidence, maxUploadBytes));
+  app.use("/api/v1", createProjectManagerRequestsRouter(authService, pmRequests));
+  app.use("/api/v1", createProjectManagerClientRouter(authService, pmClient));
+  app.use("/api/v1", createProjectManagerVendorsRouter(authService, pmVendors, pmQuality));
   app.use("/api/v1", createVendorExecutionRouter(authService, executionService, executionDelivery, vendorOnboarding, invitationDeliveryRateLimit));
   app.use("/api/v1", createProcurementVendorAccessRouter(authService, vendorOnboarding, invitationDeliveryRateLimit));
   app.use("/api/v1", createVendorWorkRouter(authService, vendorWorkService, maxUploadBytes));

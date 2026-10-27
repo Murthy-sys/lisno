@@ -27,7 +27,7 @@ export function ExecutionPolicyPanel({ projectId, onClose, onDirty, onBusy }: { 
       if (receipt.current.signature !== signature) receipt.current = { signature, key: crypto.randomUUID() };
       return executionApi.savePolicy(projectId,{ ...input, idempotencyKey: receipt.current.key });
     },
-    onSuccess: async policy => { queryClient.setQueryData(executionKeys.policy(projectId),policy); setDraft(null); setReason(""); setNotice("Reporting schedule saved. Existing daily cutoffs remain unchanged."); await queryClient.invalidateQueries({ queryKey: executionKeys.all }); }
+    onSuccess: async policy => { queryClient.setQueryData(executionKeys.policy(projectId),policy); setDraft(null); setReason(""); setNotice("Reporting schedule saved. Existing daily cutoffs remain unchanged."); await Promise.all([queryClient.invalidateQueries({ queryKey: executionKeys.all }), queryClient.invalidateQueries({ queryKey: ["project-manager"] })]); }
   });
   useEffect(() => { onDirty?.(Boolean(draft || reason)); }, [draft, reason, onDirty]);
   useEffect(() => { onBusy?.(save.isPending); }, [save.isPending, onBusy]);

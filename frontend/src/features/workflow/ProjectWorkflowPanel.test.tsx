@@ -33,7 +33,7 @@ function setup(presentation: "full" | "client" | "designer" = "full", timelineCo
 }
 
 describe("ProjectWorkflowPanel", () => {
-  it.each(["designer", "procurement", "program_manager"] as const)("shows pending and source-issue progress for %s without mounting actions", async (role) => {
+  it.each(["designer", "procurement", "site_manager"] as const)("shows pending and source-issue progress for %s without mounting actions", async (role) => {
     authState.user.role = role;
     let status: DesignWorkflowView["estimateApprovalStatus"] = "awaiting_approval";
     server.use(http.get("/api/v1/projects/project-ui/design-workflow", () => HttpResponse.json({ data: { ...workflow, estimateApprovalStatus: status } })));
@@ -49,7 +49,7 @@ describe("ProjectWorkflowPanel", () => {
     expect(screen.queryByRole("button", { name: "Confirm keys handed over" })).not.toBeInTheDocument();
   });
 
-  it.each(["procurement", "program_manager"] as const)("keeps %s as a read-only observer even for an approved estimate", async (role) => {
+  it.each(["procurement", "site_manager"] as const)("keeps %s as a read-only observer even for an approved estimate", async (role) => {
     authState.user.role = role;
     server.use(http.get("/api/v1/projects/project-ui/design-workflow", () => HttpResponse.json({ data: workflow })));
     setup();

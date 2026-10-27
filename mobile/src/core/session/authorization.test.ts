@@ -1,5 +1,5 @@
 import { AUTHORIZATION_POLICY_VERSION } from "../../contracts/authorization";
-import { parseAuthorizationSnapshot } from "./authorization";
+import { parseAuthorizationSnapshot, parsePublicUser } from "./authorization";
 
 describe("mobile authorization policy", () => {
   const current = {
@@ -29,4 +29,10 @@ describe("mobile authorization policy", () => {
       )
     ).toBeNull();
   });
+});
+
+it("retains historical role parsing only outside active sessions", () => {
+  expect(parsePublicUser({ id: "manager-a", name: "Manager", email: "manager@example.test", role: "program_manager" })).toBeNull();
+  expect(parseAuthorizationSnapshot({ role: "program_manager", policyVersion: AUTHORIZATION_POLICY_VERSION, permissions: ["projects.list"] }, "program_manager")).toBeNull();
+  expect(parsePublicUser({ id: "manager-a", name: "Manager", email: "manager@example.test", role: "site_manager" })).toMatchObject({ id: "manager-a", role: "site_manager" });
 });

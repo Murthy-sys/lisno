@@ -292,3 +292,25 @@ describe("SessionManager", () => {
     expect(harness.manager.getSnapshot().session?.user).not.toHaveProperty("profilePhotoVersion");
   });
 });
+
+it("clears protected state for a retired-role restore and accepts canonical re-login with the same stable ID", async () => {
+  let role = "program_manager";
+  const routes = jest.fn(async (input: RequestInfo | URL) => {
+    const path = new URL(String(input)).pathname;
+    const currentUser = { ...user, role };
+    if (path.endsWith("/auth/login")) return json({ user: currentUser, token: "canonical-login-token" });
+    if (path.endsWith("/auth/me")) return json(currentUser);
+    return json({ ...authorization, role });
+  });
+  const harness = createHarness(routes, "retired-token");
+  const privateCache = new Map([["project-a", "private project"]]);
+  harness.cleanups.register("test-private-cache", () => privateCache.clear(), 30);
+  await expect(harness.manager.restore()).resolves.toMatchObject({ status: "unauthenticated", failure: "expired", session: null });
+  expect(privateCache.size).toBe(0);
+  expect(harness.storage.values.size).toBe(0);
+  expect(harness.tokenState.getRequestToken()).toBeNull();
+  role = "site_manager";
+  await expect(harness.manager.login({ email: user.email, password: "synthetic" })).resolves.toMatchObject({ id: user.id, role: "site_manager" });
+  expect(harness.manager.getSnapshot().session?.user.id).toBe(user.id);
+  expect(harness.tokenState.getRequestToken()?.accepted).toBe(true);
+});

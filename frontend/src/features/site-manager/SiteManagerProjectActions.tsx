@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { useAuth } from "../../auth/AuthProvider";
 import { hasFrontendPermission } from "../../auth/authorization";
 import { Button } from "../../components/ui/Button";
@@ -24,6 +25,8 @@ export function SiteManagerProjectActions({ project, canManagePolicy, onDirty, o
       {project.completionAuthority === "vendor_client" && canComplete ? <Button size="compact" variant="secondary" disabled={disabled} onClick={() => setPanel("completion")}>Completion &amp; Client handoff</Button> : null}
       {project.completionAuthority === "legacy_staff" ? <Button size="compact" variant="secondary" disabled={disabled} onClick={() => setPanel("legacy")}>Coordination progress</Button> : null}
       {canManagePolicy ? <Button size="compact" variant="secondary" disabled={disabled} onClick={() => setPanel("policy")}>Reporting schedule</Button> : null}
+      {hasFrontendPermission(auth.authorization, "procurement.work_order_approval.read") ? <Link to="/work-order-approvals">Work order approvals</Link> : null}
+      {hasFrontendPermission(auth.authorization, "access_request.self.read") ? <Link to="/access-requests/mine">My access requests</Link> : null}
       <ProjectStatusButton projectId={project.id} projectName={project.name} participant />
       <ProjectChatLink projectId={project.id}>Project messages</ProjectChatLink>
     </div></details>

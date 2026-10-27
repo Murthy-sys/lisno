@@ -61,7 +61,7 @@ export function UserInvitationList({
           <Text style={styles.detail}>{expirationLabel(invitation.expiresAt)}</Text>
           {invitation.status === "pending" && !invitation.currentLinkAvailable ? (
             <Text style={styles.warning}>
-              {invitation.availableActions.includes("resend")
+              {invitation.role !== "program_manager" && invitation.availableActions.includes("resend")
                 ? "The current link is unavailable. Resend to issue a new link."
                 : "The current link is unavailable and cannot be resent."}
             </Text>

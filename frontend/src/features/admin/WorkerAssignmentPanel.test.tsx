@@ -237,7 +237,7 @@ const workers: WorkerAssignmentOption[] = [
   { id: "painter-1", name: "Mina Painter", email: "mina@example.com", role: "worker_painter" },
   { id: "plumber-1", name: "Pavan Plumber", email: "pavan@example.com", role: "worker_plumber" },
   { id: "procurement-1", name: "Priya Procurement", email: "priya@example.com", role: "procurement" },
-  { id: "site-manager-1", name: "Sana Site Manager", email: "sana@example.com", role: "site_manager" }
+  { id: "site-manager-1", name: "Sana Project Manager", email: "sana@example.com", role: "site_manager" }
 ];
 
 const allTasks = [
@@ -295,6 +295,25 @@ afterEach(() => {
 });
 
 describe("WorkerAssignmentPanel", () => {
+  it("refreshes the matching identity and every scoped Project Manager reader after a site assignment", async () => {
+    installPanel();
+    const received = vi.fn();
+    const invalidate = vi.spyOn(QueryClient.prototype, "invalidateQueries");
+    server.use(http.post("/api/v1/execution/worker-assignments/override", async ({ request }) => {
+      received(await request.json());
+      return HttpResponse.json({ data: { ...siteTask, version: siteTask.version + 1, assignedWorker: { ...workers.at(-1), active: true } } });
+    }));
+    const user = userEvent.setup();
+    renderWithQuery(<WorkerAssignmentPanel project={project} />);
+    await openTaskAssignment(user);
+    await user.selectOptions(screen.getByRole("combobox", { name: "Assigned Project Manager" }), "site-manager-1");
+    await user.click(screen.getByRole("button", { name: /^(Assign|Reassign) Project Manager$/ }));
+    expect(await screen.findByText("Project Manager assignment saved.")).toBeVisible();
+    expect(received).toHaveBeenCalledWith({ projectId: "project-1", taskId: siteTask.id, expectedVersion: siteTask.version, workerId: "site-manager-1" });
+    for (const key of ["admin-projects", "project-workflow", "assigned-projects", "project-manager", "execution", "procurement", "project-chat"]) {
+      expect(invalidate).toHaveBeenCalledWith({ queryKey: [key] });
+    }
+  });
   it("resets the outer disclosure closed when the reused panel receives a new project", async () => {
     installPanel();
     server.use(
@@ -333,8 +352,8 @@ describe("WorkerAssignmentPanel", () => {
     expect(screen.getByRole("article", { name: "Open approved project budget progress" })).toHaveTextContent("45% complete");
     const site = screen.getByRole("article", { name: "Coordinate site execution assignment" });
     expect(site).toHaveTextContent("30% complete");
-    const siteSelect = within(site).getByRole("combobox", { name: "Assigned Site Manager" });
-    expect(within(siteSelect).getByRole("option", { name: /Sana Site Manager/ })).toBeVisible();
+    const siteSelect = within(site).getByRole("combobox", { name: "Assigned Project Manager" });
+    expect(within(siteSelect).getByRole("option", { name: /Sana Project Manager/ })).toBeVisible();
     expect(within(siteSelect).queryByRole("option", { name: /Priya Procurement/ })).not.toBeInTheDocument();
     const procurement = screen.getByRole("article", { name: "Coordinate approved procurement assignment" });
     const procurementSelect = within(procurement).getByRole("combobox", { name: "Assigned procurement coordinator" });
