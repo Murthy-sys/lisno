@@ -1,3 +1,4 @@
+import { refreshProjectManagerAssignment } from "./projectManagerAssignmentCache";
 import { projectStatusKeys } from "../project-status/projectStatusApi";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown } from "lucide-react";
@@ -384,7 +385,7 @@ function WorkerAssignmentRow({ projectId, task, workers, onStale }: {
   const client = useQueryClient();
   const [workerId, setWorkerId] = useState(task.assignedWorker?.id ?? "");
   useEffect(() => setWorkerId(task.assignedWorker?.id ?? ""), [task.assignedWorker?.id]);
-  const assigneeLabel = task.kind === "site_execution" ? "Site Manager" : "procurement coordinator";
+  const assigneeLabel = task.kind === "site_execution" ? "Project Manager" : "procurement coordinator";
   const candidates = workers.filter((worker) => worker.role === task.assigneeRole);
   const assignment = useMutation({
     mutationFn: () => overrideWorkerAssignment({ projectId, taskId: task.id, expectedVersion: task.version, workerId: workerId || null }),
@@ -394,6 +395,7 @@ function WorkerAssignmentRow({ projectId, task, workers, onStale }: {
         (current) => current?.map((candidate) => candidate.id === updated.id ? updated : candidate)
       );
       void Promise.all([
+        ...(task.kind === "site_execution" ? [refreshProjectManagerAssignment(client)] : []),
         client.invalidateQueries({ queryKey: projectWorkflowKeys.operational }),
         client.invalidateQueries({ queryKey: projectStatusKeys.all }),
         client.invalidateQueries({ queryKey: adminProjectKeys.all }),

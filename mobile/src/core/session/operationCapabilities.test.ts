@@ -66,3 +66,8 @@ describe("operation capabilities", () => {
     }, "GET /projects").reason).toBe("invalid_session");
   });
 });
+
+it("denies a retired role even if a stale client retains every operation permission", () => {
+  expect(operationCapability(session("program_manager"), "GET /projects").reason).toBe("invalid_session");
+  expect(canPerformOperation(session("site_manager", ["pm.workspace.read"]), "GET /project-manager/projects")).toBe(true);
+});

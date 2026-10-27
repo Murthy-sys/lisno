@@ -1,3 +1,4 @@
+import { setProjectManagerAssignment } from "./project-manager-assignment.service.js";
 import mongoose, { type ClientSession } from "mongoose";
 
 import { confirmedCity } from "../domain/procurement-city.js";
@@ -91,7 +92,7 @@ export function createProcurementProjectIdentityService({ audit, now = () => new
       if (current.role !== "admin" && current.role !== "super_admin") forbidden();
       if (current.role === "super_admin") await aiEstimatorKnowledgeActorGuard.requireReadActor(actor);
       const literal = query.q.trim().replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
-      const filter = { role: "program_manager", active: true,
+      const filter = { role: "site_manager", active: true,
         ...(literal ? { $or: [{ name: { $regex: literal, $options: "i" } }, { emailNormalized: { $regex: literal, $options: "i" } }] } : {}) };
       const total = await UserModel.countDocuments(filter);
       const rows = await UserModel.find(filter).sort({ name: 1, _id: 1 }).skip(query.offset).limit(query.limit)
@@ -109,33 +110,11 @@ export function createProcurementProjectIdentityService({ audit, now = () => new
         await coordinate(session);
         const project = await scopedProject(actor, projectId, session);
         const previous = projectIdentity(project);
-        if (previous.version !== input.expectedVersion) throw new ApiError(409, "PROCUREMENT_IDENTITY_VERSION_CONFLICT", "Project assignment or city changed. Refresh and try again.");
-        const city = input.cityName === undefined ? previous.city : confirmedCity(input.cityName);
-        const programManagerId = input.programManagerId === undefined ? previous.programManagerId : input.programManagerId;
-        if (programManagerId !== null && input.programManagerId !== undefined && programManagerId !== previous.programManagerId) {
-          const manager = await UserModel.findOne({ _id: programManagerId, role: "program_manager", active: true }).select({ _id: 1 }).session(session).lean().exec();
-          if (!manager) throw new ApiError(400, "INVALID_PROGRAM_MANAGER", "Select an active Program Manager.");
-        }
-        if (city?.key === previous.city?.key && city?.name === previous.city?.name && programManagerId === previous.programManagerId) return previous;
-        const versionPredicate = project.procurementIdentityVersion == null
-          ? { procurementIdentityVersion: { $exists: false } } : { procurementIdentityVersion: input.expectedVersion };
-        const updated = await ProjectModel.findOneAndUpdate({ _id: projectId, ...versionPredicate },
-          { $set: { cityName: city?.name ?? null, cityKey: city?.key ?? null, programManagerId,
-            procurementIdentityVersion: previous.version + 1, updatedAt: now() } },
-          { session, returnDocument: "after", runValidators: true }).lean().exec() as Row | null;
-        if (!updated) throw new ApiError(409, "PROCUREMENT_IDENTITY_VERSION_CONFLICT", "Project assignment or city changed. Refresh and try again.");
-        const timestamp = now().toISOString();
-        if (previous.programManagerId !== programManagerId) {
-          await audit.appendInMongoTransaction({ actorId: actor.id, action: "project_program_manager_assigned", entityType: "project", entityId: projectId,
-            occurredAt: timestamp, oldValues: { programManagerId: previous.programManagerId, version: previous.version },
-            newValues: { programManagerId, version: previous.version + 1 } }, session);
-        }
-        if (previous.city?.key !== city?.key || previous.city?.name !== city?.name) {
-          await audit.appendInMongoTransaction({ actorId: actor.id, action: "project_city_confirmed", entityType: "project", entityId: projectId,
-            occurredAt: timestamp, oldValues: { city: previous.city, version: previous.version },
-            newValues: { city, version: previous.version + 1 } }, session);
-        }
-        return projectIdentity(updated);
+        const result = await setProjectManagerAssignment({ projectId, actorId: actor.id, actorRole: actor.role === "super_admin" ? "super_admin" : "admin",
+          ownerId: input.programManagerId === undefined ? previous.programManagerId : input.programManagerId,
+          expectedProjectVersion: input.expectedVersion, at: now(), audit,
+          ...(input.cityName === undefined ? {} : { city: confirmedCity(input.cityName) }) }, session);
+        return projectIdentity(result.project);
       });
     },
 

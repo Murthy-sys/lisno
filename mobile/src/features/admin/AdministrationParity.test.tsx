@@ -49,10 +49,10 @@ it("removes a user's private edit data when the update is denied", async () => {
   await fireEvent.press(screen.getByRole("button", { name: "Deactivate user" })); await fireEvent.press(screen.getByRole("button", { name: "Confirm deactivation" })); await screen.findByText("Your access changed."); expect(screen.queryByText(user.email)).toBeNull();
 });
 
-it("saves Program Manager identity with its captured project version", async () => {
-  const t = setup(); t.get.mockResolvedValue({ items: [{ id: "pm-a", name: "Program Manager A", email: "pm-a@example.test" }], total: 1 }); t.patch.mockResolvedValue({ projectId: "project-a", version: 5, city: { name: "Hyderabad", key: "hyderabad" }, programManagerId: "pm-a" });
+it("saves Project Manager identity with its captured project version", async () => {
+  const t = setup(); t.get.mockResolvedValue({ items: [{ id: "pm-a", name: "Project Manager A", email: "pm-a@example.test" }], total: 1 }); t.patch.mockResolvedValue({ projectId: "project-a", version: 5, city: { name: "Hyderabad", key: "hyderabad" }, programManagerId: "pm-a" });
   await t.show(<IdentityEditor context={t.c} identity={{ projectId: "project-a", version: 4, city: null, programManagerId: null }} />);
-  await waitFor(() => expect(screen.getByRole("combobox", { name: "Program Manager" })).not.toBeDisabled()); await fireEvent.changeText(screen.getByLabelText("Project city"), "Hyderabad"); await fireEvent.press(screen.getByRole("combobox", { name: "Program Manager" })); await fireEvent.press(screen.getByRole("radio", { name: "Program Manager A · pm-a@example.test" })); await fireEvent.press(screen.getByRole("button", { name: "Save procurement details" })); await waitFor(() => expect(t.patch).toHaveBeenCalledWith("/admin/projects/project-a/procurement-identity", { expectedVersion: 4, cityName: "Hyderabad", programManagerId: "pm-a" }));
+  await waitFor(() => expect(screen.getByRole("combobox", { name: "Project Manager" })).not.toBeDisabled()); await fireEvent.changeText(screen.getByLabelText("Project city"), "Hyderabad"); await fireEvent.press(screen.getByRole("combobox", { name: "Project Manager" })); await fireEvent.press(screen.getByRole("radio", { name: "Project Manager A · pm-a@example.test" })); await fireEvent.press(screen.getByRole("button", { name: "Save procurement details" })); await waitFor(() => expect(t.patch).toHaveBeenCalledWith("/admin/projects/project-a/procurement-identity", { expectedVersion: 4, cityName: "Hyderabad", programManagerId: "pm-a" }));
 });
 
 it("reconciles mixed section assignment using approved source and section revision", async () => {
@@ -80,4 +80,16 @@ it("revises a task deadline with reason and preserves the original deadline", as
 it("reconciles a lost evaluation response from scoped history without reposting", async () => {
   const t = setup("design_manager"); let rows: Evaluation[] = []; t.get.mockImplementation(async () => page(rows)); t.post.mockImplementation(async (_path, input) => { rows = [{ id: "evaluation-a", ...input, evaluatorUserId: "actor-a", evaluatorRole: "design_manager", revisionOf: null, createdAt: "2026-10-14T00:00:00Z" }]; throw new ApiError(503, "UNAVAILABLE", "Response lost"); });
   await t.show(<EvaluationView context={t.c} subjectUserId="designer-a" />); await screen.findByText("0 results"); await fireEvent.press(screen.getByRole("button", { name: "Create evaluation" })); await fireEvent.changeText(screen.getByLabelText("Evaluation score (0–100)"), "84"); await fireEvent.changeText(screen.getByLabelText("Assessment comments"), "Delivery review complete"); await fireEvent.press(screen.getByRole("button", { name: "Save evaluation" })); await screen.findByText("Evaluation saved separately from calculated KPI."); expect(t.post).toHaveBeenCalledTimes(1); expect(t.post.mock.calls[0]?.[1]).toMatchObject({ subjectUserId: "designer-a", score: 84, comments: "Delivery review complete" }); expect(t.post.mock.calls[0]?.[1]).not.toHaveProperty("kpi");
+});
+
+it("offers one active Project Manager role and prevents using ordinary role edits for migration", async () => {
+  const t = setup(); const view = await t.show(<UserEditor context={t.c} user={user} roles={["program_manager", "site_manager", "designer"]} current onClose={jest.fn()} />);
+  await fireEvent.press(screen.getByRole("combobox", { name: "User role" }));
+  expect(screen.getByRole("radio", { name: "Project Manager" })).toBeTruthy();
+  expect(screen.queryByRole("radio", { name: "Program Manager" })).toBeNull();
+  await view.unmount();
+  await t.show(<UserEditor context={t.c} user={{ ...user, role: "program_manager" }} roles={["site_manager", "designer"]} current onClose={jest.fn()} />);
+  expect(screen.getByRole("button", { name: "Save user role" })).toBeDisabled();
+  expect(screen.getByText("This historical role requires the reviewed Project Manager migration.")).toBeTruthy();
+  expect(t.patch).not.toHaveBeenCalled();
 });

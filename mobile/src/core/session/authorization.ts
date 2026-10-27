@@ -3,7 +3,7 @@ import { z } from "zod";
 import {
   AUTHORIZATION_POLICY_VERSION,
   PERMISSION_CODES,
-  isFrontendRole,
+  isActiveFrontendRole,
   type AuthorizationSnapshot,
   type PermissionCode,
   type Role
@@ -60,9 +60,20 @@ export class InvalidSessionPayloadError extends Error {
   }
 }
 
+export class RetiredSessionRoleError extends InvalidSessionPayloadError {
+  constructor() {
+    super();
+    this.name = "RetiredSessionRoleError";
+  }
+}
+
+export function isRetiredSessionUser(input: unknown): boolean {
+  return typeof input === "object" && input !== null && "role" in input && input.role === "program_manager";
+}
+
 export function parsePublicUser(input: unknown): PublicUser | null {
   const parsed = rawUserSchema.safeParse(input);
-  if (!parsed.success || !isFrontendRole(parsed.data.role)) return null;
+  if (!parsed.success || !isActiveFrontendRole(parsed.data.role)) return null;
   const base = {
     id: parsed.data.id,
     name: parsed.data.name,
@@ -93,7 +104,7 @@ export function parseAuthorizationSnapshot(
   const parsed = rawAuthorizationSchema.safeParse(input);
   if (
     !parsed.success ||
-    !isFrontendRole(parsed.data.role) ||
+    !isActiveFrontendRole(parsed.data.role) ||
     parsed.data.role !== expectedRole ||
     parsed.data.policyVersion !== AUTHORIZATION_POLICY_VERSION
   ) {

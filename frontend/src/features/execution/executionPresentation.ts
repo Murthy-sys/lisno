@@ -2,7 +2,7 @@ import type { ExecutionAction, ExecutionStatus } from "./executionApi";
 
 export const executionStatusLabels: Record<ExecutionStatus, string> = {
   assigned: "Awaiting acknowledgement", awaiting_schedule: "Awaiting schedule", not_started: "Not started",
-  in_progress: "In progress", blocked: "Blocked", awaiting_verification: "Awaiting Site Manager",
+  in_progress: "In progress", blocked: "Blocked", awaiting_verification: "Awaiting Project Manager",
   site_verified: "Site verified", awaiting_client: "With Client", changes_requested: "Changes requested", client_approved: "Client accepted", superseded: "Superseded"
 };
 export const executionActionLabels: Record<ExecutionAction, string> = {
@@ -11,6 +11,7 @@ export const executionActionLabels: Record<ExecutionAction, string> = {
   verify: "Verify completion", request_changes: "Request changes", hold: "Place on hold", resume: "Resume work", exempt_evidence: "Grant photo exemption"
 };
 export function executionLabel(value: string) {
+  if (value === "site_manager") return "Project Manager";
   return value.split("_").map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(" ");
 }
 export function executionDate(value: string | null) {

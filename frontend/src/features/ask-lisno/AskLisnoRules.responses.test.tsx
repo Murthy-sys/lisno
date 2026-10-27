@@ -23,8 +23,8 @@ const responses = JSON.parse(readFileSync(resolve(process.cwd(), "../assistant-s
 
 vi.mock("../../auth/AuthProvider", () => ({ useAuth: () => ({
   status: "authenticated",
-  user: { id: "staff-priya", name: "Priya Staff", role: "program_manager" },
-  authorization: { role: "program_manager", policyVersion: AUTHORIZATION_POLICY_VERSION, permissions: ["chat.read", "chat.assistant.read"] }
+  user: { id: "staff-priya", name: "Priya Staff", role: "site_manager" },
+  authorization: { role: "site_manager", policyVersion: AUTHORIZATION_POLICY_VERSION, permissions: ["chat.read", "chat.assistant.read"] }
 }) }));
 
 function mountPrivate(displayName?: string) {

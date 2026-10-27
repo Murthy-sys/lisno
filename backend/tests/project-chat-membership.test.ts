@@ -4,6 +4,35 @@ import type { ChatSelection } from "../src/repositories/project-chat.js";
 import { chatUser, membershipSources, CHAT_NOW } from "./helpers/project-chat.js";
 const ids = (sources: ReturnType<typeof membershipSources>, selections: ChatSelection[] = []) => resolveChatMembership(sources, selections).participants.map((row) => row.id);
 describe("project chat current membership", () => {
+    it("derives PM membership from current assignment and rejects stale manual selection", () => {
+        const source = membershipSources();
+        source.users.push(chatUser("pm-a", "site_manager"), chatUser("pm-b", "site_manager"));
+        source.project.programManagerId = "pm-a";
+        expect(ids(source)).toContain("pm-a");
+        expect(ids(source)).not.toContain("pm-b");
+        const selection: ChatSelection = { id: "old-pm", projectId: "a", userId: "pm-a", selectedRole: "site_manager", active: true, version: 1, selectedBy: { id: "admin-a", name: "Admin", role: "admin" }, selectedAt: CHAT_NOW, reason: "Legacy selection", tradeReference: null, revokedAt: null, revokedBy: null, revocationReason: null };
+        source.project.programManagerId = "pm-b";
+        expect(ids(source, [selection])).not.toContain("pm-a");
+        expect(ids(source, [selection])).toContain("pm-b");
+        source.users.find(user => user.id === "pm-b")!.active = false;
+        expect(ids(source, [selection])).not.toContain("pm-b");
+    });
+    it("requires the scalar and current Site task to agree and ignores retired identities", () => {
+        const source = membershipSources();
+        source.project.programManagerId = "site-a";
+        const task = { ...source.workflowTasks[0]!, id: "site-task", kind: "site_execution" as const,
+            assigneeRole: "site_manager" as const, assigneeUserId: "site-a", sourceSectionId: null, sourceLineItemKey: null };
+        source.workflowTasks.push(task);
+        expect(ids(source)).toContain("site-a");
+        source.workflowTasks.push({ ...task, id: "duplicate-site" });
+        expect(ids(source)).not.toContain("site-a");
+        source.workflowTasks.pop();
+        source.project.programManagerId = null;
+        expect(ids(source)).not.toContain("site-a");
+        source.project.programManagerId = "site-a";
+        source.users.find(user => user.id === "site-a")!.role = "program_manager";
+        expect(ids(source)).not.toContain("site-a");
+    });
     it("uses only current involved identities and canonical included trade rows", () => {
         const members = ids(membershipSources());
         expect(members).toEqual(expect.arrayContaining(["super", "admin-a", "client-a", "designer-a", "manager-a", "sales-a", "electric-a"]));
@@ -53,13 +82,13 @@ describe("project chat current membership", () => {
         source.estimates[0]!.projectId = "b";
         expect(ids(source)).not.toContain("electric-a");
     });
-    it("permits valid role/module grants and rejects forged direct_assignment rows", () => {
+    it("does not let module grants bypass the current Project Manager assignment", () => {
         const source = membershipSources();
         const grant = source.grants[0]!;
         source.grants.push({ ...grant, id: "direct", userId: "site-a", module: "execution", source: "direct_assignment" });
         expect(ids(source)).not.toContain("site-a");
         source.grants[1]!.source = "access_request";
-        expect(ids(source)).toContain("site-a");
+        expect(ids(source)).not.toContain("site-a");
         source.grants[1]!.module = "finance";
         expect(ids(source)).not.toContain("site-a");
     });

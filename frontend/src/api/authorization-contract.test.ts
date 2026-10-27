@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   AUTHORIZATION_POLICY_VERSION,
+  ACTIVE_ROLE_CODES,
   OPERATIONAL_ROLES,
   PERMISSION_CODES,
   PROJECT_MODULES,
@@ -11,6 +12,7 @@ import {
   ROLE_LABELS,
   WORKER_ROLES,
   isFrontendRole,
+  isActiveFrontendRole,
   roleMayRequestModule
 } from "./authorization-contract";
 import { ROUTE_REGISTRY } from "../app/routeRegistry";
@@ -40,6 +42,7 @@ const estimateCollaborationPermissions = [
   "projects.client_invitation.read",
   "projects.client_invitation.manage",
   "identity.project_invitation.accept",
+  "estimation.tiers.read", "estimation.tiers.select", "estimation.dimensions.update",
   "estimation.requirements.read",
   "estimation.requirements.create",
   "estimation.requirements.update",
@@ -84,6 +87,13 @@ const procurementPermissions = [
 ] as const;
 
 describe("frontend authorization contract", () => {
+  it("retains historical role parsing but exposes only one active Project Manager", () => {
+    expect(isFrontendRole("program_manager")).toBe(true);
+    expect(isActiveFrontendRole("program_manager")).toBe(false);
+    expect(ACTIVE_ROLE_CODES).toEqual(ROLE_CODES.filter(role => role !== "program_manager"));
+    expect(isActiveFrontendRole("site_manager")).toBe(true);
+    expect(ROLE_LABELS.site_manager).toBe("Project Manager");
+  });
   it("publishes the exact Prompt 2 role and module vocabulary", () => {
     expect(ROLE_CODES).toEqual(expectedRoles);
     expect(PROJECT_MODULES).toEqual([
@@ -101,14 +111,15 @@ describe("frontend authorization contract", () => {
       "execution"
     ]);
     expect(AUTHORIZATION_POLICY_VERSION).toBe(
-      "2026-10-14.main-line-design-rules.v1"
+      "2026-10-27.project-manager-consolidation.v1"
     );
   });
 
-  it("publishes all 196 unique permissions in canonical order", () => {
-    expect(PERMISSION_CODES).toHaveLength(196);
-    expect(new Set(PERMISSION_CODES)).toHaveLength(196);
-    expect(PERMISSION_CODES.slice(0, 21)).toEqual([...estimateCollaborationPermissions, "ask_lisno.request", "chat.assistant.read", "chat.assistant.request", "procurement.vendor_access.read", "procurement.vendor_access.manage", "execution.tracker.read", "execution.work.update", "execution.staff.manage", "execution.verify", "execution.policy.manage", "execution.notifications.read", "execution.access.retry"]);
+  it("publishes all 217 unique permissions in canonical order", () => {
+    expect(PERMISSION_CODES).toHaveLength(217);
+    expect(new Set(PERMISSION_CODES)).toHaveLength(217);
+    expect(PERMISSION_CODES.slice(0, 18)).toEqual(["pm.vendor_notices.respond", "pm.workspace.read", "pm.requests.create", "pm.requests.act", "pm.requests.receive", "pm.selections.act", "pm.supply.sign", "pm.vendors.manage", "pm.certifications.act", "pm.client.manage", "pm.snags.manage", "pm.quality.manage", "pm.performance.read", "pm.leaderboard.read", "pm.bonus.read", "pm.evidence.manage", "pm.evidence.read", "pm.notifications.read"]);
+    expect(PERMISSION_CODES.filter(permission => !permission.startsWith("pm.")).slice(0, 24)).toEqual([...estimateCollaborationPermissions, "ask_lisno.request", "chat.assistant.read", "chat.assistant.request", "procurement.vendor_access.read", "procurement.vendor_access.manage", "execution.tracker.read", "execution.work.update", "execution.staff.manage", "execution.verify", "execution.policy.manage", "execution.notifications.read", "execution.access.retry"]);
     expect(PERMISSION_CODES).toContain("chat.action_types.manage");
     expect(PERMISSION_CODES).toContain("chat.project_name.manage");
     expect(PERMISSION_CODES).toContain("estimation.design_upload.delete");
@@ -199,8 +210,8 @@ describe("frontend authorization contract", () => {
     ).toEqual(projectFinancePermissions);
   });
 
-  it("keeps the protected frontend registry at exactly 46 routes", () => {
-    expect(ROUTE_REGISTRY).toHaveLength(46);
+  it("keeps the protected frontend registry at exactly 48 routes", () => {
+    expect(ROUTE_REGISTRY).toHaveLength(48);
     expect(ROUTE_REGISTRY.map(({ path }) => path)).toEqual(
       expect.arrayContaining([
         "/execution", "/projects/:projectId/execution",
@@ -243,7 +254,6 @@ describe("frontend authorization contract", () => {
       "estimator_sales",
       "designer",
       "procurement",
-      "program_manager",
       "finance_head",
       "site_manager",
       "worker_electrician",
@@ -265,7 +275,7 @@ describe("frontend authorization contract", () => {
       procurement: "Procurement",
       program_manager: "Program Manager",
       finance_head: "Finance Manager",
-      site_manager: "Site Manager",
+      site_manager: "Project Manager",
       worker_electrician: "Electrician",
       worker_plumber: "Plumber",
       worker_carpenter: "Carpenter",

@@ -22,8 +22,9 @@ export function chatFixtureData() {
     const seed: SeedData = { users, projects, leads, projectAccessGrants: [grant], userInvitations: [], estimateResponsibilities: [], leadActivities: [], floors: [], stages: [], tasks: [], taskEvents: [], designVersions: [], extractionJobs: [], sourcePages: [], designSections: [], designSectionRevisions: [], evaluations: [], auditEvents: [], accessRequests: [] };
     return { seed, estimates, workflowTasks };
 }
-export function createChatFixture() {
-    const { seed, estimates, workflowTasks } = chatFixtureData();
+export function createChatFixture(configure?: (data: ReturnType<typeof chatFixtureData>) => void) {
+    const data = chatFixtureData(); configure?.(data);
+    const { seed, estimates, workflowTasks } = data;
     const repository = createMemoryRepository(seed);
     const audit = createAuditService(repository);
     const chatRepository = createMemoryProjectChatRepository(repository, { estimates, workflowTasks });

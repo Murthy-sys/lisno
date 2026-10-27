@@ -32,7 +32,7 @@ const topics: Array<[Topic, RegExp]> = [
   ["procurement", /\b(procurement|purchase|order|delivery|dispatch|supplier)\b/iu],
   ["coordination", /\b(project|timeline|schedule|deadline|handover)\b/iu]
 ];
-const topicRoles: Record<Topic, Role[]> = { estimate: ["estimator_sales"], design: ["designer", "design_manager"], execution: ["site_manager"], procurement: ["procurement"], coordination: ["program_manager"] };
+const topicRoles: Record<Topic, Role[]> = { estimate: ["estimator_sales"], design: ["designer", "design_manager"], execution: ["site_manager"], procurement: ["procurement"], coordination: ["site_manager"] };
 
 /** No new authority is inferred from a person's role or their presence in a chat. */
 async function resolveOwner(tx: ChatTransaction, sources: ChatSources, message: ChatStoredMessage, overrideTopic?: Topic) {
@@ -55,7 +55,7 @@ async function resolveOwner(tx: ChatTransaction, sources: ChatSources, message: 
     if (assigned.length === 1) return { owner: chatPerson(assigned[0]!), fallback: false };
   }
   const manager = selected(sources.project.programManagerId);
-  if (manager?.role === "program_manager") return { owner: chatPerson(manager), fallback: true };
+  if (manager?.role === "site_manager") return { owner: chatPerson(manager), fallback: true };
   const superAdmins = sources.users.filter(user => user.active && user.role === "super_admin");
   const administrator = superAdmins.length === 1 ? selected(superAdmins[0]!.id) : undefined;
   return { owner: administrator ? chatPerson(administrator) : null, fallback: true };

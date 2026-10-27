@@ -705,7 +705,7 @@ function assertSubmittedMilestoneReviewerCoverage(proposal: TenderRow): void {
   }
   const covered = new Set<string>(selected.flatMap(row => row.reviewerSlots));
   const missing = requiredProcurementBasketApprovalSlots(grossPaise).filter(slot => !covered.has(slot));
-  const labels: Record<string, string> = { program_manager: "Site Manager", designer: "Design",
+  const labels: Record<string, string> = { program_manager: "Project Manager", designer: "Design",
     procurement: "Procurement", finance_head: "Finance" };
   if (missing.length) tenderConflict("PROCUREMENT_BASKET_MILESTONE_REVIEWERS_REQUIRED",
     `Select approver chips for ${missing.map(slot => labels[slot]).join(", ")} before submitting.`);

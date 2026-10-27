@@ -1,7 +1,7 @@
 import {
   AUTHORIZATION_POLICY_VERSION,
   PERMISSION_CODES,
-  ROLE_CODES,
+  ACTIVE_ROLE_CODES,
   type AuthorizationSnapshot,
   type Role
 } from "../contracts/authorization";
@@ -28,14 +28,23 @@ describe("authorized mobile navigation", () => {
     expect(resolveAuthorizedFeature("ask-lisno", "admin", snapshot("admin"))).toBeNull();
     expect(rootTabsForAuthorization("client", client).map(tab => tab.destination?.id ?? tab.id)).toEqual(["projects", "messages", "profile", "more"]);
   });
-  it.each(ROLE_CODES)("provides %s with an authorized landing destination", (role) => {
+  it.each(ACTIVE_ROLE_CODES)("provides %s with an authorized landing destination", (role) => {
     const landing = landingDestination(role, snapshot(role));
     expect(landing).not.toBeNull();
     expect(snapshot(role).permissions).toContain(landing?.permission);
   });
 
+  it("uses one Project Manager operational landing and retains existing work and approvals", () => {
+    const manager = snapshot("site_manager");
+    expect(landingDestination("site_manager", manager)?.id).toBe("execution");
+    expect(destinationsForAuthorization("site_manager", manager).map(value => value.id)).toEqual(expect.arrayContaining(["execution", "projects", "work", "work-order-approvals", "performance"]));
+    expect(landingDestination("program_manager", snapshot("program_manager"))).toBeNull();
+    expect(destinationsForAuthorization("program_manager", snapshot("program_manager"))).toEqual([]);
+    expect(rootTabsForAuthorization("program_manager", snapshot("program_manager"))).toEqual([]);
+  });
+
   it("uses at most five persistent destinations", () => {
-    for (const role of ROLE_CODES) {
+    for (const role of ACTIVE_ROLE_CODES) {
       const tabs = rootTabsForAuthorization(role, snapshot(role));
       expect(tabs.length).toBeGreaterThanOrEqual(3);
       expect(tabs.length).toBeLessThanOrEqual(5);

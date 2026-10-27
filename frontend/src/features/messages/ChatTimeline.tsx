@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
-import { Check, ChevronDown } from "lucide-react";
+import { ChatIcon } from "./ChatIcon";
 import { chatDueDate } from "./ChatTrackedAction";
 import { ChatMessageAttachments } from "./ChatMessageAttachments";
 import { ChatFileTray } from "./ChatFileTray";
@@ -21,7 +21,7 @@ export function chatTime(value: string) {
   return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(value));
 }
 function MessageTime({ message, own }: { message: ChatMessage; own: boolean }) {
-  return <span className="project-chat-message__time"><time dateTime={message.createdAt} title={chatTime(message.createdAt)}>{new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(new Date(message.createdAt))}</time>{own ? <span role="img" aria-label="Sent" title="Sent"><Check size={14} aria-hidden="true" /></span> : null}</span>;
+  return <span className="project-chat-message__time"><time dateTime={message.createdAt} title={chatTime(message.createdAt)}>{new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(new Date(message.createdAt))}</time>{own ? <span role="img" aria-label="Sent" title="Sent"><ChatIcon name="check" size={14} aria-hidden="true" /></span> : null}</span>;
 }
 function MessageBody({ message, own }: { message: ChatMessage; own: boolean }) {
   const parts = [];
@@ -39,7 +39,7 @@ function MessageBody({ message, own }: { message: ChatMessage; own: boolean }) {
 function AssistantMessageMenu({ projectId, message, items }: { projectId: string; message: ChatMessage; items: ChatMenuItem[] }) {
   const action = useChatAssistantRequest(projectId, message);
   const options = [...items, ...(action.canRequest && message.assistant?.resultId && !action.busy ? [{ label: "Refresh AI reply", onSelect: action.request }] : [])];
-  return <>{options.length ? <ChatActionMenu label={`Message options from ${message.author.name}`} items={options} icon={<ChevronDown size={16} aria-hidden="true" />} /> : null}{action.error ? <p role="alert">{action.error}</p> : null}</>;
+  return <>{options.length ? <ChatActionMenu label={`Message options from ${message.author.name}`} items={options} icon={<ChatIcon name="down" size={16} aria-hidden="true" />} /> : null}{action.error ? <p role="alert">{action.error}</p> : null}</>;
 }
 
 function useVisibleChatRead({ projectId, messages, lastRead, hasOlder, filtered, container }: { projectId: string; messages: ChatMessage[]; lastRead: number; hasOlder: boolean; filtered: boolean; container: RefObject<HTMLDivElement | null> }) {
@@ -202,7 +202,7 @@ export function ChatTimeline({ projectId, messages, attempts, lastRead, hasOlder
           {firstUnreadId === message.id ? <p className="project-chat-unread"><span>Unread messages</span></p> : null}
           <article data-message-id={message.id} className={`project-chat-message${own ? " project-chat-message--own" : ""}${service ? " project-chat-message--assistant" : ""}${grouped ? " project-chat-message--grouped" : " project-chat-message--first"}${around === message.id ? " project-chat-message--target" : ""}`} aria-label={`Message from ${message.author.name}`}>
             <div className={grouped || own ? "sr-only" : "project-chat-message__meta"}><strong style={service ? undefined : { color: chatSenderColor(message.author.id) }}>{lisnoAssistant && !grouped && !own ? <LisnoChatMark /> : null}{message.author.name}</strong><span>{message.author.kind === "service" ? "AI assistant" : ROLE_LABELS[message.author.role]}</span></div>
-            {items.length || (!service && message.assistant?.resultId) ? <div className="project-chat-message__menu">{!service && message.assistant ? <AssistantMessageMenu projectId={projectId} message={message} items={items} /> : <ChatActionMenu label={`Message options from ${message.author.name}`} items={items} icon={<ChevronDown size={16} aria-hidden="true" />} />}</div> : null}
+            {items.length || (!service && message.assistant?.resultId) ? <div className="project-chat-message__menu">{!service && message.assistant ? <AssistantMessageMenu projectId={projectId} message={message} items={items} /> : <ChatActionMenu label={`Message options from ${message.author.name}`} items={items} icon={<ChatIcon name="down" size={16} aria-hidden="true" />} />}</div> : null}
             {message.replyTo ? <button type="button" className="project-chat-quote" onClick={() => onContext(message.replyTo!.id)} aria-label={`View original message from ${message.replyTo.author.name}`}><strong style={{ color: chatSenderColor(message.replyTo.author.id) }}>{message.replyTo.author.name}</strong><span>{message.replyTo.body || attachmentSummaryText(message.replyTo.attachmentSummary)}</span></button> : null}
             {message.priority !== "normal" ? <button type="button" className={`project-chat-priority project-chat-priority--${message.priority} project-chat-message__issue`} onClick={() => onIssue(message)} aria-label={`View ${message.priority} issue details`}>{message.action?.typeName ?? (message.priority === "critical" ? "Critical" : "Important")} · {message.issueStatus === "resolved" ? "Resolved" : "Open"}</button> : null}
             {message.action ? <div className="project-chat-tracked-details"><span>Responsible: {message.responsible?.name ?? "Unavailable"}{message.responsible && !message.responsible.available ? " (unavailable)" : ""}</span><span>Due <time dateTime={message.action.dueDate}>{chatDueDate(message.action.dueDate)}</time></span>{message.raisedBy ? <span>Created by {message.raisedBy.name}</span> : null}</div> : null}

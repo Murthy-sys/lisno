@@ -1,3 +1,4 @@
+import { PMCounterpartPanel } from "../project-manager/PMCounterpartPanel";
 import { ProjectChatNavigation } from "../messages";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -106,6 +107,7 @@ export function ProjectWorkspace() {
 
   return (
     <section className="designer-page project-workspace" aria-labelledby="project-title">
+      <PMCounterpartPanel projectId={projectId ?? ""} />
       <PageHeader
         id="project-title"
         title={project.name}

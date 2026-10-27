@@ -79,6 +79,9 @@
   .site-workspace .designer-kpi__identity { flex-basis: auto; }
 }
 @media (max-width: 520px) {
+  .site-workspace__project-actions { flex-basis: 100%; }
+  .site-workspace__project-actions summary { width: fit-content; }
+  .site-workspace__project-actions > div { inset-inline-start: 0; inset-inline-end: auto; width: min(280px,100%); }
   .site-workspace { gap: 13px; }
   .site-workspace h1 { font-size: 20px; }
   .site-workspace__filters { grid-template-columns: 1fr; }

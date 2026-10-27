@@ -364,7 +364,7 @@ export function createProjectService(
     async list(actor, pagination) {
       const user = await requireActor(repository, actor);
       const module = currentProjectModule();
-      const page = user.role === "procurement" || user.role === "program_manager"
+      const page = user.role === "procurement" || user.role === "site_manager"
         ? await repository.pageProjectsForUserRead(user, pagination)
         : await repository.pageProjectsForUserInModule(user, module, pagination);
       const tasks = await repository.listTasksForProjectIds(

@@ -189,6 +189,27 @@ function createRateLimitApp(input: {
 const attempt = (app: express.Express, ip: string) =>
   request(app).post("/auth").set("X-Forwarded-For", ip).send();
 
+describe("consolidated Project Manager authentication", () => {
+  it("refuses legacy-role login even with valid credentials", async () => {
+    const seed = seedWithSingleUser({ role: "program_manager" });
+    const response = await request(createTestApp(seed)).post("/api/v1/auth/login")
+      .send({ email: seed.users[0]!.email, password: DEMO_PASSWORD });
+    expect(response.status).toBe(401);
+    expect(response.body).not.toHaveProperty("data.token");
+  });
+
+  it("accepts the canonical role but rejects pre-conversion session versions", async () => {
+    const seed = seedWithSingleUser({ role: "site_manager", sessionVersion: 5 });
+    const app = createTestApp(seed);
+    const oldToken = jwt.sign({ id: seed.users[0]!.id, role: "site_manager", sessionVersion: 4 }, JWT_SECRET, { expiresIn: 900 });
+    expect((await request(app).get("/api/v1/auth/me").set("Authorization", `Bearer ${oldToken}`)).status).toBe(401);
+    const response = await request(app).post("/api/v1/auth/login")
+      .send({ email: seed.users[0]!.email, password: DEMO_PASSWORD });
+    expect(response.status).toBe(200);
+    expect(jwt.decode(response.body.data.token)).toMatchObject({ id: seed.users[0]!.id, role: "site_manager", sessionVersion: 5 });
+  });
+});
+
 describe("authentication rate limiter", () => {
   it("keeps no more than the configured number of live IP buckets", async () => {
     let now = 0;

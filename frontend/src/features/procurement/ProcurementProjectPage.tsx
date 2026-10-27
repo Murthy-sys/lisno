@@ -1,3 +1,4 @@
+import { PMCounterpartPanel } from "../project-manager/PMCounterpartPanel";
 import { VendorAccessPanel } from "../execution/VendorAccessPanel";
 import { ProjectChatNavigation } from "../messages";
 import { useRef } from "react";
@@ -44,6 +45,7 @@ export function ProcurementProjectPage() {
       className="procurement-project-page"
       aria-labelledby="procurement-project-page-title"
     >
+      <PMCounterpartPanel projectId={projectId ?? ""} />
       <PageHeader
         id="procurement-project-page-title"
         eyebrow="Project procurement"

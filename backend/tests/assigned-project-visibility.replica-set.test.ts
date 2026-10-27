@@ -30,7 +30,7 @@ afterAll(async () => replica?.stop());
 function fixtureSeed() {
   const seed = structuredClone(demoSeedData);
   const baseUser = seed.users[0]!;
-  seed.users = ["procurement", "program_manager", "designer"].flatMap(role => ["one", "two"].map(suffix => ({
+  seed.users = ["procurement", "site_manager", "designer"].flatMap(role => ["one", "two"].map(suffix => ({
     ...baseUser, id: `${role}-${suffix}`, name: "Same display name", email: `${role}-${suffix}@visibility.test`,
     emailNormalized: `${role}-${suffix}@visibility.test`, role: role as UserRecord["role"], active: true, accountKind: "standard" as const,
     managerId: null, authorizedClientIds: []
@@ -39,7 +39,7 @@ function fixtureSeed() {
   const ids = [...VISIBLE, "foreign", "wrong-kind", "wrong-role", "superseded", "null-owner", "granted", "revoked", "wrong-module", "wrong-source"];
   seed.projects = ids.map(id => ({ ...baseProject, id, name: id, clientId: null, clientMobile: "9000000000", clientAddress: "Test address",
     assignedDesignerIds: VISIBLE.includes(id) ? ["designer-one"] : ["designer-two"], initiatingDesignerId: null,
-    assignedEstimatorId: null, managerId: null, programManagerId: VISIBLE.includes(id) ? "program_manager-one" : "program_manager-two",
+    assignedEstimatorId: null, managerId: null, programManagerId: VISIBLE.includes(id) ? "site_manager-one" : "site_manager-two",
     designWorkflowStages: createProjectDesignWorkflow(id) }));
   seed.projectWorkflowAssignments = VISIBLE.map(projectId => ({ projectId, kind: "procurement", assigneeRole: "procurement", assigneeUserId: "procurement-one" }));
   seed.projectWorkflowAssignments.push(
@@ -74,8 +74,8 @@ async function setup(kind: "memory" | "mongo", configure?: (seed: SeedData) => v
     for (const project of seed.projects) await repository.createProject(project);
     await ProjectAccessGrantModel.insertMany(seed.projectAccessGrants.map(grant => ({ ...grant, _id: grant.id })));
     await ProjectWorkflowTaskModel.insertMany(seed.projectWorkflowAssignments!.map((task, index) => ({ ...task,
-      _id: `assignment-${index}`, dedupeKey: `assignment-${index}`, estimateId: `estimate-${task.projectId}`, designPlanVersion: 0,
-      preparationOnly: true, title: "Preparation assignment", status: "open", openedAt: new Date(NOW) })));
+      _id: task.id ?? `assignment-${index}`, dedupeKey: `assignment-${index}`, estimateId: task.estimateId ?? `estimate-${task.projectId}`, designPlanVersion: task.designPlanVersion ?? 0,
+      preparationOnly: task.preparationOnly ?? true, title: "Preparation assignment", status: task.status ?? "open", openedAt: new Date(NOW) })));
     // Fixture projection supplies saved estimate heads without invoking publication or delivery.
     await EstimateModel.collection.insertMany(seed.estimateSummaries!.map(row => ({ ...row, _id: row.id,
       createdAt: new Date(NOW), updatedAt: new Date(NOW), clientDecisionAt: row.clientDecisionAt ? new Date(row.clientDecisionAt) : null })));
@@ -89,7 +89,7 @@ async function setup(kind: "memory" | "mongo", configure?: (seed: SeedData) => v
 }
 
 for (const kind of ["memory", "mongo"] as const) describe(`${kind} assigned project read visibility`, () => {
-  it.each(["designer", "procurement", "program_manager"] as const)("lists and opens %s assignments independently of estimate state without writes", async role => {
+  it.each(["designer", "procurement", "site_manager"] as const)("lists and opens %s assignments independently of estimate state without writes", async role => {
     const f = await setup(kind);
     const actor = f.actor(`${role}-one`);
     const expected = role === "procurement" ? [...VISIBLE, "granted"] : VISIBLE;
@@ -118,11 +118,27 @@ for (const kind of ["memory", "mongo"] as const) describe(`${kind} assigned proj
     expect((await f.repository.pageAuditEvents({}, { offset: 0, limit: 100 })).total).toBe(0);
   });
 
+  it.each(["task-only", "mismatch", "duplicate"] as const)("denies %s Project Manager ownership consistently in lists and details", async state => {
+    const f = await setup(kind, seed => {
+      const project = seed.projects.find(row => row.id === "assigned-approved")!;
+      const source = seed.estimateSummaries!.find(row => row.projectId === project.id)!;
+      Object.assign(source, { designPlanStatus: "approved", designPlanVersion: 1 });
+      if (state === "task-only") project.programManagerId = null;
+      seed.projectWorkflowAssignments!.push({ id: "site-current", projectId: project.id, estimateId: source.id,
+        kind: "site_execution", assigneeRole: "site_manager", assigneeUserId: state === "mismatch" ? "site_manager-two" : "site_manager-one",
+        version: 1, designPlanVersion: 1, preparationOnly: false, status: "open" });
+      if (state === "duplicate") seed.projectWorkflowAssignments!.push({ ...seed.projectWorkflowAssignments!.at(-1)!, id: "site-duplicate" });
+    });
+    const manager = f.actor("site_manager-one");
+    expect(await f.repository.findProjectForUserRead(manager, "assigned-approved")).toBeNull();
+    expect((await f.repository.pageProjectsForUserRead(manager, { offset: 0, limit: 100 })).items.map(row => row.id)).not.toContain("assigned-approved");
+    await request(f.app).get("/projects/assigned-approved").set("Authorization", `Bearer ${manager.id}`).expect(404);
+  });
   it("returns source conflicts with no observer actions instead of hiding assigned project progress", async () => {
     const f = await setup(kind, seed => {
       seed.estimateSummaries!.push({ ...seed.estimateSummaries!.find(row => row.status === "client_approved")!, id: "conflicting-approved-estimate" });
     });
-    for (const role of ["procurement", "program_manager"]) {
+    for (const role of ["procurement", "site_manager"]) {
       const view = await f.service.designWorkflow(f.actor(`${role}-one`), "assigned-approved");
       expect(view.estimateApprovalStatus).toBe("source_issue");
       expect(view.projectStages!.every(stage => stage.operational!.availableActions.length === 0)).toBe(true);
@@ -131,7 +147,7 @@ for (const kind of ["memory", "mongo"] as const) describe(`${kind} assigned proj
 
   it("denies unrelated, role-mismatched, superseded and invalid-grant reads without disclosing existence", async () => {
     const f = await setup(kind);
-    for (const role of ["procurement", "program_manager", "designer"]) {
+    for (const role of ["procurement", "site_manager", "designer"]) {
       const actor = f.actor(`${role}-one`);
       for (const id of ["foreign", "wrong-kind", "wrong-role", "superseded", "null-owner", "revoked", "wrong-module", "wrong-source", "missing"]) {
         expect(await f.repository.findProjectForUserRead(actor, id)).toBeNull();
@@ -145,8 +161,8 @@ for (const kind of ["memory", "mongo"] as const) describe(`${kind} assigned proj
     const f = await setup(kind);
     const procurement = f.actor("procurement-one");
     expect(await f.repository.findProjectForUserRead(procurement, "granted")).toMatchObject({ id: "granted" });
-    expect(await f.repository.findProjectForUserRead(f.actor("program_manager-one"), "granted")).toBeNull();
-    for (const id of ["procurement-one", "program_manager-one"]) {
+    expect(await f.repository.findProjectForUserRead(f.actor("site_manager-one"), "granted")).toBeNull();
+    for (const id of ["procurement-one", "site_manager-one"]) {
       const actor = f.actor(id);
       await expect(requireDesignWorkflowScope(f.repository, actor, VISIBLE[0]!)).rejects.toMatchObject({ status: 404 });
       const workflow = createDesignWorkflowStateService(f.repository, createAuditService(f.repository), () => new Date(NOW));
@@ -160,7 +176,7 @@ for (const kind of ["memory", "mongo"] as const) describe(`${kind} assigned proj
 
   it("revalidates actor identity and denies inactive or role-forged observer reads", async () => {
     const f = await setup(kind, seed => { seed.users.find(user => user.id === "procurement-one")!.active = false; });
-    for (const actor of [f.actor("procurement-one"), { ...f.actor("program_manager-one"), role: "procurement" as const }]) {
+    for (const actor of [f.actor("procurement-one"), { ...f.actor("site_manager-one"), role: "procurement" as const }]) {
       await expect(runWithHumanOperation("GET /projects", () => f.service.list(actor, { offset: 0, limit: 100 }))).rejects.toMatchObject({ status: 401 });
       await expect(runWithHumanOperation("GET /projects/:projectId", () => f.service.get(actor, VISIBLE[0]!))).rejects.toMatchObject({ status: 401 });
       await expect(f.service.designWorkflow(actor, VISIBLE[0]!)).rejects.toMatchObject({ status: 404 });
@@ -172,17 +188,17 @@ for (const kind of ["memory", "mongo"] as const) describe(`${kind} assigned proj
     expect(await f.repository.findProjectForUserRead(f.actor("procurement-one"), "assigned-none")).not.toBeNull();
     const changedSeed = structuredClone(f.seed);
     changedSeed.projectWorkflowAssignments!.find(task => task.projectId === "assigned-none")!.assigneeUserId = "procurement-two";
-    changedSeed.projects.find(project => project.id === "assigned-none")!.programManagerId = "program_manager-two";
+    changedSeed.projects.find(project => project.id === "assigned-none")!.programManagerId = "site_manager-two";
     changedSeed.projectAccessGrants.find(grant => grant.projectId === "granted")!.active = false;
     let repository: AppRepository;
     if (kind === "memory") repository = createMemoryRepository(changedSeed);
     else {
       await ProjectWorkflowTaskModel.updateOne({ projectId: "assigned-none" }, { $set: { assigneeUserId: "procurement-two" } });
-      await ProjectModel.updateOne({ _id: "assigned-none" }, { $set: { programManagerId: "program_manager-two" } });
+      await ProjectModel.updateOne({ _id: "assigned-none" }, { $set: { programManagerId: "site_manager-two" } });
       await f.repository.revokeProjectAccessGrant("grant-granted", 1, { revokedAt: NOW, revokedById: "reviewer", revocationReason: "Removed", updatedAt: NOW });
       repository = f.repository;
     }
-    for (const role of ["procurement", "program_manager"]) {
+    for (const role of ["procurement", "site_manager"]) {
       expect(await repository.findProjectForUserRead(f.actor(`${role}-one`), "assigned-none")).toBeNull();
       expect(await repository.findProjectForUserRead(f.actor(`${role}-two`), "assigned-none")).toMatchObject({ id: "assigned-none" });
       expect((await repository.pageProjectsForUserRead(f.actor(`${role}-one`), { offset: 0, limit: 100 })).items.map(project => project.id)).not.toContain("assigned-none");

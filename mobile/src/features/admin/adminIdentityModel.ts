@@ -92,7 +92,7 @@ export function validateInvitationDraft(
     errors.email = "Enter a valid email address.";
   }
 
-  if (!availableRoles.includes(draft.role as InvitableRole)) {
+  if (draft.role === "program_manager" || !availableRoles.includes(draft.role as InvitableRole)) {
     errors.role = "Choose an available role.";
   }
 

@@ -140,7 +140,8 @@ beforeEach(async () => {
     clientName: "Test client", clientEmail: "client@example.test", clientEmailNormalized: "client@example.test",
     clientMobile: "9000000000", clientAddress: "Bengaluru",
     plannedStartAt: at, plannedEndAt: new Date("2026-12-01T00:00:00.000Z"),
-    assignedDesignerIds: ["designer"] });
+    assignedDesignerIds: ["designer"], programManagerId: "site-manager" });
+  await EstimateModel.collection.insertOne({ _id: "estimate-a", projectId: "project-a", status: "client_approved", designPlanStatus: "approved", designPlanVersion: 1 } as any);
   await UserModel.create([{ _id: buyer.id, name: buyer.name, email: buyer.email,
     emailNormalized: buyer.email, passwordHash: "fixture", role: buyer.role, active: true },
   { _id: "buyer-two", name: "Buyer Two", email: "buyer-two@example.test", emailNormalized: "buyer-two@example.test",
@@ -309,8 +310,8 @@ describe("procurement basket tender transaction flow", () => {
     const submitted = await awards.submit(buyer, "project-a", "basket-a", enquiry.id, award.id,
       { expectedVersion: award.version, idempotencyKey: "assigned-project-submit" });
     const project = (await ProjectModel.findById("project-a").lean())!;
-    await ProjectModel.create({ ...project, _id: "project-b", assignedDesignerIds: ["designer", "designer-b"] });
-    await EstimateModel.collection.insertOne({ _id: "estimate-b", projectId: "project-b", designPlanDesignerId: "designer-b" } as never);
+    await ProjectModel.create({ ...project, _id: "project-b", programManagerId: "site-b", assignedDesignerIds: ["designer", "designer-b"] });
+    await EstimateModel.collection.insertOne({ _id: "estimate-b", projectId: "project-b", designPlanDesignerId: "designer-b", status: "client_approved", designPlanStatus: "approved", designPlanVersion: 1 } as never);
     await UserModel.create(["site-b", "designer-b", "legacy-pm"].map(id => ({ _id: id, name: id,
       email: `${id}@example.test`, emailNormalized: `${id}@example.test`, passwordHash: "fixture", active: true,
       role: id === "site-b" ? "site_manager" : id === "designer-b" ? "designer" : "program_manager" })));
@@ -1696,6 +1697,7 @@ describe("procurement basket tender transaction flow", () => {
     await UserModel.create({ _id: "new-site-manager", name: "New PM", email: "new-pm@example.test",
       emailNormalized: "new-pm@example.test", passwordHash: "fixture", role: "site_manager", active: true });
     await ProjectWorkflowTaskModel.updateOne({ _id: "site-task-a" }, { $set: { assigneeUserId: "new-site-manager" }, $inc: { version: 1 } });
+    await ProjectModel.updateOne({ _id: "project-a" }, { $set: { programManagerId: "new-site-manager" }, $inc: { procurementIdentityVersion: 1 } });
     const revised = await awards.update(buyer, "project-a", "basket-a", enquiry.id, award.id, {
       expectedVersion: approved.version, idempotencyKey: "replay-revised-award", bidId: bid.bidId,
       advanceBasisPoints: 2_000, milestoneReviewers: fullReviewers, designerId: "designer",

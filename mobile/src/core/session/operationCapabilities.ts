@@ -1,5 +1,5 @@
 import type { AuthenticatedSession } from "../../contracts/session";
-import { AUTHORIZATION_POLICY_VERSION } from "../../contracts/authorization";
+import { AUTHORIZATION_POLICY_VERSION, isActiveFrontendRole } from "../../contracts/authorization";
 import {
   PROTECTED_OPERATIONS,
   type ProtectedOperation
@@ -29,6 +29,7 @@ export function operationCapability(
   const policy = OPERATION_POLICIES.get(operation) ?? null;
   if (!policy) return { allowed: false, policy: null, reason: "unknown_operation" };
   if (
+    !isActiveFrontendRole(session.user.role) ||
     session.authorization.role !== session.user.role ||
     session.authorization.policyVersion !== AUTHORIZATION_POLICY_VERSION
   ) {

@@ -41,6 +41,18 @@ function statusFixture(projectId = "project-a"): ProjectStatusSummary {
   return { projectId, projectName: "Courtyard residence", projectStatus: "active", serverNow: "2026-10-01T08:00:00Z", state: "active", currentStage: { key: "estimate_review", label: "Estimate approval" }, issue: null,
     pendingActions: [{ id: "client-review", stageKey: "estimate_review", stageLabel: "Estimate approval", action: "Review the estimate", responsibleRole: "client", people: [{ id: "client-a", name: "Maya Client", role: "client" }], state: "pending", scheduledAt: null, deadlineAt: null, blocker: null }] };
 }
+
+function responsiveDetails(initialWide: boolean) {
+  let wide = initialWide;
+  const listeners = new Set<() => void>();
+  window.matchMedia = vi.fn().mockImplementation((query: string) => ({
+    matches: query === "(min-width: 1440px)" ? wide : query.includes("pointer: fine"),
+    addEventListener: (_event: string, listener: () => void) => { if (query === "(min-width: 1440px)") listeners.add(listener); },
+    removeEventListener: (_event: string, listener: () => void) => { if (query === "(min-width: 1440px)") listeners.delete(listener); }
+  }));
+  return (next: boolean) => act(() => { wide = next; listeners.forEach(listener => listener()); });
+}
+
 beforeEach(() => {
   mocks.streams = []; mocks.status = "authenticated"; mocks.user = { id: "client-a", role: "client", name: "Maya Client" }; mocks.chatAllowed = true;
   vi.spyOn(projectStatusApi, "getProjectStatus").mockRejectedValue(new ApiError(404, "NOT_FOUND", "Unavailable"));
@@ -54,7 +66,7 @@ beforeEach(() => {
   vi.spyOn(projectChatApi, "read").mockResolvedValue({ lastReadSequence: 3, counts: chatTestSummary().counts });
   vi.spyOn(projectChatApi, "typing").mockImplementation(async (_projectId, input) => ({ sequence: input.sequence, typing: input.typing, expiresAt: input.typing ? new Date(Date.now() + 8000).toISOString() : null }));
   vi.spyOn(projectChatApi, "options").mockResolvedValue({ items: [{ id: "site-a", name: "Lee Site", role: "site_manager" }], hasMore: false });
-  vi.spyOn(projectChatApi, "conversations").mockResolvedValue({ items: [{ ...chatTestSummary(), lastMessageAt: null }], pagination: { limit: 30, offset: 0, total: 1, hasMore: false } });
+  vi.spyOn(projectChatApi, "conversations").mockResolvedValue({ items: [{ ...chatTestSummary(), lastMessageAt: null, lastMessage: null }], totals: { unread: 2, critical: 6, important: 4 }, pagination: { limit: 30, offset: 0, total: 1, hasMore: false } });
 });
 
 describe("shared project messages", () => {
@@ -81,14 +93,14 @@ describe("shared project messages", () => {
     vi.mocked(projectStatusApi.getProjectStatus).mockImplementation(async projectId => statusFixture(projectId));
     vi.mocked(projectChatApi.conversations).mockResolvedValue({
       items: [
-        { ...chatTestSummary({ project: { id: "project-a", name: "Courtyard residence", status: "completed" }, participantCount: 6 }), lastMessageAt: null },
-        { ...chatTestSummary({ project: { id: "project-b", name: "Garden residence", status: "completed" }, participantCount: 6 }), lastMessageAt: null }
+        { ...chatTestSummary({ project: { id: "project-a", name: "Courtyard residence", status: "completed" }, participantCount: 6 }), lastMessageAt: null, lastMessage: null },
+        { ...chatTestSummary({ project: { id: "project-b", name: "Garden residence", status: "completed" }, participantCount: 6 }), lastMessageAt: null, lastMessage: null }
       ],
-      pagination: { limit: 30, offset: 0, total: 2, hasMore: false }
+      totals: { unread: 2, critical: 6, important: 4 }, pagination: { limit: 30, offset: 0, total: 2, hasMore: false }
     });
     app("/project-messages");
     await screen.findAllByText("6 participants · completed");
-    const list = screen.getByRole("list", { name: "Messages" });
+    const list = screen.getByRole("list", { name: "Project messages" });
     const rows = within(list).getAllByRole("listitem");
     expect(rows).toHaveLength(2);
     for (const [index, projectId] of ["project-a", "project-b"].entries()) {
@@ -98,7 +110,7 @@ describe("shared project messages", () => {
       expect(within(rows[index]).queryByRole("button", { name: /Project status/i })).not.toBeInTheDocument();
       expect(rows[index].children).toHaveLength(1);
     }
-    expect(within(rows[0]).getByText("Critical 3")).toBeVisible();
+    expect(within(rows[0]).getByLabelText("3 open critical issues")).toBeVisible();
     expect(within(rows[0]).getByLabelText("2 unread messages")).toBeVisible();
     expect(mocks.streams).toHaveLength(0);
     await userEvent.click(within(rows[0]).getByRole("link"));
@@ -257,7 +269,7 @@ describe("shared project messages", () => {
     expect(await screen.findByRole("link", { name: "Messages for Garden residence" })).toBeVisible();
     expect(mocks.streams).toHaveLength(0);
     rendered.unmount();
-    app("/project-messages"); await screen.findByText("Critical 3"); expect(mocks.streams).toHaveLength(0);
+    app("/project-messages"); await screen.findByLabelText("3 open critical issues"); expect(mocks.streams).toHaveLength(0);
   });
   it("releases all streams under StrictMode and project navigation", async () => {
     const rendered = app(undefined, true); await screen.findByText("Critical 3");
@@ -516,6 +528,120 @@ describe("shared project messages", () => {
   });
 });
 
+
+describe("integrated project details", () => {
+  it("uses one desktop rail or narrow drawer, restores focus, and retains the draft and stream when resized", async () => {
+    const resize = responsiveDetails(true);
+    vi.mocked(projectStatusApi.getProjectStatus).mockImplementation(async projectId => statusFixture(projectId));
+    app();
+    const composer = await screen.findByRole("textbox", { name: "Message the project team" });
+    await waitFor(() => expect(composer).toBeEnabled());
+    await userEvent.type(composer, "Keep the existing draft");
+    const stream = mocks.streams.at(-1)!;
+    const trigger = screen.getByRole("button", { name: "Project details" });
+    const rail = screen.getByRole("complementary", { name: "Project details" });
+    expect(within(rail).getByRole("region", { name: "Project details" })).toBeVisible();
+    expect(screen.queryByRole("dialog", { name: "Project details" })).not.toBeInTheDocument();
+    await userEvent.click(trigger);
+    expect(rail).toHaveFocus();
+
+    resize(false);
+    expect(screen.queryByRole("complementary", { name: "Project details" })).not.toBeInTheDocument();
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    await userEvent.click(trigger);
+    const drawer = screen.getByRole("dialog", { name: "Project details" });
+    expect(within(drawer).getByRole("region", { name: "Project details" })).toBeVisible();
+    expect(screen.getAllByRole("region", { name: "Project details" })).toHaveLength(1);
+    await waitFor(() => expect(drawer.contains(document.activeElement)).toBe(true));
+    await userEvent.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog", { name: "Project details" })).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+
+    await userEvent.click(trigger);
+    resize(true);
+    expect(screen.getByRole("complementary", { name: "Project details" })).toBeVisible();
+    expect(screen.queryByRole("dialog", { name: "Project details" })).not.toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Message the project team" })).toBe(composer);
+    expect(composer).toHaveValue("Keep the existing draft");
+    expect(mocks.streams.filter(item => !item.signal.aborted)).toEqual([stream]);
+  });
+
+  it("opens the existing participant manager from details and preserves its reason and selection across resizing", async () => {
+    const resize = responsiveDetails(false);
+    app();
+    await screen.findByText(chatTestMessage().body);
+    const groupTrigger = screen.getByRole("button", { name: "3 participants" });
+    await userEvent.click(screen.getByRole("button", { name: "Project details" }));
+    await userEvent.click(within(screen.getByRole("dialog", { name: "Project details" })).getByRole("button", { name: "View all participants" }));
+    expect(screen.queryByRole("dialog", { name: "Project details" })).not.toBeInTheDocument();
+    const participants = screen.getByRole("dialog", { name: "Project participants" });
+    expect(within(participants).getAllByRole("region", { name: "Participants" })).toHaveLength(1);
+    await waitFor(() => expect(participants.contains(document.activeElement)).toBe(true));
+    await userEvent.click(within(participants).getByRole("button", { name: "Add participant" }));
+    const editor = screen.getByRole("dialog", { name: "Add project participant" });
+    const selected = await within(editor).findByLabelText(/Eligible participant/);
+    await userEvent.selectOptions(selected, "site-a");
+    const reason = within(editor).getByLabelText(/Reason/);
+    await userEvent.type(reason, "Coordinates the revised site schedule");
+
+    resize(true);
+    expect(screen.getByRole("dialog", { name: "Add project participant" })).toBe(editor);
+    expect(within(editor).getByLabelText(/Reason/)).toBe(reason);
+    expect(reason).toHaveValue("Coordinates the revised site schedule");
+    expect(selected).toHaveValue("site-a");
+    resize(false);
+    expect(screen.getByRole("dialog", { name: "Add project participant" })).toBe(editor);
+    expect(reason).toHaveValue("Coordinates the revised site schedule");
+    expect(selected).toHaveValue("site-a");
+    await userEvent.keyboard("{Escape}");
+    expect(screen.getByRole("dialog", { name: "Project participants" })).toBe(participants);
+    await userEvent.keyboard("{Escape}");
+    expect(groupTrigger).toHaveFocus();
+  });
+
+  it.each(["pending", "loaded"] as const)("clears %s details media and ignores delayed file content after chat revocation", async state => {
+    responsiveDetails(true);
+    const createDescriptor = Object.getOwnPropertyDescriptor(URL, "createObjectURL");
+    const revokeDescriptor = Object.getOwnPropertyDescriptor(URL, "revokeObjectURL");
+    const createObjectURL = vi.fn(() => "blob:synthetic-detail-preview");
+    const revokeObjectURL = vi.fn();
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: createObjectURL });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: revokeObjectURL });
+    try {
+      let resolve!: (value: Awaited<ReturnType<typeof projectChatApi.attachmentBlob>>) => void;
+      const attachment = { id: "details-photo", kind: "image" as const, filename: "Detail-room.png", mimeType: "image/png", byteSize: 1024, preview: null };
+      vi.mocked(projectChatApi.messages).mockResolvedValue(chatTestPage([chatTestMessage({ attachments: [attachment] })]));
+      const transfer = vi.spyOn(projectChatApi, "attachmentBlob").mockImplementation(() => new Promise(done => { resolve = done; }));
+      app();
+      const rail = await screen.findByRole("complementary", { name: "Project details" });
+      const preview = await within(rail).findByRole("button", { name: "Preview Detail-room.png" });
+      expect(transfer).not.toHaveBeenCalled();
+      await userEvent.click(preview);
+      expect(screen.getByRole("dialog", { name: "Detail-room.png" })).toBeVisible();
+      await waitFor(() => expect(transfer).toHaveBeenCalledOnce());
+      expect(transfer.mock.calls[0]!.slice(0, 3)).toEqual(["project-a", "details-photo", "content"]);
+      const result = { blob: new Blob(["synthetic image"], { type: "image/png" }), filename: attachment.filename };
+      if (state === "loaded") {
+        await act(async () => { resolve(result); });
+        expect(await screen.findByRole("img", { name: "Detail-room.png" })).toHaveAttribute("src", "blob:synthetic-detail-preview");
+      }
+      act(() => mocks.streams.at(-1)!.onDenied());
+      expect(await screen.findByText("Your account does not currently have access to this conversation.")).toBeVisible();
+      expect(screen.queryByRole("dialog", { name: "Detail-room.png" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("complementary", { name: "Project details" })).not.toBeInTheDocument();
+      expect(screen.queryByText("Detail-room.png")).not.toBeInTheDocument();
+      expect(transfer.mock.calls[0]![3].aborted).toBe(true);
+      if (state === "pending") {
+        await act(async () => { resolve(result); });
+        expect(createObjectURL).not.toHaveBeenCalled();
+        expect(screen.queryByRole("dialog", { name: "Detail-room.png" })).not.toBeInTheDocument();
+      } else expect(revokeObjectURL).toHaveBeenCalledWith("blob:synthetic-detail-preview");
+    } finally {
+      if (createDescriptor) Object.defineProperty(URL, "createObjectURL", createDescriptor); else delete (URL as unknown as Record<string, unknown>).createObjectURL;
+      if (revokeDescriptor) Object.defineProperty(URL, "revokeObjectURL", revokeDescriptor); else delete (URL as unknown as Record<string, unknown>).revokeObjectURL;
+    }
+  });
+});
 
 describe("tracked actions and conversation administration", () => {
   it("lets a Client select an escalation, requires its fields and retains its exact retry payload", async () => {

@@ -1,4 +1,5 @@
 export const EXISTING_AUDIT_ACTIONS = [
+  "project_manager_action_recorded",
   "estimate_tier_selected",
   "estimate_dimensions_updated",
   "design_requirement_action_recorded",
@@ -269,6 +270,8 @@ export const IDENTITY_PROFILE_PHOTO_AUDIT_ACTIONS = [
 ] as const;
 
 export const AUDIT_ACTIONS = [
+  "project_manager_assignment_sync_applied",
+  "project_manager_assignment_sync_rolled_back",
   "project_purchase_order_issued",
   "project_purchase_order_reconciled",
   "project_purchase_order_request_issued",

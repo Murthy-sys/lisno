@@ -54,7 +54,9 @@ export function legacyRelationshipAllows(
     case "design_manager":
       return project.managerId === user.id;
     case "program_manager":
-      return module === "projects" && project.programManagerId === user.id;
+    case "site_manager":
+      // Operational project reads use the validated current-assignment resolver.
+      return false;
     default:
       return false;
   }

@@ -34,7 +34,7 @@ export function createExecutionReportingPolicy(options: { audit: AuditService; n
       const input = executionPolicySchema.parse(raw);
       return mongoose.connection.transaction(async session => {
         await requireExecutionProject(actor, projectId, session, true);
-        if (!["site_manager", "program_manager", "super_admin"].includes(actor.role)) throw new ApiError(403, "EXECUTION_POLICY_FORBIDDEN", "This account cannot change reporting policy.");
+        if (!["site_manager", "super_admin"].includes(actor.role)) throw new ApiError(403, "EXECUTION_POLICY_FORBIDDEN", "This account cannot change reporting policy.");
         const digest = executionDigest(input);
         const receipt = await ExecutionReportingPolicyModel.findOne({ projectId, actorId: actor.id, idempotencyKey: input.idempotencyKey }).session(session).lean();
         if (receipt) {

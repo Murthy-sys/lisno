@@ -1,5 +1,5 @@
 import { useEffect, useId, useState } from "react";
-import { Link, NavLink, useLocation } from "react-router-dom";
+import { Link, matchPath, NavLink, useLocation } from "react-router-dom";
 
 import type { AuthorizationSnapshot } from "../../api/authorization-contract";
 import type { PublicUser } from "../../api/types";
@@ -72,6 +72,8 @@ export function Sidebar({
   onNavigate?: () => void;
   navigationLabel?: string;
 }) {
+  const { pathname } = useLocation();
+  const inProjectConversation = Boolean(matchPath("/projects/:projectId/messages", pathname));
   return (
     <div className="ui-sidebar__inner ui-common-navigation">
       <div className="ui-sidebar__brand">
@@ -83,6 +85,11 @@ export function Sidebar({
         {navigationForAuthorization(user.role, authorization).map((item) =>
           isNavigationGroup(item) ?
             <ProcurementNavigationGroup key={item.id} group={item} onNavigate={onNavigate} /> :
+            item.to === "/project-messages" && inProjectConversation ?
+            <Link key={item.to} to={item.to} onClick={onNavigate} aria-current="page" className="ui-sidebar__link ui-sidebar__link--active">
+              <SidebarIcon destination={item.to} />
+              <span>{item.label}</span>
+            </Link> :
             <NavLink
               key={item.to}
               to={item.to}

@@ -9,6 +9,7 @@ import {createAuthService} from "../src/services/auth.service.js";
 import {createDailyCriticalTasksRouter} from "../src/routes/daily-critical-tasks.js";
 import {errorHandler} from "../src/middleware/errors.js";
 import type {ProjectChatRepository} from "../src/repositories/project-chat.js";
+import { newEstimationLifecycle } from "../src/domain/estimation-lifecycle.js";
 import {projectWorkflowBlueprints} from "../src/domain/project-workflow.js";
 
 const india = (date: string, time: string) => new Date(`${date}T${time}+05:30`);
@@ -46,7 +47,10 @@ describe("India-time internal chat schedule", () => {
 
 describe("daily critical tasks", () => {
   it("preserves site preparation membership without starting execution deadlines", async () => {
-    const f = createChatFixture();
+    const f = createChatFixture(data => {
+      data.seed.projects[0]!.programManagerId = "site-a";
+      data.estimates[0]!.estimation = { ...newEstimationLifecycle(), preApproval: { reviewRoundId: "pre-round", estimateVersion: 3, approvedAt: "2026-09-01T00:00:00Z" } };
+    });
     const task = { ...f.workflowTasks[0]!, id: "site-preparation-a", kind: "site_execution" as const,
       assigneeRole: "site_manager" as const, assigneeUserId: "site-a", preparationOnly: true, status: "open",
       sourceSectionId: null, sourceLineItemKey: null,
@@ -57,6 +61,9 @@ describe("daily critical tasks", () => {
     expect((await f.service.participants(f.actor("site-a"), "a")).items.some(person => person.id === "site-a")).toBe(true);
     expect((await digest.get(f.actor("site-a")))?.items).toEqual([]);
     task.preparationOnly = false;
+    Object.assign(f.estimates[0]!.estimation!, { phase: "post", status: "client_approved", approvedDesignScopeRevision: 1,
+      finalApproval: { reviewRoundId: "final-round", estimateVersion: 3, approvedAt: "2026-09-15T00:00:00Z", requirementsVersion: 0,
+        designReviewRoundId: "design-round", designPlanVersion: 2, designScopeRevision: 1 } });
     task.dueAt = "2026-09-15T00:00:00.000Z";
     expect((await digest.get(f.actor("site-a")))?.items).toContainEqual(expect.objectContaining({ kind: "workflow_task", id: task.id }));
   });

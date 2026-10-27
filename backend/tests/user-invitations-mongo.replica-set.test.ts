@@ -134,7 +134,7 @@ async function insertPendingInvitation(
     name: string;
     email: string;
     emailNormalized: string;
-    role: "admin" | "estimator_sales" | "designer" | "procurement" | "finance_head" | "site_manager" | "worker_electrician" | "worker_plumber" | "worker_carpenter" | "worker_painter" | "worker_civil" | "worker_other" | "design_manager" | "design_head";
+    role: "program_manager" | "admin" | "estimator_sales" | "designer" | "procurement" | "finance_head" | "site_manager" | "worker_electrician" | "worker_plumber" | "worker_carpenter" | "worker_painter" | "worker_civil" | "worker_other" | "design_manager" | "design_head";
     mobile: string;
     rawToken: string;
     tokenGeneration: number;
@@ -526,6 +526,30 @@ async function expectIssuerMutationInvalidatesAccept(
 }
 
 describe("user invitation Mongo replica-set races", () => {
+  it("blocks legacy invitation acceptance and resend while preserving explicit revocation", async () => {
+    await insertUser("legacy-issuer", "super_admin");
+    await insertPendingInvitation("legacy-pm-invite", "legacy-issuer", { role: "program_manager" });
+    const repository = createMongoRepository();
+    const passwordHasher = vi.fn(async () => ACCEPTED_PASSWORD_HASH);
+    const randomBytes = vi.fn((size: number) => Buffer.alloc(size, 17));
+    const sendInvitation = vi.fn(async () => undefined);
+    const service = createUserInvitationService({ repository, audit: createAuditService(repository),
+      mailer: { deliveryKind: "local_test", sendInvitation }, clock: () => new Date(NOW), randomBytes, passwordHasher });
+    const before = await UserInvitationModel.findById("legacy-pm-invite").lean();
+    await expect(service.inspect(RAW_TOKEN)).rejects.toMatchObject({ code: "INVITATION_UNAVAILABLE" });
+    await expect(service.accept({ rawToken: RAW_TOKEN, password: ACCEPTED_PASSWORD })).rejects.toMatchObject({ code: "INVITATION_UNAVAILABLE" });
+    await expect(service.resend(publicUser("legacy-issuer"), "legacy-pm-invite", { version: 1 })).rejects.toMatchObject({ code: "INVITATION_NOT_ACTIONABLE" });
+    expect(await UserInvitationModel.findById("legacy-pm-invite").lean()).toEqual(before);
+    expect(await UserModel.countDocuments()).toBe(1);
+    expect(await AuditEventModel.countDocuments()).toBe(0);
+    expect(passwordHasher).not.toHaveBeenCalled();
+    expect(randomBytes).not.toHaveBeenCalled();
+    expect(sendInvitation).not.toHaveBeenCalled();
+    await service.revoke(publicUser("legacy-issuer"), "legacy-pm-invite", { version: 1 });
+    expect(await UserInvitationModel.findById("legacy-pm-invite").select("+tokenHash").lean()).toMatchObject({ role: "program_manager", status: "revoked", tokenHash: null });
+    expect((await AuditEventModel.find().lean()).map(row => row.action)).toEqual(["user_invitation.revoked"]);
+  });
+
   it("A1: two accepts produce one success, one unavailable result, and one staff User", async () => {
     const issuerId = "race-super-admin";
     await insertUser(issuerId, "super_admin", {

@@ -15,13 +15,18 @@ import { chatModels, insertChatMongoFixture } from "./helpers/project-chat-mongo
 let replica: Awaited<ReturnType<typeof startMongoReplicaSet>>;
 const children = new Set<ChildProcess>(); const streams = new Set<AbortController>();
 const secret = "chat-process-fixture-secret-at-least-32-characters";
-const roles = { "client-a": "client", "client-b": "client", "designer-a": "designer", "admin-a": "admin", "site-a": "site_manager" } as const;
+const roles = { "client-a": "client", "client-b": "client", "designer-a": "designer", "admin-a": "admin", "procurement": "procurement" } as const;
 type Identity = keyof typeof roles;
 const tokens = new Map<string, string>();
+// Advance on real timers during a fixed business-hour window, ahead of Mongo TTL cleanup.
+const realStartedAt = Date.now();
+const businessStartedAt = Date.parse(`${new Date(realStartedAt + 86_400_000).toISOString().slice(0, 10)}T10:00:00.000Z`);
+const clockOffsetMs = businessStartedAt - realStartedAt;
+const businessNow = () => Date.now() + clockOffsetMs;
 const input = (sequence: number, typing = true, composerId = "mongo-composer-one") => ({ composerId, sequence, typing });
 function token(id: Identity, sessionVersion = 1) {
   const key = `${id}:${sessionVersion}`;
-  if (!tokens.has(key)) tokens.set(key, jwt.sign({ id, role: roles[id], sessionVersion }, secret, { expiresIn: 3600 }));
+  if (!tokens.has(key)) tokens.set(key, jwt.sign({ id, role: roles[id], sessionVersion, iat: Math.floor(businessNow() / 1000), exp: Math.floor(businessNow() / 1000) + 3600 }, secret));
   return tokens.get(key)!;
 }
 async function until<T>(read: () => T | undefined, timeout = 5_000): Promise<T> {
@@ -30,7 +35,7 @@ async function until<T>(read: () => T | undefined, timeout = 5_000): Promise<T> 
   throw new Error("Timed out waiting for typing transport fixture");
 }
 async function start(mode: "watch" | "poll") {
-  const child = fork(fileURLToPath(new URL("./helpers/project-chat-process.ts", import.meta.url)), [replica.uri, mode, "", "advancing"], { execArgv: ["--import", "tsx"], stdio: ["ignore", "ignore", "pipe", "ipc"] });
+  const child = fork(fileURLToPath(new URL("./helpers/project-chat-process.ts", import.meta.url)), [replica.uri, mode, "", "advancing", String(clockOffsetMs)], { execArgv: ["--import", "tsx"], stdio: ["ignore", "ignore", "pipe", "ipc"] });
   children.add(child); let port: number | undefined; let stderr = "";
   child.stderr?.on("data", data => { stderr += String(data); });
   child.on("message", (data: any) => { if (data.port) port = data.port; });
@@ -76,7 +81,7 @@ afterAll(async () => { for (const abort of streams) abort.abort(); await Promise
 
 describe("Mongo typing leases and authorization fences", () => {
   it("serializes independent adapters, stale stop races and active-composer quota races", async () => {
-    const f = await insertChatMongoFixture(); const now = Date.now(); const clock = () => new Date(now);
+    const f = await insertChatMongoFixture(); const now = businessNow(); const clock = () => new Date(now);
     const actor = { ...f.actor("designer-a"), expiresAt: Math.floor(now / 1000) + 3600 };
     const one = createProjectChatTypingService({ chatRepository: f.chatRepository, clock });
     const two = createProjectChatTypingService({ chatRepository: createMongoProjectChatRepository(), clock });
@@ -95,7 +100,7 @@ describe("Mongo typing leases and authorization fences", () => {
   }, 30_000);
 
   it("filters leases before TTL cleanup and enforces unique identity/TTL indexes", async () => {
-    const f = await insertChatMongoFixture(); let now = Date.now(); const clock = () => new Date(now);
+    const f = await insertChatMongoFixture(); let now = businessNow(); const clock = () => new Date(now);
     const service = createProjectChatTypingService({ chatRepository: f.chatRepository, clock });
     const actor = { ...f.actor("designer-a"), expiresAt: Math.floor(now / 1000) + 3600 };
     const viewer = { ...f.actor("client-a"), expiresAt: actor.expiresAt };
@@ -114,9 +119,9 @@ describe("Mongo typing leases and authorization fences", () => {
   });
 
   it("checks current session and assignment at delivery under the shared coordinator", async () => {
-    const f = await insertChatMongoFixture(); const clock = () => new Date();
+    const f = await insertChatMongoFixture(); const clock = () => new Date(businessNow());
     const service = createProjectChatTypingService({ chatRepository: f.chatRepository, clock });
-    const actor = { ...f.actor("designer-a"), expiresAt: Math.floor(Date.now() / 1000) + 3600 };
+    const actor = { ...f.actor("designer-a"), expiresAt: Math.floor(businessNow() / 1000) + 3600 };
     const viewer = { ...f.actor("client-a"), expiresAt: actor.expiresAt };
     await service.update(actor, "a", input(1));
     await f.repository.runInTransaction(async tx => {
@@ -137,8 +142,8 @@ describe("Mongo typing leases and authorization fences", () => {
   });
 
   it("prevents revocation from committing between the typist check and synchronous enqueue", async () => {
-    const f = await insertChatMongoFixture(); const clock = () => new Date();
-    const actor = { ...f.actor("designer-a"), expiresAt: Math.floor(Date.now() / 1000) + 3600 };
+    const f = await insertChatMongoFixture(); const clock = () => new Date(businessNow());
+    const actor = { ...f.actor("designer-a"), expiresAt: Math.floor(businessNow() / 1000) + 3600 };
     const viewer = { ...f.actor("client-a"), expiresAt: actor.expiresAt };
     const service = createProjectChatTypingService({ chatRepository: f.chatRepository, clock });
     await service.update(actor, "a", input(1));
@@ -205,10 +210,10 @@ describe("typing across actual API processes", () => {
       await until(() => reader.snapshots.at(-1)?.participants.length ? true : undefined);
       await until(() => reader.snapshots.at(-1)?.participants.length === 0 ? true : undefined, 10_000);
       expect(await ProjectChatTypingModel.countDocuments()).toBe(1);
-      const selected = await api(writer, "admin-a", "/projects/a/chat/participants", { userId: "site-a", reason: "Synthetic assignment", idempotencyKey: "typing-site-selection" }, "POST");
-      const selection = selected.items.find((person: any) => person.id === "site-a").selection;
-      await api(writer, "site-a", "/projects/a/chat/typing", input(1));
-      await until(() => reader.snapshots.at(-1)?.participants.find(person => person.userId === "site-a"));
+      const selected = await api(writer, "admin-a", "/projects/a/chat/participants", { userId: "procurement", reason: "Synthetic assignment", idempotencyKey: "typing-site-selection" }, "POST");
+      const selection = selected.items.find((person: any) => person.id === "procurement").selection;
+      await api(writer, "procurement", "/projects/a/chat/typing", input(1));
+      await until(() => reader.snapshots.at(-1)?.participants.find(person => person.userId === "procurement"));
       await api(writer, "admin-a", `/projects/a/chat/participants/${selection.id}/revoke`, { expectedVersion: selection.version, reason: "Synthetic reassignment", idempotencyKey: "typing-site-revocation" }, "POST");
       await until(() => reader.snapshots.at(-1)?.participants.length === 0 ? true : undefined);
       await api(writer, "designer-a", "/projects/a/chat/typing", input(2));

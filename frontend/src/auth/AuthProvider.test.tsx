@@ -241,6 +241,31 @@ async function replaceReviewFromOtherTab(user: PublicUser, token: string, consum
 }
 
 describe("AuthProvider atomic authorization establishment", () => {
+  it("clears retired-role private caches and accepts the same migrated identity only after a new login", async () => {
+    const retainedId = "retained-manager-id";
+    let migrated = false;
+    tokenStorage.set("retired-role-token");
+    vi.spyOn(globalThis, "fetch").mockImplementation(async input => {
+      const path = requestPath(input);
+      const user: PublicUser = { ...userA, id: retainedId, role: migrated ? "site_manager" : "program_manager" };
+      if (path === "/api/v1/auth/me") return Response.json({ data: user });
+      if (path === "/api/v1/auth/login") { migrated = true; return Response.json({ data: { token: "migrated-manager-token", user: { ...user, role: "site_manager" } } }); }
+      if (path === "/api/v1/auth/authorization") return Response.json({ data: authorizationFor(migrated ? "site_manager" : "program_manager") });
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    const client = createQueryClient();
+    client.setQueryData(["project-manager", retainedId, "/project-manager/projects"], { privateProject: "retired scope" });
+    client.setQueryData(["execution", "detail", "work-a"], { privateWork: true });
+    renderAuthProvider(client);
+    await waitFor(() => expect(screen.getByLabelText("Authentication status")).toHaveTextContent("unauthenticated"));
+    expect(tokenStorage.get()).toBeNull();
+    expect(client.getQueryCache().getAll()).toHaveLength(0);
+    expect(screen.getByLabelText("Current user")).toHaveTextContent("none");
+    await userEvent.click(screen.getByRole("button", { name: "Log in as B" }));
+    await waitFor(() => expect(screen.getByLabelText("Authorization role")).toHaveTextContent("site_manager"));
+    expect(screen.getByLabelText("Current user")).toHaveTextContent(userA.name);
+    expect(screen.getByLabelText("Review user")).toHaveTextContent(retainedId);
+  });
   it("keeps identity hidden until both restore requests succeed", async () => {
     const authorizationGate = deferred();
     tokenStorage.set("token-a");

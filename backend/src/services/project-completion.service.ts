@@ -1,3 +1,4 @@
+import { resolveProjectManagerAssignment } from "./project-manager-assignment.service.js";
 import { VendorExecutionStateModel } from "../models/VendorExecutionState.js";
 import { currentExecutionVerification } from "./vendor-execution.service.js";
 import { createHash, randomUUID } from "node:crypto";
@@ -24,6 +25,7 @@ import { UserModel } from "../models/User.js";
 import { VendorWorkAssignmentModel } from "../models/VendorWorkAssignment.js";
 import { VendorWorkReviewModel } from "../models/VendorWorkReview.js";
 import { ProjectWorkflowTaskModel } from "../models/ProjectWorkflowTask.js";
+import { ProjectSnagModel } from "../models/ProjectSnag.js";
 import type { AuditService } from "./audit.service.js";
 import type { PublicUser } from "./auth.service.js";
 import { procurementItemSourceSnapshot } from "./procurement.service.js";
@@ -195,6 +197,10 @@ async function buildLineage(project: Row, source: Source, session: ClientSession
   if (sourceByKey.size !== source.lineItems.length) lineageConflict("Approved estimate has duplicate source keys.");
   const orders = await ProjectPurchaseOrderModel.find({ projectId }).sort({ _id: 1 }).session(session).lean() as Row[];
   const blockers: ProjectCompletionBlocker[] = [];
+  // Snag commands and every completion decision write Project in this transaction.
+  // A concurrent snag cannot be missed through snapshot write skew at handover.
+  const pendingSnags = await ProjectSnagModel.countDocuments({ projectId, status: { $ne: "verified" } }).session(session);
+  if (pendingSnags) blockers.push({ code: "SNAGS_PENDING", message: `${pendingSnags} snag(s) require repair and Project Manager verification before handover.` });
   const activeRequests = await ProjectPurchaseOrderRequestModel.find({ projectId, status: { $in: ["pending_approval", "changes_requested"] } })
     .session(session).lean() as Row[];
   if (activeRequests.length > 1) lineageConflict("Several project purchase order requests are simultaneously active.");
@@ -277,10 +283,9 @@ async function buildLineage(project: Row, source: Source, session: ClientSession
   if (work.totalAssignments !== expectedAssignments.size || work.approvedAssignments + work.pendingAssignments !== work.totalAssignments) lineageConflict("Vendor completion counts conflict with approved order lines.");
   if (work.openReviews > 0) blockers.push({ code: "CLIENT_REVIEW_PENDING", message: `${work.openReviews} vendor work submission(s) await Client review.` });
   const siteState = await SiteCompletionStateModel.findById(projectId).session(session).lean() as Row | null;
-  const siteTasks = await ProjectWorkflowTaskModel.find({ projectId, kind: "site_execution", assigneeRole: "site_manager" })
-    .select({ assigneeUserId: 1 }).session(session).lean() as Row[];
-  if (siteTasks.length > 1) lineageConflict("The Site Manager assignment is inconsistent.");
-  const siteManagerId = siteTasks[0]?.assigneeUserId ?? null;
+  const ownership = await resolveProjectManagerAssignment(projectId, session);
+  if (ownership.state === "conflict") lineageConflict("The Project Manager assignment requires reconciliation.");
+  const siteManagerId = ownership.state === "assigned" ? ownership.ownerId : null;
   const siteReview = siteState?.currentRound ? await SiteCompletionReviewModel.findOne({ projectId, round: siteState.currentRound })
     .session(session).lean() as Row | null : null;
   if (siteState && (!siteReview && siteState.currentRound > 0 || siteReview && (
@@ -326,6 +331,7 @@ async function buildLineage(project: Row, source: Source, session: ClientSession
   const pendingOwner = project.status === "completed" ? "none" : blockers.some(item => item.code === "ORDER_PENDING")
     ? activeRequest?.status === "pending_approval" || orders.some(order => order.status === "pending_approval") ? "super_admin" : "procurement"
     : blockers.some(item => item.code === "SCOPE_UNCOVERED" || item.code === "NO_APPROVED_ORDER") ? "procurement"
+    : blockers.some(item => item.code === "SNAGS_PENDING") ? "site_manager"
     : blockers.some(item => item.code === "CLIENT_REVIEW_PENDING") || siteState?.status === "pending_client" ? "client"
     : siteState?.status === "client_approved" ? "super_admin" : "site_manager";
   return { summary: { projectId, projectName: String(project.name), projectStatus: String(project.status), completionAuthority: "vendor_client",

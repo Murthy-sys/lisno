@@ -8,6 +8,8 @@ import { ProjectWorkflowTaskModel } from "../src/models/ProjectWorkflowTask.js";
 import { UserModel } from "../src/models/User.js";
 import { ProjectAccessGrantModel } from "../src/models/ProjectAccessGrant.js";
 import { ProjectChatMessageModel } from "../src/models/ProjectChat.js";
+import { ProjectModel } from "../src/models/Project.js";
+import { chatUser } from "./helpers/project-chat.js";
 let replica: Awaited<ReturnType<typeof startMongoReplicaSet>>;
 beforeAll(async () => { replica = await startMongoReplicaSet("chat-membership-mutation"); for (const model of chatModels)
     await model.syncIndexes(); }, 120000);
@@ -20,6 +22,23 @@ finally {
     await session.endSession();
 } }
 describe("project chat authorization source fence", () => {
+    it("loads assigned PM in Mongo and revokes reads, retries and prepared stream delivery on reassignment", async () => {
+        const f = await insertChatMongoFixture();
+        for (const id of ["pm-a", "pm-b"]) { const { id: _id, ...user } = chatUser(id, "site_manager"); await UserModel.create({ ...user, _id }); }
+        const actor = { id: "pm-a", role: "site_manager" as const, sessionVersion: 1, expiresAt: Math.floor(f.clock().getTime() / 1000) + 3600 };
+        await fencedMutation(session => ProjectModel.updateOne({ _id: "a" }, { $set: { programManagerId: "pm-a" } }, { session }));
+        const summary = await f.service.summary(actor, "a");
+        const input = chatSend("Synthetic PM project update");
+        await f.service.send(actor, "a", input);
+        expect((await f.service.events(actor, "a", summary.cursor)).events.length).toBeGreaterThan(0);
+        await fencedMutation(session => ProjectModel.updateOne({ _id: "a" }, { $set: { programManagerId: "pm-b" } }, { session }));
+        await expect(f.service.summary(actor, "a")).rejects.toMatchObject({ status: 404 });
+        await expect(f.service.send(actor, "a", input)).rejects.toMatchObject({ status: 404 });
+        let delivered = false;
+        await expect(f.service.authorizeDelivery(actor, "a", () => { delivered = true; })).rejects.toMatchObject({ status: 404 });
+        expect(delivered).toBe(false);
+        await expect(f.service.summary({ ...actor, id: "pm-b" }, "a")).resolves.toBeDefined();
+    });
     it("rejects a queued send after a completed trade reassignment and permits the new named assignee", async () => {
         const f = await insertChatMongoFixture();
         const worker = f.actor("electric-a");

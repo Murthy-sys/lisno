@@ -20,6 +20,9 @@ const drawings = {
 } satisfies Record<string, ReactNode>;
 
 const destinationIcons: Readonly<Record<string, keyof typeof drawings>> = {
+  "/execution": "dashboard",
+  "/project-manager/leaderboard": "procurement-dashboard",
+  "/project-manager/bonus": "finance",
   "/project-messages": "messages",
   "/designer": "dashboard",
   "/designer/design-plans": "design",

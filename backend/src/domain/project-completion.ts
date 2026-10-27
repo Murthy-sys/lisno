@@ -31,7 +31,7 @@ export interface ProjectScopeCoverage {
 }
 
 export interface ProjectCompletionBlocker {
-  code: "ORDER_PENDING" | "NO_APPROVED_ORDER" | "SCOPE_UNCOVERED" | "VENDOR_WORK_PENDING" | "CLIENT_REVIEW_PENDING" | "SITE_COMPLETION_PENDING" | "EXECUTION_VERIFICATION_PENDING" | "PROJECT_NOT_ACTIVE";
+  code: "ORDER_PENDING" | "NO_APPROVED_ORDER" | "SCOPE_UNCOVERED" | "VENDOR_WORK_PENDING" | "CLIENT_REVIEW_PENDING" | "SITE_COMPLETION_PENDING" | "EXECUTION_VERIFICATION_PENDING" | "PROJECT_NOT_ACTIVE" | "SNAGS_PENDING";
   message: string;
   sourceLineItemKey?: string;
 }
@@ -48,7 +48,7 @@ export interface ProjectCompletionSummary {
   vendorWork: { totalAssignments: number; approvedAssignments: number; pendingAssignments: number; openReviews: number };
   siteCompletion?: { status: "draft" | "pending_client" | "changes_requested" | "client_approved"; progress: number; round: number; reviewId: string | null } | null;
   blockers: ProjectCompletionBlocker[];
-  pendingOwner: "procurement" | "super_admin" | "site_manager" | "vendor" | "client" | "none";
+  pendingOwner: "procurement" | "super_admin" | "site_manager" | "program_manager" | "vendor" | "client" | "none";
   readyForCompletion: boolean;
   completedAt: string | null;
   completionDecisionId: string | null;

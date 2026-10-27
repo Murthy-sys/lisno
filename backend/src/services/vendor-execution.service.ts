@@ -101,6 +101,8 @@ export interface VendorExecutionService {
   detail(actor: PublicUser, assignmentId: string): Promise<ExecutionWork>;
   history(actor: PublicUser, assignmentId: string, query?: ExecutionQuery): Promise<ExecutionHistoryPage>;
   command(actor: PublicUser, assignmentId: string, command: ExecutionCommand, projectId?: string): Promise<ExecutionWork>;
+  /** Composes an authorized execution command into an existing transaction. */
+  commandInSession(actor: PublicUser, assignmentId: string, command: ExecutionCommand, projectId: string | undefined, session: ClientSession): Promise<ExecutionWork>;
 }
 export function createVendorExecutionService(input: { audit: AuditService; now?: () => Date;
   readPolicy?: (projectId: string, session: ClientSession) => Promise<ExecutionPolicy>;
@@ -147,30 +149,10 @@ export function createVendorExecutionService(input: { audit: AuditService; now?:
     }
     return { project: project ? { id: String(project._id), name: project.name, status: project.status, completionAuthority: project.completionAuthority ?? "legacy_staff" } : null,
       projectCounts: project ? executionCounts(projectItems) : null, items: items.slice(offset, offset + limit), total: items.length, limit, offset, counts: executionCounts(items), policy: project ? await readPolicy(String(project._id), session) : null,
-      canManagePolicy: Boolean(project && ["site_manager", "program_manager", "super_admin"].includes(actor.role)) };
+      canManagePolicy: Boolean(project && ["site_manager", "super_admin"].includes(actor.role)) };
   }
-  return {
-    listMine(actor, query = {}) { return transaction(async session => { await requireExecutionActor(actor, session); if (actor.role !== "vendor") executionNotFound(); return page(actor, { vendorId: actor.vendorId }, query, session); }); },
-    project(actor, projectId, query = {}) { return transaction(async session => { const project = await requireExecutionProject(actor, projectId, session); return page(actor, { projectId }, query, session, project); }); },
-    portfolio(actor, query = {}) { return transaction(async session => {
-      if (actor.role === "vendor") executionNotFound(); const ids = await executionProjectIds(actor, session);
-      const parsed = executionPortfolioQuerySchema.safeParse(query); if (!parsed.success) invalid("Execution filters are invalid.");
-      const { limit, offset, q, projectScope, ...workFilters } = parsed.data;
-      const projects = await ProjectModel.find({ ...(ids === null ? {} : { _id: { $in: ids } }), ...(projectScope === "current" ? { status: { $in: ["planning", "active", "on_hold"] } } : {}) }).sort({ name: 1, _id: 1 }).session(session).lean() as Row[];
-      const matching = projects.filter(project => !q || String(project.name).toLowerCase().includes(q.toLowerCase()));
-      const items = [];
-      for (const project of matching.slice(offset, offset + limit)) { const work = await page(actor, { projectId: project._id }, { ...workFilters, offset: 0, limit: 1 }, session, project); items.push({ id: String(project._id), name: project.name, status: project.status, counts: work.counts }); }
-      return { items, total: matching.length, limit, offset, deliveryHealth: actor.role === "super_admin" ? await input.readDeliveryHealth?.() ?? null : null };
-    }); },
-    detail(actor, assignmentId) { return transaction(async session => dto(actor, await assignmentFor(actor, assignmentId, session), session)); },
-    history(actor, assignmentId, query = {}) { return transaction(async session => {
-      await assignmentFor(actor, assignmentId, session); const parsed = executionQuerySchema.safeParse(query); if (!parsed.success) invalid("History pagination is invalid.");
-      const { limit, offset } = parsed.data;
-      const rows = await VendorExecutionEventModel.find({ assignmentId }).sort({ occurredAt: -1, version: -1, _id: -1 }).skip(offset).limit(limit).session(session).lean() as Row[];
-      return { items: rows.map(row => ({ id: String(row._id), assignmentId, action: row.action, actorId: row.actorId, occurredAt: iso(row.occurredAt)!, executionRound: row.executionRound, localDate: row.localDate,
-        note: row.note, reason: row.reason ?? null, nextAction: row.nextAction ?? null, startDate: row.startDate ?? null, finishDate: row.finishDate ?? null, reviewDate: row.reviewDate ?? null, progress: row.progress ?? null, status: row.status ?? null })), total: await VendorExecutionEventModel.countDocuments({ assignmentId }).session(session), limit, offset };
-    }); },
-    command(actor, assignmentId, value, projectId) { return transaction(async session => {
+  async function commandInSession(actor: PublicUser, assignmentId: string, value: ExecutionCommand, projectId: string | undefined, session: ClientSession): Promise<ExecutionWork> {
+    if (!session.inTransaction()) throw new Error("Execution commands require an active transaction.");
       const parsed = executionCommandSchema.safeParse(value); if (!parsed.success) invalid(parsed.error.issues.map(issue => issue.message).join(" "));
       const fields = parsed.data; const assignment = await assignmentFor(actor, assignmentId, session, true);
       if (projectId && assignment.projectId !== projectId) executionNotFound();
@@ -248,6 +230,30 @@ export function createVendorExecutionService(input: { audit: AuditService; now?:
         occurredAt: at.toISOString(), newValues: { projectId: assignment.projectId, action: fields.action, executionRound: next.executionRound, version: next.version, status: next.status }, reason: fields.reason ?? null }, session);
       await change({ projectId: assignment.projectId, vendorId: assignment.vendorId, assignmentId, version: next.version, kind: fields.action, occurredAt: at }, session);
       return dto(actor, await VendorWorkAssignmentModel.findById(assignmentId).session(session).lean() as Row, session);
-    }); }
+  }
+
+  return {
+    listMine(actor, query = {}) { return transaction(async session => { await requireExecutionActor(actor, session); if (actor.role !== "vendor") executionNotFound(); return page(actor, { vendorId: actor.vendorId }, query, session); }); },
+    project(actor, projectId, query = {}) { return transaction(async session => { const project = await requireExecutionProject(actor, projectId, session); return page(actor, { projectId }, query, session, project); }); },
+    portfolio(actor, query = {}) { return transaction(async session => {
+      if (actor.role === "vendor") executionNotFound(); const ids = await executionProjectIds(actor, session);
+      const parsed = executionPortfolioQuerySchema.safeParse(query); if (!parsed.success) invalid("Execution filters are invalid.");
+      const { limit, offset, q, projectScope, ...workFilters } = parsed.data;
+      const projects = await ProjectModel.find({ ...(ids === null ? {} : { _id: { $in: ids } }), ...(projectScope === "current" ? { status: { $in: ["planning", "active", "on_hold"] } } : {}) }).sort({ name: 1, _id: 1 }).session(session).lean() as Row[];
+      const matching = projects.filter(project => !q || String(project.name).toLowerCase().includes(q.toLowerCase()));
+      const items = [];
+      for (const project of matching.slice(offset, offset + limit)) { const work = await page(actor, { projectId: project._id }, { ...workFilters, offset: 0, limit: 1 }, session, project); items.push({ id: String(project._id), name: project.name, status: project.status, counts: work.counts }); }
+      return { items, total: matching.length, limit, offset, deliveryHealth: actor.role === "super_admin" ? await input.readDeliveryHealth?.() ?? null : null };
+    }); },
+    detail(actor, assignmentId) { return transaction(async session => dto(actor, await assignmentFor(actor, assignmentId, session), session)); },
+    history(actor, assignmentId, query = {}) { return transaction(async session => {
+      await assignmentFor(actor, assignmentId, session); const parsed = executionQuerySchema.safeParse(query); if (!parsed.success) invalid("History pagination is invalid.");
+      const { limit, offset } = parsed.data;
+      const rows = await VendorExecutionEventModel.find({ assignmentId }).sort({ occurredAt: -1, version: -1, _id: -1 }).skip(offset).limit(limit).session(session).lean() as Row[];
+      return { items: rows.map(row => ({ id: String(row._id), assignmentId, action: row.action, actorId: row.actorId, occurredAt: iso(row.occurredAt)!, executionRound: row.executionRound, localDate: row.localDate,
+        note: row.note, reason: row.reason ?? null, nextAction: row.nextAction ?? null, startDate: row.startDate ?? null, finishDate: row.finishDate ?? null, reviewDate: row.reviewDate ?? null, progress: row.progress ?? null, status: row.status ?? null })), total: await VendorExecutionEventModel.countDocuments({ assignmentId }).session(session), limit, offset };
+    }); },
+    command(actor, assignmentId, value, projectId) { return transaction(session => commandInSession(actor, assignmentId, value, projectId, session)); },
+    commandInSession
   };
 }

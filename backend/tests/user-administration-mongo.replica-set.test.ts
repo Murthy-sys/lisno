@@ -11,6 +11,7 @@ import { AuthorizationCoordinationModel } from "../src/models/AuthorizationCoord
 import { EstimateModel } from "../src/models/Estimate.js";
 import { LeadModel } from "../src/models/Lead.js";
 import { ProjectModel } from "../src/models/Project.js";
+import { ProjectWorkflowTaskModel } from "../src/models/ProjectWorkflowTask.js";
 import { ProjectAccessGrantModel } from "../src/models/ProjectAccessGrant.js";
 import { TaskModel } from "../src/models/Task.js";
 import { UserModel } from "../src/models/User.js";
@@ -36,6 +37,7 @@ beforeAll(async () => {
     AuditEventModel.syncIndexes(),
     AuthorizationCoordinationModel.syncIndexes(),
     ProjectModel.syncIndexes(),
+    ProjectWorkflowTaskModel.syncIndexes(),
     LeadModel.syncIndexes(),
     EstimateModel.syncIndexes(),
     TaskModel.syncIndexes()
@@ -193,6 +195,64 @@ async function expectNoIneligibleActiveGrant(
 }
 
 describe("user administration Mongo replica-set transactions", () => {
+  it("matches memory responsibility counts and blocks role editing while current execution work remains", async () => {
+    await insertUser("merge-super", "super_admin");
+    await insertUser("merge-manager", "site_manager");
+    await insertUser("merge-other", "site_manager");
+    for (const id of ["current-project", "completed-project", "other-project"]) await insertProject(id);
+    await ProjectModel.updateOne({ _id: "current-project" }, { $set: { programManagerId: "merge-manager" } });
+    await ProjectModel.updateOne({ _id: "completed-project" }, { $set: { programManagerId: "merge-manager", status: "completed" } });
+    await ProjectModel.updateOne({ _id: "other-project" }, { $set: { programManagerId: "merge-other" } });
+    const assignments = [
+      { projectId: "current-project", kind: "site_execution" as const, assigneeRole: "site_manager" as const, assigneeUserId: "merge-manager", status: "open" },
+      { projectId: "completed-project", kind: "site_execution" as const, assigneeRole: "site_manager" as const, assigneeUserId: "merge-manager", status: "completed" },
+      { projectId: "superseded-project", kind: "site_execution" as const, assigneeRole: "site_manager" as const, assigneeUserId: "merge-manager", status: "open", supersededAt: NOW },
+      { projectId: "other-project", kind: "site_execution" as const, assigneeRole: "site_manager" as const, assigneeUserId: "merge-other", status: "open" }
+    ];
+    await ProjectWorkflowTaskModel.collection.insertMany(assignments.map((row, index) => ({ ...row, _id: `merge-work-${index}`, dedupeKey: `merge-work-${index}`,
+      ...(row.supersededAt ? { supersededAt: new Date(row.supersededAt) } : {}) })));
+    const memorySeed = structuredClone(demoSeedData);
+    memorySeed.projectWorkflowAssignments = assignments;
+    memorySeed.projects = [
+      { ...structuredClone(demoSeedData.projects[0]!), id: "current-project", programManagerId: "merge-manager", status: "active" },
+      { ...structuredClone(demoSeedData.projects[0]!), id: "completed-project", programManagerId: "merge-manager", status: "completed" },
+      { ...structuredClone(demoSeedData.projects[0]!), id: "other-project", programManagerId: "merge-other", status: "active" }
+    ];
+    const expected = { assignedExecutionProjects: 1, assignedWorkflowTasks: 1 };
+    expect(await createMongoRepository().countUserResponsibilities("merge-manager")).toMatchObject(expected);
+    expect(await createMemoryRepository(memorySeed).countUserResponsibilities("merge-manager")).toMatchObject(expected);
+    const response = await request(application()).patch("/api/v1/admin/users/merge-manager")
+      .set("Authorization", bearer("merge-super", "super_admin")).send({ version: 1, role: "procurement" });
+    expect(response.status).toBe(409);
+    expect(response.body.error.code).toBe("RESPONSIBILITY_REASSIGNMENT_REQUIRED");
+    expect(await UserModel.findById("merge-manager").lean()).toMatchObject({ role: "site_manager", version: 1, sessionVersion: 1 });
+    expect(await AuditEventModel.countDocuments({ entityId: "merge-manager" })).toBe(0);
+  });
+
+  it("rejects legacy account writes and preserves monotonic session versions across deactivation", async () => {
+    await insertUser("canonical-account", "site_manager");
+    const repository = createMongoRepository();
+    const canonical = (await repository.findUserById("canonical-account"))!;
+    await expect(repository.createUser({ ...canonical, id: "legacy-new", email: "legacy-new@example.test", role: "program_manager" })).rejects.toThrow(/legacy Program Manager/);
+    await expect(repository.updateUser(canonical.id, 1, { role: "program_manager", updatedAt: NOW })).rejects.toThrow(/legacy Program Manager/);
+    expect(await UserModel.exists({ _id: "legacy-new" })).toBeNull();
+    expect(await repository.findUserById(canonical.id)).toMatchObject({ role: "site_manager", version: 1, sessionVersion: 1 });
+    await repository.updateUser(canonical.id, 1, { active: false, updatedAt: NOW });
+    await repository.updateUser(canonical.id, 2, { active: true, updatedAt: NOW });
+    expect(await repository.findUserById(canonical.id)).toMatchObject({ active: true, version: 3, sessionVersion: 3 });
+  });
+
+  it("requires migration rather than an ordinary role edit of a legacy manager", async () => {
+    await insertUser("migration-super", "super_admin");
+    await insertUser("migration-legacy", "program_manager");
+    const response = await request(application()).patch("/api/v1/admin/users/migration-legacy")
+      .set("Authorization", bearer("migration-super", "super_admin")).send({ version: 1, role: "site_manager" });
+    expect(response.status).toBe(409);
+    expect(response.body.error.code).toBe("PROJECT_MANAGER_MIGRATION_REQUIRED");
+    expect(await UserModel.findById("migration-legacy").lean()).toMatchObject({ role: "program_manager", version: 1 });
+    expect(await AuditEventModel.countDocuments({ entityId: "migration-legacy" })).toBe(0);
+  });
+
   it("defines the sole Super Admin persistence backstop", () => {
     expect(UserModel.schema.indexes()).toContainEqual([
       { role: 1 },

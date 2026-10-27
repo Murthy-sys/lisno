@@ -1,3 +1,4 @@
+import { assignmentConflict, projectManagerProjectIds, resolveProjectManagerAssignment, setProjectManagerAssignment } from "./project-manager-assignment.service.js";
 import { isCollaborativeEstimate } from "../domain/estimation-lifecycle.js";
 import { fenceCollaborativeEstimate } from "./estimate-collaboration-policy.service.js";
 import { assertProjectWorkOrderIssueEligible } from "./project-work-order-eligibility.service.js";
@@ -1295,6 +1296,13 @@ export function createProjectWorkflowService(input: {
           );
         }
 
+        if (task.kind === "site_execution") {
+          const result = await setProjectManagerAssignment({ projectId, actorId: actor.id, actorRole: "super_admin", ownerId: workerId,
+            expectedTask: { id: taskId, version: expectedVersion }, at: occurredAt, audit: input.audit }, session);
+          if (!result.task) workflowTaskStale();
+          return operationalTaskDto(result.task, String(project.name), worker);
+        }
+
         const currentWorkerId = task.assigneeUserId == null
           ? null
           : String(task.assigneeUserId);
@@ -1499,17 +1507,17 @@ export function createProjectWorkflowService(input: {
     async listOperationalTasks(actor) {
       if (!isOperationalTaskRole(actor.role)) forbidden();
       const siteProjects = actor.role === "site_manager"
-        ? await ProjectWorkflowTaskModel.find({ kind: "site_execution", preparationOnly: { $ne: true }, assigneeRole: "site_manager", assigneeUserId: actor.id }).select({ projectId: 1 }).lean()
+        ? await projectManagerProjectIds(actor.id)
         : [];
       const filter: Row = actor.role === "site_manager"
-        ? { projectId: { $in: siteProjects.map((task) => task.projectId) }, $or: [
+        ? { projectId: { $in: siteProjects }, $or: [
             { kind: "site_execution", assigneeRole: "site_manager", assigneeUserId: actor.id },
             { kind: "trade_execution", supersededAt: null }
           ] }
         : actor.role === "procurement" || isWorkerRole(actor.role)
           ? { assigneeRole: actor.role, assigneeUserId: actor.id }
           : { assigneeRole: actor.role };
-      const tasks = await ProjectWorkflowTaskModel.find({ ...filter, preparationOnly: { $ne: true } })
+      const tasks = await ProjectWorkflowTaskModel.find({ ...filter, preparationOnly: { $ne: true }, supersededAt: null })
         .sort({ projectId: 1, kind: 1, status: 1, openedAt: -1, _id: 1 })
         .lean();
       const projects = await ProjectModel.find({
@@ -1540,6 +1548,11 @@ export function createProjectWorkflowService(input: {
           kind: { $in: DOWNSTREAM_EXECUTION_TASK_KINDS }
         }).session(session).lean();
         if (!task) notFound();
+
+        if (actor.role === "site_manager") {
+          const assignment = await resolveProjectManagerAssignment(String(task.projectId), session);
+          if (assignment.state !== "assigned" || assignment.ownerId !== actor.id || assignment.task?.id !== String(task._id)) notFound();
+        }
 
         if (task.preparationOnly === true) {
           throw new ApiError(409, "WORK_ORDER_NOT_READY", "Site execution starts after final approval and initial payment.");
@@ -2003,6 +2016,8 @@ async function generateDownstreamTasks(
   const estimateId = String(estimate._id);
   const estimateVersion = isCollaborativeEstimate(estimate) ? estimate.estimation.finalApproval?.estimateVersion : approvedWorkflowEstimateVersion(estimate.version);
   if (!estimateVersion) throw new ApiError(409, "ESTIMATE_FINAL_APPROVAL_REQUIRED", "Final approval is required before execution tasks can be opened.");
+  const managerAssignment = await resolveProjectManagerAssignment(String(estimate.projectId), session);
+  if (managerAssignment.state === "conflict") assignmentConflict(managerAssignment);
   const lineItems = await approvedWorkflowLineSnapshots(estimate, session);
   const blueprints = projectWorkflowBlueprints({
     estimateId,
@@ -2053,7 +2068,7 @@ async function generateDownstreamTasks(
           projectId: String(estimate.projectId),
           estimateId,
           designPlanVersion,
-          assigneeUserId: null,
+          assigneeUserId: blueprint.kind === "site_execution" ? managerAssignment.ownerId : null,
           status: "open",
           progress: 0,
           version: 1,
@@ -2077,6 +2092,9 @@ async function activatePreparationSiteTask(
 ) {
   const current = await ProjectWorkflowTaskModel.findOne({ dedupeKey: blueprint.dedupeKey }).session(session).lean();
   if (!current) return false;
+  const assignment = await resolveProjectManagerAssignment(String(estimate.projectId), session);
+  if (assignment.state === "conflict") assignmentConflict(assignment);
+  if (assignment.task?.id !== String(current._id)) throw new ApiError(409, "WORKFLOW_TASK_ACTIVATION_CONFLICT", "The Project Manager assignment changed before activation.");
   const projectId = String(estimate.projectId);
   const estimateId = String(estimate._id);
   const conflict = () => new ApiError(409, "WORKFLOW_TASK_ACTIVATION_CONFLICT", "The Site assignment task requires reconciliation before execution can start.");
@@ -2649,6 +2667,8 @@ async function guardCollaborativeDesign(estimate: Row, session: mongoose.ClientS
 
 export async function ensureCollaborativePreparationTask(estimate: Row, occurredAt: Date, session: mongoose.ClientSession) {
   if (!isCollaborativeEstimate(estimate) || !estimate.estimation.preApproval) return;
+  const managerAssignment = await resolveProjectManagerAssignment(String(estimate.projectId), session);
+  if (managerAssignment.state === "conflict") assignmentConflict(managerAssignment);
   const estimateId = String(estimate._id);
   const blueprints = projectWorkflowBlueprints({ estimateId, estimateVersion: estimate.estimation.preApproval.estimateVersion, lineItems: [] });
   for (const { dueInDays: _dueInDays, ...blueprint } of blueprints) {
@@ -2658,7 +2678,7 @@ export async function ensureCollaborativePreparationTask(estimate: Row, occurred
       title: preparationOnly ? "Prepare Site supervision" : blueprint.kind === "finance" ? "Review provisional project budget" : blueprint.title,
       description: "Prepare and review the approved pre-estimate. Execution and work orders require final approval and initial payment.",
       projectId: String(estimate.projectId), estimateId, designPlanVersion: Number(estimate.designPlanVersion ?? 0),
-      assigneeUserId: null, status: "open", progress: 0, version: 1, openedAt: occurredAt,
+      assigneeUserId: preparationOnly ? managerAssignment.ownerId : null, status: "open", progress: 0, version: 1, openedAt: occurredAt,
       preparationOnly,
       dueAt: preparationOnly ? null : workflowTaskDueAt(blueprint.kind, occurredAt),
       plannedEffort: preparationOnly ? null : blueprint.plannedEffort,

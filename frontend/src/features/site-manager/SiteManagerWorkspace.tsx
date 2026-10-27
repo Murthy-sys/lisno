@@ -35,7 +35,7 @@ export function SiteManagerWorkspace() {
     setParams(old => { const next = new URLSearchParams(old); value ? next.set(key, value) : next.delete(key); if (key !== "offset") next.delete("offset"); return next; }, { replace: true });
   }
   return <div className="site-workspace">
-    <h1>Site Manager workspace</h1>
+    <h1>Project Manager workspace</h1>
     {auth.user ? <KpiPanel userId={auth.user.id} /> : null}
     <section className="site-workspace__projects" aria-labelledby="site-assigned-projects">
       <div className="site-workspace__heading"><h2 id="site-assigned-projects">Assigned projects</h2><Button variant="secondary" size="compact" busy={query.isFetching} onClick={() => void query.refetch()}>Refresh projects</Button></div>

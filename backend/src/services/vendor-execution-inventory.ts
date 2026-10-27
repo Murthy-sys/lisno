@@ -1,3 +1,4 @@
+import { resolveProjectManagerAssignment } from "./project-manager-assignment.service.js";
 import { VendorWorkAssignmentModel } from "../models/VendorWorkAssignment.js";
 import { VendorExecutionStateModel } from "../models/VendorExecutionState.js";
 import { ProjectPurchaseOrderModel } from "../models/ProjectPurchaseOrder.js";
@@ -20,13 +21,13 @@ export async function vendorExecutionInventory() {
       ProjectPurchaseOrderModel.exists({ _id: row.orderId, projectId: row.projectId, vendorId: row.vendorId, approvedRevision: row.orderRevision, cancelledAt: null, status: { $ne: "cancelled" } }),
       ProjectPurchaseOrderRevisionModel.exists({ orderId: row.orderId, projectId: row.projectId, vendorId: row.vendorId, revision: row.orderRevision, "lines.id": row.lineId }),
       AiEstimatorKnowledgeVendorModel.findById(row.vendorId).select({ procurementProfile: 1 }).lean(),
-      ProjectWorkflowTaskModel.countDocuments({ projectId: row.projectId, kind: "site_execution", assigneeRole: "site_manager", assigneeUserId: { $nin: [null, ""] } })
+      resolveProjectManagerAssignment(String(row.projectId))
     ]);
     if (state) counts.tracked++;
     else if (!["submitted_for_client", "client_approved"].includes(row.status)) counts.setupRequired++;
     if (!order || !revision) counts.missingIssuedSource++;
     if (!vendor?.procurementProfile?.email || !vendor.procurementProfile.phoneNumber) counts.missingVendorContact++;
-    if (owners !== 1) counts.missingSiteManager++;
+    if (owners.state !== "assigned") counts.missingSiteManager++;
   }
   return counts;
 }

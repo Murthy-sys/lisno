@@ -983,6 +983,8 @@ export interface UserResponsibilityCounts {
   initiatedActiveProjects: number;
   assignedActiveProjects: number;
   managedActiveProjects: number;
+  assignedExecutionProjects: number;
+  assignedWorkflowTasks: number;
   ownedActiveTasks: number;
   directReports: number;
   linkedClientProjects: number;

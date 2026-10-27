@@ -121,7 +121,7 @@ export async function requireDesignWorkflowScope(repository: AppRepository, acto
 
 /** Observers can inspect progress but never acquire an existing stage-action capability. */
 export async function requireDesignWorkflowReadScope(repository: AppRepository, actor: PublicUser, projectId: string) {
-  if (actor.role !== "procurement" && actor.role !== "program_manager") {
+  if (actor.role !== "procurement" && actor.role !== "site_manager") {
     return requireDesignWorkflowScope(repository, actor, projectId);
   }
   const user = await requireActor(repository, actor);

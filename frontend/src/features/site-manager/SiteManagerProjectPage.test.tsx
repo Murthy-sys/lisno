@@ -21,9 +21,10 @@ function setup(items: ExecutionWork[] = [proposal]) {
     http.get("/api/v1/execution/work/:id/history", () => HttpResponse.json({ data: { items: [], total: 0, limit: 20, offset: 0 } })));
 }
 
-describe("selected Site Manager project", () => {
+describe("selected Project Manager project", () => {
   it("exposes proposed schedule confirmation in a compact detail without eagerly loading history", async () => {
     setup(); let historyReads = 0; const writes: unknown[] = [];
+    const invalidate = vi.spyOn(QueryClient.prototype, "invalidateQueries");
     server.use(http.get("/api/v1/execution/work/work-one/history", () => { historyReads++; return HttpResponse.json({ data: { items: [], total: 0, limit: 20, offset: 0 } }); }),
       http.post("/api/v1/projects/project-one/execution/work-one", async ({ request }) => { writes.push(await request.json()); return HttpResponse.json({ data: { ...proposal, version: 5, proposedSchedule: null, schedule: executionFixture.schedule } }); }));
     const user = userEvent.setup(); mount();
@@ -42,6 +43,8 @@ describe("selected Site Manager project", () => {
     await waitFor(() => expect(writes).toHaveLength(1));
     expect(writes[0]).toMatchObject({ action: "confirm_schedule", expectedVersion: 4, startDate: "2026-10-09", finishDate: "2026-10-13" });
     await screen.findByText("Update saved.");
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["project-manager"] });
+    invalidate.mockRestore();
     await user.keyboard("{Escape}");
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(trigger).toHaveFocus();

@@ -232,7 +232,7 @@ describe("UserInvitationsPanel", () => {
       within(screen.getByRole("combobox", { name: "Filter invitations by role" }))
         .getAllByRole("option")
         .map((option) => option.textContent)
-    ).toEqual(["All roles", "Site Manager", "Finance Manager", "Designer"]);
+    ).toEqual(["All roles", "Project Manager", "Finance Manager", "Designer"]);
     expect(
       within(screen.getByRole("tablist", { name: "Filter invitations by status" }))
         .getAllByRole("tab")

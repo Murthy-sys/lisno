@@ -3,7 +3,7 @@ import { Pager } from "./nativeWorkspace";
 import { useQuery } from "@tanstack/react-query";
 import { StyleSheet, Text, View } from "react-native";
 
-import { ROLE_CODES } from "../../contracts/authorization";
+import { ACTIVE_ROLE_CODES } from "../../contracts/authorization";
 import type { AuthenticatedSession } from "../../contracts/session";
 import { privateQueryKey } from "../../core/query/queryClient";
 import { useConfiguredRuntime } from "../../runtime/RuntimeProvider";
@@ -16,7 +16,7 @@ import type { InvitableRole, UserInvitationSummary } from "./adminIdentityModel"
 
 function invitationPage(value: unknown): { readonly items: readonly UserInvitationSummary[]; readonly roles: readonly InvitableRole[]; readonly total: number } {
   if (!isRecord(value)) return { items: [], roles: [], total: 0 };
-  const roles = Array.isArray(value.invitableRoles) ? value.invitableRoles.filter((role): role is InvitableRole => typeof role === "string" && role !== "client" && role !== "super_admin" && (ROLE_CODES as readonly string[]).includes(role)) : [];
+  const roles = Array.isArray(value.invitableRoles) ? value.invitableRoles.filter((role): role is InvitableRole => typeof role === "string" && role !== "client" && role !== "super_admin" && (ACTIVE_ROLE_CODES as readonly string[]).includes(role)) : [];
   const items = Array.isArray(value.items) ? value.items.filter((item): item is UserInvitationSummary => isRecord(item) && typeof item.id === "string" && typeof item.version === "number" && typeof item.name === "string" && typeof item.email === "string" && typeof item.mobile === "string" && typeof item.expiresAt === "string" && typeof item.role === "string" && Array.isArray(item.availableActions)) : [];
   return { items, roles, total: isRecord(value.pagination) && typeof value.pagination.total === "number" ? value.pagination.total : items.length };
 }

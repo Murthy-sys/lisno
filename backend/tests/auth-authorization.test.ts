@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import { createApp } from "../src/app.js";
 import { ROLE_PERMISSIONS } from "../src/domain/authorization.js";
-import { ROLE_CODES, type Role } from "../src/domain/roles.js";
+import { ACTIVE_ROLE_CODES, type Role } from "../src/domain/roles.js";
 import { createMemoryRepository } from "../src/repositories/memory.js";
 import { demoSeedData } from "../src/seed/data.js";
 import { AUTHORIZATION_POLICY_VERSION } from "../src/services/auth.service.js";
@@ -36,7 +36,7 @@ function appFor(role: Role, active = true) {
 }
 
 describe("authorization snapshot API", () => {
-  it.each(ROLE_CODES)("returns the exact current-policy snapshot for %s", async (role) => {
+  it.each(ACTIVE_ROLE_CODES)("returns the exact current-policy snapshot for %s", async (role) => {
     const { app, token } = appFor(role);
 
     const response = await request(app)
@@ -54,6 +54,14 @@ describe("authorization snapshot API", () => {
     expect(new Set(response.body.data.permissions).size).toBe(
       response.body.data.permissions.length
     );
+  });
+
+  it("rejects a matching legacy-role token before publishing any permissions", async () => {
+    const { app, token } = appFor("program_manager");
+    const response = await request(app).get("/api/v1/auth/authorization").set("Authorization", `Bearer ${token}`);
+    expect(response.status).toBe(401);
+    expect(response.body.error.code).toBe("INVALID_TOKEN");
+    expect(response.body).not.toHaveProperty("data");
   });
 
   it("requires authentication", async () => {

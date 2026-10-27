@@ -78,7 +78,12 @@ function isInvitableRole(role: Role): role is InvitableRole {
   return role !== "client" && role !== "super_admin";
 }
 
+/** Persisted invitation roles, including immutable legacy records. */
 export const INVITABLE_ROLE_CODES = ROLE_CODES.filter(isInvitableRole);
+export const ACTIVE_INVITABLE_ROLE_CODES = INVITABLE_ROLE_CODES.filter(role => role !== "program_manager");
+export function isActiveInvitableRole(role: unknown): role is Exclude<InvitableRole, "program_manager"> {
+  return typeof role === "string" && ACTIVE_INVITABLE_ROLE_CODES.some(candidate => candidate === role);
+}
 
 const controlFreeStringSchema = z.string().refine(
   (value) => !CONTROL_CHARACTERS.test(value),

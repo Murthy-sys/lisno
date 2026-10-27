@@ -86,7 +86,7 @@ beforeEach(async () => {
     procurementProfile: { email: "vendor@example.test", phoneNumber: "+919000000000" } } as any);
   await ProjectModel.create({ _id: "project-a", name: "Project", clientId: client.id, clientName: client.name, clientEmail: client.email,
     clientEmailNormalized: client.email, clientMobile: "9000000000", clientAddress: "Site", status: "active", location: "Bengaluru",
-    completionAuthority: "vendor_client", completionAuthorityVersion: 1, plannedStartAt: now, plannedEndAt: new Date("2026-11-01T00:00:00Z") });
+    programManagerId: site.id, completionAuthority: "vendor_client", completionAuthorityVersion: 1, plannedStartAt: now, plannedEndAt: new Date("2026-11-01T00:00:00Z") });
   await ProjectWorkflowTaskModel.create({ _id: "site-task", dedupeKey: "site-task", projectId: "project-a", estimateId: "estimate-a", designPlanVersion: 1,
     kind: "site_execution", title: "Site execution", assigneeRole: "site_manager", assigneeUserId: site.id, status: "open", progress: 0, version: 1, openedAt: now });
   const lineItems = [{ id: "source-a", catalogueId: "CA01", roomName: "Living Room", specification: "Cabinet", unit: "sheet", rate: 250, quantity: 1, included: true, amount: 250 }];

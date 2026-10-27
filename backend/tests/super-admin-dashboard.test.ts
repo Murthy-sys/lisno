@@ -75,7 +75,7 @@ describe("Super Admin dashboard routes", () => {
       await request(app)
         .get("/api/v1/admin/dashboard/overview")
         .set("Authorization", bearer(actor!.id, role))
-        .expect(403);
+        .expect(role === "program_manager" ? 401 : 403);
     }
     expect(aggregate).not.toHaveBeenCalled();
   });

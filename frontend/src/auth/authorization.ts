@@ -3,7 +3,7 @@ import { z } from "zod";
 import {
   PERMISSION_CODES,
   isFrontendPermissionCode,
-  isFrontendRole,
+  isActiveFrontendRole,
   type AuthorizationSnapshot,
   type PermissionCode,
   type Role
@@ -40,7 +40,7 @@ export function parseAuthorizationSnapshot(
   const parsed = rawAuthorizationSnapshotSchema.safeParse(input);
   if (!parsed.success) return null;
   if (
-    !isFrontendRole(parsed.data.role) ||
+    !isActiveFrontendRole(parsed.data.role) ||
     parsed.data.role !== expectedRole
   ) {
     return null;

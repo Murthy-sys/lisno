@@ -1,4 +1,4 @@
-import { useQueryClient } from "@tanstack/react-query";
+import { QueryClient, useQueryClient } from "@tanstack/react-query";
 import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
@@ -14,11 +14,11 @@ vi.mock("../../auth/AuthProvider", () => ({
 
 beforeEach(() => { vi.stubGlobal("crypto", { randomUUID: () => "reverify-key-123" }); });
 
-describe("Site Manager completion re-verification", () => {
+describe("Project Manager completion re-verification", () => {
   it("allows a same-value 100% save when the approved work scope changed", async () => {
     let current = { projectId: "project-1", projectStatus: "active", version: 1, progress: 100,
       note: "Inspect all work", status: "draft", currentRound: 0, canSubmit: false, needsReverification: true,
-      blockers: ["Approved work sections changed after the Site Manager marked 100%. Save 100% again to verify the current sections."], review: null };
+      blockers: ["Approved work sections changed after the Project Manager marked 100%. Save 100% again to verify the current sections."], review: null };
     const writes: unknown[] = [];
     server.use(
       http.get("/api/v1/projects/project-1/site-completion", () => HttpResponse.json({ data: current })),
@@ -40,8 +40,9 @@ describe("Site Manager completion re-verification", () => {
   });
 });
 
-describe("Site Manager completion progress", () => {
+describe("Project Manager completion progress", () => {
   it.each([false, true])("saves 100%% with a blank note and uses backend canSubmit=%s", async canSubmit => {
+    const invalidate = vi.spyOn(QueryClient.prototype, "invalidateQueries");
     let current = { projectId: "project-1", projectStatus: "active", version: 1, progress: 0,
       note: "", status: "draft", currentRound: 0, canSubmit: false, needsReverification: false,
       blockers: ["Save 100% progress first."], review: null };
@@ -65,6 +66,8 @@ describe("Site Manager completion progress", () => {
     await waitFor(() => expect(writes).toHaveLength(1));
     expect(writes[0]).toMatchObject({ expectedVersion: 1, progress: 100, note: "" });
     await waitFor(() => expect(screen.getByText("Saved progress").parentElement).toHaveTextContent("100%"));
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["project-manager"] });
+    invalidate.mockRestore();
     const send = screen.getByRole("button", { name: "Complete and send to Client" });
     await waitFor(() => {
       if (canSubmit) expect(send).toBeEnabled();

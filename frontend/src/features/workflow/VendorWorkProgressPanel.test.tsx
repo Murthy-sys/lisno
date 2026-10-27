@@ -21,7 +21,7 @@ describe("project execution tracker", () => {
     expect(screen.getByText("Refreshing every 15 seconds")).toBeVisible();
     expect(screen.queryByRole("button",{name:"Reporting schedule"})).not.toBeInTheDocument();
   });
-  it("sends the exact submission id and version when the Site Manager verifies", async () => {
+  it("sends the exact submission id and version when the Project Manager verifies", async () => {
     const work = {...executionFixture,status:"awaiting_verification" as const,progress:100,allowedActions:["verify" as const,"request_changes" as const],submission:{id:"submission-one",version:4,note:"Installation finished",submittedAt:"2026-10-08T10:00:00Z",imageIds:[]}};
     const writes: unknown[]=[];
     server.use(http.get("/api/v1/execution/work/work-one",() => HttpResponse.json({data:work})),http.get("/api/v1/execution/work/work-one/history",() => HttpResponse.json({data:{items:[],total:0,limit:20,offset:0}})),http.post("/api/v1/projects/project-one/execution/work-one",async ({request}) => { writes.push(await request.json());return HttpResponse.json({data:{...work,version:5,allowedActions:[],status:"site_verified"}}); }));

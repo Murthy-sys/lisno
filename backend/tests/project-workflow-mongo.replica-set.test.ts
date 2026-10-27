@@ -2150,6 +2150,8 @@ describe("approved Design plan operational queues", () => {
       workflow.listProjectWorkflowTasks(admin, projectId)
     ).rejects.toMatchObject({ status: 403, code: "FORBIDDEN" });
 
+    await UserModel.create({ _id: superAdmin.id, name: superAdmin.name, email: superAdmin.email, emailNormalized: superAdmin.email,
+      role: "super_admin", active: true, passwordHash: "unused" });
     const siteManager = {
       id: "workflow-site-manager",
       name: "Site Manager",
@@ -3362,6 +3364,8 @@ describe("collaborative Design approval boundary", () => {
   const preparationAdminActor = { id: "preparation-super-admin", name: "Super Admin", email: "preparation-admin@example.test", role: "super_admin" as const };
   const executionAt = new Date(NOW.getTime() + 10 * 86_400_000);
   async function assignPreparationSite(f: Awaited<ReturnType<typeof fixture>>) {
+    await UserModel.create({ _id: preparationAdminActor.id, name: preparationAdminActor.name, email: preparationAdminActor.email,
+      emailNormalized: preparationAdminActor.email, role: "super_admin", active: true, passwordHash: "unused" });
     await UserModel.create({ _id: preparationSiteActor.id, name: preparationSiteActor.name, email: preparationSiteActor.email, emailNormalized: preparationSiteActor.email, passwordHash: "unused", role: preparationSiteActor.role, active: true, accountKind: "standard", version: 1, sessionVersion: 1, managerId: null, authorizedClientIds: [] });
     const site = await ProjectWorkflowTaskModel.findOne({ kind: "site_execution" }).lean();
     await f.workflow.overrideWorkerAssignment({ actor: preparationAdminActor, projectId: "evidence-project", taskId: String(site!._id), expectedVersion: 1, workerId: preparationSiteActor.id });
@@ -3423,7 +3427,9 @@ describe("collaborative Design approval boundary", () => {
     const f = await fixture();
     const finance = await ProjectWorkflowTaskModel.findOne({ kind: "finance" }).lean();
     const site = await ProjectWorkflowTaskModel.findOne({ kind: "site_execution" }).lean();
-    const siteActor = { id: "planning-site-manager", name: "Site Manager", email: "site@example.test", role: "site_manager" as const };
+    const siteActor = { id: "planning-site-manager", name: "Project Manager", email: "site@example.test", role: "site_manager" as const };
+    await UserModel.create(workerUser(siteActor.id, siteActor.name, "site_manager"));
+    await ProjectModel.updateOne({ _id: "evidence-project" }, { $set: { programManagerId: siteActor.id } });
     await ProjectWorkflowTaskModel.updateOne({ _id: site!._id }, { $set: { assigneeUserId: siteActor.id } });
     await expect(f.workflow.updateOperationalTask(siteActor, String(site!._id), 1, 10)).rejects.toMatchObject({ code: "WORK_ORDER_NOT_READY" });
     expect(await ProjectWorkflowTaskModel.findById(site!._id).lean()).toMatchObject({ progress: 0, version: 1 });

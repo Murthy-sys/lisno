@@ -6,6 +6,7 @@ import type { ApprovedPurchaseOrderLine } from "../src/domain/project-purchase-o
 import { clientVendorWorkDecisionSchema, vendorWorkAssignmentId, vendorWorkSubmitSchema } from "../src/domain/vendor-work.js";
 import { AuditEventModel } from "../src/models/AuditEvent.js";
 import { AiEstimatorKnowledgeVendorModel } from "../src/models/AiEstimatorKnowledgeVendor.js";
+import { EstimateModel } from "../src/models/Estimate.js";
 import { ProjectModel } from "../src/models/Project.js";
 import { ProjectPurchaseOrderRevisionModel } from "../src/models/ProjectPurchaseOrderRevision.js";
 import { EstimateClientReviewRoundModel } from "../src/models/EstimateClientReviewRound.js";
@@ -70,7 +71,7 @@ beforeEach(async () => {
   await AiEstimatorKnowledgeVendorModel.collection.insertMany([{ _id: "vendor-a", status: "active" }, { _id: "vendor-b", status: "active" }] as any);
   for (const [projectId, clientId] of [["project-a", clientA.id], ["project-b", clientB.id]]) {
     await ProjectModel.create({ _id: projectId, name: projectId, clientId, clientName: clientId, clientEmail: `${clientId}@example.test`, clientEmailNormalized: `${clientId}@example.test`,
-      clientMobile: "9000000000", clientAddress: "Site", status: "active", location: "Bengaluru", plannedStartAt: now, plannedEndAt: new Date("2026-12-01T09:00:00Z") });
+      programManagerId: projectId === "project-a" ? site.id : null, clientMobile: "9000000000", clientAddress: "Site", status: "active", location: "Bengaluru", plannedStartAt: now, plannedEndAt: new Date("2026-12-01T09:00:00Z") });
   }
   await ProjectPurchaseOrderModel.collection.insertMany([
     { _id: "order-a", orderNumber: "PO-A", projectId: "project-a", vendorId: "vendor-a", status: "approved", approvedRevision: 1, approvedRevisionId: "revision-a", cancelledAt: null },
@@ -78,7 +79,8 @@ beforeEach(async () => {
   ] as any);
   await EstimateClientReviewRoundModel.collection.insertOne({ _id: "estimate-round-a", estimateId: "estimate-a", estimateVersion: 2, projectId: null, status: "approved", decision: "approve",
     estimateSnapshot: { lineItems: [{ id: "source-cabinet" }, { id: "source-electric" }] } } as any);
-  await ProjectWorkflowTaskModel.collection.insertOne({ _id: "site-task", projectId: "project-a", kind: "site_execution", assigneeRole: "site_manager", assigneeUserId: site.id } as any);
+  await ProjectWorkflowTaskModel.collection.insertOne({ _id: "site-task", projectId: "project-a", kind: "site_execution", assigneeRole: "site_manager", assigneeUserId: site.id, estimateId: "estimate-a", status: "open", designPlanVersion: 1, version: 1 } as any);
+  await EstimateModel.collection.insertOne({ _id: "estimate-a", projectId: "project-a", status: "client_approved", designPlanStatus: "approved", designPlanVersion: 1 } as any);
 });
 afterAll(async () => { await replica?.stop(); });
 

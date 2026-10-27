@@ -246,8 +246,16 @@ describe("synthetic enterprise route harness", () => {
     expect(transport?.requests.filter((request) => request.unexpected)).toEqual([]);
   });
   it.each(routes)("renders %s as %s with only registered mock reads", async (route, role) => {
-    const { client } = mount(route, role);
+    const { client, router } = mount(route, role);
     await screen.findByRole("navigation", { name: "Primary navigation" });
+    if (route === "/home" && role === "site_manager") {
+      await screen.findByRole("heading", { name: "Dashboard" });
+      await screen.findByRole("heading", { name: "No assigned projects" });
+      expect(router.state.location.pathname).toBe("/execution");
+      expect(transport!.requests).toEqual(expect.arrayContaining([
+        expect.objectContaining({ method: "GET", path: "/project-manager/projects", status: 200, unexpected: false })
+      ]));
+    }
     await waitFor(() => expect(client.isFetching()).toBe(0));
     expect(transport?.requests.filter((r) => r.unexpected), JSON.stringify(transport?.requests.filter((r) => r.unexpected))).toEqual([]);
     expect(document.body.textContent).not.toMatch(/Unexpected Application Error|Synthetic QA render failed|Cannot read properties/);

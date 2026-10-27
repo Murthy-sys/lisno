@@ -78,6 +78,13 @@ async function fillInviteForm(user: ReturnType<typeof userEvent.setup>) {
 }
 
 describe("invitation dialogs", () => {
+  it("does not offer the retired role from an older server option list", () => {
+    renderWithQuery(<InviteUserDialog roles={["program_manager", "site_manager", "designer"]} onClose={() => undefined} />);
+    const roles = screen.getByRole("combobox", { name: "Role" });
+    expect(within(roles).queryByRole("option", { name: "Program Manager" })).not.toBeInTheDocument();
+    expect(within(roles).getByRole("option", { name: "Project Manager" })).toHaveValue("site_manager");
+    expect(roles).toHaveValue("site_manager");
+  });
   it("shows exactly four required server-ordered controls and associates mobile errors", async () => {
     let requestCount = 0;
     server.use(
@@ -101,8 +108,8 @@ describe("invitation dialogs", () => {
       within(within(dialog).getByRole("combobox", { name: "Role" }))
         .getAllByRole("option")
         .map((option) => option.textContent)
-    ).toEqual(["Site Manager", "Finance Manager", "Designer"]);
-    expect(dialog).not.toHaveTextContent(/title|password|client|project|assignment|impersonat/i);
+    ).toEqual(["Project Manager", "Finance Manager", "Designer"]);
+    expect(dialog).not.toHaveTextContent(/title|password|client|project assignment|impersonat/i);
     await waitFor(() => expect(within(dialog).getByRole("textbox", { name: "Name" })).toHaveFocus());
 
     await user.type(within(dialog).getByRole("textbox", { name: "Name" }), "Asha Rao");

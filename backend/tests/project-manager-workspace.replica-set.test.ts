@@ -1,0 +1,67 @@
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { Readable } from "node:stream";
+import { createHash } from "node:crypto";
+import { ProjectModel } from "../src/models/Project.js";
+import { UserModel } from "../src/models/User.js";
+import { ProjectManagerEvidenceModel, ProjectManagerEvidenceCleanupModel } from "../src/models/ProjectManagerEvidence.js";
+import { ProjectManagerEventModel } from "../src/models/ProjectManagerEvent.js";
+import { ProjectPurchaseOrderModel } from "../src/models/ProjectPurchaseOrder.js";
+import { ProjectVendorNoticeModel } from "../src/models/ProjectVendorNotice.js";
+import { AiEstimatorKnowledgeVendorModel } from "../src/models/AiEstimatorKnowledgeVendor.js";
+import * as vendorReadiness from "../src/services/vendor-readiness.service.js";
+import { createProjectManagerWorkspace } from "../src/services/project-manager/workspace.js";
+import { createPMEvidenceService } from "../src/services/project-manager/evidence.js";
+import { pmPanel } from "../src/services/project-manager/common.js";
+import { createAuditService } from "../src/services/audit.service.js";
+import { createMemoryRepository } from "../src/repositories/memory.js";
+import type { PublicUser } from "../src/services/auth.service.js";
+import type { FileStorage } from "../src/storage/storage.js";
+import type { PMItem } from "../src/contracts/project-manager.js";
+import { startMongoReplicaSet } from "./helpers/mongo-replica-set.js";
+const at=new Date("2026-10-27T08:00:00Z");const pm:PublicUser={id:"pm-a",name:"PM A",role:"site_manager",email:"pm-a@example.test"};
+const other:PublicUser={...pm,id:"pm-b",name:"PM B",email:"pm-b@example.test"};
+const audit=createAuditService(createMemoryRepository());let replica:Awaited<ReturnType<typeof startMongoReplicaSet>>;
+beforeAll(async()=>{replica=await startMongoReplicaSet("pm-workspace-isolated");await Promise.all([ProjectModel,UserModel,ProjectManagerEventModel,ProjectManagerEvidenceModel,ProjectManagerEvidenceCleanupModel].map(model=>model.syncIndexes()));},120000);
+afterAll(async()=>replica?.stop());
+beforeEach(async()=>{vi.restoreAllMocks();await replica.clear();await UserModel.create([pm,other].map(user=>({...user,_id:user.id,emailNormalized:user.email,passwordHash:"fixture-only",active:true})));await ProjectModel.create([['a',pm.id,'active'],['b',pm.id,'on_hold'],['c',other.id,'active']].map(([id,owner,status])=>({_id:id,name:`Project ${id}`,programManagerId:owner,clientName:`Client ${id}`,clientEmail:`client-${id}@example.test`,clientEmailNormalized:`client-${id}@example.test`,clientMobile:"9000000000",status,plannedStartAt:at,plannedEndAt:new Date("2026-12-01")})));});
+describe("PM workspace scoping and truthful portfolio",()=>{
+ it("delivers escalation details only to the current designated manager and uses visible source targets",async()=>{
+  const manager:PublicUser={id:"manager-a",role:"design_manager",name:"Design Manager",email:"manager-a@example.test"};
+  await UserModel.create({...manager,_id:manager.id,emailNormalized:manager.email,passwordHash:"fixture-only",active:true});
+  await ProjectModel.updateOne({_id:"a"},{$set:{managerId:manager.id}});
+  await ProjectManagerEventModel.create({_id:"event-manager",projectId:"a",entityId:"internal-hashed-record",family:"selection_request",actorId:pm.id,actorName:pm.name,idempotencyKey:"manager-escalation",digest:"test",action:"escalate",version:1,occurredAt:at,reason:"Selection blocks installation",result:{id:"selection:source-a",title:"Finish decision"},recipientIds:[manager.id]});
+  const service=createProjectManagerWorkspace({audit,panels:{}});
+  expect((await service.notifications(manager)).items[0]).toMatchObject({entityId:"selection:source-a",description:"Selection blocks installation"});
+  await service.readNotification(manager,"event-manager");
+  expect((await service.notifications(manager)).unreadTotal).toBe(0);
+  await ProjectModel.updateOne({_id:"a"},{$set:{managerId:"replacement-manager"}});
+  expect((await service.notifications(manager)).items).toHaveLength(0);
+  await expect(service.readNotification(manager,"event-manager")).rejects.toMatchObject({status:404});
+ });
+ it("counts authorized search scope before health filtering and pagination",async()=>{const service=createProjectManagerWorkspace({audit,now:()=>at,panels:{}});const page=await service.portfolio(pm,{limit:1,health:"at_risk"});expect(page.counts).toEqual({active:2,atRisk:1,critical:0,setup:0,onTrack:0,incomplete:1});expect(page.total).toBe(1);expect(page.items[0]!.id).toBe("b");expect(page.items[0]!.progress.actual).toBeNull();expect((await service.portfolio(pm,{q:"Project a"})).counts.active).toBe(1);await expect(service.overview(other,"a")).rejects.toMatchObject({status:404});await ProjectModel.updateOne({_id:"a"},{$set:{programManagerId:other.id}});await expect(service.overview(pm,"a")).rejects.toMatchObject({status:404});});
+ it("does not miss a critical snag beyond the first panel page",async()=>{const items:PMItem[]=Array.from({length:101},(_,i)=>({id:`snag-${i}`,kind:"snag",title:`Defect ${i}`,status:i===100?"open":"verified",severity:i===100?"critical":"success",version:1,sourceToken:null,facts:[],actions:[]}));const reader=vi.fn(async(_actor:PublicUser,id:string,q?:{limit?:number;offset?:number})=>({...pmPanel("snagging",at),availability:"available" as const,items:id==="a"?items.slice(q?.offset??0,(q?.offset??0)+(q?.limit??100)):[],total:id==="a"?items.length:0}));const service=createProjectManagerWorkspace({audit,now:()=>at,panels:{snagging:reader}});const page=await service.portfolio(pm);expect(page.items.find(p=>p.id==="a")!.health).toBe("critical");expect(page.counts).toMatchObject({active:2,atRisk:2,critical:1});expect(page.alertTotal).toBe(1);expect(page.alerts[0]!.entityId).toBe("snag-100");expect(reader).toHaveBeenCalledWith(pm,"a",{limit:100,offset:100});});
+ it("keeps KPI and bonus unavailable without granting another user's records",async()=>{const service=createProjectManagerWorkspace({audit,now:()=>at,panels:{}});expect(await service.bonus(pm)).toMatchObject({availability:"not_configured",statements:[]});expect(await service.leaderboard(pm)).toMatchObject({availability:"not_configured",items:[]});expect(await service.performance(pm)).toMatchObject({availability:"not_configured",policy:null});await UserModel.updateOne({_id:pm.id},{$set:{active:false}});await expect(service.bonus(pm)).rejects.toMatchObject({status:404});});
+ it("revalidates notification membership after PM reassignment",async()=>{await ProjectManagerEventModel.create({_id:"event-a",projectId:"a",entityId:"record-a",family:"snag",actorId:other.id,actorName:other.name,idempotencyKey:"notification-a",digest:"test",action:"created",version:1,occurredAt:at,result:{title:"Defect"},recipientIds:[pm.id]});const service=createProjectManagerWorkspace({audit,panels:{}});expect((await service.notifications(pm)).items).toHaveLength(1);await ProjectModel.updateOne({_id:"a"},{$set:{programManagerId:other.id}});expect((await service.notifications(pm)).items).toEqual([]);await expect(service.readNotification(pm,"event-a")).rejects.toMatchObject({status:404});});
+});
+describe("PM evidence storage compensation",()=>{
+ const bytes=Buffer.from("synthetic-media");const sha256=createHash("sha256").update(bytes).digest("hex");
+ const media={open:async()=>Readable.from(bytes),extension:".png" as const,originalFilename:"test.png",mimeType:"image/png",sizeBytes:bytes.length,sha256,kind:"image" as const};
+ function storage(){return {importStream:vi.fn(async()=>({reference:"opaque-test",byteSize:bytes.length,sha256})),delete:vi.fn(async()=>{}),open:vi.fn(async()=>Readable.from(bytes))} as unknown as FileStorage;}
+ it("revokes known vendor evidence links when the last issued order is cancelled",async()=>{
+  const vendor:PublicUser={id:"vendor-user",name:"Vendor",role:"vendor",vendorId:"vendor-a",email:"vendor@example.test"};
+  await UserModel.create({...vendor,_id:vendor.id,emailNormalized:vendor.email,passwordHash:"fixture-only",active:true});
+  await AiEstimatorKnowledgeVendorModel.collection.insertOne({_id:"vendor-a",status:"active",name:"Vendor"} as any);
+  vi.spyOn(vendorReadiness,"vendorActivation").mockResolvedValue({effectiveStatus:"active"} as any);
+  await ProjectPurchaseOrderModel.collection.insertOne({_id:"order-vendor",projectId:"a",vendorId:"vendor-a",approvedRevisionId:"revision",cancelledAt:null} as any);
+  const store=storage();const service=createPMEvidenceService(store);const [file]=await service.upload(pm,"a","notice-vendor",[media]);
+  await ProjectVendorNoticeModel.collection.insertOne({_id:"notice-vendor",projectId:"a",vendorId:"vendor-a",evidenceIds:[file!.id]} as any);
+  (await service.read(vendor,"a",file!.id)).stream.destroy();
+  await ProjectPurchaseOrderModel.updateOne({_id:"order-vendor"},{$set:{cancelledAt:at}});
+  const opened=vi.mocked(store.open).mock.calls.length;
+  await expect(service.read(vendor,"a",file!.id)).rejects.toMatchObject({status:404});
+  expect(vi.mocked(store.open).mock.calls.length).toBe(opened);
+ });
+ it("binds authenticated opaque files and rejects cross-project reads",async()=>{const store=storage();const service=createPMEvidenceService(store);const uploaded=await service.upload(pm,"a","pm-snag-draft",[media]);expect(uploaded).toHaveLength(1);expect(uploaded[0]).not.toHaveProperty("storageReference");const file=await service.read(pm,"a",uploaded[0]!.id);file.stream.destroy();await expect(service.read(other,"a",uploaded[0]!.id)).rejects.toMatchObject({status:404});expect((await ProjectManagerEvidenceModel.findById(uploaded[0]!.id).lean())!.entityId).toBe("pm-snag-draft");});
+ it("cleans permanent imports when metadata persistence fails",async()=>{const store=storage();vi.spyOn(ProjectManagerEvidenceModel,"create").mockRejectedValueOnce(new Error("metadata failure"));await expect(createPMEvidenceService(store).upload(pm,"a","draft",[media])).rejects.toThrow("metadata failure");expect(store.delete).toHaveBeenCalledWith("opaque-test");expect(await ProjectManagerEvidenceModel.countDocuments()).toBe(0);});
+ it("persists a cleanup retry when object deletion fails",async()=>{const store=storage();vi.mocked(store.delete).mockRejectedValue(new Error("storage offline"));vi.spyOn(ProjectManagerEvidenceModel,"create").mockRejectedValueOnce(new Error("metadata failure"));await expect(createPMEvidenceService(store).upload(pm,"a","draft",[media])).rejects.toThrow("metadata failure");expect(await ProjectManagerEvidenceCleanupModel.countDocuments({_id:"opaque-test"})).toBe(1);});
+});

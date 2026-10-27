@@ -30,9 +30,9 @@ function collaborativeStatusFixture(corrupt?: (data: Parameters<NonNullable<Para
 }
 
 describe("project status participant-safe source projection", () => {
-  it("allows exact assigned Program Manager status reads without adding chat participation", async () => {
+  it("allows status and chat reads only for the exact assigned Project Manager", async () => {
     const f = statusFixture(data => {
-      data.seed.users.push(chatUser("pm-a", "program_manager"), chatUser("pm-b", "program_manager"));
+      data.seed.users.push(chatUser("pm-a", "site_manager"), chatUser("pm-b", "site_manager"));
       data.seed.projects[0]!.programManagerId = "pm-a";
       data.seed.projects[1]!.programManagerId = "pm-b";
     });
@@ -42,7 +42,8 @@ describe("project status participant-safe source projection", () => {
     await expect(f.service.get(f.actor("pm-b"), "a")).rejects.toMatchObject({ status: 404 });
     await expect(f.service.get(f.actor("pm-a"), "b")).rejects.toMatchObject({ status: 404 });
     const chat = createProjectChatService({ repository: f.repository, audit: createAuditService(f.repository), chatRepository: f.chatRepository, clock: f.clock });
-    await expect(chat.actionTypes(f.actor("pm-a"), "a")).rejects.toMatchObject({ status: 403 });
+    await expect(chat.actionTypes(f.actor("pm-a"), "a")).resolves.toMatchObject({ canCreate: false, items: expect.any(Array) });
+    await expect(chat.actionTypes(f.actor("pm-a"), "b")).rejects.toMatchObject({ status: 404 });
     expect(mutate).not.toHaveBeenCalled();
   });
   it("uses the pending pre-estimate round without requiring a prior approval", async () => {
@@ -130,16 +131,16 @@ describe("project status participant-safe source projection", () => {
     await expect(f.service.get(f.actor("procurement"), "a")).rejects.toMatchObject({ status: 404 });
   });
 
-  it("preserves explicit Program Manager participant status access alongside direct assignment", async () => {
+  it("does not let explicit Project Manager selection bypass current assignment", async () => {
     const f = statusFixture(data => {
-      data.seed.users.push(chatUser("selected-pm", "program_manager"), chatUser("assigned-pm", "program_manager"));
+      data.seed.users.push(chatUser("selected-pm", "site_manager"), chatUser("assigned-pm", "site_manager"));
       data.seed.projects[0]!.programManagerId = "assigned-pm";
     });
-    const selection = { id: "selected-pm-membership", projectId: "a", userId: "selected-pm", selectedRole: "program_manager" as const, active: true, version: 1,
+    const selection = { id: "selected-pm-membership", projectId: "a", userId: "selected-pm", selectedRole: "site_manager" as const, active: true, version: 1,
       selectedBy: { id: "super", name: "Super", role: "super_admin" as const }, selectedAt: CHAT_NOW, reason: "Support", tradeReference: null, revokedBy: null, revokedAt: null, revocationReason: null };
     await expect(f.service.get(f.actor("selected-pm"), "a")).rejects.toMatchObject({ status: 404 });
     await f.chatRepository.mutate(tx => tx.saveSelection(selection));
-    expect(await f.service.get(f.actor("selected-pm"), "a")).toMatchObject({ projectId: "a" });
+    await expect(f.service.get(f.actor("selected-pm"), "a")).rejects.toMatchObject({ status: 404 });
     expect(await f.service.get(f.actor("assigned-pm"), "a")).toMatchObject({ projectId: "a" });
     await expect(f.service.get(f.actor("selected-pm"), "b")).rejects.toMatchObject({ status: 404 });
     await f.chatRepository.mutate(tx => tx.saveSelection({ ...selection, active: false, version: 2 }));

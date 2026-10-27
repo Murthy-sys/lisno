@@ -1,7 +1,7 @@
 import {
   AUTHORIZATION_POLICY_VERSION,
   PERMISSION_CODES,
-  ROLE_CODES,
+  ACTIVE_ROLE_CODES,
   type PermissionCode,
   type Role
 } from "../contracts/authorization";
@@ -26,7 +26,7 @@ const homeByRole: Record<Role, string> = {
   procurement: "work",
   program_manager: "execution",
   finance_head: "work",
-  site_manager: "work",
+  site_manager: "execution",
   worker_electrician: "work",
   worker_plumber: "work",
   worker_carpenter: "work",
@@ -161,7 +161,7 @@ describe("mobile Back home and fallback policy", () => {
     expect(resolveBackAction(current, session("procurement"), fence, new BackEntryOwnership())).toEqual({ kind: "replace", path: "/feature/procurement" });
     expect(resolveBackAction(current, session("procurement", ["workflow.tasks.read", "procurement.vendor_directory.read"]), fence, new BackEntryOwnership())).toEqual({ kind: "replace", path: "/feature/work" });
   });
-  it.each(ROLE_CODES)("hides Back only on %s's exact authorized home feature", (role) => {
+  it.each(ACTIVE_ROLE_CODES)("hides Back only on %s's exact authorized home feature", (role) => {
     const homeId = homeByRole[role];
     const routes = [feature("messages"), feature(homeId)];
     const ownership = observedHistory(routes);
@@ -173,7 +173,7 @@ describe("mobile Back home and fallback policy", () => {
     });
   });
 
-  it.each(ROLE_CODES)("returns secondary Messages and More screens to %s's home on direct entry", (role) => {
+  it.each(ACTIVE_ROLE_CODES)("returns secondary Messages and More screens to %s's home on direct entry", (role) => {
     for (const current of [feature("messages"), { key: "more", name: "more" }]) {
       expect(resolveBackAction(stack([current]), session(role), fence, new BackEntryOwnership())).toEqual({
         kind: "replace", path: `/feature/${homeByRole[role]}`

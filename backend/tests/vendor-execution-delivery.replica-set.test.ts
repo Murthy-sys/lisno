@@ -32,7 +32,7 @@ import { startMongoReplicaSet } from "./helpers/mongo-replica-set.js";
 vi.mock("../src/services/vendor-readiness.service.js", () => ({ vendorActivation: vi.fn(async (vendor: { status: string }) => ({ effectiveStatus: vendor.status === "active" ? "active" : "inactive" })) }));
 const user = (id: string, role: PublicUser["role"], vendorId?: string): PublicUser => ({ id, role, name: id, email: `${id}@example.test`, ...(vendorId ? { vendorId } : {}) });
 const vendor = user("delivery-vendor", "vendor", "vendor-a"), otherVendor = user("delivery-other-vendor", "vendor", "vendor-b");
-const site = user("delivery-site", "site_manager"), manager = user("delivery-manager", "program_manager"), otherManager = user("other-manager", "program_manager"), admin = user("delivery-admin", "super_admin");
+const site = user("delivery-site", "site_manager"), manager = site, otherManager = user("other-manager", "site_manager"), admin = user("delivery-admin", "super_admin");
 const audit = createAuditService(createMemoryRepository());
 const auth = { authenticate: vi.fn(async () => vendor) } as unknown as AuthService;
 let clock: Date, sent: ExecutionDigestMail[], replica: Awaited<ReturnType<typeof startMongoReplicaSet>>, service: ReturnType<typeof createVendorExecutionDeliveryService>;
@@ -51,13 +51,13 @@ beforeAll(async () => {
 }, 120000);
 beforeEach(async () => {
   await replica.clear(); sent = []; at("2026-10-09T03:29:00Z"); service = make();
-  await UserModel.collection.insertMany([vendor, otherVendor, site, manager, otherManager, admin].map(actor => ({ _id: actor.id, ...actor, active: true, emailNormalized: actor.email, accountKind: "standard", createdAt: new Date("2026-10-01T00:00:00Z"), updatedAt: new Date("2026-10-01T00:00:00Z") })) as any);
+  await UserModel.collection.insertMany([vendor, otherVendor, site, otherManager, admin].map(actor => ({ _id: actor.id, ...actor, active: true, emailNormalized: actor.email, accountKind: "standard", createdAt: new Date("2026-10-01T00:00:00Z"), updatedAt: new Date("2026-10-01T00:00:00Z") })) as any);
   await ProjectModel.collection.insertMany([{ _id: "project-a", name: "Project A", status: "active", programManagerId: manager.id, updatedAt: new Date("2026-10-01") }, { _id: "project-b", name: "Project B", status: "active", programManagerId: otherManager.id }] as any);
-  await ProjectWorkflowTaskModel.collection.insertOne({ _id: "site-task", projectId: "project-a", kind: "site_execution", assigneeRole: "site_manager", assigneeUserId: site.id } as any);
+  await ProjectWorkflowTaskModel.collection.insertOne({ _id: "site-task", projectId: "project-a", kind: "site_execution", assigneeRole: "site_manager", assigneeUserId: site.id, estimateId: "estimate-a", designPlanVersion: 1, status: "open", version: 1 } as any);
   await AiEstimatorKnowledgeVendorModel.collection.insertMany([{ _id: "vendor-a", status: "active" }, { _id: "vendor-b", status: "active" }] as any);
   await ProjectPurchaseOrderModel.collection.insertOne({ _id: "order-a", projectId: "project-a", vendorId: "vendor-a", orderNumber: "WO-A", status: "approved", approvedRevision: 1, approvedRevisionId: "revision-a", cancelledAt: null } as any);
   await ProjectPurchaseOrderRevisionModel.collection.insertOne({ _id: "revision-a", projectId: "project-a", vendorId: "vendor-a", orderId: "order-a", revision: 1, lines: [0, 1].map(index => ({ id: `line-${index}`, procurementItemId: `item-${index}`, sourceLineItemKey: `source-${index}` })) } as any);
-  await EstimateModel.collection.insertOne({ _id: "estimate-a", version: 1, lineItems: [{ id: "source-0" }, { id: "source-1" }] } as any);
+  await EstimateModel.collection.insertOne({ _id: "estimate-a", projectId: "project-a", status: "client_approved", designPlanStatus: "approved", designPlanVersion: 1, version: 1, lineItems: [{ id: "source-0" }, { id: "source-1" }] } as any);
   await VendorWorkAssignmentModel.collection.insertMany(["assignment-a", "assignment-b"].map((id, index) => ({ _id: id, projectId: "project-a", vendorId: "vendor-a", estimateId: "estimate-a", estimateVersion: 1, orderId: "order-a", orderRevision: 1, lineId: `line-${index}`, procurementItemId: `item-${index}`, sourceLineItemKey: `source-${index}`, status: "in_progress", itemName: index ? "Painting" : "Ceiling", targetDate: "2026-10-15" })) as any);
   await VendorExecutionStateModel.collection.insertMany(["assignment-a", "assignment-b"].map(id => ({ _id: id, assignmentId: id, projectId: "project-a", vendorId: "vendor-a", workflowVersion: 1, version: 1, executionRound: 1, status: "in_progress", progress: 10, latestNote: "Started", latestReportAt: null, acknowledgedAt: new Date("2026-10-08T03:00:00Z"), accessAvailableAt: new Date("2026-10-08T02:00:00Z"), schedule: { startDate: "2026-10-09", finishDate: "2026-10-15", confirmedAt: new Date("2026-10-08T04:00:00Z"), revision: 1, confirmedById: manager.id }, reportingStartsOn: "2026-10-09", hold: null, createdAt: new Date("2026-10-08"), updatedAt: new Date("2026-10-08") })) as any);
 });
@@ -78,7 +78,7 @@ describe("daily obligation and digest boundaries", () => {
     at("2026-10-11T13:30:00Z");
     await UserModel.updateOne({ _id: vendor.id }, { $set: { name: "Edited profile", updatedAt: clock } }, { timestamps: false });
     await service.runOnce();
-    expect(sent).toHaveLength(3);
+    expect(sent).toHaveLength(2);
     expect(sent.every(mail => mail.items.every(item => item.reasons.includes("Acknowledgement overdue")))).toBe(true);
     expect((await VendorExecutionStateModel.findById("assignment-a").lean())?.accessAvailableAt).toEqual(availableAt);
     expect(await ExecutionDailyObligationModel.countDocuments()).toBe(0);
@@ -118,8 +118,8 @@ describe("daily obligation and digest boundaries", () => {
     at("2026-10-09T12:30:00Z"); await service.runOnce(); expect((await daily()).state).toBe("missing");
     expect(await ExecutionDailyObligationModel.countDocuments({ outcome: "missing" })).toBe(2);
     at("2026-10-09T13:30:00Z"); await service.runOnce();
-    expect(sent.filter(mail => mail.kind === "daily_escalation").map(mail => mail.recipient.email).sort()).toEqual([admin.email, manager.email, site.email].sort());
-    expect(await ExecutionNotificationModel.countDocuments()).toBe(4);
+    expect(sent.filter(mail => mail.kind === "daily_escalation").map(mail => mail.recipient.email).sort()).toEqual([admin.email, manager.email].sort());
+    expect(await ExecutionNotificationModel.countDocuments()).toBe(3);
     expect((await service.health()).lastSuccessAt).toBe(clock.toISOString());
   });
   it("late updates preserve missed cutoff but resolve missing escalation; a blocker still escalates", async () => {
@@ -128,7 +128,7 @@ describe("daily obligation and digest boundaries", () => {
     at("2026-10-09T13:30:00Z"); await service.runOnce();
     expect(await daily()).toMatchObject({ state: "late", reportedAt: "2026-10-09T12:31:00.000Z" });
     expect((await ExecutionDailyObligationModel.findById("assignment-a:2026-10-09").lean())?.outcome).toBe("missing");
-    expect(sent).toHaveLength(3); expect(sent.every(mail => mail.items.length === 1 && mail.items[0]!.assignmentId === "assignment-b" && mail.items[0]!.reasons.includes("Work blocked"))).toBe(true);
+    expect(sent).toHaveLength(2); expect(sent.every(mail => mail.items.length === 1 && mail.items[0]!.assignmentId === "assignment-b" && mail.items[0]!.reasons.includes("Work blocked"))).toBe(true);
   });
   it("recognizes an on-time zero progress report and never counts photos or notification reads as reports", async () => {
     at("2026-10-09T03:30:00Z"); await service.runOnce();
@@ -223,7 +223,7 @@ describe("daily obligation and digest boundaries", () => {
     await VendorExecutionStateModel.updateMany({}, { $set: { status: "awaiting_verification", submissionId: "review-a" } });
     await VendorExecutionReviewModel.collection.insertOne({ _id: "review-a", submittedAt: new Date("2026-10-09T05:00:00Z") } as any);
     at("2026-10-09T13:30:00Z"); await service.runOnce(); expect(sent).toHaveLength(0);
-    at("2026-10-10T13:30:00Z"); await service.runOnce(); expect(sent).toHaveLength(3);
+    at("2026-10-10T13:30:00Z"); await service.runOnce(); expect(sent).toHaveLength(2);
     expect(sent.every(mail => mail.items.every(item => item.reasons.includes("Site verification overdue")))).toBe(true);
   });
   it("resumes obligations for Client rework without rewriting legacy accepted status", async () => {
@@ -233,7 +233,7 @@ describe("daily obligation and digest boundaries", () => {
     at("2026-10-09T03:30:00Z"); await service.runOnce();
     expect((await daily()).state).toBe("due"); expect(sent).toHaveLength(1);
     at("2026-10-09T13:30:00Z"); await service.runOnce();
-    expect(sent.filter(mail => mail.kind === "daily_escalation")).toHaveLength(3);
+    expect(sent.filter(mail => mail.kind === "daily_escalation")).toHaveLength(2);
     expect(await VendorWorkAssignmentModel.countDocuments({ status: "client_approved" })).toBe(2);
   });
   it("routes missing issued source to staff without creating vendor reporting penalties", async () => {
@@ -241,7 +241,8 @@ describe("daily obligation and digest boundaries", () => {
     at("2026-10-09T03:30:00Z"); await service.runOnce(); expect(sent).toHaveLength(0);
     expect(await ExecutionDailyObligationModel.countDocuments()).toBe(0);
     at("2026-10-09T13:30:00Z"); await service.runOnce();
-    expect(sent).toHaveLength(3);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.recipient.email).toBe(admin.email);
     expect(sent.every(mail => mail.items.every(item => item.reasons.includes("Issued work source unavailable")))).toBe(true);
   });
   it("escalates missing ownership only to the sole Super Admin without role-wide fallback", async () => {
@@ -249,7 +250,7 @@ describe("daily obligation and digest boundaries", () => {
     await ProjectModel.updateOne({ _id: "project-a" }, { $set: { programManagerId: null } });
     at("2026-10-09T13:30:00Z"); await service.runOnce();
     expect(sent).toHaveLength(1); expect(sent[0]!.recipient.email).toBe(admin.email);
-    expect(sent[0]!.items[0]!.reasons).toEqual(expect.arrayContaining(["Site Manager assignment required", "Program Manager assignment required"]));
+    expect(sent[0]!.items[0]!.reasons).toEqual(expect.arrayContaining(["Project Manager assignment requires reconciliation"]));
   });
 });
 

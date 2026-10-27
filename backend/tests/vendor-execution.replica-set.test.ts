@@ -10,6 +10,7 @@ import { ProjectPurchaseOrderRevisionModel } from "../src/models/ProjectPurchase
 import { ProjectWorkflowTaskModel } from "../src/models/ProjectWorkflowTask.js";
 import { SiteCompletionStateModel } from "../src/models/SiteCompletionState.js";
 import { UserModel } from "../src/models/User.js";
+import { EstimateModel } from "../src/models/Estimate.js";
 import { EstimateClientReviewRoundModel } from "../src/models/EstimateClientReviewRound.js";
 import { VendorWorkAssignmentModel } from "../src/models/VendorWorkAssignment.js";
 import { VendorWorkImageModel } from "../src/models/VendorWorkImage.js";
@@ -29,8 +30,8 @@ const vendor = actor("vendor-user", "vendor", "vendor-a");
 const otherVendor = actor("other-vendor", "vendor", "vendor-b");
 const site = actor("site-a", "site_manager");
 const otherSite = actor("site-b", "site_manager");
-const manager = actor("program-a", "program_manager");
-const otherManager = actor("program-b", "program_manager");
+const manager = site;
+const otherManager = otherSite;
 const admin = actor("admin", "super_admin");
 const client = actor("client", "client");
 const id = "vendor-work:order-a:1:line-a";
@@ -66,10 +67,11 @@ beforeAll(async () => {
 }, 120_000);
 beforeEach(async () => {
   await replica.clear(); serial = 0; clock = new Date("2026-10-08T09:00:00Z");
-  await UserModel.create([vendor, otherVendor, site, otherSite, manager, otherManager, admin, client].map(user => ({ _id: user.id, name: user.name, email: user.email, emailNormalized: user.email, passwordHash: "fixture-only", role: user.role, vendorId: user.vendorId ?? null, active: true })));
+  await UserModel.create([vendor, otherVendor, site, otherSite, admin, client].map(user => ({ _id: user.id, name: user.name, email: user.email, emailNormalized: user.email, passwordHash: "fixture-only", role: user.role, vendorId: user.vendorId ?? null, active: true })));
   await AiEstimatorKnowledgeVendorModel.collection.insertMany([{ _id: "vendor-a", name: "Vendor A", status: "active" }, { _id: "vendor-b", name: "Vendor B", status: "active" }] as any);
   await ProjectModel.collection.insertMany([{ _id: "project-a", name: "Project A", status: "active", programManagerId: manager.id }, { _id: "project-b", name: "Project B", status: "active", programManagerId: otherManager.id }] as any);
-  await ProjectWorkflowTaskModel.collection.insertMany([{ _id: "site-task-a", projectId: "project-a", kind: "site_execution", assigneeRole: "site_manager", assigneeUserId: site.id }, { _id: "site-task-b", projectId: "project-b", kind: "site_execution", assigneeRole: "site_manager", assigneeUserId: otherSite.id }] as any);
+  await ProjectWorkflowTaskModel.collection.insertMany([{ _id: "site-task-a", projectId: "project-a", kind: "site_execution", assigneeRole: "site_manager", assigneeUserId: site.id, estimateId: "estimate-a", designPlanVersion: 1, status: "open", version: 1 }, { _id: "site-task-b", projectId: "project-b", kind: "site_execution", assigneeRole: "site_manager", assigneeUserId: otherSite.id, estimateId: "estimate-b", designPlanVersion: 1, status: "open", version: 1 }] as any);
+  await EstimateModel.collection.insertMany(["a", "b"].map(key => ({ _id: `estimate-${key}`, projectId: `project-${key}`, status: "client_approved", designPlanStatus: "approved", designPlanVersion: 1 })) as any);
   for (const [orderId, projectId, vendorId] of [["order-a", "project-a", "vendor-a"], ["order-b", "project-a", "vendor-b"]]) {
     await ProjectPurchaseOrderModel.collection.insertOne({ _id: orderId, projectId, vendorId, orderNumber: orderId.toUpperCase(), status: "approved", approvedRevision: 1, approvedRevisionId: `revision-${orderId}`, cancelledAt: null } as any);
     await ProjectPurchaseOrderRevisionModel.collection.insertOne({ _id: `revision-${orderId}`, orderId, projectId, vendorId, orderNumber: orderId.toUpperCase(), revision: 1, lines: [{ ...issuedLine, quantityMilliUnits: orderId === "order-a" ? 12_500 : 27_000 }] } as any);
@@ -164,7 +166,7 @@ describe("individual Site Manager verification", () => {
     expect(submitted.status).toBe("awaiting_verification");
     expect((await VendorWorkAssignmentModel.findById(id).lean())?.status).toBe("in_progress");
     await expect(command(admin, "verify", { submissionId: submitted.submission!.id })).rejects.toMatchObject({ status: 403 });
-    await expect(command(manager, "verify", { submissionId: submitted.submission!.id })).rejects.toMatchObject({ status: 403 });
+    await expect(command(otherManager, "verify", { submissionId: submitted.submission!.id })).rejects.toMatchObject({ status: 404 });
     await expect(command(site, "verify", { submissionId: "stale-submission" })).rejects.toMatchObject({ status: 409 });
     await expect(mongoose.connection.transaction(async session => assertExecutionEditable((await VendorWorkAssignmentModel.findById(id).session(session).lean())!, session))).rejects.toMatchObject({ code: "EXECUTION_LOCKED" });
     const verified = await command(site, "verify", { submissionId: submitted.submission!.id });

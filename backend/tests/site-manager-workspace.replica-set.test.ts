@@ -4,6 +4,7 @@ import type { ExecutionCommand } from "../src/contracts/vendor-execution.js";
 import { AuditEventModel } from "../src/models/AuditEvent.js";
 import { AiEstimatorKnowledgeVendorModel } from "../src/models/AiEstimatorKnowledgeVendor.js";
 import { EstimateClientReviewRoundModel } from "../src/models/EstimateClientReviewRound.js";
+import { EstimateModel } from "../src/models/Estimate.js";
 import { ProjectModel } from "../src/models/Project.js";
 import { ProjectPurchaseOrderModel } from "../src/models/ProjectPurchaseOrder.js";
 import { ProjectPurchaseOrderRevisionModel } from "../src/models/ProjectPurchaseOrderRevision.js";
@@ -77,9 +78,10 @@ beforeEach(async () => {
     { _id: "same-name", name: "D shared name", status: "active", completionAuthority: "vendor_client" },
     { _id: "foreign", name: "Private second manager project", status: "active", completionAuthority: "vendor_client" }
   ];
-  await ProjectModel.collection.insertMany(projects as any);
+  await ProjectModel.collection.insertMany(projects.map(project => ({ ...project, programManagerId: project._id === "foreign" ? otherSite.id : site.id })) as any);
+  await EstimateModel.collection.insertMany(projects.map(project => ({ _id: `estimate-${project._id}`, projectId: project._id, status: "client_approved", designPlanStatus: "approved", designPlanVersion: 1 })) as any);
   await ProjectWorkflowTaskModel.collection.insertMany(projects.map(project => ({ _id: `task-${project._id}`, projectId: project._id, kind: "site_execution", assigneeRole: "site_manager",
-    assigneeUserId: project._id === "foreign" ? otherSite.id : site.id })) as any);
+    assigneeUserId: project._id === "foreign" ? otherSite.id : site.id, estimateId: `estimate-${project._id}`, designPlanVersion: 1, status: project.status === "completed" ? "completed" : "open", version: 1 })) as any);
   await addWork("order-a", "active", "vendor-a");
   await addWork("order-b", "active", "vendor-b");
   await addWork("order-c", "active", "vendor-a");
@@ -132,9 +134,13 @@ describe("Site Manager current assigned projects", () => {
     expect((await service.portfolio(site)).items.map(item => item.id)).not.toContain("active");
     await ProjectWorkflowTaskModel.deleteOne({ _id: "duplicate-assignment" });
     await ProjectWorkflowTaskModel.updateOne({ _id: "task-active" }, { $set: { assigneeUserId: otherSite.id } });
+    expect((await service.portfolio(otherSite)).items.map(item => item.id)).not.toContain("active");
+    await ProjectModel.updateOne({ _id: "active" }, { $set: { programManagerId: otherSite.id } });
     expect((await service.portfolio(site)).items.map(item => item.id)).not.toContain("active");
     expect((await service.portfolio(otherSite)).items.map(item => item.id)).toContain("active");
     await ProjectWorkflowTaskModel.deleteOne({ _id: "task-hold" });
+    expect((await service.project(site, "hold")).project?.id).toBe("hold");
+    await ProjectModel.updateOne({ _id: "hold" }, { $set: { programManagerId: null } });
     await expect(service.project(site, "hold")).rejects.toMatchObject({ status: 404 });
   });
 });

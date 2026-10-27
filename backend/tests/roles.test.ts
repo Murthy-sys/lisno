@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  ACTIVE_ROLE_CODES,
+  isActiveRole,
   OPERATIONAL_ROLES,
   ROLE_CODES,
   ROLE_LABELS,
@@ -42,7 +44,7 @@ describe("canonical role catalog", () => {
       procurement: "Procurement",
       program_manager: "Program Manager",
       finance_head: "Finance Manager",
-      site_manager: "Site Manager",
+      site_manager: "Project Manager",
       worker_electrician: "Electrician",
       worker_plumber: "Plumber",
       worker_carpenter: "Carpenter",
@@ -54,6 +56,15 @@ describe("canonical role catalog", () => {
       client: "Client",
       vendor: "Vendor"
     });
+  });
+
+  it("keeps legacy roles readable but permits only the consolidated active role", () => {
+    expect(isRole("program_manager")).toBe(true);
+    expect(isActiveRole("program_manager")).toBe(false);
+    expect(isActiveRole("site_manager")).toBe(true);
+    expect(isActiveRole("not_a_role")).toBe(false);
+    expect(isActiveRole(null)).toBe(false);
+    expect(ACTIVE_ROLE_CODES).toEqual(ROLE_CODES.filter(role => role !== "program_manager"));
   });
 
   it.each(WORKER_ROLES)("maps %s to the Worker family", (role) => {
@@ -69,7 +80,6 @@ describe("canonical role catalog", () => {
       "estimator_sales",
       "designer",
       "procurement",
-      "program_manager",
       "finance_head",
       "site_manager",
       ...WORKER_ROLES

@@ -11,6 +11,7 @@ import { AiEstimatorKnowledgeUomModel } from "../src/models/AiEstimatorKnowledge
 import { AiEstimatorKnowledgeVendorModel } from "../src/models/AiEstimatorKnowledgeVendor.js";
 import { ProcurementBasketAwardApprovalModel, ProcurementBasketAwardModel, ProcurementBasketAwardRevisionModel, ProcurementBasketBidModel, ProcurementBasketBoqRevisionModel,
   ProcurementBasketEnquiryModel } from "../src/models/ProcurementBasketTender.js";
+import { EstimateModel } from "../src/models/Estimate.js";
 import { ProjectModel } from "../src/models/Project.js";
 import { ProjectWorkflowTaskModel } from "../src/models/ProjectWorkflowTask.js";
 import { ProjectProcurementItemModel } from "../src/models/ProjectProcurementItem.js";
@@ -317,6 +318,8 @@ async function largeReviewers(): Promise<Array<{ id: "advance" | "mobilisation" 
     emailNormalized: "finance@example.test", passwordHash: "fixture", role: "finance_head", active: true },
   { _id: "super-admin", name: "Super Admin", email: "admin@example.test",
     emailNormalized: "admin@example.test", passwordHash: "fixture", role: "super_admin", active: true }]);
+  await ProjectModel.updateOne({ _id: "project-a" }, { $set: { programManagerId: "site-manager" } });
+  await EstimateModel.collection.insertOne({ _id: "estimate-a", projectId: "project-a", status: "client_approved", designPlanStatus: "approved", designPlanVersion: 1, designPlanDesignerId: "designer" } as any);
   await ProjectWorkflowTaskModel.create({ _id: "site-task-a", dedupeKey: "estimate-a:site",
     projectId: "project-a", estimateId: "estimate-a", designPlanVersion: 1,
     kind: "site_execution", title: "Site execution", assigneeRole: "site_manager", assigneeUserId: "site-manager", openedAt: at });

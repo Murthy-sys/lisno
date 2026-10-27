@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useId, useSyncExternalStore, type CSSProperties, type ReactNode } from "react";
-import { Download, LoaderCircle, Mic, Pause, Play, RotateCcw, X } from "lucide-react";
+import { ChatIcon } from "./ChatIcon";
 import { chatInitials, chatSenderColor } from "./ChatActionMenu";
 import { ChatAudioController, type ChatAudioSource, type ChatAudioState } from "./chatAudioController";
 import "./chatAudio.css";
@@ -43,7 +43,7 @@ export function ChatAudioBubble({ source, sender = { id: "self", name: "You" }, 
     <span id={description} className="sr-only">{source.filename}. {duration ? `Duration ${audioTime(duration)}.` : "Duration available after loading."} Waveform builds from measured sound during playback.</span>
     <div className="project-chat-audio__main">
       <button type="button" className="project-chat-audio__play" aria-label={buttonLabel} onClick={() => controller.toggle(source)} aria-describedby={description}>
-        {loading ? <><LoaderCircle className="project-chat-audio__loading" size={26} aria-hidden="true" /><X className="project-chat-audio__cancel" size={11} aria-hidden="true" /></> : playbackError ? <RotateCcw size={23} aria-hidden="true" /> : playing ? <Pause size={27} fill="currentColor" aria-hidden="true" /> : <Play size={27} fill="currentColor" aria-hidden="true" />}
+        {loading ? <><ChatIcon name="refresh" className="project-chat-audio__loading" size={26} aria-hidden="true" /><ChatIcon name="close" className="project-chat-audio__cancel" size={11} aria-hidden="true" /></> : playbackError ? <ChatIcon name="refresh" size={23} aria-hidden="true" /> : playing ? <ChatIcon name="pause" size={27} fill="currentColor" aria-hidden="true" /> : <ChatIcon name="play" size={27} fill="currentColor" aria-hidden="true" />}
       </button>
       <div className="project-chat-audio__track" style={{ "--audio-progress": `${progress}%` } as CSSProperties}>
         <svg viewBox="0 0 192 40" preserveAspectRatio="none" aria-hidden="true">
@@ -53,13 +53,13 @@ export function ChatAudioBubble({ source, sender = { id: "self", name: "You" }, 
         <input type="range" min={0} max={duration ?? 1} step={0.1} value={Math.min(position, duration ?? 0)} disabled={!duration || loading} aria-label={`Seek ${source.filename}`} aria-valuetext={duration ? `${audioTime(position)} of ${audioTime(duration)}` : "Duration unknown"} onChange={event => controller.seek(source.key, Number(event.target.value))} />
       </div>
       <span className="project-chat-audio__sender" role="img" title={sender.name} aria-label={`Audio from ${sender.name}`} style={{ "--audio-sender": chatSenderColor(sender.id) } as CSSProperties}>
-        <span aria-hidden="true">{chatInitials(sender.name)}</span><Mic size={17} className="project-chat-audio__mic" aria-hidden="true" />
+        <span aria-hidden="true">{chatInitials(sender.name)}</span><ChatIcon name="mic" size={17} className="project-chat-audio__mic" aria-hidden="true" />
       </span>
     </div>
     <div className="project-chat-audio__details">
       <span className="project-chat-audio__duration" aria-hidden="true">{audioTime(playing || position > 0 ? position : duration)}</span>
       {loading ? <span className="project-chat-audio__transfer" role="status">{state.progress === undefined ? "Loading…" : `${state.progress}%`}</span> : null}
-      <button type="button" className="project-chat-audio__download" aria-label={`Download ${source.filename}`} onClick={() => controller.download(source)}><Download size={14} aria-hidden="true" /></button>
+      <button type="button" className="project-chat-audio__download" aria-label={`Download ${source.filename}`} onClick={() => controller.download(source)}><ChatIcon name="download" size={14} aria-hidden="true" /></button>
       {timestamp ? <span className="project-chat-audio__time">{timestamp}</span> : null}
     </div>
     {draftLabel ? <span className="project-chat-audio__filename" title={source.filename}>{source.filename}</span> : null}

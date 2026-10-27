@@ -9,6 +9,7 @@ import {
   KeyRound,
   LayoutDashboard,
   MailCheck,
+  MessagesSquare,
   Palette,
   Settings2,
   ShoppingCart,
@@ -33,7 +34,7 @@ const roleNavigation = [
   ["designer", [["Workspace", "/designer", LayoutDashboard], ["Design plans", "/designer/design-plans", Palette], ["My access requests", "/access-requests/mine", KeyRound]]],
   ["procurement", [["My access requests", "/access-requests/mine", KeyRound], ["Home", "/home", House]]],
   ["finance_head", [["Finance", "/finance", WalletCards], ["My access requests", "/access-requests/mine", KeyRound], ["Home", "/home", House]]],
-  ["site_manager", [["Work order approvals", "/work-order-approvals", ClipboardCheck], ["My access requests", "/access-requests/mine", KeyRound], ["Home", "/home", House]]],
+  ["site_manager", [["Dashboard", "/execution", ClipboardCheck], ["Project messages", "/project-messages", MessagesSquare], ["Leaderboard", "/project-manager/leaderboard", UsersRound], ["My Bonus", "/project-manager/bonus", WalletCards]]],
   ["worker_electrician", [["Home", "/home", House]]],
   ["worker_plumber", [["Home", "/home", House]]],
   ["worker_carpenter", [["Home", "/home", House]]],
@@ -58,9 +59,13 @@ function navigationAuthorization(role: Role) {
 }
 
 describe("role navigation", () => {
+  it("shows exactly the four Project Manager workspace destinations", () => {
+    const authorization = authorizationFor("site_manager", ["execution.tracker.read", "chat.read", "pm.leaderboard.read", "pm.bonus.read"]);
+    expect(navigationForAuthorization("site_manager", authorization).map(item => item.label)).toEqual(["Dashboard", "Project messages", "Leaderboard", "My Bonus"]);
+  });
   it.each(ROLE_CODES)("gates execution navigation by both permission and presentation role for %s", role => {
     const links = navigationForAuthorization(role, authorizationFor(role, ["execution.tracker.read"])).filter(item => !isNavigationGroup(item));
-    expect(links.some(item => !isNavigationGroup(item) && item.to === "/execution")).toBe(["super_admin", "program_manager", "procurement"].includes(role));
+    expect(links.some(item => !isNavigationGroup(item) && item.to === "/execution")).toBe(["super_admin", "site_manager", "procurement"].includes(role));
     expect(navigationForAuthorization(role, authorizationFor(role, [])).some(item => !isNavigationGroup(item) && item.to === "/execution")).toBe(false);
   });
   it.each(ROLE_CODES)("returns a frozen safe navigation array for %s", (role) => {
@@ -144,16 +149,16 @@ describe("role navigation", () => {
     ).toEqual([]);
   });
 
-  it("gives Site Managers permission-based work order navigation without enabling legacy Program Managers", () => {
+  it("keeps work order approvals out of the four-link Project Manager sidebar", () => {
     const approvals = (role: Role, permissions?: Parameters<typeof authorizationFor>[1]) => navigationForAuthorization(role,
       permissions ? authorizationFor(role, permissions) : authorizationFor(role)).filter(({ label }) => label === "Work order approvals");
-    expect(approvals("site_manager")).toEqual([expect.objectContaining({ to: "/work-order-approvals" })]);
+    expect(approvals("site_manager")).toEqual([]);
     expect(approvals("site_manager", ["identity.self.read"])).toEqual([]);
     expect(approvals("program_manager")).toEqual([]);
     expect(approvals("program_manager", ["procurement.work_order_approval.read"])).toEqual([]);
   });
 
-  it.each(["procurement", "site_manager", "super_admin", "designer", "finance_head"] as const)(
+  it.each(["procurement", "super_admin", "designer", "finance_head"] as const)(
     "renders Work order approvals for a permitted %s",
     (role) => {
       render(<MemoryRouter initialEntries={["/work-order-approvals"]}>

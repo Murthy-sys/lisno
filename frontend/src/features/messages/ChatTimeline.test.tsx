@@ -56,7 +56,7 @@ describe("chat transcript presentation", () => {
     expect(screen.getAllByRole("button", { name: "Message options from Lisno AI" })).toHaveLength(2);
   });
   it("shows the authenticated AI answer once instead of the generic shared body", async () => {
-    vi.spyOn(projectChatApi, "assistantResult").mockResolvedValue({ id: "answer-a", projectId: "project-a", messageId: "ai-message", kind: "status", checkedAt: "2026-10-09T08:00:00Z", stale: false, commercialAccess: "none", facts: [], candidates: [], missingInputs: [], commercial: null, narrative: [{ text: "Your project team is preparing the next stage.", factIds: [] }] });
+    vi.spyOn(projectChatApi, "assistantResult").mockResolvedValue({ disclosurePolicy: "project-publication-v1", id: "answer-a", projectId: "project-a", messageId: "ai-message", kind: "status", checkedAt: "2026-10-09T08:00:00Z", stale: false, commercialAccess: "none", facts: [], candidates: [], missingInputs: [], commercial: null, narrative: [{ text: "Your project team is preparing the next stage.", factIds: [] }] });
     render(<ChatTimeline {...props()} messages={[chatTestMessage({ author: { kind: "service", id: "lisno-ai", name: "Lisno AI" }, body: "I checked the current project status.", assistant: { runId: "run-a", generation: 1, status: "answered", eligibleAt: "2026-10-09T08:00:00Z", resultId: "answer-a", checkedAt: "2026-10-09T08:00:00Z", routing: "not_required", notified: null, canRequest: false, failureCode: null } })]} />, { wrapper });
     expect(await screen.findByText("Your project team is preparing the next stage.")).toBeVisible();
     expect(screen.queryByText("I checked the current project status.")).not.toBeInTheDocument();

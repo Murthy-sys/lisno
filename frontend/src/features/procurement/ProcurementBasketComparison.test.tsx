@@ -39,14 +39,14 @@ const assignedPreview: BasketAwardPreview = {
   totals: { netPaise: 6000000, gstPaise: 0, totalPaise: 6000000 }, milestones: [...milestones],
   requiredSlots: ["program_manager", "designer", "procurement", "finance_head"], budgetOverrideRequired: false,
   designerOptions: [{ id: "designer-other", name: "Unrelated Designer" }],
-  assignedSiteManager: { id: "site-manager-one", name: "Arun Site Manager" },
+  assignedSiteManager: { id: "site-manager-one", name: "Arun Project Manager" },
   assignedDesigner: { id: "designer-one", name: "Asha Designer" }, approverBlockers: [],
   programManagerId: "site-manager-one", recommendedBidId: "bid-one", lines: [line]
 };
 
 describe("basket bid comparison and award", () => {
   it.each([
-    { slot: "program_manager" as const, code: "SITE_MANAGER_REQUIRED", message: "Assign a Site Manager to this project's Site execution task before submitting the award." },
+    { slot: "program_manager" as const, code: "SITE_MANAGER_REQUIRED", message: "Assign a Project Manager to this project's Site execution task before submitting the award." },
     { slot: "designer" as const, code: "DESIGNER_INACTIVE", message: "The assigned project Designer is inactive. Update the project's Designer assignment." },
     { slot: "designer" as const, code: "DESIGNER_ASSIGNMENT_CONFLICT", message: "The project's Designer assignments conflict. Resolve the project assignment before submitting." }
   ])("shows the server assignment blocker $code without choosing another person", async (blocker) => {
@@ -64,7 +64,7 @@ describe("basket bid comparison and award", () => {
     await user.click(await screen.findByRole("button", { name: "Award" }));
     const modal = await screen.findByRole("dialog", { name: "Award vendor" });
     expect(await within(modal).findByText(blocker.message)).toHaveAttribute("role", "alert");
-    for (const role of ["Site Manager", "Designer", "Procurement", "Finance"]) {
+    for (const role of ["Project Manager", "Designer", "Procurement", "Finance"]) {
       await user.click(within(modal).getByRole("button", { name: `Advance ${role} approver` }));
     }
     await waitFor(() => expect(within(modal).queryByText("Updating payment schedule…")).not.toBeInTheDocument());
@@ -87,7 +87,7 @@ describe("basket bid comparison and award", () => {
     renderWithQuery(<ProcurementBasketComparison projectId="project-one" basketId="basket-one" enquiry={enquiry} frozen={false} afterChange={async () => {}} />);
     await user.click(await screen.findByRole("button", { name: "Award" }));
     const modal = await screen.findByRole("dialog", { name: "Award vendor" });
-    for (const role of ["Site Manager", "Designer", "Procurement", "Finance"]) {
+    for (const role of ["Project Manager", "Designer", "Procurement", "Finance"]) {
       await user.click(await within(modal).findByRole("button", { name: `Advance ${role} approver` }));
     }
     await waitFor(() => expect(within(modal).queryByText("Updating payment schedule…")).not.toBeInTheDocument());
@@ -140,7 +140,7 @@ describe("basket bid comparison and award", () => {
     await user.click(await screen.findByRole("button", { name: "Review current bid" }));
     const modal = await screen.findByRole("dialog", { name: "Award vendor" });
     expect(await within(modal).findByText("Asha Designer")).toBeVisible();
-    expect(within(modal).getByText("Arun Site Manager")).toBeVisible();
+    expect(within(modal).getByText("Arun Project Manager")).toBeVisible();
     expect(within(modal).queryByRole("combobox")).not.toBeInTheDocument();
     expect(within(modal).getByText(/saved proposal differs/u)).toBeVisible();
     expect(within(modal).queryByRole("button", { name: "Retry issue and lock" })).not.toBeInTheDocument();
@@ -152,7 +152,7 @@ describe("basket bid comparison and award", () => {
     expect(updates[0]).toMatchObject({ expectedVersion: 3, bidId: "bid-two" });
     expect(updates[0]).not.toHaveProperty("designerId");
     expect(submissions[0]).toMatchObject({ expectedVersion: 4, autoIssueOnApproval: true });
-    expect(await within(modal).findByText("Awaiting Site Manager, Designer, Procurement, Finance.")).toBeVisible();
+    expect(await within(modal).findByText("Awaiting Project Manager, Designer, Procurement, Finance.")).toBeVisible();
   });
 
   it.each([false, true])("keeps the award modal keyboard accessible and dismisses its frozen view with reduced motion %s", async (reducedMotion) => {
@@ -224,7 +224,7 @@ describe("basket bid comparison and award", () => {
       http.get("/api/v1/procurement/projects/project-one/baskets/basket-one/enquiries/enquiry-one/comparison", () => HttpResponse.json({ data: { enquiryId: enquiry.id, boqRevisionId: "boq-revision-one", boqDigest: digest, comparisonDigest: digest, averageBidNetPaise: 5500000, rows: [...rows].reverse(), recommendedBidId: "bid-one", awardId,
         bidHistory: [{ bidId: "bid-one", vendorId: "vendor-one", revision: 1, submittedAt: "2026-10-05T00:00:00Z", totals: { netPaise: 5000000, gstPaise: 0, totalPaise: 5000000 }, lines: rows[0]!.lines }], bidHistoryHasMore: false,
         counteroffers: [], counteroffersHasMore: false } })),
-      http.post("/api/v1/procurement/projects/project-one/baskets/basket-one/enquiries/enquiry-one/award-preview", async ({ request }) => { previewRequests.push(await request.json()); return HttpResponse.json({ data: { bidId: "bid-two", vendorId: "vendor-two", vendorName: "Decor Masters", totals: { netPaise: 6000000, gstPaise: 0, totalPaise: 6000000 }, milestones, requiredSlots: ["program_manager", "designer", "procurement", "finance_head"], budgetOverrideRequired: false, designerOptions: [{ id: "designer-one", name: "Asha Designer" }], assignedSiteManager: { id: "manager-one", name: "Arun Site Manager" }, assignedDesigner: { id: "designer-one", name: "Asha Designer" }, approverBlockers: [], programManagerId: "manager-one", recommendedBidId: "bid-one", lines: [line] } }); }),
+      http.post("/api/v1/procurement/projects/project-one/baskets/basket-one/enquiries/enquiry-one/award-preview", async ({ request }) => { previewRequests.push(await request.json()); return HttpResponse.json({ data: { bidId: "bid-two", vendorId: "vendor-two", vendorName: "Decor Masters", totals: { netPaise: 6000000, gstPaise: 0, totalPaise: 6000000 }, milestones, requiredSlots: ["program_manager", "designer", "procurement", "finance_head"], budgetOverrideRequired: false, designerOptions: [{ id: "designer-one", name: "Asha Designer" }], assignedSiteManager: { id: "manager-one", name: "Arun Project Manager" }, assignedDesigner: { id: "designer-one", name: "Asha Designer" }, approverBlockers: [], programManagerId: "manager-one", recommendedBidId: "bid-one", lines: [line] } }); }),
       http.post("/api/v1/procurement/projects/project-one/baskets/basket-one/enquiries/enquiry-one/awards", async ({ request }) => {
         const input = await request.json() as { milestoneReviewers: BasketMilestoneReviewers[] };
         awardRequests.push(input); awardId = "award-one";
@@ -258,12 +258,12 @@ describe("basket bid comparison and award", () => {
     expect(within(drawer).queryByLabelText("Work order terms")).not.toBeInTheDocument();
     expect(within(drawer).queryByText("Complete these details before preparing the award.")).not.toBeInTheDocument();
     expect(within(drawer).getByText("₹12,000.00")).toBeVisible();
-    expect(within(drawer).getByText(/Select Site Manager, Designer, Procurement, Finance on at least one payment row/u)).toBeVisible();
+    expect(within(drawer).getByText(/Select Project Manager, Designer, Procurement, Finance on at least one payment row/u)).toBeVisible();
     const advanceApprovers = within(drawer).getByRole("group", { name: "Advance approvers" });
-    within(advanceApprovers).getByRole("button", { name: "Advance Site Manager approver" }).focus();
+    within(advanceApprovers).getByRole("button", { name: "Advance Project Manager approver" }).focus();
     await user.keyboard(" ");
     await user.click(within(advanceApprovers).getByRole("button", { name: "Advance Designer approver" }));
-    expect(within(advanceApprovers).getByRole("button", { name: "Advance Site Manager approver" })).toHaveAttribute("aria-pressed", "true");
+    expect(within(advanceApprovers).getByRole("button", { name: "Advance Project Manager approver" })).toHaveAttribute("aria-pressed", "true");
     expect(within(advanceApprovers).getByRole("button", { name: "Advance Designer approver" })).toHaveAttribute("aria-pressed", "true");
     await user.click(within(within(drawer).getByRole("group", { name: "Mobilisation approvers" })).getByRole("button", { name: "Mobilisation Procurement approver" }));
     await user.click(within(drawer).getByRole("button", { name: "Final Finance approver" }));
@@ -274,7 +274,7 @@ describe("basket bid comparison and award", () => {
     expect(table).toBeInTheDocument();
     expect(within(drawer).queryByRole("combobox")).not.toBeInTheDocument();
     expect(within(drawer).getByText("Asha Designer")).toBeVisible();
-    expect(within(drawer).getByText("Arun Site Manager")).toBeVisible();
+    expect(within(drawer).getByText("Arun Project Manager")).toBeVisible();
     expect((await axe.run(drawer, { rules: { "color-contrast": { enabled: false } } })).violations).toEqual([]);
     await waitFor(() => expect(within(drawer).getByRole("button", { name: "Send for approvals" })).toBeEnabled());
     expect(within(drawer).queryByRole("button", { name: "Prepare award" })).not.toBeInTheDocument();
@@ -304,7 +304,7 @@ describe("basket bid comparison and award", () => {
     expect(awardRequests).toHaveLength(1);
     expect(submitRequests[1]).toMatchObject({ expectedVersion: 1, autoIssueOnApproval: true });
     expect(submitRequests[1]!.idempotencyKey).toBe(submitRequests[0]!.idempotencyKey);
-    expect(await within(drawer).findByText(/Awaiting Site Manager, Designer, Procurement, Finance/u)).toBeVisible();
+    expect(await within(drawer).findByText(/Awaiting Project Manager, Designer, Procurement, Finance/u)).toBeVisible();
   });
 
   it("reviews a frozen saved bid and revises its award to the latest eligible bid with a new approval revision", async () => {
@@ -365,7 +365,7 @@ describe("basket bid comparison and award", () => {
     for (const milestone of milestones) {
       const chips = within(drawer).getByRole("group", { name: `${milestone.name} approvers` });
       expect(within(chips).getByRole("button", { name: `${milestone.name} Procurement approver` })).toHaveAttribute("aria-pressed", "true");
-      for (const role of ["Site Manager", "Designer", "Finance"]) expect(within(chips).getByRole("button", { name: `${milestone.name} ${role} approver` })).toBeDisabled();
+      for (const role of ["Project Manager", "Designer", "Finance"]) expect(within(chips).getByRole("button", { name: `${milestone.name} ${role} approver` })).toBeDisabled();
     }
     await waitFor(() => expect(within(drawer).getByRole("button", { name: "Send for approvals" })).toBeEnabled());
     await user.click(within(drawer).getByRole("button", { name: "Send for approvals" }));

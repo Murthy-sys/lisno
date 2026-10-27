@@ -23,6 +23,8 @@ export interface ChatEstimateSource {
     lineItems: EstimateWorkflowLine[];
 }
 export interface ChatWorkflowSource {
+    version?: number;
+    supersededAt?: string | null;
     preparationOnly?: boolean;
     id: string;
     projectId: string;
@@ -59,6 +61,7 @@ export interface ChatActionTypeRecord extends ChatActionType {
     createdAt: string;
 }
 export interface ChatSources {
+    projectManagerAssignment?: import("../domain/project-manager-assignment.js").ProjectManagerAssignment;
     exclusions?: ChatExclusion[];
     project: ProjectRecord;
     users: UserRecord[];

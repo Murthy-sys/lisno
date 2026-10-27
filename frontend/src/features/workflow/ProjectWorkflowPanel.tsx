@@ -30,8 +30,8 @@ export function ProjectWorkflowPanel({ projectId, onOpenTask, timelineContainer,
   });
   const data = canRead && !projectReadDenied(workflow.error) && workflow.data?.projectId === projectId ? workflow.data : undefined;
   const currentStage = data ? currentProjectWorkflowStage(data) : undefined;
-  const staffCanReadBeforeApproval = user?.role === "designer" || user?.role === "procurement" || user?.role === "program_manager";
-  const observer = user?.role === "procurement" || user?.role === "program_manager";
+  const staffCanReadBeforeApproval = user?.role === "designer" || user?.role === "procurement" || user?.role === "site_manager";
+  const observer = user?.role === "procurement" || user?.role === "site_manager";
   const showProjectProgress = Boolean(data && (data.estimateApprovalStatus === "approved" || staffCanReadBeforeApproval));
   const showStageActions = data?.estimateApprovalStatus === "approved" && !observer;
   const initialStageId = presentation !== "client" && timelineContainer !== undefined && currentStage?.type === "space_planning_tentative_look_feel"
