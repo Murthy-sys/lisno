@@ -26,6 +26,19 @@ function componentSchemas(): Record<string, OpenApiObject> {
 }
 
 describe("OpenAPI and Swagger UI", () => {
+  it("documents versioned user deletion with a minimal historical-identity-safe result", () => {
+    const schemas = componentSchemas();
+    expect(schemas.ManagedUserDeletionRequest).toMatchObject({
+      additionalProperties: false,
+      required: ["version"],
+      properties: { version: { type: "integer", minimum: 1 } }
+    });
+    expect(schemas.ManagedUserDeletionResult!.required).toEqual(["userId", "deletedAt", "version"]);
+    expect(Object.keys(schemas.ManagedUserDeletionResult!.properties as OpenApiObject)).toEqual(["userId", "deletedAt", "version"]);
+    const operation = openApiDocument.paths["/admin/users/{userId}"]!.delete!;
+    expect(operation).toHaveProperty("requestBody.content.application/json.schema.$ref", "#/components/schemas/ManagedUserDeletionRequest");
+    expect(operation).toHaveProperty("responses.2XX.content.application/json.schema.properties.data.$ref", "#/components/schemas/ManagedUserDeletionResult");
+  });
   it("documents linked-vendor lookup and optional reinstatement availability without changing write bodies", () => {
     const schemas = componentSchemas();
     expect(schemas.PMVendorSuggestion).toHaveProperty("properties.reinstatementAvailability.allOf", [
@@ -1246,7 +1259,7 @@ describe("OpenAPI and Swagger UI", () => {
     }
   });
 
-  it("contains all 506 routes without versioning paths twice", () => {
+  it("contains all 507 routes without versioning paths twice", () => {
     const methods = new Set(["get", "post", "put", "patch", "delete"]);
     const operationCount = Object.values(openApiDocument.paths).reduce(
       (total, pathItem) =>
@@ -1255,7 +1268,7 @@ describe("OpenAPI and Swagger UI", () => {
     );
 
     expect(operationCount).toBe(HUMAN_JWT_OPERATION_LIST.length + 21);
-    expect(operationCount).toBe(506);
+    expect(operationCount).toBe(507);
     expect(Object.keys(openApiDocument.paths).some((path) =>
       path.startsWith("/api/v1")
     )).toBe(false);

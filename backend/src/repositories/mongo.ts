@@ -1454,6 +1454,7 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
         return { items: [], total: 0 };
       }
       const filter: PlainDocument = {
+        deletedAt: null,
         role: filters.role ?? { $in: [...filters.visibleRoles] }
       };
       if (filters.active !== undefined) filter.active = filters.active;
@@ -1475,7 +1476,7 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
     },
 
     async countActiveUsersByRole(role) {
-      const query = UserModel.countDocuments({ role, active: true });
+      const query = UserModel.countDocuments({ role, active: true, deletedAt: null });
       if (session) query.session(session);
       return query.exec();
     },
@@ -1485,7 +1486,7 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
         return { total: 0, active: 0, inactive: 0, roleCount: 0 };
       }
       const pipeline: PipelineStage[] = [
-        { $match: { role: { $in: [...visibleRoles] } } },
+        { $match: { role: { $in: [...visibleRoles] }, deletedAt: null } },
         {
           $group: {
             _id: null,
@@ -1589,6 +1590,35 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       };
     },
 
+    async deleteUser(userId, expectedVersion, change) {
+      const currentQuery = UserModel.findOne({ _id: userId, deletedAt: null });
+      if (session) currentQuery.session(session);
+      const current = await currentQuery.lean().exec();
+      if (!current) throw new RepositoryNotFoundError(`User ${userId} was not found.`);
+      if (current.role === "super_admin" || (current.version ?? 1) !== expectedVersion) {
+        throw new RepositoryConflictError(`User ${userId} cannot be deleted at this version.`);
+      }
+      const versionFilter = expectedVersion === 1
+        ? { $or: [{ version: 1 }, { version: { $exists: false } }] }
+        : { version: expectedVersion };
+      const query = UserModel.findOneAndUpdate(
+        { _id: userId, deletedAt: null, role: { $ne: "super_admin" }, ...versionFilter },
+        { $set: {
+          active: false,
+          deletedAt: date(change.deletedAt),
+          deletedById: change.deletedById,
+          updatedAt: date(change.deletedAt),
+          version: expectedVersion + 1,
+          sessionVersion: (current.sessionVersion ?? 1) + 1
+        } },
+        { new: true, runValidators: true, timestamps: false }
+      ).select("+passwordHash");
+      if (session) query.session(session);
+      const document = await query.lean().exec();
+      if (document) return mapUser(document);
+      throw new RepositoryConflictError(`User ${userId} changed concurrently.`);
+    },
+
     async updateUser(userId, expectedVersion, change) {
       if (change.role === "program_manager") throw new RepositoryConflictError("The legacy Program Manager role is retired.");
       if (change.role === "vendor") {
@@ -1597,7 +1627,7 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       const currentQuery = UserModel.findById(userId);
       if (session) currentQuery.session(session);
       const current = await currentQuery.lean().exec();
-      if (!current) throw new RepositoryNotFoundError(`User ${userId} was not found.`);
+      if (!current || current.deletedAt) throw new RepositoryNotFoundError(`User ${userId} was not found.`);
       if ((current.version ?? 1) !== expectedVersion) {
         throw new RepositoryConflictError(`User ${userId} changed concurrently.`);
       }
@@ -1617,6 +1647,7 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
               $or: [{ version: 1 }, { version: { $exists: false } }]
             }
           : { _id: userId, version: expectedVersion };
+      filter.deletedAt = null;
       if (change.role !== undefined) filter.role = { $ne: "vendor" };
       const update: PlainDocument =
         expectedVersion === 1
@@ -1631,7 +1662,7 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       const document = await query.lean().exec();
       if (document) return mapUser(document);
 
-      const existsQuery = UserModel.exists({ _id: userId });
+      const existsQuery = UserModel.exists({ _id: userId, deletedAt: null });
       if (session) existsQuery.session(session);
       if (!(await existsQuery.exec())) {
         throw new RepositoryNotFoundError(`User ${userId} was not found.`);
@@ -1661,6 +1692,7 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       const query = UserModel.findOneAndUpdate(
         {
           _id: userId,
+          deletedAt: null,
           $and: [versionFilter, sessionVersionFilter]
         },
         {
@@ -1677,7 +1709,7 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       const document = await query.lean().exec();
       if (document) return mapUser(document);
 
-      const existsQuery = UserModel.exists({ _id: userId });
+      const existsQuery = UserModel.exists({ _id: userId, deletedAt: null });
       if (session) existsQuery.session(session);
       if (!(await existsQuery.exec())) {
         throw new RepositoryNotFoundError(`User ${userId} was not found.`);
@@ -1704,7 +1736,7 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
 
     async setUserProfilePhoto(userId, expectedRevision, change) {
       const query = UserModel.findOneAndUpdate(
-        { _id: userId, ...profilePhotoRevisionFilter(expectedRevision) },
+        { _id: userId, deletedAt: null, ...profilePhotoRevisionFilter(expectedRevision) },
         {
           $set: {
             profilePhoto: {
@@ -1721,7 +1753,7 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       const document = await query.lean().exec();
       if (document) return mapUser(document);
 
-      const existsQuery = UserModel.exists({ _id: userId });
+      const existsQuery = UserModel.exists({ _id: userId, deletedAt: null });
       if (session) existsQuery.session(session);
       if (!(await existsQuery.exec())) {
         throw new RepositoryNotFoundError(`User ${userId} was not found.`);
@@ -1731,7 +1763,7 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
 
     async clearUserProfilePhoto(userId, expectedRevision) {
       const query = UserModel.findOneAndUpdate(
-        { _id: userId, ...profilePhotoRevisionFilter(expectedRevision) },
+        { _id: userId, deletedAt: null, ...profilePhotoRevisionFilter(expectedRevision) },
         {
           $unset: { profilePhoto: "" },
           $set: { profilePhotoRevision: expectedRevision + 1 }
@@ -1742,7 +1774,7 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       const document = await query.lean().exec();
       if (document) return mapUser(document);
 
-      const existsQuery = UserModel.exists({ _id: userId });
+      const existsQuery = UserModel.exists({ _id: userId, deletedAt: null });
       if (session) existsQuery.session(session);
       if (!(await existsQuery.exec())) {
         throw new RepositoryNotFoundError(`User ${userId} was not found.`);
@@ -3962,6 +3994,8 @@ function mapUser(document: PlainDocument): UserRecord {
     role: document.role,
     ...(typeof document.vendorId === "string" ? { vendorId: document.vendorId } : {}),
     active: document.active,
+    ...(document.deletedAt ? { deletedAt: iso(document.deletedAt) } : {}),
+    ...(document.deletedById ? { deletedById: String(document.deletedById) } : {}),
     accountKind:
       document.accountKind === "development_demo" ? "development_demo" : "standard",
     version: document.version ?? 1,

@@ -977,6 +977,16 @@ export type UpdateManagedUserInput =
   | { version: number; role: Role; active?: never }
   | { version: number; active: boolean; role?: never };
 
+export interface DeleteManagedUserInput {
+  version: number;
+}
+
+export interface ManagedUserDeletionResult {
+  userId: string;
+  deletedAt: string;
+  version: number;
+}
+
 export interface UserResponsibilityCounts {
   ownedActiveLeads: number;
   ownedActiveEstimates: number;

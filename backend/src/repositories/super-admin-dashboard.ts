@@ -128,7 +128,7 @@ export function memorySuperAdminDashboardOverview(
   const rows = memoryProjectRows(state, input.observedAt);
   const estimates = canonicalEstimatesByProject(state);
   const activeWorkers = state.users.filter((user) =>
-    user.active && (WORKER_ROLES as readonly string[]).includes(user.role)
+    user.active && !user.deletedAt && (WORKER_ROLES as readonly string[]).includes(user.role)
   );
   const approvedBaselines = [...estimates.values()].flatMap((estimate) =>
     estimate.status === "client_approved" && estimate.approvedBaseline
@@ -408,7 +408,7 @@ export function memorySuperAdminDashboardWorkforce(
   input: { filters: DashboardWorkforceFilters }
 ): DashboardPageResult<DashboardWorkforceRow> {
   let rows: DashboardWorkforceRow[] = state.users.flatMap((user) =>
-    user.active && (WORKER_ROLES as readonly string[]).includes(user.role)
+    user.active && !user.deletedAt && (WORKER_ROLES as readonly string[]).includes(user.role)
       ? [{
           workerId: user.id,
           workerName: user.name,
@@ -623,7 +623,7 @@ async function mongoDashboardClients(
 ): Promise<DashboardClientMetrics> {
   const [accountsResult, relationshipsResult] = await Promise.allSettled([
     UserModel.aggregate<MongoRow>([
-      { $match: { role: "client" } },
+      { $match: { role: "client", deletedAt: null } },
       {
         $group: {
           _id: null,
@@ -2155,7 +2155,8 @@ async function mongoProjectRows(
   }
   const activeAssigneeIds = new Set((await UserModel.find({
     _id: { $in: uniqueBounded(workflowTasks.map((task) => task.assigneeUserId), 5_000) },
-    active: true
+    active: true,
+    deletedAt: null
   }).select({ _id: 1 }).lean().exec()).map((user) => String(user._id)));
   const rowResults = projectDocuments.map((project: MongoRow) => mongoProjectRow({
     project, observedAt,
@@ -2268,7 +2269,7 @@ export async function mongoSuperAdminDashboardWorkforce(input: {
       dataQuality: unavailableDataQuality(["workforce.capacity"])
     };
   }
-  const userMatch: MongoRow = { active: true, role: { $in: [...WORKER_ROLES] } };
+  const userMatch: MongoRow = { active: true, deletedAt: null, role: { $in: [...WORKER_ROLES] } };
   if (input.filters.role) userMatch.role = input.filters.role;
   if (input.filters.search) userMatch.name = new RegExp(escapeRegex(input.filters.search), "i");
   const derivedMatch: MongoRow = {};
@@ -2541,8 +2542,10 @@ function memoryDashboardClients(
   startAt: Date,
   endAt: Date
 ): DashboardClientMetrics {
-  const clientUsers = state.users.filter((user) => user.role === "client");
-  const clientIds = new Set(clientUsers.map((user) => user.id));
+  const historicalClients = state.users.filter((user) => user.role === "client");
+  const clientUsers = historicalClients.filter((user) => !user.deletedAt);
+  // Deleted accounts retain valid project links and historical actor identities.
+  const clientIds = new Set(historicalClients.map((user) => user.id));
   const linkedClientIds = new Set<string>();
   const activeLinkedClientIds = new Set<string>();
   let unlinkedProjects = 0;
@@ -4427,7 +4430,7 @@ async function mongoWorkforceOverview(input: {
 }): Promise<DashboardWorkforceMetrics> {
   const [workerFacet, inactiveRows] = await Promise.all([
     UserModel.aggregate<MongoRow>([
-      { $match: { active: true, role: { $in: [...WORKER_ROLES] } } },
+      { $match: { active: true, deletedAt: null, role: { $in: [...WORKER_ROLES] } } },
       ...mongoWorkforceDerivedFilterStages(input),
       {
         $facet: {
@@ -4484,7 +4487,8 @@ async function mongoWorkforceOverview(input: {
         $match: {
           $or: [
             { "assignee._id": { $exists: false } },
-            { "assignee.active": { $ne: true } }
+            { "assignee.active": { $ne: true } },
+            { "assignee.deletedAt": { $ne: null } }
           ]
         }
       },
@@ -4714,7 +4718,8 @@ async function mongoRiskFactorDistribution(
                           {
                             $or: [
                               { $eq: [{ $size: "$assignee" }, 0] },
-                              { $ne: [{ $arrayElemAt: ["$assignee.active", 0] }, true] }
+                              { $ne: [{ $arrayElemAt: ["$assignee.active", 0] }, true] },
+                              { $ne: [{ $ifNull: [{ $arrayElemAt: ["$assignee.deletedAt", 0] }, null] }, null] }
                             ]
                           }
                         ]
@@ -5181,7 +5186,7 @@ function mongoProjectDerivedFilterStages(
               from: UserModel.collection.name,
               localField: "assigneeUserId",
               foreignField: "_id",
-              pipeline: [{ $project: { _id: 1, active: 1 } }],
+              pipeline: [{ $project: { _id: 1, active: 1, deletedAt: 1 } }],
               as: "assignee"
             }
           },
@@ -5278,7 +5283,14 @@ function mongoProjectDerivedFilterStages(
                         {
                           $or: [
                             { $and: [{ $eq: [{ $ifNull: ["$task.assigneeUserId", null] }, null] }, { $lt: ["$dueAt", observedAt] }] },
-                            { $and: [{ $ne: [{ $ifNull: ["$task.assigneeUserId", null] }, null] }, { $or: [{ $eq: [{ $size: "$assignee" }, 0] }, { $ne: [{ $arrayElemAt: ["$assignee.active", 0] }, true] }] }] }
+                            { $and: [
+                              { $ne: [{ $ifNull: ["$task.assigneeUserId", null] }, null] },
+                              { $or: [
+                                { $eq: [{ $size: "$assignee" }, 0] },
+                                { $ne: [{ $arrayElemAt: ["$assignee.active", 0] }, true] },
+                                { $ne: [{ $ifNull: [{ $arrayElemAt: ["$assignee.deletedAt", 0] }, null] }, null] }
+                              ] }
+                            ] }
                           ]
                         }
                       ]

@@ -14,6 +14,7 @@ import {
   RepositoryConflictError,
   type AppRepository
 } from "../src/repositories/types.js";
+import { createUserAdministrationService } from "../src/services/user-administration.service.js";
 import { createAuditService, type AuditService } from "../src/services/audit.service.js";
 import type { PublicUser } from "../src/services/auth.service.js";
 import type { InvitationMailer } from "../src/services/invitation-mailer.js";
@@ -731,6 +732,31 @@ describe("password reset Mongo replica-set transactions", () => {
     );
     expect(await UserModel.findById("mongo-reset-super-admin").lean().exec())
       .toMatchObject({ version: 2, sessionVersion: 2 });
+  });
+
+  it("rejects an in-flight password reset when account deletion commits first", async () => {
+    await insertUser();
+    await insertSuperAdmin();
+    await issueReset();
+    const repository = createMongoRepository();
+    const reached = deferred();
+    const release = deferred();
+    const reset = createPasswordResetService({ repository, audit: createAuditService(repository), mailer, clock: () => new Date(NOW),
+      passwordHasher: async () => { reached.resolve(); await release.promise; return NEW_PASSWORD_HASH; } });
+    const completion = reset.complete({ rawToken: RAW_TOKEN, password: "ReplacementPassword!2026" });
+    await reached.promise;
+    try {
+      await createUserAdministrationService(repository, createAuditService(repository), () => new Date(NOW))
+        .delete(superAdminActor(), "mongo-reset-user", { version: 1 });
+    } finally { release.resolve(); }
+    await expect(completion).rejects.toBeInstanceOf(PasswordResetUnavailableError);
+    expect(await UserModel.findById("mongo-reset-user").select("+passwordHash").lean()).toMatchObject({
+      active: false, deletedById: "mongo-reset-super-admin", version: 2, sessionVersion: 2,
+      passwordHash: "$2b$12$original-password-hash-placeholder"
+    });
+    expect(await PasswordResetRequestModel.findOne().select("+tokenHash").lean()).toMatchObject({
+      status: "pending", tokenHash: hashPasswordResetToken(RAW_TOKEN), version: 2
+    });
   });
 
   for (const mutation of ["deactivate", "role-change"] as const) {

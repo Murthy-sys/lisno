@@ -28,6 +28,7 @@ import type {
 import { startMongoReplicaSet } from "./helpers/mongo-replica-set.js";
 import { calculateKpi } from "../src/domain/kpi.js";
 import type { KpiTask } from "../src/contracts/domain.js";
+import type { UserRecord } from "../src/repositories/types.js";
 
 const OBSERVED_AT = "2026-08-30T12:00:00.000Z";
 const PERIOD_START_AT = "2026-08-24T00:00:00.000Z";
@@ -1410,6 +1411,102 @@ describe("Super Admin dashboard Mongo pre-pagination filters", () => {
     expect(mongoWorkforce.items[0]).toMatchObject({
       assignmentState: "assigned", activeTaskCount: 1
     });
+  });
+
+  it("excludes deleted accounts from current populations while preserving client history and links", async () => {
+    const template = structuredClone(demoSeedData.users[0]!);
+    const rows: UserRecord[] = [
+      { id: "current-client-one", role: "client", active: true },
+      { id: "current-client-two", role: "client", active: true, deletedAt: null },
+      { id: "inactive-client", role: "client", active: false },
+      { id: "deleted-client", role: "client", active: false, deletedAt: OBSERVED_AT },
+      { id: "deleted-active-client", role: "client", active: true, deletedAt: OBSERVED_AT },
+      { id: "current-worker", role: "worker_electrician", active: true },
+      { id: "inactive-worker", role: "worker_electrician", active: false },
+      { id: "deleted-worker", role: "worker_electrician", active: false, deletedAt: OBSERVED_AT },
+      { id: "deleted-active-worker", role: "worker_electrician", active: true, deletedAt: OBSERVED_AT }
+    ].map((row) => ({
+      ...template, ...row, role: row.role as UserRecord["role"], name: row.id,
+      email: `${row.id}@example.test`, emailNormalized: `${row.id}@example.test`,
+      accountKind: "standard", createdAt: OBSERVED_AT, updatedAt: OBSERVED_AT
+    }));
+    await UserModel.collection.insertMany(rows.map(({ id, createdAt, updatedAt, deletedAt, ...row }) => ({
+      ...row, _id: id, createdAt: new Date(createdAt), updatedAt: new Date(updatedAt),
+      ...(deletedAt === undefined ? {} : { deletedAt: deletedAt === null ? null : new Date(deletedAt) })
+    })));
+    const projects = [
+      { id: "retained-client-link", clientId: "deleted-client" },
+      { id: "current-client-link", clientId: "current-client-one" }
+    ];
+    await ProjectModel.create(projects.map(({ id, clientId }) => ({
+      ...project(id, id, "2026-09-30T00:00:00.000Z"), clientId
+    })));
+    const seed = {
+      ...structuredClone(demoSeedData), users: rows,
+      projects: projects.map(({ id, clientId }) => ({
+        ...memoryProject(id, id, "2026-09-30T00:00:00.000Z"), clientId
+      })),
+      leads: [], tasks: [], estimateSummaries: []
+    };
+    const input = {
+      observedAt: OBSERVED_AT, startAt: PERIOD_START_AT,
+      endAt: PERIOD_END_AT, periodDays: 7 as const
+    };
+    const filters = { sort: "name_asc" as const, limit: 20, offset: 0 };
+    const mongoOverview = await mongoSuperAdminDashboardOverview(input);
+    const memoryOverview = memorySuperAdminDashboardOverview(seed, input);
+    for (const overview of [memoryOverview, mongoOverview]) {
+      expect(overview.clients).toMatchObject({
+        registeredAccounts: 3, activeAccounts: 2, inactiveAccounts: 1,
+        accountsCreatedInPeriod: 3, clientsWithProjects: 2, clientsWithActiveProjects: 2,
+        invalidProjectClientLinks: 0, unlinkedProjects: 0
+      });
+      expect(overview.comparison.metrics.clients_created.current).toBe(5);
+      expect(overview.workforce.activeWorkers).toBe(1);
+    }
+    const mongoWorkforce = await mongoSuperAdminDashboardWorkforce({ ...input, filters });
+    const memoryWorkforce = memorySuperAdminDashboardWorkforce(seed, { filters });
+    for (const page of [memoryWorkforce, mongoWorkforce]) {
+      expect(page.total).toBe(1);
+      expect(page.items.map(({ workerId }) => workerId)).toEqual(["current-worker"]);
+    }
+  });
+
+  it("retains deleted worker assignments as inactive risk across overview and filtered project pages", async () => {
+    await UserModel.collection.insertMany([
+      { ...worker("deleted-assignee", "Deleted assignee"), active: false, deletedAt: new Date(OBSERVED_AT) },
+      { ...worker("deleted-active-assignee", "Deleted active assignee"), deletedAt: new Date(OBSERVED_AT) },
+      worker("available-assignee", "Available assignee")
+    ]);
+    for (const [id, assigneeUserId] of [
+      ["deleted-work", "deleted-assignee"],
+      ["deleted-active-work", "deleted-active-assignee"],
+      ["available-work", "available-assignee"]
+    ]) {
+      await approvedProcurementProject({ id: id!, lineAmountRupees: 1_000, postedSpendPaise: 0, taskProgress: 0 });
+      await ProjectWorkflowTaskModel.create({
+        ...executionTask(`${id}:worker-task`, id!, assigneeUserId!),
+        sourceSectionId: "EL", sourceLineItemKey: `${id}:line`
+      });
+    }
+    const overview = await mongoSuperAdminDashboardOverview({
+      observedAt: OBSERVED_AT, startAt: PERIOD_START_AT, endAt: PERIOD_END_AT, periodDays: 7
+    });
+    expect(overview.workforce).toMatchObject({ activeWorkers: 1, inactiveAssigneeTaskCount: 2 });
+    expect(overview.risk.factorDistribution).toEqual(expect.arrayContaining([
+      expect.objectContaining({ reasonCode: "inactive_execution_assignee", occurrenceCount: 2, projectCount: 2 })
+    ]));
+    const result = await mongoSuperAdminDashboardProjects(OBSERVED_AT, {
+      riskFactor: "staffing", sort: "risk_desc", limit: 20, offset: 0
+    });
+    expect(result.total).toBe(2);
+    expect(result.items.map(({ projectId }) => projectId).sort()).toEqual(["deleted-active-work", "deleted-work"]);
+    for (const row of result.items) {
+      expect(row.risk.factors).toEqual(expect.arrayContaining([
+        expect.objectContaining({ reasonCode: "inactive_execution_assignee" })
+      ]));
+    }
+    expect(await ProjectWorkflowTaskModel.countDocuments({ assigneeUserId: { $in: ["deleted-assignee", "deleted-active-assignee"] } })).toBe(2);
   });
 
   it("aggregates full-population risk and workforce facts while bounding top risk rows", async () => {

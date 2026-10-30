@@ -90,6 +90,9 @@ export interface UserRecord {
   vendorId?: string | null;
   active: boolean;
   accountKind: AccountKind;
+  /** Logical deletion retains this identity for historical attribution. */
+  deletedAt?: string | null;
+  deletedById?: string | null;
   version: number;
   sessionVersion: number;
   managerId: string | null;
@@ -1217,6 +1220,11 @@ export interface AppRepository {
   countActiveUsersByRole(role: Role): Promise<number>;
   summarizeUsers(visibleRoles: readonly Role[]): Promise<UserDirectorySummary>;
   countUserResponsibilities(userId: string): Promise<UserResponsibilityCounts>;
+  deleteUser(
+    userId: string,
+    expectedVersion: number,
+    change: { deletedAt: string; deletedById: string }
+  ): Promise<UserRecord>;
   updateUser(
     userId: string,
     expectedVersion: number,

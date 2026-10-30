@@ -83,5 +83,23 @@ export function createAdminUsersRouter(
     }
   );
 
+  router.delete(
+    "/admin/users/:userId",
+    authenticate(authService),
+    requireOperation("DELETE /admin/users/:userId"),
+    validateBody(z.object({ version: z.number().int().positive() }).strict()),
+    async (request, response, next) => {
+      try {
+        response.json({ data: await userAdministrationService.delete(
+          request.authenticatedUser!,
+          request.params.userId as string,
+          request.body
+        ) });
+      } catch (error) {
+        next(error);
+      }
+    }
+  );
+
   return router;
 }

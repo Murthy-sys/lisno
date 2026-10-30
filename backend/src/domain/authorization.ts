@@ -177,6 +177,7 @@ export const PERMISSION_CODES = [
   "identity.authorization.read",
   "identity.users.read",
   "identity.users.update",
+  "identity.users.delete",
   "identity.user_invitations.read",
   "identity.user_invitations.create",
   "identity.user_invitations.resend",

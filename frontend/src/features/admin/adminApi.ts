@@ -1,5 +1,7 @@
 import { apiClient } from "../../api/client";
 import type {
+  DeleteManagedUserInput,
+  ManagedUserDeletionResult,
   ManagedUserMutationResult,
   PaginationInput,
   UpdateManagedUserInput,
@@ -38,6 +40,16 @@ export function updateManagedUser(
   input: UpdateManagedUserInput
 ): Promise<ManagedUserMutationResult> {
   return apiClient.patch<ManagedUserMutationResult>(
+    `/admin/users/${encodeURIComponent(userId)}`,
+    input
+  );
+}
+
+export function deleteManagedUser(
+  userId: string,
+  input: DeleteManagedUserInput
+): Promise<ManagedUserDeletionResult> {
+  return apiClient.delete<ManagedUserDeletionResult>(
     `/admin/users/${encodeURIComponent(userId)}`,
     input
   );

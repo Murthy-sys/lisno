@@ -882,3 +882,107 @@ describe("user administration routes", () => {
     });
   });
 });
+
+describe("user deletion", () => {
+  it("retains identity and work, removes all directory/count visibility, revokes grants once, and forbids reactivation", async () => {
+    const seed = asymmetricDirectorySeed();
+    const actor = publicUser(canonicalSuperAdmin(seed));
+    const target = seed.users.find(user => user.id === "user-designer-alpha")!;
+    const unaffected = structuredClone(seed.users.find(user => user.id === "user-designer-beta")!);
+    seed.tasks.push({ ...structuredClone(demoSeedData.tasks[0]!), id: "retained-deletion-task", ownerId: target.id, status: "in_progress", completedAt: null });
+    seed.projectAccessGrants.push(grant("delete-one", target.id), grant("delete-two", target.id, "tasks"), grant("unaffected", unaffected.id));
+    const { repository, service } = setup(seed);
+    const deleted = await service.delete(actor, target.id, { version: 1 });
+    expect(deleted).toEqual({ userId: target.id, deletedAt: clock().toISOString(), version: 2 });
+    await expect(repository.findUserById(target.id)).resolves.toMatchObject({ active: false, deletedById: actor.id, deletedAt: clock().toISOString(), version: 2, sessionVersion: 2 });
+    await expect(repository.findUserByEmail(target.email)).resolves.toMatchObject({ id: target.id });
+    await expect(repository.listUsersByIds([target.id])).resolves.toHaveLength(1);
+    await expect(repository.findTaskById("retained-deletion-task")).resolves.toMatchObject({ ownerId: target.id, status: "in_progress" });
+    await expect(repository.findUserById(unaffected.id)).resolves.toEqual(unaffected);
+    await expect(repository.listActiveProjectAccessGrants(target.id, "design")).resolves.toEqual([]);
+    await expect(repository.listActiveProjectAccessGrants(target.id, "tasks")).resolves.toEqual([]);
+    await expect(repository.listActiveProjectAccessGrants(unaffected.id, "design")).resolves.toHaveLength(1);
+    for (const filters of [{}, { active: false }, { active: true }, { search: target.email }, { role: "designer" as const }]) {
+      const page = await service.list(actor, filters, { limit: 20, offset: 0 });
+      expect(page.items.some(user => user.id === target.id)).toBe(false);
+      expect(page.summary).toEqual({ total: 6, active: 4, inactive: 2, roleCount: 4 });
+      if ("search" in filters) expect(page.total).toBe(0);
+    }
+    const beforeRetry = await repository.listAuditEvents({});
+    await expect(service.delete(actor, target.id, { version: 1 })).resolves.toEqual(deleted);
+    await expect(repository.listAuditEvents({})).resolves.toEqual(beforeRetry);
+    const deletionAudits = beforeRetry.filter(event => event.action === "user.deleted");
+    expect(deletionAudits).toHaveLength(1);
+    expect(deletionAudits[0]).toMatchObject({ actorId: actor.id, entityId: target.id, newValues: { active: false, version: 2, revokedGrantCount: 2, responsibilities: { ownedActiveTasks: 1 } } });
+    expect(beforeRetry.filter(event => event.action === "project_access.revoked")).toHaveLength(2);
+    expect(JSON.stringify(beforeRetry)).not.toMatch(/passwordHash|sessionVersion|storageKey/i);
+    for (const input of [{ version: 2, active: true }, { version: 2, role: "procurement" as const }, { version: 1, active: false }]) {
+      await expect(service.update(actor, target.id, input)).rejects.toMatchObject({ status: 404, code: "NOT_FOUND" });
+    }
+    await expect(repository.updateUser(target.id, 2, { active: true, updatedAt: clock().toISOString() })).rejects.toThrow(/not found/);
+  });
+
+  it("increments an inactive vendor's session version and retains reserved membership", async () => {
+    const seed = emptyAdministrationSeed();
+    const vendor = addUser(seed, "delete-inactive-vendor", "vendor", { active: false, version: 4, sessionVersion: 7 });
+    const { repository, service } = setup(seed);
+    await service.delete(publicUser(canonicalSuperAdmin(seed)), vendor.id, { version: 4 });
+    await expect(repository.findVendorBoundUsers(vendor.vendorId!)).resolves.toMatchObject([{ id: vendor.id, active: false, version: 5, sessionVersion: 8, deletedAt: clock().toISOString() }]);
+    await expect(repository.findUserByEmail(vendor.email)).resolves.toMatchObject({ id: vendor.id });
+    await expect(repository.summarizeUsers(ROLE_CODES)).resolves.toEqual({ total: 1, active: 1, inactive: 0, roleCount: 1 });
+  });
+
+  it("protects Super Admin before version checks and denies non-admin service callers without mutation", async () => {
+    const seed = emptyAdministrationSeed();
+    const actor = publicUser(canonicalSuperAdmin(seed));
+    const target = addUser(seed, "delete-protected-target", "designer");
+    const otherUsers = ROLE_CODES.filter(role => role !== "super_admin").map(role => addUser(seed, `delete-actor-${role}`, role));
+    const { repository, service } = setup(seed);
+    for (const version of [1, 99]) await expect(service.delete(actor, actor.id, { version })).rejects.toMatchObject({ status: 409, code: "SOLE_SUPER_ADMIN_IMMUTABLE" });
+    for (const other of otherUsers) for (const id of [target.id, "missing", actor.id]) {
+      await expect(service.delete(publicUser(other), id, { version: 1 })).rejects.toMatchObject({ status: 403, code: "FORBIDDEN" });
+    }
+    await expect(service.delete(actor, "missing", { version: 1 })).rejects.toMatchObject({ status: 404 });
+    await expect(service.delete(actor, target.id, { version: 99 })).rejects.toMatchObject({ status: 409, code: "VERSION_CONFLICT" });
+    await expect(repository.findUserById(target.id)).resolves.toEqual(target);
+    await expect(repository.listAuditEvents({})).resolves.toEqual([]);
+  });
+
+  it("rolls back deletion and grant revocation if the deletion audit fails", async () => {
+    const seed = emptyAdministrationSeed();
+    const target = addUser(seed, "delete-rollback", "designer");
+    seed.projectAccessGrants.push(grant("delete-rollback-grant", target.id));
+    const repository = createMemoryRepository(seed);
+    const audit = createAuditService(repository);
+    const append = audit.append.bind(audit);
+    vi.spyOn(audit, "append").mockImplementation((input, tx) => input.action === "user.deleted" ? Promise.reject(new Error("deletion audit failed")) : append(input, tx));
+    const service = createUserAdministrationService(repository, audit, clock);
+    await expect(service.delete(publicUser(canonicalSuperAdmin(seed)), target.id, { version: 1 })).rejects.toThrow("deletion audit failed");
+    await expect(repository.findUserById(target.id)).resolves.toEqual(target);
+    await expect(repository.listActiveProjectAccessGrants(target.id, "design")).resolves.toHaveLength(1);
+    await expect(repository.listAuditEvents({})).resolves.toEqual([]);
+  });
+
+  it("exposes a strict redacted DELETE contract and denies malformed unauthorized requests before disclosure", async () => {
+    const seed = emptyAdministrationSeed();
+    const actor = canonicalSuperAdmin(seed);
+    const target = addUser(seed, "delete-route-target", "designer");
+    const admin = addUser(seed, "delete-route-admin", "admin");
+    const repository = createMemoryRepository(seed);
+    const app = createApp({ repository, auth, clock, developmentDemoAuthorization: developmentDemoAuthentication() });
+    for (const body of [{}, { version: 0 }, { version: 1.5 }, { version: 1, active: false }]) {
+      const invalid = await request(app).delete(`/api/v1/admin/users/${target.id}`).set("Authorization", bearer(actor)).send(body);
+      expect(invalid.status).toBe(400);
+      const forbidden = await request(app).delete("/api/v1/admin/users/missing").set("Authorization", bearer(admin)).send(body);
+      expect(forbidden.status).toBe(403);
+      expect(forbidden.body.error.code).toBe("FORBIDDEN");
+    }
+    const response = await request(app).delete(`/api/v1/admin/users/${target.id}`).set("Authorization", bearer(actor)).send({ version: 1 });
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ data: { userId: target.id, deletedAt: clock().toISOString(), version: 2 } });
+    const replay = await request(app).delete(`/api/v1/admin/users/${target.id}`).set("Authorization", bearer(actor)).send({ version: 1 });
+    expect(replay.body).toEqual(response.body);
+    const oldToken = await request(app).get("/api/v1/auth/me").set("Authorization", bearer(target));
+    expect(oldToken.status).toBe(401);
+  });
+});

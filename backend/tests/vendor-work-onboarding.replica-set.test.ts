@@ -9,6 +9,7 @@ import { AiEstimatorKnowledgeVendorModel } from "../src/models/AiEstimatorKnowle
 import { ProjectPurchaseOrderModel } from "../src/models/ProjectPurchaseOrder.js";
 import { createMongoRepository } from "../src/repositories/mongo.js";
 import { createAuditService } from "../src/services/audit.service.js";
+import { createUserAdministrationService } from "../src/services/user-administration.service.js";
 import { createUserInvitationService } from "../src/services/user-invitation.service.js";
 import { createVendorWorkOnboardingService, type VendorAccessIssuedSource } from "../src/services/vendor-work-onboarding.service.js";
 import type { InvitationMailer } from "../src/services/invitation-mailer.js";
@@ -34,6 +35,25 @@ async function fixture(disabled = false) {
 }
 async function boundUser(id = "vendor-user", email = "vendor@example.test", active = true) { return UserModel.create({ _id: id, name: "Vendor User", email, emailNormalized: email, role: "vendor", vendorId: "v-one", active, accountKind: "standard", passwordHash: "unchanged", version: 1 }); }
 describe("work-order onboarding transactions and identity", () => {
+  it("keeps vendor and order history when deleting the login and blocks automatic replacement", async () => {
+    const f = await fixture();
+    await boundUser();
+    const admin = await f.repository.createUser({ name: "Owner", email: "owner@example.test", role: "super_admin",
+      passwordHash: "unused", mobile: null, address: null, accountKind: "standard", managerId: null, authorizedClientIds: [] });
+    const vendorBefore = await AiEstimatorKnowledgeVendorModel.findById("v-one").lean();
+    const orderBefore = await ProjectPurchaseOrderModel.findById("o-one").lean();
+    await createUserAdministrationService(f.repository, f.audit, f.clock).delete(admin, "vendor-user", { version: 1 });
+    expect(await AiEstimatorKnowledgeVendorModel.findById("v-one").lean()).toEqual(vendorBefore);
+    expect(await ProjectPurchaseOrderModel.findById("o-one").lean()).toEqual(orderBefore);
+    await f.service.runOnce();
+    expect(f.messages).toEqual([]);
+    expect(f.work).toEqual([]);
+    expect(await UserInvitationModel.countDocuments()).toBe(0);
+    expect(await UserModel.countDocuments({ vendorId: "v-one" })).toBe(1);
+    expect(await UserModel.findById("vendor-user").lean()).toMatchObject({ active: false, deletedById: admin.id, vendorId: "v-one" });
+    expect((await VendorAccessIntentModel.findOne().lean())?.state).toBe("intervention_required");
+  });
+
   it("records intent atomically and deduplicates a repeated issuance without sending", async () => {
     const f = await fixture();
     await mongoose.connection.transaction(async session => { await f.service.recordIssued(source, session); });
