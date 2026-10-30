@@ -136,6 +136,7 @@ const DEFAULT_PERMISSIONS_BY_ROLE = {
     "access_request.self.read"
   ],
   site_manager: [
+    "pm.estimates.read", "pm.vendor_suggestions.read", "pm.vendor_suggestions.manage",
     ...BASE_SESSION_PERMISSIONS,
     "projects.list", "projects.read", "projects.design_workflow.read",
     "execution.tracker.read", "execution.verify", "execution.staff.manage",

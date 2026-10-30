@@ -39,6 +39,13 @@ export interface BasketVendorCandidateQuery {
   offset?: number;
 }
 
+export function vendorReadinessReason(code: string): string {
+  return ({ vendor_inactive: "Vendor is inactive.", vendor_archived: "Vendor is archived.",
+    vendor_under_review: "Vendor activation is incomplete.", kpi_unrated: "Vendor KPI is incomplete.",
+    contact_missing: "A bid-request contact is missing.", basket_mismatch: "Vendor is not classified for this Main Basket." } as Record<string, string>)[code]
+    ?? "Vendor bid readiness is unavailable.";
+}
+
 function basketClassificationMatches(vendor: Row, basketId: string): boolean {
   const profile = vendor.procurementProfile as Row | null | undefined;
   if (!profile) return false;
@@ -82,6 +89,24 @@ async function candidateRows(vendors: Row[], projectCity: { name: string; key: s
       kpiScoreBps: kpi?.status === "rated" ? kpi.officialScoreBps : null,
       city, cityVersion: Number(cityRow?.version ?? 0), cityMatch: matchCity(projectCity, city), eligible: blockers.length === 0, blockers
     };
+  });
+}
+
+/** Internal bulk facts for scoped recommendation readers; blocked vendors remain explicit. */
+export async function readBasketVendorRecommendationReadiness(projectId: string, basketId: string,
+  vendors: Row[], session: ClientSession): Promise<Array<BasketVendorCandidate & { canSuggest: boolean; classification: string[] }>> {
+  const project = await ProjectModel.findById(projectId).select({ cityName: 1, cityKey: 1 }).session(session).lean();
+  if (!project) throw new ApiError(404, "NOT_FOUND", "The requested project was not found.");
+  const byId = new Map(vendors.map(vendor => [String(vendor._id), vendor]));
+  return (await candidateRows(vendors, cityOf(project), session)).map(candidate => {
+    const vendor = byId.get(candidate.vendorId)!;
+    const profile = vendor.procurementProfile as Row | undefined;
+    const classification = Array.isArray(profile?.mainBasketIds) && profile.mainBasketIds.length
+      ? profile.mainBasketIds.filter((value: unknown): value is string => typeof value === "string")
+      : typeof profile?.mainBasketId === "string" ? [profile.mainBasketId] : [];
+    const blockers = [...candidate.blockers, ...(!basketClassificationMatches(vendor, basketId) ? ["basket_mismatch"] : [])];
+    return { ...candidate, eligible: blockers.length === 0, blockers, classification,
+      canSuggest: !candidate.blockers.some(reason => reason.startsWith("vendor_")) };
   });
 }
 

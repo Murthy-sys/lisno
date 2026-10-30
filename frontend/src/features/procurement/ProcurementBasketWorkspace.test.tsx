@@ -17,6 +17,7 @@ import { ProcurementBasketWorkspace } from "./ProcurementBasketWorkspace";
 import { procurementBasketKeys, type BasketEnquiry, type ProcurementBasketDetail, type ProcurementBasketList } from "./procurementBasketApi";
 import { purchaseOrderKeys, type PurchaseOrderModeResolution } from "./purchaseOrderApi";
 import { syncKnowledgeSectionMutation } from "../ai-estimator-knowledge/knowledgeMutationSync";
+import type { PMVendorSuggestion } from "../project-manager/pmEstimateTypes";
 
 const source = { estimateId: "estimate-one", estimateVersion: 2, estimateReviewRoundId: "round-one" };
 const digest = "a".repeat(64);
@@ -163,7 +164,74 @@ function installStandardRate(initialEnquiry: BasketEnquiry | null = null, lineNa
 }
 
 describe("Procurement basket workspace", () => {
-  beforeEach(() => { access.manageBaseRate = false; });
+  beforeEach(() => {
+    access.manageBaseRate = false;
+    server.use(http.get("/api/v1/procurement/projects/:projectId/baskets/:basketId/vendor-suggestions", () => HttpResponse.json({ data: { items: [], total: 0, offset: 0, limit: 20, mainLines: [] } })));
+  });
+
+  function recommendedVendor(id: string, mainLineId: string, mainLineName: string): PMVendorSuggestion {
+    return { id, projectId: "project-one", source: { ...source, phase: "legacy", designPlanVersion: 1, sourceSnapshotId: null, sourceDigest: null },
+      storedSource: { ...source, designPlanVersion: 1 }, scope: "main_line", mainLine: { mainLineId, mainLineName, mainBasketId: "basket-painting", mainBasketName: "Painting",
+        occurrences: [{ sourceLineItemKey: "room-one:paint-one", sectionId: "room-one", roomId: "room-one", roomName: "Living Room" }], scopeDigest: digest, canSuggest: true, unavailableReason: null },
+      vendor: { id: "vendor-recommended", code: "VEN-51", name: "Recommended Specialist" }, note: "Reviewed the approved room scope.", status: "suggested", version: 1,
+      suggestedBy: { id: "pm-one", name: "Project Manager One" }, updatedBy: { id: "pm-one", name: "Project Manager One" }, createdAt: "2026-10-28T10:00:00Z", updatedAt: "2026-10-28T10:00:00Z",
+      sourceState: "current", canEdit: false, editUnavailableReason: null, bidEligible: true, readinessReasons: [], activity: { availability: "available", items: [], truncated: false } };
+  }
+
+  it("selects recommended vendors beyond the first directory page and deduplicates two Main Line recommendations", async () => {
+    const { dispatches } = install(draftEnquiry);
+    const suggestions = [recommendedVendor("suggestion-one", "main-one", "Primer coat"), recommendedVendor("suggestion-two", "main-two", "Finishing coat")];
+    server.use(
+      http.get("/api/v1/procurement/projects/project-one/baskets/basket-painting/vendor-candidates", () => HttpResponse.json({ data: {
+        items: vendors, total: 52, matchingVendorCount: 52, blockedReasonCounts: {}, limit: 50, offset: 0, projectCity: null
+      } })),
+      http.get("/api/v1/procurement/projects/project-one/baskets/basket-painting/vendor-suggestions", () => HttpResponse.json({ data: {
+        items: suggestions, total: 2, limit: 20, offset: 0, mainLines: [{ id: "main-one", name: "Primer coat" }, { id: "main-two", name: "Finishing coat" }]
+      } }))
+    );
+    const user = userEvent.setup(); renderWorkspace();
+    await user.click((await screen.findAllByRole("button", { name: /Open Painting in /i }))[0]!);
+    const first = await screen.findByRole("checkbox", { name: /Recommended Specialist Suggested for Primer coat/ });
+    const second = screen.getByRole("checkbox", { name: /Recommended Specialist Suggested for Finishing coat/ });
+    expect(first).not.toBeChecked(); expect(second).not.toBeChecked(); expect(dispatches).toHaveLength(0);
+    expect(screen.getByText(/Invitations cover the basket BOQ/)).toBeVisible();
+    await user.click(first);
+    expect(first).toBeChecked(); expect(second).toBeChecked();
+    expect(screen.getByText("Selected: Recommended Specialist")).toBeVisible();
+    expect(screen.getByText("1 vendor selected")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Send bid invitations" }));
+    await waitFor(() => expect(dispatches).toHaveLength(1));
+    expect(dispatches[0]).toMatchObject({ vendorIds: ["vendor-recommended"] });
+  });
+
+  it("preserves select-all exclusions from a Main Line recommendation", async () => {
+    const { dispatches } = install(draftEnquiry);
+    const recommendation = recommendedVendor("suggestion-one", "main-one", "Primer coat");
+    recommendation.vendor = { id: "vendor-one", name: "Sharma Interiors", code: "VEN-1" };
+    server.use(http.get("/api/v1/procurement/projects/project-one/baskets/basket-painting/vendor-suggestions", () => HttpResponse.json({ data: { items: [recommendation], total: 1, offset: 0, limit: 20, mainLines: [{ id: "main-one", name: "Primer coat" }] } })));
+    const user = userEvent.setup(); renderWorkspace();
+    await user.click((await screen.findAllByRole("button", { name: /Open Painting in /i }))[0]!);
+    const recommended = await screen.findByRole("checkbox", { name: /Sharma Interiors Suggested for Primer coat/ });
+    await user.click(screen.getByRole("button", { name: "Select all eligible (2)" }));
+    expect(recommended).toBeChecked();
+    await user.click(recommended);
+    expect(screen.getByRole("checkbox", { name: /Sharma Interiors VEN-1/ })).not.toBeChecked();
+    await user.click(screen.getByRole("button", { name: "Send bid invitations" }));
+    await waitFor(() => expect(dispatches).toHaveLength(1));
+    expect(dispatches[0]).toMatchObject({ selection: { kind: "all_eligible", excludedVendorIds: ["vendor-one"] } });
+  });
+
+  it("keeps ordinary directory selection available when recommendations fail", async () => {
+    const { dispatches } = install(draftEnquiry);
+    server.use(http.get("/api/v1/procurement/projects/project-one/baskets/basket-painting/vendor-suggestions", () => HttpResponse.json({ error: { code: "UNAVAILABLE", message: "Suggestion lookup failed." } }, { status: 503 })));
+    const user = userEvent.setup(); renderWorkspace();
+    await user.click((await screen.findAllByRole("button", { name: /Open Painting in /i }))[0]!);
+    expect(await screen.findByText("The vendor directory remains available below.")).toBeVisible();
+    await user.click(screen.getByRole("checkbox", { name: /Sharma Interiors/ }));
+    await user.click(screen.getByRole("button", { name: "Send bid invitations" }));
+    await waitFor(() => expect(dispatches).toHaveLength(1));
+    expect(dispatches[0]).toMatchObject({ vendorIds: ["vendor-one"] });
+  });
   it("shows the current Configuration unit name for an approved line", async () => {
     install();
     server.use(http.get("/api/v1/procurement/projects/project-one/baskets/basket-painting", () => HttpResponse.json({ data: {

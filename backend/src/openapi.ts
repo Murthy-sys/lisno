@@ -1,3 +1,4 @@
+import { PM_ESTIMATE_SCHEMAS, PM_ESTIMATE_REQUESTS, PM_ESTIMATE_RESPONSES, PM_ESTIMATE_QUERIES, PM_ESTIMATE_SUMMARIES } from "./openapi/project-manager-estimates.js";
 import { ESTIMATE_DIMENSION_INPUT_UNITS, ESTIMATE_DIMENSION_QUANTITY_UNITS } from "./domain/estimate-dimensions.js";
 import { ESTIMATE_TIER_SCHEMAS, ESTIMATE_TIER_REQUESTS, ESTIMATE_TIER_RESPONSES } from "./openapi/estimate-tiers.js";
 import { ESTIMATE_COMPONENT_PRICING_SCHEMAS, ESTIMATE_COMPONENT_PRICING_REQUESTS, ESTIMATE_COMPONENT_PRICING_RESPONSES } from "./openapi/estimate-component-pricing.js";
@@ -155,6 +156,7 @@ const requestBodiesByOperation: Readonly<Record<string, OpenApiRequestBody>> = {
   ...VENDOR_BASKET_PROPOSAL_BODIES,
   ...VENDOR_WORK_REQUESTS,
   ...EXECUTION_REQUESTS,
+  ...PM_ESTIMATE_REQUESTS,
   ...PROJECT_MANAGER_REQUESTS,
   ...VENDOR_ACCESS_REQUESTS,
   ...PROJECT_COMPLETION_REQUESTS,
@@ -270,6 +272,7 @@ const responseSchemaByOperation: Readonly<Record<string, string>> = {
   ...VENDOR_BASKET_PROPOSAL_RESPONSES,
   ...VENDOR_WORK_RESPONSES,
   ...EXECUTION_RESPONSES,
+  ...PM_ESTIMATE_RESPONSES,
   ...PROJECT_MANAGER_RESPONSES,
   ...VENDOR_ACCESS_RESPONSES,
   ...PROJECT_COMPLETION_RESPONSES,
@@ -393,6 +396,7 @@ const storedAttachmentContentTypes = [
 ] as const;
 
 const operationSummaries: Readonly<Record<string, string>> = {
+  ...PM_ESTIMATE_SUMMARIES,
   ...PROJECT_MANAGER_SUMMARIES,
   "GET /estimation/catalogue": "Read the estimator Main Basket catalogue",
   "GET /estimation/catalogue/recommendations": "Read selected catalogue Main Line recommendations",
@@ -633,6 +637,7 @@ const queryParametersByOperation: Readonly<
 > = {
   ...CHAT_QUERY_PARAMETERS,
   ...EXECUTION_QUERIES,
+  ...PM_ESTIMATE_QUERIES,
   ...PROJECT_MANAGER_QUERIES,
   "GET /finance/projects": [
     { name: "search", in: "query", required: false, schema: { type: "string", minLength: 1, maxLength: 200 }, description: "Case-insensitive literal search across project and client names." },
@@ -1658,6 +1663,7 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
     ...VENDOR_BASKET_PROPOSAL_SCHEMAS,
     ...VENDOR_WORK_SCHEMAS,
   ...EXECUTION_SCHEMAS,
+  ...PM_ESTIMATE_SCHEMAS,
   ...PROJECT_MANAGER_SCHEMAS,
   ...VENDOR_ACCESS_SCHEMAS,
     ...PROJECT_COMPLETION_SCHEMAS,

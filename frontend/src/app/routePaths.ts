@@ -65,6 +65,7 @@ export function safeReturnPath(
       parsed.pathname === home || (role !== "site_manager" && parsed.pathname.startsWith(`${home}/`));
     const canReturnToExecution = ["super_admin", "site_manager", "procurement"].includes(role) &&
       (parsed.pathname === "/execution" || /^\/projects\/[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\/execution$/u.test(parsed.pathname));
+    const canReturnToPMEstimate = role === "site_manager" && /^\/projects\/[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\/estimations$/u.test(parsed.pathname);
     const canReturnToProjectManager = role === "site_manager" && ["/home", "/project-manager/leaderboard", "/project-manager/bonus", "/work-order-approvals", "/access-requests/mine"].includes(parsed.pathname);
     const canReturnToClientResponses =
       (role === "admin" || role === "super_admin") &&
@@ -102,6 +103,7 @@ export function safeReturnPath(
       (!canReturnToRoleHome &&
         !canReturnToExecution &&
         !canReturnToProjectManager &&
+        !canReturnToPMEstimate &&
         !canReturnToProjectMessages &&
         !canReturnToClientResponses &&
         !canReturnToDesignApprovals &&

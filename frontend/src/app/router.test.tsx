@@ -616,7 +616,7 @@ describe("role landing staging contract", () => {
 
 describe("public invitation route", () => {
   it("mounts directly while staying outside the protected registry", async () => {
-    expect(ROUTE_REGISTRY).toHaveLength(48);
+    expect(ROUTE_REGISTRY).toHaveLength(49);
     expect(ROUTE_REGISTRY.map(({ path }) => path)).not.toContain(
       "/accept-invitation"
     );
@@ -712,7 +712,7 @@ describe("registered permission routes", () => {
   it("redirects the legacy Project Manager Home link to the dashboard", async () => {
     installAuthorizationSession("site_manager", ["execution.tracker.read", "workflow.tasks.read"]);
     const { router } = renderApp(["/home"]);
-    expect(await screen.findByRole("heading", { name: "Dashboard" })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Project Dashboard" })).toBeVisible();
     expect(router.state.location.pathname).toBe("/execution");
     expect(screen.queryByText("Ready for staged access")).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Project execution" })).not.toBeInTheDocument();
@@ -720,7 +720,7 @@ describe("registered permission routes", () => {
   it("lands the Project Manager on the compact dashboard", async () => {
     installAuthorizationSession("site_manager", ["execution.tracker.read"]);
     const { router } = renderApp(["/"]);
-    expect(await screen.findByRole("heading", { name: "Dashboard" })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Project Dashboard" })).toBeVisible();
     expect(router.state.location.pathname).toBe("/execution");
   });
   it.each(["vendor", "client", "admin"] as const)("does not expose staff execution to %s even with a misplaced permission", async role => {
@@ -749,9 +749,9 @@ describe("registered permission routes", () => {
       (path) => !(historicalProtectedPaths as readonly string[]).includes(path)
     );
 
-    expect(paths).toHaveLength(historicalProtectedPaths.length + 27);
+    expect(paths).toHaveLength(historicalProtectedPaths.length + 28);
     expect(additions).toEqual([
-      "/execution", "/projects/:projectId/execution",
+      "/execution", "/projects/:projectId/estimations", "/projects/:projectId/execution",
       "/project-messages", "/project-manager/leaderboard", "/project-manager/bonus", "/projects/:projectId/messages",
       "/designer/design-plans",
       "/vendor",
@@ -765,7 +765,7 @@ describe("registered permission routes", () => {
     ]);
     expect(paths.filter(
       (path) => ![
-        "/execution", "/projects/:projectId/execution",
+        "/execution", "/projects/:projectId/estimations", "/projects/:projectId/execution",
         "/project-manager/leaderboard", "/project-manager/bonus",
         "/project-messages", "/projects/:projectId/messages",
         "/designer/design-plans",

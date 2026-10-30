@@ -148,6 +148,21 @@ async function seedFixtureItem(input: FixtureItem) {
   return revisionId;
 }
 
+async function seedCurrentDraftDesignSection(section: Record<string, unknown>) {
+  await AiEstimatorKnowledgeRevisionModel.collection.insertOne({
+    _id: "design-draft-revision", mainLineId: "line-a", status: "draft", version: 2
+  } as never);
+  await AiEstimatorKnowledgeMainLineModel.collection.updateOne({ _id: "line-a" }, { $set: { draftRevisionId: "design-draft-revision" } });
+  // Native inserts preserve legacy missing payloads instead of applying schema defaults.
+  await AiEstimatorKnowledgeSectionModel.collection.insertMany([
+    { _id: "overview-design-draft", mainLineId: "line-a", revisionId: "design-draft-revision",
+      sectionKey: "overview", payload: { uomId: "uom-sq" } },
+    { _id: "design-active", mainLineId: "line-a", revisionId: "revision-a", sectionKey: "design",
+      applicability: "configured", payload: { answers: { stockCheck: true } } },
+    { _id: "design-draft", mainLineId: "line-a", revisionId: "design-draft-revision", sectionKey: "design", ...section }
+  ] as never[]);
+}
+
 describe("estimator configured catalogue and estimate", { timeout: 30_000 }, () => {
   it("keeps screen-hidden rows internally available, freezes visibility, and preserves every amount", async () => {
     await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: "overview-a" }, { $set: { "payload.clientVisible": false } });
@@ -273,6 +288,42 @@ describe("estimator configured catalogue and estimate", { timeout: 30_000 }, () 
     expect((await resolveCurrentMainLineDesignRules(["line-a"])).get("line-a")).toMatchObject({ mainLineId: "line-a", revisionId: "revision-a", designRules: normalizeDesignRules() });
     await AiEstimatorKnowledgeSectionModel.collection.insertOne({ _id: "invalid-design-a", mainLineId: "line-a", revisionId: "revision-a", sectionKey: "design", payload: { answers: { stockCheck: "yes" } } } as never);
     await expect(resolveCurrentMainLineDesignRules(["line-a"])).rejects.toMatchObject({ code: "ESTIMATE_DESIGN_RULES_UNAVAILABLE" });
+  });
+
+  it.each(["catalogue", "workflow"] as const)("resolves an unconfigured Design placeholder without a payload in the latest draft for %s", async (consumer) => {
+    await seedCurrentDraftDesignSection({ applicability: "not_configured" });
+    const current = consumer === "catalogue"
+      ? (await resolveEstimatorCatalogueLines(["line-a"])).get("line-a")?.line
+      : (await resolveCurrentMainLineDesignRules(["line-a"])).get("line-a");
+    const rules = normalizeDesignRules();
+    expect(current).toMatchObject({ revisionId: "design-draft-revision", revisionVersion: 2,
+      designRules: rules, designRulesDigest: designRulesDigest(rules) });
+    expect(await AiEstimatorKnowledgeSectionModel.collection.findOne({ _id: "design-draft" }))
+      .not.toHaveProperty("payload");
+  });
+
+  it.each([
+    { name: "configured missing payload", section: { applicability: "configured" } },
+    { name: "unspecified applicability with missing payload", section: {} },
+    { name: "unconfigured null payload", section: { applicability: "not_configured", payload: null } },
+    { name: "unconfigured malformed nonempty payload", section: { applicability: "not_configured", payload: { answers: { stockCheck: "yes" } } } },
+    { name: "configured malformed nonempty payload", section: { applicability: "configured", payload: { answers: { stockCheck: "yes" } } } },
+    { name: "mismatched placeholder Main Line", section: { applicability: "not_configured", mainLineId: "line-b" } }
+  ])("rejects $name without falling back to active Design rules", async ({ section }) => {
+    await seedCurrentDraftDesignSection(section);
+    const resolved = await resolveEstimatorCatalogueLines(["line-a", "line-b"]);
+    expect(resolved.has("line-a")).toBe(false);
+    expect(resolved.has("line-b")).toBe(true);
+    await expect(resolveCurrentMainLineDesignRules(["line-a"]))
+      .rejects.toMatchObject({ code: "ESTIMATE_DESIGN_RULES_UNAVAILABLE" });
+  });
+
+  it("rejects an unconfigured placeholder when its current revision belongs to a different Main Line", async () => {
+    await seedCurrentDraftDesignSection({ applicability: "not_configured" });
+    await AiEstimatorKnowledgeRevisionModel.collection.updateOne({ _id: "design-draft-revision" }, { $set: { mainLineId: "line-b" } });
+    expect((await resolveEstimatorCatalogueLines(["line-a"])).has("line-a")).toBe(false);
+    await expect(resolveCurrentMainLineDesignRules(["line-a"]))
+      .rejects.toMatchObject({ code: "ESTIMATE_DESIGN_RULES_UNAVAILABLE" });
   });
 
   it("projects current saved basket descriptions and null for empty or legacy descriptions", async () => {

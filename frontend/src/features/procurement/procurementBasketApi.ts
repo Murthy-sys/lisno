@@ -1,6 +1,7 @@
 import type { EstimationPreparationSource } from "../../api/types";
 import { apiClient } from "../../api/client";
 import type { PurchaseOrderComponentIdentity, PurchaseOrderModeResolution } from "./purchaseOrderApi";
+import type { PMVendorSuggestionQuery, ProcurementMainLineSuggestionPage } from "../project-manager/pmEstimateTypes";
 
 export interface BasketEstimateSource {
   estimateId: string;
@@ -500,6 +501,8 @@ export const procurementBasketKeys = {
   list: (projectId: string) => ["procurement", "baskets", projectId] as const,
   detail: (projectId: string, basketId: string) => ["procurement", "basket", projectId, basketId] as const,
   candidates: (projectId: string, basketId: string, search: string, city: string, offset: number) => ["procurement", "basket-vendors", projectId, basketId, search, city, offset] as const,
+  suggestions: (projectId: string, basketId: string, actorId: string | undefined, sourceKey: string | null, filters: PMVendorSuggestionQuery) =>
+    ["procurement", "basket-vendor-suggestions", projectId, basketId, actorId, sourceKey, filters] as const,
   enquiries: (projectId: string, basketId: string) => ["procurement", "basket-enquiries", projectId, basketId] as const,
   enquiry: (projectId: string, basketId: string, enquiryId: string) => ["procurement", "basket-enquiry", projectId, basketId, enquiryId] as const,
   history: (projectId: string, basketId: string, enquiryId: string, beforeRevision: number | null) => ["procurement", "basket-history", projectId, basketId, enquiryId, beforeRevision] as const,
@@ -533,6 +536,14 @@ export async function saveBasketBaseRate(projectId: string, basketId: string, in
 export function getProcurementVendorCandidates(projectId: string, basketId: string, search: string, city: "all" | VendorCityMatch, offset = 0, signal?: AbortSignal) {
   const params = new URLSearchParams({ q: search, city, limit: "50", offset: String(offset) });
   return apiClient.get<ProcurementVendorCandidates>(`${basketPath(projectId, basketId)}/vendor-candidates?${params}`, { signal, showGlobalLoader: false });
+}
+export async function getProcurementMainLineSuggestions(projectId: string, basketId: string, filters: PMVendorSuggestionQuery, signal?: AbortSignal) {
+  const params = new URLSearchParams(Object.entries(filters).flatMap(([key, value]) => value === undefined ? [] : [[key, String(value)]]));
+  const data = await apiClient.get<ProcurementMainLineSuggestionPage>(`${basketPath(projectId, basketId)}/vendor-suggestions?${params}`, { signal, showGlobalLoader: false });
+  if (data.items.some(item => item.projectId !== projectId || item.mainLine && item.mainLine.mainBasketId !== basketId)) {
+    throw new Error("These suggestions belong to another project or basket. Refresh the basket.");
+  }
+  return data;
 }
 export function saveProcurementVendorServiceCity(vendorId: string, expectedVersion: number, cityName: string | null) {
   return apiClient.put<{ vendorId: string; city: { name: string; key: string } | null; version: number }>(`/procurement/vendors/${encodeURIComponent(vendorId)}/service-city`, { expectedVersion, cityName });

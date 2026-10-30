@@ -16,6 +16,9 @@ import { hasValidProcurementModeGroups } from "../../features/procurement/procur
 import type { EstimateDraft } from "../../features/leads/leadsApi";
 import type { EstimationCataloguePage, EstimationCatalogueRecommendations } from "../../features/leads/estimationCatalogueApi";
 import { procurementProjectsIntegrityError } from "../../features/procurement/procurementPresentation";
+import type { PMPortfolio, PMAlert, PMOverview, PMPanel } from "../../features/project-manager/projectManagerTypes";
+import type { ExecutionPage, ExecutionWork } from "../../features/execution/executionApi";
+import type { PMEstimateView, PMVendorCandidatePage, PMVendorSuggestionPage } from "../../features/project-manager/pmEstimateTypes";
 
 let transport: ReturnType<typeof installEnterpriseTransport> | undefined;
 let cleanup: (() => void) | undefined;
@@ -48,6 +51,164 @@ const routes: [string, Role][] = [
   ["/admin/configuration/estimation", "super_admin"], ["/admin/configuration/estimation/items/line-1", "super_admin"], ["/admin/configuration/estimation/reusable-values", "super_admin"]
 ];
 describe("synthetic enterprise route harness", () => {
+  it("scopes PM fixture vendors to each Main Line and enforces link changes on create and reinstate", async () => {
+    transport = installEnterpriseTransport({ route: "/projects/pm-cedar/estimations?qaPMEstimates=ready", role: "site_manager", state: "populated" });
+    const base = "/api/v1/projects/pm-cedar/pm";
+    const read = async <T,>(resource: string) => (await (await fetch(`${base}/${resource}`)).json()).data as T;
+    const write = (method: string, resource: string, body: unknown) => fetch(`${base}/${resource}`, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const estimate = await read<PMEstimateView>("estimate");
+    const ceiling = await read<PMVendorCandidatePage>("vendor-suggestion-candidates?mainLineId=line-ceiling");
+    const storage = await read<PMVendorCandidatePage>("vendor-suggestion-candidates?mainLineId=line-storage");
+    expect(ceiling.items.map(vendor => vendor.id)).toEqual(["vendor-ceiling", "vendor-contact", "vendor-inactive"]);
+    expect(storage.items.map(vendor => vendor.id)).toEqual(["vendor-joinery", "vendor-contact"]);
+    expect(ceiling.items.find(vendor => vendor.id === "vendor-inactive")!.canSuggest).toBe(false);
+    const input = { expectedSource: estimate.source, mainLineId: "line-ceiling", vendorId: "vendor-joinery", note: "Synthetic suggestion.", idempotencyKey: "synthetic-command-1" };
+    expect(await (await write("POST", "vendor-suggestions", input)).json()).toMatchObject({ error: { code: "VENDOR_SUGGESTION_VENDOR_NOT_LINKED" } });
+    const response = await (await write("POST", "vendor-suggestions", { ...input, vendorId: "vendor-contact" })).json();
+    expect(response.data.status).toBe("suggested");
+    const id = response.data.id as string;
+    const update = { expectedSource: estimate.source, expectedVersion: 1, note: input.note, status: "withdrawn", idempotencyKey: "synthetic-command-2" };
+    expect((await write("PATCH", `vendor-suggestions/${id}`, update)).status).toBe(200);
+    let saved = (await read<PMVendorSuggestionPage>("vendor-suggestions")).items.find(row => row.id === id)!;
+    expect(saved.reinstatementAvailability).toEqual({ available: true, reason: null });
+    window.dispatchEvent(new CustomEvent("enterprise-qa-pm-vendor-links", { detail: { state: "removed" } }));
+    saved = (await read<PMVendorSuggestionPage>("vendor-suggestions")).items.find(row => row.id === id)!;
+    expect(saved.reinstatementAvailability?.available).toBe(false);
+    expect(saved.bidEligible).toBe(false);
+    expect(saved.readinessReasons).toContain("Vendor is no longer linked to this Main Line in Configuration.");
+    expect(await (await write("PATCH", `vendor-suggestions/${id}`, { ...update, expectedVersion: 2, status: "suggested" })).json())
+      .toMatchObject({ error: { code: "VENDOR_SUGGESTION_VENDOR_NOT_LINKED" } });
+    expect((await write("PATCH", `vendor-suggestions/${id}`, { ...update, expectedVersion: 2, note: "Retained history." })).status).toBe(200);
+    window.dispatchEvent(new CustomEvent("enterprise-qa-pm-vendor-links", { detail: { state: "unavailable" } }));
+    expect(await (await fetch(`${base}/vendor-suggestion-candidates?mainLineId=line-ceiling`)).json())
+      .toMatchObject({ error: { code: "PM_MAIN_LINE_VENDOR_CONFIGURATION_UNAVAILABLE" } });
+    expect((await read<PMEstimateView>("estimate")).totals).toEqual(estimate.totals);
+    expect(transport.requests.some(request => request.unexpected)).toBe(false);
+  });
+
+  it("keeps rich project details opt-in with source-backed states and matching issued assignment IDs", async () => {
+    const read = async <T,>(path: string) => (await (await fetch(`/api/v1${path}`)).json()).data as T;
+    transport = installEnterpriseTransport({ route: "/execution?qaProjectDashboard=ready", role: "site_manager", state: "populated" });
+    const original = await read<PMPanel>("/projects/pm-cedar/pm/site");
+    expect(original.items).toHaveLength(1);
+    expect(original.items[0]!.children).toHaveLength(3);
+    transport.restore();
+
+    transport = installEnterpriseTransport({ route: "/projects/pm-cedar/execution?qaProjectDashboard=ready&qaProjectDetail=ready", role: "site_manager", state: "populated" });
+    const overview = await read<PMOverview>("/projects/pm-cedar/pm/overview");
+    const site = await read<PMPanel>("/projects/pm-cedar/pm/site");
+    expect(overview.project).toMatchObject({ id: "pm-cedar", progress: { actual: 62.5, planned: 70, siteVerified: 3, clientAccepted: 1 } });
+    expect(overview.project.issues[0]).toContain("estimate-line-synthetic-");
+    expect(site.issues).toHaveLength(1);
+    expect(site.items).toHaveLength(3);
+    expect(site.items.map(room => room.progress)).toEqual([65.5, 45, null]);
+    expect(site.items[2]!.children).toEqual([]);
+    const trades = site.items.flatMap(room => room.children ?? []);
+    expect(trades).toHaveLength(8);
+    expect(trades.map(item => item.progress)).toEqual([10, 35, 0, 100, 100, 75, 100, 30]);
+    const portfolio = await read<PMPortfolio>("/project-manager/projects");
+    expect(portfolio.alerts.filter(alert => alert.projectId === "pm-cedar").every(alert => trades.some(item => item.id === alert.entityId))).toBe(true);
+    const execution = await read<ExecutionPage>("/projects/pm-cedar/execution");
+    expect(execution.project).toMatchObject({ id: "pm-cedar", name: overview.project.name });
+    expect(execution.items.map(item => item.id)).toEqual(trades.map(item => item.assignmentId));
+    expect(execution.projectCounts).toMatchObject({ total: 8, verified: 3, clientAccepted: 1 });
+    const work = await read<ExecutionWork>("/execution/work/pm-cedar-work-1");
+    expect(work).toMatchObject({ id: "pm-cedar-work-1", projectId: "pm-cedar", itemName: trades[0]!.title, progress: 10 });
+    expect(await read("/execution/work/pm-cedar-work-1/history")).toMatchObject({ items: [], total: 0 });
+    expect((await read<PMOverview>("/projects/pm-studio/pm/overview")).project.progress.actual).toBe(0);
+    expect((await read<PMPanel>("/projects/pm-studio/pm/site")).items).toEqual([]);
+    expect((await read<PMOverview>("/projects/pm-terrace/pm/overview")).project.progress.actual).toBeNull();
+    const unavailable = await read<PMPanel>("/projects/pm-terrace/pm/site");
+    expect(unavailable).toMatchObject({ availability: "source_unavailable" });
+    expect(unavailable.items[0]!.children![0]!.progress).toBeNull();
+    expect((await fetch("/api/v1/execution/work/pm-terrace-work-1")).status).toBe(404);
+    expect(transport.requests.filter(request => request.unexpected)).toEqual([]);
+
+    const removeListener = vi.spyOn(window, "removeEventListener");
+    transport.restore();
+    expect(removeListener).toHaveBeenCalledWith("enterprise-qa-project-manager", expect.any(Function));
+    removeListener.mockRestore();
+    transport = installEnterpriseTransport({ route: "/execution?qaProjectDashboard=ready", role: "site_manager", state: "populated" });
+    expect(await read<PMPanel>("/projects/pm-cedar/pm/site")).toEqual(original);
+  });
+
+  it("opens a rich project's actual assignment and preserves the detail review note", async () => {
+    const user = userEvent.setup();
+    const { client, router } = mount("/projects/pm-cedar/execution?qaProjectDashboard=ready&qaProjectDetail=ready", "site_manager");
+    expect(await screen.findByRole("heading", { name: "Cedar residence" })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Living & dining" })).toBeVisible();
+    await user.click(screen.getByRole("link", { name: "Open POP false ceiling in Living & dining" }));
+    expect(router.state.location.search).toContain("assignment=pm-cedar-work-1");
+    expect(await screen.findByRole("link", { name: "Back to project tabs" })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "POP false ceiling", level: 2 })).toBeVisible();
+    await waitFor(() => expect(client.isFetching()).toBe(0));
+    expect(transport!.requests.filter(request => request.unexpected)).toEqual([]);
+    await user.keyboard("{Escape}");
+    expect(screen.getByText("Project details to review (1)")).toBeVisible();
+    await user.click(screen.getByRole("link", { name: "Back to project tabs" }));
+    expect(await screen.findByRole("navigation", { name: "Project sections" })).toBeVisible();
+  });
+
+  it.each(["/execution", "/home"])("renders the opted-in Project Manager dashboard through %s and opens its source project", async path => {
+    const user = userEvent.setup();
+    const { client, router } = mount(`${path}?qaProjectDashboard=ready`, "site_manager");
+    expect(await screen.findByRole("heading", { name: "Project Dashboard" })).toBeVisible();
+    const projectLink = await screen.findByRole("link", { name: "Open project Cedar residence" });
+    expect(within(screen.getByRole("region", { name: "Project summary" })).getByRole("button", { name: /Active projects 7/ })).toBeVisible();
+    expect(router.state.location.pathname).toBe("/execution");
+    expect(screen.queryByRole("button", { name: "New project" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "New project" })).not.toBeInTheDocument();
+    await user.click(projectLink);
+    expect(await screen.findByRole("heading", { name: "Cedar residence" })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Living & dining" })).toBeVisible();
+    expect(within(screen.getByRole("navigation", { name: "Project sections" })).getAllByRole("link")).toHaveLength(8);
+    await user.click(screen.getByRole("link", { name: "All projects" }));
+    expect(await screen.findByRole("heading", { name: "Project Dashboard" })).toBeVisible();
+    await waitFor(() => expect(client.isFetching()).toBe(0));
+    expect(transport!.requests.filter(request => request.unexpected)).toEqual([]);
+  });
+
+  it("keeps Project Manager fixtures opt-in, paginates source records and supports refresh failures", async () => {
+    const read = async <T,>(path: string) => (await (await fetch(`/api/v1${path}`)).json()).data as T;
+    transport = installEnterpriseTransport({ route: "/execution", role: "site_manager", state: "populated" });
+    expect((await read<PMPortfolio>("/project-manager/projects")).items).toHaveLength(0);
+    transport.restore();
+    transport = installEnterpriseTransport({ route: "/execution?qaProjectDashboard=ready", role: "site_manager", state: "populated" });
+    const all = await read<PMPortfolio>("/project-manager/projects");
+    expect(all).toMatchObject({ total: 7, counts: { active: 7, atRisk: 3, critical: 1, setup: 1, onTrack: 2, incomplete: 1 }, alertTotal: 9 });
+    expect(all.alerts).toHaveLength(8);
+    expect(all.items.find(project => project.id === "pm-studio")).toMatchObject({ progress: { actual: 0 }, approvedNetPaise: 0, plannedEndAt: null });
+    expect(all.items.find(project => project.id === "pm-terrace")).toMatchObject({ progress: { actual: null }, approvedNetPaise: null, plannedEndAt: null });
+    const critical = await read<PMPortfolio>("/project-manager/projects?health=critical");
+    expect(critical.total).toBe(1);
+    expect(critical.counts).toEqual(all.counts);
+    expect(critical.alerts.every(alert => alert.projectId === "pm-cedar")).toBe(true);
+    expect((await read<PMPortfolio>("/project-manager/projects?status=all")).total).toBe(8);
+    expect((await read<PMPortfolio>("/project-manager/projects?q=Chennai")).items.map(project => project.id)).toEqual(["pm-studio"]);
+    expect((await read<PMPortfolio>("/project-manager/projects?health=at_risk")).total).toBe(3);
+
+    for (const [state, status] of [["error", 503], ["denied", 404], ["ready", 200]] as const) {
+      window.dispatchEvent(new CustomEvent("enterprise-qa-project-manager", { detail: { state } }));
+      expect((await fetch("/api/v1/project-manager/projects")).status).toBe(status);
+    }
+    expect(transport.requests.filter(request => request.unexpected)).toEqual([]);
+    transport.restore();
+    transport = installEnterpriseTransport({ route: "/execution?qaProjectDashboard=ready&qaProjectDashboardPaging=ready", role: "site_manager", state: "populated" });
+    const first = await read<PMPortfolio>("/project-manager/projects?limit=20&offset=0");
+    const second = await read<PMPortfolio>("/project-manager/projects?limit=20&offset=20");
+    expect(first.total).toBe(31);
+    expect(first.items).toHaveLength(20);
+    expect(second.items).toHaveLength(11);
+    expect(second.items.some(project => first.items.some(previous => previous.id === project.id))).toBe(false);
+    const alerts = await read<{ items: PMAlert[]; total: number }>("/project-manager/alerts?limit=20&offset=20");
+    expect(alerts.total).toBe(81);
+    expect(alerts.items).toHaveLength(20);
+    expect(transport.requests.filter(request => request.unexpected)).toEqual([]);
+    transport.restore();
+    transport = installEnterpriseTransport({ route: "/execution?qaProjectDashboard=ready", role: "site_manager", state: "empty" });
+    expect(await read<PMPortfolio>("/project-manager/projects")).toMatchObject({ total: 0, alertTotal: 0, counts: { active: 0, atRisk: 0 } });
+  });
+
   it("renders component estimate previews, retries failures and saves exact null-rate amounts", async () => {
     const user = userEvent.setup();
     mount("/estimator-sales/leads/lead-1/estimate?qaComponentAmounts=ready", "estimator_sales");
@@ -249,7 +410,7 @@ describe("synthetic enterprise route harness", () => {
     const { client, router } = mount(route, role);
     await screen.findByRole("navigation", { name: "Primary navigation" });
     if (route === "/home" && role === "site_manager") {
-      await screen.findByRole("heading", { name: "Dashboard" });
+      await screen.findByRole("heading", { name: "Project Dashboard" });
       await screen.findByRole("heading", { name: "No assigned projects" });
       expect(router.state.location.pathname).toBe("/execution");
       expect(transport!.requests).toEqual(expect.arrayContaining([

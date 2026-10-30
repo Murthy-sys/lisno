@@ -1,3 +1,7 @@
+import { createPMEstimateReadService } from "./services/project-manager/estimates.js";
+import { createPMVendorSuggestionCommandService } from "./services/project-manager/vendor-suggestion-commands.js";
+import { createProcurementMainLineSuggestionService } from "./services/procurement-main-line-suggestions.service.js";
+import { createProjectManagerEstimatesRouter } from "./routes/project-manager-estimates.js";
 import { createProjectManagerWorkspace } from "./services/project-manager/workspace.js";
 import { createPMEvidenceService } from "./services/project-manager/evidence.js";
 import { createProjectManagerRequestsSupplyService } from "./services/project-manager/requests.js";
@@ -488,6 +492,9 @@ export function createApp(dependencies: AppDependencies) {
     procurement: pmRequests.procurement, selections: pmRequests.selections, supply: pmRequests.supply,
     vendors: pmVendors.vendors, client: pmClient.client, snagging: pmClient.snagging, quality: pmQuality.quality
   } });
+  const pmEstimateReads = createPMEstimateReadService();
+  const pmSuggestionCommands = createPMVendorSuggestionCommandService(pmDependencies);
+  const procurementMainLineSuggestions = createProcurementMainLineSuggestionService();
   const pmEvidence = createPMEvidenceService(storage);
   const vendorOnboarding = createVendorWorkOnboardingService({ repository, audit: auditService, clock,
     deliveryEnabled: dependencies.enableVendorAccessDelivery,
@@ -733,6 +740,7 @@ export function createApp(dependencies: AppDependencies) {
   app.use("/api/v1", createProjectPurchaseOrderBasketMonitorRouter(authService, projectPurchaseOrderBasketMonitorService));
   app.use("/api/v1", createProjectCompletionRouter(authService, projectCompletionService));
   app.use("/api/v1", createSiteCompletionRouter(authService, siteCompletionService));
+  app.use("/api/v1", createProjectManagerEstimatesRouter(authService, pmEstimateReads, pmSuggestionCommands, procurementMainLineSuggestions));
   app.use("/api/v1", createProjectManagerRouter(authService, pmWorkspace, pmEvidence, maxUploadBytes));
   app.use("/api/v1", createProjectManagerRequestsRouter(authService, pmRequests));
   app.use("/api/v1", createProjectManagerClientRouter(authService, pmClient));

@@ -26,6 +26,21 @@ function componentSchemas(): Record<string, OpenApiObject> {
 }
 
 describe("OpenAPI and Swagger UI", () => {
+  it("documents linked-vendor lookup and optional reinstatement availability without changing write bodies", () => {
+    const schemas = componentSchemas();
+    expect(schemas.PMVendorSuggestion).toHaveProperty("properties.reinstatementAvailability.allOf", [
+      { $ref: "#/components/schemas/PMWriteAvailability" }
+    ]);
+    expect(schemas.PMVendorSuggestion!.required).not.toContain("reinstatementAvailability");
+    expect(schemas.PMVendorSuggestion!.required).toEqual(expect.arrayContaining(["canEdit", "bidEligible", "readinessReasons"]));
+    expect(schemas.PMVendorCandidatePage!.description).toContain("PM_MAIN_LINE_VENDOR_CONFIGURATION_UNAVAILABLE");
+    for (const name of ["PMVendorSuggestionCreate", "PMVendorSuggestionUpdate"]) {
+      expect(schemas[name]!.description).toContain("VENDOR_SUGGESTION_VENDOR_NOT_LINKED");
+      expect(schemas[name]!.description).toContain("PM_MAIN_LINE_VENDOR_CONFIGURATION_UNAVAILABLE");
+      expect(schemas[name]).not.toHaveProperty("properties.reinstatementAvailability");
+    }
+    expect(schemas.PMVendorSuggestionCreate!.required).toEqual(["expectedSource", "mainLineId", "vendorId", "idempotencyKey"]);
+  });
   it("documents server-owned dimension rules, measured quantities and optional legacy defaults", () => {
     const schemas = componentSchemas();
     const overview = (schemas.KnowledgeSectionPayload!.anyOf as OpenApiObject[]).find(entry => (entry.properties as OpenApiObject)?.dimensionsMandatory !== undefined);
@@ -1231,7 +1246,7 @@ describe("OpenAPI and Swagger UI", () => {
     }
   });
 
-  it("contains all 499 routes without versioning paths twice", () => {
+  it("contains all 505 routes without versioning paths twice", () => {
     const methods = new Set(["get", "post", "put", "patch", "delete"]);
     const operationCount = Object.values(openApiDocument.paths).reduce(
       (total, pathItem) =>
@@ -1240,7 +1255,7 @@ describe("OpenAPI and Swagger UI", () => {
     );
 
     expect(operationCount).toBe(HUMAN_JWT_OPERATION_LIST.length + 21);
-    expect(operationCount).toBe(499);
+    expect(operationCount).toBe(505);
     expect(Object.keys(openApiDocument.paths).some((path) =>
       path.startsWith("/api/v1")
     )).toBe(false);

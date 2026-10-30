@@ -8,13 +8,13 @@ import { PageState } from "../../components/ui/PageState";
 import { getPurchaseOrderPreparation, purchaseOrderKeys } from "./purchaseOrderApi";
 import { ProcurementBasketComparison } from "./ProcurementBasketComparison";
 import { ProcurementBasketMonitor } from "./ProcurementBasketMonitor";
+import { ProcurementBasketSuggestions, type BasketSelectedVendor } from "./ProcurementBasketSuggestions";
 import {
   createBasketEnquiry, createBasketWhatsAppShareIntent, dispatchBasketEnquiry, getProcurementVendorCandidates, listBasketEnquiries,
   previewBasketInvitationBatch, procurementBasketKeys, resendBasketInvitation, submitBasketInvitationBatch, updateBasketEnquiry,
   type BasketBoqLineInput, type BasketEnquiry, type BasketInvitationAction, type BasketInvitationBatchInput,
   type BasketInvitationBatchResult,
-  type BasketInvitationSelection, type ProcurementBasketDetail,
-  type ProcurementVendorCandidate
+  type BasketInvitationSelection, type ProcurementBasketDetail
 } from "./procurementBasketApi";
 import { procurementError, procurementRequestKey } from "./procurementPresentation";
 import "./procurementBasketEnquiry.css";
@@ -82,7 +82,7 @@ function BasketBoqEditor({ projectId, basket, enquiry, frozen, reviseSent, prepa
     setMessage("");
   }
   return <>
-    <BasketVendorPicker projectId={projectId} basketId={basket.id} enquiry={currentEnquiry}
+    <BasketVendorPicker projectId={projectId} basketId={basket.id} enquiry={currentEnquiry} sourceKey={preparationDigest}
       boqEditable={canEdit} allowSentRevision={reviseSent} frozenReason={basisChanged && !sentSameRevision ? "Load the current BOQ before sending invitations." : vendorFrozenReason}
       prepareBoq={prepareBoq} afterDispatch={async (sent) => {
         if (sent) {
@@ -118,9 +118,9 @@ function vendorParticipation(enquiry: BasketEnquiry | null, vendorId: string) {
   return hasBid && latest.status !== "consumed" ? `Bid received · ${state.toLowerCase()}` : state;
 }
 
-function BasketVendorPicker({ projectId, basketId, enquiry, boqEditable, allowSentRevision, frozenReason,
+function BasketVendorPicker({ projectId, basketId, enquiry, sourceKey, boqEditable, allowSentRevision, frozenReason,
   prepareBoq, afterDispatch, boqMessage }: {
-  projectId: string; basketId: string; enquiry: BasketEnquiry | null; boqEditable: boolean;
+  projectId: string; basketId: string; enquiry: BasketEnquiry | null; sourceKey: string | null; boqEditable: boolean;
   allowSentRevision: boolean; frozenReason: string | null;
   prepareBoq: () => Promise<BasketEnquiry | null>; afterDispatch: (sent?: BasketEnquiry) => Promise<void>;
   boqMessage: string;
@@ -128,7 +128,7 @@ function BasketVendorPicker({ projectId, basketId, enquiry, boqEditable, allowSe
   const dispatchReasonId = useId();
   const [search, setSearch] = useState("");
   const [offset, setOffset] = useState(0);
-  const [selected, setSelected] = useState<ProcurementVendorCandidate[]>([]);
+  const [selected, setSelected] = useState<BasketSelectedVendor[]>([]);
   const [allEligible, setAllEligible] = useState(false);
   const [excludedVendorIds, setExcludedVendorIds] = useState<string[]>([]);
   const [counterofferReason, setCounterofferReason] = useState("");
@@ -243,8 +243,15 @@ function BasketVendorPicker({ projectId, basketId, enquiry, boqEditable, allowSe
       sentRevision && preview.data?.requiresReason && counterofferReason.trim().length < 10 ? "Give a reason of at least 10 characters to request updated bids." :
       sentRevision && preview.data?.actions.every((item) => item.action === "already_invited") ? "Every selected vendor already has an active invitation. No new message will be sent." : null);
   const reasons = Object.entries(candidates.data?.blockedReasonCounts ?? {}).filter(([, count]) => count > 0);
+  function toggleVendor(vendor: BasketSelectedVendor, checked: boolean) {
+    setLastResults(null);
+    if (allEligible) setExcludedVendorIds(current => checked ? current.filter(id => id !== vendor.vendorId) : [...new Set([...current, vendor.vendorId])]);
+    else setSelected(current => checked ? current.some(item => item.vendorId === vendor.vendorId) ? current : [...current, vendor] : current.filter(item => item.vendorId !== vendor.vendorId));
+  }
   return <section className="procurement-basket__vendors" aria-labelledby="basket-vendors-title">
     <h3 id="basket-vendors-title" className="sr-only">Choose vendors</h3>
+    <ProcurementBasketSuggestions projectId={projectId} basketId={basketId} sourceKey={sourceKey} disabled={sending || Boolean(frozenReason)}
+      isSelected={vendorId => allEligible ? !excludedVendorIds.includes(vendorId) : selected.some(item => item.vendorId === vendorId)} onToggle={toggleVendor} />
     <label className="procurement-basket__search">Search vendors<span className="procurement-basket__search-field"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="10.5" cy="10.5" r="6.5" /><path d="m15.5 15.5 5 5" /></svg><input type="search" value={search} onChange={(event) => { setSearch(event.target.value); setOffset(0); }} placeholder="Name or code" /></span></label>
     <div className="procurement-basket__selection-tools"><button type="button" disabled={basketCandidates.isPending || basketCandidates.isFetching || basketCandidates.isError || !basketCandidates.data?.total || sending}
       onClick={() => { setAllEligible(true); setExcludedVendorIds([]); setSelected([]); setMessage(null); }}>
@@ -261,11 +268,7 @@ function BasketVendorPicker({ projectId, basketId, enquiry, boqEditable, allowSe
         : <><div className="procurement-basket__vendor-list">{candidates.data.items.map((vendor) => {
           const checked = allEligible ? !excludedVendorIds.includes(vendor.vendorId) : selected.some((item) => item.vendorId === vendor.vendorId);
           const planned = preview.data?.actions.find((item) => item.vendorId === vendor.vendorId);
-          return <div className="procurement-basket__vendor" key={vendor.vendorId}><label><input type="checkbox" disabled={!vendor.eligible || sending} checked={checked} onChange={(event) => {
-            setLastResults(null);
-            if (allEligible) setExcludedVendorIds((current) => event.target.checked ? current.filter((id) => id !== vendor.vendorId) : [...current, vendor.vendorId]);
-            else setSelected((current) => event.target.checked ? current.some((item) => item.vendorId === vendor.vendorId) ? current : [...current, vendor] : current.filter((item) => item.vendorId !== vendor.vendorId));
-          }} /><span><strong>{vendor.name}</strong><small>{vendor.code} · {vendor.city?.name ?? "City unknown"}</small><small className="procurement-basket__vendor-participation">{vendorParticipation(enquiry, vendor.vendorId)}</small>{checked && planned ? <small>Next: {invitationActionLabel[planned.action]}</small> : null}</span></label><span className="procurement-basket__vendor-summary">{vendor.eligible ? <span className="procurement-basket__vendor-eligibility">Eligible</span> : null}<span className="procurement-basket__vendor-kpi">KPI {vendor.kpiScoreBps === null ? "Unrated" : `${(vendor.kpiScoreBps / 100).toFixed(1)}`}</span></span></div>;
+          return <div className="procurement-basket__vendor" key={vendor.vendorId}><label><input type="checkbox" disabled={!vendor.eligible || sending} checked={checked} onChange={event => toggleVendor(vendor, event.target.checked)} /><span><strong>{vendor.name}</strong><small>{vendor.code} · {vendor.city?.name ?? "City unknown"}</small><small className="procurement-basket__vendor-participation">{vendorParticipation(enquiry, vendor.vendorId)}</small>{checked && planned ? <small>Next: {invitationActionLabel[planned.action]}</small> : null}</span></label><span className="procurement-basket__vendor-summary">{vendor.eligible ? <span className="procurement-basket__vendor-eligibility">Eligible</span> : null}<span className="procurement-basket__vendor-kpi">KPI {vendor.kpiScoreBps === null ? "Unrated" : `${(vendor.kpiScoreBps / 100).toFixed(1)}`}</span></span></div>;
         })}</div><div className="procurement-basket__vendor-pages"><span>{offset + 1}–{offset + candidates.data.items.length} of {candidates.data.total} eligible vendors</span><div><button type="button" disabled={offset === 0 || candidates.isFetching} onClick={() => setOffset(Math.max(0, offset - candidates.data.limit))}>Previous</button><button type="button" disabled={offset + candidates.data.items.length >= candidates.data.total || candidates.isFetching} onClick={() => setOffset(offset + candidates.data.limit)}>Next</button></div></div></>}
     </>}
     {selectedCount > 0 ? <p className="procurement-basket__selected-vendors">{allEligible
@@ -480,6 +483,8 @@ export function ProcurementBasketEnquiry({ projectId, projectName, basket, froze
     queryClient.invalidateQueries({ queryKey: enquiry ? procurementBasketKeys.comparison(projectId, basket.id, enquiry.id) : procurementBasketKeys.enquiries(projectId, basket.id), refetchType: "none" }),
     queryClient.invalidateQueries({ queryKey: ["procurement", "basket-award", projectId, basket.id] }),
     queryClient.invalidateQueries({ queryKey: ["procurement", "basket-vendors", projectId, basket.id] }),
+    queryClient.invalidateQueries({ queryKey: ["procurement", "basket-vendor-suggestions", projectId, basket.id] }),
+    queryClient.invalidateQueries({ queryKey: ["project-manager", "estimations"] }),
     queryClient.invalidateQueries({ queryKey: ["procurement", "basket-invitation-preview", projectId, basket.id] }),
     queryClient.invalidateQueries({ queryKey: ["procurement", "basket-history", projectId, basket.id] }),
     queryClient.invalidateQueries({ queryKey: ["procurement", "basket-history-revision", projectId, basket.id] }),
