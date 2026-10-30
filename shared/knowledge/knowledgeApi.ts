@@ -28,6 +28,8 @@ import type {
   KnowledgeQualityControlOption,
   KnowledgeQualityControlOptionKind,
   KnowledgeQualityControlOptionListResponse,
+  KnowledgeSpecificationItemNameListParams,
+  KnowledgeSpecificationItemNameListResponse,
   KnowledgePermanentDeleteBasketResult,
   KnowledgeSectionEnvelope,
   KnowledgeSectionMutationEnvelope,
@@ -631,6 +633,16 @@ function listKnowledgeQualityControlOptions(
   );
 }
 
+function listKnowledgeSpecificationItemNames(
+  params: KnowledgeSpecificationItemNameListParams = {},
+  options?: { readonly signal?: AbortSignal }
+): Promise<KnowledgeSpecificationItemNameListResponse> {
+  return apiClient.get<KnowledgeSpecificationItemNameListResponse>(
+    withQuery(`${ADMIN_PREFIX}/specification-item-names`, params),
+    { ...options, showGlobalLoader: false }
+  );
+}
+
 function createKnowledgeQualityControlOption(
   input: KnowledgeCreateQualityControlOptionInput
 ): Promise<KnowledgeQualityControlOption> {
@@ -684,6 +696,7 @@ return {
   getKnowledgeSubBasketDeletionImpact,
   permanentlyDeleteKnowledgeSubBasket,
   listKnowledgeQualityControlOptions,
+  listKnowledgeSpecificationItemNames,
   createKnowledgeQualityControlOption,
   updateKnowledgeBasketQuality
 };

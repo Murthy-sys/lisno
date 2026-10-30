@@ -1,0 +1,14 @@
+.knowledge-item-name-picker { min-inline-size: 0; }
+.knowledge-item-name-picker__trigger { text-align: start; white-space: normal; overflow-wrap: anywhere; min-inline-size: 0; transition: none; }
+.knowledge-item-name-picker__popup { margin-block-start: 6px; padding: var(--space-2); border: 1px solid var(--role-line-strong, var(--color-border-strong)); background: var(--role-deck, var(--color-surface)); }
+.knowledge-item-name-picker__search { display: grid; gap: 4px; font-size: var(--text-sm); }
+.knowledge-item-name-picker__options { max-block-size: min(15rem, 40dvh); overflow-y: auto; overscroll-behavior: contain; margin-block-start: var(--space-2); }
+.knowledge-item-name-picker__option { display: flex; flex-direction: column; align-items: start; gap: 3px; inline-size: 100%; min-block-size: 44px; padding: 8px; border: 1px solid transparent; background: transparent; color: inherit; font: inherit; font-size: var(--text-sm); text-align: start; white-space: normal; overflow-wrap: anywhere; }
+.knowledge-item-name-picker__option[aria-selected="true"] { background: var(--role-deck-tint, var(--color-surface-subtle)); border-color: var(--role-line, var(--color-border)); }
+.knowledge-item-name-picker__option:disabled { color: var(--role-ink-muted, var(--color-text-muted)); cursor: not-allowed; }
+.knowledge-item-name-picker__actions { margin-block-start: var(--space-2); padding-block-start: var(--space-2); border-block-start: 1px solid var(--role-line, var(--color-border)); }
+.knowledge-item-name-picker__add, .knowledge-item-name-picker__matches { display: grid; gap: var(--space-2); min-inline-size: 0; }
+.knowledge-item-name-picker__matches button { white-space: normal; overflow-wrap: anywhere; }
+.knowledge-item-name-picker__confirmation { display: flex; align-items: start; gap: var(--space-2); margin-block-start: var(--space-2); overflow-wrap: anywhere; }
+.knowledge-item-name-picker :is(button, input):focus-visible { outline: 2px solid var(--role-focus, var(--button-primary-bg)); outline-offset: 2px; box-shadow: none; }
+.knowledge-item-name-picker p { font-size: var(--text-sm); }

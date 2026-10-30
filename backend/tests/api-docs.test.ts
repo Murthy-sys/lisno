@@ -1246,7 +1246,7 @@ describe("OpenAPI and Swagger UI", () => {
     }
   });
 
-  it("contains all 505 routes without versioning paths twice", () => {
+  it("contains all 506 routes without versioning paths twice", () => {
     const methods = new Set(["get", "post", "put", "patch", "delete"]);
     const operationCount = Object.values(openApiDocument.paths).reduce(
       (total, pathItem) =>
@@ -1255,7 +1255,7 @@ describe("OpenAPI and Swagger UI", () => {
     );
 
     expect(operationCount).toBe(HUMAN_JWT_OPERATION_LIST.length + 21);
-    expect(operationCount).toBe(505);
+    expect(operationCount).toBe(506);
     expect(Object.keys(openApiDocument.paths).some((path) =>
       path.startsWith("/api/v1")
     )).toBe(false);
@@ -1265,7 +1265,7 @@ describe("OpenAPI and Swagger UI", () => {
     const knowledgeOperations = HUMAN_JWT_OPERATION_LIST.filter(
       ({ availability, key }) => availability === "ai_estimator_knowledge" && !key.includes("/procurement/vendor-kpis") && !key.includes("/procurement/vendor-inductions") && !key.includes("basket-proposals")
     );
-    expect(knowledgeOperations).toHaveLength(73);
+    expect(knowledgeOperations).toHaveLength(74);
 
     for (const registered of knowledgeOperations) {
       const { method, path } = splitHumanOperationKey(registered.key);
@@ -2206,6 +2206,19 @@ describe("OpenAPI and Swagger UI", () => {
         required: true,
         schema: { type: "string", enum: ["frequency", "performer"] }
       }));
+    const itemNames = openApiDocument.paths["/admin/ai-estimator-knowledge/specification-item-names"]?.get;
+    expect(itemNames).toMatchObject({ "x-lisno-permission": "ai_estimator_knowledge.configuration.read" });
+    expect(itemNames?.parameters).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: "search", schema: { type: "string", maxLength: 240 } }),
+      expect.objectContaining({ name: "checkName", schema: { type: "string", minLength: 1, maxLength: 240 } }),
+      expect.objectContaining({ name: "limit", schema: { type: "integer", minimum: 1, maximum: 100, default: 20 } }),
+      expect.objectContaining({ name: "offset", schema: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER, default: 0 } })
+    ]));
+    expect(componentSchemas().KnowledgeSpecificationItemNameList).toMatchObject({
+      additionalProperties: false,
+      required: ["items", "pagination", "exactMatch", "similarItems"],
+      properties: { items: { maxItems: 100 }, similarItems: { maxItems: 5 }, exactMatch: { nullable: true } }
+    });
     expect(openApiDocument.paths["/admin/ai-estimator-knowledge/quality-control-options"]?.post)
       .toMatchObject({
         "x-lisno-permission": "ai_estimator_knowledge.quality_control_options.create",

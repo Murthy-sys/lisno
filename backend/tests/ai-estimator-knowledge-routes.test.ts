@@ -130,7 +130,8 @@ function services() {
     })),
     validateReferences: vi.fn(async () => [])
   } as unknown as AiEstimatorKnowledgeQualityControlOptionService;
-  return { reference, item, context, qualityControlOptions };
+  const specificationItemNames = { list: vi.fn(async () => ({ items: [], pagination: { limit: 20, offset: 0, total: 0, hasMore: false }, exactMatch: null, similarItems: [] })) };
+  return { reference, item, context, qualityControlOptions, specificationItemNames };
 }
 
 function appFor(testServices: AiEstimatorKnowledgeAdminRouterServices, actor?: PublicUser) {
@@ -144,6 +145,25 @@ function appFor(testServices: AiEstimatorKnowledgeAdminRouterServices, actor?: P
 }
 
 describe("AI Estimator Knowledge HTTP routes", () => {
+  it("validates and isolates the paginated specification item-name lookup", async () => {
+    const testServices = services();
+    const app = appFor(testServices);
+    const path = "/api/v1/admin/ai-estimator-knowledge/specification-item-names";
+    const headers = { Authorization: "Bearer super-admin-token" };
+    const result = await request(app).get(path).set(headers).expect(200);
+    expect(result.headers["cache-control"]).toBe("private, no-store");
+    expect(testServices.specificationItemNames.list).toHaveBeenLastCalledWith(superAdmin, { limit: 20, offset: 0 });
+    await request(app).get(path).query({ search: "", checkName: "Plywod", limit: 5, offset: 100 }).set(headers).expect(200);
+    expect(testServices.specificationItemNames.list).toHaveBeenLastCalledWith(superAdmin, { search: "", checkName: "Plywod", limit: 5, offset: 100 });
+    for (const query of [{ limit: 101 }, { limit: 0 }, { limit: 1.5 }, { offset: -1 }, { offset: "9007199254740992" }, { checkName: " " }, { checkName: "x".repeat(241) }, { search: "x".repeat(241) }, { scope: "private" }, { search: ["a", "b"] }]) {
+      await request(app).get(path).query(query).set(headers).expect(400);
+    }
+    await request(app).get(path).expect(401);
+    for (const role of ROLE_CODES.filter(value => value !== "super_admin")) {
+      await request(appFor(testServices, { ...superAdmin, role })).get(path).set(headers).expect(403);
+    }
+    expect(testServices.specificationItemNames.list).toHaveBeenCalledTimes(2);
+  });
   it("exposes Sub-Basket margin defaults only to Configuration administrators and validates exact apply commands", async () => {
     const testServices = services();
     const app = appFor(testServices);

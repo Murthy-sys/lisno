@@ -82,6 +82,23 @@ function itemDetail(overrides: Partial<KnowledgeItemDetail> = {}): KnowledgeItem
 }
 
 describe("knowledge mutation cache synchronization", () => {
+  it.each(["section", "lifecycle", "main-line deletion", "basket deletion", "sub-basket catalog"])("invalidates saved item-name pages and candidate checks after %s changes", async (kind) => {
+    const client = queryClient();
+    const page = knowledgeQueryKeys.specificationItemNameList({ search: "ply", offset: 20 });
+    const candidate = knowledgeQueryKeys.specificationItemNameList({ checkName: "Plywod", limit: 1 });
+    const privateKey = ["vendor-basket-proposals", "private", "item-names"];
+    for (const key of [page, candidate, privateKey]) client.setQueryData(key, { items: [{ name: "Plywood" }] });
+    if (kind === "section") await syncKnowledgeSectionMutation(client, {
+      ...actor, id: "pricing-section", mainLineId: "line-1", revisionId: "revision-1", sectionKey: "pricing", applicability: "configured", version: 2, aggregateVersion: 3, payload: {}
+    });
+    else if (kind === "lifecycle") await syncKnowledgeLifecycleMutation(client, itemDetail());
+    else if (kind === "main-line deletion") await syncKnowledgeMainLineDeletion(client, "line-1");
+    else if (kind === "basket deletion") await syncKnowledgeBasketDeletion(client, "basket-1");
+    else await refreshKnowledgeSubBasketCatalog(client, "basket-1");
+    expect(client.getQueryState(page)?.isInvalidated).toBe(true);
+    expect(client.getQueryState(candidate)?.isInvalidated).toBe(true);
+    expect(client.getQueryState(privateKey)?.isInvalidated).toBe(false);
+  });
   it.each(["basket", "sub-basket"])("invalidates only affected margin summaries after %s changes", async (kind) => {
     const client = queryClient();
     const affected = knowledgeQueryKeys.subBasketMargins("basket-1", "sub-1");

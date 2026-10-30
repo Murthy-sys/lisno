@@ -220,6 +220,7 @@ export async function refreshKnowledgeSubBasketCatalog(
   basketId: string
 ): Promise<void> {
   const results = await Promise.allSettled([
+    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.specificationItemNames() }, { throwOnError: true }),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.masterLists("vendors") }, { throwOnError: true }),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.vendorDetails() }, { throwOnError: true }),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.itemLists() }, { throwOnError: true }),
@@ -245,6 +246,7 @@ export async function refreshKnowledgeSubBasketCatalog(
 /** A committed rename stays visible even if a dependent read fails. */
 export async function refreshKnowledgeMainLineCatalog(queryClient: QueryClient): Promise<void> {
   const results = await Promise.allSettled([
+    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.specificationItemNames() }, { throwOnError: true }),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.itemLists() }, { throwOnError: true }),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.mainLineLists() }, { throwOnError: true }),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.items() }, { throwOnError: true }),
@@ -435,6 +437,7 @@ export async function invalidateKnowledgeSectionMutation(
   mainLineId: string
 ): Promise<void> {
   await Promise.allSettled([
+    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.specificationItemNames() }),
     invalidateTemporaryMainLineDetails(queryClient),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.subBasketMarginSummaries() }),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.subBasketDeletionImpacts() }),
@@ -523,6 +526,7 @@ export async function syncKnowledgeBasketDeletion(
   });
 
   const refreshed = await Promise.allSettled([
+    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.specificationItemNames() }, { throwOnError: true }),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.basketLists() }, { throwOnError: true }),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.itemLists() }, { throwOnError: true }),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.mainLineLists() }, { throwOnError: true }),
@@ -564,6 +568,7 @@ export async function syncKnowledgeMainLineDeletion(
 
   const refreshOptions = options.throwOnError ? { throwOnError: true } : undefined;
   const refreshes = [
+    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.specificationItemNames() }, refreshOptions),
     invalidateTemporaryMainLineDetails(queryClient, refreshOptions),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.subBasketMarginSummaries() }),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.subBasketDeletionImpacts() }, refreshOptions),
@@ -600,6 +605,7 @@ export async function syncKnowledgeLifecycleMutation(
   queryClient.setQueryData(knowledgeQueryKeys.item(item.mainLineId), item);
 
   await Promise.all([
+    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.specificationItemNames() }),
     invalidateTemporaryMainLineDetails(queryClient),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.subBasketMarginSummaries() }),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.subBasketDeletionImpacts() }),

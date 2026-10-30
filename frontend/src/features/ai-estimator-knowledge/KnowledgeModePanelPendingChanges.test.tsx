@@ -373,6 +373,7 @@ describe("proposal Mode data source", () => {
     const keys = (...parts: unknown[]) => ["vendor-basket-proposals", "actor-a", "proposal-a", ...parts];
     const dataSource: KnowledgeEditorDataSource = {
       ...liveKnowledgeEditorDataSource, scopeKey: "actor-a/proposal-a/review", supportsLegacyQuality: false,
+      specificationItemNames: undefined,
       sectionKey: (id, revision, key) => keys(id, revision, key), itemKey: id => keys(id),
       getSection: (async (_id, revision, key) => section(key, key === "pricing" ? savedPricing : {}, 1, revision)) as KnowledgeEditorDataSource["getSection"],
       getItem: async () => item, updateSection: update as KnowledgeEditorDataSource["updateSection"],

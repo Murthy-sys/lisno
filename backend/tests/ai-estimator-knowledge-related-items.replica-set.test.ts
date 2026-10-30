@@ -18,6 +18,7 @@ import { createAiEstimatorKnowledgeAdminRouter } from "../src/routes/ai-estimato
 import { createAiEstimatorKnowledgeContextService } from "../src/services/ai-estimator-knowledge-context.service.js";
 import { createAiEstimatorKnowledgeItemService } from "../src/services/ai-estimator-knowledge-item.service.js";
 import { createAiEstimatorKnowledgeQualityControlOptionService } from "../src/services/ai-estimator-knowledge-quality-control-option.service.js";
+import { createAiEstimatorKnowledgeSpecificationItemNameService } from "../src/services/ai-estimator-knowledge-specification-item-name.service.js";
 import { createAiEstimatorKnowledgeReferenceService } from "../src/services/ai-estimator-knowledge-reference.service.js";
 import { createAuditService } from "../src/services/audit.service.js";
 import type { AuthService, PublicUser } from "../src/services/auth.service.js";
@@ -243,6 +244,7 @@ function createServices() {
     item: createAiEstimatorKnowledgeItemService({ audit, now: () => NOW, uuid: createId }),
     reference: createAiEstimatorKnowledgeReferenceService({ audit, now: () => NOW, createId, qualityControlOptionValidator: qualityControlOptions }),
     qualityControlOptions,
+    specificationItemNames: createAiEstimatorKnowledgeSpecificationItemNameService(),
     context: createAiEstimatorKnowledgeContextService({ now: () => NOW })
   };
 }

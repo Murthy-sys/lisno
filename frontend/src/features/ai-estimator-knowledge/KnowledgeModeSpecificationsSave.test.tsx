@@ -21,6 +21,7 @@ vi.mock("./knowledgeApi", async (importOriginal) => {
     ...actual,
     getKnowledgeItem: vi.fn(),
     getKnowledgeSection: vi.fn(),
+    listKnowledgeSpecificationItemNames: vi.fn(),
     updateKnowledgeSection: vi.fn()
   };
 });
@@ -147,6 +148,17 @@ function renderPanel(ref: React.RefObject<KnowledgeModePanelHandle | null>) {
   );
 }
 
+async function addItemName(user: ReturnType<typeof userEvent.setup>, name: string) {
+  await user.click(screen.getByRole("button", { name: "Item name" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Add item" })).toBeEnabled());
+  await user.click(screen.getByRole("button", { name: "Add item" }));
+  const dialog = screen.getByRole("dialog", { name: "Add item" });
+  await user.type(within(dialog).getByRole("textbox", { name: "Item name" }), name);
+  const add = within(dialog).getByRole("button", { name: "Add and select" });
+  await waitFor(() => expect(add).toBeEnabled());
+  await user.click(add);
+}
+
 async function openSpecificationEditor(
   user: ReturnType<typeof userEvent.setup>,
   index = 1
@@ -160,6 +172,7 @@ async function openSpecificationEditor(
 describe("Knowledge Mode Specifications save integration", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(knowledgeApi.listKnowledgeSpecificationItemNames).mockResolvedValue({ items: [], pagination: { limit: 20, offset: 0, total: 0, hasMore: false }, exactMatch: null, similarItems: [] });
     vi.mocked(knowledgeApi.getKnowledgeItem).mockResolvedValue(item);
     vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(
       async (_mainLineId, _revisionId, sectionKey) => section(
@@ -277,7 +290,7 @@ describe("Knowledge Mode Specifications save integration", () => {
 
     for (const part of ["Laminate", "Hinges", "Glue"]) {
       await user.click(screen.getByRole("button", { name: "Add Specification" }));
-      await user.type(screen.getByRole("textbox", { name: "Item name" }), part);
+      await addItemName(user, part);
       await user.click(screen.getByRole("button", { name: "Done" }));
     }
 
@@ -345,7 +358,7 @@ describe("Knowledge Mode Specifications save integration", () => {
     renderPanel(ref);
 
     await user.click(await screen.findByRole("button", { name: "Add Specification" }));
-    await user.type(screen.getByRole("textbox", { name: "Item name" }), "Local plywood");
+    await addItemName(user, "Local plywood");
 
     let saved: boolean | undefined;
     await act(async () => {
@@ -648,7 +661,7 @@ describe("Knowledge Mode Specifications save integration", () => {
     });
 
     expect(knowledgeApi.updateKnowledgeSection).not.toHaveBeenCalled();
-    const invalidName = screen.getAllByRole("textbox", { name: "Item name" })
+    const invalidName = screen.getAllByRole("button", { name: "Item name" })
       .find((control) => control.getAttribute("aria-invalid") === "true");
     expect(invalidName).toHaveFocus();
     expect(screen.getAllByRole("alert").some((alert) =>
@@ -671,9 +684,7 @@ describe("Knowledge Mode Specifications save integration", () => {
     renderPanel(ref);
 
     await openSpecificationEditor(user);
-    const specificationName = screen.getByRole("textbox", { name: "Item name" });
-    await user.clear(specificationName);
-    await user.type(specificationName, "Renamed plywood");
+    await addItemName(user, "Renamed plywood");
     await act(async () => {
       expect(await ref.current?.save()).toBe(true);
     });
@@ -730,17 +741,15 @@ describe("Knowledge Mode Specifications save integration", () => {
     renderPanel(ref);
 
     await openSpecificationEditor(user);
-    const nameControl = screen.getByRole("textbox", { name: "Item name" });
-    await user.clear(nameControl);
-    await user.type(nameControl, "Rejected plywood");
+    const nameControl = screen.getByRole("button", { name: "Item name" });
+    await addItemName(user, "Rejected plywood");
     await act(async () => {
       expect(await ref.current?.save()).toBe(false);
     });
 
     expect(await screen.findAllByText("Item name is no longer accepted.")).toHaveLength(2);
     expect(nameControl).toHaveAttribute("aria-invalid", "true");
-    await user.clear(nameControl);
-    await user.type(nameControl, "Accepted plywood");
+    await addItemName(user, "Accepted plywood");
 
     await waitFor(() => {
       expect(screen.queryAllByText("Item name is no longer accepted.")).toHaveLength(0);
@@ -761,8 +770,8 @@ describe("Knowledge Mode Specifications save integration", () => {
     const ref = createRef<KnowledgeModePanelHandle>();
     renderPanel(ref);
     await openSpecificationEditor(user);
-    const name = screen.getByRole("textbox", { name: "Item name" });
-    await user.type(name, " update");
+    const name = screen.getByRole("button", { name: "Item name" });
+    await addItemName(user, "Plywood update");
     await act(async () => { expect(await ref.current?.save()).toBe(false); });
     expect(name).toHaveAttribute("aria-invalid", "true");
     expect(name).toHaveFocus();
@@ -770,7 +779,7 @@ describe("Knowledge Mode Specifications save integration", () => {
     for (const text of ["Private pricing feedback.", "Hidden price feedback."]) {
       expect(screen.queryByText(text)).not.toBeInTheDocument();
     }
-    await user.type(name, " corrected");
+    await addItemName(user, "Plywood update corrected");
     expect(screen.queryAllByText("Choose another name.")).toHaveLength(0);
   });
 

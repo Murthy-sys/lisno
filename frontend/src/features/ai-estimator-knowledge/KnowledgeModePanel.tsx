@@ -744,6 +744,7 @@ export const KnowledgeModePanel = forwardRef<
         pricingQuery,
         <div>
           <KnowledgeSpecificationBuilder
+            itemNameLookup={dataSource.specificationItemNames}
             value={drafts.pricing.payload.specifications}
             brands={drafts.pricing.payload.brands}
             savedValue={drafts.pricing.pendingBaseline?.specifications}

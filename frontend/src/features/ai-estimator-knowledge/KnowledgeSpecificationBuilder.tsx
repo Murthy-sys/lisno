@@ -19,6 +19,8 @@ import {
 } from "./knowledgeSpecificationConfiguration";
 import type { KnowledgeJsonValue } from "./knowledgeTypes";
 import { KnowledgeBrandMultiSelect } from "./KnowledgeBrandMultiSelect";
+import { KnowledgeSpecificationItemNamePicker } from "./KnowledgeSpecificationItemNamePicker";
+import type { KnowledgeSpecificationItemNameLookup } from "./knowledgeEditorDataSource";
 
 const MAX_BRAND_NAME_LENGTH = 240;
 
@@ -31,6 +33,7 @@ export interface KnowledgeSpecificationChange {
 }
 
 export interface KnowledgeSpecificationBuilderProps {
+  readonly itemNameLookup?: KnowledgeSpecificationItemNameLookup;
   readonly value: KnowledgeJsonValue | undefined;
   readonly brands?: KnowledgeJsonValue;
   readonly savedValue?: KnowledgeJsonValue;
@@ -46,6 +49,7 @@ export interface KnowledgeSpecificationBuilderProps {
 }
 
 export function KnowledgeSpecificationBuilder({
+  itemNameLookup,
   value,
   brands,
   savedValue,
@@ -446,7 +450,17 @@ export function KnowledgeSpecificationBuilder({
                 error={issueFor(`specifications.${editingIndex}.name`)}
               >
                 {(props) => (
-                  <Input
+                  itemNameLookup ? <KnowledgeSpecificationItemNamePicker
+                    {...props}
+                    key={editingSpecification.id}
+                    ref={(element) => fieldInitialRef("name", element)}
+                    lookup={itemNameLookup}
+                    value={editingSpecification.name}
+                    draftNames={parsed.specifications.map((entry) => entry.name)}
+                    otherRowNames={parsed.specifications.filter((entry) => entry.id !== editingSpecification.id).map((entry) => entry.name)}
+                    readOnly={readOnly}
+                    onChange={(name) => replace(editingSpecification.id, { ...editingSpecification, name })}
+                  /> : <Input
                     {...props}
                     ref={(element) => fieldInitialRef("name", element)}
                     maxLength={240}

@@ -50,10 +50,27 @@ beforeEach(() => {
       return data({ detail, resource: proposalSectionFixture(params.section as KnowledgeSectionKey, input.payload as KnowledgeJsonObject, detail) });
     })
   );
-  server.use(http.get("/api/v1/admin/ai-estimator-knowledge/main-lines/:id", () => { directReads++; return fail(403); }));
+  server.use(
+    http.get("/api/v1/admin/ai-estimator-knowledge/main-lines/:id", () => { directReads++; return fail(403); }),
+    http.get("/api/v1/admin/ai-estimator-knowledge/specification-item-names", () => { directReads++; return fail(403); })
+  );
 });
 
 describe("isolated basket proposal workspace", () => {
+  it("keeps specification names scoped and never reads the internal item-name list", async () => {
+    const user = userEvent.setup();
+    const { client } = setup();
+    await screen.findByRole("combobox", { name: "Unit of measure (UOM)" });
+    await user.click(screen.getByRole("tab", { name: "Mode" }));
+    await user.click(await screen.findByRole("button", { name: "Edit Specification 1" }));
+    const input = screen.getByRole("textbox", { name: "Item name" });
+    await user.clear(input);
+    await user.type(input, "Private proposal item");
+    expect(input).toHaveValue("Private proposal item");
+    expect(screen.queryByRole("button", { name: "Add item" })).not.toBeInTheDocument();
+    expect(directReads).toBe(0);
+    expect(client.getQueryCache().getAll().some((entry) => entry.queryKey.includes("specification-item-names"))).toBe(false);
+  });
   it.each([undefined, { kind: "new_main_basket" as const }, { kind: "new_sub_basket" as const, basketId: "parent-paint" }])("uses the Procurement reference presentation with real proposal identity (%j)", async target => {
     detail = proposalFixture({ target });
     setup();

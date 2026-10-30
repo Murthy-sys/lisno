@@ -101,6 +101,24 @@ export interface KnowledgeSubBasketBudgetAlteration extends KnowledgeBudgetAlter
 
 export type KnowledgeBudgetAlteration = KnowledgeMainLineBudgetAlteration | KnowledgeSubBasketBudgetAlteration;
 
+export interface KnowledgeSpecificationItemName {
+  readonly name: string;
+}
+
+export interface KnowledgeSpecificationItemNameListParams {
+  readonly search?: string;
+  readonly limit?: number;
+  readonly offset?: number;
+  readonly checkName?: string;
+}
+
+export interface KnowledgeSpecificationItemNameListResponse {
+  readonly items: readonly KnowledgeSpecificationItemName[];
+  readonly pagination: { readonly limit: number; readonly offset: number; readonly total: number; readonly hasMore: boolean };
+  readonly exactMatch: KnowledgeSpecificationItemName | null;
+  readonly similarItems: readonly KnowledgeSpecificationItemName[];
+}
+
 export interface KnowledgeActorMetadata {
   readonly createdById: string;
   readonly updatedById: string;

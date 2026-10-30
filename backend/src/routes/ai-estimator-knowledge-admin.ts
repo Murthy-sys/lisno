@@ -29,6 +29,7 @@ import { validateBody, validateQuery } from "../middleware/validate.js";
 import type { AiEstimatorKnowledgeContextService } from "../services/ai-estimator-knowledge-context.service.js";
 import type { AiEstimatorKnowledgeItemService } from "../services/ai-estimator-knowledge-item.service.js";
 import type { AiEstimatorKnowledgeQualityControlOptionService } from "../services/ai-estimator-knowledge-quality-control-option.service.js";
+import type { AiEstimatorKnowledgeSpecificationItemNameService } from "../services/ai-estimator-knowledge-specification-item-name.service.js";
 import type {
   AiEstimatorKnowledgeMasterType,
   AiEstimatorKnowledgeReferenceService
@@ -63,6 +64,12 @@ const paginationFields = {
   limit: z.coerce.number().int().min(1).max(100).default(20),
   offset: z.coerce.number().int().min(0).default(0)
 } as const;
+const specificationItemNameListQuerySchema = z.object({
+  search: z.string().max(240).optional(),
+  checkName: z.string().max(240).refine(value => value.normalize("NFKC").trim().length > 0).optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+  offset: z.coerce.number().int().min(0).max(Number.MAX_SAFE_INTEGER).default(0)
+}).strict();
 const includeArchivedSchema = z
   .enum(["true", "false"])
   .transform((value) => value === "true")
@@ -422,6 +429,7 @@ export interface AiEstimatorKnowledgeAdminRouterServices {
   readonly item: AiEstimatorKnowledgeItemService;
   readonly context: AiEstimatorKnowledgeContextService;
   readonly qualityControlOptions: AiEstimatorKnowledgeQualityControlOptionService;
+  readonly specificationItemNames: AiEstimatorKnowledgeSpecificationItemNameService;
 }
 
 const masterRoutes = [
@@ -448,6 +456,16 @@ export function createAiEstimatorKnowledgeAdminRouter(
       return services.reference.getVendorDetail(request.authenticatedUser!, String(request.params.id));
     }));
 
+  router.get(
+    `${prefix}/specification-item-names`,
+    protectedRoute,
+    requireOperation("GET /admin/ai-estimator-knowledge/specification-item-names"),
+    validateQuery(specificationItemNameListQuerySchema),
+    handler(async (request, response) => {
+      response.set("Cache-Control", "private, no-store");
+      return services.specificationItemNames.list(request.authenticatedUser!, response.locals.validatedQuery);
+    })
+  );
   router.get(
     `${prefix}/quality-control-options`,
     protectedRoute,

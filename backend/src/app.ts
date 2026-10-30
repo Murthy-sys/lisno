@@ -161,6 +161,7 @@ import { createAuditService } from "./services/audit.service.js";
 import { createAiEstimatorKnowledgeContextService } from "./services/ai-estimator-knowledge-context.service.js";
 import { createAiEstimatorKnowledgeItemService } from "./services/ai-estimator-knowledge-item.service.js";
 import { createAiEstimatorKnowledgeQualityControlOptionService } from "./services/ai-estimator-knowledge-quality-control-option.service.js";
+import { createAiEstimatorKnowledgeSpecificationItemNameService } from "./services/ai-estimator-knowledge-specification-item-name.service.js";
 import { createAiEstimatorKnowledgeReferenceService } from "./services/ai-estimator-knowledge-reference.service.js";
 import { createVendorBasketRequestService } from "./services/vendor-basket-request.service.js";
 import { createVendorBasketRequestRouter } from "./routes/vendor-basket-requests.js";
@@ -288,6 +289,7 @@ export function createApp(dependencies: AppDependencies) {
   const ocrRetryPolicy =
     dependencies.ocrRetryPolicy ?? defaultExtractionRetryPolicy;
   const auditService = createAuditService(repository);
+  const aiEstimatorKnowledgeSpecificationItemNameService = createAiEstimatorKnowledgeSpecificationItemNameService();
   const aiEstimatorKnowledgeQualityControlOptionService =
     createAiEstimatorKnowledgeQualityControlOptionService({
       audit: auditService,
@@ -697,7 +699,8 @@ export function createApp(dependencies: AppDependencies) {
       reference: aiEstimatorKnowledgeReferenceService,
       item: aiEstimatorKnowledgeItemService,
       context: aiEstimatorKnowledgeContextService,
-      qualityControlOptions: aiEstimatorKnowledgeQualityControlOptionService
+      qualityControlOptions: aiEstimatorKnowledgeQualityControlOptionService,
+      specificationItemNames: aiEstimatorKnowledgeSpecificationItemNameService
     })
   );
   app.use(
