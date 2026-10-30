@@ -282,8 +282,8 @@ describe("authorization policy", () => {
         [...permissionsForRows([...COMMON_ROWS, ...ADDITIONAL_ROWS[role]]), ...(role === "site_manager" ? ["projects.list", "projects.read"] : [])]
       );
     }
-    expect(PERMISSION_CODES).toHaveLength(220);
-    expect(new Set(PERMISSION_CODES).size).toBe(220);
+    expect(PERMISSION_CODES).toHaveLength(221);
+    expect(new Set(PERMISSION_CODES).size).toBe(221);
     expect(ROLE_PERMISSIONS.super_admin).toEqual(PERMISSION_CODES);
   });
 
@@ -433,16 +433,18 @@ describe("authorization policy", () => {
 
   it("places the four staff-invitation permissions exactly after user mutation and grants them only to Super Admin", () => {
     const usersUpdateIndex = PERMISSION_CODES.indexOf("identity.users.update");
-    expect(PERMISSION_CODES.slice(usersUpdateIndex + 1, usersUpdateIndex + 5)).toEqual(
+    expect(PERMISSION_CODES[usersUpdateIndex + 1]).toBe("identity.users.delete");
+    expect(PERMISSION_CODES.slice(usersUpdateIndex + 2, usersUpdateIndex + 6)).toEqual(
       STAFF_INVITATION_PERMISSIONS
     );
-    expect(PERMISSION_CODES[usersUpdateIndex + 5]).toBe("access_request.create");
+    expect(PERMISSION_CODES[usersUpdateIndex + 6]).toBe("access_request.create");
     expect(ROLE_PERMISSIONS.super_admin).toEqual(PERMISSION_CODES);
     for (const role of ROLE_CODES.filter((candidate) => candidate !== "super_admin")) {
       for (const permission of STAFF_INVITATION_PERMISSIONS) {
         expect(hasPermission(role, permission), `${role} ${permission}`).toBe(false);
         expect(ROLE_PERMISSIONS[role], `${role} ${permission}`).not.toContain(permission);
       }
+      expect(hasPermission(role, "identity.users.delete"), role).toBe(false);
     }
   });
 
@@ -594,9 +596,9 @@ describe("authorization policy", () => {
     }
   });
 
-  it("registers all nine Prompt 1 audit actions", () => {
+  it("registers all ten Prompt 1 audit actions", () => {
     expect(PROMPT_1_AUDIT_ACTIONS).toEqual([
-      "user.role_changed", "user.activated", "user.deactivated",
+      "user.role_changed", "user.activated", "user.deactivated", "user.deleted",
       "access_request.created", "access_request.cancelled", "access_request.approved",
       "access_request.rejected", "project_access.granted", "project_access.revoked"
     ]);
@@ -605,7 +607,7 @@ describe("authorization policy", () => {
   it("registers estimate assignment as a typed existing-domain audit action", () => {
     expect(EXISTING_AUDIT_ACTIONS).toContain("estimate_designer_assigned");
     expect(AUDIT_ACTIONS).toContain("estimate_designer_assigned");
-    expect(PROMPT_1_AUDIT_ACTIONS).toHaveLength(9);
+    expect(PROMPT_1_AUDIT_ACTIONS).toHaveLength(10);
   });
 
   it("registers the sanitized procurement and vendor audit actions", () => {

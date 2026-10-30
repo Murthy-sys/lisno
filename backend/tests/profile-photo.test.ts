@@ -12,6 +12,7 @@ import type { Role } from "../src/domain/roles.js";
 import { createMemoryRepository } from "../src/repositories/memory.js";
 import type { AppRepository } from "../src/repositories/types.js";
 import { demoSeedData } from "../src/seed/data.js";
+import { createUserAdministrationService } from "../src/services/user-administration.service.js";
 import { createAuditService } from "../src/services/audit.service.js";
 import { toPublicUser } from "../src/services/auth.service.js";
 import { createProfilePhotoService } from "../src/services/profile-photo.service.js";
@@ -101,6 +102,34 @@ describe("profile photo policy", () => {
 });
 
 describe("profile photo API", () => {
+  it("rejects an upload started before account deletion and compensates only the new object", async () => {
+    let afterSave = async () => {};
+    const f = await setup({ storage: base => ({ ...base, async saveGenerated(input) {
+      const stored = await base.saveGenerated(input);
+      await afterSave();
+      return stored;
+    } }) });
+    const audit = createAuditService(f.repository);
+    const clock = () => new Date("2026-10-30T10:00:00Z");
+    const photos = createProfilePhotoService({ repository: f.repository, audit, storage: f.storage, clock });
+    const actor = toPublicUser((await f.repository.findUserById(USERS.alice.id))!);
+    const admin = toPublicUser((await f.repository.findUserById(USERS.superAdmin.id))!);
+    await photos.replace(actor, await png());
+    const previous = await f.repository.findUserProfilePhotoState(actor.id);
+    const previousFiles = await f.storedFiles();
+    afterSave = async () => {
+      const user = (await f.repository.findUserById(actor.id))!;
+      await createUserAdministrationService(f.repository, audit, clock).delete(admin, actor.id, { version: user.version });
+    };
+    await expect(photos.replace(actor, await png())).rejects.toMatchObject({ status: 404 });
+    expect(await f.repository.findUserProfilePhotoState(actor.id)).toEqual(previous);
+    expect(await f.storedFiles()).toEqual(previousFiles);
+    expect(await f.repository.findUserById(actor.id)).toMatchObject({ active: false, deletedById: admin.id });
+    const events = await f.repository.listAuditEvents({ entityId: actor.id });
+    expect(events.filter(event => event.action === "identity.profile_photo.updated")).toHaveLength(1);
+    expect(events.filter(event => event.action === "user.deleted")).toHaveLength(1);
+  });
+
   it("stores a 512x512 JPEG without EXIF/GPS and exposes only the version", async () => {
     const { app, repository, token, storedFiles } = await setup();
     const source = await jpegWithGps();

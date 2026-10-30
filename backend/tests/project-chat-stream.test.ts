@@ -2,7 +2,8 @@ import { EventEmitter } from "node:events";
 import jwt from "jsonwebtoken";
 import type { Request, Response } from "express";
 import { describe, expect, it, vi } from "vitest";
-import type { AuthService } from "../src/services/auth.service.js";
+import { createAuthService, type AuthService } from "../src/services/auth.service.js";
+import { createUserAdministrationService } from "../src/services/user-administration.service.js";
 import { ApiError } from "../src/middleware/errors.js";
 import { createProjectChatStreamService } from "../src/services/project-chat-stream.service.js";
 import { createChatFixture, chatSend } from "./helpers/project-chat.js";
@@ -43,6 +44,29 @@ function harness() {
 }
 
 describe("bounded, authorization-safe project chat streaming", () => {
+  it("stops protected delivery when the connected user is deleted during backpressure", async () => {
+    const h = harness();
+    const secret = "deleted-chat-session-secret-at-least-32-characters";
+    const auth = createAuthService(h.repository, { jwtSecret: secret, jwtExpiresInSeconds: 3600 });
+    const token = jwt.sign({ id: "client-a", role: "client", sessionVersion: 1 }, secret, { expiresIn: 3600 });
+    const req = { ...h.request, header: () => `Bearer ${token}` } as unknown as Request;
+    const { cursor } = await h.service.summary(h.actor("client-a"), "a");
+    await h.service.send(h.actor("designer-a"), "a", chatSend("Queued before deletion"));
+    const response = new StreamResponse();
+    response.block = frame => frame.includes("event: state");
+    const stream = createProjectChatStreamService({ auth, chat: h.service, hub: h.hub });
+    const opening = stream.open(req, response as unknown as Response, "a", cursor);
+    try {
+      await vi.waitFor(() => expect(response.frames.some(frame => frame.includes("event: state"))).toBe(true));
+      await createUserAdministrationService(h.repository, h.audit, h.clock)
+        .delete(h.seed.users.find(user => user.id === "super")!, "client-a", { version: 1 });
+      response.drain();
+      await opening;
+      expect(response.frames.some(frame => frame.includes("event: chat"))).toBe(false);
+      expect(response.frames.some(frame => frame.includes('"denied"'))).toBe(true);
+    } finally { await stream.close(); }
+  });
+
   it("rechecks authorization after initial state-frame backpressure", async () => {
     const h = harness();
     const { cursor } = await h.service.summary(h.actor("client-a"), "a");

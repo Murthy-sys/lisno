@@ -67,7 +67,7 @@ export interface AuthPayload {
 }
 
 export const AUTHORIZATION_POLICY_VERSION =
-  "2026-10-29.project-manager-estimate-vendors.v1" as const;
+  "2026-10-30.user-deletion.v1" as const;
 
 export interface AuthorizationSnapshot {
   readonly role: Role;
@@ -171,7 +171,7 @@ export function createAuthService(
         user?.passwordHash ?? DUMMY_PASSWORD_HASH
       );
 
-      if (!user || !user.active || !passwordMatches) {
+      if (!user || !user.active || user.deletedAt || !passwordMatches) {
         throw new InvalidCredentialsError();
       }
       if (
@@ -224,6 +224,7 @@ export function createAuthService(
       if (
         !user ||
         !user.active ||
+        user.deletedAt ||
         user.role !== parsed.data.role ||
         (user.sessionVersion ?? 1) !== (parsed.data.sessionVersion ?? 1)
       ) {

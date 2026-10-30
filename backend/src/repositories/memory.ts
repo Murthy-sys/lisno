@@ -138,6 +138,7 @@ const mutationMethods = new Set<keyof AppRepository>([
   "appendLeadActivity",
   "createUser",
   "updateUser",
+  "deleteUser",
   "updateUserCredentials",
   "setUserProfilePhoto",
   "clearUserProfilePhoto",
@@ -1219,7 +1220,7 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
       const visibleRoles = new Set(filters.visibleRoles);
       const search = filters.search?.trim().toLowerCase();
       const users = state.users
-        .filter((user) => visibleRoles.has(user.role))
+        .filter((user) => !user.deletedAt && visibleRoles.has(user.role))
         .filter((user) => !filters.role || user.role === filters.role)
         .filter((user) => filters.active === undefined || user.active === filters.active)
         .filter(
@@ -1233,12 +1234,12 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
     },
 
     async countActiveUsersByRole(role) {
-      return state.users.filter((user) => user.role === role && user.active).length;
+      return state.users.filter((user) => user.role === role && user.active && !user.deletedAt).length;
     },
 
     async summarizeUsers(visibleRoles) {
       const scope = new Set(visibleRoles);
-      const users = state.users.filter((user) => scope.has(user.role));
+      const users = state.users.filter((user) => !user.deletedAt && scope.has(user.role));
       const active = users.filter((user) => user.active).length;
       const presentRoles = new Set(users.map((user) => user.role));
       return {
@@ -1287,6 +1288,28 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
       };
     },
 
+    async deleteUser(userId, expectedVersion, change) {
+      const index = state.users.findIndex((user) => user.id === userId);
+      if (index < 0 || state.users[index]!.deletedAt) {
+        throw new RepositoryNotFoundError(`User ${userId} was not found.`);
+      }
+      const current = state.users[index]!;
+      if (current.role === "super_admin" || (current.version ?? 1) !== expectedVersion) {
+        throw new RepositoryConflictError(`User ${userId} cannot be deleted at this version.`);
+      }
+      const updated: UserRecord = {
+        ...current,
+        active: false,
+        deletedAt: change.deletedAt,
+        deletedById: change.deletedById,
+        updatedAt: change.deletedAt,
+        version: expectedVersion + 1,
+        sessionVersion: (current.sessionVersion ?? 1) + 1
+      };
+      state.users[index] = updated;
+      return clone(updated);
+    },
+
     async updateUser(userId, expectedVersion, change) {
       if (change.role === "program_manager") throw new RepositoryConflictError("The legacy Program Manager role is retired.");
       const index = state.users.findIndex((user) => user.id === userId);
@@ -1294,6 +1317,7 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
         throw new RepositoryNotFoundError(`User ${userId} was not found.`);
       }
       const current = state.users[index]!;
+      if (current.deletedAt) throw new RepositoryNotFoundError(`User ${userId} was not found.`);
       if (current.version !== expectedVersion) {
         throw new RepositoryConflictError(`User ${userId} changed concurrently.`);
       }
@@ -1333,6 +1357,7 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
         throw new RepositoryNotFoundError(`User ${userId} was not found.`);
       }
       const current = state.users[index]!;
+      if (current.deletedAt) throw new RepositoryNotFoundError(`User ${userId} was not found.`);
       if (
         current.version !== expectedVersion ||
         (current.sessionVersion ?? 1) !== expectedSessionVersion
@@ -1365,6 +1390,7 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
         throw new RepositoryNotFoundError(`User ${userId} was not found.`);
       }
       const current = state.users[index]!;
+      if (current.deletedAt) throw new RepositoryNotFoundError(`User ${userId} was not found.`);
       if ((current.profilePhotoRevision ?? 0) !== expectedRevision) {
         throw new RepositoryConflictError(`User ${userId} profile photo changed concurrently.`);
       }
@@ -1387,6 +1413,7 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
         throw new RepositoryNotFoundError(`User ${userId} was not found.`);
       }
       const current = state.users[index]!;
+      if (current.deletedAt) throw new RepositoryNotFoundError(`User ${userId} was not found.`);
       if ((current.profilePhotoRevision ?? 0) !== expectedRevision) {
         throw new RepositoryConflictError(`User ${userId} profile photo changed concurrently.`);
       }

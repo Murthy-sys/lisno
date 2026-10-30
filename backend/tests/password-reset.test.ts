@@ -13,6 +13,7 @@ import { ROLE_CODES } from "../src/domain/roles.js";
 import { createMemoryRepository } from "../src/repositories/memory.js";
 import type { AppRepository, SeedData } from "../src/repositories/types.js";
 import { demoSeedData } from "../src/seed/data.js";
+import { createUserAdministrationService } from "../src/services/user-administration.service.js";
 import { createAuditService } from "../src/services/audit.service.js";
 import type { PasswordResetMailer } from "../src/services/password-reset-mailer.js";
 import { createPasswordResetService } from "../src/services/password-reset.service.js";
@@ -99,6 +100,26 @@ async function waitForResetLink(
 }
 
 describe("self-service password reset", () => {
+  it("keeps a deleted account and its password unchanged when an earlier reset is completed", async () => {
+    const seed = standardSeed();
+    seed.users.push({ ...seed.users[0]!, id: "reset-owner", email: "owner@example.test", emailNormalized: "owner@example.test", role: "super_admin" });
+    const repository = createMemoryRepository(seed);
+    const mailer = recordingMailer();
+    const jobs: Array<() => Promise<void>> = [];
+    const clock = () => new Date("2026-10-30T10:00:00Z");
+    const audit = createAuditService(repository);
+    const reset = createPasswordResetService({ repository, audit, mailer, clock, dispatch: job => { jobs.push(job); }, passwordHasher: async () => "new-hash" });
+    await reset.request("recovery-user@example.test");
+    await jobs.shift()!();
+    const admin = seed.users[1]!;
+    await createUserAdministrationService(repository, audit, clock).delete(admin, seed.users[0]!.id, { version: 1 });
+    const deleted = await repository.findUserById(seed.users[0]!.id);
+    await expect(reset.complete({ rawToken: mailer.resetLinks[0]!.rawToken, password: NEW_PASSWORD })).rejects.toBeInstanceOf(PasswordResetUnavailableError);
+    expect(await repository.findUserById(seed.users[0]!.id)).toEqual(deleted);
+    expect(deleted).toMatchObject({ active: false, deletedById: admin.id, version: 2, sessionVersion: 2 });
+    expect(mailer.changed).toEqual([]);
+  });
+
   it.each(["a".repeat(73), "é".repeat(37), "😀".repeat(19), "short"])("rejects an invalid new password without consuming a reset or hashing", async password => {
     const repository = createMemoryRepository(standardSeed());
     const mailer = recordingMailer();

@@ -11,6 +11,7 @@ import type { Role } from "../src/domain/roles.js";
 import { AuditEventModel } from "../src/models/AuditEvent.js";
 import { UserModel } from "../src/models/User.js";
 import { createMongoRepository } from "../src/repositories/mongo.js";
+import { createUserAdministrationService } from "../src/services/user-administration.service.js";
 import { createAuditService } from "../src/services/audit.service.js";
 import { toPublicUser } from "../src/services/auth.service.js";
 import { createProfilePhotoService } from "../src/services/profile-photo.service.js";
@@ -68,6 +69,39 @@ const png = () =>
   sharp({ create: { width: 320, height: 240, channels: 3, background: { r: 5, g: 90, b: 200 } } }).png().toBuffer();
 
 describe("profile photo on a Mongo replica set", () => {
+  it("retains the previous photo and removes a delayed upload when deletion commits first", async () => {
+    await insertUser("mongo-photo-alice", "designer");
+    await insertUser("mongo-photo-owner", "super_admin");
+    const root = await storageRoot();
+    const base = createLocalStorage(root);
+    const repository = createMongoRepository();
+    const audit = createAuditService(repository);
+    const actor = toPublicUser((await repository.findUserById("mongo-photo-alice"))!);
+    const admin = toPublicUser((await repository.findUserById("mongo-photo-owner"))!);
+    let deleteOnSave = false;
+    const photos = createProfilePhotoService({ repository, audit, clock, storage: {
+      ...base,
+      async saveGenerated(input) {
+        const stored = await base.saveGenerated(input);
+        if (deleteOnSave) {
+          const current = (await repository.findUserById(actor.id))!;
+          await createUserAdministrationService(repository, audit, clock).delete(admin, actor.id, { version: current.version });
+        }
+        return stored;
+      }
+    } });
+    await photos.replace(actor, await png());
+    const previous = await repository.findUserProfilePhotoState(actor.id);
+    const previousFiles = await readdir(root);
+    deleteOnSave = true;
+    await expect(photos.replace(actor, await png())).rejects.toMatchObject({ status: 404 });
+    expect(await repository.findUserProfilePhotoState(actor.id)).toEqual(previous);
+    expect(await readdir(root)).toEqual(previousFiles);
+    expect(await UserModel.findById(actor.id).lean()).toMatchObject({ active: false, deletedById: admin.id });
+    expect(await AuditEventModel.countDocuments({ entityId: actor.id, action: "identity.profile_photo.updated" })).toBe(1);
+    expect(await AuditEventModel.countDocuments({ entityId: actor.id, action: "user.deleted" })).toBe(1);
+  });
+
   it("lets exactly one concurrent replacement win and leaves no orphan object", async () => {
     await insertUser("mongo-photo-alice", "designer");
     const root = await storageRoot();

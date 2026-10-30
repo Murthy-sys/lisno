@@ -5,6 +5,7 @@ import {
   RepositoryNotFoundError,
   type AppRepository,
   type PaginationInput,
+  type ProjectAccessGrantRecord,
   type UserDirectoryFilters,
   type UserDirectorySummary,
   type UserRecord,
@@ -37,6 +38,12 @@ export interface ManagedUserMutationResult {
   responsibilities: UserResponsibilityCounts;
 }
 
+export interface ManagedUserDeletionResult {
+  userId: string;
+  deletedAt: string;
+  version: number;
+}
+
 export interface UserDirectoryPage {
   items: UserDirectoryItem[];
   total: number;
@@ -56,6 +63,7 @@ export interface UserAdministrationService {
     userId: string,
     input: UpdateManagedUserInput
   ): Promise<ManagedUserMutationResult>;
+  delete(actor: PublicUser, userId: string, input: { version: number }): Promise<ManagedUserDeletionResult>;
 }
 
 const responsibilityRole: Readonly<
@@ -118,6 +126,7 @@ export function createUserAdministrationService(
             "The sole Super Admin account cannot be changed."
           );
         }
+        if (target.deletedAt) notFound();
         if (target.version !== input.version) versionConflict();
 
         if (input.role === "super_admin" || input.role === "program_manager") {
@@ -181,33 +190,7 @@ export function createUserAdministrationService(
               })
             : [];
 
-        for (const grant of revoked) {
-          await auditService.append(
-            {
-              actorId: storedActor.id,
-              action: "project_access.revoked",
-              entityType: "project_access_grant",
-              entityId: grant.id,
-              occurredAt,
-              oldValues: {
-                projectId: grant.projectId,
-                userId: grant.userId,
-                module: grant.module,
-                source: grant.source,
-                active: true,
-                version: grant.version - 1
-              },
-              newValues: {
-                active: false,
-                version: grant.version,
-                revokedAt: grant.revokedAt,
-                revokedById: grant.revokedById
-              },
-              reason: grant.revocationReason
-            },
-            transaction
-          );
-        }
+        await auditRevokedGrants(auditService, transaction, revoked, storedActor.id, occurredAt);
 
         if (roleChanges) {
           await auditService.append(
@@ -250,8 +233,111 @@ export function createUserAdministrationService(
           responsibilities
         };
       });
+    },
+
+    async delete(actor, userId, input) {
+      // A completed deletion has no mutable state left; retries need no write fence.
+      await requireAdministrativeActor(repository, actor);
+      const existing = await repository.findUserById(userId);
+      requireDeletableTarget(existing);
+      if (existing.deletedAt) return deletionResult(existing);
+
+      return repository.runInTransaction(async (transaction) => {
+        await transaction.coordinateAuthorizationMutation();
+        const storedActor = await requireAdministrativeActor(transaction, actor);
+        const target = await transaction.findUserById(userId);
+        requireDeletableTarget(target);
+        if (target.deletedAt) return deletionResult(target);
+        if (target.version !== input.version) versionConflict();
+
+        const responsibilities = await transaction.countUserResponsibilities(target.id);
+        const occurredAt = clock().toISOString();
+        let deleted: UserRecord;
+        try {
+          deleted = await transaction.deleteUser(target.id, target.version, {
+            deletedAt: occurredAt,
+            deletedById: storedActor.id
+          });
+        } catch (error) {
+          if (error instanceof RepositoryConflictError) versionConflict();
+          if (error instanceof RepositoryNotFoundError) notFound();
+          throw error;
+        }
+        const revoked = await transaction.revokeActiveProjectAccessGrantsForUser(target.id, {
+          revokedAt: occurredAt,
+          revokedById: storedActor.id,
+          revocationReason: "User account deleted.",
+          updatedAt: occurredAt
+        });
+        await auditRevokedGrants(auditService, transaction, revoked, storedActor.id, occurredAt);
+        await auditService.append({
+          actorId: storedActor.id,
+          action: "user.deleted",
+          entityType: "user",
+          entityId: target.id,
+          occurredAt,
+          oldValues: { active: target.active, version: target.version },
+          newValues: {
+            active: false,
+            version: deleted.version,
+            deletedAt: occurredAt,
+            deletedById: storedActor.id,
+            revokedGrantCount: revoked.length,
+            responsibilities: { ...responsibilities }
+          },
+          reason: "User account deleted with identity and business history preserved."
+        }, transaction);
+        return deletionResult(deleted);
+      });
     }
   };
+}
+
+function requireDeletableTarget(target: UserRecord | null): asserts target is UserRecord {
+  if (!target) notFound();
+  if (target.role === "super_admin") {
+    throw new ApiError(409, "SOLE_SUPER_ADMIN_IMMUTABLE", "The sole Super Admin account cannot be changed.");
+  }
+}
+
+function deletionResult(user: UserRecord): ManagedUserDeletionResult {
+  return { userId: user.id, deletedAt: user.deletedAt!, version: user.version };
+}
+
+async function auditRevokedGrants(
+  auditService: AuditService,
+  transaction: AppRepository,
+  revoked: ProjectAccessGrantRecord[],
+  actorId: string,
+  occurredAt: string
+): Promise<void> {
+  for (const grant of revoked) {
+    await auditService.append(
+      {
+        actorId,
+        action: "project_access.revoked",
+        entityType: "project_access_grant",
+        entityId: grant.id,
+        occurredAt,
+        oldValues: {
+          projectId: grant.projectId,
+          userId: grant.userId,
+          module: grant.module,
+          source: grant.source,
+          active: true,
+          version: grant.version - 1
+        },
+        newValues: {
+          active: false,
+          version: grant.version,
+          revokedAt: grant.revokedAt,
+          revokedById: grant.revokedById
+        },
+        reason: grant.revocationReason
+      },
+      transaction
+    );
+  }
 }
 
 async function requireAdministrativeActor(
@@ -259,7 +345,7 @@ async function requireAdministrativeActor(
   actor: PublicUser
 ): Promise<UserRecord & { role: "super_admin" }> {
   const stored = await repository.findUserById(actor.id);
-  if (!stored || !stored.active || stored.role !== actor.role) {
+  if (!stored || !stored.active || stored.deletedAt || stored.role !== actor.role) {
     throw new ApiError(401, "INVALID_TOKEN", "Authentication token is invalid.");
   }
   if (stored.role !== "super_admin") forbidden();

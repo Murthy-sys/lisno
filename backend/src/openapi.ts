@@ -168,6 +168,7 @@ const requestBodiesByOperation: Readonly<Record<string, OpenApiRequestBody>> = {
   "POST /projects/:projectId/design-workflow/furniture-uoms": jsonRequest("FurnitureUomCreate"),
   "POST /projects/:projectId/design-workflow/actions": { required: true, content: { "application/json": { schema: { $ref: "#/components/schemas/DesignWorkflowActionRequest" } }, "multipart/form-data": { schema: { $ref: "#/components/schemas/DesignWorkflowActionRequest" } } } },
   "POST /auth/login": jsonRequest("LoginRequest"),
+  "DELETE /admin/users/:userId": jsonRequest("ManagedUserDeletionRequest"),
   "POST /auth/client-signup": jsonRequest("ClientSignupRequest"),
   "POST /auth/password-reset/request": jsonRequest("PasswordResetRequest"),
   "POST /auth/password-reset/inspect": jsonRequest("PasswordResetInspectRequest"),
@@ -299,6 +300,7 @@ const responseSchemaByOperation: Readonly<Record<string, string>> = {
   "GET /auth/authorization": "AuthorizationSnapshot",
   "GET /admin/sales-managers": "SalesManagerOptionPage",
   "GET /admin/users": "UserDirectoryPage",
+  "DELETE /admin/users/:userId": "ManagedUserDeletionResult",
   "GET /admin/projects": "AdminProjectPage",
   "GET /admin/designers": "DesignerOptionList",
   "POST /admin/projects/:projectId/design-assignment": "DesignPlanTask",
@@ -2202,6 +2204,23 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
           }
         },
         pagination: { $ref: "#/components/schemas/Pagination" }
+      }
+    },
+    ManagedUserDeletionRequest: {
+      type: "object",
+      additionalProperties: false,
+      required: ["version"],
+      properties: { version: { type: "integer", minimum: 1 } }
+    },
+    ManagedUserDeletionResult: {
+      type: "object",
+      additionalProperties: false,
+      required: ["userId", "deletedAt", "version"],
+      description: "Logical deletion revokes account access while retaining historical identity. Repeating deletion returns the stored result without another deletion event.",
+      properties: {
+        userId: id,
+        deletedAt: dateTime,
+        version: { type: "integer", minimum: 1 }
       }
     },
     UserDirectorySummary: {

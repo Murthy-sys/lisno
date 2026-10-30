@@ -21,6 +21,8 @@ export interface UserMutationDialogProps {
   user: UserDirectoryItem;
   manageableRoles: readonly Exclude<Role, "super_admin">[];
   isCurrentPageUser: boolean;
+  deletionReady?: boolean;
+  onDelete?(): void;
   onClose(): void;
 }
 
@@ -93,6 +95,8 @@ export function UserMutationDialog({
   user,
   manageableRoles: serverRoles,
   isCurrentPageUser,
+  deletionReady = false,
+  onDelete,
   onClose
 }: UserMutationDialogProps) {
   const manageableRoles = serverRoles.filter(isActiveFrontendRole);
@@ -151,6 +155,8 @@ export function UserMutationDialog({
 
   const interactionBlocked =
     mutation.isPending || conflictVersion !== null || !isCurrentPageUser;
+  const hasRoleChanges = selectedRole !== user.role;
+  const deletionBlocked = interactionBlocked || !deletionReady || hasRoleChanges;
   const displayedError = !isCurrentPageUser
     ? missingCurrentPageMessage
     : error;
@@ -218,7 +224,7 @@ export function UserMutationDialog({
   return (
     <ContextPanel
       key="user-mutation"
-      dirty={selectedRole !== user.role}
+      dirty={hasRoleChanges}
       className="administration-context-panel"
       footer={({ requestClose }) => (
         <div className="admin-user-dialog__actions">
@@ -324,8 +330,30 @@ export function UserMutationDialog({
             </Button>
           )}
         </section>
-
-
+        {onDelete && user.role !== "super_admin" ? (
+          <section
+            className="admin-user-dialog__account"
+            aria-labelledby={`account-deletion-${user.id}`}
+          >
+            <div>
+              <h3 id={`account-deletion-${user.id}`}>Delete account</h3>
+              <p>Remove this user from the list and revoke access. Work history is kept.</p>
+              {hasRoleChanges ? (
+                <p id={`account-deletion-blocked-${user.id}`}>Save or cancel the role change before deleting.</p>
+              ) : null}
+            </div>
+            <Button
+              variant="destructive-outline"
+              disabled={deletionBlocked}
+              aria-describedby={hasRoleChanges ? `account-deletion-blocked-${user.id}` : undefined}
+              onClick={() => {
+                if (!deletionBlocked) onDelete();
+              }}
+            >
+              Delete user
+            </Button>
+          </section>
+        ) : null}
       </div>
     </ContextPanel>
   );

@@ -1,6 +1,6 @@
 import jwt from "jsonwebtoken";
 import request from "supertest";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createApp } from "../src/app.js";
 import { roleMayRequestModule } from "../src/domain/authorization.js";
@@ -19,6 +19,8 @@ import { createMemoryRepository } from "../src/repositories/memory.js";
 import { createMongoRepository } from "../src/repositories/mongo.js";
 import type { SeedData, UserRecord } from "../src/repositories/types.js";
 import { demoSeedData } from "../src/seed/data.js";
+import { createAuditService } from "../src/services/audit.service.js";
+import { createUserAdministrationService } from "../src/services/user-administration.service.js";
 import { startMongoReplicaSet } from "./helpers/mongo-replica-set.js";
 
 const JWT_SECRET = "user-administration-mongo-secret-at-least-32-characters";
@@ -376,5 +378,111 @@ describe("user administration Mongo replica-set transactions", () => {
     await expectNoIneligibleActiveGrant(requesterId, projectId, {
       role: "procurement"
     });
+  });
+});
+
+describe("logical user deletion Mongo transactions", () => {
+  const actor = { id: "delete-super", name: "Delete Super", email: "delete-super@mongo-admin.lisno.example", role: "super_admin" as const };
+  function deletionService() {
+    const repository = createMongoRepository();
+    const audit = createAuditService(repository);
+    return { repository, audit, service: createUserAdministrationService(repository, audit, clock) };
+  }
+
+  it("keeps legacy inactive vendor identity and membership while incrementing default versions and hiding directory rows", async () => {
+    await insertUser(actor.id, "super_admin");
+    await UserModel.create({ _id: "deleted-vendor", name: "Old Vendor", email: "old-vendor@example.test", emailNormalized: "old-vendor@example.test", passwordHash: "fixture-hash", role: "vendor", vendorId: "vendor-directory-fixture", active: false, sessionVersion: 1 });
+    await UserModel.collection.updateOne({ _id: "deleted-vendor" }, { $unset: { version: "", sessionVersion: "", deletedAt: "", deletedById: "" } });
+    const { repository, service } = deletionService();
+    const result = await service.delete(actor, "deleted-vendor", { version: 1 });
+    expect(result).toEqual({ userId: "deleted-vendor", version: 2, deletedAt: NOW });
+    await expect(repository.findVendorBoundUsers("vendor-directory-fixture")).resolves.toMatchObject([{ id: "deleted-vendor", active: false, version: 2, sessionVersion: 2, deletedById: actor.id }]);
+    await expect(repository.findUserByEmail("old-vendor@example.test")).resolves.toMatchObject({ id: "deleted-vendor", deletedAt: NOW });
+    expect((await service.list(actor, { active: false }, { limit: 20, offset: 0 })).total).toBe(0);
+    await expect(repository.summarizeUsers(ROLE_CODES)).resolves.toEqual({ total: 1, active: 1, inactive: 0, roleCount: 1 });
+    await expect(repository.updateUser("deleted-vendor", 2, { active: true, updatedAt: NOW })).rejects.toThrow(/not found/);
+    expect(await UserModel.countDocuments({ _id: "deleted-vendor" })).toBe(1);
+  });
+
+  it("serializes repeated deletion and preserves unrelated users and work with one audit", async () => {
+    await insertUser(actor.id, "super_admin");
+    await insertUser("delete-concurrent", "designer");
+    await insertUser("delete-untouched", "designer");
+    await insertProject("delete-project");
+    await ProjectModel.updateOne({ _id: "delete-project" }, { $set: { assignedDesignerIds: ["delete-concurrent", "delete-untouched"] } });
+    const { repository, service } = deletionService();
+    const [first, second] = await Promise.all([
+      service.delete(actor, "delete-concurrent", { version: 1 }),
+      service.delete(actor, "delete-concurrent", { version: 1 })
+    ]);
+    expect(first).toEqual(second);
+    expect(await AuditEventModel.countDocuments({ action: "user.deleted", entityId: "delete-concurrent" })).toBe(1);
+    await expect(repository.findUserById("delete-concurrent")).resolves.toMatchObject({ active: false, version: 2, sessionVersion: 2 });
+    await expect(repository.findUserById("delete-untouched")).resolves.toMatchObject({ active: true, version: 1, sessionVersion: 1 });
+    expect((await ProjectModel.findById("delete-project").lean())!.assignedDesignerIds).toEqual(["delete-concurrent", "delete-untouched"]);
+    const fenceBefore = await AuthorizationCoordinationModel.findById("authorization").lean();
+    await expect(service.delete(actor, "delete-concurrent", { version: 1 })).resolves.toEqual(first);
+    expect(await AuthorizationCoordinationModel.findById("authorization").lean()).toEqual(fenceBefore);
+  });
+
+  it.each(["activation", "role"])("serializes deletion against %s without allowing a deleted account to return", async changeKind => {
+    await insertUser(actor.id, "super_admin");
+    await insertUser("delete-update-race", "designer", false);
+    const { repository, service } = deletionService();
+    const update = changeKind === "activation" ? { version: 1, active: true } : { version: 1, role: "procurement" as const };
+    const results = await Promise.allSettled([
+      service.delete(actor, "delete-update-race", { version: 1 }),
+      service.update(actor, "delete-update-race", update)
+    ]);
+    expect(results.some(result => result.status === "fulfilled")).toBe(true);
+    const current = (await repository.findUserById("delete-update-race"))!;
+    if (!current.deletedAt) {
+      expect(results[0]).toMatchObject({ status: "rejected", reason: { code: "VERSION_CONFLICT" } });
+      await service.delete(actor, current.id, { version: current.version });
+    }
+    const deleted = (await repository.findUserById("delete-update-race"))!;
+    expect(deleted.active).toBe(false);
+    expect(deleted.deletedAt).toBe(NOW);
+    await expect(service.update(actor, deleted.id, { version: deleted.version, active: true })).rejects.toMatchObject({ code: "NOT_FOUND" });
+    expect(await AuditEventModel.countDocuments({ action: "user.deleted", entityId: deleted.id })).toBe(1);
+  });
+
+  it("serializes access approval against requester deletion", async () => {
+    const requesterId = "user-race-delete";
+    const projectId = "project-race-delete";
+    await insertUser(actor.id, "super_admin");
+    await insertUser(requesterId, "designer");
+    await insertProject(projectId);
+    const pending = await createPending("request-race-delete", requesterId, projectId);
+    const app = application();
+    const [deletion, approval] = await Promise.all([
+      request(app).delete(`/api/v1/admin/users/${requesterId}`).set("Authorization", bearer(actor.id, "super_admin")).send({ version: 1 }),
+      request(app).post(`/api/v1/access-requests/${pending.id}/decision`).set("Authorization", bearer(actor.id, "super_admin")).send({ version: pending.version, decision: "approved" })
+    ]);
+    expect(deletion.status).toBe(200);
+    expect(deletion.body.data).toEqual({ userId: requesterId, deletedAt: NOW, version: 2 });
+    expect([200, 409]).toContain(approval.status);
+    await expectNoIneligibleActiveGrant(requesterId, projectId, { active: false });
+    expect(await AuditEventModel.countDocuments({ action: "user.deleted", entityId: requesterId })).toBe(1);
+  });
+
+  it("rolls back the user and revoked grants when deletion audit persistence fails", async () => {
+    await insertUser(actor.id, "super_admin");
+    await insertUser("delete-rollback", "designer");
+    await insertProject("delete-rollback-project");
+    const repository = createMongoRepository();
+    const pending = await createPending("delete-rollback-request", "delete-rollback", "delete-rollback-project");
+    const approval = await request(application()).post(`/api/v1/access-requests/${pending.id}/decision`).set("Authorization", bearer(actor.id, "super_admin")).send({ version: pending.version, decision: "approved" });
+    expect(approval.status).toBe(200);
+    const audit = createAuditService(repository);
+    const append = audit.append.bind(audit);
+    vi.spyOn(audit, "append").mockImplementation((input, tx) => input.action === "user.deleted" ? Promise.reject(new Error("mongo deletion audit failed")) : append(input, tx));
+    const service = createUserAdministrationService(repository, audit, clock);
+    const auditCount = await AuditEventModel.countDocuments();
+    await expect(service.delete(actor, "delete-rollback", { version: 1 })).rejects.toThrow("mongo deletion audit failed");
+    await expect(repository.findUserById("delete-rollback")).resolves.toMatchObject({ active: true, version: 1, sessionVersion: 1 });
+    expect((await repository.findUserById("delete-rollback"))!.deletedAt).toBeUndefined();
+    expect(await ProjectAccessGrantModel.countDocuments({ userId: "delete-rollback", active: true })).toBe(1);
+    expect(await AuditEventModel.countDocuments()).toBe(auditCount);
   });
 });

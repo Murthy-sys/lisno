@@ -28,6 +28,8 @@ const userSchema = new Schema(
     },
     vendorId: { type: String, ref: "AiEstimatorKnowledgeVendor", default: null, immutable: true, match: VENDOR_ID_PATTERN },
     active: { type: Boolean, required: true, default: true },
+    deletedAt: { type: Date, default: null },
+    deletedById: { type: String, ref: "User", default: null },
     accountKind: {
       type: String,
       enum: ACCOUNT_KINDS,

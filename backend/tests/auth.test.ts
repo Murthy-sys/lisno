@@ -1004,3 +1004,16 @@ describe("reserved Client signup boundary", () => {
     expect(hash).not.toHaveBeenCalled();
   });
 });
+
+describe("deleted account authentication", () => {
+  it.each([false, true])("rejects password and bearer authentication for a deleted account even if active is %s", async active => {
+    const seed = seedWithSingleUser({ active, deletedAt: "2026-10-30T10:00:00.000Z", deletedById: "account-admin", passwordHash: await bcrypt.hash("DeletionTestPassword!42", 4) });
+    const user = seed.users[0]!;
+    const app = createTestApp(seed);
+    const login = await request(app).post("/api/v1/auth/login").send({ email: user.email, password: "DeletionTestPassword!42" });
+    expect(login.status).toBe(401);
+    const token = jwt.sign({ id: user.id, role: user.role, sessionVersion: user.sessionVersion ?? 1 }, JWT_SECRET, { expiresIn: 900 });
+    const current = await request(app).get("/api/v1/auth/me").set("Authorization", `Bearer ${token}`);
+    expect(current.status).toBe(401);
+  });
+});

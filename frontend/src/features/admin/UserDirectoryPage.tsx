@@ -1,5 +1,5 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { ROLE_LABELS, type Role } from "../../api/authorization-contract";
 import { ApiError } from "../../api/client";
@@ -18,9 +18,11 @@ import { PageState } from "../../components/ui/PageState";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { Surface } from "../../components/ui/Surface";
 import { useAuth } from "../../auth/AuthProvider";
+import { hasFrontendPermission } from "../../auth/authorization";
 import { adminUserKeys, getManagedUsers } from "./adminApi";
 import { UserInvitationsPanel } from "./UserInvitationsPanel";
 import { UserMutationDialog } from "./UserMutationDialog";
+import { UserDeletionDialog } from "./UserDeletionDialog";
 
 const PAGE_SIZE = 20;
 
@@ -74,6 +76,11 @@ export function UserDirectoryPage() {
   });
   const [selectedUser, setSelectedUser] = useState<UserDirectoryItem | null>(null);
   const [summaryUserId, setSummaryUserId] = useState<string | null>(null);
+  const [deletingUser, setDeletingUser] = useState<UserDirectoryItem | null>(null);
+  const [deletedUserIds, setDeletedUserIds] = useState<ReadonlySet<string>>(new Set());
+  const [deletionRefreshing, setDeletionRefreshing] = useState(false);
+  const searchRef = useRef<HTMLInputElement>(null);
+  const canDelete = auth.user?.role === "super_admin" && hasFrontendPermission(auth.authorization, "identity.users.delete");
 
   const normalizedFilters = useMemo<UserDirectoryFilters>(
     () => ({
@@ -100,6 +107,10 @@ export function UserDirectoryPage() {
     (user) => user.id === selectedUser?.id
   );
   const pageData = usersQuery.data;
+  const directoryRows = pageData?.items.filter((item) => !deletedUserIds.has(item.id)) ?? [];
+  const directoryReady = !usersQuery.isFetching && !usersQuery.isError && !usersQuery.isPlaceholderData && !deletionRefreshing;
+  const currentDeletionUser = directoryRows.find((item) => item.id === deletingUser?.id);
+  const showCounts = directoryReady;
   /**
    * The contract types `summary` as required, but an older or partial response
    * can still omit it at runtime. Widening to `| undefined` here keeps the
@@ -119,6 +130,13 @@ export function UserDirectoryPage() {
     );
   }, [currentPageUser]);
 
+  useEffect(() => {
+    if (!directoryReady || !pageData || pagination.offset === 0) return;
+    if (pagination.offset >= pageData.pagination.total) {
+      setPagination((current) => ({ ...current, offset: Math.max(0, Math.ceil(pageData.pagination.total / current.limit) - 1) * current.limit }));
+    }
+  }, [directoryReady, pageData, pagination.offset]);
+
   return (
     <section
       className="access-administration"
@@ -130,7 +148,7 @@ export function UserDirectoryPage() {
         title="User administration"
         description="Review redacted account details and change one access setting at a time."
         metadata={
-          pageData ? (
+          pageData && showCounts ? (
             <StatusBadge
               tone="info"
               label={`${pageData.pagination.total} visible user${
@@ -141,7 +159,7 @@ export function UserDirectoryPage() {
         }
       />
 
-      {directorySummary ? (
+      {directorySummary && showCounts ? (
         <div className="access-administration__metrics">
           <MetricCard label="Total users" value={directorySummary.total} />
           <MetricCard label="Active users" value={directorySummary.active} />
@@ -160,6 +178,7 @@ export function UserDirectoryPage() {
           {(controlProps) => (
             <Input
               {...controlProps}
+              ref={searchRef}
               type="search"
               value={filters.search ?? ""}
               placeholder="Name or email"
@@ -226,10 +245,12 @@ export function UserDirectoryPage() {
       ) : usersQuery.isError ? (
         <PageState
           state="error"
-          message={requestErrorMessage(usersQuery.error)}
+          message={deletedUserIds.size > 0 ? "User deleted. The directory could not be refreshed. Refresh to see current users and totals." : requestErrorMessage(usersQuery.error)}
           action={{ label: "Try again", onAction: () => void usersQuery.refetch() }}
         />
-      ) : !pageData || pageData.items.length === 0 ? (
+      ) : deletionRefreshing ? (
+        <PageState state="loading" message="Refreshing the user directory…" />
+      ) : !pageData || directoryRows.length === 0 ? (
         <PageState state="empty" message="No users match these filters." />
       ) : (
         <Surface
@@ -252,7 +273,7 @@ export function UserDirectoryPage() {
                 </tr>
               </thead>
               <tbody>
-                {pageData.items.map((user) => (
+                {directoryRows.map((user) => (
                   <tr key={user.id}>
                     <td>
                       <span className="access-administration__identity">
@@ -299,6 +320,11 @@ export function UserDirectoryPage() {
                           Manage <span className="sr-only">{user.name}</span>
                         </Button>
                       )}
+                      {canDelete && user.role !== "super_admin" ? (
+                        <Button size="compact" variant="destructive-outline" disabled={!directoryReady} onClick={() => setDeletingUser(user)}>
+                          Delete <span className="sr-only">{user.name}</span>
+                        </Button>
+                      ) : null}
                       </div>
                     </td>
                   </tr>
@@ -311,13 +337,13 @@ export function UserDirectoryPage() {
             className="access-administration__pagination"
             aria-label="User directory pages"
           >
-            <p aria-live="polite">
+            {showCounts ? <p aria-live="polite">
               Showing {pageData.pagination.offset + 1}–
               {Math.min(
-                pageData.pagination.offset + pageData.items.length,
+                pageData.pagination.offset + directoryRows.length,
                 pageData.pagination.total
               )} of {pageData.pagination.total}
-            </p>
+            </p> : null}
             <span className="access-administration__page-indicator">
               Page{" "}
               {Math.floor(
@@ -368,8 +394,38 @@ export function UserDirectoryPage() {
         <UserMutationDialog
           user={selectedUser}
           manageableRoles={pageData.manageableRoles}
-          isCurrentPageUser={Boolean(currentPageUser)}
+          isCurrentPageUser={Boolean(currentPageUser) && !deletedUserIds.has(selectedUser.id) && !usersQuery.isError && !usersQuery.isPlaceholderData}
+          deletionReady={directoryReady && currentPageUser?.version === selectedUser.version}
+          onDelete={canDelete ? () => {
+            if (!directoryReady || !currentPageUser || currentPageUser.version !== selectedUser.version || currentPageUser.role === "super_admin") return;
+            setSelectedUser(null);
+            setSummaryUserId(null);
+            setDeletingUser(currentPageUser);
+          } : undefined}
           onClose={() => setSelectedUser(null)}
+        />
+      ) : null}
+      {deletingUser ? (
+        <UserDeletionDialog
+          key={deletingUser.id}
+          user={deletingUser}
+          currentUser={currentDeletionUser}
+          directoryReady={directoryReady && canDelete}
+          refreshing={usersQuery.isFetching}
+          fallbackFocusRef={searchRef}
+          onRefresh={() => usersQuery.refetch()}
+          onClose={() => setDeletingUser(null)}
+          onDeleted={({ userId }) => {
+            setDeletedUserIds((current) => new Set([...current, userId]));
+            setDeletionRefreshing(true);
+            setDeletingUser(null);
+            setSelectedUser((current) => current?.id === userId ? null : current);
+            setSummaryUserId((current) => current === userId ? null : current);
+            if (directoryRows.length === 1 && pagination.offset > 0) {
+              setPagination((current) => ({ ...current, offset: Math.max(0, current.offset - current.limit) }));
+            }
+          }}
+          onRefreshFinished={() => setDeletionRefreshing(false)}
         />
       ) : null}
       {summaryUserId ? (

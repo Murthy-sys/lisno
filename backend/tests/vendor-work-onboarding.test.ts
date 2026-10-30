@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { createMemoryRepository } from "../src/repositories/memory.js";
 import { demoSeedData } from "../src/seed/data.js";
+import { createUserAdministrationService } from "../src/services/user-administration.service.js";
 import { createAuditService } from "../src/services/audit.service.js";
 import { createUserInvitationService } from "../src/services/user-invitation.service.js";
 import { vendorWorkMailTemplate } from "../src/services/vendor-work-mail-template.js";
@@ -21,6 +22,24 @@ function fixture() {
   return { seed, repository, service, sends, mailer, advance: () => { now = new Date(now.getTime() + 61_000); } };
 }
 describe("vendor work invitation authority", () => {
+  it("reserves a deleted vendor login without recreating it or sending another invitation", async () => {
+    const f = fixture();
+    const { id: _id, ...template } = (await f.repository.listUsers())[0]!;
+    const admin = await f.repository.createUser({ ...template, email: "owner@example.test", role: "super_admin" });
+    const vendor = await f.repository.createUser({ ...template, email: authority.emailNormalized, role: "vendor", vendorId: authority.vendorId });
+    await createUserAdministrationService(f.repository, createAuditService(f.repository), () => NOW)
+      .delete(admin, vendor.id, { version: vendor.version });
+    const retained = await f.repository.findUserById(vendor.id);
+    await expect(f.service.createForVendorWork(authority)).rejects.toMatchObject({ code: "ACCOUNT_EXISTS" });
+    await expect(f.service.create(admin, { name: "Replacement", email: authority.emailNormalized, role: "designer", mobile: "+919000000000" }))
+      .rejects.toMatchObject({ code: "ACCOUNT_EXISTS" });
+    expect(await f.repository.findVendorBoundUsers(authority.vendorId)).toEqual([retained]);
+    expect(await f.repository.findUserByEmail(authority.emailNormalized)).toEqual(retained);
+    expect(retained).toMatchObject({ active: false, deletedById: admin.id, vendorId: authority.vendorId });
+    expect(await f.repository.findPendingUserInvitationByEmail(authority.emailNormalized)).toBeNull();
+    expect(f.sends).toEqual([]);
+  });
+
   it("uses issued-work authority without a forged Super Admin and reuses setup across orders", async () => {
     const f = fixture();
     const created = await f.service.createForVendorWork(authority);

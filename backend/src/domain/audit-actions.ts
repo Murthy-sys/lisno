@@ -88,6 +88,7 @@ export const PROMPT_1_AUDIT_ACTIONS = [
   "user.role_changed",
   "user.activated",
   "user.deactivated",
+  "user.deleted",
   "access_request.created",
   "access_request.cancelled",
   "access_request.approved",
