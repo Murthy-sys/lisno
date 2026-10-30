@@ -1,0 +1,456 @@
+/* Keep these tokens separate at the root so the embedded execution view retains its theme. */
+.pm-project-detail {
+  --pm-detail-canvas: #f3f2ec;
+  --pm-detail-panel: #faf9f4;
+  --pm-detail-ink: #20271f;
+  --pm-detail-muted: #62685f;
+  --pm-detail-border: #dcded2;
+  --pm-detail-accent: #556348;
+  container: pm-project-detail / inline-size;
+}
+
+.pm-project-detail.pm-workspace {
+  gap: 16px;
+  padding: 0;
+  background: var(--pm-detail-canvas);
+}
+
+.ui-app-shell.ui-common-shell[data-role="site_manager"]:has(.pm-project-detail),
+.ui-app-shell.ui-common-shell[data-role="site_manager"] .ui-workspace[data-role="site_manager"]:has(.pm-project-detail) {
+  background: #f3f2ec;
+}
+
+.pm-project-detail > :is(.pm-project-detail__header, .pm-project-detail__back, .pm-project-detail__review, .pm-project-detail__nav, .pm-project-detail__content, .pm-project-detail__kpi, .pm-empty, .pm-loading, .pm-message) {
+  --pm-canvas: var(--pm-detail-canvas);
+  --pm-panel: var(--pm-detail-panel);
+  --pm-ink: var(--pm-detail-ink);
+  --pm-muted: var(--pm-detail-muted);
+  --pm-border: var(--pm-detail-border);
+  --pm-accent: var(--pm-detail-accent);
+  color: var(--pm-ink);
+  min-width: 0;
+}
+
+.pm-project-detail .pm-project-detail__back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  margin-block: -8px;
+  padding: 4px 2px;
+  color: var(--pm-detail-accent);
+  font-size: 12px;
+  text-decoration: none;
+}
+
+.pm-project-detail__back svg {
+  width: 15px;
+  height: 15px;
+  transform: rotate(180deg);
+}
+
+.pm-project-detail .pm-project-detail__header {
+  --pm-detail-header-inset: 24px;
+  --pm-detail-header-gap: 24px;
+  position: relative;
+  isolation: isolate;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--pm-detail-header-gap);
+  min-height: 184px;
+  padding: var(--pm-detail-header-inset);
+  border: 1px solid var(--pm-border);
+  border-radius: 3px;
+  background: var(--pm-panel);
+}
+
+.pm-project-detail__header::before {
+  position: absolute;
+  z-index: -1;
+  grid-area: 1 / 2 / 2 / 3;
+  inset: calc(var(--pm-detail-header-inset) * -1) calc(var(--pm-detail-header-inset) * -1) calc(var(--pm-detail-header-inset) * -1) calc(var(--pm-detail-header-gap) * -.5);
+  content: "";
+  background: url("../../assets/projects-living-room.webp") center 58% / cover no-repeat;
+  opacity: .22;
+  pointer-events: none;
+}
+
+.pm-project-detail__intro {
+  grid-area: 1 / 1;
+  min-width: 0;
+  background: var(--pm-panel);
+}
+
+.pm-project-detail__header .pm-eyebrow {
+  margin: 0 0 8px;
+  color: var(--pm-muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+}
+
+.pm-project-detail__header .pm-project__identity {
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.pm-project-detail__header h1 {
+  color: var(--pm-ink);
+  font-size: clamp(28px, 3cqi, 36px);
+  font-weight: 650;
+  line-height: 1.18;
+  letter-spacing: -.04em;
+}
+
+.pm-project-detail__header .pm-project-detail__client {
+  margin-top: 8px;
+  color: var(--pm-muted);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.pm-project-detail__header .pm-project-detail__metadata {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 32px;
+  margin-top: 20px;
+}
+
+.pm-project-detail__metadata > div { min-width: 0; }
+.pm-project-detail__metadata dt { color: var(--pm-muted); font-size: 11px; }
+.pm-project-detail__metadata dd {
+  margin: 3px 0 0;
+  color: var(--pm-ink);
+  font-size: 14px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.pm-project-detail__header .pm-project-detail__actions {
+  grid-area: 1 / 2;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.pm-project-detail__actions :is(.ui-button, .pm-link-button),
+.pm-project-detail__content .ui-button,
+.pm-project-detail__kpi .ui-button {
+  min-height: 44px;
+  padding: 9px 13px;
+  border-radius: 3px;
+  font-size: 12px;
+  font-weight: 500;
+  box-shadow: none;
+  transition: none;
+}
+
+.pm-project-detail__actions .ui-button__content > span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+}
+
+.pm-project-detail__actions svg { width: 18px; height: 18px; flex-shrink: 0; }
+.pm-project-detail__actions > .ui-button:not(.ui-button--secondary) {
+  border-color: var(--pm-accent);
+  background: var(--pm-accent);
+  color: var(--pm-panel);
+}
+
+.pm-project-detail .pm-project-detail__review,
+.pm-project-detail__site > .pm-issues {
+  margin: 0;
+  padding: 0 16px;
+  border: 1px solid var(--pm-border);
+  border-radius: 3px;
+  background: #f0efe5;
+  font-size: 12px;
+}
+
+.pm-project-detail__review > summary,
+.pm-project-detail__site > .pm-issues > summary {
+  width: 100%;
+  min-height: 44px;
+  padding-block: 12px;
+  color: var(--pm-warning);
+  font-weight: 550;
+  line-height: 20px;
+}
+
+.pm-project-detail__review[open],
+.pm-project-detail__site > .pm-issues[open] { padding-bottom: 14px; }
+.pm-project-detail__review p,
+.pm-project-detail__site > .pm-issues p { max-width: 110ch; }
+.pm-project-detail__site > .pm-issues { margin-bottom: 16px; }
+
+.pm-project-detail .pm-project-detail__nav {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  gap: 0;
+  max-width: 100%;
+  padding: 4px 4px 0;
+  border: 1px solid var(--pm-border);
+  border-radius: 3px;
+  background: var(--pm-panel);
+  overflow-x: auto;
+  scroll-padding-inline: 8px;
+  scrollbar-width: thin;
+  scrollbar-color: #9ba38f var(--pm-panel);
+}
+
+.pm-project-detail__nav a {
+  flex: 0 0 auto;
+  justify-content: center;
+  min-height: 48px;
+  margin: 0;
+  padding: 12px 17px;
+  border: 0;
+  border-bottom: 3px solid transparent;
+  background: transparent;
+  color: var(--pm-muted);
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+.pm-project-detail__nav a[aria-current="page"] {
+  border-bottom-color: var(--pm-accent);
+  background: #eef0e6;
+  color: var(--pm-ink);
+  font-weight: 600;
+}
+
+.pm-project-detail__nav a:focus-visible { outline-offset: -3px; }
+
+.pm-project-detail__content > section,
+.pm-project-detail__site { min-width: 0; }
+.pm-project-detail__content .pm-section-heading { margin-bottom: 16px; gap: 16px; }
+.pm-project-detail__content .pm-section-heading h2,
+.pm-project-detail__kpi h2 { color: var(--pm-ink); font-size: 19px; line-height: 1.4; }
+.pm-project-detail__content .pm-section-heading p { margin-top: 5px; font-size: 12px; line-height: 1.6; }
+.pm-project-detail__content .pm-record,
+.pm-project-detail__kpi .pm-record { padding: 18px; border-radius: 3px; }
+.pm-project-detail__content .pm-record__head h3 { font-size: 16px; }
+.pm-project-detail__content .pm-records { gap: 16px; }
+
+.pm-project-detail__site .pm-project-detail__progress {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(330px, .9fr);
+  align-items: center;
+  gap: 16px 32px;
+  margin: 0 0 16px;
+  padding: 20px;
+  border-color: var(--pm-border);
+  border-radius: 3px;
+}
+
+.pm-project-detail__progress-main .pm-progress__label {
+  align-items: baseline;
+  margin-bottom: 12px;
+  font-size: 12px;
+  gap: 16px;
+}
+
+.pm-project-detail__progress-main .pm-progress__label strong {
+  font-size: clamp(22px, 2.5cqi, 30px);
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: -.025em;
+}
+
+.pm-project-detail__progress-main .pm-progress__track { height: 7px; }
+.pm-project-detail__progress-facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  min-width: 0;
+}
+
+.pm-project-detail__progress-facts > div { min-width: 0; }
+.pm-project-detail__progress-facts dt { color: var(--pm-muted); font-size: 11px; }
+.pm-project-detail__progress-facts dd {
+  margin: 5px 0 0;
+  color: var(--pm-ink);
+  font-size: 18px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.pm-project-detail__progress > .pm-disclosure {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding-top: 0;
+  font-size: 12px;
+}
+
+.pm-project-detail__progress > .pm-disclosure > summary {
+  min-height: 44px;
+  padding-top: 13px;
+  line-height: 20px;
+}
+
+.pm-project-detail__progress > .pm-disclosure:not([open]) { margin-bottom: -8px; }
+.pm-project-detail__site .pm-room { border-radius: 3px; }
+.pm-project-detail__room-summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(200px, .45fr);
+  align-items: center;
+  gap: 16px 32px;
+  padding: 18px 20px;
+}
+
+.pm-project-detail__room-summary .pm-room__heading {
+  align-items: baseline;
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  padding: 0;
+  border: 0;
+}
+
+.pm-project-detail__room-summary h3 { font-size: 17px; line-height: 1.4; overflow-wrap: anywhere; }
+.pm-project-detail__room-summary .pm-room__heading > span { flex-shrink: 0; font-size: 12px; }
+.pm-project-detail__room-summary .pm-progress__label { font-size: 11px; }
+.pm-project-detail__room-summary .pm-progress__label strong { font-size: 13px; }
+.pm-project-detail__room-summary .pm-progress__track { height: 6px; }
+
+.pm-project-detail__room-note {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 0;
+  font-size: 12px;
+}
+
+.pm-project-detail__room-note > summary { min-height: 44px; padding-top: 13px; color: var(--pm-warning); line-height: 20px; }
+.pm-project-detail__room-note:not([open]) { margin-bottom: -8px; }
+.pm-project-detail__site .pm-room > .pm-quiet-state { margin: 0 20px 18px; border: 0; }
+.pm-project-detail__site .pm-trade-table { overflow: visible; }
+.pm-project-detail__site .pm-trade-table:focus-visible { outline: 2px solid var(--pm-accent); outline-offset: -2px; }
+.pm-project-detail__site .pm-trade-table table { min-width: 0; font-size: 13px; }
+.pm-project-detail__site .pm-trade-table :is(th, td) { padding: 16px 20px; border-bottom-color: var(--pm-border); }
+.pm-project-detail__site .pm-trade-table thead th {
+  padding-block: 10px;
+  border-top: 1px solid var(--pm-border);
+  background: #f0f0e8;
+  color: var(--pm-muted);
+  font-size: 11px;
+  font-weight: 550;
+}
+
+.pm-project-detail__site .pm-trade-table th:first-child { width: 30%; }
+.pm-project-detail__site .pm-trade-table th:nth-child(2) { width: 18%; }
+.pm-project-detail__site .pm-trade-table th:nth-child(3) { width: 20%; }
+.pm-project-detail__site .pm-trade-table th:nth-child(4) { width: 23%; }
+.pm-project-detail__site .pm-trade-table th:last-child { width: 9%; }
+.pm-project-detail__site .pm-trade-table tbody th > strong { font-weight: 600; line-height: 1.5; }
+.pm-project-detail__site .pm-trade-note { margin-top: 6px; font-size: 12px !important; line-height: 1.55; }
+.pm-project-detail__site .pm-badge { min-height: 24px; padding: 3px 8px; }
+.pm-project-detail__site .pm-trade-table .pm-progress { margin-top: 10px; }
+.pm-project-detail__site .pm-trade-table .pm-progress__label { justify-content: flex-end; font-size: 12px; }
+.pm-project-detail__site .pm-trade-table .pm-progress__track { height: 6px; }
+.pm-project-detail__site .pm-trade-table td dl { gap: 8px; }
+.pm-project-detail__site .pm-trade-table td dl div { gap: 2px 7px; }
+.pm-project-detail__site .pm-trade-table dt { font-size: 11px; }
+.pm-project-detail__site .pm-trade-table dd { font-size: 12px; font-weight: 500; }
+.pm-project-detail__cell-label { display: none; }
+
+.pm-project-detail__site .pm-project-detail__open { padding-left: 8px; }
+.pm-project-detail__site .pm-project-detail__open > a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 3px;
+  min-height: 44px;
+  padding: 8px 0;
+  color: var(--pm-accent);
+  font-size: 12px;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.pm-project-detail__open svg { width: 15px; height: 15px; flex-shrink: 0; }
+.pm-project-detail__trade-note { margin-top: 5px; padding: 0; border: 0; font-size: 12px; }
+.pm-project-detail__trade-note > summary { min-height: 44px; padding-block: 12px; color: var(--pm-warning); line-height: 20px; }
+.pm-project-detail__trade-note p { font-weight: 400; }
+
+@container pm-project-detail (max-width: 1000px) {
+  .pm-project-detail .pm-project-detail__header { --pm-detail-header-gap: 16px; --pm-detail-header-inset: 20px; }
+  .pm-project-detail__header .pm-project-detail__actions { flex-direction: column; align-items: stretch; }
+  .pm-project-detail__site .pm-trade-table :is(th, td) { padding-inline: 14px; }
+  .pm-project-detail__site .pm-project-detail__open { padding-left: 6px; }
+  .pm-project-detail__site .pm-project-detail__progress { grid-template-columns: minmax(0, 1fr) minmax(280px, .95fr); gap: 16px 24px; }
+  .pm-project-detail__nav a { padding-inline: 14px; }
+}
+
+@container pm-project-detail (max-width: 760px) {
+  .pm-project-detail .pm-project-detail__header { grid-template-columns: minmax(0, 1fr); min-height: 0; }
+  .pm-project-detail__header::before { display: none; }
+  .pm-project-detail__header .pm-project-detail__actions { grid-area: 2 / 1; flex-direction: row; justify-content: flex-start; }
+  .pm-project-detail__header .pm-project-detail__metadata { gap: 12px 24px; margin-top: 16px; }
+  .pm-project-detail__site .pm-project-detail__progress { grid-template-columns: minmax(0, 1fr); gap: 20px; }
+  .pm-project-detail__progress-main .pm-progress__label strong { font-size: 26px; }
+  .pm-project-detail__progress-facts { gap: 16px; }
+  .pm-project-detail__room-summary { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  .pm-project-detail__room-summary .pm-room__heading { justify-content: space-between; }
+  .pm-project-detail__room-summary .pm-progress { max-width: 100%; }
+  .pm-project-detail__site .pm-trade-table table { display: block; width: 100%; min-width: 0; }
+  .pm-project-detail__site .pm-trade-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+  }
+  .pm-project-detail__site .pm-trade-table tbody { display: block; width: 100%; }
+  .pm-project-detail__site .pm-trade-table tbody tr {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px 20px;
+    padding: 18px 20px;
+    border-top: 1px solid var(--pm-border);
+  }
+  .pm-project-detail__site .pm-trade-table table :is(th, td) { display: block; width: auto; min-width: 0; padding: 0; border: 0; }
+  .pm-project-detail__site .pm-trade-table tbody th:first-child { grid-column: 1 / -1; width: auto; min-width: 0; max-width: 100%; font-size: 14px; }
+  .pm-project-detail__site .pm-project-detail__vendor { grid-column: 1 / -1; }
+  .pm-project-detail__cell-label { display: block; margin-bottom: 6px; color: var(--pm-muted); font-size: 11px; font-weight: 500; }
+  .pm-project-detail__site .pm-trade-table .pm-progress__label { margin-bottom: 6px; }
+  .pm-project-detail__site .pm-trade-table td dl div { display: block; }
+  .pm-project-detail__site .pm-trade-table dd { margin-top: 2px; }
+  .pm-project-detail__site .pm-project-detail__open { grid-column: 1 / -1; justify-self: end; }
+  .pm-project-detail__site .pm-project-detail__open > a { margin-bottom: -6px; padding: 8px; }
+  .pm-project-detail__site .pm-trade-note { margin-top: 5px; }
+  .pm-project-detail__trade-note > summary { padding-block: 11px; }
+}
+
+@container pm-project-detail (max-width: 420px) {
+  .pm-project-detail .pm-project-detail__header { padding: 16px; gap: 16px; }
+  .pm-project-detail__header h1 { font-size: 28px; }
+  .pm-project-detail__header .pm-project-detail__metadata { gap: 12px 20px; }
+  .pm-project-detail__metadata dd { font-size: 13px; }
+  .pm-project-detail__actions :is(.ui-button, .pm-link-button) { padding-inline: 11px; }
+  .pm-project-detail__nav a { padding-inline: 12px; font-size: 12px; }
+  .pm-project-detail__content .pm-section-heading h2 { font-size: 18px; }
+  .pm-project-detail__content .pm-section-heading p { font-size: 12px; }
+  .pm-project-detail__content .pm-record,
+  .pm-project-detail__kpi .pm-record { padding: 16px; }
+  .pm-project-detail__site .pm-project-detail__progress { padding: 16px; }
+  .pm-project-detail__progress-main .pm-progress__label { flex-wrap: wrap; gap: 6px 12px; }
+  .pm-project-detail__progress-facts { gap: 12px; }
+  .pm-project-detail__progress-facts dd { font-size: 16px; }
+  .pm-project-detail__room-summary { padding: 16px; }
+  .pm-project-detail__room-summary h3 { font-size: 16px; }
+  .pm-project-detail__site .pm-trade-table tbody tr { padding: 16px; gap: 14px 16px; }
+  .pm-project-detail__site .pm-trade-table tbody th { font-size: 13px; }
+  .pm-project-detail__site .pm-room > .pm-quiet-state { margin-inline: 16px; }
+}

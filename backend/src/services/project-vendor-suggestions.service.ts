@@ -117,13 +117,13 @@ export function createProjectVendorSuggestionService(input: { audit: AuditServic
       return transaction(async (session) => {
         const currentActor = await authorize(actor, session, projectId, true);
         const source = await procurementItemSourceSnapshot(projectId, session, true);
-        const current = await ProjectVendorSuggestionModel.findOne({ _id: id, projectId }).session(session).lean();
+        const current = await ProjectVendorSuggestionModel.findOne({ _id: id, projectId, mainLineId: null }).session(session).lean();
         if (!current) notFound();
         requireStoredSource(source, current);
         if (current.version !== fields.expectedVersion) versionConflict();
         if (fields.status === "suggested" && current.status !== "suggested") await activeVendor(String(current.vendorId), session);
         const timestamp = now();
-        const updated = await ProjectVendorSuggestionModel.findOneAndUpdate({ _id: id, projectId, version: fields.expectedVersion }, {
+        const updated = await ProjectVendorSuggestionModel.findOneAndUpdate({ _id: id, projectId, mainLineId: null, version: fields.expectedVersion }, {
           $set: { note: fields.note, status: fields.status, updatedById: actor.id, updatedByName: currentActor.name, updatedAt: timestamp }, $inc: { version: 1 }
         }, { session, returnDocument: "after", runValidators: true, timestamps: false }).lean();
         if (!updated) versionConflict();
@@ -135,7 +135,7 @@ export function createProjectVendorSuggestionService(input: { audit: AuditServic
   };
 }
 function sourceFilter(projectId: string, source: Source) {
-  return { projectId, estimateId: source.estimateId, estimateVersion: source.estimateVersion, estimateReviewRoundId: source.estimateReviewRoundId, designPlanVersion: source.designPlanVersion };
+  return { projectId, mainLineId: null, estimateId: source.estimateId, estimateVersion: source.estimateVersion, estimateReviewRoundId: source.estimateReviewRoundId, designPlanVersion: source.designPlanVersion };
 }
 function summary(projectId: string, projectName: string, source: Source): VendorSuggestionProject {
   return { projectId, projectName, estimateId: source.estimateId, estimateVersion: source.estimateVersion, designPlanVersion: source.designPlanVersion };
@@ -147,7 +147,7 @@ function requireStoredSource(source: Source, row: Row) {
   requireSource(source, row as VendorSuggestionCreate);
   if (source.estimateReviewRoundId !== row.estimateReviewRoundId) sourceConflict();
 }
-async function activeVendor(id: string, session: ClientSession): Promise<Row> {
+export async function activeVendor(id: string, session: ClientSession): Promise<Row> {
   const row = await AiEstimatorKnowledgeVendorModel.findOneAndUpdate({ _id: id, status: "active" }, { $inc: { dependencyEpoch: 1 } }, { session, returnDocument: "after", timestamps: false, runValidators: true }).lean();
   if (!row) throw new ApiError(409, "VENDOR_SUGGESTION_VENDOR_UNAVAILABLE", "This vendor is no longer available. Choose an active vendor.");
   if ((await vendorActivation(row, session)).effectiveStatus !== "active") throw new ApiError(409, "VENDOR_SUGGESTION_VENDOR_UNAVAILABLE", "This vendor is inactive or missing a completed KPI. Choose an active vendor.");

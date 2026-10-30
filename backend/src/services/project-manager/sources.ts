@@ -1,34 +1,22 @@
 import type { ClientSession } from "mongoose";
-import { EstimateModel } from "../../models/Estimate.js";
-import { EstimateClientReviewRoundModel } from "../../models/EstimateClientReviewRound.js";
 import { ProjectScopeExceptionModel } from "../../models/ProjectScopeException.js";
 import { ProjectPurchaseOrderModel } from "../../models/ProjectPurchaseOrder.js";
 import { ProjectPurchaseOrderRevisionModel } from "../../models/ProjectPurchaseOrderRevision.js";
 import { VendorWorkAssignmentModel } from "../../models/VendorWorkAssignment.js";
 import { VendorExecutionStateModel } from "../../models/VendorExecutionState.js";
-import { approvedProcurementSnapshotFromRows } from "../procurement.service.js";
 import { executionWorkDto, cacheLatestVendorReports, defaultExecutionDaily, type ExecutionProjectionCache } from "../vendor-execution-projection.js";
 import { defaultExecutionPolicy, executionLocalDate } from "../../domain/vendor-execution.js";
 import { ExecutionReportingPolicyModel } from "../../models/ExecutionReportingPolicy.js";
 import { approvedExecutionProgress, type PMProgressLine } from "../../domain/project-manager/progress.js";
 import type { PublicUser } from "../auth.service.js";
 import type { PMRow } from "./common.js";
-import { ApiError } from "../../middleware/errors.js";
+import { readPMApprovedSource } from "./approved-source.js";
 import type { ExecutionWork } from "../../contracts/vendor-execution.js";
 
 export async function readPMSources(actor: PublicUser, project: PMRow, session: ClientSession, at: Date) {
   const projectId = String(project._id);
-  const estimates = await EstimateModel.find({ projectId }).limit(2).session(session).lean();
-  const issues: string[] = []; let source: ReturnType<typeof approvedProcurementSnapshotFromRows> | null = null;
-  if (estimates.length === 1) {
-    const rounds = await EstimateClientReviewRoundModel.find({ estimateId: estimates[0]!._id, status: "approved", decision: "approve" }).session(session).lean();
-    try { source = approvedProcurementSnapshotFromRows(estimates[0]!, rounds); }
-    catch (error) { if (!(error instanceof ApiError) || error.status >= 500) throw error; issues.push("The client-approved estimate source is not available. Reconcile approval lineage before measuring progress."); }
-  } else issues.push(estimates.length ? "The approved estimate source is ambiguous." : "No approved estimate is available yet.");
-  if (source && !source.estimateReviewRoundId) {
-    issues.push("An immutable approved estimate snapshot is required to measure execution value.");
-    source = null;
-  }
+  const approved = await readPMApprovedSource(projectId, session);
+  const source = approved.snapshot, issues = approved.issues;
   const assignments = await VendorWorkAssignmentModel.find({ projectId, status: { $ne: "superseded" } }).session(session).lean();
   const states = await VendorExecutionStateModel.find({ projectId }).session(session).lean();
   const stateById = new Map(states.map(row => [String(row._id), row]));

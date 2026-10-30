@@ -32,6 +32,24 @@ export type KnowledgeQualityControlOptionKind = "frequency" | "performer";
 /** Public custom-option reference. Runtime validation requires qco_<24 lowercase hex>. */
 export type KnowledgeQualityControlOptionReference = `qco_${string}`;
 
+export interface KnowledgeSpecificationItemName {
+  readonly name: string;
+}
+
+export interface KnowledgeSpecificationItemNameListParams {
+  readonly search?: string;
+  readonly limit?: number;
+  readonly offset?: number;
+  readonly checkName?: string;
+}
+
+export interface KnowledgeSpecificationItemNameListResponse {
+  readonly items: readonly KnowledgeSpecificationItemName[];
+  readonly pagination: { readonly limit: number; readonly offset: number; readonly total: number; readonly hasMore: boolean };
+  readonly exactMatch: KnowledgeSpecificationItemName | null;
+  readonly similarItems: readonly KnowledgeSpecificationItemName[];
+}
+
 export interface KnowledgeActorMetadata {
   createdById: KnowledgeStableId;
   updatedById: KnowledgeStableId;

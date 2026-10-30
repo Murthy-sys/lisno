@@ -86,6 +86,7 @@ export const AI_ESTIMATOR_KNOWLEDGE_REQUEST_BODIES: Readonly<Record<string, Open
 };
 
 export const AI_ESTIMATOR_KNOWLEDGE_RESPONSE_SCHEMAS: Readonly<Record<string, string>> = {
+  [`GET ${admin}/specification-item-names`]: "KnowledgeSpecificationItemNameList",
   [`GET ${admin}/quality-control-options`]: "KnowledgeQualityControlOptionList",
   [`POST ${admin}/quality-control-options`]: "KnowledgeQualityControlOption",
   [`GET ${admin}/baskets/:basketId/sub-baskets`]: "KnowledgeSubBasketPage",
@@ -139,6 +140,7 @@ export const AI_ESTIMATOR_KNOWLEDGE_RESPONSE_SCHEMAS: Readonly<Record<string, st
 
 export const AI_ESTIMATOR_KNOWLEDGE_OPERATION_SUMMARIES: Readonly<Record<string, string>> = {
   [`GET ${admin}/quality-control-options`]: "List reusable Quality Control values by kind",
+  [`GET ${admin}/specification-item-names`]: "Find reusable specification names from current saved Configuration",
   [`POST ${admin}/quality-control-options`]: "Create an append-only reusable Quality Control value",
   [`GET ${admin}/baskets/:basketId/sub-baskets`]: "List a Main Basket’s Sub Baskets",
   [`POST ${admin}/baskets/:basketId/sub-baskets`]: "Create a Sub Basket",
@@ -217,6 +219,12 @@ export const AI_ESTIMATOR_KNOWLEDGE_QUERY_PARAMETERS: Readonly<
     schema: { type: "string", enum: [...AI_ESTIMATOR_KNOWLEDGE_QUALITY_CONTROL_OPTION_KINDS] },
     description: "Returns only custom reusable values of this kind. Built-in values remain code-defined."
   }],
+  [`GET ${admin}/specification-item-names`]: [
+    { name: "search", in: "query", required: false, schema: { type: "string", maxLength: 240 }, description: "Normalized substring search; empty returns all names." },
+    { name: "checkName", in: "query", required: false, schema: { type: "string", minLength: 1, maxLength: 240 }, description: "Checks exact and similar spellings across the entire catalog, independently of search and pagination." },
+    { name: "limit", in: "query", required: false, schema: { type: "integer", minimum: 1, maximum: 100, default: 20 } },
+    { name: "offset", in: "query", required: false, schema: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER, default: 0 } }
+  ],
   [`GET ${admin}/baskets/:basketId/sub-baskets`]: [searchParameter],
   [`GET ${admin}/baskets`]: [searchParameter, masterStatusParameter, includeArchivedParameter],
   [`GET ${admin}/baskets/:basketId/main-lines`]: [searchParameter, includeArchivedParameter],
@@ -399,6 +407,15 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
       items: ref("KnowledgeQualityControlOption"),
       description: "Custom values sorted by normalized display name and stable ID."
     }
+  }),
+  KnowledgeSpecificationItemName: strictObject(["name"], {
+    name: { type: "string", minLength: 1, maxLength: 240 }
+  }),
+  KnowledgeSpecificationItemNameList: strictObject(["items", "pagination", "exactMatch", "similarItems"], {
+    items: { type: "array", maxItems: 100, items: ref("KnowledgeSpecificationItemName") },
+    pagination: ref("Pagination"),
+    exactMatch: { allOf: [ref("KnowledgeSpecificationItemName")], nullable: true },
+    similarItems: { type: "array", maxItems: 5, items: ref("KnowledgeSpecificationItemName") }
   }),
   KnowledgeArchiveRequest: strictObject(["expectedVersion", "reason"], {
     expectedVersion: version,

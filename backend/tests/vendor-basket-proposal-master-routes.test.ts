@@ -36,7 +36,7 @@ function fixture(actor: PublicUser = procurement) {
   app.use(express.json());
   app.use("/api/v1", createVendorBasketProposalRouter(auth, service as unknown as ReturnType<typeof createVendorBasketProposalService>));
   app.use("/api/v1", createAiEstimatorKnowledgeAdminRouter(auth, {
-    reference: shared, item: {}, context: {}, qualityControlOptions: {}
+    reference: shared, item: {}, context: {}, qualityControlOptions: {}, specificationItemNames: {}
   } as unknown as AiEstimatorKnowledgeAdminRouterServices));
   app.use(errorHandler);
   return { app, service, shared };

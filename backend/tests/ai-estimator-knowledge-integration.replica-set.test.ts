@@ -36,6 +36,7 @@ import {
   type AiEstimatorKnowledgeItemService
 } from "../src/services/ai-estimator-knowledge-item.service.js";
 import { createAiEstimatorKnowledgeQualityControlOptionService } from "../src/services/ai-estimator-knowledge-quality-control-option.service.js";
+import { createAiEstimatorKnowledgeSpecificationItemNameService } from "../src/services/ai-estimator-knowledge-specification-item-name.service.js";
 import {
   createAiEstimatorKnowledgeReferenceService
 } from "../src/services/ai-estimator-knowledge-reference.service.js";
@@ -4416,6 +4417,7 @@ function createServices() {
     reference,
     item,
     qualityControlOptions,
+    specificationItemNames: createAiEstimatorKnowledgeSpecificationItemNameService(),
     context: createAiEstimatorKnowledgeContextService({ now: () => NOW })
   };
 }

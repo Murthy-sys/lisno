@@ -31,6 +31,7 @@ export const EXPECTED_AI_ESTIMATOR_KNOWLEDGE_OPERATIONS = [
   { key: "GET /admin/ai-estimator-knowledge/baskets", permission: "procurement.vendor_directory.read", ...readOperation },
   { key: "GET /admin/ai-estimator-knowledge/baskets/:basketId/quality", permission: "ai_estimator_knowledge.configuration.read", ...readOperation },
   { key: "GET /admin/ai-estimator-knowledge/quality-control-options", permission: "ai_estimator_knowledge.configuration.read", ...readOperation },
+  { key: "GET /admin/ai-estimator-knowledge/specification-item-names", permission: "ai_estimator_knowledge.configuration.read", ...readOperation },
   { key: "POST /admin/ai-estimator-knowledge/quality-control-options", permission: "ai_estimator_knowledge.quality_control_options.create", ...adminOperation },
   { key: "POST /admin/ai-estimator-knowledge/baskets", permission: "ai_estimator_knowledge.configuration.create", ...adminOperation },
   { key: "GET /admin/ai-estimator-knowledge/basket-requests", permission: "ai_estimator_knowledge.configuration.read", ...readOperation },

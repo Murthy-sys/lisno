@@ -439,6 +439,11 @@ export interface CurrentMainLineDesignRules {
   designRulesDigest: string;
 }
 
+function currentDesignRulesPayload(section: { applicability?: unknown; payload?: unknown }): unknown {
+  // Historical unconfigured placeholders may omit the otherwise empty payload.
+  return section.applicability === "not_configured" && section.payload === undefined ? {} : section.payload;
+}
+
 /** Workflow obligations resolve independently of pricing/UOM readiness. */
 export async function resolveCurrentMainLineDesignRules(
   mainLineIds: readonly string[], session?: mongoose.ClientSession
@@ -453,7 +458,7 @@ export async function resolveCurrentMainLineDesignRules(
   const revisionQuery = AiEstimatorKnowledgeRevisionModel.find({ _id: { $in: revisionIds } })
     .select({ _id: 1, mainLineId: 1, version: 1, status: 1 });
   const sectionQuery = AiEstimatorKnowledgeSectionModel.find({ revisionId: { $in: revisionIds }, sectionKey: "design" })
-    .select({ revisionId: 1, mainLineId: 1, payload: 1 });
+    .select({ revisionId: 1, mainLineId: 1, applicability: 1, payload: 1 });
   if (session) { revisionQuery.session(session); sectionQuery.session(session); }
   const revisions = await revisionQuery.lean().exec();
   const sections = await sectionQuery.lean().exec();
@@ -464,13 +469,14 @@ export async function resolveCurrentMainLineDesignRules(
     const source = selectCurrentMainLineRevision(line);
     const revision = source ? revisionById.get(source.id) : undefined;
     const design = source ? sectionByRevisionId.get(source.id) : undefined;
+    const designPayload = design ? currentDesignRulesPayload(design) : undefined;
     if (!source || !revision || String(revision.mainLineId) !== id || revision.status !== source.status ||
       !Number.isSafeInteger(revision.version) || revision.version < 1 ||
       !Number.isSafeInteger(line.version) || line.version < 1 ||
-      design && (String(design.mainLineId) !== id || validateDesignRules(design.payload).length)) {
+      design && (String(design.mainLineId) !== id || validateDesignRules(designPayload).length)) {
       throw new ApiError(409, "ESTIMATE_DESIGN_RULES_UNAVAILABLE", "Current Main Line Design rules need correction before continuing.");
     }
-    const rules = normalizeDesignRules(design?.payload);
+    const rules = normalizeDesignRules(designPayload);
     result.set(id, { mainLineId: id, name: String(line.name), itemVersion: Number(line.version),
       revisionId: source.id, revisionVersion: Number(revision.version), designRules: rules, designRulesDigest: designRulesDigest(rules) });
   }
@@ -504,7 +510,7 @@ async function projectLines(
   const pricingQuery = AiEstimatorKnowledgeSectionModel.find({ revisionId: { $in: revisionIds }, sectionKey: "pricing" })
     .select({ revisionId: 1, mainLineId: 1, sectionKey: 1, applicability: 1, "payload.tierConfigurations": 1 });
   const designQuery = AiEstimatorKnowledgeSectionModel.find({ revisionId: { $in: revisionIds }, sectionKey: "design" })
-    .select({ revisionId: 1, mainLineId: 1, payload: 1 });
+    .select({ revisionId: 1, mainLineId: 1, applicability: 1, payload: 1 });
   if (session) { revisionQuery.session(session); overviewQuery.session(session); advancedQuery.session(session); pricingQuery.session(session); designQuery.session(session); }
   // Keep reads sequential when this resolver runs inside an estimate-save transaction.
   const revisions = await revisionQuery.lean().exec();
@@ -565,9 +571,10 @@ async function projectLines(
       typeof uom.name !== "string" || !uom.name ||
       !Number.isSafeInteger(uom.decimalScale) || Number(uom.decimalScale) < 0 || Number(uom.decimalScale) > 3) continue;
     const design = designByRevision.get(revisionId);
+    const designPayload = design ? currentDesignRulesPayload(design) : undefined;
     // Malformed current rules must fail closed, never silently remove obligations.
-    if (design && (String(design.mainLineId) !== id || validateDesignRules(design.payload).length > 0)) continue;
-    const designRules = normalizeDesignRules(design?.payload);
+    if (design && (String(design.mainLineId) !== id || validateDesignRules(designPayload).length > 0)) continue;
+    const designRules = normalizeDesignRules(designPayload);
     const projectTier = (tier: KnowledgeModeTier): EstimatorCatalogueTierPricing => {
       const section = advanced && String(advanced.mainLineId) === id ? projectKnowledgeModeTierSection(advanced, tier) : undefined;
       const configured = section?.applicability === "configured";

@@ -111,14 +111,14 @@ describe("frontend authorization contract", () => {
       "execution"
     ]);
     expect(AUTHORIZATION_POLICY_VERSION).toBe(
-      "2026-10-27.project-manager-consolidation.v1"
+      "2026-10-29.project-manager-estimate-vendors.v1"
     );
   });
 
-  it("publishes all 217 unique permissions in canonical order", () => {
-    expect(PERMISSION_CODES).toHaveLength(217);
-    expect(new Set(PERMISSION_CODES)).toHaveLength(217);
-    expect(PERMISSION_CODES.slice(0, 18)).toEqual(["pm.vendor_notices.respond", "pm.workspace.read", "pm.requests.create", "pm.requests.act", "pm.requests.receive", "pm.selections.act", "pm.supply.sign", "pm.vendors.manage", "pm.certifications.act", "pm.client.manage", "pm.snags.manage", "pm.quality.manage", "pm.performance.read", "pm.leaderboard.read", "pm.bonus.read", "pm.evidence.manage", "pm.evidence.read", "pm.notifications.read"]);
+  it("publishes all 220 unique permissions in canonical order", () => {
+    expect(PERMISSION_CODES).toHaveLength(220);
+    expect(new Set(PERMISSION_CODES)).toHaveLength(220);
+    expect(PERMISSION_CODES.slice(0, 21)).toEqual(["pm.estimates.read", "pm.vendor_suggestions.read", "pm.vendor_suggestions.manage", "pm.vendor_notices.respond", "pm.workspace.read", "pm.requests.create", "pm.requests.act", "pm.requests.receive", "pm.selections.act", "pm.supply.sign", "pm.vendors.manage", "pm.certifications.act", "pm.client.manage", "pm.snags.manage", "pm.quality.manage", "pm.performance.read", "pm.leaderboard.read", "pm.bonus.read", "pm.evidence.manage", "pm.evidence.read", "pm.notifications.read"]);
     expect(PERMISSION_CODES.filter(permission => !permission.startsWith("pm.")).slice(0, 24)).toEqual([...estimateCollaborationPermissions, "ask_lisno.request", "chat.assistant.read", "chat.assistant.request", "procurement.vendor_access.read", "procurement.vendor_access.manage", "execution.tracker.read", "execution.work.update", "execution.staff.manage", "execution.verify", "execution.policy.manage", "execution.notifications.read", "execution.access.retry"]);
     expect(PERMISSION_CODES).toContain("chat.action_types.manage");
     expect(PERMISSION_CODES).toContain("chat.project_name.manage");
@@ -210,8 +210,8 @@ describe("frontend authorization contract", () => {
     ).toEqual(projectFinancePermissions);
   });
 
-  it("keeps the protected frontend registry at exactly 48 routes", () => {
-    expect(ROUTE_REGISTRY).toHaveLength(48);
+  it("keeps the protected frontend registry at exactly 49 routes", () => {
+    expect(ROUTE_REGISTRY).toHaveLength(49);
     expect(ROUTE_REGISTRY.map(({ path }) => path)).toEqual(
       expect.arrayContaining([
         "/execution", "/projects/:projectId/execution",

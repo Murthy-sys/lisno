@@ -9,6 +9,7 @@ const admin = (key: string, permission: string) => ({ key, permission, scope: wo
 
 /** Explicit additions to the established protected route manifest. */
 export const EXPECTED_PROCUREMENT_BASKET_OPERATIONS = [
+  { key: "GET /procurement/projects/:projectId/baskets/:basketId/vendor-suggestions", permission: "procurement.purchase_orders.read", scope: { kind: "non_project", namespace: "project_workflow" }, operationClass: "personal", superAdminBehavior: "deny_personal", availability: "project_workflow" },
   read("GET /admin/program-managers", "projects.procurement_identity.manage"),
   read("GET /admin/projects/:projectId/procurement-identity", "projects.procurement_identity.manage"),
   admin("PATCH /admin/projects/:projectId/procurement-identity", "projects.procurement_identity.manage"),

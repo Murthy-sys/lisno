@@ -67,7 +67,7 @@ export interface AuthPayload {
 }
 
 export const AUTHORIZATION_POLICY_VERSION =
-  "2026-10-27.project-manager-consolidation.v1" as const;
+  "2026-10-29.project-manager-estimate-vendors.v1" as const;
 
 export interface AuthorizationSnapshot {
   readonly role: Role;

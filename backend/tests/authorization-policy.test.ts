@@ -282,8 +282,8 @@ describe("authorization policy", () => {
         [...permissionsForRows([...COMMON_ROWS, ...ADDITIONAL_ROWS[role]]), ...(role === "site_manager" ? ["projects.list", "projects.read"] : [])]
       );
     }
-    expect(PERMISSION_CODES).toHaveLength(217);
-    expect(new Set(PERMISSION_CODES).size).toBe(217);
+    expect(PERMISSION_CODES).toHaveLength(220);
+    expect(new Set(PERMISSION_CODES).size).toBe(220);
     expect(ROLE_PERMISSIONS.super_admin).toEqual(PERMISSION_CODES);
   });
 

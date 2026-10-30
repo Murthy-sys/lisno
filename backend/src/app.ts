@@ -1,3 +1,7 @@
+import { createPMEstimateReadService } from "./services/project-manager/estimates.js";
+import { createPMVendorSuggestionCommandService } from "./services/project-manager/vendor-suggestion-commands.js";
+import { createProcurementMainLineSuggestionService } from "./services/procurement-main-line-suggestions.service.js";
+import { createProjectManagerEstimatesRouter } from "./routes/project-manager-estimates.js";
 import { createProjectManagerWorkspace } from "./services/project-manager/workspace.js";
 import { createPMEvidenceService } from "./services/project-manager/evidence.js";
 import { createProjectManagerRequestsSupplyService } from "./services/project-manager/requests.js";
@@ -157,6 +161,7 @@ import { createAuditService } from "./services/audit.service.js";
 import { createAiEstimatorKnowledgeContextService } from "./services/ai-estimator-knowledge-context.service.js";
 import { createAiEstimatorKnowledgeItemService } from "./services/ai-estimator-knowledge-item.service.js";
 import { createAiEstimatorKnowledgeQualityControlOptionService } from "./services/ai-estimator-knowledge-quality-control-option.service.js";
+import { createAiEstimatorKnowledgeSpecificationItemNameService } from "./services/ai-estimator-knowledge-specification-item-name.service.js";
 import { createAiEstimatorKnowledgeReferenceService } from "./services/ai-estimator-knowledge-reference.service.js";
 import { createVendorBasketRequestService } from "./services/vendor-basket-request.service.js";
 import { createVendorBasketRequestRouter } from "./routes/vendor-basket-requests.js";
@@ -284,6 +289,7 @@ export function createApp(dependencies: AppDependencies) {
   const ocrRetryPolicy =
     dependencies.ocrRetryPolicy ?? defaultExtractionRetryPolicy;
   const auditService = createAuditService(repository);
+  const aiEstimatorKnowledgeSpecificationItemNameService = createAiEstimatorKnowledgeSpecificationItemNameService();
   const aiEstimatorKnowledgeQualityControlOptionService =
     createAiEstimatorKnowledgeQualityControlOptionService({
       audit: auditService,
@@ -488,6 +494,9 @@ export function createApp(dependencies: AppDependencies) {
     procurement: pmRequests.procurement, selections: pmRequests.selections, supply: pmRequests.supply,
     vendors: pmVendors.vendors, client: pmClient.client, snagging: pmClient.snagging, quality: pmQuality.quality
   } });
+  const pmEstimateReads = createPMEstimateReadService();
+  const pmSuggestionCommands = createPMVendorSuggestionCommandService(pmDependencies);
+  const procurementMainLineSuggestions = createProcurementMainLineSuggestionService();
   const pmEvidence = createPMEvidenceService(storage);
   const vendorOnboarding = createVendorWorkOnboardingService({ repository, audit: auditService, clock,
     deliveryEnabled: dependencies.enableVendorAccessDelivery,
@@ -690,7 +699,8 @@ export function createApp(dependencies: AppDependencies) {
       reference: aiEstimatorKnowledgeReferenceService,
       item: aiEstimatorKnowledgeItemService,
       context: aiEstimatorKnowledgeContextService,
-      qualityControlOptions: aiEstimatorKnowledgeQualityControlOptionService
+      qualityControlOptions: aiEstimatorKnowledgeQualityControlOptionService,
+      specificationItemNames: aiEstimatorKnowledgeSpecificationItemNameService
     })
   );
   app.use(
@@ -733,6 +743,7 @@ export function createApp(dependencies: AppDependencies) {
   app.use("/api/v1", createProjectPurchaseOrderBasketMonitorRouter(authService, projectPurchaseOrderBasketMonitorService));
   app.use("/api/v1", createProjectCompletionRouter(authService, projectCompletionService));
   app.use("/api/v1", createSiteCompletionRouter(authService, siteCompletionService));
+  app.use("/api/v1", createProjectManagerEstimatesRouter(authService, pmEstimateReads, pmSuggestionCommands, procurementMainLineSuggestions));
   app.use("/api/v1", createProjectManagerRouter(authService, pmWorkspace, pmEvidence, maxUploadBytes));
   app.use("/api/v1", createProjectManagerRequestsRouter(authService, pmRequests));
   app.use("/api/v1", createProjectManagerClientRouter(authService, pmClient));

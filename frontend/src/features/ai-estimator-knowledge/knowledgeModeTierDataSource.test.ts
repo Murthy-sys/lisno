@@ -12,6 +12,13 @@ const section = { id: "advanced", mainLineId: "line", revisionId: "revision", se
 beforeEach(() => vi.clearAllMocks());
 
 describe("Mode tier data source", () => {
+  it("inherits only an explicitly provided specification catalog capability", () => {
+    expect(knowledgeModeTierDataSource("premium").specificationItemNames).toBe(liveKnowledgeEditorDataSource.specificationItemNames);
+    const { specificationItemNames: _catalog, ...source } = liveKnowledgeEditorDataSource;
+    const isolated = { ...source, scopeKey: "private-proposal" };
+    expect(knowledgeModeTierDataSource("signature", isolated).specificationItemNames).toBeUndefined();
+    expect(knowledgeModeTierDataSource("functional", isolated).specificationItemNames).toBeUndefined();
+  });
   it("keeps Signature on the existing source and scopes independent tier caches", () => {
     expect(knowledgeModeTierDataSource("signature")).toBe(liveKnowledgeEditorDataSource);
     const premium = knowledgeModeTierDataSource("premium"); const functional = knowledgeModeTierDataSource("functional");

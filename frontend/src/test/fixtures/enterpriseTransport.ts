@@ -1,3 +1,5 @@
+import { enterpriseBasketRecommendations } from "./enterprisePMEstimateData";
+import { createEnterprisePMEstimates } from "./enterprisePMEstimateData";
 import { createEnterpriseComponentAmounts } from "./enterpriseComponentAmountsData";
 import type { EstimateDraftInput } from "../../features/leads/leadsApi";
 import type { EstimateInHousePreviewLine } from "../../../../shared/estimation/estimateComponentPricing";
@@ -12,6 +14,7 @@ import type { KnowledgePreview } from "../../features/ai-estimator-knowledge/kno
 import { createEnterpriseEstimateModes } from "./enterpriseEstimateModesData";
 import { chatTestPage, chatTestPolicy, chatTestSummary } from "../../features/messages/projectChatFixtures";
 import { createEnterpriseMessages } from "./enterpriseMessagesData";
+import { createEnterpriseProjectManager } from "./enterpriseProjectManagerData";
 
 export type EnterpriseState = "populated" | "empty" | "error" | "denied" | "loading" | "mutation-error";
 export interface EnterpriseScenario { route: string; role: Role; state: EnterpriseState; }
@@ -148,6 +151,18 @@ async function jsonBody(input: RequestInfo | URL, init?: RequestInit): Promise<u
 export function installEnterpriseTransport(scenario: EnterpriseScenario) {
   const requests: EnterpriseRequest[] = [];
   const scenarioParams = new URL(scenario.route, window.location.origin).searchParams;
+  const projectManager = scenario.role === "site_manager" && scenarioParams.get("qaProjectDashboard") === "ready"
+    ? createEnterpriseProjectManager({ empty: scenario.state === "empty", paging: scenarioParams.get("qaProjectDashboardPaging") === "ready", detail: scenarioParams.get("qaProjectDetail") === "ready" }) : null;
+  const pmEstimates = scenario.role === "site_manager" && scenarioParams.get("qaPMEstimates") === "ready"
+    ? createEnterprisePMEstimates(scenario.state === "empty", scenarioParams.get("qaPMLinks")) : null;
+  const updatePMVendorLinks = (event: Event) => pmEstimates?.setLinkState((event as CustomEvent<{ state?: string }>).detail?.state);
+  if (pmEstimates) window.addEventListener("enterprise-qa-pm-vendor-links", updatePMVendorLinks);
+  let projectManagerState: "ready" | "error" | "denied" = "ready";
+  const updateProjectManagerState = (event: Event) => {
+    const state = (event as CustomEvent<{ state?: string }>).detail?.state;
+    if (state === "ready" || state === "error" || state === "denied") projectManagerState = state;
+  };
+  if (projectManager) window.addEventListener("enterprise-qa-project-manager", updateProjectManagerState);
   const messages = scenarioParams.get("qaMessages") === "ready" ? createEnterpriseMessages({ role: scenario.role, state: scenario.state, writable: scenarioParams.get("qaChatHours") !== "closed" }) : null;
   const componentAmounts = scenarioParams.get("qaComponentAmounts") === "ready" ? createEnterpriseComponentAmounts() : null;
   let componentPreviewFailure = false;
@@ -165,9 +180,15 @@ export function installEnterpriseTransport(scenario: EnterpriseScenario) {
     capabilities: { canSend: false, canManageParticipants: false, canManageIssues: false, canRenameProject: false }
   });
   const chatStreamStops = new Set<() => void>();
-  const readProjectManager = (path: string): unknown => {
+  const readProjectManager = (path: string, params: URLSearchParams): unknown => {
     if (scenario.role !== "site_manager") return undefined;
     if (path === "/notifications") return { items: [], unreadCount: 0, pagination: { limit: 20, offset: 0, total: 0, hasMore: false } };
+    const populated = pmEstimates?.read(path, params) ?? projectManager?.read(path, params);
+    if (populated !== undefined) {
+      if (projectManagerState === "error") return failure(503, "SYNTHETIC_UNAVAILABLE", "Synthetic QA: project refresh failed.");
+      if (projectManagerState === "denied") return failure(404, "PM_NOT_FOUND", "Synthetic QA: your project assignment changed.");
+      return populated;
+    }
     if (path === "/project-manager/projects") return { items: [], total: 0,
       counts: { active: 0, atRisk: 0, critical: 0, setup: 0, onTrack: 0, incomplete: 0 },
       alerts: [], alertTotal: 0, calculatedAt: "2026-10-27T09:00:00.000Z" };
@@ -307,6 +328,14 @@ export function installEnterpriseTransport(scenario: EnterpriseScenario) {
       log(method, path, 200);
       return Response.json({ data: response });
     }
+    if (pmEstimates && method !== "GET" && path.includes("/pm/vendor-suggestions")) {
+      if (scenario.state === "mutation-error") { log(method, path, 409); return failure(409, "SYNTHETIC_CONFLICT", "Synthetic QA: this suggestion changed. Refresh and review your note."); }
+      const data = pmEstimates.mutate(method, path, await jsonBody(input, init));
+      if (data !== undefined) {
+        log(method, path, data instanceof Response ? data.status : 200);
+        return data instanceof Response ? data : Response.json({ data });
+      }
+    }
     if (method !== "GET") { log(method, path, 422); return failure(422, "SYNTHETIC_MUTATION_FAILURE", "Synthetic QA: the change was not saved. Your values remain available to review."); }
     if (path === "/auth/me") { log(method, path, 200); return Response.json({ data: { id: scenario.role === "designer" ? "user-designer-ananya" : `${scenario.role}-1`, name: "Synthetic workspace reviewer", email: "reviewer@lisno.example", role: scenario.role } }); }
     if (path === "/auth/authorization") {
@@ -339,12 +368,23 @@ export function installEnterpriseTransport(scenario: EnterpriseScenario) {
       log(method, path, 200);
       return new Response(stream, { headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" } });
     }
+    if (scenarioParams.get("qaPMRecommendations") === "ready" && path === "/projects/project-one/design-requirements") {
+      log(method, path, 200); return Response.json({ data: { version: 0, sourceToken: "synthetic-recommendation-scope", entries: [], blockers: [], canReadInternal: true } });
+    }
+    const recommendationPath = path.match(/^\/procurement\/projects\/([^/]+)\/baskets\/([^/]+)\/vendor-suggestions$/u);
+    if (recommendationPath && scenario.role === "procurement") {
+      log(method, path, 200);
+      const basket = enterpriseDataFor(path.slice(0, -"/vendor-suggestions".length), url.searchParams, scenario, projectRates);
+      return Response.json({ data: scenarioParams.get("qaPMRecommendations") === "ready" && basket
+        ? enterpriseBasketRecommendations(basket as Parameters<typeof enterpriseBasketRecommendations>[0], url.searchParams)
+        : { items: [], total: 0, limit: Number(url.searchParams.get("limit") ?? 20), offset: Number(url.searchParams.get("offset") ?? 0), mainLines: [] } });
+    }
     const basketNotifications = path === "/admin/ai-estimator-knowledge/basket-request-notifications"
       ? scenario.role === "super_admin"
         ? { items: [], unreadCount: 0, pagination: { limit: 20, offset: Number(url.searchParams.get("offset") ?? 0), total: 0, hasMore: false } }
         : failure(403, "FORBIDDEN", "Super Admin access is required.")
       : undefined;
-    const data = componentAmounts?.read(path) ?? basketNotifications ?? readProjectManager(path) ?? readRecommendationChat(path) ?? estimateModes?.read(path, url.searchParams) ?? enterpriseDataFor(path, url.searchParams, scenario, projectRates);
+    const data = componentAmounts?.read(path) ?? basketNotifications ?? readProjectManager(path, url.searchParams) ?? readRecommendationChat(path) ?? estimateModes?.read(path, url.searchParams) ?? enterpriseDataFor(path, url.searchParams, scenario, projectRates);
     if (data === undefined) { log(method, path, 501, true); return failure(501, "UNEXPECTED_QA_REQUEST", `No synthetic response registered for ${path}.`); }
     if (scenario.state === "loading") { log(method, path, 0); return new Promise<Response>((_resolve, reject) => { const signal = init?.signal ?? (input instanceof Request ? input.signal : undefined); if (signal?.aborted) reject(new DOMException("Aborted", "AbortError")); signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true }); }); }
     if (scenario.state === "error") { log(method, path, 503); return failure(503, "SYNTHETIC_UNAVAILABLE", "Synthetic QA: this information could not be loaded."); }
@@ -356,5 +396,5 @@ export function installEnterpriseTransport(scenario: EnterpriseScenario) {
   XMLHttpRequest.prototype.setRequestHeader = function() {};
   XMLHttpRequest.prototype.send = function() { const request = xhrRequests.get(this) ?? { method: "UNKNOWN", path: "unknown-upload" }; log(request.method, request.path, 0); queueMicrotask(() => this.dispatchEvent(new ProgressEvent("error"))); };
   XMLHttpRequest.prototype.abort = function() { this.dispatchEvent(new ProgressEvent("abort")); };
-  return { requests, restore: () => { messages?.dispose(); window.removeEventListener("enterprise-qa-component-preview", componentPreviewState); for (const stop of chatStreamStops) stop(); window.removeEventListener("enterprise-qa-estimate-mode-rates", updateEstimateConfiguration); window.fetch = originals.fetch; tokenStorage.get = originals.get; tokenStorage.set = originals.set; tokenStorage.clear = originals.clear; XMLHttpRequest.prototype.open = originals.open; XMLHttpRequest.prototype.send = originals.send; XMLHttpRequest.prototype.setRequestHeader = originals.setRequestHeader; XMLHttpRequest.prototype.abort = originals.abort; alert.remove(); } };
+  return { requests, restore: () => { messages?.dispose(); window.removeEventListener("enterprise-qa-component-preview", componentPreviewState); window.removeEventListener("enterprise-qa-project-manager", updateProjectManagerState); window.removeEventListener("enterprise-qa-pm-vendor-links", updatePMVendorLinks); for (const stop of chatStreamStops) stop(); window.removeEventListener("enterprise-qa-estimate-mode-rates", updateEstimateConfiguration); window.fetch = originals.fetch; tokenStorage.get = originals.get; tokenStorage.set = originals.set; tokenStorage.clear = originals.clear; XMLHttpRequest.prototype.open = originals.open; XMLHttpRequest.prototype.send = originals.send; XMLHttpRequest.prototype.setRequestHeader = originals.setRequestHeader; XMLHttpRequest.prototype.abort = originals.abort; alert.remove(); } };
 }

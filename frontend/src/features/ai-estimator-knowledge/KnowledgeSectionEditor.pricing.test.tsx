@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -71,9 +72,10 @@ function PricingEditorHarness({
   const [payload, setPayload] = useState(initialPayload);
   const [valid, setValid] = useState(true);
   const [validationAttempt, setValidationAttempt] = useState(0);
+  const [queryClient] = useState(() => new QueryClient({ defaultOptions: { queries: { retry: false } } }));
 
   return (
-    <>
+    <QueryClientProvider client={queryClient}>
       <KnowledgeSectionEditor
         sectionKey="pricing"
         payload={payload}
@@ -95,7 +97,7 @@ function PricingEditorHarness({
       <output data-testid="pricing-payload">{JSON.stringify(payload)}</output>
       <output data-testid="pricing-validity">{valid ? "valid" : "invalid"}</output>
       <button type="button" onClick={() => setValidationAttempt((attempt) => attempt + 1)}>Attempt save</button>
-    </>
+    </QueryClientProvider>
   );
 }
 

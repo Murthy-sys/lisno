@@ -15,6 +15,7 @@ import {
   listKnowledgeItems,
   listKnowledgeMasters,
   listKnowledgeQualityControlOptions,
+  listKnowledgeSpecificationItemNames,
   permanentlyDeleteKnowledgeMainLine,
   permanentlyDeleteKnowledgeBasket,
   permanentlyDeleteKnowledgeSubBasket,
@@ -29,6 +30,15 @@ import {
 afterEach(() => vi.restoreAllMocks());
 
 describe("knowledge API", () => {
+  it("encodes paged item-name lookup and independent candidate checks with local loading", async () => {
+    const get = vi.spyOn(apiClient, "get").mockResolvedValue({});
+    const signal = new AbortController().signal;
+    await listKnowledgeSpecificationItemNames({ search: "MDF & board", limit: 20, offset: 40, checkName: "Plywod" }, { signal });
+    expect(get).toHaveBeenCalledWith(
+      "/admin/ai-estimator-knowledge/specification-item-names?checkName=Plywod&limit=20&offset=40&search=MDF+%26+board",
+      { signal, showGlobalLoader: false }
+    );
+  });
   it("encodes margin parent/child paths and preserves mode and snapshot token", async () => {
     const get = vi.spyOn(apiClient, "get").mockResolvedValue({});
     const post = vi.spyOn(apiClient, "post").mockResolvedValue({});

@@ -39,6 +39,7 @@ export const {
   getKnowledgeSubBasketDeletionImpact,
   permanentlyDeleteKnowledgeSubBasket,
   listKnowledgeQualityControlOptions,
+  listKnowledgeSpecificationItemNames,
   createKnowledgeQualityControlOption,
   updateKnowledgeBasketQuality
 } = createKnowledgeApi(apiClient);

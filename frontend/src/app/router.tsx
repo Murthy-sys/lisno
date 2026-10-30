@@ -1,3 +1,4 @@
+import { ProjectManagerEstimationsPage } from "../features/project-manager/ProjectManagerEstimationsPage";
 import { ProjectManagerDashboard, ProjectManagerProjectPage } from "../features/project-manager/ProjectManagerWorkspace";
 import { ProjectManagerLeaderboard, ProjectManagerBonus } from "../features/project-manager/PMPerformancePages";
 import {
@@ -429,6 +430,7 @@ export function AppRoutes() {
         <Route path="/project-manager/leaderboard" element={registeredElement("/project-manager/leaderboard", <ProjectManagerLeaderboard />)} />
         <Route path="/project-manager/bonus" element={registeredElement("/project-manager/bonus", <ProjectManagerBonus />)} />
         <Route path="/execution" element={registeredElement("/execution", <ExecutionPortfolioRoute />)} />
+        <Route path="/projects/:projectId/estimations" element={registeredElement("/projects/:projectId/estimations", <ProjectManagerEstimationsPage />)} />
         <Route path="/projects/:projectId/execution" element={registeredElement("/projects/:projectId/execution", <ProjectExecutionRoute />)} />
         <Route path="/vendor" element={registeredElement("/vendor", <VendorWorkPage />)} />
         <Route path="/procurement" element={registeredElement("/procurement", <ProcurementWorkspace />)} />

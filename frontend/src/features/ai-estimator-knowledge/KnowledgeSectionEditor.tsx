@@ -1,4 +1,4 @@
-import type { KnowledgeEditorDataSource } from "./knowledgeEditorDataSource";
+import { liveKnowledgeEditorDataSource, type KnowledgeEditorDataSource } from "./knowledgeEditorDataSource";
 import { Fragment, useEffect, useMemo, useRef, type ReactNode } from "react";
 
 import { Button } from "../../components/ui/Button";
@@ -336,6 +336,7 @@ export function KnowledgeSectionEditor({
       {ARRAY_FIELDS[sectionKey].filter((field) => sectionKey !== "recommendations" || objectArray(payload[field]).length > 0).map((field) => field === "specifications" ? (
         <Fragment key={`${specificationScopeKey ?? resetKey}-${field}`}>
           <KnowledgeSpecificationBuilder
+            itemNameLookup={(dataSource ?? liveKnowledgeEditorDataSource).specificationItemNames}
             value={payload.specifications}
             brands={payload.brands}
             savedValue={savedPayload?.specifications}

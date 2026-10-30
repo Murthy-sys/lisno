@@ -8,11 +8,21 @@ import type {
 import type {
   KnowledgeMasterType,
   KnowledgeQualityControlOptionKind,
+  KnowledgeSpecificationItemNameListParams,
   KnowledgeSectionKey
 } from "./knowledgeTypes";
+import { normalizeSpecificationItemName } from "../../../../shared/knowledge/knowledgeSpecificationItemNames";
 
 export const knowledgeQueryKeys = {
   all: ["ai-estimator-knowledge"] as const,
+  specificationItemNames: () => ["ai-estimator-knowledge", "specification-item-names"] as const,
+  specificationItemNameList: (params: KnowledgeSpecificationItemNameListParams = {}) =>
+    ["ai-estimator-knowledge", "specification-item-names", {
+      search: normalizeSpecificationItemName(params.search ?? ""),
+      limit: params.limit ?? 20,
+      offset: params.offset ?? 0,
+      checkName: normalizeSpecificationItemName(params.checkName ?? "")
+    }] as const,
   vendorDetails: () => ["private-procurement-vendors"] as const,
   vendorDetail: (id: string) => ["private-procurement-vendors", id] as const,
   vendorBaseline: (id: string) => ["private-procurement-vendors", id, "allocation-baseline"] as const,

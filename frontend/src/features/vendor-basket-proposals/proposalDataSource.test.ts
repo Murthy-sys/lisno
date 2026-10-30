@@ -3,6 +3,7 @@ import { apiClient } from "../../api/client";
 import type { KnowledgeSubBasket } from "../ai-estimator-knowledge/knowledgeTypes";
 import { proposalFixture, proposalHierarchyFixture } from "./proposal.fixtures";
 import { createProposalDataSource } from "./proposalDataSource";
+import { knowledgeModeTierDataSource } from "../ai-estimator-knowledge/knowledgeModeTierDataSource";
 import type { ProposalDetail } from "./proposalTypes";
 
 function subBasket(id: string, basketId: string, name = id): KnowledgeSubBasket {
@@ -19,6 +20,14 @@ function source(detail: ProposalDetail) {
 afterEach(() => vi.restoreAllMocks());
 
 describe("proposal recommendation Sub-Basket catalog", () => {
+  it("does not inherit global item-name discovery in any Mode tier", () => {
+    const get = vi.spyOn(apiClient, "get");
+    const { adapter } = source(proposalFixture());
+    for (const tier of ["signature", "premium", "functional"] as const) {
+      expect(knowledgeModeTierDataSource(tier, adapter).specificationItemNames).toBeUndefined();
+    }
+    expect(get).not.toHaveBeenCalled();
+  });
   it("offers live siblings and the proposed child under an existing parent, across catalog pages", async () => {
     const detail = proposalFixture({ basketId: "parent-one", target: { kind: "new_sub_basket", basketId: "parent-one" } });
     const get = vi.spyOn(apiClient, "get")
