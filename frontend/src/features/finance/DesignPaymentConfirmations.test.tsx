@@ -32,6 +32,29 @@ beforeEach(() => {
 });
 
 describe("DesignPaymentConfirmations", () => {
+  it("keeps v3 payment unavailable until server-approved quotation and design prerequisites are satisfied", () => {
+    asSuperAdmin();
+    setup({ ...projectWorkflow, initialPayment: { ...projectWorkflow.initialPayment!, workflowVersion: 3, status: "awaiting_estimate_approval", canConfirm: false } });
+    expect(screen.getByText("Awaiting quotation and design approval")).toBeVisible();
+    expect(screen.getByText(/After the uploaded design is approved, Super Admin confirms/)).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Mark initial payment received" })).not.toBeInTheDocument();
+  });
+  it("keeps v3 Finance access read-only even when a cached capability says payment can be confirmed", async () => {
+    server.use(http.get("/api/v1/design-workflow/payment-confirmations", () => HttpResponse.json({ data: [{ projectId: "v3", projectName: "Quotation Project", confirmedAt: null, version: 4, status: "awaiting_payment", canConfirm: true, workflowVersion: 3 }] })));
+    setup();
+    expect(await screen.findByRole("heading", { name: "Quotation Project" })).toBeVisible();
+    expect(screen.queryByRole("form", { name: "Record initial payment for Quotation Project" })).not.toBeInTheDocument();
+  });
+  it("records an allowed v3 Super Admin receipt without restarting design tasks", async () => {
+    asSuperAdmin(); const post = vi.spyOn(apiClient, "post").mockResolvedValue({ version: 5 });
+    setup({ ...projectWorkflow, initialPayment: { ...projectWorkflow.initialPayment!, workflowVersion: 3, version: 4 } });
+    const user = userEvent.setup();
+    await user.type(screen.getByRole("textbox", { name: "Payment reference / receipt note" }), "Verified quotation receipt");
+    await user.click(screen.getByRole("button", { name: "Mark initial payment received" }));
+    expect(await screen.findByText("Initial payment confirmed for the final estimate. Work orders can be issued when procurement checks are complete.")).toBeVisible();
+    expect(post).toHaveBeenCalledOnce();
+    expect(screen.queryByText(/countdown has started/)).not.toBeInTheDocument();
+  });
   it("counts unconfirmed receipts including final-estimate attestations without exposing summary mutations", async () => {
     asSuperAdmin();
     server.use(http.get("/api/v1/design-workflow/payment-confirmations", () => HttpResponse.json({ data: [

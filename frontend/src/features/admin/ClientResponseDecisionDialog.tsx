@@ -1,5 +1,6 @@
 import { projectStatusKeys } from "../project-status/projectStatusApi";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { estimateRevisionKeys } from "../leads/estimateRevisionsApi";
 import {
   useRef,
   useState,
@@ -83,6 +84,7 @@ export function ClientResponseDecisionDialog({
       ),
     onSuccess: async () => {
       await Promise.all([
+        queryClient.invalidateQueries({ queryKey: estimateRevisionKeys.all }),
         queryClient.invalidateQueries({
           queryKey: estimateClientResponseKeys.all
         }),
@@ -113,6 +115,7 @@ export function ClientResponseDecisionDialog({
         await queryClient.invalidateQueries({
           queryKey: estimateClientResponseKeys.all
         });
+        await queryClient.invalidateQueries({ queryKey: estimateRevisionKeys.all });
         return;
       }
       setRequestError(

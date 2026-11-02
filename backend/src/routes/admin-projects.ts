@@ -1,3 +1,4 @@
+import { projectInitiationMetadataShape, projectInitiationNextActionSchema } from "../domain/project-initiation-metadata.js";
 import { Router } from "express";
 import { z } from "zod";
 import { cityNameSchema } from "../domain/procurement-city.js";
@@ -10,6 +11,7 @@ import type { AdminProjectService } from "../services/admin-project.service.js";
 import type { AuthService } from "../services/auth.service.js";
 
 const initiationSchema = z.object({
+  ...projectInitiationMetadataShape,
   initiationKey: z.string().regex(/^[A-Za-z0-9_-]{8,128}$/).optional(),
   clientName: z.string().trim().min(1),
   clientEmail: z.string().trim().email(),
@@ -21,7 +23,7 @@ const initiationSchema = z.object({
   source: z.string().trim().min(1).max(200).optional(),
   budgetMin: z.number().nonnegative().optional(),
   budgetMax: z.number().nonnegative().optional(),
-  nextAction: z.string().trim().min(1),
+  nextAction: projectInitiationNextActionSchema,
   nextActionAt: z.string().datetime({ offset: true }),
   estimatorId: z.string().trim().min(1).optional(),
   salesManagerId: z.string().trim().min(1).optional()

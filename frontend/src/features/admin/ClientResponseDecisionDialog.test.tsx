@@ -284,6 +284,7 @@ describe("ClientResponseDecisionDialog", () => {
     ).toHaveTextContent("Client response recorded.");
     await waitFor(() => {
       expect(invalidate).toHaveBeenCalledWith({ queryKey: ["estimate-client-responses"] });
+      expect(invalidate).toHaveBeenCalledWith({ queryKey: ["estimates", "revisions"] });
       expect(invalidate).toHaveBeenCalledWith({ queryKey: ["admin-projects"] });
       expect(invalidate).toHaveBeenCalledWith({
         queryKey: ["project-finance", "projects"]

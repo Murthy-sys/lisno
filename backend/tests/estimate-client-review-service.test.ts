@@ -11,6 +11,7 @@ import {
 } from "vitest";
 
 import { sha256Hex } from "../src/domain/estimate-client-review.js";
+import { createEstimateProposal } from "../src/domain/estimate-proposal.js";
 import { ApiError } from "../src/middleware/errors.js";
 import { EstimateModel } from "../src/models/Estimate.js";
 import { EstimateClientResponseProofModel } from "../src/models/EstimateClientResponseProof.js";
@@ -366,13 +367,16 @@ describe("estimate client review scoped queries", () => {
   });
 
   it("returns historical detail from the immutable round projection", async () => {
+    const original = detailRow();
+    const proposal = createEstimateProposal({ issuedAt: NOW, estimateId: original.estimate.id, projectNumber: "Lisno000076" });
+    const frozen = { ...original, estimateSnapshot: { ...original.estimateSnapshot, proposal } };
     const aggregateSpy = vi
       .spyOn(EstimateClientReviewRoundModel, "aggregate")
-      .mockReturnValue(aggregateResult([detailRow()]) as never);
+      .mockReturnValue(aggregateResult([frozen]) as never);
     const service = createEstimateClientReviewService({ storage: storageDouble() });
 
     await expect(service.detail(actors.admin, "round-1")).resolves.toEqual({
-      ...detailRow(),
+      ...frozen,
       deliveryAttemptedAt: NOW.toISOString(),
       deliveredAt: LATER.toISOString(),
       createdAt: NOW.toISOString()
@@ -537,35 +541,48 @@ describe("estimate client review scoped queries", () => {
 
   it("authorizes the current Client PDF before storage and rejects historical/foreign rounds identically", async () => {
     const storage = storageDouble();
+    const renditions = { readForRound: vi.fn(async () => ({ filename: "estimate-current.pdf", mimeType: "application/pdf" as const,
+      bytes: Buffer.from("safe client rendition") })) };
     const aggregateSpy = vi.spyOn(EstimateClientReviewRoundModel, "aggregate");
     aggregateSpy
       .mockReturnValueOnce(
         aggregateResult([
           {
-            storageReference: "private/client-current.pdf",
-            filename: "estimate-current.pdf",
-            mimeType: "application/pdf"
+            _id: "round-current", estimateId: "estimate-current", estimateVersion: 3,
+            recipientEmail: actors.client.email, estimateSnapshot: { clientName: "Client" }
           }
         ]) as never
       )
       .mockReturnValueOnce(aggregateResult([]) as never);
-    const service = createEstimateClientReviewService({ storage });
+    const service = createEstimateClientReviewService({ storage, renditions });
 
     await expect(service.readClientPdf(actors.client, "round-current")).resolves.toEqual({
       filename: "estimate-current.pdf",
       mimeType: "application/pdf",
-      bytes: Buffer.from("bytes:private/client-current.pdf")
+      bytes: Buffer.from("safe client rendition")
     });
     const error = await service
       .readClientPdf(actors.client, "round-historical")
       .catch((value) => value);
     expectSafeNotFound(error);
-    expect(storage.read).toHaveBeenCalledTimes(1);
+    expect(renditions.readForRound).toHaveBeenCalledTimes(1);
+    expect(storage.read).not.toHaveBeenCalled();
 
     const text = pipelineText(aggregateSpy.mock.calls[0]![0]);
     expect(text).toContain('"emailNormalized":"client@example.com"');
     expect(text).toContain('"sendGeneration":-1');
     expect(text).toContain('"$latestRound._id","$_id"');
+  });
+
+  it("does not fall back to the internal PDF when safe rendition support is unavailable", async () => {
+    const storage = storageDouble();
+    vi.spyOn(EstimateClientReviewRoundModel, "aggregate").mockReturnValueOnce(aggregateResult([
+      { _id: "round-current", estimateId: "estimate-current", estimateVersion: 3, recipientEmail: actors.client.email,
+        estimateSnapshot: detailRow().estimateSnapshot, storageReference: "private/original.pdf" }
+    ]) as never);
+    await expect(createEstimateClientReviewService({ storage }).readClientPdf(actors.client, "round-current"))
+      .rejects.toMatchObject({ code: "QUOTATION_RENDITION_UNAVAILABLE" });
+    expect(storage.read).not.toHaveBeenCalled();
   });
 
   it("allows the owning Sales actor to read proof bytes", async () => {

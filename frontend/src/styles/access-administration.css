@@ -529,6 +529,13 @@
   gap: var(--space-1);
 }
 
+fieldset.admin-project-form__estimator {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
 .admin-project-form__estimator-option span {
   color: var(--color-text-muted);
 }

@@ -1114,6 +1114,12 @@
 }
 
 /* Reference-aligned configured estimate builder. Kept local to this workflow. */
+.ui-app-shell.ui-common-shell[data-role] > .ui-workspace:has(> .estimate-workspace--revision-workspace) {
+  padding: max(6px, env(safe-area-inset-top))
+    max(6px, env(safe-area-inset-right))
+    max(6px, env(safe-area-inset-bottom))
+    max(6px, env(safe-area-inset-left));
+}
 .estimate-workspace--item-view {
   --est-ink: #101a3e;
   --est-muted: #5b6883;
@@ -1139,6 +1145,11 @@
   display: grid; grid-template-columns: minmax(0, 1fr) auto 200px;
   align-items: center; gap: 20px; min-height: 82px; padding: 0 0 12px;
   border-bottom: 1px solid var(--est-line); overflow: visible;
+}
+.estimate-workspace__project-number {
+  display: block;
+  margin-block-start: 4px;
+  overflow-wrap: anywhere;
 }
 .ui-app-shell[data-role] .estimate-workspace--item-view .estimate-workspace__title { min-width: 0; }
 .ui-app-shell[data-role] .estimate-workspace--item-view .estimate-workspace__title .eyebrow {
@@ -1572,6 +1583,298 @@
 }
 @media (max-width: 430px) {
   .ui-app-shell[data-role] .estimate-workspace--item-view:has(.estimate-workspace__builder-area) .estimate-workspace__header { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* Dense item-selection workspace. Other estimate views keep their existing geometry. */
+.estimate-workspace.estimator-dashboard.estimate-workspace--compact-builder {
+  --estimate-compact-control: 32px;
+  --estimate-compact-input-text: 12px;
+  --estimate-compact-step: 26px;
+  --estimate-compact-menu: 24px;
+  --estimate-compact-thumb: 38px;
+  --estimate-compact-fields: 386px;
+  gap: 6px;
+}
+.estimate-workspace--compact-builder :is(input, button, select) { scroll-margin-block: 8px; }
+.ui-app-shell[data-role] .estimator-dashboard.estimate-workspace--compact-builder .estimate-workspace__header {
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  min-height: 0;
+  padding: 0 0 6px;
+}
+.estimate-workspace--compact-builder .estimate-workspace__heading-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.ui-app-shell[data-role] .estimator-dashboard.estimate-workspace--compact-builder .estimate-workspace__back {
+  flex: 0 1 auto;
+  min-block-size: var(--estimate-compact-control);
+  min-height: var(--estimate-compact-control);
+  max-width: 160px;
+  padding: 2px 0;
+  font-size: 11px;
+  line-height: 1.3;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.estimate-workspace--compact-builder .estimate-workspace__back svg { flex: none; }
+.estimate-workspace--compact-builder .estimate-workspace__title { flex: 1; }
+.ui-app-shell[data-role] .estimator-dashboard.estimate-workspace--compact-builder .estimate-workspace__title .eyebrow {
+  margin: 0 0 1px;
+  font-size: 11px;
+  line-height: 1.3;
+}
+.ui-app-shell[data-role] .estimator-dashboard.estimate-workspace--compact-builder .estimate-workspace__header h1 {
+  font-size: 19px;
+  line-height: 1.2;
+  letter-spacing: -.025em;
+}
+.ui-app-shell[data-role] .estimator-dashboard.estimate-workspace--compact-builder .estimate-workspace__project-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1px 10px;
+  margin: 2px 0 0;
+  font-size: 11px;
+  line-height: 1.35;
+}
+.estimate-workspace--compact-builder .estimate-workspace__project-location { min-width: 0; overflow-wrap: anywhere; }
+.estimate-workspace--compact-builder .estimate-workspace__project-number { margin: 0; }
+.ui-app-shell[data-role] .estimator-dashboard.estimate-workspace--compact-builder .estimate-workspace__summary {
+  min-height: 46px;
+  min-width: 145px;
+  width: auto;
+  gap: 0;
+  padding: 5px 9px;
+  margin: 0;
+  grid-row: auto;
+}
+.ui-app-shell[data-role] .estimator-dashboard.estimate-workspace--compact-builder .estimate-workspace__summary strong { font-size: 20px; }
+.ui-app-shell[data-role] .estimator-dashboard.estimate-workspace--compact-builder .estimate-workspace__summary span { font-size: 11px; }
+.estimate-workspace--compact-builder .estimate-workspace__summary svg { display: none; }
+.estimate-workspace--compact-builder .staff-estimate-workspace-tools > summary {
+  min-height: 30px;
+  padding-block: 5px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+.estimate-workspace--compact-builder .estimate-workspace__builder-area { gap: 6px; min-height: 300px; }
+.estimate-workspace--compact-builder .estimate-workspace__view-controls { flex-wrap: wrap; gap: 4px 8px; }
+.estimate-workspace--compact-builder .estimate-workspace__builder-area .estimate-workspace__tabs {
+  flex: 0 1 auto;
+  grid-template-columns: repeat(3, auto);
+  width: auto;
+  max-width: 100%;
+}
+.estimate-workspace--compact-builder .estimate-workspace__tabs button {
+  min-block-size: var(--estimate-compact-control);
+  min-height: var(--estimate-compact-control);
+  gap: 6px;
+  padding: 3px 12px;
+  font-size: 12px;
+  line-height: 1.3;
+}
+.estimate-workspace--compact-builder .estimate-workspace__tabs svg { width: 16px; height: 16px; }
+.estimate-workspace--compact-builder .estimate-workspace__builder-area .estimate-workspace__messages { min-height: var(--estimate-compact-control); }
+.estimate-workspace--compact-builder .estimate-workspace__messages .project-chat-navigation { gap: 4px; }
+.estimate-workspace--compact-builder .estimate-workspace__messages .project-chat-navigation > nav a { min-height: var(--estimate-compact-control); }
+.estimate-workspace--compact-builder .estimate-workspace__builder-area .configured-estimate-builder { gap: 6px; }
+.estimate-workspace--compact-builder .configured-estimate-builder__toolbar {
+  grid-template-columns: minmax(0, 1fr) 150px 125px;
+  gap: 8px;
+}
+.estimate-workspace--compact-builder .configured-estimate-builder__toolbar :is(label, button) {
+  min-block-size: var(--estimate-compact-control);
+  min-height: var(--estimate-compact-control);
+}
+.estimate-workspace--compact-builder .configured-estimate-builder__toolbar > :is(label, button) { gap: 7px; padding-inline: 8px; }
+.estimate-workspace--compact-builder.estimator-dashboard .configured-estimate-builder__search input,
+.estimate-workspace--compact-builder.estimator-dashboard .configured-estimate-builder__filter select {
+  min-block-size: calc(var(--estimate-compact-control) - 2px);
+  min-height: calc(var(--estimate-compact-control) - 2px);
+  font-size: var(--estimate-compact-input-text);
+}
+.estimate-workspace--compact-builder .configured-estimate-builder__refresh { white-space: nowrap; }
+.estimate-workspace--compact-builder .estimate-workspace__builder-area .configured-estimate-builder__layout {
+  grid-template-columns: 190px minmax(0, 1fr);
+  gap: 8px;
+}
+.estimate-workspace--compact-builder .configured-estimate-builder__rail-tabs { padding: 3px; gap: 3px; }
+.estimate-workspace--compact-builder .configured-estimate-builder__rail-tabs button {
+  min-block-size: var(--estimate-compact-control);
+  min-height: var(--estimate-compact-control);
+  padding: 3px;
+  font-size: 11px;
+}
+.estimate-workspace--compact-builder .configured-estimate-builder__rooms button {
+  grid-template-columns: 22px minmax(0, 1fr) 12px;
+  gap: 6px;
+  min-height: 40px;
+  padding: 5px 7px;
+}
+.estimate-workspace--compact-builder .configured-estimate-builder__room-copy strong { white-space: normal; overflow-wrap: anywhere; font-size: 12px; }
+.estimate-workspace--compact-builder .configured-estimate-builder__room-copy small { white-space: normal; overflow-wrap: anywhere; font-size: 11px; }
+.estimate-workspace--compact-builder .configured-estimate-builder__content { gap: 6px; }
+.estimate-workspace--compact-builder .configured-estimate-builder__jump { gap: 6px; }
+.estimate-workspace--compact-builder .configured-estimate-builder__jump button {
+  min-block-size: 36px;
+  min-height: 36px;
+  min-width: 145px;
+  max-width: 250px;
+  gap: 6px;
+  padding: 3px 7px;
+}
+.estimate-workspace--compact-builder .configured-estimate-builder__jump button > svg { width: 20px; height: 20px; }
+.estimate-workspace--compact-builder .configured-estimate-builder__jump button strong { font-size: 11px; line-height: 1.3; }
+.estimate-workspace--compact-builder .configured-estimate-builder__jump button small { font-size: 11px; line-height: 1.2; }
+.estimate-workspace--compact-builder .configured-estimate-builder__scroll-pane,
+.estimate-workspace--compact-builder .configured-estimate-builder__baskets { gap: 6px; }
+.estimate-workspace--compact-builder .configured-estimate-basket__toggle {
+  grid-template-columns: 22px minmax(0, 1fr) auto auto 14px;
+  min-block-size: 36px;
+  min-height: 36px;
+  gap: 8px;
+  padding: 4px 8px;
+}
+.estimate-workspace--compact-builder .configured-estimate-basket__toggle > svg:first-child { width: 20px; height: 20px; }
+.estimate-workspace--compact-builder .configured-estimate-basket > header .configured-estimate-basket__toggle > span { font-size: 13px; line-height: 1.3; }
+.estimate-workspace--compact-builder :is(.configured-estimate-basket__toggle, .configured-estimate-sub-basket__toggle, .configured-estimate-sub-basket__heading) small { display: block; font-size: 11px; }
+.estimate-workspace--compact-builder :is(.configured-estimate-basket__toggle, .configured-estimate-sub-basket__toggle, .configured-estimate-sub-basket__heading) strong { padding-left: 8px; white-space: normal; overflow-wrap: anywhere; }
+.estimate-workspace--compact-builder .configured-estimate-sub-basket { padding: 4px 6px 0; }
+.estimate-workspace--compact-builder .configured-estimate-sub-basket__toggle,
+.estimate-workspace--compact-builder .configured-estimate-sub-basket__heading {
+  grid-template-columns: 18px minmax(0, 1fr) auto auto 14px;
+  min-block-size: 32px;
+  min-height: 32px;
+  gap: 6px;
+  padding: 4px 7px;
+}
+.estimate-workspace--compact-builder .configured-estimate-sub-basket__heading { grid-template-columns: 18px minmax(0, 1fr) auto auto; }
+.estimate-workspace--compact-builder .configured-estimate-sub-basket__toggle span { overflow-wrap: anywhere; }
+.estimate-workspace--compact-builder .configured-estimate-line {
+  grid-template-columns: minmax(0, 1fr) minmax(0, var(--estimate-compact-fields));
+  min-height: 60px;
+  gap: 4px 8px;
+  margin: 4px 0;
+  padding: 6px;
+}
+.estimate-workspace--compact-builder .configured-estimate-line__choice { gap: 8px; min-height: 38px; }
+.estimate-workspace--compact-builder .configured-estimate-line__thumb { width: var(--estimate-compact-thumb); height: var(--estimate-compact-thumb); }
+.estimate-workspace--compact-builder .configured-estimate-line__copy { gap: 2px; }
+.estimate-workspace--compact-builder .configured-estimate-line__copy strong { font-size: 12px; }
+.estimate-workspace--compact-builder .configured-estimate-line__copy small { font-size: 11px; }
+.estimate-workspace--compact-builder .configured-estimate-line__fields {
+  grid-template-columns: minmax(84px, 96px) minmax(92px, 108px) minmax(138px, 1fr) var(--estimate-compact-menu);
+  gap: 6px;
+  margin-left: 0;
+}
+.estimate-workspace--compact-builder .configured-estimate-line__fields label,
+.estimate-workspace--compact-builder .configured-estimate-line__amount { gap: 2px; font-size: 11px; line-height: 1.2; }
+.estimate-workspace--compact-builder.estimator-dashboard .configured-estimate-line__fields input {
+  min-block-size: var(--estimate-compact-control);
+  min-height: var(--estimate-compact-control);
+  font-size: var(--estimate-compact-input-text);
+}
+.estimate-workspace--compact-builder .configured-estimate-line__fields .configured-estimate-line__rate input { height: var(--estimate-compact-control); padding: 4px 6px; }
+.estimate-workspace--compact-builder .configured-estimate-line__stepper {
+  grid-template-columns: var(--estimate-compact-step) minmax(0, 1fr) var(--estimate-compact-step);
+  height: var(--estimate-compact-control);
+}
+.estimate-workspace--compact-builder.estimator-dashboard .configured-estimate-line__stepper input {
+  min-block-size: 0;
+  min-height: 0;
+}
+.estimate-workspace--compact-builder.estimator-dashboard .configured-estimate-line__stepper button { min-block-size: 24px; }
+.estimate-workspace--compact-builder .configured-estimate-line__amount output { min-height: var(--estimate-compact-control); font-size: 12px; }
+.estimate-workspace--compact-builder .configured-estimate-line__more,
+.estimate-workspace--compact-builder .configured-estimate-line__more > button { height: var(--estimate-compact-control); }
+.estimate-workspace--compact-builder .configured-estimate-line__more > button { width: var(--estimate-compact-menu); }
+.estimate-workspace--compact-builder .configured-estimate-line__options,
+.estimate-workspace--compact-builder .configured-estimate-line__message,
+.estimate-workspace--compact-builder .configured-estimate-line__review { margin-left: calc(var(--estimate-compact-thumb) + 8px); }
+.estimate-workspace--compact-builder .estimate-line-dimensions { grid-column: 1 / -1; margin-top: 4px; padding-top: 6px; font-size: 11px; }
+.estimate-workspace--compact-builder .estimate-line-dimensions__fields { gap: 6px; }
+.estimate-workspace--compact-builder.estimator-dashboard .estimate-line-dimensions__fields input { min-block-size: var(--estimate-compact-control); padding: 4px 6px; font-size: var(--estimate-compact-input-text); }
+.ui-app-shell[data-role] .estimator-dashboard.estimate-workspace--compact-builder .estimate-workspace__footer {
+  min-height: 48px;
+  gap: 6px 12px;
+  padding: 6px 8px;
+}
+.estimate-workspace--compact-builder .estimate-workspace__footer > div:first-child { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; min-width: 0; }
+.ui-app-shell[data-role] .estimator-dashboard.estimate-workspace--compact-builder .estimate-workspace__footer strong { font-size: 14px; line-height: 1.3; }
+.ui-app-shell[data-role] .estimator-dashboard.estimate-workspace--compact-builder .estimate-workspace__footer span { font-size: 11px; line-height: 1.3; }
+.ui-app-shell[data-role] .estimator-dashboard.estimate-workspace--compact-builder .estimate-workspace__footer .estimate-actions { flex: none; gap: 6px; }
+.ui-app-shell[data-role] .estimator-dashboard.estimate-workspace--compact-builder .estimate-workspace__footer .button {
+  min-block-size: var(--estimate-compact-control);
+  min-height: var(--estimate-compact-control);
+  max-width: 100%;
+  padding: 5px 10px;
+  font-size: 12px;
+  line-height: 1.35;
+  white-space: normal;
+}
+.ui-app-shell[data-role] .estimator-dashboard.estimate-workspace--compact-builder .estimate-workspace__footer .button:is(:hover, :active) { font-size: 12px; }
+@container estimate-builder-area (max-width: 800px) {
+  .estimate-workspace--compact-builder .estimate-workspace__builder-area .configured-estimate-builder__layout { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+  .estimate-workspace--compact-builder .configured-estimate-builder__rail-tabs { padding: 3px; }
+  .estimate-workspace--compact-builder .configured-estimate-builder__toolbar { grid-template-columns: minmax(0, 1fr) 145px 125px; gap: 6px; }
+}
+@container (max-width: 650px) {
+  .estimate-workspace--compact-builder .configured-estimate-line { grid-template-columns: minmax(0, 1fr); }
+  .estimate-workspace--compact-builder .configured-estimate-line__fields { margin-left: calc(var(--estimate-compact-thumb) + 8px); }
+}
+@container estimate-builder-area (max-width: 500px) {
+  .estimate-workspace--compact-builder .estimate-workspace__builder-area .estimate-workspace__tabs { flex: 1 1 100%; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .estimate-workspace--compact-builder .estimate-workspace__tabs button { gap: 3px; padding-inline: 4px; font-size: 11px; }
+  .estimate-workspace--compact-builder .configured-estimate-builder__toolbar { grid-template-columns: minmax(0, 1fr) 125px; }
+  .estimate-workspace--compact-builder .configured-estimate-builder__search { grid-column: 1 / -1; }
+  .estimate-workspace--compact-builder .configured-estimate-builder__rooms button { min-height: 40px; }
+}
+@container (max-width: 480px) {
+  .estimate-workspace--compact-builder .configured-estimate-line__fields { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) var(--estimate-compact-menu); margin-left: 0; }
+  .estimate-workspace--compact-builder .configured-estimate-line__options,
+  .estimate-workspace--compact-builder .configured-estimate-line__message,
+  .estimate-workspace--compact-builder .configured-estimate-line__review { margin-left: 0; }
+}
+@media (max-width: 690px) {
+  .estimate-workspace.estimator-dashboard.estimate-workspace--compact-builder { --estimate-compact-input-text: 16px; }
+  .estimate-workspace--compact-builder .estimate-workspace__builder-area { min-height: 640px; }
+  .estimate-workspace--compact-builder .configured-estimate-line { grid-template-columns: minmax(0, 1fr); }
+  .estimate-workspace--compact-builder .configured-estimate-line__fields { grid-column: 1; grid-row: auto; margin-left: 0; }
+  .estimate-workspace--compact-builder .estimate-workspace__heading-main { flex-wrap: wrap; gap: 3px 8px; }
+  .ui-app-shell[data-role] .estimator-dashboard.estimate-workspace--compact-builder .estimate-workspace__back { max-width: 100%; }
+  .estimate-workspace--compact-builder .estimate-workspace__title { flex-basis: 100%; }
+  .ui-app-shell[data-role] .estimator-dashboard.estimate-workspace--compact-builder .estimate-workspace__footer { align-items: stretch; }
+  .ui-app-shell[data-role] .estimator-dashboard.estimate-workspace--compact-builder .estimate-workspace__footer .estimate-actions { flex-wrap: wrap; justify-content: flex-start; }
+}
+@media (max-width: 430px) {
+  .ui-app-shell[data-role] .estimator-dashboard.estimate-workspace--compact-builder .estimate-workspace__header { grid-template-columns: minmax(0, 1fr); gap: 5px; }
+  .ui-app-shell[data-role] .estimator-dashboard.estimate-workspace--compact-builder .estimate-workspace__summary { flex-direction: row; justify-content: flex-start; align-items: baseline; gap: 7px; min-height: 32px; padding: 4px 7px; }
+  .estimate-workspace--compact-builder .configured-estimate-basket__toggle { grid-template-columns: 18px minmax(0, 1fr) auto auto 12px; gap: 5px; padding-inline: 6px; }
+  .estimate-workspace--compact-builder .configured-estimate-sub-basket__toggle { gap: 5px; padding-inline: 5px; }
+}
+@media (pointer: coarse) {
+  .estimate-workspace.estimator-dashboard.estimate-workspace--compact-builder {
+    --estimate-compact-control: 40px;
+    --estimate-compact-step: 40px;
+    --estimate-compact-menu: 40px;
+    --estimate-compact-thumb: 44px;
+    --estimate-compact-fields: 392px;
+  }
+  .estimate-workspace--compact-builder .staff-estimate-workspace-tools > summary { min-height: 40px; padding-block: 10px; }
+  .estimate-workspace--compact-builder :is(.configured-estimate-builder__jump button, .configured-estimate-basket__toggle, .configured-estimate-sub-basket__toggle) { min-block-size: 40px; min-height: 40px; }
+  .ui-app-shell[data-role] .estimator-dashboard.estimate-workspace--compact-builder .project-chat-navigation :is(a, button) { min-block-size: 40px; min-height: 40px; }
+  .estimate-workspace--compact-builder .configured-estimate-line__fields { grid-template-columns: minmax(120px, 1fr) minmax(100px, 1fr) minmax(114px, 1fr) var(--estimate-compact-menu); }
+  .estimate-workspace--compact-builder .configured-estimate-line__choice { min-height: 44px; }
+  body:has(.estimate-workspace--compact-builder) .configured-estimate-line__menu--floating button { min-block-size: 40px; min-height: 40px; font-size: 12px; }
+}
+@media (pointer: coarse) {
+  @container (max-width: 650px) {
+    .estimate-workspace--compact-builder .configured-estimate-line__fields { grid-template-columns: minmax(120px, 1fr) minmax(0, 1fr) var(--estimate-compact-menu); margin-left: 0; }
+    .estimate-workspace--compact-builder .configured-estimate-line__amount { grid-column: 1 / 3; grid-row: 2; }
+    .estimate-workspace--compact-builder .configured-estimate-line__more { grid-column: 3; grid-row: 1; }
+  }
 }
 
 /* Compact Configure step; the item-selection view has its own layout above. */
@@ -2236,4 +2539,51 @@
   .estimate-workspace--configure-view .estimate-selection-footer__summary,
   .estimate-workspace--configure-view .estimate-selection-footer__continue { width: 100%; }
   .estimate-workspace--configure-view > .estimate-continue { justify-self: stretch; }
+}
+
+/* Current drafts and frozen publications share a single compact toolbar. */
+.estimate-workspace.estimator-dashboard.estimate-workspace--revision-workspace { gap: 6px; }
+.estimate-workspace--revision-workspace > .estimate-workspace__view-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-width: 0; }
+.estimate-workspace--revision-workspace > .estimate-workspace__view-controls .estimate-workspace__tabs { flex: 0 1 auto; display: grid; grid-template-columns: repeat(3, auto); width: auto; max-width: 100%; min-width: 0; margin: 0; }
+.estimate-workspace--revision-workspace .estimate-workspace__view-controls .estimate-workspace__tabs button { min-block-size: 32px; min-height: 32px; padding: 4px 10px; gap: 5px; font-size: 12px; line-height: 1.3; }
+.estimate-workspace--revision-workspace .estimate-workspace__view-controls .estimate-workspace__tabs svg { width: 16px; height: 16px; }
+.ui-app-shell[data-role] .estimator-dashboard.estimate-workspace--revision-workspace .estimate-workspace__back { min-height: 32px; min-block-size: 32px; margin: 0; padding: 3px 0; max-width: 160px; font-size: 11px; line-height: 1.3; text-align: start; overflow-wrap: anywhere; }
+.estimate-workspace--revision-workspace .estimate-workspace__amount { flex: none; margin-left: 2px; color: var(--est-ink); font-size: 20px; line-height: 1.3; white-space: nowrap; }
+.estimate-workspace--revision-workspace .estimate-workspace__current-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.estimate-workspace--revision-workspace .estimate-workspace__current-tools:empty { display: none; }
+.estimate-workspace--revision-workspace .estimate-workspace__messages { display: flex; align-items: center; min-width: 0; margin-left: auto; }
+.estimate-workspace--revision-workspace .estimate-workspace__messages .project-chat-navigation { position: static; justify-content: flex-start; gap: 4px; }
+.estimate-workspace--revision-workspace .estimate-workspace__messages .project-chat-navigation > nav { position: static; }
+.estimate-workspace--revision-workspace .estimate-workspace__messages .project-chat-navigation :is(a, button) { min-height: 32px; min-block-size: 32px; font-size: 12px; }
+.estimate-workspace--revision-workspace .estimate-workspace__messages .project-chat-navigation svg { width: 16px; height: 16px; }
+.estimate-workspace--revision-workspace .configured-estimate-builder__rail { overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+.estimate-workspace--revision-workspace .configured-estimate-builder__rail > * { flex-shrink: 0; }
+.estimate-workspace--revision-workspace .configured-estimate-builder__rooms { overflow: visible; }
+.estimate-workspace--revision-workspace .estimate-workspace__secondary-view { display: grid; grid-template-columns: 190px minmax(0, 1fr); gap: 8px; min-width: 0; min-height: 0; }
+.estimate-workspace--revision-workspace .estimate-workspace__secondary-view--without-revisions { grid-template-columns: minmax(0, 1fr); }
+.estimate-workspace--revision-workspace .estimate-workspace__secondary-view > :is(section, aside, div) { min-width: 0; }
+.estimate-workspace--revision-workspace .estimate-workspace__revision-rail { align-self: start; padding: 3px; border: 1px solid var(--est-line, #dce1e8); }
+.estimate-workspace--revision-workspace .estimate-workspace__history-state { padding: 8px; }
+.estimate-workspace--revision-workspace .estimate-workspace__history-area { min-height: 300px; }
+.ui-app-shell[data-role] .estimator-dashboard.estimate-workspace--revision-workspace .estimate-workspace__footer { gap: 6px 12px; min-height: 48px; padding: 6px 9px; }
+.estimate-workspace--revision-workspace .estimate-workspace__footer > div:first-child { display: flex; flex-wrap: wrap; align-items: baseline; gap: 3px 10px; }
+.estimate-workspace--revision-workspace .estimate-workspace__footer > div:first-child strong { font-size: 15px; }
+.estimate-workspace--revision-workspace .estimate-workspace__footer > div:first-child span { font-size: 12px; }
+.estimate-workspace--revision-workspace .estimate-workspace__footer .button { min-block-size: 32px; min-height: 32px; padding: 5px 11px; font-size: 12px; }
+@media (max-width: 690px) {
+  .estimate-workspace--revision-workspace > .estimate-workspace__view-controls .estimate-workspace__tabs { order: 2; flex: 1 1 100%; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .estimate-workspace--revision-workspace .estimate-workspace__amount { margin-left: auto; font-size: 19px; }
+  .estimate-workspace--revision-workspace .estimate-workspace__messages { order: 3; margin-left: 0; }
+  .estimate-workspace--revision-workspace .configured-estimate-builder__rail { display: flex; max-height: 270px; }
+  .estimate-workspace--revision-workspace .estimate-workspace__secondary-view { grid-template-columns: minmax(0, 1fr); }
+  .estimate-workspace--revision-workspace .estimate-workspace__revision-rail { max-height: 240px; overflow: auto; }
+  .estimate-workspace--revision-workspace .estimate-workspace__history-area { height: auto; min-height: 0; }
+  .estimate-workspace--revision-workspace .estimate-workspace__footer { flex-wrap: wrap; }
+  .estimate-workspace--revision-workspace .estimate-workspace__footer .estimate-actions { flex-wrap: wrap; }
+}
+@media (pointer: coarse) {
+  .estimate-workspace--revision-workspace .estimate-workspace__view-controls .estimate-workspace__tabs button,
+  .estimate-workspace--revision-workspace .estimate-workspace__footer .button,
+  .ui-app-shell[data-role] .estimator-dashboard.estimate-workspace--revision-workspace .estimate-workspace__back,
+  .estimate-workspace--revision-workspace .estimate-workspace__messages .project-chat-navigation :is(a, button) { min-block-size: 40px; min-height: 40px; }
 }

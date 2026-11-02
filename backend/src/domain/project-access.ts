@@ -11,6 +11,7 @@ type ProjectAccessUser = {
 };
 
 type ProjectAccessRecord = {
+  estimationWorkflowVersion?: 2 | 3;
   clientId: string | null;
   initiatingDesignerId: string | null;
   assignedDesignerIds: string[];
@@ -48,7 +49,7 @@ export function legacyRelationshipAllows(
       return project.clientId === user.id;
     case "designer":
       return (
-        project.initiatingDesignerId === user.id ||
+        project.estimationWorkflowVersion !== 3 && project.initiatingDesignerId === user.id ||
         project.assignedDesignerIds.includes(user.id)
       );
     case "design_manager":

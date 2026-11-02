@@ -1,0 +1,8 @@
+.design-team-picker { display: grid; gap: var(--space-3); padding-block: var(--space-4); border-block: 1px solid var(--color-border); min-width: 0; }
+.design-team-picker h3, .design-team-picker p { margin: 0; }
+.design-team-picker__heading, .design-team-picker__actions { display: flex; align-items: center; flex-wrap: wrap; justify-content: space-between; gap: var(--space-3); }
+.design-team-picker label { display: flex; align-items: center; gap: var(--space-2); }
+.design-team-picker label:has(input[type="search"]), .design-team-picker label:has(textarea) { display: grid; margin-block: var(--space-3); }
+.design-team-picker input[type="search"], .design-team-picker textarea { padding: var(--space-2); min-height: 44px; border: 1px solid var(--color-border); background: var(--color-surface); color: inherit; font: inherit; }
+.design-team-picker fieldset { display: grid; gap: var(--space-2); border: 0; padding: var(--space-3) 0; margin: 0; max-height: 20rem; overflow-y: auto; }
+.design-team-picker input[type="checkbox"] { width: 1.1rem; height: 1.1rem; accent-color: var(--color-text); }

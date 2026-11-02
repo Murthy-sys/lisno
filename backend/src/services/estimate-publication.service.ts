@@ -1,3 +1,6 @@
+import { quotationSnapshotDigest } from "./quotation-digest.js";
+import { createEstimateProposal, type EstimateProposalMetadata } from "../domain/estimate-proposal.js";
+import { readProjectNumber } from "../domain/project-number.js";
 import { ESTIMATE_COMPONENT_PRICING_BASIS, estimateComponentLineAmountIsValid, readEstimateComponentPricing } from "../domain/estimate-component-pricing.js";
 import { currentEstimateComponentPricingMatches } from "./estimate-component-pricing.service.js";
 import { estimateDimensionRulesEqual } from "../domain/estimate-dimensions.js";
@@ -31,6 +34,8 @@ import { AiEstimatorKnowledgeSubBasketModel } from "../models/AiEstimatorKnowled
 import { AiEstimatorKnowledgeUomModel } from "../models/AiEstimatorKnowledgeUom.js";
 import { EstimateClientReviewRoundModel } from "../models/EstimateClientReviewRound.js";
 import { EstimateModel } from "../models/Estimate.js";
+import { UserModel } from "../models/User.js";
+import { ProjectModel } from "../models/Project.js";
 import { LeadModel } from "../models/Lead.js";
 import type { AuditService } from "./audit.service.js";
 import type { PublicUser } from "./auth.service.js";
@@ -51,6 +56,7 @@ export interface PublishEstimateToClientInput {
   expectedEstimateVersion: number;
   expectedStatus: "draft" | "ready_for_client";
   submittedAt?: Date;
+  approveSales?: boolean;
 }
 
 export interface PublishEstimateToClientResult {
@@ -95,6 +101,7 @@ interface PublicationLead {
   clientName: string;
   clientEmail: string;
   projectName: string;
+  projectNumber?: string | null;
   location: string;
   [key: string]: unknown;
 }
@@ -134,9 +141,9 @@ export function createEstimatePublicationService(input: {
       const preflightEstimate = await findEstimateForPublication(publication);
       if (!preflightEstimate) publicationConflict();
       assertPublishableConfiguredLines(preflightEstimate);
-      if (publication.expectedStatus === "draft") await assertCurrentConfiguredPublication(preflightEstimate);
+      if (publication.expectedStatus === "draft" || preflightEstimate.estimation?.workflowVersion === 3) await assertCurrentConfiguredPublication(preflightEstimate);
       if (
-        publication.expectedStatus === "draft" &&
+        publication.expectedStatus === "draft" && preflightEstimate.estimation?.workflowVersion !== 3 &&
         preflightEstimate.total > APPROVAL_THRESHOLD
       ) {
         publicationConflict();
@@ -150,7 +157,12 @@ export function createEstimatePublicationService(input: {
 
       const occurredAt = now();
       const submittedAt = publication.submittedAt ?? occurredAt;
-      const pdfInput = toPostTransitionPdfInput(preflightEstimate, preflightLead);
+      const proposal = createEstimateProposal({
+        issuedAt: occurredAt,
+        projectNumber: preflightLead.projectNumber,
+        estimateId: preflightEstimate._id
+      });
+      const pdfInput = toPostTransitionPdfInput(preflightEstimate, preflightLead, proposal);
       let retainedPdfBytes: Buffer | null = null;
       let stored: Awaited<ReturnType<EstimateClientReviewStorage["savePdfSnapshot"]>>;
       try {
@@ -206,12 +218,12 @@ export function createEstimatePublicationService(input: {
           );
           if (!currentEstimate) publicationConflict();
           assertPublishableConfiguredLines(currentEstimate);
-          if (publication.expectedStatus === "draft") {
+          if (publication.expectedStatus === "draft" || currentEstimate.estimation?.workflowVersion === 3) {
             await fencePublicationConfigurationDependencies(currentEstimate, session);
             await assertCurrentConfiguredPublication(currentEstimate, session);
           }
           if (
-            publication.expectedStatus === "draft" &&
+            publication.expectedStatus === "draft" && currentEstimate.estimation?.workflowVersion !== 3 &&
             currentEstimate.total > APPROVAL_THRESHOLD
           ) {
             publicationConflict();
@@ -229,7 +241,7 @@ export function createEstimatePublicationService(input: {
             publicationConflict();
           }
           if (!isDeepStrictEqual(
-            toPostTransitionPdfInput(currentEstimate, currentLead),
+            toPostTransitionPdfInput(currentEstimate, currentLead, proposal),
             pdfInput
           )) {
             publicationConflict();
@@ -249,15 +261,34 @@ export function createEstimatePublicationService(input: {
             ? Number(latestRound.sendGeneration) + 1
             : 1;
           const roundId = `estimate-client-review-${randomUUID()}`;
-          const snapshot = toEstimateSnapshot(currentEstimate, currentLead);
+          const snapshot = toEstimateSnapshot(currentEstimate, currentLead, proposal);
           await fenceCollaborativeEstimate(currentEstimate, session);
           let designBinding = {};
           if (currentEstimate.estimation) {
             await assertEstimateRequirementsResolved(String(currentEstimate.projectId), currentEstimate.estimation.requirementsVersion, session);
-            if (currentEstimate.estimation.phase === "post") designBinding = await currentFinalDesignBinding(currentEstimate, session);
+            if (currentEstimate.estimation.workflowVersion === 2 && currentEstimate.estimation.phase === "post") designBinding = await currentFinalDesignBinding(currentEstimate, session);
+          }
+          let quotationEvidence = {};
+          let salesApproval = currentEstimate.estimation?.workflowVersion === 3 ? currentEstimate.estimation.salesApproval : null;
+          if (currentEstimate.estimation?.workflowVersion === 3) {
+            const lifecycle = currentEstimate.estimation;
+            const sourceDigest = quotationSnapshotDigest(snapshot);
+            const actor = await UserModel.findOne({ _id: publication.actorId, active: true, deletedAt: null }).session(session).lean();
+            const project = await ProjectModel.findById(currentEstimate.projectId).session(session).lean();
+            if (lifecycle.phase === "pre") {
+              if (!publication.approveSales || actor?.role !== "estimator_sales" || currentEstimate.ownerId !== publication.actorId || project?.assignedEstimatorId !== publication.actorId)
+                throw new ApiError(403, "ESTIMATE_SALES_APPROVAL_REQUIRED", "The assigned Sales estimator must approve and send this quotation.");
+              salesApproval = { actorId: publication.actorId, pricedRevision: lifecycle.pricedRevision,
+                estimateVersion: currentEstimate.version, sourceDigest, approvedAt: occurredAt.toISOString() };
+            } else if (actor?.role !== "designer" || project?.primaryDesignerId !== publication.actorId || currentEstimate.designPlanDesignerId !== publication.actorId || !lifecycle.preApproval) {
+              throw new ApiError(403, "ESTIMATE_PRIMARY_DESIGNER_REQUIRED", "The primary Designer must submit the revised quotation.");
+            }
+            quotationEvidence = { workflowVersion: 3, pricedRevision: lifecycle.pricedRevision, sourceDigest, designScopeRevision: lifecycle.designScopeRevision,
+              submittedById: publication.actorId, salesApproval: lifecycle.phase === "pre" ? salesApproval : null };
           }
           const roundInput = {
             _id: roundId,
+            ...quotationEvidence,
             ...(currentEstimate.estimation ? { phase: currentEstimate.estimation.phase, requirementsVersion: currentEstimate.estimation.requirementsVersion, ...designBinding } : {}),
             estimateId: publication.estimateId,
             leadId: publication.leadId,
@@ -300,7 +331,7 @@ export function createEstimatePublicationService(input: {
             ? {
                 $set: {
                   ...estimateCommercialStatusFields(currentEstimate, "sent_to_client"),
-                  ...(currentEstimate.estimation ? { "estimation.pendingReviewRoundId": roundId } : {}),
+                  ...(currentEstimate.estimation ? { "estimation.pendingReviewRoundId": roundId, ...(currentEstimate.estimation.workflowVersion === 3 ? { "estimation.salesApproval": salesApproval } : {}) } : {}),
                   sentToClientAt: occurredAt,
                   submittedAt,
                   approvalRequired: false
@@ -313,7 +344,7 @@ export function createEstimatePublicationService(input: {
             : {
                 $set: {
                   ...estimateCommercialStatusFields(currentEstimate, "sent_to_client"),
-                  ...(currentEstimate.estimation ? { "estimation.pendingReviewRoundId": roundId } : {}),
+                  ...(currentEstimate.estimation ? { "estimation.pendingReviewRoundId": roundId, ...(currentEstimate.estimation.workflowVersion === 3 ? { "estimation.salesApproval": salesApproval } : {}) } : {}),
                   sentToClientAt: occurredAt
                 },
                 $push: { notifications: compatibilityNotification }
@@ -373,7 +404,7 @@ export function createEstimatePublicationService(input: {
           }, session);
 
           resultEstimate = { ...mapPublishedEstimate({ estimate: currentEstimate, expectedStatus: publication.expectedStatus, occurredAt, submittedAt, compatibilityNotification, submittedReview }),
-            ...(currentEstimate.estimation ? { estimation: { ...currentEstimate.estimation, status: "sent_to_client", pendingReviewRoundId: roundId } } : {}) };
+            ...(currentEstimate.estimation ? { estimation: { ...currentEstimate.estimation, status: "sent_to_client", pendingReviewRoundId: roundId, ...(currentEstimate.estimation.workflowVersion === 3 ? { salesApproval } : {}) } } : {}) };
           const createdObject = createdRound.toObject() as unknown as RoundRow;
           transactionBodyCompleted = true;
           return {
@@ -440,7 +471,7 @@ function publicationEstimateFilter(input: PublishEstimateToClientInput, collabor
     _id: input.estimateId,
     leadId: input.leadId,
      $and: [
-      { $or: [{ "estimation.workflowVersion": 2, "estimation.status": input.expectedStatus }, { "estimation.workflowVersion": { $ne: 2 }, status: input.expectedStatus, ownerId: input.actorId }] }
+      { $or: [{ "estimation.workflowVersion": { $in: [2, 3] }, "estimation.status": input.expectedStatus }, { "estimation.workflowVersion": { $nin: [2, 3] }, status: input.expectedStatus, ownerId: input.actorId }] }
     ],
     version: input.expectedEstimateVersion
   };
@@ -472,9 +503,12 @@ async function findMatchingLead(
 
 function toPostTransitionPdfInput(
   estimate: PublicationEstimate,
-  lead: PublicationLead
+  lead: PublicationLead,
+  proposal: EstimateProposalMetadata
 ): EstimatePdfInput {
   return {
+    // Recheck the saved reference while retaining this publication's captured dates and terms.
+    proposal: { ...structuredClone(proposal), reference: readProjectNumber(lead.projectNumber) ?? estimate._id },
     id: estimate._id,
     version: estimate.version,
     status: "sent_to_client",
@@ -497,9 +531,11 @@ function toPostTransitionPdfInput(
 
 export function toEstimateSnapshot(
   estimate: PublicationEstimate,
-  lead: PublicationLead
+  lead: PublicationLead,
+  proposal?: EstimateProposalMetadata
 ): EstimateClientReviewSnapshot {
   return {
+    ...(proposal === undefined ? {} : { proposal: structuredClone(proposal) }),
     clientName: lead.clientName,
     projectName: lead.projectName,
     location: lead.location,
@@ -800,7 +836,7 @@ async function loadCommittedEstimate(
     }).lean();
     if (!estimate) {
       estimate = await EstimateModel.findOne({ _id: input.estimateId, leadId: input.leadId,
-        "estimation.workflowVersion": 2, "estimation.status": "sent_to_client", version: input.expectedEstimateVersion,
+        "estimation.workflowVersion": { $in: [2, 3] }, "estimation.status": "sent_to_client", version: input.expectedEstimateVersion,
         $or: [{ ownerId: input.actorId }, { designPlanDesignerId: input.actorId, "estimation.phase": "post" }]
       }).lean();
     }

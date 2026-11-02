@@ -71,7 +71,7 @@ beforeEach(async () => { await replica.clear(); vi.clearAllMocks(); });
 afterAll(async () => { await replica?.stop(); });
 
 describe("collaborative estimation service journey", () => {
-  it("joins the invited project, resolves a client request, approves both phases, confirms payment and explicitly issues vendor work", async () => {
+  it("preserves the version-2 journey from invitation through both approvals, payment and explicit vendor issue", async () => {
     await UserModel.insertMany([admin, sales, designer, buyer, finance, site].map(user => ({ _id: user.id, ...user,
       emailNormalized: user.email, passwordHash: "synthetic-unused", active: true, accountKind: "standard", version: 1,
       sessionVersion: 1, managerId: null, authorizedClientIds: [] })));
@@ -86,7 +86,9 @@ describe("collaborative estimation service journey", () => {
       clientEmail: "client@journey.example.test", clientMobile: "0000000000", projectName: "Synthetic Journey Residence",
       propertyType: "2BHK", nextAction: "Estimate", nextActionAt: at.toISOString(), estimatorId: sales.id });
     expect(tokens).toHaveLength(1);
-    expect(await repository.findProjectById(project.id)).toMatchObject({ clientId: null, estimationWorkflowVersion: 2 });
+    expect(await repository.findProjectById(project.id)).toMatchObject({ clientId: null, estimationWorkflowVersion: 3 });
+    // Pin this historical journey to v2; new project defaults are exercised above.
+    await ProjectModel.updateOne({ _id: project.id }, { $set: { estimationWorkflowVersion: 2 } });
     const password = "JourneySyntheticPassword!23";
     await invitations.acceptNew({ token: tokens[0]!, password, passwordConfirmation: password }, { remoteAddress: "127.0.0.1" });
     const clientRecord = (await repository.findUserByEmail("client@journey.example.test"))!;

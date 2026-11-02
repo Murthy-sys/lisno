@@ -26,6 +26,7 @@ import type {
   DashboardWorkforceFilters
 } from "../src/contracts/super-admin-dashboard.js";
 import { startMongoReplicaSet } from "./helpers/mongo-replica-set.js";
+import { newQuotationLifecycle } from "../src/domain/estimation-lifecycle.js";
 import { calculateKpi } from "../src/domain/kpi.js";
 import type { KpiTask } from "../src/contracts/domain.js";
 import type { UserRecord } from "../src/repositories/types.js";
@@ -439,6 +440,56 @@ function reviewRound(input: {
 }
 
 describe("Super Admin dashboard Mongo pre-pagination filters", () => {
+  it("retains unequal v3 approved baselines and issued task scope after quotation unlock", async () => {
+    for (const [id, amount] of [["quote-small", 1000], ["quote-large", 3000]] as const) {
+      await approvedFinanceProject({ id, subtotalRupees: amount, directSpendPaise: 0 });
+      const roundId = `${id}:quote-round`;
+      const line = { id: `${id}:line`, catalogueId: "EL-001", roomName: "Kitchen", specification: "Wiring", unit: "lot", rate: amount, quantity: 1, included: true, amount };
+      const lifecycle = { ...newQuotationLifecycle(), phase: "post", status: "draft", pricedRevision: 4,
+        preApproval: { reviewRoundId: `${id}:pre-round`, estimateVersion: 1, approvedAt: "2026-08-22T00:00:00.000Z" },
+        finalApproval: { reviewRoundId: roundId, estimateVersion: 7, approvedAt: "2026-08-25T00:00:00.000Z", requirementsVersion: 0,
+          designScopeRevision: 1, designReviewRoundId: null, designPlanVersion: null },
+        designApproval: { reviewRoundId: `${id}:design-round`, designPlanVersion: 1, estimateReviewRoundId: roundId, designScopeRevision: 1, approvedAt: "2026-08-26T00:00:00.000Z" } };
+      await ProjectModel.collection.updateOne({ _id: id }, { $set: { estimationWorkflowVersion: 3, clientId: "dashboard-client" } });
+      await EstimateModel.collection.updateOne({ _id: `${id}:estimate` }, { $set: { estimation: lifecycle, version: 12,
+        lineItems: [], subtotal: 99999, gst: 18000, total: 117999, designPlanVersion: 2, designPlanStatus: "changes_requested" } });
+      await EstimateClientReviewRoundModel.collection.insertOne({
+        ...reviewRound({ id: roundId, projectId: id, estimateVersion: 7, sendGeneration: 1, status: "approved", decision: "approve" }),
+        estimateSnapshot: { clientName: "Dashboard Client", projectName: id, location: "Pune", propertyType: "apartment", lineItems: [line], subtotal: amount, gst: amount * .18, total: amount * 1.18 }
+      });
+      await DesignPlanReviewRoundModel.collection.insertOne({ _id: `${id}:design-round`, estimateId: `${id}:estimate`, projectId: id, leadId: `${id}:lead`,
+        designPlanVersion: 1, estimateReviewRoundId: roundId, status: "approved", decision: "approve", decisionSource: "client_portal", decidedById: "dashboard-client", decidedByRole: "client", decidedByName: "Dashboard Client", decidedAt: new Date("2026-08-26T00:00:00.000Z") });
+      await ProjectFinanceBucketModel.collection.updateOne({ projectId: id }, { $set: { estimateVersion: 7, estimateReviewRoundId: roundId } });
+      await ProjectWorkflowTaskModel.create({ ...executionTask(`${id}:trade`, id, null), sourceSectionId: "EL", sourceLineItemKey: `${id}:line`, status: "completed", progress: 100, completedAt: new Date("2026-08-29T00:00:00.000Z") });
+    }
+    await UserModel.create({ ...worker("dashboard-client", "Dashboard Client"), role: "client" });
+    const overview = await mongoSuperAdminDashboardOverview({ observedAt: OBSERVED_AT, startAt: PERIOD_START_AT, endAt: PERIOD_END_AT, periodDays: 7 });
+    expect(overview.estimation).toMatchObject({ draftInternal: 2, clientApproved: 0 });
+    expect(overview.finance).toMatchObject({ projectCount: 2, approvedSubtotalPaise: 400000, approvedGstPaise: 72000, approvedContractTotalPaise: 472000 });
+    expect(overview.execution.total).toBe(2);
+    expect(overview.comparison.metrics.execution_tasks_completed.current).toBe(2);
+    expect(overview.dataQuality.unavailableMetricKeys).not.toContain("execution.total");
+    const page = await mongoSuperAdminDashboardProjects(OBSERVED_AT, { module: "finance", sort: "name_asc", limit: 20, offset: 0 });
+    expect(page.items).toHaveLength(2);
+    expect(page.items.map(row => row.finance?.approvedSubtotalPaise)).toEqual([300000, 100000]);
+    expect(page.items.every(row => row.estimate?.status === "draft")).toBe(true);
+    const drafts = await mongoSuperAdminDashboardProjects(OBSERVED_AT, { module: "estimation", moduleStatus: "draft_internal", sort: "name_asc", limit: 20, offset: 0 });
+    expect(drafts.total).toBe(2);
+    await DesignPlanReviewRoundModel.collection.updateOne({ _id: "quote-small:design-round" }, { $set: { estimateReviewRoundId: "quote-large:quote-round" } });
+    const corrupt = await mongoSuperAdminDashboardOverview({ observedAt: OBSERVED_AT, startAt: PERIOD_START_AT, endAt: PERIOD_END_AT, periodDays: 7 });
+    expect(corrupt.execution.total).toBe(1);
+    expect(corrupt.dataQuality.unavailableMetricKeys).toContain("execution.total");
+  }, 30_000);
+
+  it("never infers a v3 approval from legacy history when immutable rounds are absent", async () => {
+    await approvedFinanceProject({ id: "quote-no-round", subtotalRupees: 1000, directSpendPaise: 0 });
+    await ProjectModel.collection.updateOne({ _id: "quote-no-round" }, { $set: { estimationWorkflowVersion: 3 } });
+    await EstimateModel.collection.updateOne({ _id: "quote-no-round:estimate" }, { $set: { estimation: { ...newQuotationLifecycle(), phase: "post",
+      preApproval: { reviewRoundId: "missing-pre", estimateVersion: 1, approvedAt: "2026-08-25T00:00:00.000Z" } } } });
+    const page = await mongoSuperAdminDashboardProjects(OBSERVED_AT, { module: "finance", sort: "name_asc", limit: 20, offset: 0 });
+    expect(page.total).toBe(0);
+  });
+
   it("derives Client cohorts and matched-period events from authoritative database records", async () => {
     const currentClient = {
       ...worker("client-current", "Current Client"),

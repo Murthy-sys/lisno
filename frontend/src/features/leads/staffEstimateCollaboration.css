@@ -16,3 +16,17 @@
 .staff-estimate-request__lines label { display: flex; align-items: start; gap: 10px; }
 .staff-estimate-request__lines input { flex: none; margin-top: 4px; }
 @media (max-width: 600px) { .staff-estimate-flow__heading { display: block; } .staff-estimate-flow__totals { margin-block: 12px; } }
+
+.staff-estimate-flow--compact { position: relative; padding: 0; border: 0; font-size: 12px; }
+.staff-estimate-actions-menu > summary { cursor: pointer; min-height: 32px; padding: 7px 8px; border: 1px solid var(--border-subtle, #d8dce3); font-weight: 600; }
+.staff-estimate-actions-menu__options { position: absolute; z-index: 25; top: calc(100% + 4px); left: 0; width: 250px; max-width: calc(100vw - 32px); padding: 8px; border: 1px solid var(--border-subtle, #d8dce3); background: var(--surface-base, #faf9f6); }
+.staff-estimate-flow--compact .staff-estimate-flow__actions { display: grid; gap: 4px; }
+.staff-estimate-flow--compact .staff-estimate-flow__actions .ui-button,
+.staff-estimate-requests-control > .ui-button { width: 100%; min-height: 32px; padding: 6px 8px; font-size: 12px; text-align: start; }
+.staff-estimate-flow--compact p { margin: 4px 0; font-size: 12px; }
+.staff-estimate-requests-control { margin: 0; }
+@media (pointer: coarse) {
+  .staff-estimate-actions-menu > summary,
+  .staff-estimate-flow--compact .staff-estimate-flow__actions .ui-button,
+  .staff-estimate-requests-control > .ui-button { min-height: 40px; }
+}

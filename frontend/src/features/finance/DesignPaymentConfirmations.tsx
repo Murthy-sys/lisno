@@ -28,12 +28,13 @@ export function ProjectInitialPaymentStatus({ workflow }: { workflow: DesignWork
   if (!payment) return null;
   const status = payment.confirmedAt ? "received" : payment.status;
   const received = status === "received" || receiptRecorded;
-  const collaborative = payment.workflowVersion === 2;
+  const quotationWorkflow = payment.workflowVersion === 3;
+  const collaborative = quotationWorkflow || payment.workflowVersion === 2;
   const canConfirm = !received && canRecord && (!collaborative || user?.role === "super_admin") && payment.canConfirm && status === "awaiting_payment";
   return <section className="workflow-payment-status" data-received={received || undefined} aria-label="Initial payment status">
     <div className="workflow-payment-status__summary">
-      <div><h2>Initial payment</h2><strong className="workflow-payment-status__label">{received ? "Initial payment received" : payment.requiresAttestation ? "Confirm existing receipt against final estimate" : status === "awaiting_estimate_approval" ? collaborative ? "Awaiting final estimate approval" : "Awaiting estimate approval" : status === "awaiting_payment" ? "Awaiting initial payment" : "Payment status unavailable"}</strong></div>
-      <div>{payment.confirmedAt ? <ReceiptTime confirmedAt={payment.confirmedAt} /> : received ? <p role="status">{collaborative ? "Initial payment confirmed for the final estimate. Work orders can be issued when procurement checks are complete." : "Initial payment received. The Designer’s Internal Kick off countdown has started. The recorded time will appear when the workflow refreshes."}</p> : collaborative ? <p>Design starts after pre-estimate approval. After design and final estimate approval, Super Admin verifies the initial payment to enable work-order issuance.</p> : <p>{status === "awaiting_estimate_approval" ? "The estimate must be approved before the initial payment can be recorded." : "Super Admin or Finance verifies the actual receipt before recording payment."} The Designer’s Internal Kick off countdown starts when initial payment is marked received.</p>}
+      <div><h2>Initial payment</h2><strong className="workflow-payment-status__label">{received ? "Initial payment received" : payment.requiresAttestation ? "Confirm existing receipt against final estimate" : status === "awaiting_estimate_approval" ? quotationWorkflow ? "Awaiting quotation and design approval" : collaborative ? "Awaiting final estimate approval" : "Awaiting estimate approval" : status === "awaiting_payment" ? "Awaiting initial payment" : "Payment status unavailable"}</strong></div>
+      <div>{payment.confirmedAt ? <ReceiptTime confirmedAt={payment.confirmedAt} /> : received ? <p role="status">{collaborative ? "Initial payment confirmed for the final estimate. Work orders can be issued when procurement checks are complete." : "Initial payment received. The Designer’s Internal Kick off countdown has started. The recorded time will appear when the workflow refreshes."}</p> : quotationWorkflow ? <p>Design tasks start after the Designer-revised quotation is approved. After the uploaded design is approved, Super Admin confirms the initial payment before work-order issuance.</p> : collaborative ? <p>Design starts after pre-estimate approval. After design and final estimate approval, Super Admin verifies the initial payment to enable work-order issuance.</p> : <p>{status === "awaiting_estimate_approval" ? "The estimate must be approved before the initial payment can be recorded." : "Super Admin or Finance verifies the actual receipt before recording payment."} The Designer’s Internal Kick off countdown starts when initial payment is marked received.</p>}
         {payment.requiresAttestation && payment.existingReceiptAt ? <><ReceiptTime confirmedAt={payment.existingReceiptAt} /><p>Confirm this existing receipt against the final approved estimate. This does not record another payment.</p></> : null}
         {payment.issue ? <p>{payment.issue}</p> : null}</div>
     </div>
@@ -62,14 +63,14 @@ export function DesignPaymentConfirmations({ summaryHref }: { summaryHref?: stri
   </section>;
   return <Surface as="section" className="design-payment-confirmations" aria-label="Initial payment confirmations">
     <h2>Initial payment confirmations</h2>
-    <p>Verify the receipt before confirming payment. For pre/post-estimation projects, Super Admin confirms payment after final approval to enable work-order issuance. Earlier projects keep their existing payment workflow.</p>
+    <p>Verify the receipt before confirming payment. For quotation projects, Super Admin confirms payment after quotation and uploaded-design approval. Pre/post-estimation projects require final estimate approval before confirmation. Earlier projects keep their existing payment workflow.</p>
     {query.isError ? <div role="alert"><p>Payment confirmations could not be refreshed.</p><Button variant="secondary" onClick={() => void query.refetch()}>Reload confirmations</Button></div> : null}
     {query.isPending ? <p role="status">Loading payment confirmations…</p> : query.data
       ? query.data.length === 0 ? <p>No projects are waiting for initial-payment confirmation.</p>
         : <ul className="design-payment-confirmations__list">{query.data.map((project) => <li key={project.projectId}>
           <h3>{project.projectName}</h3>
           {project.existingReceiptAt && project.requiresAttestation ? <><ReceiptTime confirmedAt={project.existingReceiptAt} /><p>Confirm the existing receipt against the final estimate without recording another payment.</p></> : null}
-          {project.confirmedAt ? <ReceiptTime confirmedAt={project.confirmedAt} /> : canRecord && (project.workflowVersion !== 2 || user?.role === "super_admin") && project.canConfirm === true ? <PaymentConfirmationForm project={project} canConfirm={project.canConfirm} /> : <p>Awaiting initial payment confirmation.</p>}
+          {project.confirmedAt ? <ReceiptTime confirmedAt={project.confirmedAt} /> : canRecord && (![2, 3].includes(project.workflowVersion ?? 0) || user?.role === "super_admin") && project.canConfirm === true ? <PaymentConfirmationForm project={project} canConfirm={project.canConfirm && !query.isError} /> : <p>Awaiting initial payment confirmation.</p>}
         </li>)}</ul> : null}
   </Surface>;
 }
@@ -98,7 +99,7 @@ function PaymentConfirmationForm({ project, canConfirm, onRecorded }: { project:
     inFlight.current = true; mutation.mutate();
   }
   return <form className="workflow-stage-actions__form" onSubmit={submit} aria-label={`Record initial payment for ${project.projectName}`}>
-    {recorded ? <p role="status">{project.workflowVersion === 2 ? "Initial payment confirmed for the final estimate. Work orders can be issued when procurement checks are complete." : "Initial payment received. The Designer’s Internal Kick off countdown has started."}</p> : <>
+    {recorded ? <p role="status">{[2, 3].includes(project.workflowVersion ?? 0) ? "Initial payment confirmed for the final estimate. Work orders can be issued when procurement checks are complete." : "Initial payment received. The Designer’s Internal Kick off countdown has started."}</p> : <>
       <Field id={`${id}-reference`} label="Payment reference / receipt note" required hint="Record the verified receipt reference. The confirmation time is recorded automatically.">{(props) => <Textarea {...props} value={note} maxLength={1000} rows={2} onChange={(event) => setNote(event.target.value)} disabled={mutation.isPending || stale} />}</Field>
       {stale ? <div role="alert"><p>The payment or workflow status changed. Review the latest status before saving. Your receipt note has been kept.</p>{project.version !== version && canConfirm && !project.confirmedAt ? <Button variant="secondary" disabled={mutation.isPending} onClick={() => { setVersion(project.version); setConflict(false); setKey(crypto.randomUUID()); mutation.reset(); }}>Use latest status</Button> : <Button variant="secondary" disabled={mutation.isPending} onClick={() => void refresh()}>Refresh payment status</Button>}</div> : null}
       {mutation.isError ? <p role="alert">{mutation.error instanceof Error ? mutation.error.message : "The confirmation could not be saved."}</p> : null}

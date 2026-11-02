@@ -515,6 +515,8 @@
   text-underline-offset: 0.2em;
 }
 
+.lead-row__project-number { overflow-wrap: anywhere; }
+
 .ui-app-shell[data-role] .lead-workspace .lead-row small,
 .ui-app-shell[data-role] .lead-workspace .lead-row__created time,
 .ui-app-shell[data-role] .lead-workspace .lead-row__next time {

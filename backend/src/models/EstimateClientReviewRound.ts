@@ -1,5 +1,6 @@
 import { ESTIMATE_COMPONENT_PRICING_BASIS, estimateComponentLineAmountIsValid, readEstimateComponentPricing } from "../domain/estimate-component-pricing.js";
 import { estimateDimensionSnapshotValid } from "../domain/estimate-dimension-snapshot.js";
+import { readEstimateProposal } from "../domain/estimate-proposal.js";
 import { estimatePricingMetadataIsValid } from "../domain/estimate-mode-pricing.js";
 import { KNOWLEDGE_MODE_TIERS } from "../domain/ai-estimator-knowledge-mode-tiers.js";
 import {
@@ -152,6 +153,8 @@ const selectedMainBasketClassificationSchema = new Schema({
 
 const estimateClientReviewSnapshotSchema = new Schema(
   {
+    proposal: { type: Schema.Types.Mixed, default: undefined, immutable: true,
+      validate: (value: unknown) => value === undefined || readEstimateProposal(value) !== null },
     rooms: { type: [Schema.Types.Mixed], default: undefined, immutable: true },
     bedroomCount: { type: Number, default: undefined, immutable: true },
     scopes: { type: [String], default: undefined, immutable: true },
@@ -238,6 +241,17 @@ const estimateClientReviewRoundSchema = new Schema(
       immutable: true,
       match: ESTIMATE_CLIENT_SHA256
     },
+    workflowVersion: { type: Number, enum: [2, 3], immutable: true, default: undefined },
+    pricedRevision: { type: Number, min: 1, immutable: true, default: undefined, validate: safeIntegerValidator },
+    sourceDigest: { type: String, match: ESTIMATE_CLIENT_SHA256, immutable: true, default: undefined },
+    submittedById: { type: String, immutable: true, default: undefined },
+    salesApproval: { type: new Schema({
+      actorId: { type: String, required: true },
+      pricedRevision: { type: Number, min: 1, required: true, validate: safeIntegerValidator },
+      estimateVersion: { type: Number, min: 1, required: true, validate: safeIntegerValidator },
+      sourceDigest: { type: String, match: ESTIMATE_CLIENT_SHA256, required: true },
+      approvedAt: { type: String, required: true }
+    }, { _id: false }), immutable: true, default: undefined },
     recipientEmail: { type: String, required: true, immutable: true },
     recipientEmailNormalized: { type: String, required: true, immutable: true },
     estimateSnapshot: {

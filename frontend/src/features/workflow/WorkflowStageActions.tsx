@@ -21,6 +21,7 @@ import { FurnitureRequirementsReview } from "./FurnitureRequirementsReview";
 import { createFurnitureDimensionsDraft, formatApprovedRoomSize, FurnitureDimensionsEditor, parseFurnitureDimensionsDraft, type FurnitureDraftReveal } from "./FurnitureDimensionsEditor";
 import { SpacePlanningCompletion } from "./SpacePlanningCompletion";
 import { useRefreshDesignWorkflow } from "./useRefreshDesignWorkflow";
+import { ExistingFurnitureWorkflow } from "./ExistingFurnitureWorkflow";
 export { useRefreshDesignWorkflow } from "./useRefreshDesignWorkflow";
 
 const evidenceActions = new Set<DesignWorkflowActionId>(["internal_kickoff_complete", "furniture_upload"]);
@@ -43,6 +44,8 @@ const actionNames: Record<DesignWorkflowActionId, string> = {
   measurement_access_restore: "Site access restored",
   measurement_complete: "On Site Actual Measurement completed",
   furniture_scope: "Furniture dimensions requirement recorded",
+  furniture_request: "Furniture collection requested from Client",
+  furniture_choice: "Client furniture preference saved",
   furniture_accept: "Furniture dimensions request accepted",
   furniture_upload: "Furniture dimensions submitted for Client approval",
   furniture_scope_return: "Furniture requirements sent back",
@@ -54,7 +57,16 @@ const actionNames: Record<DesignWorkflowActionId, string> = {
 const actionLabel = (action: DesignWorkflowAction) => action.id === "measurement_complete" ? "Complete measurement" : action.label;
 const canSubmitDimensions = (room: NonNullable<DesignStageOperational["rooms"]>[number]) => room.required && !room.canProceed && (!room.dimensions || room.dimensions.status === "changes_requested");
 
-export function WorkflowStageActions({ workflow, stage, expandKickoff = false, presentation = "full", refreshError = false, refreshing = false }: { workflow: DesignWorkflowView; stage: DesignWorkflowStage; expandKickoff?: boolean; presentation?: "full" | "client" | "designer"; refreshError?: boolean; refreshing?: boolean }) {
+type WorkflowStageActionsProps = { workflow: DesignWorkflowView; stage: DesignWorkflowStage; expandKickoff?: boolean; presentation?: "full" | "client" | "designer"; refreshError?: boolean; refreshing?: boolean };
+
+export function WorkflowStageActions(props: WorkflowStageActionsProps) {
+  if (props.stage.type === "existing_furniture_dimensions" && (props.stage.operational?.workflowVersion === 3 || props.workflow.initialPayment?.workflowVersion === 3)) {
+    return <ExistingFurnitureWorkflow {...props} />;
+  }
+  return <LegacyWorkflowStageActions {...props} />;
+}
+
+function LegacyWorkflowStageActions({ workflow, stage, expandKickoff = false, presentation = "full", refreshError = false, refreshing = false }: WorkflowStageActionsProps) {
   const id = useId();
   const automaticActionId = presentation === "client" && stage.type === "client_kickoff" ? "client_kickoff_complete" : expandKickoff ? "internal_kickoff_complete" : undefined;
   const [selected, setSelected] = useState<DesignWorkflowAction | null>(() => automaticActionId
@@ -361,7 +373,7 @@ function StageActionForm({ action, workflow, stage, onClose, onSaved, autoFocus 
       </div> : null}
       {isInternalKickoff ? <div className="workflow-stage-actions__handover">
         {presentation !== "designer" ? <strong>Design handover acknowledgement</strong> : null}
-        <label><Checkbox required checked={designHandoverAcknowledged} onChange={(event) => setDesignHandoverAcknowledged(event.target.checked)} />{workflow.initialPayment?.workflowVersion === 2 ? "I acknowledge the design handover following pre-estimate approval." : "I acknowledge that the design flow has been handed over to me after initial payment."}</label>
+        <label><Checkbox required checked={designHandoverAcknowledged} onChange={(event) => setDesignHandoverAcknowledged(event.target.checked)} />{workflow.initialPayment?.workflowVersion === 3 ? "I acknowledge the design handover following approval of the Designer-revised quotation." : workflow.initialPayment?.workflowVersion === 2 ? "I acknowledge the design handover following pre-estimate approval." : "I acknowledge that the design flow has been handed over to me after initial payment."}</label>
         {presentation !== "designer" ? <p>Acknowledge receipt of the design flow, attach the signed checklist, then complete and save Internal Kick off. Saving stops this stage’s countdown.</p> : null}
       </div> : null}
       {meetingActions.has(action.id) ? <Field id={`${id}-meeting`} label={action.id === "internal_kickoff_complete" ? "Meeting conducted at" : "Meeting date and time"} hint="Dates use your local time zone." required>{(props) => <Input {...props} type="datetime-local" value={meetingAt} onChange={(event) => setMeetingAt(event.target.value)} />}</Field> : null}

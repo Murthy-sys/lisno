@@ -25,7 +25,7 @@ const projectFinanceBucketSchema = new Schema(
   {
     _id: { type: String, required: true, immutable: true },
     effectiveBaseline: { type: financeBaselineSourceSchema, default: null },
-    estimationWorkflowVersion: { type: Number, enum: [2] },
+    estimationWorkflowVersion: { type: Number, enum: [2, 3] },
     projectId: {
       type: String,
       ref: "Project",

@@ -38,7 +38,7 @@ export async function resolveBasketProjectApprovers(projectId: string, estimateI
   } else if (assignment.state !== "assigned" || !assignment.task || assignment.task.estimateId !== estimateId) {
     block("program_manager", "PROCUREMENT_BASKET_SITE_MANAGER_REQUIRED", "Assign a Project Manager to this project's current Site task before submitting this award.");
   } else {
-    const user = await UserModel.findOne({ _id: assignment.ownerId, role: "site_manager", active: true })
+    const user = await UserModel.findOne({ _id: assignment.ownerId, role: "site_manager", active: true, deletedAt: null })
       .select({ name: 1 }).session(session).lean() as Row | null;
     if (!user) block("program_manager", "PROCUREMENT_BASKET_SITE_MANAGER_INACTIVE", "Assign an active Project Manager before submitting this award.");
     else {
@@ -59,8 +59,8 @@ export async function resolveBasketProjectApprovers(projectId: string, estimateI
     .session(session).lean() as Row[];
   const sourceIds = [...new Set<string>([estimate?.designPlanDesignerId, ...designTasks.map(task => task.assigneeUserId)]
     .filter(Boolean).map(String))];
-  const candidate = sourceIds.length === 1 ? sourceIds[0] : projectDesigners.length === 1 ? projectDesigners[0] : null;
-  const inconsistent = sourceIds.length > 1 || designTasks.length > 1 ||
+  const candidate = project.estimationWorkflowVersion === 3 ? project.primaryDesignerId ?? null : sourceIds.length === 1 ? sourceIds[0] : projectDesigners.length === 1 ? projectDesigners[0] : null;
+  const inconsistent = (project.estimationWorkflowVersion === 3 && sourceIds.some(id => id !== candidate)) || sourceIds.length > 1 || designTasks.length > 1 ||
     designTasks.some(task => task.assigneeRole !== "designer" || !task.assigneeUserId) ||
     (estimate?.projectId && String(estimate.projectId) !== projectId) ||
     (candidate && !projectDesigners.includes(candidate));
@@ -69,7 +69,7 @@ export async function resolveBasketProjectApprovers(projectId: string, estimateI
   } else if (!candidate) {
     block("designer", "PROCUREMENT_BASKET_DESIGNER_REQUIRED", "Assign a Designer to this project before submitting this award.");
   } else {
-    const user = await UserModel.findOne({ _id: candidate, role: "designer", active: true })
+    const user = await UserModel.findOne({ _id: candidate, role: "designer", active: true, deletedAt: null })
       .select({ name: 1 }).session(session).lean() as Row | null;
     if (!user) block("designer", "PROCUREMENT_BASKET_DESIGNER_INACTIVE", "The project's assigned Designer is inactive. Correct the project assignment before submitting this award.");
     else result.assignedDesigner = { id: String(user._id), name: String(user.name) };

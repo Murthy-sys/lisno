@@ -26,7 +26,7 @@ export const workflowActionSchema = z.object({
   }, z.record(z.unknown()).default({}))
 }).strict();
 export type WorkflowActionInput = z.infer<typeof workflowActionSchema>;
-export type WorkflowCapabilities = { designer: boolean; client: boolean; sales: boolean; finance: boolean; representative: boolean; manager: boolean };
+export type WorkflowCapabilities = { designer: boolean; primaryDesigner?: boolean; client: boolean; sales: boolean; finance: boolean; representative: boolean; manager: boolean };
 export interface WorkflowAvailableAction { id: DesignWorkflowAction; label: string; actor: "designer" | "client" | "sales" | "finance"; requiresProof: boolean; disabledReason?: string }
 const ACTIONS: Record<Exclude<DesignWorkflowAction, "confirm_initial_payment">, { type: DesignStageType; label: string; actor: WorkflowAvailableAction["actor"]; file?: boolean }> = {
   internal_kickoff_complete: { type: "internal_kickoff", label: "Complete Internal Kick off and save", actor: "designer", file: true },
@@ -42,6 +42,8 @@ const ACTIONS: Record<Exclude<DesignWorkflowAction, "confirm_initial_payment">, 
   measurement_access_restore: { type: "site_measurement", label: "Confirm site access restored", actor: "client" },
   measurement_complete: { type: "site_measurement", label: "Complete measurement", actor: "designer" },
   furniture_scope: { type: "existing_furniture_dimensions", label: "Declare existing-furniture requirements", actor: "designer" },
+  furniture_request: { type: "existing_furniture_dimensions", label: "Request existing furniture details", actor: "designer" },
+  furniture_choice: { type: "existing_furniture_dimensions", label: "Confirm existing furniture", actor: "client" },
   furniture_accept: { type: "existing_furniture_dimensions", label: "Accept furniture requirements", actor: "client" },
   furniture_scope_return: { type: "existing_furniture_dimensions", label: "Send back requirements", actor: "client" },
   furniture_upload: { type: "existing_furniture_dimensions", label: "Submit furniture dimensions", actor: "client", file: true },
@@ -82,25 +84,33 @@ async function paymentApprovalSource(repository: AppRepository, projectId: strin
 /** Hydrate the recorded pre-approval anchor without writing on reads or inventing a payment. */
 export async function hydrateDesignWorkflowState(repository: AppRepository, projectId: string, state: DesignWorkflowState, lock = false) {
   const project = await repository.findProjectById(projectId);
-  if (project?.estimationWorkflowVersion !== 2) return state;
+  if (project?.estimationWorkflowVersion !== 2 && project?.estimationWorkflowVersion !== 3) return state;
   const context = await repository.findProjectEstimationContext(projectId, lock);
-  state.estimationWorkflowVersion = 2;
-  if (!state.designStartedAt && context?.preApprovedAt) state.designStartedAt = state.initialPaymentAt ?? context.preApprovedAt;
+  state.estimationWorkflowVersion = project.estimationWorkflowVersion;
+  if (project.estimationWorkflowVersion === 3) {
+    state.quotationLocked = Boolean(context?.quotationLocked && context.finalApproval &&
+      context.finalApproval.designScopeRevision === context.designScopeRevision);
+    state.designApprovalLocked = Boolean(state.quotationLocked && context?.designApproval?.designScopeRevision === context?.designScopeRevision);
+    if (!state.designStartedAt && context?.quotationApprovedAt && state.quotationLocked) state.designStartedAt = context.designStartedAt ?? context.quotationApprovedAt;
+  } else if (!state.designStartedAt && context?.preApprovedAt) state.designStartedAt = state.initialPaymentAt ?? context.preApprovedAt;
   return state;
 }
 
 export async function projectInitialPayment(repository: AppRepository, projectId: string, state: DesignWorkflowState, canConfirm: boolean, actorRole?: string) {
   const project = await repository.findProjectById(projectId);
-  const collaborative = project?.estimationWorkflowVersion === 2;
+  const collaborative = project?.estimationWorkflowVersion === 2 || project?.estimationWorkflowVersion === 3;
   const lifecycle = collaborative ? await repository.findProjectEstimationContext(projectId) : null;
+  const designReviewRoundId = project?.estimationWorkflowVersion === 3 ? lifecycle?.designApproval?.reviewRoundId : lifecycle?.finalApproval?.designReviewRoundId;
+  const approvedSource = lifecycle?.finalApproval && (project?.estimationWorkflowVersion !== 3 || lifecycle.quotationLocked &&
+    lifecycle.designApproval?.estimateReviewRoundId === lifecycle.finalApproval.reviewRoundId && lifecycle.designApproval.designScopeRevision === lifecycle.designScopeRevision);
   const exactReceipt = Boolean(lifecycle?.finalApproval && state.initialPaymentEstimateId === lifecycle.estimateId &&
     state.initialPaymentEstimateVersion === lifecycle.finalApproval.estimateVersion && state.initialPaymentReviewRoundId === lifecycle.finalApproval.reviewRoundId &&
-    state.initialPaymentDesignReviewRoundId === lifecycle.finalApproval.designReviewRoundId);
-  const metadata = collaborative ? { workflowVersion: 2 as const, designStartedAt: state.designStartedAt ?? null,
+    state.initialPaymentDesignReviewRoundId === designReviewRoundId && approvedSource);
+  const metadata = collaborative ? { workflowVersion: project!.estimationWorkflowVersion, designStartedAt: state.designStartedAt ?? null,
     existingReceiptAt: state.initialPaymentAt, requiresAttestation: Boolean(state.initialPaymentAt && !exactReceipt) } : {};
   if (state.initialPaymentAt && (!collaborative || exactReceipt)) return { ...metadata, confirmedAt: state.initialPaymentAt, canConfirm: false, version: state.version, status: "received" as WorkflowPaymentStatus };
   const { source, issue } = collaborative
-    ? lifecycle?.finalApproval ? { source: { estimateId: lifecycle.estimateId, estimateVersion: lifecycle.finalApproval.estimateVersion }, issue: undefined } : { source: null, issue: "Awaiting Client final estimate approval after design completion." }
+    ? approvedSource && lifecycle?.finalApproval ? { source: { estimateId: lifecycle.estimateId, estimateVersion: lifecycle.finalApproval.estimateVersion }, issue: undefined } : { source: null, issue: project?.estimationWorkflowVersion === 3 ? "Awaiting the current approved quotation and Client design approval." : "Awaiting Client final estimate approval after design completion." }
     : await paymentApprovalSource(repository, projectId);
   return { ...metadata, confirmedAt: null, canConfirm: canConfirm && Boolean(source) && (!collaborative || actorRole === "super_admin"), version: state.version, status: (source ? "awaiting_payment" : "awaiting_estimate_approval") as WorkflowPaymentStatus, ...(issue ? { issue } : {}) };
 }
@@ -110,13 +120,16 @@ export async function requireDesignWorkflowScope(repository: AppRepository, acto
   const project = await repository.findProjectById(projectId);
   if (!project) missing();
   const representative = user.role === "super_admin" || user.role === "admin" && Boolean(await repository.findActiveProjectAccessGrant(user.id, projectId, "projects").then((grant) => grant?.source === "admin_initiator" && grant.active));
-  const designer = user.role === "designer" && (project.assignedDesignerIds.includes(user.id) || project.initiatingDesignerId === user.id);
+  const designer = user.role === "designer" && (project.estimationWorkflowVersion === 3
+    ? project.primaryDesignerId === user.id || project.secondaryDesignerIds?.includes(user.id) === true
+    : project.assignedDesignerIds.includes(user.id) || project.initiatingDesignerId === user.id);
+  const primaryDesigner = designer && project.primaryDesignerId === user.id;
   const client = user.role === "client" && project.clientId === user.id;
   const sales = user.role === "estimator_sales" && project.assignedEstimatorId === user.id;
   const finance = user.role === "finance_head" || user.role === "super_admin";
   const manager = user.role === "design_head" || user.role === "design_manager" && project.managerId === user.id;
   if (!(representative || designer || client || sales || manager || allowFinance && finance)) missing();
-  return { project, capabilities: { designer, client: client || representative, sales, finance, representative, manager: manager || representative } };
+  return { project, capabilities: { designer, primaryDesigner, client: client || representative, sales, finance, representative, manager: manager || representative } };
 }
 
 /** Observers can inspect progress but never acquire an existing stage-action capability. */
@@ -133,6 +146,8 @@ export async function requireDesignWorkflowReadScope(repository: AppRepository, 
 export async function assertDesignWorkflowSubmissionAllowed(repository: AppRepository, projectId: string, options: { lock?: boolean; roomIds?: string[]; phase?: "upload" | "submission" } = {}) {
   const project = await repository.findProjectById(projectId);
   if (!project) missing();
+  if (project.estimationWorkflowVersion === 3 && !project.designWorkflowStages?.length)
+    blocked(["The quotation workflow is missing its configured design stages. Reconcile the project workflow before uploading or submitting designs."]);
   const readiness = options.phase === "upload" ? undefined : await assertDesignRequirementsSubmissionAllowed(repository, projectId, options.lock ?? false);
   const designRequirementsReadiness = readiness?.entries.length ? readiness : undefined;
   if (!project.designWorkflowStages) return designRequirementsReadiness;
@@ -145,6 +160,13 @@ export async function assertDesignWorkflowSubmissionAllowed(repository: AppRepos
       throw error;
     });
     if (!context || furniture.scopeEstimateId !== context.estimateId || furniture.scopeEstimateVersion !== context.estimateVersion) reasons.push("The approved estimate no longer matches this furniture confirmation. Reconcile the project approved source before submitting.");
+    if (state.estimationWorkflowVersion === 3) {
+      const stageId = project.designWorkflowStages.find(stage => stage.type === "existing_furniture_dimensions")?.id;
+      if (!stageId || furnitureRequirementsSubmission(state, stageId).kind !== "client" ||
+        furniture.rooms?.some(room => room.dimensions && !currentFurnitureSubmission(state, stageId, room))) {
+        reasons.push("The current Client furniture confirmation or measurement evidence is unavailable. Reconcile it before design submission.");
+      }
+    }
   }
   if (reasons.length) blocked(reasons);
   if (options.lock) {
@@ -154,7 +176,22 @@ export async function assertDesignWorkflowSubmissionAllowed(repository: AppRepos
   return designRequirementsReadiness;
 }
 function allowed(state: DesignWorkflowState, action: Exclude<DesignWorkflowAction, "confirm_initial_payment">, at: number, actorId?: string): boolean {
+  if (state.estimationWorkflowVersion === 3 && !state.quotationLocked) return false;
   if (!workflowDesignStartAt(state)) return false;
+  if (state.estimationWorkflowVersion === 3 && action.startsWith("furniture_")) {
+    if (state.designApprovalLocked) return false;
+    const furniture = state.stages.existing_furniture_dimensions;
+    const request = furniture?.clientFurnitureRequest;
+    if (action === "furniture_request") return !request || request.hasFurniture === null;
+    if (action === "furniture_choice") return Boolean(request && !furniture?.completedAt);
+    if (action === "furniture_upload") return Boolean(request?.hasFurniture && furniture?.acceptedAt && !furniture.completedAt &&
+      furniture.rooms?.some(room => room.required && (!room.dimensions || room.dimensions.status === "changes_requested")));
+    if (action === "furniture_dimensions_approve") return Boolean(request?.hasFurniture && furniture?.rooms?.some(room => room.dimensions?.status === "pending"));
+    if (action === "furniture_dimensions_return") return Boolean(request?.hasFurniture && furniture?.rooms?.some(room =>
+      room.dimensions?.status === "pending" || room.dimensions?.status === "approved" && room.dimensions.provenance === "client_self"));
+    return false;
+  }
+  if (action === "furniture_request" || action === "furniture_choice") return false;
   const paused = workflowIsPaused(state);
   if (action === "measurement_access_restore") return paused;
   if (action !== "sales_calendar_accept" && !workflowStageStartAt(state, ACTIONS[action].type, at)) return false;
@@ -186,19 +223,41 @@ function allowed(state: DesignWorkflowState, action: Exclude<DesignWorkflowActio
     case "furniture_proceed": return false;
   }
 }
+
+function workflowActionActor(state: DesignWorkflowState, action: keyof typeof ACTIONS, capabilities: WorkflowCapabilities): WorkflowAvailableAction["actor"] | null {
+  if (state.estimationWorkflowVersion === 3 && action.startsWith("furniture_")) {
+    if (action === "furniture_request") return capabilities.primaryDesigner ? "designer" : null;
+    if (capabilities.representative) return null;
+    if (action === "furniture_choice" || action === "furniture_dimensions_approve") return "client";
+    if (action === "furniture_upload") return state.stages.existing_furniture_dimensions?.clientFurnitureRequest?.needsAssistance ? "designer" : "client";
+    if (action === "furniture_dimensions_return") return capabilities.primaryDesigner ? "designer" : "client";
+    return null;
+  }
+  return action === "furniture_upload" && capabilities.designer ? "designer" : ACTIONS[action].actor;
+}
+
+function workflowActionNeedsProof(state: DesignWorkflowState, action: keyof typeof ACTIONS, actionActor: WorkflowAvailableAction["actor"], capabilities: WorkflowCapabilities): boolean {
+  if (state.estimationWorkflowVersion === 3 && action.startsWith("furniture_")) return action === "furniture_upload" && actionActor === "designer";
+  return Boolean(ACTIONS[action].file || actionActor === "client" && capabilities.representative);
+}
 export function workflowAvailableActions(state: DesignWorkflowState, type: DesignStageType, capabilities: WorkflowCapabilities, at: number, actorId?: string, context?: WorkflowStageContext): WorkflowAvailableAction[] {
   return Object.entries(ACTIONS).flatMap(([id, definition]) => {
-    const actionActor = id === "furniture_upload" && capabilities.designer ? "designer" : definition.actor;
-    if (definition.type !== type || !capabilities[actionActor]) return [];
+    const actionActor = workflowActionActor(state, id as keyof typeof ACTIONS, capabilities);
+    if (definition.type !== type || !actionActor || !capabilities[actionActor]) return [];
+    if (state.estimationWorkflowVersion === 3 && id === "furniture_dimensions_return" && actionActor === "designer" &&
+      !state.stages.existing_furniture_dimensions?.rooms?.some(room => room.dimensions?.provenance === "client_self" && room.dimensions.status === "approved")) return [];
+    if (state.estimationWorkflowVersion === 3 && id === "furniture_dimensions_return" && actionActor === "client" &&
+      !state.stages.existing_furniture_dimensions?.rooms?.some(room => room.dimensions?.provenance === "designer_assisted" && room.dimensions.status === "pending")) return [];
     if (id === "space_planning_complete" && (capabilities.representative || !context?.spacePlanning?.readyForCompletion || context.spacePlanningIssue)) return [];
     let disabledReason: string | undefined;
     if (id === "internal_kickoff_complete") {
       if (state.stages.internal_kickoff?.completedAt) return [];
-      if (!workflowDesignStartAt(state)) disabledReason = state.estimationWorkflowVersion === 2 ? "Awaiting Client pre-estimate approval before design starts." : paymentBlockingReason(context);
+      if (state.estimationWorkflowVersion === 3 && !state.quotationLocked) disabledReason = "Awaiting Client approval of the Designer-revised quotation.";
+      else if (!workflowDesignStartAt(state)) disabledReason = state.estimationWorkflowVersion === 2 ? "Awaiting Client pre-estimate approval before design starts." : paymentBlockingReason(context);
     } else if (!allowed(state, id as keyof typeof ACTIONS, at, actorId)) return [];
     if (id === "client_kickoff_complete" && !submittedInternalKickoffEvent(state, context?.projectId, context?.internalKickoffStageId)) disabledReason = KICKOFF_DOCUMENT_UNAVAILABLE;
     const label = id === "furniture_scope" && state.stages.existing_furniture_dimensions?.rooms ? "Edit furniture requirements" : id === "furniture_upload" && state.stages.existing_furniture_dimensions?.rooms?.some((room) => room.dimensions?.status === "changes_requested") ? "Resubmit returned dimensions" : definition.label;
-    return [{ id: id as keyof typeof ACTIONS, label, actor: actionActor, requiresProof: Boolean(definition.file || actionActor === "client" && capabilities.representative), ...(disabledReason ? { disabledReason } : {}) }];
+    return [{ id: id as keyof typeof ACTIONS, label, actor: actionActor, requiresProof: workflowActionNeedsProof(state, id as keyof typeof ACTIONS, actionActor, capabilities), ...(disabledReason ? { disabledReason } : {}) }];
   });
 }
 function dateField(data: Record<string, unknown>, key: string, at: number, future: boolean, optional = false): string | undefined {
@@ -220,6 +279,108 @@ const furnitureStoredItemSchema = z.union([furnitureMeasurementsSchema.extend(fu
 const furnitureUploadSchema = z.object({ rooms: z.array(z.object({ roomId: z.string().min(1), items: z.array(furnitureInputItemSchema).min(1) }).strict()).min(1).max(100) }).strict();
 const furnitureReturnedZeroValueResolutionSchema = z.object({ resolveReturnedZeroValueRoomIds: z.array(z.string().min(1)).min(1).max(100) }).strict();
 const furnitureStoredSubmissionSchema = z.object({ rooms: z.array(z.object({ roomId: z.string().min(1), items: z.array(furnitureStoredItemSchema).min(1) }).strict()).min(1).max(100) }).strict();
+const personalFurnitureIdentity = { id: z.string().trim().min(1).max(128), name: z.string().trim().min(1).max(240), uomId: z.string().trim().min(1).max(128) };
+const personalFurnitureItemSchema = z.union([furnitureMeasurementsSchema.extend(personalFurnitureIdentity).strict(), furnitureCountSchema.extend(personalFurnitureIdentity).strict()]);
+const personalFurnitureUploadSchema = z.object({ confirmed: z.literal(true).optional(),
+  rooms: z.array(z.object({ roomId: z.string().min(1), items: z.array(personalFurnitureItemSchema).min(1).max(200) }).strict()).min(1).max(100) }).strict();
+const personalFurnitureStoredSubmissionSchema = furnitureStoredSubmissionSchema.extend({
+  requestEventId: z.string().min(1), responseEventId: z.string().min(1),
+  provenance: z.enum(["client_self", "designer_assisted"]), confirmed: z.literal(true).optional()
+}).strict();
+const clientFurnitureChoiceSchema = z.object({ hasFurniture: z.boolean(), needsAssistance: z.boolean().optional() }).strict();
+
+async function applyClientFurnitureAction(input: { repository: AppRepository; projectId: string; state: DesignWorkflowState;
+  actor: PublicUser; capabilities: WorkflowCapabilities; action: DesignWorkflowAction; data: Record<string, unknown>;
+  note: string; eventId: string; stageId: string; timestamp: string }) {
+  const { repository, projectId, state, actor, capabilities, action, data, note, eventId, stageId, timestamp } = input;
+  const current = state.stages.existing_furniture_dimensions ??= {};
+  const source = await repository.findDesignWorkflowRoomContext(projectId, true);
+  if (!source) blocked(["The approved project room source is unavailable."]);
+  if (action === "furniture_request") {
+    if (!capabilities.primaryDesigner) missing();
+    const parsed = z.object({ roomIds: z.array(z.string().min(1)).max(100) }).strict().safeParse(data);
+    if (!parsed.success || new Set(parsed.data.roomIds).size !== parsed.data.roomIds.length ||
+      source.rooms.length > 0 && parsed.data.roomIds.length === 0 || parsed.data.roomIds.some(id => !source.rooms.some(room => room.id === id))) {
+      throw new ApiError(400, "INVALID_FURNITURE_ROOMS", "Select unique rooms from this project.");
+    }
+    current.clientFurnitureRequest = { requestEventId: eventId, requestedById: actor.id, requestedAt: timestamp,
+      roomIds: parsed.data.roomIds, hasFurniture: null, needsAssistance: null, assistanceFeePaise: null };
+    current.scopeEstimateId = source.estimateId; current.scopeEstimateVersion = source.estimateVersion;
+    current.scopeRoomFingerprints = workflowGeometryFingerprints(source);
+    current.rooms = source.rooms.map(room => ({ id: room.id, name: room.name, required: parsed.data.roomIds.includes(room.id), uploadedAt: null, proceed: false }));
+    delete current.acceptedAt; delete current.completedAt; delete current.noExistingFurniture; delete current.scopeReturn;
+    return { roomIds: parsed.data.roomIds, assistanceFeePaise: null };
+  }
+  const request = current.clientFurnitureRequest;
+  if (!request || current.scopeEstimateId !== source.estimateId || current.scopeEstimateVersion !== source.estimateVersion ||
+    request.roomIds.some(id => !source.rooms.some(room => room.id === id))) blocked(["The furniture request changed. Refresh its project room scope."]);
+  if (action === "furniture_choice") {
+    if (actor.role !== "client" || capabilities.representative) missing();
+    const parsed = clientFurnitureChoiceSchema.safeParse(data);
+    if (!parsed.success || parsed.data.hasFurniture && typeof parsed.data.needsAssistance !== "boolean" ||
+      !parsed.data.hasFurniture && parsed.data.needsAssistance === true) {
+      throw new ApiError(400, "INVALID_FURNITURE_CHOICE", "Confirm whether you have existing furniture and whether Lisno assistance is needed.");
+    }
+    request.hasFurniture = parsed.data.hasFurniture;
+    request.needsAssistance = parsed.data.hasFurniture ? parsed.data.needsAssistance! : null;
+    request.assistanceFeePaise = null; request.respondedById = actor.id; request.respondedAt = timestamp; request.responseEventId = eventId;
+    current.acceptedAt = timestamp; current.noExistingFurniture = !parsed.data.hasFurniture;
+    current.rooms = source.rooms.map(room => ({ id: room.id, name: room.name,
+      required: parsed.data.hasFurniture && request.roomIds.includes(room.id), uploadedAt: null, proceed: false }));
+    delete current.completedAt; delete current.scopeReturn;
+    return { ...parsed.data, requestEventId: request.requestEventId, assistanceFeePaise: null };
+  }
+  if (!request.hasFurniture || !request.responseEventId) blocked(["The Client must confirm existing furniture before submitting measurements."]);
+  if (action === "furniture_upload") {
+    const parsed = personalFurnitureUploadSchema.safeParse(data);
+    if (!parsed.success) throw new ApiError(400, "INVALID_FURNITURE_DIMENSIONS", "Enter personal item names, stable item IDs, a configured UOM, and positive dimensions or a whole count.");
+    const self = actor.role === "client";
+    if (self ? request.needsAssistance !== false || parsed.data.confirmed !== true : !capabilities.designer || request.needsAssistance !== true || parsed.data.confirmed !== undefined) {
+      throw new ApiError(403, "FORBIDDEN", "Only the Client can confirm self-entered dimensions; requested assistance must be submitted by an assigned Designer.");
+    }
+    const roomIds = parsed.data.rooms.map(room => room.roomId);
+    if (new Set(roomIds).size !== roomIds.length || roomIds.some(id => !current.rooms?.some(room => room.id === id && room.required))) {
+      throw new ApiError(400, "INVALID_FURNITURE_ROOMS", "Choose unique required rooms from the current furniture request.");
+    }
+    const itemIds = [...parsed.data.rooms.flatMap(room => room.items.map(item => item.id)),
+      ...(current.rooms ?? []).filter(room => !roomIds.includes(room.id)).flatMap(room => room.dimensions?.items.map(item => item.id) ?? [])];
+    if (new Set(itemIds).size !== itemIds.length) throw new ApiError(400, "INVALID_FURNITURE_DIMENSIONS", "Each personal furniture item must have a unique ID.");
+    const uomIds = [...new Set(parsed.data.rooms.flatMap(room => room.items.map(item => item.uomId)))];
+    const uoms = new Map((await repository.referenceWorkflowUoms(uomIds)).map(uom => [uom.id, uom]));
+    if (uoms.size !== uomIds.length) throw new ApiError(400, "INVALID_FURNITURE_UOM", "Select active configured units for every item.");
+    const rooms = parsed.data.rooms.map(entry => ({ roomId: entry.roomId, items: entry.items.map(item => ({ ...item,
+      unit: uoms.get(item.uomId)!.code, uomName: uoms.get(item.uomId)!.name })) }));
+    for (const entry of rooms) {
+      const room = current.rooms!.find(saved => saved.id === entry.roomId)!;
+      if (room.dimensions && room.dimensions.status !== "changes_requested") blocked(["Return the current furniture submission before replacing its measurements."]);
+      room.dimensions = { submissionEventId: eventId, revision: nextFurnitureRevision(state, stageId, room.id),
+        status: self ? "approved" : "pending", items: entry.items, submittedAt: timestamp, submittedById: actor.id,
+        provenance: self ? "client_self" : "designer_assisted", ...(self ? { clientConfirmedAt: timestamp, reviewedAt: timestamp } : {}) };
+      room.uploadedAt = timestamp; room.proceed = false;
+    }
+    return { rooms, requestEventId: request.requestEventId, responseEventId: request.responseEventId,
+      provenance: self ? "client_self" : "designer_assisted", ...(self ? { confirmed: true } : {}) };
+  }
+  if (action === "furniture_dimensions_approve" || action === "furniture_dimensions_return") {
+    const parsed = furnitureReviewSchema.safeParse(data);
+    if (!parsed.success || new Set(parsed.data.submissions.map(row => row.roomId)).size !== parsed.data.submissions.length) throw new ApiError(400, "INVALID_FURNITURE_REVIEW", "Select unique rooms and their current submissions.");
+    if (action === "furniture_dimensions_return" && !note) throw new ApiError(400, "WORKFLOW_NOTE_REQUIRED", "Explain which dimensions need correction.");
+    for (const entry of parsed.data.submissions) {
+      const room = current.rooms?.find(room => room.id === entry.roomId && room.required);
+      const dimensions = room?.dimensions;
+      if (!room || !dimensions || dimensions.submissionEventId !== entry.submissionEventId || !currentFurnitureSubmission(state, stageId, room)) blocked(["The furniture submission changed. Refresh before reviewing it."]);
+      const self = dimensions.provenance === "client_self";
+      if (self ? action !== "furniture_dimensions_return" || !capabilities.primaryDesigner || dimensions.status !== "approved"
+        : actor.role !== "client" || dimensions.status !== "pending") throw new ApiError(403, "FORBIDDEN", "This furniture submission is not awaiting your decision.");
+      dimensions.status = action === "furniture_dimensions_approve" ? "approved" : "changes_requested";
+      dimensions.reviewedAt = timestamp;
+      if (action === "furniture_dimensions_approve") dimensions.clientConfirmedAt = timestamp;
+      else { dimensions.returnReason = note; delete dimensions.clientConfirmedAt; delete current.completedAt; }
+    }
+    return parsed.data;
+  }
+  blocked(["Use the Client furniture request and response actions for this workflow."]);
+}
 function canonicalFurnitureItems<T extends { estimateItemId: string }>(source: WorkflowEstimateRoomContext, roomId: string, items: T[], requireComplete = true) {
   const selected = source.rooms.find((room) => room.id === roomId)?.estimateItems ?? [];
   if (!selected.length) blocked(["This room has no selected items in the approved estimate. Correct the approved estimate or declare that the room has no existing furniture before continuing."]);
@@ -254,7 +415,7 @@ async function canonicalDimensionRooms(repository: AppRepository, source: Workfl
 function nextFurnitureRevision(state: DesignWorkflowState, stageId: string, roomId: string) {
   const eventIds = new Set(state.history.flatMap(event => {
     if (event.stageId !== stageId) return [];
-    const parsed = event.action === "furniture_scope" ? furnitureStoredScopeSchema.safeParse(event.data) : event.action === "furniture_upload" ? furnitureStoredSubmissionSchema.safeParse(event.data) : undefined;
+    const parsed = event.action === "furniture_scope" ? furnitureStoredScopeSchema.safeParse(event.data) : event.action === "furniture_upload" ? (state.estimationWorkflowVersion === 3 ? personalFurnitureStoredSubmissionSchema : furnitureStoredSubmissionSchema).safeParse(event.data) : undefined;
     if (!parsed?.success) return [];
     const rooms = "dimensions" in parsed.data ? parsed.data.dimensions : parsed.data.rooms;
     return rooms.some(room => room.roomId === roomId) ? [event.id] : [];
@@ -284,6 +445,8 @@ export function createDesignWorkflowStateService(repository: AppRepository, audi
         await tx.coordinateAuthorizationMutation();
         const { capabilities } = await requireFurnitureUomScope(tx, actor, projectId);
         const state = await hydrateDesignWorkflowState(tx, projectId, await tx.findDesignWorkflowState(projectId) ?? emptyDesignWorkflowState(projectId), true);
+        const uploadActor = workflowActionActor(state, "furniture_upload", capabilities);
+        if (state.estimationWorkflowVersion === 3 && (!uploadActor || !capabilities[uploadActor])) missing();
         const declaringScope = capabilities.designer && allowed(state, "furniture_scope", clock().getTime(), actor.id);
         if (!declaringScope && !allowed(state, "furniture_upload", clock().getTime(), actor.id)) blocked(["Furniture requirements or dimensions must be awaiting your submission before adding a UOM."]);
         if (declaringScope) {
@@ -356,6 +519,9 @@ export function createDesignWorkflowStateService(repository: AppRepository, audi
           }
           if (mediaFiles.length && input.action !== "measurement_complete") throw new ApiError(400, "INVALID_WORKFLOW_EVIDENCE", "Photos and videos are supported only for measurement completion.");
           if (state.version !== input.expectedVersion) throw new ApiError(409, "WORKFLOW_VERSION_CONFLICT", "The workflow changed. Refresh and try again.");
+          if (state.estimationWorkflowVersion === 3 && state.designApprovalLocked && input.action.startsWith("furniture_")) {
+            throw new ApiError(409, "DESIGN_APPROVAL_LOCKED", "Reopen design review before changing furniture information.");
+          }
           let onBehalfOfClient = false;
           let recordedActorName = actor.name;
           let recordedData = structuredClone(input.data);
@@ -363,43 +529,52 @@ export function createDesignWorkflowStateService(repository: AppRepository, audi
           const eventId = `workflow-event-${randomUUID()}`;
           if (input.action === "confirm_initial_payment") {
             checkData(input.data, []);
-            if (!capabilities.finance || project.estimationWorkflowVersion === 2 && actor.role !== "super_admin" || !input.note) throw new ApiError(403, "PAYMENT_CONFIRMATION_NOT_ALLOWED", "Super Admin or Finance must record a payment receipt reference.");
-            const lifecycle = project.estimationWorkflowVersion === 2 ? await tx.findProjectEstimationContext(projectId, true) : null;
+            const collaborative = project.estimationWorkflowVersion === 2 || project.estimationWorkflowVersion === 3;
+            if (!capabilities.finance || collaborative && actor.role !== "super_admin" || !input.note) throw new ApiError(403, "PAYMENT_CONFIRMATION_NOT_ALLOWED", "Super Admin or Finance must record a payment receipt reference.");
+            const lifecycle = collaborative ? await tx.findProjectEstimationContext(projectId, true) : null;
+            const designReviewRoundId = project.estimationWorkflowVersion === 3 ? lifecycle?.designApproval?.reviewRoundId : lifecycle?.finalApproval?.designReviewRoundId;
             const confirmedCurrentApproval = lifecycle?.finalApproval &&
               state.initialPaymentEstimateId === lifecycle.estimateId &&
               state.initialPaymentEstimateVersion === lifecycle.finalApproval.estimateVersion &&
               state.initialPaymentReviewRoundId === lifecycle.finalApproval.reviewRoundId &&
-              state.initialPaymentDesignReviewRoundId === lifecycle.finalApproval.designReviewRoundId;
-            if (input.stageId || state.initialPaymentAt && (project.estimationWorkflowVersion !== 2 || confirmedCurrentApproval)) blocked(["The initial payment is already confirmed or this request names a stage."]);
-            if (project.estimationWorkflowVersion === 2 && !lifecycle?.finalApproval) blocked(["The Client must approve the final estimate after design completion before payment can be confirmed."]);
+              state.initialPaymentDesignReviewRoundId === designReviewRoundId;
+            if (input.stageId || state.initialPaymentAt && (!collaborative || confirmedCurrentApproval)) blocked(["The initial payment is already confirmed or this request names a stage."]);
+            if (collaborative && !lifecycle?.finalApproval) blocked(["The Client must approve the quotation before payment can be confirmed."]);
+            if (project.estimationWorkflowVersion === 3 && (!lifecycle?.quotationLocked || !lifecycle.finalApproval ||
+              lifecycle.designApproval?.estimateReviewRoundId !== lifecycle.finalApproval.reviewRoundId || lifecycle.designApproval.designScopeRevision !== lifecycle.designScopeRevision)) {
+              blocked(["Approve the current quotation and uploaded design before confirming payment."]);
+            }
             const { source, issue } = lifecycle?.finalApproval ? { source: { estimateId: lifecycle.estimateId, estimateVersion: lifecycle.finalApproval.estimateVersion }, issue: undefined } : await paymentApprovalSource(tx, projectId);
             if (!source) blocked([issue!]);
             const attestation = Boolean(state.initialPaymentAt);
             state.initialPaymentAt ??= timestamp;
             if (lifecycle?.finalApproval) {
               state.initialPaymentReviewRoundId = lifecycle.finalApproval.reviewRoundId;
-              state.initialPaymentDesignReviewRoundId = lifecycle.finalApproval.designReviewRoundId;
+              state.initialPaymentDesignReviewRoundId = designReviewRoundId ?? undefined;
             }
             state.initialPaymentEstimateId = source.estimateId;
             state.initialPaymentEstimateVersion = source.estimateVersion;
-            recordedData = { estimateId: source.estimateId, estimateVersion: source.estimateVersion, confirmedAt: state.initialPaymentAt, ...(lifecycle?.finalApproval ? { estimateReviewRoundId: lifecycle.finalApproval.reviewRoundId, designReviewRoundId: lifecycle.finalApproval.designReviewRoundId, attestation } : {}) };
+            recordedData = { estimateId: source.estimateId, estimateVersion: source.estimateVersion, confirmedAt: state.initialPaymentAt, ...(lifecycle?.finalApproval ? { estimateReviewRoundId: lifecycle.finalApproval.reviewRoundId, designReviewRoundId: designReviewRoundId, attestation } : {}) };
             auditDetails = recordedData;
           } else {
             const definition = ACTIONS[input.action];
             const stage = project.designWorkflowStages.find((stage) => stage.id === input.stageId && stage.type === definition.type);
             if (!stage) missing();
-            const actionActor = input.action === "furniture_upload" && capabilities.designer ? "designer" : definition.actor;
-            if (!capabilities[actionActor]) throw new ApiError(403, "FORBIDDEN", "You cannot perform this stage action.");
+            const actionActor = workflowActionActor(state, input.action, capabilities);
+            if (!actionActor || !capabilities[actionActor]) throw new ApiError(403, "FORBIDDEN", "You cannot perform this stage action.");
             if (!allowed(state, input.action, at.getTime(), actor.id)) blocked(["This action is not available until its stage prerequisites are met."]);
             onBehalfOfClient = actionActor === "client" && capabilities.representative;
             const resolvingReturnedZeroValueRooms = input.action === "furniture_upload" && Object.hasOwn(input.data, "resolveReturnedZeroValueRoomIds");
-            if ((definition.file && !resolvingReturnedZeroValueRooms || onBehalfOfClient) && !proof) throw new ApiError(400, "WORKFLOW_PROOF_REQUIRED", "Upload the required supporting document.");
+            if (workflowActionNeedsProof(state, input.action, actionActor, capabilities) && !resolvingReturnedZeroValueRooms && !proof) throw new ApiError(400, "WORKFLOW_PROOF_REQUIRED", "Upload the required supporting document.");
             const current = state.stages[definition.type] ??= {};
-            const furnitureSource = definition.type === "existing_furniture_dimensions" && input.action !== "furniture_scope" ? await assertFurnitureScopeSource(tx, projectId, current) : undefined;
-            switch (input.action) {
+            const furnitureSource = state.estimationWorkflowVersion !== 3 && definition.type === "existing_furniture_dimensions" && input.action !== "furniture_scope" ? await assertFurnitureScopeSource(tx, projectId, current) : undefined;
+            if (state.estimationWorkflowVersion === 3 && definition.type === "existing_furniture_dimensions") {
+              recordedData = await applyClientFurnitureAction({ repository: tx, projectId, state, actor, capabilities,
+                action: input.action, data: input.data, note: input.note, eventId, stageId: stage.id, timestamp });
+            } else switch (input.action) {
               case "internal_kickoff_complete": {
                 checkData(input.data, ["meetingAt", "designHandoverAcknowledged"]);
-                if (input.data.designHandoverAcknowledged !== true) throw new ApiError(400, "KICKOFF_HANDOVER_REQUIRED", state.estimationWorkflowVersion === 2 ? "Acknowledge the design handover following pre-estimate approval." : "Acknowledge that the design flow has been handed over to you after initial payment.");
+                if (input.data.designHandoverAcknowledged !== true) throw new ApiError(400, "KICKOFF_HANDOVER_REQUIRED", state.estimationWorkflowVersion === 3 ? "Acknowledge the design handover following approval of the Designer-revised quotation." : state.estimationWorkflowVersion === 2 ? "Acknowledge the design handover following pre-estimate approval." : "Acknowledge that the design flow has been handed over to you after initial payment.");
                 const designer = await requireActor(tx, actor);
                 recordedActorName = designer.name;
                 current.meetingAt = dateField(input.data, "meetingAt", at.getTime(), false);
@@ -438,7 +613,7 @@ export function createDesignWorkflowStateService(repository: AppRepository, audi
               case "measurement_complete": {
                 checkData(input.data, []);
                 if (!mediaFiles.length) throw new ApiError(400, "WORKFLOW_MEDIA_REQUIRED", "Upload at least one site photo or video.");
-                if (state.estimationWorkflowVersion === 2) {
+                if (state.estimationWorkflowVersion === 2 || state.estimationWorkflowVersion === 3) {
                   const source = await tx.findDesignWorkflowRoomContext(projectId, true);
                   if (source) { current.scopeEstimateId = source.estimateId; current.scopeEstimateVersion = source.estimateVersion; current.scopeRoomFingerprints = workflowGeometryFingerprints(source); }
                 }
@@ -599,10 +774,16 @@ export function createDesignWorkflowStateService(repository: AppRepository, audi
               auditDetails = { ...auditDetails, timingBasis: "sequential" };
             }
           }
+          if (state.estimationWorkflowVersion === 3) {
+            const furniture = state.stages.existing_furniture_dimensions;
+            if (furniture?.acceptedAt && furniture.clientFurnitureRequest?.hasFurniture !== null &&
+              furniture.rooms?.every(room => workflowFurnitureRoomReady(furniture, room)) &&
+              workflowStagePrerequisiteBlockers(state, "existing_furniture_dimensions").length === 0) furniture.completedAt ??= timestamp;
+          }
           state.history.push({ id: eventId, idempotencyKey: input.idempotencyKey, requestHash: hash, action: input.action, stageId: input.stageId ?? null, actorId: actor.id, actorName: recordedActorName, actorRole: actor.role, onBehalfOfClient, at: timestamp, note: input.note, data: recordedData, proof, ...(mediaFiles.length ? { mediaFiles } : {}) });
           attemptedWrite = true;
           const saved = await tx.saveDesignWorkflowState(projectId, state.version, state);
-          if (input.action === "confirm_initial_payment" && project.estimationWorkflowVersion === 2) await tx.activateCollaborativeExecution(projectId, actor.id, timestamp);
+          if (input.action === "confirm_initial_payment" && (project.estimationWorkflowVersion === 2 || project.estimationWorkflowVersion === 3)) await tx.activateCollaborativeExecution(projectId, actor.id, timestamp);
           await audit.append({ actorId: actor.id, action: "design_workflow_action_recorded", entityType: "design_workflow", entityId: projectId, occurredAt: timestamp, newValues: { action: input.action, stageId: input.stageId ?? null, eventId, onBehalfOfClient, proofAvailable: Boolean(proof), ...(mediaFiles.length ? { mediaCount: mediaFiles.length } : {}), version: saved.version, ...auditDetails }, reason: input.note || null }, tx);
           return { version: saved.version, replayed: false };
         });
@@ -642,9 +823,24 @@ function wallAt(state: DesignWorkflowState, startsAt: string | null, offset: num
 }
 type FurnitureReviewEvidence = { eventId: string; mediaId?: string; filename: string; mimeType: string; byteSize: number; source: "site_measurement" | "furniture_requirements" | "furniture_dimensions" };
 
-type FurnitureRequirementsSubmission = { kind: "reconciled" } | { kind: "legacy" } | { kind: "invalid" } | { kind: "combined"; event: DesignWorkflowHistoryEvent };
+type FurnitureRequirementsSubmission = { kind: "client" } | { kind: "reconciled" } | { kind: "legacy" } | { kind: "invalid" } | { kind: "combined"; event: DesignWorkflowHistoryEvent };
 function furnitureRequirementsSubmission(state: DesignWorkflowState, stageId: string): FurnitureRequirementsSubmission {
   const current = state.stages.existing_furniture_dimensions;
+  if (state.estimationWorkflowVersion === 3) {
+    const request = current?.clientFurnitureRequest;
+    if (!request) return { kind: current?.rooms ? "invalid" : "legacy" };
+    const events = state.history.filter(event => event.id === request.requestEventId && event.action === "furniture_request" && event.stageId === stageId &&
+      event.actorRole === "designer" && event.actorId === request.requestedById && event.at === request.requestedAt && !event.onBehalfOfClient);
+    if (events.length !== 1 || JSON.stringify(events[0].data?.roomIds) !== JSON.stringify(request.roomIds) || request.assistanceFeePaise !== null) return { kind: "invalid" };
+    if (request.hasFurniture === null) return { kind: request.responseEventId || current.acceptedAt || current.rooms?.some(room => room.dimensions) ? "invalid" : "client" };
+    const choices = state.history.filter(event => event.id === request.responseEventId && event.action === "furniture_choice" && event.stageId === stageId &&
+      event.actorRole === "client" && event.actorId === request.respondedById && event.at === request.respondedAt && !event.onBehalfOfClient);
+    if (choices.length !== 1 || choices[0].data?.requestEventId !== request.requestEventId || choices[0].data?.hasFurniture !== request.hasFurniture ||
+      (request.hasFurniture && choices[0].data?.needsAssistance !== request.needsAssistance) ||
+      current.acceptedAt !== request.respondedAt || current.noExistingFurniture !== !request.hasFurniture ||
+      current.rooms?.some(room => room.required !== Boolean(request.hasFurniture && request.roomIds.includes(room.id)))) return { kind: "invalid" };
+    return { kind: "client" };
+  }
   if (current?.scopeReconciliation) return { kind: "reconciled" };
   const latest = state.history.filter(event => event.action === "furniture_scope" && event.stageId === stageId).at(-1);
   const pointer = current?.requirementsSubmissionEventId;
@@ -678,6 +874,30 @@ function currentFurnitureSubmission(state: DesignWorkflowState, stageId: string,
   if (!dimensions) return undefined;
   const matches = state.history.filter((event) => event.id === dimensions.submissionEventId);
   const event = matches.length === 1 ? matches[0] : undefined;
+  if (state.estimationWorkflowVersion === 3) {
+    const request = state.stages.existing_furniture_dimensions?.clientFurnitureRequest;
+    if (!event || event.action !== "furniture_upload" || event.stageId !== stageId || event.at !== dimensions.submittedAt ||
+      event.actorId !== dimensions.submittedById || event.onBehalfOfClient || furnitureRequirementsSubmission(state, stageId).kind !== "client") return undefined;
+    const parsed = personalFurnitureStoredSubmissionSchema.safeParse(event.data);
+    if (!parsed.success || parsed.data.requestEventId !== request?.requestEventId || parsed.data.responseEventId !== request?.responseEventId || parsed.data.provenance !== dimensions.provenance) return undefined;
+    if (parsed.data.provenance === "client_self" ? event.actorRole !== "client" || parsed.data.confirmed !== true || request.needsAssistance !== false
+      : event.actorRole !== "designer" || !event.proof || request.needsAssistance !== true) return undefined;
+    const items = z.array(furnitureStoredItemSchema).safeParse(dimensions.items);
+    const entries = parsed.data.rooms.filter(entry => entry.roomId === room.id);
+    if (dimensions.status === "approved") {
+      if (!dimensions.clientConfirmedAt || dimensions.reviewedAt !== dimensions.clientConfirmedAt) return undefined;
+      if (dimensions.provenance === "client_self") {
+        if (dimensions.clientConfirmedAt !== event.at || event.actorId !== request.respondedById) return undefined;
+      } else {
+        const confirmations = state.history.filter(review => review.action === "furniture_dimensions_approve" && review.stageId === stageId &&
+          review.actorRole === "client" && !review.onBehalfOfClient && review.at === dimensions.clientConfirmedAt &&
+          furnitureReviewSchema.safeParse(review.data).success && furnitureReviewSchema.parse(review.data).submissions.some(item =>
+            item.roomId === room.id && item.submissionEventId === event.id));
+        if (confirmations.length !== 1) return undefined;
+      }
+    }
+    return entries.length === 1 && items.success && JSON.stringify(entries[0].items) === JSON.stringify(items.data) ? event : undefined;
+  }
   if (event?.action === "furniture_scope") {
     if (state.stages.existing_furniture_dimensions?.scopeReconciliation) {
       const parsed = furnitureStoredScopeSchema.safeParse(event.data);
@@ -797,8 +1017,10 @@ export function projectOperationalStage(stage: ProjectDesignWorkflowStage, state
   const showSubmittedDocument = stage.type === "client_kickoff" ? capabilities.client : stage.type === "internal_kickoff" && stage.id === submitted?.stageId && canReadProof;
   const submittedDocument = showSubmittedDocument && submitted?.proof ? { eventId: submitted.id, filename: submitted.proof.originalFilename, mimeType: submitted.proof.mimeType, uploadedAt: submitted.at } : undefined;
   const reasons: string[] = [];
-  if (!workflowDesignStartAt(state)) reasons.push(state.estimationWorkflowVersion === 2 ? "Awaiting Client pre-estimate approval before design starts." : paymentBlockingReason(context));
+  if (state.estimationWorkflowVersion === 3 && !state.quotationLocked) reasons.push("Awaiting Client approval of the Designer-revised quotation.");
+  else if (!workflowDesignStartAt(state)) reasons.push(state.estimationWorkflowVersion === 2 ? "Awaiting Client pre-estimate approval before design starts." : paymentBlockingReason(context));
   if (paused) reasons.push("Site access is unavailable. All workflow clocks are paused.");
+  if (stage.type === "existing_furniture_dimensions" && state.estimationWorkflowVersion === 3 && state.designApprovalLocked) reasons.push("Reopen design review before changing furniture information.");
   if (!current.completedAt && (stage.type !== "space_planning_tentative_look_feel" || spacePlanning || context?.spacePlanningIssue || stored.spacePlanningApproval)) reasons.push(...workflowStagePrerequisiteBlockers(state, stage.type));
   const completionReasons: string[] = [];
   if (stage.type === "space_planning_tentative_look_feel") {
@@ -831,6 +1053,7 @@ export function projectOperationalStage(stage: ProjectDesignWorkflowStage, state
     if (elapsed >= reminderAt) reminders.push({ id: `${state.projectId}:${stage.id}:${reminderAt}`, label: elapsed >= greenEnd ? "Stage SLA needs attention" : "Stage approaches Yellow in one day", dueAt: wallAt(state, startsAt, reminderAt, at)! });
   }
   return {
+    ...(state.estimationWorkflowVersion === 3 ? { workflowVersion: 3 as const } : {}),
     status: (current.completedAt ? "completed" : !startsAt ? "not_started" : reasons.length ? "blocked" : "in_progress") as "completed" | "blocked" | "not_started" | "in_progress",
     version: state.version, availableActions: actions,
     timing: {
@@ -845,7 +1068,8 @@ export function projectOperationalStage(stage: ProjectDesignWorkflowStage, state
       clockOwner: clock && startsAt ? owner : null, designerElapsedMs: Math.max(0, activeElapsed - clientElapsed), clientElapsedMs: clientElapsed
     }, blockingReasons: [...new Set(reasons)], facts, history, reminders,
     ...(spacePlanning && canReadProof ? { spacePlanning: { estimateId: spacePlanning.estimateId, designPlanVersion: spacePlanning.designPlanVersion, reviewRoundId: spacePlanning.reviewRoundId, totalImages: spacePlanning.totalImages, approvedImages: spacePlanning.approvedImages, readyForCompletion: spacePlanning.readyForCompletion && completionReasons.length === 0 && !current.completedAt, completedAt: current.completedAt ?? null, completionBlockingReasons: [...new Set(completionReasons)] } } : {}),
-    ...(stage.type === "existing_furniture_dimensions" ? { furniture: projectFurnitureProgress(current, projectFurnitureEvidence(stage.id, state, canReadProof, context), canReadFurnitureDetails, furnitureSubmission?.kind === "combined" ? furnitureSubmission.event.id : undefined) } : {}),
+    ...(stage.type === "existing_furniture_dimensions" ? { furniture: projectFurnitureProgress(current, projectFurnitureEvidence(stage.id, state, canReadProof, context), canReadFurnitureDetails, furnitureSubmission?.kind === "combined" ? furnitureSubmission.event.id : undefined),
+      ...(current.clientFurnitureRequest && canReadFurnitureDetails ? { clientFurnitureRequest: structuredClone(current.clientFurnitureRequest) } : {}) } : {}),
     ...(submittedDocument ? { submittedDocument } : {}),
     ...(current.rooms ? { rooms: current.rooms.map((room) => ({ id: room.id, name: room.name, required: room.required, hasDimensions: Boolean(room.uploadedAt), canProceed: workflowFurnitureRoomReady(current, room), ...(room.dimensions && canReadFurnitureDetails ? { dimensions: structuredClone(room.dimensions) } : {}) })) } : {})
   };
@@ -877,10 +1101,10 @@ function workflowGeometryFingerprints(source: WorkflowEstimateRoomContext): Reco
 /** Reconcile the current room source while retaining immutable evidence and unaffected approvals. */
 export async function reconcileWorkflowRoomScope(repository: AppRepository, projectId: string, at: string): Promise<string[]> {
   const state = await hydrateDesignWorkflowState(repository, projectId, await repository.findDesignWorkflowState(projectId) ?? emptyDesignWorkflowState(projectId), true);
-  if (state.estimationWorkflowVersion !== 2) return [];
+  if (state.estimationWorkflowVersion !== 2 && state.estimationWorkflowVersion !== 3) return [];
   const source = await repository.findDesignWorkflowRoomContext(projectId, true);
   if (!source) blocked(["The saved estimate rooms are unavailable for reconciliation."]);
-  const fingerprints = workflowRoomFingerprints(source!);
+  const fingerprints = state.estimationWorkflowVersion === 3 ? workflowGeometryFingerprints(source!) : workflowRoomFingerprints(source!);
   const furniture = state.stages.existing_furniture_dimensions;
   const affected = new Set<string>();
   if (furniture?.scopeEstimateVersion !== undefined && furniture.scopeEstimateVersion !== source!.estimateVersion) {
@@ -894,13 +1118,19 @@ export async function reconcileWorkflowRoomScope(repository: AppRepository, proj
     furniture.rooms = source!.rooms.map(room => {
       const priorRoom = currentRooms.find(saved => saved.id === room.id);
       if (priorRoom && !affected.has(room.id)) return priorRoom;
-      const required = priorRoom?.required ?? room.estimateItems.length > 0;
-      return { ...priorRoom, id: room.id, name: room.name, required: required && room.estimateItems.length > 0, uploadedAt: priorRoom?.uploadedAt ?? null, proceed: false,
+      const required = priorRoom?.required ?? (state.estimationWorkflowVersion === 3 ? false : room.estimateItems.length > 0);
+      return { ...priorRoom, id: room.id, name: room.name, required: state.estimationWorkflowVersion === 3 ? required : required && room.estimateItems.length > 0, uploadedAt: priorRoom?.uploadedAt ?? null, proceed: false,
         ...(priorRoom?.dimensions ? { dimensions: { ...priorRoom.dimensions, status: "changes_requested" as const, reviewedAt: at, returnReason: "Estimate scope changed; confirm dimensions for the revised items." } } : {}) };
     });
     if (affected.size) {
       delete furniture.completedAt;
+      const responseNeedsRenewal = roomSetChanged || furniture.noExistingFurniture;
       if (roomSetChanged || furniture.noExistingFurniture) { delete furniture.acceptedAt; delete furniture.requirementsSubmissionEventId; furniture.noExistingFurniture = false; }
+      if (state.estimationWorkflowVersion === 3 && furniture.clientFurnitureRequest && responseNeedsRenewal) {
+        furniture.clientFurnitureRequest.hasFurniture = null; furniture.clientFurnitureRequest.needsAssistance = null;
+        delete furniture.clientFurnitureRequest.responseEventId; delete furniture.clientFurnitureRequest.respondedAt; delete furniture.clientFurnitureRequest.respondedById;
+        delete furniture.acceptedAt;
+      }
     }
   }
   const measurement = state.stages.site_measurement;

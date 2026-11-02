@@ -29,7 +29,7 @@ import {
   riskFactor
 } from "../domain/super-admin-dashboard.js";
 import { resolveEstimateReviewRoundId } from "../domain/estimate-client-review.js";
-import { isCollaborativeEstimate } from "../domain/estimation-lifecycle.js";
+import { effectiveCommercialStatus, isCollaborativeEstimate } from "../domain/estimation-lifecycle.js";
 import {
   MAX_FINANCE_AMOUNT_PAISE,
   PROJECT_FINANCE_TARGET_MARGIN_BPS,
@@ -87,9 +87,17 @@ function procurementPreparationEligible(estimate: MongoRow | null): estimate is 
     : estimate.designPlanStatus === "approved");
 }
 
+function dashboardEstimateStatus(estimate: MongoRow): string {
+  return estimate.estimation?.workflowVersion === 3 ? effectiveCommercialStatus(estimate) : estimate.status;
+}
+
+function dashboardEstimateStatusExpression(path: string): Record<string, unknown> {
+  return { $cond: [{ $eq: [`${path}.estimation.workflowVersion`, 3] }, `${path}.estimation.status`, `${path}.status`] };
+}
+
 function approvedEstimateVersionExpression(path: string): Record<string, unknown> {
   return { $cond: [
-    { $eq: [`${path}.estimation.workflowVersion`, 2] },
+    { $in: [`${path}.estimation.workflowVersion`, [2, 3]] },
     { $ifNull: [`${path}.estimation.finalApproval.estimateVersion`, `${path}.estimation.preApproval.estimateVersion`] },
     { $cond: [{ $gt: [`${path}.version`, 1] }, { $subtract: [`${path}.version`, 1] }, 1] }
   ] };
@@ -162,7 +170,7 @@ export function memorySuperAdminDashboardOverview(
 
   const estimateStatuses = [...estimates.values()];
   const waitingAges = estimateStatuses
-    .filter((estimate) => estimate.status === "sent_to_client")
+    .filter((estimate) => dashboardEstimateStatus(estimate) === "sent_to_client")
     .map((estimate) => elapsedDays(estimate.updatedAt, input.observedAt))
     .sort((left, right) => left - right);
   const designEligible = estimateStatuses.filter(
@@ -180,7 +188,7 @@ export function memorySuperAdminDashboardOverview(
   const statusCount = (status: ProjectRecord["status"]) =>
     projects.filter((project) => project.status === status).length;
   const clientChanges = estimateStatuses.filter(
-    (estimate) => estimate.status === "client_changes_requested"
+    (estimate) => dashboardEstimateStatus(estimate) === "client_changes_requested"
   ).length;
   const designChanges = designEligible.filter(
     (estimate) => estimate.designPlanStatus === "changes_requested"
@@ -233,11 +241,11 @@ export function memorySuperAdminDashboardOverview(
       draftInternal: estimateStatuses.filter((estimate) => [
         "draft", "pending_manager_assignment", "pending_designer_approval",
         "designer_changes_requested"
-      ].includes(estimate.status)).length,
-      readyToSend: estimateStatuses.filter((estimate) => estimate.status === "ready_for_client").length,
-      awaitingClient: estimateStatuses.filter((estimate) => estimate.status === "sent_to_client").length,
+      ].includes(dashboardEstimateStatus(estimate))).length,
+      readyToSend: estimateStatuses.filter((estimate) => dashboardEstimateStatus(estimate) === "ready_for_client").length,
+      awaitingClient: estimateStatuses.filter((estimate) => dashboardEstimateStatus(estimate) === "sent_to_client").length,
       changesRequested: clientChanges,
-      clientApproved: approvedBaselines.length,
+      clientApproved: estimateStatuses.filter(estimate => dashboardEstimateStatus(estimate) === "client_approved").length,
       approvedSubtotalPaise: finance.approvedSubtotalPaise,
       approvedGstPaise: finance.approvedGstPaise,
       approvedContractTotalPaise: finance.approvedContractTotalPaise,
@@ -367,8 +375,11 @@ export function memorySuperAdminDashboardProjects(
   observedAt: string,
   filters: DashboardProjectFilters
 ): DashboardPageResult<DashboardProjectRow> {
+  const estimates = canonicalEstimatesByProject(state);
   let rows = memoryProjectRows(state, observedAt).filter((row) => {
-    if (filters.module && !projectMatchesModule(row, filters.module)) return false;
+    const estimate = estimates.get(row.projectId);
+    const retainedApproval = estimate?.status === "client_approved" && Boolean(estimate.approvedBaseline);
+    if (filters.module && !projectMatchesModule(row, filters.module, retainedApproval)) return false;
     if (filters.projectStatus && row.projectStatus !== filters.projectStatus) return false;
     if (filters.riskLevel && row.risk.level !== filters.riskLevel) return false;
     if (filters.riskFactor && !row.risk.factors.some((factor) => factor.kind === filters.riskFactor)) return false;
@@ -512,11 +523,11 @@ async function mongoCanonicalModuleMetrics(): Promise<MongoRow> {
         tracked: {
           $sum: { $cond: [{ $ne: [{ $ifNull: ["$_dashboardCanonicalEstimate._id", null] }, null] }, 1, 0] }
         },
-        draftInternal: { $sum: { $cond: [{ $in: ["$_dashboardCanonicalEstimate.status", ["draft", "pending_manager_assignment", "pending_designer_approval", "designer_changes_requested"]] }, 1, 0] } },
-        readyToSend: { $sum: { $cond: [{ $eq: ["$_dashboardCanonicalEstimate.status", "ready_for_client"] }, 1, 0] } },
-        awaitingClient: { $sum: { $cond: [{ $eq: ["$_dashboardCanonicalEstimate.status", "sent_to_client"] }, 1, 0] } },
-        changesRequested: { $sum: { $cond: [{ $eq: ["$_dashboardCanonicalEstimate.status", "client_changes_requested"] }, 1, 0] } },
-        clientApproved: { $sum: { $cond: [{ $eq: ["$_dashboardCanonicalEstimate.status", "client_approved"] }, 1, 0] } },
+        draftInternal: { $sum: { $cond: [{ $in: [dashboardEstimateStatusExpression("$_dashboardCanonicalEstimate"), ["draft", "pending_manager_assignment", "pending_designer_approval", "designer_changes_requested"]] }, 1, 0] } },
+        readyToSend: { $sum: { $cond: [{ $eq: [dashboardEstimateStatusExpression("$_dashboardCanonicalEstimate"), "ready_for_client"] }, 1, 0] } },
+        awaitingClient: { $sum: { $cond: [{ $eq: [dashboardEstimateStatusExpression("$_dashboardCanonicalEstimate"), "sent_to_client"] }, 1, 0] } },
+        changesRequested: { $sum: { $cond: [{ $eq: [dashboardEstimateStatusExpression("$_dashboardCanonicalEstimate"), "client_changes_requested"] }, 1, 0] } },
+        clientApproved: { $sum: { $cond: [{ $eq: [dashboardEstimateStatusExpression("$_dashboardCanonicalEstimate"), "client_approved"] }, 1, 0] } },
         designEligible: { $sum: { $cond: [{ $eq: ["$_dashboardCanonicalEstimate.status", "client_approved"] }, 1, 0] } },
         designTracked: {
           $sum: {
@@ -539,7 +550,7 @@ async function mongoCanonicalModuleMetrics(): Promise<MongoRow> {
         designChanges: { $sum: { $cond: [{ $eq: ["$_dashboardCanonicalEstimate.designPlanStatus", "changes_requested"] }, 1, 0] } },
         designApproved: { $sum: { $cond: [{ $eq: ["$_dashboardCanonicalEstimate.designPlanStatus", "approved"] }, 1, 0] } },
         procurementEligible: { $sum: { $cond: [{ $or: [
-          { $and: [{ $eq: ["$_dashboardCanonicalEstimate.estimation.workflowVersion", 2] }, { $eq: [{ $type: "$_dashboardCanonicalEstimate.estimation.preApproval.reviewRoundId" }, "string"] }] },
+          { $and: [{ $in: ["$_dashboardCanonicalEstimate.estimation.workflowVersion", [2, 3]] }, { $eq: [{ $type: "$_dashboardCanonicalEstimate.estimation.preApproval.reviewRoundId" }, "string"] }] },
           { $eq: ["$_dashboardCanonicalEstimate.designPlanStatus", "approved"] }
         ] }, 1, 0] } }
       }
@@ -585,7 +596,7 @@ async function mongoCanonicalProcurementMetrics(): Promise<MongoRow> {
             { $eq: [{ $ifNull: ["$estimate.projectId", "$lead.projectId"] }, "$projectId"] },
             { $eq: ["$estimate._id", "$estimateId"] },
             { $or: [
-              { $and: [{ $eq: ["$project.estimationWorkflowVersion", 2] }, { $eq: ["$estimate.estimation.workflowVersion", 2] }, { $eq: [{ $type: "$estimate.estimation.preApproval.reviewRoundId" }, "string"] }] },
+              { $and: [{ $in: ["$project.estimationWorkflowVersion", [2, 3]] }, { $eq: ["$estimate.estimation.workflowVersion", "$project.estimationWorkflowVersion"] }, { $eq: [{ $type: "$estimate.estimation.preApproval.reviewRoundId" }, "string"] }] },
               { $and: [{ $eq: ["$estimate.designPlanStatus", "approved"] }, { $eq: ["$estimate.designPlanVersion", "$designPlanVersion"] }] }
             ] }
           ]
@@ -733,6 +744,37 @@ interface DashboardComparisonSideProjection {
   availability: DashboardComparisonSeriesAvailability;
 }
 
+/** The task's immutable design version binds the original physical scope across quotation unlocks. */
+function mongoExecutionApprovalSourceStages(): PipelineStage[] {
+  return [
+    { $lookup: {
+      from: DesignPlanReviewRoundModel.collection.name,
+      let: { estimateId: "$estimateId", projectId: "$projectId", designPlanVersion: "$designPlanVersion", workflowVersion: "$estimate.estimation.workflowVersion" },
+      pipeline: [{ $match: { status: "approved", decision: "approve", $expr: { $and: [
+        { $eq: ["$$workflowVersion", 3] }, { $eq: ["$estimateId", "$$estimateId"] },
+        { $eq: ["$projectId", "$$projectId"] }, { $eq: ["$designPlanVersion", "$$designPlanVersion"] }
+      ] } } }], as: "_executionDesignRounds"
+    } },
+    { $lookup: {
+      from: EstimateClientReviewRoundModel.collection.name,
+      let: { estimateId: "$estimateId", projectId: "$projectId", roundId: { $arrayElemAt: ["$_executionDesignRounds.estimateReviewRoundId", 0] } },
+      pipeline: [{ $match: { status: "approved", decision: "approve", $expr: { $and: [
+        { $eq: ["$_id", "$$roundId"] }, { $eq: ["$estimateId", "$$estimateId"] }, { $eq: ["$projectId", "$$projectId"] }
+      ] } } }], as: "_executionQuoteRounds"
+    } },
+    { $set: {
+      executionApprovalSourceValid: { $or: [
+        { $ne: ["$estimate.estimation.workflowVersion", 3] },
+        { $and: [{ $eq: [{ $size: "$_executionDesignRounds" }, 1] }, { $eq: [{ $size: "$_executionQuoteRounds" }, 1] }] }
+      ] },
+      executionSourceLines: { $cond: [{ $eq: ["$estimate.estimation.workflowVersion", 3] },
+        { $arrayElemAt: ["$_executionQuoteRounds.estimateSnapshot.lineItems", 0] }, "$estimate.lineItems"] },
+      executionSourceVersion: { $cond: [{ $eq: ["$estimate.estimation.workflowVersion", 3] },
+        { $arrayElemAt: ["$_executionQuoteRounds.estimateVersion", 0] }, approvedEstimateVersionExpression("$estimate")] }
+    } }
+  ];
+}
+
 function mongoDashboardExecutionLineageStages(): PipelineStage[] {
   return [
     { $match: { preparationOnly: { $ne: true } } },
@@ -746,17 +788,18 @@ function mongoDashboardExecutionLineageStages(): PipelineStage[] {
     },
     { $lookup: { from: LeadModel.collection.name, localField: "estimate.leadId", foreignField: "_id", as: "leadRows" } },
     { $set: { lead: { $arrayElemAt: ["$leadRows", 0] } } },
+    ...mongoExecutionApprovalSourceStages(),
     {
       $set: {
         matchingTradeSourceCount: {
           $size: {
             $filter: {
-              input: { $range: [0, { $size: { $ifNull: ["$estimate.lineItems", []] } }] },
+              input: { $range: [0, { $size: { $ifNull: ["$executionSourceLines", []] } }] },
               as: "lineIndex",
               cond: {
                 $let: {
                   vars: {
-                    line: { $arrayElemAt: [{ $ifNull: ["$estimate.lineItems", []] }, "$$lineIndex"] }
+                    line: { $arrayElemAt: [{ $ifNull: ["$executionSourceLines", []] }, "$$lineIndex"] }
                   },
                   in: {
                     $let: {
@@ -794,7 +837,7 @@ function mongoDashboardExecutionLineageStages(): PipelineStage[] {
                                   {
                                     $concat: [
                                       "legacy-estimate-line:", "$estimate._id", ":",
-                                      { $toString: "$approvedEstimateVersion" }, ":", { $toString: "$$lineIndex" }
+                                      { $toString: "$executionSourceVersion" }, ":", { $toString: "$$lineIndex" }
                                     ]
                                   }
                                 ]
@@ -816,6 +859,7 @@ function mongoDashboardExecutionLineageStages(): PipelineStage[] {
       $set: {
         lineageValid: {
           $and: [
+            "$executionApprovalSourceValid",
             { $eq: [{ $size: "$project" }, 1] },
             { $ne: [{ $ifNull: ["$estimate._id", null] }, null] },
             { $eq: [{ $size: "$leadRows" }, 1] },
@@ -919,122 +963,7 @@ async function mongoDashboardComparisonSide(input: {
           completedAt: { $gte: input.startAt, $lt: input.endAt }
         }
       },
-      { $lookup: { from: ProjectModel.collection.name, localField: "projectId", foreignField: "_id", as: "project" } },
-      { $lookup: { from: EstimateModel.collection.name, localField: "estimateId", foreignField: "_id", as: "estimate" } },
-      { $set: { estimate: { $arrayElemAt: ["$estimate", 0] } } },
-      {
-        $set: {
-          approvedEstimateVersion: approvedEstimateVersionExpression("$estimate")
-        }
-      },
-      { $lookup: { from: LeadModel.collection.name, localField: "estimate.leadId", foreignField: "_id", as: "leadRows" } },
-      { $set: { lead: { $arrayElemAt: ["$leadRows", 0] } } },
-      {
-        $set: {
-          matchingTradeSourceCount: {
-            $size: {
-              $filter: {
-                input: { $range: [0, { $size: { $ifNull: ["$estimate.lineItems", []] } }] },
-                as: "lineIndex",
-                cond: {
-                  $let: {
-                    vars: {
-                      line: { $arrayElemAt: [{ $ifNull: ["$estimate.lineItems", []] }, "$$lineIndex"] }
-                    },
-                    in: {
-                      $let: {
-                        vars: {
-                          lineId: {
-                            $cond: [
-                              { $eq: [{ $type: "$$line.id" }, "string"] },
-                              { $trim: { input: "$$line.id" } },
-                              ""
-                            ]
-                          },
-                          catalogueId: {
-                            $toUpper: {
-                              $trim: {
-                                input: { $convert: { input: "$$line.catalogueId", to: "string", onError: "", onNull: "" } }
-                              }
-                            }
-                          }
-                        },
-                        in: {
-                          $and: [
-                            { $eq: ["$$line.included", true] },
-                            { $eq: ["$sourceSectionId", { $cond: [
-                              { $eq: ["$$line.source", "configuration"] },
-                              "$$line.mainBasketId",
-                              { $substrCP: ["$$catalogueId", 0, 2] }
-                            ] }] },
-                            {
-                              $eq: [
-                                "$sourceLineItemKey",
-                                {
-                                  $cond: [
-                                    { $gt: [{ $strLenCP: "$$lineId" }, 0] },
-                                    "$$lineId",
-                                    {
-                                      $concat: [
-                                        "legacy-estimate-line:", "$estimate._id", ":",
-                                        { $toString: "$approvedEstimateVersion" }, ":", { $toString: "$$lineIndex" }
-                                      ]
-                                    }
-                                  ]
-                                }
-                              ]
-                            }
-                          ]
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      },
-      {
-        $set: {
-          lineageValid: {
-            $and: [
-              { $eq: [{ $size: "$project" }, 1] },
-              { $ne: [{ $ifNull: ["$estimate._id", null] }, null] },
-              { $eq: [{ $size: "$leadRows" }, 1] },
-              { $eq: ["$estimate.leadId", "$lead._id"] },
-              { $eq: ["$lead.projectId", "$projectId"] },
-              {
-                $or: [
-                  { $eq: [{ $ifNull: ["$estimate.projectId", null] }, null] },
-                  { $eq: ["$estimate.projectId", "$projectId"] }
-                ]
-              },
-              { $in: [{ $type: "$designPlanVersion" }, ["int", "long", "double", "decimal"]] },
-              { $gte: ["$designPlanVersion", 1] },
-              { $eq: ["$designPlanVersion", { $trunc: "$designPlanVersion" }] },
-              { $lte: ["$designPlanVersion", "$estimate.designPlanVersion"] },
-              {
-                $or: [
-                  {
-                    $and: [
-                      { $eq: ["$kind", "site_execution"] },
-                      { $eq: [{ $ifNull: ["$sourceSectionId", null] }, null] },
-                      { $eq: [{ $ifNull: ["$sourceLineItemKey", null] }, null] }
-                    ]
-                  },
-                  {
-                    $and: [
-                      { $eq: ["$kind", "trade_execution"] },
-                      { $eq: ["$matchingTradeSourceCount", 1] }
-                    ]
-                  }
-                ]
-              }
-            ]
-          }
-        }
-      },
+      ...mongoDashboardExecutionLineageStages(),
       {
         $facet: {
           invalid: [{ $match: { lineageValid: false } }, { $count: "value" }],
@@ -1248,7 +1177,7 @@ async function mongoDashboardComparisonSide(input: {
     EstimateModel.aggregate<MongoRow>([
       {
         $match: {
-          "estimation.workflowVersion": { $ne: 2 },
+          "estimation.workflowVersion": { $nin: [2, 3] },
           $or: [
             { status: "client_approved", clientDecisionAt: { $gte: input.startAt, $lt: input.endAt } },
             { designPlanStatus: "approved", designPlanApprovedAt: { $gte: input.startAt, $lt: input.endAt } }
@@ -1317,7 +1246,7 @@ async function mongoDashboardComparisonSide(input: {
         }
       },
       { $unwind: "$events" },
-      { $match: { $or: [{ "estimation.workflowVersion": { $ne: 2 } }, { "events.type": "designPlansApproved" }] } },
+      { $match: { $or: [{ "estimation.workflowVersion": { $nin: [2, 3] } }, { "events.type": "designPlansApproved" }] } },
       { $lookup: { from: ProjectModel.collection.name, localField: "projectId", foreignField: "_id", as: "projectRows" } },
       { $lookup: { from: LeadModel.collection.name, localField: "leadId", foreignField: "_id", as: "leadRows" } },
       { $lookup: { from: UserModel.collection.name, localField: "events.actorId", foreignField: "_id", as: "actorRows" } },
@@ -1873,7 +1802,7 @@ export async function mongoSuperAdminDashboardOverview(input: {
       noEstimate: Math.max(0, Number(project.total ?? 0) - Number(estimate.tracked ?? 0)),
       draftInternal: Number(estimate.draftInternal ?? 0), readyToSend: Number(estimate.readyToSend ?? 0),
       awaitingClient: Number(estimate.awaitingClient ?? 0), changesRequested: Number(estimate.changesRequested ?? 0),
-      clientApproved: finance.projectCount, approvedSubtotalPaise: finance.approvedSubtotalPaise,
+      clientApproved: Number(estimate.clientApproved ?? 0), approvedSubtotalPaise: finance.approvedSubtotalPaise,
       approvedGstPaise: finance.approvedGstPaise, approvedContractTotalPaise: finance.approvedContractTotalPaise,
       medianWaitingAgeDays: null, oldestWaitingAgeDays: null
     },
@@ -2347,11 +2276,11 @@ function memoryProjectRows(state: SeedData, observedAt: string): DashboardProjec
         observedValue: project.status, threshold: "active", drillDownTarget: `/admin/projects/${encodeURIComponent(project.id)}`
       }));
     }
-    if (estimate?.status === "client_changes_requested") {
+    if (estimate && dashboardEstimateStatus(estimate) === "client_changes_requested") {
       factors.push(riskFactor({
         kind: "workflow", level: "yellow", reasonCode: "estimate_changes_requested",
         reason: "The Client requested Estimate changes.", entityType: "estimate", entityId: estimate.id,
-        observedValue: estimate.status, threshold: "client_approved", drillDownTarget: `/admin/projects/${encodeURIComponent(project.id)}`
+        observedValue: dashboardEstimateStatus(estimate), threshold: "client_approved", drillDownTarget: `/admin/projects/${encodeURIComponent(project.id)}`
       }));
     }
     if (estimate?.designPlanStatus === "changes_requested") {
@@ -2385,7 +2314,7 @@ function memoryProjectRows(state: SeedData, observedAt: string): DashboardProjec
         projectLinkSource: estimate.projectId ? "estimate" : "lead",
         version: estimate.version,
         reviewRoundId: resolveEstimateReviewRoundId({
-          estimateStatus: estimate.status,
+          estimateStatus: dashboardEstimateStatus(estimate),
           estimateVersion: estimate.version,
           approvedReviewRoundId: estimate.approvedBaseline?.reviewRoundId ?? null,
           rounds: estimate.clientReview ? [{
@@ -2393,12 +2322,12 @@ function memoryProjectRows(state: SeedData, observedAt: string): DashboardProjec
             estimateVersion: estimate.clientReview.estimateVersion,
             sendGeneration: estimate.clientReview.sendGeneration,
             status: estimate.clientReview.status,
-            decision: estimate.status === "client_changes_requested"
+            decision: dashboardEstimateStatus(estimate) === "client_changes_requested"
               ? "request_changes"
               : null
           }] : []
         }),
-        status: estimate.status
+        status: dashboardEstimateStatus(estimate)
       } : null,
       designPlan: estimate?.designPlanStatus ? {
         estimateId: estimate.id,
@@ -2767,14 +2696,15 @@ function dashboardEstimateModuleStatus(status: string): string {
 
 function projectMatchesModule(
   row: DashboardProjectRow,
-  module: NonNullable<DashboardProjectFilters["module"]>
+  module: NonNullable<DashboardProjectFilters["module"]>,
+  retainedApproval: boolean
 ): boolean {
   switch (module) {
     case "projects": return true;
     case "estimation": return true;
-    case "design": return row.estimate?.status === "client_approved";
+    case "design": return retainedApproval;
     case "procurement": return row.procurement !== null || row.designPlan?.status === "approved";
-    case "finance": return row.estimate?.status === "client_approved";
+    case "finance": return retainedApproval;
     case "execution": return row.execution.taskCount > 0;
     case "risk": return true;
   }
@@ -2849,11 +2779,11 @@ function mongoProjectRow(input: {
       drillDownTarget: `/admin/projects/${encodeURIComponent(projectId)}`
     }));
   }
-  if (input.estimate?.status === "client_changes_requested") {
+  if (input.estimate && dashboardEstimateStatus(input.estimate) === "client_changes_requested") {
     factors.push(riskFactor({
       kind: "workflow", level: "yellow", reasonCode: "estimate_changes_requested",
       reason: "The Client requested Estimate changes.", entityType: "estimate", entityId: String(input.estimate._id),
-      observedValue: input.estimate.status, threshold: "client_approved", drillDownTarget: `/admin/projects/${encodeURIComponent(projectId)}`
+      observedValue: dashboardEstimateStatus(input.estimate), threshold: "client_approved", drillDownTarget: `/admin/projects/${encodeURIComponent(projectId)}`
     }));
   }
   if (input.estimate?.designPlanStatus === "changes_requested") {
@@ -2946,7 +2876,7 @@ function mongoProjectRow(input: {
     : "lead";
   const estimateReviewRoundId = input.estimate
     ? resolveEstimateReviewRoundId({
-        estimateStatus: String(input.estimate.status),
+        estimateStatus: dashboardEstimateStatus(input.estimate),
         estimateVersion: Number(input.estimate.version),
         approvedReviewRoundId: input.finance?.estimateReviewRoundId ?? null,
         rounds: validEstimateRounds.map((round) => ({
@@ -3008,7 +2938,7 @@ function mongoProjectRow(input: {
       resolvedProjectId, projectLinkSource,
       version: Number(input.estimate.version),
       reviewRoundId: estimateReviewRoundId,
-      status: String(input.estimate.status)
+      status: dashboardEstimateStatus(input.estimate)
     } : null,
     designPlan: input.estimate?.designPlanStatus ? {
       estimateId: String(input.estimate._id), version: Number(input.estimate.designPlanVersion ?? 0),
@@ -3394,7 +3324,7 @@ const DASHBOARD_SOURCE_DEPENDENCIES = {
   canonicalModules: [
     "estimation.trackedProjects", "estimation.unavailableProjects",
     "estimation.noEstimate", "estimation.draftInternal", "estimation.readyToSend",
-    "estimation.awaitingClient", "estimation.changesRequested",
+    "estimation.awaitingClient", "estimation.changesRequested", "estimation.clientApproved",
     "design.eligibleProjects", "design.trackedProjects", "design.unavailableProjects",
     "design.pendingAssignment", "design.assigned", "design.inProgress", "design.readyForClient",
     "design.changesRequested", "design.approved", "design.approvalRate"
@@ -3713,17 +3643,18 @@ async function mongoDashboardLineageDataQuality(
         }
       },
       { $set: { lead: { $arrayElemAt: ["$lead", 0] } } },
+      ...mongoExecutionApprovalSourceStages(),
       {
         $set: {
           matchingTradeSourceCount: {
             $size: {
               $filter: {
-                input: { $range: [0, { $size: { $ifNull: ["$estimate.lineItems", []] } }] },
+                input: { $range: [0, { $size: { $ifNull: ["$executionSourceLines", []] } }] },
                 as: "lineIndex",
                 cond: {
                   $let: {
                     vars: {
-                      line: { $arrayElemAt: [{ $ifNull: ["$estimate.lineItems", []] }, "$$lineIndex"] }
+                      line: { $arrayElemAt: [{ $ifNull: ["$executionSourceLines", []] }, "$$lineIndex"] }
                     },
                     in: {
                       $let: {
@@ -3761,7 +3692,7 @@ async function mongoDashboardLineageDataQuality(
                                     {
                                       $concat: [
                                         "legacy-estimate-line:", "$estimate._id", ":",
-                                        { $toString: "$approvedEstimateVersion" }, ":", { $toString: "$$lineIndex" }
+                                        { $toString: "$executionSourceVersion" }, ":", { $toString: "$$lineIndex" }
                                       ]
                                     }
                                   ]
@@ -3805,6 +3736,7 @@ async function mongoDashboardLineageDataQuality(
                           { $in: ["$kind", ["site_execution", "trade_execution"]] },
                           {
                             $or: [
+                              { $not: ["$executionApprovalSourceValid"] },
                               { $not: [{ $in: [{ $type: "$designPlanVersion" }, ["int", "long", "double", "decimal"]] }] },
                               { $lt: ["$designPlanVersion", 1] },
                               { $ne: ["$designPlanVersion", { $trunc: "$designPlanVersion" }] },
@@ -4858,7 +4790,7 @@ async function mongoRiskFactorDistribution(
               "estimate.status": "client_approved",
               $expr: {
                 $and: [
-                  { $or: [{ $ne: ["$estimate.estimation.workflowVersion", 2] }, { $eq: ["$estimateReviewRoundId", approvedEstimateRoundExpression("$estimate")] }] },
+                  { $or: [{ $not: [{ $in: ["$estimate.estimation.workflowVersion", [2, 3]] }] }, { $eq: ["$estimateReviewRoundId", approvedEstimateRoundExpression("$estimate")] }] },
                   { $eq: [{ $ifNull: ["$estimate.projectId", "$lead.projectId"] }, "$projectId"] },
                   {
                     $eq: [
@@ -4975,7 +4907,7 @@ async function mongoRiskFactorDistribution(
                 $concatArrays: [
                   {
                     $cond: [
-                      { $eq: ["$status", "client_changes_requested"] },
+                      { $eq: [dashboardEstimateStatusExpression("$$ROOT"), "client_changes_requested"] },
                       [{ kind: "workflow", level: "yellow", reasonCode: "estimate_changes_requested" }],
                       []
                     ]
@@ -5199,7 +5131,7 @@ function mongoProjectDerivedFilterStages(
                   { $eq: ["$task.kind", "procurement"] },
                   { $eq: ["$task.estimateId", "$$canonicalEstimateId"] },
                   { $or: [
-                    { $and: [{ $eq: ["$$canonicalWorkflowVersion", 2] }, { $eq: [{ $type: "$$canonicalPreApproval" }, "string"] }] },
+                    { $and: [{ $in: ["$$canonicalWorkflowVersion", [2, 3]] }, { $eq: [{ $type: "$$canonicalPreApproval" }, "string"] }] },
                     { $and: [{ $eq: ["$$canonicalDesignPlanStatus", "approved"] }, { $eq: ["$task.designPlanVersion", "$$canonicalDesignPlanVersion"] }] }
                   ] }
                 ]
@@ -5382,7 +5314,7 @@ function mongoProjectDerivedFilterStages(
               matching: {
                 $push: {
                   $cond: [
-                    { $and: [{ $eq: ["$estimateVersion", "$$approvedVersion"] }, { $or: [{ $ne: ["$$workflowVersion", 2] }, { $eq: ["$_id", "$$approvedRoundId"] }] }] },
+                    { $and: [{ $eq: ["$estimateVersion", "$$approvedVersion"] }, { $or: [{ $not: [{ $in: ["$$workflowVersion", [2, 3]] }] }, { $eq: ["$_id", "$$approvedRoundId"] }] }] },
                     {
                       _id: "$_id", projectId: "$projectId", estimateVersion: "$estimateVersion",
                       estimateSnapshot: "$estimateSnapshot", decisionSource: "$decisionSource",
@@ -5483,7 +5415,7 @@ function mongoProjectDerivedFilterStages(
                     }
                   ]
                 },
-                { $and: [{ $ne: ["$_dashboardEstimate.estimation.workflowVersion", 2] }, { $eq: ["$_dashboardLegacyApprovalCount", 1] }] }
+                { $and: [{ $not: [{ $in: ["$_dashboardEstimate.estimation.workflowVersion", [2, 3]] }] }, { $eq: ["$_dashboardLegacyApprovalCount", 1] }] }
               ]
             }
           ]
@@ -5660,7 +5592,7 @@ function mongoProjectDerivedFilterStages(
         _dashboardWorkflowYellow: {
           $or: [
             { $eq: ["$status", "on_hold"] },
-            { $eq: [{ $arrayElemAt: ["$_dashboardEstimates.status", 0] }, "client_changes_requested"] },
+            { $eq: [{ $let: { vars: { estimate: { $arrayElemAt: ["$_dashboardEstimates", 0] } }, in: dashboardEstimateStatusExpression("$$estimate") } }, "client_changes_requested"] },
             { $eq: [{ $arrayElemAt: ["$_dashboardEstimates.designPlanStatus", 0] }, "changes_requested"] },
             { $gt: [{ $add: [{ $ifNull: ["$_dashboardClientDeliveryFact.failed", 0] }, { $ifNull: ["$_dashboardClientDeliveryFact.disabled", 0] }, { $ifNull: ["$_dashboardDesignDeliveryFact.failed", 0] }, { $ifNull: ["$_dashboardDesignDeliveryFact.disabled", 0] }] }, 0] }
           ]
@@ -5694,7 +5626,7 @@ function mongoProjectDerivedFilterStages(
             { $ifNull: ["$_dashboardWorkflowFact.riskOccurrenceCount", 0] },
             { $ifNull: ["$_dashboardDesignFact.riskOccurrenceCount", 0] },
             { $cond: [{ $or: ["$_dashboardFinanceRed", "$_dashboardFinanceYellow"] }, 1, 0] },
-            { $cond: [{ $eq: [{ $arrayElemAt: ["$_dashboardEstimates.status", 0] }, "client_changes_requested"] }, 1, 0] },
+            { $cond: [{ $eq: [{ $let: { vars: { estimate: { $arrayElemAt: ["$_dashboardEstimates", 0] } }, in: dashboardEstimateStatusExpression("$$estimate") } }, "client_changes_requested"] }, 1, 0] },
             { $cond: [{ $eq: [{ $arrayElemAt: ["$_dashboardEstimates.designPlanStatus", 0] }, "changes_requested"] }, 1, 0] },
             { $ifNull: ["$_dashboardClientDeliveryFact.failed", 0] },
             { $ifNull: ["$_dashboardClientDeliveryFact.disabled", 0] },
@@ -5848,7 +5780,7 @@ function dashboardModuleMatchesExpression(
       $and: [
         "$_dashboardFinanceLineageValid",
         { $or: [
-          { $eq: [{ $arrayElemAt: ["$_dashboardEstimates.estimation.workflowVersion", 0] }, 2] },
+          { $in: [{ $arrayElemAt: ["$_dashboardEstimates.estimation.workflowVersion", 0] }, [2, 3]] },
           { $eq: [{ $arrayElemAt: ["$_dashboardEstimates.designPlanStatus", 0] }, "approved"] }
         ] }
       ]
@@ -5870,9 +5802,9 @@ function dashboardModuleStatusExpressions(
       ["no_estimate"],
       [{
         $cond: [
-          { $in: [{ $arrayElemAt: ["$_dashboardEstimates.status", 0] }, ["draft", "pending_manager_assignment", "pending_designer_approval", "designer_changes_requested"]] },
+          { $in: [{ $let: { vars: { estimate: { $arrayElemAt: ["$_dashboardEstimates", 0] } }, in: dashboardEstimateStatusExpression("$$estimate") } }, ["draft", "pending_manager_assignment", "pending_designer_approval", "designer_changes_requested"]] },
           "draft_internal",
-          { $arrayElemAt: ["$_dashboardEstimates.status", 0] }
+          { $let: { vars: { estimate: { $arrayElemAt: ["$_dashboardEstimates", 0] } }, in: dashboardEstimateStatusExpression("$$estimate") } }
         ]
       }]
     ]

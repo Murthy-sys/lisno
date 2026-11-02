@@ -214,7 +214,8 @@ describe("Super Admin dashboard page", () => {
     await user.click(link);
     await waitFor(() => expect(screen.getByRole("heading", { name: "Initial payment review" })).toHaveFocus());
     const workflow = screen.getByRole("region", { name: "Initial payment confirmations" });
-    expect(workflow).toHaveTextContent("Super Admin confirms payment after final approval to enable work-order issuance.");
+    expect(workflow).toHaveTextContent("Super Admin confirms payment after quotation and uploaded-design approval.");
+    expect(workflow).toHaveTextContent("Pre/post-estimation projects require final estimate approval before confirmation.");
     expect(workflow).toHaveTextContent("Earlier projects keep their existing payment workflow.");
     expect(within(workflow).getByText("No projects are waiting for initial-payment confirmation.")).toBeVisible();
     expect(get).toHaveBeenCalledWith("/design-workflow/payment-confirmations", { showGlobalLoader: false });

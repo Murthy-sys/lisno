@@ -7,6 +7,7 @@
 .next-action-date-time__heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
 .next-action-date-time__calendar button { color: var(--color-primary); border: 1px solid transparent; background: transparent; cursor: pointer; }
 .next-action-date-time__calendar button:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+.next-action-date-time__calendar button:disabled { opacity: 0.5; cursor: default; }
 .next-action-date-time__heading button { width: 40px; height: 40px; font-size: 1.65rem; }
 .next-action-date-time__heading strong { font-size: 0.95rem; }
 .next-action-date-time__grid { width: 100%; table-layout: fixed; border-collapse: collapse; }

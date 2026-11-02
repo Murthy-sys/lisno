@@ -133,7 +133,14 @@ function stageAppearance(stage: WorkflowStage, current: boolean) {
   return "upcoming";
 }
 
-function FurnitureProgressSummary({ furniture }: { furniture: DesignStageOperational["furniture"] }) {
+function FurnitureProgressSummary({ furniture, request }: { furniture: DesignStageOperational["furniture"]; request?: DesignStageOperational["clientFurnitureRequest"] }) {
+  if (request) return <div className="workflow-progress__furniture-summary" role="group" aria-label="Furniture requirements progress">
+    <strong>Existing furniture</strong><p>{request.hasFurniture === null ? "The Client needs to confirm existing furniture and assistance needs."
+      : !request.hasFurniture ? "The Client confirmed there is no existing furniture."
+      : request.needsAssistance ? "Lisno assistance requested. Additional charges: to be determined. Submitted measurements require Client approval."
+      : "The Client provides and confirms the furniture dimensions."}</p>
+    {furniture && furniture.requiredRoomCount > 0 ? <p>{furniture.readyRoomCount} of {furniture.requiredRoomCount} required rooms ready · {furniture.pendingRoomCount} pending</p> : null}
+  </div>;
   if (!furniture || furniture.phase === "requirements_pending") return null;
   const combined = Boolean(furniture.requirementsSubmissionEventId);
   return <div className="workflow-progress__furniture-summary" role="group" aria-label="Furniture requirements progress">
@@ -160,7 +167,7 @@ function StageOperationalDetails({ stage, compact = false }: { stage: WorkflowSt
     <section className={`workflow-progress__operational${compact ? " workflow-progress__operational--compact" : ""}`} aria-labelledby={compact ? undefined : `${id}-heading`} aria-label={compact ? `${stage.name} recorded information` : undefined}>
       {!compact ? <h5 id={`${id}-heading`}>Recorded stage details</h5> : null}
       {operational.blockingReasons.length ? <div className="workflow-progress__dependency-group workflow-progress__dependency-group--blocked"><strong><LockKeyhole aria-hidden="true" />Waiting for</strong><ul className="workflow-progress__dependencies">{operational.blockingReasons.map((reason, index) => <li key={`${index}-${reason}`}>{reason}</li>)}</ul></div> : null}
-      <FurnitureProgressSummary furniture={operational.furniture} />
+      <FurnitureProgressSummary furniture={operational.furniture} request={operational.clientFurnitureRequest} />
       {!compact || operational.facts.length > 0 ? <dl className="workflow-progress__facts">
         {!compact ? <>
         {timing.band ? <div><dt>Current SLA band</dt><dd>{timing.band}</dd></div> : null}
@@ -377,7 +384,7 @@ export function ProjectWorkflowProgress({ workflow, onOpenTask, actionLabel = "O
                 <div className="workflow-progress__detail-heading"><div>{presentation !== "client" ? <p className="workflow-progress__eyebrow">{group.name}</p> : null}<h4 id={`${panelId}-heading`}>{selectedStage.name}</h4><StatusBadge label={workflowStageStatusLabel(selectedStage)} tone={selectedStatus ? statusTones[selectedStatus] : "neutral"} /></div><Button variant="secondary" size="compact" onClick={closeDetails} aria-label="Close stage details" leadingIcon={<X />}>Close</Button></div>
                 {renderStageActions?.(selectedStage)}
                 {presentation === "client" ? <>
-                  <FurnitureProgressSummary furniture={selectedStage.operational?.furniture} />
+                  <FurnitureProgressSummary furniture={selectedStage.operational?.furniture} request={selectedStage.operational?.clientFurnitureRequest} />
                   {!selectedStage.operational?.availableActions.length && selectedStatus !== "completed" && !selectedStage.operational?.submittedDocument ? <p className="workflow-progress__empty">{selectedStage.operational?.blockingReasons[0] ?? (selectedStage.id === currentStage?.id ? `Your project team is completing ${selectedStage.name}.` : "This stage is not ready yet.")}</p> : null}
                 </> : <>
                   {selectedStage.operational ? <StageOperationalDetails stage={selectedStage} /> : null}

@@ -4,6 +4,7 @@ import { AiEstimatorKnowledgeDisplayOrderSequenceModel } from "../src/models/AiE
 import mongoose from "mongoose";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { emptyDesignWorkflowState } from "../src/domain/design-workflow-state.js";
+import { newQuotationLifecycle } from "../src/domain/estimation-lifecycle.js";
 import { createProjectDesignWorkflow } from "../src/domain/design-workflow.js";
 import { sha256Hex } from "../src/domain/estimate-client-review.js";
 import { AuditEventModel } from "../src/models/AuditEvent.js";
@@ -802,5 +803,105 @@ describe("Mongo all selected items including zero estimate quantities", () => {
     expect(after.history.slice(0, -1)).toEqual(before.history);
     expect(after.history.at(-1)).toMatchObject({ action: "furniture_upload", data: { resolveReturnedZeroValueRoomIds: ["kitchen"] }, proof: null });
     expect(await AuditEventModel.findOne({ "newValues.resolvedZeroValueRoomIds": ["kitchen"] }).lean()).toBeTruthy();
+  });
+});
+
+describe("Mongo Client furniture quotation workflow", () => {
+  async function readyQuotation() {
+    const f = await setup();
+    const snapshot = { clientName: "Synthetic Client", projectName: "Synthetic project", location: "Test city", propertyType: "residential",
+      lineItems: [{ id: "new-work", catalogueId: "CUSTOM", roomName: "Room", specification: "New work", unit: "nos", rate: 1000, quantity: 1, included: true, amount: 1000 }], subtotal: 1000, gst: 0, total: 1000 };
+    await EstimateClientReviewRoundModel.create([2, 4].map(version => ({
+      _id: `furniture-round-${version}`, estimateId: "workflow-approved-estimate", leadId: "lead-workflow-approved-estimate", projectId: PROJECT_ID,
+      workflowVersion: 3, phase: version === 2 ? "pre" : "post", requirementsVersion: 0, designScopeRevision: 1, pricedRevision: 1,
+      sourceDigest: sha256Hex(JSON.stringify(snapshot)), submittedById: version === 2 ? "sales-fixture" : f.designer.id,
+      estimateVersion: version, sendGeneration: version / 2, dedupeKey: sha256Hex(`furniture-round-${version}`),
+      recipientEmail: f.client.email, recipientEmailNormalized: f.client.email.toLowerCase(), estimateSnapshot: snapshot,
+      pdfFilename: "synthetic.pdf", pdfMimeType: "application/pdf", pdfByteSize: 5, pdfSha256: sha256Hex("pdf"), pdfStorageReference: "synthetic-quotation",
+      deliveryStatus: "sent", deliveryAttemptGeneration: 1, deliveryAttemptCount: 1, assignedAdminId: "sales-fixture",
+      status: "approved", decision: "approve", decisionSource: "client_portal", decisionNote: "Approved", decidedById: f.client.id, decidedAt: BASE, version: 2
+    })));
+    await ProjectModel.updateOne({ _id: PROJECT_ID }, { $set: { estimationWorkflowVersion: 3, primaryDesignerId: f.designer.id, secondaryDesignerIds: [] } });
+    await EstimateModel.updateOne({ _id: "workflow-approved-estimate" }, { $set: { version: 5, estimation: {
+      ...newQuotationLifecycle(), phase: "post", status: "client_approved", editClosedAt: BASE.toISOString(), designStartedAt: BASE.toISOString(),
+      preApproval: { reviewRoundId: "furniture-round-2", estimateVersion: 2, approvedAt: BASE.toISOString() },
+      finalApproval: { reviewRoundId: "furniture-round-4", estimateVersion: 4, approvedAt: BASE.toISOString(), requirementsVersion: 0,
+        designReviewRoundId: null, designPlanVersion: null, designScopeRevision: 1 }
+    } } }, { runValidators: true });
+    const service = createDesignWorkflowStateService(f.repository, f.audit, () => DAY_TWO);
+    const stageId = f.stages.find(stage => stage.type === "existing_furniture_dimensions")!.id;
+    const action = async (actor: PublicUser, kind: WorkflowActionInput["action"], data: Record<string, unknown>, key: string, proof: typeof PROOF | null = null) => service.act(actor, PROJECT_ID, {
+      action: kind, stageId, expectedVersion: (await f.repository.findDesignWorkflowState(PROJECT_ID))?.version ?? 0,
+      idempotencyKey: key, data, note: "Synthetic confirmation"
+    }, proof);
+    await action(f.designer, "furniture_request", { roomIds: ["workflow-room"] }, "request-client-furniture");
+    return { ...f, service, stageId, action };
+  }
+
+  it("serializes concurrent Client choices and replays the winning request once", async () => {
+    const f = await readyQuotation();
+    const base = { action: "furniture_choice" as const, stageId: f.stageId, expectedVersion: 1, note: "Client choice" };
+    const no = { ...base, idempotencyKey: "client-no-furniture", data: { hasFurniture: false } };
+    const yes = { ...base, idempotencyKey: "client-assisted-furniture", data: { hasFurniture: true, needsAssistance: true } };
+    const results = await Promise.allSettled([f.service.act(f.client, PROJECT_ID, no, null), f.service.act(f.client, PROJECT_ID, yes, null)]);
+    expect(results.filter(result => result.status === "fulfilled")).toHaveLength(1);
+    const state = (await f.repository.findDesignWorkflowState(PROJECT_ID))!;
+    expect(state.history.filter(event => event.action === "furniture_choice")).toHaveLength(1);
+    expect(state.stages.existing_furniture_dimensions!.clientFurnitureRequest!.assistanceFeePaise).toBeNull();
+    expect(await f.service.act(f.client, PROJECT_ID, results[0].status === "fulfilled" ? no : yes, null)).toMatchObject({ replayed: true });
+    expect(await AuditEventModel.countDocuments({ action: "design_workflow_action_recorded", "newValues.action": "furniture_choice" })).toBe(1);
+  });
+
+  it("serializes an assistance change against an in-flight Designer submission", async () => {
+    const f = await readyQuotation();
+    await f.action(f.client, "furniture_choice", { hasFurniture: true, needsAssistance: true }, "assistance-before-race");
+    const before = (await f.repository.findDesignWorkflowState(PROJECT_ID))!;
+    const base = { stageId: f.stageId, expectedVersion: before.version, note: "Synthetic race" };
+    const results = await Promise.allSettled([
+      f.service.act(f.client, PROJECT_ID, { ...base, action: "furniture_choice", idempotencyKey: "self-entry-racing", data: { hasFurniture: true, needsAssistance: false } }, null),
+      f.service.act(f.designer, PROJECT_ID, { ...base, action: "furniture_upload", idempotencyKey: "assisted-upload-racing", data: { rooms: [{ roomId: "workflow-room", items: [{ id: "personal-chair", name: "Existing chair", uomId: "uom-cm", measurementType: "count", quantity: 2 }] }] } }, PROOF)
+    ]);
+    expect(results.filter(result => result.status === "fulfilled")).toHaveLength(1);
+    const after = (await f.repository.findDesignWorkflowState(PROJECT_ID))!;
+    expect(after.history.slice(0, before.history.length)).toEqual(before.history);
+    expect(after.history).toHaveLength(before.history.length + 1);
+    const stage = after.stages.existing_furniture_dimensions!;
+    expect(stage.clientFurnitureRequest!.assistanceFeePaise).toBeNull();
+    if (results[0].status === "fulfilled") {
+      expect(stage.clientFurnitureRequest!.needsAssistance).toBe(false);
+      expect(stage.rooms!.every(room => !room.dimensions)).toBe(true);
+      expect(after.history.some(event => event.idempotencyKey === "assisted-upload-racing")).toBe(false);
+    } else {
+      expect(stage.clientFurnitureRequest!.needsAssistance).toBe(true);
+      expect(stage.rooms![0]!.dimensions).toMatchObject({ status: "pending", provenance: "designer_assisted" });
+      expect(after.history.at(-1)!.proof).toMatchObject({ storageReference: PROOF.storageReference });
+    }
+  });
+
+  it("keeps personal IDs, assisted evidence and current-response CAS through a choice-versus-approval race", async () => {
+    const f = await readyQuotation();
+    await f.action(f.client, "furniture_choice", { hasFurniture: true, needsAssistance: true }, "client-needs-assistance");
+    await f.action(f.designer, "furniture_upload", { rooms: [{ roomId: "workflow-room", items: [{ id: "personal-chair", name: "Existing chair", uomId: "uom-cm", measurementType: "count", quantity: 2 }] }] }, "designer-assisted-upload", PROOF);
+    const before = (await f.repository.findDesignWorkflowState(PROJECT_ID))!;
+    const dimensions = before.stages.existing_furniture_dimensions!.rooms![0]!.dimensions!;
+    const base = { stageId: f.stageId, expectedVersion: before.version, note: "Client review" };
+    const results = await Promise.allSettled([
+      f.service.act(f.client, PROJECT_ID, { ...base, action: "furniture_dimensions_approve", idempotencyKey: "approve-assisted-current", data: { submissions: [{ roomId: "workflow-room", submissionEventId: dimensions.submissionEventId }] } }, null),
+      f.service.act(f.client, PROJECT_ID, { ...base, action: "furniture_choice", idempotencyKey: "change-assisted-choice", data: { hasFurniture: true, needsAssistance: false } }, null)
+    ]);
+    expect(results.filter(result => result.status === "fulfilled")).toHaveLength(1);
+    const state = (await f.repository.findDesignWorkflowState(PROJECT_ID))!;
+    expect(state.history).toHaveLength(before.history.length + 1);
+    expect(state.history.find(event => event.id === dimensions.submissionEventId)).toEqual(before.history.find(event => event.id === dimensions.submissionEventId));
+    expect(dimensions.items[0]).toMatchObject({ id: "personal-chair", name: "Existing chair", quantity: 2, unit: "cm" });
+    expect(dimensions.items[0]).not.toHaveProperty("estimateItemId");
+    expect(state.stages.existing_furniture_dimensions!.completedAt).toBeUndefined();
+  });
+
+  it("rejects a Client deactivated before a furniture response and preserves the request", async () => {
+    const f = await readyQuotation(); const before = await f.repository.findDesignWorkflowState(PROJECT_ID);
+    await UserModel.updateOne({ _id: f.client.id }, { $set: { active: false } });
+    await expect(f.action(f.client, "furniture_choice", { hasFurniture: false }, "inactive-client-choice")).rejects.toMatchObject({ status: 401 });
+    expect(await f.repository.findDesignWorkflowState(PROJECT_ID)).toEqual(before);
   });
 });

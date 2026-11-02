@@ -63,6 +63,7 @@ export function configuredEstimateParentIsValid(line: {
 }
 
 export interface EstimateClientReviewSnapshot {
+  proposal?: import("./estimate-proposal.js").EstimateProposalMetadata;
   rooms?: readonly Record<string, unknown>[];
   bedroomCount?: number | null;
   scopes?: readonly string[];
@@ -74,7 +75,7 @@ export interface EstimateClientReviewSnapshot {
     id?: string | null;
     source?: "legacy" | "configuration";
     itemType?: ConfiguredEstimateItemType;
-    /** Client screen only; absent historical values remain visible. */
+    /** Client quotation visibility; absent historical values remain visible. */
     clientVisible?: boolean;
     classification?: EstimateClassification;
     modeTier?: KnowledgeModeTier;
@@ -126,6 +127,7 @@ export interface EstimateClientReviewSnapshot {
 
 /** Client-facing projection of the immutable proposal submitted for review. */
 export interface ClientPublishedEstimateReview {
+  workflowVersion?: 2 | 3;
   phase?: "pre" | "post";
   requirementsVersion?: number;
   id: string;
@@ -147,6 +149,11 @@ export interface EstimateClientFeedback {
 }
 
 export interface EstimateClientReviewRoundRecord {
+  workflowVersion?: 2 | 3;
+  pricedRevision?: number;
+  sourceDigest?: string;
+  submittedById?: string;
+  salesApproval?: import("./estimation-lifecycle.js").SalesQuotationApproval | null;
   phase?: "pre" | "post";
   requirementsVersion?: number;
   designReviewRoundId?: string | null;

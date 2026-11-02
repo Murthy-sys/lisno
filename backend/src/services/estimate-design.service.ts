@@ -4571,7 +4571,10 @@ async function guardDesignLifecycle(
   session: mongoose.ClientSession
 ) {
   if (isCollaborativeEstimate(estimate)) {
-    if (estimate.estimation.editClosedAt || estimate.estimation.finalApproval) throw new ApiError(409, "ESTIMATE_EDIT_WINDOW_CLOSED", "The final estimate is approved; design changes are locked.");
+    if (estimate.estimation.workflowVersion === 3) {
+      if (!estimate.estimation.finalApproval || !estimate.estimation.editClosedAt || estimate.estimation.status !== "client_approved")
+        throw new ApiError(409, "QUOTATION_APPROVAL_REQUIRED", "Approve the Designer-revised quotation before starting design work.");
+    } else if (estimate.estimation.editClosedAt || estimate.estimation.finalApproval) throw new ApiError(409, "ESTIMATE_EDIT_WINDOW_CLOSED", "The final estimate is approved; design changes are locked.");
     await fenceCollaborativeEstimate(estimate, session);
   }
   const expectedVersion = Number(estimate.designLifecycleVersion ?? 0);

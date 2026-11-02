@@ -67,7 +67,7 @@ export interface AuthPayload {
 }
 
 export const AUTHORIZATION_POLICY_VERSION =
-  "2026-10-30.user-deletion.v1" as const;
+  "2026-10-30.quotation-workflow.v3" as const;
 
 export interface AuthorizationSnapshot {
   readonly role: Role;

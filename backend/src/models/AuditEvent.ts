@@ -20,6 +20,10 @@ const auditEventSchema = new Schema(
 
 auditEventSchema.index({ entityType: 1, entityId: 1, occurredAt: 1, _id: 1 });
 auditEventSchema.index({ actorId: 1, occurredAt: 1 });
+auditEventSchema.index(
+  { action: 1, "newValues.projectNumber": 1 },
+  { partialFilterExpression: { action: "project_number_assigned" } }
+);
 
 export const AuditEventModel =
   models.AuditEvent ?? model("AuditEvent", auditEventSchema);

@@ -136,6 +136,24 @@ describe("AdminProjectsPage", () => {
     window.localStorage.removeItem(VIEW_STORAGE_KEY);
   });
 
+  it("shows distinct saved project numbers in both grid and list presentations", async () => {
+    installSession();
+    const second = { ...project, id: "project-two", name: "Cedar Loft", projectNumber: "Lisno1000000" };
+    server.use(http.get("/api/v1/admin/projects", () => HttpResponse.json(page([
+      { ...project, projectNumber: "Lisno000021" }, second
+    ]))));
+    const user = userEvent.setup();
+    renderApp(["/admin/projects"]);
+    expect(await screen.findByText("Project number: Lisno000021")).toBeVisible();
+    expect(screen.getByText("Project number: Lisno1000000")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "List view" }));
+    const first = screen.getByRole("article", { name: project.name });
+    const other = screen.getByRole("article", { name: second.name });
+    expect(within(first).getByText("Project number: Lisno000021")).toBeVisible();
+    expect(within(first).queryByText("Project number: Lisno1000000")).not.toBeInTheDocument();
+    expect(within(other).getByText("Project number: Lisno1000000")).toBeVisible();
+  });
+
   it("keeps quick view tied to the selected ID, preserves the list route, and never fetches detail", async () => {
     installSession();
     let detailGets = 0;
@@ -484,11 +502,12 @@ describe("AdminProjectsPage", () => {
       ["Client email", "asha@example.com"],
       ["Mobile", "+91 90000 00000"],
       ["Project / property name", "Asha home"],
-      ["Next action", "Schedule site visit"],
     ] as const) {
       fireEvent.change(within(dialog).getByLabelText(requiredLabel(label)), { target: { value } });
     }
     await user.selectOptions(within(dialog).getByRole("combobox", { name: "Property type" }), "3BHK");
+    expect(within(dialog).getByRole("textbox", { name: "Next action" })).toHaveValue("Estimation");
+    expect(within(dialog).getByRole("textbox", { name: "Next action" })).toBeDisabled();
     await user.click(within(dialog).getByRole("button", { name: "Next action date" }));
     await user.click(within(dialog).getByRole("button", { name: "Today" }));
     const estimatorInput = within(dialog).getByRole("combobox", { name: "Sales" });

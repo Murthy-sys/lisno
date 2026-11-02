@@ -325,7 +325,7 @@ export function createProjectService(
             const sources = linkedStages.filter(({ stage: actual }) => actual.workflowStageId === stage.id);
             const view = stageView({ ...stage, dependencyStageIds: [] }, sources.flatMap(({ stage: actual, floor }) => actual.tasks.map((task) => ({ ...task, floorName: floor.name }))));
             const operational = projectOperationalStage(stage, operationalState!, capabilities, now, actor.id, measurementAssigneeName, { spacePlanning, spacePlanningIssue, paymentStatus: initialPayment!.status, projectId: hierarchy.id, internalKickoffStageId: savedStages.find((configured) => configured.type === "internal_kickoff")?.id, measurementStageId: savedStages.find((configured) => configured.type === "site_measurement")?.id });
-            const instructions = instructionsForStage(stage.type);
+            const instructions = instructionsForStage(stage.type, hierarchy.estimationWorkflowVersion);
             // Review-backed plans require the Client's explicit acknowledgement; legacy
             // floor-only projects keep their established task-derived progress.
             const reviewBacked = Boolean(spacePlanning || spacePlanningIssue || operationalState!.stages.space_planning_tentative_look_feel?.spacePlanningApproval);
@@ -759,7 +759,7 @@ export function createProjectService(
 
 function toClientProject(project: DerivedProject): ClientProject {
   return {
-    ...(project.estimationWorkflowVersion === 2 ? { estimationWorkflowVersion: 2 as const } : {}),
+    ...([2, 3].includes(project.estimationWorkflowVersion ?? 0) ? { estimationWorkflowVersion: project.estimationWorkflowVersion } : {}),
     id: project.id,
     name: project.name,
     status: project.status,

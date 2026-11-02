@@ -24,11 +24,34 @@ export type ProjectClientInvitationService = ReturnType<typeof createProjectClie
 
 export function createProjectClientInvitationService(deps: ProjectClientInvitationDependencies) {
   const { repository, audit, mailer, clock, auth } = deps;
-  function summary(projectId: string, record: ProjectClientInvitationRecord | null): ProjectClientInvitationSummary {
+  async function summary(repo: AppRepository, projectId: string, record: ProjectClientInvitationRecord | null): Promise<ProjectClientInvitationSummary> {
+    const project = await repo.findProjectById(projectId);
+    if (!project) unavailable(404);
+    if (record?.status === "accepted") {
+      if (project.clientId === null || record.acceptedUserId !== project.clientId ||
+        record.emailNormalized !== normalizeEmail(project.clientEmail)) unavailable();
+      // Acceptance is historical evidence; later account deactivation does not erase it.
+      return {
+        projectId, status: "accepted", deliveryAvailable: mailer.deliveryKind !== "disabled",
+        expectedVersion: record.version, expiresAt: record.expiresAt, sentAt: record.sentAt,
+        acceptedAt: record.acceptedAt, availableActions: []
+      };
+    }
+    if (project.clientId !== null) {
+      const client = await repo.findUserById(project.clientId);
+      if (!client || !client.active || client.deletedAt || client.role !== "client" || client.accountKind !== "standard" ||
+        isReservedDevelopmentDemoIdentity(client) || client.emailNormalized !== normalizeEmail(project.clientEmail)) unavailable();
+      return {
+        projectId, status: "linked",
+        deliveryAvailable: mailer.deliveryKind !== "disabled", expectedVersion: record?.version ?? 0,
+        expiresAt: record?.expiresAt ?? null, sentAt: record?.sentAt ?? null,
+        acceptedAt: null, availableActions: []
+      };
+    }
     const status = !record ? "not_issued" : record.status !== "pending" ? record.status : Date.parse(record.expiresAt) <= clock().getTime() ? "expired" : record.deliveryStatus === "failed" ? "delivery_failed" : "pending";
     const deliveryAvailable = mailer.deliveryKind !== "disabled";
     return { projectId, status, deliveryAvailable, expectedVersion: record?.version ?? 0, expiresAt: record?.expiresAt ?? null, sentAt: record?.sentAt ?? null, acceptedAt: record?.acceptedAt ?? null,
-      availableActions: status === "accepted" ? [] : !record ? deliveryAvailable ? ["send"] : [] : [...(deliveryAvailable ? ["resend" as const] : []), ...(record.status === "pending" ? ["revoke" as const] : [])] };
+      availableActions: !record ? deliveryAvailable ? ["send"] : [] : [...(deliveryAvailable ? ["resend" as const] : []), ...(record.status === "pending" ? ["revoke" as const] : [])] };
   }
   async function manage(repo: AppRepository, actor: PublicUser, projectId: string) {
     const stored = await requireActor(repo, actor);
@@ -52,39 +75,39 @@ export function createProjectClientInvitationService(deps: ProjectClientInvitati
     return { record: record!, ...resolved };
   }
   async function deliver(record: ProjectClientInvitationRecord, rawToken: string) {
-    if (mailer.deliveryKind === "disabled") return summary(record.projectId, record);
+    if (mailer.deliveryKind === "disabled") return summary(repository, record.projectId, record);
     let failed = false;
     const attemptedAt = clock().toISOString();
     try {
       const current = await repository.findProjectClientInvitation(record.projectId);
-      if (!current || current.status !== "pending" || current.tokenGeneration !== record.tokenGeneration || current.tokenHash !== record.tokenHash) return summary(record.projectId, current);
+      if (!current || current.status !== "pending" || current.tokenGeneration !== record.tokenGeneration || current.tokenHash !== record.tokenHash) return summary(repository, record.projectId, current);
       const { project } = await authority(repository, current);
       await mailer.sendInvitation({ recipient: { name: project.clientName, email: record.emailNormalized }, roleLabel: "Client", rawToken, expiresAt: record.expiresAt, purpose: "project_client" });
     } catch { failed = true; }
     return repository.runInTransaction(async transaction => {
       const current = await transaction.findProjectClientInvitation(record.projectId);
-      if (!current || current.status !== "pending" || current.tokenGeneration !== record.tokenGeneration || current.tokenHash !== record.tokenHash) return summary(record.projectId, current);
+      if (!current || current.status !== "pending" || current.tokenGeneration !== record.tokenGeneration || current.tokenHash !== record.tokenHash) return summary(transaction, record.projectId, current);
       const next = await transaction.saveProjectClientInvitation({ ...current, deliveryStatus: failed ? "failed" : "sent", deliveryFailureCode: failed ? "DELIVERY_FAILED" : null, deliveryAttemptedAt: attemptedAt, sentAt: failed ? null : clock().toISOString(), updatedAt: clock().toISOString(), version: current.version + 1 }, current.version);
       await audit.append({ actorId: record.tokenIssuedById, action: failed ? "project_client_invitation.delivery_failed" : "project_client_invitation.sent", entityType: "project_client_invitation", entityId: record.id, occurredAt: attemptedAt, newValues: { projectId: record.projectId, generation: record.tokenGeneration } }, transaction);
-      return summary(record.projectId, next);
+      return summary(transaction, record.projectId, next);
     });
   }
   async function issue(actor: PublicUser, projectId: string, expectedVersion?: number) {
-    // Preflight occurs before credential generation or invitation/audit writes.
-    await manage(repository, actor, projectId);
-    if (mailer.deliveryKind === "disabled") throw new ApiError(503, "INVITATION_UNAVAILABLE", "Invitation delivery is unavailable. The project is saved; retry when delivery is available.");
     const prepared = await repository.runInTransaction(async transaction => {
       await transaction.coordinateAuthorizationMutation();
       const { project, actor: stored } = await manage(transaction, actor, projectId);
       const emailNormalized = normalizeEmail(project.clientEmail);
       await transaction.coordinateClientEmail(emailNormalized);
+      const current = await transaction.findProjectClientInvitation(projectId);
+      if (project.clientId !== null) return { kind: "linked" as const, summary: await summary(transaction, projectId, current) };
+      // Linked clients need no delivery preflight; new invitations still preflight before credentials or durable writes.
+      if (mailer.deliveryKind === "disabled") throw new ApiError(503, "INVITATION_UNAVAILABLE", "Invitation delivery is unavailable. The project is saved; retry when delivery is available.");
       if (!eligible(project, emailNormalized) || isReservedDemoEmail(emailNormalized)) unavailable();
       const existing = await transaction.findUserByEmail(emailNormalized);
       if (existing && (!existing.active || existing.role !== "client" || isReservedDevelopmentDemoIdentity(existing))) unavailable();
       if (mailer.deliveryKind === "external" && isReservedDevelopmentDemoIdentity(stored) && !deps.allowDemoAccountExternalEmail) throw new ApiError(409, "DEMO_EXTERNAL_DELIVERY_BLOCKED", "External delivery is unavailable for this issuing identity.");
-      const current = await transaction.findProjectClientInvitation(projectId);
       if (current && current.emailNormalized !== emailNormalized) unavailable();
-      if (expectedVersion === undefined && current) return { record: current, rawToken: null };
+      if (expectedVersion === undefined && current) return { kind: "invitation" as const, record: current, rawToken: null };
       if (expectedVersion !== undefined && (!Number.isSafeInteger(expectedVersion) || expectedVersion < 1 || current?.version !== expectedVersion)) conflict();
       if (current?.status === "accepted") unavailable();
       const issuedAt = clock().toISOString();
@@ -99,9 +122,10 @@ export function createProjectClientInvitationService(deps: ProjectClientInvitati
       };
       await transaction.saveProjectClientInvitation(next, current?.version ?? 0);
       await audit.append({ actorId: stored.id, action: current ? "project_client_invitation.resent" : "project_client_invitation.created", entityType: "project_client_invitation", entityId: next.id, occurredAt: issuedAt, newValues: { projectId, generation: next.tokenGeneration } }, transaction);
-      return { record: next, rawToken };
+      return { kind: "invitation" as const, record: next, rawToken };
     });
-    return prepared.rawToken ? deliver(prepared.record, prepared.rawToken) : summary(projectId, prepared.record);
+    if (prepared.kind === "linked") return prepared.summary;
+    return prepared.rawToken ? deliver(prepared.record, prepared.rawToken) : summary(repository, projectId, prepared.record);
   }
   async function accept(token: string, existingActor?: PublicUser, password?: string) {
     const discovered = await publicRecord(repository, token);
@@ -134,7 +158,7 @@ export function createProjectClientInvitationService(deps: ProjectClientInvitati
   return {
     async get(actor: PublicUser, projectId: string) {
       await manage(repository, actor, projectId);
-      return summary(projectId, await repository.findProjectClientInvitation(projectId));
+      return summary(repository, projectId, await repository.findProjectClientInvitation(projectId));
     },
     send: (actor: PublicUser, projectId: string) => issue(actor, projectId),
     resend: (actor: PublicUser, projectId: string, expectedVersion: number) => issue(actor, projectId, expectedVersion),
@@ -144,11 +168,12 @@ export function createProjectClientInvitationService(deps: ProjectClientInvitati
         const { actor: stored, project } = await manage(transaction, actor, projectId);
         await transaction.coordinateClientEmail(normalizeEmail(project.clientEmail));
         const current = await transaction.findProjectClientInvitation(projectId);
+        if (project.clientId !== null) return summary(transaction, projectId, current);
         if (!current || current.version !== expectedVersion || current.status !== "pending") conflict();
         const at = clock().toISOString();
         const next = await transaction.saveProjectClientInvitation({ ...current!, tokenHash: null, status: "revoked", revokedById: stored.id, revokedAt: at, updatedAt: at, version: expectedVersion + 1 }, expectedVersion);
         await audit.append({ actorId: stored.id, action: "project_client_invitation.revoked", entityType: "project_client_invitation", entityId: next.id, occurredAt: at, newValues: { projectId } }, transaction);
-        return summary(projectId, next);
+        return summary(transaction, projectId, next);
       });
     },
     async inspect(token: string) {
@@ -178,7 +203,7 @@ async function canManage(repository: AppRepository, actor: UserRecord, project: 
   return grant?.source === "admin_initiator" || grant?.source === "access_request";
 }
 function eligible(project: ProjectRecord, emailNormalized: string) {
-  return project.estimationWorkflowVersion === 2 && project.clientId === null && project.status !== "completed" && normalizeEmail(project.clientEmail) === emailNormalized;
+  return [2, 3].includes(project.estimationWorkflowVersion ?? 0) && project.clientId === null && project.status !== "completed" && normalizeEmail(project.clientEmail) === emailNormalized;
 }
 function unavailable(status = 400): never { throw new ApiError(status, "PROJECT_INVITATION_UNAVAILABLE", "This project invitation is unavailable. Ask your project team for a new invitation."); }
 function conflict(): never { throw new ApiError(409, "VERSION_CONFLICT", "The invitation changed. Refresh and try again."); }

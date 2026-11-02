@@ -4,6 +4,8 @@ import { readFile } from "node:fs/promises";
 
 import PDFDocument from "pdfkit";
 import sharp from "sharp";
+import { estimateProposalSchema, type EstimateProposalMetadata } from "../domain/estimate-proposal.js";
+import { renderEstimateProposalPdf } from "./estimate-proposal-pdf/index.js";
 
 import { estimatePdfCatalogue } from "../domain/estimate-pdf-catalogue.js";
 import { isKnowledgeModeTier, type KnowledgeModeTier } from "../domain/ai-estimator-knowledge-mode-tiers.js";
@@ -45,6 +47,7 @@ export interface EstimatePdfLine extends EstimateDimensionMetadata {
 }
 
 export interface EstimatePdfInput {
+  proposal?: EstimateProposalMetadata;
   id: string;
   version: number;
   status: string;
@@ -844,18 +847,22 @@ export function createEstimatePdfService(options?: {
   logoSvg?: Buffer;
 }): EstimatePdfService {
   const now = options?.now ?? (() => new Date());
-  const logoPngPromise = (async () => {
-    const logoSvg =
-      options?.logoSvg ??
-      (await readFile(new URL("../assets/lisno-logo.svg", import.meta.url)));
-    const logoPng = await sharp(logoSvg).png().toBuffer();
-    return logoPng;
-  })();
+  let logoPngPromise: Promise<Buffer> | undefined;
+  const legacyLogo = () => logoPngPromise ??= (async () => {
+    const logoSvg = options?.logoSvg ?? await readFile(new URL("../assets/lisno-logo.svg", import.meta.url));
+    return sharp(logoSvg).png().toBuffer();
+  })().catch(error => { logoPngPromise = undefined; throw error; });
 
   return {
     async generate(input, generateOptions) {
+      if (input.proposal !== undefined) {
+        const proposal = estimateProposalSchema.parse(input.proposal);
+        const bytes = await renderEstimateProposalPdf({ ...input, proposal }, { logoSvg: options?.logoSvg });
+        const projectPart = safeFilenamePart(input.lead.projectName) || safeFilenamePart(input.id) || "estimate";
+        return { bytes, filename: `lisno-${projectPart}-estimate-v${input.version}.pdf` };
+      }
       const profile = generateOptions?.profile ?? "standard";
-      const logoPng = await logoPngPromise;
+      const logoPng = await legacyLogo();
       const doc = new PDFDocument({
         size: "A4",
         margins: { top: 54, right: 42, bottom: 54, left: 42 },

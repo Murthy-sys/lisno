@@ -42,6 +42,11 @@ const estimateCollaborationPermissions = [
   "projects.client_invitation.read",
   "projects.client_invitation.manage",
   "identity.project_invitation.accept",
+  "estimation.quotation.read",
+  "estimation.quotation.edit",
+  "estimation.quotation.unlock",
+  "projects.design_team.read",
+  "projects.design_team.manage",
   "estimation.tiers.read", "estimation.tiers.select", "estimation.dimensions.update",
   "estimation.requirements.read",
   "estimation.requirements.create",
@@ -111,15 +116,15 @@ describe("frontend authorization contract", () => {
       "execution"
     ]);
     expect(AUTHORIZATION_POLICY_VERSION).toBe(
-      "2026-10-30.user-deletion.v1"
+      "2026-10-30.quotation-workflow.v3"
     );
   });
 
-  it("publishes all 221 unique permissions in canonical order", () => {
-    expect(PERMISSION_CODES).toHaveLength(221);
-    expect(new Set(PERMISSION_CODES)).toHaveLength(221);
+  it("publishes all 226 unique permissions in canonical order", () => {
+    expect(PERMISSION_CODES).toHaveLength(226);
+    expect(new Set(PERMISSION_CODES)).toHaveLength(226);
     expect(PERMISSION_CODES.slice(0, 21)).toEqual(["pm.estimates.read", "pm.vendor_suggestions.read", "pm.vendor_suggestions.manage", "pm.vendor_notices.respond", "pm.workspace.read", "pm.requests.create", "pm.requests.act", "pm.requests.receive", "pm.selections.act", "pm.supply.sign", "pm.vendors.manage", "pm.certifications.act", "pm.client.manage", "pm.snags.manage", "pm.quality.manage", "pm.performance.read", "pm.leaderboard.read", "pm.bonus.read", "pm.evidence.manage", "pm.evidence.read", "pm.notifications.read"]);
-    expect(PERMISSION_CODES.filter(permission => !permission.startsWith("pm.")).slice(0, 24)).toEqual([...estimateCollaborationPermissions, "ask_lisno.request", "chat.assistant.read", "chat.assistant.request", "procurement.vendor_access.read", "procurement.vendor_access.manage", "execution.tracker.read", "execution.work.update", "execution.staff.manage", "execution.verify", "execution.policy.manage", "execution.notifications.read", "execution.access.retry"]);
+    expect(PERMISSION_CODES.filter(permission => !permission.startsWith("pm.")).slice(0, 29)).toEqual([...estimateCollaborationPermissions, "ask_lisno.request", "chat.assistant.read", "chat.assistant.request", "procurement.vendor_access.read", "procurement.vendor_access.manage", "execution.tracker.read", "execution.work.update", "execution.staff.manage", "execution.verify", "execution.policy.manage", "execution.notifications.read", "execution.access.retry"]);
     expect(PERMISSION_CODES).toContain("chat.action_types.manage");
     expect(PERMISSION_CODES).toContain("chat.project_name.manage");
     expect(PERMISSION_CODES).toContain("estimation.design_upload.delete");

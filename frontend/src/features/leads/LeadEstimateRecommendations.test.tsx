@@ -2,6 +2,12 @@ import { act, fireEvent, screen, waitFor, within } from "@testing-library/react"
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
+vi.mock("../../auth/AuthProvider", () => ({ useAuth: () => ({ user: { id: "test-estimator" }, reviewSession: { id: "test-session" }, status: "authenticated" }) }));
+vi.mock("./estimateRevisionsApi", async importOriginal => ({
+  ...await importOriginal<typeof import("./estimateRevisionsApi")>(),
+  getEstimateRevisions: vi.fn(async () => ({ items: [], pagination: { limit: 20, nextCursor: null } }))
+}));
+
 
 import { renderWithQuery } from "../../test/render";
 import { LeadEstimateWorkspace } from "./LeadEstimateWorkspace";
@@ -147,7 +153,7 @@ describe("estimator room recommendations", () => {
     expect(within(dialog).getByText("All recommendations reviewed.")).toBeVisible();
     await user.click(within(dialog).getByRole("button", { name: "Done" }));
     expect(source).toBeChecked();
-    expect(screen.getByText("₹177 total")).toBeVisible();
+    expect(screen.getByText("₹150 total")).toBeVisible();
     expect(screen.queryByRole("checkbox", { name: /False ceiling functional lights/ })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Save draft" }));
     await screen.findByText("Estimate draft saved.");
@@ -156,7 +162,7 @@ describe("estimator room recommendations", () => {
     renderWorkspace();
     expect(await screen.findByRole("checkbox", { name: /Functional Lights/ })).toBeChecked();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    expect(screen.getByText("₹177 total")).toBeVisible();
+    expect(screen.getByText("₹150 total")).toBeVisible();
   });
 
   it("lets manual review reconsider a declined probable item and adds it with its source origin", async () => {
@@ -174,7 +180,7 @@ describe("estimator room recommendations", () => {
     await user.click(within(dialog).getByRole("button", { name: "Add False ceiling functional lights for Living & Dining" }));
     await user.click(await within(dialog).findByRole("button", { name: "Done" }));
     expect(screen.getByRole("checkbox", { name: /False ceiling functional lights/ })).toBeChecked();
-    expect(screen.getByText("₹590 total")).toBeVisible();
+    expect(screen.getByText("₹500 total")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Save draft" }));
     await screen.findByText("Estimate draft saved.");
     expect(savedInputs.at(-1)?.lineItems.find((line) => line.mainLineId === "line-light"))
@@ -196,7 +202,7 @@ describe("estimator room recommendations", () => {
     } else await user.click(within(dialog).getByRole("button", { name: "Not now" }));
     if (allAnswered) expect(source).toBeChecked();
     else expect(source).not.toBeChecked();
-    expect(screen.getByText(allAnswered ? "₹118 total" : "₹0 total")).toBeVisible();
+    expect(screen.getByText(allAnswered ? "₹100 total" : "₹0 total")).toBeVisible();
   });
 
   it("does not let a probable skip satisfy an unanswered non-negotiable addition", async () => {
@@ -229,7 +235,7 @@ describe("estimator room recommendations", () => {
     expect(screen.getByRole("checkbox", { name: /POP false ceiling/ })).toBeChecked();
     expect(screen.getByRole("checkbox", { name: /False ceiling functional lights/ })).toBeChecked();
     expect(screen.queryByRole("checkbox", { name: /False ceiling painting/ })).not.toBeInTheDocument();
-    expect(screen.getByText("₹531 total")).toBeVisible();
+    expect(screen.getByText("₹450 total")).toBeVisible();
   });
 
   it("invalidates declined targets on refresh when Configuration makes them required", async () => {
@@ -289,7 +295,7 @@ describe("estimator room recommendations", () => {
     expect(screen.queryByRole("checkbox", { name: /POP false ceiling|False ceiling painting/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Painting" })).not.toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "POP / Gypsum" })).not.toBeInTheDocument();
-    expect(screen.getByText("₹413 total")).toBeVisible();
+    expect(screen.getByText("₹350 total")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "By Section" }));
     expect(screen.getByRole("checkbox", { name: /False ceiling painting/ })).not.toBeChecked();
     expect(screen.getByRole("spinbutton", { name: /Quantity .* False ceiling painting/ })).toHaveValue(2);
@@ -357,7 +363,7 @@ describe("estimator room recommendations", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     await user.click(popCheckbox);
     expect(paintCheckbox).toBeChecked();
-    expect(screen.getByText("₹295 total")).toBeVisible();
+    expect(screen.getByText("₹250 total")).toBeVisible();
   });
 
   it("keeps a shared target until both recorded sources are unchecked", async () => {
@@ -580,7 +586,7 @@ describe("estimator room recommendations", () => {
     expect(dialog).toHaveClass("ui-dialog", "modal");
     expect(dialog.parentElement).toHaveClass("modal-layer");
     expect(dialog).toHaveAttribute("aria-modal", "true");
-    expect(screen.getByText("₹118 total")).toBeVisible();
+    expect(screen.getByText("₹100 total")).toBeVisible();
     expect(within(dialog).getByText(/Closing without adding a related item will uncheck/)).toBeVisible();
 
     if (dismissal === "Escape") await user.keyboard("{Escape}");
@@ -615,7 +621,7 @@ describe("estimator room recommendations", () => {
     await user.click(within(secondModal).getByRole("button", { name: "Add False ceiling painting for Living & Dining" }));
     await user.click(within(secondModal).getByRole("button", { name: "Done" }));
     expect(sourceCheckbox).toBeChecked();
-    expect(screen.getByText("₹413 total")).toBeVisible();
+    expect(screen.getByText("₹350 total")).toBeVisible();
     expect(screen.queryByText("Removed POP false ceiling from Living & Dining because no related item was selected.")).not.toBeInTheDocument();
   });
 
@@ -643,7 +649,7 @@ describe("estimator room recommendations", () => {
     releaseSave();
     expect(await screen.findByText("Estimate draft saved.")).toBeVisible();
     expect(sourceCheckbox).toBeChecked();
-    expect(screen.getByText("₹118 total")).toBeVisible();
+    expect(screen.getByText("₹100 total")).toBeVisible();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
@@ -662,7 +668,7 @@ describe("estimator room recommendations", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(sourceCheckbox).toBeChecked();
-    expect(screen.getByText("₹118 total")).toBeVisible();
+    expect(screen.getByText("₹100 total")).toBeVisible();
 
     releaseSave();
     expect(await screen.findByText("Estimate draft saved.")).toBeVisible();
@@ -685,7 +691,7 @@ describe("estimator room recommendations", () => {
     });
 
     expect(sourceCheckbox).toBeChecked();
-    expect(await screen.findByText("₹413 total")).toBeVisible();
+    expect(await screen.findByText("₹350 total")).toBeVisible();
     const paint = within(screen.getByRole("region", { name: "Painting" })).getByText("False ceiling painting").closest(".configured-estimate-line") as HTMLElement;
     expect(within(paint).getByRole("checkbox", { name: /False ceiling painting/ })).toBeChecked();
     expect(screen.queryByText(/Removed POP false ceiling/)).not.toBeInTheDocument();
@@ -712,7 +718,7 @@ describe("estimator room recommendations", () => {
 
     expect(popCheckbox).toBeChecked();
     await waitFor(() => expect(functionalCheckbox).not.toBeChecked());
-    expect(screen.getByText("₹413 total")).toBeVisible();
+    expect(screen.getByText("₹350 total")).toBeVisible();
     expect(screen.getByText("Removed Functional Lights from Living & Dining because no related item was selected.")).toBeVisible();
   });
 
@@ -738,7 +744,7 @@ describe("estimator room recommendations", () => {
 
     expect(popCheckbox).toBeChecked();
     expect(functionalCheckbox).toBeChecked();
-    expect(screen.getByText("₹590 total")).toBeVisible();
+    expect(screen.getByText("₹500 total")).toBeVisible();
     expect(screen.queryByText(/Removed .* because no related item was selected/)).not.toBeInTheDocument();
   });
 
@@ -762,7 +768,7 @@ describe("estimator room recommendations", () => {
 
     await waitFor(() => expect(popCheckbox).not.toBeChecked());
     expect(lightCheckbox).toBeChecked();
-    expect(screen.getByText("₹413 total")).toBeVisible();
+    expect(screen.getByText("₹350 total")).toBeVisible();
   });
 
   it("keeps an unrelated line in another room when automatic dismissal unchecks the new source", async () => {
@@ -802,10 +808,10 @@ describe("estimator room recommendations", () => {
     const dialog = await screen.findByRole("dialog", { name: "Recommendations for Living & Dining" });
     expect(await within(dialog).findByText("Painting completes the ceiling surface.")).toBeVisible();
     expect(within(dialog).getByText("False ceiling painting is needed for POP false ceiling.")).toBeVisible();
-    expect(screen.getByText("₹118 total")).toBeVisible();
+    expect(screen.getByText("₹100 total")).toBeVisible();
     expect(screen.queryByRole("checkbox", { name: /False ceiling painting/ })).not.toBeInTheDocument();
     await user.click(within(dialog).getByRole("button", { name: "Add False ceiling painting for Living & Dining" }));
-    expect(await screen.findByText("₹413 total")).toBeVisible();
+    expect(await screen.findByText("₹350 total")).toBeVisible();
     expect(await within(dialog).findByText("All related items selected.")).toBeVisible();
     expect(calls.some((ids) => ids.includes("line-pop"))).toBe(true);
 

@@ -17,6 +17,11 @@ function activeFurniturePhase(stage: DesignWorkflowStage) {
 }
 
 export function workflowStageStatusLabel(stage: DesignWorkflowStage) {
+  const request = stage.operational?.clientFurnitureRequest;
+  if (request && activeFurniturePhase(stage)) {
+    if (request.hasFurniture === null) return "Awaiting Client furniture details";
+    if (request.hasFurniture === true && stage.operational?.furniture?.phase === "awaiting_dimensions") return request.needsAssistance ? "Awaiting assisted measurements" : "Awaiting Client measurements";
+  }
   const phase = activeFurniturePhase(stage);
   if (phase === "awaiting_client_acceptance") return stage.operational?.furniture?.requirementsSubmissionEventId ? "Awaiting dimensions approval" : "Awaiting Client acceptance";
   if (phase === "awaiting_dimensions") return "Awaiting furniture dimensions";
@@ -28,6 +33,11 @@ export function workflowStageStatusLabel(stage: DesignWorkflowStage) {
 }
 
 export function workflowStageNextStep(stage: DesignWorkflowStage) {
+  const request = stage.operational?.clientFurnitureRequest;
+  if (request && activeFurniturePhase(stage)) {
+    if (request.hasFurniture === null) return "The Client confirms existing furniture and assistance needs";
+    if (request.hasFurniture === true && stage.operational?.furniture?.phase === "awaiting_dimensions") return request.needsAssistance ? "Submit assisted measurements for Client approval" : "The Client enters and confirms furniture dimensions";
+  }
   const phase = activeFurniturePhase(stage);
   if (phase === "awaiting_client_acceptance") return stage.operational?.furniture?.requirementsSubmissionEventId ? "Await Client approval of furniture dimensions" : "Await Client acceptance of furniture requirements";
   if (phase === "awaiting_dimensions") return "Submit furniture dimensions for Client approval";

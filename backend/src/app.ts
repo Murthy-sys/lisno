@@ -182,6 +182,7 @@ import { createExtractionWorkerService } from "./services/extraction-worker.serv
 import { createEstimateDesignService } from "./services/estimate-design.service.js";
 import { createEstimatePlanReviewService } from "./services/estimate-plan-review.service.js";
 import { createEstimateClientReviewStorage } from "./services/estimate-client-review-storage.js";
+import { createEstimateRevisionsService } from "./services/estimate-revisions.service.js";
 import { createEstimateClientReviewService } from "./services/estimate-client-review.service.js";
 import { createEstimateDecisionService } from "./services/estimate-decision.service.js";
 import { createEstimateDeliveryService } from "./services/estimate-delivery.service.js";
@@ -217,8 +218,12 @@ import { createUserInvitationService } from "./services/user-invitation.service.
 import { createProjectClientInvitationService } from "./services/project-client-invitation.service.js";
 import { createProjectClientInvitationsRouter } from "./routes/project-client-invitations.js";
 import { createEstimateTiersRouter } from "./routes/estimate-tiers.js";
+import { createQuotationRouter } from "./routes/quotation.js";
+import { createDesignTeamRouter } from "./routes/design-team.js";
 import { createEstimateRequirementsRouter } from "./routes/estimate-requirements.js";
 import { createEstimateCollaborationRouter } from "./routes/estimate-collaboration.js";
+import { createClientQuotationProjectionService } from "./services/client-quotation-projection.service.js";
+import { createClientQuotationRenditionService } from "./services/client-quotation-rendition.service.js";
 import { systemClock, type Clock } from "./services/workflow.js";
 import { createLocalStorage } from "./storage/local-storage.js";
 import type { FileStorage } from "./storage/storage.js";
@@ -585,10 +590,15 @@ export function createApp(dependencies: AppDependencies) {
     now: clock,
     projectWorkflow: projectWorkflowService
   });
+  const quotationProjection = createClientQuotationProjectionService();
+  const quotationRenditions = createClientQuotationRenditionService({
+    projection: quotationProjection, pdf: estimatePdfService, storage: estimateClientReviewStorage, now: clock
+  });
   const estimateClientReviewService = createEstimateClientReviewService({
-    storage: estimateClientReviewStorage
+    storage: estimateClientReviewStorage, projection: quotationProjection, renditions: quotationRenditions
   });
   const estimateDeliveryService = createEstimateDeliveryService({
+    renditions: quotationRenditions,
     reviews: estimateClientReviewService,
     storage: estimateClientReviewStorage,
     mailer: dependencies.estimateMailer ?? { deliveryKind: "disabled" },
@@ -651,6 +661,8 @@ export function createApp(dependencies: AppDependencies) {
   app.use("/api/v1", createProjectClientInvitationsRouter(authService, projectClientInvitations, (_req, _res, next) => next(), invitationDeliveryRateLimit));
   app.use("/api/v1", createEstimateRequirementsRouter(authService, auditService));
   app.use("/api/v1", createEstimateTiersRouter(authService, auditService));
+  app.use("/api/v1", createQuotationRouter(authService, auditService));
+  app.use("/api/v1", createDesignTeamRouter(authService, auditService));
   app.use("/api/v1", createEstimateCollaborationRouter(authService, auditService));
   app.use("/api/v1", createProfilePhotosRouter(authService, profilePhotoService));
   app.use("/api/v1", createNotificationsRouter(authService, notifications, notificationStream));
@@ -802,7 +814,8 @@ export function createApp(dependencies: AppDependencies) {
       auditService,
       estimatePublicationService,
       estimateDecisionService,
-      estimateClientReviewService
+      estimateClientReviewService,
+      createEstimateRevisionsService({ leads: leadService, storage: estimateClientReviewStorage })
     )
   );
   app.use("/api/v1", createEstimatorCatalogueRouter(authService));

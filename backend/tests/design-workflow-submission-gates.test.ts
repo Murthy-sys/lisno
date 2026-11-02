@@ -2,10 +2,13 @@ import { Readable } from "node:stream";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { createProjectDesignWorkflow } from "../src/domain/design-workflow.js";
+import { newQuotationLifecycle } from "../src/domain/estimation-lifecycle.js";
+import { sha256Hex } from "../src/domain/estimate-client-review.js";
 import { emptyDesignWorkflowState, type DesignWorkflowState } from "../src/domain/design-workflow-state.js";
 import { createMemoryRepository } from "../src/repositories/memory.js";
 import * as mongoRepository from "../src/repositories/mongo.js";
 import { EstimateModel } from "../src/models/Estimate.js";
+import { EstimateClientReviewRoundModel } from "../src/models/EstimateClientReviewRound.js";
 import { EstimateDesignDrawingModel } from "../src/models/EstimateDesignDrawing.js";
 import { DesignWorkflowStateModel } from "../src/models/DesignWorkflowState.js";
 import { DesignVersionModel } from "../src/models/DesignVersion.js";
@@ -71,10 +74,15 @@ function readyState(): DesignWorkflowState {
   };
 }
 
-function setup(options: { legacy?: boolean; state?: DesignWorkflowState } = {}) {
+function setup(options: { legacy?: boolean; state?: DesignWorkflowState; missingQuotationStages?: "absent" | "empty" } = {}) {
   const seed = structuredClone(demoSeedData);
   const project = seed.projects.find((item) => item.id === PROJECT_ID)!;
   if (!options.legacy) project.designWorkflowStages = createProjectDesignWorkflow(project.id);
+  if (options.missingQuotationStages) {
+    project.estimationWorkflowVersion = 3;
+    if (options.missingQuotationStages === "empty") project.designWorkflowStages = [];
+    else delete project.designWorkflowStages;
+  }
   seed.designWorkflowStates = options.state ? [options.state] : [];
   seed.estimateSummaries = [{
     id: "gate-approved-estimate", leadId: "gate-approved-lead", projectId: PROJECT_ID,
@@ -113,6 +121,18 @@ function setup(options: { legacy?: boolean; state?: DesignWorkflowState } = {}) 
 }
 
 describe("Design workflow upload and submission gates", () => {
+  it.each(["absent", "empty"] as const)("fails closed for v3 %s stages before reading approval sources or storing files", async missingQuotationStages => {
+    const { repository, versions, actor, storage } = setup({ missingQuotationStages, state: readyState() });
+    const context = vi.spyOn(repository, "findProjectEstimationContext");
+    for (const phase of ["upload", "submission"] as const) {
+      await expect(assertDesignWorkflowSubmissionAllowed(repository, PROJECT_ID, { phase })).rejects.toMatchObject({
+        code: "DESIGN_WORKFLOW_BLOCKED", message: expect.stringContaining("missing its configured design stages")
+      });
+    }
+    await expect(versions.upload(actor, "task-furniture-layout", FILE)).rejects.toMatchObject({ code: "DESIGN_WORKFLOW_BLOCKED" });
+    expect(context).not.toHaveBeenCalled();
+    expect(storage.objects.size).toBe(0);
+  });
   it("gates approved-estimate Designer uploads before any file is saved", async () => {
     const { repository, storage, actor } = setup();
     vi.spyOn(mongoRepository, "createMongoRepository").mockReturnValue(repository);
@@ -276,6 +296,59 @@ describe("Mongo submission gate transaction", () => {
     ]);
   }, 120_000);
   afterAll(async () => replica?.stop());
+
+  it("rejects a secondary removed while upload storage is pending and cleans the file", async () => {
+    const project = demoSeedData.projects.find(item => item.id === PROJECT_ID)!;
+    const user = { ...demoSeedData.users.find(item => item.id === "user-designer-ananya")!, id: "secondary-upload-user", email: "secondary-upload@synthetic.invalid", emailNormalized: "secondary-upload@synthetic.invalid" };
+    const task = demoSeedData.tasks.find(item => item.id === "task-furniture-layout")!;
+    const projectId = "removed-secondary-project";
+    await ProjectModel.create({ ...project, _id: projectId, clientMobile: "9000000000", clientAddress: "Test",
+      designWorkflowStages: createProjectDesignWorkflow(projectId), estimationWorkflowVersion: 3, primaryDesignerId: "primary",
+      secondaryDesignerIds: [user.id], assignedDesignerIds: ["primary", user.id] });
+    await UserModel.create({ ...user, _id: user.id });
+    await TaskModel.create({ ...task, _id: "secondary-upload-task", ownerId: user.id, projectId });
+    const estimateId = "secondary-upload-estimate";
+    const snapshot = { clientName: "Synthetic Client", projectName: "Synthetic project", location: "Test city", propertyType: "2BHK",
+      lineItems: [{ id: "synthetic-line", catalogueId: "CUSTOM", roomName: "Living room", specification: "Synthetic work", unit: "nos", rate: 1000, quantity: 1, included: true, amount: 1000 }], subtotal: 1000, gst: 0, total: 1000 };
+    await EstimateClientReviewRoundModel.create([2, 4].map(version => ({
+      _id: `secondary-quotation-${version}`, estimateId, leadId: "secondary-upload-lead", projectId,
+      workflowVersion: 3, phase: version === 2 ? "pre" : "post", requirementsVersion: 0, designScopeRevision: 1, pricedRevision: 1,
+      sourceDigest: sha256Hex(JSON.stringify(snapshot)), submittedById: version === 2 ? "synthetic-sales" : "primary",
+      estimateVersion: version, sendGeneration: version / 2, dedupeKey: sha256Hex(`secondary-quotation-${version}`),
+      recipientEmail: "synthetic-client@example.test", recipientEmailNormalized: "synthetic-client@example.test", estimateSnapshot: snapshot,
+      pdfFilename: "synthetic.pdf", pdfMimeType: "application/pdf", pdfByteSize: 5, pdfSha256: sha256Hex("proof"), pdfStorageReference: "synthetic-quotation",
+      deliveryStatus: "disabled", deliveryAttemptGeneration: 1, deliveryAttemptCount: 0, assignedAdminId: "synthetic-super",
+      status: "approved", decision: "approve", decisionSource: "client_portal", decisionNote: "Approved", decidedById: project.clientId, decidedAt: new Date(NOW), version: 2
+    })));
+    await EstimateModel.create({ _id: estimateId, leadId: "secondary-upload-lead", ownerId: "synthetic-sales", projectId,
+      propertyType: "2BHK", rooms: [{ id: "room-living", label: "Living room" }], scopes: ["interiors"],
+      lineItems: snapshot.lineItems, subtotal: 1000, gst: 0, total: 1000, status: "client_approved", version: 5,
+      estimation: { ...newQuotationLifecycle(), phase: "post", status: "client_approved", editClosedAt: NOW, designStartedAt: NOW,
+        preApproval: { reviewRoundId: "secondary-quotation-2", estimateVersion: 2, approvedAt: NOW },
+        finalApproval: { reviewRoundId: "secondary-quotation-4", estimateVersion: 4, approvedAt: NOW, requirementsVersion: 0,
+          designReviewRoundId: null, designPlanVersion: null, designScopeRevision: 1 } } });
+    const repository = mongoRepository.createMongoRepository();
+    const operational = readyState();
+    operational.projectId = projectId; operational.estimationWorkflowVersion = 3; operational.initialPaymentAt = null;
+    operational.designStartedAt = NOW; delete operational.stages.existing_furniture_dimensions;
+    await repository.saveDesignWorkflowState(projectId, 0, operational);
+    await expect(assertDesignWorkflowSubmissionAllowed(repository, projectId, { phase: "upload" })).resolves.toBeUndefined();
+    const storage = new TestStorage();
+    storage.afterSave = async () => {
+      await repository.runInTransaction(async tx => {
+        await tx.coordinateAuthorizationMutation();
+        await ProjectModel.updateOne({ _id: projectId }, { $set: { secondaryDesignerIds: [], assignedDesignerIds: ["primary"] } });
+      });
+    };
+    const actor: PublicUser = { id: user.id, name: user.name, email: user.email, role: user.role };
+    const service = createDesignVersionService(repository, createAuditService(repository), storage, () => new Date(NOW));
+    await expect(service.upload(actor, "secondary-upload-task", FILE)).rejects.toMatchObject({ status: 403 });
+    expect(storage.objects.size).toBe(0);
+    expect(storage.deleted).toHaveLength(1);
+    expect(await DesignVersionModel.countDocuments({ projectId })).toBe(0);
+    expect(await DesignExtractionJobModel.countDocuments()).toBe(0);
+    expect(await AuditEventModel.countDocuments({ entityType: "design_version" })).toBe(0);
+  });
 
   it("commits the stage lock with the upload and rolls both back on persistence failure", async () => {
     const project = demoSeedData.projects.find((item) => item.id === PROJECT_ID)!;

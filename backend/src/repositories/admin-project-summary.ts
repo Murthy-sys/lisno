@@ -1,4 +1,7 @@
+import { readProjectNumber } from "../domain/project-number.js";
+import { readProjectInitiationMetadata } from "../domain/project-initiation-metadata.js";
 import { ApiError } from "../middleware/errors.js";
+import { effectiveCommercialStatus, isEstimationWorkflowVersion, quotationApprovalIsCurrent } from "../domain/estimation-lifecycle.js";
 import { projectFinanceBaseline } from "../domain/project-finance.js";
 import type {
   AdminProjectEstimateLinkSource,
@@ -16,20 +19,28 @@ export function adminProjectSummary(
   estimates: EstimateSummaryRecord[],
   actor: Pick<UserRecord, "id" | "role">
 ): AdminProjectSummary {
-  const lead = leads
-    .filter((candidate) => candidate.projectId === project.id)
-    .sort((left, right) => left.id.localeCompare(right.id))[0] ?? null;
+  const linkedLeads = leads.filter((candidate) => candidate.projectId === project.id);
+  if (linkedLeads.length > 1 && linkedLeads.some(candidate => readProjectNumber(candidate.projectNumber) !== null)) {
+    throw new ApiError(409, "PROJECT_NUMBER_STATE_CONFLICT", "The project's numbered Lead identity is inconsistent.");
+  }
+  const lead = linkedLeads.sort((left, right) => left.id.localeCompare(right.id))[0] ?? null;
   const estimator = project.assignedEstimatorId === null
     ? null
     : users.find((candidate) => candidate.id === project.assignedEstimatorId) ?? null;
   const estimateResolution = canonicalProjectEstimate(project.id, leads, estimates);
   const estimate = estimateResolution?.estimate ?? null;
   if (estimate) assertApprovedBaseline(estimate);
+  const projectNumber = readProjectNumber(lead?.projectNumber);
+  if (projectNumber && estimate && estimate.leadId !== lead!.id) {
+    throw new ApiError(409, "PROJECT_NUMBER_STATE_CONFLICT", "The project number and estimate identify different Leads.");
+  }
   const designPlanDesigner = estimate?.designPlanDesignerId == null
     ? null
     : users.find((candidate) => candidate.id === estimate.designPlanDesignerId) ?? null;
   return {
-    ...(project.estimationWorkflowVersion === 2 ? { estimationWorkflowVersion: 2 as const } : {}),
+    ...readProjectInitiationMetadata(lead),
+    projectNumber,
+    ...(isEstimationWorkflowVersion(project.estimationWorkflowVersion) ? { estimationWorkflowVersion: project.estimationWorkflowVersion } : {}),
     id: project.id,
     name: project.name,
     status: project.status,
@@ -61,9 +72,16 @@ export function adminProjectSummary(
           resolvedProjectId: estimateResolution!.resolvedProjectId,
           projectLinkSource: estimateResolution!.projectLinkSource,
           version: estimate.version,
-          status: estimate.status,
-          ...(estimate.estimation?.workflowVersion === 2 ? { estimationPhase: estimate.estimation.phase,
-            finalEstimateApproved: Boolean(estimate.estimation.finalApproval) } : {}),
+          status: effectiveCommercialStatus(estimate),
+          ...(isEstimationWorkflowVersion(estimate.estimation?.workflowVersion) ? { estimationPhase: estimate.estimation!.phase,
+            finalEstimateApproved: estimate.estimation!.workflowVersion === 3 ? quotationApprovalIsCurrent(estimate) : Boolean(estimate.estimation!.finalApproval) } : {}),
+          ...(estimate.estimation?.workflowVersion === 3 ? { designApproved: Boolean(
+            quotationApprovalIsCurrent(estimate) && estimate.designPlanStatus === "approved" &&
+            estimate.estimation.designApproval?.estimateReviewRoundId === estimate.estimation.finalApproval?.reviewRoundId &&
+            estimate.estimation.designApproval?.designScopeRevision === estimate.estimation.designScopeRevision &&
+            estimate.estimation.designApproval?.designPlanVersion === estimate.designPlanVersion &&
+            estimate.estimation.designApproval?.reviewRoundId
+          ) } : {}),
           subtotal: estimate.subtotal,
           gst: estimate.gst,
           total: estimate.total,

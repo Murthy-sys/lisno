@@ -139,7 +139,7 @@ export function createHierarchyService(
       const projects = relevantProjects
         .filter(
           (project) =>
-            project.initiatingDesignerId === designer.id ||
+            project.estimationWorkflowVersion !== 3 && project.initiatingDesignerId === designer.id ||
             project.assignedDesignerIds.includes(designer.id)
         )
         .map((project) =>

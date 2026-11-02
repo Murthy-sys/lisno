@@ -37,7 +37,7 @@ export function FurnitureRequirementsReview({ projectId, operational }: { projec
     <div className="furniture-review__heading">
       <h5 id={`${id}-heading`}>{awaitingAcceptance ? combined ? "Review furniture requirements and dimensions" : "Review furniture requirements" : hasDimensions ? "Submitted furniture dimensions" : "Furniture requirements"}</h5>
       {awaitingAcceptance ? <p>{combined ? "Review each room’s dimensions and the supporting document. Approval accepts the room requirements and measurements together." : "Review the room requirements and uploaded files before accepting."}</p> : null}
-      {hasDimensions && !awaitingAcceptance && operational.furniture?.phase !== "completed" ? <p>Review the latest measurements and supporting document. Required rooms can proceed after Client approval.</p> : null}
+      {hasDimensions && !awaitingAcceptance && operational.furniture?.phase !== "completed" ? <p>{operational.workflowVersion === 3 ? "Review the saved measurements and supporting documents." : "Review the latest measurements and supporting document. Required rooms can proceed after Client approval."}</p> : null}
     </div>
     {operational.furniture?.scopeReturn ? <div className="furniture-review__feedback" role="note"><strong>Client requested changes to the requirements</strong><p>{operational.furniture.scopeReturn.reason}</p></div> : null}
     {noFurniture ? <p>No existing furniture dimensions are needed.</p> : rooms.length ? <ul className="furniture-review__rooms" aria-label="Saved room requirements">
@@ -49,14 +49,14 @@ export function FurnitureRequirementsReview({ projectId, operational }: { projec
       const hasSavedHeight = dimensionItems.some((item) => typeof item.height === "number");
       return <section className="furniture-review__dimensions" key={room.id} aria-label={`${room.name} submitted dimensions`}>
       <div className="furniture-review__dimension-heading"><h6>{room.name}</h6><span>Revision {room.dimensions!.revision} · {furnitureRoomStatusLabel(room)}</span></div>
-      {room.dimensions!.returnReason ? <div className="furniture-review__feedback" role="note"><strong>Client requested changes</strong><p>{room.dimensions!.returnReason}</p></div> : null}
+      {room.dimensions!.returnReason ? <div className="furniture-review__feedback" role="note"><strong>{operational.workflowVersion === 3 ? "Changes requested" : "Client requested changes"}</strong><p>{room.dimensions!.returnReason}</p></div> : null}
       {dimensionItems.length ? <div className="furniture-review__table-scroll" role="region" aria-label={`${room.name} measurements`} tabIndex={0}>
         <table><caption className="sr-only">Furniture measurements for {room.name}</caption><thead><tr><th scope="col">Furniture item</th><th scope="col">Length</th><th scope="col">Width</th>{hasSavedHeight ? <th scope="col">Height</th> : null}<th scope="col">Unit</th></tr></thead>
           <tbody>{dimensionItems.map((item) => <tr key={item.id}><th scope="row">{item.name}</th><td>{item.length}</td><td>{item.width}</td>{hasSavedHeight ? <td>{item.height ?? "—"}</td> : null}<td title={item.uomName}>{item.unit}</td></tr>)}</tbody>
         </table>
       </div> : null}
       {pointItems.length ? <div className="furniture-review__table-scroll" role="region" aria-label={`${room.name} point counts`} tabIndex={0}>
-        <table><caption className="sr-only">Point counts for {room.name}</caption><thead><tr><th scope="col">Item</th><th scope="col">Number of points</th><th scope="col">Unit</th></tr></thead>
+        <table><caption className="sr-only">{operational.workflowVersion === 3 ? "Furniture counts" : "Point counts"} for {room.name}</caption><thead><tr><th scope="col">Item</th><th scope="col">{operational.workflowVersion === 3 ? "Count" : "Number of points"}</th><th scope="col">Unit</th></tr></thead>
           <tbody>{pointItems.map((item) => <tr key={item.id}><th scope="row">{item.name}</th><td>{item.quantity}</td><td title={item.uomName}>{item.unit}</td></tr>)}</tbody>
         </table>
       </div> : null}

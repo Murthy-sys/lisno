@@ -1,0 +1,98 @@
+.estimate-revision-nav,
+.estimate-revision-rooms { min-width: 0; color: var(--est-ink, var(--color-text-strong)); font-family: var(--font-interface); }
+.estimate-revision-rooms h2 { margin: 8px 0 4px; font-size: 11px; font-weight: 600; line-height: 1.4; }
+.estimate-revision-nav p,
+.estimate-revision-rooms p { margin: 4px 0; font-size: 11px; line-height: 1.4; overflow-wrap: anywhere; }
+.estimate-revision-nav__disclosure > summary { min-height: 32px; padding: 5px 7px; border: 1px solid var(--est-line, var(--color-border-default)); cursor: pointer; font-size: 12px; font-weight: 600; line-height: 1.35; overflow-wrap: anywhere; }
+.estimate-revision-nav__disclosure > summary::marker { color: var(--est-green, #16351f); font-size: 10px; }
+.estimate-revision-nav__disclosure > summary small { display: block; margin-top: 1px; padding-inline-start: 12px; font-size: 10px; font-weight: 400; line-height: 1.35; }
+.estimate-revision-nav__body { display: grid; gap: 3px; margin-top: 3px; }
+.estimate-revision-nav ol { display: grid; gap: 3px; margin: 0; padding: 3px; list-style: none; max-block-size: 180px; overflow-y: auto; scrollbar-gutter: stable; }
+.estimate-revision-nav button,
+.estimate-revision-rooms button { font: inherit; color: inherit; cursor: pointer; border: 1px solid var(--est-line, var(--color-border-default)); background: var(--color-bg); border-radius: 2px; min-height: 32px; padding: 5px 7px; text-align: left; overflow-wrap: anywhere; }
+.estimate-revision-nav button:disabled,
+.estimate-revision-rooms button:disabled { cursor: default; opacity: .6; }
+.estimate-revision-nav__entry,
+.estimate-revision-rooms button { display: grid; gap: 1px; width: 100%; }
+.estimate-revision-nav__entry strong,
+.estimate-revision-rooms strong { font-size: 12px; line-height: 1.35; font-weight: 600; }
+.estimate-revision-nav__entry small { display: flex; flex-wrap: wrap; gap: 1px 6px; font-size: 10px; line-height: 1.35; }
+.estimate-revision-rooms small { font-size: 10px; line-height: 1.35; }
+.estimate-revision-nav button[aria-current="true"],
+.estimate-revision-rooms button[aria-current="true"] { color: var(--color-bg); background: var(--est-green, #16351f); border-color: var(--est-green, #16351f); }
+.estimate-revision-nav__more,
+.estimate-revision-nav__error button { width: 100%; margin-top: 4px; font-size: 11px; }
+.estimate-revision-nav button:focus-visible,
+.estimate-revision-nav__disclosure > summary:focus-visible,
+.estimate-revision-rooms button:focus-visible,
+.estimate-revision-view__scroll:focus-visible,
+.estimate-revision-line__components summary:focus-visible { outline: 2px solid var(--est-green, #16351f); outline-offset: 2px; }
+.estimate-revision-view { display: grid; grid-template-columns: 190px minmax(0, 1fr); gap: 8px; min-width: 0; min-height: 0; flex: 1; color: var(--est-ink, var(--color-text-strong)); font-family: var(--font-interface); }
+.estimate-revision-view__rail { min-width: 0; min-height: 0; overflow-y: auto; padding: 2px; scrollbar-gutter: stable; }
+.estimate-revision-rooms { display: grid; gap: 3px; margin-top: 6px; }
+.estimate-revision-view__content { display: flex; flex-direction: column; min-width: 0; min-height: 0; gap: 6px; }
+.estimate-revision-view__heading { display: flex; justify-content: space-between; align-items: start; flex-wrap: wrap; gap: 4px 12px; padding: 5px 8px; border-bottom: 1px solid var(--est-line, var(--color-border-default)); }
+.estimate-revision-view__heading h2 { margin: 0; font-size: 14px; line-height: 1.4; }
+.estimate-revision-view__heading p,
+.estimate-revision-view__heading > span { margin: 1px 0 0; font-size: 11px; line-height: 1.4; }
+.estimate-revision-view__scroll { min-width: 0; min-height: 0; flex: 1; overflow-y: auto; padding: 2px; scroll-padding-block: 8px; }
+.estimate-revision-view__groups { display: grid; gap: 8px; }
+.estimate-revision-group { min-width: 0; border: 1px solid var(--est-line, var(--color-border-default)); }
+.estimate-revision-group > h3 { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin: 0; padding: 6px 8px; font-size: 14px; line-height: 1.4; overflow-wrap: anywhere; }
+.estimate-revision-group > h3 small { flex: none; font-size: 11px; font-weight: 500; }
+.estimate-revision-group__section > h4 { margin: 0; padding: 5px 8px; font-size: 12px; line-height: 1.4; background: var(--color-surface-muted, var(--color-bg)); border-block: 1px solid var(--est-line, var(--color-border-default)); overflow-wrap: anywhere; }
+.estimate-revision-group__lines { display: grid; }
+.estimate-revision-line { display: grid; grid-template-columns: minmax(0, 1fr) minmax(290px, 36%); gap: 4px 12px; padding: 8px; border-top: 1px solid var(--est-line, var(--color-border-default)); }
+.estimate-revision-line:first-child { border-top: 0; }
+.estimate-revision-line__identity { min-width: 0; }
+.estimate-revision-line__identity h4 { margin: 0; font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
+.estimate-revision-line__meta { display: flex; flex-wrap: wrap; gap: 2px 8px; margin: 2px 0 0; font-size: 10px; line-height: 1.45; overflow-wrap: anywhere; }
+.estimate-revision-line__description,
+.estimate-revision-line__notes { margin: 4px 0 0; font-size: 11px; line-height: 1.45; overflow-wrap: anywhere; }
+.estimate-revision-line__notes { padding-left: 16px; }
+.estimate-revision-line__amounts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-content: start; gap: 8px; margin: 0; }
+.estimate-revision-line__amounts dt { margin: 0 0 2px; font-size: 10px; line-height: 1.4; overflow-wrap: anywhere; }
+.estimate-revision-line__amounts dd { margin: 0; font-size: 12px; line-height: 1.45; font-weight: 600; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.estimate-revision-line__components { grid-column: 1 / -1; font-size: 11px; line-height: 1.45; min-width: 0; }
+.estimate-revision-line__components summary { cursor: pointer; padding: 4px 0; overflow-wrap: anywhere; }
+.estimate-revision-line__components p { margin: 4px 0; }
+.estimate-revision-line__components ul { display: grid; gap: 6px; padding-left: 16px; margin: 4px 0; }
+.estimate-revision-line__components li { overflow-wrap: anywhere; }
+.estimate-revision-line__components dl { display: flex; flex-wrap: wrap; gap: 8px 16px; margin: 3px 0; }
+.estimate-revision-line__components dd { margin: 0; font-variant-numeric: tabular-nums; }
+.estimate-revision-view__summary,
+.estimate-revision-view__proposal-context { padding: 6px 8px; }
+.estimate-revision-view__summary h3,
+.estimate-revision-view__proposal-context h3 { margin: 0 0 6px; font-size: 14px; line-height: 1.4; }
+.estimate-revision-view__summary-row { display: flex; justify-content: space-between; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--est-line, var(--color-border-default)); font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
+.estimate-revision-view__summary-row span { flex: none; font-size: 11px; }
+.estimate-revision-view__proposal-context p,
+.estimate-revision-view__room-context,
+.estimate-revision-view__empty,
+.estimate-revision-view__summary > p { margin: 4px 0; font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
+.estimate-revision-view__room-context { padding-inline: 8px; }
+.estimate-revision-totals { display: grid; gap: 6px; margin: 8px 0 0; padding: 8px; border-top: 1px solid var(--est-line, var(--color-border-default)); }
+.estimate-revision-totals > div { display: flex; justify-content: space-between; gap: 12px; font-size: 12px; line-height: 1.4; }
+.estimate-revision-totals dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.estimate-revision-totals > div:last-child { padding-top: 6px; border-top: 1px solid var(--est-line, var(--color-border-default)); }
+@media (max-width: 900px) {
+  .estimate-revision-line { grid-template-columns: minmax(0, 1fr); }
+  .estimate-revision-line__amounts { margin-top: 4px; }
+}
+@media (max-width: 690px) {
+  .estimate-revision-view { grid-template-columns: minmax(0, 1fr); }
+  .estimate-revision-view__rail { overflow: visible; }
+  .estimate-revision-nav ol { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .estimate-revision-rooms { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .estimate-revision-rooms h2,
+  .estimate-revision-rooms > p { grid-column: 1 / -1; }
+  .estimate-revision-view__scroll { overflow: visible; }
+  .estimate-revision-line__amounts dt,
+  .estimate-revision-line__meta { font-size: 11px; }
+}
+@media (pointer: coarse) {
+  .estimate-revision-nav button,
+  .estimate-revision-nav__disclosure > summary,
+  .estimate-revision-rooms button,
+  .estimate-revision-line__components summary { min-height: 40px; }
+}

@@ -12,6 +12,7 @@ import { DownloadButton } from "../../components/ui/DownloadButton";
 import { Textarea } from "../../components/ui/Field";
 import { clientKeys } from "../client/clientApi";
 import { estimateRequirementsKeys } from "../client/estimateRequirementsApi";
+import { refreshEstimateCollaboration } from "../leads/estimateCollaborationQueries";
 import { estimateBuilderSections } from "../leads/estimateBuilderCatalogue";
 import { estimateDesignKeys } from "../leads/estimateDesignApi";
 import { projectWorkflowKeys } from "../workflow/projectWorkflowApi";
@@ -22,6 +23,7 @@ export const clientEstimateMoney = (value: number) => `₹${value.toLocaleString
 export function ClientPublishedEstimate({ estimate, decisionBlocked = false }: { estimate: EstimateQueueItem; decisionBlocked?: boolean }) {
   const reviewSectionRef = useRef<HTMLElement>(null);
   const review = estimate.publishedReview;
+  const quotationWorkflow = (review?.workflowVersion ?? estimate.workflowVersion) === 3;
   const displayedItemCount = review?.snapshot.lineItems.filter((item) => item.included).length ?? 0;
   if (!review || estimate.reviewSourceIssue) return <div className="client-commercial-state" role="status">
     <strong>Submitted estimate unavailable</strong>
@@ -30,7 +32,7 @@ export function ClientPublishedEstimate({ estimate, decisionBlocked = false }: {
 
   return <section className="client-commercial-review" aria-label="Submitted estimate" ref={reviewSectionRef} tabIndex={-1}>
     <div className="client-commercial-review__metadata">
-      {review.phase ? <strong>{review.phase === "post" ? "Final post-estimate" : "Pre-estimate"}</strong> : null}
+      {review.phase ? <strong>{quotationWorkflow ? review.phase === "post" ? "Post-design approval: Designer-revised quotation" : "Pre-design approval" : review.phase === "post" ? "Final post-estimate" : "Pre-estimate"}</strong> : null}
       <span>Version {review.estimateVersion} · Submission {review.sendGeneration}</span>
       <span>Submitted {formatDate(review.submittedAt)}</span>
       <span className="client-commercial-status">{review.status === "approved" ? "Approved" : review.status === "changes_requested" ? "Changes requested" : review.status === "superseded" ? "Review withdrawn" : "Awaiting your review"}</span>
@@ -47,14 +49,15 @@ function PreEstimateComparison({ estimate }: { estimate: EstimateQueueItem }) {
   const before = estimate.preApprovedReview;
   const after = estimate.publishedReview;
   const changes = estimate.changesFromPre;
+  const quotationWorkflow = (after?.workflowVersion ?? estimate.workflowVersion) === 3;
   if (!before || !after || !changes) return <p role="status">The comparison with your approved pre-estimate is unavailable. Ask your team to verify it before approving.</p>;
   const describe = (line: EstimateClientReviewSnapshot["lineItems"][number] | undefined) => line
     ? `${line.mainLineName ?? line.specification ?? "Estimate item"} · ${line.roomName} · ${line.quantity} ${line.uomName ?? line.unit}${line.dimensions ? ` · Dimensions ${line.dimensions.length} × ${line.dimensions.width} × ${line.dimensions.height}${line.dimensionRule ? ` ${line.dimensionRule.inputUnit}` : ""} (L × W × H)` : ""}`
     : "Item details unavailable";
   const row = (snapshot: EstimateClientReviewSnapshot, id: string) => snapshot.lineItems.find((line) => line.id === id);
   return <div className="client-commercial-state" aria-label="Changes from pre-estimate">
-    <strong>{changes.noChanges ? "No changes from pre-estimate" : "Changes from your approved pre-estimate"}</strong>
-    <p>Pre-estimate {clientEstimateMoney(before.snapshot.totalPaise === undefined ? before.snapshot.total : before.snapshot.totalPaise / 100)} · Final submitted estimate {clientEstimateMoney(after.snapshot.totalPaise === undefined ? after.snapshot.total : after.snapshot.totalPaise / 100)}</p>
+    <strong>{quotationWorkflow ? changes.noChanges ? "No changes from pre-design approval" : "Changes from your pre-design approval" : changes.noChanges ? "No changes from pre-estimate" : "Changes from your approved pre-estimate"}</strong>
+    <p>{quotationWorkflow ? "Pre-design approved quotation" : "Pre-estimate"} {clientEstimateMoney(before.snapshot.totalPaise === undefined ? before.snapshot.total : before.snapshot.totalPaise / 100)} · {quotationWorkflow ? "Designer-revised quotation" : "Final submitted estimate"} {clientEstimateMoney(after.snapshot.totalPaise === undefined ? after.snapshot.total : after.snapshot.totalPaise / 100)}</p>
     {changes.scopeChanged ? <p>Room or scope details have changed. Review the submitted scope before approving.</p> : null}
     {!changes.noChanges ? <ul>
       {changes.addedLineIds.map((id) => <li key={`added-${id}`}>Added: {describe(row(after.snapshot, id))}</li>)}
@@ -109,7 +112,7 @@ function PublishedEstimateDetails({ snapshot }: { snapshot: EstimateClientReview
           </div>)}
         </div>
       </details>)}
-      {!included.length ? <p>View the PDF/quotation for the item breakdown.</p> : null}
+      {!included.length ? <p>No item details are available for this quotation.</p> : null}
       <dl className="client-commercial-totals">
         <div><dt>Subtotal</dt><dd>{clientEstimateMoney(snapshot.subtotalPaise === undefined ? snapshot.subtotal : snapshot.subtotalPaise / 100)}</dd></div>
         <div><dt>GST</dt><dd>{clientEstimateMoney(snapshot.gstPaise === undefined ? snapshot.gst : snapshot.gstPaise / 100)}</dd></div>
@@ -130,7 +133,8 @@ function ClientEstimateDecision({ estimate, review, decisionBlocked, fallbackRef
   const triggerRef = useRef<HTMLButtonElement>(null);
   const noteRef = useRef<HTMLTextAreaElement>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
-  const phaseName = review.phase === "post" ? "final post-estimate" : review.phase === "pre" ? "pre-estimate" : "estimate";
+  const quotationWorkflow = (review.workflowVersion ?? estimate.workflowVersion) === 3;
+  const phaseName = quotationWorkflow ? review.phase === "post" ? "designer-revised quotation" : "pre-design quotation" : review.phase === "post" ? "final post-estimate" : review.phase === "pre" ? "pre-estimate" : "estimate";
   const refresh = async () => {
     setRefreshing(true);
     await queryClient.invalidateQueries({ queryKey: estimateWorkflowKeys.client });
@@ -144,6 +148,7 @@ function ClientEstimateDecision({ estimate, review, decisionBlocked, fallbackRef
       setCompleted(decision);
       setDialog(null);
       await Promise.all([
+        refreshEstimateCollaboration(queryClient),
         queryClient.invalidateQueries({ queryKey: estimateWorkflowKeys.client }),
         queryClient.invalidateQueries({ queryKey: clientKeys.projects }),
         queryClient.invalidateQueries({ queryKey: projectWorkflowKeys.all }),
@@ -171,10 +176,10 @@ function ClientEstimateDecision({ estimate, review, decisionBlocked, fallbackRef
     setDialog(decision);
   };
   return <div className="client-commercial-decision">
-    {review.status === "approved" || completed === "approve" ? <div className="client-commercial-state" role="status"><strong>{review.phase === "post" ? "Final post-estimate approved" : review.phase === "pre" ? "Pre-estimate approved" : "Estimate approved"}</strong><p>{review.phase === "post" ? "Your final approval is recorded and estimate changes are closed. Your team will confirm the initial payment before issuing work orders." : review.phase === "pre" ? "Your pre-estimate approval is recorded. Design and procurement preparation can continue while your team prepares the final estimate." : "Your approved estimate is recorded. Follow the project workflow below, or review the design plan when it is submitted."}</p></div> : null}
+    {review.status === "approved" || completed === "approve" ? <div className="client-commercial-state" role="status"><strong>{quotationWorkflow ? review.phase === "post" ? "Post-design quotation approved" : "Pre-design approval recorded" : review.phase === "post" ? "Final post-estimate approved" : review.phase === "pre" ? "Pre-estimate approved" : "Estimate approved"}</strong><p>{quotationWorkflow ? review.phase === "post" ? "Estimation is complete and the quotation is locked. Your Designer can now begin design tasks." : "Your approval is recorded. The primary Designer will review the quotation before design tasks begin." : review.phase === "post" ? "Your final approval is recorded and estimate changes are closed. Your team will confirm the initial payment before issuing work orders." : review.phase === "pre" ? "Your pre-estimate approval is recorded. Design and procurement preparation can continue while your team prepares the final estimate." : "Your approved estimate is recorded. Follow the project workflow below, or review the design plan when it is submitted."}</p></div> : null}
     {review.status === "changes_requested" || completed === "request_changes" ? <div className="client-commercial-state" role="status"><strong>Sales is revising your estimate</strong><p>Your last submitted estimate remains available here. You can review the revised estimate when Sales submits it again.</p>{review.decisionNote ? <blockquote><span>Your requested changes</span><p>{review.decisionNote}</p></blockquote> : null}</div> : null}
-    {review.status === "superseded" ? <div className="client-commercial-state" role="status"><strong>This submitted review was withdrawn</strong><p>Your team is revising the estimate. This submission remains available as history; review the next submission when it is ready.</p></div> : null}
-    {review.status === "pending" && !available && !completed ? <p role="status">This estimate is not currently available for a decision. Sales will share the next version when it is ready.</p> : null}
+    {review.status === "superseded" ? <div className="client-commercial-state" role="status"><strong>{quotationWorkflow ? "This quotation has been superseded" : "This submitted review was withdrawn"}</strong><p>{quotationWorkflow ? "A newer quotation is being prepared. You can approve it after your team submits it." : "Your team is revising the estimate. This submission remains available as history; review the next submission when it is ready."}</p></div> : null}
+    {review.status === "pending" && !available && !completed && !decisionBlocked ? <p role="status">This estimate is not currently available for a decision. Sales will share the next version when it is ready.</p> : null}
     {action.isError ? <div className="client-commercial-state" role="alert"><strong>{action.error instanceof ApiError && action.error.status === 409 ? "This estimate has changed" : "Your decision could not be saved"}</strong><p>{action.error instanceof ApiError ? action.error.message : "Refresh the submitted estimate and try again."}</p></div> : null}
     {needsRefresh ? <Button variant="secondary" busy={refreshing} onClick={() => void refresh()}>Refresh estimate</Button> : available ? <div className="client-commercial-decision__actions"><div><strong>Ready to proceed?</strong><p>Approve this {phaseName} or tell your team what needs to change.</p></div><Button variant="secondary" disabled={action.isPending} onClick={(event) => openDialog("request_changes", event.currentTarget)}>Request changes</Button><Button disabled={action.isPending} onClick={(event) => openDialog("approve", event.currentTarget)}>Approve {phaseName}</Button></div> : null}
     {dialog && available && !needsRefresh ? <Dialog title={dialog === "approve" ? `Approve this ${phaseName}?` : "Request estimate changes"} eyebrow="Estimate review" onClose={() => setDialog(null)} busy={action.isPending} showCloseButton={false} initialFocusRef={dialog === "request_changes" ? noteRef : cancelRef} returnFocusRef={triggerRef} fallbackFocusRef={fallbackRef}>
@@ -186,7 +191,7 @@ function ClientEstimateDecision({ estimate, review, decisionBlocked, fallbackRef
       }}>
         <div className="ui-dialog__body">
           <div className="client-estimate-decision-form__summary"><strong>{review.snapshot.projectName}</strong><span>Version {review.estimateVersion} · Submission {review.sendGeneration}</span><span>Total including GST</span><strong>{clientEstimateMoney(review.snapshot.totalPaise === undefined ? review.snapshot.total : review.snapshot.totalPaise / 100)}</strong></div>
-          {dialog === "approve" && review.phase === "post" ? <p>Final approval closes estimate changes. Work orders remain subject to initial payment confirmation and the required procurement checks.</p> : null}
+          {dialog === "approve" && review.phase === "post" ? <p>{quotationWorkflow ? "Approval locks this quotation and starts design tasks. You will review the uploaded design separately before procurement." : "Final approval closes estimate changes. Work orders remain subject to initial payment confirmation and the required procurement checks."}</p> : null}
           {dialog === "approve" ? <p>Confirm that you have reviewed the submitted scope and total. Your approval will be recorded for this version.</p> : <label htmlFor={`estimate-change-note-${estimate.id}`}><span>Changes needed <span aria-hidden="true">*</span></span><Textarea ref={noteRef} id={`estimate-change-note-${estimate.id}`} value={note} maxLength={1000} aria-required="true" aria-invalid={Boolean(validation)} aria-describedby={`estimate-note-hint-${estimate.id}`} disabled={action.isPending} onChange={(event) => { setNote(event.target.value); setValidation(""); }} /><span id={`estimate-note-hint-${estimate.id}`} className="client-commercial-review__hint">Tell Sales which items, quantities, or specifications to revise. {note.length}/1,000 characters.</span></label>}
           {validation ? <p role="alert">{validation}</p> : null}
         </div>

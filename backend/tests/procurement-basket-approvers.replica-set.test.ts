@@ -30,6 +30,16 @@ beforeEach(async () => {
 });
 
 describe("project-assigned basket approvers", () => {
+  it("uses the current v3 primary and rejects stale secondary ownership or a deleted primary", async () => {
+    await ProjectModel.updateOne({ _id: "project-a" }, { $set: { estimationWorkflowVersion: 3,
+      primaryDesignerId: "designer-a", secondaryDesignerIds: ["designer-b"], assignedDesignerIds: ["designer-a", "designer-b"] } });
+    expect((await resolve(["designer"])).assignedDesigner?.id).toBe("designer-a");
+    await EstimateModel.updateOne({ _id: "estimate-a" }, { $set: { designPlanDesignerId: "designer-b" } });
+    expect((await resolve(["designer"])).approverBlockers).toContainEqual(expect.objectContaining({ code: "PROCUREMENT_BASKET_DESIGNER_AMBIGUOUS" }));
+    await EstimateModel.updateOne({ _id: "estimate-a" }, { $set: { designPlanDesignerId: "designer-a" } });
+    await UserModel.updateOne({ _id: "designer-a" }, { $set: { deletedAt: at } });
+    expect((await resolve(["designer"])).approverBlockers).toContainEqual(expect.objectContaining({ code: "PROCUREMENT_BASKET_DESIGNER_INACTIVE" }));
+  });
   it("resolves the consolidated Project Manager assignment and keeps preview read-only", async () => {
     const beforeTask = await ProjectWorkflowTaskModel.findById("site-task").lean();
     expect(await resolve()).toEqual({ assignedSiteManager: { id: "site-a", name: "site-a" },

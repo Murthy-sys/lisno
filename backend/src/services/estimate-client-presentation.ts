@@ -1,15 +1,18 @@
 import { ESTIMATE_COMPONENT_PRICING_BASIS, estimateComponentLineAmountIsValid, readEstimateComponentPricing, type EstimateComponentPricing } from "../domain/estimate-component-pricing.js";
 import { estimateDimensionSnapshotValid } from "../domain/estimate-dimension-snapshot.js";
 import { canonicalEstimateDimensions, readEstimateDimensionRule, type EstimateDimensions, type EstimateDimensionRule } from "../domain/estimate-dimensions.js";
-import { effectiveCommercialStatus, isCollaborativeEstimate } from "../domain/estimation-lifecycle.js";
+import { effectiveCommercialStatus, isCollaborativeEstimate, isEstimationWorkflowVersion } from "../domain/estimation-lifecycle.js";
 import { KNOWLEDGE_MODE_TIERS } from "../domain/ai-estimator-knowledge-mode-tiers.js";
 import { ESTIMATE_PRICING_MODES, ESTIMATE_RATE_SOURCES, estimatePricingMetadataIsValid } from "../domain/estimate-mode-pricing.js";
 import { z } from "zod";
+import { estimateProposalSchema } from "../domain/estimate-proposal.js";
 
-import { configuredEstimateParentIsValid, type ClientPublishedEstimateReview } from "../domain/estimate-client-review.js";
+import { configuredEstimateParentIsValid, type ClientPublishedEstimateReview, type EstimateClientReviewSnapshot } from "../domain/estimate-client-review.js";
+import type { ClientQuotationProjectionService } from "./client-quotation-projection.service.js";
 import { normalizeEmail } from "../domain/email.js";
 import type { PublicUser } from "./auth.service.js";
 import { isDeepStrictEqual } from "node:util";
+import type mongoose from "mongoose";
 
 type Row = Record<string, any>;
 const money = z.number().finite().nonnegative();
@@ -53,6 +56,7 @@ const configuredLine = z.object({
     return legacy;
   });
 const snapshotSchema = z.object({
+  proposal: estimateProposalSchema.optional(),
   rooms: z.array(z.record(z.unknown())).optional(), bedroomCount: z.number().int().nullable().optional(), scopes: z.array(z.string()).optional(),
   clientName: z.string().min(1), projectName: z.string().min(1),
   location: z.string(), propertyType: z.string().min(1),
@@ -75,7 +79,9 @@ const snapshotSchema = z.object({
   }
   if (!snapshot.lineItems.some((line) => line.source === "configuration")) return;
   if (snapshot.subtotalPaise === undefined || snapshot.gstPaise === undefined || snapshot.totalPaise === undefined ||
-    snapshot.subtotalPaise + snapshot.gstPaise !== snapshot.totalPaise) {
+    snapshot.subtotalPaise + snapshot.gstPaise !== snapshot.totalPaise ||
+    snapshot.subtotal !== snapshot.subtotalPaise / 100 || snapshot.gst !== snapshot.gstPaise / 100 ||
+    snapshot.total !== snapshot.totalPaise / 100) {
     ctx.addIssue({ code: "custom", message: "Configured review totals require exact paise." });
   }
 });
@@ -86,7 +92,12 @@ function timestamp(value: unknown): string | null {
   return Number.isFinite(date.getTime()) ? date.toISOString() : null;
 }
 
-/** Screen-only projection; the stored approval and its quotation retain every line. */
+export function parseClientQuotationSource(value: unknown): EstimateClientReviewSnapshot | null {
+  const parsed = snapshotSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
+/** Frozen visibility is also enforced for decision eligibility and historical readers. */
 function clientScreenSnapshot(snapshot: z.infer<typeof snapshotSchema>) {
   return {
     ...snapshot,
@@ -101,6 +112,27 @@ function clientScreenSnapshot(snapshot: z.infer<typeof snapshotSchema>) {
   };
 }
 
+/** All client-facing readers must resolve current Configuration before presentation. */
+export async function presentClientEstimateWithVisibility(
+  projection: ClientQuotationProjectionService,
+  actor: PublicUser,
+  estimate: Row,
+  lead: Row,
+  round: Row | null,
+  project?: Row | null,
+  preRound?: Row | null,
+  session?: mongoose.ClientSession
+): Promise<Row | null> {
+  // Authorize and validate lineage before querying Configuration for this quotation.
+  const readable = presentClientEstimate(actor, estimate, lead, round, project, preRound);
+  if (!readable) return null;
+  const current = readable.publishedReview && round
+    ? (await projection.project(round.estimateSnapshot, session)).snapshot : undefined;
+  const pre = readable.preApprovedReview && preRound
+    ? (await projection.project(preRound.estimateSnapshot, session)).snapshot : undefined;
+  return presentClientEstimate(actor, estimate, lead, round, project, preRound, { current, pre });
+}
+
 /** Only the immutable published proposal supplies Client commercial fields. */
 export function presentClientEstimate(
   actor: PublicUser,
@@ -108,10 +140,11 @@ export function presentClientEstimate(
   lead: Row,
   round: Row | null,
   project?: Row | null,
-  preRound?: Row | null
+  preRound?: Row | null,
+  projections?: { current?: EstimateClientReviewSnapshot; pre?: EstimateClientReviewSnapshot }
 ): Row | null {
   const collaborative = isCollaborativeEstimate(estimate);
-  if ((collaborative || project?.estimationWorkflowVersion === 2) && actor.role !== "super_admin" &&
+  if ((collaborative || isEstimationWorkflowVersion(project?.estimationWorkflowVersion)) && actor.role !== "super_admin" &&
       (!project || project.clientId !== actor.id || String(project._id ?? project.id) !== estimate.projectId || lead.projectId !== estimate.projectId)) return null;
   estimate = { ...estimate, status: effectiveCommercialStatus(estimate) };
   const email = normalizeEmail(actor.email);
@@ -158,9 +191,10 @@ export function presentClientEstimate(
     !Number.isSafeInteger(round.sendGeneration) || round.sendGeneration < 1
   ));
   const reviewSourceIssue = sourceConflict ? "source_conflict" : !parsed.success ? "missing_snapshot" : null;
-  const snapshot = reviewSourceIssue === null && parsed.success ? clientScreenSnapshot(parsed.data) : null;
+  const snapshot = reviewSourceIssue === null && parsed.success ? projections?.current ?? clientScreenSnapshot(parsed.data) : null;
   const publishedReview: ClientPublishedEstimateReview | null = snapshot && round ? {
-    ...(collaborative ? { phase: round.phase, requirementsVersion: round.requirementsVersion } : {}),
+    ...(collaborative ? { phase: round.phase, requirementsVersion: round.requirementsVersion,
+      workflowVersion: round.workflowVersion ?? estimate.estimation.workflowVersion } : {}),
     id: String(round._id ?? round.id), version: round.version,
     estimateVersion: round.estimateVersion, sendGeneration: round.sendGeneration,
     status: round.status, submittedAt: submittedAt!, snapshot,
@@ -178,12 +212,12 @@ export function presentClientEstimate(
     preRound.decision === "approve" && String(preRound._id ?? preRound.id) === estimate.estimation.preApproval?.reviewRoundId &&
     preRound.estimateVersion === estimate.estimation.preApproval?.estimateVersion &&
     preRound.projectId === projectId && String(preRound.estimateId) === String(estimate._id ?? estimate.id)
-    ? { reviewRoundId: String(preRound._id ?? preRound.id), estimateVersion: preRound.estimateVersion, snapshot: clientScreenSnapshot(preSnapshot.data) }
+    ? { reviewRoundId: String(preRound._id ?? preRound.id), estimateVersion: preRound.estimateVersion, snapshot: projections?.pre ?? clientScreenSnapshot(preSnapshot.data) }
     : null;
   return {
     id: String(estimate._id ?? estimate.id), leadId: String(estimate.leadId), projectId,
     ownerId: estimate.ownerId, version, status: estimate.status,
-    ...(collaborative ? { estimation: estimate.estimation, preApprovedReview,
+    ...(collaborative ? { workflowVersion: estimate.estimation.workflowVersion, estimation: estimate.estimation, preApprovedReview,
       changesFromPre: preApprovedReview && snapshot ? comparePublishedEstimateSnapshots(preApprovedReview.snapshot, snapshot) : null } : {}),
     propertyType: snapshot?.propertyType ?? "", lineItems: snapshot?.lineItems ?? [],
     subtotal: snapshot?.subtotal ?? 0, gst: snapshot?.gst ?? 0, total: snapshot?.total ?? 0,

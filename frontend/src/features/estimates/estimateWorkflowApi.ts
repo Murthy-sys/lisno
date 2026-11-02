@@ -3,6 +3,7 @@ import type { ClientPublishedEstimateReview, EstimateClientReviewSnapshot } from
 import type { EstimateDraft } from "../leads/leadsApi";
 
 export interface EstimateQueueItem extends EstimateDraft {
+  workflowVersion?: 2 | 3;
   version?: number;
   publishedReview?: ClientPublishedEstimateReview | null;
   preApprovedReview?: {
@@ -74,12 +75,26 @@ export const downloadClientEstimatePdf = (estimateId: string, roundId: string) =
 
 export const enableEstimateCollaboration = (estimateId: string, expectedVersion: number) =>
   apiClient.post<EstimateDraft>(`/estimates/${encodeURIComponent(estimateId)}/enable-collaboration`, { expectedVersion });
+export interface QuotationTransitionPreview {
+  estimateId: string;
+  projectId: string | null;
+  estimateVersion: number;
+  currentWorkflowVersion: 2 | 3 | null;
+  targetVersion: 3;
+  eligible: boolean;
+  blockers: string[];
+  previewFingerprint: string;
+}
+export const getQuotationTransitionPreview = (estimateId: string) =>
+  apiClient.get<QuotationTransitionPreview>(`/estimates/${encodeURIComponent(estimateId)}/collaboration-preview`);
+export const enableQuotationWorkflow = (estimateId: string, input: { expectedVersion: number; targetVersion: 3; reason: string; previewFingerprint: string }) =>
+  apiClient.post<EstimateDraft>(`/estimates/${encodeURIComponent(estimateId)}/enable-collaboration`, input);
 export const withdrawEstimateReview = (estimateId: string, input: {
   expectedVersion: number; reviewRoundId: string; reviewRoundVersion: number; reason: string;
 }) => apiClient.post<EstimateDraft>(`/estimates/${encodeURIComponent(estimateId)}/withdraw-review`, input);
 export interface EstimatePreparationSource {
   estimateId: string; estimateVersion: number; estimateReviewRoundId: string | null;
-  workflowVersion: 2; phase: "pre" | "post"; kind: "approved_pre" | "released_post" | "approved_final";
+  workflowVersion: 2 | 3; phase: "pre" | "post"; kind: "approved_pre" | "released_post" | "approved_final";
   sourceSnapshotId: string; sourceDigest: string;
 }
 export const releaseEstimatePreparation = (estimateId: string, expectedVersion: number) =>

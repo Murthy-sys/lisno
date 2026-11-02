@@ -313,8 +313,8 @@ export function createProcurementBasketAwardService({ audit, now = () => new Dat
             tenderConflict("PROCUREMENT_BASKET_FINANCE_REVIEWER_REQUIRED",
               "Assign an active Finance reviewer to this project before submitting the work order.");
         }
-        const autoIssueOnApproval = project.estimationWorkflowVersion !== 2 &&
-          proposal.preparationSource?.workflowVersion !== 2 && input.autoIssueOnApproval === true;
+        const autoIssueOnApproval = ![2, 3].includes(project.estimationWorkflowVersion ?? 0) &&
+          ![2, 3].includes(proposal.preparationSource?.workflowVersion ?? 0) && input.autoIssueOnApproval === true;
         const changed = await ProcurementBasketAwardModel.updateOne({ _id: awardId, version: input.expectedVersion,
           status: "draft" }, { $set: { status: "pending_approvals", updatedById: actor.id,
             autoIssueOnApproval, submittedById: actor.id, issueBlocker: null,
@@ -821,11 +821,11 @@ async function awardDto(award: TenderRow, session: ClientSession): Promise<Procu
 }
 
 async function automaticIssueEnabled(award: TenderRow, proposal: TenderRow, session: ClientSession): Promise<boolean> {
-  if (award.autoIssueOnApproval !== true || proposal.preparationSource?.workflowVersion === 2) return false;
+  if (award.autoIssueOnApproval !== true || [2, 3].includes(proposal.preparationSource?.workflowVersion ?? 0)) return false;
   const project = await ProjectModel.findById(award.projectId).select({ estimationWorkflowVersion: 1 }).session(session).lean();
   // Recheck the current project on decision replays too: an older stored true
   // flag cannot turn collaborative internal approval into automatic issuance.
-  return Boolean(project && project.estimationWorkflowVersion !== 2);
+  return Boolean(project && ![2, 3].includes(project.estimationWorkflowVersion ?? 0));
 }
 
 export async function assertProposalFresh(award: TenderRow, proposal: TenderRow, session: ClientSession): Promise<void> {

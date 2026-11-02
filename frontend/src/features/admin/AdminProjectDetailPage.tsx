@@ -125,6 +125,7 @@ export function AdminProjectDetailPage() {
         description="Review the commercial handoff and assign approved design work."
         breadcrumb={<Link to="/admin/projects"><ArrowLeft aria-hidden="true" /> Back to {auth.user?.role === "super_admin" ? "All Projects" : "My Projects"}</Link>}
         metadata={<>
+          <span className="admin-project-reference__identifier">{project.projectNumber ? `Project number: ${project.projectNumber}` : "Project number not assigned"}</span>
           <StatusBadge tone="info" label={adminProjectStatusLabel(project)} />
           <span className="admin-project-reference__identifier">Project ID: {project.id}</span>
           <span>Created <time dateTime={project.createdAt}>{createdLabel}</time></span>

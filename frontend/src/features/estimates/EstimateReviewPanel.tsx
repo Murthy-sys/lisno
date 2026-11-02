@@ -42,7 +42,7 @@ import { ClientPublishedEstimate, clientEstimateMoney } from "./ClientPublishedE
 import "./clientPublishedEstimate.css";
 
 const money = (value: number) => `₹${value.toLocaleString("en-IN")}`;
-export function EstimateReviewPanel({ selectedEstimateId, projectId }: { selectedEstimateId?: string; projectId?: string } = {}) {
+export function EstimateReviewPanel({ selectedEstimateId, projectId, decisionBlocked = false }: { selectedEstimateId?: string; projectId?: string; decisionBlocked?: boolean } = {}) {
   const role = useAuth().user!.role;
   const queryClient = useQueryClient();
   const [designerByEstimate, setDesignerByEstimate] = useState<Record<string, string>>({});
@@ -84,6 +84,7 @@ export function EstimateReviewPanel({ selectedEstimateId, projectId }: { selecte
     <header><div><p className="eyebrow">Estimate review</p><h2 id="estimate-review-title">{panelTitle}</h2><p>{projectId ? "Review the submitted scope and pricing, then share your decision." : "Review your submitted estimates and respond to Sales."}</p></div><strong>{actionableCount} awaiting action</strong></header>
     <div className="estimate-review-grid">{estimates.map((estimate) => <EstimateReviewCard
       actionable={canActOnEstimate(role, estimate.status)}
+      decisionBlocked={decisionBlocked}
       actionError={action.isError && action.variables?.id === estimate.id
         ? action.error
         : null}
@@ -111,6 +112,7 @@ function canActOnEstimate(role: string, status: EstimateQueueItem["status"]) {
 
 function canReviewDesign(role: Role, estimate: EstimateQueueItem) {
   if (role !== "client") return false;
+  if (estimate.workflowVersion === 3 && !((estimate.designPlanVersion ?? 0) > 0 && estimate.publishedReview?.phase === "post" && estimate.publishedReview.status === "approved")) return false;
   if (estimate.status === "client_approved") {
     return estimate.designPlanStatus === "ready_for_client";
   }
@@ -123,6 +125,7 @@ function EstimateReviewCard({
   initiallyExpanded = false,
   role,
   actionable,
+  decisionBlocked = false,
   designers,
   selectedDesignerId,
   note,
@@ -136,6 +139,7 @@ function EstimateReviewCard({
   initiallyExpanded?: boolean;
   role: Role;
   actionable: boolean;
+  decisionBlocked?: boolean;
   designers: Awaited<ReturnType<typeof getEstimateDesigners>>;
   selectedDesignerId: string;
   note: string;
@@ -156,7 +160,8 @@ function EstimateReviewCard({
   const publishedReview = estimate.reviewSourceIssue ? null : estimate.publishedReview;
   const unchangedDesignRequest = estimate.status === "client_changes_requested" &&
     publishedReview?.status === "pending" && estimate.version === publishedReview.estimateVersion;
-  const showDesignTools = isClient && (estimate.status === "sent_to_client" || estimate.status === "client_approved" || unchangedDesignRequest);
+  const quotationDesignReady = estimate.workflowVersion !== 3 || (estimate.designPlanVersion ?? 0) > 0 && publishedReview?.phase === "post" && publishedReview.status === "approved";
+  const showDesignTools = isClient && quotationDesignReady && (estimate.status === "sent_to_client" || estimate.status === "client_approved" || unchangedDesignRequest);
   const clientTitle = publishedReview?.snapshot.projectName ?? estimate.lead?.projectName ?? "Project estimate";
   const drawingWorkspace = useQuery({
     queryKey: estimateDesignKeys.clientWorkspace(estimate.id),
@@ -213,7 +218,8 @@ function EstimateReviewCard({
       </div>
       {clientExpanded ? <div className="estimate-review-card__client-content" id={detailsId}>
         {pdfNeedsRefresh ? <div className="client-commercial-state" role="status"><p>Refresh the submitted estimate before trying the PDF or making a decision.</p><Button variant="secondary" onClick={async () => { await queryClient.invalidateQueries({ queryKey: estimateWorkflowKeys.client }); setPdfNeedsRefresh(false); }}>Refresh estimate</Button></div> : null}
-        <ClientPublishedEstimate estimate={estimate} decisionBlocked={pdfNeedsRefresh} />
+        {decisionBlocked ? <p role="status">Save or discard your quotation changes before approving a submitted version.</p> : null}
+        <ClientPublishedEstimate estimate={estimate} decisionBlocked={pdfNeedsRefresh || decisionBlocked} />
         <div className={`client-estimate-workspace${showDesignTools && planWorkspace.data?.pages.length ? "" : " client-estimate-workspace--single"}`}>
           <div className="client-estimate-workspace__main">
             {showDesignTools && (drawingWorkspace.isPending || drawingWorkspace.isError || planWorkspace.isPending || planWorkspace.isError || drawingWorkspace.data?.drawings.length || planWorkspace.data?.pages.length) ? <section className="client-estimate-design-review" aria-label="Design review">
@@ -231,7 +237,7 @@ function EstimateReviewCard({
               planWorkspace={planWorkspace.data}
             />
             </section> : null}
-            {estimate.status === "client_approved" && estimate.projectId ? <EstimateSpacePlanningCompletion projectId={estimate.projectId} estimateId={estimate.id} /> : null}
+            {quotationDesignReady && estimate.status === "client_approved" && estimate.projectId ? <EstimateSpacePlanningCompletion projectId={estimate.projectId} estimateId={estimate.id} /> : null}
           </div>
           {showDesignTools && planWorkspace.data?.pages.length ? (
             <aside className="client-estimate-workspace__rail" aria-label="Design tools">

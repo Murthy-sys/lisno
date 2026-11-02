@@ -995,6 +995,19 @@ describe("accessibility smoke coverage", () => {
     expect(estimator).toHaveValue("Accessible Estimator");
     await expectNoAxeViolations();
 
+    const knownLanguages = within(dialog).getByRole("button", { name: "Languages Known" });
+    await user.click(knownLanguages);
+    const languageOptions = within(dialog).getByRole("listbox", { name: "Languages Known" });
+    await user.click(within(languageOptions).getByRole("option", { name: "English" }));
+    await expectNoAxeViolations();
+    await user.keyboard("{Escape}");
+    expect(knownLanguages).toHaveFocus();
+    await user.click(within(dialog).getByRole("button", { name: "Closure Tentative Date" }));
+    expect(within(dialog).getByRole("dialog", { name: "Choose closure tentative date" })).toBeVisible();
+    await expectNoAxeViolations();
+    await user.keyboard("{Escape}");
+    expect(within(dialog).getByRole("button", { name: "Closure Tentative Date" })).toHaveFocus();
+
     const values = {
       clientName: "Asha Shah",
       clientEmail: "asha@example.com",
@@ -1002,8 +1015,7 @@ describe("accessibility smoke coverage", () => {
       projectName: "Asha home",
       cityName: "Pune",
       propertyType: "3BHK",
-      source: "Customer referral",
-      nextAction: "Schedule site visit"
+      source: "Customer referral"
     };
     fireEvent.change(within(dialog).getByLabelText(/^Client name/), { target: { value: values.clientName } });
     fireEvent.change(within(dialog).getByLabelText(/^Client email/), { target: { value: values.clientEmail } });
@@ -1012,7 +1024,8 @@ describe("accessibility smoke coverage", () => {
     fireEvent.change(within(dialog).getByLabelText(/^Project city/), { target: { value: values.cityName } });
     fireEvent.change(within(dialog).getByLabelText(/^Property type/), { target: { value: values.propertyType } });
     fireEvent.change(within(dialog).getByRole("combobox", { name: "Source" }), { target: { value: values.source } });
-    fireEvent.change(within(dialog).getByLabelText(/^Next action\*/), { target: { value: values.nextAction } });
+    expect(within(dialog).getByRole("textbox", { name: "Next action" })).toHaveValue("Estimation");
+    expect(within(dialog).getByRole("textbox", { name: "Next action" })).toBeDisabled();
     await user.click(within(dialog).getByRole("button", { name: "Next action date" }));
     await user.click(within(dialog).getByRole("button", { name: "Today" }));
     await waitFor(() => expect(within(dialog).getByRole("button", { name: "Initiate project" })).toBeEnabled());

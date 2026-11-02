@@ -1,3 +1,5 @@
+import { readProjectNumber } from "../domain/project-number.js";
+import { readProjectInitiationMetadata } from "../domain/project-initiation-metadata.js";
 import { projectManagerAssignmentFromProjection } from "../domain/project-manager-assignment-projection.js";
 import { workflowSpacePlanningSource } from "../domain/workflow-space-planning.js";
 import { furnitureUomOption } from "../domain/workflow-uoms.js";
@@ -280,11 +282,11 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
       const configured = state.designRequirementsSources?.find(row => row.projectId === projectId);
       const estimate = state.estimateSummaries?.find(row => row.projectId === projectId);
       const workflow = state.designWorkflowStates?.find(row => row.projectId === projectId);
-      const active = (ids: string[], role: string) => ids.filter(id => state.users.some(user => user.id === id && user.active && user.role === role)).sort();
+      const active = (ids: string[], role: string) => ids.filter(id => state.users.some(user => user.id === id && user.active && !user.deletedAt && user.role === role)).sort();
       const designTasks = (state.projectWorkflowAssignments ?? []).filter(task => task.projectId === projectId && task.kind === "design_plan_upload");
       const designSourceIds = [...new Set([estimate?.designPlanDesignerId, ...designTasks.map(task => task.assigneeUserId)].filter((id): id is string => Boolean(id)))];
-      const poCandidate = designSourceIds.length === 1 ? designSourceIds[0]! : project.assignedDesignerIds.length === 1 ? project.assignedDesignerIds[0]! : null;
-      const poAssignmentConsistent = designSourceIds.length <= 1 && designTasks.length <= 1 && designTasks.every(task => task.assigneeRole === "designer" && task.assigneeUserId);
+      const poCandidate = project.estimationWorkflowVersion === 3 ? project.primaryDesignerId ?? null : designSourceIds.length === 1 ? designSourceIds[0]! : project.assignedDesignerIds.length === 1 ? project.assignedDesignerIds[0]! : null;
+      const poAssignmentConsistent = (project.estimationWorkflowVersion !== 3 || designSourceIds.every(id => id === poCandidate)) && designSourceIds.length <= 1 && designTasks.length <= 1 && designTasks.every(task => task.assigneeRole === "designer" && task.assigneeUserId);
       return clone({ projectId, estimateId: estimate?.id ?? null, estimateVersion: estimate?.version ?? null,
         lines: [], issues: [], ...configured,
         clientId: active(project.clientId ? [project.clientId] : [], "client")[0] ?? null,
@@ -369,8 +371,8 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
       if (estimates.length > 1) throw new RepositoryConflictError("The project's approved estimate source is ambiguous.");
       const estimate = estimates[0];
       if (!estimate) return null;
-      if (estimate.estimation?.workflowVersion === 2) {
-        const revision = estimate.estimation.designScopeRevision;
+      if ([2, 3].includes(estimate.estimation?.workflowVersion ?? 0)) {
+        const revision = estimate.estimation!.designScopeRevision;
         return { estimateId: estimate.id, estimateVersion: revision,
           rooms: includeEstimateItems ? workflowEstimateRooms(estimate.id, revision, estimate.rooms ?? [], estimate.lineItems ?? [], { includeZeroValueItems, includeUnpricedItems: true })
             : (estimate.rooms ?? []).map(room => ({ id: room.id, name: room.label, ...workflowEstimateRoomDimensions(room), estimateItems: [] })) };
@@ -394,15 +396,38 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
     },
     async findProjectEstimationContext(projectId, lock = false) {
       const project = state.projects.find(row => row.id === projectId);
-      if (project?.estimationWorkflowVersion !== 2) return null;
+      if (![2, 3].includes(project?.estimationWorkflowVersion ?? 0)) return null;
       const estimates = (state.estimateSummaries ?? []).filter(row => row.projectId === projectId);
       if (estimates.length > 1) throw new RepositoryConflictError("The project estimate source is ambiguous.");
       const estimate = estimates[0];
       if (!estimate) return null;
       const lifecycle = estimate.estimation;
-      if (lifecycle?.workflowVersion !== 2) throw new RepositoryConflictError("The project estimate lifecycle is unavailable.");
+      if (!lifecycle || lifecycle.workflowVersion !== project?.estimationWorkflowVersion) throw new RepositoryConflictError("The project estimate lifecycle is unavailable.");
+      if (lifecycle.workflowVersion === 3) {
+        const matching = (reference: NonNullable<typeof lifecycle.preApproval>) => (state.estimateReviewRounds ?? []).find(round =>
+          round.id === reference.reviewRoundId && round.estimateId === estimate.id && round.projectId === projectId &&
+          round.estimateVersion === reference.estimateVersion && round.status === "approved" && round.decision === "approve" &&
+          round.decidedAt === reference.approvedAt);
+        if (lifecycle.preApproval && !matching(lifecycle.preApproval)) throw new RepositoryConflictError("The project pre-approval source is unavailable.");
+        if (lifecycle.finalApproval) {
+          const final = matching(lifecycle.finalApproval);
+          if (!final || final.phase !== "post" || final.requirementsVersion !== lifecycle.finalApproval.requirementsVersion ||
+            final.designScopeRevision !== lifecycle.finalApproval.designScopeRevision) throw new RepositoryConflictError("The approved quotation source is unavailable.");
+        }
+        if (lifecycle.designApproval) {
+          const design = lifecycle.designApproval;
+          const round = (state.designPlanReviewSources ?? []).filter(source => source.projectId === projectId && source.estimateId === estimate.id)
+            .flatMap(source => source.rounds).find(round => round.id === design.reviewRoundId && round.projectId === projectId && round.estimateId === estimate.id &&
+              round.designPlanVersion === design.designPlanVersion && round.designScopeRevision === design.designScopeRevision &&
+              round.status === "approved" && round.decision === "approve" && round.decidedAt === design.approvedAt);
+          if (!round) throw new RepositoryConflictError("The approved design source is unavailable.");
+        }
+      }
       if (lock) project.estimationFenceEpoch = (project.estimationFenceEpoch ?? 0) + 1;
-      return clone({ estimateId: estimate.id, preApprovedAt: lifecycle.preApproval?.approvedAt ?? null,
+      return clone({ estimateId: estimate.id, workflowVersion: lifecycle.workflowVersion, preApprovedAt: lifecycle.preApproval?.approvedAt ?? null,
+        quotationApprovedAt: lifecycle.workflowVersion === 3 ? lifecycle.finalApproval?.approvedAt ?? null : null,
+        designStartedAt: lifecycle.workflowVersion === 3 ? lifecycle.designStartedAt ?? lifecycle.finalApproval?.approvedAt ?? null : null,
+        quotationLocked: !!lifecycle.editClosedAt, designApproval: lifecycle.workflowVersion === 3 ? lifecycle.designApproval ?? null : null,
         designScopeRevision: lifecycle.designScopeRevision, approvedDesignScopeRevision: lifecycle.approvedDesignScopeRevision,
         finalApproval: lifecycle.finalApproval });
     },
@@ -416,7 +441,7 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
       return clone(saved);
     },
     async listDesignWorkflowPaymentProjects() {
-      return clone(state.projects.filter((project) => project.designWorkflowStages?.length && !state.designWorkflowStates?.some((workflow) => workflow.projectId === project.id && workflow.initialPaymentAt && (project.estimationWorkflowVersion !== 2 || workflow.initialPaymentReviewRoundId))).sort(newestProjectFirst));
+      return clone(state.projects.filter((project) => project.designWorkflowStages?.length && !state.designWorkflowStates?.some((workflow) => workflow.projectId === project.id && workflow.initialPaymentAt && (![2, 3].includes(project.estimationWorkflowVersion ?? 0) || workflow.initialPaymentReviewRoundId))).sort(newestProjectFirst));
     },
     async activateCollaborativeExecution(projectId, actorId, occurredAt) {
       const project = state.projects.find(row => row.id === projectId);
@@ -425,7 +450,8 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
       const payment = await implementation.findDesignWorkflowState(projectId);
       if (!project || !actor || !context?.finalApproval || !payment?.initialPaymentAt ||
         payment.initialPaymentEstimateId !== context.estimateId || payment.initialPaymentEstimateVersion !== context.finalApproval.estimateVersion ||
-        payment.initialPaymentReviewRoundId !== context.finalApproval.reviewRoundId || payment.initialPaymentDesignReviewRoundId !== context.finalApproval.designReviewRoundId)
+        payment.initialPaymentReviewRoundId !== context.finalApproval.reviewRoundId || payment.initialPaymentDesignReviewRoundId !== (context.workflowVersion === 3 ? context.designApproval?.reviewRoundId : context.finalApproval.designReviewRoundId) ||
+        context.workflowVersion === 3 && (!context.quotationLocked || context.designApproval?.estimateReviewRoundId !== context.finalApproval.reviewRoundId || context.designApproval.designScopeRevision !== context.designScopeRevision))
         throw new RepositoryConflictError("Final estimate approval and matching payment are required for execution.");
       project.status = "active";
       project.actualStartAt ??= occurredAt;
@@ -488,7 +514,7 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
     async linkProjectClient(projectId, emailNormalized, clientId, updatedAt) {
       const project = state.projects.find(row => row.id === projectId);
       const user = state.users.find(row => row.id === clientId);
-      if (!project || project.clientId !== null || project.estimationWorkflowVersion !== 2 || normalizeEmail(project.clientEmail) !== emailNormalized || !user || !user.active || user.role !== "client" || user.emailNormalized !== emailNormalized) throw new RepositoryConflictError("Project invitation is no longer available.");
+      if (!project || project.clientId !== null || ![2, 3].includes(project.estimationWorkflowVersion ?? 0) || normalizeEmail(project.clientEmail) !== emailNormalized || !user || !user.active || user.role !== "client" || user.emailNormalized !== emailNormalized) throw new RepositoryConflictError("Project invitation is no longer available.");
       project.clientId = clientId;
       project.updatedAt = updatedAt;
     },
@@ -1430,7 +1456,7 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
         .filter((lead) => !search || [lead.clientName, lead.clientEmail, lead.clientMobile, lead.projectName]
           .some((value) => value.toLowerCase().includes(search)))
         .sort((left, right) => byDateThenId("updatedAt", right, left));
-      return paginate(clone(leads), pagination);
+      return paginate(clone(leads.map(lead => ({ ...lead, projectNumber: readProjectNumber(lead.projectNumber), ...readProjectInitiationMetadata(lead) }))), pagination);
     },
 
     async pageLeadsForOwner(ownerId, filters, pagination) {
@@ -1441,14 +1467,16 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
         .filter((lead) => !search || [lead.clientName, lead.clientEmail, lead.clientMobile, lead.projectName]
           .some((value) => value.toLowerCase().includes(search)))
         .sort((left, right) => byDateThenId("updatedAt", right, left));
-      return paginate(clone(leads), pagination);
+      return paginate(clone(leads.map(lead => ({ ...lead, projectNumber: readProjectNumber(lead.projectNumber), ...readProjectInitiationMetadata(lead) }))), pagination);
     },
 
     async findLeadById(id) {
-      return copyOrNull(state.leads.find((lead) => lead.id === id));
+      const lead = state.leads.find((lead) => lead.id === id);
+      return lead ? clone({ ...lead, projectNumber: readProjectNumber(lead.projectNumber), ...readProjectInitiationMetadata(lead) }) : null;
     },
 
     async createLead(input) {
+      if (Object.prototype.hasOwnProperty.call(input, "projectNumber")) throw new RepositoryConflictError("Project numbers are assigned only when an estimate is created.");
       ensureUniqueId(state.leads, input.id, "Lead");
       if (
         input.projectId !== null &&
@@ -1456,16 +1484,17 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
       ) {
         throw new RepositoryConflictError("A lead already exists for this project.");
       }
-      const record: LeadRecord = clone(input);
+      const record: LeadRecord = clone({ ...input, projectNumber: null, ...readProjectInitiationMetadata(input) });
       state.leads.push(record);
       return clone(record);
     },
 
     async updateLead(id, change) {
+      if (Object.prototype.hasOwnProperty.call(change, "projectNumber")) throw new RepositoryConflictError("Project numbers cannot be changed through Lead updates.");
       const lead = state.leads.find((candidate) => candidate.id === id);
       if (!lead) throw new RepositoryNotFoundError(`Lead ${id} was not found.`);
       Object.assign(lead, clone(change));
-      return clone(lead);
+      return clone({ ...lead, projectNumber: readProjectNumber(lead.projectNumber), ...readProjectInitiationMetadata(lead) });
     },
 
     async appendLeadActivity(input) {

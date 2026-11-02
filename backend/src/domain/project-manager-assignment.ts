@@ -21,7 +21,9 @@ export interface ProjectManagerSourceFact {
   estimation?: {
     workflowVersion?: number;
     preApproval?: { reviewRoundId: string; estimateVersion: number } | null;
-    finalApproval?: { reviewRoundId: string; estimateVersion: number; designPlanVersion: number; designScopeRevision: number } | null;
+    finalApproval?: { reviewRoundId: string; estimateVersion: number; designPlanVersion: number | null; designScopeRevision: number } | null;
+    editClosedAt?: string | null;
+    designApproval?: { reviewRoundId: string; estimateReviewRoundId: string; designPlanVersion: number; designScopeRevision: number } | null;
     designScopeRevision?: number;
     approvedDesignScopeRevision?: number | null;
   } | null;
@@ -53,9 +55,17 @@ export function projectManagerTaskSourceIsValid(task: ProjectManagerTaskFact, so
   const eligible = sources.filter(source => {
     if (source.projectId !== task.projectId) return false;
     const lifecycle = source.estimation;
-    if (task.preparationOnly) return lifecycle?.workflowVersion === 2 &&
-      identity(lifecycle.preApproval?.reviewRoundId) && positive(lifecycle.preApproval!.estimateVersion);
+    if (task.preparationOnly) return [2, 3].includes(lifecycle?.workflowVersion ?? 0) &&
+      identity(lifecycle?.preApproval?.reviewRoundId) && positive(lifecycle!.preApproval!.estimateVersion);
     if (source.status !== "client_approved" || source.designPlanStatus !== "approved" || !positive(source.designPlanVersion)) return false;
+    if (lifecycle?.workflowVersion === 3) {
+      const final = lifecycle.finalApproval;
+      const design = lifecycle.designApproval;
+      return Boolean(final && design && lifecycle.editClosedAt && identity(final.reviewRoundId) && positive(final.estimateVersion) &&
+        design.estimateReviewRoundId === final.reviewRoundId && design.designPlanVersion === source.designPlanVersion &&
+        design.designScopeRevision === lifecycle.designScopeRevision && final.designScopeRevision === lifecycle.designScopeRevision &&
+        final.designScopeRevision === lifecycle.approvedDesignScopeRevision);
+    }
     if (lifecycle?.workflowVersion !== 2) return true;
     const final = lifecycle.finalApproval;
     return Boolean(final && identity(final.reviewRoundId) && positive(final.estimateVersion) &&

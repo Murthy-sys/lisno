@@ -50,7 +50,7 @@ function mockLeadApi(leads: Lead[]) {
     api.requests.push({ url, method });
     if (url === "/api/v1/auth/me") return Response.json({ data: { id: "sales-1", name: "Sales", email: "sales@example.com", role: "estimator_sales" } });
     if (url === "/api/v1/auth/authorization") return Response.json({ data: authorizationFor("estimator_sales", [
-      ...authorizationFor("estimator_sales").permissions, "design.plan_response_tasks.read"
+      ...authorizationFor("estimator_sales").permissions, "design.plan_response_tasks.read", "projects.design_workflow.read"
     ]) });
     const lead = leads.find((item) => url === `/api/v1/leads/${item.id}`);
     if (lead) {
@@ -65,6 +65,7 @@ function mockLeadApi(leads: Lead[]) {
     if (url.startsWith("/api/v1/leads?")) return Response.json({ data: { items: leads, pagination: { limit: 20, offset: 0, total: leads.length, hasMore: false } } });
     if (url === "/api/v1/estimates") return Response.json({ data: [] });
     if (leads.some((item) => url === `/api/v1/leads/${item.id}/estimate`)) return Response.json({ data: null });
+    if (url === "/api/v1/projects/project-cedar/estimate-requirements") return Response.json({ data: { projectId: "project-cedar", requirementsVersion: 0, estimateVersion: null, phase: "pre", editingAllowed: true, editingBlockReason: null, canResolve: false, requirements: [], mainBaskets: [], rooms: [], indicativeTotalPaise: null, pricingComplete: false } });
     if (url.startsWith("/api/v1/estimation/catalogue?")) return Response.json({ data: {
       items: [], pagination: { limit: 100, offset: 0, total: 0, hasMore: false }, ineligibleLineCount: 0
     } });
@@ -117,6 +118,23 @@ function expectLatestLayout(lead: Lead, action: string) {
 }
 
 describe("Lead details", () => {
+  it.each([undefined, null, "Lisno000042"])("shows the saved project reference %s without allocating on entry", async (projectNumber) => {
+    const lead = makeLead({ projectNumber });
+    const api = mockLeadApi([lead]);
+    renderApp([`/estimator-sales/leads/${lead.id}`]);
+    expect(await screen.findByText(projectNumber ? `Project number: ${projectNumber}` : "Project number not assigned")).toBeVisible();
+    expect(screen.getByRole("heading", { name: lead.projectName })).toBeVisible();
+    expect(api.updates).toEqual([]);
+  });
+
+  it("loads quotation collaboration and client requirements for a v3 lead", async () => {
+    const lead = makeLead({ estimationWorkflowVersion: 3 }); const api = mockLeadApi([lead]);
+    renderApp([`/estimator-sales/leads/${lead.id}`]);
+    expect(await screen.findByText("Pre-design quotation · Start the estimate and collect the client’s requirements.")).toBeVisible();
+    await waitFor(() => expect(api.requests).toContainEqual({ method: "GET", url: `/api/v1/leads/${lead.id}/estimate` }));
+    expect(api.requests).toContainEqual({ method: "GET", url: "/api/v1/projects/project-cedar/estimate-requirements" });
+    expect(api.updates).toEqual([]);
+  });
   it.each(stageCases)("uses the latest layout and saved %s stage without writing on direct entry", async (value, _label, action) => {
     const lead = makeLead({ stage: value });
     const api = mockLeadApi([lead]);

@@ -1,3 +1,5 @@
+import type { ProjectInitiationMetadata } from "../../../shared/projects/projectInitiation";
+import type { EstimateProposalMetadata } from "../../../shared/estimation/estimateProposal";
 import type { EstimateComponentPricing, ESTIMATE_COMPONENT_PRICING_BASIS } from "../../../shared/estimation/estimateComponentPricing";
 import type { EstimateDimensions, EstimateDimensionRule } from "../../../shared/estimation/estimateDimensions";
 import type { KnowledgeModeTier } from "../../../shared/knowledge/knowledgeModeTiers";
@@ -28,7 +30,7 @@ export interface AuthPayload {
 
 export type LeadStage = "new_lead" | "contacted" | "site_visit" | "design_meeting" | "estimate_in_progress" | "estimate_sent" | "negotiation" | "won" | "lost";
 export type LeadActivityType = "call" | "whatsapp" | "meeting" | "email" | "note";
-export interface Lead { estimationWorkflowVersion?: 2; id: string; projectId: string | null; ownerId: string; clientName: string; clientEmail: string; clientMobile: string; projectName: string; location: string; cityName?: string | null; cityKey?: string | null; propertyType: string; budgetMin: number | null; budgetMax: number | null; source: string; stage: LeadStage; nextAction: string; nextActionAt: string; builder: string | null; areaSqft: number | null; targetHandoverAt: string | null; notes: string | null; latestActivityAt: string | null; createdAt: string; updatedAt: string; }
+export interface Lead extends ProjectInitiationMetadata { estimationWorkflowVersion?: 2 | 3; readonly projectNumber?: string | null; id: string; projectId: string | null; ownerId: string; clientName: string; clientEmail: string; clientMobile: string; projectName: string; location: string; cityName?: string | null; cityKey?: string | null; propertyType: string; budgetMin: number | null; budgetMax: number | null; source: string; stage: LeadStage; nextAction: string; nextActionAt: string; builder: string | null; areaSqft: number | null; targetHandoverAt: string | null; notes: string | null; latestActivityAt: string | null; createdAt: string; updatedAt: string; }
 export interface LeadActivity { id: string; leadId: string; actorId: string; type: LeadActivityType; note: string; occurredAt: string; createdAt: string; }
 
 export interface ClientSignupInput {
@@ -132,7 +134,7 @@ export type TaskEventType =
   | "deadline_revised";
 
 export interface Project {
-  estimationWorkflowVersion?: 2;
+  estimationWorkflowVersion?: 2 | 3;
   id: string;
   name: string;
   clientId: string | null;
@@ -276,6 +278,10 @@ export interface EstimateClientReviewSummary {
 }
 
 export interface EstimateClientReviewSnapshot {
+  proposal?: EstimateProposalMetadata;
+  rooms?: readonly Record<string, unknown>[];
+  bedroomCount?: number | null;
+  scopes?: readonly string[];
   clientName: string;
   projectName: string;
   location: string;
@@ -311,6 +317,8 @@ export interface EstimateClientReviewSnapshot {
     mainLineId?: string;
     revisionId?: string;
     uomId?: string;
+    uomCode?: string;
+    uomDecimalScale?: number;
     mainBasketName?: string;
     subBasketName?: string | null;
     mainLineName?: string;
@@ -327,6 +335,7 @@ export interface EstimateClientReviewSnapshot {
 }
 
 export interface ClientPublishedEstimateReview {
+  workflowVersion?: 2 | 3;
   phase?: "pre" | "post";
   id: string;
   version: number;
@@ -388,8 +397,9 @@ export interface EstimateClientResponseDecisionResult {
   clientReview: EstimateClientReviewSummary;
 }
 
-export interface AdminProjectSummary {
-  estimationWorkflowVersion?: 2;
+export interface AdminProjectSummary extends ProjectInitiationMetadata {
+  estimationWorkflowVersion?: 2 | 3;
+  readonly projectNumber?: string | null;
   id: string;
   name: string;
   status: ProjectStatus;
@@ -408,6 +418,7 @@ export interface AdminProjectSummary {
   estimate: {
     estimationPhase?: "pre" | "post";
     finalEstimateApproved?: boolean;
+  designApproved?: boolean;
     id: string;
     leadId: string;
     projectId: string | null;
@@ -448,7 +459,9 @@ export type DesignPlanStatus =
 
 export interface DesignPlanTask {
   leadId?: string;
-  estimationWorkflowVersion?: 2;
+  estimationWorkflowVersion?: 2 | 3;
+  quotationApproved?: boolean;
+  canEditQuotation?: boolean;
   scopeReconciliation?: { required: boolean; designScopeRevision: number; approvedDesignScopeRevision: number | null };
   id: string;
   estimateId: string;
@@ -714,7 +727,7 @@ export interface ProcurementEstimateSection {
 }
 
 export interface EstimationPreparationSource {
-  workflowVersion: 2;
+  workflowVersion: 2 | 3;
   phase: "pre" | "post";
   kind: "approved_pre" | "released_post" | "approved_final";
   estimateId: string;
@@ -844,7 +857,7 @@ export type InitiatedAdminProjectSummary = AdminProjectSummary & {
   lead: NonNullable<AdminProjectSummary["lead"]>;
 };
 
-interface InitiateProjectFields {
+interface InitiateProjectFields extends ProjectInitiationMetadata {
   clientName: string;
   clientEmail: string;
   clientMobile: string;
@@ -855,7 +868,7 @@ interface InitiateProjectFields {
   source?: string;
   budgetMin?: number;
   budgetMax?: number;
-  nextAction: string;
+  nextAction?: string;
   nextActionAt: string;
 }
 

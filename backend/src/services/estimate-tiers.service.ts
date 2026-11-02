@@ -6,7 +6,7 @@ import { canonicalEstimateDimensions, calculateDimensionQuantity, estimateDimens
 import { KNOWLEDGE_MODE_TIERS, type KnowledgeModeTier } from "../domain/ai-estimator-knowledge-mode-tiers.js";
 import { selectedInHouseBaseRate, selectedInHouseComponents } from "../domain/ai-estimator-knowledge-in-house-components.js";
 import { ESTIMATE_PRICING_MODES, estimateConfigurationRateMatches, type EstimatePricingMode } from "../domain/estimate-mode-pricing.js";
-import { effectiveCommercialStatus, isCollaborativeEstimate } from "../domain/estimation-lifecycle.js";
+import { effectiveCommercialStatus, isCollaborativeEstimate, clientQuotationEditable } from "../domain/estimation-lifecycle.js";
 import { ApiError } from "../middleware/errors.js";
 import { EstimateModel } from "../models/Estimate.js";
 import { LeadModel } from "../models/Lead.js";
@@ -58,8 +58,8 @@ const tierOf = (line: Row): KnowledgeModeTier => line.modeTier ?? "signature";
 const modeOf = (line: Row): EstimatePricingMode | null => ESTIMATE_PRICING_MODES.includes(line.pricingMode) ? line.pricingMode : null;
 const validMoney = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 
-async function scope(actor: PublicUser, projectId: string, session?: ClientSession) {
-  const userQuery = UserModel.findOne({ _id: actor.id, active: true, role: actor.role });
+export async function estimateTierScope(actor: PublicUser, projectId: string, session?: ClientSession) {
+  const userQuery = UserModel.findOne({ _id: actor.id, active: true, deletedAt: null, role: actor.role });
   const projectQuery = ProjectModel.findById(projectId);
   const estimateQuery = EstimateModel.findOne({ projectId });
   if (session) { userQuery.session(session); projectQuery.session(session); estimateQuery.session(session); }
@@ -67,22 +67,25 @@ async function scope(actor: PublicUser, projectId: string, session?: ClientSessi
   const project = await projectQuery.lean() as Row | null;
   const estimate = await estimateQuery.lean() as Row | null;
   if (!user || !project) return notFound();
+  if (project.estimationWorkflowVersion === 3 && estimate && estimate.estimation?.workflowVersion !== 3) return notFound();
   const client = actor.role === "client" && project.clientId === actor.id;
   const sales = actor.role === "estimator_sales" && project.assignedEstimatorId === actor.id && (!estimate || estimate.ownerId === actor.id);
-  const designer = actor.role === "designer" && estimate?.estimation?.phase === "post" && estimate.designPlanDesignerId === actor.id;
-  if (!(client || sales || designer || actor.role === "super_admin")) return notFound();
+  const designer = actor.role === "designer" && estimate?.estimation?.phase === "post" && estimate.designPlanDesignerId === actor.id && (project.estimationWorkflowVersion !== 3 || project.primaryDesignerId === actor.id);
+  const secondary = actor.role === "designer" && project.estimationWorkflowVersion === 3 && estimate?.estimation?.preApproval &&
+    project.secondaryDesignerIds?.includes(actor.id) === true;
+  if (!(client || sales || designer || secondary || actor.role === "super_admin")) return notFound();
   if (estimate) {
     const query = LeadModel.findOne({ _id: estimate.leadId, projectId });
     if (session) query.session(session);
     if (!await query.select({ _id: 1 }).lean()) return notFound();
   }
-  return { project, estimate, client, canUpdate: client || sales || designer };
+  return { project, estimate, client, secondary: Boolean(secondary), canUpdate: client || sales || designer };
 }
 
-function editing(context: Awaited<ReturnType<typeof scope>>) {
+function editing(context: Awaited<ReturnType<typeof estimateTierScope>>) {
   if (!context.estimate) return { editingAllowed: false, editingBlockReason: "not_started" as const };
   try {
-    assertEstimateEditable(context.estimate);
+    if (!(context.client && context.estimate.estimation?.workflowVersion === 3 && clientQuotationEditable(context.estimate))) assertEstimateEditable(context.estimate);
     if (!context.canUpdate) return { editingAllowed: false, editingBlockReason: "closed" as const };
     return { editingAllowed: true, editingBlockReason: null };
   } catch {
@@ -92,7 +95,7 @@ function editing(context: Awaited<ReturnType<typeof scope>>) {
   }
 }
 
-function amountFor(ratePaise: number, quantity: unknown, decimalScale: number): number | null {
+export function estimateAmountFor(ratePaise: number, quantity: unknown, decimalScale: number): number | null {
   if (!validMoney(ratePaise) || typeof quantity !== "number" || !Number.isFinite(quantity) || quantity <= 0 ||
     !Number.isSafeInteger(decimalScale) || decimalScale < 0 || decimalScale > 6) return null;
   const match = /^(0|[1-9]\d*)(?:\.(\d+))?$/u.exec(String(quantity));
@@ -104,7 +107,7 @@ function amountFor(ratePaise: number, quantity: unknown, decimalScale: number): 
   return value <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(value) : null;
 }
 
-async function choicesFor(line: Row, source?: Source, session?: ClientSession) {
+export async function estimateTierChoices(line: Row, source?: Source, session?: ClientSession) {
   const mode = modeOf(line);
   const choices = [];
   for (const modeTier of KNOWLEDGE_MODE_TIERS) {
@@ -136,7 +139,7 @@ async function choicesFor(line: Row, source?: Source, session?: ClientSession) {
     choices.push({ modeTier, available, unavailableReason,
       ...(componentPricing ? { pricingBasis: ESTIMATE_COMPONENT_PRICING_BASIS, componentPricing } : {}),
       ratePaise: components === undefined && available && validMoney(ratePaise) ? ratePaise : null,
-      amountPaise: components !== undefined ? componentPricing?.totalPaise ?? null : available && validMoney(ratePaise) ? amountFor(ratePaise, line.quantity, source!.line.uom.decimalScale) : null,
+      amountPaise: components !== undefined ? componentPricing?.totalPaise ?? null : available && validMoney(ratePaise) ? estimateAmountFor(ratePaise, line.quantity, source!.line.uom.decimalScale) : null,
       source: source ? { revisionId: source.line.revisionId, itemVersion: source.line.itemVersion,
         revisionVersion: source.line.revisionVersion, uomId: source.line.uom.id } : null,
       ...(componentChoices === undefined ? {} : { inHouseComponents: componentChoices }) });
@@ -144,14 +147,14 @@ async function choicesFor(line: Row, source?: Source, session?: ClientSession) {
   return choices;
 }
 
-async function present(context: Awaited<ReturnType<typeof scope>>, session?: ClientSession) {
+export async function presentEstimateTiers(context: Awaited<ReturnType<typeof estimateTierScope>>, session?: ClientSession) {
   const estimate = context.estimate;
   const savedLines: Row[] = (estimate?.lineItems ?? []).filter((line: Row) => line.source === "configuration" && line.included);
   const current = await resolveEstimatorCatalogueLines(savedLines.map(line => String(line.mainLineId)), session);
   // An unresolved current source cannot establish client visibility. Keep its cost in the total,
   // but let staff repair it without exposing a formerly visible line to the client.
   const lines = [];
-  for (const line of savedLines.filter(line => !context.client || current.has(line.mainLineId) &&
+  for (const line of savedLines.filter(line => !(context.client || context.secondary) || current.has(line.mainLineId) &&
     line.clientVisible !== false && current.get(line.mainLineId)!.line.clientVisible !== false)) {
       const source = current.get(line.mainLineId);
       lines.push({ id: String(line.id), mainLineId: String(line.mainLineId), mainLineName: source?.line.name ?? line.mainLineName,
@@ -164,7 +167,7 @@ async function present(context: Awaited<ReturnType<typeof scope>>, session?: Cli
         amountPaise: validMoney(line.amountPaise) ? line.amountPaise : null,
         ...(estimateComponentLineAmountIsValid(line) ? { pricingBasis: ESTIMATE_COMPONENT_PRICING_BASIS, componentPricing: line.componentPricing } : {}),
         ...(line.selectedInHouseComponentIds === undefined ? {} : { selectedInHouseComponentIds: line.selectedInHouseComponentIds }),
-        choices: await choicesFor(line, source, session) });
+        choices: await estimateTierChoices(line, source, session) });
     }
   const totalPaise = estimate?.totalPaise ?? (typeof estimate?.total === "number" ? Math.round(estimate.total * 100) : null);
   return { projectId: String(context.project._id), estimateId: estimate ? String(estimate._id) : null,
@@ -175,7 +178,7 @@ async function present(context: Awaited<ReturnType<typeof scope>>, session?: Cli
     }), lines };
 }
 
-async function fenceSource(line: Row, session: ClientSession) {
+export async function fenceEstimateTierSource(line: Row, session: ClientSession) {
   const dependencies = [
     [AiEstimatorKnowledgeBasketModel, { _id: line.mainBasketId, status: { $in: ["active", "inactive"] } }],
     ...(line.subBasketId ? [[AiEstimatorKnowledgeSubBasketModel, { _id: line.subBasketId, basketId: line.mainBasketId }]] : []),
@@ -195,11 +198,11 @@ export function createEstimateTiersService({ audit }: { audit: AuditService }) {
     const input = change.input;
     const session = await mongoose.startSession();
     try {
-      let result!: Awaited<ReturnType<typeof present>>;
+      let result!: Awaited<ReturnType<typeof presentEstimateTiers>>;
       await session.withTransaction(async () => {
         await AuthorizationCoordinationModel.updateOne({ _id: "authorization" },
           { $inc: { revision: 1 }, $set: { updatedAt: new Date() } }, { upsert: true, session });
-        const context = await scope(actor, projectId, session);
+        const context = await estimateTierScope(actor, projectId, session);
         const estimate = context.estimate;
         if (!estimate || !context.canUpdate) return notFound();
         assertEstimateEditable(estimate);
@@ -210,7 +213,7 @@ export function createEstimateTiersService({ audit }: { audit: AuditService }) {
         await fenceCollaborativeEstimate(estimate, session);
         const line: Row | undefined = estimate.lineItems.find((entry: Row) => entry.id === lineItemId && entry.source === "configuration" && entry.included);
         if (!line || context.client && line.clientVisible === false) return notFound();
-        await fenceSource(line, session);
+        await fenceEstimateTierSource(line, session);
         const current = await resolveEstimatorCatalogueLines([String(line.mainLineId)], session);
         const source = current.get(line.mainLineId);
         if (context.client && source?.line.clientVisible === false) return notFound();
@@ -277,7 +280,7 @@ export function createEstimateTiersService({ audit }: { audit: AuditService }) {
         const componentPricing = mode === "in_house" && rateSource === "configuration" && pricing?.inHouseComponents !== undefined
           ? await resolveEstimateComponentPricing(source, selectedTier, quantity, selected, session) : undefined;
         if (componentPricing) ratePaise = null;
-        const amountPaise = componentPricing ? componentPricing.totalPaise : ratePaise === null ? null : amountFor(ratePaise, quantity, source.line.uom.decimalScale);
+        const amountPaise = componentPricing ? componentPricing.totalPaise : ratePaise === null ? null : estimateAmountFor(ratePaise, quantity, source.line.uom.decimalScale);
         if (ratePaise !== null && amountPaise === null) return unavailable();
         const nextLine: Row = { ...line, modeTier: selectedTier, rateSource, ratePaise, rate: ratePaise === null ? null : ratePaise / 100,
           quantity, amountPaise, amount: amountPaise === null ? null : amountPaise / 100, revisionId: source.line.revisionId,
@@ -326,21 +329,40 @@ export function createEstimateTiersService({ audit }: { audit: AuditService }) {
             ...(change.kind === "dimensions" ? { dimensions: line.dimensions ?? null, quantity: line.quantity, dimensionRule: line.dimensionRule ?? null } : {}) },
           newValues: { lineItemId, modeTier: selectedTier, estimateVersion: saved.version, ratePaise, amountPaise,
             selectedInHouseComponentIds: selected ?? [], ...(change.kind === "dimensions" ? { dimensions, quantity, dimensionRule: nextLine.dimensionRule } : {}) } }, session);
-        result = await present({ ...context, estimate: saved }, session);
+        result = await presentEstimateTiers({ ...context, estimate: saved }, session);
       });
       return result;
     } finally { await session.endSession(); }
   }
   return {
-    async detail(actor: PublicUser, projectId: string) { return present(await scope(actor, projectId)); },
+    async detail(actor: PublicUser, projectId: string) {
+      const context = await estimateTierScope(actor, projectId);
+      if (context.estimate?.estimation?.workflowVersion === 3) {
+        const { createQuotationService } = await import("./quotation.service.js");
+        return createQuotationService({ audit }).detail(actor, projectId);
+      }
+      return presentEstimateTiers(context);
+    },
     async select(actor: PublicUser, projectId: string, lineItemId: string, command: EstimateTierSelection) {
       const parsed = estimateTierSelectionSchema.safeParse(command);
       if (!parsed.success) throw new ApiError(400, "VALIDATION_ERROR", "Choose a valid tier and current configuration.");
+      const context = await estimateTierScope(actor, projectId);
+      if (context.estimate?.estimation?.workflowVersion === 3) {
+        const { createQuotationService } = await import("./quotation.service.js");
+        const { expectedVersion, modeTier, selectedInHouseComponentIds, ...source } = parsed.data;
+        return createQuotationService({ audit }).save(actor, projectId, { expectedVersion, operations: [{ kind: "update", lineItemId, source, modeTier, selectedInHouseComponentIds }] });
+      }
       return changeLine(actor, projectId, lineItemId, { kind: "tier", input: parsed.data });
     },
     async updateDimensions(actor: PublicUser, projectId: string, lineItemId: string, command: EstimateDimensionsUpdate) {
       const parsed = estimateDimensionsUpdateSchema.safeParse(command);
       if (!parsed.success) throw new ApiError(400, "VALIDATION_ERROR", "Enter valid Length, Width and Height and current configuration.");
+      const context = await estimateTierScope(actor, projectId);
+      if (context.estimate?.estimation?.workflowVersion === 3) {
+        const { createQuotationService } = await import("./quotation.service.js");
+        const { expectedVersion, dimensions, expectedDimensionRule, ...source } = parsed.data;
+        return createQuotationService({ audit }).save(actor, projectId, { expectedVersion, operations: [{ kind: "update", lineItemId, source, dimensions }] });
+      }
       return changeLine(actor, projectId, lineItemId, { kind: "dimensions", input: parsed.data });
     }
   };

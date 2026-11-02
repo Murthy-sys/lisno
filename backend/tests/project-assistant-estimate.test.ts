@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { EstimateModel } from "../src/models/Estimate.js";
 import { EstimateClientReviewRoundModel } from "../src/models/EstimateClientReviewRound.js";
+import { AiEstimatorKnowledgeSectionModel } from "../src/models/AiEstimatorKnowledgeSection.js";
+import * as catalogue from "../src/services/estimator-catalogue.service.js";
 import { projectPricingFromPublication, readAssistantProjectEstimate } from "../src/services/project-assistant-estimate.js";
 import { newEstimationLifecycle } from "../src/domain/estimation-lifecycle.js";
 import { createAssistantReadSources } from "../src/services/project-assistant-sources.js";
@@ -12,7 +14,7 @@ const configuredLine = () => ({ id: "published-line", source: "configuration", i
   mainBasketId: "pop", mainBasketName: "POP", subBasketId: "pop-sub", subBasketName: "Ceiling", mainLineId: "ceiling", mainLineName: "Published ceiling", revisionId: "old-approved-revision", uomId: "uom", uomName: "Square feet", unit: "sqft", quantity: 2, rate: 10, amount: 20, ratePaise: 1000, amountPaise: 2000, included: true });
 const snapshot = () => ({ clientName: "Client A", projectName: "Project A", location: "Synthetic", propertyType: "villa", lineItems: [configuredLine()], subtotal: 20, gst: 3.6, total: 23.6, subtotalPaise: 2000, gstPaise: 360, totalPaise: 2360 });
 const round = () => ({ _id: "review-a", estimateId: "estimate-a", leadId: "lead-a", projectId: "a", estimateVersion: 3, version: 1, sendGeneration: 1, status: "approved", decision: "approve", decisionSource: "client_portal", decidedById: "client-a", decidedAt: at, createdAt: at, recipientEmailNormalized: "client-a@chat.test", estimateSnapshot: snapshot() });
-const chain = (value: unknown) => { const query: any = { session: () => query, lean: () => query, limit: () => query, exec: async () => value }; return query; };
+const chain = (value: unknown) => { const query: any = { select: () => query, session: () => query, lean: () => query, limit: () => query, exec: async () => value }; return query; };
 afterEach(() => vi.restoreAllMocks());
 function fixture() {
   const estimate: any = { _id: "estimate-a", leadId: "lead-a", projectId: "a", version: 4, status: "client_approved", clientDecisionAt: at, totalPaise: 99999999, lineItems: [{ private: "draft" }] };
@@ -22,7 +24,12 @@ function fixture() {
   const tx: any = { session: {}, app: { findProjectStatusEstimateEvidence: vi.fn(async () => evidence) } };
   vi.spyOn(EstimateModel, "findById").mockImplementation(() => chain(estimate));
   vi.spyOn(EstimateClientReviewRoundModel, "find").mockImplementation(() => chain(rounds));
-  return { estimate, rounds, evidence, context, tx, read: (basis: "current" | "published" | "approved" = "current") => readAssistantProjectEstimate(context, { basis }, tx) };
+  const currentLine = { mainLineId: "ceiling", revisionId: "current-saved-revision", itemVersion: 3, revisionVersion: 5, clientVisible: true };
+  vi.spyOn(catalogue, "resolveEstimatorCatalogueLines").mockImplementation(async () => new Map([["ceiling", { line: currentLine }]]) as never);
+  vi.spyOn(AiEstimatorKnowledgeSectionModel, "find").mockImplementation(() => chain([
+    { mainLineId: currentLine.mainLineId, revisionId: currentLine.revisionId, payload: { clientVisible: currentLine.clientVisible } }
+  ]));
+  return { estimate, rounds, evidence, context, tx, currentLine, read: (basis: "current" | "published" | "approved" = "current") => readAssistantProjectEstimate(context, { basis }, tx) };
 }
 
 describe("immutable customer estimate projection", () => {
@@ -72,6 +79,16 @@ describe("immutable customer estimate projection", () => {
     expect(projectPricingFromPublication({ estimateId: "e", projectId: "a", round: round(), snapshot: s, approved: true }))
       .toMatchObject({ lines: [], lineCount: 0, hasMoreLines: false, subtotalPaise: 2000, gstPaise: 360, totalPaise: 2360 });
   });
+  it("applies current visibility before pagination while reconciling every approved amount", () => {
+    const s = snapshot();
+    s.lineItems = Array.from({ length: 102 }, (_, index) => ({ ...configuredLine(), id: `line-${index}`, mainLineId: index === 101 ? "shown" : "hidden" }));
+    Object.assign(s, { subtotal: 2040, subtotalPaise: 204000, gst: 0, gstPaise: 0, total: 2040, totalPaise: 204000 });
+    const report = projectPricingFromPublication({ estimateId: "e", projectId: "a", round: round(), snapshot: s, approved: true, visibleMainLineIds: new Set(["shown"]) });
+    expect(report).toMatchObject({ lineCount: 1, hasMoreLines: false, totalPaise: 204000 });
+    expect(report?.lines.map(line => line.id)).toEqual(["line-101"]);
+    s.lineItems[0].amountPaise = 1900;
+    expect(projectPricingFromPublication({ estimateId: "e", projectId: "a", round: round(), snapshot: s, approved: true, visibleMainLineIds: new Set(["shown"]) })).toBeNull();
+  });
   it.each(["false", 0, null, {}])("rejects malformed frozen visibility instead of showing a row: %j", clientVisible => {
     const s = { ...snapshot(), lineItems: [{ ...configuredLine(), clientVisible }] };
     expect(projectPricingFromPublication({ estimateId: "e", projectId: "a", round: round(), snapshot: s, approved: false })).toBeNull();
@@ -89,6 +106,29 @@ describe("immutable customer estimate projection", () => {
 });
 
 describe("published estimate read boundary", () => {
+  it("hides a currently restricted line while preserving its immutable approved total and source", async () => {
+    const f = fixture();
+    const original = structuredClone(f.rounds[0].estimateSnapshot);
+    f.currentLine.clientVisible = false;
+
+    const result = await f.read();
+
+    expect(result.report).toMatchObject({ lines: [], lineCount: 0, totalPaise: 2360, state: "approved" });
+    expect(JSON.stringify(result)).not.toContain("Published ceiling");
+    expect(f.rounds[0].estimateSnapshot).toEqual(original);
+    expect(catalogue.resolveEstimatorCatalogueLines).toHaveBeenCalledWith(["ceiling"], f.tx.session);
+  });
+  it("changes the freshness witness when Configuration hides a previously visible approved line", async () => {
+    const f = fixture();
+    const before = await f.read();
+    f.currentLine.clientVisible = false;
+    const after = await f.read();
+    expect(before.report?.lines).toHaveLength(1);
+    expect(after.report?.lines).toHaveLength(0);
+    expect(after.report?.totalPaise).toBe(before.report?.totalPaise);
+    expect(after.freshness).not.toEqual(before.freshness);
+  });
+
   it("reconciles an authorized full round before returning an all-hidden screen projection", async () => {
     const f = fixture(); f.rounds[0].estimateSnapshot.lineItems[0].clientVisible = false;
     const result = await f.read();

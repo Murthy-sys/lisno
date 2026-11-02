@@ -181,6 +181,7 @@ function replace(target: Row, source: Row): void {
 }
 
 interface HarnessOptions {
+  withoutRenditions?: boolean;
   round?: Row;
   currentRound?: Row;
   currentRounds?: Row[];
@@ -318,7 +319,13 @@ function setup(options: HarnessOptions = {}) {
     });
   }
 
+  const renditions = { readForRound: vi.fn(async () => {
+    if (options.storageError) throw options.storageError;
+    if (options.bytes || options.round?.pdfSha256 && options.round.pdfSha256 !== sha256Hex(PDF_BYTES)) throw new Error("Unsafe rendition rejected.");
+    return { filename: PDF_FILENAME, mimeType: "application/pdf" as const, bytes: Buffer.from(PDF_BYTES) };
+  }) };
   const delivery = createEstimateDeliveryService({
+    ...(options.withoutRenditions ? {} : { renditions }),
     reviews: reviews as never,
     storage: storage as never,
     mailer,
@@ -339,6 +346,7 @@ function setup(options: HarnessOptions = {}) {
     updateOne,
     estimateUpdate,
     storage,
+    renditions,
     reviews,
     audit,
     mailer
@@ -376,6 +384,14 @@ afterEach(() => {
 });
 
 describe("initial Estimate PDF delivery", () => {
+  it("fails delivery safely when rendition support is unavailable without reading the archived original", async () => {
+    const harness = setup({ withoutRenditions: true });
+    await harness.delivery.deliverInitial(ROUND_ID, OWNER.id);
+    expect(harness.record).toMatchObject({ deliveryStatus: "failed", deliveryFailureCode: "QUOTATION_RENDITION_UNAVAILABLE" });
+    expect(harness.storage.read).not.toHaveBeenCalled();
+    expect(harness.renditions.readForRound).not.toHaveBeenCalled();
+    if ("send" in harness.mailer) expect(harness.mailer.send).not.toHaveBeenCalled();
+  });
   it("marks an unpublished queued attempt disabled without leasing or contacting SMTP", async () => {
     const harness = setup({ mailer: { deliveryKind: "disabled" } });
 
@@ -390,13 +406,13 @@ describe("initial Estimate PDF delivery", () => {
       deliveredAt: null,
       deliveryFailureCode: null
     });
-    expect(harness.storage.read).not.toHaveBeenCalled();
+    expect(harness.renditions.readForRound).not.toHaveBeenCalled();
     expect(harness.reviews.requireRetryScope).not.toHaveBeenCalled();
     expect(harness.audits).toEqual([]);
     expectSafeSummary(result, harness.record);
   });
 
-  it("leases generation one once, sends the exact stored PDF and snapshot presentation, and atomically completes sent", async () => {
+  it("leases generation one once, sends the safe rendition and immutable snapshot presentation, and atomically completes sent", async () => {
     const send = vi.fn(async () => ({ kind: "sent" as const }));
     const harness = setup({ mailer: enabledMailer(send) });
 
@@ -420,8 +436,9 @@ describe("initial Estimate PDF delivery", () => {
       $inc: { version: 1, deliveryAttemptCount: 1 }
     });
 
-    expect(harness.storage.read).toHaveBeenCalledOnce();
-    expect(harness.storage.read).toHaveBeenCalledWith(PDF_REFERENCE);
+    expect(harness.renditions.readForRound).toHaveBeenCalledOnce();
+    expect(harness.renditions.readForRound).toHaveBeenCalledWith(expect.objectContaining({ _id: ROUND_ID, estimateVersion: 3 }));
+    expect(harness.storage.read).not.toHaveBeenCalled();
     expect(send).toHaveBeenCalledOnce();
     expect(send).toHaveBeenCalledWith({
       to: "Client@Example.COM",
@@ -446,7 +463,7 @@ describe("initial Estimate PDF delivery", () => {
     });
     expect(storageSelects.some(([selection]) =>
       String(selection).includes("+pdfStorageReference")
-    )).toBe(true);
+    )).toBe(false);
 
     expect(harness.updateOne).toHaveBeenCalledOnce();
     expect(harness.updateOne).toHaveBeenCalledWith(
@@ -549,19 +566,19 @@ describe("initial Estimate PDF delivery", () => {
     {
       label: "storage read error",
       options: { storageError: new Error("s3://secret-bucket Client@Example.COM") },
-      failureCode: "PDF_STORAGE_READ_FAILED"
+      failureCode: "QUOTATION_RENDITION_UNAVAILABLE"
     },
     {
       label: "stored byte-size mismatch",
       options: { bytes: Buffer.concat([PDF_BYTES, Buffer.from("tampered")]) },
-      failureCode: "PDF_BYTE_SIZE_MISMATCH"
+      failureCode: "QUOTATION_RENDITION_UNAVAILABLE"
     },
     {
       label: "stored SHA-256 mismatch",
       options: {
         round: { pdfSha256: sha256Hex(Buffer.from("different immutable bytes")) }
       },
-      failureCode: "PDF_SHA256_MISMATCH"
+      failureCode: "QUOTATION_RENDITION_UNAVAILABLE"
     },
     {
       label: "unexpected mailer throw",
@@ -736,7 +753,7 @@ describe("authorized retry leasing", () => {
     expect(harness.record).toEqual(prior);
     expect(harness.transactions).toContain("rollback");
     expect(harness.audits).toEqual([]);
-    expect(harness.storage.read).not.toHaveBeenCalled();
+    expect(harness.renditions.readForRound).not.toHaveBeenCalled();
     expect("send" in harness.mailer ? harness.mailer.send : undefined)
       .not.toHaveBeenCalled();
   });
@@ -783,7 +800,7 @@ describe("authorized retry leasing", () => {
     expect(harness.audits.map((audit) => audit.action)).toEqual([
       "estimate_email_retry_requested"
     ]);
-    expect(harness.storage.read).not.toHaveBeenCalled();
+    expect(harness.renditions.readForRound).not.toHaveBeenCalled();
     expect(send).not.toHaveBeenCalled();
   });
 
@@ -840,7 +857,7 @@ describe("authorized retry leasing", () => {
     });
 
     await expectRetryConflict(operation);
-    expect(harness.storage.read).not.toHaveBeenCalled();
+    expect(harness.renditions.readForRound).not.toHaveBeenCalled();
     expect("send" in harness.mailer ? harness.mailer.send : undefined)
       .not.toHaveBeenCalled();
     expect(harness.audits).toEqual([]);
@@ -867,7 +884,7 @@ describe("authorized retry leasing", () => {
     })).rejects.toMatchObject({ status: 404, code: "NOT_FOUND" });
 
     expect(harness.findOneAndUpdate).not.toHaveBeenCalled();
-    expect(harness.storage.read).not.toHaveBeenCalled();
+    expect(harness.renditions.readForRound).not.toHaveBeenCalled();
     expect(harness.audits).toEqual([]);
   });
 
@@ -901,7 +918,7 @@ describe("authorized retry leasing", () => {
       ROUND_ID
     );
     expect(harness.findOneAndUpdate).not.toHaveBeenCalled();
-    expect(harness.storage.read).not.toHaveBeenCalled();
+    expect(harness.renditions.readForRound).not.toHaveBeenCalled();
     expect(harness.audits).toEqual([]);
   });
 
@@ -941,7 +958,7 @@ describe("authorized retry leasing", () => {
     expect(harness.findOneAndUpdate).not.toHaveBeenCalled();
     expect(harness.record).toMatchObject(historical);
     expect(harness.audits).toEqual([]);
-    expect(harness.storage.read).not.toHaveBeenCalled();
+    expect(harness.renditions.readForRound).not.toHaveBeenCalled();
     expect("send" in harness.mailer ? harness.mailer.send : undefined)
       .not.toHaveBeenCalled();
   });
@@ -968,7 +985,7 @@ describe("authorized retry leasing", () => {
     });
 
     await expectRetryConflict(operation);
-    expect(harness.storage.read).not.toHaveBeenCalled();
+    expect(harness.renditions.readForRound).not.toHaveBeenCalled();
     expect("send" in harness.mailer ? harness.mailer.send : undefined)
       .not.toHaveBeenCalled();
     expect(harness.audits).toEqual([]);

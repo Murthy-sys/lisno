@@ -536,7 +536,7 @@ function procurementBudgetPaise(source: Source): number {
 }
 export async function cutOverProjectAuthority(projectId: string, actorId: string, timestamp: Date, auditService: AuditService, session: ClientSession): Promise<void> {
   const project = await ProjectModel.findById(projectId).select({ status: 1, estimationWorkflowVersion: 1, completionAuthority: 1, completionAuthorityVersion: 1 }).session(session).lean();
-  if (project?.estimationWorkflowVersion === 2 && (project.status === "planning" || !(await projectWorkOrderIssueReadiness(projectId, session)).canIssue)) return;
+  if ([2, 3].includes(project?.estimationWorkflowVersion ?? 0) && (project.status === "planning" || !(await projectWorkOrderIssueReadiness(projectId, session)).canIssue)) return;
   if (!project || project.status !== "active") throw new ApiError(409, "PURCHASE_ORDER_PROJECT_NOT_ACTIVE", "A purchase order can be created only for an active project.");
   if (project.completionAuthority != null && !["legacy_staff", "vendor_client"].includes(project.completionAuthority)) throw new ApiError(409, "PURCHASE_ORDER_PROJECT_AUTHORITY_CONFLICT", "Project completion authority is inconsistent.");
   if (project.completionAuthority !== "vendor_client") {

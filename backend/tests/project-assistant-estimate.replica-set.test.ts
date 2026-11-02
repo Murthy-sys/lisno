@@ -6,6 +6,15 @@ import { EstimateClientResponseProofModel } from "../src/models/EstimateClientRe
 import { LeadModel } from "../src/models/Lead.js";
 import { ProjectModel } from "../src/models/Project.js";
 import { ProjectFinanceBucketModel } from "../src/models/ProjectFinanceBucket.js";
+import { ProjectPurchaseOrderModel } from "../src/models/ProjectPurchaseOrder.js";
+import { ProjectPurchaseOrderRevisionModel } from "../src/models/ProjectPurchaseOrderRevision.js";
+import { VendorWorkAssignmentModel } from "../src/models/VendorWorkAssignment.js";
+import { AiEstimatorKnowledgeBasketModel } from "../src/models/AiEstimatorKnowledgeBasket.js";
+import { AiEstimatorKnowledgeSubBasketModel } from "../src/models/AiEstimatorKnowledgeSubBasket.js";
+import { AiEstimatorKnowledgeMainLineModel } from "../src/models/AiEstimatorKnowledgeMainLine.js";
+import { AiEstimatorKnowledgeRevisionModel } from "../src/models/AiEstimatorKnowledgeRevision.js";
+import { AiEstimatorKnowledgeSectionModel } from "../src/models/AiEstimatorKnowledgeSection.js";
+import { AiEstimatorKnowledgeUomModel } from "../src/models/AiEstimatorKnowledgeUom.js";
 import { newEstimationLifecycle } from "../src/domain/estimation-lifecycle.js";
 import { createAssistantReadSources } from "../src/services/project-assistant-sources.js";
 import { CHAT_NOW, chatLead } from "./helpers/project-chat.js";
@@ -49,11 +58,20 @@ function publicationRound(key: ProjectKey) {
 
 async function fixture() {
   const f = await insertChatMongoFixture();
+  await AiEstimatorKnowledgeBasketModel.collection.insertOne({ _id: "pop", name: "Current POP", status: "active" } as never);
+  await AiEstimatorKnowledgeSubBasketModel.collection.insertOne({ _id: "pop-sub", basketId: "pop", name: "Current ceiling" } as never);
+  await AiEstimatorKnowledgeUomModel.collection.insertOne({ _id: "uom", code: "sqft", name: "Square feet", decimalScale: 2, status: "active" } as never);
   const { id: leadId, ...leadB } = chatLead("lead-b", "b");
   await LeadModel.collection.insertOne({ ...leadB, _id: leadId, clientEmail: "client-b@chat.test" } as never);
   const template = (await EstimateModel.findById("estimate-a").lean().exec())!;
   await EstimateModel.collection.insertOne({ ...template, _id: "estimate-b", projectId: "b", leadId: "lead-b" } as never);
   for (const key of ["a", "b"] as const) {
+    await AiEstimatorKnowledgeMainLineModel.collection.insertOne({ _id: `ceiling-${key}`, basketId: "pop", subBasketId: "pop-sub",
+      name: `Current ceiling ${key}`, itemType: "main_line", status: "active", version: 2, displayOrder: 0,
+      activeRevisionId: `historical-revision-${key}`, draftRevisionId: `current-saved-${key}` } as never);
+    await AiEstimatorKnowledgeRevisionModel.collection.insertOne({ _id: `current-saved-${key}`, mainLineId: `ceiling-${key}`, status: "draft", version: 2 } as never);
+    await AiEstimatorKnowledgeSectionModel.collection.insertOne({ _id: `overview-${key}`, mainLineId: `ceiling-${key}`, revisionId: `current-saved-${key}`,
+      sectionKey: "overview", applicability: "configured", payload: { uomId: "uom", clientVisible: true } } as never);
     await LeadModel.collection.updateOne(byId(`lead-${key}`), { $set: { clientEmail: `client-${key}@chat.test` } });
     // Deliberately divergent working data must never become the customer answer.
     await EstimateModel.collection.updateOne(byId(`estimate-${key}`), { $set: { status: "client_approved", version: 4, clientDecisionAt: new Date(CHAT_NOW),
@@ -67,6 +85,48 @@ async function fixture() {
 }
 
 describe("Ask Lisno immutable estimate reader with real Mongo snapshots", () => {
+  it("invalidates cached execution labels when their approved Main Line becomes hidden", async () => {
+    const f = await fixture();
+    const snapshot = publicationSnapshot("a");
+    const withoutIds = [
+      { ...snapshot.lineItems[0], id: null },
+      { ...snapshot.lineItems[0], id: null, catalogueId: "ceiling-b", mainLineId: "ceiling-b", mainLineName: "Visible ceiling b" }
+    ];
+    await EstimateClientReviewRoundModel.collection.updateOne(byId("review-a"), { $set: { estimateSnapshot: { ...snapshot,
+      lineItems: withoutIds, subtotal: 40, subtotalPaise: 4000, gst: 7.2, gstPaise: 720, total: 47.2, totalPaise: 4720 } } });
+    const sourceLineItemKey = "legacy-estimate-line:estimate-a:3:0";
+    await VendorWorkAssignmentModel.collection.insertOne({ _id: "assignment-a", projectId: "a", vendorId: "vendor-a", orderId: "order-a",
+      orderRevision: 1, lineId: "issued-line-a", procurementItemId: "proc-item-a", estimateId: "estimate-a", estimateVersion: 3,
+      estimateReviewRoundId: "review-a", sourceLineItemKey, roomName: "Hall", itemName: "Published ceiling a",
+      status: "in_progress", currentRound: 1, version: 1, progress: 0 } as never);
+    await ProjectPurchaseOrderModel.collection.insertOne({ _id: "order-a", projectId: "a", vendorId: "vendor-a", approvedRevisionId: "order-revision-a",
+      approvedRevision: 1, status: "approved" } as never);
+    await ProjectPurchaseOrderRevisionModel.collection.insertOne({ _id: "order-revision-a", projectId: "a", vendorId: "vendor-a", orderId: "order-a", revision: 1,
+      lines: [{ id: "issued-line-a", procurementItemId: "proc-item-a", sourceLineItemKey }] } as never);
+    const before = await f.sources("a").execution();
+    const other = await f.sources("b").execution();
+    expect(JSON.stringify(before.facts)).toContain("Published ceiling a");
+
+    await AiEstimatorKnowledgeSectionModel.collection.updateOne(byId("overview-a"), { $set: { "payload.clientVisible": false } });
+
+    expect(await f.sources("a").revalidate(before.freshness)).toBe(false);
+    expect(await f.sources("b").revalidate(other.freshness)).toBe(true);
+    expect(JSON.stringify((await f.sources("a").execution()).facts)).not.toContain("Published ceiling a");
+  });
+
+  it("revokes a cached answer after current visibility changes without changing either project's approved money", async () => {
+    const f = await fixture();
+    const a = await f.read("a"), b = await f.read("b");
+    const original = await EstimateClientReviewRoundModel.findById("review-a").lean();
+    await AiEstimatorKnowledgeSectionModel.collection.updateOne(byId("overview-a"), { $set: { "payload.clientVisible": false } });
+
+    expect(await f.sources("a").revalidate(a.freshness)).toBe(false);
+    expect(await f.sources("b").revalidate(b.freshness)).toBe(true);
+    expect((await f.read("a")).report).toMatchObject({ lines: [], lineCount: 0, totalPaise: amounts.a.totalPaise });
+    expect((await f.read("b")).report).toMatchObject({ lineCount: 1, totalPaise: amounts.b.totalPaise });
+    expect(await EstimateClientReviewRoundModel.findById("review-a").lean()).toEqual(original);
+  });
+
   it("keeps two unequal projects isolated, uses exact publication values and performs no writes", async () => {
     const f = await fixture();
     const before = await Promise.all([EstimateModel.countDocuments(), EstimateClientReviewRoundModel.countDocuments(), AuditEventModel.countDocuments()]);

@@ -179,6 +179,15 @@ const approvedPendingBucket: ProjectFinanceBucket = {
 };
 
 describe("AdminProjectDetailPage", () => {
+  it.each([undefined, null, "Lisno000042"])("shows the project number %s separately from internal identity", async (projectNumber) => {
+    installSession();
+    server.use(http.get("/api/v1/admin/projects/:id", () => HttpResponse.json({ data: { ...project, projectNumber } })));
+    renderApp(["/admin/projects/project-1"]);
+    expect(await screen.findByText(projectNumber ? `Project number: ${projectNumber}` : "Project number not assigned")).toBeVisible();
+    expect(screen.getByRole("heading", { name: project.name })).toBeVisible();
+    expect(screen.getByText(`Project ID: ${project.id}`)).toBeVisible();
+  });
+
   it("presents captured summary facts, clearly labelled reference artwork and only known team members", async () => {
     installSession();
     server.use(http.get("/api/v1/admin/projects/project-1", () => HttpResponse.json({ data: project })));

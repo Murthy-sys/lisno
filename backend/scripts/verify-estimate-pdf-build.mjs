@@ -49,3 +49,23 @@ assert.ok(result.bytes.length > 1_000);
 console.log(
   `Compiled estimate PDF verification passed (${result.bytes.length} bytes).`
 );
+
+const { createEstimateProposal } = await import("../dist/domain/estimate-proposal.js");
+const { readdir } = await import("node:fs/promises");
+for (const name of await readdir(new URL("../src/assets/estimate-proposal/", import.meta.url))) {
+  assert.deepEqual(
+    await readFile(new URL(`../dist/assets/estimate-proposal/${name}`, import.meta.url)),
+    await readFile(new URL(`../src/assets/estimate-proposal/${name}`, import.meta.url)),
+    `Packaged proposal asset differs: ${name}`
+  );
+}
+const proposalResult = await service.generate({
+  id: "compiled-proposal-pdf", version: 1, status: "sent_to_client", propertyType: "residential_apartment",
+  subtotal: 9500, gst: 1710, total: 11210,
+  lineItems: [{ catalogueId: "FC01", roomId: "living", roomName: "Living room", specification: "Gypsum plain", unit: "sqft", rate: 95, quantity: 100, included: true, amount: 9500 }],
+  lead: { clientName: "Sample Client", clientEmail: "sample@example.test", projectName: "Sample Residence", location: "Bengaluru" },
+  proposal: createEstimateProposal({ issuedAt: new Date("2026-11-02T10:00:00.000Z"), projectNumber: "Lisno000125", estimateId: "compiled-proposal-pdf" })
+});
+assert.equal(proposalResult.bytes.subarray(0, 5).toString(), "%PDF-");
+assert.ok(proposalResult.bytes.length > 1_000_000, "The compiled booklet must include its packaged photographs and fonts.");
+console.log(`Compiled proposal booklet verification passed (${proposalResult.bytes.length} bytes).`);

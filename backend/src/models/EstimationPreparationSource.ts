@@ -5,7 +5,7 @@ export const estimationPreparationSourceSchema = new Schema({
   estimateId: { type: String, required: true },
   estimateVersion: { type: Number, required: true, min: 1, validate: Number.isSafeInteger },
   estimateReviewRoundId: { type: String, default: null },
-  workflowVersion: { type: Number, enum: [2], required: true },
+  workflowVersion: { type: Number, enum: [2, 3], required: true },
   phase: { type: String, enum: ["pre", "post"], required: true },
   kind: { type: String, enum: ["approved_pre", "released_post", "approved_final"], required: true },
   sourceSnapshotId: { type: String, required: true },

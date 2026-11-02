@@ -34,11 +34,11 @@ export async function mongoDesignRequirementsSource(projectId: string, session?:
   const designTasks = estimate ? await ProjectWorkflowTaskModel.find({ projectId, estimateId: estimate._id, kind: "design_plan_upload" }).session(session ?? null).lean() : [];
   if (lock && designTasks.length) await ProjectWorkflowTaskModel.updateMany({ _id: { $in: designTasks.map(row => row._id) } }, { $inc: { awardApprovalEpoch: 1 } }, { session, timestamps: false });
   const designSourceIds = [...new Set<string>([estimate?.designPlanDesignerId, ...designTasks.map(row => row.assigneeUserId)].filter(Boolean).map(String))];
-  const poCandidate = designSourceIds.length === 1 ? designSourceIds[0]! : designers.length === 1 ? designers[0]! : null;
-  const poAssignmentConsistent = designSourceIds.length <= 1 && designTasks.length <= 1 &&
+  const poCandidate = project.estimationWorkflowVersion === 3 ? project.primaryDesignerId ?? null : designSourceIds.length === 1 ? designSourceIds[0]! : designers.length === 1 ? designers[0]! : null;
+  const poAssignmentConsistent = (project.estimationWorkflowVersion !== 3 || designSourceIds.every(id => id === poCandidate)) && designSourceIds.length <= 1 && designTasks.length <= 1 &&
     designTasks.every(row => row.assigneeRole === "designer" && row.assigneeUserId) && poCandidate !== null && designers.includes(poCandidate);
   const procurements = [...new Set(tasks.flatMap(row => row.assigneeUserId ? [String(row.assigneeUserId)] : []))];
-  const users = await UserModel.find({ _id: { $in: [...designers, ...procurements, ...(project.clientId ? [String(project.clientId)] : [])] }, active: true }).select({ _id: 1, role: 1 }).session(session ?? null).lean();
+  const users = await UserModel.find({ _id: { $in: [...designers, ...procurements, ...(project.clientId ? [String(project.clientId)] : [])] }, active: true, deletedAt: null }).select({ _id: 1, role: 1 }).session(session ?? null).lean();
   const activeIds = (ids: string[], role: string) => ids.filter(id => users.some(user => String(user._id) === id && user.role === role)).sort();
   const payment = await DesignWorkflowStateModel.findById(projectId).select("+history").session(session ?? null).lean();
   const source: DesignRequirementsSource = { projectId, estimateId: estimate ? String(estimate._id) : null,

@@ -13,6 +13,7 @@ import { EmailCoordinationModel } from "../src/models/EmailCoordination.js";
 import { AuthorizationCoordinationModel } from "../src/models/AuthorizationCoordination.js";
 import { ProjectAccessGrantModel } from "../src/models/ProjectAccessGrant.js";
 import { startMongoReplicaSet } from "./helpers/mongo-replica-set.js";
+import type { AppRepository } from "../src/repositories/types.js";
 
 let replica: Awaited<ReturnType<typeof startMongoReplicaSet>>;
 beforeAll(async () => {
@@ -40,6 +41,70 @@ async function setup() {
 }
 
 describe("project client invitation transactional persistence", () => {
+  it("links an existing client under concurrent initiation with one audit and no invitation or mail", async () => {
+    const f = await setup();
+    const client = await f.repository.createUser({ name: "Existing project client", email: input.clientEmail, mobile: null, address: null, passwordHash: "unused", role: "client", active: true, createdAt: "2026-10-13T09:00:00.000Z", updatedAt: "2026-10-13T09:00:00.000Z" });
+    const other = await f.repository.createUser({ name: "Existing project client", email: "other@project-invitation.test", mobile: null, address: null, passwordHash: "unused", role: "client", active: true, createdAt: "2026-10-13T09:00:00.000Z", updatedAt: "2026-10-13T09:00:00.000Z" });
+    const command = { ...input, clientEmail: ` ${input.clientEmail.toUpperCase()} ` };
+    const results = await Promise.all([f.projects.initiate(f.actor, command), f.projects.initiate(f.actor, command)]);
+    expect(results[0]!.id).toBe(results[1]!.id);
+    expect(results.map(result => result.clientInvitation?.status)).toEqual(["linked", "linked"]);
+    expect(await ProjectModel.countDocuments()).toBe(1);
+    expect(await LeadModel.countDocuments()).toBe(1);
+    expect(await ProjectInitiationReceiptModel.countDocuments()).toBe(1);
+    expect(await ProjectClientInvitationModel.countDocuments()).toBe(0);
+    expect(f.deliveries).toEqual([]);
+    expect(await AuditEventModel.countDocuments({ action: "client_project_linked", entityId: results[0]!.id, actorId: f.actor.id })).toBe(1);
+    expect((await f.repository.pageProjectsForUserRead(client, { limit: 100, offset: 0 })).items.map(project => project.id)).toEqual([results[0]!.id]);
+    expect(await f.repository.findProjectForUserRead(client, results[0]!.id)).toMatchObject({ clientId: client.id });
+    expect((await f.repository.pageProjectsForUserRead(other, { limit: 100, offset: 0 })).items).toEqual([]);
+    expect(await f.repository.findProjectForUserRead(other, results[0]!.id)).toBeNull();
+  });
+
+  it("rolls back automatic ownership, project, lead, receipt, and grants when its linking audit fails", async () => {
+    const f = await setup();
+    await f.repository.createUser({ name: "Existing project client", email: input.clientEmail, mobile: null, address: null, passwordHash: "unused", role: "client", active: true, createdAt: "2026-10-13T09:00:00.000Z", updatedAt: "2026-10-13T09:00:00.000Z" });
+    const audit = createAuditService(f.repository);
+    const projects = createAdminProjectService(f.repository, { ...audit, async append(value, transaction) { if (value.action === "client_project_linked") throw new Error("Synthetic link audit failure"); return audit.append(value, transaction); } }, () => new Date("2026-10-13T10:00:00.000Z"), f.invitations);
+    await expect(projects.initiate(f.actor, input)).rejects.toThrow("Synthetic link audit failure");
+    for (const model of [ProjectModel, LeadModel, ProjectInitiationReceiptModel, ProjectAccessGrantModel, ProjectClientInvitationModel, AuditEventModel]) expect(await model.countDocuments()).toBe(0);
+    expect(f.deliveries).toEqual([]);
+  });
+
+  it("rechecks eligibility when client deactivation wins a concurrent initiation", async () => {
+    const f = await setup();
+    const client = await f.repository.createUser({ name: "Existing project client", email: input.clientEmail, mobile: null, address: null, passwordHash: "unused", role: "client", active: true, createdAt: "2026-10-13T09:00:00.000Z", updatedAt: "2026-10-13T09:00:00.000Z" });
+    let release!: () => void;
+    let held!: () => void;
+    let attempted!: () => void;
+    const untilRelease = new Promise<void>(resolve => { release = resolve; });
+    const untilHeld = new Promise<void>(resolve => { held = resolve; });
+    const untilAttempted = new Promise<void>(resolve => { attempted = resolve; });
+    const deactivate = f.repository.runInTransaction(async tx => {
+      await tx.coordinateAuthorizationMutation();
+      await tx.coordinateClientEmail(client.emailNormalized);
+      await tx.updateUser(client.id, client.version, { active: false, updatedAt: "2026-10-13T10:00:00.000Z" });
+      held();
+      await untilRelease;
+    });
+    await untilHeld;
+    const repository = new Proxy(f.repository, { get(target, key, receiver) {
+      if (key === "runInTransaction") return <T>(operation: (tx: AppRepository) => Promise<T>) => target.runInTransaction(tx => operation(new Proxy(tx, { get(inner, property, innerReceiver) {
+        if (property === "coordinateAuthorizationMutation") return async () => { attempted(); return inner.coordinateAuthorizationMutation(); };
+        return Reflect.get(inner, property, innerReceiver);
+      } })));
+      return Reflect.get(target, key, receiver);
+    } });
+    const projects = createAdminProjectService(repository, createAuditService(repository), () => new Date("2026-10-13T10:00:00.000Z"), f.invitations);
+    const initiated = projects.initiate(f.actor, input);
+    const rejected = expect(initiated).rejects.toMatchObject({ code: "VALIDATION_ERROR", fields: { clientEmail: expect.any(String) } });
+    try { await untilAttempted; } finally { release(); }
+    await deactivate;
+    await rejected;
+    for (const model of [ProjectModel, LeadModel, ProjectInitiationReceiptModel, ProjectClientInvitationModel, AuditEventModel]) expect(await model.countDocuments()).toBe(0);
+    expect(f.deliveries).toEqual([]);
+  });
+
   it("deduplicates concurrent initiation and deliveries by actor command", async () => {
     const f = await setup();
     const results = await Promise.all([f.projects.initiate(f.actor, input), f.projects.initiate(f.actor, input)]);
@@ -49,7 +114,7 @@ describe("project client invitation transactional persistence", () => {
     expect(await ProjectInitiationReceiptModel.countDocuments()).toBe(1);
     expect(await ProjectClientInvitationModel.countDocuments()).toBe(1);
     expect(f.deliveries).toHaveLength(1);
-    expect(await f.repository.findProjectById(results[0]!.id)).toMatchObject({ clientId: null, estimationWorkflowVersion: 2, estimateRequirementsVersion: 0 });
+    expect(await f.repository.findProjectById(results[0]!.id)).toMatchObject({ clientId: null, estimationWorkflowVersion: 3, estimateRequirementsVersion: 0 });
   });
 
   it("creates one account under concurrent acceptance and binds only the exact project", async () => {
@@ -91,5 +156,54 @@ describe("project client invitation transactional persistence", () => {
     expect(await UserModel.countDocuments({ emailNormalized: input.clientEmail })).toBe(0);
     expect(await f.repository.findProjectById(project.id)).toMatchObject({ clientId: null });
     expect(await f.repository.findProjectClientInvitation(project.id)).toMatchObject({ status: "pending" });
+  });
+});
+
+
+describe("initiation intake Mongo persistence", () => {
+  it("round-trips two distinct intakes and preserves metadata through unrelated Lead updates", async () => {
+    const f = await setup();
+    const values = [
+      { nativePlace: "Kochi", tentativeBudget: "₹15–20 lakh", closureTentativeDate: "2028-02-29", category: "self_use" as const, languagesKnown: ["english", "malayalam"] as const, preferredLanguage: "tamil" as const },
+      { nativePlace: "Pune", tentativeBudget: "To be discussed", closureTentativeDate: "2027-12-31", category: "rental" as const, languagesKnown: ["marathi"] as const, preferredLanguage: "english" as const }
+    ];
+    for (const [index, value] of values.entries()) {
+      f.advance();
+      const metadata = { ...value, languagesKnown: [...value.languagesKnown] };
+      const created = await f.projects.initiate(f.actor, { ...input, initiationKey: `mongo-intake-${index}`, projectName: `Intake ${index}`, ...metadata });
+      expect(created).toMatchObject(metadata);
+      const leadId = created.lead!.id;
+      expect(await f.repository.findLeadById(leadId)).toMatchObject(metadata);
+      expect(await f.projects.get(f.actor, created.id)).toMatchObject(metadata);
+      expect(await LeadModel.findById(leadId).lean()).toMatchObject(metadata);
+      await f.repository.updateLead(leadId, { notes: "Unrelated note" });
+      expect(await f.repository.findLeadById(leadId)).toMatchObject(metadata);
+      expect(await ProjectModel.findById(created.id).lean()).not.toHaveProperty("nativePlace");
+      expect(await ProjectModel.findById(created.id).lean()).not.toHaveProperty("tentativeBudget");
+    }
+    const leads = await f.repository.pageAllLeads({}, { limit: 20, offset: 0 });
+    expect(leads.total).toBe(2);
+    for (const value of values) expect(leads.items).toEqual(expect.arrayContaining([expect.objectContaining(value)]));
+    const audits = await AuditEventModel.find({}).lean();
+    for (const audit of audits) for (const key of Object.keys(values[0]!)) expect(audit.newValues).not.toHaveProperty(key);
+  });
+
+  it("deduplicates concurrent normalized intake retries and rejects a changed value", async () => {
+    const f = await setup();
+    const { nextAction: _removed, ...command } = input;
+    const results = await Promise.all([
+      f.projects.initiate(f.actor, command),
+      f.projects.initiate(f.actor, { ...command, nextAction: "Estimation", nativePlace: null, tentativeBudget: " ", category: null, closureTentativeDate: null, languagesKnown: [], preferredLanguage: null })
+    ]);
+    expect(results[0]!.id).toBe(results[1]!.id);
+    expect(results[0]).toMatchObject({ nativePlace: null, tentativeBudget: null, closureTentativeDate: null, category: null, languagesKnown: [], preferredLanguage: null, lead: { nextAction: "Estimation" } });
+    expect(await ProjectModel.countDocuments()).toBe(1);
+    expect(await LeadModel.countDocuments()).toBe(1);
+    expect(await ProjectInitiationReceiptModel.countDocuments()).toBe(1);
+    expect(f.deliveries).toHaveLength(1);
+    await expect(f.projects.initiate(f.actor, { ...command, nativePlace: "Kochi" })).rejects.toMatchObject({ code: "INITIATION_KEY_REUSED" });
+    const leadId = results[0]!.lead!.id;
+    await LeadModel.collection.updateOne({ _id: leadId }, { $unset: { nativePlace: "", tentativeBudget: "", closureTentativeDate: "", category: "", languagesKnown: "", preferredLanguage: "" } });
+    expect(await f.repository.findLeadById(leadId)).toMatchObject({ nativePlace: null, tentativeBudget: null, closureTentativeDate: null, category: null, languagesKnown: [], preferredLanguage: null });
   });
 });

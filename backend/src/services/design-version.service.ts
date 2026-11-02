@@ -108,7 +108,7 @@ export function createDesignVersionService(
       if (
         task.ownerId !== actor.id ||
         (
-          project.initiatingDesignerId !== actor.id &&
+          (project.estimationWorkflowVersion === 3 || project.initiatingDesignerId !== actor.id) &&
           !project.assignedDesignerIds.includes(actor.id)
         )
       ) {
@@ -133,6 +133,16 @@ export function createDesignVersionService(
       const uploadedAt = clock().toISOString();
       try {
         const created = await repository.runInTransaction(async (transaction) => {
+          await transaction.coordinateAuthorizationMutation();
+          const currentActor = await requireActor(transaction, actor);
+          const currentTask = await requireTask(transaction, taskId);
+          const currentProject = await transaction.findProjectById(currentTask.projectId);
+          if (currentActor.deletedAt || currentActor.role !== "designer" || !currentProject ||
+            currentTask.ownerId !== actor.id || currentTask.projectId !== task.projectId ||
+            currentTask.floorId !== task.floorId || currentTask.stageId !== task.stageId ||
+            (currentProject.estimationWorkflowVersion === 3
+              ? currentProject.primaryDesignerId !== actor.id && !currentProject.secondaryDesignerIds?.includes(actor.id)
+              : currentProject.initiatingDesignerId !== actor.id && !currentProject.assignedDesignerIds.includes(actor.id))) forbidden();
           await assertDesignWorkflowSubmissionAllowed(transaction, project.id, { lock: true, phase: "upload" });
           const version = await transaction.createNextDesignVersion({
             projectId: task.projectId,

@@ -1,3 +1,4 @@
+import type { ProjectInitiationMetadata } from "../contracts/project-initiation.js";
 import type { ProjectClientInvitationRecord, ProjectInitiationReceipt } from "../domain/project-client-invitations.js";
 import type { DesignRequirementsSource, DesignRequirementsState } from "../domain/design-requirements.js";
 import type { WorkflowDesignPlanData, WorkflowSpacePlanningSource } from "../domain/workflow-space-planning.js";
@@ -301,7 +302,7 @@ export interface UserResponsibilityCounts {
 
 export interface ProjectRecord {
   /** Absent means the historical single-estimate lifecycle. */
-  estimationWorkflowVersion?: 2;
+  estimationWorkflowVersion?: 2 | 3;
   estimateRequirementsVersion?: number;
   estimationFenceEpoch?: number;
   designWorkflowStages?: ProjectDesignWorkflowStage[];
@@ -321,6 +322,9 @@ export interface ProjectRecord {
   initiatingDesignerId: string | null;
   assignedEstimatorId: string | null;
   assignedDesignerIds: string[];
+  primaryDesignerId?: string | null;
+  secondaryDesignerIds?: string[];
+  designTeamVersion?: number;
   managerId: string | null;
   programManagerId?: string | null;
   procurementIdentityVersion?: number;
@@ -336,9 +340,10 @@ export interface ProjectRecord {
   updatedAt: string;
 }
 
-export interface LeadRecord {
+export interface LeadRecord extends ProjectInitiationMetadata {
   id: string;
   projectId: string | null;
+  readonly projectNumber?: string | null;
   ownerId: string;
   clientName: string;
   clientEmail: string;
@@ -394,9 +399,9 @@ export interface LeadFilters {
   stage?: LeadStage;
 }
 
-export type NewLead = LeadRecord;
+export type NewLead = Omit<LeadRecord, "projectNumber">;
 export type LeadChange = Partial<
-  Omit<LeadRecord, "id" | "projectId" | "ownerId" | "createdAt">
+  Omit<LeadRecord, "id" | "projectId" | "projectNumber" | "ownerId" | "createdAt">
 >;
 
 export interface EstimatorOption {
@@ -454,6 +459,7 @@ export type AdminProjectEstimateLinkSource =
 export interface AdminProjectEstimateSummary {
   estimationPhase?: "pre" | "post";
   finalEstimateApproved?: boolean;
+  designApproved?: boolean;
   id: string;
   leadId: string;
   projectId: string | null;
@@ -474,8 +480,9 @@ export interface AdminProjectEstimateSummary {
   designPlanDesigner: { id: string; name: string; email: string } | null;
 }
 
-export interface AdminProjectSummary {
-  estimationWorkflowVersion?: 2;
+export interface AdminProjectSummary extends ProjectInitiationMetadata {
+  estimationWorkflowVersion?: 2 | 3;
+  readonly projectNumber?: string | null;
   id: string;
   name: string;
   status: ProjectStatus;
@@ -1040,7 +1047,12 @@ export interface AppRepository {
   findDesignWorkflowSpacePlanningSource(projectId: string, lock?: boolean): Promise<WorkflowSpacePlanningSource | null>;
   findProjectEstimationContext(projectId: string, lock?: boolean): Promise<{
     estimateId: string;
+    workflowVersion: 2 | 3;
     preApprovedAt: string | null;
+    quotationApprovedAt: string | null;
+    designStartedAt: string | null;
+    designApproval: import("../domain/estimation-lifecycle.js").QuotationDesignApproval | null;
+    quotationLocked: boolean;
     designScopeRevision: number;
     approvedDesignScopeRevision: number | null;
     finalApproval: FinalEstimationApprovalReference | null;

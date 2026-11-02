@@ -143,6 +143,35 @@ describe("Admin project collection selection", () => {
 });
 
 describe("Admin-initiated projects", () => {
+  it("automatically exposes a new project only to its matching existing client", async () => {
+    const seed = structuredClone(demoSeedData);
+    const template = seed.users.find(user => user.role === "client")!;
+    const clients = [
+      { ...template, id: "existing-project-client-a", email: "first@client-link.test", emailNormalized: "first@client-link.test", accountKind: "standard" as const },
+      { ...template, id: "existing-project-client-b", email: "second@client-link.test", emailNormalized: "second@client-link.test", accountKind: "standard" as const }
+    ];
+    seed.users.push(...clients);
+    const repository = createMemoryRepository(seed);
+    const app = createApp({ repository, auth, clock });
+    const created = await request(app).post("/api/v1/admin/projects")
+      .set("Authorization", bearer("user-admin", "admin"))
+      .send({ clientName: clients[1]!.name, clientEmail: " FIRST@CLIENT-LINK.TEST ", clientMobile: "9000000000", projectName: "Existing client project", propertyType: "3BHK", nextActionAt: "2026-11-05T00:00:00.000Z", estimatorId: "user-estimator-sales" })
+      .expect(201);
+    expect(created.body.data.clientInvitation).toMatchObject({ status: "linked", availableActions: [] });
+    const projectId = created.body.data.id;
+    for (const [index, client] of clients.entries()) {
+      const list = await request(app).get("/api/v1/client/project-summaries")
+        .set("Authorization", bearer(client.id, "client")).expect(200);
+      expect(list.body.data.items.map((project: { id: string }) => project.id)).toEqual(index === 0 ? [projectId] : []);
+      await request(app).get(`/api/v1/projects/${projectId}`)
+        .set("Authorization", bearer(client.id, "client")).expect(index === 0 ? 200 : 404);
+    }
+    expect(await repository.findProjectClientInvitation(projectId)).toBeNull();
+    expect((await repository.listAuditEvents({})).filter(event => event.entityId === projectId && event.action === "client_project_linked")).toEqual([
+      expect.objectContaining({ actorId: "user-admin", newValues: { clientId: clients[0]!.id } })
+    ]);
+  });
+
   it("keeps fallback-assigned Client-response history safe while exposing the task only to its assignee or Super Admin", async () => {
     const seed = structuredClone(demoSeedData);
     seed.projects = seed.projects.filter(({ id }) =>
@@ -613,6 +642,10 @@ describe("Admin-initiated projects", () => {
     );
     expect(projects).toHaveLength(1);
     expect(projects[0]).toMatchObject({
+      estimationWorkflowVersion: 3,
+      primaryDesignerId: null,
+      secondaryDesignerIds: [],
+      designTeamVersion: 0,
       initiatingDesignerId: null,
       assignedEstimatorId: "user-estimator-sales",
       assignedDesignerIds: [],
@@ -919,5 +952,96 @@ describe("Admin-initiated projects", () => {
       .resolves.toMatchObject({ total: 0, items: [] });
     await expect(base.pageAuditEvents({}, { limit: 20, offset: 0 }))
       .resolves.toMatchObject({ total: 0, items: [] });
+  });
+});
+
+describe("project initiation intake metadata", () => {
+  const intakeInput = {
+    clientName: "Synthetic Intake", clientEmail: "intake@projects.test", clientMobile: "9000000000",
+    projectName: "Intake project", propertyType: "Apartment", nextActionAt: "2026-11-05T00:00:00+05:30",
+    estimatorId: "user-estimator-sales"
+  };
+  const emptyMetadata = { nativePlace: null, tentativeBudget: null, closureTentativeDate: null, category: null, languagesKnown: [], preferredLanguage: null };
+  const metadata = { nativePlace: "Kochi", tentativeBudget: "₹15–20 lakh", closureTentativeDate: "2028-02-29", category: "self_use", languagesKnown: ["english", "malayalam"], preferredLanguage: "tamil" };
+
+  it("persists independent project metadata through authorized Lead and Admin reads without financial or audit effects", async () => {
+    const repository = createMemoryRepository(structuredClone(demoSeedData));
+    const app = createApp({ repository, auth, clock });
+    const inputs = [metadata, { ...metadata, nativePlace: "Pune", tentativeBudget: "To be discussed", closureTentativeDate: "2027-12-31", category: "rental", languagesKnown: ["marathi"], preferredLanguage: "english" }];
+    for (const [index, values] of inputs.entries()) {
+      const created = await request(app).post("/api/v1/admin/projects")
+        .set("Authorization", bearer("user-admin", "admin"))
+        .send({ ...intakeInput, ...values, nativePlace: `  ${values.nativePlace}  `, tentativeBudget: ` ${values.tentativeBudget} `, projectName: `Intake ${index}`, budgetMin: 100, budgetMax: 400 })
+        .expect(201);
+      expect(created.body.data).toMatchObject({ ...values, budgetMin: 100, budgetMax: 400, lead: { nextAction: "Estimation" } });
+      const id = created.body.data.id;
+      const leadId = created.body.data.lead.id;
+      for (const [url, actorId, role] of [
+        [`/api/v1/leads/${leadId}`, "user-estimator-sales", "estimator_sales"],
+        [`/api/v1/admin/projects/${id}`, "user-admin", "admin"]
+      ]) {
+        const read = await request(app).get(url!).set("Authorization", bearer(actorId!, role!)).expect(200);
+        expect(read.body.data).toMatchObject(values);
+      }
+      const project = await repository.findProjectById(id);
+      expect(project).not.toHaveProperty("nativePlace");
+      expect(project).not.toHaveProperty("tentativeBudget");
+      expect(project!.plannedEndAt).not.toBe(values.closureTentativeDate);
+      await repository.updateLead(leadId, { notes: "Unrelated note" });
+      expect(await repository.findLeadById(leadId)).toMatchObject(values);
+      const audits = await repository.pageAuditEvents({ entityId: leadId }, { limit: 20, offset: 0 });
+      for (const key of Object.keys(metadata)) expect(audits.items[0]!.newValues).not.toHaveProperty(key);
+    }
+    const leads = await repository.pageLeadsForOwner("user-estimator-sales", {}, { limit: 20, offset: 0 });
+    for (const values of inputs) expect(leads.items).toEqual(expect.arrayContaining([expect.objectContaining(values)]));
+  });
+
+  it("normalizes omitted and empty metadata, preserves explicit legacy actions and reads historical records", async () => {
+    const seed = structuredClone(demoSeedData);
+    const repository = createMemoryRepository(seed);
+    const app = createApp({ repository, auth, clock });
+    const created = await request(app).post("/api/v1/admin/projects")
+      .set("Authorization", bearer("user-admin", "admin"))
+      .send({ ...intakeInput, nativePlace: "  ", tentativeBudget: "", nextAction: "Site visit" }).expect(201);
+    expect(created.body.data).toMatchObject({ ...emptyMetadata, lead: { nextAction: "Site visit" } });
+    const legacy = (await repository.findLeadById(created.body.data.lead.id))!;
+    for (const key of Object.keys(emptyMetadata)) delete (legacy as unknown as Record<string, unknown>)[key];
+    seed.leads = [legacy];
+    const historical = createMemoryRepository(seed);
+    expect(await historical.findLeadById(legacy.id)).toMatchObject({ ...emptyMetadata, nextAction: "Site visit" });
+    expect((await historical.pageAllLeads({}, { limit: 20, offset: 0 })).items[0]).toMatchObject(emptyMetadata);
+    expect((await historical.pageLeadsForOwner(legacy.ownerId, {}, { limit: 20, offset: 0 })).items[0]).toMatchObject(emptyMetadata);
+  });
+
+  it.each([
+    ["nativePlace", "a".repeat(121)], ["tentativeBudget", "a".repeat(201)],
+    ["closureTentativeDate", "2027-02-29"], ["closureTentativeDate", "2026-04-31"],
+    ["closureTentativeDate", "2026-11-02T00:00:00Z"], ["closureTentativeDate", "0000-01-01"],
+    ["closureTentativeDate", "2026-1-01"], ["category", "owner"],
+    ["languagesKnown", ["english", "english"]], ["languagesKnown", ["unknown"]],
+    ["languagesKnown", null], ["preferredLanguage", "unknown"], ["nextAction", " "]
+  ])("rejects invalid %s intake before any writes", async (field, value) => {
+    const seed = structuredClone(demoSeedData);
+    seed.projects = []; seed.leads = []; seed.auditEvents = []; seed.projectAccessGrants = [];
+    const repository = createMemoryRepository(seed);
+    const app = createApp({ repository, auth, clock });
+    const response = await request(app).post("/api/v1/admin/projects")
+      .set("Authorization", bearer("user-admin", "admin"))
+      .send({ ...intakeInput, initiationKey: "invalid-intake-command", [field as string]: value }).expect(400);
+    expect(response.body.error.fields).toHaveProperty(field as string);
+    expect((await repository.pageAllLeads({}, { limit: 20, offset: 0 })).total).toBe(0);
+    expect(await repository.listAuditEvents({})).toEqual([]);
+    expect(await repository.listActiveProjectAccessGrants("user-admin", "projects")).toEqual([]);
+    expect((await repository.pageAdminProjects((await repository.findUserById("user-super-admin"))!, { limit: 20, offset: 0 })).total).toBe(0);
+  });
+
+  it("validates direct service intake and accepts exact text boundaries and leap days", async () => {
+    const repository = createMemoryRepository(structuredClone(demoSeedData));
+    const service = createAdminProjectService(repository, createAuditService(repository), clock);
+    const admin = (await repository.findUserById("user-admin"))!;
+    await expect(service.initiate(admin, { ...intakeInput, closureTentativeDate: "2100-02-29" }))
+      .rejects.toMatchObject({ code: "VALIDATION_ERROR", fields: { closureTentativeDate: expect.any(String) } });
+    const created = await service.initiate(admin, { ...intakeInput, nativePlace: "a".repeat(120), tentativeBudget: "b".repeat(200), closureTentativeDate: "2000-02-29" });
+    expect(created).toMatchObject({ nativePlace: "a".repeat(120), tentativeBudget: "b".repeat(200), closureTentativeDate: "2000-02-29", lead: { nextAction: "Estimation" } });
   });
 });

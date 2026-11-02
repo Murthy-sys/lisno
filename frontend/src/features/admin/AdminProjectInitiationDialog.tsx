@@ -8,6 +8,17 @@ import {
   type FormEvent
 } from "react";
 
+import {
+  DEFAULT_PROJECT_NEXT_ACTION,
+  NATIVE_PLACE_MAX_LENGTH,
+  TENTATIVE_BUDGET_MAX_LENGTH,
+  PROJECT_CATEGORY_OPTIONS,
+  PROJECT_LANGUAGE_OPTIONS,
+  isProjectCalendarDate,
+  type ProjectCategory,
+  type ProjectLanguage
+} from "../../../../shared/projects/projectInitiation";
+import { ProjectLanguageMultiSelect } from "./ProjectLanguageMultiSelect";
 import { ApiError } from "../../api/client";
 import { projectClientInvitationKeys } from "../../auth/projectClientInvitationsApi";
 import type {
@@ -35,6 +46,12 @@ interface ProjectInitiationForm {
   clientName: string;
   clientEmail: string;
   clientMobile: string;
+  nativePlace: string;
+  languagesKnown: ProjectLanguage[];
+  preferredLanguage: ProjectLanguage | "";
+  tentativeBudget: string;
+  closureTentativeDate: string;
+  category: ProjectCategory | "";
   projectName: string;
   cityName: string;
   propertyType: string;
@@ -48,12 +65,18 @@ const emptyForm: ProjectInitiationForm = {
   clientName: "",
   clientEmail: "",
   clientMobile: "",
+  nativePlace: "",
+  languagesKnown: [],
+  preferredLanguage: "",
+  tentativeBudget: "",
+  closureTentativeDate: "",
+  category: "",
   projectName: "",
   cityName: "",
   propertyType: "",
   source: "",
   otherSource: "",
-  nextAction: "",
+  nextAction: DEFAULT_PROJECT_NEXT_ACTION,
   nextActionAt: ""
 };
 
@@ -71,13 +94,25 @@ const fields = [
   ["clientName", "Client name", "text", "Enter client name"],
   ["clientEmail", "Client email", "email", "example@email.com"],
   ["clientMobile", "Mobile", "text", "Enter mobile number"],
+  ["nativePlace", "Native", "text", "Enter hometown / native place"],
+  ["languagesKnown", "Languages Known", "select", undefined],
+  ["preferredLanguage", "Most Preferred Language", "select", undefined],
   ["projectName", "Project / property name", "text", "Enter project / property name"],
   ["cityName", "Project city", "text", "Enter city for vendor matching"],
   ["propertyType", "Property type", "text", "Enter property type"],
+  ["category", "Category", "select", undefined],
+  ["tentativeBudget", "Tentative Budget", "text", "e.g. ₹15–20 lakh"],
+  ["closureTentativeDate", "Closure Tentative Date", "date", undefined],
   ["source", "Source", "text", undefined],
-  ["nextAction", "Next action", "text", "Enter next action"],
+  ["nextAction", "Next action", "text", undefined],
   ["nextActionAt", "Next action date", "date", undefined]
 ] as const satisfies ReadonlyArray<readonly [keyof ProjectInitiationForm, string, string, string | undefined]>;
+
+const requiredFields = new Set<keyof ProjectInitiationForm>([
+  "clientName", "clientEmail", "clientMobile", "projectName", "propertyType", "nextActionAt"
+]);
+
+type TextFormKey = Exclude<keyof ProjectInitiationForm, "languagesKnown">;
 
 function validate(
   form: ProjectInitiationForm,
@@ -87,15 +122,16 @@ function validate(
 ): Record<string, string> {
   const errors: Record<string, string> = {};
   for (const [key, label] of fields) {
-    if (key === "cityName" || key === "source") continue;
+    if (!requiredFields.has(key) || key === "languagesKnown") continue;
     if (!form[key].trim()) errors[key] = `${label} is required.`;
   }
   const source = resolvedSource(form);
   if (form.source === "Other" && !source) errors.source = "Other source is required.";
   if (source.length > 200) errors.source = "Source must be 200 characters or fewer.";
-  if (form.nextActionAt.trim() && Number.isNaN(new Date(`${form.nextActionAt}T00:00:00`).getTime())) {
-    errors.nextActionAt = "Next action date must be valid.";
-  }
+  if (form.nativePlace.trim().length > NATIVE_PLACE_MAX_LENGTH) errors.nativePlace = `Native must be ${NATIVE_PLACE_MAX_LENGTH} characters or fewer.`;
+  if (form.tentativeBudget.trim().length > TENTATIVE_BUDGET_MAX_LENGTH) errors.tentativeBudget = `Tentative Budget must be ${TENTATIVE_BUDGET_MAX_LENGTH} characters or fewer.`;
+  if (form.nextActionAt && !isProjectCalendarDate(form.nextActionAt)) errors.nextActionAt = "Next action date must be valid.";
+  if (form.closureTentativeDate && !isProjectCalendarDate(form.closureTentativeDate)) errors.closureTentativeDate = "Closure Tentative Date must be valid.";
   if (!selectedAssignee) {
     errors[assignmentField] = `Select an active ${assignmentLabel} user.`;
   }
@@ -146,10 +182,13 @@ export function AdminProjectInitiationDialog({
   });
 
   const focusFirst = (errors: Record<string, string>) => {
-    const firstKey = Object.keys(errors)
-      .map((key) => key === "source" && form.source === "Other" ? "otherSource" : key)
-      .find((key) => refs.current[key]);
-    if (firstKey) window.setTimeout(() => refs.current[firstKey]?.focus(), 0);
+    // Mutation errors arrive before pending controls have been enabled again.
+    window.setTimeout(() => {
+      const firstKey = Object.keys(errors)
+        .map((key) => key === "source" && form.source === "Other" ? "otherSource" : key)
+        .find((key) => refs.current[key] && !refs.current[key]?.disabled);
+      if (firstKey) refs.current[firstKey]?.focus();
+    }, 0);
   };
 
   const mutation = useMutation({
@@ -165,7 +204,9 @@ export function AdminProjectInitiationDialog({
       ]);
       feedback.success({
         title: "Project initiated",
-        message: project.clientInvitation && ["not_issued", "delivery_failed"].includes(project.clientInvitation.status)
+        message: project.clientInvitation?.status === "linked"
+          ? "Your project is ready. The existing client already has access; no invitation is needed."
+          : project.clientInvitation && ["not_issued", "delivery_failed"].includes(project.clientInvitation.status)
           ? "Your project is ready. Check the client invitation status to send or retry the invitation."
           : selectsSalesManager
           ? "Your lead is ready with the selected Sales Manager."
@@ -185,19 +226,19 @@ export function AdminProjectInitiationDialog({
     }
   });
 
-  const updateValue = (key: keyof ProjectInitiationForm, value: string) => {
-      const errorKey = key === "otherSource" ? "source" : key;
-      setForm((current) => ({ ...current, [key]: value }));
-      setFieldErrors((current) => {
-        if (!current[errorKey]) return current;
-        const next = { ...current };
-        delete next[errorKey];
-        return next;
-      });
-    };
+  const updateValue = <K extends keyof ProjectInitiationForm>(key: K, value: ProjectInitiationForm[K]) => {
+    const errorKey = key === "otherSource" ? "source" : key;
+    setForm((current) => ({ ...current, [key]: value }));
+    setFieldErrors((current) => {
+      if (!current[errorKey]) return current;
+      const next = { ...current };
+      delete next[errorKey];
+      return next;
+    });
+  };
 
-  const update = (key: keyof ProjectInitiationForm) =>
-    (event: ChangeEvent<HTMLInputElement | HTMLSelectElement>) => updateValue(key, event.target.value);
+  const update = (key: TextFormKey) =>
+    (event: ChangeEvent<HTMLInputElement | HTMLSelectElement>) => updateValue(key, event.target.value as ProjectInitiationForm[typeof key]);
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -222,7 +263,13 @@ export function AdminProjectInitiationDialog({
       ...(form.cityName.trim() ? { cityName: form.cityName.trim() } : {}),
       propertyType: form.propertyType.trim(),
       ...(source ? { source } : {}),
-      nextAction: form.nextAction.trim(),
+      nativePlace: form.nativePlace.trim() || null,
+      tentativeBudget: form.tentativeBudget.trim() || null,
+      closureTentativeDate: form.closureTentativeDate || null,
+      category: form.category || null,
+      languagesKnown: form.languagesKnown,
+      preferredLanguage: form.preferredLanguage || null,
+      nextAction: DEFAULT_PROJECT_NEXT_ACTION,
       // The initiation form collects a local calendar date; the API stores a timestamp.
       nextActionAt: new Date(`${form.nextActionAt}T00:00:00`).toISOString(),
       ...(selectsSalesManager
@@ -256,7 +303,7 @@ export function AdminProjectInitiationDialog({
       onClose={onClose}
       busy={mutation.isPending}
       width="wide"
-      dirty={Object.values(form).some(Boolean) || selectedAssignee !== null || assigneeSearch.length > 0}
+      dirty={Object.entries(form).some(([key, value]) => Array.isArray(value) ? value.length > 0 : value !== emptyForm[key as keyof ProjectInitiationForm]) || selectedAssignee !== null || assigneeSearch.length > 0}
       className="administration-context-panel"
       footer={({ requestClose }) => (
         <div className="modal-form__actions admin-project-form__actions">
@@ -270,16 +317,29 @@ export function AdminProjectInitiationDialog({
         {fields.map(([key, label, type, placeholder]) => (
           <Fragment key={key}>
             <Field
-              className={key === "clientName" || key === "projectName" || key === "source" || key === "nextAction" || key === "nextActionAt" ? "admin-project-form__wide" : undefined}
+              className={key === "clientName" || key === "nativePlace" || key === "projectName" || key === "closureTentativeDate" || key === "source" || key === "nextAction" || key === "nextActionAt" ? "admin-project-form__wide" : undefined}
               id={`admin-project-${key}`}
               label={label}
-              required={key !== "cityName" && key !== "source"}
+              required={requiredFields.has(key)}
               hint={key === "source" ? "How did the client hear about Lisno?" : undefined}
               error={key === "source" && form.source === "Other" ? undefined : fieldErrors[key]}
             >
               {(controlProps) => (
                 <div className="admin-project-form__control">
-                  {key === "propertyType" ? <Select {...controlProps}
+                  {key === "languagesKnown" ? <ProjectLanguageMultiSelect {...controlProps}
+                    value={form.languagesKnown} onChange={(value) => updateValue(key, value)}
+                    inputRef={(node) => { refs.current[key] = node; }} disabled={mutation.isPending}
+                  /> : key === "preferredLanguage" ? <Select {...controlProps}
+                    ref={(node) => { refs.current[key] = node; }} name={key}
+                    value={form.preferredLanguage} onChange={update(key)} disabled={mutation.isPending}>
+                    <option value="">Select preferred language</option>
+                    {PROJECT_LANGUAGE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                  </Select> : key === "category" ? <Select {...controlProps}
+                    ref={(node) => { refs.current[key] = node; }} name={key}
+                    value={form.category} onChange={update(key)} disabled={mutation.isPending}>
+                    <option value="">Select category</option>
+                    {PROJECT_CATEGORY_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                  </Select> : key === "propertyType" ? <Select {...controlProps}
                     ref={(node) => { refs.current[key] = node; }} name={key}
                     value={form.propertyType} onChange={update(key)} disabled={mutation.isPending}>
                     <option value="">Select property type</option>
@@ -289,8 +349,10 @@ export function AdminProjectInitiationDialog({
                     value={form.source} onChange={update(key)} disabled={mutation.isPending}>
                     <option value="">Select source</option>
                     {sourceOptions.map((option) => <option key={option} value={option}>{option}</option>)}
-                  </Select> : key === "nextActionAt" ? <NextActionDateTime {...controlProps}
-                    value={form.nextActionAt} onChange={(value) => updateValue(key, value)}
+                  </Select> : key === "nextActionAt" || key === "closureTentativeDate" ? <NextActionDateTime {...controlProps}
+                    calendarLabel={key === "closureTentativeDate" ? "Choose closure tentative date" : undefined}
+                    clearable={key === "closureTentativeDate"}
+                    value={form[key]} onChange={(value) => updateValue(key, value)}
                     inputRef={(node) => { refs.current[key] = node; }} disabled={mutation.isPending}
                   /> : <Input
                     {...controlProps}
@@ -298,9 +360,10 @@ export function AdminProjectInitiationDialog({
                     name={key}
                     type={type}
                     placeholder={placeholder}
-                    disabled={mutation.isPending}
+                    disabled={mutation.isPending || key === "nextAction"}
+                    maxLength={key === "nativePlace" ? NATIVE_PLACE_MAX_LENGTH : key === "tentativeBudget" ? TENTATIVE_BUDGET_MAX_LENGTH : undefined}
                     value={form[key]}
-                    onChange={update(key)}
+                    onChange={key === "nextAction" ? undefined : update(key)}
                   />}
                 </div>
               )}
@@ -317,7 +380,7 @@ export function AdminProjectInitiationDialog({
             ) : null}
           </Fragment>
         ))}
-        <div className="admin-project-form__estimator">
+        <fieldset className="admin-project-form__estimator" disabled={mutation.isPending}>
           <SearchCombobox
             label={assignmentLabel}
             name={assignmentField}
@@ -358,7 +421,7 @@ export function AdminProjectInitiationDialog({
           ) : !selectedAssignee ? (
             <p className="ui-field__hint">Pick an option from the list — Initiate project stays disabled until {selectsSalesManager ? "a Sales Manager" : "a Sales user"} is selected.</p>
           ) : null}
-        </div>
+        </fieldset>
       </form>
     </ContextPanel>
   );

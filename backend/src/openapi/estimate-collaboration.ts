@@ -12,7 +12,7 @@ export const ESTIMATE_COLLABORATION_SCHEMAS = {
   ProjectInvitationCommand: object({ expectedVersion: requirementsVersion }, ["expectedVersion"]),
   ProjectInvitationToken: object({ token }, ["token"]),
   ProjectInvitationAccept: object({ token, password: { type: "string", writeOnly: true }, passwordConfirmation: { type: "string", writeOnly: true } }, ["token", "password", "passwordConfirmation"]),
-  ProjectInvitationStatus: object({ projectId: id, status: { type: "string", enum: ["not_issued", "pending", "delivery_failed", "expired", "revoked", "accepted"] },
+  ProjectInvitationStatus: object({ projectId: id, status: { type: "string", enum: ["not_issued", "pending", "delivery_failed", "expired", "revoked", "accepted", "linked"], description: "linked means the project already belongs to an existing Client account without a new invitation; accepted records retain their actual acceptance history." },
     deliveryAvailable: { type: "boolean" }, expectedVersion: requirementsVersion, expiresAt: nullableDate, sentAt: nullableDate, acceptedAt: nullableDate,
     availableActions: { type: "array", items: { type: "string", enum: ["send", "resend", "revoke"] } } },
     ["projectId", "status", "deliveryAvailable", "expectedVersion", "availableActions"]),

@@ -4,6 +4,19 @@ import type { ChatSelection } from "../src/repositories/project-chat.js";
 import { chatUser, membershipSources, CHAT_NOW } from "./helpers/project-chat.js";
 const ids = (sources: ReturnType<typeof membershipSources>, selections: ChatSelection[] = []) => resolveChatMembership(sources, selections).participants.map((row) => row.id);
 describe("project chat current membership", () => {
+    it("limits v3 Designer access to the current team despite historical task ownership", () => {
+        const source = membershipSources();
+        source.project.estimationWorkflowVersion = 3;
+        source.project.primaryDesignerId = "designer-a";
+        source.project.secondaryDesignerIds = ["old-designer"];
+        source.estimates[0]!.status = "pending_designer_approval";
+        expect(ids(source)).toContain("old-designer");
+        source.project.secondaryDesignerIds = [];
+        expect(ids(source)).not.toContain("old-designer");
+        expect(ids(source)).toContain("designer-a");
+        source.users.find(user => user.id === "designer-a")!.deletedAt = CHAT_NOW;
+        expect(ids(source)).not.toContain("designer-a");
+    });
     it("derives PM membership from current assignment and rejects stale manual selection", () => {
         const source = membershipSources();
         source.users.push(chatUser("pm-a", "site_manager"), chatUser("pm-b", "site_manager"));

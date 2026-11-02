@@ -7,11 +7,11 @@ import { createProjectDesignWorkflow, type DesignStageType } from "./design-work
 import { projectWorkflowBlueprints } from "./project-workflow.js";
 import type { Role } from "./roles.js";
 import type { WorkflowSpacePlanningSource } from "./workflow-space-planning.js";
-import { effectiveCommercialStatus } from "./estimation-lifecycle.js";
+import { effectiveCommercialStatus, isEstimationWorkflowVersion, quotationApprovalIsCurrent } from "./estimation-lifecycle.js";
 
 /** Approval evidence and source selection are validated by the source reader, not status labels. */
 export interface ProjectStatusInput {
-  project: Pick<ProjectRecord, "id" | "name" | "status" | "clientId" | "assignedEstimatorId" | "initiatingDesignerId" | "assignedDesignerIds" | "managerId" | "designWorkflowStages" | "completionAuthority" | "completionAuthorityVersion" | "completionDecisionId" | "estimationWorkflowVersion">;
+  project: Pick<ProjectRecord, "id" | "name" | "status" | "clientId" | "assignedEstimatorId" | "initiatingDesignerId" | "assignedDesignerIds" | "managerId" | "designWorkflowStages" | "completionAuthority" | "completionAuthorityVersion" | "completionDecisionId" | "estimationWorkflowVersion" | "primaryDesignerId" | "secondaryDesignerIds">;
   participants: readonly ProjectStatusPerson[];
   estimate: ChatEstimateSource | null;
   salesOwnerIds: readonly string[];
@@ -46,7 +46,8 @@ const recordedDate = (date: string | Date | null | undefined): string | null => 
 /** Viewer-independent, read-only projection. Participant membership has already been authorized. */
 export function deriveProjectStatus(input: ProjectStatusInput): ProjectStatusSummary {
   const { project, estimate, commercial } = input;
-  const lifecycle = estimate?.estimation?.workflowVersion === 2 ? estimate.estimation : null;
+  const lifecycle = isEstimationWorkflowVersion(estimate?.estimation?.workflowVersion) ? estimate!.estimation! : null;
+  const quotation = lifecycle?.workflowVersion === 3 ? lifecycle : null;
   const approval = lifecycle?.finalApproval ?? lifecycle?.preApproval;
   const result: ProjectStatusSummary = {
     projectId: project.id, projectName: project.name, projectStatus: project.status,
@@ -61,7 +62,7 @@ export function deriveProjectStatus(input: ProjectStatusInput): ProjectStatusSum
     }).sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
   const salesCandidates = [...new Set(input.salesOwnerIds.filter(Boolean))];
   const salesIds = project.assignedEstimatorId ? [project.assignedEstimatorId] : salesCandidates.length === 1 ? salesCandidates : [];
-  const designerIds = [...project.assignedDesignerIds, project.initiatingDesignerId];
+  const designerIds = quotation ? [project.primaryDesignerId, ...(project.secondaryDesignerIds ?? [])] : [...project.assignedDesignerIds, project.initiatingDesignerId];
   const clientIds = [project.clientId];
   const add = (key: string, source: string, action: string, role: Role, ids: readonly (string | null | undefined)[], extra: Partial<Pick<ProjectPendingAction, "state" | "scheduledAt" | "deadlineAt" | "blocker">> = {}, eligibleRoles: readonly Role[] = [role]) => {
     const assigned = people(eligibleRoles, ids);
@@ -95,12 +96,27 @@ export function deriveProjectStatus(input: ProjectStatusInput): ProjectStatusSum
   if (!recordedDate(input.serverNow) || commercial.state === "conflict" ||
       (estimate?.projectId && estimate.projectId !== project.id) ||
       commercial.estimateId !== (estimate?.id ?? null) ||
-      (project.estimationWorkflowVersion === 2 && estimate && !lifecycle) ||
-      (lifecycle && project.estimationWorkflowVersion !== 2) ||
+      (isEstimationWorkflowVersion(project.estimationWorkflowVersion) && estimate && !lifecycle) ||
+      (lifecycle && project.estimationWorkflowVersion !== lifecycle.workflowVersion) ||
       (estimate && commercial.estimateVersion !== (lifecycle ? approval?.estimateVersion ?? estimate.version : commercial.state === "approved" ? Math.max(1, estimate.version - 1) : estimate.version))) return unavailable("estimate_approval");
 
-  if (project.completionAuthority === "vendor_client" && commercial.state !== "approved" &&
+  if (project.completionAuthority === "vendor_client" && commercial.state !== "approved" && !quotation?.finalApproval &&
       (input.execution?.hasApprovedOrder || input.participants.some(person => person.role === "vendor"))) return unavailable("estimate_approval");
+
+  if (quotation && !quotationApprovalIsCurrent(estimate!)) {
+    if (quotation.status === "sent_to_client") {
+      add("estimate_approval", `estimate:${estimate!.id}:quotation-review`, quotation.preApproval ? "Review and approve the Designer-revised quotation or request changes." : "Review and approve the pre-design quotation or request changes.", "client", clientIds);
+    } else if (quotation.preApproval) {
+      if (!project.primaryDesignerId) {
+        add("estimate_internal_review", `estimate:${estimate!.id}:assign-primary`, "Assign the primary Designer to revise the quotation.", "super_admin", input.participants.filter(person => person.role === "super_admin").map(person => person.id));
+      } else {
+        add("estimate_preparation", `estimate:${estimate!.id}:revise-quotation`, "Revise the quotation and submit it to the Client for post-design approval.", "designer", [project.primaryDesignerId]);
+      }
+    } else {
+      add("estimate_preparation", `estimate:${estimate!.id}:prepare-quotation`, "Prepare the pre-design quotation, approve its price, and send it to the Client.", "estimator_sales", salesIds);
+    }
+    return finish();
+  }
 
   if (commercial.state !== "approved" && commercial.state !== "pre_approved") {
     const status = estimate ? effectiveCommercialStatus(estimate) : "draft";
@@ -137,12 +153,14 @@ export function deriveProjectStatus(input: ProjectStatusInput): ProjectStatusSum
     if (!lifecycle.preApproval || !recordedDate(workflowDesignStartAt(workflow))) return unavailable("internal_kickoff");
     if (workflow.initialPaymentAt && !recordedDate(workflow.initialPaymentAt)) return unavailable("initial_payment");
     const final = lifecycle.finalApproval;
-    if (final && (invalidDesignSource || !input.design?.readyForCompletion || input.design.reviewRoundId !== final.designReviewRoundId ||
-        input.design.designPlanVersion !== final.designPlanVersion)) return unavailable("space_planning_tentative_look_feel");
+    const designApproval = quotation ? quotation.designApproval : final;
+    const designReviewRoundId = quotation ? quotation.designApproval?.reviewRoundId : final?.designReviewRoundId;
+    if (designApproval && (invalidDesignSource || !input.design?.readyForCompletion || input.design.reviewRoundId !== designReviewRoundId ||
+        input.design.designPlanVersion !== designApproval.designPlanVersion)) return unavailable("space_planning_tentative_look_feel");
     const receiptCurrent = final && workflow.initialPaymentAt && workflow.initialPaymentEstimateId === estimate.id &&
       workflow.initialPaymentEstimateVersion === final.estimateVersion && workflow.initialPaymentReviewRoundId === final.reviewRoundId &&
-      workflow.initialPaymentDesignReviewRoundId === final.designReviewRoundId;
-    if (final && !receiptCurrent) {
+      workflow.initialPaymentDesignReviewRoundId === designReviewRoundId;
+    if (final && designApproval && !receiptCurrent) {
       add("initial_payment", "initial-payment", workflow.initialPaymentAt ? "Confirm the recorded initial payment against the final approved estimate." : "Record confirmation that the initial payment was received.",
         "super_admin", input.participants.filter(person => person.role === "super_admin").map(person => person.id));
       return finish();
@@ -213,7 +231,21 @@ export function deriveProjectStatus(input: ProjectStatusInput): ProjectStatusSum
     else add(current, "measurement:complete", "Complete the site measurement and upload the site photos or videos.", "designer", project.assignedDesignerIds.includes(measurement.assignedDesignerId) ? [measurement.assignedDesignerId] : []);
   } else if (current === "existing_furniture_dimensions") {
     if (input.issues?.furniture) return unavailable(current);
-    if (!furniture.rooms || furniture.scopeReturn) {
+    if (quotation) {
+      const request = furniture.clientFurnitureRequest;
+      if (!request) add(current, "furniture:request", "Request existing-furniture information from the Client.", "designer", [project.primaryDesignerId]);
+      else if (request.hasFurniture === null || furniture.scopeReturn) add(current, "furniture:choice", furniture.scopeReturn ? "Review and resubmit the existing-furniture information." : "Confirm whether existing furniture needs to be retained and choose assistance if needed.", "client", clientIds);
+      else if (request.hasFurniture === false) return unavailable(current);
+      else {
+        for (const room of (furniture.rooms ?? []).filter(room => room.required)) {
+          if (workflowFurnitureRoomReady(furniture, room)) continue;
+          if (room.dimensions?.status === "pending") add(current, `furniture:${room.id}:review`, "Review the submitted furniture dimensions.", "client", clientIds);
+          else if (!room.dimensions || room.dimensions.status === "changes_requested") add(current, `furniture:${room.id}:submit`, "Provide or resubmit the existing-furniture dimensions.", request.needsAssistance ? "designer" : "client", request.needsAssistance ? designerIds : clientIds);
+          else return unavailable(current);
+        }
+        if (!result.pendingActions.length) return unavailable(current);
+      }
+    } else if (!furniture.rooms || furniture.scopeReturn) {
       add(current, "furniture:prepare", furniture.scopeReturn ? "Revise and resubmit the existing-furniture requirements and dimensions." : "Declare existing-furniture requirements and submit the dimensions.", "designer", designerIds);
     } else if (!furniture.acceptedAt) {
       add(current, "furniture:requirements-review", furniture.requirementsSubmissionEventId ? "Review the existing-furniture requirements and dimensions." : "Review and accept the existing-furniture requirements.", "client", clientIds);
@@ -270,7 +302,7 @@ export function deriveProjectStatus(input: ProjectStatusInput): ProjectStatusSum
     } else if (!design?.readyForCompletion || planning.spacePlanningApproval?.estimateId !== estimate.id || planning.spacePlanningApproval.designPlanVersion !== design.designPlanVersion || planning.spacePlanningApproval.reviewRoundId !== design.reviewRoundId) return unavailable("space_planning_tentative_look_feel");
   }
 
-  if (lifecycle && !lifecycle.finalApproval) {
+  if (lifecycle?.workflowVersion === 2 && !lifecycle.finalApproval) {
     if (estimate.designPlanStatus === "approved" && input.design?.readyForCompletion) {
       if (lifecycle.approvedDesignScopeRevision !== lifecycle.designScopeRevision) {
         add("space_planning_tentative_look_feel", `estimate:${estimate.id}:reconcile-design`, "Reconcile the Design plan with the revised estimate scope and obtain approval again.", "designer", [estimate.designPlanDesignerId]);

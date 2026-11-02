@@ -4,9 +4,15 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
 import { LeadEstimateWorkspace } from "./LeadEstimateWorkspace";
-import type { ConfiguredEstimateLine, EstimateDraft, EstimateDraftInput } from "./leadsApi";
+import { leadKeys, type ConfiguredEstimateLine, type EstimateDraft, type EstimateDraftInput } from "./leadsApi";
 import { estimationCatalogueKeys } from "./estimationCatalogueApi";
 import type { EstimationCatalogueMainLine } from "./estimationCatalogueApi";
+vi.mock("../../auth/AuthProvider", () => ({ useAuth: () => ({ user: { id: "test-estimator" }, reviewSession: { id: "test-session" }, status: "authenticated" }) }));
+vi.mock("./estimateRevisionsApi", async importOriginal => ({
+  ...await importOriginal<typeof import("./estimateRevisionsApi")>(),
+  getEstimateRevisions: vi.fn(async () => ({ items: [], pagination: { limit: 20, nextCursor: null } }))
+}));
+
 
 vi.mock("../messages", () => ({ ProjectChatNavigation: () => null }));
 function fixture(withDimensions = false) {
@@ -45,10 +51,22 @@ function fixture(withDimensions = false) {
     const rendered = render(<QueryClientProvider client={client}><MemoryRouter initialEntries={["/estimator-sales/leads/lead/estimate"]}><Routes><Route path="/estimator-sales/leads/:leadId/estimate" element={<LeadEstimateWorkspace />} /></Routes></MemoryRouter></QueryClientProvider>);
     return { ...rendered, client };
   };
-  return { mount, saves, source, stored: () => stored, pauseSave(promise: Promise<void>) { gate = promise; } };
+  return { mount, saves, source, stored: () => stored, updateStored(next: EstimateDraft) { stored = next; }, pauseSave(promise: Promise<void>) { gate = promise; } };
 }
 
 describe("Sales estimate tier persistence", () => {
+  it("refreshes untouched configured selections and rates after another session saves", async () => {
+    const data = fixture(); const view = data.mount();
+    await screen.findByRole("radio", { name: /Premium tier for/ });
+    await waitFor(() => expect(screen.getByRole("radio", { name: /Premium tier for/ })).toBeEnabled());
+    expect(screen.getByRole("textbox", { name: /Selling rate/ })).toHaveValue("99");
+    data.updateStored({ ...data.stored(), version: 8, lineItems: data.stored().lineItems.map(line => ({ ...line, modeTier: "premium" as const, rateSource: "configuration" as const, ratePaise: 2500, rate: 25 })) });
+    await act(async () => { await view.client.refetchQueries({ queryKey: leadKeys.estimate("lead") }); });
+    await waitFor(() => expect(screen.getByRole("radio", { name: /Premium tier for/ })).toBeChecked());
+    expect(screen.getByRole("textbox", { name: /Selling rate/ })).toHaveValue("25");
+    expect(screen.queryByText(/Your local edits are preserved/)).not.toBeInTheDocument();
+  });
+
   it("saves and reloads the selected tier with configured rates and exact estimate/source versions", async () => {
     const user = userEvent.setup(); const data = fixture(); const view = data.mount();
     await screen.findByRole("radio", { name: /Premium tier for/ });
