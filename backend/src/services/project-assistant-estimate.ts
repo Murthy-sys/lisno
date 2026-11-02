@@ -1,5 +1,7 @@
+import { createClientQuotationProjectionService } from "./client-quotation-projection.service.js";
 import { estimateComponentLineAmountIsValid } from "../domain/estimate-component-pricing.js";
 import { estimateDimensionSnapshotValid } from "../domain/estimate-dimension-snapshot.js";
+import type { EstimateClientReviewSnapshot } from "../domain/estimate-client-review.js";
 import type { AssistantProjectEstimate, AssistantProjectPricing } from "../contracts/project-chat-assistant.js";
 import { currentEstimationApproval, isCollaborativeEstimate } from "../domain/estimation-lifecycle.js";
 import { ApiError } from "../middleware/errors.js";
@@ -7,7 +9,7 @@ import { EstimateModel } from "../models/Estimate.js";
 import { EstimateClientReviewRoundModel } from "../models/EstimateClientReviewRound.js";
 import type { ChatTransaction } from "../repositories/project-chat.js";
 import { toPublicUser } from "./auth.service.js";
-import { presentClientEstimate } from "./estimate-client-presentation.js";
+import { presentClientEstimateWithVisibility } from "./estimate-client-presentation.js";
 import { financeApprovalLineage } from "./project-finance.service.js";
 import { sourceWitness, type AssistantContext } from "./project-assistant-context.js";
 
@@ -24,7 +26,7 @@ function amount(exact: unknown, rupees: unknown): number | null {
 }
 
 /** Validate the full immutable quotation before projecting its screen-visible lines. */
-export function projectPricingFromPublication(input: { estimateId: string; projectId: string; round: Row; snapshot: Row; approved: boolean }): AssistantProjectPricing | null {
+export function projectPricingFromPublication(input: { estimateId: string; projectId: string; round: Row; snapshot: Row; approved: boolean; visibleMainLineIds?: ReadonlySet<string> }): AssistantProjectPricing | null {
   const { round, snapshot } = input;
   const publishedAt = date(round.createdAt);
   const totals = [amount(snapshot.subtotalPaise, snapshot.subtotal), amount(snapshot.gstPaise, snapshot.gst), amount(snapshot.totalPaise, snapshot.total)];
@@ -49,7 +51,7 @@ export function projectPricingFromPublication(input: { estimateId: string; proje
     const id = typeof line.id === "string" && line.id ? line.id : `published-line-${index + 1}`;
     if (id.length > 200 || /[\u0000-\u001f\u007f]/u.test(id) || ids.has(id)) return null;
     ids.add(id);
-    if (line.clientVisible !== false) {
+    if (line.clientVisible !== false && (line.source !== "configuration" || input.visibleMainLineIds === undefined || input.visibleMainLineIds.has(line.mainLineId))) {
       visibleCount++;
       if (lines.length < 100) lines.push({ id, label, quantity: String(line.quantity), unit: line.unit, ratePaise, amountPaise });
     }
@@ -75,7 +77,7 @@ export async function readAssistantProjectEstimate(context: AssistantContext, in
   if (!estimate || !lead || (estimate.projectId && estimate.projectId !== projectId) || (lead.projectId && lead.projectId !== projectId) || estimate.leadId !== lead.id) return finish(null, "source_conflict", { estimate, lead });
   const rounds = await EstimateClientReviewRoundModel.find({ estimateId: selected.id }).limit(501).session(tx.session).lean().exec() as Row[];
   const evidence = await tx.app.findProjectStatusEstimateEvidence(projectId);
-  const witness = { estimate, lead, rounds, evidence };
+  const witness = { estimate, lead, rounds, evidence, visibleMainLineIds: null as string[] | null };
   if (rounds.length > 500 || evidence.projectId !== projectId) return finish(null, "source_conflict", witness);
   const reference = currentEstimationApproval(estimate);
   const approvedRounds = rounds.filter(row => row.status === "approved" && row.decision === "approve");
@@ -91,8 +93,13 @@ export async function readAssistantProjectEstimate(context: AssistantContext, in
     round = ordered[0];
   }
   if (!round) return finish(null, "not_published", witness);
-  const presented = presentClientEstimate(toPublicUser(context.user), estimate, { ...lead, _id: lead.id }, round, context.sources.project);
+  const presented = await presentClientEstimateWithVisibility(createClientQuotationProjectionService(), toPublicUser(context.user), estimate, { ...lead, _id: lead.id }, round, context.sources.project, undefined, tx.session);
   if (!presented?.publishedReview || presented.reviewSourceIssue !== null || presented.projectId !== projectId) return finish(null, "source_conflict", witness);
+  const clientSnapshot = presented.publishedReview.snapshot as EstimateClientReviewSnapshot;
+  const visibleMainLineIds = new Set<string>(clientSnapshot.lineItems
+    .filter(line => line.source === "configuration" && line.mainLineId)
+    .map(line => line.mainLineId!));
+  witness.visibleMainLineIds = [...visibleMainLineIds].sort();
   const approved = round.status === "approved";
   let baseline: ReturnType<typeof financeApprovalLineage>["baseline"] | null = null;
   if (approved) {
@@ -112,7 +119,7 @@ export async function readAssistantProjectEstimate(context: AssistantContext, in
   }
   // Authorization and source validation above still use the Client presentation.
   // Reconcile all approved amounts before omitting screen-hidden row details.
-  const report = projectPricingFromPublication({ estimateId: selected.id, projectId, round, snapshot: round.estimateSnapshot, approved });
+  const report = projectPricingFromPublication({ estimateId: selected.id, projectId, round, snapshot: round.estimateSnapshot, approved, visibleMainLineIds });
   if (report && baseline && (report.subtotalPaise !== baseline.approvedSubtotalPaise || report.gstPaise !== baseline.approvedGstPaise || report.totalPaise !== baseline.approvedContractTotalPaise)) return finish(null, "source_conflict", witness);
   return finish(report, report ? null : "incomplete", witness);
 }

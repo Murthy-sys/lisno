@@ -101,7 +101,7 @@ export function estimateIdentityEqual(a: PMRow | null | undefined, b: PMRow | nu
 export function preparationMatchesPMSource(preparation: PMRow | null | undefined, source: PMApprovedSourceRef): boolean {
   return !!preparation && source.phase !== "legacy" && estimateIdentityEqual(preparation, source) &&
     preparation.phase === source.phase && preparation.sourceSnapshotId === source.sourceSnapshotId &&
-    preparation.sourceDigest === source.sourceDigest && preparation.workflowVersion === 2 &&
+    preparation.sourceDigest === source.sourceDigest && [2, 3].includes(preparation.workflowVersion) &&
     preparation.kind === (source.phase === "pre" ? "approved_pre" : "approved_final");
 }
 export function revisionMatchesPMSource(revision: PMRow, source: PMApprovedSourceRef): boolean {

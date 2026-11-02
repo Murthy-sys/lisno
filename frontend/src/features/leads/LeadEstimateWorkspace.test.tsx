@@ -3,6 +3,12 @@ import { QueryClient, useQueryClient } from "@tanstack/react-query";
 import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
+vi.mock("../../auth/AuthProvider", () => ({ useAuth: () => ({ user: { id: "test-estimator" }, reviewSession: { id: "test-session" }, status: "authenticated" }) }));
+vi.mock("./estimateRevisionsApi", async importOriginal => ({
+  ...await importOriginal<typeof import("./estimateRevisionsApi")>(),
+  getEstimateRevisions: vi.fn(async () => ({ items: [], pagination: { limit: 20, nextCursor: null } }))
+}));
+
 
 import type { EstimateClientReviewSummary } from "../../api/types";
 import { renderWithQuery } from "../../test/render";
@@ -17,6 +23,7 @@ const response = (data: unknown) => Response.json({ data });
 type DeliveryStatus = EstimateClientReviewSummary["deliveryStatus"];
 
 interface EstimateFixture {
+  projectNumber?: string | null;
   id: string;
   propertyType: string;
   rooms: Array<Record<string, unknown>>;
@@ -118,6 +125,7 @@ function deferred<T>() {
 interface WorkspaceHarnessOptions {
   initialEstimate: EstimateFixture;
   refetchedEstimate: EstimateFixture;
+  savedEstimate?: EstimateFixture;
   publication?: {
     endpoint: "submit" | "send";
     result: EstimateFixture;
@@ -154,7 +162,7 @@ function installWorkspaceHarness(options: WorkspaceHarnessOptions) {
     if (url.endsWith("/leads/lead-1/estimate") && method === "PUT") {
       counts.saves += 1;
       if (options.failure === "save") return Response.json({ error: { code: "CONFLICT", message: "Save failed." } }, { status: 409 });
-      return response(options.initialEstimate);
+      return response(options.savedEstimate ?? options.initialEstimate);
     }
     if (url.endsWith("/leads/lead-1/estimate/submit") && method === "POST") {
       counts.submits += 1;
@@ -196,9 +204,16 @@ function installWorkspaceHarness(options: WorkspaceHarnessOptions) {
   };
 }
 
+function CaptureQueryClient({ capture }: { capture: (client: QueryClient) => void }) {
+  capture(useQueryClient());
+  return null;
+}
+
 function renderWorkspace(extra?: React.ReactNode) {
-  return renderWithQuery(
+  let queryClient!: QueryClient;
+  const view = renderWithQuery(
     <MemoryRouter initialEntries={["/estimator-sales/leads/lead-1/estimate"]}>
+      <CaptureQueryClient capture={(client) => { queryClient = client; }} />
       {extra}
       <Routes>
         <Route
@@ -208,6 +223,7 @@ function renderWorkspace(extra?: React.ReactNode) {
       </Routes>
     </MemoryRouter>
   );
+  return { ...view, queryClient };
 }
 
 function RefetchSavedEstimate() {
@@ -216,6 +232,123 @@ function RefetchSavedEstimate() {
 }
 
 describe("LeadEstimateWorkspace", () => {
+  it.each([false, true])("refreshes the committed project number when submission fails: %s", async (submit) => {
+    const unnumbered = estimateFixture("draft");
+    const numbered = { ...unnumbered, projectNumber: "Lisno000021" };
+    const harness = installWorkspaceHarness({ initialEstimate: unnumbered, refetchedEstimate: numbered, savedEstimate: numbered, failure: "submit" });
+    const { queryClient } = renderWorkspace();
+    const invalidations = vi.spyOn(queryClient, "invalidateQueries");
+    queryClient.setQueryData(leadKeys.detail("lead-other"), { id: "lead-other", projectNumber: "Lisno000087" });
+    const searchedPage = leadKeys.page("estimate", "all");
+    queryClient.setQueryData(searchedPage, { items: [], pagination: { total: 0 } });
+    expect(queryClient.getQueryState(searchedPage)?.isInvalidated).toBe(false);
+    await screen.findByRole("button", { name: "Save draft" });
+    expect(screen.queryByText("Project number not assigned")).not.toBeInTheDocument();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: submit ? "Submit estimate" : "Save draft" }));
+    await waitFor(() => expect(queryClient.getQueryData(leadKeys.estimate("lead-1"))).toMatchObject({ projectNumber: "Lisno000021" }));
+    if (submit) expect(await screen.findByText("Submit failed.")).toBeVisible();
+    expect(harness.counts.saves).toBe(1);
+    expect(queryClient.getQueryData(leadKeys.estimate("lead-1"))).toMatchObject({ projectNumber: "Lisno000021" });
+    expect(queryClient.getQueryState(searchedPage)?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(leadKeys.estimate("lead-1"))?.isInvalidated).toBe(false);
+    expect(harness.counts.estimateGets).toBe(1);
+    expect(queryClient.getQueryData(leadKeys.detail("lead-other"))).toMatchObject({ projectNumber: "Lisno000087" });
+    for (const key of [["leads"], ["admin-projects"], ["projects"], ["assigned-projects"], ["super-admin-dashboard"]]) {
+      expect(invalidations).toHaveBeenCalledWith(expect.objectContaining({ queryKey: key }));
+    }
+    const payload = JSON.parse(String(harness.requests.find(request => request.method === "PUT")?.body));
+    expect(payload).not.toHaveProperty("projectNumber");
+  });
+
+  it("does not invent a number on failed save and shows the committed value after retry", async () => {
+    const unnumbered = estimateFixture("draft");
+    const numbered = { ...unnumbered, projectNumber: "Lisno1000000" };
+    const options: WorkspaceHarnessOptions = { initialEstimate: unnumbered, refetchedEstimate: numbered, savedEstimate: numbered, failure: "save" };
+    installWorkspaceHarness(options);
+    const { queryClient } = renderWorkspace();
+    await screen.findByRole("button", { name: "Save draft" });
+    expect(screen.queryByText("Project number not assigned")).not.toBeInTheDocument();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Save draft" }));
+    expect(await screen.findByText("Save failed.")).toBeVisible();
+    expect(screen.queryByText("Project number not assigned")).not.toBeInTheDocument();
+    expect(screen.queryByText("Project number: Lisno1000000")).not.toBeInTheDocument();
+    options.failure = undefined;
+    await user.click(screen.getByRole("button", { name: "Save draft" }));
+    await waitFor(() => expect(queryClient.getQueryData(leadKeys.estimate("lead-1"))).toMatchObject({ projectNumber: "Lisno1000000" }));
+    await user.click(screen.getByRole("button", { name: "Back to Asha Shah" }));
+    expect(screen.getByText("Project number: Lisno1000000")).toBeVisible();
+  });
+
+  it("retains the saved number when publication and older read responses omit it", async () => {
+    const unnumbered = estimateFixture("draft");
+    const numbered = { ...unnumbered, projectNumber: "Lisno000032" };
+    const published = estimateFixture("sent_to_client");
+    const harness = installWorkspaceHarness({ initialEstimate: unnumbered, refetchedEstimate: unnumbered, savedEstimate: numbered,
+      publication: { endpoint: "submit", result: published } });
+    const { queryClient } = renderWorkspace(<RefetchSavedEstimate />);
+    await screen.findByRole("button", { name: "Save draft" });
+    expect(screen.queryByText("Project number not assigned")).not.toBeInTheDocument();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Submit estimate" }));
+    await waitFor(() => expect(harness.counts.estimateGets).toBeGreaterThan(1));
+    expect(queryClient.getQueryData(leadKeys.estimate("lead-1"))).toMatchObject({ projectNumber: "Lisno000032" });
+    await user.click(screen.getByRole("button", { name: "Refetch saved estimate" }));
+    await waitFor(() => expect(harness.counts.estimateGets).toBeGreaterThan(2));
+    expect(queryClient.getQueryData(leadKeys.estimate("lead-1"))).toMatchObject({ projectNumber: "Lisno000032" });
+    expect(screen.queryByText("Project number: Lisno000032")).not.toBeInTheDocument();
+  });
+
+  it("shows the current submit failure after a previously failed draft save succeeds", async () => {
+    const unnumbered = estimateFixture("draft");
+    const numbered = { ...unnumbered, projectNumber: "Lisno000002" };
+    const options: WorkspaceHarnessOptions = { initialEstimate: unnumbered, refetchedEstimate: numbered, savedEstimate: numbered, failure: "save" };
+    const harness = installWorkspaceHarness(options);
+    const { queryClient } = renderWorkspace();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Save draft" }));
+    expect(await screen.findByText("Save failed.")).toBeVisible();
+    expect(screen.queryByText("Project number not assigned")).not.toBeInTheDocument();
+    options.failure = "submit";
+    await user.click(screen.getByRole("button", { name: "Submit estimate" }));
+    expect(await screen.findByText("Submit failed.")).toBeVisible();
+    expect(screen.queryByText("Save failed.")).not.toBeInTheDocument();
+    expect(queryClient.getQueryData(leadKeys.estimate("lead-1"))).toMatchObject({ projectNumber: "Lisno000002" });
+    expect(harness.counts.saves).toBe(2);
+    expect(harness.counts.submits).toBe(1);
+  });
+
+  it("keeps a late draft-save number on the submitted lead after navigation", async () => {
+    const pendingSave = deferred<Response>();
+    const original = estimateFixture("draft");
+    const other = { ...original, id: "estimate-other", projectNumber: "Lisno000087" };
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith("/leads/lead-1/estimate") && init?.method === "PUT") return pendingSave.promise;
+      if (url.endsWith("/leads/lead-1/estimate")) return response(original);
+      if (url.endsWith("/leads/lead-other/estimate")) return response(other);
+      if (url.endsWith("/leads/lead-1")) return response(leadFixture);
+      if (url.endsWith("/leads/lead-other")) return response({ ...leadFixture, id: "lead-other", clientName: "Cedar", projectName: "Cedar Loft", projectNumber: other.projectNumber });
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    let queryClient!: QueryClient;
+    renderWithQuery(<MemoryRouter initialEntries={["/estimator-sales/leads/lead-1/estimate"]}>
+      <CaptureQueryClient capture={(client) => { queryClient = client; }} />
+      <Link to="/estimator-sales/leads/lead-other/estimate">Next lead</Link>
+      <Routes><Route path="/estimator-sales/leads/:leadId/estimate" element={<LeadEstimateWorkspace />} /></Routes>
+    </MemoryRouter>);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Save draft" }));
+    await user.click(screen.getByRole("link", { name: "Next lead" }));
+    await screen.findByRole("button", { name: "Back to Cedar" });
+    pendingSave.resolve(response({ ...original, projectNumber: "Lisno000021" }));
+    await waitFor(() => expect(queryClient.getQueryData(leadKeys.estimate("lead-1"))).toMatchObject({ projectNumber: "Lisno000021" }));
+    expect(queryClient.getQueryData(leadKeys.estimate("lead-other"))).toMatchObject({ projectNumber: "Lisno000087" });
+    expect(screen.getByRole("button", { name: "Back to Cedar" })).toBeVisible();
+    expect(screen.queryByText("Project number: Lisno000021")).not.toBeInTheDocument();
+  });
+
   it("keeps photo-card controls usable after image failure, omits descriptions and counts, and preserves independent keyboard toggles and disclosures", async () => {
     const basketName = "Functional Lights Supply and Installation";
     const description = "Prepare surfaces and apply the specified finishes.\nProtect adjoining furniture during execution.";
@@ -534,7 +667,7 @@ describe("LeadEstimateWorkspace", () => {
         const amountPaise = ratePaise === null ? null : Math.round(ratePaise * (line.quantity as number));
         const subtotalPaise = amountPaise ?? 0;
         savedEstimate = {
-          id: "estimate-configured", version: savedVersion, ...payload,
+          id: "estimate-configured", version: savedVersion, ...payload, projectNumber: "Lisno000001",
           lineItems: [{ ...line, id: "estimate-line-stable", mainBasketName: "Joinery", subBasketName: "Wardrobes", mainLineName: "Wardrobe carcass", uomName: "sq ft", uomCode: "SQFT", uomDecimalScale: 2, unit: "sq ft", specification: null, rate: ratePaise === null ? null : ratePaise / 100, amount: amountPaise === null ? null : amountPaise / 100, amountPaise }],
           subtotalPaise, gstPaise: Math.round(subtotalPaise * .18), totalPaise: subtotalPaise + Math.round(subtotalPaise * .18),
           subtotal: subtotalPaise / 100, gst: Math.round(subtotalPaise * .18) / 100, total: (subtotalPaise + Math.round(subtotalPaise * .18)) / 100,
@@ -551,6 +684,8 @@ describe("LeadEstimateWorkspace", () => {
     renderWorkspace();
 
     expect(await screen.findByRole("heading", { name: "Main Baskets" })).toBeVisible();
+    const configureHeader = screen.getByRole("heading", { name: "Configure estimate" }).closest("header")!;
+    expect(configureHeader).not.toContainElement(screen.getByRole("link", { name: "Back to Asha Shah" }));
     await user.click(screen.getByRole("button", { name: "Select rooms" }));
     await user.click(screen.getByRole("option", { name: "Living & Dining" }));
     await user.click(screen.getByRole("button", { name: "Done" }));
@@ -562,10 +697,26 @@ describe("LeadEstimateWorkspace", () => {
     expect(screen.getByRole("region", { name: "Wardrobes" })).toBeVisible();
     expect(screen.getByRole("textbox", { name: /Selling rate.*Wardrobe carcass/ })).toHaveAccessibleName(/sq ft/);
     expect(screen.queryByText("False ceiling")).not.toBeInTheDocument();
+    const builderHeader = screen.getByRole("button", { name: "Back to Asha Shah" }).parentElement!;
+    expect(within(builderHeader).getByRole("button", { name: "Back to Asha Shah" })).toBeEnabled();
+    expect(screen.getAllByRole("button", { name: "Back to Asha Shah" })).toHaveLength(1);
+    expect(screen.queryByText("Project number not assigned")).not.toBeInTheDocument();
+    expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
     await user.click(screen.getByRole("checkbox", { name: /Wardrobe carcass/ }));
     await user.click(screen.getByRole("radio", { name: /Special item type for Joinery, Wardrobes, Wardrobe carcass in Living & Dining/ }));
     expect(screen.getByRole("radio", { name: /Special item type for Joinery, Wardrobes, Wardrobe carcass in Living & Dining/ })).toBeChecked();
+    for (const view of ["Summary", "Proposal"]) {
+      await user.click(screen.getByRole("button", { name: view }));
+      const header = screen.getByRole("button", { name: "Back to Asha Shah" }).parentElement!;
+      expect(header).toContainElement(screen.getByRole("navigation", { name: "Estimate views" }));
+      expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
+      expect(screen.queryByText("Project number not assigned")).not.toBeInTheDocument();
+    }
+    await user.click(screen.getByRole("button", { name: "Estimate Builder" }));
+    expect(screen.getByRole("radio", { name: /Special item type for Joinery, Wardrobes, Wardrobe carcass in Living & Dining/ })).toBeChecked();
+    expect(screen.getByRole("button", { name: "Back to Asha Shah" })).toBeEnabled();
     await user.click(screen.getByRole("button", { name: "Back to Asha Shah" }));
+    expect(screen.getByRole("heading", { name: "Configure estimate" }).closest("header")).not.toContainElement(screen.getByRole("link", { name: "Back to Asha Shah" }));
     expect(screen.queryByRole("radio", { name: /item type for Main Basket/ })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Continue to item selection" }));
     expect(screen.getByRole("radio", { name: /Special item type for Joinery, Wardrobes, Wardrobe carcass in Living & Dining/ })).toBeChecked();
@@ -585,6 +736,10 @@ describe("LeadEstimateWorkspace", () => {
     expect(saves[0]!.selectedMainBasketIds).toEqual(["basket-joinery"]);
     expect(saves[0]!.selectedMainBasketClassifications).toEqual([{ mainBasketId: "basket-joinery", classification: "standard" }]);
     expect(await screen.findByText("Estimate draft saved.")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Back to Asha Shah" }));
+    expect(screen.getByText("Project number: Lisno000001")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Return to saved items" }));
+    expect(saves[0]).not.toHaveProperty("projectNumber");
     expect(estimateGets).toBe(1);
 
     const quantity = await screen.findByRole("spinbutton", { name: /Quantity.*Wardrobe carcass/ });
@@ -755,7 +910,7 @@ describe("LeadEstimateWorkspace", () => {
     await user.click(screen.getByRole("button", { name: /Living & Dining.*₹0/ }));
     await user.click(within(row()).getByRole("checkbox"));
     await user.click(within(cove()).getByRole("checkbox"));
-    expect(screen.getByText("₹350.68 total")).toBeVisible();
+    expect(screen.getByText("₹297.19 total")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Save draft" }));
     await screen.findByText("Estimate draft saved.");
     expect(saves[0]!.lineItems).toHaveLength(2);
@@ -854,18 +1009,18 @@ describe("LeadEstimateWorkspace", () => {
     await user.click(screen.getByRole("button", { name: "Refresh available items" }));
     await waitFor(() => expect(catalogueReads).toBe(2));
     expect(price).toHaveValue("120.25");
-    expect(screen.getByText("₹141.9 total")).toBeVisible();
+    expect(screen.getByText("₹120.25 total")).toBeVisible();
     saveGate.resolve();
     await waitFor(() => expect(posts).toBe(1));
     expect(screen.getByRole("textbox", { name: /Selling rate/ })).toBeDisabled();
     expect(screen.getByRole("textbox", { name: /Selling rate/ })).toHaveValue("120.25");
     expect(screen.queryByRole("radio", { name: /pricing mode/ })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Summary" }));
-    expect(screen.getByText("₹141.9 total")).toBeVisible();
+    expect(screen.getByText("₹120.25 total")).toBeVisible();
     publishGate.resolve();
     await screen.findByText(/Submitted to the client portal/);
     expect(screen.getByRole("heading", { name: "Estimate summary" })).toBeVisible();
-    expect(screen.getByText("₹141.9 total")).toBeVisible();
+    expect(screen.getByText("₹120.25 total")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Estimate Builder" }));
     expect(screen.getByText("Published POP false ceiling")).toBeVisible();
     expect(screen.getByText("PMC")).toBeVisible();
@@ -972,11 +1127,11 @@ describe("LeadEstimateWorkspace", () => {
     expect(persisted[1]).toMatchObject({ classification: "special", pricingMode: "in_house", rateSource: "manual", ratePaise: 17183, revisionId: "revision-pop-2" });
     await waitFor(() => expect(screen.getByRole("button", { name: "Save draft" })).toBeEnabled());
     await user.click(screen.getByRole("button", { name: "Summary" }));
-    expect(screen.getByText("₹737.98 total")).toBeVisible();
+    expect(screen.getByText("₹625.41 total")).toBeVisible();
     expect(screen.getByText("₹281.75")).toBeVisible();
     expect(screen.getByText("₹343.66")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Proposal" }));
-    expect(screen.getByText("₹737.98 total")).toBeVisible();
+    expect(screen.getByText("₹625.41 total")).toBeVisible();
     expect(screen.getByText(/₹225.4 per sq ft/)).toBeVisible();
     expect(screen.getByText(/₹171.83 per sq ft/)).toBeVisible();
     view.unmount();
@@ -1044,7 +1199,7 @@ describe("LeadEstimateWorkspace", () => {
 
     await user.click(within(popRow).getByRole("checkbox", { name: /POP false ceiling/ }));
     expect(screen.getByRole("button", { name: /Collapse POP \/ Gypsum, subtotal ₹6,000/ })).toBeVisible();
-    expect(screen.getByText("₹7,080 total")).toBeVisible();
+    expect(screen.getByText("₹6,000 total")).toBeVisible();
     expect(screen.getByRole("button", { name: "Save draft" })).toBeEnabled();
     await user.clear(popRate);
     await user.type(popRate, "1000000000000");
@@ -1082,7 +1237,7 @@ describe("LeadEstimateWorkspace", () => {
     expect(screen.getByText("₹0 total")).toBeVisible();
     await user.click(within(coveRow).getByRole("checkbox", { name: /Cove in Gypsum/ }));
     expect(screen.getByRole("button", { name: /Collapse POP \/ Gypsum, subtotal ₹38.25/ })).toBeVisible();
-    expect(screen.getByText("₹45.14 total")).toBeVisible();
+    expect(screen.getByText("₹38.25 total")).toBeVisible();
     const roomNavigation = screen.getByRole("navigation", { name: "Rooms" });
     expect(within(roomNavigation).getByRole("button", { name: /Living & Dining.*₹0/ })).toBeVisible();
     expect(within(roomNavigation).getByRole("button", { name: /Bedroom 1.*₹38.25/ })).toBeVisible();
@@ -1706,8 +1861,8 @@ describe("LeadEstimateWorkspace", () => {
     );
     expect(await screen.findByText(clientFeedback.note)).toBeVisible();
     await user.click(screen.getByRole("link", { name: "Open Neel villa" }));
-    await screen.findByText("Neel villa · Pune");
-    expect(await screen.findByText("₹70,800")).toBeVisible();
+    await screen.findByRole("button", { name: "Back to Neel Roy" });
+    expect(await screen.findByLabelText("Estimate amount before GST: ₹60,000")).toBeVisible();
     expect(screen.queryByRole("region", { name: "Changes requested" })).not.toBeInTheDocument();
     expect(screen.queryByText(clientFeedback.note)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Submit estimate" })).not.toBeInTheDocument();
@@ -1742,12 +1897,12 @@ describe("LeadEstimateWorkspace", () => {
     );
     await user.click(await screen.findByRole("button", { name: "Submit estimate" }));
     await user.click(screen.getByRole("link", { name: "Open Neel villa" }));
-    await screen.findByText("Neel villa · Pune");
+    await screen.findByRole("button", { name: "Back to Neel Roy" });
     publishedFirst = true;
     pendingSubmission.resolve(response(published));
     await waitFor(() => expect(screen.getByRole("button", { name: "Submit estimate" })).toBeEnabled());
     expect(screen.getByText(second.clientFeedback.note)).toBeVisible();
-    expect(screen.getByText("₹70,800")).toBeVisible();
+    expect(screen.getByLabelText("Estimate amount before GST: ₹60,000")).toBeVisible();
     expect(screen.queryByText(/Submitted to the client portal for approval/)).not.toBeInTheDocument();
   });
 
@@ -2079,7 +2234,7 @@ describe("property-aware estimate setup", () => {
     const harness = installSetupHarness(initial);
     const user = userEvent.setup();
     renderWorkspace();
-    await screen.findByRole("heading", { name: "Select estimate items" });
+    await screen.findByRole("heading", { name: "Estimate workspace" });
     await user.click(screen.getByRole("button", { name: "Back to Asha Shah" }));
     fireEvent.change(screen.getByRole("spinbutton", { name: "Number of bedrooms" }), { target: { value: "1" } });
     await chooseProperty(user, "1BHK");
@@ -2136,7 +2291,7 @@ describe("property-aware estimate setup", () => {
     installSetupHarness({ ...legacySetup(), propertyType: "Penthouse", status: "client_approved" });
     const user = userEvent.setup();
     renderWorkspace();
-    await screen.findByRole("heading", { name: "Select estimate items" });
+    await screen.findByRole("heading", { name: "Estimate workspace" });
     expect(screen.queryByRole("button", { name: "Configure bedrooms" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Save draft" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Back to Asha Shah" }));

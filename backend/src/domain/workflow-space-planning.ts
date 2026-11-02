@@ -11,6 +11,8 @@ export interface WorkflowDesignPlanData {
   frozenAt: string | null;
   rounds: Array<{
     id: string; estimateId: string; projectId: string; designPlanVersion: number;
+    designScopeRevision?: number;
+    estimateReviewRoundId?: string;
     status: string; decision: string | null; decisionSource: string | null;
     decidedById: string | null; decidedByRole: string | null; decidedAt: string | null;
     submittedRevisionIds: string[];

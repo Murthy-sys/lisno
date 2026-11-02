@@ -1178,7 +1178,7 @@ describe("Mongo repository contracts", () => {
       { clientId: "user-client-aurora" },
       {
         $or: [
-          { initiatingDesignerId: "user-designer-ananya" },
+          { initiatingDesignerId: "user-designer-ananya", estimationWorkflowVersion: { $ne: 3 } },
           { assignedDesignerIds: "user-designer-ananya" }
         ]
       },
@@ -1382,6 +1382,7 @@ describe("Mongo repository contracts", () => {
     );
     const leadDocument = {
       _id: "lead-admin-page",
+      projectNumber: "Lisno000456",
       projectId: "project-admin-page",
       ownerId: "estimator-page",
       clientName: "Asha Shah",
@@ -1464,6 +1465,7 @@ describe("Mongo repository contracts", () => {
           name: "Asha Estimator",
           email: "estimator@example.com"
         },
+        projectNumber: "Lisno000456",
         lead: expect.objectContaining({ id: "lead-admin-page" }),
         estimate: {
           id: "estimate-admin-page",
@@ -1614,7 +1616,7 @@ describe("Mongo repository contracts", () => {
     const pattern = /\[a\+b\]/i;
     const scopeAndSearch = { $and: [
       { $or: [
-        { initiatingDesignerId: actor.id }, { assignedDesignerIds: actor.id }
+        { initiatingDesignerId: actor.id, estimationWorkflowVersion: { $ne: 3 } }, { assignedDesignerIds: actor.id }
       ] },
       { $or: [{ name: pattern }, { clientName: pattern }, { location: pattern }] }
     ] };
@@ -3248,5 +3250,34 @@ describe("Mongo repository contracts", () => {
       clientEmailNormalized: "reserved@example.test"
     });
     expect(existsQuery.session).toHaveBeenCalledWith(session);
+  });
+});
+
+
+describe("Mongo project number read projections", () => {
+  it("maps each Lead number and historical absence without issuing a new number", async () => {
+    const at = "2026-11-02T10:00:00.000Z";
+    const template = { ownerId: "sales", clientName: "Synthetic client", clientEmail: "number@example.test", clientMobile: "0000000000", projectName: "Numbered home", location: "Pune", propertyType: "2BHK", stage: "new_lead", source: "test", nextAction: "Estimation", nextActionAt: at, createdAt: at, updatedAt: at };
+    const repository = createMongoRepository();
+    for (const [id, projectNumber] of [["lead-number-a", "Lisno000042"], ["lead-number-b", "Lisno1000000"], ["lead-number-historical", undefined]] as const) {
+      const document = { ...template, _id: id, projectNumber };
+      vi.spyOn(LeadModel, "findById").mockReturnValueOnce(recordedQuery(document) as never);
+      expect(await repository.findLeadById(id)).toMatchObject({ id, projectNumber: projectNumber ?? null });
+    }
+    const update = vi.spyOn(LeadModel, "findByIdAndUpdate").mockReturnValueOnce(recordedQuery({ ...template, _id: "lead-number-a", projectNumber: "Lisno000042", notes: "Updated note" }) as never);
+    expect(await repository.updateLead("lead-number-a", { notes: "Updated note" })).toMatchObject({ projectNumber: "Lisno000042", notes: "Updated note" });
+    expect(update.mock.calls[0]?.[1]).not.toHaveProperty("$set.projectNumber");
+  });
+
+  it("rejects number assignment or clearing through ordinary repository writes", async () => {
+    const repository = createMongoRepository();
+    const create = vi.spyOn(LeadModel, "create");
+    const update = vi.spyOn(LeadModel, "findByIdAndUpdate");
+    for (const projectNumber of ["Lisno000001", null, undefined]) {
+      await expect(repository.createLead({ ...demoSeedData.leads[0]!, projectNumber } as never)).rejects.toThrow("Project numbers are assigned only");
+      await expect(repository.updateLead("lead-number-a", { projectNumber } as never)).rejects.toThrow("Project numbers cannot be changed");
+    }
+    expect(create).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
   });
 });

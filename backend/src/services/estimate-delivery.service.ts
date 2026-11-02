@@ -2,7 +2,6 @@ import mongoose from "mongoose";
 
 import {
   ESTIMATE_DELIVERY_FAILURE_CODE,
-  sha256Hex,
   type EstimateClientReviewSnapshot,
   type EstimateClientReviewSummary,
   type EstimateClientReviewStatus,
@@ -15,11 +14,11 @@ import type { PublicUser } from "./auth.service.js";
 import type { EstimateClientReviewStorage } from "./estimate-client-review-storage.js";
 import type { EstimateClientReviewService } from "./estimate-client-review.service.js";
 import type { EstimateMailer } from "./estimate-mailer.js";
+import type { ClientQuotationRenditionService } from "./client-quotation-rendition.service.js";
+import type { StoredDownload } from "../domain/estimate-client-review.js";
 
 const DELIVERY_ATTEMPT_DEADLINE_MS = 30_000;
-const PDF_STORAGE_READ_FAILED = "PDF_STORAGE_READ_FAILED";
-const PDF_BYTE_SIZE_MISMATCH = "PDF_BYTE_SIZE_MISMATCH";
-const PDF_SHA256_MISMATCH = "PDF_SHA256_MISMATCH";
+const QUOTATION_RENDITION_UNAVAILABLE = "QUOTATION_RENDITION_UNAVAILABLE";
 const ESTIMATE_MAILER_FAILED = "ESTIMATE_MAILER_FAILED";
 
 interface DeliveryRoundRow {
@@ -68,6 +67,7 @@ export interface EstimateDeliveryService {
 export function createEstimateDeliveryService(input: {
   reviews: EstimateClientReviewService;
   storage: EstimateClientReviewStorage;
+  renditions?: ClientQuotationRenditionService;
   mailer: EstimateMailer;
   portalUrl: string;
   audit: AuditService;
@@ -293,27 +293,19 @@ export function createEstimateDeliveryService(input: {
       _id: lease._id,
       deliveryStatus: "queued",
       deliveryAttemptGeneration: lease.deliveryAttemptGeneration
-    })
-      .select("+pdfStorageReference")
-      .lean();
+    }).lean();
     return payload as unknown as DeliveryRoundRow | null;
   }
 
   async function attemptDelivery(
     payload: DeliveryRoundRow
   ): Promise<AttemptOutcome> {
-    let bytes: Buffer;
+    let attachment: StoredDownload;
     try {
-      if (!payload.pdfStorageReference) throw new Error("Missing PDF reference.");
-      bytes = await input.storage.read(payload.pdfStorageReference);
+      if (!input.renditions) throw new Error("Client rendition service unavailable.");
+      attachment = await input.renditions.readForRound(payload);
     } catch {
-      return { status: "failed", failureCode: PDF_STORAGE_READ_FAILED };
-    }
-    if (bytes.byteLength !== payload.pdfByteSize) {
-      return { status: "failed", failureCode: PDF_BYTE_SIZE_MISMATCH };
-    }
-    if (sha256Hex(bytes) !== payload.pdfSha256) {
-      return { status: "failed", failureCode: PDF_SHA256_MISMATCH };
+      return { status: "failed", failureCode: QUOTATION_RENDITION_UNAVAILABLE };
     }
 
     try {
@@ -328,9 +320,9 @@ export function createEstimateDeliveryService(input: {
         total: payload.estimateSnapshot.total,
         portalUrl: input.portalUrl,
         attachment: {
-          filename: payload.pdfFilename,
-          mimeType: payload.pdfMimeType,
-          bytes
+          filename: attachment.filename,
+          mimeType: "application/pdf",
+          bytes: attachment.bytes
         }
       });
       if (result.kind === "sent") return { status: "sent" };

@@ -1,3 +1,4 @@
+import { quotationSnapshotDigest } from "./quotation-digest.js";
 import { effectiveCommercialStatus, estimateCommercialStatusFilter, estimateCommercialStatusFields, isCollaborativeEstimate } from "../domain/estimation-lifecycle.js";
 import { ProjectModel } from "../models/Project.js";
 import { currentFinalDesignBinding, fenceCollaborativeEstimate, requireEstimateClientMembership } from "./estimate-collaboration-policy.service.js";
@@ -26,7 +27,7 @@ import type { EstimateClientReviewService } from "./estimate-client-review.servi
 import type { EstimateDesignService } from "./estimate-design.service.js";
 import type { EnsurePendingFinanceBucketInput } from "./project-finance.service.js";
 import { syncCollaborativeFinanceBaseline } from "./project-finance.service.js";
-import { ensureCollaborativePreparationTask } from "./project-workflow.service.js";
+import { ensureCollaborativePreparationTask, ensureQuotationDesignTask, recordQuotationDesignHandoff } from "./project-workflow.service.js";
 import { resolveApprovalProject } from "./estimate-project-handoff.js";
 import { presentClientEstimate } from "./estimate-client-presentation.js";
 
@@ -151,7 +152,18 @@ export function createEstimateDecisionService(input: {
           if (!reviewRound || estimate.estimation.pendingReviewRoundId !== round?.id ||
             reviewRound.phase !== estimate.estimation.phase || reviewRound.requirementsVersion !== estimate.estimation.requirementsVersion) estimateNotReviewable();
           await assertEstimateRequirementsResolved(String(estimate.projectId), estimate.estimation.requirementsVersion, session);
-          if (estimate.estimation.phase === "post") {
+          if (estimate.estimation.workflowVersion === 3) {
+            const digest = quotationSnapshotDigest(reviewRound.estimateSnapshot);
+            if (reviewRound.workflowVersion !== 3 || reviewRound.pricedRevision !== estimate.estimation.pricedRevision || reviewRound.sourceDigest !== digest || reviewRound.designScopeRevision !== estimate.estimation.designScopeRevision) estimateNotReviewable();
+            if (estimate.estimation.phase === "pre") {
+              const proof = reviewRound.salesApproval;
+              if (!proof || proof.actorId !== estimate.ownerId || proof.pricedRevision !== estimate.estimation.pricedRevision ||
+                proof.estimateVersion !== reviewRound.estimateVersion || proof.sourceDigest !== digest ||
+                estimate.estimation.salesApproval?.sourceDigest !== digest) estimateNotReviewable();
+            } else if (!estimate.estimation.preApproval || reviewRound.submittedById !== collaborationProject?.primaryDesignerId ||
+              reviewRound.submittedById !== estimate.designPlanDesignerId) estimateNotReviewable();
+          }
+          if (estimate.estimation.workflowVersion === 2 && estimate.estimation.phase === "post") {
             const binding = await currentFinalDesignBinding(estimate, session);
             if (Object.entries(binding).some(([key, value]) => reviewRound[key] !== value)) estimateNotReviewable();
           }
@@ -234,6 +246,11 @@ export function createEstimateDecisionService(input: {
         }
         if (input.finance && decision === "approve" && isCollaborativeEstimate(estimate) && estimate.estimation.phase === "post") {
           await syncCollaborativeFinanceBaseline(estimateId, session);
+        }
+        if (decision === "approve" && estimate.estimation?.workflowVersion === 3 && estimate.estimation.phase === "post") {
+          await ensureQuotationDesignTask(estimateResult, occurredAt, session);
+          if (estimateResult.estimation?.designApproval?.designScopeRevision === estimateResult.estimation.designScopeRevision)
+            await recordQuotationDesignHandoff(estimateResult, context.actor.id, occurredAt, session);
         }
 
         let proofId: string | null = null;
@@ -573,7 +590,7 @@ async function approve(input: {
   if (finance) {
     const snapshot = reviewRound?.estimateSnapshot ?? estimate;
     await finance.ensurePending({
-      ...(isCollaborativeEstimate(estimate) ? { workflowVersion: 2 as const } : {}),
+      ...(isCollaborativeEstimate(estimate) ? { workflowVersion: estimate.estimation.workflowVersion } : {}),
       projectId,
       estimateId: String(estimate._id),
       estimateVersion: reviewRound == null
@@ -647,12 +664,15 @@ async function approve(input: {
 
 async function approveFinal(input: Parameters<typeof approve>[0]): Promise<Row> {
   const { estimate, reviewRound, context, note, occurredAt, session, audit } = input;
-  const binding = await currentFinalDesignBinding(estimate, session);
+  const binding = estimate.estimation.workflowVersion === 3
+    ? { designReviewRoundId: null, designPlanVersion: null, designScopeRevision: estimate.estimation.designScopeRevision }
+    : await currentFinalDesignBinding(estimate, session);
   const finalApproval = {
     reviewRoundId: String(reviewRound!._id), estimateVersion: Number(reviewRound!.estimateVersion),
     approvedAt: occurredAt.toISOString(), requirementsVersion: estimate.estimation.requirementsVersion, ...binding
   };
   const estimation = { ...estimate.estimation, status: "client_approved", finalApproval,
+    ...(estimate.estimation.workflowVersion === 3 ? { designStartedAt: estimate.estimation.designStartedAt ?? occurredAt.toISOString() } : {}),
     pendingReviewRoundId: null, editClosedAt: occurredAt.toISOString() };
   const review = { actorId: context.actor.id, action: "final_estimate_approved", note, occurredAt };
   const updated = await EstimateModel.updateOne(estimateCasFilter(estimate), {

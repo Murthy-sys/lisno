@@ -1,4 +1,5 @@
-import { newEstimationLifecycle } from "../src/domain/estimation-lifecycle.js";
+import { QuotationDesignHandoffModel } from "../src/models/QuotationDesignHandoff.js";
+import { newEstimationLifecycle, newQuotationLifecycle } from "../src/domain/estimation-lifecycle.js";
 import { DesignWorkflowStateModel } from "../src/models/DesignWorkflowState.js";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import mongoose from "mongoose";
@@ -22,8 +23,14 @@ import { ProjectAccessGrantModel } from "../src/models/ProjectAccessGrant.js";
 import { ProjectModel } from "../src/models/Project.js";
 import { ProjectWorkflowTaskModel } from "../src/models/ProjectWorkflowTask.js";
 import { UserModel } from "../src/models/User.js";
+import { AuditEventModel } from "../src/models/AuditEvent.js";
+import { QuotationUnlockReceiptModel } from "../src/models/QuotationUnlockReceipt.js";
+import { AuthorizationCoordinationModel } from "../src/models/AuthorizationCoordination.js";
 import type { AuditService } from "../src/services/audit.service.js";
+import { createAuditService } from "../src/services/audit.service.js";
 import { createMongoRepository } from "../src/repositories/mongo.js";
+import { createEstimateCollaborationService } from "../src/services/estimate-collaboration.service.js";
+import { fenceCollaborativeEstimate } from "../src/services/estimate-collaboration-policy.service.js";
 import { createEstimateDecisionService } from "../src/services/estimate-decision.service.js";
 import { createEstimateDesignService } from "../src/services/estimate-design.service.js";
 import { createEstimatePlanDocumentService } from "../src/services/estimate-plan-document.service.js";
@@ -101,6 +108,8 @@ beforeAll(async () => {
     ProjectAccessGrantModel.syncIndexes(),
     ProjectModel.syncIndexes(),
     ProjectWorkflowTaskModel.syncIndexes(),
+    AuditEventModel.syncIndexes(),
+    QuotationUnlockReceiptModel.syncIndexes(),
     UserModel.syncIndexes()
   ]);
 }, 120_000);
@@ -3413,6 +3422,35 @@ describe("collaborative Design approval boundary", () => {
     expect(await ProjectWorkflowTaskModel.findById(site!._id).lean()).toMatchObject({ preparationOnly: true, designPlanVersion: 0, version: 2, assigneeUserId: preparationSiteActor.id });
     expect(await ProjectModel.findById("evidence-project").lean()).toMatchObject({ status: "planning" });
   });
+  async function quotationFixture(locked = true) {
+    const f = await fixture();
+    const prior = (await EstimateModel.findById("evidence-estimate").lean())!;
+    const estimation = { ...newQuotationLifecycle(), phase: "post", status: locked ? "client_approved" : "draft",
+      preApproval: prior.estimation.preApproval, editClosedAt: locked ? NOW.toISOString() : null,
+      finalApproval: locked ? { reviewRoundId: "quotation-final", estimateVersion: 4, approvedAt: NOW.toISOString(),
+        requirementsVersion: 0, designReviewRoundId: null, designPlanVersion: null, designScopeRevision: 1 } : null };
+    await ProjectModel.updateOne({ _id: "evidence-project" }, { $set: { estimationWorkflowVersion: 3, primaryDesignerId: f.designer.id } });
+    await EstimateModel.updateOne({ _id: "evidence-estimate" }, { $set: { estimation, version: 5 } });
+    await DesignPlanReviewRoundModel.collection.updateOne({ _id: "evidence-round" } as never, { $set: { estimateReviewRoundId: "quotation-final" } });
+    return f;
+  }
+  it("permits actual design approval after a locked v3 quotation and records a separate procurement handoff", async () => {
+    const f = await quotationFixture();
+    await f.workflow.decideDesignReviewAsAdmin({ actor: f.admin, roundId: "evidence-round", expectedVersion: 1, decision: "approve", note: "Client proof", proof: f.proof });
+    expect(await EstimateModel.findById("evidence-estimate").lean()).toMatchObject({ designPlanStatus: "approved", estimation: {
+      editClosedAt: NOW.toISOString(), finalApproval: { reviewRoundId: "quotation-final", designReviewRoundId: null, designPlanVersion: null },
+      designApproval: { reviewRoundId: "evidence-round", estimateReviewRoundId: "quotation-final", designScopeRevision: 1 } } });
+    expect(await QuotationDesignHandoffModel.countDocuments({ estimateId: "evidence-estimate" })).toBe(1);
+    expect(await ProjectModel.findById("evidence-project").lean()).toMatchObject({ status: "planning" });
+    expect(await ProjectWorkflowTaskModel.countDocuments({ kind: "trade_execution" })).toBe(0);
+  });
+  it("blocks v3 operational approval before the second quote or after that quote is superseded", async () => {
+    const f = await quotationFixture(false);
+    await expect(f.workflow.decideDesignReviewAsAdmin({ actor: f.admin, roundId: "evidence-round", expectedVersion: 1, decision: "approve", note: "", proof: f.proof }))
+      .rejects.toMatchObject({ code: "QUOTATION_APPROVAL_REQUIRED" });
+    expect(await DesignPlanReviewRoundModel.findById("evidence-round").lean()).toMatchObject({ status: "pending" });
+    expect(await QuotationDesignHandoffModel.countDocuments()).toBe(0);
+  });
   it("pins design approval to scope and leaves execution and finance unopened", async () => {
     const f = await fixture();
     await f.workflow.decideDesignReviewAsAdmin({ actor: f.admin, roundId: "evidence-round", expectedVersion: 1, decision: "approve", note: "Client approved design", proof: f.proof });
@@ -3443,6 +3481,68 @@ describe("collaborative Design approval boundary", () => {
     expect(await DesignPlanReviewRoundModel.findById("evidence-round").lean()).toMatchObject({ status: "pending" });
     expect(await EstimateDesignRevisionModel.findById("evidence-revision").lean()).toMatchObject({ reviewStatus: "submitted" });
     expect(await DesignPlanResponseProofModel.countDocuments()).toBe(0);
+  });
+  it.each([2, 3] as const)("serializes v%s drawing approval behind a winning scope change without approving stale drawings", async workflowVersion => {
+    const f = workflowVersion === 3 ? await quotationFixture() : await fixture();
+    const initial = (await EstimateModel.findById("evidence-estimate").lean())!;
+    if (workflowVersion === 3) await EstimateClientReviewRoundModel.collection.insertOne({ _id: "quotation-final", dedupeKey: "quotation-final", sendGeneration: 2,
+      estimateId: "evidence-estimate", projectId: "evidence-project", phase: "post", estimateVersion: 4,
+      status: "approved", decision: "approve", decidedAt: NOW, estimateSnapshot: { lineItems: [] } } as never);
+    const history = await EstimateClientReviewRoundModel.find({ estimateId: "evidence-estimate" }).sort({ _id: 1 }).lean();
+    const round = await DesignPlanReviewRoundModel.findById("evidence-round").lean();
+    const drawing = await EstimateDesignRevisionModel.findById("evidence-revision").lean();
+    let paused = false;
+    let release!: () => void;
+    const resumed = new Promise<void>(resolve => { release = resolve; });
+    const pauseFirstFence = (query: any) => {
+      if (!paused) {
+        const execute = query.exec.bind(query);
+        query.exec = async () => { paused = true; await resumed; return execute(); };
+      }
+      return query;
+    };
+    const originalProjectFence = ProjectModel.findOneAndUpdate.bind(ProjectModel);
+    const originalAuthorizationFence = AuthorizationCoordinationModel.updateOne.bind(AuthorizationCoordinationModel);
+    // V3 unlock and approval serialize first on authorization, so the winning unlock must precede that write.
+    const fenceSpy = workflowVersion === 3
+      ? vi.spyOn(AuthorizationCoordinationModel, "updateOne").mockImplementation((filter: any, update: any, options: any) =>
+          pauseFirstFence(originalAuthorizationFence(filter, update, options)))
+      : vi.spyOn(ProjectModel, "findOneAndUpdate").mockImplementation((filter: any, update: any, options: any) =>
+          pauseFirstFence(originalProjectFence(filter, update, options)));
+    const approval = f.workflow.decideDesignReviewAsAdmin({ actor: f.admin, roundId: "evidence-round", expectedVersion: 1,
+      decision: "approve", note: "Client approved the submitted drawings", proof: f.proof }).then(() => null, error => error);
+    try {
+      await vi.waitFor(() => expect(paused).toBe(true));
+      if (workflowVersion === 3) {
+        await createEstimateCollaborationService(createAuditService(createMongoRepository())).unlock(f.designer, "evidence-estimate", {
+          expectedVersion: initial.version, reviewRoundId: "quotation-final", reason: "Client added another room",
+          idempotencyKey: "scope-change-before-drawing-approval"
+        });
+      }
+      // Scope writers and the approval command use the same project fence inside their transactions.
+      await mongoose.connection.transaction(async session => {
+        const current = (await EstimateModel.findById("evidence-estimate").session(session).lean())!;
+        expect(current.estimation.editClosedAt).toBeNull();
+        await fenceCollaborativeEstimate(current, session);
+        const changed = await EstimateModel.updateOne({ _id: current._id, version: current.version, "estimation.designScopeRevision": 1 }, {
+          $set: { rooms: [{ id: "added-study", label: "Study" }] },
+          $inc: { version: 1, "estimation.designScopeRevision": 1, ...(workflowVersion === 3 ? { "estimation.pricedRevision": 1 } : {}) }
+        }, { session, runValidators: true });
+        expect(changed.modifiedCount).toBe(1);
+      });
+      release();
+      expect(await approval).toMatchObject({ code: workflowVersion === 3 ? "QUOTATION_APPROVAL_REQUIRED" : "DESIGN_SCOPE_CHANGED" });
+    } finally { release(); await approval; fenceSpy.mockRestore(); }
+    expect(await EstimateModel.findById("evidence-estimate").lean()).toMatchObject({
+      designPlanStatus: "ready_for_client", rooms: [{ id: "added-study", label: "Study" }],
+      estimation: { designScopeRevision: 2, approvedDesignScopeRevision: null, finalApproval: initial.estimation.finalApproval }
+    });
+    expect(await EstimateClientReviewRoundModel.find({ estimateId: "evidence-estimate" }).sort({ _id: 1 }).lean()).toEqual(history);
+    expect(await DesignPlanReviewRoundModel.findById("evidence-round").lean()).toEqual(round);
+    expect(await EstimateDesignRevisionModel.findById("evidence-revision").lean()).toEqual(drawing);
+    expect(await DesignPlanResponseProofModel.countDocuments()).toBe(0);
+    expect(await QuotationDesignHandoffModel.countDocuments()).toBe(0);
+    expect(await ProjectWorkflowTaskModel.countDocuments({ kind: "trade_execution" })).toBe(0);
   });
   it("reopens changed scope while preserving approved history and blocks reconciliation after final closure", async () => {
     const f = await fixture();

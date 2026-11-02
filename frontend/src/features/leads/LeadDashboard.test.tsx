@@ -138,12 +138,14 @@ const salesManager = { id: "manager-1", name: "Meera Manager", email: "meera@exa
 async function fillSalesInitiation(dialog: HTMLElement, user: ReturnType<typeof userEvent.setup>) {
   for (const [label, value] of Object.entries({
     "Client name": "Aurora Homes", "Client email": "aurora@example.com", Mobile: "9000000001",
-    "Project / property name": "Aurora Villa", "Project city": "Bengaluru", "Next action": "Site visit"
+    "Project / property name": "Aurora Villa", "Project city": "Bengaluru"
   })) {
     await user.type(within(dialog).getByLabelText(new RegExp(`^${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\*?$`)), value);
   }
   await user.selectOptions(within(dialog).getByRole("combobox", { name: "Property type" }), "3BHK");
   await user.selectOptions(within(dialog).getByRole("combobox", { name: "Source" }), "Customer referral");
+  expect(within(dialog).getByRole("textbox", { name: "Next action" })).toHaveValue("Estimation");
+  expect(within(dialog).getByRole("textbox", { name: "Next action" })).toBeDisabled();
   await user.click(within(dialog).getByRole("button", { name: "Next action date" }));
   await user.click(within(dialog).getByRole("button", { name: "Today" }));
   await user.click(within(dialog).getByRole("combobox", { name: "Sales Manager" }));
@@ -168,6 +170,20 @@ function mockDashboardReads(getLeads: (url: URL) => Lead[]) {
 }
 
 describe("LeadDashboard", () => {
+  it("keeps different project numbers attached to their own lead rows", async () => {
+    tokenStorage.set("sales-token");
+    mockDashboardReads(() => [
+      { ...leads[0], projectNumber: "Lisno000021" },
+      { ...leads[1], projectNumber: "Lisno1000000" }
+    ]);
+    renderApp(["/estimator-sales"]);
+    const first = await screen.findByRole("article", { name: "Aurora Villa" });
+    const second = screen.getByRole("article", { name: "Cedar Loft" });
+    expect(within(first).getByText("Project number: Lisno000021")).toBeVisible();
+    expect(within(first).queryByText("Project number: Lisno1000000")).not.toBeInTheDocument();
+    expect(within(second).getByText("Project number: Lisno1000000")).toBeVisible();
+  });
+
   it("shows truthful metrics, lead details, next actions, and the existing estimate routes", async () => {
     tokenStorage.set("sales-token");
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {

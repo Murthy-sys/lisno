@@ -80,14 +80,15 @@ export function createDesignSectionService(
 ): DesignSectionService {
   async function requireEditableOwner(
     actor: PublicUser,
-    versionId: string
+    versionId: string,
+    source: AppRepository = repository
   ): Promise<EditableDesignContext> {
-    const user = await requireActor(repository, actor);
-    const version = await repository.findDesignVersionById(versionId);
-    if (!version || user.role !== "designer" || !version.taskId) notFound();
+    const user = await requireActor(source, actor);
+    const version = await source.findDesignVersionById(versionId);
+    if (!version || user.deletedAt || user.role !== "designer" || !version.taskId) notFound();
     const [task, project] = await Promise.all([
-      repository.findTaskById(version.taskId),
-      repository.findProjectById(version.projectId)
+      source.findTaskById(version.taskId),
+      source.findProjectById(version.projectId)
     ]);
     if (
       !task ||
@@ -95,8 +96,9 @@ export function createDesignSectionService(
       task.ownerId !== actor.id ||
       version.uploaderId !== actor.id ||
       (
-        project.initiatingDesignerId !== actor.id &&
-        !project.assignedDesignerIds.includes(actor.id)
+        project.estimationWorkflowVersion === 3
+          ? project.primaryDesignerId !== actor.id && !project.secondaryDesignerIds?.includes(actor.id)
+          : project.initiatingDesignerId !== actor.id && !project.assignedDesignerIds.includes(actor.id)
       )
     ) {
       notFound();
@@ -125,7 +127,7 @@ export function createDesignSectionService(
       task.ownerId !== actor.id ||
       version.uploaderId !== actor.id ||
       (
-        project.initiatingDesignerId !== actor.id &&
+        (project.estimationWorkflowVersion === 3 || project.initiatingDesignerId !== actor.id) &&
         !project.assignedDesignerIds.includes(actor.id)
       )
     ) {
@@ -134,10 +136,10 @@ export function createDesignSectionService(
     return { version, task, project };
   }
 
-  async function requireEditable(actor: PublicUser, versionId: string) {
-    const context = await requireEditableOwner(actor, versionId);
+  async function requireEditable(actor: PublicUser, versionId: string, source: AppRepository = repository) {
+    const context = await requireEditableOwner(actor, versionId, source);
     const { version } = context;
-    const job = await repository.findExtractionJobByVersionId(version.id);
+    const job = await source.findExtractionJobByVersionId(version.id);
     if (!job || !["designer_review", "processing_failed", "changes_requested"].includes(job.status)) {
       throw new ApiError(409, "INVALID_EXTRACTION_STATE", "The extracted sections cannot be edited in their current state.");
     }
@@ -201,6 +203,8 @@ export function createDesignSectionService(
       const occurredAt = clock().toISOString();
       try {
         const result = await repository.runInTransaction(async (transaction) => {
+          await transaction.coordinateAuthorizationMutation();
+          await requireEditable(actor, versionId, transaction);
           const section: DesignSectionRecord = {
             id: randomUUID(),
             designVersionId: versionId,
@@ -269,6 +273,8 @@ export function createDesignSectionService(
       );
       try {
         const result = await repository.runInTransaction(async (transaction) => {
+          await transaction.coordinateAuthorizationMutation();
+          await requireEditable(actor, section.designVersionId, transaction);
           await transaction.updateDraftSection(
             section.id,
             { label, sourcePageId: page.id },
@@ -308,6 +314,8 @@ export function createDesignSectionService(
       const occurredAt = clock().toISOString();
       try {
         await repository.runInTransaction(async (transaction) => {
+          await transaction.coordinateAuthorizationMutation();
+          await requireEditable(actor, section.designVersionId, transaction);
           await transaction.updateDraftSection(
             section.id,
             { active: false },
@@ -338,6 +346,8 @@ export function createDesignSectionService(
       let updated;
       try {
         updated = await repository.runInTransaction(async (transaction) => {
+          await transaction.coordinateAuthorizationMutation();
+          await requireEditable(actor, versionId, transaction);
           const result = await transaction.retryExtractionJob(job.id, occurredAt);
           await audit.append({
             actorId: actor.id,
@@ -370,6 +380,8 @@ export function createDesignSectionService(
       let submittedCount: number;
       try {
         submittedCount = await repository.runInTransaction(async (transaction) => {
+          await transaction.coordinateAuthorizationMutation();
+          await requireEditable(actor, versionId, transaction);
           const designRequirementsReadiness = await assertDesignWorkflowSubmissionAllowed(transaction, project.id, { lock: true });
           const count = await transaction.submitDesignSectionDrafts(versionId, occurredAt);
           await audit.append({

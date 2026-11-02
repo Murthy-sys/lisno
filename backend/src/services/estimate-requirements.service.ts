@@ -44,11 +44,11 @@ async function scope(actor: PublicUser, projectId: string, session?: ClientSessi
   const user = await userQuery.lean() as Row | null;
   const project = await projectQuery.lean() as Row | null;
   const estimate = await estimateQuery.lean() as Row | null;
-  if (!user || !project || project.estimationWorkflowVersion !== 2) return missing();
+  if (!user || !project || ![2, 3].includes(project.estimationWorkflowVersion)) return missing();
   const client = actor.role === "client" && project.clientId === actor.id;
   const sales = actor.role === "estimator_sales" && project.assignedEstimatorId === actor.id;
   const designer = actor.role === "designer" && estimate?.estimation?.phase === "post" &&
-    (estimate.designPlanDesignerId === actor.id || project.assignedDesignerIds?.includes(actor.id));
+    (project.estimationWorkflowVersion === 3 ? project.primaryDesignerId === actor.id : estimate.designPlanDesignerId === actor.id || project.assignedDesignerIds?.includes(actor.id));
   const supervisor = actor.role === "super_admin";
   if (!(client || sales || designer || supervisor)) missing();
   return { project: project!, estimate, client, staff: sales || designer || supervisor };
@@ -56,17 +56,17 @@ async function scope(actor: PublicUser, projectId: string, session?: ClientSessi
 
 function assertEditable(estimate: Row | null) {
   if (!estimate) return;
-  if (!isCollaborativeEstimate(estimate) || estimate.estimation.editClosedAt || estimate.estimation.finalApproval)
+  if (!isCollaborativeEstimate(estimate) || estimate.estimation.editClosedAt || estimate.estimation.workflowVersion === 2 && estimate.estimation.finalApproval)
     throw new ApiError(409, "ESTIMATE_EDITING_CLOSED", "This estimate is closed for changes.");
   if (!["draft", "designer_changes_requested", "client_changes_requested"].includes(effectiveCommercialStatus(estimate)))
     throw new ApiError(409, "ESTIMATE_REVIEW_IN_PROGRESS", "Request changes or withdraw the submitted review before changing requirements.");
 }
 
 async function fence(projectId: string, expectedVersion: number, session: ClientSession) {
-  const result = await ProjectModel.updateOne({ _id: projectId, estimationWorkflowVersion: 2,
+  const result = await ProjectModel.updateOne({ _id: projectId, estimationWorkflowVersion: { $in: [2, 3] },
     estimateRequirementsVersion: expectedVersion }, { $inc: { estimateRequirementsVersion: 1, estimationFenceEpoch: 1 } }, { session });
   if (result.matchedCount !== 1) conflict();
-  await EstimateModel.updateOne({ projectId, "estimation.workflowVersion": 2, "estimation.editClosedAt": null },
+  await EstimateModel.updateOne({ projectId, "estimation.workflowVersion": { $in: [2, 3] }, "estimation.editClosedAt": null },
     { $set: { "estimation.requirementsVersion": expectedVersion + 1 }, $inc: { version: 1 } }, { session });
 }
 

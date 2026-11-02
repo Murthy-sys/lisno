@@ -1,7 +1,8 @@
 import { EstimateComponentPricingStatus, EstimateSubBasketAmounts } from "./EstimateComponentBreakdown";
 import { EstimateDimensionsFields } from "./EstimateDimensionsFields";
 import { KNOWLEDGE_MODE_TIERS, KNOWLEDGE_MODE_TIER_LABELS } from "../../../../shared/knowledge/knowledgeModeTiers";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type Dispatch, type SetStateAction } from "react";
+import { useConfiguredEstimateViewState, type ConfiguredEstimateViewState } from "./useConfiguredEstimateViewState";
 import { createPortal } from "react-dom";
 import type { LucideIcon } from "lucide-react";
 
@@ -46,7 +47,8 @@ export function ConfiguredEstimateBuilder({
   recommendationSourceCount = 0, recommendationState = "ready", recommendationView = null,
   recommendationDialogOpen = false, automaticDismissal = false, skippedRecommendationKeys,
   onOpenRecommendations = () => {}, onCloseRecommendations = () => {},
-  onRetryRecommendations = () => {}, onSelectRecommendedLine = () => false, onSkipRecommendedLine
+  onRetryRecommendations = () => {}, onSelectRecommendedLine = () => false, onSkipRecommendedLine,
+  navigation, viewState, onViewStateChange
 }: {
   rooms: readonly Room[];
   activeRoomId: string;
@@ -73,11 +75,14 @@ export function ConfiguredEstimateBuilder({
   onRetryRecommendations?: () => void;
   onSelectRecommendedLine?: (target: RecommendedLineTarget) => boolean | void;
   onSkipRecommendedLine?: (target: RecommendedLineTarget) => boolean | void;
+  navigation?: ReactNode;
+  viewState?: ConfiguredEstimateViewState;
+  onViewStateChange?: Dispatch<SetStateAction<ConfiguredEstimateViewState>>;
 }) {
-  const [search, setSearch] = useState("");
+  const { search, setSearch, basketFilter, setBasketFilter, railView, setRailView,
+    collapsedBasketIds, setCollapsedBasketIds, collapsedSubBasketIds, setCollapsedSubBasketIds } =
+    useConfiguredEstimateViewState(viewState, onViewStateChange);
   const recommendationFallbackFocusRef = useRef<HTMLInputElement>(null);
-  const [basketFilter, setBasketFilter] = useState("all");
-  const [railView, setRailView] = useState<"section" | "selected">("section");
   const selectedCount = lines.filter((line) => line.included).length;
   const visibleRooms = railView === "selected" ? rooms.filter((room) => lines.some((line) => line.roomId === room.id && line.included)) : rooms;
   const activeRoom = visibleRooms.find((room) => room.id === activeRoomId) ?? visibleRooms[0];
@@ -94,8 +99,6 @@ export function ConfiguredEstimateBuilder({
   const mainBasketRefs = useRef<Map<string, HTMLElement>>(new Map());
   const itemPaneRef = useRef<HTMLDivElement>(null);
   const basketJumpFrameRef = useRef<number | null>(null);
-  const [collapsedBasketIds, setCollapsedBasketIds] = useState<Set<string>>(() => new Set());
-  const [collapsedSubBasketIds, setCollapsedSubBasketIds] = useState<Set<string>>(() => new Set());
   const query = search.trim().toLocaleLowerCase();
   useEffect(() => {
     if (itemPaneRef.current) itemPaneRef.current.scrollTop = 0;
@@ -190,6 +193,7 @@ export function ConfiguredEstimateBuilder({
     </div>
     <div className="configured-estimate-builder__layout">
       <aside className="configured-estimate-builder__rail" aria-label="Estimate sections">
+        {navigation}
         <div className="configured-estimate-builder__rail-tabs" role="group" aria-label="Room view"><button type="button" aria-pressed={railView === "section"} onClick={() => setRailView("section")}>By Section</button><button type="button" aria-pressed={railView === "selected"} onClick={() => setRailView("selected")}>Selected ({selectedCount})</button></div>
         <nav aria-label="Rooms" className="configured-estimate-builder__rooms">{visibleRooms.map((room) => <button type="button" key={room.id} aria-current={room.id === activeRoom?.id ? "true" : undefined} onClick={() => onSelectRoom(room.id)}><span className="configured-estimate-builder__room-icon"><BuilderGlyph name="room" /></span><span className="configured-estimate-builder__room-copy"><strong>{room.label}</strong><small>{room.sqft} sqft · {roomAmountLabel(room.id)}</small></span><BuilderGlyph name="chevron" /></button>)}</nav>
         {!visibleRooms.length ? <p className="configured-estimate-builder__rail-empty">No selected items yet. Choose By Section to add items.</p> : null}

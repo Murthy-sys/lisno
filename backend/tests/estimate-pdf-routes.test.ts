@@ -5,6 +5,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp as createApplication } from "../src/app.js";
 import { EstimateModel } from "../src/models/Estimate.js";
 import { EstimateClientReviewRoundModel } from "../src/models/EstimateClientReviewRound.js";
+import { ClientQuotationRenditionModel } from "../src/models/ClientQuotationRendition.js";
+import { sha256Hex } from "../src/domain/estimate-client-review.js";
+import { createEstimateProposal } from "../src/domain/estimate-proposal.js";
+import type { EstimatePdfInput } from "../src/services/estimate-pdf.service.js";
 import { LeadModel } from "../src/models/Lead.js";
 import { createMemoryRepository } from "../src/repositories/memory.js";
 import { demoSeedData } from "../src/seed/data.js";
@@ -46,6 +50,7 @@ const estimate = {
 
 const lead = {
   _id: "lead-aurora",
+  projectNumber: "Lisno000017",
   clientName: "Aurora Homes",
   clientEmail: "client@lisno.example",
   projectName: "Aurora Villa",
@@ -87,7 +92,7 @@ function setup(storage?: FileStorage) {
   const client = seed.users.find((user) => user.id === "user-client-aurora")!;
   client.email = "client@lisno.example";
   client.emailNormalized = "client@lisno.example";
-  const generate = vi.fn(async () => ({
+  const generate = vi.fn(async (_input: EstimatePdfInput) => ({
     bytes: pdfBytes,
     filename: "lisno-aurora-villa-estimate-v1.pdf"
   }));
@@ -152,7 +157,13 @@ describe("estimate PDF download routes", () => {
       'attachment; filename="lisno-aurora-villa-estimate-v1.pdf"'
     );
     expect(response.body.subarray(0, 5).toString()).toBe("%PDF-");
+    const proposal = generate.mock.calls[0]![0].proposal!;
+    expect(proposal).toEqual(createEstimateProposal({
+      issuedAt: new Date(proposal.issuedAt), projectNumber: lead.projectNumber, estimateId: estimate._id,
+      preparedBy: demoSeedData.users.find(user => user.id === "user-estimator-sales")!.name
+    }));
     expect(generate).toHaveBeenCalledWith({
+      proposal,
       id: "estimate-draft",
       version: 2,
       status: "ready_for_client",
@@ -214,13 +225,13 @@ describe("estimate PDF download routes", () => {
     }
   );
 
-  it("serves the immutable current-round Client PDF bytes and stored filename", async () => {
-    const storedBytes = Buffer.from("%PDF-1.7\nimmutable-round\n%%EOF");
+  it("serves the separately stored safe Client rendition and its filename", async () => {
+    const storedBytes = Buffer.from("%PDF-1.7\nsafe-rendition\n%%EOF");
     const storage = {
       save: vi.fn(),
       saveGenerated: vi.fn(),
       read: vi.fn(async (reference: string) => {
-        expect(reference).toBe("estimate-client-pdfs/round-current.pdf");
+        expect(reference).toBe("client-renditions/round-current.pdf");
         return storedBytes;
       }),
       delete: vi.fn(),
@@ -236,10 +247,13 @@ describe("estimate PDF download routes", () => {
     );
     vi.spyOn(EstimateClientReviewRoundModel, "aggregate")
       .mockReturnValueOnce(aggregate([{
-        storageReference: "estimate-client-pdfs/round-current.pdf",
-        filename: "lisno-estimate-sent-v3.pdf",
-        mimeType: "application/pdf"
+        ...publishedRow().publishedRounds[0], recipientEmail: lead.clientEmail
       }]) as never);
+    const stored = { estimateId: "estimate-client-visible", estimateVersion: 2,
+      sourceDigest: sha256Hex(JSON.stringify(publishedRow().publishedRounds[0].estimateSnapshot)),
+      approvedTotalPaise: 1_121_000, storageReference: "client-renditions/round-current.pdf",
+      filename: "lisno-estimate-sent-v3.pdf", mimeType: "application/pdf", byteSize: storedBytes.byteLength, sha256: sha256Hex(storedBytes) };
+    vi.spyOn(ClientQuotationRenditionModel, "findOne").mockReturnValue({ select: vi.fn(() => lean(stored)) } as never);
 
     const response = await request(app)
       .get("/api/v1/client/estimates/estimate-client-visible/pdf?roundId=round-current")
@@ -255,13 +269,13 @@ describe("estimate PDF download routes", () => {
     expect(generate).not.toHaveBeenCalled();
   });
 
-  it("serves the immutable current-round Client PDF to Super Admin without regenerating", async () => {
-    const storedBytes = Buffer.from("%PDF-1.7\nimmutable-super-admin-round\n%%EOF");
+  it("serves the safe client-preview rendition to Super Admin without regenerating", async () => {
+    const storedBytes = Buffer.from("%PDF-1.7\nsafe-super-admin-preview\n%%EOF");
     const storage = {
       save: vi.fn(),
       saveGenerated: vi.fn(),
       read: vi.fn(async (reference: string) => {
-        expect(reference).toBe("estimate-client-pdfs/round-current.pdf");
+        expect(reference).toBe("client-renditions/round-current.pdf");
         return storedBytes;
       }),
       delete: vi.fn(),
@@ -277,10 +291,13 @@ describe("estimate PDF download routes", () => {
     );
     vi.spyOn(EstimateClientReviewRoundModel, "aggregate")
       .mockReturnValueOnce(aggregate([{
-        storageReference: "estimate-client-pdfs/round-current.pdf",
-        filename: "lisno-estimate-sent-v2.pdf",
-        mimeType: "application/pdf"
+        ...publishedRow().publishedRounds[0], recipientEmail: lead.clientEmail
       }]) as never);
+    const stored = { estimateId: "estimate-client-visible", estimateVersion: 2,
+      sourceDigest: sha256Hex(JSON.stringify(publishedRow().publishedRounds[0].estimateSnapshot)),
+      approvedTotalPaise: 1_121_000, storageReference: "client-renditions/round-current.pdf",
+      filename: "lisno-estimate-sent-v2.pdf", mimeType: "application/pdf", byteSize: storedBytes.byteLength, sha256: sha256Hex(storedBytes) };
+    vi.spyOn(ClientQuotationRenditionModel, "findOne").mockReturnValue({ select: vi.fn(() => lean(stored)) } as never);
 
     const response = await request(app)
       .get("/api/v1/client/estimates/estimate-client-visible/pdf?roundId=round-current")

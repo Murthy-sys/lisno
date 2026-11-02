@@ -20,7 +20,8 @@ const statusCopy: Record<InvitationStatus["status"], { title: string; message: s
   delivery_failed: { title: "Invitation delivery failed", message: "The project is ready. Retry the invitation without creating another project." },
   expired: { title: "Invitation expired", message: "Send a new invitation so the client can join this project." },
   revoked: { title: "Invitation revoked", message: "The previous invitation can no longer be used." },
-  accepted: { title: "Client has joined", message: "The client can share requirements and review estimates for this project." }
+  accepted: { title: "Client has joined", message: "The client joined this project through an accepted invitation." },
+  linked: { title: "Client already linked", message: "The existing client already has access to this project. No invitation is needed." }
 };
 
 export function ProjectClientInvitationStatus({ projectId }: { projectId: string }) {
@@ -66,10 +67,12 @@ export function ProjectClientInvitationStatus({ projectId }: { projectId: string
   </section>;
 
   const status = query.data;
-  const deliveryUnavailable = !status.deliveryAvailable && status.status !== "accepted";
+  const hasClientAccess = status.status === "accepted" || status.status === "linked";
+  const deliveryUnavailable = !status.deliveryAvailable && !hasClientAccess;
+  const availableActions = hasClientAccess ? [] : status.availableActions;
   const copy = statusCopy[status.status];
   const act = (action: "send" | "resend" | "revoke") => {
-    if (mutating.current || query.isFetching || !status.availableActions.includes(action)) return;
+    if (mutating.current || query.isFetching || !availableActions.includes(action)) return;
     if (action !== "revoke" && !status.deliveryAvailable) return;
     mutating.current = true;
     setMessage(null);
@@ -82,11 +85,11 @@ export function ProjectClientInvitationStatus({ projectId }: { projectId: string
       <p>{deliveryUnavailable ? "The project is ready. Email invitations are currently unavailable; refresh the status to check again." : copy.message}</p>
     </div>
     {message ? <p role="alert">{message}</p> : null}
-    <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--space-2)" }}>
-      {status.availableActions.includes("send") ? <Button variant="secondary" disabled={mutation.isPending || query.isFetching || !status.deliveryAvailable} onClick={() => act("send")}>Send client invitation</Button> : null}
-      {status.availableActions.includes("resend") ? <Button variant="secondary" disabled={mutation.isPending || query.isFetching || !status.deliveryAvailable} onClick={() => act("resend")}>Resend client invitation</Button> : null}
-      {status.availableActions.includes("revoke") ? <Button variant="destructive-outline" disabled={mutation.isPending || query.isFetching} onClick={() => act("revoke")}>Revoke invitation</Button> : null}
+    {availableActions.length > 0 || deliveryUnavailable ? <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--space-2)" }}>
+      {availableActions.includes("send") ? <Button variant="secondary" disabled={mutation.isPending || query.isFetching || !status.deliveryAvailable} onClick={() => act("send")}>Send client invitation</Button> : null}
+      {availableActions.includes("resend") ? <Button variant="secondary" disabled={mutation.isPending || query.isFetching || !status.deliveryAvailable} onClick={() => act("resend")}>Resend client invitation</Button> : null}
+      {availableActions.includes("revoke") ? <Button variant="destructive-outline" disabled={mutation.isPending || query.isFetching} onClick={() => act("revoke")}>Revoke invitation</Button> : null}
       {deliveryUnavailable ? <Button variant="secondary" disabled={mutation.isPending || query.isFetching} onClick={() => void query.refetch()}>Refresh invitation status</Button> : null}
-    </div>
+    </div> : null}
   </section>;
 }

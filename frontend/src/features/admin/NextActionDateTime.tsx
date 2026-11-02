@@ -12,11 +12,13 @@ const fullDate = (date: Date) => date.toLocaleDateString("en-IN", { day: "numeri
 const moveMonth = (date: Date, offset: number) => new Date(date.getFullYear(), date.getMonth() + offset,
   Math.min(date.getDate(), new Date(date.getFullYear(), date.getMonth() + offset + 1, 0).getDate()), 12);
 
-export function NextActionDateTime({ id, value, onChange, disabled, inputRef, ...field }: FieldControlProps & {
+export function NextActionDateTime({ id, value, onChange, disabled, inputRef, calendarLabel = "Choose next action date", clearable = false, ...field }: FieldControlProps & {
   value: string;
   onChange: (value: string) => void;
   disabled?: boolean;
   inputRef?: Ref<HTMLButtonElement>;
+  calendarLabel?: string;
+  clearable?: boolean;
 }) {
   const day = value;
   const [open, setOpen] = useState(false);
@@ -110,7 +112,7 @@ export function NextActionDateTime({ id, value, onChange, disabled, inputRef, ..
       {field.required ? <span id={`${id}-required`} className="sr-only">Required</span> : null}
     </div>
     {open || closing ? <div ref={calendar} id={calendarId} className="next-action-date-time__calendar"
-      role="dialog" aria-label="Choose next action date" aria-hidden={closing || undefined} inert={closing || undefined}
+      role="dialog" aria-label={calendarLabel} aria-hidden={closing || undefined} inert={closing || undefined}
       data-closing={closing || undefined}>
       <div className="next-action-date-time__heading">
         <button type="button" aria-label="Previous month" onClick={() => setCursor(moveMonth(cursor, -1))}>‹</button>
@@ -130,6 +132,7 @@ export function NextActionDateTime({ id, value, onChange, disabled, inputRef, ..
       </table>
       <div className="next-action-date-time__footer">
         <button type="button" onClick={() => { onChange(today); close(true); }}>Today</button>
+        {clearable ? <button type="button" disabled={!day} onClick={() => { onChange(""); close(true); }}>Clear date</button> : null}
         <button type="button" onClick={() => close(true)}>Close calendar</button>
       </div>
     </div> : null}

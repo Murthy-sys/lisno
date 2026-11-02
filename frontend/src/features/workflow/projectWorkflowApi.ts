@@ -118,6 +118,7 @@ export type DesignWorkflowActionId =
   | "measurement_assign" | "measurement_access_block" | "measurement_access_restore"
   | "measurement_complete" | "furniture_scope" | "furniture_accept"
   | "furniture_upload" | "furniture_proceed" | "furniture_scope_return"
+  | "furniture_request" | "furniture_choice"
   | "furniture_dimensions_approve" | "furniture_dimensions_return" | "space_planning_complete";
 
 interface FurnitureMeasurementItemBase {
@@ -169,6 +170,7 @@ export interface FurnitureEstimateRoom {
 }
 
 export interface FurnitureDimensionsSubmission {
+  provenance?: "client_self" | "designer_assisted";
   submissionEventId: string;
   revision: number;
   status: "pending" | "changes_requested" | "approved";
@@ -187,6 +189,19 @@ export interface DesignWorkflowAction {
 }
 
 export interface DesignStageOperational {
+  workflowVersion?: 2 | 3;
+  clientFurnitureRequest?: {
+    requestEventId: string;
+    requestedById: string;
+    requestedAt: string;
+    roomIds: string[];
+    hasFurniture: boolean | null;
+    needsAssistance: boolean | null;
+    assistanceFeePaise: null;
+    respondedById?: string;
+    respondedAt?: string;
+    responseEventId?: string;
+  };
   status: TaskStatus;
   version: number;
   availableActions: DesignWorkflowAction[];
@@ -260,7 +275,7 @@ export interface FurnitureReviewEvidence {
 
 export type InitialPaymentStatus = "awaiting_estimate_approval" | "awaiting_payment" | "received";
 export interface InitialPaymentDetails {
-  workflowVersion?: 2;
+  workflowVersion?: 2 | 3;
   designStartedAt?: string | null;
   existingReceiptAt?: string | null;
   requiresAttestation?: boolean;
@@ -301,7 +316,7 @@ export const getDesignWorkflow = (projectId: string) =>
   ).then((workflow) => ({ ...workflow, receivedAt: Date.now() }));
 
 export interface DesignPaymentConfirmation {
-  workflowVersion?: 2;
+  workflowVersion?: 2 | 3;
   existingReceiptAt?: string | null;
   requiresAttestation?: boolean;
   projectId: string;

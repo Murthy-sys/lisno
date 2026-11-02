@@ -1,7 +1,27 @@
 import { describe, expect, it } from "vitest";
-import { currentEstimationApproval, effectiveCommercialStatus, estimateCommercialStatusFields, estimateWorkingCopyEditable, newEstimationLifecycle } from "../src/domain/estimation-lifecycle.js";
+import { clientQuotationEditable, currentEstimationApproval, effectiveCommercialStatus, estimateCommercialStatusFields, estimateWorkingCopyEditable, newEstimationLifecycle, newQuotationLifecycle, quotationApprovalIsCurrent } from "../src/domain/estimation-lifecycle.js";
 
 describe("commercial estimation lifecycle", () => {
+  it("lets a client revise a pending v3 quotation without allowing an unrestricted staff overwrite", () => {
+    const estimation = newQuotationLifecycle();
+    estimation.status = "sent_to_client";
+    expect(clientQuotationEditable({ estimation })).toBe(true);
+    expect(estimateWorkingCopyEditable({ estimation })).toBe(false);
+    expect(clientQuotationEditable({ estimation: { ...newEstimationLifecycle(), status: "sent_to_client" } })).toBe(false);
+  });
+  it("retains the approved financial source when a v3 quote is reopened", () => {
+    const estimation = newQuotationLifecycle();
+    estimation.phase = "post";
+    estimation.finalApproval = { reviewRoundId: "quote-two", estimateVersion: 8, approvedAt: "2026-10-30T00:00:00Z",
+      requirementsVersion: 0, designReviewRoundId: null, designPlanVersion: null, designScopeRevision: 1 };
+    estimation.editClosedAt = estimation.finalApproval.approvedAt;
+    expect(quotationApprovalIsCurrent({ estimation })).toBe(true);
+    expect(estimateWorkingCopyEditable({ estimation })).toBe(false);
+    estimation.editClosedAt = null;
+    expect(quotationApprovalIsCurrent({ estimation })).toBe(false);
+    expect(estimateWorkingCopyEditable({ estimation })).toBe(true);
+    expect(currentEstimationApproval({ estimation })?.reviewRoundId).toBe("quote-two");
+  });
   it("keeps post-estimate drafts editable without withdrawing the project design handoff", () => {
     const estimation = newEstimationLifecycle();
     estimation.phase = "post";

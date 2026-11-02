@@ -10,6 +10,7 @@ import { estimateWorkflowKeys, type EstimateQueueItem } from "../estimates/estim
 import { withPublishedReview } from "../estimates/clientEstimateReviewTestUtils";
 import { projectWorkflowKeys } from "../workflow/projectWorkflowApi";
 import type { EstimateRequirementsDetail } from "./estimateRequirementsApi";
+import type { QuotationDetail } from "./quotationApi";
 
 const client = { id: "client-1", name: "Review Client", email: "review@example.test", role: "client" as const };
 const project = { id: "project-villa", name: "Submitted Villa", clientId: client.id, status: "active", location: "Bengaluru", floors: [], progress: 0 };
@@ -24,14 +25,16 @@ function estimate(id = "estimate-villa", projectId: string | null = project.id):
   });
 }
 
-function installApi(rows: EstimateQueueItem[], options: { requirements?: EstimateRequirementsDetail; decisionStatus?: number; getError?: () => number | undefined; pending?: Promise<Response>; decisionPending?: Promise<void> } = {}) {
+function installApi(rows: EstimateQueueItem[], options: { quotation?: QuotationDetail; requirements?: EstimateRequirementsDetail; decisionStatus?: number; getError?: () => number | undefined; pending?: Promise<Response>; decisionPending?: Promise<void> } = {}) {
   tokenStorage.set("client-token");
   const decisions: unknown[] = [];
   const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
     if (url.endsWith("/auth/me")) return Response.json({ data: client });
     if (url.endsWith("/auth/authorization")) return Response.json({ data: authorizationFor("client") });
-    if (url.endsWith(`/projects/${project.id}`)) return Response.json({ data: { ...project, ...(options.requirements ? { estimationWorkflowVersion: 2 } : {}) } });
+    if (url.endsWith(`/projects/${project.id}`)) return Response.json({ data: { ...project, ...(options.quotation ? { estimationWorkflowVersion: 3 } : options.requirements ? { estimationWorkflowVersion: 2 } : {}) } });
+    if (url.endsWith(`/projects/${project.id}/quotation`) && options.quotation) return Response.json({ data: options.quotation });
+    if (url.endsWith(`/projects/${project.id}/quotation/revision`) && options.quotation) return Response.json({ data: { estimateId: options.quotation.estimateId, estimateVersion: options.quotation.estimateVersion, pricedRevision: options.quotation.pricedRevision, status: options.quotation.status, phase: options.quotation.phase } });
     if (url.endsWith(`/projects/${project.id}/estimate-requirements`) && options.requirements) return Response.json({ data: options.requirements });
     if (url.endsWith(`/projects/${project.id}/estimate-tiers`)) return Response.json({ data: { projectId: project.id, estimateId: rows[0]?.id ?? null, estimateVersion: 1, editingAllowed: false, editingBlockReason: "review_pending", totalPaise: 88500, isIncomplete: false, lines: [] } });
     if (url.endsWith("/client/estimates")) {
@@ -58,6 +61,22 @@ function installApi(rows: EstimateQueueItem[], options: { requirements?: Estimat
 }
 
 describe("Client project published estimate review", () => {
+  it("mounts the v3 quotation editor and blocks approval while unsaved item edits exist", async () => {
+    const selected = estimate(); selected.workflowVersion = 3; selected.publishedReview!.workflowVersion = 3; selected.publishedReview!.phase = "pre";
+    const source = { revisionId: "revision-one", itemVersion: 2, revisionVersion: 3, uomId: "unit" };
+    const quotation: QuotationDetail = { projectId: project.id, estimateId: selected.id, estimateVersion: 3, workflowVersion: 3, pricedRevision: 2, phase: "pre", status: "sent_to_client", reviewState: "ready_for_approval", editingAllowed: true, editingBlockReason: null, totalPaise: 88500, isIncomplete: false, rooms: [{ id: "living", name: "Living room" }], lines: [{ id: "storage", mainLineId: "storage", mainLineName: "Storage", roomId: "living", roomName: "Living room", included: true, source, quantity: 2, uomName: "Unit", pricingMode: "sub_vendor", modeTier: "signature", ratePaise: 40000, amountPaise: 75000, choices: [] }] };
+    installApi([selected], { quotation, requirements: { projectId: project.id, requirementsVersion: 0, estimateVersion: 3, phase: "pre", editingAllowed: true, editingBlockReason: null, canResolve: false, requirements: [], mainBaskets: [], rooms: [], indicativeTotalPaise: null, pricingComplete: false } });
+    renderApp([`/client/projects/${project.id}`]); const user = userEvent.setup();
+    const quantity = await screen.findByRole("spinbutton", { name: /Quantity for Storage/ });
+    const approve = await screen.findByRole("button", { name: "Approve pre-design quotation" });
+    expect(approve).toBeEnabled();
+    await user.clear(quantity); await user.type(quantity, "4");
+    expect(screen.queryByRole("button", { name: "Approve pre-design quotation" })).not.toBeInTheDocument();
+    expect(screen.getByText(/Save or discard your quotation changes/)).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Discard changes" }));
+    expect(screen.getByRole("button", { name: "Approve pre-design quotation" })).toBeEnabled();
+    expect(screen.queryByRole("region", { name: "Design review" })).not.toBeInTheDocument();
+  });
   it("offers project requirements immediately after invited membership, before the first estimate exists", async () => {
     installApi([], { requirements: {
       projectId: project.id, requirementsVersion: 0, estimateVersion: null, phase: "pre", editingAllowed: true,

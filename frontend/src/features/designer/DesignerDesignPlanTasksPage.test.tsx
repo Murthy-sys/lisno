@@ -224,6 +224,25 @@ EstimateDesignWorkspace {
 }
 
 describe("DesignerDesignPlanTasksPage", () => {
+  it.each([true, false])("separates quotation revision from operational design work for a v3 team member, primary=%s", async primary => {
+    const task = { ...assignedTask, leadId: "lead-v3", estimationWorkflowVersion: 3 as const, quotationApproved: false, canEditQuotation: primary };
+    const workflow = uploadWorkflow(); workflow.initialPayment = { ...workflow.initialPayment!, workflowVersion: 3, designStartedAt: null };
+    server.use(
+      http.get("/api/v1/designer/design-plan-tasks", () => HttpResponse.json({ data: [task] })),
+      http.get("/api/v1/projects/project-1/design-workflow", () => HttpResponse.json({ data: workflow })),
+      http.get("/api/v1/projects/project-1/design-team", () => HttpResponse.json({ data: { projectId: "project-1", version: 1, primary: { id: "designer-1", name: "Primary Designer" }, secondaries: [{ id: "designer-2", name: "Assistant Designer" }], candidates: [], canManage: primary, requiresReason: false } })),
+      http.get("/api/v1/estimates/estimate-1/design-uploads", () => HttpResponse.json({ data: emptyWorkspace() }))
+    );
+    const view = renderPage();
+    expect(await screen.findByText("Design tasks begin after the Client approves the Designer-revised quotation.")).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "Upload design" })).not.toBeInTheDocument();
+    if (primary) expect(screen.getByRole("link", { name: "Review Designer-revised quotation" })).toHaveAttribute("href", "/estimator-sales/leads/lead-v3/estimate");
+    else expect(screen.queryByRole("link", { name: "Review Designer-revised quotation" })).not.toBeInTheDocument();
+    task.quotationApproved = true; workflow.initialPayment.designStartedAt = "2026-10-30T10:00:00Z";
+    await act(async () => view.queryClient.invalidateQueries());
+    expect(await screen.findByText("The quotation is approved. Continue the design tasks below.")).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Upload design" })).toBeVisible();
+  });
   it("shows acknowledgement after payment and saves the Designer receipt of the design flow with evidence", async () => {
     let completed = false;
     let workflowReads = 0;

@@ -146,7 +146,30 @@ const instructions: Partial<Record<DesignStageType, DesignStageInstructions>> = 
   }
 };
 
-export function instructionsForStage(type: DesignStageType): DesignStageInstructions | undefined {
+export function instructionsForStage(type: DesignStageType, workflowVersion?: 2 | 3): DesignStageInstructions | undefined {
   const value = instructions[type];
-  return value ? structuredClone(value) : undefined;
+  if (!value) return undefined;
+  const result = structuredClone(value);
+  if (workflowVersion !== 3) return result;
+  if (type === "internal_kickoff") {
+    result.trigger = "The Client approves the Designer-revised quotation. Estimation is complete and operational design can begin.";
+    result.start = "After Client approval of the Designer-revised quotation.";
+  }
+  if (type === "existing_furniture_dimensions") {
+    result.trigger = "After quotation approval, the primary Designer requests existing furniture details from the Client.";
+    result.start = "The Client can respond once requested; stage completion also requires the earlier design workflow confirmations.";
+    result.completion = ["Client confirms whether existing furniture is present.",
+      "Client selects Lisno assistance or enters and confirms personal furniture dimensions with configured units.",
+      "Assisted measurements require Client approval. Returned dimensions must be corrected and resubmitted."];
+    result.clientExperience = ["Choose whether Lisno assistance is needed. Additional charges are to be determined; no amount is charged by this choice.",
+      "Without assistance, enter existing furniture names, dimensions or counts and confirm the details."];
+    result.requirements = ["Furniture items do not need to appear in the quotation.",
+      "Use positive dimensions or whole counts with a configured UOM.", "The Designer attaches supporting evidence for assisted measurements."];
+  }
+  if (type === "space_planning_tentative_look_feel") {
+    result.trigger = "The Designer-revised quotation is approved, both kick-off stages, key confirmations and site measurement are complete, and site access is available.";
+    result.start = "After quotation approval and the preceding design tasks are complete.";
+    result.dependencies = ["Keep the approved quotation locked while completing design work.", "The Client must confirm existing furniture details and approve assisted measurements for required rooms."];
+  }
+  return result;
 }

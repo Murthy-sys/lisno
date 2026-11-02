@@ -143,6 +143,7 @@ function AdminProjectCard({
         >
           <div className="admin-project-card__identity">
             <h2>{project.name}</h2>
+            {project.projectNumber ? <p className="admin-project-number">Project number: {project.projectNumber}</p> : null}
             <p>{project.client.name}</p>
             <StatusBadge label={adminProjectStatusLabel(project)} tone="info" />
           </div>
@@ -216,6 +217,7 @@ function AdminProjectGridCard({
             aria-label={`View details for ${project.name}`}
           >
             <h2 className="admin-project-tile__title" title={project.name}>{project.name}</h2>
+            {project.projectNumber ? <p className="admin-project-number">Project number: {project.projectNumber}</p> : null}
             <dl className="admin-project-tile__meta">
               <div>
                 <dt className="sr-only">Client</dt>

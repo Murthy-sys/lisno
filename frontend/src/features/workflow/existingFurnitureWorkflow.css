@@ -1,0 +1,10 @@
+.existing-furniture, .existing-furniture__form { display: grid; gap: var(--space-4); min-width: 0; }
+.existing-furniture p { margin: 0; }
+.existing-furniture__actions { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: start; }
+.existing-furniture__actions > div { display: grid; gap: var(--space-2); }
+.existing-furniture__form > fieldset { border: 0; margin: 0; padding: 0; display: grid; gap: var(--space-4); }
+.existing-furniture__form fieldset > label { display: flex; gap: var(--space-2); align-items: start; }
+.existing-furniture__room { display: grid; gap: var(--space-3); border-block-start: 1px solid var(--color-border); padding-block-start: var(--space-4); }
+.existing-furniture__item { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-3); border: 1px solid var(--color-border); padding: var(--space-3); min-width: 0; }
+.existing-furniture__item legend { font-weight: 600; padding-inline: var(--space-2); }
+@media (max-width: 600px) { .existing-furniture__item { grid-template-columns: minmax(0, 1fr); } .existing-furniture__actions > button { flex: 1 1 auto; } }

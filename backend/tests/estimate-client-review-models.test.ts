@@ -10,6 +10,7 @@ import {
   prepareEstimateClientReviewIndexes
 } from "../src/models/EstimateClientReviewRound.js";
 import { EstimateClientResponseProofModel } from "../src/models/EstimateClientResponseProof.js";
+import { createEstimateProposal } from "../src/domain/estimate-proposal.js";
 
 const NOW = new Date("2026-08-24T10:00:00.000Z");
 
@@ -101,6 +102,17 @@ describe("estimate client review domain helpers", () => {
 });
 
 describe("EstimateClientReviewRound persistence model", () => {
+  it("persists validated immutable proposal metadata and keeps old snapshots compatible", async () => {
+    const proposal = createEstimateProposal({ issuedAt: NOW, estimateId: "estimate-1", projectNumber: "Lisno000076" });
+    const document = round({ estimateSnapshot: { ...snapshot(), proposal } });
+    await expect(document.validate()).resolves.toBeUndefined();
+    expect(document.toObject().estimateSnapshot.proposal).toEqual(proposal);
+    expect(EstimateClientReviewRoundModel.schema.path("estimateSnapshot.proposal").options.immutable).toBe(true);
+    expect(round().toObject().estimateSnapshot).not.toHaveProperty("proposal");
+    for (const value of [null, {}, { ...proposal, defaultsVersion: 999 }, { ...proposal, issuedAt: "invalid" }]) {
+      await expect(round({ estimateSnapshot: { ...snapshot(), proposal: value } }).validate()).rejects.toThrow(/proposal/);
+    }
+  });
   afterEach(() => {
     vi.restoreAllMocks();
   });

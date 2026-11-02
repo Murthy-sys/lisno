@@ -17,7 +17,7 @@ export interface ChatMembership {
 /** Every source is validated independently. Ambiguous legacy lineage never widens membership. */
 export function resolveChatMembership(sources: ChatSources, selections: readonly ChatSelection[]): ChatMembership {
     const { project, users } = sources;
-    const active = new Map(users.filter((user) => user.active).map((user) => [user.id, user]));
+    const active = new Map(users.filter((user) => user.active && !user.deletedAt).map((user) => [user.id, user]));
     const members = new Map<string, ChatParticipant>();
     const warnings = new Set<string>();
     const selectionManagers = new Set<string>();
@@ -28,6 +28,7 @@ export function resolveChatMembership(sources: ChatSources, selections: readonly
         const user = active.get(userId);
         if (!user || (role && user.role !== role))
             return;
+        if (project.estimationWorkflowVersion === 3 && user.role === "designer" && project.primaryDesignerId !== userId && !(project.secondaryDesignerIds ?? []).includes(userId)) return;
         const participant = members.get(userId) ?? { id: user.id, name: user.name, role: user.role, sources: [], selection: null };
         if (!participant.sources.some((source) => source.kind === kind && source.id === id))
             participant.sources.push({ kind, id });
@@ -41,7 +42,7 @@ export function resolveChatMembership(sources: ChatSources, selections: readonly
     }
     else if (superAdmins.length > 1)
         warnings.add("The Super Admin account needs administrative review.");
-    add(project.initiatingDesignerId, "designer", "project_assignment", project.id);
+    if (project.estimationWorkflowVersion !== 3) add(project.initiatingDesignerId, "designer", "project_assignment", project.id);
     for (const id of project.assignedDesignerIds)
         add(id, "designer", "project_assignment", project.id);
     const projectManager = sources.projectManagerAssignment ?? projectManagerAssignmentFromProjection(project, sources.workflowTasks, sources.estimates, users);

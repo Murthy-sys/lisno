@@ -177,7 +177,7 @@ export async function readProcurementDashboardApprovalRounds(
       {
         $set: {
           approvedEstimateVersion: {
-            $cond: [{ $eq: ["$estimation.workflowVersion", 2] }, { $ifNull: ["$estimation.finalApproval.estimateVersion", "$estimation.preApproval.estimateVersion"] }, { $cond: [{ $gt: ["$version", 1] }, { $subtract: ["$version", 1] }, 1] }]
+            $cond: [{ $in: ["$estimation.workflowVersion", [2, 3]] }, { $ifNull: ["$estimation.finalApproval.estimateVersion", "$estimation.preApproval.estimateVersion"] }, { $cond: [{ $gt: ["$version", 1] }, { $subtract: ["$version", 1] }, 1] }]
           }
         }
       },
@@ -206,7 +206,7 @@ export async function readProcurementDashboardApprovalRounds(
                   $and: [
                     { $eq: ["$estimateId", "$$estimateId"] },
                     { $eq: ["$estimateVersion", "$$approvedEstimateVersion"] },
-                    { $or: [{ $ne: ["$$workflowVersion", 2] }, { $eq: ["$_id", "$$approvedRoundId"] }] }
+                    { $or: [{ $not: [{ $in: ["$$workflowVersion", [2, 3]] }] }, { $eq: ["$_id", "$$approvedRoundId"] }] }
                   ]
                 }
               }
@@ -288,7 +288,7 @@ export async function readProcurementDashboardPortfolioReport(): Promise<Procure
       },
       {
         $set: {
-          approvedVersion: { $cond: [{ $eq: ["$estimation.workflowVersion", 2] }, { $ifNull: ["$estimation.finalApproval.estimateVersion", "$estimation.preApproval.estimateVersion"] }, { $cond: [{ $gt: ["$version", 1] }, { $subtract: ["$version", 1] }, 1] } ] },
+          approvedVersion: { $cond: [{ $in: ["$estimation.workflowVersion", [2, 3]] }, { $ifNull: ["$estimation.finalApproval.estimateVersion", "$estimation.preApproval.estimateVersion"] }, { $cond: [{ $gt: ["$version", 1] }, { $subtract: ["$version", 1] }, 1] } ] },
           legacyApprovals: {
             $filter: {
               input: { $ifNull: ["$reviews", []] },
@@ -311,7 +311,7 @@ export async function readProcurementDashboardPortfolioReport(): Promise<Procure
               input: "$approvedRounds",
               as: "round",
               cond: { $and: [{ $eq: ["$$round.estimateVersion", "$approvedVersion"] },
-                { $or: [{ $ne: ["$estimation.workflowVersion", 2] }, { $eq: ["$$round._id",
+                { $or: [{ $not: [{ $in: ["$estimation.workflowVersion", [2, 3]] }] }, { $eq: ["$$round._id",
                   { $ifNull: ["$estimation.finalApproval.reviewRoundId", "$estimation.preApproval.reviewRoundId"] }] }] }] }
             }
           }
@@ -345,7 +345,7 @@ export async function readProcurementDashboardPortfolioReport(): Promise<Procure
                   { $eq: [{ $size: "$legacyApprovals" }, 1] }
                 ]
               },
-              { $or: [{ $eq: ["$estimation.workflowVersion", 2] }, { $and: [
+              { $or: [{ $in: ["$estimation.workflowVersion", [2, 3]] }, { $and: [
                 { $gt: ["$designPlanVersion", 0] },
                 { $eq: [{ $type: "$designPlanApprovedAt" }, "date"] },
                 { $eq: [{ $type: "$designPlanApprovedById" }, "string"] },
@@ -444,8 +444,8 @@ export async function readProcurementDashboardPortfolioReport(): Promise<Procure
                         { $eq: [{ $size: "$buckets" }, 1] },
                         { $eq: ["$bucket.estimateId", "$_id"] }, { $eq: ["$bucket.estimateVersion", "$approvedVersion"] },
                         { $eq: [{ $ifNull: ["$bucket.estimateReviewRoundId", null] }, "$approvalRoundId"] },
-                        { $eq: ["$bucket.designPlanVersion", { $cond: [{ $eq: ["$estimation.workflowVersion", 2] },
-                          { $cond: [{ $eq: ["$bucket.status", "pending_design"] }, 0, { $ifNull: ["$estimation.finalApproval.designPlanVersion", 0] }] }, "$designPlanVersion"] }] },
+                        { $eq: ["$bucket.designPlanVersion", { $cond: [{ $in: ["$estimation.workflowVersion", [2, 3]] },
+                          { $cond: [{ $eq: ["$bucket.status", "pending_design"] }, 0, { $ifNull: ["$estimation.designApproval.designPlanVersion", { $ifNull: ["$estimation.finalApproval.designPlanVersion", 0] }] }] }, "$designPlanVersion"] }] },
                         { $eq: ["$bucket.approvedSubtotalPaise", "$approvedSubtotalPaise"] },
                         { $eq: ["$bucket.approvedGstPaise", "$approvedGstPaise"] },
                         { $eq: ["$bucket.approvedContractTotalPaise", "$approvedContractTotalPaise"] }
@@ -535,7 +535,7 @@ export async function readProcurementDashboardPortfolioReport(): Promise<Procure
                             {
                               $or: [
                                 { $ne: [{ $arrayElemAt: ["$tasks.estimateId", 0] }, "$estimateId"] },
-                                { $and: [{ $ne: ["$estimationWorkflowVersion", 2] }, { $ne: [{ $arrayElemAt: ["$tasks.designPlanVersion", 0] }, "$designPlanVersion"] }] },
+                                { $and: [{ $not: [{ $in: ["$estimationWorkflowVersion", [2, 3]] }] }, { $ne: [{ $arrayElemAt: ["$tasks.designPlanVersion", 0] }, "$designPlanVersion"] }] },
                                 { $ne: [{ $arrayElemAt: ["$tasks.assigneeRole", 0] }, "procurement"] },
                                 { $not: [{ $in: ["$taskStatus", ["open", "in_progress", "completed"]] }] },
                                 { $not: [{ $isNumber: "$taskProgress" }] },
@@ -1483,7 +1483,7 @@ export function approvedProcurementSnapshotFromRows(
     if (!ref || !approval.estimateReviewRoundId) procurementLineageConflict();
     return collaborativeProcurementSnapshot(estimate, { source: {
       estimateId: String(estimate._id), estimateVersion: approval.estimateVersion,
-      estimateReviewRoundId: approval.estimateReviewRoundId, workflowVersion: 2,
+      estimateReviewRoundId: approval.estimateReviewRoundId, workflowVersion: estimate.estimation.workflowVersion,
       phase: estimate.estimation.finalApproval ? "post" : "pre",
       kind: estimate.estimation.finalApproval ? "approved_final" : "approved_pre",
       sourceSnapshotId: approval.estimateReviewRoundId,
@@ -2601,14 +2601,14 @@ function financeStateCorrupt(): never {
 }
 
 export function procurementPreparationProjectFilter(): Row {
-  return { $or: [{ status: "active" }, { status: "planning", estimationWorkflowVersion: 2 }] };
+  return { $or: [{ status: "active" }, { status: "planning", estimationWorkflowVersion: { $in: [2, 3] } }] };
 }
 export function procurementPreparationProjectAllowed(project: Row | null): boolean {
-  return !!project && (project.status === "active" || project.status === "planning" && project.estimationWorkflowVersion === 2);
+  return !!project && (project.status === "active" || project.status === "planning" && [2, 3].includes(project.estimationWorkflowVersion));
 }
 function procurementEstimateEligibilityFilter(): Row {
-  return { status: "client_approved", $or: [{ "estimation.workflowVersion": 2, "estimation.preApproval.reviewRoundId": { $type: "string" } },
-    { "estimation.workflowVersion": { $ne: 2 }, designPlanStatus: "approved" }] };
+  return { status: "client_approved", $or: [{ "estimation.workflowVersion": { $in: [2, 3] }, "estimation.preApproval.reviewRoundId": { $type: "string" } },
+    { "estimation.workflowVersion": { $nin: [2, 3] }, designPlanStatus: "approved" }] };
 }
 function procurementEstimateEligible(estimate: Row): boolean {
   return estimate.status === "client_approved" && (isCollaborativeEstimate(estimate)

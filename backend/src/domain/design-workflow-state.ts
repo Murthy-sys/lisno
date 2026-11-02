@@ -2,16 +2,29 @@ import type { Role } from "../contracts/domain.js";
 import type { DesignStageType } from "./design-workflow.js";
 import type { StoredEstimateClientResponseProof } from "./estimate-client-review.js";
 
-export const DESIGN_WORKFLOW_ACTIONS = ["confirm_initial_payment", "internal_kickoff_complete", "sales_calendar_accept", "client_kickoff_request", "client_kickoff_schedule", "client_kickoff_complete", "client_kickoff_not_required", "keys_handed_over", "keys_received", "measurement_assign", "measurement_access_block", "measurement_access_restore", "measurement_complete", "furniture_scope", "furniture_accept", "furniture_scope_return", "furniture_upload", "furniture_dimensions_approve", "furniture_dimensions_return", "furniture_proceed", "space_planning_complete"] as const;
+export const DESIGN_WORKFLOW_ACTIONS = ["confirm_initial_payment", "internal_kickoff_complete", "sales_calendar_accept", "client_kickoff_request", "client_kickoff_schedule", "client_kickoff_complete", "client_kickoff_not_required", "keys_handed_over", "keys_received", "measurement_assign", "measurement_access_block", "measurement_access_restore", "measurement_complete", "furniture_request", "furniture_choice", "furniture_scope", "furniture_accept", "furniture_scope_return", "furniture_upload", "furniture_dimensions_approve", "furniture_dimensions_return", "furniture_proceed", "space_planning_complete"] as const;
 export type DesignWorkflowAction = (typeof DESIGN_WORKFLOW_ACTIONS)[number];
 interface FurnitureItemSnapshot { id: string; estimateItemId?: string; name: string; unit: string; uomId?: string; uomName?: string }
 export type FurnitureDimensionItem = FurnitureItemSnapshot & (
   | { measurementType?: "dimensions"; length: number; width: number; height?: number; quantity?: never }
   | { measurementType: "count"; quantity: number; length?: never; width?: never; height?: never }
 );
-export interface FurnitureDimensions { submissionEventId: string; revision: number; status: "pending" | "changes_requested" | "approved"; items: FurnitureDimensionItem[]; submittedAt: string; reviewedAt?: string; returnReason?: string }
+export interface FurnitureDimensions { submissionEventId: string; revision: number; status: "pending" | "changes_requested" | "approved"; items: FurnitureDimensionItem[]; submittedAt: string; reviewedAt?: string; returnReason?: string; provenance?: "client_self" | "designer_assisted"; submittedById?: string; clientConfirmedAt?: string }
+export interface ClientFurnitureRequest {
+  requestEventId: string;
+  requestedById: string;
+  requestedAt: string;
+  roomIds: string[];
+  hasFurniture: boolean | null;
+  needsAssistance: boolean | null;
+  assistanceFeePaise: null;
+  responseEventId?: string;
+  respondedById?: string;
+  respondedAt?: string;
+}
 export interface WorkflowRoom { id: string; name: string; required: boolean; uploadedAt: string | null; proceed: boolean; dimensions?: FurnitureDimensions }
 export interface WorkflowStageState {
+  clientFurnitureRequest?: ClientFurnitureRequest;
   spacePlanningApproval?: { estimateId: string; designPlanVersion: number; reviewRoundId: string };
   timingBasis?: "sequential";
   completedAt?: string;
@@ -79,7 +92,10 @@ export interface DesignWorkflowState {
   projectId: string;
   version: number;
   initialPaymentAt: string | null;
-  estimationWorkflowVersion?: 2;
+  estimationWorkflowVersion?: 2 | 3;
+  /** Hydrated from the current approved quotation; never grants authority on its own. */
+  quotationLocked?: boolean;
+  designApprovalLocked?: boolean;
   designStartedAt?: string;
   initialPaymentEstimateId?: string;
   initialPaymentEstimateVersion?: number;
@@ -97,7 +113,7 @@ export function workflowPausedMs(state: DesignWorkflowState, at: number, from = 
   return state.pauses.reduce((sum, pause) => sum + Math.max(0, Math.min(at, pause.endedAt ? Date.parse(pause.endedAt) : at) - Math.max(from, Date.parse(pause.startedAt))), 0);
 }
 export function workflowDesignStartAt(state: DesignWorkflowState): string | null {
-  return state.estimationWorkflowVersion === 2 ? state.designStartedAt ?? null : state.initialPaymentAt;
+  return state.estimationWorkflowVersion === 2 || state.estimationWorkflowVersion === 3 ? state.designStartedAt ?? null : state.initialPaymentAt;
 }
 export function workflowElapsedMs(state: DesignWorkflowState, at: number): number {
   const startedAt = workflowDesignStartAt(state);
@@ -160,7 +176,8 @@ export function workflowStagePrerequisiteBlockers(state: DesignWorkflowState, ty
 }
 export function workflowSubmissionBlockers(state: DesignWorkflowState, roomIds?: string[], phase: "upload" | "submission" = "submission"): string[] {
   const blockers: string[] = [];
-  if (!workflowDesignStartAt(state)) blockers.push(state.estimationWorkflowVersion === 2 ? "The Client must approve the pre-estimate before design starts." : "Super Admin must confirm Initial payment received after estimate approval.");
+  if (state.estimationWorkflowVersion === 3 && !state.quotationLocked) blockers.push("The Client must approve the current Designer-revised quotation before design work continues.");
+  else if (!workflowDesignStartAt(state)) blockers.push(state.estimationWorkflowVersion === 2 ? "The Client must approve the pre-estimate before design starts." : "Super Admin must confirm Initial payment received after estimate approval.");
   if (workflowIsPaused(state)) blockers.push("The Client has blocked site access. Restore access to resume the workflow.");
   if (!state.stages.internal_kickoff?.completedAt) blockers.push("Complete Internal Kick off with its signed checklist.");
   if (!state.stages.client_kickoff?.completedAt) blockers.push("Complete Client Kick off or mark it not necessary.");

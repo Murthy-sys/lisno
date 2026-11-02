@@ -22,8 +22,8 @@ export const leadKeys = {
 };
 export function getLeadPage(search = "", stage: LeadStage | "all" = "all") { const query = new URLSearchParams({ limit: "20", offset: "0" }); if (search.trim()) query.set("search", search.trim()); if (stage !== "all") query.set("stage", stage); return apiClient.get<PaginatedData<Lead>>(`/leads?${query}`); }
 export const getLead = (id: string) => apiClient.get<Lead>(`/leads/${encodeURIComponent(id)}`);
-export const createLead = (input: Omit<Lead, "id" | "projectId" | "ownerId" | "stage" | "latestActivityAt" | "createdAt" | "updatedAt" | "builder" | "areaSqft" | "targetHandoverAt" | "notes">) => apiClient.post<Lead>("/leads", input);
-export const updateLead = (id: string, input: Partial<Lead>) => apiClient.patch<Lead>(`/leads/${encodeURIComponent(id)}`, input);
+export const createLead = (input: Omit<Lead, "id" | "projectId" | "projectNumber" | "ownerId" | "stage" | "latestActivityAt" | "createdAt" | "updatedAt" | "builder" | "areaSqft" | "targetHandoverAt" | "notes">) => apiClient.post<Lead>("/leads", input);
+export const updateLead = (id: string, input: Partial<Omit<Lead, "projectNumber">>) => apiClient.patch<Lead>(`/leads/${encodeURIComponent(id)}`, input);
 export const getLeadActivities = (id: string) => apiClient.get<PaginatedData<LeadActivity>>(`/leads/${encodeURIComponent(id)}/activities?limit=50&offset=0`);
 export const addLeadActivity = (id: string, input: { type: LeadActivityType; note: string; occurredAt: string }) => apiClient.post<LeadActivity>(`/leads/${encodeURIComponent(id)}/activities`, input);
 export interface LegacyEstimateLineInput {
@@ -122,19 +122,25 @@ export interface EstimateDraftInput {
 }
 export type EstimateStatus = "draft" | "pending_manager_assignment" | "pending_designer_approval" | "designer_changes_requested" | "ready_for_client" | "sent_to_client" | "client_changes_requested" | "client_approved";
 export interface EstimationLifecycle {
-  workflowVersion: 2;
+  workflowVersion: 2 | 3;
   phase: "pre" | "post";
   status: EstimateStatus;
   requirementsVersion: number;
+  pricedRevision?: number;
+  designStartedAt?: string | null;
+  salesApproval?: { actorId: string; pricedRevision: number; estimateVersion: number; sourceDigest: string; approvedAt: string } | null;
+  designApproval?: { reviewRoundId: string; designPlanVersion: number; designScopeRevision: number; estimateReviewRoundId: string; approvedAt: string } | null;
   editClosedAt: string | null;
   preApproval: { reviewRoundId: string; estimateVersion: number; approvedAt: string } | null;
-  finalApproval: { reviewRoundId: string; estimateVersion: number; approvedAt: string; requirementsVersion: number; designReviewRoundId: string; designPlanVersion: number; designScopeRevision: number } | null;
+  finalApproval: { reviewRoundId: string; estimateVersion: number; approvedAt: string; requirementsVersion: number; designReviewRoundId: string | null; designPlanVersion: number | null; designScopeRevision: number } | null;
   designScopeRevision: number;
   approvedDesignScopeRevision: number | null;
   pendingReviewRoundId: string | null;
   preparationSnapshotId: string | null;
 }
 export interface EstimateDraft extends Omit<EstimateDraftInput, "lineItems"> {
+  readonly projectNumber?: string | null;
+  capabilities?: { canUnlockQuotation: boolean; canPublishQuotation?: boolean };
   id: string;
   version?: number;
   lineItems: EstimateLine[];
@@ -158,13 +164,13 @@ export interface EstimateDraft extends Omit<EstimateDraftInput, "lineItems"> {
 export interface SavedEstimate extends EstimateDraft {
   leadId: string;
   updatedAt: string;
-  lead: Pick<Lead, "id" | "clientName" | "clientEmail" | "clientMobile" | "projectName" | "propertyType" | "location"> | null;
+  lead: Pick<Lead, "id" | "projectNumber" | "clientName" | "clientEmail" | "clientMobile" | "projectName" | "propertyType" | "location"> | null;
 }
 export const getLeadEstimate = (id: string) => apiClient.get<EstimateDraft | null>(`/leads/${encodeURIComponent(id)}/estimate`);
 export const getSavedEstimates = () => apiClient.get<SavedEstimate[]>("/estimates");
 export const saveLeadEstimate = (id: string, input: EstimateDraftInput) => apiClient.put<EstimateDraft>(`/leads/${encodeURIComponent(id)}/estimate`, input);
-export const submitLeadEstimate = (id: string, expectedVersion?: number) => apiClient.post<EstimateDraft>(`/leads/${encodeURIComponent(id)}/estimate/submit`, expectedVersion === undefined ? {} : { expectedVersion });
-export const sendEstimateToClient = (estimateId: string, expectedVersion?: number) => apiClient.post<EstimateDraft>(`/estimates/${encodeURIComponent(estimateId)}/send-client`, expectedVersion === undefined ? {} : { expectedVersion });
+export const submitLeadEstimate = (id: string, expectedVersion?: number, approveSales = false) => apiClient.post<EstimateDraft>(`/leads/${encodeURIComponent(id)}/estimate/submit`, { ...(expectedVersion === undefined ? {} : { expectedVersion }), ...(approveSales ? { approveSales: true } : {}) });
+export const sendEstimateToClient = (estimateId: string, expectedVersion?: number, approveSales = false) => apiClient.post<EstimateDraft>(`/estimates/${encodeURIComponent(estimateId)}/send-client`, { ...(expectedVersion === undefined ? {} : { expectedVersion }), ...(approveSales ? { approveSales: true } : {}) });
 export const retryEstimateClientEmail = (
   estimateId: string,
   input: { roundId: string; version: number }

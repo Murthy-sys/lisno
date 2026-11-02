@@ -4,7 +4,7 @@ import { emptyDesignWorkflowState, type WorkflowStageState } from "../src/domain
 import { deriveProjectStatus, type ProjectStatusInput } from "../src/domain/project-status.js";
 import { projectWorkflowBlueprints } from "../src/domain/project-workflow.js";
 import type { ProjectCompletionSummary } from "../src/domain/project-completion.js";
-import { newEstimationLifecycle } from "../src/domain/estimation-lifecycle.js";
+import { newEstimationLifecycle, newQuotationLifecycle } from "../src/domain/estimation-lifecycle.js";
 
 const AT = "2026-10-01T12:00:00.000Z";
 const BEFORE = "2026-09-30T12:00:00.000Z";
@@ -517,5 +517,73 @@ describe("vendor-managed project status", () => {
     input.execution!.completion!.completedAt = AT;
     input.execution!.completion!.readyForCompletion = false;
     expect(deriveProjectStatus(input)).toMatchObject({ state: "completed", pendingActions: [], currentStage: null });
+  });
+});
+
+describe("quotation project status responsibility", () => {
+  function quotation(locked = false) {
+    const input = collaborative();
+    input.project.estimationWorkflowVersion = 3;
+    input.project.primaryDesignerId = "designer-b";
+    input.project.secondaryDesignerIds = ["designer-a"];
+    input.project.initiatingDesignerId = "former-designer";
+    input.participants = [...input.participants, { id: "former-designer", name: "Former Designer", role: "designer" }];
+    input.estimate!.estimation = { ...newQuotationLifecycle(3), phase: "post", designScopeRevision: 3,
+      preApproval: { reviewRoundId: "pre-round", estimateVersion: 2, approvedAt: BEFORE },
+      ...(locked ? { editClosedAt: BEFORE, status: "client_approved", designStartedAt: BEFORE,
+        finalApproval: { reviewRoundId: "quote-round", estimateVersion: 7, approvedAt: BEFORE,
+          requirementsVersion: 3, designScopeRevision: 3, designReviewRoundId: null, designPlanVersion: null } } : {}) };
+    input.commercial = { state: locked ? "approved" : "pre_approved", estimateId: "estimate-a", estimateVersion: locked ? 7 : 2 };
+    Object.assign(input.workflow!, { estimationWorkflowVersion: 3, designStartedAt: locked ? BEFORE : null });
+    return input;
+  }
+
+  it("assigns the Designer-revised quotation before any operational design or payment", () => {
+    const input = quotation();
+    const result = deriveProjectStatus(input);
+    expect(result).toMatchObject({ state: "active", currentStage: { key: "estimate_preparation" } });
+    expect(result.pendingActions).toHaveLength(1);
+    expect(result.pendingActions[0]).toMatchObject({ responsibleRole: "designer", people: [{ id: "designer-b" }] });
+    input.estimate!.estimation!.status = "sent_to_client";
+    expect(deriveProjectStatus(input).pendingActions).toEqual([expect.objectContaining({ stageKey: "estimate_approval", responsibleRole: "client" })]);
+  });
+
+  it("starts operational design after quote approval without payment or a drawing approval", () => {
+    const input = quotation(true);
+    const result = deriveProjectStatus(input);
+    expect(result).toMatchObject({ state: "active", currentStage: { key: "internal_kickoff" } });
+    expect(result.pendingActions.find(action => action.stageKey === "internal_kickoff")?.people.map(person => person.id)).toEqual(["designer-a", "designer-b"]);
+    expect(result.pendingActions.some(action => action.stageKey === "initial_payment")).toBe(false);
+  });
+
+  it("retains the approved source when unlocked and returns responsibility to the primary Designer", () => {
+    const input = quotation(true);
+    input.estimate!.estimation!.editClosedAt = null;
+    input.estimate!.estimation!.status = "draft";
+    input.commercial.state = "pre_approved";
+    expect(deriveProjectStatus(input).pendingActions).toEqual([expect.objectContaining({ stageKey: "estimate_preparation", people: [{ id: "designer-b", name: "Designer B", role: "designer" }] })]);
+  });
+
+  it("binds payment to the separate drawing approval after quotation completion", () => {
+    const input = quotation(true);
+    readyDesign(input);
+    const lifecycle = input.estimate!.estimation!;
+    if (lifecycle.workflowVersion !== 3) throw new Error("Expected quotation lifecycle");
+    lifecycle.designApproval = { reviewRoundId: "round-a", designPlanVersion: 2, designScopeRevision: 3, estimateReviewRoundId: "quote-round", approvedAt: BEFORE };
+    expect(deriveProjectStatus(input).pendingActions).toEqual([expect.objectContaining({ stageKey: "initial_payment" })]);
+    Object.assign(input.workflow!, { initialPaymentAt: BEFORE, initialPaymentEstimateId: "estimate-a", initialPaymentEstimateVersion: 7, initialPaymentReviewRoundId: "quote-round", initialPaymentDesignReviewRoundId: "round-a" });
+    expect(deriveProjectStatus(input).pendingActions.some(action => action.stageKey === "initial_payment")).toBe(false);
+  });
+
+  it("places requested existing-furniture information with the Client", () => {
+    const input = fixture(); through(input, "measurement");
+    const quote = quotation(true);
+    quote.workflow!.stages = input.workflow!.stages;
+    quote.workflow!.stages.existing_furniture_dimensions = { clientFurnitureRequest: {
+      requestEventId: "request-a", requestedById: "designer-b", requestedAt: BEFORE,
+      roomIds: ["room-a"], hasFurniture: null, needsAssistance: null, assistanceFeePaise: null
+    } };
+    const action = deriveProjectStatus(quote).pendingActions.find(item => item.stageKey === "existing_furniture_dimensions");
+    expect(action).toMatchObject({ responsibleRole: "client", people: [{ id: "client-a" }] });
   });
 });

@@ -1,4 +1,5 @@
-import { newEstimationLifecycle } from "../src/domain/estimation-lifecycle.js";
+import { newQuotationLifecycle } from "../src/domain/estimation-lifecycle.js";
+import { createEstimateProposal } from "../src/domain/estimate-proposal.js";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import {
@@ -357,8 +358,15 @@ function createHarness(input: {
   deliverInitial?: (roundId: string) => Promise<EstimateClientReviewSummary>;
 }) {
   const audit = input.audit ?? createAuditService(createMongoRepository());
-  const reviews = createEstimateClientReviewService({ storage: input.storage });
+  // Commercial/lease tests use synthetic PDF bytes. Projection/rendition safety has its own integration suite.
+  const renditions = { async readForRound(round: { _id?: string; id?: string }) {
+    const stored = await EstimateClientReviewRoundModel.findById(round._id ?? round.id).select("+pdfStorageReference").lean();
+    if (!stored) throw new Error("Synthetic published fixture missing.");
+    return { filename: stored.pdfFilename, mimeType: "application/pdf" as const, bytes: await input.storage.read(stored.pdfStorageReference) };
+  } };
+  const reviews = createEstimateClientReviewService({ storage: input.storage, renditions });
   const delivery = createEstimateDeliveryService({
+    renditions,
     reviews,
     storage: input.storage,
     mailer: input.mailer,
@@ -411,6 +419,49 @@ async function selectedRound(roundId: string) {
 }
 
 describe("Estimate publication and delivery on a Mongo replica set", () => {
+  it("persists exactly the rendered proposal metadata and retains it through detail and delivery retries", async () => {
+    const fixture = await seedPublication();
+    await LeadModel.collection.updateOne({ _id: fixture.leadId }, { $set: { projectNumber: "Lisno000047" } });
+    const storage = createReviewStorage();
+    const mail = createSequencedMailer([{ kind: "failed", failureCode: "MAIL_TEMPORARY_FAILURE" }, { kind: "sent" }]);
+    let clock = new Date("2026-12-31T18:45:00Z");
+    const harness = createHarness({ storage: storage.storage, mailer: mail.mailer, now: () => new Date(clock) });
+    const published = await harness.publication.publishEstimateToClient(publicationInput(fixture));
+    const stored = await selectedRound(published.clientReview.id);
+    const expected = createEstimateProposal({ issuedAt: clock, projectNumber: "Lisno000047", estimateId: fixture.estimateId });
+    expect(harness.pdfInputs[0].proposal).toEqual(expected);
+    expect(stored!.estimateSnapshot.proposal).toEqual(expected);
+    expect(expected.validUntil).toBe("2027-01-16");
+    expect((await harness.reviews.detail(ADMIN, published.clientReview.id)).estimateSnapshot.proposal).toEqual(expected);
+    const originalBytes = Buffer.from(storage.objects.get(stored!.pdfStorageReference)!);
+    clock = new Date("2027-01-03T12:00:00Z");
+    await LeadModel.collection.updateOne({ _id: fixture.leadId }, { $set: { projectNumber: "Lisno000048" } });
+    await harness.delivery.retry(ESTIMATOR, { estimateId: fixture.estimateId, roundId: published.clientReview.id, version: published.clientReview.version });
+    expect(harness.pdfInputs).toHaveLength(1);
+    expect(await EstimateClientReviewRoundModel.countDocuments()).toBe(1);
+    expect((await selectedRound(published.clientReview.id))!.estimateSnapshot.proposal).toEqual(expected);
+    expect(mail.attachments.every(bytes => bytes.equals(originalBytes))).toBe(true);
+    expect(storage.objects.get(stored!.pdfStorageReference)).toEqual(originalBytes);
+  });
+
+  it("rejects a saved project reference changed after rendering and cleans only the unused PDF", async () => {
+    const fixture = await seedPublication();
+    await LeadModel.collection.updateOne({ _id: fixture.leadId }, { $set: { projectNumber: "Lisno000047" } });
+    const storage = createReviewStorage(1);
+    const mail = createSequencedMailer();
+    const harness = createHarness({ storage: storage.storage, mailer: mail.mailer, now: () => new Date(BASE_TIME) });
+    const pending = harness.publication.publishEstimateToClient(publicationInput(fixture)).catch((error: unknown) => error);
+    await storage.savesReached;
+    await LeadModel.collection.updateOne({ _id: fixture.leadId }, { $set: { projectNumber: "Lisno000048" } });
+    storage.releaseSaves();
+    expectApiError(await pending, "ESTIMATE_PUBLICATION_CONFLICT", 409);
+    expect(await EstimateClientReviewRoundModel.countDocuments()).toBe(0);
+    expect(await EstimateModel.findById(fixture.estimateId).lean()).toMatchObject({ status: "draft", version: fixture.estimateVersion });
+    expect(storage.deleted).toEqual(storage.saved);
+    expect(storage.objects.size).toBe(0);
+    expect(mail.calls).toHaveLength(0);
+  });
+
   it.each(["pmc", "sub_vendor", "in_house"] as const)("freezes %s mode pricing and excludes recommendation origins", async (pricingMode) => {
     const fixture = await seedConfiguredPublication();
     await AiEstimatorKnowledgeSectionModel.collection.insertOne({
@@ -508,7 +559,7 @@ describe("Estimate publication and delivery on a Mongo replica set", () => {
     });
     const leadId = initiated.lead!.id;
     await EstimateModel.updateOne({ _id: fixture.estimateId }, { $set: { leadId, projectId: initiated.id,
-      estimation: { ...newEstimationLifecycle(), status: estimateStatus } } });
+      estimation: { ...newQuotationLifecycle(), status: estimateStatus } } });
     // The publication fixture begins after this specific project invitation was accepted.
     await ProjectModel.updateOne({ _id: initiated.id }, { $set: { clientId: CLIENT.id } });
     expect(await ProjectModel.findById(initiated.id).lean()).toMatchObject({ location: "", clientAddress: "" });
@@ -517,7 +568,7 @@ describe("Estimate publication and delivery on a Mongo replica set", () => {
     const storage = createReviewStorage();
     const mail = createSequencedMailer();
     const harness = createHarness({ storage: storage.storage, mailer: mail.mailer, audit, now: () => new Date(BASE_TIME) });
-    const input = { ...publicationInput(fixture), leadId, expectedStatus: estimateStatus };
+    const input = { ...publicationInput(fixture), leadId, expectedStatus: estimateStatus, approveSales: true };
     const published = await harness.publication.publishEstimateToClient(input);
     await expect(harness.publication.publishEstimateToClient(input))
       .rejects.toMatchObject({ code: "ESTIMATE_PUBLICATION_CONFLICT", status: 409 });

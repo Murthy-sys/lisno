@@ -31,6 +31,13 @@
   font-weight: 600;
 }
 
+.lead-detail--estimate-progress .estimation-progress__project-number {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+
 .lead-detail--estimate-progress .estimation-progress__title-row {
   display: flex;
   flex-wrap: wrap;

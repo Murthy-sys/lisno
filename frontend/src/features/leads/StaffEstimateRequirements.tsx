@@ -11,9 +11,30 @@ import "./staffEstimateCollaboration.css";
 
 const labels: Record<EstimateRequirement["status"], string> = { open: "Open", included: "Included", declined: "Declined", superseded: "Replaced", withdrawn: "Withdrawn" };
 
-export function StaffEstimateRequirements({ projectId, estimate, disabled = false, onVersionAdvance }: {
-  projectId: string; estimate: EstimateDraft | null; disabled?: boolean; onVersionAdvance?: (before: number, after: number) => void;
-}) {
+interface StaffEstimateRequirementsProps {
+  projectId: string; estimate: EstimateDraft | null; disabled?: boolean; onVersionAdvance?: (before: number, after: number) => void; compact?: boolean;
+}
+
+export function StaffEstimateRequirements(props: StaffEstimateRequirementsProps) {
+  return props.compact ? <CompactEstimateRequirements {...props} /> : <EstimateRequirementsContent {...props} />;
+}
+
+function CompactEstimateRequirements(props: StaffEstimateRequirementsProps) {
+  const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const query = useQuery({ queryKey: estimateRequirementsKeys.detail(props.projectId), queryFn: () => getEstimateRequirements(props.projectId) });
+  const count = query.data?.requirements.filter(request => request.status === "open").length ?? 0;
+  if (query.isPending || !query.isError && !query.data?.requirements.length) return null;
+  const label = query.isError ? "Client requests unavailable" : count > 0 ? `Client requests (${count})` : `Request history (${query.data!.requirements.length})`;
+  return <div className="staff-estimate-requests-control">
+    <Button variant="secondary" ref={triggerRef} onClick={() => setOpen(true)} aria-haspopup="dialog">{label}</Button>
+    {open ? <Dialog title="Client requests" eyebrow="Current estimate" onClose={() => setOpen(false)} returnFocusRef={triggerRef}>
+      <div className="ui-dialog__body"><EstimateRequirementsContent {...props} expanded /></div>
+    </Dialog> : null}
+  </div>;
+}
+
+function EstimateRequirementsContent({ projectId, estimate, disabled = false, onVersionAdvance, expanded = false }: StaffEstimateRequirementsProps & { expanded?: boolean }) {
   const queryClient = useQueryClient();
   const query = useQuery({ queryKey: estimateRequirementsKeys.detail(projectId), queryFn: () => getEstimateRequirements(projectId) });
   const [draft, setDraft] = useState<{ request: EstimateRequirement; collectionVersion: number; estimateVersion: number | null; status: ResolveEstimateRequirementInput["status"]; lineItemIds: string[]; reason: string; supersededById: string } | null>(null);
@@ -49,7 +70,7 @@ export function StaffEstimateRequirements({ projectId, estimate, disabled = fals
   const lines = draft ? (estimate?.lineItems ?? []).filter((line) => line.source === "configuration" && line.id && line.included && line.mainBasketId === draft.request.mainBasketId && (!draft.request.mainLineId || (line.mainLineId === draft.request.mainLineId && line.catalogueId === draft.request.mainLineId)) && (!draft.request.roomId || line.roomId === draft.request.roomId)) : [];
   const locked = disabled || query.isFetching || !detail.canResolve || command.isPending;
   return <div ref={sectionRef} tabIndex={-1} className="staff-estimate-flow" aria-label="Client estimate requests">
-    <details className="staff-estimate-requests" open={openCount > 0 || undefined}><summary>Client requirements · {openCount} open · {detail.requirements.length} total</summary>
+    <details className="staff-estimate-requests" open={expanded || openCount > 0 || undefined}><summary>Client requirements · {openCount} open · {detail.requirements.length} total</summary>
       <p>Resolve each open request against saved estimate items before submission. Save new items before linking them.</p>
       {!detail.editingAllowed ? <p role="status">{detail.editingBlockReason === "review_pending" ? "Withdraw the pending estimate review before resolving requests." : "The estimate is closed for changes. Request history remains available."}</p> : null}
       {notice ? <p role="status">{notice}</p> : null}

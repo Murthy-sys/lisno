@@ -64,7 +64,7 @@ export function FinanceProjectWorkflowControl({ projectId }: { projectId: string
 }
 
 export function ProjectWorkflowSnapshot({ project }: { project: AdminProjectSummary }) {
-  const executionOpen = project.estimationWorkflowVersion === 2 ? project.estimate?.estimationPhase === "post" : project.estimate?.designPlanStatus === "approved";
+  const executionOpen = project.estimationWorkflowVersion === 3 ? project.estimate?.designApproved === true : project.estimationWorkflowVersion === 2 ? project.estimate?.estimationPhase === "post" : project.estimate?.designPlanStatus === "approved";
   const tasksQuery = useQuery({
     queryKey: projectWorkflowKeys.projectTasks(project.id),
     queryFn: () => getAdminProjectWorkflowTasks(project.id),
@@ -105,16 +105,17 @@ function WorkflowSnapshot({
   tasksErrorMessage: string;
   onRetryTasks: () => void;
 }) {
-  const collaborative = project.estimationWorkflowVersion === 2;
+  const quotationWorkflow = project.estimationWorkflowVersion === 3;
+  const collaborative = quotationWorkflow || project.estimationWorkflowVersion === 2;
   const estimateApproved = collaborative ? project.estimate?.estimationPhase === "post" : project.estimate?.status === "client_approved";
   const designStatus = project.estimate?.designPlanStatus ?? "pending_assignment";
   const designerAssigned = Boolean(project.estimate?.designPlanDesigner) ||
     !["pending_assignment"].includes(designStatus);
   const designSubmitted = ["ready_for_client", "changes_requested", "approved"].includes(designStatus);
-  const designApproved = designStatus === "approved";
+  const designApproved = quotationWorkflow ? project.estimate?.designApproved === true : designStatus === "approved";
   const preparationTasks = tasks.filter((task) => task.kind !== "design_plan_upload" && task.preparationOnly === true);
   const executionTasks = tasks.filter((task) => task.kind !== "design_plan_upload" && task.preparationOnly !== true);
-  const executionEnabled = collaborative ? project.estimate?.finalEstimateApproved && project.status !== "planning" && executionTasks.length > 0 : designApproved;
+  const executionEnabled = collaborative ? (!quotationWorkflow || designApproved) && project.estimate?.finalEstimateApproved && project.status !== "planning" && executionTasks.length > 0 : designApproved;
   const tradeTasks = executionTasks.filter((task) => task.kind === "trade_execution");
   const completedTasks = executionTasks.filter((task) => task.status === "completed").length;
   const assignedTrades = tradeTasks.filter((task) => task.assignedWorker).length;
@@ -149,14 +150,15 @@ function WorkflowSnapshot({
           detail={`${project.name} · ${date.format(new Date(project.createdAt))}`}
         />
         <WorkflowStage
-          title={collaborative ? "2. Pre-estimate approved" : "2. Estimate approved"}
+          title={quotationWorkflow ? "2. Pre-design approval" : collaborative ? "2. Pre-estimate approved" : "2. Estimate approved"}
           tone={estimateApproved ? "success" : project.estimate ? "warning" : "neutral"}
           status={estimateApproved
             ? "Approved"
             : project.estimate
               ? formatWorkflowLabel(project.estimate.status)
               : "Not started"}
-          detail={collaborative
+          detail={quotationWorkflow ? estimateApproved ? "The initial quotation is approved. The primary Designer can revise it for the second Client approval." : "Sales and Client approval of the initial quotation is required."
+            : collaborative
             ? estimateApproved ? "The Client approved the pre-estimate. Design and procurement preparation can proceed." : "Client pre-estimate approval is required before design and procurement preparation."
             : project.estimate
             ? project.estimate.status === "client_approved"
@@ -174,8 +176,11 @@ function WorkflowSnapshot({
             ? `${project.estimate.designPlanDesigner.name} · ${project.estimate.designPlanDesigner.email}`
             : "No Designer is currently assigned."}
         />
+        {quotationWorkflow ? <WorkflowStage title="4. Post-design quotation approval" tone={project.estimate?.finalEstimateApproved ? "success" : "warning"}
+          status={project.estimate?.finalEstimateApproved ? "Approved" : "Awaiting quotation approval"}
+          detail={project.estimate?.finalEstimateApproved ? "The Designer-revised quotation is approved and locked. Actual design tasks can proceed." : "The Client approves the Designer-revised quotation before actual design tasks begin."} /> : null}
         <WorkflowStage
-          title="4. Design uploaded and submitted to Client"
+          title={quotationWorkflow ? "5. Design uploaded and submitted to Client" : "4. Design uploaded and submitted to Client"}
           tone={designSubmitted ? designStatus === "changes_requested" ? "warning" : "success" : "info"}
           status={designSubmitted
             ? designStatus === "changes_requested"
@@ -189,14 +194,14 @@ function WorkflowSnapshot({
             : "The Designer must upload and submit the actual plan to the Client."}
         />
         <WorkflowStage
-          title="5. Design approved"
+          title={quotationWorkflow ? "6. Design approved" : "5. Design approved"}
           tone={designApproved ? "success" : designStatus === "changes_requested" ? "warning" : "neutral"}
-          status={designApproved ? "Approved" : formatWorkflowLabel(designStatus)}
+          status={designApproved ? "Approved" : quotationWorkflow && designStatus === "approved" ? "Awaiting current design approval" : formatWorkflowLabel(designStatus)}
           detail={designApproved
             ? "Approved by the Client, or by a Sales Manager with recorded proof."
             : "Execution remains locked until the design decision is approved."}
         />
-        {collaborative ? <WorkflowStage title="6. Final estimate approval" tone={project.estimate?.finalEstimateApproved ? "success" : "warning"}
+        {collaborative && !quotationWorkflow ? <WorkflowStage title="6. Final estimate approval" tone={project.estimate?.finalEstimateApproved ? "success" : "warning"}
           status={project.estimate?.finalEstimateApproved ? "Approved" : "Awaiting final approval"}
           detail={project.estimate?.finalEstimateApproved
             ? project.estimate.approvedBaseline
@@ -210,10 +215,10 @@ function WorkflowSnapshot({
             ? "Complete"
             : executionEnabled
               ? `${completedTasks} of ${executionTasks.length} tasks complete`
-              : collaborative ? "Preparation in progress" : "Waiting for design approval"}
+              : quotationWorkflow ? designApproved ? "Awaiting execution release" : "Waiting for design approval" : collaborative ? "Preparation in progress" : "Waiting for design approval"}
           detail={executionEnabled
             ? `Procurement, Finance, Site Management, and approved trades · ${assignedTrades} of ${tradeTasks.length} trade tasks assigned`
-            : collaborative ? "Procurement and assigned staff can prepare now. Work-order issuance requires final approval and Super Admin payment confirmation." : "Execution queues open after design approval."}
+            : quotationWorkflow ? "Procurement follows approval of the uploaded design. Work-order issuance also requires the approved quotation, Super Admin payment confirmation and procurement checks." : collaborative ? "Procurement and assigned staff can prepare now. Work-order issuance requires final approval and Super Admin payment confirmation." : "Execution queues open after design approval."}
         >
           {preparationTasks.length > 0 && !tasksLoading && !tasksError ? <p>{preparationTasks.filter((task) => task.assignedWorker).length} of {preparationTasks.length} preparation tasks assigned. Assignments can be planned now; execution deadlines and effort tracking start only after Super Admin confirms the initial payment.</p> : null}
           {executionEnabled && !tasksLoading && !tasksError ? (

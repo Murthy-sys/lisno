@@ -16,6 +16,13 @@ const target: EstimationPreparationSource = { workflowVersion: 2, phase: "post",
 const enquiry: BasketEnquiry = { id: "enquiry-one", projectId: "project-one", mainBasketId: "basket-one", version: 7, status: "award_pending", estimateSource: { estimateId: "estimate-one", estimateVersion: 3, estimateReviewRoundId: "pre-review" }, preparationDigest: "old-digest", vendorScopeCurrent: true, boqRevisionId: "boq-one", boqRevision: 1, boqDigest: "boq-digest", lines: [], invitations: [], bidCount: 2, awardId: "award-one" };
 
 describe("Procurement estimate lifecycle", () => {
+  it("keeps v3 work orders blocked by the server's later design-approval requirement despite an approved quotation source", () => {
+    const readiness = { ...source.issueReadiness, blockers: ["Approval of the uploaded design is required."], finalSource: { ...target, workflowVersion: 3 as const, estimateReviewRoundId: "final-review" } };
+    renderWithQuery(<><ProcurementEstimateSource source={readiness.finalSource} readiness={readiness} /><PreparedOrderActions source={{ ...source, issueReadiness: readiness }} kind="order" canManage /></>);
+    expect(screen.getByText("Approved quotation · Version 12")).toBeVisible();
+    expect(screen.getAllByText("Approval of the uploaded design is required.").length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: "Issue approved work orders" })).toBeDisabled();
+  });
   it("allows preparation while explaining backend final and payment blockers", () => {
     renderWithQuery(<><ProcurementEstimateSource source={{ ...target, kind: "released_post" }} readiness={source.issueReadiness} /><PreparedOrderActions source={source} kind="order" canManage /></>);
     expect(screen.getByText("Procurement preparation is open")).toBeVisible();

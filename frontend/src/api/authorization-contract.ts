@@ -120,6 +120,11 @@ export const PERMISSION_CODES = [
   "projects.client_invitation.read",
   "projects.client_invitation.manage",
   "identity.project_invitation.accept",
+  "estimation.quotation.read",
+  "estimation.quotation.edit",
+  "estimation.quotation.unlock",
+  "projects.design_team.read",
+  "projects.design_team.manage",
   "estimation.tiers.read",
   "estimation.tiers.select", "estimation.dimensions.update",
   "estimation.requirements.read",
@@ -322,7 +327,7 @@ export const PERMISSION_CODES = [
 export type PermissionCode = (typeof PERMISSION_CODES)[number];
 
 export const AUTHORIZATION_POLICY_VERSION =
-  "2026-10-30.user-deletion.v1" as const;
+  "2026-10-30.quotation-workflow.v3" as const;
 
 export interface AuthorizationSnapshot {
   readonly role: Role;

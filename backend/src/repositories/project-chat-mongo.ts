@@ -151,8 +151,8 @@ function mongoTransaction(app: AppRepository, session: ClientSession): ChatTrans
             const exclusions = await find<ChatExclusion>(ProjectChatExclusionModel, { projectId });
             const selections = await ProjectChatParticipantAssignmentModel.find({ projectId, active: true }).select({ userId: 1 }).session(session).lean();
             const ids = new Set([project.clientId, project.initiatingDesignerId, project.assignedEstimatorId, project.managerId, project.programManagerId, ...project.assignedDesignerIds, ...leads.map((lead) => lead.ownerId), ...estimates.flatMap((estimate) => [estimate.ownerId, estimate.assignedDesignerId, estimate.assignedManagerId, estimate.designPlanDesignerId]), ...workflowTasks.map((task) => task.assigneeUserId), ...designTasks.map((task) => task.ownerId), ...grants.map((grant) => grant.userId), ...selections.map((selection) => selection.userId), ...exclusions.map(row => row.userId)].filter(Boolean));
-            const users = await find<UserRecord>(UserModel, { _id: { $in: [...ids] }, active: true });
-            const superAdmins = (await UserModel.find({ role: "super_admin", active: true }).limit(2).session(session).lean()).map((row) => record<UserRecord>(row));
+            const users = await find<UserRecord>(UserModel, { _id: { $in: [...ids] }, active: true, deletedAt: null });
+            const superAdmins = (await UserModel.find({ role: "super_admin", active: true, deletedAt: null }).limit(2).session(session).lean()).map((row) => record<UserRecord>(row));
             for (const user of superAdmins)
                 if (!users.some((candidate) => candidate.id === user.id))
                     users.push(user);

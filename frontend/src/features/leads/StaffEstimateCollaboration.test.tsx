@@ -1,4 +1,5 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { useState } from "react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { describe, expect, it, vi } from "vitest";
@@ -24,6 +25,38 @@ const detail: EstimateRequirementsDetail = { projectId: "project-one", requireme
   requirements: [{ id: "request-one", projectId: "project-one", phase: "post", mainBasketId: "joinery", roomId: "room-one", text: "Add tall storage.", authorId: "client-one", version: 2, status: "open", lineItemIds: [], reason: "", supersededById: null, createdAt: "2026-10-13T10:00:00Z", updatedAt: "2026-10-13T10:00:00Z", resolvedAt: null, canEdit: false }] };
 
 describe("Staff estimate collaboration", () => {
+  it("hides compact actions when the current quotation has no eligible action", () => {
+    const { container } = renderWithQuery(<StaffEstimateCollaboration compact estimate={{ ...estimate, estimation: { ...lifecycle, workflowVersion: 3, pricedRevision: 2 } }} />);
+    expect(container.querySelector(".staff-estimate-flow")).toBeNull();
+  });
+
+  it("keeps v3 quotation revision separate from procurement preparation release", () => {
+    renderWithQuery(<StaffEstimateCollaboration estimate={{ ...estimate, estimation: { ...lifecycle, workflowVersion: 3, pricedRevision: 2 } }} />);
+    expect(screen.getByRole("heading", { name: "Designer-revised quotation" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Release saved estimate for preparation" })).not.toBeInTheDocument();
+  });
+  it("shows quotation unlock only with server capability and pins the approved source plus reason", async () => {
+    const post = vi.fn(async ({ request }: { request: Request }) => {
+      expect(await request.json()).toEqual({ expectedVersion: 7, reviewRoundId: "quote-approved", reason: "Client changed the storage scope.", idempotencyKey: expect.any(String) });
+      return HttpResponse.json({ data: { ...estimate, version: 8 } });
+    });
+    server.use(http.post("/api/v1/estimates/estimate-one/unlock", post));
+    renderWithQuery(<StaffEstimateCollaboration estimate={{ ...estimate, capabilities: { canUnlockQuotation: true }, estimation: { ...lifecycle, workflowVersion: 3, pricedRevision: 2,
+      editClosedAt: "2026-10-30T10:00:00Z", finalApproval: { reviewRoundId: "quote-approved", estimateVersion: 6, approvedAt: "2026-10-30T10:00:00Z", requirementsVersion: 3, designReviewRoundId: null, designPlanVersion: null, designScopeRevision: 2 } } }} />);
+    const user = userEvent.setup(); await user.click(screen.getByRole("button", { name: "Unlock quotation" }));
+    expect(screen.getByRole("textbox", { name: "Unlock reason" })).toHaveFocus();
+    await user.click(screen.getByRole("button", { name: "Confirm unlock" })); expect(post).not.toHaveBeenCalled();
+    await user.type(screen.getByRole("textbox", { name: "Unlock reason" }), "Client changed the storage scope.");
+    await user.click(screen.getByRole("button", { name: "Confirm unlock" }));
+    expect(await screen.findByText(/Quotation reopened/)).toBeVisible();
+  });
+
+  it("keeps a locked quotation readable without offering unauthorized unlock", () => {
+    renderWithQuery(<StaffEstimateCollaboration estimate={{ ...estimate, capabilities: { canUnlockQuotation: false }, estimation: { ...lifecycle, workflowVersion: 3, pricedRevision: 2, editClosedAt: "2026-10-30T10:00:00Z" } }} />);
+    expect(screen.getByText("Estimation complete")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Unlock quotation" })).not.toBeInTheDocument();
+  });
+
   it("shows immutable original and saved proposed totals with a design scope blocker", () => {
     renderWithQuery(<StaffEstimateCollaboration estimate={estimate} />);
     expect(screen.getByText("₹944.00")).toBeVisible(); expect(screen.getByText("₹1,180.00")).toBeVisible();
@@ -38,14 +71,44 @@ describe("Staff estimate collaboration", () => {
       return HttpResponse.json({ data: { ...estimate, version: 8 } });
     });
     server.use(http.post("/api/v1/estimates/estimate-one/withdraw-review", post));
-    renderWithQuery(<StaffEstimateCollaboration onVersionAdvance={advance} estimate={{ ...estimate, status: "sent_to_client", estimation: { ...lifecycle, status: "sent_to_client", pendingReviewRoundId: "post-round" },
+    renderWithQuery(<StaffEstimateCollaboration compact onVersionAdvance={advance} estimate={{ ...estimate, status: "sent_to_client", estimation: { ...lifecycle, status: "sent_to_client", pendingReviewRoundId: "post-round" },
       clientReview: { id: "post-round", version: 4, estimateVersion: 7, sendGeneration: 1, status: "pending", deliveryStatus: "sent", deliveryAttemptCount: 1, deliveredAt: null } }} />);
-    const user = userEvent.setup(); await user.click(screen.getByRole("button", { name: "Withdraw review to edit" }));
+    const user = userEvent.setup();
+    expect(screen.getByRole("button", { name: "Withdraw review to edit" })).not.toBeVisible();
+    await user.click(screen.getByLabelText("Estimate actions"));
+    await user.click(screen.getByRole("button", { name: "Withdraw review to edit" }));
     expect(screen.getByRole("textbox", { name: "Withdrawal reason" })).toHaveFocus();
     await user.click(screen.getByRole("button", { name: "Withdraw review" })); expect(post).not.toHaveBeenCalled();
     await user.type(screen.getByRole("textbox", { name: "Withdrawal reason" }), "Client added storage.");
     await user.click(screen.getByRole("button", { name: "Withdraw review" }));
     expect(await screen.findByText(/Review withdrawn. The client/)).toBeVisible(); expect(advance).toHaveBeenCalledWith(7, 8);
+  });
+
+  it.each([false, true])("preserves a compact conflict dialog when refreshed eligibility disappears (locked %s)", async locked => {
+    const post = vi.fn(() => HttpResponse.json({ error: { code: "ESTIMATE_VERSION_CONFLICT", message: "This review changed elsewhere." } }, { status: 409 }));
+    server.use(http.post("/api/v1/estimates/estimate-one/withdraw-review", post));
+    const pending: EstimateDraft = { ...estimate, status: "sent_to_client", estimation: { ...lifecycle, workflowVersion: 3, status: "sent_to_client", pendingReviewRoundId: "post-round" },
+      clientReview: { id: "post-round", version: 4, estimateVersion: 7, sendGeneration: 1, status: "pending", deliveryStatus: "sent", deliveryAttemptCount: 1, deliveredAt: null } };
+    function Harness() {
+      const [current, setCurrent] = useState(pending);
+      return <><button onClick={() => setCurrent({ ...estimate, version: 8, capabilities: { canUnlockQuotation: false }, estimation: { ...lifecycle, workflowVersion: 3, editClosedAt: locked ? "2026-11-02T10:00:00Z" : null } })}>Apply refreshed estimate</button><StaffEstimateCollaboration compact estimate={current} /></>;
+    }
+    renderWithQuery(<Harness />); const user = userEvent.setup();
+    await user.click(screen.getByLabelText("Estimate actions"));
+    await user.click(screen.getByRole("button", { name: "Withdraw review to edit" }));
+    await user.type(screen.getByRole("textbox", { name: "Withdrawal reason" }), "Retain this reason for review.");
+    await user.click(screen.getByRole("button", { name: "Withdraw review" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("This review changed elsewhere.");
+    // Refreshing the parent query replaces the estimate props while the conflict is open.
+    act(() => screen.getByRole("button", { name: "Apply refreshed estimate", hidden: true }).click());
+    await waitFor(() => expect(screen.queryByLabelText("Estimate actions")).not.toBeInTheDocument());
+    const dialog = screen.getByRole("dialog", { name: "Withdraw this client review?" });
+    expect(within(dialog).getByRole("textbox", { name: "Withdrawal reason" })).toHaveValue("Retain this reason for review.");
+    expect(within(dialog).getByRole("alert")).toHaveTextContent("The latest state has been refreshed.");
+    expect(within(dialog).getByRole("button", { name: "Withdraw review" })).toBeDisabled();
+    expect(post).toHaveBeenCalledOnce();
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
   it("freezes only an explicitly confirmed saved preparation version", async () => {
@@ -60,12 +123,47 @@ describe("Staff estimate collaboration", () => {
   });
 
   it("keeps legacy transition conflicts reviewable without retrying stale input", async () => {
+    server.use(http.get("/api/v1/estimates/estimate-one/collaboration-preview", () => HttpResponse.json({ data: { estimateId: "estimate-one", projectId: "project-one", estimateVersion: 7, currentWorkflowVersion: null, targetVersion: 3, eligible: true, blockers: [], previewFingerprint: "preview-one" } })));
     server.use(http.post("/api/v1/estimates/estimate-one/enable-collaboration", () => HttpResponse.json({ error: { code: "ESTIMATE_TRANSITION_CONFLICT", message: "Existing commitments require reconciliation." } }, { status: 409 })));
     renderWithQuery(<StaffEstimateCollaboration estimate={{ ...estimate, estimation: undefined, designPlanStatus: "assigned" }} />);
     const user = userEvent.setup(); await user.click(screen.getByRole("button", { name: "Enable collaboration" }));
+    await user.type(await screen.findByRole("textbox", { name: "Workflow change reason" }), "Use the revised quotation flow.");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Confirm enable collaboration" })).toBeEnabled());
     await user.click(screen.getByRole("button", { name: "Confirm enable collaboration" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Existing commitments require reconciliation.");
     expect(screen.getByRole("button", { name: "Confirm enable collaboration" })).toBeDisabled();
+  });
+
+  it("requires a reviewed eligible preview and a reason before enabling the new quotation workflow", async () => {
+    const post = vi.fn(async ({ request }: { request: Request }) => {
+      expect(await request.json()).toEqual({ expectedVersion: 7, targetVersion: 3, reason: "Start the revised client review process.", previewFingerprint: "preview-one" });
+      return HttpResponse.json({ data: { ...estimate, version: 8 } });
+    });
+    server.use(
+      http.get("/api/v1/estimates/estimate-one/collaboration-preview", () => HttpResponse.json({ data: { estimateId: "estimate-one", projectId: "project-one", estimateVersion: 7, currentWorkflowVersion: 2, targetVersion: 3, eligible: true, blockers: [], previewFingerprint: "preview-one" } })),
+      http.post("/api/v1/estimates/estimate-one/enable-collaboration", post)
+    );
+    renderWithQuery(<StaffEstimateCollaboration estimate={estimate} />); const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Enable collaboration" }));
+    await screen.findByText("This saved draft is eligible. Existing approval history will be preserved.");
+    expect(post).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Confirm enable collaboration" }));
+    expect(post).not.toHaveBeenCalled();
+    expect(screen.getByRole("textbox", { name: "Workflow change reason" })).toHaveFocus();
+    await user.type(screen.getByRole("textbox", { name: "Workflow change reason" }), "Start the revised client review process.");
+    await user.click(screen.getByRole("button", { name: "Confirm enable collaboration" }));
+    expect(await screen.findByText(/Revised quotation workflow enabled/)).toBeVisible();
+    expect(post).toHaveBeenCalledOnce();
+  });
+
+  it("displays transition blockers and does not offer a mutation for an ineligible history", async () => {
+    const post = vi.fn();
+    server.use(http.get("/api/v1/estimates/estimate-one/collaboration-preview", () => HttpResponse.json({ data: { estimateId: "estimate-one", projectId: "project-one", estimateVersion: 7, currentWorkflowVersion: 2, targetVersion: 3, eligible: false, blockers: ["Existing approvals need reconciliation."], previewFingerprint: "blocked-one" } })), http.post("/api/v1/estimates/estimate-one/enable-collaboration", post));
+    renderWithQuery(<StaffEstimateCollaboration estimate={estimate} />); const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Enable collaboration" }));
+    expect(await screen.findByText("Existing approvals need reconciliation.")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Confirm enable collaboration" })).toBeDisabled();
+    expect(post).not.toHaveBeenCalled();
   });
 
   it("hides editing transitions after final approval even if a stale physical status says draft", () => {

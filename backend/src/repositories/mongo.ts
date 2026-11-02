@@ -1,3 +1,5 @@
+import { readProjectNumber } from "../domain/project-number.js";
+import { readProjectInitiationMetadata } from "../domain/project-initiation-metadata.js";
 import { projectManagerProjectIds } from "../services/project-manager-assignment.service.js";
 import { ProjectClientInvitationModel, ProjectInitiationReceiptModel } from "../models/ProjectClientInvitation.js";
 import { mongoDesignRequirementsSource, mongoDesignRequirementsState, mongoSaveDesignRequirementsState } from "./design-requirements-mongo.js";
@@ -163,7 +165,7 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       case "designer":
         return {
           $or: [
-            { initiatingDesignerId: user.id },
+            { initiatingDesignerId: user.id, estimationWorkflowVersion: { $ne: 3 } },
             { assignedDesignerIds: user.id }
           ]
         };
@@ -487,7 +489,7 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
     async findDesignWorkflowSpacePlanningSource(projectId, lock = false) {
       if (lock && !session) throw new Error("Confirming space planning requires a transaction.");
       const context = await repository.findDesignWorkflowRoomContext(projectId);
-      const roundQuery = DesignPlanReviewRoundModel.find(context ? { estimateId: context.estimateId } : { projectId }).select("estimateId projectId designPlanVersion status decision decisionSource decidedById decidedByRole decidedAt submittedRevisionIds");
+      const roundQuery = DesignPlanReviewRoundModel.find(context ? { estimateId: context.estimateId } : { projectId }).select("estimateId projectId designPlanVersion designScopeRevision estimateReviewRoundId status decision decisionSource decidedById decidedByRole decidedAt submittedRevisionIds");
       if (session) roundQuery.session(session);
       const rounds = await roundQuery.lean();
       if (rounds.some(round => String(round.projectId) !== projectId || String(round.estimateId) !== context?.estimateId)) throw new RepositoryConflictError("The Design plan source is ambiguous or unavailable.");
@@ -525,7 +527,7 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
         rounds: rounds.map(round => {
           const matchingProofs = proofs.filter(proof => String(proof.reviewRoundId) === String(round._id));
           const proof = matchingProofs.length === 1 ? matchingProofs[0] : undefined;
-          return { id: String(round._id), estimateId: String(round.estimateId), projectId: String(round.projectId), designPlanVersion: Number(round.designPlanVersion), status: String(round.status), decision: round.decision ?? null, decisionSource: round.decisionSource ?? null, decidedById: round.decidedById ?? null, decidedByRole: round.decidedByRole ?? null, decidedAt: iso(round.decidedAt), submittedRevisionIds: Array.isArray(round.submittedRevisionIds) ? round.submittedRevisionIds.map(String) : [],
+          return { id: String(round._id), estimateId: String(round.estimateId), projectId: String(round.projectId), designPlanVersion: Number(round.designPlanVersion), designScopeRevision: round.designScopeRevision, estimateReviewRoundId: round.estimateReviewRoundId ?? undefined, status: String(round.status), decision: round.decision ?? null, decisionSource: round.decisionSource ?? null, decidedById: round.decidedById ?? null, decidedByRole: round.decidedByRole ?? null, decidedAt: iso(round.decidedAt), submittedRevisionIds: Array.isArray(round.submittedRevisionIds) ? round.submittedRevisionIds.map(String) : [],
             ...(proof ? { proof: { estimateId: String(proof.estimateId), reviewRoundId: String(proof.reviewRoundId), uploadedById: String(proof.uploadedById), valid: typeof proof.storageReference === "string" && proof.storageReference.length > 0 && typeof proof.originalFilename === "string" && proof.originalFilename.length > 0 && ["application/pdf", "image/jpeg", "image/png", "image/webp"].includes(proof.mimeType) && Number.isSafeInteger(proof.byteSize) && proof.byteSize > 0 && /^[a-f0-9]{64}$/.test(proof.sha256) && Number.isFinite(Date.parse(iso(proof.uploadedAt) ?? "")) } } : {}) };
         }),
         drawings: drawings.map(drawing => ({ id: String(drawing._id), revisions: revisions.filter(revision => String(revision.drawingId) === String(drawing._id)).map(revision => ({ id: String(revision._id), revisionNumber: Number(revision.revisionNumber), reviewStatus: String(revision.reviewStatus), reviewerId: revision.reviewerId ?? null, reviewedAt: iso(revision.reviewedAt) })) }))
@@ -570,7 +572,7 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       if (estimates.length > 1 || bucket && estimates.length !== 1) throw new RepositoryConflictError("The project's approved estimate source is ambiguous or unavailable.");
       const estimate = estimates[0];
       if (!estimate) return null;
-      if (estimate.estimation?.workflowVersion === 2) {
+      if ([2, 3].includes(estimate.estimation?.workflowVersion ?? 0)) {
         const revision = Number(estimate.estimation.designScopeRevision);
         return { estimateId: String(estimate._id), estimateVersion: revision,
           rooms: includeEstimateItems ? workflowEstimateRooms(String(estimate._id), revision, estimate.rooms ?? [], estimate.lineItems ?? [], { includeZeroValueItems, includeUnpricedItems: true })
@@ -615,7 +617,7 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       const projectQuery = ProjectModel.findById(projectId).select({ estimationWorkflowVersion: 1 });
       if (session) projectQuery.session(session);
       const project = await projectQuery.lean();
-      if (project?.estimationWorkflowVersion !== 2) return null;
+      if (![2, 3].includes(project?.estimationWorkflowVersion ?? 0)) return null;
       const query = EstimateModel.find({ projectId }).limit(2).select({ estimation: 1 });
       if (session) query.session(session);
       const estimates = await query.lean();
@@ -623,26 +625,48 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       const estimate = estimates[0];
       if (!estimate) return null;
       const lifecycle = estimate.estimation;
-      if (lifecycle?.workflowVersion !== 2) throw new RepositoryConflictError("The project estimate lifecycle is unavailable.");
+      if (!lifecycle || lifecycle.workflowVersion !== project?.estimationWorkflowVersion) throw new RepositoryConflictError("The project estimate lifecycle is unavailable.");
       if (lifecycle.preApproval) {
         const approvalQuery = EstimateClientReviewRoundModel.exists({ _id: lifecycle.preApproval.reviewRoundId,
-          estimateId: estimate._id, projectId, estimateVersion: lifecycle.preApproval.estimateVersion, status: "approved", decision: "approve" });
+          estimateId: estimate._id, projectId, estimateVersion: lifecycle.preApproval.estimateVersion, status: "approved", decision: "approve",
+          ...(lifecycle.workflowVersion === 3 ? { phase: "pre", decidedAt: new Date(lifecycle.preApproval.approvedAt) } : {}) });
         if (session) approvalQuery.session(session);
         if (!await approvalQuery) throw new RepositoryConflictError("The project pre-approval source is unavailable.");
       }
+      if (lifecycle.workflowVersion === 3 && lifecycle.finalApproval) {
+        const final = lifecycle.finalApproval;
+        const finalQuery = EstimateClientReviewRoundModel.exists({ _id: final.reviewRoundId, estimateId: estimate._id, projectId,
+          estimateVersion: final.estimateVersion, phase: "post", status: "approved", decision: "approve",
+          requirementsVersion: final.requirementsVersion, designScopeRevision: final.designScopeRevision,
+          decidedAt: new Date(final.approvedAt) });
+        if (session) finalQuery.session(session);
+        if (!await finalQuery) throw new RepositoryConflictError("The approved quotation source is unavailable.");
+      }
+      if (lifecycle.workflowVersion === 3 && lifecycle.designApproval) {
+        const design = lifecycle.designApproval;
+        const designQuery = DesignPlanReviewRoundModel.exists({ _id: design.reviewRoundId, estimateId: estimate._id, projectId,
+          designPlanVersion: design.designPlanVersion, designScopeRevision: design.designScopeRevision,
+          status: "approved", decision: "approve", decidedAt: new Date(design.approvedAt) });
+        if (session) designQuery.session(session);
+        if (!await designQuery) throw new RepositoryConflictError("The approved design source is unavailable.");
+      }
       if (lock) {
-        const result = await ProjectModel.updateOne({ _id: projectId, estimationWorkflowVersion: 2 }, { $inc: { estimationFenceEpoch: 1 } }, { session, timestamps: false });
+        const result = await ProjectModel.updateOne({ _id: projectId, estimationWorkflowVersion: project!.estimationWorkflowVersion }, { $inc: { estimationFenceEpoch: 1 } }, { session, timestamps: false });
         if (result.matchedCount !== 1) throw new RepositoryConflictError("The project estimate lifecycle changed.");
       }
-      return { estimateId: String(estimate._id), preApprovedAt: lifecycle.preApproval?.approvedAt ?? null,
+      return { estimateId: String(estimate._id), workflowVersion: lifecycle.workflowVersion, preApprovedAt: lifecycle.preApproval?.approvedAt ?? null,
+        quotationApprovedAt: lifecycle.workflowVersion === 3 ? lifecycle.finalApproval?.approvedAt ?? null : null,
+        designStartedAt: lifecycle.workflowVersion === 3 ? lifecycle.designStartedAt ?? lifecycle.finalApproval?.approvedAt ?? null : null,
+        quotationLocked: !!lifecycle.editClosedAt, designApproval: lifecycle.workflowVersion === 3 ? lifecycle.designApproval ?? null : null,
         designScopeRevision: lifecycle.designScopeRevision, approvedDesignScopeRevision: lifecycle.approvedDesignScopeRevision,
         finalApproval: lifecycle.finalApproval };
     },
     async activateCollaborativeExecution(projectId, actorId, occurredAt) {
       if (!session) throw new Error("Activating execution requires a transaction.");
       const context = await repository.findProjectEstimationContext(projectId, true);
-      if (!context?.finalApproval) throw new RepositoryConflictError("Final estimate approval is required for execution.");
-      await openProjectFinanceBucket({ projectId, designPlanVersion: context.finalApproval.designPlanVersion,
+      const designPlanVersion = context?.workflowVersion === 3 ? context.designApproval?.designPlanVersion : context?.finalApproval?.designPlanVersion;
+      if (!context?.finalApproval || !designPlanVersion) throw new RepositoryConflictError("Quotation and design approval are required for execution.");
+      await openProjectFinanceBucket({ projectId, designPlanVersion,
         openedById: actorId, occurredAt: new Date(occurredAt) }, session);
       await activateCollaborativeProjectWorkflow(projectId, actorId, new Date(occurredAt), session);
     },
@@ -660,8 +684,8 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
     async listDesignWorkflowPaymentProjects() {
       const confirmed = await DesignWorkflowStateModel.find({ initialPaymentAt: { $ne: null } }).select({ projectId: 1, initialPaymentReviewRoundId: 1 }).lean();
       return (await ProjectModel.find({ "designWorkflowStages.0": { $exists: true }, $or: [
-        { estimationWorkflowVersion: { $ne: 2 }, _id: { $nin: confirmed.map(row => row.projectId) } },
-        { estimationWorkflowVersion: 2, _id: { $nin: confirmed.filter(row => row.initialPaymentReviewRoundId).map(row => row.projectId) } }
+        { estimationWorkflowVersion: { $nin: [2, 3] }, _id: { $nin: confirmed.map(row => row.projectId) } },
+        { estimationWorkflowVersion: { $in: [2, 3] }, _id: { $nin: confirmed.filter(row => row.initialPaymentReviewRoundId).map(row => row.projectId) } }
       ] }).sort({ createdAt: -1, _id: 1 }).lean()).map(mapProject);
     },
     async runInTransaction(operation) {
@@ -727,7 +751,7 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       if (!session) throw new Error("Project client linking requires a transaction.");
       const user = await UserModel.exists({ _id: clientId, active: true, role: "client", emailNormalized }).session(session);
       if (!user) throw new RepositoryConflictError("Project invitation is no longer available.");
-      const result = await ProjectModel.updateOne({ _id: projectId, clientId: null, clientEmailNormalized: emailNormalized, estimationWorkflowVersion: 2 }, { $set: { clientId, updatedAt: new Date(updatedAt) } }, { session, runValidators: true });
+      const result = await ProjectModel.updateOne({ _id: projectId, clientId: null, clientEmailNormalized: emailNormalized, estimationWorkflowVersion: { $in: [2, 3] } }, { $set: { clientId, updatedAt: new Date(updatedAt) } }, { session, runValidators: true });
       if (result.matchedCount !== 1) throw new RepositoryConflictError("Project invitation is no longer available.");
     },
     async findProjectInitiationReceipt(id) {
@@ -1816,11 +1840,13 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
     },
 
     async createLead(input) {
+      if (Object.prototype.hasOwnProperty.call(input, "projectNumber")) throw new RepositoryConflictError("Project numbers are assigned only when an estimate is created.");
       const document = await createMongoDocument("Lead", () => createDocument(LeadModel, { ...leadForMongo(input), _id: input.id }, session));
       return mapLead(document.toObject());
     },
 
     async updateLead(id, change) {
+      if (Object.prototype.hasOwnProperty.call(change, "projectNumber")) throw new RepositoryConflictError("Project numbers cannot be changed through Lead updates.");
       const update: PlainDocument = { ...leadChangeForMongo(change), updatedAt: new Date() };
       const query = LeadModel.findByIdAndUpdate(id, { $set: update }, { new: true, runValidators: true }).lean();
       if (session) query.session(session);
@@ -4161,8 +4187,8 @@ function mapProjectAccessGrant(document: PlainDocument): ProjectAccessGrantRecor
 function mapProject(document: PlainDocument): ProjectRecord {
   return {
     id: idOf(document),
-    ...(document.estimationWorkflowVersion === 2 ? {
-      estimationWorkflowVersion: 2 as const,
+    ...([2, 3].includes(document.estimationWorkflowVersion) ? {
+      estimationWorkflowVersion: document.estimationWorkflowVersion as 2 | 3,
       estimateRequirementsVersion: Number(document.estimateRequirementsVersion ?? 0),
       estimationFenceEpoch: Number(document.estimationFenceEpoch ?? 0)
     } : {}),
@@ -4184,6 +4210,9 @@ function mapProject(document: PlainDocument): ProjectRecord {
       document.initiatingDesignerId == null ? null : String(document.initiatingDesignerId),
     assignedEstimatorId:
       document.assignedEstimatorId == null ? null : String(document.assignedEstimatorId),
+    primaryDesignerId: document.primaryDesignerId == null ? null : String(document.primaryDesignerId),
+    secondaryDesignerIds: Array.isArray(document.secondaryDesignerIds) ? document.secondaryDesignerIds.map(String) : [],
+    designTeamVersion: Number(document.designTeamVersion ?? 0),
     assignedDesignerIds: Array.isArray(document.assignedDesignerIds)
       ? document.assignedDesignerIds.map(String)
       : [],
@@ -4213,7 +4242,7 @@ function leadActivityForMongo(input: LeadActivityRecord): PlainDocument {
   return { ...input, id: undefined, occurredAt: date(input.occurredAt), createdAt: date(input.createdAt) };
 }
 function mapLead(document: PlainDocument): LeadRecord {
-  return { id: idOf(document), projectId: document.projectId == null ? null : String(document.projectId), ownerId: document.ownerId, clientName: document.clientName, clientEmail: document.clientEmail, clientMobile: document.clientMobile, projectName: document.projectName, location: document.location,
+  return { ...readProjectInitiationMetadata(document), projectNumber: readProjectNumber(document.projectNumber), id: idOf(document), projectId: document.projectId == null ? null : String(document.projectId), ownerId: document.ownerId, clientName: document.clientName, clientEmail: document.clientEmail, clientMobile: document.clientMobile, projectName: document.projectName, location: document.location,
     cityName: document.cityName ?? null, cityKey: document.cityKey ?? null, propertyType: document.propertyType, budgetMin: document.budgetMin ?? null, budgetMax: document.budgetMax ?? null, source: document.source, stage: document.stage, nextAction: document.nextAction, nextActionAt: iso(document.nextActionAt), builder: document.builder ?? null, areaSqft: document.areaSqft ?? null, targetHandoverAt: nullableIso(document.targetHandoverAt), notes: document.notes ?? null, latestActivityAt: nullableIso(document.latestActivityAt), createdAt: iso(document.createdAt), updatedAt: iso(document.updatedAt) };
 }
 function mapLeadActivity(document: PlainDocument): LeadActivityRecord {

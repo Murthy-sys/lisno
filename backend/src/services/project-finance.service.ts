@@ -474,7 +474,7 @@ export async function readProjectFinanceExpenseActivity(
 }
 
 export interface EnsurePendingFinanceBucketInput {
-  workflowVersion?: 2;
+  workflowVersion?: 2 | 3;
   projectId: string;
   estimateId: string;
   estimateVersion: number;
@@ -946,7 +946,7 @@ export async function ensurePendingProjectFinanceBucket(
     totalPaise: input.approvedContractTotalPaise
   });
   const candidate = {
-    ...(input.workflowVersion === 2 ? { estimationWorkflowVersion: 2 } : {}),
+    ...([2, 3].includes(input.workflowVersion ?? 0) ? { estimationWorkflowVersion: input.workflowVersion } : {}),
     _id: `finance-bucket-${input.projectId}`,
     projectId: input.projectId,
     estimateId: input.estimateId,
@@ -976,7 +976,7 @@ export async function ensurePendingProjectFinanceBucket(
     bucket = created.toObject();
   }
   requireMatchingBaseline(bucket, candidate);
-  if (input.workflowVersion === 2 && input.estimateReviewRoundId) {
+  if ([2, 3].includes(input.workflowVersion ?? 0) && input.estimateReviewRoundId) {
     await storeFinanceBaselineRevision({ projectId: input.projectId, phase: "pre", estimateId: input.estimateId,
       estimateVersion: input.estimateVersion, estimateReviewRoundId: input.estimateReviewRoundId, ...baseline,
       approvedAt: input.occurredAt, approvedById: input.createdById }, session);
@@ -1014,14 +1014,17 @@ export async function syncCollaborativeFinanceBaseline(estimateId: string, sessi
     status: "approved", decision: "approve" }).session(session).lean();
   const approval = financeApprovalLineage(estimate, rounds);
   const bucket = await ProjectFinanceBucketModel.findOne({ projectId: estimate.projectId }).session(session).lean();
-  if (!bucket || bucket.status !== "pending_design" || bucket.directSpendPaise !== 0 || bucket.overheadPaise !== 0)
-    financeSourceConflict("The project budget cannot change after execution spending opens.");
+  const quotation = estimate.estimation.workflowVersion === 3;
+  if (!bucket || quotation && !["pending_design", "open"].includes(bucket.status) ||
+      !quotation && (bucket.status !== "pending_design" || bucket.directSpendPaise !== 0 || bucket.overheadPaise !== 0))
+    financeSourceConflict("The project budget cannot accept this quotation revision.");
   const source = await storeFinanceBaselineRevision({ projectId: estimate.projectId, phase: "post", estimateId,
     estimateVersion: approval.estimateVersion, estimateReviewRoundId: approval.estimateReviewRoundId,
     ...approval.baseline, approvedAt: approval.occurredAt, approvedById: approval.createdById }, session);
   if (bucket.effectiveBaseline?.revisionId === source.revisionId) return;
-  const result = await ProjectFinanceBucketModel.updateOne({ _id: bucket._id, version: bucket.version, status: "pending_design", effectiveBaseline: null },
-    { $set: { effectiveBaseline: source, estimationWorkflowVersion: 2 }, $inc: { version: 1 } }, { session, runValidators: true });
+  const result = await ProjectFinanceBucketModel.updateOne({ _id: bucket._id, version: bucket.version, status: bucket.status,
+    ...(quotation ? { "effectiveBaseline.revisionId": bucket.effectiveBaseline?.revisionId ?? null } : { effectiveBaseline: null }) },
+    { $set: { effectiveBaseline: source, estimationWorkflowVersion: estimate.estimation.workflowVersion }, $inc: { version: 1 } }, { session, runValidators: true });
   if (result.matchedCount !== 1) financeSourceConflict("The project budget changed before final approval.");
 }
 
@@ -1075,12 +1078,18 @@ export async function openProjectFinanceBucket(
       "The approved project budget is missing."
     );
   }
-  if (current.estimationWorkflowVersion === 2) await assertProjectWorkOrderIssueEligible(input.projectId, session);
+  if ([2, 3].includes(current.estimationWorkflowVersion)) await assertProjectWorkOrderIssueEligible(input.projectId, session);
   if (
     current.status === "open" &&
     Number(current.designPlanVersion) === input.designPlanVersion
   ) {
     return current;
+  }
+  if (current.estimationWorkflowVersion === 3 && current.status === "open") {
+    const rebound = await ProjectFinanceBucketModel.findOneAndUpdate({ _id: current._id, version: current.version, status: "open" },
+      { $set: { designPlanVersion: input.designPlanVersion }, $inc: { version: 1 } }, { session, returnDocument: "after", runValidators: true }).lean();
+    if (!rebound) financeSourceConflict("The budget changed before the approved source could be bound.");
+    return rebound;
   }
   const updated = await ProjectFinanceBucketModel.findOneAndUpdate(
     {
@@ -1865,7 +1874,7 @@ function bucketDto(
     : costBudgetPaise === 0 ? "no_budget"
       : financeRisk.some((factor) => factor.level === "yellow") ? "at_risk" : "within_budget";
   return {
-    ...(bucket.effectiveBaseline ? { baselinePhase: bucket.effectiveBaseline.phase, originalApprovedContractTotalPaise: Number(bucket.originalApprovedContractTotalPaise) } : bucket.estimationWorkflowVersion === 2 ? { baselinePhase: "pre" as const } : {}),
+    ...(bucket.effectiveBaseline ? { baselinePhase: bucket.effectiveBaseline.phase, originalApprovedContractTotalPaise: Number(bucket.originalApprovedContractTotalPaise) } : [2, 3].includes(bucket.estimationWorkflowVersion) ? { baselinePhase: "pre" as const } : {}),
     id: String(bucket._id),
     projectId: String(bucket.projectId),
     projectName: String(project.name),

@@ -16,12 +16,14 @@ import { ClientVendorWorkReview } from "./ClientVendorWorkReview";
 import { ClientSiteCompletionReview } from "./ClientSiteCompletionReview";
 import { ClientEstimateRequirements } from "./ClientEstimateRequirements";
 import { ClientEstimateTiers } from "./ClientEstimateTiers";
+import { ClientQuotation } from "./ClientQuotation";
 import { PMCounterpartPanel } from "../project-manager/PMCounterpartPanel";
 import "./clientWorkflow.css";
 
 export function ClientProject() {
   const { projectId = "" } = useParams();
   const [timelineContainer, setTimelineContainer] = useState<HTMLDivElement | null>(null);
+  const [quotationPendingChanges, setQuotationPendingChanges] = useState(false);
   const projectQuery = useQuery({ queryKey: clientKeys.project(projectId), queryFn: () => getClientProject(projectId), enabled: Boolean(projectId) });
   const versionsQuery = useQuery({ queryKey: clientKeys.versions(projectId), queryFn: () => getClientVersions(projectId), enabled: Boolean(projectId) });
   if (projectQuery.isPending) return <AsyncState state="loading" message="Loading your project…" />;
@@ -32,9 +34,10 @@ export function ClientProject() {
     <PageHeader id="client-project-title" title={project.name} eyebrow="Your project" description={project.location} breadcrumb={<Link className="client-project-back" to="/client">Back to projects</Link>} metadata={<span className="client-project-status">{project.status.replaceAll("_", " ")}</span>} />
     <ProjectChatNavigation projectId={projectId} overviewTo={`/client/projects/${projectId}`} />
     <PMCounterpartPanel projectId={projectId} />
-    {project.estimationWorkflowVersion === 2 ? <ClientEstimateRequirements key={`requirements-${projectId}`} projectId={projectId} /> : null}
+    {project.estimationWorkflowVersion === 2 || project.estimationWorkflowVersion === 3 ? <ClientEstimateRequirements key={`requirements-${projectId}`} projectId={projectId} /> : null}
     {project.estimationWorkflowVersion === 2 ? <ClientEstimateTiers key={`tiers-${projectId}`} projectId={projectId} /> : null}
-    <EstimateReviewPanel key={`estimate-${projectId}`} projectId={projectId} />
+    {project.estimationWorkflowVersion === 3 ? <ClientQuotation key={`quotation-${projectId}`} projectId={projectId} onPendingChanges={setQuotationPendingChanges} /> : null}
+    <EstimateReviewPanel key={`estimate-${projectId}`} projectId={projectId} decisionBlocked={quotationPendingChanges} />
     <div className="client-project-workflow" ref={setTimelineContainer} />
     <ProjectWorkflowPanel key={projectId} projectId={projectId} timelineContainer={timelineContainer} presentation="client" />
     <ClientSiteCompletionReview key={`site-completion-${projectId}`} projectId={projectId} />

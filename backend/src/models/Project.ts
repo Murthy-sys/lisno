@@ -24,6 +24,9 @@ const projectSchema = new Schema(
     initiatingDesignerId: { type: String, ref: "User", default: null },
     assignedEstimatorId: { type: String, ref: "User", default: null },
     assignedDesignerIds: { type: [String], ref: "User", default: [] },
+    primaryDesignerId: { type: String, ref: "User", default: null },
+    secondaryDesignerIds: { type: [String], ref: "User", default: [] },
+    designTeamVersion: { type: Number, min: 0, default: 0, validate: Number.isSafeInteger },
     managerId: { type: String, ref: "User", default: null },
     programManagerId: { type: String, ref: "User", default: null },
     procurementIdentityVersion: { type: Number, min: 1, default: 1, validate: Number.isSafeInteger },
@@ -32,7 +35,7 @@ const projectSchema = new Schema(
       enum: ["planning", "active", "on_hold", "completed"],
       required: true
     },
-    estimationWorkflowVersion: { type: Number, enum: [2], default: undefined },
+    estimationWorkflowVersion: { type: Number, enum: [2, 3], default: undefined },
     estimateRequirementsVersion: { type: Number, min: 0, default: 0, validate: Number.isSafeInteger },
     estimationFenceEpoch: { type: Number, min: 0, default: 0, validate: Number.isSafeInteger },
     completionAuthority: {

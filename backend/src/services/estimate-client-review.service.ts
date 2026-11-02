@@ -1,6 +1,7 @@
 import { ESTIMATE_COMPONENT_PRICING_BASIS, readEstimateComponentPricing } from "../domain/estimate-component-pricing.js";
 import { estimateDimensionSnapshotFields, estimateDimensionSnapshotValid } from "../domain/estimate-dimension-snapshot.js";
 import { effectiveCommercialStatus } from "../domain/estimation-lifecycle.js";
+import { estimateProposalSchema } from "../domain/estimate-proposal.js";
 import type { EstimatePricingMode, EstimateRateSource } from "../domain/estimate-mode-pricing.js";
 import type { KnowledgeModeTier } from "../domain/ai-estimator-knowledge-mode-tiers.js";
 import type mongoose from "mongoose";
@@ -29,7 +30,9 @@ import { UserModel } from "../models/User.js";
 import type { PageResult, PaginationInput } from "../repositories/types.js";
 import type { PublicUser } from "./auth.service.js";
 import type { EstimateClientReviewStorage } from "./estimate-client-review-storage.js";
-import { presentClientEstimate } from "./estimate-client-presentation.js";
+import { presentClientEstimateWithVisibility } from "./estimate-client-presentation.js";
+import { createClientQuotationProjectionService, type ClientQuotationProjectionService } from "./client-quotation-projection.service.js";
+import type { ClientQuotationRenditionService, ClientQuotationRenditionRound } from "./client-quotation-rendition.service.js";
 
 type Pipeline = Record<string, unknown>[];
 type Row = Record<string, unknown>;
@@ -72,7 +75,10 @@ export interface EstimateClientReviewService {
 
 export function createEstimateClientReviewService(input: {
   storage: EstimateClientReviewStorage;
+  projection?: ClientQuotationProjectionService;
+  renditions?: ClientQuotationRenditionService;
 }): EstimateClientReviewService {
+  const projection = input.projection ?? createClientQuotationProjectionService();
   async function listClientEstimates(actor: PublicUser, estimateId?: string): Promise<Record<string, any>[]> {
     if (!["client", "super_admin"].includes(actor.role)) notFound();
     const rows = await aggregateRows(EstimateModel, [
@@ -103,11 +109,13 @@ export function createEstimateClientReviewService(input: {
       } },
       { $sort: { updatedAt: -1, _id: 1 } }
     ]);
-    return rows.flatMap((row) => {
-      const value = presentClientEstimate(actor, row, recordField(row, "clientLead"), arrayField(row, "publishedRounds")[0] ?? null, row.clientProject as Record<string, any> | undefined,
+    const result: Record<string, any>[] = [];
+    for (const row of rows) {
+      const value = await presentClientEstimateWithVisibility(projection, actor, row, recordField(row, "clientLead"), arrayField(row, "publishedRounds")[0] ?? null, row.clientProject as Record<string, any> | undefined,
         arrayField(row, "preApprovedRounds")[0] ?? null);
-      return value ? [value] : [];
-    });
+      if (value) result.push(value);
+    }
+    return result;
   }
 
   async function currentClientFeedbackForEstimate(actor: PublicUser, estimateId: string, authorizedEstimate?: Row): Promise<EstimateClientFeedback | null> {
@@ -338,7 +346,14 @@ export function createEstimateClientReviewService(input: {
     actor: PublicUser,
     roundId: string
   ): Promise<StoredDownload> {
-    if (actor.role !== "client") notFound();
+    if (!["client", "super_admin"].includes(actor.role)) notFound();
+    if (actor.role === "super_admin") {
+      const rows = await aggregateRows(EstimateClientReviewRoundModel, [
+        ...roundScopePipeline(actor, { _id: roundId }),
+        { $project: { _id: 1, estimateId: 1, estimateVersion: 1, recipientEmail: 1, estimateSnapshot: 1 } }
+      ]);
+      return readClientRendition(rows[0]);
+    }
     const rows = await aggregateRows(EstimateClientReviewRoundModel, [
       { $match: { _id: roundId } },
       ...activeActorStages(actor, "clientActor", {
@@ -373,14 +388,21 @@ export function createEstimateClientReviewService(input: {
       { $match: { $expr: { $or: [{ $eq: ["$latestRound._id", "$_id"] }, { $in: ["$phase", ["pre", "post"]] }] } } },
       {
         $project: {
-          _id: 0,
-          storageReference: "$pdfStorageReference",
-          filename: "$pdfFilename",
-          mimeType: "$pdfMimeType"
+          _id: 1,
+          estimateId: 1,
+          estimateVersion: 1,
+          recipientEmail: 1,
+          estimateSnapshot: 1
         }
       }
     ]);
-    return readAuthorizedDownload(rows[0]);
+    return readClientRendition(rows[0]);
+  }
+
+  async function readClientRendition(row: Row | undefined): Promise<StoredDownload> {
+    if (!row) notFound();
+    if (!input.renditions) throw new ApiError(503, "QUOTATION_RENDITION_UNAVAILABLE", "The client quotation document is temporarily unavailable.");
+    return input.renditions.readForRound(row as unknown as ClientQuotationRenditionRound);
   }
 
   async function readProof(
@@ -452,7 +474,7 @@ export function createEstimateClientReviewService(input: {
     if (!["estimator_sales", "designer", "super_admin"].includes(actor.role)) notFound();
     const estimateMatch: Row = { _id: estimateId };
     if (actor.role === "estimator_sales") estimateMatch.ownerId = actor.id;
-    if (actor.role === "designer") Object.assign(estimateMatch, { "estimation.workflowVersion": 2, "estimation.phase": "post", designPlanDesignerId: actor.id });
+    if (actor.role === "designer") Object.assign(estimateMatch, { "estimation.workflowVersion": { $in: [2, 3] }, "estimation.phase": "post", designPlanDesignerId: actor.id });
     const rows = await aggregateRows(EstimateModel, [
       { $match: estimateMatch },
       ...activeActorStages(actor, "activeActor"),
@@ -494,7 +516,7 @@ export function createEstimateClientReviewService(input: {
     if (!["estimator_sales", "designer", "super_admin"].includes(actor.role)) notFound();
     const match: Row = { _id: estimateId };
     if (actor.role === "estimator_sales") match.ownerId = actor.id;
-    if (actor.role === "designer") Object.assign(match, { "estimation.workflowVersion": 2, "estimation.phase": "post", designPlanDesignerId: actor.id });
+    if (actor.role === "designer") Object.assign(match, { "estimation.workflowVersion": { $in: [2, 3] }, "estimation.phase": "post", designPlanDesignerId: actor.id });
     const rows = await aggregateRows(EstimateModel, [
       { $match: match },
       ...activeActorStages(actor, "activeActor"),
@@ -726,8 +748,8 @@ function clientProjectMembershipStages(clientAlias: string): Pipeline {
     { $lookup: { from: ProjectModel.collection.name, localField: "projectId", foreignField: "_id", as: "clientProjects" } },
     { $set: { clientProject: { $arrayElemAt: ["$clientProjects", 0] } } },
     { $match: { $expr: { $or: [
-      { $and: [{ $ne: [{ $ifNull: ["$clientProject.estimationWorkflowVersion", 0] }, 2] }, { $ne: [{ $ifNull: ["$estimation.workflowVersion", 0] }, 2] }, { $eq: [{ $ifNull: ["$phase", null] }, null] }] },
-      { $and: [{ $eq: ["$clientProject.estimationWorkflowVersion", 2] }, { $eq: ["$clientProject.clientId", `$${clientAlias}._id`] }, { $eq: ["$clientLead.projectId", "$projectId"] }] }
+      { $and: [{ $not: [{ $in: [{ $ifNull: ["$clientProject.estimationWorkflowVersion", 0] }, [2, 3]] }] }, { $not: [{ $in: [{ $ifNull: ["$estimation.workflowVersion", 0] }, [2, 3]] }] }, { $eq: [{ $ifNull: ["$phase", null] }, null] }] },
+      { $and: [{ $in: ["$clientProject.estimationWorkflowVersion", [2, 3]] }, { $eq: ["$clientProject.clientId", `$${clientAlias}._id`] }, { $eq: ["$clientLead.projectId", "$projectId"] }] }
     ] } } }
   ];
 }
@@ -962,6 +984,7 @@ function mapDetail(row: Row): EstimateClientReviewDetail {
 
 function mapSnapshot(row: Row): EstimateClientReviewSnapshot {
   return {
+    ...(row.proposal === undefined ? {} : { proposal: estimateProposalSchema.parse(row.proposal) }),
     clientName: stringField(row, "clientName"),
     projectName: stringField(row, "projectName"),
     location: stringField(row, "location"),

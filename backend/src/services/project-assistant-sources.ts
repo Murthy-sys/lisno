@@ -1,3 +1,4 @@
+import { createClientQuotationProjectionService } from "./client-quotation-projection.service.js";
 import type { ClientSession } from "mongoose";
 import type { AssistantCatalogueCandidate, AssistantFact, AssistantFactBundle, AssistantReadScope, AssistantReadSources, AssistantSourceVersion } from "../contracts/project-chat-assistant.js";
 import type { ProjectStatusSummary } from "../contracts/project-status.js";
@@ -16,7 +17,7 @@ import { SiteCompletionStateModel } from "../models/SiteCompletionState.js";
 import { SiteCompletionReviewModel } from "../models/SiteCompletionReview.js";
 import type { ChatTransaction, ProjectChatRepository } from "../repositories/project-chat.js";
 import { toPublicUser } from "./auth.service.js";
-import { presentClientEstimate } from "./estimate-client-presentation.js";
+import { presentClientEstimateWithVisibility } from "./estimate-client-presentation.js";
 import { financeApprovalLineage } from "./project-finance.service.js";
 import { readAssistantContext, scopeWitness, sourceWitness, type AssistantContext } from "./project-assistant-context.js";
 import { boundedAssistantIds, readAssistantLines, readAssistantRecommendations, searchAssistantCatalogue, type AssistantLineRead } from "./project-assistant-catalogue.js";
@@ -62,7 +63,7 @@ async function readApproved(context: AssistantContext, tx?: ChatTransaction): Pr
   if (!approved.length) return finish({ ...empty, rooms }, { estimate, lead });
   const rounds = await EstimateClientReviewRoundModel.find({ estimateId: selected.id, status: "approved", decision: "approve" }).session(tx.session).lean().exec() as Row[];
   const evidence = await tx.app.findProjectStatusEstimateEvidence(projectId);
-  const witness = { estimate, lead, rounds, evidence };
+  const witness = { estimate, lead, rounds, evidence, visibleSourceKeys: null as string[] | null };
   const collaborative = isCollaborativeEstimate(estimate);
   const approvedReference = currentEstimationApproval(estimate);
   const matchingRounds = collaborative ? rounds.filter(round => String(round._id) === approvedReference?.reviewRoundId && round.estimateVersion === approvedReference.estimateVersion) : rounds;
@@ -78,12 +79,18 @@ async function readApproved(context: AssistantContext, tx?: ChatTransaction): Pr
     evidence.financeSource && (evidence.financeSource.estimateId !== selected.id || evidence.financeSource.estimateVersion !== approvedVersion || evidence.financeSource.reviewRoundId !== String(round._id)) ||
     round.decisionSource === "client_portal" && round.decidedById !== context.user.id ||
     round.decisionSource === "admin_proof" && !evidenceRound.proofValid) return finish(unavailable, witness);
-  const presented = presentClientEstimate(toPublicUser(context.user), estimate, { ...lead, _id: lead.id }, round, context.sources.project);
+  const presented = await presentClientEstimateWithVisibility(createClientQuotationProjectionService(), toPublicUser(context.user), estimate, { ...lead, _id: lead.id }, round, context.sources.project, undefined, tx.session);
   if (!presented?.publishedReview || presented.reviewSourceIssue !== null || presented.projectId !== projectId) return finish(unavailable, witness);
   try {
     const approval = financeApprovalLineage(estimate, rounds);
     if (!approval.immutable || approval.estimateReviewRoundId !== String(round._id)) return finish(unavailable, witness);
     const lines = presented.publishedReview.snapshot.lineItems as Row[];
+    const visibleMainLineIds = new Set(lines.filter(line => line.source === "configuration").map(line => line.mainLineId));
+    // Legacy source keys use their position in the immutable source, before visibility filtering.
+    const sourceKeys = (round.estimateSnapshot.lineItems as Row[]).flatMap((line, index) => line.included && line.clientVisible !== false &&
+      (line.source !== "configuration" || visibleMainLineIds.has(line.mainLineId))
+      ? [approvedEstimateLineItemKey({ id: line.id, index, estimateId: selected.id, estimateVersion: approval.estimateVersion })] : []);
+    witness.visibleSourceKeys = [...sourceKeys].sort();
     const configured = lines.filter(line => line.source === "configuration");
     const approvedRooms = collaborative ? (presented.publishedReview.snapshot.rooms ?? []).flatMap((room: Row) =>
       typeof room?.id === "string" && typeof (room.name ?? room.label) === "string" ? [{ id: room.id, name: room.name ?? room.label }] : []) : rooms;
@@ -95,8 +102,7 @@ async function readApproved(context: AssistantContext, tx?: ChatTransaction): Pr
         ...(line.dimensionsMandatory === undefined ? {} : { dimensionsMandatory: line.dimensionsMandatory }),
         ...(line.selectedInHouseComponentIds === undefined ? {} : { selectedInHouseComponentIds: line.selectedInHouseComponentIds }),
         pricingMode: line.pricingMode ?? ((line.classification ?? "standard") === "standard" ? "sub_vendor" : null) })) }, witness,
-      { estimateId: selected.id, estimateVersion: approval.estimateVersion, roundId: String(round._id), sourceKeys: lines.flatMap((line, index) => line.included
-        ? [approvedEstimateLineItemKey({ id: line.id, index, estimateId: selected.id, estimateVersion: approval.estimateVersion })] : []) });
+      { estimateId: selected.id, estimateVersion: approval.estimateVersion, roundId: String(round._id), sourceKeys });
   } catch (error) {
     if (!(error instanceof ApiError)) throw error;
     return finish(unavailable, witness);

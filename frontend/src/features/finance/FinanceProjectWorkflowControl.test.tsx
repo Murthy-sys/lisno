@@ -316,6 +316,25 @@ describe("Finance project workflow control", () => {
 
 
 describe("Collaborative project preparation snapshot", () => {
+  it.each([false, undefined])("keeps v3 execution closed without verified bound design approval even when the quotation and legacy design status are approved: %s", async designApproved => {
+    const request = vi.fn(() => HttpResponse.json({ data: workflowTasks }));
+    server.use(http.get("/api/v1/admin/projects/project-one/workflow-tasks", request));
+    renderWithQuery(<ProjectWorkflowSnapshot project={{ ...project, estimationWorkflowVersion: 3,
+      estimate: { ...project.estimate!, estimationPhase: "post", finalEstimateApproved: true, designPlanStatus: "approved", designApproved } }} />);
+    expect(screen.getByRole("heading", { name: "4. Post-design quotation approval" }).closest("section")).toHaveTextContent("Approved");
+    expect(screen.getByRole("heading", { name: "6. Design approved" }).closest("section")).toHaveTextContent("Awaiting current design approval");
+    expect(screen.getByRole("heading", { name: "7. Execution queues" }).closest("section")).toHaveTextContent("Waiting for design approval");
+    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+    expect(request).not.toHaveBeenCalled();
+  });
+  it("shows v3 execution progress only after the server verifies the later uploaded-design approval and released tasks", async () => {
+    server.use(http.get("/api/v1/admin/projects/project-one/workflow-tasks", () => HttpResponse.json({ data: workflowTasks })));
+    renderWithQuery(<ProjectWorkflowSnapshot project={{ ...project, estimationWorkflowVersion: 3,
+      estimate: { ...project.estimate!, estimationPhase: "post", finalEstimateApproved: true, designApproved: true } }} />);
+    expect(await screen.findByRole("progressbar", { name: "Overall project execution: 25% complete" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "6. Design approved" }).closest("section")).toHaveTextContent("Approved");
+    expect(screen.queryByRole("heading", { name: "6. Final estimate approval" })).not.toBeInTheDocument();
+  });
   it("loads post-estimate preparation during draft review and keeps preparation progress out of execution", async () => {
     const request = vi.fn(() => HttpResponse.json({ data: workflowTasks.map((task) => ({ ...task, preparationOnly: true, progress: 100, status: "completed" })) }));
     server.use(http.get("/api/v1/admin/projects/project-one/workflow-tasks", request));

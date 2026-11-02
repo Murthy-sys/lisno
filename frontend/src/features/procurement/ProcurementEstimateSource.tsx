@@ -15,9 +15,9 @@ export function ProcurementEstimateSource({ source, readiness, stale = false }: 
 }) {
   if (!source) return null;
   return <section className="procurement-source" aria-label="Procurement estimate source">
-    <p className="eyebrow">{source.kind === "approved_final" ? "Final approved estimate" : source.kind === "approved_pre" ? "Approved pre-estimate" : "Released post-estimate"} · Version {source.estimateVersion}</p>
+    <p className="eyebrow">{source.workflowVersion === 3 ? source.kind === "approved_final" ? "Approved quotation" : "Quotation preparation source" : source.kind === "approved_final" ? "Final approved estimate" : source.kind === "approved_pre" ? "Approved pre-estimate" : "Released post-estimate"} · Version {source.estimateVersion}</p>
     <h2>{source.kind === "approved_final" ? "Prepare and release approved work" : "Procurement preparation is open"}</h2>
-    <p>{source.kind === "approved_final" ? "Reconcile earlier preparation with this final source before issuing work orders. Issued orders retain their original approved records." : "Prepare quantities, obtain vendor bids and seek internal approval using this frozen estimate. Final client approval and initial payment are required before work orders can be issued."}</p>
+    <p>{source.workflowVersion === 3 ? "Use the approved quotation for procurement. Work-order issuance also requires approval of the uploaded design, payment confirmation and the release checks below. Issued orders retain their original approved records." : source.kind === "approved_final" ? "Reconcile earlier preparation with this final source before issuing work orders. Issued orders retain their original approved records." : "Prepare quantities, obtain vendor bids and seek internal approval using this frozen estimate. Final client approval and initial payment are required before work orders can be issued."}</p>
     {stale ? <p role="status">Refreshing the estimate source and release conditions. Changes are paused.</p> : <WorkOrderReadiness readiness={readiness} />}
   </section>;
 }

@@ -26,6 +26,15 @@ function componentSchemas(): Record<string, OpenApiObject> {
 }
 
 describe("OpenAPI and Swagger UI", () => {
+  it("documents optional frozen proposal metadata without changing legacy snapshots", () => {
+    const schemas = componentSchemas();
+    expect(schemas.ClientEstimateSnapshot).toHaveProperty("properties.proposal.$ref", "#/components/schemas/EstimateProposalMetadata");
+    expect(schemas.ClientEstimateSnapshot!.required).not.toContain("proposal");
+    expect(schemas.EstimateProposalMetadata).toHaveProperty("properties.templateVersion.enum", ["lisno-proposal-v1"]);
+    expect(schemas.EstimateProposalMetadata).toHaveProperty("properties.defaultsVersion.enum", [1]);
+    expect(schemas.EstimateProposalMetadata).toHaveProperty("properties.terms.properties.paymentStages.minItems", 5);
+    expect(schemas.EstimateProposalMetadata).toHaveProperty("properties.terms.additionalProperties", false);
+  });
   it("documents versioned user deletion with a minimal historical-identity-safe result", () => {
     const schemas = componentSchemas();
     expect(schemas.ManagedUserDeletionRequest).toMatchObject({
@@ -325,7 +334,7 @@ describe("OpenAPI and Swagger UI", () => {
     expect(schemas.ClientEstimateSnapshot).toHaveProperty("properties.lineItems.items.properties.pricingMode.enum", ["pmc", "sub_vendor", "in_house"]);
     expect(schemas.ClientEstimateSnapshot).toHaveProperty("properties.lineItems.items.properties.rateSource.enum", ["configuration", "manual"]);
   });
-  it("documents optional bedroom counts and keeps client-review snapshots unchanged", () => {
+  it("documents optional bedroom counts and frozen room metadata without requiring them on legacy snapshots", () => {
     const schemas = componentSchemas();
     expect(schemas.EstimateInput!.required).not.toContain("bedroomCount");
     expect(schemas.EstimateInput).toHaveProperty("properties.bedroomCount", {
@@ -334,7 +343,9 @@ describe("OpenAPI and Swagger UI", () => {
     });
     expect(schemas.EstimateInput).toHaveProperty("additionalProperties", false);
     expect(schemas.EstimateInput).not.toHaveProperty("properties.propertyType.enum");
-    expect(schemas.ClientEstimateSnapshot).not.toHaveProperty("properties.bedroomCount");
+    expect(schemas.ClientEstimateSnapshot).toHaveProperty("properties.bedroomCount", { type: "integer", minimum: 0, nullable: true });
+    expect(schemas.ClientEstimateSnapshot!.required).not.toContain("bedroomCount");
+    expect(schemas.ClientEstimateSnapshot!.required).not.toContain("rooms");
     const paths = openApiDocument.paths as Record<string, Record<string, OpenApiObject>>;
     expect(paths["/leads/{leadId}/estimate"]!.put!.requestBody)
       .toHaveProperty("content.application/json.schema.$ref", "#/components/schemas/EstimateInput");
@@ -901,6 +912,15 @@ describe("OpenAPI and Swagger UI", () => {
     expect(initiation.required).not.toContain("budgetMin");
     expect(initiation.required).not.toContain("budgetMax");
     expect(initiation.required).not.toContain("source");
+    expect(initiation.required).not.toContain("nextAction");
+    expect(initiation.properties).toMatchObject({
+      nextAction: { default: "Estimation" }, nativePlace: { maxLength: 120, nullable: true },
+      tentativeBudget: { maxLength: 200, nullable: true }, closureTentativeDate: { format: "date", nullable: true },
+      category: { enum: ["self_use", "rental", null] },
+      languagesKnown: { uniqueItems: true, maxItems: 23, items: { enum: expect.arrayContaining(["english", "hindi", "tamil"]) } },
+      preferredLanguage: { nullable: true, enum: expect.arrayContaining(["english", null]) }
+    });
+    expect(schemas.ProjectIntakeRecord!.properties).toHaveProperty("closureTentativeDate.format", "date");
     expect(initiation.properties).toMatchObject({
       source: { type: "string", minLength: 1, maxLength: 200 },
       location: { type: "string", minLength: 1 },
@@ -1259,7 +1279,7 @@ describe("OpenAPI and Swagger UI", () => {
     }
   });
 
-  it("contains all 507 routes without versioning paths twice", () => {
+  it("contains all 518 routes without versioning paths twice", () => {
     const methods = new Set(["get", "post", "put", "patch", "delete"]);
     const operationCount = Object.values(openApiDocument.paths).reduce(
       (total, pathItem) =>
@@ -1268,7 +1288,7 @@ describe("OpenAPI and Swagger UI", () => {
     );
 
     expect(operationCount).toBe(HUMAN_JWT_OPERATION_LIST.length + 21);
-    expect(operationCount).toBe(507);
+    expect(operationCount).toBe(518);
     expect(Object.keys(openApiDocument.paths).some((path) =>
       path.startsWith("/api/v1")
     )).toBe(false);
@@ -2761,4 +2781,33 @@ describe("OpenAPI and Swagger UI", () => {
       }
     });
   });
+});
+
+
+describe("project number API documentation", () => {
+  it("exposes a nullable read-only number in authorized Lead, Admin and estimate responses only", () => {
+    const schemas = componentSchemas();
+    for (const name of ["ProjectIntakeRecord", "NumberedEstimateRecord", "NullableNumberedEstimateRecord"]) {
+      expect(schemas[name]).toHaveProperty("properties.projectNumber", expect.objectContaining({ type: "string", nullable: true, readOnly: true, example: "Lisno000001" }));
+    }
+    expect(schemas.AdminProjectInitiationRequest).not.toHaveProperty("properties.projectNumber");
+    expect(schemas.EstimateInput).not.toHaveProperty("properties.projectNumber");
+    const paths = openApiDocument.paths;
+    expect(paths["/leads"]!.get!).toHaveProperty("responses.2XX.content.application/json.schema.properties.data.$ref", "#/components/schemas/ProjectLeadPage");
+    expect(paths["/leads/{leadId}/estimate"]!.put!).toHaveProperty("responses.2XX.content.application/json.schema.properties.data.$ref", "#/components/schemas/NumberedEstimateRecord");
+    expect(paths["/leads/{leadId}/estimate"]!.get!).toHaveProperty("responses.2XX.content.application/json.schema.properties.data.$ref", "#/components/schemas/NullableNumberedEstimateRecord");
+    expect(paths["/estimates"]!.get!).toHaveProperty("responses.2XX.content.application/json.schema.properties.data.$ref", "#/components/schemas/NumberedEstimateList");
+  });
+});
+
+it("documents scoped revision pagination, frozen detail, and original PDF availability", () => {
+  const paths = openApiDocument.paths as Record<string, Record<string, OpenApiObject>>;
+  const list = paths["/estimates/{estimateId}/revisions"]!.get!;
+  expect(list.parameters).toContainEqual(expect.objectContaining({ name: "limit", in: "query", schema: expect.objectContaining({ minimum: 1, maximum: 50, default: 20 }) }));
+  expect(list.parameters).toContainEqual(expect.objectContaining({ name: "cursor", in: "query" }));
+  expect(list.responses["2XX"].content["application/json"].schema.properties.data.$ref).toBe("#/components/schemas/EstimateRevisionPage");
+  expect(paths["/estimates/{estimateId}/revisions/{revisionId}"]!.get!.responses["2XX"].content["application/json"].schema.properties.data.$ref).toBe("#/components/schemas/EstimateRevisionDetail");
+  const pdf = paths["/estimates/{estimateId}/revisions/{revisionId}/pdf"]!.get!;
+  expect(pdf.responses["200"].content["application/pdf"]).toBeDefined();
+  expect(pdf.responses["503"].$ref).toBe("#/components/responses/ServiceUnavailable");
 });

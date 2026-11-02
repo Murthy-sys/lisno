@@ -62,13 +62,25 @@ describe("client screen visibility projection", () => {
 
   it("keeps totals and approval available when every line is omitted from the screen", () => {
     renderWithQuery(<ClientPublishedEstimate estimate={projectedEstimate(false)} />);
-    expect(screen.getByText("View the PDF/quotation for the item breakdown.")).toBeVisible();
+    expect(screen.getByText("No item details are available for this quotation.")).toBeVisible();
     expect(screen.getByText("GST included")).toBeVisible();
     expect(screen.queryByText(/0 items/)).not.toBeInTheDocument();
     expect(screen.getByText("₹350")).toBeVisible();
     expect(screen.getByText("₹413")).toBeVisible();
     expect(screen.getByRole("button", { name: "Approve estimate" })).toBeEnabled();
   });
+});
+
+it("distinguishes the v3 quotation approval from the later drawing approval", () => {
+  const estimate = projectedEstimate(true);
+  estimate.workflowVersion = 3;
+  estimate.publishedReview = { ...estimate.publishedReview!, workflowVersion: 3, phase: "post", status: "approved", canDecide: false };
+  estimate.preApprovedReview = { reviewRoundId: "initial-round", estimateVersion: 1, snapshot: estimate.publishedReview.snapshot };
+  estimate.changesFromPre = { addedLineIds: [], removedLineIds: [], changedLineIds: [], scopeChanged: false, noChanges: true, beforeTotal: 413, afterTotal: 413 };
+  renderWithQuery(<ClientPublishedEstimate estimate={estimate} />);
+  expect(screen.getByText("Post-design approval: Designer-revised quotation")).toBeVisible();
+  expect(screen.getByText("Estimation is complete and the quotation is locked. Your Designer can now begin design tasks.")).toBeVisible();
+  expect(screen.queryByText(/Design and procurement preparation can continue/)).not.toBeInTheDocument();
 });
 
 it("displays recorded dimensions from the frozen snapshot without adopting working measurements", () => {

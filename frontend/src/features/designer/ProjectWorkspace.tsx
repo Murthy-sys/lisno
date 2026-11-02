@@ -28,6 +28,7 @@ import { ProgressBar } from "../../components/ui/ProgressBar";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { designerKeys } from "./designerApi";
 import { DesignUploadsWorkspace } from "./DesignUploadsWorkspace";
+import { DesignTeamPicker } from "./DesignTeamPicker";
 import { EstimatePlanChangeRequests } from "../leads/EstimatePlanChangeRequests";
 import { ProjectWorkflowPanel } from "../workflow/ProjectWorkflowPanel";
 import {
@@ -118,6 +119,7 @@ export function ProjectWorkspace() {
       />
 
       <ProjectChatNavigation projectId={projectId} overviewTo={`/designer/projects/${projectId}`} />
+      {project.estimationWorkflowVersion === 3 ? <DesignTeamPicker key={`team-${projectId}`} projectId={projectId} /> : null}
 
       {notice ? (
         <div className="workspace-notice" role="status" aria-label="Project updates">

@@ -1,6 +1,6 @@
 import mongoose from "mongoose";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { newEstimationLifecycle } from "../src/domain/estimation-lifecycle.js";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { newEstimationLifecycle, newQuotationLifecycle } from "../src/domain/estimation-lifecycle.js";
 import { ProjectModel } from "../src/models/Project.js";
 import { UserModel } from "../src/models/User.js";
 import { EstimateModel } from "../src/models/Estimate.js";
@@ -10,8 +10,14 @@ import { DesignPlanReviewRoundModel } from "../src/models/DesignPlanReviewRound.
 import { DesignWorkflowStateModel } from "../src/models/DesignWorkflowState.js";
 import { ProjectFinanceBucketModel } from "../src/models/ProjectFinanceBucket.js";
 import { ProjectFinanceBaselineRevisionModel } from "../src/models/ProjectFinanceBaselineRevision.js";
+import { QuotationDesignHandoffModel } from "../src/models/QuotationDesignHandoff.js";
 import { ProjectWorkflowTaskModel } from "../src/models/ProjectWorkflowTask.js";
-import { activateCollaborativeProjectWorkflow, ensureCollaborativePreparationTask } from "../src/services/project-workflow.service.js";
+import { ProjectPurchaseOrderModel } from "../src/models/ProjectPurchaseOrder.js";
+import { QuotationUnlockReceiptModel } from "../src/models/QuotationUnlockReceipt.js";
+import { createEstimateCollaborationService } from "../src/services/estimate-collaboration.service.js";
+import { createAuditService } from "../src/services/audit.service.js";
+import { createMongoRepository } from "../src/repositories/mongo.js";
+import { activateCollaborativeProjectWorkflow, ensureCollaborativePreparationTask, recordQuotationDesignHandoff } from "../src/services/project-workflow.service.js";
 import { ensurePendingProjectFinanceBucket, syncCollaborativeFinanceBaseline, openProjectFinanceBucket, createProjectFinanceService } from "../src/services/project-finance.service.js";
 import { assertProjectWorkOrderIssueEligible, projectWorkOrderIssueReadiness } from "../src/services/project-work-order-eligibility.service.js";
 import { mongoSuperAdminDashboardOverview, mongoSuperAdminDashboardProjects } from "../src/repositories/super-admin-dashboard.js";
@@ -31,16 +37,17 @@ beforeEach(async () => {
     role: actor.role, active: true, passwordHash: "synthetic-unused", accountKind: "standard", version: 1 });
 });
 
-async function fixture(id: string, pre: number, final: number, preOnly = false, finalApprovedAt = at) {
+async function fixture(id: string, pre: number, final: number, preOnly = false, finalApprovedAt = at, workflowVersion: 2 | 3 = 2) {
   await ProjectModel.create({ _id: id, name: `Synthetic ${id}`, clientName: "Synthetic Client", clientEmail: `${id}@example.test`,
     clientEmailNormalized: `${id}@example.test`, clientMobile: "0000000000", clientAddress: "Synthetic location", location: "Synthetic location",
-    status: "planning", plannedStartAt: at, plannedEndAt: at, estimationWorkflowVersion: 2, estimateRequirementsVersion: 0 });
+    status: "planning", plannedStartAt: at, plannedEndAt: at, estimationWorkflowVersion: workflowVersion, estimateRequirementsVersion: 0 });
   await LeadModel.create({ _id: `${id}-lead`, projectId: id, ownerId: "sales", clientName: "Synthetic Client", clientEmail: `${id}@example.test`,
     clientMobile: "0000000000", projectName: `Synthetic ${id}`, location: "Synthetic location", propertyType: "2BHK", source: "walk_in", stage: "won", nextAction: "Estimation", nextActionAt: at });
-  const estimation = { ...newEstimationLifecycle(), phase: "post", status: preOnly ? "draft" : "client_approved", editClosedAt: preOnly ? null : at.toISOString(),
+  const estimation = { ...(workflowVersion === 3 ? newQuotationLifecycle() : newEstimationLifecycle()), phase: "post", status: preOnly ? "draft" : "client_approved", editClosedAt: preOnly ? null : at.toISOString(),
     preApproval: { reviewRoundId: `${id}-pre`, estimateVersion: 1, approvedAt: at.toISOString() },
     finalApproval: preOnly ? null : { reviewRoundId: `${id}-final`, estimateVersion: 7, approvedAt: finalApprovedAt.toISOString(), requirementsVersion: 0,
-      designReviewRoundId: `${id}-design`, designPlanVersion: 3, designScopeRevision: 1 }, approvedDesignScopeRevision: preOnly ? null : 1 };
+      designReviewRoundId: workflowVersion === 3 ? null : `${id}-design`, designPlanVersion: workflowVersion === 3 ? null : 3, designScopeRevision: 1 },
+    ...(workflowVersion === 3 ? { designApproval: preOnly ? null : { reviewRoundId: `${id}-design`, estimateReviewRoundId: `${id}-final`, designPlanVersion: 3, designScopeRevision: 1, approvedAt: at.toISOString() } } : {}), approvedDesignScopeRevision: preOnly ? null : 1 };
   await EstimateModel.create({ _id: `${id}-estimate`, leadId: `${id}-lead`, projectId: id, ownerId: "sales", propertyType: "2BHK", rooms: [], scopes: [], lineItems: [],
     version: 25, status: "client_approved", estimation, subtotal: final, gst: 0, total: final,
     designPlanStatus: preOnly ? "pending_assignment" : "approved", designPlanVersion: preOnly ? 0 : 3,
@@ -52,9 +59,9 @@ async function fixture(id: string, pre: number, final: number, preOnly = false, 
       decisionSource: "client_portal", estimateSnapshot: { subtotal: value, gst: 0, total: value, subtotalPaise: value * 100, gstPaise: 0, totalPaise: value * 100, lineItems: [] } } as never);
   }
   if (!preOnly) await DesignPlanReviewRoundModel.collection.insertOne({ _id: `${id}-design`, estimateId: `${id}-estimate`, projectId: id,
-    designPlanVersion: 3, status: "approved", decision: "approve" } as never);
+    designPlanVersion: 3, designScopeRevision: 1, status: "approved", decision: "approve" } as never);
   await mongoose.connection.transaction(async session => {
-    await ensurePendingProjectFinanceBucket({ workflowVersion: 2, projectId: id, estimateId: `${id}-estimate`, estimateVersion: 1,
+    await ensurePendingProjectFinanceBucket({ workflowVersion, projectId: id, estimateId: `${id}-estimate`, estimateVersion: 1,
       estimateReviewRoundId: `${id}-pre`, approvedSubtotalRupees: pre, approvedGstRupees: 0, approvedContractTotalRupees: pre,
       createdById: actor.id, occurredAt: at }, session);
     if (!preOnly) await syncCollaborativeFinanceBaseline(`${id}-estimate`, session);
@@ -67,6 +74,108 @@ async function payment(id: string, roundId = `${id}-final`, receivedAt = at) {
 }
 
 describe("final finance source and work-order gate", () => {
+  it("retries issuance eligibility against an unlock that wins after the approved snapshot was read", async () => {
+    const id = "unlock-race";
+    await fixture(id, 1000, 1500, false, at, 3);
+    await payment(id);
+    const sales = { id: "sales", name: "Synthetic Sales", email: "unlock-sales@example.test", role: "estimator_sales" as const };
+    await UserModel.create({ _id: sales.id, ...sales, emailNormalized: sales.email, active: true, passwordHash: "unused" });
+    await ProjectModel.updateOne({ _id: id }, { $set: { assignedEstimatorId: sales.id } });
+    await ProjectPurchaseOrderModel.collection.insertOne({ _id: `${id}-order`, projectId: id, status: "ready_to_issue",
+      version: 3, submittedRevisionId: `${id}-order-revision`, approvedRevisionId: null,
+      approvedNetPaise: null, approvedGstPaise: null, approvedTotalPaise: null } as never);
+    expect(await projectWorkOrderIssueReadiness(id)).toMatchObject({ canIssue: true });
+    const history = await EstimateClientReviewRoundModel.find({ projectId: id }).sort({ _id: 1 }).lean();
+    const drawings = await DesignPlanReviewRoundModel.find({ projectId: id }).lean();
+    const baseline = await ProjectFinanceBucketModel.findOne({ projectId: id }).lean();
+    const originalOrder = await ProjectPurchaseOrderModel.findById(`${id}-order`).lean();
+    let paused = false;
+    let release!: () => void;
+    const resumed = new Promise<void>(resolve => { release = resolve; });
+    const originalUpdate = ProjectModel.updateOne.bind(ProjectModel);
+    const fenceSpy = vi.spyOn(ProjectModel, "updateOne").mockImplementation((filter: any, update: any, options: any) => {
+      const query = originalUpdate(filter, update, options);
+      if (filter._id === id && update.$inc?.estimationFenceEpoch === 1 && !paused) {
+        const execute = query.exec.bind(query);
+        query.exec = async () => { paused = true; await resumed; return execute(); };
+      }
+      return query;
+    });
+    let attempts = 0;
+    const issuance = mongoose.connection.transaction(async session => {
+      attempts += 1;
+      await assertProjectWorkOrderIssueEligible(id, session, { estimateId: `${id}-estimate`, estimateVersion: 7, estimateReviewRoundId: `${id}-final` });
+      // A committed order is the observable sink behind the real issuance eligibility primitive.
+      await ProjectPurchaseOrderModel.updateOne({ _id: `${id}-order`, status: "ready_to_issue", version: 3 }, {
+        $set: { status: "approved", approvedRevisionId: `${id}-order-revision`, approvedNetPaise: 50_000,
+          approvedGstPaise: 9_000, approvedTotalPaise: 59_000 }, $inc: { version: 1 }
+      }, { session });
+    }).then(() => null, error => error);
+    try {
+      await vi.waitFor(() => expect(paused).toBe(true));
+      const service = createEstimateCollaborationService(createAuditService(createMongoRepository()));
+      await service.unlock(sales, `${id}-estimate`, { expectedVersion: 25, reviewRoundId: `${id}-final`,
+        reason: "Client requested a scope revision", idempotencyKey: "unlock-wins-issuance" });
+      release();
+      expect(await issuance).toMatchObject({ code: "WORK_ORDER_NOT_READY" });
+      expect(attempts).toBeGreaterThan(1);
+    } finally { release(); await issuance; fenceSpy.mockRestore(); }
+    expect(await ProjectPurchaseOrderModel.findById(`${id}-order`).lean()).toEqual(originalOrder);
+    expect(await ProjectPurchaseOrderModel.countDocuments({ projectId: id, approvedRevisionId: { $ne: null } })).toBe(0);
+    expect(await EstimateClientReviewRoundModel.find({ projectId: id }).sort({ _id: 1 }).lean()).toEqual(history);
+    expect(await DesignPlanReviewRoundModel.find({ projectId: id }).lean()).toEqual(drawings);
+    expect(await ProjectFinanceBucketModel.findOne({ projectId: id }).lean()).toEqual(baseline);
+    expect(await QuotationUnlockReceiptModel.countDocuments({ estimateId: `${id}-estimate` })).toBe(1);
+    expect(await EstimateModel.findById(`${id}-estimate`).lean()).toMatchObject({ version: 26,
+      estimation: { editClosedAt: null, status: "draft", finalApproval: { reviewRoundId: `${id}-final` } } });
+  });
+
+  it("binds v3 quotation and later drawings separately, preserving two unequal project baselines on repricing", async () => {
+    await fixture("quote-alpha", 1000, 1500, false, at, 3);
+    await fixture("quote-beta", 2300, 3100, false, at, 3);
+    const finance = createProjectFinanceService({ now: () => at });
+    const page = await finance.listProjects(actor, { limit: 20, offset: 0 });
+    expect(page.summary).toMatchObject({ projectCount: 2, approvedSubtotalPaise: 460000, approvedContractTotalPaise: 460000 });
+    for (const id of ["quote-alpha", "quote-beta"]) {
+      await payment(id);
+      expect(await projectWorkOrderIssueReadiness(id)).toMatchObject({ required: true, canIssue: true });
+      const estimate = (await EstimateModel.findById(`${id}-estimate`).lean())!;
+      await mongoose.connection.transaction(session => recordQuotationDesignHandoff(estimate, actor.id, at, session));
+      await mongoose.connection.transaction(session => recordQuotationDesignHandoff(estimate, actor.id, at, session));
+    }
+    expect(await QuotationDesignHandoffModel.countDocuments()).toBe(2);
+    const id = "quote-alpha";
+    await EstimateModel.updateOne({ _id: `${id}-estimate` }, { $set: { "estimation.editClosedAt": null, "estimation.status": "draft" } });
+    expect(await projectWorkOrderIssueReadiness(id)).toMatchObject({ required: true, canIssue: false });
+    expect(await finance.getBucket(actor, id)).toMatchObject({ approvedSubtotalPaise: 150000 });
+    await EstimateClientReviewRoundModel.collection.insertOne({ _id: `${id}-revised`, estimateId: `${id}-estimate`, projectId: id,
+      leadId: `${id}-lead`, phase: "post", estimateVersion: 26, status: "approved", decision: "approve", decidedById: "synthetic-client",
+      decisionSource: "client_portal", decidedAt: at, estimateSnapshot: { subtotal: 1800, gst: 0, total: 1800,
+        subtotalPaise: 180000, gstPaise: 0, totalPaise: 180000, lineItems: [] } } as never);
+    await EstimateModel.updateOne({ _id: `${id}-estimate` }, { $set: { version: 27, "estimation.status": "client_approved", "estimation.editClosedAt": at.toISOString(),
+      "estimation.finalApproval.reviewRoundId": `${id}-revised`, "estimation.finalApproval.estimateVersion": 26 } });
+    await mongoose.connection.transaction(async session => {
+      await syncCollaborativeFinanceBaseline(`${id}-estimate`, session);
+      const estimate = (await EstimateModel.findById(`${id}-estimate`).session(session).lean())!;
+      await recordQuotationDesignHandoff(estimate, actor.id, at, session);
+    });
+    expect(await ProjectFinanceBucketModel.findOne({ projectId: id }).lean()).toMatchObject({ approvedSubtotalPaise: 100000,
+      effectiveBaseline: { approvedSubtotalPaise: 180000, estimateReviewRoundId: `${id}-revised` } });
+    expect(await ProjectFinanceBaselineRevisionModel.countDocuments({ projectId: id })).toBe(3);
+    expect(await QuotationDesignHandoffModel.countDocuments({ projectId: id })).toBe(2);
+    expect(await projectWorkOrderIssueReadiness(id)).toMatchObject({ canIssue: false });
+    expect((await finance.listProjects(actor, { limit: 20, offset: 0 })).summary).toMatchObject({ approvedSubtotalPaise: 490000 });
+  });
+  it("does not treat a v3 quotation approval as drawing approval or unrestricted legacy issuance", async () => {
+    await fixture("quote-only", 1000, 1500, false, at, 3);
+    await EstimateModel.updateOne({ _id: "quote-only-estimate" }, { $set: { designPlanStatus: "assigned", "estimation.designApproval": null,
+      "estimation.approvedDesignScopeRevision": null } });
+    await payment("quote-only");
+    expect(await projectWorkOrderIssueReadiness("quote-only")).toMatchObject({ required: true, canIssue: false });
+    await expect(mongoose.connection.transaction(session => assertProjectWorkOrderIssueEligible("quote-only", session)))
+      .rejects.toMatchObject({ code: "WORK_ORDER_NOT_READY" });
+  });
+
   it("filters by the effective final approval decision instead of the original or materialization date", async () => {
     const finalApprovedAt = new Date("2026-10-20T23:59:59.999Z");
     await fixture("final-date", 1000, 1500, false, finalApprovedAt);

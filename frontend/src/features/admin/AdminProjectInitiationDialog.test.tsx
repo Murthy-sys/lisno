@@ -6,6 +6,7 @@ import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AdminProjectSummary } from "../../api/types";
+import { projectClientInvitationKeys, type ProjectClientInvitationStatus as InvitationStatus } from "../../auth/projectClientInvitationsApi";
 import { renderWithQuery } from "../../test/render";
 import { server } from "../../test/server";
 import { AdminProjectInitiationDialog } from "./AdminProjectInitiationDialog";
@@ -52,7 +53,7 @@ const createdProject: AdminProjectSummary = {
   lead: {
     id: "lead-created",
     stage: "new_lead",
-    nextAction: "Schedule site visit",
+    nextAction: "Estimation",
     nextActionAt: "2026-08-25T05:00:00.000Z"
   },
   estimate: null,
@@ -122,7 +123,6 @@ async function fillForm(user: ReturnType<typeof userEvent.setup>, select = true)
     "Client email": "asha@example.com",
     Mobile: "+91 90000 00000",
     "Project / property name": "Asha home",
-    "Next action": "Schedule site visit",
   } as const;
   for (const [name, value] of Object.entries(fields)) {
     await user.type(screen.getByLabelText(requiredLabel(name)), value);
@@ -134,6 +134,169 @@ async function fillForm(user: ReturnType<typeof userEvent.setup>, select = true)
 }
 
 describe("AdminProjectInitiationDialog", () => {
+  it.each(assignmentFlows)("confirms existing client access and caches the linked status in the $label flow", async ({ assignmentMode, label, endpoint, option }) => {
+    const clientInvitation: InvitationStatus = {
+      projectId: createdProject.id, status: "linked", deliveryAvailable: false,
+      expectedVersion: 0, expiresAt: null, sentAt: null, acceptedAt: null, availableActions: []
+    };
+    const setQueryData = vi.spyOn(QueryClient.prototype, "setQueryData");
+    server.use(
+      http.get(endpoint, () => HttpResponse.json(estimatorPage([option]))),
+      http.post("/api/v1/admin/projects", () => HttpResponse.json({ data: { ...createdProject, clientInvitation } }, { status: 201 }))
+    );
+    const user = userEvent.setup();
+    const { onCreated, onClose } = renderDialog({ assignmentMode });
+    await fillForm(user, false);
+    await user.click(screen.getByRole("combobox", { name: label }));
+    await user.click(await screen.findByRole("option", { name: new RegExp(option.name) }));
+    await user.click(screen.getByRole("button", { name: "Initiate project" }));
+    expect(await screen.findByText("Your project is ready. The existing client already has access; no invitation is needed.")).toBeVisible();
+    expect(screen.queryByText("Your project is ready. Check the client invitation status to send or retry the invitation.")).not.toBeInTheDocument();
+    expect(setQueryData).toHaveBeenCalledWith(projectClientInvitationKeys.detail(createdProject.id), clientInvitation);
+    expect(onCreated).toHaveBeenCalledWith({ ...createdProject, clientInvitation });
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it("closes an untouched form without treating its default action or empty languages as changes", async () => {
+    server.use(http.get("/api/v1/admin/estimators", () => HttpResponse.json(estimatorPage())));
+    const user = userEvent.setup();
+    const { onClose } = renderDialog();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(onClose).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  });
+
+  it.each(["Native", "Tentative Budget", "Category", "Most Preferred Language", "Languages Known", "Closure Tentative Date"])(
+    "guards an edit to %s and becomes clean when it is reverted", async (label) => {
+      server.use(http.get("/api/v1/admin/estimators", () => HttpResponse.json(estimatorPage())));
+      const user = userEvent.setup();
+      const { onClose } = renderDialog();
+      const update = async (clear: boolean) => {
+        if (label === "Native" || label === "Tentative Budget") {
+          const input = screen.getByRole("textbox", { name: label });
+          if (clear) await user.clear(input);
+          else await user.type(input, "Draft value");
+        } else if (label === "Category" || label === "Most Preferred Language") {
+          await user.selectOptions(screen.getByRole("combobox", { name: label }), clear ? "" : label === "Category" ? "rental" : "english");
+        } else if (label === "Languages Known") {
+          await user.click(screen.getByRole("button", { name: label }));
+          await user.click(within(screen.getByRole("listbox", { name: "Languages Known" })).getByRole("option", { name: "English" }));
+          await user.keyboard("{Escape}");
+        } else {
+          await user.click(screen.getByRole("button", { name: label }));
+          const calendar = screen.getByRole("dialog", { name: "Choose closure tentative date" });
+          await user.click(within(calendar).getByRole("button", { name: clear ? "Clear date" : "Today" }));
+        }
+      };
+      await update(false);
+      await user.click(screen.getByRole("button", { name: "Cancel" }));
+      expect(screen.getByRole("alertdialog", { name: "Discard unsaved changes?" })).toBeVisible();
+      expect(onClose).not.toHaveBeenCalled();
+      await user.click(screen.getByRole("button", { name: "Keep editing" }));
+      await update(true);
+      await user.click(screen.getByRole("button", { name: "Cancel" }));
+      expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+      expect(onClose).toHaveBeenCalledOnce();
+    }
+  );
+
+  it.each(assignmentFlows)("submits all intake metadata in the $label flow without altering the independent preferred language", async ({ assignmentMode, label, endpoint, option }) => {
+    let body: Record<string, unknown> | undefined;
+    server.use(
+      http.get(endpoint, () => HttpResponse.json(estimatorPage([option]))),
+      http.post("/api/v1/admin/projects", async ({ request }) => {
+        body = await request.json() as Record<string, unknown>;
+        return HttpResponse.json({ data: createdProject }, { status: 201 });
+      })
+    );
+    const user = userEvent.setup();
+    renderDialog({ assignmentMode });
+    await fillForm(user, false);
+    await user.click(screen.getByRole("combobox", { name: label }));
+    await user.click(await screen.findByRole("option", { name: new RegExp(option.name) }));
+    await user.type(screen.getByRole("textbox", { name: "Native" }), "  Mysuru  ");
+    await user.type(screen.getByRole("textbox", { name: "Tentative Budget" }), "  ₹15–20 lakh  ");
+    await user.selectOptions(screen.getByRole("combobox", { name: "Category" }), "self_use");
+    const preferred = screen.getByRole("combobox", { name: "Most Preferred Language" });
+    await user.selectOptions(preferred, "tamil");
+    await user.click(screen.getByRole("button", { name: "Languages Known" }));
+    const languages = screen.getByRole("listbox", { name: "Languages Known" });
+    expect(within(languages).getAllByRole("option")).toHaveLength(23);
+    expect(within(preferred).getAllByRole("option").slice(1).map((item) => item.textContent))
+      .toEqual(within(languages).getAllByRole("option").map((item) => item.textContent));
+    await user.click(within(languages).getByRole("option", { name: "English" }));
+    await user.click(within(languages).getByRole("option", { name: "Hindi" }));
+    await user.click(within(languages).getByRole("option", { name: "Kannada" }));
+    await user.click(within(languages).getByRole("option", { name: "Hindi" }));
+    await user.keyboard("{Escape}");
+    expect(preferred).toHaveValue("tamil");
+    const known = screen.getByRole("button", { name: "Languages Known" });
+    expect(known).toHaveFocus();
+    expect(known).toHaveTextContent("English, Kannada");
+    expect(known).toHaveAccessibleDescription("2 languages selected");
+    const nextDate = screen.getByRole("button", { name: "Next action date" }).textContent;
+    await user.click(screen.getByRole("button", { name: "Closure Tentative Date" }));
+    const calendar = screen.getByRole("dialog", { name: "Choose closure tentative date" });
+    await user.click(within(calendar).getByRole("button", { name: "Today" }));
+    const today = new Date();
+    const dateOnly = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+    expect(screen.getByRole("button", { name: "Next action date" }).textContent).toBe(nextDate);
+    await user.click(screen.getByRole("button", { name: "Initiate project" }));
+    await waitFor(() => expect(body).toMatchObject({
+      nativePlace: "Mysuru", tentativeBudget: "₹15–20 lakh", category: "self_use",
+      languagesKnown: ["english", "kannada"], preferredLanguage: "tamil",
+      closureTentativeDate: dateOnly, nextAction: "Estimation"
+    }));
+    expect(body).toHaveProperty(assignmentMode === "estimator" ? "estimatorId" : "salesManagerId", option.id);
+  });
+
+  it("preserves new values after a failed request and focuses the invalid language picker", async () => {
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => { release = resolve; });
+    server.use(
+      http.get("/api/v1/admin/estimators", () => HttpResponse.json(estimatorPage())),
+      http.post("/api/v1/admin/projects", async () => {
+        await pending;
+        return HttpResponse.json({ error: { code: "VALIDATION_ERROR", message: "Review languages.", fields: { languagesKnown: "Choose supported languages." } } }, { status: 400 });
+      })
+    );
+    const user = userEvent.setup();
+    renderDialog();
+    await fillForm(user);
+    await user.type(screen.getByRole("textbox", { name: "Native" }), "Mysuru");
+    await user.type(screen.getByRole("textbox", { name: "Tentative Budget" }), "To be discussed");
+    await user.selectOptions(screen.getByRole("combobox", { name: "Category" }), "rental");
+    await user.selectOptions(screen.getByRole("combobox", { name: "Most Preferred Language" }), "english");
+    const known = screen.getByRole("button", { name: "Languages Known" });
+    await user.click(known);
+    await user.click(within(screen.getByRole("listbox", { name: "Languages Known" })).getByRole("option", { name: "Hindi" }));
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("button", { name: "Closure Tentative Date" }));
+    await user.click(screen.getByRole("button", { name: "Today" }));
+    const closureText = screen.getByRole("button", { name: "Closure Tentative Date" }).textContent;
+    const submit = screen.getByRole("button", { name: "Initiate project" });
+    await waitFor(() => expect(submit).toBeEnabled());
+    fireEvent.click(submit);
+    await waitFor(() => expect(known).toBeDisabled());
+    for (const name of ["Native", "Tentative Budget"]) expect(screen.getByRole("textbox", { name })).toBeDisabled();
+    for (const name of ["Category", "Most Preferred Language"]) expect(screen.getByRole("combobox", { name })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Closure Tentative Date" })).toBeDisabled();
+    expect(screen.getByRole("combobox", { name: "Sales" })).toBeDisabled();
+    release();
+    await waitFor(() => expect(known).toHaveFocus());
+    expect(known).toBeEnabled();
+    expect(known).toHaveAccessibleDescription("Choose supported languages. 1 language selected");
+    expect(known).toHaveTextContent("Hindi");
+    expect(screen.getByRole("textbox", { name: "Native" })).toHaveValue("Mysuru");
+    expect(screen.getByRole("textbox", { name: "Tentative Budget" })).toHaveValue("To be discussed");
+    expect(screen.getByRole("combobox", { name: "Category" })).toHaveValue("rental");
+    expect(screen.getByRole("combobox", { name: "Most Preferred Language" })).toHaveValue("english");
+    expect(screen.getByRole("button", { name: "Closure Tentative Date" }).textContent).toBe(closureText);
+    await user.click(known);
+    await user.click(within(screen.getByRole("listbox", { name: "Languages Known" })).getByRole("option", { name: "English" }));
+    expect(known).not.toHaveAttribute("aria-invalid");
+  });
+
   it("reuses its initiation key after an uncertain response and navigates after invitation delivery failure", async () => {
     const requests: Array<Record<string, unknown>> = [];
     const clientInvitation = {
@@ -179,11 +342,17 @@ describe("AdminProjectInitiationDialog", () => {
       "Mobile",
       "Project / property name",
       "Property type",
-      "Next action",
       "Sales"
     ]) {
       expect(within(dialog).getByLabelText(requiredLabel(name))).toBeRequired();
     }
+    expect(screen.getByRole("textbox", { name: "Next action" })).toBeDisabled();
+    expect(screen.getByRole("textbox", { name: "Next action" })).toHaveValue("Estimation");
+    for (const name of ["Native", "Tentative Budget", "Category", "Most Preferred Language"]) {
+      expect(within(dialog).getByLabelText(name)).not.toBeRequired();
+    }
+    expect(screen.getByRole("button", { name: "Languages Known" })).toHaveAccessibleDescription("0 languages selected");
+    expect(screen.getByRole("button", { name: "Closure Tentative Date" })).not.toHaveAccessibleDescription("Required");
     expect(screen.getByRole("button", { name: "Next action date" })).toHaveAccessibleDescription("Required");
     expect(screen.queryByLabelText("Next action time")).not.toBeInTheDocument();
     expect(within(screen.getByRole("combobox", { name: "Property type" })).getAllByRole("option").map((option) => option.textContent)).toEqual(["Select property type", "1BHK", "2BHK", "2.5BHK", "3BHK", "3.5BHK", "4BHK", "Villa", "Penthouse", "Studio", "Duplex"]);
@@ -288,7 +457,13 @@ describe("AdminProjectInitiationDialog", () => {
       clientMobile: "+91 90000 00000",
       projectName: "Asha home",
       propertyType: "3BHK",
-      nextAction: "Schedule site visit",
+      nativePlace: null,
+      tentativeBudget: null,
+      closureTentativeDate: null,
+      category: null,
+      languagesKnown: [],
+      preferredLanguage: null,
+      nextAction: "Estimation",
       nextActionAt: expect.stringMatching(/Z$/),
       estimatorId: "estimator-1"
     });
@@ -630,7 +805,13 @@ describe("AdminProjectInitiationDialog", () => {
       clientMobile: "+91 90000 00000",
       projectName: "Asha home",
       propertyType: "3BHK",
-      nextAction: "Schedule site visit",
+      nativePlace: null,
+      tentativeBudget: null,
+      closureTentativeDate: null,
+      category: null,
+      languagesKnown: [],
+      preferredLanguage: null,
+      nextAction: "Estimation",
       nextActionAt: expect.stringMatching(/Z$/),
       salesManagerId: "sales-manager-2"
     });

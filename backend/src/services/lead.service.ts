@@ -65,7 +65,7 @@ export function createLeadService(repository: AppRepository, audit: AuditService
     if (actor.role === "designer") {
       const lead = await repository.findLeadById(id);
       const project = lead?.projectId ? await repository.findProjectById(lead.projectId) : null;
-      const context = project?.estimationWorkflowVersion === 2 ? await repository.findProjectEstimationContext(project.id) : null;
+      const context = [2, 3].includes(project?.estimationWorkflowVersion ?? 0) ? await repository.findProjectEstimationContext(project!.id) : null;
       if (!lead || !project?.assignedDesignerIds.includes(actor.id) || !context?.preApprovedAt)
         throw new ApiError(404, "NOT_FOUND", "The requested resource was not found.");
       return lead;
@@ -85,10 +85,11 @@ export function createLeadService(repository: AppRepository, audit: AuditService
     async get(actor, leadId) {
       const lead = await findLeadForReader(actor, leadId);
       const project = lead.projectId ? await repository.findProjectById(lead.projectId) : null;
-      return { ...lead, ...(project?.estimationWorkflowVersion === 2 ? { estimationWorkflowVersion: 2 as const } : {}) };
+      return { ...lead, ...([2, 3].includes(project?.estimationWorkflowVersion ?? 0) ? { estimationWorkflowVersion: project!.estimationWorkflowVersion } : {}) };
     },
     async create(actor, input) {
       await requireEstimator(repository, actor);
+      assertServerOwnedProjectNumber(input);
       const now = clock().toISOString();
       const fields = clean(input) as CreateLeadInput;
       const city = confirmedCity(fields.cityName);
@@ -99,7 +100,9 @@ export function createLeadService(repository: AppRepository, audit: AuditService
       return repository.runInTransaction(async (tx) => { const lead = await tx.createLead(record); await audit.append({ actorId: actor.id, action: "lead_created", entityType: "lead", entityId: lead.id, occurredAt: now, newValues: { stage: lead.stage, cityName: city?.name ?? null, cityKey: city?.key ?? null } }, tx); return lead; });
     },
     async update(actor, leadId, input) {
-      const current = await owned(actor, leadId); const now = clock().toISOString();
+      const current = await owned(actor, leadId);
+      assertServerOwnedProjectNumber(input);
+      const now = clock().toISOString();
       assertLinkedIdentityIsUnchanged(current, input);
       const city = input.cityName === undefined ? undefined : confirmedCity(input.cityName);
       return repository.runInTransaction(async (tx) => { const lead = await tx.updateLead(leadId, { ...clean(input),
@@ -118,4 +121,10 @@ export function createLeadService(repository: AppRepository, audit: AuditService
 async function requireEstimator(repository: AppRepository, actor: PublicUser) { await requireActor(repository, actor); if (actor.role !== "estimator_sales") forbidden(); }
 function clean(input: Partial<CreateLeadInput>): Partial<CreateLeadInput> {
   return Object.fromEntries(Object.entries(input).map(([key, value]) => [key, typeof value === "string" ? value.trim() : value]).filter(([, value]) => value !== undefined));
+}
+
+function assertServerOwnedProjectNumber(input: object): void {
+  if (Object.prototype.hasOwnProperty.call(input, "projectNumber")) {
+    throw new ApiError(400, "PROJECT_NUMBER_READ_ONLY", "Project numbers are assigned automatically when an estimate is created.");
+  }
 }

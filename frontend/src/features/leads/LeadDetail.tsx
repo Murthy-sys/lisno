@@ -27,7 +27,7 @@ function LeadDetailContent({ leadId, returnTo }: { leadId: string; returnTo?: st
   const [summaryContainer, setSummaryContainer] = useState<HTMLDivElement | null>(null);
   const summaryRef = useCallback((element: HTMLDivElement | null) => setSummaryContainer(element), []);
   const lead = useQuery({ queryKey: leadKeys.detail(leadId), queryFn: () => getLead(leadId) });
-  const estimate = useQuery({ queryKey: leadKeys.estimate(leadId), queryFn: () => getLeadEstimate(leadId), enabled: lead.data?.estimationWorkflowVersion === 2 });
+  const estimate = useQuery({ queryKey: leadKeys.estimate(leadId), queryFn: () => getLeadEstimate(leadId), enabled: [2, 3].includes(lead.data?.estimationWorkflowVersion ?? 0) });
   const stage = useMutation({
     mutationFn: ({ value }: { value: LeadStage; openEstimate?: boolean }) => updateLead(leadId, { stage: value }),
     onSuccess: () => client.invalidateQueries({ queryKey: leadKeys.all })
@@ -82,6 +82,7 @@ function LeadDetailContent({ leadId, returnTo }: { leadId: string; returnTo?: st
             <h1 id="lead-detail-title">{item.projectName}</h1>
             {item.propertyType ? <span className="estimation-progress__property">{item.propertyType}</span> : null}
           </div>
+          <p className="estimation-progress__project-number">{item.projectNumber ? `Project number: ${item.projectNumber}` : "Project number not assigned"}</p>
           <ul className="estimation-progress__contacts" aria-label="Client contact details">
             <li>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="7" r="4" /><path d="M4 21v-3a5 5 0 0 1 5-5h6a5 5 0 0 1 5 5v3H4Z" /></svg>
@@ -114,9 +115,9 @@ function LeadDetailContent({ leadId, returnTo }: { leadId: string; returnTo?: st
       ) : null}
       {stage.isError ? <p role="alert">The lead could not be updated. Try again.</p> : null}
       {content}
-      {item.estimationWorkflowVersion === 2 && item.projectId ? <>
+      {[2, 3].includes(item.estimationWorkflowVersion ?? 0) && item.projectId ? <>
         {!returnTo ? <ProjectClientInvitationStatus projectId={item.projectId} /> : null}
-        {estimate.isPending ? <p role="status">Loading estimate workflow…</p> : estimate.isError ? <p role="alert">The estimate workflow could not be loaded. Open the estimate to retry.</p> : estimate.data ? <StaffEstimateCollaboration estimate={estimate.data} disabled={estimate.isFetching} /> : <p>Pre-estimation · Start the estimate and collect the client’s requirements.</p>}
+        {estimate.isPending ? <p role="status">Loading estimate workflow…</p> : estimate.isError ? <p role="alert">The estimate workflow could not be loaded. Open the estimate to retry.</p> : estimate.data ? <StaffEstimateCollaboration estimate={estimate.data} disabled={estimate.isFetching} /> : <p>{item.estimationWorkflowVersion === 3 ? "Pre-design quotation · Start the estimate and collect the client’s requirements." : "Pre-estimation · Start the estimate and collect the client’s requirements."}</p>}
         <StaffEstimateRequirements projectId={item.projectId} estimate={estimate.data ?? null} disabled={estimate.isPending || estimate.isError || estimate.isFetching} />
       </> : null}
       {workflow}

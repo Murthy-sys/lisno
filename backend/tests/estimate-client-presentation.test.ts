@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { comparePublishedEstimateSnapshots, presentClientEstimate } from "../src/services/estimate-client-presentation.js";
 import { newEstimationLifecycle } from "../src/domain/estimation-lifecycle.js";
+import { createEstimateProposal } from "../src/domain/estimate-proposal.js";
 
 const actor = { id: "client-a", name: "Client A", email: "a@example.test", role: "client" } as const;
 const lead = { _id: "lead-a", projectId: "project-a", clientEmail: actor.email, projectName: "Draft label" };
@@ -25,6 +26,15 @@ const visibilitySnapshot = (lineItems: ReturnType<typeof visibilityLine>[]) => {
 };
 
 describe("published Client estimate presentation", () => {
+  it("retains frozen proposal defaults and rejects malformed explicit metadata", () => {
+    const proposal = createEstimateProposal({ issuedAt: new Date("2026-10-25T12:00:00Z"), estimateId: estimate._id, projectNumber: "Lisno000076" });
+    const result = presentClientEstimate(actor, estimate, lead, { ...round, estimateSnapshot: { ...snapshot, proposal } });
+    expect(result?.publishedReview?.snapshot.proposal).toEqual(proposal);
+    for (const invalid of [null, {}, { ...proposal, templateVersion: "unsupported" }, { ...proposal, validUntil: "2030-01-01" }]) {
+      expect(presentClientEstimate(actor, estimate, lead, { ...round, estimateSnapshot: { ...snapshot, proposal: invalid } })?.publishedReview).toBeNull();
+    }
+    expect(presentClientEstimate(actor, estimate, lead, round)?.publishedReview?.snapshot).not.toHaveProperty("proposal");
+  });
   it("retains the frozen selected tier and detects tier-only changes without repricing history", () => {
     const full = visibilitySnapshot([{ ...visibilityLine("tier-line"), modeTier: "premium" } as ReturnType<typeof visibilityLine>]);
     const frozen = structuredClone(full);

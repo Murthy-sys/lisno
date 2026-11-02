@@ -662,7 +662,7 @@ describe("complete cross-role journey", () => {
       }]
     });
     expect(EstimateModel.find).toHaveBeenCalledOnce();
-    expect(EstimateModel.find).toHaveBeenCalledWith({ $or: [{ "estimation.workflowVersion": 2, "estimation.status": "pending_manager_assignment" }, { "estimation.workflowVersion": { $ne: 2 }, status: "pending_manager_assignment" }] });
+    expect(EstimateModel.find).toHaveBeenCalledWith({ $or: [{ "estimation.workflowVersion": { $in: [2, 3] }, "estimation.status": "pending_manager_assignment" }, { "estimation.workflowVersion": { $nin: [2, 3] }, status: "pending_manager_assignment" }] });
     expect(LeadModel.find).toHaveBeenCalledOnce();
     expectNoWorkflowWrites(fixture);
   });

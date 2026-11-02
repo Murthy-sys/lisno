@@ -34,6 +34,7 @@ import {
 import { ProjectWorkflowPanel } from "../workflow/ProjectWorkflowPanel";
 import { currentProjectWorkflowStage, workflowStageNextStep, workflowStageStatus } from "../workflow/projectWorkflowSelectors";
 import { refreshEstimateCollaboration } from "../leads/estimateCollaborationQueries";
+import { DesignTeamPicker } from "./DesignTeamPicker";
 
 const statusLabels: Record<DesignPlanStatus, string> = {
   pending_assignment: "Awaiting assignment",
@@ -63,7 +64,7 @@ function designAction(status: DesignPlanStatus) {
 }
 
 function stageAction(workflow: DesignWorkflowView, stage: DesignWorkflowStage | undefined, status: DesignPlanStatus, estimateId: string) {
-  if (workflow.initialPayment && workflow.initialPayment.workflowVersion !== 2 && !workflow.initialPayment.confirmedAt) {
+  if (workflow.initialPayment && ![2, 3].includes(workflow.initialPayment.workflowVersion ?? 0) && !workflow.initialPayment.confirmedAt) {
     return workflow.initialPayment.status === "awaiting_estimate_approval" ? "Await estimate approval" : "Await initial payment confirmation";
   }
   if (!stage) {
@@ -135,12 +136,13 @@ export function DesignerDesignPlanTasksPage() {
   const atUploadStage = Boolean(uploadStage && currentStage?.id === uploadStage.id);
   const showDesignSection = Boolean(uploadStage && (atUploadStage || workflowStageStatus(uploadStage) === "completed"));
   const canWorkOnUploadStage = Boolean(atUploadStage && uploadOperational?.spacePlanning?.estimateId === task?.estimateId &&
-    (savedWorkflow?.initialPayment?.workflowVersion === 2 ? savedWorkflow.initialPayment.designStartedAt : savedWorkflow?.initialPayment?.confirmedAt) && uploadOperational &&
+    ([2, 3].includes(savedWorkflow?.initialPayment?.workflowVersion ?? 0) ? savedWorkflow?.initialPayment?.designStartedAt : savedWorkflow?.initialPayment?.confirmedAt) &&
+    (task?.estimationWorkflowVersion !== 3 || task.quotationApproved === true) && uploadOperational &&
     ["in_progress", "in_review"].includes(uploadOperational.status) && uploadOperational.blockingReasons.length === 0 &&
     !["waiting", "paused"].includes(uploadOperational.timing.state) &&
     !workflow.isError && !workflow.isFetching && !tasks.isFetching);
   const canEditDesign = Boolean(canWorkOnUploadStage && task && ["assigned", "in_progress", "changes_requested"].includes(task.status));
-  const nextAction = workflow.isError ? "Refresh the project workflow" : !savedWorkflow ? "Loading project workflow…" :
+  const nextAction = task?.estimationWorkflowVersion === 3 && task.quotationApproved !== true ? task.canEditQuotation ? "Submit the Designer-revised quotation for Client approval" : "Await Client approval of the Designer-revised quotation" : workflow.isError ? "Refresh the project workflow" : !savedWorkflow ? "Loading project workflow…" :
     workflow.isFetching || tasks.isFetching ? "Checking the latest project workflow…" : stageAction(savedWorkflow, currentStage, task!.status, task!.estimateId);
 
   return (
@@ -234,9 +236,13 @@ export function DesignerDesignPlanTasksPage() {
                 <div><dt>Next action</dt><dd>{nextAction}</dd></div>
               </dl>
               {task.estimationWorkflowVersion === 2 && task.leadId ? <Link to={`/estimator-sales/leads/${encodeURIComponent(task.leadId)}/estimate`}>Review and edit post-estimate</Link> : null}
+              {task.estimationWorkflowVersion === 3 && task.canEditQuotation && task.leadId ? <Link to={`/estimator-sales/leads/${encodeURIComponent(task.leadId)}/estimate`}>Review Designer-revised quotation</Link> : null}
+              {task.estimationWorkflowVersion === 3 ? <p className="designer-plan-workspace__notice">{task.quotationApproved ? "The quotation is approved. Continue the design tasks below." : "Design tasks begin after the Client approves the Designer-revised quotation."}</p> : null}
               {task.estimationWorkflowVersion === 2 ? <p className="designer-plan-workspace__notice">Design starts after pre-estimate approval. Initial payment is confirmed after design and final estimate approval.</p> : null}
               {task.scopeReconciliation?.required ? <DesignScopeReconciliation key={`${task.id}:${task.designPlanVersion}:${task.scopeReconciliation.designScopeRevision}`} task={task} /> : null}
             </Surface>
+
+            {task.estimationWorkflowVersion === 3 ? <DesignTeamPicker key={`team-${task.projectId}`} projectId={task.projectId} /> : null}
 
             <ProjectWorkflowPanel key={`workflow-${task.projectId}`} projectId={task.projectId} timelineContainer={timelineContainer} presentation="designer" />
 

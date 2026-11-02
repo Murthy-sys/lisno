@@ -27,6 +27,9 @@ export interface WorkflowEstimateItem { id: string; name: string; catalogueId: s
 export interface WorkflowEstimateRoom { id: string; name: string; estimateDimensions?: { lengthFt: number; widthFt: number }; estimateItems: WorkflowEstimateItem[] }
 export interface WorkflowEstimateRoomContext { estimateId: string; estimateVersion: number; rooms: WorkflowEstimateRoom[] }
 export interface WorkflowEstimateApproval {
+  phase?: "pre" | "post";
+  requirementsVersion?: number;
+  designScopeRevision?: number;
   id: string;
   estimateId: string;
   projectId: string | null;

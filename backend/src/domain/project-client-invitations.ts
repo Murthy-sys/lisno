@@ -30,7 +30,7 @@ export interface ProjectInitiationReceipt {
 }
 export interface ProjectClientInvitationSummary {
   projectId: string;
-  status: "not_issued" | "pending" | "delivery_failed" | "expired" | "revoked" | "accepted";
+  status: "not_issued" | "pending" | "delivery_failed" | "expired" | "revoked" | "accepted" | "linked";
   deliveryAvailable: boolean;
   expectedVersion: number;
   expiresAt: string | null;

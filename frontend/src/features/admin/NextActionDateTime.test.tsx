@@ -16,6 +16,32 @@ function Example({ initial = "2026-01-31", onClose = vi.fn() }: { initial?: stri
 }
 
 describe("NextActionDateTime", () => {
+  it("labels a closure calendar independently and preserves leap-day values through keyboard selection and clearing", async () => {
+    const user = userEvent.setup();
+    function ClosureExample() {
+      const [value, setValue] = useState("2028-02-28");
+      return <>
+        <label htmlFor="closure-date">Closure Tentative Date</label>
+        <NextActionDateTime id="closure-date" value={value} onChange={setValue} clearable calendarLabel="Choose closure tentative date" />
+        <output aria-label="Closure value">{value}</output>
+      </>;
+    }
+    render(<ClosureExample />);
+    const trigger = screen.getByRole("button", { name: "Closure Tentative Date" });
+    await user.click(trigger);
+    expect(screen.getByRole("dialog", { name: "Choose closure tentative date" })).toBeVisible();
+    expect(screen.queryByRole("dialog", { name: "Choose next action date" })).not.toBeInTheDocument();
+    await user.keyboard("{ArrowRight}{Enter}");
+    expect(screen.getByLabelText("Closure value")).toHaveTextContent("2028-02-29");
+    expect(trigger).toHaveTextContent("29 February 2028");
+    expect(trigger).toHaveFocus();
+    await user.click(trigger);
+    await user.click(screen.getByRole("button", { name: "Clear date" }));
+    expect(screen.getByLabelText("Closure value")).toBeEmptyDOMElement();
+    expect(trigger).toHaveTextContent("Select date");
+    expect(trigger).toHaveFocus();
+  });
+
   it("selects a date without a time field, closes, and restores trigger focus", async () => {
     const user = userEvent.setup();
     render(<Example />);

@@ -2,7 +2,7 @@ import { Readable } from "node:stream";
 
 import jwt from "jsonwebtoken";
 import request from "supertest";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { createApp as createApplication } from "../src/app.js";
 import { createMemoryRepository } from "../src/repositories/memory.js";
@@ -130,6 +130,24 @@ function sectionSeed(status: "designer_review" | "processing_failed" = "designer
 }
 
 describe("Design Section operations", () => {
+  it("rechecks current v3 membership inside section mutation transactions", async () => {
+    const { app, repository } = setup();
+    const run = repository.runInTransaction.bind(repository);
+    vi.spyOn(repository, "runInTransaction").mockImplementation(callback => run(async tx => {
+      const read = tx.findProjectById.bind(tx);
+      vi.spyOn(tx, "findProjectById").mockImplementation(async id => {
+        const project = await read(id);
+        return project ? { ...project, estimationWorkflowVersion: 3, primaryDesignerId: "another-designer", secondaryDesignerIds: [], assignedDesignerIds: ["another-designer"] } : null;
+      });
+      return callback(tx);
+    }));
+    const before = await repository.listSectionRevisions("section-1");
+    await request(app).delete("/api/v1/design-sections/section-1").send({ version: 1 })
+      .set("Authorization", `Bearer ${token("user-designer-ananya", "designer")}`).expect(404);
+    expect(await repository.listSectionRevisions("section-1")).toEqual(before);
+    expect((await repository.findDesignSectionById("section-1"))!.active).toBe(true);
+  });
+
   it("lets Super Admin read draft sections and their images without mutation", async () => {
     const { app, repository, storage } = setup();
     const beforeSections = await repository.listDesignSections("version-aurora-plan-1");

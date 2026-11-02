@@ -1,3 +1,4 @@
+import { DEFAULT_PROJECT_NEXT_ACTION, NATIVE_PLACE_MAX_LENGTH, TENTATIVE_BUDGET_MAX_LENGTH, PROJECT_LANGUAGES, PROJECT_CATEGORIES } from "./contracts/project-initiation.js";
 import { PM_ESTIMATE_SCHEMAS, PM_ESTIMATE_REQUESTS, PM_ESTIMATE_RESPONSES, PM_ESTIMATE_QUERIES, PM_ESTIMATE_SUMMARIES } from "./openapi/project-manager-estimates.js";
 import { ESTIMATE_DIMENSION_INPUT_UNITS, ESTIMATE_DIMENSION_QUANTITY_UNITS } from "./domain/estimate-dimensions.js";
 import { ESTIMATE_TIER_SCHEMAS, ESTIMATE_TIER_REQUESTS, ESTIMATE_TIER_RESPONSES } from "./openapi/estimate-tiers.js";
@@ -6,6 +7,9 @@ import { KNOWLEDGE_MODE_TIERS } from "./domain/ai-estimator-knowledge-mode-tiers
 import { DESIGN_REQUIREMENTS_SCHEMAS } from "./openapi/design-requirements.js";
 import { VENDOR_BASKET_REQUEST_NOTIFICATION_SCHEMAS, VENDOR_BASKET_REQUEST_NOTIFICATION_RESPONSES, VENDOR_BASKET_REQUEST_NOTIFICATION_QUERIES, VENDOR_BASKET_REQUEST_NOTIFICATION_BODIES } from "./openapi/vendor-basket-request-notifications.js";
 import { ESTIMATE_COLLABORATION_SCHEMAS, ESTIMATE_COLLABORATION_REQUESTS, ESTIMATE_COLLABORATION_RESPONSES } from "./openapi/estimate-collaboration.js";
+import { QUOTATION_SCHEMAS, QUOTATION_REQUESTS, QUOTATION_RESPONSES } from "./openapi/quotation.js";
+import { ESTIMATE_REVISION_SCHEMAS, ESTIMATE_REVISION_RESPONSES, ESTIMATE_REVISION_QUERIES } from "./openapi/estimate-revisions.js";
+import { ESTIMATE_PROPOSAL_SCHEMAS } from "./openapi/estimate-proposal.js";
 import { VENDOR_BASKET_PROPOSAL_SCHEMAS, VENDOR_BASKET_PROPOSAL_BODIES, VENDOR_BASKET_PROPOSAL_RESPONSES, VENDOR_BASKET_PROPOSAL_QUERIES } from "./openapi/vendor-basket-proposals.js";
 import { ASK_LISNO_SCHEMAS } from "./openapi/ask-lisno.js";
 import { VENDOR_ACCESS_SCHEMAS, VENDOR_ACCESS_REQUESTS, VENDOR_ACCESS_RESPONSES } from "./openapi/vendor-access.js";
@@ -141,6 +145,7 @@ const genericJsonRequestBody: OpenApiRequestBody = {
 
 const requestBodiesByOperation: Readonly<Record<string, OpenApiRequestBody>> = {
   ...ESTIMATE_COLLABORATION_REQUESTS,
+  ...QUOTATION_REQUESTS,
   ...ESTIMATE_TIER_REQUESTS,
   ...ESTIMATE_COMPONENT_PRICING_REQUESTS,
   "POST /client/ask-lisno": jsonRequest("AskLisnoRequest"),
@@ -242,8 +247,6 @@ const operationsWithoutBodies = new Set<string>([
   "PUT /daily-critical-tasks/:localDate/acknowledgment",
   "DELETE /auth/me/profile-photo",
   "PUT /notifications/:notificationId/read",
-  "POST /leads/:leadId/estimate/submit",
-  "POST /estimates/:estimateId/send-client",
   "POST /estimate-design-uploads/:uploadId/retry",
   "POST /estimates/:estimateId/design-drawings/submit",
   "POST /design-versions/:versionId/retry-extraction",
@@ -254,7 +257,9 @@ const operationsWithoutBodies = new Set<string>([
 ]);
 
 const responseSchemaByOperation: Readonly<Record<string, string>> = {
+  ...ESTIMATE_REVISION_RESPONSES,
   ...ESTIMATE_COLLABORATION_RESPONSES,
+  ...QUOTATION_RESPONSES,
   ...ESTIMATE_TIER_RESPONSES,
   ...ESTIMATE_COMPONENT_PRICING_RESPONSES,
   "POST /client/ask-lisno": "AskLisnoResponse",
@@ -302,6 +307,15 @@ const responseSchemaByOperation: Readonly<Record<string, string>> = {
   "GET /admin/users": "UserDirectoryPage",
   "DELETE /admin/users/:userId": "ManagedUserDeletionResult",
   "GET /admin/projects": "AdminProjectPage",
+  "POST /admin/projects": "ProjectIntakeRecord",
+  "GET /admin/projects/:projectId": "ProjectIntakeRecord",
+  "GET /leads/:leadId": "ProjectIntakeRecord",
+  "GET /leads": "ProjectLeadPage",
+  "POST /leads": "ProjectIntakeRecord",
+  "PATCH /leads/:leadId": "ProjectIntakeRecord",
+  "PUT /leads/:leadId/estimate": "NumberedEstimateRecord",
+  "GET /leads/:leadId/estimate": "NullableNumberedEstimateRecord",
+  "GET /estimates": "NumberedEstimateList",
   "GET /admin/designers": "DesignerOptionList",
   "POST /admin/projects/:projectId/design-assignment": "DesignPlanTask",
   "GET /designer/design-plan-tasks": "DesignPlanTaskList",
@@ -341,6 +355,7 @@ const responseSchemaByOperation: Readonly<Record<string, string>> = {
 };
 
 const pdfOperations = new Set<string>([
+  "GET /estimates/:estimateId/revisions/:revisionId/pdf",
   "GET /estimates/:estimateId/pdf",
   "GET /client/estimates/:estimateId/pdf",
   "GET /admin/estimate-client-response-tasks/:roundId/pdf",
@@ -398,6 +413,9 @@ const storedAttachmentContentTypes = [
 ] as const;
 
 const operationSummaries: Readonly<Record<string, string>> = {
+  "GET /estimates/:estimateId/revisions": "List immutable estimate publications available to the current staff workspace reader",
+  "GET /estimates/:estimateId/revisions/:revisionId": "Read a saved estimate revision without applying current Configuration",
+  "GET /estimates/:estimateId/revisions/:revisionId/pdf": "Download the selected revision's original stored PDF",
   ...PM_ESTIMATE_SUMMARIES,
   ...PROJECT_MANAGER_SUMMARIES,
   "GET /estimation/catalogue": "Read the estimator Main Basket catalogue",
@@ -637,6 +655,7 @@ function dashboardPaginationParameters(): readonly OpenApiParameter[] {
 const queryParametersByOperation: Readonly<
   Record<string, readonly OpenApiParameter[]>
 > = {
+  ...ESTIMATE_REVISION_QUERIES,
   ...CHAT_QUERY_PARAMETERS,
   ...EXECUTION_QUERIES,
   ...PM_ESTIMATE_QUERIES,
@@ -1371,7 +1390,8 @@ function responsesFor(key: HumanJwtOperationKeyShape): Readonly<Record<string, O
     };
   }
   if (pdfOperations.has(key)) {
-    return binaryResponses("application/pdf", "PDF attachment.");
+    return { ...binaryResponses("application/pdf", "PDF attachment."),
+      ...(key === "GET /estimates/:estimateId/revisions/:revisionId/pdf" ? { "503": { $ref: "#/components/responses/ServiceUnavailable" } } : {}) };
   }
   if (imageOperations.has(key)) {
     return binaryResponses("image/png", "PNG image.");
@@ -1639,8 +1659,22 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
     properties: { id, basketId: id, basketName: { type: "string" }, subBasketId: { ...id, nullable: true },
       subBasketName: { type: "string", nullable: true }, baseRatePaise: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER, nullable: true },
       unavailableReason: { type: "string", nullable: true } } } };
+  const projectNumber: OpenApiSchema = { type: "string", nullable: true, readOnly: true,
+    pattern: "^Lisno[0-9]{6,16}$", example: "Lisno000001",
+    description: "Server-assigned immutable global reference from the linked Lead, allocated on the first successful estimate creation. The positive safe-integer suffix is padded to at least six digits. Unassigned and historical saved estimates remain null." };
+  const projectIntakeProperties: Record<string, OpenApiSchema> = {
+    nativePlace: { type: "string", nullable: true, maxLength: NATIVE_PLACE_MAX_LENGTH, description: "Optional native place; trimmed, empty or absent values become null." },
+    tentativeBudget: { type: "string", nullable: true, maxLength: TENTATIVE_BUDGET_MAX_LENGTH, description: "Optional descriptive budget, not a financial amount; trimmed, empty or absent values become null." },
+    closureTentativeDate: { type: "string", format: "date", nullable: true, description: "Valid YYYY-MM-DD calendar date, stored without a timezone." },
+    category: { type: "string", enum: [...PROJECT_CATEGORIES, null], nullable: true },
+    languagesKnown: { type: "array", items: { type: "string", enum: [...PROJECT_LANGUAGES] }, uniqueItems: true, maxItems: PROJECT_LANGUAGES.length, description: "Supported known languages; omission reads back as an empty array." },
+    preferredLanguage: { type: "string", enum: [...PROJECT_LANGUAGES, null], nullable: true, description: "Independent most preferred language." }
+  };
   return {
     ...ESTIMATE_COLLABORATION_SCHEMAS,
+    ...QUOTATION_SCHEMAS,
+    ...ESTIMATE_REVISION_SCHEMAS,
+    ...ESTIMATE_PROPOSAL_SCHEMAS,
     ...ESTIMATE_TIER_SCHEMAS,
     ...ESTIMATE_COMPONENT_PRICING_SCHEMAS,
     EstimateDimensions: { type: "object", additionalProperties: false, required: ["length", "width", "height"],
@@ -2137,6 +2171,16 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
         }
       }
     },
+    ProjectIntakeRecord: { type: "object", additionalProperties: true, properties: { ...projectIntakeProperties, projectNumber }, description: "Existing authorized Lead or Admin project record with additive intake metadata. Historical missing scalar metadata reads as null and known languages as an empty array; other record fields retain their existing contracts." },
+    ProjectLeadPage: { type: "object", required: ["items", "pagination"], properties: {
+      items: { type: "array", items: { $ref: "#/components/schemas/ProjectIntakeRecord" } },
+      pagination: { $ref: "#/components/schemas/Pagination" }
+    } },
+    NumberedEstimateRecord: { type: "object", additionalProperties: true, properties: { projectNumber },
+      description: "Existing authorized estimate response with its canonical Lead project number. Other estimate fields retain their existing contracts." },
+    NullableNumberedEstimateRecord: { type: "object", nullable: true, additionalProperties: true, properties: { projectNumber },
+      description: "The existing estimate with its canonical Lead project number, or null before an estimate exists." },
+    NumberedEstimateList: { type: "array", items: { $ref: "#/components/schemas/NumberedEstimateRecord" } },
     AdminProjectStatusCounts: {
       type: "object",
       additionalProperties: false,
@@ -2157,7 +2201,7 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
       properties: {
         items: {
           type: "array",
-          items: { type: "object", additionalProperties: true, description: "Existing Admin project summary, including its authoritative estimate and approved baseline when available." }
+          items: { $ref: "#/components/schemas/ProjectIntakeRecord" }
         },
         pagination: { $ref: "#/components/schemas/Pagination", description: "Total includes both search and selected status filters." },
         statusCounts: { $ref: "#/components/schemas/AdminProjectStatusCounts" }
@@ -2166,9 +2210,10 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
     AdminProjectInitiationRequest: {
       type: "object",
       additionalProperties: false,
-      required: ["clientName", "clientEmail", "clientMobile", "projectName", "propertyType", "nextAction", "nextActionAt"],
+      required: ["clientName", "clientEmail", "clientMobile", "projectName", "propertyType", "nextActionAt"],
       description: "Sales must select salesManagerId; the authenticated actor owns the sales lead. Sales Manager and Super Admin must select estimatorId and cannot supply salesManagerId.",
       properties: {
+        ...projectIntakeProperties,
         clientName: { type: "string", minLength: 1 },
         clientEmail: { type: "string", format: "email" },
         clientMobile: { type: "string", minLength: 1 },
@@ -2178,7 +2223,7 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
         budgetMin: { type: "number", minimum: 0, description: "Optional legacy budget bound. Stored as null when omitted." },
         budgetMax: { type: "number", minimum: 0, description: "Optional legacy budget bound. Stored as null when omitted. Must be greater than or equal to budgetMin when both are supplied." },
         source: { type: "string", minLength: 1, maxLength: 200, description: "Optional free-text channel or referral describing how the client heard about Lisno. Trimmed before storage on the linked Lead; omission retains admin_project. Does not affect access-grant provenance." },
-        nextAction: { type: "string", minLength: 1 },
+        nextAction: { type: "string", minLength: 1, default: DEFAULT_PROJECT_NEXT_ACTION, description: "The initiation screen submits Estimation. Existing API clients may supply another nonempty action." },
         nextActionAt: dateTime,
         estimatorId: { ...id, description: "Required for Sales Manager and Super Admin. For Sales, omit or supply only your own ID." },
         salesManagerId: { ...id, description: "Required for Sales: ID of an active Sales Manager (role code admin). Not accepted for Sales Manager or Super Admin initiation." }
@@ -2304,7 +2349,10 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
       description: "Immutable submitted commercial proposal. Configured lines retain exact integer-paise rates and amounts alongside rupee display values; historical lines retain their whole-rupee boundary.",
       required: ["clientName", "projectName", "location", "propertyType", "lineItems", "subtotal", "gst", "total"],
       properties: {
+        proposal: { $ref: "#/components/schemas/EstimateProposalMetadata" },
         clientName: { type: "string" }, projectName: { type: "string" }, location: { type: "string" }, propertyType: { type: "string" },
+        rooms: { type: "array", items: { type: "object", additionalProperties: true }, description: "Optional frozen room metadata; historical staff reads expose only saved identity, label and dimensions." },
+        bedroomCount: { type: "integer", minimum: 0, nullable: true }, scopes: { type: "array", items: { type: "string" } },
         lineItems: { type: "array", items: {
           type: "object", additionalProperties: false,
           required: ["catalogueId", "roomName", "specification", "unit", "rate", "quantity", "included", "amount"],
@@ -2322,7 +2370,7 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
             dimensionsMandatory: { type: "boolean", default: false },
             dimensions: { $ref: "#/components/schemas/EstimateDimensions" },
             dimensionRule: { allOf: [{ $ref: "#/components/schemas/EstimateDimensionRule" }], nullable: true, description: "Frozen server-owned measurement rule. Inactive retained dimensions do not determine quantity." },
-            clientVisible: { type: "boolean", default: true, description: "Frozen Client-screen visibility. Missing historical values mean visible. PDFs, quotations and totals retain every included line." },
+            clientVisible: { type: "boolean", default: true, description: "Frozen client quotation visibility, additionally restricted by current Configuration. Client screens, PDFs and email attachments omit hidden lines while approved totals and internal originals remain unchanged." },
             classification: { type: "string", enum: ["standard", "special"], description: "Frozen item classification. Standard uses Sub-Vendor when an explicit pricing mode is present. Historical missing classifications display as Standard without repricing." },
             pricingMode: { type: "string", enum: ["pmc", "sub_vendor", "in_house"], description: "Frozen selected pricing mode. Absent historical modes remain unknown." },
             modeTier: { ...modeTier, description: "Frozen selected Mode tier. Absent historical values mean Signature; amounts do not follow later Configuration edits." },
@@ -2330,9 +2378,10 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
             rateSource: { type: "string", enum: ["configuration", "manual"], description: "Frozen origin of the saved selling rate. Published amounts never follow later Configuration changes." },
             revisionId: { type: "string" }, uomId: { type: "string" }, mainBasketName: { type: "string" },
             sourceItemStatus: { type: "string", enum: ["draft", "active", "inactive"] },
-            sourceRevisionStatus: { type: "string", enum: ["draft", "active"] },
+            sourceRevisionStatus: { type: "string", enum: ["draft", "active", "superseded"] },
             sourceItemVersion: { type: "integer", minimum: 1 }, sourceRevisionVersion: { type: "integer", minimum: 1 },
-            subBasketName: { type: "string", nullable: true }, mainLineName: { type: "string" }, uomName: { type: "string" }
+            subBasketName: { type: "string", nullable: true }, mainLineName: { type: "string" }, uomName: { type: "string" },
+            uomCode: { type: "string" }, uomDecimalScale: { type: "integer", minimum: 0 }, estimateNotes: { type: "array", items: { type: "string" } }
           }
         } },
         subtotal: { type: "number", minimum: 0 }, gst: { type: "number", minimum: 0 }, total: { type: "number", minimum: 0 },
@@ -2404,7 +2453,7 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
         subBasketId: { type: "string", nullable: true }, itemType: { type: "string", enum: ["main_line", "temporary"] },
         dimensionsMandatory: { type: "boolean", default: false, readOnly: true },
         dimensionRule: { allOf: [{ $ref: "#/components/schemas/EstimateDimensionRule" }], nullable: true, readOnly: true, description: "Derived from the configured supported area UOM. Null when not required or unsupported; never inferred from unrelated unit names." },
-        clientVisible: { type: "boolean", default: true, readOnly: true, description: "Current saved Overview choice for the Client estimate screen only. Internal estimating, PDF output and totals are unchanged." },
+        clientVisible: { type: "boolean", default: true, readOnly: true, description: "Current saved Overview visibility for all client quotation screens and documents. Internal estimating and approved totals are unchanged." },
         name: { type: "string" },
         displayOrder: { type: "integer" }, revisionId: { type: "string" },
         itemStatus: { type: "string", enum: ["draft", "active", "inactive"] },

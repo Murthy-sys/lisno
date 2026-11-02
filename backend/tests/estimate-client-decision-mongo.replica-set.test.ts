@@ -15,6 +15,7 @@ import { EstimateModel } from "../src/models/Estimate.js";
 import { EstimateClientResponseProofModel } from "../src/models/EstimateClientResponseProof.js";
 import { EstimateClientReviewRoundModel } from "../src/models/EstimateClientReviewRound.js";
 import { LeadModel } from "../src/models/Lead.js";
+import { PROJECT_NUMBER_SEQUENCE_ID, ProjectNumberSequenceModel } from "../src/models/ProjectNumberSequence.js";
 import { ProjectModel } from "../src/models/Project.js";
 import { ProjectAccessGrantModel } from "../src/models/ProjectAccessGrant.js";
 import { UserModel } from "../src/models/User.js";
@@ -352,7 +353,13 @@ function createDecisionHarness(input: {
   storage: EstimateClientReviewStorage;
   audit?: AuditService;
 }) {
-  const reviews = createEstimateClientReviewService({ storage: input.storage });
+  // Commercial/lease tests use synthetic PDF bytes. Projection/rendition safety has its own integration suite.
+  const renditions = { async readForRound(round: { _id?: string; id?: string }) {
+    const stored = await EstimateClientReviewRoundModel.findById(round._id ?? round.id).select("+pdfStorageReference").lean();
+    if (!stored) throw new Error("Synthetic published fixture missing.");
+    return { filename: stored.pdfFilename, mimeType: "application/pdf" as const, bytes: await input.storage.read(stored.pdfStorageReference) };
+  } };
+  const reviews = createEstimateClientReviewService({ storage: input.storage, renditions });
   const audit = input.audit ?? createAuditService(createMongoRepository());
   const decisions = createEstimateDecisionService({
     audit,
@@ -707,6 +714,22 @@ async function assertWinningProofIsOnlyReadableObject(
 }
 
 describe("Estimate decision races on a Mongo replica set", () => {
+  it("retains an issued project number when approval creates the legacy Lead's Project", async () => {
+    const fixture = await seedDecisionFixture({ projectLink: "unlinked" });
+    await LeadModel.collection.updateOne({ _id: fixture.leadId }, { $set: { projectNumber: "Lisno000001" } });
+    await ProjectNumberSequenceModel.create({ _id: PROJECT_NUMBER_SEQUENCE_ID, lastNumber: 1 });
+    const storage = createProofStorage();
+    const harness = createDecisionHarness({ storage: storage.storage });
+    await clientDecision(harness.decisions, fixture, "approve");
+    const lead = await LeadModel.findById(fixture.leadId).lean();
+    expect(lead).toMatchObject({ projectNumber: "Lisno000001", projectId: expect.any(String) });
+    const repository = createMongoRepository();
+    const admin = (await repository.findUserById(ACTORS.superAdmin.id))!;
+    expect(await repository.findAdminProject(admin, String(lead!.projectId))).toMatchObject({ projectNumber: "Lisno000001" });
+    expect((await ProjectNumberSequenceModel.findById(PROJECT_NUMBER_SEQUENCE_ID).lean())?.lastNumber).toBe(1);
+    expect(await AuditEventModel.countDocuments({ action: "project_number_assigned" })).toBe(0);
+  });
+
   it("retains the pending commercial snapshot and PDF after design feedback and a Sales draft save", async () => {
     const fixture = await seedDecisionFixture();
     const storage = createProofStorage();

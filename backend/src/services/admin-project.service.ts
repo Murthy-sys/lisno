@@ -1,9 +1,12 @@
+import type { ProjectInitiationMetadata } from "../contracts/project-initiation.js";
+import { validateProjectInitiationIntake } from "../domain/project-initiation-metadata.js";
 import type { ProjectClientInvitationService } from "./project-client-invitation.service.js";
 import type { ProjectClientInvitationSummary } from "../domain/project-client-invitations.js";
 import { createProjectDesignWorkflow } from "../domain/design-workflow.js";
 import { createHash, randomUUID } from "node:crypto";
 
 import { normalizeEmail } from "../domain/email.js";
+import { isReservedDemoEmail, isReservedDevelopmentDemoIdentity } from "../domain/demo-identities.js";
 import { confirmedCity } from "../domain/procurement-city.js";
 import { ApiError } from "../middleware/errors.js";
 import type {
@@ -20,7 +23,7 @@ import type { AuditService } from "./audit.service.js";
 import type { PublicUser } from "./auth.service.js";
 import { forbidden, requireActor, type Clock } from "./workflow.js";
 
-export interface InitiateAdminProjectInput {
+export interface InitiateAdminProjectInput extends ProjectInitiationMetadata {
   initiationKey?: string;
   clientName: string;
   clientEmail: string;
@@ -32,7 +35,7 @@ export interface InitiateAdminProjectInput {
   source?: string;
   budgetMin?: number;
   budgetMax?: number;
-  nextAction: string;
+  nextAction?: string;
   nextActionAt: string;
   estimatorId?: string;
   salesManagerId?: string;
@@ -97,9 +100,21 @@ export function createAdminProjectService(
 
     async initiate(actor, input) {
       const { initiationKey, ...projectInput } = input;
+      const { metadata, nextAction } = validateProjectInitiationIntake(input);
       if (initiationKey !== undefined && !/^[A-Za-z0-9_-]{8,128}$/.test(initiationKey)) validationError("initiationKey", "Use a valid initiation key.");
       const receiptId = initiationKey ? createHash("sha256").update(`${actor.id}:${initiationKey}`).digest("hex") : null;
-      const fingerprint = createHash("sha256").update(JSON.stringify(Object.keys(projectInput).sort().map(key => [key, projectInput[key as keyof typeof projectInput]]))).digest("hex");
+      const effectiveInput = { ...projectInput, ...metadata, nextAction,
+        location: input.location ?? "", cityName: input.cityName ?? null,
+        source: input.source ?? "admin_project", budgetMin: input.budgetMin ?? null, budgetMax: input.budgetMax ?? null,
+        languagesKnown: [...metadata.languagesKnown].sort()
+      };
+      const fingerprint = initiationFingerprint(effectiveInput);
+      // Historical receipts predate intake metadata. Only an empty intake may
+      // retry that exact legacy request; metadata changes must still conflict.
+      const emptyMetadata = Object.values(metadata).every(value => value === null || (Array.isArray(value) && value.length === 0));
+      const legacyInput: Record<string, unknown> = { ...projectInput, nextAction: projectInput.nextAction ?? nextAction };
+      for (const key of Object.keys(metadata)) delete legacyInput[key];
+      const legacyFingerprint = emptyMetadata ? initiationFingerprint(legacyInput) : null;
       const summary = await repository.runInTransaction(async (transaction) => {
         await transaction.coordinateAuthorizationMutation();
         const initiator = await requireActor(transaction, actor);
@@ -107,7 +122,7 @@ export function createAdminProjectService(
         if (receiptId) {
           const receipt = await transaction.findProjectInitiationReceipt(receiptId);
           if (receipt) {
-            if (receipt.actorId !== initiator.id || receipt.fingerprint !== fingerprint) throw new ApiError(409, "INITIATION_KEY_REUSED", "This initiation key belongs to a different project request.");
+            if (receipt.actorId !== initiator.id || (receipt.fingerprint !== fingerprint && receipt.fingerprint !== legacyFingerprint)) throw new ApiError(409, "INITIATION_KEY_REUSED", "This initiation key belongs to a different project request.");
             const originalProject = await transaction.findProjectById(receipt.projectId);
             const managerId = initiator.role === "estimator_sales" ? input.salesManagerId : initiator.id;
             const manager = managerId ? await transaction.findUserById(managerId) : null;
@@ -145,6 +160,10 @@ export function createAdminProjectService(
             clientEmail: "This email belongs to an internal account."
           });
         }
+        if (isReservedDemoEmail(emailNormalized) || existingClient && (
+          !existingClient.active || existingClient.deletedAt || existingClient.accountKind !== "standard" ||
+          isReservedDevelopmentDemoIdentity(existingClient)
+        )) validationError("clientEmail", "Use an active client account eligible for project access.");
 
         const occurredAt = clock();
         const city = confirmedCity(input.cityName);
@@ -156,8 +175,11 @@ export function createAdminProjectService(
           id: projectId,
           designWorkflowStages: createProjectDesignWorkflow(projectId),
           name: input.projectName,
-          clientId: null,
-          estimationWorkflowVersion: 2,
+          clientId: existingClient?.id ?? null,
+          estimationWorkflowVersion: 3,
+          primaryDesignerId: null,
+          secondaryDesignerIds: [],
+          designTeamVersion: 0,
           estimateRequirementsVersion: 0,
           estimationFenceEpoch: 0,
           clientName: input.clientName,
@@ -194,6 +216,7 @@ export function createAdminProjectService(
           updatedAt: timestamp
         });
         const lead = await transaction.createLead({
+          ...metadata,
           id: `lead-${randomUUID()}`,
           projectId: createdProject.id,
           ownerId: estimator.id,
@@ -209,7 +232,7 @@ export function createAdminProjectService(
           budgetMax: input.budgetMax ?? null,
           source: input.source ?? "admin_project",
           stage: "new_lead",
-          nextAction: input.nextAction,
+          nextAction,
           nextActionAt: input.nextActionAt,
           builder: null,
           areaSqft: null,
@@ -227,6 +250,15 @@ export function createAdminProjectService(
           entityId: createdProject.id,
           occurredAt: timestamp,
           newValues: { status: "planning", assignedEstimatorId: estimator.id, ...(city ? { cityName: city.name, cityKey: city.key } : {}) }
+        }, transaction);
+        if (existingClient) await audit.append({
+          actorId: initiator.id,
+          action: "client_project_linked",
+          entityType: "project",
+          entityId: createdProject.id,
+          occurredAt: timestamp,
+          oldValues: { clientId: null },
+          newValues: { clientId: existingClient.id }
         }, transaction);
         await audit.append({
           actorId: initiator.id,
@@ -279,4 +311,9 @@ function validationError(field: string, message: string): never {
 
 function notFound(): never {
   throw new ApiError(404, "NOT_FOUND", "The requested resource was not found.");
+}
+
+function initiationFingerprint(input: object): string {
+  const values = input as Record<string, unknown>;
+  return createHash("sha256").update(JSON.stringify(Object.keys(values).sort().map(key => [key, values[key]]))).digest("hex");
 }

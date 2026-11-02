@@ -16,6 +16,10 @@ import { AiEstimatorKnowledgeSectionModel } from "../src/models/AiEstimatorKnowl
 import { AiEstimatorKnowledgeSubBasketModel } from "../src/models/AiEstimatorKnowledgeSubBasket.js";
 import { AiEstimatorKnowledgeUomModel } from "../src/models/AiEstimatorKnowledgeUom.js";
 import { EstimateModel } from "../src/models/Estimate.js";
+import { LeadModel } from "../src/models/Lead.js";
+import { ProjectModel } from "../src/models/Project.js";
+import { createMongoRepository } from "../src/repositories/mongo.js";
+import { createAuditService } from "../src/services/audit.service.js";
 import { UserModel } from "../src/models/User.js";
 import { createEstimatorCatalogueRouter } from "../src/routes/estimator-catalogue.js";
 import { createEstimatesRouter } from "../src/routes/estimates.js";
@@ -50,9 +54,18 @@ function app(leadProjectIds: Record<string, string> = {}) {
   const auth = {
     authenticate: async (token: string) => actors[token as ActorKey] ?? (() => { throw new Error("Unknown test actor"); })()
   } as unknown as Parameters<typeof createEstimatorCatalogueRouter>[0];
-  const leads = { get: async (actor: PublicUser, leadId: string) => ({
-    id: leadId, ownerId: actor.id, projectId: leadProjectIds[leadId] ?? null
-  }) } as unknown as Parameters<typeof createEstimatesRouter>[1];
+  const leads = { get: async (actor: PublicUser, leadId: string) => {
+    const projectId = leadProjectIds[leadId] ?? null;
+    const lead = await LeadModel.findOneAndUpdate({ _id: leadId }, { $setOnInsert: {
+      ownerId: actor.id, projectId, clientName: "Catalogue fixture", clientEmail: "catalogue@example.test",
+      clientMobile: "0000000000", projectName: leadId, propertyType: "Apartment", source: "test",
+      stage: "new_lead", nextAction: "Estimation", nextActionAt: new Date(), createdAt: new Date(), updatedAt: new Date()
+    } }, { upsert: true, returnDocument: "after", timestamps: false }).lean();
+    if (projectId) await ProjectModel.collection.updateOne({ _id: projectId }, {
+      $setOnInsert: { assignedEstimatorId: lead!.ownerId }
+    }, { upsert: true });
+    return { ...lead, id: leadId };
+  } } as unknown as Parameters<typeof createEstimatesRouter>[1];
   const reviews = {
     currentSummaryForEstimate: async () => null,
     currentClientFeedbackForEstimate: async () => null
@@ -64,7 +77,7 @@ function app(leadProjectIds: Record<string, string> = {}) {
   server.use("/api/v1", createEstimatesRouter(auth, leads,
     {} as Parameters<typeof createEstimatesRouter>[2],
     {} as Parameters<typeof createEstimatesRouter>[3],
-    {} as Parameters<typeof createEstimatesRouter>[4],
+    createAuditService(createMongoRepository()),
     publication as unknown as Parameters<typeof createEstimatesRouter>[5],
     {} as Parameters<typeof createEstimatesRouter>[6], reviews));
   server.use(errorHandler);

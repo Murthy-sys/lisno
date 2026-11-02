@@ -12,8 +12,11 @@ import { EstimateModel } from "../src/models/Estimate.js";
 import { LeadModel } from "../src/models/Lead.js";
 import { createEstimateClientReviewStorage } from "../src/services/estimate-client-review-storage.js";
 import { presentClientEstimate } from "../src/services/estimate-client-presentation.js";
+import { createEstimateProposal } from "../src/domain/estimate-proposal.js";
+import type { EstimatePdfInput } from "../src/services/estimate-pdf.service.js";
 import {
   createEstimatePublicationService,
+  toEstimateSnapshot,
   type PublishEstimateToClientInput
 } from "../src/services/estimate-publication.service.js";
 
@@ -197,7 +200,7 @@ function setupHarness(options: HarnessOptions = {}) {
   const storage = createEstimateClientReviewStorage(fileStorage as never);
 
   const pdf = {
-    generate: vi.fn(async () => {
+    generate: vi.fn(async (_input: EstimatePdfInput) => {
       events.push("pdf:generate");
       return { bytes: PDF_BYTES, filename: PDF_FILENAME };
     })
@@ -371,6 +374,19 @@ afterEach(() => {
 });
 
 describe("ordinary transactional Estimate publication", () => {
+  it("freezes one proposal in the rendered artifact and committed round without adding defaults to ordinary snapshots", async () => {
+    const sourceLead = lead({ projectNumber: "Lisno000027" });
+    const harness = setupHarness({ lead: sourceLead });
+    await harness.publication.publishEstimateToClient(publicationInput());
+    const rendered = harness.pdf.generate.mock.calls[0]![0];
+    const snapshot = harness.createRound.mock.calls[0]![0][0].estimateSnapshot;
+    expect(rendered.proposal).toEqual(createEstimateProposal({ issuedAt: NOW, estimateId: ESTIMATE_ID, projectNumber: "Lisno000027" }));
+    expect(snapshot.proposal).toEqual(rendered.proposal);
+    expect(snapshot.proposal).not.toBe(rendered.proposal);
+    expect(snapshot.proposal).toMatchObject({ issuedAt: NOW.toISOString(), validUntil: "2026-09-08", preparedBy: "Team Lisno" });
+    expect(toEstimateSnapshot(estimate() as never, sourceLead)).not.toHaveProperty("proposal");
+    expect(toEstimateSnapshot(estimate() as never, sourceLead)).toEqual(toEstimateSnapshot(estimate() as never, sourceLead));
+  });
   // Draft Configuration fencing is covered by the Mongo replica-set suite; these unit cases isolate frozen snapshots.
   it("publishes configured identity and exact paise, and rechecks null rates inside the transaction", async () => {
     const configuredLine = {
@@ -469,6 +485,7 @@ describe("ordinary transactional Estimate publication", () => {
 
     expect(harness.pdf.generate).toHaveBeenCalledOnce();
     expect(harness.pdf.generate).toHaveBeenCalledWith({
+      proposal: createEstimateProposal({ issuedAt: NOW, estimateId: ESTIMATE_ID }),
       id: ESTIMATE_ID,
       version: 3,
       status: "sent_to_client",
@@ -855,6 +872,13 @@ describe("publication cleanup and idempotency", () => {
         transactionLead: lead({
           projectName: "Changed after PDF generation"
         })
+      }
+    ],
+    [
+      "project reference",
+      {
+        lead: lead({ projectNumber: "Lisno000027" }),
+        transactionLead: lead({ projectNumber: "Lisno000028" })
       }
     ]
   ] satisfies [string, HarnessOptions][])(

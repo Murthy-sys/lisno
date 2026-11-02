@@ -18,6 +18,10 @@ import { UserModel } from "../src/models/User.js";
 import { AuditEventModel } from "../src/models/AuditEvent.js";
 import { createMemoryRepository } from "../src/repositories/memory.js";
 import { createEstimatesRouter } from "../src/routes/estimates.js";
+import { newEstimationLifecycle, newQuotationLifecycle } from "../src/domain/estimation-lifecycle.js";
+import * as projectNumbers from "../src/services/project-number.service.js";
+import { createLeadService } from "../src/services/lead.service.js";
+import { createAuditService } from "../src/services/audit.service.js";
 import { demoSeedData } from "../src/seed/data.js";
 import { developmentDemoAuthentication } from "./helpers/development-demo-authentication.js";
 import { startMongoReplicaSet } from "./helpers/mongo-replica-set.js";
@@ -39,7 +43,9 @@ async function salesToken() {
 const lead = { clientName: "Ramesh Nair", clientEmail: "ramesh@example.com", clientMobile: "9876500000", projectName: "Prestige Lakeside", location: "Bengaluru", propertyType: "3BHK", budgetMin: 1000000, budgetMax: 1400000, source: "Referral", nextAction: "Call client", nextActionAt: "2026-08-01T10:00:00.000Z" };
 
 const CHARACTERIZATION_NOW = "2026-08-17T12:00:00.000Z";
+const CHARACTERIZATION_INTAKE = { projectNumber: null, nativePlace: null, tentativeBudget: null, closureTentativeDate: null, category: null, languagesKnown: [], preferredLanguage: null };
 const CHARACTERIZATION_LEAD = {
+  ...CHARACTERIZATION_INTAKE,
   id: "lead-aurora",
   ownerId: "user-estimator-sales",
   projectId: null,
@@ -184,7 +190,7 @@ function immutableEstimateSnapshot(record: Record<string, any>) {
 
 function estimateDto(record: Record<string, any>) {
   const { _id, ...plain } = plainEstimateRecord(record);
-  return JSON.parse(JSON.stringify({ selectedMainBasketClassifications: [], ...plain, id: _id }));
+  return JSON.parse(JSON.stringify({ selectedMainBasketClassifications: [], projectNumber: null, ...plain, id: _id }));
 }
 
 const CLIENT_REVIEW_SUMMARY = {
@@ -308,11 +314,31 @@ describe("lead and owner-estimate route characterizations", () => {
       actorId: "user-estimator-sales",
       expectedEstimateVersion: 1,
       expectedStatus: "draft",
+      approveSales: false,
       submittedAt: expect.any(Date)
     });
     expect(response.body).toEqual({
       data: { ...publishedEstimate, clientReview: CLIENT_REVIEW_SUMMARY }
     });
+    expect(estimate.save).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [2, "/api/v1/leads/lead-aurora/estimate/submit"],
+    [2, "/api/v1/estimates/estimate-draft/send-client"],
+    [3, "/api/v1/leads/lead-aurora/estimate/submit"],
+    [3, "/api/v1/estimates/estimate-draft/send-client"]
+  ] as const)("rejects body-less version %i publication at %s without side effects", async (version, endpoint) => {
+    const { app, publication } = setupEstimateRouteCollaborators();
+    const estimation = version === 3 ? newQuotationLifecycle() : newEstimationLifecycle();
+    const estimate = estimateDocument({ estimation, projectId: "project-aurora" });
+    vi.spyOn(EstimateModel, "findOne").mockReturnValue(query(estimate) as never);
+
+    const response = await request(app).post(endpoint)
+      .set("Authorization", "Bearer route-test").expect(409);
+
+    expect(response.body.error.code).toBe("ESTIMATE_VERSION_CONFLICT");
+    expect(publication.publishEstimateToClient).not.toHaveBeenCalled();
     expect(estimate.save).not.toHaveBeenCalled();
   });
 
@@ -350,7 +376,8 @@ describe("lead and owner-estimate route characterizations", () => {
       leadId: "lead-aurora",
       actorId: "user-estimator-sales",
       expectedEstimateVersion: 7,
-      expectedStatus: "ready_for_client"
+      expectedStatus: "ready_for_client",
+      approveSales: false
     });
     expect(response.body).toEqual({
       data: { ...publishedEstimate, clientReview: CLIENT_REVIEW_SUMMARY }
@@ -645,8 +672,10 @@ describe("lead and owner-estimate route characterizations", () => {
     const { app, authorization } = setupLeadCharacterization({
       projectId: "project-admin-1"
     });
+    vi.spyOn(LeadModel, "findById").mockReturnValue(query({ ...CHARACTERIZATION_LEAD, _id: CHARACTERIZATION_LEAD.id, projectId: "project-admin-1" }) as never);
+    vi.spyOn(projectNumbers, "assignProjectNumber").mockResolvedValue("Lisno000001");
     const findProject = vi.spyOn(ProjectModel, "findById").mockReturnValue(
-      query({ _id: "project-admin-1", status: "planning" }) as never
+      query({ _id: "project-admin-1", status: "planning", assignedEstimatorId: "user-estimator-sales" }) as never
     );
     vi.spyOn(UserModel, "findOne").mockReturnValue(query({ _id: "user-estimator-sales", active: true, role: "estimator_sales" }) as never);
     const findEstimate = vi.spyOn(EstimateModel, "findOne");
@@ -684,7 +713,8 @@ describe("lead and owner-estimate route characterizations", () => {
     expect(plainEstimateRecord(conflictingDraft)).toEqual(conflictingBefore);
     expect(modelSave).toHaveBeenCalledOnce();
     expect(modelSave).toHaveBeenCalledWith({ session: mongoSession });
-    expect(findProject).toHaveBeenCalledTimes(3);
+    // Conflicting Lead/Estimate lineage is rejected before another Project lookup.
+    expect(findProject).toHaveBeenCalledTimes(2);
     expect(findProject).toHaveBeenCalledWith("project-admin-1");
   });
 
@@ -750,6 +780,7 @@ describe("lead and owner-estimate route characterizations", () => {
         ownerId: "user-estimator-sales",
         projectId: null,
         ...CHARACTERIZATION_LEAD_BODY,
+        ...CHARACTERIZATION_INTAKE,
         cityName: null,
         cityKey: null,
         budgetMin: null,
@@ -918,6 +949,7 @@ describe("lead and owner-estimate route characterizations", () => {
           clientEmail: "client@aurora.example",
           projectName: "Aurora",
           location: "Pune",
+          projectNumber: null,
           id: "lead-aurora"
         }
       }]
@@ -951,7 +983,7 @@ describe("lead and owner-estimate route characterizations", () => {
     const findEstimates = vi.spyOn(EstimateModel, "find").mockImplementation((filter) => {
       if (Object.keys(filter as object).length === 0) return query([draft]) as never;
       const status = (filter as Record<string, any>).$or?.find(
-        (branch: Record<string, any>) => branch["estimation.workflowVersion"]?.$ne === 2
+        (branch: Record<string, any>) => branch["estimation.workflowVersion"]?.$nin?.includes(3)
       )?.status;
       if (status?.$in?.includes("pending_manager_assignment")) return query([pendingAssignment]) as never;
       if (status?.$in?.includes("sent_to_client")) return query([clientVisible]) as never;
@@ -978,8 +1010,8 @@ describe("lead and owner-estimate route characterizations", () => {
     expect(findOne).toHaveBeenCalledWith({ leadId: "lead-aurora" });
     expect(findEstimates).toHaveBeenCalledWith({});
     expect(findEstimates).toHaveBeenCalledWith({ $or: [
-      { "estimation.workflowVersion": 2, "estimation.status": { $in: ["pending_manager_assignment", "pending_designer_approval"] } },
-      { "estimation.workflowVersion": { $ne: 2 }, status: { $in: ["pending_manager_assignment", "pending_designer_approval"] } }
+      { "estimation.workflowVersion": { $in: [2, 3] }, "estimation.status": { $in: ["pending_manager_assignment", "pending_designer_approval"] } },
+      { "estimation.workflowVersion": { $nin: [2, 3] }, status: { $in: ["pending_manager_assignment", "pending_designer_approval"] } }
     ] });
     expect(findDesigners).toHaveBeenCalledWith({ role: "designer", active: true });
     expect(findLeads).toHaveBeenCalledWith({ _id: { $in: ["lead-aurora"] } });
@@ -1111,6 +1143,7 @@ describe("lead and owner-estimate route characterizations", () => {
   });
 
   it("row 74 saves one exact calculated draft estimate", async () => {
+    vi.spyOn(LeadModel, "findById").mockReturnValue(query({ ...CHARACTERIZATION_LEAD, _id: CHARACTERIZATION_LEAD.id }) as never);
     const mongoSession = mockAuthorizationTransaction();
     mockNoClientReviewSummary();
     const { app, authorization, runInTransaction } = setupLeadCharacterization();
@@ -1165,6 +1198,7 @@ describe("lead and owner-estimate route characterizations", () => {
   });
 
   it("row 75 keeps a high-value initial submit in pre-publication review", async () => {
+    vi.spyOn(LeadModel, "findById").mockReturnValue(query({ ...CHARACTERIZATION_LEAD, _id: CHARACTERIZATION_LEAD.id }) as never);
     const mongoSession = mockAuthorizationTransaction();
     mockNoClientReviewSummary();
     const { app, authorization, runInTransaction } = setupLeadCharacterization();
@@ -1221,9 +1255,9 @@ describe("lead and owner-estimate route characterizations", () => {
     expect(findEstimate).toHaveBeenCalledTimes(2);
     expect(findEstimate).toHaveBeenLastCalledWith({
       _id: estimate._id, ownerId: "user-estimator-sales", version: before.version,
-      "estimation.workflowVersion": { $ne: 2 }, status: "draft", total: { $gt: 1_500_000 }
+      "estimation.workflowVersion": { $ne: 3 }, status: "draft", total: { $gt: 1_500_000 }
     });
-    expect(findActor).toHaveBeenCalledWith({ _id: "user-estimator-sales", active: true });
+    expect(findActor).toHaveBeenCalledWith({ _id: "user-estimator-sales", active: true, deletedAt: null });
     expect(estimate.save).toHaveBeenCalledOnce();
     expect(estimate.save).toHaveBeenCalledWith({ session: mongoSession });
     expect(AuthorizationCoordinationModel.updateOne).toHaveBeenCalledOnce();
@@ -1848,3 +1882,30 @@ function mockAuthorizationTransaction() {
   mockAuthorizationFence(session);
   return session;
 }
+
+
+describe("server-owned project numbers", () => {
+  it("rejects caller-supplied numbers at the direct service boundary without writes", async () => {
+    const seed = structuredClone(demoSeedData);
+    const actor = seed.users.find(user => user.id === "user-estimator-sales")!;
+    seed.leads = [{ ...CHARACTERIZATION_LEAD, projectNumber: "Lisno000071" }];
+    const repository = createMemoryRepository(seed);
+    const service = createLeadService(repository, createAuditService(repository), () => new Date(CHARACTERIZATION_NOW));
+    const before = await repository.pageAuditEvents({}, { offset: 0, limit: 100 });
+    for (const projectNumber of ["Lisno000001", null, undefined]) {
+      await expect(service.create(actor, { ...lead, projectNumber } as never)).rejects.toMatchObject({ code: "PROJECT_NUMBER_READ_ONLY" });
+      await expect(service.update(actor, CHARACTERIZATION_LEAD.id, { notes: "forged", projectNumber } as never)).rejects.toMatchObject({ code: "PROJECT_NUMBER_READ_ONLY" });
+    }
+    expect((await repository.pageAllLeads({}, { offset: 0, limit: 100 })).total).toBe(1);
+    expect(await repository.findLeadById(CHARACTERIZATION_LEAD.id)).toMatchObject({ projectNumber: "Lisno000071", notes: null });
+    expect(await repository.pageAuditEvents({}, { offset: 0, limit: 100 })).toEqual(before);
+  });
+
+  it("rejects number overrides from Lead create and update HTTP inputs", async () => {
+    const { app, authorization } = setupLeadCharacterization();
+    await request(app).post("/api/v1/leads").set("Authorization", authorization)
+      .send({ ...lead, projectNumber: "Lisno000001" }).expect(400);
+    await request(app).patch(`/api/v1/leads/${CHARACTERIZATION_LEAD.id}`).set("Authorization", authorization)
+      .send({ notes: "forged", projectNumber: "Lisno000001" }).expect(400);
+  });
+});

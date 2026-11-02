@@ -12,7 +12,7 @@ type Row = Record<string, any>;
 
 export function assertEstimateEditable(estimate: Row): void {
   if (!estimateWorkingCopyEditable(estimate)) throw new ApiError(409, "ESTIMATE_LOCKED",
-    estimate.estimation?.editClosedAt ? "Design and the final estimate are approved. Estimate editing is closed." :
+    estimate.estimation?.editClosedAt ? estimate.estimation.workflowVersion === 3 ? "The quotation is approved. Unlock it before editing." : "Design and the final estimate are approved. Estimate editing is closed." :
       "Withdraw the pending review before editing this estimate.");
 }
 
@@ -23,18 +23,27 @@ export function canStaffEditEstimate(actor: Pick<PublicUser, "id" | "role">, est
 }
 
 export async function requireEstimateStaffActor(actorId: string, estimate: Row, session?: mongoose.ClientSession, expectedRole?: PublicUser["role"]): Promise<void> {
-  const query = UserModel.findOne({ _id: actorId, active: true });
+  const query = UserModel.findOne({ _id: actorId, active: true, deletedAt: null });
   if (session) query.session(session);
   const actor = await query.lean();
   if (!actor || expectedRole && actor.role !== expectedRole || !canStaffEditEstimate({ id: actorId, role: actor.role }, estimate))
     throw new ApiError(404, "ESTIMATE_NOT_FOUND", "Estimate not found.");
+  if (estimate.estimation?.workflowVersion === 3 && actor.role !== "super_admin") {
+    const projectQuery = ProjectModel.findById(estimate.projectId);
+    if (session) projectQuery.session(session);
+    const project = await projectQuery.lean();
+    if (!project || project.estimationWorkflowVersion !== 3 ||
+      actor.role === "estimator_sales" && project.assignedEstimatorId !== actorId ||
+      actor.role === "designer" && project.primaryDesignerId !== actorId)
+      throw new ApiError(404, "ESTIMATE_NOT_FOUND", "Estimate not found.");
+  }
 }
 
 /** All commercial, requirements, design and payment writers serialize on this project document. */
 export async function fenceCollaborativeEstimate(estimate: Row, session: mongoose.ClientSession): Promise<Row | null> {
   if (!isCollaborativeEstimate(estimate)) return null;
   const project = await ProjectModel.findOneAndUpdate({
-    _id: estimate.projectId, estimationWorkflowVersion: 2,
+    _id: estimate.projectId, estimationWorkflowVersion: estimate.estimation.workflowVersion,
     estimateRequirementsVersion: estimate.estimation.requirementsVersion
   }, { $inc: { estimationFenceEpoch: 1 } }, { session, returnDocument: "after" }).lean();
   if (!project) throw new ApiError(409, "ESTIMATE_SOURCE_CONFLICT", "Project requirements changed. Refresh this estimate.");
@@ -48,8 +57,8 @@ export async function requireEstimateClientMembership(actor: PublicUser, estimat
   const query = ProjectModel.findById(estimate.projectId);
   if (session) query.session(session);
   const project = await query.lean();
-  if (!isCollaborativeEstimate(estimate) && project?.estimationWorkflowVersion !== 2) return;
-  if (actor.role !== "client" || !project || project.clientId !== actor.id || project.estimationWorkflowVersion !== 2) throw notFound();
+  if (!isCollaborativeEstimate(estimate) && ![2, 3].includes(project?.estimationWorkflowVersion)) return;
+  if (actor.role !== "client" || !project || project.clientId !== actor.id || project.estimationWorkflowVersion !== estimate.estimation?.workflowVersion) throw notFound();
   const leadQuery = LeadModel.findById(estimate.leadId);
   if (session) leadQuery.session(session);
   const lead = await leadQuery.lean();
@@ -87,4 +96,13 @@ export function estimatePhysicalScopeChanged(before: Row, after: Row): boolean {
     })).sort((a: Row, b: Row) => String(a.id).localeCompare(String(b.id)))
   });
   return !isDeepStrictEqual(scope(before), scope(after));
+}
+
+/** Workflow-only updates must not change the immutable priced revision identity. */
+export function estimateQuotationContentChanged(before: Row, after: Row): boolean {
+  const content = (value: Row) => ({ propertyType: value.propertyType, bedroomCount: value.bedroomCount ?? null,
+    rooms: value.rooms ?? [], scopes: value.scopes ?? [], selectedMainBasketIds: value.selectedMainBasketIds ?? [],
+    selectedMainBasketClassifications: value.selectedMainBasketClassifications ?? [], lineItems: value.lineItems ?? [],
+    subtotalPaise: value.subtotalPaise, gstPaise: value.gstPaise, totalPaise: value.totalPaise });
+  return !isDeepStrictEqual(content(before), content(after));
 }

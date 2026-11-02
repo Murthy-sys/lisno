@@ -249,6 +249,7 @@ describe("authorization policy", () => {
           !VENDOR_KPI_PERMISSIONS.includes(permission as never) &&
           !VENDOR_INDUCTION_PERMISSIONS.includes(permission as never) &&
           !permission.startsWith("pm.") &&
+          !permission.startsWith("estimation.quotation.") && !permission.startsWith("projects.design_team.") &&
           !PROCUREMENT_FULFILLMENT_PERMISSIONS.includes(permission as never) &&
           !["projects.procurement_identity.manage", "finance.vendor_invoice.manage", "procurement.vendor_city.manage",
             "procurement.work_order_approval.read", "procurement.work_order_approval.decide"].includes(permission) &&
@@ -282,13 +283,18 @@ describe("authorization policy", () => {
         [...permissionsForRows([...COMMON_ROWS, ...ADDITIONAL_ROWS[role]]), ...(role === "site_manager" ? ["projects.list", "projects.read"] : [])]
       );
     }
-    expect(PERMISSION_CODES).toHaveLength(221);
-    expect(new Set(PERMISSION_CODES).size).toBe(221);
+    expect(PERMISSION_CODES).toHaveLength(226);
+    expect(new Set(PERMISSION_CODES).size).toBe(226);
     expect(ROLE_PERMISSIONS.super_admin).toEqual(PERMISSION_CODES);
   });
 
   it("restricts estimate collaboration and project invitations to their participating roles", () => {
     const grants = {
+      "estimation.quotation.read": ["client", "designer", "estimator_sales", "super_admin"],
+      "estimation.quotation.edit": ["client", "designer", "estimator_sales", "super_admin"],
+      "estimation.quotation.unlock": ["designer", "estimator_sales", "super_admin"],
+      "projects.design_team.read": ["designer", "super_admin"],
+      "projects.design_team.manage": ["designer", "super_admin"],
       "estimation.dimensions.update": ["client", "designer", "estimator_sales", "super_admin"],
       "estimation.tiers.read": ["client", "designer", "estimator_sales", "super_admin"],
       "estimation.tiers.select": ["client", "designer", "estimator_sales", "super_admin"],
