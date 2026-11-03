@@ -1,6 +1,7 @@
 import { useQueries, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { useEffect, useId, useRef, useState, type DragEvent } from "react";
 import { Link } from "react-router-dom";
+import { useOpenBasketVendor } from "./basketDeletionNavigation";
 import { ChevronDown, CircleHelp, LockKeyhole, MoreVertical, Pencil, Plus, ShieldCheck, ShieldMinus, ShieldPlus, Trash2 } from "lucide-react";
 import { ADD_MAIN_BASKET, CreateKnowledgeBasketFields } from "./CreateKnowledgeBasketFields";
 import { CreateKnowledgeItemDialog } from "./CreateKnowledgeItemDialog";
@@ -490,6 +491,7 @@ function BudgetAlterationRow({ dataSource = liveKnowledgeEditorDataSource, row, 
   const [refreshWarning, setRefreshWarning] = useState("");
   const [highlightedChildId, setHighlightedChildId] = useState("");
   const [catalogDialog, setCatalogDialog] = useState<CatalogDialogState | null>(null);
+  const openBasketVendor = useOpenBasketVendor();
   const [removingSubBasket, setRemovingSubBasket] = useState<{ basket: KnowledgeBasket; subBasket: KnowledgeSubBasket } | null>(null);
   const [catalogMutationError, setCatalogMutationError] = useState<{ message: string; refreshable: boolean } | null>(null);
   const [catalogDialogRefreshPending, setCatalogDialogRefreshPending] = useState(false);
@@ -1056,6 +1058,7 @@ function BudgetAlterationRow({ dataSource = liveKnowledgeEditorDataSource, row, 
       }} />}
     {removingSubBasket ? <KnowledgeSubBasketDeleteDialog
       basket={removingSubBasket.basket} subBasket={removingSubBasket.subBasket} inline
+      onOpenVendor={(vendorId) => openBasketVendor(vendorId, removingSubBasket.basket.id, removingSubBasket.subBasket.id)}
       disabledReason={groupRemovalBlockReason} onBusyChange={setCatalogMutationBusy}
       onRefreshError={setRefreshWarning}
       returnFocusRef={catalogReturnFocusRef} fallbackFocusRef={targetKind === "main_line" ? selectedItemHeadingRef : subItemsHeadingRef}

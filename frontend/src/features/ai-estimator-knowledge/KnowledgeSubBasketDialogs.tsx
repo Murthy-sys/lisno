@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useId, useRef, useState, type RefObject } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type RefObject } from "react";
 
 import { ApiError } from "../../api/client";
 import { Button } from "../../components/ui/Button";
@@ -17,6 +17,7 @@ import {
   commitKnowledgeSubBasketMutation, refreshKnowledgeSubBasketCatalog, syncKnowledgeSubBasketDeletion
 } from "./knowledgeMutationSync";
 import { knowledgeQueryKeys } from "./knowledgeQueryKeys";
+import { KnowledgeVendorBlockers } from "./KnowledgeVendorBlockers";
 import { requiresRelatedItemReconciliation } from "./knowledgeRelatedItemCreation";
 import type { KnowledgeBasket, KnowledgePermanentDeleteSubBasketResult, KnowledgeSubBasket } from "./knowledgeTypes";
 
@@ -178,7 +179,7 @@ function normalizeDeletionConfirmation(value: string) {
   return value.trim().replace(/\s+/gu, " ");
 }
 
-export function KnowledgeSubBasketDeleteDialog({ basket, subBasket, fallbackFocusRef, returnFocusRef, inline = false, disabledReason, onBusyChange, onCommitted, onRefreshError, onClose, onDeleted }: {
+export function KnowledgeSubBasketDeleteDialog({ basket, subBasket, fallbackFocusRef, returnFocusRef, inline = false, disabledReason, onBusyChange, onCommitted, onRefreshError, onOpenVendor, onClose, onDeleted }: {
   readonly basket: KnowledgeBasket;
   readonly subBasket: KnowledgeSubBasket;
   readonly fallbackFocusRef: RefObject<HTMLElement | null>;
@@ -188,6 +189,7 @@ export function KnowledgeSubBasketDeleteDialog({ basket, subBasket, fallbackFocu
   readonly onBusyChange?: (busy: boolean) => void;
   readonly onCommitted?: (result: KnowledgePermanentDeleteSubBasketResult) => void;
   readonly onRefreshError?: (message: string) => void;
+  readonly onOpenVendor?: (vendorId: string) => void;
   readonly onClose: () => void;
   readonly onDeleted: (name: string) => void;
 }) {
@@ -202,6 +204,8 @@ export function KnowledgeSubBasketDeleteDialog({ basket, subBasket, fallbackFocu
   const [saved, setSaved] = useState<KnowledgePermanentDeleteSubBasketResult | null>(null);
   const [refreshError, setRefreshError] = useState("");
   const [refreshing, setRefreshing] = useState(false);
+  const [vendorReview, setVendorReview] = useState<{ target: string; count: number; blocked: boolean } | null>(null);
+  const vendorTargetsSeen = useRef(new Set<string>());
   const targetKey = JSON.stringify([basket.id, subBasket.id]);
   const priorTarget = useRef(targetKey);
   const priorReview = useRef<string | undefined>(undefined);
@@ -216,6 +220,14 @@ export function KnowledgeSubBasketDeleteDialog({ basket, subBasket, fallbackFocu
     refetchOnReconnect: false, enabled: !saved
   });
   const impact = impactQuery.data;
+  const vendorCount = impact?.vendorReferenceCount ?? 0;
+  if (vendorCount > 0) vendorTargetsSeen.current.add(targetKey);
+  const showVendorBlockers = vendorTargetsSeen.current.has(targetKey);
+  const reviewVendorList = useCallback((blocked: boolean) => {
+    setVendorReview({ target: targetKey, count: vendorCount, blocked });
+  }, [targetKey, vendorCount]);
+  const vendorListReady = !showVendorBlockers || (vendorReview?.target === targetKey
+    && vendorReview.count === vendorCount && !vendorReview.blocked);
   const reviewKey = impact ? JSON.stringify([
     basket.id, subBasket.id, impact.basketId, impact.subBasketId,
     impact.version, impact.impactToken, impact.subBasketName
@@ -291,7 +303,7 @@ export function KnowledgeSubBasketDeleteDialog({ basket, subBasket, fallbackFocu
   const normalizedName = normalizeDeletionConfirmation(confirmationName);
   const nameMatches = Boolean(normalizedName && normalizedName === normalizeDeletionConfirmation(impact?.subBasketName ?? ""));
   const impactReady = impactQuery.isSuccess && !impactQuery.isFetching && !impactQuery.isPaused;
-  const canDelete = Boolean(impact && !(impact.vendorReferenceCount ?? 0) && nameMatches && reason.trim()
+  const canDelete = Boolean(impact && !vendorCount && vendorListReady && nameMatches && reason.trim()
     && confirmationReviewKey === reviewKey && identityMatches && !blockReason && !busy && impactReady && !saved);
   const nameError = nameTouched && !nameMatches ? "Enter the displayed Sub-Basket name with matching capitalization." : undefined;
   const reasonError = reasonTouched && !reason.trim() ? "Enter a reason for this permanent deletion." : undefined;
@@ -328,6 +340,9 @@ export function KnowledgeSubBasketDeleteDialog({ basket, subBasket, fallbackFocu
                   <div><dt>References in other configurations</dt><dd>{impact.referenceCount}</dd></div>
                 </dl>
                 {(impact.vendorReferenceCount ?? 0) > 0 ? <InlineMessage tone="error" title="Permanent deletion is blocked">{impact.vendorReferenceCount} retained vendors reference this Sub Basket. Reassign their classification before deleting it.</InlineMessage> : null}
+                {showVendorBlockers ? <KnowledgeVendorBlockers key={targetKey} basketId={basket.id} subBasketId={subBasket.id}
+                  vendorReferenceCount={vendorCount} onOpenVendor={onOpenVendor} onRefreshImpact={refreshImpact}
+                  onMismatchChange={reviewVendorList} disabled={busy || Boolean(blockReason)} /> : null}
                 <InlineMessage tone="warning" title="This action cannot be undone">
                   {impact.mainLineCount ? "All items in this Sub-Basket, their revisions, sections and price versions will be deleted." : "This Sub-Basket is empty. Deleting it removes the group itself."}
                   {" "}Draft references to this group and its items will be removed. Active and superseded revisions keep

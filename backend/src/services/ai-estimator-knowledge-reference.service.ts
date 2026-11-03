@@ -1,9 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
+import { hasPermission } from "../domain/authorization.js";
 import { ADDITIONAL_KNOWLEDGE_MODE_TIERS } from "../domain/ai-estimator-knowledge-mode-tiers.js";
 import mongoose, { type ClientSession, type Model } from "mongoose";
 
 import type { ProcurementVendorProfileInput, ProcurementVendorSummary, ProcurementVendorDetailFields, ProcurementVendorDirectoryOverview } from "../contracts/procurement-vendor.js";
-import { prepareProcurementVendorProfile, procurementVendorSummaries, storedProcurementVendorProfile, procurementVendorPhotoDescriptor, procurementVendorProfileComplete } from "./procurement-vendor-profile.js";
+import { prepareProcurementVendorClassification, storedProcurementVendorClassification, procurementVendorClassificationCommandSchema, type ProcurementVendorClassificationCommand, prepareProcurementVendorProfile, procurementVendorSummaries, storedProcurementVendorProfile, procurementVendorPhotoDescriptor, procurementVendorProfileComplete } from "./procurement-vendor-profile.js";
 import { consumeProcurementVendorCertificate, procurementVendorCertificateDescriptor } from "./procurement-vendor-certificate.service.js";
 import { vendorSaveCommand, readVendorSaveCommand, recordVendorSaveCommand } from "./procurement-vendor-save-command.js";
 import type {
@@ -318,6 +319,7 @@ type AiEstimatorKnowledgeAnyUpdateMasterInput =
   | AiEstimatorKnowledgeUpdateSurfaceInput;
 
 export interface AiEstimatorKnowledgeReferenceService {
+  updateVendorClassification(actor: PublicUser, id: string, input: ProcurementVendorClassificationCommand): Promise<AiEstimatorKnowledgeMasterDto>;
   getVendorDetail(actor: PublicUser, id: string): Promise<AiEstimatorKnowledgeMasterDto & ProcurementVendorDetailFields>;
   getBasketQuality(actor: PublicUser, basketId: string): Promise<AiEstimatorKnowledgeBasketQualityDto>;
   updateBasketQuality(actor: PublicUser, basketId: string, input: {
@@ -905,6 +907,52 @@ export function createAiEstimatorKnowledgeReferenceService(
           deleted: true,
           deletedAt: timestamp.toISOString()
         };
+      });
+    },
+
+    async updateVendorClassification(actor, id, input) {
+      const parsed = procurementVendorClassificationCommandSchema.safeParse(input);
+      if (!parsed.success) throw new ApiError(400, "VALIDATION_ERROR", "Basket assignment correction is invalid.",
+        Object.fromEntries(parsed.error.issues.map(issue => [issue.path.join("."), issue.message])));
+      const change = parsed.data;
+      return withMongoTransaction(startSession, async (session) => {
+        const authorized = await vendorActorGuard.requireMutationActor(actor, session);
+        if (!hasPermission(authorized.role, "procurement.vendor_directory.update")) {
+          throw new ApiError(403, "FORBIDDEN", "You are not authorized to change vendor assignments.");
+        }
+        const current = await AiEstimatorKnowledgeVendorModel.findById(id).session(session).lean().exec() as Row | null;
+        if (!current) notFound();
+        // Authorization is checked against current state before any stored receipt is disclosed.
+        if (current.status === "archived" && (authorized.role !== "super_admin"
+          || !hasPermission(authorized.role, "ai_estimator_knowledge.configuration.lifecycle"))) {
+          throw new ApiError(403, "FORBIDDEN", "Only an authorized Super Admin can correct archived vendor assignments.");
+        }
+        const command = vendorSaveCommand(authorized.id, id, change, "classification");
+        const replay = await readVendorSaveCommand<AiEstimatorKnowledgeMasterDto>(command, session);
+        if (replay) return replay;
+        requireCurrent(current, change.expectedVersion);
+        if (!current.procurementProfile || typeof current.procurementProfile !== "object") {
+          throw new ApiError(409, "VENDOR_PROFILE_REQUIRED", "Complete the vendor profile before assigning baskets.");
+        }
+        const previous = storedProcurementVendorClassification(current.procurementProfile);
+        const classification = await prepareProcurementVendorClassification(change, previous, session);
+        const timestamp = now();
+        // Dotted writes preserve every unrelated legacy, private, and verification field exactly.
+        const updated = await AiEstimatorKnowledgeVendorModel.findOneAndUpdate(
+          { _id: id, version: change.expectedVersion, status: current.status },
+          { $set: { ...Object.fromEntries(Object.entries(classification).map(([key, value]) => [`procurementProfile.${key}`, value])),
+            updatedById: authorized.id, updatedAt: timestamp }, $inc: { version: 1, dependencyEpoch: 1 } },
+          { returnDocument: "after", runValidators: true, session, timestamps: false }
+        ).lean().exec() as Row | null;
+        if (!updated) versionConflict();
+        await dependencies.audit.appendInMongoTransaction({ actorId: authorized.id,
+          action: "procurement_vendor_classification_corrected", entityType: "ai_estimator_knowledge_vendor", entityId: id,
+          occurredAt: timestamp.toISOString(), oldValues: previous ? { ...previous } : {},
+          newValues: { ...classification }, reason: change.reason }, session);
+        const summaries = await procurementVendorSummaries([updated!], session);
+        const result = { ...masterDto("vendors", updated!), procurementSummary: summaries.get(id)! };
+        await recordVendorSaveCommand(command, result, session);
+        return result;
       });
     },
 

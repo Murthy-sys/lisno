@@ -14,6 +14,7 @@ import { KnowledgeModeCalculationEditor, type KnowledgeModeCalculationUom } from
 import { KnowledgeInHouseTotal } from "./KnowledgeInHouseTotal";
 import { KnowledgePmcScopeChecklist } from "./KnowledgePmcScopeChecklist";
 import { KnowledgeSubBasketRequestPanel } from "./KnowledgeSubBasketRequestPanel";
+import type { KnowledgeBudgetCatalogState } from "./KnowledgeBudgetBuilder";
 import type { KnowledgeEditorDataSource } from "./knowledgeEditorDataSource";
 import type { KnowledgePendingCalculation } from "./knowledgeModePendingChanges";
 import { formatKnowledgeMoney } from "./knowledgePresentation";
@@ -34,11 +35,12 @@ function interactiveDragOrigin(target: EventTarget | null) {
   return Boolean(target.closest('input, textarea, select, button, a, label, [role="button"], [role="textbox"], [contenteditable]:not([contenteditable="false"])'));
 }
 
-export function KnowledgeInHouseComponents({ payload, item, baskets, dataSource, uom, readOnly, validationAttempt, pendingSaveVersion, issues, onChange, onSaveComponent, onValidationChange, onPendingChange, onRequestDraft, emptyCalculationDefaults = false }: {
+export function KnowledgeInHouseComponents({ payload, item, baskets, basketCatalogState = { status: "ready" }, dataSource, uom, readOnly, validationAttempt, pendingSaveVersion, issues, onChange, onSaveComponent, onValidationChange, onPendingChange, onRequestDraft, emptyCalculationDefaults = false }: {
   readonly emptyCalculationDefaults?: boolean;
   readonly payload: KnowledgeJsonObject;
   readonly item: KnowledgeItemDetail;
   readonly baskets: readonly KnowledgeBasket[];
+  readonly basketCatalogState?: KnowledgeBudgetCatalogState;
   readonly dataSource: KnowledgeEditorDataSource;
   readonly uom: KnowledgeModeCalculationUom;
   readonly readOnly: boolean;
@@ -361,13 +363,14 @@ export function KnowledgeInHouseComponents({ payload, item, baskets, dataSource,
         {!components.some(({ id }) => id !== copyPicker.sourceId && id !== LEGACY_IN_HOUSE_COMPONENT_ID) ? <p>Add another component to choose a destination.</p> : null}
       </div>
     </ContextPanel> : null}
-    {adding ? <AddInHouseComponent item={item} baskets={baskets} existing={components} payload={payload} dataSource={dataSource} readOnly={readOnly}
+    {adding ? <AddInHouseComponent item={item} baskets={baskets} basketCatalogState={basketCatalogState} existing={components} payload={payload} dataSource={dataSource} readOnly={readOnly}
       onClose={() => setAdding(false)} onAdd={add} returnFocusRef={addRef} /> : null}
   </div>;
 }
 
-function AddInHouseComponent({ item, baskets, existing, payload, dataSource, readOnly, onClose, onAdd, returnFocusRef }: {
+function AddInHouseComponent({ item, baskets, basketCatalogState, existing, payload, dataSource, readOnly, onClose, onAdd, returnFocusRef }: {
   item: KnowledgeItemDetail; baskets: readonly KnowledgeBasket[]; existing: readonly KnowledgeInHouseComponent[]; payload: KnowledgeJsonObject;
+  basketCatalogState: KnowledgeBudgetCatalogState;
   dataSource: KnowledgeEditorDataSource; readOnly: boolean; onClose: () => void; onAdd: (component: KnowledgeInHouseComponent) => Promise<boolean>;
   returnFocusRef: React.RefObject<HTMLButtonElement | null>;
 }) {
@@ -381,15 +384,20 @@ function AddInHouseComponent({ item, baskets, existing, payload, dataSource, rea
   const [requesting, setRequesting] = useState(false);
   const [requested, setRequested] = useState("");
   const lock = useRef(false);
-  const catalog = useQuery({ queryKey: dataSource.subBasketCatalogKey(basketId), queryFn: () => dataSource.getSubBasketCatalog(basketId), enabled: Boolean(basketId) });
-  const choices = baskets.filter((basket) => basket.status === "active");
+  const liveConfiguration = dataSource.scopeKey === "live-configuration" || dataSource.supportsLiveConfigurationRequests === true;
+  const choices = baskets.filter((basket) => liveConfiguration ? basket.status !== "archived" : basket.status === "active");
   const basket = choices.find(({ id: value }) => value === basketId);
+  const basketsReady = basketCatalogState.status === "ready" && !basketCatalogState.refreshing
+    && !basketCatalogState.errorMessage && !basketCatalogState.refreshErrorMessage;
+  const catalog = useQuery({ queryKey: dataSource.subBasketCatalogKey(basketId), queryFn: () => dataSource.getSubBasketCatalog(basketId), enabled: Boolean(basket) && basketsReady });
+  const subBaskets = basket ? catalog.data?.items.filter((group) => group.basketId === basketId) ?? [] : [];
   const legacy = Object.hasOwn(payload, "inHouseComponents") ? null : legacyInHouseComponent(payload, item);
   const targets = legacy ? [...existing, legacy] : existing;
   const duplicate = targets.some((component) => component.id !== candidate?.id && component.basketId === basketId && component.subBasketId === subBasketId);
-  const selected = catalog.data?.items.find(({ id: value, basketId: parent }) => value === subBasketId && parent === basketId);
-  const canSave = Boolean(basket && selected && !duplicate && !catalog.isFetching && !catalog.isError && !readOnly && !saving);
-  const canRequest = (dataSource.scopeKey === "live-configuration" || dataSource.supportsLiveConfigurationRequests === true) && auth.user?.role === "super_admin"
+  const selected = subBaskets.find(({ id: value }) => value === subBasketId);
+  const subBasketsReady = Boolean(basket) && basketsReady && catalog.isSuccess && !catalog.isFetching;
+  const canSave = Boolean(selected && !duplicate && subBasketsReady && !readOnly && !saving);
+  const canRequest = liveConfiguration && !readOnly && auth.user?.role === "super_admin"
     && hasFrontendPermission(auth.authorization, "ai_estimator_knowledge.configuration.create");
 
   async function save() {
@@ -407,20 +415,37 @@ function AddInHouseComponent({ item, baskets, existing, payload, dataSource, rea
     width="medium" busy={saving} onClose={onClose} returnFocusRef={returnFocusRef} className="knowledge-context-panel"
     footer={({ requestClose }) => <div className="knowledge-dialog-actions"><Button variant="secondary" disabled={saving} onClick={requestClose}>Close</Button><Button busy={saving} disabled={!canSave} onClick={() => void save()}>{candidate ? "Retry save" : "Save component"}</Button></div>}>
     <div className="knowledge-dialog-body">
-      <Field id={`${id}-basket`} label="Main basket" required>{(props) => <Select {...props} value={basketId} disabled={saving || Boolean(candidate)} onChange={(event) => { setBasketId(event.target.value); setSubBasketId(""); setRequested(""); }}>
-        <option value="">Select a Main basket</option>{choices.map((choice) => <option key={choice.id} value={choice.id}>{choice.name}</option>)}
+      <Field id={`${id}-basket`} label="Main basket" required>{(props) => <Select {...props} value={basketId} disabled={!basketsReady || readOnly || saving || Boolean(candidate)} onChange={(event) => { setBasketId(event.target.value); setSubBasketId(""); setRequested(""); setRequesting(false); }}>
+        <option value="">Select a Main basket</option>
+        {basketId && !basket ? <option value={basketId} disabled>{basketCatalogState.status === "loading" ? "Loading Main basket…" : "Unavailable Main basket"}</option> : null}
+        {choices.map((choice) => <option key={choice.id} value={choice.id}>{choice.name}{choice.status === "inactive" ? " (Inactive)" : ""}</option>)}
       </Select>}</Field>
-      <Field id={`${id}-sub`} label="Sub-basket" required error={duplicate ? "This Sub-basket is already a component." : undefined}>{(props) => <Select {...props} value={subBasketId} disabled={!basketId || catalog.isPending || catalog.isError || saving || Boolean(candidate)} onChange={(event) => setSubBasketId(event.target.value)}>
-        <option value="">Select a Sub-basket</option>{catalog.data?.items.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}
+      {basketCatalogState.status === "loading" ? <p role="status">Loading Main baskets…</p> : null}
+      {basketCatalogState.refreshing ? <p role="status">Refreshing Main baskets…</p> : null}
+      {basketCatalogState.status === "error" || basketCatalogState.errorMessage || basketCatalogState.refreshErrorMessage ? <InlineMessage tone="error">
+        {basketCatalogState.refreshErrorMessage ? "Main baskets could not be refreshed. Retry before saving." : "Main baskets could not be loaded."}
+        {basketCatalogState.onRetry ? <Button variant="quiet" disabled={basketCatalogState.refreshing} onClick={basketCatalogState.onRetry}>Retry Main baskets</Button> : null}
+      </InlineMessage> : null}
+      {basketsReady && !choices.length ? <p>No Main baskets available.</p> : null}
+      {basketsReady && basketId && !basket ? <InlineMessage tone="warning">The selected Main basket is unavailable. Select another Main basket.</InlineMessage> : null}
+      <Field id={`${id}-sub`} label="Sub-basket" required error={duplicate ? "This Sub-basket is already a component." : undefined}>{(props) => <Select {...props} value={subBasketId} disabled={!subBasketsReady || readOnly || saving || Boolean(candidate)} onChange={(event) => setSubBasketId(event.target.value)}>
+        <option value="">Select a Sub-basket</option>
+        {subBasketId && !selected ? <option value={subBasketId} disabled>Unavailable Sub-basket</option> : null}
+        {subBaskets.map((group) => <option key={group.id} value={group.id}>{group.name}</option>)}
       </Select>}</Field>
-      {catalog.isPending ? <p role="status">Loading Sub-baskets…</p> : null}
-      {catalog.isError ? <InlineMessage tone="error">Sub-baskets could not be loaded. <Button variant="quiet" onClick={() => void catalog.refetch()}>Retry Sub-baskets</Button></InlineMessage> : null}
-      {catalog.isSuccess && !catalog.data.items.length ? <p>No Sub-baskets available under this Main basket.</p> : null}
-      {canRequest && basket && !candidate ? <Button variant="quiet" disabled={saving} onClick={() => setRequesting(true)}>Request a missing Sub-basket</Button> : null}
-      {requested ? <InlineMessage tone="info">{requested} <Button variant="quiet" onClick={() => void catalog.refetch()}>Refresh Sub-baskets</Button></InlineMessage> : null}
+      {basket && basketsReady && catalog.isPending ? <p role="status">Loading Sub-baskets…</p> : null}
+      {basket && catalog.data && catalog.isFetching ? <p role="status">Refreshing Sub-baskets…</p> : null}
+      {basket && catalog.isError ? <InlineMessage tone="error">{catalog.data ? "Sub-baskets could not be refreshed. Retry before saving." : "Sub-baskets could not be loaded."} <Button variant="quiet" disabled={!basketsReady || catalog.isFetching} onClick={() => void catalog.refetch()}>Retry Sub-baskets</Button></InlineMessage> : null}
+      {subBasketsReady && !subBaskets.length ? <p>No Sub-baskets available under this Main basket.</p> : null}
+      {subBasketsReady && subBasketId && !selected ? <InlineMessage tone="warning">The selected Sub-basket is unavailable. Select another Sub-basket.</InlineMessage> : null}
+      {canRequest && basket && !candidate ? <>
+        <Button variant="quiet" disabled={!basketsReady || basket.status !== "active" || saving} aria-describedby={basket.status !== "active" ? `${id}-request-unavailable` : undefined} onClick={() => setRequesting(true)}>Request a missing Sub-basket</Button>
+        {basket.status !== "active" ? <p id={`${id}-request-unavailable`}>Activate this Main basket in Configuration before requesting a new Sub-basket. Existing Sub-baskets can still be selected.</p> : null}
+      </> : null}
+      {requested ? <InlineMessage tone="info">{requested} <Button variant="quiet" disabled={!basket || !basketsReady || catalog.isFetching} onClick={() => void catalog.refetch()}>Refresh Sub-baskets</Button></InlineMessage> : null}
       {error ? <InlineMessage tone="error" role="alert">{error}</InlineMessage> : null}
     </div>
-  </ContextPanel>{requesting && basket ? <KnowledgeSubBasketRequestPanel basketId={basket.id} basketName={basket.name} onClose={() => setRequesting(false)} onRequested={(request) => {
+  </ContextPanel>{requesting && canRequest && basket?.status === "active" ? <KnowledgeSubBasketRequestPanel basketId={basket.id} basketName={basket.name} onClose={() => setRequesting(false)} onRequested={(request) => {
         setRequested(request.status === "fulfilled" ? "The Sub-basket request is approved. Refresh the list to select it." : request.status === "rejected" ? "The Sub-basket request was rejected. Review its decision before submitting another request." : "Sub-basket request submitted for approval. It becomes selectable after approval.");
         if (request.status === "fulfilled") void catalog.refetch();
         setRequesting(false);

@@ -18,6 +18,18 @@ export async function getVendorDetail(id: string, signal?: AbortSignal) {
 }
 export const createVendorProfile = (input: VendorProfileInput) => apiClient.post<KnowledgeMaster>("/admin/ai-estimator-knowledge/vendors", input);
 export const updateVendorProfile = (id: string, input: VendorProfileInput & { expectedVersion: number }) => apiClient.patch<KnowledgeMaster>(path(id), input);
+export interface VendorClassificationInput {
+  expectedVersion: number;
+  mainBasketIds: string[];
+  subBasketIds: string[];
+  reason: string;
+  idempotencyKey: string;
+}
+export async function updateVendorClassification(id: string, input: VendorClassificationInput): Promise<KnowledgeMaster> {
+  const vendor = await apiClient.patch<KnowledgeMaster>(`${path(id)}/classification`, input);
+  if (vendor.id !== id || vendor.masterType !== "vendors") throw new Error("The saved assignments belong to a different vendor. Retry to confirm the save.");
+  return vendor;
+}
 export function uploadVendorPhoto(id: string, photo: File, expectedVersion: number, idempotencyKey: string) {
   const body = new FormData();
   body.append("photo", photo);

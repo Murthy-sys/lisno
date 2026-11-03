@@ -35,7 +35,7 @@ import type {
   AiEstimatorKnowledgeReferenceService
 } from "../services/ai-estimator-knowledge-reference.service.js";
 import type { AuthService } from "../services/auth.service.js";
-import { procurementVendorProfileSchema } from "../services/procurement-vendor-profile.js";
+import { procurementVendorClassificationCommandSchema, procurementVendorProfileSchema } from "../services/procurement-vendor-profile.js";
 
 const stableIdSchema = z.string().trim().min(1).max(128);
 const shortTextSchema = z.string().trim().min(1).max(240);
@@ -448,6 +448,14 @@ export function createAiEstimatorKnowledgeAdminRouter(
   const router = Router();
   const protectedRoute = authenticate(auth);
   const prefix = "/admin/ai-estimator-knowledge";
+
+  router.patch(`${prefix}/vendors/:id/classification`, protectedRoute,
+    requireOperation("PATCH /admin/ai-estimator-knowledge/vendors/:id/classification"),
+    validateBody(procurementVendorClassificationCommandSchema),
+    handler(async (request, response) => {
+      response.set("Cache-Control", "private, no-store");
+      return services.reference.updateVendorClassification(request.authenticatedUser!, String(request.params.id), request.body);
+    }));
 
   router.get(`${prefix}/vendors/:id`, protectedRoute,
     requireOperation("GET /admin/ai-estimator-knowledge/vendors/:id"),

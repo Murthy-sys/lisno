@@ -5,11 +5,14 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../../api/client";
+import { authorizationFor } from "../../test/authFixtures";
 import { KnowledgeBasketManagementDialog } from "./KnowledgeBasketManagementDialog";
 import { KnowledgeSubBasketDeleteDialog } from "./KnowledgeSubBasketDialogs";
 import * as api from "./knowledgeApi";
 import { knowledgeQueryKeys } from "./knowledgeQueryKeys";
 import type { KnowledgeBasket, KnowledgeSubBasket, KnowledgeSubBasketDeletionImpact } from "./knowledgeTypes";
+
+vi.mock("../../auth/AuthProvider", () => ({ useAuth: () => ({ user: { id: "super-admin", role: "super_admin" }, authorization: authorizationFor("super_admin", []) }) }));
 
 vi.mock("./knowledgeApi", async (original) => ({
   ...await original<typeof import("./knowledgeApi")>(),

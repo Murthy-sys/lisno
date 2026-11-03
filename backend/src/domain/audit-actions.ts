@@ -239,6 +239,7 @@ export const AI_ESTIMATOR_KNOWLEDGE_AUDIT_ACTIONS = [
   "ai_estimator_knowledge_main_line_duplicated",
   "ai_estimator_knowledge_master_created",
   "ai_estimator_knowledge_master_updated",
+  "procurement_vendor_classification_corrected",
   "ai_estimator_knowledge_master_archived",
   "ai_estimator_knowledge_section_updated",
   "ai_estimator_knowledge_price_version_created",

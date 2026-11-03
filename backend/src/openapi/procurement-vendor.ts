@@ -110,6 +110,7 @@ export const PROCUREMENT_VENDOR_SCHEMAS: Readonly<Record<string, Shape>> = {
     description: "Entity Name is required. An omitted code is generated; an omitted procurementProfile leaves the legacy profile incomplete. A new vendor with procurementProfile requires a non-null organizationType. Existing committed save receipts remain replayable."
   },
   KnowledgeVendorUpdateRequest: object({ ...updateMaster.properties, ...saveFields, procurementProfile: ref("KnowledgeVendorProfileInput"), confirmPhysicalAddressVerification: { type: "boolean" } }, ["expectedVersion"]),
+  KnowledgeVendorClassificationRequest: { ...object({ expectedVersion: version, mainBasketIds, subBasketIds, reason: { type: "string", minLength: 1, maxLength: 1000 }, idempotencyKey: saveIdentity }), description: "Correct only basket assignments. Archived vendors additionally require Super Admin Configuration lifecycle authority. At least one valid pair must remain; unrelated profile and lifecycle fields are preserved." },
   KnowledgeVendorPhotoUpload: object({ photo: { type: "string", format: "binary" }, expectedVersion: version, idempotencyKey: { type: "string", minLength: 8, maxLength: 200, pattern: "^[A-Za-z0-9_-]{8,200}$" } }),
   KnowledgeVendorPhotoRemove: object({ expectedVersion: version }),
   KnowledgeVendorPhotoResult: object({ vendorId: id, version, geoTaggedPicture: { allOf: [ref("KnowledgeVendorPhoto")], nullable: true } }),
@@ -122,6 +123,7 @@ export const PROCUREMENT_VENDOR_SCHEMAS: Readonly<Record<string, Shape>> = {
 export const PROCUREMENT_VENDOR_REQUESTS = {
   [`POST ${base}`]: request("KnowledgeVendorCreateRequest"),
   [`PATCH ${base}/:id`]: request("KnowledgeVendorUpdateRequest"),
+  [`PATCH ${base}/:id/classification`]: request("KnowledgeVendorClassificationRequest"),
   [`POST ${base}/msme-certificate-uploads`]: request("KnowledgeVendorCertificateCreateUpload", "multipart/form-data"),
   [`POST ${base}/:id/msme-certificate-uploads`]: request("KnowledgeVendorCertificateUpdateUpload", "multipart/form-data"),
   [`PUT ${base}/:id/photo`]: request("KnowledgeVendorPhotoUpload", "multipart/form-data"),
@@ -131,6 +133,7 @@ export const PROCUREMENT_VENDOR_REQUESTS = {
 export const PROCUREMENT_VENDOR_RESPONSES = {
   [`GET ${base}`]: "KnowledgeVendorPage", [`POST ${base}`]: "KnowledgeMaster", [`PATCH ${base}/:id`]: "KnowledgeMaster",
   [`GET ${base}/:id`]: "KnowledgeVendorDetail",
+  [`PATCH ${base}/:id/classification`]: "KnowledgeVendor",
   [`GET ${base}/msme-certificate-upload-policy`]: "KnowledgeVendorCertificateUploadPolicy",
   [`POST ${base}/msme-certificate-uploads`]: "KnowledgeVendorCertificateUploadResult",
   [`POST ${base}/:id/msme-certificate-uploads`]: "KnowledgeVendorCertificateUploadResult",

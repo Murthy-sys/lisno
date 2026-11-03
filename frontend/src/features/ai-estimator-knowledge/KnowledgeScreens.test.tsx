@@ -15,6 +15,7 @@ import * as knowledgeApi from "./knowledgeApi";
 import { commitKnowledgeMainLineMutation } from "./knowledgeMutationSync";
 import { knowledgeQueryKeys } from "./knowledgeQueryKeys";
 import type {
+  KnowledgeBasket,
   KnowledgeCompleteness,
   KnowledgeItemDetail,
   KnowledgeJsonObject,
@@ -490,6 +491,95 @@ beforeEach(() => {
   vi.mocked(knowledgeApi.getKnowledgeItem).mockResolvedValue(item);
   vi.mocked(knowledgeApi.getKnowledgeHistory).mockResolvedValue({ items: [revision], pagination: page });
   vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_lineId, _revisionId, sectionKey) => section(sectionKey));
+});
+
+describe("In-house component basket catalog integration", () => {
+  const basket: KnowledgeBasket = { ...squareFoot, id: item.basketId, name: item.basketName };
+  const otherBasket: KnowledgeBasket = { ...basket, id: "unrelated-basket", name: "Metalwork", status: "inactive" };
+  const child = { ...squareFoot, id: "metal-frames", basketId: otherBasket.id, name: "Metal frames" };
+  const basketKey = [...knowledgeQueryKeys.basketLists(), "relationship-catalog"];
+
+  function setupCatalogWorkspace() {
+    vi.mocked(knowledgeApi.listKnowledgeMasters).mockImplementation(async type => ({ items: type === "uoms" ? [squareFoot] : [], pagination: page }));
+    vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_id, _revision, key, options) => ({
+      ...section(key, key === "overview" ? { uomId: squareFoot.id, applicableTiers: ["signature", "premium"] }
+        : key === "advanced" ? { inHouseComponents: [], modeConfigurations: [{ id: "in-house", modeKind: "execution", executionSource: "in_house", fields: [] }] }
+          : key === "pricing" ? configuredPricingPayload() : {}),
+      ...((key === "advanced" || key === "pricing") && options?.modeTier ? { modeTier: options.modeTier } : {})
+    }));
+    return renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
+  }
+
+  async function openPicker(user: ReturnType<typeof userEvent.setup>, tier = "Signature") {
+    await user.click(await screen.findByRole("tab", { name: `${tier} mode` }));
+    await user.click(await screen.findByRole("button", { name: "Add component" }));
+    return screen.getByRole("dialog", { name: "Add In-house component" });
+  }
+
+  it.each(["Signature", "Premium"])("loads all basket and child pages in %s despite an unrelated Main Line catalog failure", async tier => {
+    const user = userEvent.setup();
+    const baskets = [basket, ...Array.from({ length: 99 }, (_, index) => ({ ...basket, id: `basket-${index + 2}`, name: `Basket ${index + 2}` })), otherBasket];
+    vi.mocked(knowledgeApi.listKnowledgeBaskets).mockImplementation(async ({ offset = 0 } = {}) => ({
+      items: baskets.slice(offset, offset + 100), pagination: { ...page, offset, total: 101, hasMore: offset === 0 }
+    }));
+    const children = [...Array.from({ length: 100 }, (_, index) => ({ ...child, id: `metal-${index}`, name: `Metal work ${index}` })), child];
+    vi.mocked(knowledgeApi.listKnowledgeSubBaskets).mockImplementation(async (id, { offset = 0 } = {}) => ({
+      items: id === otherBasket.id ? children.slice(offset, offset + 100) : [],
+      pagination: { ...page, offset, total: id === otherBasket.id ? 101 : 0, hasMore: id === otherBasket.id && offset === 0 }
+    }));
+    vi.mocked(knowledgeApi.listKnowledgeItems).mockRejectedValue(new Error("Main Line catalog unavailable"));
+    setupCatalogWorkspace();
+    const dialog = await openPicker(user, tier);
+    const main = within(dialog).getByRole("combobox", { name: "Main basket" });
+    await waitFor(() => expect(within(main).getAllByRole("option")).toHaveLength(102));
+    await user.selectOptions(main, otherBasket.id);
+    await within(dialog).findByRole("option", { name: child.name });
+    await user.selectOptions(within(dialog).getByRole("combobox", { name: "Sub-basket" }), child.id);
+    expect(within(dialog).getByRole("button", { name: "Save component" })).toBeEnabled();
+    expect(knowledgeApi.listKnowledgeBaskets).toHaveBeenCalledWith({ limit: 100, offset: 100 });
+    expect(knowledgeApi.listKnowledgeSubBaskets).toHaveBeenCalledWith(otherBasket.id, { limit: 100, offset: 100 });
+    expect(within(dialog).getByRole("button", { name: "Request a missing Sub-basket" })).toBeDisabled();
+    expect(knowledgeApi.updateKnowledgeSection).not.toHaveBeenCalled();
+  });
+
+  it("recovers the Main Basket catalog independently after an initial failure", async () => {
+    const user = userEvent.setup();
+    vi.mocked(knowledgeApi.listKnowledgeBaskets).mockRejectedValueOnce(new Error("Basket service unavailable"))
+      .mockResolvedValue({ items: [basket], pagination: { ...page, total: 1 } });
+    const { queryClient } = setupCatalogWorkspace();
+    const dialog = await openPicker(user);
+    expect(within(dialog).getByRole("button", { name: "Save component" })).toBeDisabled();
+    const unrelatedReads = vi.mocked(knowledgeApi.listKnowledgeItems).mock.calls.length;
+    await user.click(within(dialog).getByRole("button", { name: "Retry Main baskets" }));
+    await waitFor(() => expect(within(dialog).getByRole("combobox", { name: "Main basket" })).toBeEnabled());
+    expect(within(dialog).getByRole("option", { name: basket.name })).toBeVisible();
+    expect(queryClient.getQueryState(basketKey)?.status).toBe("success");
+    expect(knowledgeApi.listKnowledgeItems).toHaveBeenCalledTimes(unrelatedReads);
+  });
+
+  it("blocks cached choices after failed Main Basket refresh and preserves the selection through retry", async () => {
+    const user = userEvent.setup();
+    vi.mocked(knowledgeApi.listKnowledgeBaskets).mockResolvedValue({ items: [basket, otherBasket], pagination: { ...page, total: 2 } });
+    vi.mocked(knowledgeApi.listKnowledgeSubBaskets).mockImplementation(async id => ({ items: id === otherBasket.id ? [child] : [], pagination: { ...page, total: id === otherBasket.id ? 1 : 0 } }));
+    const { queryClient } = setupCatalogWorkspace();
+    const dialog = await openPicker(user);
+    await user.selectOptions(within(dialog).getByRole("combobox", { name: "Main basket" }), otherBasket.id);
+    await within(dialog).findByRole("option", { name: child.name });
+    const sub = within(dialog).getByRole("combobox", { name: "Sub-basket" });
+    await user.selectOptions(sub, child.id);
+    expect(within(dialog).getByRole("button", { name: "Save component" })).toBeEnabled();
+    vi.mocked(knowledgeApi.listKnowledgeBaskets).mockRejectedValueOnce(new Error("Refresh unavailable"));
+    await act(async () => { await queryClient.refetchQueries({ queryKey: basketKey, exact: true }); });
+    await waitFor(() => expect(within(dialog).getByRole("button", { name: "Save component" })).toBeDisabled());
+    expect(sub).toHaveValue(child.id);
+    await user.click(within(dialog).getByRole("button", { name: "Retry Main baskets" }));
+    await waitFor(() => expect(within(dialog).getByRole("button", { name: "Save component" })).toBeEnabled());
+    expect(sub).toHaveValue(child.id);
+    await expectNoAutomatedAccessibilityViolations();
+    await user.click(within(dialog).getByRole("button", { name: "Close" }));
+    expect(screen.getByRole("button", { name: "Add component" })).toHaveFocus();
+    expect(knowledgeApi.updateKnowledgeSection).not.toHaveBeenCalled();
+  });
 });
 
 describe("Mode sidebar compact default margins", () => {

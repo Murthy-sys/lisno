@@ -71,6 +71,7 @@ export const EXPECTED_AI_ESTIMATOR_KNOWLEDGE_OPERATIONS = [
   { key: "GET /admin/ai-estimator-knowledge/vendors", permission: "procurement.vendor_directory.read", ...readOperation },
   { key: "POST /admin/ai-estimator-knowledge/vendors", permission: "procurement.vendor_directory.create", ...adminOperation },
   { key: "PATCH /admin/ai-estimator-knowledge/vendors/:id", permission: "procurement.vendor_directory.update", ...adminOperation },
+  { key: "PATCH /admin/ai-estimator-knowledge/vendors/:id/classification", permission: "procurement.vendor_directory.update", ...adminOperation },
   { key: "DELETE /admin/ai-estimator-knowledge/vendors/:id", permission: "procurement.vendor_directory.lifecycle", ...adminOperation },
   { key: "GET /admin/ai-estimator-knowledge/taxes", permission: "ai_estimator_knowledge.configuration.read", ...readOperation },
   { key: "POST /admin/ai-estimator-knowledge/taxes", permission: "ai_estimator_knowledge.configuration.create", ...adminOperation },
