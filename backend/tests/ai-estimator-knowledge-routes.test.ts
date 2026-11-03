@@ -39,6 +39,7 @@ function authService(actor?: PublicUser): AuthService {
 
 function services() {
   const reference = {
+    updateVendorClassification: vi.fn(async () => ({ id: "vendor-1", masterType: "vendors", version: 2 })),
     getVendorDetail: vi.fn(async () => ({ id: "vendor-1", procurementProfile: vendorProfileFixture() })),
     listSubBaskets: vi.fn(async () => ({ items: [{ id: "child-1", basketId: "basket-1" }], total: 1 })),
     createSubBasket: vi.fn(async () => ({ id: "child-1", basketId: "basket-1" })),
@@ -240,6 +241,31 @@ describe("AI Estimator Knowledge HTTP routes", () => {
       await operation.set(headers).expect(403);
     }
   });
+  it("accepts only classification correction fields for authorized directory writers", async () => {
+    const input = { expectedVersion: 1, mainBasketIds: ["basket-2", "basket-1"], subBasketIds: ["child-2"], reason: "Remove the old assignment", idempotencyKey: "classification-save-1" };
+    for (const role of ["super_admin", "procurement"] as const) {
+      const testServices = services(); const actor = { ...superAdmin, role };
+      const response = await request(appFor(testServices, actor)).patch("/api/v1/admin/ai-estimator-knowledge/vendors/vendor-1/classification")
+        .set("Authorization", "Bearer role-token").send(input).expect(200);
+      expect(response.headers["cache-control"]).toBe("private, no-store");
+      expect(testServices.reference.updateVendorClassification).toHaveBeenCalledWith(actor, "vendor-1", { ...input, mainBasketIds: ["basket-1", "basket-2"] });
+    }
+    for (const invalid of [{ ...input, status: "active" }, { ...input, procurementProfile: vendorProfileFixture() },
+      { ...input, mainBasketIds: [] }, { ...input, subBasketIds: [] }, { ...input, mainBasketIds: ["same", "same"] },
+      { ...input, reason: " " }, { ...input, idempotencyKey: undefined }, { ...input, expectedVersion: 0 }]) {
+      const testServices = services();
+      await request(appFor(testServices)).patch("/api/v1/admin/ai-estimator-knowledge/vendors/vendor-1/classification")
+        .set("Authorization", "Bearer super-admin-token").send(invalid).expect(400);
+      expect(testServices.reference.updateVendorClassification).not.toHaveBeenCalled();
+    }
+    for (const role of ROLE_CODES.filter(role => role !== "super_admin" && role !== "procurement")) {
+      const testServices = services();
+      await request(appFor(testServices, { ...superAdmin, role })).patch("/api/v1/admin/ai-estimator-knowledge/vendors/vendor-1/classification")
+        .set("Authorization", "Bearer role-token").send(input).expect(403);
+      expect(testServices.reference.updateVendorClassification).not.toHaveBeenCalled();
+    }
+  });
+
   it("passes vendor classification filters while rejecting them on other masters", async () => {
     const testServices = services(); const app = appFor(testServices);
     const filters = { vendorType: "supplier", mainBasketId: "basket-1", subBasketId: "sub-1" };

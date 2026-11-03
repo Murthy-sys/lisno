@@ -1,0 +1,66 @@
+.knowledge-vendor-blockers {
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.knowledge-vendor-blockers h3,
+.knowledge-vendor-blockers p {
+  margin: 0;
+}
+
+.knowledge-vendor-blockers__results {
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.knowledge-vendor-blockers__results:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 3px;
+}
+
+.knowledge-vendor-blockers__list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.knowledge-vendor-blockers__list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding-block: var(--space-3);
+  border-bottom: 1px solid var(--role-line, var(--color-border));
+}
+
+.knowledge-vendor-blockers__list li > div {
+  display: grid;
+  gap: var(--space-1);
+  min-width: 0;
+  overflow-wrap: anywhere;
+  flex: 1 1 12rem;
+}
+
+.knowledge-vendor-blockers__list li > div > span {
+  color: var(--role-muted, var(--color-text-muted));
+}
+
+.knowledge-vendor-blockers .ui-button {
+  max-width: 100%;
+  white-space: normal;
+}
+
+.knowledge-vendor-blockers__actions,
+.knowledge-vendor-blockers nav {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.knowledge-vendor-blockers__actions {
+  justify-content: space-between;
+}

@@ -8,6 +8,8 @@ import { estimationCatalogueKeys } from "../leads/estimationCatalogueApi";
 import { projectProcurementKeys } from "../procurement/projectProcurementApi";
 import { procurementBasketKeys } from "../procurement/procurementBasketApi";
 import { vendorSuggestionKeys } from "../procurement/vendorSuggestionsApi";
+import { vendorKpiKeys } from "../procurement/vendorKpiApi";
+import { vendorInductionKeys } from "../procurement/vendorInductionApi";
 import type {
   KnowledgeBasket,
   KnowledgeBasketDeletionImpact,
@@ -628,6 +630,16 @@ export async function syncKnowledgeLifecycleMutation(
     queryClient.invalidateQueries({ queryKey: procurementBasketKeys.lists() }),
     queryClient.invalidateQueries({ queryKey: procurementBasketKeys.details() })
   ]);
+}
+
+/** A confirmed assignment correction must report any failed active-view refresh. */
+export async function syncVendorClassificationMutation(queryClient: QueryClient): Promise<void> {
+  await Promise.all([
+    knowledgeQueryKeys.vendorDetails(), knowledgeQueryKeys.masterLists("vendors"),
+    knowledgeQueryKeys.basketDeletionImpacts(), knowledgeQueryKeys.subBasketDeletionImpacts(),
+    knowledgeQueryKeys.itemLists(), knowledgeQueryKeys.contexts(),
+    projectProcurementKeys.vendors, vendorSuggestionKeys.all, vendorKpiKeys.all, vendorInductionKeys.all
+  ].map((queryKey) => queryClient.invalidateQueries({ queryKey }, { throwOnError: true })));
 }
 
 export async function syncKnowledgeMasterMutation(

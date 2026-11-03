@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { ApiError } from "../../api/client";
 import { useAuth } from "../../auth/AuthProvider";
 import { hasFrontendPermission } from "../../auth/authorization";
@@ -8,6 +8,9 @@ import { Button } from "../../components/ui/Button";
 import { InlineMessage } from "../../components/ui/InlineMessage";
 import { PageState } from "../../components/ui/PageState";
 import { knowledgeQueryKeys } from "../ai-estimator-knowledge/knowledgeQueryKeys";
+import { basketDeletionState } from "../ai-estimator-knowledge/basketDeletionNavigation";
+import { syncVendorClassificationMutation } from "../ai-estimator-knowledge/knowledgeMutationSync";
+import { VendorBasketAssignmentEditor } from "./VendorBasketAssignmentEditor";
 import { getVendorDetail } from "./vendorProfileApi";
 import { useProcurementVendorDraft } from "./ProcurementVendorDraftProvider";
 import { ProcurementVendorEditor } from "./ProcurementVendorEditor";
@@ -48,6 +51,10 @@ export function VendorKpiStaffPage() {
   const auth = useAuth();
   const client = useQueryClient();
   const navigate = useNavigate();
+  const location = useLocation();
+  const deletionReturn = basketDeletionState(location.state, "basketDeletionReturn");
+  const [assignmentsOpen, setAssignmentsOpen] = useState(false);
+  const assignmentButton = useRef<HTMLButtonElement>(null);
   const vendorDraftState = useProcurementVendorDraft();
   const resumeButton = useRef<HTMLButtonElement>(null);
   const [resuming, setResuming] = useState(false);
@@ -59,6 +66,8 @@ export function VendorKpiStaffPage() {
   const canRate = staffRole && hasFrontendPermission(auth.authorization, "procurement.vendor_kpi.rate");
   const canRequest = staffRole && hasFrontendPermission(auth.authorization, "procurement.vendor_kpi.request");
   const canEdit = staffRole && hasFrontendPermission(auth.authorization, "procurement.vendor_directory.update");
+  const canReadDirectory = staffRole && hasFrontendPermission(auth.authorization, "procurement.vendor_directory.read");
+  const canCorrectArchived = auth.user?.role === "super_admin" && hasFrontendPermission(auth.authorization, "ai_estimator_knowledge.configuration.lifecycle");
   const [editOpen, setEditOpen] = useState(false);
   const [section, setSection] = useState<"overview" | "induction">("overview");
   const [notice, setNotice] = useState("");
@@ -78,6 +87,13 @@ export function VendorKpiStaffPage() {
     }
     setResuming(Boolean(retained)); setEditOpen(true);
   }
+  function openAssignments() {
+    if (vendorDraftState.retained) {
+      setNotice("Save or discard your retained vendor draft before changing basket assignments."); return;
+    }
+    setAssignmentsOpen(true);
+  }
+  function closeAssignments() { setAssignmentsOpen(false); requestAnimationFrame(() => assignmentButton.current?.focus()); }
   function closeEditor() { setEditOpen(false); if (resuming) vendorDraftState.clear(); setResuming(false); }
   async function refreshAffected() {
     await Promise.all([
@@ -136,7 +152,8 @@ export function VendorKpiStaffPage() {
   const activation = induction.data?.vendor.id === vendorId ? induction.data.activation : undefined;
 
   return <main className="vendor-kpi vendor-kpi--staff" aria-labelledby="vendor-kpi-title">
-    <Link className="vendor-kpi__back" to={backPath}>Back to vendors</Link>
+    {deletionReturn ? <Link className="vendor-kpi__back" to={deletionReturn.path} state={{ basketDeletionTarget: deletionReturn }}>Back to basket deletion</Link>
+      : <Link className="vendor-kpi__back" to={backPath}>Back to vendors</Link>}
     <header className="vendor-kpi__header"><div><p className="vendor-kpi__eyebrow">Procurement / Vendor details</p><div className="vendor-kpi__title-row"><h1 id="vendor-kpi-title">{vendor.name}</h1>{section === "overview" && requestAllowed ? <Button busy={request.isPending} onClick={() => void sendRequest()}>{requestLabel}</Button> : null}{section === "overview" ? <Button variant="secondary" busy={query.isFetching} onClick={() => void query.refetch()}>Refresh KPI</Button> : null}</div><p>{vendor.code} · {type === "execution" ? "Execution vendor" : type === "supplier" ? "Supplier" : "Type not recorded"} · {activationStatus(activation)}</p></div><div className="vendor-kpi__official"><span>Official Vendor KPI</span><strong>{formatVendorKpiScore(detail.officialScoreBps)}</strong><small>Procurement rating</small></div></header>
     <nav className="vendor-induction__tabs" aria-label="Vendor detail sections"><button type="button" aria-current={section === "overview" ? "page" : undefined} onClick={() => setSection("overview")}>Overview</button><button type="button" aria-current={section === "induction" ? "page" : undefined} onClick={() => setSection("induction")}>Induction</button></nav>
     {section === "induction" ? !canReadInduction ? <PageState state="error" message="You do not have permission to view vendor induction." /> : induction.isPending ? <PageState state="loading" message="Loading vendor induction…" /> : induction.isError ? <PageState state="error" message={procurementError(induction.error, "Vendor induction could not be loaded.")} action={{ label: "Retry induction", onAction: () => void induction.refetch() }} /> : induction.data.vendor.id !== vendorId ? <PageState state="error" message="Vendor induction identity changed. Refresh the directory." /> : <VendorInductionStaffPanel vendorId={vendorId} detail={induction.data} refetch={() => void induction.refetch()} /> : <>
@@ -146,10 +163,16 @@ export function VendorKpiStaffPage() {
     {request.isError ? <InlineMessage tone="error">{conflict(request.error) ? "The request state changed. Review the latest status and try again." : procurementError(request.error, "The KPI request could not be sent. Retry when delivery is available.")}</InlineMessage> : null}
     {detail.request && !detail.selfAssessment ? <p className="vendor-kpi__request" role="status">Vendor request: {detail.request.status}. {detail.request.status === "sent" ? `Link expires ${new Date(detail.request.expiresAt).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })}.` : ""}</p> : null}
     {!detail.selfAssessment && detail.requestEligibility === "missing_profile" ? <InlineMessage tone="warning">Complete the vendor type and profile email before requesting a self assessment.</InlineMessage> : null}
-    <section className="vendor-kpi__identity" aria-label="Vendor details"><div><h2>Vendor details</h2><dl><div><dt>Work profile</dt><dd>{vendor.workProfile || "Not recorded"}</dd></div><div><dt>Main baskets</dt><dd>{vendor.mainBasketNames.join(", ") || "Not recorded"}</dd></div><div><dt>Sub baskets</dt><dd>{vendor.subBasketNames.join(", ") || "Not recorded"}</dd></div></dl></div>{canEdit && vendor.status !== "archived" ? <Button variant="secondary" onClick={openEditor}>Edit vendor</Button> : null}</section>
+    <section className="vendor-kpi__identity" aria-label="Vendor details"><div><h2>Vendor details</h2><dl><div><dt>Work profile</dt><dd>{vendor.workProfile || "Not recorded"}</dd></div><div><dt>Main baskets</dt><dd>{vendor.mainBasketNames.join(", ") || "Not recorded"}</dd></div><div><dt>Sub baskets</dt><dd>{vendor.subBasketNames.join(", ") || "Not recorded"}</dd></div></dl></div><div className="knowledge-dialog-actions">{canReadDirectory && canEdit && (vendor.status !== "archived" || canCorrectArchived) ? <Button ref={assignmentButton} variant="secondary" disabled={editOpen || assignmentsOpen} onClick={openAssignments}>Manage basket assignments</Button> : null}{canEdit && vendor.status !== "archived" ? <Button variant="secondary" disabled={assignmentsOpen} onClick={openEditor}>Edit vendor</Button> : null}</div></section>
     <VendorLoginAccessPanel vendorId={vendorId} contactEditing={editOpen} onEditContact={canEdit && vendor.status !== "archived" ? openEditor : undefined} />
     {type ? <div id="vendor-kpi-assessments" className="vendor-kpi__columns"><VendorKpiAssessmentView title="Vendor self rating" assessment={detail.selfAssessment} type={type} />{canRate && vendor.status !== "archived" ? <VendorKpiScoreForm key={`${type}-${detail.procurementAssessment?.revision ?? 0}`} title="Procurement rating" type={type} initial={detail.procurementAssessment} busy={save.isPending} submitLabel="Save Procurement KPI" error={save.isError ? conflict(save.error) ? "The KPI changed while you were editing. Review the latest scores before saving." : procurementError(save.error, "The KPI could not be saved. Retry or refresh to check its status.") : undefined} onSave={saveScores} /> : <VendorKpiAssessmentView title="Procurement rating" assessment={detail.procurementAssessment} type={type} />}</div> : <PageState state="empty" message="Set the vendor type before rating this vendor." />}
     {editOpen && canEdit ? privateDetail.isPending ? <PageState state="loading" message="Loading vendor editor…" /> : privateDetail.isError ? <InlineMessage tone="error">{procurementError(privateDetail.error, "Vendor details could not be loaded.")}<Button variant="secondary" onClick={() => setEditOpen(false)}>Close</Button></InlineMessage> : privateDetail.data ? <ProcurementVendorEditor retainedDraft={resuming ? vendorDraftState.retained ?? undefined : undefined} existing={privateDetail.data} canCreateBasket={hasFrontendPermission(auth.authorization, "procurement.vendor_classification.create")} canRequestMainBasket={auth.user?.role === "procurement" && hasFrontendPermission(auth.authorization, "procurement.vendor_basket_proposal.create")} canUpdate={canEdit} canCorrectBaseline={hasFrontendPermission(auth.authorization, "procurement.vendor_allocation_baseline.correct")} onClose={closeEditor} onRequestSubmitted={() => { setEditOpen(false); setResuming(false); setBasketSubmitted(true); setNotice("Request submitted to Super Admin. Your vendor draft is available to resume."); requestAnimationFrame(() => resumeButton.current?.focus()); }} onOpenRequests={() => { setEditOpen(false); setResuming(false); navigate("/procurement/requests"); }} onSaved={() => { if (resuming) vendorDraftState.clear(); setEditOpen(false); void query.refetch(); void induction.refetch(); void invalidateVendorAccess(client); }} /> : null : null}
     </>}
+    {assignmentsOpen && canReadDirectory && canEdit && (vendor.status !== "archived" || canCorrectArchived) ? <VendorBasketAssignmentEditor key={`${actorId}:${vendorId}`} vendorId={vendorId} canUpdate={canEdit}
+      origin={deletionReturn ?? undefined} onClose={closeAssignments} onSaved={async () => {
+        await syncVendorClassificationMutation(client);
+        setNotice("Basket assignments saved. Return to basket deletion to review the latest impact.");
+        closeAssignments();
+      }} /> : null}
   </main>;
 }

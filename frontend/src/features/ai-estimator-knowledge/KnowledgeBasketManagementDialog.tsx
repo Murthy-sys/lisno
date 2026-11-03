@@ -14,7 +14,7 @@ import type { KnowledgeBasket, KnowledgeSubBasket } from "./knowledgeTypes";
 const PAGE_SIZE = 100;
 
 export function KnowledgeBasketManagementDialog({
-  canCreate, canUpdate, canLifecycle, onCreate, onClose, onEdit, onDelete, childDialogOpen
+  canCreate, canUpdate, canLifecycle, onCreate, onClose, onEdit, onDelete, onOpenVendor, childDialogOpen
 }: {
   readonly canCreate: boolean;
   readonly canUpdate: boolean;
@@ -23,6 +23,7 @@ export function KnowledgeBasketManagementDialog({
   readonly onClose: () => void;
   readonly onEdit: (basket: KnowledgeBasket) => void;
   readonly onDelete: (basket: KnowledgeBasket) => void;
+  readonly onOpenVendor?: (vendorId: string, basketId: string, subBasketId?: string) => void;
   readonly childDialogOpen: boolean;
 }) {
   const [offset, setOffset] = useState(0);
@@ -145,6 +146,7 @@ export function KnowledgeBasketManagementDialog({
     /> : null}
     {basket && deletion ? <KnowledgeSubBasketDeleteDialog
       basket={basket} subBasket={deletion} fallbackFocusRef={resultsRef}
+      onOpenVendor={onOpenVendor ? (vendorId) => onOpenVendor(vendorId, basket.id, deletion.id) : undefined}
       onClose={() => setDeletion(null)}
       onDeleted={(name) => { setAnnouncement(`Sub-Basket “${name}” was permanently deleted.`); setDeletion(null); }}
     /> : null}

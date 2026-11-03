@@ -15,7 +15,7 @@ import {
   Trash2,
   X
 } from "lucide-react";
-import { useEffect, useId, useMemo, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type FormEvent } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 
 import { ApiError } from "../../api/client";
@@ -46,6 +46,9 @@ import {
 import { syncKnowledgeBasketDeletion, syncKnowledgeBasketMutation } from "./knowledgeMutationSync";
 import { knowledgeQueryKeys } from "./knowledgeQueryKeys";
 import { KNOWLEDGE_ITEM_STATUS_LABELS } from "./knowledgePresentation";
+import { KnowledgeVendorBlockers } from "./KnowledgeVendorBlockers";
+import { KnowledgeBasketDeletionReturn } from "./KnowledgeBasketDeletionReturn";
+import { useOpenBasketVendor } from "./basketDeletionNavigation";
 import { KnowledgeBasketManagementDialog } from "./KnowledgeBasketManagementDialog";
 import { KnowledgeSubBasketMargins } from "./KnowledgeSubBasketMargins";
 import { KnowledgeBasketCard } from "./KnowledgeBasketCard";
@@ -118,6 +121,7 @@ export function KnowledgeBaseIndexPage() {
   const auth = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+  const openBasketVendor = useOpenBasketVendor();
   const [searchParams, setSearchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const [filters, setFilters] = useState<FilterState>(emptyFilters);
@@ -861,6 +865,7 @@ export function KnowledgeBaseIndexPage() {
           onClose={closeBasketManager}
           onEdit={setBasketEditor}
           onDelete={setBasketDelete}
+          onOpenVendor={openBasketVendor}
           childDialogOpen={Boolean(basketDialogOpen || basketEditor || basketDelete)}
         />
       ) : null}
@@ -875,9 +880,13 @@ export function KnowledgeBaseIndexPage() {
           }}
         />
       ) : null}
+      <KnowledgeBasketDeletionReturn fallbackFocusRef={indexFocusRef} renderMain={(basket, close) => <PermanentDeleteBasketDialog basket={basket}
+        onOpenVendor={(vendorId) => openBasketVendor(vendorId, basket.id)} onClose={close}
+        onDeleted={async (result) => { await syncKnowledgeBasketDeletion(queryClient, result.basketId); close(); }} />} />
       {basketDelete ? (
         <PermanentDeleteBasketDialog
           basket={basketDelete}
+          onOpenVendor={(vendorId) => openBasketVendor(vendorId, basketDelete.id)}
           onClose={() => setBasketDelete(null)}
           onDeleted={async (result, basketName) => {
             await syncKnowledgeBasketDeletion(queryClient, result.basketId);
@@ -905,6 +914,7 @@ export function KnowledgeBaseIndexPage() {
       {subBasketDelete ? <KnowledgeSubBasketDeleteDialog
         basket={subBasketDelete.basket}
         subBasket={subBasketDelete.subBasket}
+        onOpenVendor={(vendorId) => openBasketVendor(vendorId, subBasketDelete.basket.id, subBasketDelete.subBasket.id)}
         returnFocusRef={subBasketDeleteFocusRef}
         fallbackFocusRef={indexFocusRef}
         disabledReason={subBasketDeleteDisabledReason}
@@ -960,10 +970,12 @@ export function KnowledgeBaseIndexPage() {
 
 function PermanentDeleteBasketDialog({
   basket,
+  onOpenVendor,
   onClose,
   onDeleted
 }: {
   readonly basket: KnowledgeBasket;
+  readonly onOpenVendor: (vendorId: string) => void;
   readonly onClose: () => void;
   readonly onDeleted: (
     result: KnowledgePermanentDeleteBasketResult,
@@ -989,6 +1001,12 @@ function PermanentDeleteBasketDialog({
     enabled: !saved
   });
   const impact = impactQuery.data;
+  const vendorCount = impact?.vendorReferenceCount ?? 0;
+  const seenVendorBlockers = useRef(false);
+  if (vendorCount > 0) seenVendorBlockers.current = true;
+  const [vendorReview, setVendorReview] = useState<{ count: number; mismatch: boolean } | null>(null);
+  const onVendorMismatch = useCallback((mismatch: boolean) => setVendorReview({ count: vendorCount, mismatch }), [vendorCount]);
+  const vendorListBlocked = seenVendorBlockers.current && (vendorReview?.count !== vendorCount || vendorReview.mismatch);
 
   async function finishDeletion(result: KnowledgePermanentDeleteBasketResult) {
     setRefreshing(true);
@@ -1001,6 +1019,7 @@ function PermanentDeleteBasketDialog({
   }
 
   async function refreshImpact(): Promise<boolean> {
+    setConfirmationName("");
     setRequiresFreshImpact(true);
     const refreshed = await impactQuery.refetch();
     const succeeded = refreshed.isSuccess;
@@ -1036,7 +1055,7 @@ function PermanentDeleteBasketDialog({
   const busy = impactQuery.isFetching || mutation.isPending || requiresFreshImpact || refreshing;
   const nameMatches = Boolean(impact && confirmationName === impact.basketName);
   const canSubmit = Boolean(
-    impact && !(impact.vendorReferenceCount ?? 0) && nameMatches && reason.trim() && !busy && !impactQuery.isError && !saved
+    impact && !vendorListBlocked && !(impact.vendorReferenceCount ?? 0) && nameMatches && reason.trim() && !busy && !impactQuery.isError && !saved
   );
   const mutationError = mutation.error;
   const mutationErrorMessage =
@@ -1076,7 +1095,11 @@ function PermanentDeleteBasketDialog({
               }}
             />
           ) : !saved && impact ? (
-            <BasketDeletionImpactSummary impact={impact} />
+            <><BasketDeletionImpactSummary impact={impact} />
+              {seenVendorBlockers.current ? <KnowledgeVendorBlockers basketId={basket.id} vendorReferenceCount={vendorCount}
+                onOpenVendor={onOpenVendor} onRefreshImpact={retryImpact} onMismatchChange={onVendorMismatch}
+                disabled={mutation.isPending || refreshing} /> : null}
+            </>
           ) : null}
 
           {conflictRefresh === "refreshed" ? (

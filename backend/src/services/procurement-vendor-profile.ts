@@ -99,13 +99,40 @@ export function storedProcurementVendorProfile(value: unknown): ProcurementVendo
     physicalAddressVerifiedById: typeof physicalAddressVerifiedById === "string" ? physicalAddressVerifiedById : null };
 }
 
-export async function prepareProcurementVendorProfile(input: unknown, previous: unknown, actorId: string, now: Date, confirmPhysicalAddressVerification: boolean | undefined, session: ClientSession): Promise<ProcurementVendorStoredProfile> {
-  const current = storedProcurementVendorProfile(previous);
-  const previousFields = previous && typeof previous === "object" ? previous as Record<string, unknown> : {};
-  const submittedFields = input && typeof input === "object" ? input as Record<string, unknown> : null;
-  const profile = validateProcurementVendorProfile(submittedFields ? { ...submittedFields,
-    ...Object.fromEntries(["reference", "organizationType", "bankAccount"].map(key => [key,
-      submittedFields[key] === undefined ? previousFields[key] ?? null : submittedFields[key]])) } : input);
+export interface ProcurementVendorClassification {
+  readonly mainBasketIds: string[];
+  readonly subBasketIds: string[];
+  readonly mainBasketId: string;
+  readonly subBasketId: string;
+}
+
+export const procurementVendorClassificationCommandSchema = z.object({
+  expectedVersion: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+  mainBasketIds: basketIds(100),
+  subBasketIds: basketIds(500),
+  reason: z.string().trim().min(1).max(1_000),
+  idempotencyKey: z.string().regex(/^[A-Za-z0-9_-]{8,200}$/u)
+}).strict();
+export type ProcurementVendorClassificationCommand = z.infer<typeof procurementVendorClassificationCommandSchema>;
+
+/** Read classifications independently of unrelated legacy profile completeness. */
+export function storedProcurementVendorClassification(value: unknown): ProcurementVendorClassification | null {
+  if (!value || typeof value !== "object") return null;
+  const row = value as Record<string, unknown>;
+  if (typeof row.mainBasketId !== "string" || typeof row.subBasketId !== "string") return null;
+  const main = basketIds(100).safeParse(row.mainBasketIds ?? [row.mainBasketId]);
+  const sub = basketIds(500).safeParse(row.subBasketIds ?? [row.subBasketId]);
+  if (!main.success || !sub.success) return null;
+  return { mainBasketIds: [...new Set([...main.data, row.mainBasketId])].sort(),
+    subBasketIds: [...new Set([...sub.data, row.subBasketId])].sort(),
+    mainBasketId: row.mainBasketId, subBasketId: row.subBasketId };
+}
+
+export async function prepareProcurementVendorClassification(
+  profile: Partial<ProcurementVendorClassification>,
+  current: ProcurementVendorClassification | null,
+  session: ClientSession
+): Promise<ProcurementVendorClassification> {
   const arrayInput = profile.mainBasketIds !== undefined && profile.subBasketIds !== undefined;
   const unchangedLegacyPair = !arrayInput && current && current.mainBasketId === profile.mainBasketId && current.subBasketId === profile.subBasketId;
   const mainBasketIds = arrayInput ? profile.mainBasketIds! : unchangedLegacyPair ? current.mainBasketIds : [profile.mainBasketId!];
@@ -116,7 +143,7 @@ export async function prepareProcurementVendorProfile(input: unknown, previous: 
   const parents = new Map<string, { status: string }>();
   // Every selected existing parent takes the same dependency write used by basket deletion.
   // Stable order prevents multi-parent saves from forming a write-lock cycle.
-  for (const basketId of mainBasketIds) {
+  for (const basketId of [...mainBasketIds].sort()) {
     const parent = await AiEstimatorKnowledgeBasketModel.findOneAndUpdate(
       { _id: basketId, ...(!previousMain.has(basketId) ? { status: "active" } : {}) },
       { $inc: { dependencyEpoch: 1 } }, { session, returnDocument: "after", timestamps: false }
@@ -154,9 +181,20 @@ export async function prepareProcurementVendorProfile(input: unknown, previous: 
   if (!primarySubBasketId || !primaryMainBasketId || !selectedMain.has(primaryMainBasketId)) {
     throw new ApiError(409, "SUB_BASKET_PARENT_MISMATCH", "Choose a Sub Basket with a selected Main Basket.", { "procurementProfile.subBasketIds": "Choose a Sub Basket in a selected Main Basket." });
   }
+  return { mainBasketIds, subBasketIds, mainBasketId: primaryMainBasketId, subBasketId: primarySubBasketId };
+}
+
+export async function prepareProcurementVendorProfile(input: unknown, previous: unknown, actorId: string, now: Date, confirmPhysicalAddressVerification: boolean | undefined, session: ClientSession): Promise<ProcurementVendorStoredProfile> {
+  const current = storedProcurementVendorProfile(previous);
+  const previousFields = previous && typeof previous === "object" ? previous as Record<string, unknown> : {};
+  const submittedFields = input && typeof input === "object" ? input as Record<string, unknown> : null;
+  const profile = validateProcurementVendorProfile(submittedFields ? { ...submittedFields,
+    ...Object.fromEntries(["reference", "organizationType", "bankAccount"].map(key => [key,
+      submittedFields[key] === undefined ? previousFields[key] ?? null : submittedFields[key]])) } : input);
+  const classification = await prepareProcurementVendorClassification(profile, current, session);
   if (current && current.currentAddress !== profile.currentAddress && confirmPhysicalAddressVerification !== true) profile.currentAddressVerifiedPhysically = false;
   const newlyVerified = profile.currentAddressVerifiedPhysically && (!current?.currentAddressVerifiedPhysically || current.currentAddress !== profile.currentAddress);
-  return { ...profile, mainBasketIds, subBasketIds, mainBasketId: primaryMainBasketId, subBasketId: primarySubBasketId,
+  return { ...profile, ...classification,
     physicalAddressVerifiedAt: profile.currentAddressVerifiedPhysically ? newlyVerified ? now.toISOString() : current?.physicalAddressVerifiedAt ?? now.toISOString() : null,
     physicalAddressVerifiedById: profile.currentAddressVerifiedPhysically ? newlyVerified ? actorId : current?.physicalAddressVerifiedById ?? actorId : null };
 }
@@ -166,7 +204,9 @@ export async function procurementVendorSummaries(rows: readonly Record<string, u
   const basketQuery = AiEstimatorKnowledgeBasketModel.find({ _id: { $in: profiles.flatMap(profile => profile?.mainBasketIds ?? []) } }).select({ _id: 1, name: 1, status: 1 });
   const childQuery = AiEstimatorKnowledgeSubBasketModel.find({ _id: { $in: profiles.flatMap(profile => profile?.subBasketIds ?? []) } }).select({ _id: 1, basketId: 1, name: 1 });
   if (session) { basketQuery.session(session); childQuery.session(session); }
-  const [baskets, children] = await Promise.all([basketQuery.lean().exec(), childQuery.lean().exec()]);
+  const [baskets, children] = session
+    ? [await basketQuery.lean().exec(), await childQuery.lean().exec()]
+    : await Promise.all([basketQuery.lean().exec(), childQuery.lean().exec()]);
   const byBasket = new Map(baskets.map(row => [String(row._id), row]));
   const byChild = new Map(children.map(row => [String(row._id), row]));
   return new Map(rows.map((row, index) => {

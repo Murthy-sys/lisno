@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import axe from "axe-core";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError } from "../../api/client";
@@ -170,6 +170,25 @@ beforeEach(() => {
 });
 
 describe("Super Admin permanent Main Basket deletion", () => {
+  it("opens the exact blocking vendor from Main Basket deletion with the correct return target", async () => {
+    const duplicates = ["one", "two"].map((id) => ({ ...emptyBasket, id: `vendor-${id}`, masterType: "vendors" as const, code: `VEN-${id}`, name: "Same vendor name" }));
+    vi.mocked(knowledgeApi.getKnowledgeBasketDeletionImpact).mockResolvedValue({ ...eligibleImpact, vendorReferenceCount: 2 });
+    vi.mocked(knowledgeApi.listKnowledgeMasters).mockImplementation(async (_type, params) => ({
+      items: params?.mainBasketId === emptyBasket.id ? duplicates : [],
+      pagination: { limit: 20, offset: 0, total: params?.mainBasketId === emptyBasket.id ? 2 : 0, hasMore: false }
+    }));
+    function Location() { const location = useLocation(); return <output data-testid="blocker-destination">{JSON.stringify({ path: location.pathname, state: location.state })}</output>; }
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(<QueryClientProvider client={queryClient}><MemoryRouter initialEntries={["/admin/configuration/estimation"]}><KnowledgeBaseIndexPage /><Location /></MemoryRouter></QueryClientProvider>);
+    const user = userEvent.setup(); const dialog = await openPermanentDelete(user);
+    await user.click(await within(dialog).findByRole("button", { name: "Open vendor details for Same vendor name (VEN-two)" }));
+    expect(JSON.parse(screen.getByTestId("blocker-destination").textContent!)).toEqual({
+      path: "/admin/procurement/vendors/vendor-two",
+      state: { basketDeletionReturn: { path: "/admin/configuration/estimation", basketId: emptyBasket.id } }
+    });
+    expect(knowledgeApi.permanentlyDeleteKnowledgeBasket).not.toHaveBeenCalled();
+  });
+
   it("lazily lists empty and archived baskets with one delete action each", async () => {
     const user = userEvent.setup();
     renderPage();

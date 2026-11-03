@@ -121,6 +121,7 @@ export interface KnowledgeModePanelProps {
     Partial<Record<KnowledgeMasterType, readonly KnowledgeMaster[]>>
   >;
   readonly relationshipBaskets: readonly KnowledgeBasket[];
+  readonly basketCatalogState?: KnowledgeBudgetCatalogState;
   readonly relationshipItems: readonly KnowledgeItemListItem[];
   readonly editable: boolean;
   readonly locked?: boolean;
@@ -147,6 +148,7 @@ export const KnowledgeModePanel = forwardRef<
     masters,
     proposedUoms = [],
     relationshipBaskets,
+    basketCatalogState,
     relationshipItems,
     editable,
     locked = false,
@@ -695,7 +697,7 @@ export const KnowledgeModePanel = forwardRef<
           inHouseComponentsValid={componentsValid}
           inHouseComponents={<KnowledgeInHouseComponents key={`${sourceKey}:${descriptionResetVersion}`} payload={drafts.advanced.payload} item={item}
             emptyCalculationDefaults={emptyCalculationDefaults}
-            baskets={relationshipBaskets} dataSource={dataSource} uom={calculationUom} readOnly={!editable || saving || locked}
+            baskets={relationshipBaskets} basketCatalogState={basketCatalogState} dataSource={dataSource} uom={calculationUom} readOnly={!editable || saving || locked}
             onRequestDraft={saving || locked ? undefined : onRequestDraft}
             validationAttempt={drafts.advanced.validationAttempt} pendingSaveVersion={pendingCalculationSaveVersion} issues={drafts.advanced.serverIssues}
             onValidationChange={setComponentsValid} onPendingChange={setComponentPending}

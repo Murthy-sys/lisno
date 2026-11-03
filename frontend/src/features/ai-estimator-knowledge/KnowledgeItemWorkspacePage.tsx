@@ -73,6 +73,7 @@ import { KnowledgeSectionEditor } from "./KnowledgeSectionEditor";
 import { KnowledgeSectionNavigation } from "./KnowledgeSectionNavigation";
 import { KnowledgeTemporaryMainLineInfo } from "./KnowledgeTemporaryMainLineInfo";
 import { KnowledgeSafetyNotice } from "./KnowledgeSafetyNotice";
+import { KnowledgeBasketDeletionReturn } from "./KnowledgeBasketDeletionReturn";
 import { KnowledgeUnsavedChangesDialog } from "./KnowledgeUnsavedChangesDialog";
 import { KnowledgeVersionConflictDialog } from "./KnowledgeVersionConflictDialog";
 import {
@@ -313,6 +314,18 @@ export function KnowledgeItemWorkspacePage() {
   };
   const uomCatalogState = masterCatalogStates.uoms;
   const vendorCatalogState = masterCatalogStates.vendors;
+  const basketsHaveData = Boolean(relationshipBasketsQuery.data);
+  const basketCatalogError = relationshipBasketsQuery.isError
+    ? relationshipBasketsQuery.error instanceof Error ? relationshipBasketsQuery.error.message || "Main Baskets could not be loaded." : "Main Baskets could not be loaded."
+    : undefined;
+  const basketCatalogState = {
+    status: relationshipBasketsQuery.isError && !basketsHaveData ? "error" as const
+      : relationshipBasketsQuery.isPending && !basketsHaveData ? "loading" as const : "ready" as const,
+    refreshing: basketsHaveData && relationshipBasketsQuery.isFetching,
+    errorMessage: basketsHaveData ? undefined : basketCatalogError,
+    refreshErrorMessage: basketsHaveData ? basketCatalogError : undefined,
+    onRetry: () => { void relationshipBasketsQuery.refetch(); }
+  };
   const editable = Boolean(item && revision?.status === "draft" && item.status !== "archived" && canUpdate && item.allowedActions.includes("update_section"));
   const overviewDraftPayload = activeSection === "overview" && sectionQuery.data
     ? dirty ? payload : sectionQuery.data.payload
@@ -644,6 +657,7 @@ export function KnowledgeItemWorkspacePage() {
                 pendingChangesSourceKey={pendingSession.sourceKey}
                 masters={masters}
                 relationshipBaskets={relationshipBasketsQuery.data?.items ?? []}
+                basketCatalogState={basketCatalogState}
                 relationshipItems={relationshipItemsQuery.data?.items ?? []}
                 editable={editable}
                 onRequestDraft={canCreate && canUpdate && revision.status === "active" && item.status !== "archived"
@@ -724,6 +738,7 @@ export function KnowledgeItemWorkspacePage() {
           : <KnowledgeWorkspaceRail section={activeSection}>{savedDetails}</KnowledgeWorkspaceRail>}
       </div>
 
+      <KnowledgeBasketDeletionReturn fallbackFocusRef={workspaceRef} />
       {guard.dialogOpen ? <KnowledgeUnsavedChangesDialog onSave={() => void guard.saveAndContinue()} onDiscard={designUnknownOutcome && isMetadataSection ? guard.stayHere : guard.discardAndContinue} onStay={guard.stayHere} busy={guard.busy || (isMetadataSection && activeSaving)} error={guard.error} blockingReason={designUnknownOutcome && isMetadataSection ? "A Design save is unconfirmed. Stay here and load the current saved values before leaving." : undefined} /> : null}
       {conflict ? <KnowledgeVersionConflictDialog sectionLabel={backendSection ? KNOWLEDGE_SECTION_LABELS[backendSection] : undefined} localVersion={conflict.localVersion} serverVersion={conflict.server.version} onKeepEditing={() => setConflict(null)} onReviewServerVersion={() => { setServerReview(conflict); setConflict(null); }} onDiscardLocalChanges={() => { setPayload(conflict.server.payload); setDirty(false); setOverviewDirtyFields(new Set()); setConflict(null); setServerReview(null); }} /> : null}
       {quickAdd ? quickAdd.type === "surfaces" ? (
