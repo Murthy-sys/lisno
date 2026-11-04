@@ -3,14 +3,16 @@ import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { http, HttpResponse } from "msw";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithQuery } from "../../test/render";
 import { server } from "../../test/server";
 import { LeadEstimateWorkspace } from "./LeadEstimateWorkspace";
 import { leadKeys, type ConfiguredEstimateLine, type EstimateDraft, type EstimateDraftInput } from "./leadsApi";
 import type { EstimationCatalogue } from "./estimationCatalogueApi";
 import type { EstimateRequirementsDetail } from "../client/estimateRequirementsApi";
-vi.mock("../../auth/AuthProvider", () => ({ useAuth: () => ({ user: { id: "test-estimator" }, reviewSession: { id: "test-session" }, status: "authenticated" }) }));
+const authState = vi.hoisted(() => ({ user: { id: "test-staff", role: "designer" }, authorization: { permissions: ["estimation.estimate.save", "estimation.estimate.submit", "estimation.estimate.send_client"] }, reviewSession: { id: "test-session" }, status: "authenticated" }));
+vi.mock("../../auth/AuthProvider", () => ({ useAuth: () => authState }));
+beforeEach(() => { authState.user.role = "designer"; });
 vi.mock("./estimateRevisionsApi", async importOriginal => ({
   ...await importOriginal<typeof import("./estimateRevisionsApi")>(),
   getEstimateRevisions: vi.fn(async () => ({ items: [], pagination: { limit: 20, nextCursor: null } }))
@@ -88,6 +90,55 @@ function configuredFixture() {
 }
 
 describe("Collaborative estimate workspace", () => {
+  it("recovers an invalid quantity after excluding a saved item without including it again", async () => {
+    const { draft, catalogue } = configuredFixture();
+    const { saves } = setup(draft, structuredClone(requirements), catalogue);
+    const user = userEvent.setup();
+    await screen.findByRole("spinbutton", { name: /Quantity.*Visible finish.*Living Room/i });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save draft" })).toBeEnabled());
+    await user.clear(screen.getByRole("spinbutton", { name: /Quantity.*Visible finish.*Living Room/i }));
+    await user.click(screen.getByRole("checkbox", { name: /Visible finish/ }));
+    const recovery = await screen.findByRole("region", { name: "Excluded items needing review" });
+    expect(within(recovery).getByRole("checkbox", { name: /Visible finish/ })).not.toBeChecked();
+    expect(screen.getByRole("button", { name: "Save draft" })).toBeDisabled();
+    const excludedQuantity = within(recovery).getByRole("spinbutton", { name: /Quantity.*Visible finish.*Living Room/i });
+    await user.type(excludedQuantity, "23");
+    expect(excludedQuantity).toHaveValue(23);
+    expect(screen.getByRole("button", { name: "Save draft" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Save draft" }));
+    await screen.findByText("Estimate draft saved.");
+    expect((saves[0] as EstimateDraftInput).lineItems).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "visible-living", quantity: 23, included: false }),
+      expect.objectContaining({ id: "visible-bedroom", quantity: 3, included: true })
+    ]));
+    expect(screen.queryByRole("region", { name: "Excluded items needing review" })).not.toBeInTheDocument();
+  });
+
+  it("exposes an excluded saved item's changed unit for explicit quantity review before saving", async () => {
+    const { draft, catalogue } = configuredFixture();
+    draft.lineItems = draft.lineItems.map(line => line.id === "internal-living" ? { ...line, included: false } : line);
+    const item = catalogue.items[0]!.subBaskets[0]!.mainLines.find(line => line.mainLineId === "internal")!;
+    item.uom = { id: "new-unit", code: "SQFT", name: "sq ft", decimalScale: 2 };
+    const { saves } = setup(draft, structuredClone(requirements), catalogue);
+    const user = userEvent.setup();
+    const recovery = await screen.findByRole("region", { name: "Excluded items needing review" });
+    expect(within(recovery).getByText(/Unit changed from units to sq ft/)).toBeVisible();
+    expect(within(recovery).getByRole("checkbox", { name: /Internal finish/ })).not.toBeChecked();
+    expect(screen.getByRole("button", { name: "Save draft" })).toBeDisabled();
+    const quantity = within(recovery).getByRole("spinbutton", { name: /Quantity.*Internal finish.*Living Room/i });
+    await user.clear(quantity); await user.type(quantity, "3.5");
+    expect(quantity).toHaveValue(3.5);
+    expect(screen.getByRole("button", { name: "Save draft" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Finish reviewing excluded items" }));
+    expect(screen.queryByRole("region", { name: "Excluded items needing review" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add items" })).toHaveFocus();
+    await user.click(screen.getByRole("button", { name: "Save draft" }));
+    await screen.findByText("Estimate draft saved.");
+    expect((saves[0] as EstimateDraftInput).lineItems).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "internal-living", uomId: "new-unit", quantity: 3.5, included: false })
+    ]));
+  });
+
   it.each([403, 503])("preserves dirty exit protection and input after lead refresh failure %s", async status => {
     const { draft, catalogue } = configuredFixture();
     const data = setup(draft, structuredClone(requirements), catalogue);
@@ -148,9 +199,9 @@ describe("Collaborative estimate workspace", () => {
     const dialog = await screen.findByRole("alertdialog", { name: "Remove Finishes in Living Room?" });
     expect(dialog).toHaveTextContent("All selected items in this Sub Basket will be removed from this room");
     await user.click(within(dialog).getByRole("button", { name: "Remove from estimate" }));
-    expect(screen.getByRole("checkbox", { name: /Visible finish/ })).not.toBeChecked();
+    expect(screen.queryByRole("checkbox", { name: /Visible finish/ })).not.toBeInTheDocument();
     await user.clear(screen.getByRole("searchbox", { name: "Search estimate items" }));
-    expect(screen.getByRole("checkbox", { name: /Internal finish/ })).not.toBeChecked();
+    expect(screen.queryByRole("checkbox", { name: /Internal finish/ })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Save and edit baskets" }));
     await screen.findByRole("heading", { name: "Configure estimate" });
     await user.click(screen.getByRole("button", { name: "Save draft" }));
@@ -165,9 +216,10 @@ describe("Collaborative estimate workspace", () => {
     const stored = structuredClone(data.state.estimate);
     data.unmount();
     setup(stored, structuredClone(requirements), catalogue);
-    await screen.findByRole("checkbox", { name: /Visible finish/ });
-    expect(screen.getByRole("checkbox", { name: /Visible finish/ })).not.toBeChecked();
-    expect(screen.getByRole("checkbox", { name: /Internal finish/ })).not.toBeChecked();
+    await screen.findByRole("button", { name: "Add items" });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save draft" })).toBeEnabled());
+    expect(screen.queryByRole("checkbox", { name: /Visible finish/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: /Internal finish/ })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /Bedroom.*sqft/i }));
     expect(screen.getByRole("checkbox", { name: /Visible finish/ })).toBeChecked();
     expect(screen.getByRole("spinbutton", { name: /Quantity.*Visible finish.*Bedroom/i })).toHaveValue(3);
@@ -237,16 +289,19 @@ describe("Collaborative estimate workspace", () => {
     draft.lineItems = draft.lineItems.filter(line => line.id !== "internal-living");
     const { state, getClient, saves } = setup(draft, structuredClone(requirements), catalogue);
     const quantity = () => screen.getByRole("spinbutton", { name: /quantity.*internal finish.*living room/i });
-    await screen.findByRole("spinbutton", { name: /quantity.*internal finish.*living room/i });
+    await userEvent.click(await screen.findByRole("button", { name: "Add items" }));
+    await userEvent.click(screen.getByRole("button", { name: "Add Internal finish" }));
+    await userEvent.click(screen.getByRole("button", { name: "Close item picker" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "Save draft" })).toBeEnabled());
     await userEvent.clear(quantity()); await userEvent.type(quantity(), "7");
+    await userEvent.click(screen.getByRole("checkbox", { name: /Internal finish/ }));
     await userEvent.click(screen.getByRole("button", { name: "Save draft" }));
     await screen.findByText("Estimate draft saved.");
     expect((saves[0] as EstimateDraftInput).lineItems.some(line => line.source === "configuration" && line.mainLineId === "internal")).toBe(false);
     state.estimate = { ...state.estimate, version: 9 };
     await act(async () => { await getClient().refetchQueries({ queryKey: leadKeys.estimate("lead-one") }); });
     expect(await screen.findByText(/Your local edits are preserved/)).toBeVisible();
-    expect(quantity()).toHaveValue(7);
+    expect(screen.queryByRole("checkbox", { name: /Internal finish/ })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Save draft" })).toBeDisabled();
   });
 
@@ -334,19 +389,33 @@ describe("Collaborative estimate workspace", () => {
   });
 
   it("allows the server-authorized primary Designer to send a v3 post quotation before drawing approval", async () => {
-    const { saves, submits } = setup({ ...estimate, capabilities: { canUnlockQuotation: false, canPublishQuotation: true }, designPlanStatus: "assigned", estimation: { ...estimate.estimation!, workflowVersion: 3, pricedRevision: 2, approvedDesignScopeRevision: null } });
-    await waitFor(() => expect(screen.getByRole("button", { name: "Send designer-revised quotation" })).toBeEnabled());
+    const { saves, submits } = setup({ ...estimate, quotationApprovalState: "revision_draft", currentQuotationApproved: false,
+      requiresClientReapproval: true, quotationApprovalSource: null, currentQuotationApproval: null,
+      capabilities: { canUnlockQuotation: false, canPublishQuotation: true }, designPlanStatus: "assigned", estimation: { ...estimate.estimation!, workflowVersion: 3, pricedRevision: 2, approvedDesignScopeRevision: null } });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Send revised quotation to Client" })).toBeEnabled());
     expect(screen.queryByText(/Final submission is waiting/)).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Send designer-revised quotation" }));
+    await userEvent.click(screen.getByRole("button", { name: "Send revised quotation to Client" }));
     await waitFor(() => expect(submits).toEqual([{ expectedVersion: 8 }]));
     expect(saves).toHaveLength(1);
+  });
+
+  it("does not offer a second Client submission while the unchanged initial approval is current", async () => {
+    const current = { kind: "initial_unchanged" as const, reviewRoundId: "pre-round", estimateVersion: 7, approvedAt: "2026-11-04T08:00:00Z" };
+    const { submits } = setup({ ...estimate, quotationApprovalState: "initial_current", currentQuotationApproved: true,
+      requiresClientReapproval: false, quotationApprovalSource: "initial_unchanged", currentQuotationApproval: current,
+      capabilities: { canUnlockQuotation: false, canPublishQuotation: true }, designPlanStatus: "assigned",
+      estimation: { ...estimate.estimation!, workflowVersion: 3, pricedRevision: 2, approvedDesignScopeRevision: null } });
+    expect(await screen.findByText("Initial estimate approved. No quotation changes require Client review.")).toBeVisible();
+    expect(screen.queryByRole("button", { name: /Send revised quotation|Send designer-revised quotation/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save draft" })).toBeEnabled();
+    expect(submits).toEqual([]);
   });
 
   it("keeps Sales post-quotation Save and read available without a save-first publication action", async () => {
     const { saves, submits } = setup({ ...estimate, capabilities: { canUnlockQuotation: false, canPublishQuotation: false }, estimation: { ...estimate.estimation!, workflowVersion: 3, pricedRevision: 2 } });
     const quantity = await screen.findByRole("spinbutton", { name: /false ceiling.*quantity/i });
     expect(quantity).toBeEnabled();
-    expect(screen.queryByRole("button", { name: "Send designer-revised quotation" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Send revised quotation to Client" })).not.toBeInTheDocument();
     expect(saves).toEqual([]); expect(submits).toEqual([]);
     await userEvent.click(screen.getByRole("button", { name: "Save draft" }));
     await waitFor(() => expect(saves).toHaveLength(1));
@@ -360,8 +429,12 @@ describe("Collaborative estimate workspace", () => {
   });
 
   it("requires an explicit Sales approve-and-send action for the first v3 quotation", async () => {
+    authState.user.role = "estimator_sales";
     const { submits } = setup({ ...estimate, capabilities: { canUnlockQuotation: false, canPublishQuotation: true }, designPlanStatus: "pending_assignment", estimation: { ...estimate.estimation!, workflowVersion: 3, phase: "pre", pricedRevision: 1, preApproval: null, approvedDesignScopeRevision: null } });
     await userEvent.click(await screen.findByRole("button", { name: "Approve and send to client" }));
+    const checklist = await screen.findByRole("dialog", { name: "Before submitting your estimate" });
+    for (const checkbox of within(checklist).getAllByRole("checkbox")) await userEvent.click(checkbox);
+    await userEvent.click(within(checklist).getByRole("button", { name: "Confirm and submit" }));
     await waitFor(() => expect(submits).toEqual([{ expectedVersion: 8, approveSales: true }]));
   });
 

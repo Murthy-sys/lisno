@@ -3,6 +3,8 @@ import { useEffect, useState } from "react";
 
 import { isActiveFrontendRole, ROLE_LABELS, type Role } from "../../api/authorization-contract";
 import { ApiError } from "../../api/client";
+import { useAuth } from "../../auth/AuthProvider";
+import { hasFrontendPermission } from "../../auth/authorization";
 import type {
   ManagedUserMutationResult,
   UpdateManagedUserInput,
@@ -16,6 +18,7 @@ import { Dialog } from "../../components/ui/Dialog";
 import { Field, Select } from "../../components/ui/Field";
 import { adminUserKeys, updateManagedUser } from "./adminApi";
 import { dashboardKeys } from "./dashboard/superAdminDashboardApi";
+import { UserResponsibilitiesPanel } from "./UserResponsibilitiesPanel";
 
 export interface UserMutationDialogProps {
   user: UserDirectoryItem;
@@ -101,6 +104,7 @@ export function UserMutationDialog({
 }: UserMutationDialogProps) {
   const manageableRoles = serverRoles.filter(isActiveFrontendRole);
   const queryClient = useQueryClient();
+  const auth = useAuth();
   const feedback = useFeedback();
   const [selectedRole, setSelectedRole] = useState<Role>(user.role);
   const [confirmingDeactivation, setConfirmingDeactivation] = useState(false);
@@ -141,10 +145,12 @@ export function UserMutationDialog({
           await queryClient.invalidateQueries({ queryKey: adminUserKeys.all });
           return;
         }
-        if (
-          failure.code === "RESPONSIBILITY_REASSIGNMENT_REQUIRED" ||
-          failure.code === "SOLE_SUPER_ADMIN_IMMUTABLE"
-        ) {
+        if (failure.code === "RESPONSIBILITY_REASSIGNMENT_REQUIRED") {
+          setError(failure.message);
+          await queryClient.invalidateQueries({ queryKey: adminUserKeys.responsibilities(user.id) });
+          return;
+        }
+        if (failure.code === "SOLE_SUPER_ADMIN_IMMUTABLE") {
           setError(failure.message);
           return;
         }
@@ -292,9 +298,9 @@ export function UserMutationDialog({
             </Select>
           )}
         </Field>
-
-
-
+        <UserResponsibilitiesPanel user={user} destinationRole={selectedRole}
+          enabled={isCurrentPageUser}
+          canReadProjects={hasFrontendPermission(auth.authorization, "projects.read")} />
         <section
           className="admin-user-dialog__account"
           aria-labelledby={`account-status-${user.id}`}

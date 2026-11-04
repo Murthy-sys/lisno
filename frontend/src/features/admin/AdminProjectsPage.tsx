@@ -23,6 +23,9 @@ import { PageState } from "../../components/ui/PageState";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { Surface } from "../../components/ui/Surface";
 import {
+  adminEstimateStages,
+  canAssignProjectDesigner,
+  hasInitialEstimateApproval,
   adminProjectNextAction,
   adminProjectStatusLabel,
   adminProjectStatusTone,
@@ -73,9 +76,9 @@ function writeStoredView(view: AdminProjectsView) {
  */
 function adminProjectEstimateDisplay(project: AdminProjectSummary) {
   const estimate = project.estimate;
-  const estimateApproved = estimate?.status === "client_approved";
+  const estimateApproved = hasInitialEstimateApproval(project);
   const estimateValue = estimateApproved
-    ? estimate.approvedBaseline?.total ?? null
+    ? estimate?.approvedBaseline?.total ?? null
     : estimate?.total ?? null;
 
   return {
@@ -159,6 +162,7 @@ function AdminProjectCard({
             <div>
               <dt className={estimateDisplay.approved ? "admin-project-card__estimate-label" : "sr-only"}>{estimateDisplay.label}</dt>
               <dd>{estimateDisplay.text}</dd>
+              {adminEstimateStages(project).map(stage => <dd className="admin-project-estimate-stage" key={stage.label}>{stage.label}: {stage.value}</dd>)}
             </div>
           </dl>
           <span className="admin-project-card__view"><Eye aria-hidden="true" /> View project</span>
@@ -167,7 +171,7 @@ function AdminProjectCard({
           <Button size="compact" variant="quiet" disabled={quickViewDisabled} onClick={onQuickView} aria-label={`Quick view ${project.name}`}>
             Quick view
           </Button>
-          {assignmentPending && canAssignDesigner ? (
+          {assignmentPending && canAssignDesigner && canAssignProjectDesigner(project) ? (
             <Link
               className="button button--primary"
               to={`${detailPath}#design-assignment-title`}
@@ -191,7 +195,7 @@ function AdminProjectGridCard({
   const assignmentPending = isDesignerAssignmentPending(project);
   const detailPath = `/admin/projects/${encodeURIComponent(project.id)}`;
   const estimateDisplay = adminProjectEstimateDisplay(project);
-  const showAssignDesigner = assignmentPending && canAssignDesigner;
+  const showAssignDesigner = assignmentPending && canAssignDesigner && canAssignProjectDesigner(project);
 
   return (
     <li className="admin-project-grid__item">
@@ -239,6 +243,7 @@ function AdminProjectGridCard({
                 <dd>{estimateDisplay.text}</dd>
               </div>
             </dl>
+            {adminEstimateStages(project).length > 0 ? <dl className="admin-project-estimate-stages">{adminEstimateStages(project).map(stage => <div key={stage.label}><dt>{stage.label}</dt><dd>{stage.value}</dd></div>)}</dl> : null}
           </Link>
           {showAssignDesigner ? (
             <div className="admin-project-tile__actions">

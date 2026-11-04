@@ -17,6 +17,7 @@ import { estimateBuilderSections } from "../leads/estimateBuilderCatalogue";
 import { estimateDesignKeys } from "../leads/estimateDesignApi";
 import { projectWorkflowKeys } from "../workflow/projectWorkflowApi";
 import { decideEstimateAsClient, downloadClientEstimatePdf, estimateWorkflowKeys, type EstimateQueueItem } from "./estimateWorkflowApi";
+import { quotationApprovalNeedsClient } from "./quotationApproval";
 
 export const clientEstimateMoney = (value: number) => `₹${value.toLocaleString("en-IN")}`;
 
@@ -30,18 +31,20 @@ export function ClientPublishedEstimate({ estimate, decisionBlocked = false }: {
     <p>The submitted version could not be verified. Please ask your Sales team to submit the estimate again.</p>
   </div>;
 
+  const revisionDecisionCurrent = !quotationWorkflow || review.phase !== "post" ||
+    estimate.quotationApprovalState === "revision_pending_client" && quotationApprovalNeedsClient(estimate);
   return <section className="client-commercial-review" aria-label="Submitted estimate" ref={reviewSectionRef} tabIndex={-1}>
     <div className="client-commercial-review__metadata">
       {review.phase ? <strong>{quotationWorkflow ? review.phase === "post" ? "Post-design approval: Designer-revised quotation" : "Pre-design approval" : review.phase === "post" ? "Final post-estimate" : "Pre-estimate"}</strong> : null}
       <span>Version {review.estimateVersion} · Submission {review.sendGeneration}</span>
       <span>Submitted {formatDate(review.submittedAt)}</span>
-      <span className="client-commercial-status">{review.status === "approved" ? "Approved" : review.status === "changes_requested" ? "Changes requested" : review.status === "superseded" ? "Review withdrawn" : "Awaiting your review"}</span>
+      <span className="client-commercial-status">{review.status === "pending" && !revisionDecisionCurrent ? "Review status unavailable" : review.status === "approved" ? "Approved" : review.status === "changes_requested" ? "Changes requested" : review.status === "superseded" ? "Review withdrawn" : "Awaiting your review"}</span>
     </div>
     <p>{review.snapshot.clientName} · {review.snapshot.location}</p>
     <p className="client-commercial-review__hint">{displayedItemCount ? `${displayedItemCount} ${displayedItemCount === 1 ? "item" : "items"} shown · ` : ""}GST included</p>
     {review.phase === "post" ? <PreEstimateComparison estimate={estimate} /> : null}
     <PublishedEstimateDetails snapshot={review.snapshot} />
-    <ClientEstimateDecision key={`${review.id}:${review.version}`} estimate={estimate} review={review} decisionBlocked={decisionBlocked || (review.phase === "post" && (!estimate.preApprovedReview || !estimate.changesFromPre))} fallbackRef={reviewSectionRef} />
+    <ClientEstimateDecision key={`${review.id}:${review.version}`} estimate={estimate} review={review} decisionBlocked={decisionBlocked || !revisionDecisionCurrent || (review.phase === "post" && (!estimate.preApprovedReview || !estimate.changesFromPre))} fallbackRef={reviewSectionRef} />
   </section>;
 }
 
@@ -176,10 +179,10 @@ export function ClientEstimateDecision({ estimate, review, decisionBlocked, fall
     setDialog(decision);
   };
   return <div className="client-commercial-decision">
-    {review.status === "approved" || completed === "approve" ? <div className="client-commercial-state" role="status"><strong>{quotationWorkflow ? review.phase === "post" ? "Post-design quotation approved" : "Pre-design approval recorded" : review.phase === "post" ? "Final post-estimate approved" : review.phase === "pre" ? "Pre-estimate approved" : "Estimate approved"}</strong><p>{quotationWorkflow ? review.phase === "post" ? "Estimation is complete and the quotation is locked. Your Designer can now begin design tasks." : "Your approval is recorded. The primary Designer will review the quotation before design tasks begin." : review.phase === "post" ? "Your final approval is recorded and estimate changes are closed. Your team will confirm the initial payment before issuing work orders." : review.phase === "pre" ? "Your pre-estimate approval is recorded. Design and procurement preparation can continue while your team prepares the final estimate." : "Your approved estimate is recorded. Follow the project workflow below, or review the design plan when it is submitted."}</p></div> : null}
+    {review.status === "approved" || completed === "approve" ? <div className="client-commercial-state" role="status"><strong>{quotationWorkflow ? review.phase === "post" ? "Post-design quotation approved" : "Pre-design approval recorded" : review.phase === "post" ? "Final post-estimate approved" : review.phase === "pre" ? "Pre-estimate approved" : "Estimate approved"}</strong><p>{quotationWorkflow ? review.phase === "post" ? "Your revised quotation approval is recorded. Design work can continue." : "Your approval remains current while the quotation is unchanged. Design work can begin; if the Designer revises the quotation, you will review that revision before work continues." : review.phase === "post" ? "Your final approval is recorded and estimate changes are closed. Your team will confirm the initial payment before issuing work orders." : review.phase === "pre" ? "Your pre-estimate approval is recorded. Design and procurement preparation can continue while your team prepares the final estimate." : "Your approved estimate is recorded. Follow the project workflow below, or review the design plan when it is submitted."}</p></div> : null}
     {review.status === "changes_requested" || completed === "request_changes" ? <div className="client-commercial-state" role="status"><strong>Sales is revising your estimate</strong><p>Your last submitted estimate remains available here. You can review the revised estimate when Sales submits it again.</p>{review.decisionNote ? <blockquote><span>Your requested changes</span><p>{review.decisionNote}</p></blockquote> : null}</div> : null}
     {review.status === "superseded" ? <div className="client-commercial-state" role="status"><strong>{quotationWorkflow ? "This quotation has been superseded" : "This submitted review was withdrawn"}</strong><p>{quotationWorkflow ? "A newer quotation is being prepared. You can approve it after your team submits it." : "Your team is revising the estimate. This submission remains available as history; review the next submission when it is ready."}</p></div> : null}
-    {review.status === "pending" && !available && !completed && !decisionBlocked ? <p role="status">This estimate is not currently available for a decision. Sales will share the next version when it is ready.</p> : null}
+    {review.status === "pending" && !available && !completed ? <p role="status">{decisionBlocked ? "The current quotation approval could not be verified. Refresh before deciding." : "This estimate is not currently available for a decision. Sales will share the next version when it is ready."}</p> : null}
     {action.isError ? <div className="client-commercial-state" role="alert"><strong>{action.error instanceof ApiError && action.error.status === 409 ? "This estimate has changed" : "Your decision could not be saved"}</strong><p>{action.error instanceof ApiError ? action.error.message : "Refresh the submitted estimate and try again."}</p></div> : null}
     {needsRefresh ? <Button variant="secondary" busy={refreshing} onClick={() => void refresh()}>Refresh estimate</Button> : available ? <div className="client-commercial-decision__actions"><div><strong>Ready to proceed?</strong><p>Approve this {phaseName} or tell your team what needs to change.</p></div><Button variant="secondary" disabled={action.isPending} onClick={(event) => openDialog("request_changes", event.currentTarget)}>Request changes</Button><Button disabled={action.isPending} onClick={(event) => openDialog("approve", event.currentTarget)}>Approve {phaseName}</Button></div> : null}
     {dialog && available && !needsRefresh ? <Dialog title={dialog === "approve" ? `Approve this ${phaseName}?` : "Request estimate changes"} eyebrow="Estimate review" onClose={() => setDialog(null)} busy={action.isPending} showCloseButton={false} initialFocusRef={dialog === "request_changes" ? noteRef : cancelRef} returnFocusRef={triggerRef} fallbackFocusRef={fallbackRef}>
@@ -191,7 +194,7 @@ export function ClientEstimateDecision({ estimate, review, decisionBlocked, fall
       }}>
         <div className="ui-dialog__body">
           <div className="client-estimate-decision-form__summary"><strong>{review.snapshot.projectName}</strong><span>Version {review.estimateVersion} · Submission {review.sendGeneration}</span><span>Total including GST</span><strong>{clientEstimateMoney(review.snapshot.totalPaise === undefined ? review.snapshot.total : review.snapshot.totalPaise / 100)}</strong></div>
-          {dialog === "approve" && review.phase === "post" ? <p>{quotationWorkflow ? "Approval locks this quotation and starts design tasks. You will review the uploaded design separately before procurement." : "Final approval closes estimate changes. Work orders remain subject to initial payment confirmation and the required procurement checks."}</p> : null}
+          {dialog === "approve" && review.phase === "post" ? <p>{quotationWorkflow ? "Approval makes this revised quotation current so design work can continue. You will review the uploaded design separately before procurement." : "Final approval closes estimate changes. Work orders remain subject to initial payment confirmation and the required procurement checks."}</p> : null}
           {dialog === "approve" ? <p>Confirm that you have reviewed the submitted scope and total. Your approval will be recorded for this version.</p> : <label htmlFor={`estimate-change-note-${estimate.id}`}><span>Changes needed <span aria-hidden="true">*</span></span><Textarea ref={noteRef} id={`estimate-change-note-${estimate.id}`} value={note} maxLength={1000} aria-required="true" aria-invalid={Boolean(validation)} aria-describedby={`estimate-note-hint-${estimate.id}`} disabled={action.isPending} onChange={(event) => { setNote(event.target.value); setValidation(""); }} /><span id={`estimate-note-hint-${estimate.id}`} className="client-commercial-review__hint">Tell Sales which items, quantities, or specifications to revise. {note.length}/1,000 characters.</span></label>}
           {validation ? <p role="alert">{validation}</p> : null}
         </div>

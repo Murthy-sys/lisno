@@ -366,6 +366,22 @@ function newLine(
   });
 }
 
+/** Materialize only the item explicitly chosen for one room. */
+export function createConfiguredLine(
+  catalogue: EstimationCatalogue,
+  room: ConfiguredEstimateRoom,
+  target: { mainLineId: string; basketId: string; subBasketId: string | null }
+): ConfiguredLineDraft | null {
+  const basket = catalogue.items.find(item => item.id === target.basketId);
+  if (!basket) return null;
+  const subBasket = target.subBasketId === null ? null : basket.subBaskets.find(item => item.id === target.subBasketId);
+  if (target.subBasketId !== null && !subBasket) return null;
+  const items = subBasket ? [...subBasket.mainLines, ...(subBasket.temporaryItems ?? [])] : basket.directTemporaryItems ?? [];
+  const item = items.find(item => item.mainLineId === target.mainLineId);
+  return item ? newLine(room, basket, subBasket ?? null, item) : null;
+}
+
+/** Refresh existing project drafts without creating rows for the available catalogue. */
 export function buildConfiguredLines(
   catalogue: EstimationCatalogue,
   rooms: readonly ConfiguredEstimateRoom[],
@@ -373,69 +389,56 @@ export function buildConfiguredLines(
   previous: readonly ConfiguredLineDraft[],
   preservePersisted = false
 ): ConfiguredLineDraft[] {
-  const prior = new Map(previous.map((line) => [line.key, line]));
-  const next = rooms.flatMap((room) => catalogue.items
-    .filter((basket) => selectedMainBasketIds.has(basket.id))
-    .flatMap((basket) => [
-      ...(basket.directTemporaryItems ?? []).map((item) => newLine(room, basket, null, item)),
-      ...basket.subBaskets.flatMap((subBasket) => [
-        ...subBasket.mainLines.map((item) => newLine(room, basket, subBasket, item)),
-        ...(subBasket.temporaryItems ?? []).map((item) => newLine(room, basket, subBasket, item))
-      ])
-    ].map((fresh) => {
-      const saved = prior.get(fresh.key);
-      if (!saved) return fresh;
-      const selectedFresh = withSelectedTierPricing({ ...fresh, modeTier: saved.modeTier ?? "signature" });
-      if (preservePersisted && saved.persistedId) return {
-        ...saved,
-        applicableTiers: fresh.applicableTiers,
-        tierPricing: fresh.tierPricing,
-        modeBaseRatesPaise: selectedFresh.modeBaseRatesPaise,
-        inHouseBaseRatePaise: selectedFresh.inHouseBaseRatePaise,
-        // Historical amounts use their saved pricing basis, never newly available live components.
-        inHouseComponents: undefined,
-        sourceMissing: saved.mainBasketId !== fresh.mainBasketId ||
-          saved.subBasketId !== fresh.subBasketId || saved.itemType !== fresh.itemType
-      };
-      const uomChanged = saved.uomId !== fresh.uomId || Boolean(fresh.dimensionsMandatory && saved.uomDecimalScale !== fresh.uomDecimalScale);
-      const dimensionsNeedReview = Boolean(fresh.dimensionsMandatory && (saved.dimensionsNeedReview ||
-        saved.dimensionsMandatory !== true || !estimateDimensionRulesEqual(saved.dimensionRule, fresh.dimensionRule)));
-      const measuredQuantity = fresh.dimensionsMandatory && !dimensionsNeedReview
-        ? calculateDimensionQuantity(fresh.dimensionRule, saved.dimensions)?.quantity : undefined;
-      return {
-        ...selectedFresh,
-        persistedId: saved.persistedId,
-        pricingBasis: saved.pricingBasis,
-        componentPricing: saved.componentPricing,
-        dimensions: saved.dimensions ? { ...saved.dimensions } : undefined,
-        dimensionRule: fresh.dimensionsMandatory ? fresh.dimensionRule : saved.dimensions ? saved.dimensionRule ?? fresh.dimensionRule : fresh.dimensionRule,
-        dimensionsNeedReview,
-        quantity: measuredQuantity ?? saved.quantity,
-        pricingMode: saved.pricingMode,
-        selectedInHouseComponentIds: saved.selectedInHouseComponentIds,
-        rateSource: saved.rateSource ?? "manual",
-        rateInput: saved.rateSource === "configuration" && saved.pricingMode
-          ? formatRateInput(configuredModeBaseRate({ ...selectedFresh, selectedInHouseComponentIds: saved.selectedInHouseComponentIds }, saved.pricingMode)) : saved.rateInput,
-        included: saved.included,
-        recommendationSourceMainLineIds: saved.recommendationSourceMainLineIds,
-        classification: saved.classification,
-        sourceItemStatus: fresh.itemStatus,
-        sourceRevisionStatus: fresh.revisionStatus,
-        sourceItemVersion: fresh.itemVersion,
-        sourceRevisionVersion: fresh.revisionVersion,
-        sourceMissing: saved.mainBasketId !== fresh.mainBasketId || saved.subBasketId !== fresh.subBasketId || saved.itemType !== fresh.itemType,
-        uomNeedsQuantityReview: Boolean(saved.uomNeedsQuantityReview || uomChanged),
-        previousUomName: uomChanged ? saved.uomName : saved.previousUomName
-      };
-    })));
-  const seen = new Set(next.map((line) => line.key));
-  const roomIds = new Set(rooms.map((room) => room.id));
-  for (const line of previous) {
-    if (!seen.has(line.key) && roomIds.has(line.roomId) && (line.persistedId || line.included ||
-      line.classification !== undefined || line.rateSource === "manual" || line.quantity !== 1)) {
-      next.push({ ...line, sourceMissing: true, modeBaseRatesPaise: undefined, tierPricing: {}, inHouseComponents: undefined,
-        rateInput: !preservePersisted && line.rateSource === "configuration" ? "" : line.rateInput });
-    }
-  }
-  return next;
+  const roomById = new Map(rooms.map(room => [room.id, room]));
+  return [...new Map(previous.map(line => [line.key, line])).values()].flatMap<ConfiguredLineDraft>(saved => {
+    const room = roomById.get(saved.roomId);
+    if (!room) return [];
+    const fresh = selectedMainBasketIds.has(saved.mainBasketId)
+      ? createConfiguredLine(catalogue, room, { mainLineId: saved.mainLineId, basketId: saved.mainBasketId, subBasketId: saved.subBasketId })
+      : null;
+    if (!fresh) return [{ ...saved, sourceMissing: true, modeBaseRatesPaise: undefined, tierPricing: {}, inHouseComponents: undefined,
+      rateInput: !preservePersisted && saved.rateSource === "configuration" ? "" : saved.rateInput }];
+    const selectedFresh = withSelectedTierPricing({ ...fresh, modeTier: saved.modeTier ?? "signature" });
+    if (preservePersisted && saved.persistedId) return {
+      ...saved,
+      applicableTiers: fresh.applicableTiers,
+      tierPricing: fresh.tierPricing,
+      modeBaseRatesPaise: selectedFresh.modeBaseRatesPaise,
+      inHouseBaseRatePaise: selectedFresh.inHouseBaseRatePaise,
+      // Historical amounts use their saved pricing basis, never newly available live components.
+      inHouseComponents: undefined,
+      sourceMissing: saved.mainBasketId !== fresh.mainBasketId ||
+        saved.subBasketId !== fresh.subBasketId || saved.itemType !== fresh.itemType
+    };
+    const uomChanged = saved.uomId !== fresh.uomId || Boolean(fresh.dimensionsMandatory && saved.uomDecimalScale !== fresh.uomDecimalScale);
+    const dimensionsNeedReview = Boolean(fresh.dimensionsMandatory && (saved.dimensionsNeedReview ||
+      saved.dimensionsMandatory !== true || !estimateDimensionRulesEqual(saved.dimensionRule, fresh.dimensionRule)));
+    const measuredQuantity = fresh.dimensionsMandatory && !dimensionsNeedReview
+      ? calculateDimensionQuantity(fresh.dimensionRule, saved.dimensions)?.quantity : undefined;
+    return {
+      ...selectedFresh,
+      persistedId: saved.persistedId,
+      pricingBasis: saved.pricingBasis,
+      componentPricing: saved.componentPricing,
+      dimensions: saved.dimensions ? { ...saved.dimensions } : undefined,
+      dimensionRule: fresh.dimensionsMandatory ? fresh.dimensionRule : saved.dimensions ? saved.dimensionRule ?? fresh.dimensionRule : fresh.dimensionRule,
+      dimensionsNeedReview,
+      quantity: measuredQuantity ?? saved.quantity,
+      pricingMode: saved.pricingMode,
+      selectedInHouseComponentIds: saved.selectedInHouseComponentIds,
+      rateSource: saved.rateSource ?? "manual",
+      rateInput: saved.rateSource === "configuration" && saved.pricingMode
+        ? formatRateInput(configuredModeBaseRate({ ...selectedFresh, selectedInHouseComponentIds: saved.selectedInHouseComponentIds }, saved.pricingMode)) : saved.rateInput,
+      included: saved.included,
+      recommendationSourceMainLineIds: saved.recommendationSourceMainLineIds,
+      classification: saved.classification,
+      sourceItemStatus: fresh.itemStatus,
+      sourceRevisionStatus: fresh.revisionStatus,
+      sourceItemVersion: fresh.itemVersion,
+      sourceRevisionVersion: fresh.revisionVersion,
+      sourceMissing: saved.mainBasketId !== fresh.mainBasketId || saved.subBasketId !== fresh.subBasketId || saved.itemType !== fresh.itemType,
+      uomNeedsQuantityReview: Boolean(saved.uomNeedsQuantityReview || uomChanged),
+      previousUomName: uomChanged ? saved.uomName : saved.previousUomName
+    };
+  });
 }

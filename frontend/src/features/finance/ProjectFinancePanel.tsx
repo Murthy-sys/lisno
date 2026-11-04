@@ -126,7 +126,7 @@ export function ProjectFinancePanel({
       </div>
 
       {!enabled ? (
-        <p>The approved financial baseline becomes available after the Client approves the estimate.</p>
+        <p>The current approved financial baseline is unavailable until the latest quotation is approved.</p>
       ) : expectedSource === null ? (
         <PageState
           state="error"

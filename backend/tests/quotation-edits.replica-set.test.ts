@@ -1,6 +1,8 @@
 import { quotationSnapshotDigest } from "../src/services/quotation-digest.js";
 import { toEstimateSnapshot } from "../src/services/estimate-publication.service.js";
 import { createEstimateDecisionService } from "../src/services/estimate-decision.service.js";
+import express from "express";
+import request from "supertest";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { startMongoReplicaSet } from "./helpers/mongo-replica-set.js";
 import { newQuotationLifecycle } from "../src/domain/estimation-lifecycle.js";
@@ -27,6 +29,8 @@ import { EstimateDesignDrawingModel } from "../src/models/EstimateDesignDrawing.
 import { EstimateDesignRevisionModel } from "../src/models/EstimateDesignRevision.js";
 import { EstimateDesignUploadModel } from "../src/models/EstimateDesignUpload.js";
 import { DesignPlanReviewRoundModel } from "../src/models/DesignPlanReviewRound.js";
+import { createQuotationRouter } from "../src/routes/quotation.js";
+import { errorHandler } from "../src/middleware/errors.js";
 
 const client: PublicUser = { id: "tier-client", name: "Client", email: "client@tier.invalid", role: "client" };
 const sales: PublicUser = { id: "tier-sales", name: "Sales", email: "sales@tier.invalid", role: "estimator_sales" };
@@ -78,6 +82,32 @@ beforeEach(async () => {
 const source = { revisionId: "revision-visible", itemVersion: 1, revisionVersion: 1, uomId: "tier-uom" };
 const quantityChange = (expectedVersion = 1, quantity = 4) => ({ expectedVersion,
   operations: [{ kind: "update" as const, lineItemId: "line-one", source, quantity }] });
+
+async function recommendationLine(id: string, input: { visible?: boolean; basketId?: string; subBasketId?: string; priced?: boolean } = {}) {
+  const basketId = input.basketId ?? "tier-basket";
+  const subBasketId = input.subBasketId ?? "tier-sub";
+  await MainLine.collection.insertOne({ _id: id as never, name: id, basketId, subBasketId,
+    itemType: "main_line", status: "active", version: 1, activeRevisionId: `revision-${id}`, displayOrder: 1 });
+  await Revision.collection.insertOne({ _id: `revision-${id}` as never, mainLineId: id, status: "active", revisionNumber: 1, version: 1 });
+  await Section.collection.insertMany([
+    { _id: `overview-${id}` as never, mainLineId: id, revisionId: `revision-${id}`, sectionKey: "overview", applicability: "configured", version: 1,
+      payload: { uomId: "tier-uom", clientVisible: input.visible !== false, applicableTiers: ["signature"] } },
+    { _id: `advanced-${id}` as never, mainLineId: id, revisionId: `revision-${id}`, sectionKey: "advanced", applicability: "configured", version: 1,
+      payload: { modeCalculations: input.priced === false ? {} : { sub_vendor: { baseRatePaise: 2000 } } } }
+  ]);
+}
+const mustRule = (targetMainLineId: string, overrides: Record<string, unknown> = {}) => ({ id: `rule-${targetMainLineId}`, active: true,
+  trigger: "added", action: "add", requirement: "must", targetKind: "main_line", targetType: "catalog",
+  targetBasketId: "tier-basket", targetSubBasketId: "tier-sub", targetMainLineId, reason: "Internal reason must never appear", ...overrides });
+async function recommendationRules(mainLineId: string, rules: unknown[]) {
+  await Section.collection.insertOne({ _id: `recommendations-${mainLineId}` as never, mainLineId, revisionId: `revision-${mainLineId}`,
+    sectionKey: "recommendations", applicability: "configured", version: 1, payload: { budgetAlterations: rules } });
+}
+const recommendationRead = () => ({ expectedVersion: 1, roomId: "Room1", sources: [{ mainLineId: "visible", source }] });
+const targetSource = (id = "target") => ({ revisionId: `revision-${id}`, itemVersion: 1, revisionVersion: 1, uomId: "tier-uom" });
+const addRecommendation = (origins = ["visible"], mainLineId = "target", roomId = "Room1") => ({ kind: "add" as const,
+  mainLineId, roomId, source: targetSource(mainLineId), quantity: 1, modeTier: "signature" as const,
+  recommendationSourceMainLineIds: origins });
 const removeGroup = async (scope: { subBasketId: string | null; roomId: string | null }, projectId = "tier-project") => {
   const detail = await service.detail(client, projectId);
   const group = detail.groups.find(value => value.mainBasketId === "tier-basket" && value.subBasketId === scope.subBasketId && value.roomId === scope.roomId);
@@ -86,7 +116,242 @@ const removeGroup = async (scope: { subBasketId: string | null; roomId: string |
   return { expectedVersion: detail.estimateVersion!, operations: [{ kind: "exclude_group" as const, ...identity }] };
 };
 
+describe("Client inline non-negotiable recommendations", () => {
+  it("serves the bounded read as a private project-scoped HTTP operation", async () => {
+    const auth = { authenticate: async (token: string) => token === "client" ? client : other } as unknown as Parameters<typeof createQuotationRouter>[0];
+    const app = express();
+    app.use(express.json());
+    app.use("/api/v1", createQuotationRouter(auth, createAuditService(createMongoRepository())));
+    app.use(errorHandler);
+    await recommendationLine("target");
+    await recommendationRules("visible", [mustRule("target")]);
+    const path = "/api/v1/projects/tier-project/quotation/recommendations/query";
+    const result = await request(app).post(path).set("Authorization", "Bearer client").send(recommendationRead());
+    expect(result.status).toBe(200);
+    expect(result.headers["cache-control"]).toBe("private, no-store");
+    expect(result.body.data.items[0].candidate.mainLineId).toBe("target");
+    expect((await request(app).post(path).set("Authorization", "Bearer client").send({ ...recommendationRead(), limit: 21 })).status).toBe(400);
+    const denied = await request(app).post(path).set("Authorization", "Bearer other").send(recommendationRead());
+    expect([403, 404]).toContain(denied.status);
+    expect(JSON.stringify(denied.body)).not.toContain("target");
+    const candidates = await request(app).get("/api/v1/projects/tier-project/quotation/items")
+      .set("Authorization", "Bearer client").query({ search: "target", mainBasketId: "tier-basket", subBasketId: "tier-sub", limit: 20 });
+    expect(candidates.status).toBe(200);
+    expect(candidates.body.data.total).toBe(1);
+    expect((await request(app).get("/api/v1/projects/tier-project/quotation/items").set("Authorization", "Bearer client")
+      .query({ mainBasketId: " " })).status).toBe(400);
+  });
+
+  it("keeps unequal projects and their versions isolated for the two Clients", async () => {
+    await recommendationLine("target");
+    await recommendationRules("visible", [mustRule("target")]);
+    const original = (await EstimateModel.findById("tier-estimate").lean())!;
+    await ProjectModel.collection.insertOne({ _id: "other-project" as never, name: "Other synthetic project", clientId: other.id,
+      assignedEstimatorId: sales.id, assignedDesignerIds: [], estimationWorkflowVersion: 3, status: "planning" });
+    await LeadModel.collection.insertOne({ _id: "other-lead" as never, projectId: "other-project", ownerId: sales.id });
+    await EstimateModel.collection.insertOne({ ...original, _id: "other-estimate" as never, projectId: "other-project", leadId: "other-lead", version: 7,
+      subtotalPaise: 22000, gstPaise: 3960, totalPaise: 25960, subtotal: 220, gst: 39.6, total: 259.6,
+      lineItems: original.lineItems.map(line => ({ ...line, quantity: line.quantity * 2, amountPaise: line.amountPaise! * 2, amount: line.amount! * 2 })) });
+    await expect(service.recommendations(client, "other-project", { ...recommendationRead(), expectedVersion: 7 })).rejects.toMatchObject({ status: 404 });
+    await expect(service.recommendations(other, "tier-project", recommendationRead())).rejects.toMatchObject({ status: 404 });
+    expect(await service.recommendations(other, "other-project", { ...recommendationRead(), expectedVersion: 7 }))
+      .toMatchObject({ projectId: "other-project", estimateId: "other-estimate", estimateVersion: 7 });
+    expect((await EstimateModel.findById("tier-estimate").lean())!.totalPaise).toBe(12980);
+    expect((await EstimateModel.findById("other-estimate").lean())!.totalPaise).toBe(25960);
+  });
+
+  it("projects only visible must-add targets and never internal reasons or hidden counts", async () => {
+    await recommendationLine("target");
+    await recommendationLine("optional");
+    await recommendationRules("visible", [mustRule("target"), mustRule("optional", { requirement: "can" }),
+      mustRule("hidden"), mustRule("optional", { id: "remove-rule", action: "remove" })]);
+    const before = await EstimateModel.findById("tier-estimate").lean();
+    const result = await service.recommendations(client, "tier-project", recommendationRead());
+    expect(result).toMatchObject({ projectId: "tier-project", estimateId: "tier-estimate", estimateVersion: 1, roomId: "Room1", total: 1, limit: 20, offset: 0 });
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]).toMatchObject({ candidate: { mainLineId: "target" },
+      sourceMainLines: [{ mainLineId: "visible", name: "visible painting" }], requiresSetup: false });
+    expect(JSON.stringify(result)).not.toMatch(/hidden|optional|Internal reason|privateMargin/);
+    expect(await EstimateModel.findById("tier-estimate").lean()).toEqual(before);
+    expect(await AuditEventModel.countDocuments()).toBe(0);
+  });
+
+  it("deduplicates Sub Basket targets and supports current unsaved visible source selections", async () => {
+    await recommendationLine("source-two");
+    await SubBasket.collection.insertOne({ _id: "targets-sub" as never, basketId: "tier-basket", name: "Targets", displayOrder: 2, version: 1 });
+    await recommendationLine("target", { subBasketId: "targets-sub" });
+    await recommendationLine("target-hidden", { subBasketId: "targets-sub", visible: false });
+    await recommendationRules("visible", [mustRule("target", { targetSubBasketId: "targets-sub" })]);
+    await recommendationRules("source-two", [mustRule("target", { targetKind: "sub_basket", targetType: null,
+      targetMainLineId: null, targetSubBasketId: "targets-sub" })]);
+    const result = await service.recommendations(client, "tier-project", { ...recommendationRead(),
+      sources: [...recommendationRead().sources, { mainLineId: "source-two", source: targetSource("source-two") }] });
+    expect(result.total).toBe(1);
+    expect(result.items[0]!.candidate.mainLineId).toBe("target");
+    expect(result.items[0]!.sourceMainLines.map(line => line.mainLineId).sort()).toEqual(["source-two", "visible"]);
+    expect(JSON.stringify(result)).not.toContain("target-hidden");
+  });
+
+  it("returns cross-basket setup requirements and unavailable current prices without fallbacks", async () => {
+    await Basket.collection.insertOne({ _id: "extra-basket" as never, name: "Extra", status: "active", displayOrder: 2, version: 1 });
+    await SubBasket.collection.insertOne({ _id: "extra-sub" as never, basketId: "extra-basket", name: "Extra items", displayOrder: 1, version: 1 });
+    await recommendationLine("target", { basketId: "extra-basket", subBasketId: "extra-sub", priced: false });
+    await recommendationRules("visible", [mustRule("target", { targetBasketId: "extra-basket", targetSubBasketId: "extra-sub" })]);
+    const result = await service.recommendations(client, "tier-project", recommendationRead());
+    expect(result.items[0]!.requiresSetup).toBe(true);
+    expect(result.items[0]!.candidate.choices.every(choice => !choice.available)).toBe(true);
+    expect((await service.items(client, "tier-project")).items.some(item => item.mainLineId === "target")).toBe(false);
+    await expect(service.save(client, "tier-project", { expectedVersion: 1, operations: [addRecommendation()] })).rejects.toMatchObject({ status: 404 });
+  });
+
+  it("uses the latest draft source rules and rejects stale current identities", async () => {
+    await recommendationLine("old-target");
+    await recommendationLine("target");
+    await recommendationRules("visible", [mustRule("old-target")]);
+    await MainLine.updateOne({ _id: "visible" }, { $set: { draftRevisionId: "draft-visible", version: 2 } });
+    await Revision.collection.insertOne({ _id: "draft-visible" as never, mainLineId: "visible", status: "draft", revisionNumber: 2, version: 2 });
+    const oldSections = await Section.find({ mainLineId: "visible", sectionKey: { $in: ["overview", "advanced"] } }).lean();
+    await Section.collection.insertMany(oldSections.map(section => ({ ...section, _id: `draft-${section.sectionKey}` as never, revisionId: "draft-visible" })));
+    await Section.collection.insertOne({ _id: "draft-recommendations" as never, mainLineId: "visible", revisionId: "draft-visible",
+      sectionKey: "recommendations", applicability: "configured", version: 2, payload: { budgetAlterations: [mustRule("target")] } });
+    await expect(service.recommendations(client, "tier-project", recommendationRead())).rejects.toMatchObject({ code: "QUOTATION_CONFIGURATION_CHANGED" });
+    const result = await service.recommendations(client, "tier-project", { ...recommendationRead(),
+      sources: [{ mainLineId: "visible", source: { ...source, revisionId: "draft-visible", itemVersion: 2, revisionVersion: 2 } }] });
+    expect(result.items.map(item => item.candidate.mainLineId)).toEqual(["target"]);
+  });
+
+  it("hides frozen-hidden and currently hidden sources and targets", async () => {
+    await recommendationLine("target");
+    await recommendationRules("visible", [mustRule("target"), mustRule("hidden")]);
+    await Section.updateOne({ _id: "overview-hidden" }, { $set: { "payload.clientVisible": true } });
+    expect((await service.recommendations(client, "tier-project", recommendationRead())).total).toBe(1);
+    await Section.updateOne({ _id: "overview-target" }, { $set: { "payload.clientVisible": false } });
+    expect((await service.recommendations(client, "tier-project", recommendationRead())).total).toBe(0);
+    for (const id of ["hidden", "not-a-line"]) {
+      await expect(service.recommendations(client, "tier-project", { ...recommendationRead(),
+        sources: [{ mainLineId: id, source: targetSource(id) }] })).rejects.toMatchObject({ status: 404, code: "QUOTATION_NOT_FOUND" });
+    }
+    await Section.updateOne({ _id: "overview-visible" }, { $set: { "payload.clientVisible": false } });
+    await expect(service.recommendations(client, "tier-project", recommendationRead())).rejects.toMatchObject({ status: 404, code: "QUOTATION_NOT_FOUND" });
+  });
+
+  it("rejects unauthorized projects, stale versions, unknown rooms and invalid bounds without writes", async () => {
+    const before = await EstimateModel.findById("tier-estimate").lean();
+    await expect(service.recommendations(other, "tier-project", recommendationRead())).rejects.toMatchObject({ status: 404 });
+    await expect(service.recommendations(client, "tier-project", { ...recommendationRead(), expectedVersion: 2 })).rejects.toMatchObject({ code: "ESTIMATE_VERSION_CONFLICT" });
+    await expect(service.recommendations(client, "tier-project", { ...recommendationRead(), roomId: "Other room" })).rejects.toMatchObject({ status: 404 });
+    for (const input of [{ limit: 21 }, { offset: -1 }, { sources: [...recommendationRead().sources, ...recommendationRead().sources] },
+      { sources: Array.from({ length: 201 }, (_, index) => ({ mainLineId: `source-${index}`, source })) }]) {
+      await expect(service.recommendations(client, "tier-project", { ...recommendationRead(), ...input })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    }
+    expect(await EstimateModel.findById("tier-estimate").lean()).toEqual(before);
+    expect(await AuditEventModel.countDocuments()).toBe(0);
+  });
+
+  it("paginates recommendations and searches/filter candidates before pagination", async () => {
+    const ids = Array.from({ length: 25 }, (_, index) => `target-${String(index).padStart(2, "0")}`);
+    for (const id of ids) await recommendationLine(id);
+    await recommendationRules("visible", ids.map(id => mustRule(id)));
+    const first = await service.recommendations(client, "tier-project", recommendationRead());
+    const second = await service.recommendations(client, "tier-project", { ...recommendationRead(), offset: 20 });
+    expect(first.items).toHaveLength(20);
+    expect(second.items).toHaveLength(5);
+    expect(second.total).toBe(25);
+    expect([...first.items, ...second.items].map(item => item.candidate.mainLineId)).toEqual(ids);
+    expect(await service.items(client, "tier-project", { search: "target-24", mainBasketId: "tier-basket", subBasketId: "tier-sub" }))
+      .toMatchObject({ total: 1, items: [{ mainLineId: "target-24" }] });
+    expect((await service.items(client, "tier-project", { mainBasketId: "unrelated-basket", subBasketId: "tier-sub" })).total).toBe(0);
+  });
+
+  it("removes a recommended target, preserves its source, and restores it independently with its stable ID", async () => {
+    await recommendationLine("target");
+    await recommendationRules("visible", [mustRule("target")]);
+    const added = await service.save(client, "tier-project", { expectedVersion: 1, operations: [addRecommendation()] });
+    const target = added.lines.find(line => line.mainLineId === "target")!;
+    expect(target.recommendationSourceMainLineIds).toEqual(["visible"]);
+    const removed = await service.save(client, "tier-project", { expectedVersion: 2, operations: [{ kind: "update", lineItemId: target.id,
+      source: targetSource(), included: false }] });
+    expect(removed.lines.some(line => line.id === "line-one")).toBe(true);
+    expect(removed.excludedLines).toContainEqual(expect.objectContaining({ id: target.id, included: false, recommendationSourceMainLineIds: [] }));
+    const reopened = await service.detail(client, "tier-project");
+    expect(reopened.lines.some(line => line.id === target.id)).toBe(false);
+    const { recommendationSourceMainLineIds: _origins, ...manualAdd } = addRecommendation();
+    const restored = await service.save(client, "tier-project", { expectedVersion: 3, operations: [manualAdd] });
+    expect(restored.lines.find(line => line.mainLineId === "target")).toMatchObject({ id: target.id, recommendationSourceMainLineIds: [] });
+    const sourceRemoved = await service.save(client, "tier-project", { expectedVersion: 4, operations: [{ kind: "update", lineItemId: "line-one", source, included: false }] });
+    expect(sourceRemoved.lines.some(line => line.id === target.id)).toBe(true);
+  });
+
+  it("cascades only same-room visible recommended dependents while preserving hidden lines", async () => {
+    await recommendationLine("target");
+    await recommendationRules("visible", [mustRule("target")]);
+    await EstimateModel.updateOne({ _id: "tier-estimate", "lineItems.id": "line-hidden" },
+      { $set: { "lineItems.$.recommendationSourceMainLineIds": ["visible"] } });
+    await service.save(client, "tier-project", { expectedVersion: 1, operations: [addRecommendation(), addRecommendation(["visible"], "target", "Room2")] });
+    const hidden = (await EstimateModel.findById("tier-estimate").lean())!.lineItems.find(line => line.id === "line-hidden");
+    const result = await service.save(client, "tier-project", { expectedVersion: 2, operations: [{ kind: "update", lineItemId: "line-one", source, included: false }] });
+    expect(result.lines.filter(line => line.mainLineId === "target").map(line => line.roomId)).toEqual(["Room2"]);
+    expect(result.excludedLines).toContainEqual(expect.objectContaining({ mainLineId: "target", roomId: "Room1", included: false }));
+    expect((await EstimateModel.findById("tier-estimate").lean())!.lineItems.find(line => line.id === "line-hidden")).toEqual(hidden);
+  });
+
+  it("keeps a dependent while another included source remains and hides partial origin metadata", async () => {
+    await recommendationLine("target");
+    await recommendationLine("source-two");
+    await recommendationRules("visible", [mustRule("target")]);
+    await recommendationRules("source-two", [mustRule("target")]);
+    const { recommendationSourceMainLineIds: _origins, ...sourceAdd } = addRecommendation([], "source-two");
+    const added = await service.save(client, "tier-project", { expectedVersion: 1, operations: [addRecommendation(["visible", "source-two"]), sourceAdd] });
+    const target = added.lines.find(line => line.mainLineId === "target")!;
+    const result = await service.save(client, "tier-project", { expectedVersion: 2, operations: [{ kind: "update", lineItemId: "line-one", source, included: false }] });
+    expect(result.lines.find(line => line.id === target.id)?.recommendationSourceMainLineIds).toEqual(["source-two"]);
+    await EstimateModel.updateOne({ _id: "tier-estimate", "lineItems.id": target.id },
+      { $set: { "lineItems.$.recommendationSourceMainLineIds": ["source-two", "hidden"] } });
+    expect((await service.detail(client, "tier-project")).lines.find(line => line.id === target.id)).not.toHaveProperty("recommendationSourceMainLineIds");
+    const sourceTwo = result.lines.find(line => line.mainLineId === "source-two")!;
+    const lastVisibleRemoved = await service.save(client, "tier-project", { expectedVersion: 3,
+      operations: [{ kind: "update", lineItemId: sourceTwo.id, source: targetSource("source-two"), included: false }] });
+    expect(lastVisibleRemoved.lines.find(line => line.id === target.id)).toBeDefined();
+  });
+
+  it("rejects forged, optional, hidden and different-room origins without changing the estimate", async () => {
+    await recommendationLine("target");
+    await recommendationRules("visible", [mustRule("target", { requirement: "can" })]);
+    const before = await EstimateModel.findById("tier-estimate").lean();
+    await expect(service.save(client, "tier-project", { expectedVersion: 1, operations: [addRecommendation()] })).rejects.toMatchObject({ code: "QUOTATION_CONFIGURATION_CHANGED" });
+    for (const origin of ["unknown", "hidden", "target"]) {
+      await expect(service.save(client, "tier-project", { expectedVersion: 1, operations: [addRecommendation([origin])] }))
+        .rejects.toMatchObject({ code: "QUOTATION_RECOMMENDATION_SOURCE_INVALID" });
+    }
+    expect(await EstimateModel.findById("tier-estimate").lean()).toEqual(before);
+    expect(await AuditEventModel.countDocuments()).toBe(0);
+    await EstimateModel.updateOne({ _id: "tier-estimate", "lineItems.id": "line-one" }, { $set: { "lineItems.$.included": false } });
+    await expect(service.save(client, "tier-project", { expectedVersion: 1, operations: [addRecommendation()] }))
+      .rejects.toMatchObject({ code: "QUOTATION_RECOMMENDATION_SOURCE_INVALID" });
+  });
+});
+
 describe("version 3 Client quotation commands", () => {
+  it("returns the authoritative quotation-approval contract from GET and PATCH", async () => {
+    const auth = { authenticate: async () => client } as unknown as Parameters<typeof createQuotationRouter>[0];
+    const app = express();
+    app.use(express.json());
+    app.use("/api/v1", createQuotationRouter(auth, createAuditService(createMongoRepository())));
+    app.use(errorHandler);
+    const approvalFields = {
+      quotationApprovalState: "source_issue",
+      currentQuotationApproved: false,
+      requiresClientReapproval: false,
+      quotationApprovalSource: null,
+      currentQuotationApproval: null
+    };
+    const detail = await request(app).get("/api/v1/projects/tier-project/quotation").set("Authorization", "Bearer client").expect(200);
+    expect(detail.body.data).toMatchObject(approvalFields);
+    const saved = await request(app).patch("/api/v1/projects/tier-project/quotation")
+      .set("Authorization", "Bearer client").send(quantityChange()).expect(200);
+    expect(saved.body.data).toMatchObject(approvalFields);
+  });
+
   it("uses the live Lead Project ID without changing the quotation snapshot", async () => {
     await LeadModel.collection.updateOne({ _id: "tier-lead" as never }, { $set: { projectNumber: "Lisno000012" } });
     const before = await EstimateModel.findById("tier-estimate").lean();

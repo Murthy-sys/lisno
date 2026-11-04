@@ -534,22 +534,37 @@ describe("quotation project status responsibility", () => {
         finalApproval: { reviewRoundId: "quote-round", estimateVersion: 7, approvedAt: BEFORE,
           requirementsVersion: 3, designScopeRevision: 3, designReviewRoundId: null, designPlanVersion: null } } : {}) };
     input.commercial = { state: locked ? "approved" : "pre_approved", estimateId: "estimate-a", estimateVersion: locked ? 7 : 2 };
-    Object.assign(input.workflow!, { estimationWorkflowVersion: 3, designStartedAt: locked ? BEFORE : null });
+    input.quotationApproval = locked ? {
+      quotationApprovalState: "revision_current", currentQuotationApproved: true, requiresClientReapproval: false,
+      quotationApprovalSource: "designer_revision", currentQuotationApproval: { kind: "designer_revision",
+        reviewRoundId: "quote-round", estimateVersion: 7, approvedAt: BEFORE, requirementsVersion: 3,
+        pricedRevision: 1, designScopeRevision: 3 }
+    } : {
+      quotationApprovalState: "initial_current", currentQuotationApproved: true, requiresClientReapproval: false,
+      quotationApprovalSource: "initial_unchanged", currentQuotationApproval: { kind: "initial_unchanged",
+        reviewRoundId: "pre-round", estimateVersion: 2, approvedAt: BEFORE, requirementsVersion: 3,
+        pricedRevision: 1, designScopeRevision: 3 }
+    };
+    Object.assign(input.workflow!, { estimationWorkflowVersion: 3, designStartedAt: BEFORE });
     return input;
   }
 
-  it("assigns the Designer-revised quotation before any operational design or payment", () => {
+  it("returns a materially revised quotation to the primary Designer and then the Client", () => {
     const input = quotation();
+    input.quotationApproval = { quotationApprovalState: "revision_draft", currentQuotationApproved: false,
+      requiresClientReapproval: true, quotationApprovalSource: null, currentQuotationApproval: null };
+    input.commercial = { state: "none", estimateId: "estimate-a", estimateVersion: input.estimate!.version };
     const result = deriveProjectStatus(input);
     expect(result).toMatchObject({ state: "active", currentStage: { key: "estimate_preparation" } });
     expect(result.pendingActions).toHaveLength(1);
     expect(result.pendingActions[0]).toMatchObject({ responsibleRole: "designer", people: [{ id: "designer-b" }] });
     input.estimate!.estimation!.status = "sent_to_client";
+    input.quotationApproval = { ...input.quotationApproval, quotationApprovalState: "revision_pending_client" };
     expect(deriveProjectStatus(input).pendingActions).toEqual([expect.objectContaining({ stageKey: "estimate_approval", responsibleRole: "client" })]);
   });
 
-  it("starts operational design after quote approval without payment or a drawing approval", () => {
-    const input = quotation(true);
+  it("starts operational design from unchanged initial approval without a second Client review", () => {
+    const input = quotation();
     const result = deriveProjectStatus(input);
     expect(result).toMatchObject({ state: "active", currentStage: { key: "internal_kickoff" } });
     expect(result.pendingActions.find(action => action.stageKey === "internal_kickoff")?.people.map(person => person.id)).toEqual(["designer-a", "designer-b"]);
@@ -560,7 +575,9 @@ describe("quotation project status responsibility", () => {
     const input = quotation(true);
     input.estimate!.estimation!.editClosedAt = null;
     input.estimate!.estimation!.status = "draft";
-    input.commercial.state = "pre_approved";
+    input.commercial = { state: "none", estimateId: "estimate-a", estimateVersion: input.estimate!.version };
+    input.quotationApproval = { quotationApprovalState: "revision_draft", currentQuotationApproved: false,
+      requiresClientReapproval: true, quotationApprovalSource: null, currentQuotationApproval: null };
     expect(deriveProjectStatus(input).pendingActions).toEqual([expect.objectContaining({ stageKey: "estimate_preparation", people: [{ id: "designer-b", name: "Designer B", role: "designer" }] })]);
   });
 

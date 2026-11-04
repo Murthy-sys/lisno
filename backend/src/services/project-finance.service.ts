@@ -40,6 +40,10 @@ import { ProjectWorkflowTaskModel } from "../models/ProjectWorkflowTask.js";
 import { UserModel } from "../models/User.js";
 import type { FileStorage } from "../storage/storage.js";
 import type { PublicUser } from "./auth.service.js";
+import {
+  resolveCurrentQuotationApproval,
+  type CurrentQuotationApproval
+} from "./quotation-approval-state.service.js";
 
 type Row = Record<string, any>;
 const GENERIC_DIRECT_EXPENSE_CLASSES = ["employee_payment", "other"] as const;
@@ -1012,9 +1016,21 @@ export async function syncCollaborativeFinanceBaseline(estimateId: string, sessi
   const estimate = await EstimateModel.findById(estimateId).session(session).lean();
   if (!estimate || !isCollaborativeEstimate(estimate) || !estimate.estimation.finalApproval) financeSourceConflict("The final Estimate source is unavailable.");
   const reference = estimate.estimation.finalApproval;
+  const effectiveApproval = estimate.estimation.workflowVersion === 3
+    ? await resolveCurrentQuotationApproval(estimate, session)
+    : null;
+  const currentApproval = effectiveApproval?.currentQuotationApproval ?? null;
+  if (effectiveApproval && (!effectiveApproval.currentQuotationApproved ||
+      effectiveApproval.quotationApprovalState !== "revision_current" ||
+      currentApproval?.reviewRoundId !== reference.reviewRoundId ||
+      currentApproval?.estimateVersion !== reference.estimateVersion)) {
+    financeSourceConflict("The final Estimate source is not the current approved quotation.");
+  }
   const rounds = await EstimateClientReviewRoundModel.find({ _id: reference.reviewRoundId, estimateId, projectId: estimate.projectId,
     status: "approved", decision: "approve" }).session(session).lean();
-  const approval = financeApprovalLineage(estimate, rounds);
+  const approval = financeApprovalLineage(estimate, rounds, {
+    currentApproval: currentApproval ?? undefined
+  });
   const bucket = await ProjectFinanceBucketModel.findOne({ projectId: estimate.projectId }).session(session).lean();
   const quotation = estimate.estimation.workflowVersion === 3;
   if (!bucket || quotation && !["pending_design", "open"].includes(bucket.status) ||
@@ -1251,9 +1267,19 @@ async function approvedFinanceEstimates(
       projectId: 1,
       version: 1,
       estimation: 1,
+      propertyType: 1,
+      bedroomCount: 1,
+      rooms: 1,
+      scopes: 1,
+      selectedMainBasketIds: 1,
+      selectedMainBasketClassifications: 1,
+      lineItems: 1,
       subtotal: 1,
       gst: 1,
       total: 1,
+      subtotalPaise: 1,
+      gstPaise: 1,
+      totalPaise: 1,
       designPlanStatus: 1,
       designPlanVersion: 1,
       designPlanApprovedAt: 1,
@@ -1311,8 +1337,25 @@ async function approvedFinanceEstimates(
   }
   if (resolved.length === 0) return resolved;
 
+  const currentSources: Row[] = [];
+  for (const estimate of resolved) {
+    if (!isCollaborativeEstimate(estimate) || estimate.estimation.workflowVersion !== 3) {
+      currentSources.push(estimate);
+      continue;
+    }
+    const resolution = await resolveCurrentQuotationApproval(estimate, session);
+    if (resolution.quotationApprovalState === "source_issue") {
+      financeSourceConflict("The current quotation approval source is invalid.");
+    }
+    // Draft and pending revisions are valid workflow states, but they cannot
+    // authorize current Finance actions until that exact version is approved.
+    if (!resolution.currentQuotationApproved || !resolution.currentQuotationApproval) continue;
+    currentSources.push({ ...estimate, _currentQuotationApproval: resolution.currentQuotationApproval });
+  }
+  if (currentSources.length === 0) return currentSources;
+
   const approvedRounds = await EstimateClientReviewRoundModel.find({
-    estimateId: { $in: resolved.map((estimate) => String(estimate._id)) },
+    estimateId: { $in: currentSources.map((estimate) => String(estimate._id)) },
     status: "approved",
     decision: "approve"
   })
@@ -1336,11 +1379,12 @@ async function approvedFinanceEstimates(
     current.push(round);
     roundsByEstimateId.set(estimateId, current);
   }
-  return resolved.map((estimate) => ({
+  return currentSources.map((estimate) => ({
     ...estimate,
     _financeApproval: financeApprovalLineage(
       estimate,
-      roundsByEstimateId.get(String(estimate._id)) ?? []
+      roundsByEstimateId.get(String(estimate._id)) ?? [],
+      { currentApproval: estimate._currentQuotationApproval ?? undefined }
     ),
     _financeDesignApproval: financeDesignApproval(estimate)
   })).sort(compareApprovedEstimateSources);
@@ -1435,15 +1479,25 @@ export interface FinanceDesignApproval {
   occurredAt: Date;
 }
 
+export interface FinanceApprovalLineageOptions {
+  /** Strict backend-authoritative source for an operational workflow-v3 read. */
+  currentApproval?: CurrentQuotationApproval;
+  /** Explicitly permit immutable historical presentation; never use for gates. */
+  allowHistorical?: boolean;
+}
+
 export function financeApprovalLineage(
   estimate: Row,
-  approvedRounds: readonly Row[]
+  approvedRounds: readonly Row[],
+  options: FinanceApprovalLineageOptions = {}
 ): FinanceApprovalLineage {
   const currentVersion = Number(estimate.version);
   if (!Number.isSafeInteger(currentVersion) || currentVersion < 1) {
     financeSourceConflict("The approved Estimate version is invalid.");
   }
-  const reference = currentEstimationApproval(estimate);
+  const reference = isCollaborativeEstimate(estimate) && estimate.estimation.workflowVersion === 3
+    ? options.currentApproval ?? (options.allowHistorical ? currentEstimationApproval(estimate) : null)
+    : currentEstimationApproval(estimate);
   if (isCollaborativeEstimate(estimate) && !reference) financeSourceConflict("The Estimate has no recorded approval source.");
   const approvedVersion = reference?.estimateVersion ?? (currentVersion > 1 ? currentVersion - 1 : 1);
   if (reference && approvedRounds.length === 0) financeSourceConflict("The immutable Estimate approval source is unavailable.");

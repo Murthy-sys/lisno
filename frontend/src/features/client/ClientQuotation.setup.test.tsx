@@ -61,6 +61,11 @@ function setup(initial = fixture()) {
       const items = state.detail.setup?.selectedMainBasketIds.includes(lighting.id) ? [desk, pendant] : [desk];
       return HttpResponse.json({ data: { items, total: items.length, limit: 20, offset: 0 } });
     }),
+    http.post("/api/v1/projects/project-one/quotation/recommendations/query", async ({ request }) => {
+      const input = await request.json() as { roomId: string; offset: number };
+      return HttpResponse.json({ data: { projectId: state.detail.projectId, estimateId: state.detail.estimateId,
+        estimateVersion: state.detail.estimateVersion, roomId: input.roomId, items: [], total: 0, limit: 20, offset: input.offset } });
+    }),
     http.patch("/api/v1/projects/project-one/quotation", async ({ request }) => {
       const input = await request.json() as SavedInput; saves.push(input); commit(input);
       return HttpResponse.json({ data: state.detail });
@@ -78,6 +83,12 @@ async function configure(user: ReturnType<typeof userEvent.setup>) {
 async function property(user: ReturnType<typeof userEvent.setup>, value: string) {
   await user.click(screen.getByRole("button", { name: /^Property type:/ }));
   await user.click(screen.getByRole("option", { name: value }));
+}
+
+async function chooseItem(user: ReturnType<typeof userEvent.setup>, name: string) {
+  const trigger = screen.queryByRole("button", { name: "Add items" });
+  if (trigger) await user.click(trigger);
+  await user.click(await screen.findByRole("button", { name: `Add ${name}` }));
 }
 
 describe("Client Sales-style estimate setup integration", () => {
@@ -164,22 +175,22 @@ describe("Client Sales-style estimate setup integration", () => {
     expect(command).toMatchObject({ kind: "configure", sourceToken: "scope-7", propertyType: "2BHK", selectedMainBasketIds: ["furniture", "lighting"] });
     expect(command.rooms).toEqual(expect.arrayContaining([{ id: "room-kitchen", typeId: "kitchen", label: "Kitchen", length: 12, width: 9 }, expect.objectContaining({ id: expect.any(String), typeId: "bedroom2", label: "Bedroom 2" })]));
     expect(command.rooms[1]!.id).not.toBe("room-kitchen");
-    expect(await screen.findByRole("checkbox", { name: "Include Pendant in Kitchen" })).not.toBeChecked();
+    expect(screen.queryByRole("checkbox", { name: "Include Pendant in Kitchen" })).not.toBeInTheDocument();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(state.detail.reviewState).toBe("awaiting_staff_review");
     expect(screen.getByText(/Your team will review the revised quotation before approval/)).toBeVisible();
-    await user.click(screen.getByRole("checkbox", { name: "Include Pendant in Kitchen" }));
+    await chooseItem(user, "Pendant");
     expect(saves).toHaveLength(1);
     await user.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(saves).toHaveLength(2));
     expect(saves[1]).toEqual({ expectedVersion: 8, operations: [{ kind: "add", mainLineId: "pendant", roomId: "room-kitchen", source, quantity: 1, modeTier: "signature" }] });
   });
 
-  it("selects a permitted Main Line in the builder without using the Add item dialog", async () => {
+  it("shows only selected lines and adds a permitted Main Line through the inline picker", async () => {
     const { saves } = setup(); const user = userEvent.setup();
-    const checkbox = await screen.findByRole("checkbox", { name: "Include Desk in Kitchen" });
-    expect(checkbox).not.toBeChecked();
-    await user.click(checkbox);
+    await screen.findByRole("button", { name: "Add items" });
+    expect(screen.queryByRole("checkbox", { name: "Include Desk in Kitchen" })).not.toBeInTheDocument();
+    await chooseItem(user, "Desk");
     const quantity = screen.getByRole("spinbutton", { name: "Quantity for Desk in Kitchen Unit" });
     await user.clear(quantity); await user.type(quantity, "3");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
@@ -188,41 +199,39 @@ describe("Client Sales-style estimate setup integration", () => {
     await waitFor(() => expect(saves).toEqual([{ expectedVersion: 7, operations: [{ kind: "add", mainLineId: "desk", roomId: "room-kitchen", source, quantity: 3, modeTier: "signature" }] }]));
   });
 
-  it("adds an unselected builder candidate through the supporting dialog as a new line", async () => {
+  it("does not request or render the available catalogue until Add items is opened", async () => {
     const { saves } = setup(); const user = userEvent.setup();
-    expect(await screen.findByRole("checkbox", { name: "Include Desk in Kitchen" })).not.toBeChecked();
-    await user.click(screen.getByRole("button", { name: "Add item" }));
-    const dialog = screen.getByRole("dialog", { name: "Add quotation item" });
-    await user.selectOptions(await within(dialog).findByRole("combobox", { name: "Item" }), "desk");
-    await user.click(within(dialog).getByRole("button", { name: "Add to changes" }));
+    const requests: string[] = [];
+    server.use(http.get("/api/v1/projects/project-one/quotation/items", ({ request }) => {
+      requests.push(request.url);
+      return HttpResponse.json({ data: { items: [desk], total: 1, limit: 20, offset: 0 } });
+    }));
+    await screen.findByRole("checkbox", { name: "Include Storage in Kitchen" });
+    expect(requests).toEqual([]);
+    expect(screen.queryByRole("checkbox", { name: "Include Desk in Kitchen" })).not.toBeInTheDocument();
+    await chooseItem(user, "Desk");
+    expect(requests).toHaveLength(1);
     expect(screen.getAllByRole("checkbox", { name: "Include Desk in Kitchen" })).toHaveLength(1);
-    expect(screen.getByRole("checkbox", { name: "Include Desk in Kitchen" })).toBeChecked();
     await user.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(saves).toEqual([{ expectedVersion: 7, operations: [{ kind: "add", mainLineId: "desk", roomId: "room-kitchen", source, quantity: 1, modeTier: "signature" }] }]));
   });
 
-  it("prevents dialog duplication and restores a deselected pending add with its current quantity and tier", async () => {
+  it("prevents duplicate additions and restores a removed pending item with its quantity and tier", async () => {
     const { saves } = setup(); const user = userEvent.setup();
-    await user.click(await screen.findByRole("checkbox", { name: "Include Desk in Kitchen" }));
+    await screen.findByRole("button", { name: "Add items" });
+    await chooseItem(user, "Desk");
     const quantity = screen.getByRole("spinbutton", { name: "Quantity for Desk in Kitchen Unit" });
     await user.clear(quantity); await user.type(quantity, "5");
     await user.click(screen.getByRole("radio", { name: "Premium tier for Desk in Kitchen" }));
-    await user.click(screen.getByRole("button", { name: "Add item" }));
-    let dialog = screen.getByRole("dialog", { name: "Add quotation item" });
-    await user.selectOptions(await within(dialog).findByRole("combobox", { name: "Item" }), "desk");
-    expect(within(dialog).getByRole("button", { name: "Add to changes" })).toBeDisabled();
-    expect(within(dialog).getByText(/This item is already in the quotation for this room/)).toBeVisible();
-    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(screen.getByRole("button", { name: "Added Desk" })).toBeDisabled();
     await user.click(screen.getByRole("checkbox", { name: "Include Desk in Kitchen" }));
-    await user.click(screen.getByRole("button", { name: "Add item" }));
-    dialog = screen.getByRole("dialog", { name: "Add quotation item" });
-    await user.selectOptions(await within(dialog).findByRole("combobox", { name: "Item" }), "desk");
-    expect(within(dialog).getByRole("spinbutton", { name: "Quantity for Desk in Kitchen Unit" })).toHaveValue(5);
-    expect(within(dialog).getByRole("combobox", { name: "Configured option for Desk in Kitchen" })).toHaveValue("premium");
-    await user.click(within(dialog).getByRole("button", { name: "Add to changes" }));
+    expect(screen.queryByRole("checkbox", { name: "Include Desk in Kitchen" })).not.toBeInTheDocument();
+    await chooseItem(user, "Desk");
+    expect(screen.getByRole("spinbutton", { name: "Quantity for Desk in Kitchen Unit" })).toHaveValue(5);
+    expect(screen.getByRole("radio", { name: "Premium tier for Desk in Kitchen" })).toBeChecked();
     expect(screen.getAllByRole("checkbox", { name: "Include Desk in Kitchen" })).toHaveLength(1);
     await user.click(screen.getByRole("button", { name: "Save changes" }));
-    await waitFor(() => expect(saves).toEqual([{ expectedVersion: 7, operations: [{ kind: "add", mainLineId: "desk", roomId: "room-kitchen", source, quantity: 5, modeTier: "premium" }] }]));
+    await waitFor(() => expect(saves).toEqual([{ expectedVersion: 7, operations: [{ kind: "add", mainLineId: "desk", roomId: "room-kitchen", source, quantity: 5, modeTier: "premium", recommendationSourceMainLineIds: [] }] }]));
   });
 
   it("keeps saved and excluded choices when candidates repeat their Main Lines", async () => {
@@ -233,27 +242,37 @@ describe("Client Sales-style estimate setup integration", () => {
     expect(await screen.findByRole("spinbutton", { name: "Quantity for Storage in Kitchen Unit" })).toHaveValue(2);
     expect(screen.getByRole("radio", { name: "Premium tier for Storage in Kitchen" })).toBeChecked();
     expect(screen.getAllByRole("checkbox", { name: "Include Storage in Kitchen" })).toHaveLength(1);
-    await user.click(screen.getByRole("checkbox", { name: "Include Chair in Kitchen" }));
+    await chooseItem(user, "Chair");
     expect(screen.getByRole("spinbutton", { name: "Quantity for Chair in Kitchen Unit" })).toHaveValue(9);
     expect(screen.getByRole("radio", { name: "Premium tier for Chair in Kitchen" })).toBeChecked();
     await user.click(screen.getByRole("button", { name: "Save changes" }));
-    await waitFor(() => expect(saves[0]).toEqual({ expectedVersion: 7, operations: [{ kind: "update", lineItemId: "line-chair", source, quantity: 9, modeTier: "premium", included: true }] }));
+    await waitFor(() => expect(saves[0]).toEqual({ expectedVersion: 7, operations: [{ kind: "update", lineItemId: "line-chair", source, quantity: 9, modeTier: "premium", included: true, recommendationSourceMainLineIds: [] }] }));
   });
 
-  it("loads further Main Lines without losing the earlier pending selection or sending duplicate rows", async () => {
+  it("pages through a large catalogue and searches beyond the first page without losing selected items", async () => {
     const { saves } = setup(); const user = userEvent.setup();
+    const requests: Array<{ offset: number; search: string; basket: string | null; sub: string | null }> = [];
     server.use(http.get("/api/v1/projects/project-one/quotation/items", ({ request }) => {
-      const offset = Number(new URL(request.url).searchParams.get("offset"));
-      return HttpResponse.json({ data: { items: offset === 0 ? [desk] : [{ ...desk, mainLineId: "shelf", name: "Shelf" }], total: 2, limit: 1, offset } });
+      const params = new URL(request.url).searchParams;
+      const offset = Number(params.get("offset")); const search = params.get("search") ?? "";
+      requests.push({ offset, search, basket: params.get("mainBasketId"), sub: params.get("subBasketId") });
+      const items = search ? [{ ...desk, mainLineId: "last", name: "Last item" }] : Array.from({ length: 20 }, (_, index) => ({ ...desk, mainLineId: `item-${offset + index}`, name: `Item ${offset + index}` }));
+      return HttpResponse.json({ data: { items, total: search ? 1 : 1000, limit: 20, offset } });
     }));
-    await user.click(await screen.findByRole("checkbox", { name: "Include Desk in Kitchen" }));
-    await user.click(screen.getByRole("button", { name: "Load more Main Lines" }));
-    await user.click(await screen.findByRole("checkbox", { name: "Include Shelf in Kitchen" }));
-    expect(screen.getAllByRole("checkbox", { name: "Include Desk in Kitchen" })).toHaveLength(1);
-    expect(screen.getByRole("checkbox", { name: "Include Desk in Kitchen" })).toBeChecked();
+    await screen.findByRole("button", { name: "Add items" });
+    await chooseItem(user, "Item 0");
+    expect(within(screen.getByRole("list", { name: "Available items" })).getAllByRole("listitem")).toHaveLength(20);
+    await user.click(within(screen.getByRole("navigation", { name: "Available item pages" })).getByRole("button", { name: "Next" }));
+    await chooseItem(user, "Item 20");
+    expect(screen.getByRole("checkbox", { name: "Include Item 0 in Kitchen" })).toBeChecked();
+    await user.selectOptions(screen.getByRole("combobox", { name: "Main Basket" }), "furniture");
+    await user.selectOptions(screen.getByRole("combobox", { name: "Sub Basket" }), "storage");
+    await user.type(screen.getByRole("searchbox", { name: "Search available items" }), "Last");
+    await chooseItem(user, "Last item");
+    expect(requests).toContainEqual({ offset: 0, search: "Last", basket: "furniture", sub: "storage" });
     await user.click(screen.getByRole("button", { name: "Save changes" }));
-    await waitFor(() => expect(saves[0]!.operations).toHaveLength(2));
-    expect(saves[0]!.operations.map(operation => operation.kind === "add" ? operation.mainLineId : null)).toEqual(["desk", "shelf"]);
+    await waitFor(() => expect(saves[0]!.operations).toHaveLength(3));
+    expect(saves[0]!.operations.map(operation => operation.kind === "add" ? operation.mainLineId : null)).toEqual(["item-0", "item-20", "last"]);
   });
 
   it("preserves an edited property and freezes setup saving when the estimate changes elsewhere", async () => {
@@ -287,7 +306,8 @@ describe("Client Sales-style estimate setup integration", () => {
     }));
     await configure(user); await property(user, "2BHK");
     await user.click(screen.getByRole("button", { name: "Continue to item selection" }));
-    expect(await screen.findByRole("checkbox", { name: "Include Desk in Kitchen" })).toBeVisible();
+    expect(await screen.findByRole("button", { name: "Add items" })).toBeVisible();
+    expect(screen.queryByRole("checkbox", { name: "Include Desk in Kitchen" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Verify saved changes" })).not.toBeInTheDocument();
     expect(saves).toHaveLength(1);
     await user.click(screen.getByRole("button", { name: "Configure estimate" }));
@@ -311,10 +331,11 @@ describe("Client Sales-style estimate setup integration", () => {
 
   it("preserves a staged Main Line but blocks saving it after available items can no longer be read", async () => {
     const { saves } = setup(); const user = userEvent.setup();
-    await user.click(await screen.findByRole("checkbox", { name: "Include Desk in Kitchen" }));
+    await screen.findByRole("button", { name: "Add items" });
+    await chooseItem(user, "Desk");
     server.use(http.get("/api/v1/projects/project-one/quotation/items", () => HttpResponse.json({ error: { code: "FORBIDDEN", message: "Unavailable" } }, { status: 403 })));
     await user.click(screen.getByRole("button", { name: "Refresh available items" }));
-    expect(await screen.findByText(/Available Main Lines could not be refreshed/)).toBeVisible();
+    expect(await screen.findByText(/Available items could not be loaded/)).toBeVisible();
     expect(screen.getByRole("checkbox", { name: "Include Desk in Kitchen" })).toBeChecked();
     await user.click(screen.getByRole("button", { name: "Save changes" }));
     expect(screen.getByText(/Refresh available items before saving/)).toBeVisible();
@@ -333,7 +354,8 @@ describe("Client Sales-style estimate setup integration", () => {
     }));
     await configure(user); await property(user, "2BHK"); await property(user, "1BHK");
     await user.click(screen.getByRole("button", { name: "Continue to item selection" }));
-    expect(await screen.findByRole("checkbox", { name: "Include Desk in Kitchen" })).toBeVisible();
+    expect(await screen.findByRole("button", { name: "Add items" })).toBeVisible();
+    expect(screen.queryByRole("checkbox", { name: "Include Desk in Kitchen" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Verify saved changes" })).not.toBeInTheDocument();
     expect(state.detail.estimateVersion).toBe(7);
     expect(state.detail.reviewState).toBe("ready_for_approval");

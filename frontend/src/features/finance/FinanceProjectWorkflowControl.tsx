@@ -17,6 +17,10 @@ import {
   getAdminProject
 } from "../admin/adminProjectsApi";
 import {
+  currentQuotationApprovalState,
+  currentQuotationIsApproved
+} from "../estimates/quotationApproval";
+import {
   getAdminProjectWorkflowTasks,
   projectWorkflowKeys
 } from "../workflow/projectWorkflowApi";
@@ -64,7 +68,11 @@ export function FinanceProjectWorkflowControl({ projectId }: { projectId: string
 }
 
 export function ProjectWorkflowSnapshot({ project }: { project: AdminProjectSummary }) {
-  const executionOpen = project.estimationWorkflowVersion === 3 ? project.estimate?.designApproved === true : project.estimationWorkflowVersion === 2 ? project.estimate?.estimationPhase === "post" : project.estimate?.designPlanStatus === "approved";
+  const executionOpen = project.estimationWorkflowVersion === 3
+    ? currentQuotationIsApproved(project.estimate) && project.estimate?.designApproved === true
+    : project.estimationWorkflowVersion === 2
+      ? project.estimate?.estimationPhase === "post"
+      : project.estimate?.designPlanStatus === "approved";
   const tasksQuery = useQuery({
     queryKey: projectWorkflowKeys.projectTasks(project.id),
     queryFn: () => getAdminProjectWorkflowTasks(project.id),
@@ -107,7 +115,18 @@ function WorkflowSnapshot({
 }) {
   const quotationWorkflow = project.estimationWorkflowVersion === 3;
   const collaborative = quotationWorkflow || project.estimationWorkflowVersion === 2;
-  const estimateApproved = collaborative ? project.estimate?.estimationPhase === "post" : project.estimate?.status === "client_approved";
+  const quotationApprovalState = currentQuotationApprovalState(project.estimate);
+  const quotationPhase = project.estimate?.estimationPhase;
+  const quotationPostPhase = quotationWorkflow && quotationPhase === "post";
+  const awaitingPreDesignApproval = quotationWorkflow && quotationPhase === "pre";
+  const currentQuotationApproved = quotationPostPhase && currentQuotationIsApproved(project.estimate);
+  const quotationApprovalBlocked = quotationPostPhase && !currentQuotationApproved;
+  const hasQuotationRevision = quotationPostPhase && ["revision_draft", "revision_pending_client", "revision_changes_requested", "revision_current"].includes(quotationApprovalState);
+  const estimateApproved = quotationWorkflow
+    ? quotationPostPhase && quotationApprovalState !== "source_issue"
+    : collaborative
+      ? project.estimate?.estimationPhase === "post"
+      : project.estimate?.status === "client_approved";
   const designStatus = project.estimate?.designPlanStatus ?? "pending_assignment";
   const designerAssigned = Boolean(project.estimate?.designPlanDesigner) ||
     !["pending_assignment"].includes(designStatus);
@@ -115,7 +134,11 @@ function WorkflowSnapshot({
   const designApproved = quotationWorkflow ? project.estimate?.designApproved === true : designStatus === "approved";
   const preparationTasks = tasks.filter((task) => task.kind !== "design_plan_upload" && task.preparationOnly === true);
   const executionTasks = tasks.filter((task) => task.kind !== "design_plan_upload" && task.preparationOnly !== true);
-  const executionEnabled = collaborative ? (!quotationWorkflow || designApproved) && project.estimate?.finalEstimateApproved && project.status !== "planning" && executionTasks.length > 0 : designApproved;
+  const executionEnabled = quotationWorkflow
+    ? currentQuotationApproved && designApproved && project.status !== "planning" && executionTasks.length > 0
+    : collaborative
+      ? Boolean(project.estimate?.finalEstimateApproved) && project.status !== "planning" && executionTasks.length > 0
+      : designApproved;
   const tradeTasks = executionTasks.filter((task) => task.kind === "trade_execution");
   const completedTasks = executionTasks.filter((task) => task.status === "completed").length;
   const assignedTrades = tradeTasks.filter((task) => task.assignedWorker).length;
@@ -152,12 +175,20 @@ function WorkflowSnapshot({
         <WorkflowStage
           title={quotationWorkflow ? "2. Pre-design approval" : collaborative ? "2. Pre-estimate approved" : "2. Estimate approved"}
           tone={estimateApproved ? "success" : project.estimate ? "warning" : "neutral"}
-          status={estimateApproved
+          status={quotationPostPhase && quotationApprovalState === "source_issue"
+            ? "Approval status unavailable"
+            : estimateApproved
             ? "Approved"
             : project.estimate
               ? formatWorkflowLabel(project.estimate.status)
               : "Not started"}
-          detail={quotationWorkflow ? estimateApproved ? "The initial quotation is approved. The primary Designer can revise it for the second Client approval." : "Sales and Client approval of the initial quotation is required."
+          detail={quotationWorkflow ? awaitingPreDesignApproval
+            ? "Client pre-design approval is required before design work can begin."
+            : quotationApprovalState === "source_issue"
+              ? "The current quotation approval could not be verified. Design workflow remains paused."
+              : quotationApprovalState === "initial_current"
+                ? "The initial quotation is approved and current. Design work can proceed unless the quotation is revised."
+                : "The initial quotation was approved. Any material quotation revision is tracked separately below."
             : collaborative
             ? estimateApproved ? "The Client approved the pre-estimate. Design and procurement preparation can proceed." : "Client pre-estimate approval is required before design and procurement preparation."
             : project.estimate
@@ -176,30 +207,48 @@ function WorkflowSnapshot({
             ? `${project.estimate.designPlanDesigner.name} · ${project.estimate.designPlanDesigner.email}`
             : "No Designer is currently assigned."}
         />
-        {quotationWorkflow ? <WorkflowStage title="4. Post-design quotation approval" tone={project.estimate?.finalEstimateApproved ? "success" : "warning"}
-          status={project.estimate?.finalEstimateApproved ? "Approved" : "Awaiting quotation approval"}
-          detail={project.estimate?.finalEstimateApproved ? "The Designer-revised quotation is approved and locked. Actual design tasks can proceed." : "The Client approves the Designer-revised quotation before actual design tasks begin."} /> : null}
+        {hasQuotationRevision ? <QuotationRevisionStage state={quotationApprovalState} /> : null}
         <WorkflowStage
-          title={quotationWorkflow ? "5. Design uploaded and submitted to Client" : "4. Design uploaded and submitted to Client"}
-          tone={designSubmitted ? designStatus === "changes_requested" ? "warning" : "success" : "info"}
-          status={designSubmitted
+          title={quotationWorkflow ? `${hasQuotationRevision ? "5" : "4"}. Design uploaded and submitted to Client` : "4. Design uploaded and submitted to Client"}
+          tone={quotationApprovalBlocked || awaitingPreDesignApproval ? "warning" : designSubmitted ? designStatus === "changes_requested" ? "warning" : "success" : "info"}
+          status={awaitingPreDesignApproval
+            ? "Waiting for pre-design approval"
+            : quotationApprovalBlocked
+            ? "Waiting for quotation approval"
+            : designSubmitted
             ? designStatus === "changes_requested"
               ? "Changes requested"
               : "Submitted"
             : isDesignerAssignmentPending(project)
               ? "Waiting for Designer"
               : "Upload pending"}
-          detail={designSubmitted
+          detail={awaitingPreDesignApproval
+            ? "Design work begins after the Client approves the pre-design quotation."
+            : quotationApprovalBlocked
+            ? "Design workflow is paused until the current quotation approval is verified."
+            : designSubmitted
             ? `The Client review includes design plan version ${project.estimate?.designPlanVersion ?? 0}.`
             : "The Designer must upload and submit the actual plan to the Client."}
         />
         <WorkflowStage
-          title={quotationWorkflow ? "6. Design approved" : "5. Design approved"}
-          tone={designApproved ? "success" : designStatus === "changes_requested" ? "warning" : "neutral"}
-          status={designApproved ? "Approved" : quotationWorkflow && designStatus === "approved" ? "Awaiting current design approval" : formatWorkflowLabel(designStatus)}
-          detail={designApproved
-            ? "Approved by the Client, or by a Sales Manager with recorded proof."
-            : "Execution remains locked until the design decision is approved."}
+          title={quotationWorkflow ? `${hasQuotationRevision ? "6" : "5"}. Design approved` : "5. Design approved"}
+          tone={quotationApprovalBlocked || awaitingPreDesignApproval ? "warning" : designApproved ? "success" : designStatus === "changes_requested" ? "warning" : "neutral"}
+          status={awaitingPreDesignApproval
+            ? "Waiting for pre-design approval"
+            : quotationApprovalBlocked
+            ? "Waiting for quotation approval"
+            : designApproved
+              ? "Approved"
+              : quotationWorkflow && designStatus === "approved"
+                ? "Awaiting current design approval"
+                : formatWorkflowLabel(designStatus)}
+          detail={awaitingPreDesignApproval
+            ? "The design decision becomes available after pre-design quotation approval."
+            : quotationApprovalBlocked
+            ? "The design decision cannot advance until the current quotation is approved."
+            : designApproved
+              ? "Approved by the Client, or by a Sales Manager with recorded proof."
+              : "Execution remains locked until the design decision is approved."}
         />
         {collaborative && !quotationWorkflow ? <WorkflowStage title="6. Final estimate approval" tone={project.estimate?.finalEstimateApproved ? "success" : "warning"}
           status={project.estimate?.finalEstimateApproved ? "Approved" : "Awaiting final approval"}
@@ -209,16 +258,30 @@ function WorkflowSnapshot({
               : "Final approved commercial baseline unavailable. Super Admin confirms the initial payment before work-order issuance."
             : "After design completion, the Client approves the final estimate. Super Admin then confirms the initial payment."} /> : null}
         <WorkflowStage
-          title={collaborative ? "7. Execution queues" : "6. Execution queues"}
+          title={quotationWorkflow ? `${hasQuotationRevision ? "7" : "6"}. Execution queues` : collaborative ? "7. Execution queues" : "6. Execution queues"}
           tone={executionComplete && executionEnabled ? "success" : executionEnabled ? "warning" : "neutral"}
           status={executionComplete && executionEnabled
             ? "Complete"
             : executionEnabled
               ? `${completedTasks} of ${executionTasks.length} tasks complete`
-              : quotationWorkflow ? designApproved ? "Awaiting execution release" : "Waiting for design approval" : collaborative ? "Preparation in progress" : "Waiting for design approval"}
+              : quotationWorkflow
+                ? awaitingPreDesignApproval
+                  ? "Waiting for pre-design approval"
+                  : !currentQuotationApproved
+                  ? "Waiting for quotation approval"
+                  : designApproved
+                    ? "Awaiting execution release"
+                    : "Waiting for design approval"
+                : collaborative ? "Preparation in progress" : "Waiting for design approval"}
           detail={executionEnabled
             ? `Procurement, Finance, Site Management, and approved trades · ${assignedTrades} of ${tradeTasks.length} trade tasks assigned`
-            : quotationWorkflow ? "Procurement follows approval of the uploaded design. Work-order issuance also requires the approved quotation, Super Admin payment confirmation and procurement checks." : collaborative ? "Procurement and assigned staff can prepare now. Work-order issuance requires final approval and Super Admin payment confirmation." : "Execution queues open after design approval."}
+            : quotationWorkflow
+              ? awaitingPreDesignApproval
+                ? "Execution remains locked until the Client approves the pre-design quotation."
+                : !currentQuotationApproved
+                ? "Execution remains locked until the current quotation approval is verified."
+                : "Procurement follows approval of the uploaded design. Work-order issuance also requires Super Admin payment confirmation and procurement checks."
+              : collaborative ? "Procurement and assigned staff can prepare now. Work-order issuance requires final approval and Super Admin payment confirmation." : "Execution queues open after design approval."}
         >
           {preparationTasks.length > 0 && !tasksLoading && !tasksError ? <p>{preparationTasks.filter((task) => task.assignedWorker).length} of {preparationTasks.length} preparation tasks assigned. Assignments can be planned now; execution deadlines and effort tracking start only after Super Admin confirms the initial payment.</p> : null}
           {executionEnabled && !tasksLoading && !tasksError ? (
@@ -237,6 +300,51 @@ function WorkflowSnapshot({
         />
       ) : null}
     </Surface>
+  );
+}
+
+function QuotationRevisionStage({
+  state
+}: {
+  state: ReturnType<typeof currentQuotationApprovalState>;
+}) {
+  const presentation = state === "revision_current"
+    ? {
+        tone: "success" as const,
+        status: "Revised quotation approved",
+        detail: "The Client approved the current Designer-revised quotation. Design workflow can continue."
+      }
+    : state === "revision_pending_client"
+      ? {
+          tone: "warning" as const,
+          status: "Awaiting Client review",
+          detail: "The revised quotation is awaiting the Client's decision. Design workflow remains paused."
+        }
+      : state === "revision_changes_requested"
+        ? {
+            tone: "warning" as const,
+            status: "Changes requested",
+            detail: "The Client requested changes to the revised quotation. Design workflow remains paused."
+          }
+        : state === "revision_draft"
+          ? {
+              tone: "warning" as const,
+              status: "Revision draft",
+              detail: "Client approval is required after the revised quotation is submitted. Design workflow remains paused."
+            }
+          : {
+              tone: "warning" as const,
+              status: "Approval status unavailable",
+              detail: "The current quotation approval could not be verified. Design workflow remains paused."
+            };
+
+  return (
+    <WorkflowStage
+      title="4. Quotation revision"
+      tone={presentation.tone}
+      status={presentation.status}
+      detail={presentation.detail}
+    />
   );
 }
 

@@ -40,8 +40,9 @@ export function quotationVisibleOverview(payload: unknown): boolean {
 }
 
 /** Read current Configuration only; callers establish project authority before using this helper. */
-export async function visibleQuotationSources(estimate: Row, session?: ClientSession, allBaskets = false) {
-  const query = AiEstimatorKnowledgeMainLineModel.find({ ...(!allBaskets ? { basketId: { $in: estimate.selectedMainBasketIds ?? [] } } : {}),
+export async function visibleQuotationSources(estimate: Row, session?: ClientSession, allBaskets = false, mainLineIds?: readonly string[]) {
+  const query = AiEstimatorKnowledgeMainLineModel.find({ ...(mainLineIds ? { _id: { $in: mainLineIds } } : {}),
+    ...(!allBaskets ? { basketId: { $in: estimate.selectedMainBasketIds ?? [] } } : {}),
     status: { $in: ["active", "draft", "inactive"] } }).select({ _id: 1 });
   if (session) query.session(session);
   const sources = await resolveEstimatorCatalogueLines((await query.lean()).map(row => String(row._id)), session);

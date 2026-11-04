@@ -44,13 +44,24 @@ describe("ClientEstimateSummary", () => {
   it("links two unequal projects to their saved estimation workspaces without repeating rows or decisions", async () => {
     const second = estimate("estimate-two", "project-two", "post");
     second.total = 92341; second.publishedReview!.snapshot.total = 92341;
+    second.quotationApprovalState = "revision_pending_client";
+    second.currentQuotationApproved = false;
+    second.requiresClientReapproval = true;
+    second.quotationApprovalSource = null;
+    second.currentQuotationApproval = null;
+    second.estimation = {
+      workflowVersion: 3, phase: "post", status: "sent_to_client", requirementsVersion: 1,
+      pricedRevision: 1, editClosedAt: null, preApproval: null, finalApproval: null,
+      designScopeRevision: 1, approvedDesignScopeRevision: null,
+      pendingReviewRoundId: second.publishedReview!.id, preparationSnapshotId: null
+    };
     const { container } = setup([estimate("estimate-one", "project-one"), second], { selectedEstimateId: "estimate-two" });
     const list = await screen.findByRole("list", { name: "Project estimates" });
     expect(within(list).getByRole("link", { name: "Review estimate: Cedar Home" })).toHaveAttribute("href", "/projects/project-one/quotation");
     const selectedRow = within(list).getByRole("heading", { name: "Lakeside Studio" }).closest("li")!;
     expect(within(selectedRow).getByRole("link", { name: "Review estimate: Lakeside Studio" })).toHaveAttribute("href", "/projects/project-two/quotation");
     expect(within(selectedRow).getByText("Estimate from your link")).toBeVisible();
-    expect(within(selectedRow).getByText("Ready for your post-design approval")).toBeVisible();
+    expect(within(selectedRow).getByText("Ready for your revised quotation approval")).toBeVisible();
     expect(screen.queryByText(/Do not repeat item/)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Approve|Request changes|Export as PDF/ })).not.toBeInTheDocument();
     expect((await axe.run(container, { rules: { "color-contrast": { enabled: false } } })).violations).toEqual([]);
@@ -67,6 +78,28 @@ describe("ClientEstimateSummary", () => {
     expect(screen.queryByRole("link", { name: /Review estimate/ })).not.toBeInTheDocument();
   });
 
+  it("shows the unchanged initial approval without implying that a Designer revision exists", async () => {
+    const approved = estimate("estimate-one", "project-one");
+    approved.status = "client_approved";
+    approved.publishedReview!.status = "approved";
+    approved.publishedReview!.canDecide = false;
+    approved.estimation = { workflowVersion: 3, phase: "post", status: "draft", requirementsVersion: 1, pricedRevision: 1,
+      editClosedAt: null, preApproval: { reviewRoundId: approved.publishedReview!.id, estimateVersion: 3, approvedAt: "2026-11-04T08:00:00Z" }, finalApproval: null,
+      designScopeRevision: 1, approvedDesignScopeRevision: null, pendingReviewRoundId: null, preparationSnapshotId: null };
+    approved.quotationApprovalState = "initial_current";
+    approved.currentQuotationApproved = true;
+    approved.requiresClientReapproval = false;
+    approved.quotationApprovalSource = "initial_unchanged";
+    approved.currentQuotationApproval = { kind: "initial_unchanged", reviewRoundId: approved.publishedReview!.id, estimateVersion: 3, approvedAt: "2026-11-04T08:00:00Z" };
+    setup([approved]);
+    expect(
+      await screen.findByText(
+        "Initial estimate approved. Design can continue while the quotation remains unchanged.",
+      ),
+    ).toBeVisible();
+    expect(screen.queryByText(/preparing the revised quotation/i)).not.toBeInTheDocument();
+  });
+
   it("does not label a mismatched published version ready for approval", async () => {
     const changed = estimate("estimate-one", "project-one");
     changed.version = 4;
@@ -74,6 +107,19 @@ describe("ClientEstimateSummary", () => {
     expect(await screen.findByText("Open your estimation workspace to check the latest review status.")).toBeVisible();
     expect(screen.getByRole("link", { name: "Open estimation: Cedar Home" })).toBeVisible();
     expect(screen.queryByText("Ready for your pre-design approval")).not.toBeInTheDocument();
+  });
+
+  it("keeps a valid pre-design review ready when current approval is not established yet", async () => {
+    const pending = estimate("estimate-one", "project-one", "pre");
+    pending.quotationApprovalState = "source_issue";
+    pending.currentQuotationApproved = false;
+    pending.requiresClientReapproval = false;
+    pending.quotationApprovalSource = null;
+    pending.currentQuotationApproval = null;
+    setup([pending]);
+    expect(await screen.findByText("Ready for your pre-design approval")).toBeVisible();
+    expect(screen.getByRole("link", { name: "Review estimate: Cedar Home" })).toBeVisible();
+    expect(screen.queryByText(/current quotation approval could not be verified/i)).not.toBeInTheDocument();
   });
 
   it("keeps legacy review expansion while a version supplied by the published contract uses compact navigation", async () => {

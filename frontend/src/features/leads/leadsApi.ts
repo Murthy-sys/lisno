@@ -7,6 +7,9 @@ import type {
   EstimateClientReviewSnapshot,
   EstimateClientReviewSummary,
   EstimateClientFeedback,
+  CurrentQuotationApproval,
+  QuotationApprovalSource,
+  QuotationApprovalState,
   Lead,
   LeadActivity,
   LeadActivityType,
@@ -160,6 +163,11 @@ export interface EstimateDraft extends Omit<EstimateDraftInput, "lineItems"> {
   designPlanVersion?: number;
   estimation?: EstimationLifecycle | null;
   preApprovedReview?: { reviewRoundId: string; estimateVersion: number; snapshot: EstimateClientReviewSnapshot } | null;
+  quotationApprovalState?: QuotationApprovalState;
+  currentQuotationApproved?: boolean;
+  requiresClientReapproval?: boolean;
+  quotationApprovalSource?: QuotationApprovalSource | null;
+  currentQuotationApproval?: CurrentQuotationApproval | null;
 }
 export interface SavedEstimate extends EstimateDraft {
   leadId: string;

@@ -22,6 +22,20 @@ function SafeQuotationShell({ onRemove, scrollMode }: { onRemove?: () => void; s
 }
 
 describe("EstimateBuilderShell safe presentation", () => {
+  it("keeps empty rooms available in selected-only editors without changing historical room views", () => {
+    const { rerender } = render(<EstimateBuilderShell rooms={[{ id: "empty", label: "Empty bedroom", hasSelectedItems: false }]}
+      activeRoomId="empty" onSelectRoom={vi.fn()} selectedCount={0} baskets={[]} groups={[]} renderLine={() => null}
+      viewState={{ ...createConfiguredEstimateViewState(), railView: "selected" }} onViewStateChange={vi.fn()}
+      onRefresh={vi.fn()} refreshing={false} selectedItemsOnly />);
+    expect(screen.getByRole("button", { name: "Empty bedroom" })).toBeVisible();
+    expect(screen.queryByRole("group", { name: "Room view" })).not.toBeInTheDocument();
+    rerender(<EstimateBuilderShell rooms={[{ id: "empty", label: "Empty bedroom", hasSelectedItems: false }]}
+      activeRoomId="empty" onSelectRoom={vi.fn()} selectedCount={0} baskets={[]} groups={[]} renderLine={() => null}
+      viewState={{ ...createConfiguredEstimateViewState(), railView: "selected" }} onViewStateChange={vi.fn()}
+      onRefresh={vi.fn()} refreshing={false} />);
+    expect(screen.queryByRole("button", { name: "Empty bedroom" })).not.toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Room view" })).toBeVisible();
+  });
   it.each(["pane", "document"] as const)("opens a collapsed basket and jumps in %s scroll mode", async (scrollMode) => {
     const user = userEvent.setup();
     render(<SafeQuotationShell scrollMode={scrollMode === "document" ? "document" : undefined} />);

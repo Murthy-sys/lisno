@@ -8,11 +8,36 @@ import { enableQuotationWorkflow, getQuotationTransitionPreview, releaseEstimate
 import { refreshEstimateCollaboration } from "./estimateCollaborationQueries";
 import type { EstimateDraft } from "./leadsApi";
 import { unlockQuotation } from "../client/quotationApi";
+import { currentQuotationApprovalState, currentQuotationIsApproved } from "../estimates/quotationApproval";
 import "./staffEstimateCollaboration.css";
 
 type Action = "enable" | "withdraw" | "release" | "unlock";
 const money = (paise: number) => new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 2 }).format(paise / 100);
 const total = (value: { total: number; totalPaise?: number }) => money(value.totalPaise ?? Math.round(value.total * 100));
+
+function quotationStatusCopy(estimate: EstimateDraft) {
+  const state = currentQuotationApprovalState(estimate);
+  if (state === "initial_current" && currentQuotationIsApproved(estimate)) {
+    return "Initial estimate approved. No quotation changes require Client review.";
+  }
+  if (state === "revision_current" && currentQuotationIsApproved(estimate)) {
+    return "The Client approved the revised quotation. Design work can continue.";
+  }
+  if (state === "revision_draft") return "Client approval is required for the revised quotation before design work continues.";
+  if (state === "revision_pending_client") return "The revised quotation is awaiting Client approval.";
+  if (state === "revision_changes_requested") return "The Client requested quotation changes. Update and resubmit the revision before design work continues.";
+  return "The current quotation approval could not be verified. Refresh before continuing design work.";
+}
+
+function quotationStatusHeading(estimate: EstimateDraft) {
+  const state = currentQuotationApprovalState(estimate);
+  if (state === "initial_current") return "Current approved quotation";
+  if (state === "revision_current") return "Revised quotation approved";
+  if (state === "revision_draft") return "Revised quotation draft";
+  if (state === "revision_pending_client") return "Revised quotation under Client review";
+  if (state === "revision_changes_requested") return "Quotation changes requested";
+  return "Quotation approval unavailable";
+}
 
 export function StaffEstimateCollaboration({ estimate, disabled = false, onVersionAdvance, compact = false }: {
   estimate: EstimateDraft; disabled?: boolean; onVersionAdvance?: (before: number, after: number) => void; compact?: boolean;
@@ -55,7 +80,7 @@ export function StaffEstimateCollaboration({ estimate, disabled = false, onVersi
     onSuccess: async (result, input) => {
       if (input.action !== "release" && "version" in result && typeof result.version === "number" && input.source.version !== undefined) onVersionAdvance?.(input.source.version, result.version);
       setDialog(null);
-      setMessage(input.action === "unlock" ? "Quotation reopened. Save and submit the revised quotation for client approval." : input.action === "withdraw" ? "Review withdrawn. The client cannot approve that submission; its history is preserved." : input.action === "release" ? "Saved estimate released for procurement preparation. Final approval and initial payment are still required before work orders." : "Revised quotation workflow enabled. Sales and client approval come before the Designer's quotation review.");
+      setMessage(input.action === "unlock" ? "Quotation reopened. Save and submit the revised quotation for client approval." : input.action === "withdraw" ? "Review withdrawn. The client cannot approve that submission; its history is preserved." : input.action === "release" ? "Saved estimate released for procurement preparation. Final approval and initial payment are still required before work orders." : "Quotation workflow enabled. The current Client approval remains effective until a saved quotation revision requires review.");
       await refreshEstimateCollaboration(queryClient);
       sectionRef.current?.focus();
     },
@@ -69,6 +94,9 @@ export function StaffEstimateCollaboration({ estimate, disabled = false, onVersi
   });
   const lifecycle = estimate.estimation;
   const quotationWorkflow = lifecycle?.workflowVersion === 3;
+  const quotationReapprovalStage = quotationWorkflow && lifecycle?.phase === "post";
+  const quotationState = quotationReapprovalStage ? currentQuotationApprovalState(estimate) : undefined;
+  const quotationCopy = quotationReapprovalStage ? quotationStatusCopy(estimate) : "";
   const closed = Boolean(lifecycle?.editClosedAt || !quotationWorkflow && lifecycle?.finalApproval);
   const canUnlock = quotationWorkflow && closed && estimate.capabilities?.canUnlockQuotation === true && Boolean(lifecycle.finalApproval);
   const editable = !closed && ["draft", "designer_changes_requested", "client_changes_requested"].includes(lifecycle?.status ?? estimate.status);
@@ -85,7 +113,7 @@ export function StaffEstimateCollaboration({ estimate, disabled = false, onVersi
       {canWithdraw ? <Button variant="secondary" disabled={disabled || command.isPending || estimate.version === undefined} onClick={(event) => open("withdraw", event.currentTarget)}>Withdraw review to edit</Button> : null}
       {canRelease ? <Button variant="secondary" disabled={disabled || command.isPending || estimate.version === undefined} onClick={(event) => open("release", event.currentTarget)}>Release saved estimate for preparation</Button> : null}
     </div>;
-  if ((!lifecycle && !canEnable || compact && !hasActions) && !dialog && !message) return null;
+  if ((!lifecycle && !canEnable || compact && !hasActions && !quotationReapprovalStage) && !dialog && !message) return null;
   return <section className={`staff-estimate-flow${compact ? " staff-estimate-flow--compact" : ""}`} aria-label="Estimate collaboration" ref={sectionRef} tabIndex={-1}>
     {compact ? hasActions ? <details className="staff-estimate-actions-menu" onKeyDown={event => { if (event.key === "Escape") { event.currentTarget.open = false; event.currentTarget.querySelector("summary")?.focus(); } }}><summary aria-label="Estimate actions">Actions</summary><div className="staff-estimate-actions-menu__options">
       <p className="staff-estimate-flow__notice">{closed ? "Approved estimate · editing locked" : (lifecycle?.status ?? estimate.status).replaceAll("_", " ")}</p>
@@ -93,18 +121,15 @@ export function StaffEstimateCollaboration({ estimate, disabled = false, onVersi
       {lifecycle?.preparationSnapshotId ? <p className="staff-estimate-flow__notice">Later draft changes do not update the saved procurement preparation source.</p> : null}
       {message ? <p role="status">{message}</p> : null}
       {actionControls}
-    </div></details> : message ? <p role="status">{message}</p> : null : <>
-    <div className="staff-estimate-flow__heading"><div><p className="eyebrow">{quotationWorkflow ? lifecycle.phase === "post" ? "Post-design approval" : "Pre-design approval" : lifecycle ? lifecycle.phase === "post" ? "Post-estimation" : "Pre-estimation" : "Existing estimate"}</p><h2>{closed ? quotationWorkflow ? "Estimation complete" : "Final estimate approved" : quotationWorkflow && lifecycle.phase === "post" ? "Designer-revised quotation" : lifecycle ? "Estimate collaboration" : "Enable client collaboration"}</h2></div>
+    </div></details> : message ? <p role="status">{message}</p> : quotationReapprovalStage ? <p className="staff-estimate-flow__notice" role={quotationState === "source_issue" ? "alert" : "status"}>{quotationCopy}</p> : null : <>
+    <div className="staff-estimate-flow__heading"><div><p className="eyebrow">{quotationReapprovalStage ? "Quotation approval" : lifecycle ? lifecycle.phase === "post" ? "Post-estimation" : "Pre-estimation" : "Existing estimate"}</p><h2>{quotationReapprovalStage ? quotationStatusHeading(estimate) : closed ? "Final estimate approved" : lifecycle ? "Estimate collaboration" : "Enable client collaboration"}</h2></div>
       {lifecycle ? <dl className="staff-estimate-flow__totals"><div><dt>{quotationWorkflow ? "Pre-design approved total" : "Approved pre-estimate"}</dt><dd>{estimate.preApprovedReview ? total(estimate.preApprovedReview.snapshot) : lifecycle.preApproval ? "Source unavailable" : "Not approved yet"}</dd></div><div><dt>{closed ? "Approved total" : "Saved proposed total"}</dt><dd>{total(estimate)}</dd></div></dl> : null}
     </div>
-    {quotationWorkflow ? <p>{closed ? "The quotation is approved and locked. Design work can now proceed."
-      : lifecycle.status === "sent_to_client" ? "The client can approve this submission or save permitted changes for your review."
-      : lifecycle.phase === "post" ? "Review the initial approved quotation, make the required changes, and send it to the client before design tasks begin."
-      : "Sales and the client approve the same quotation before the primary Designer reviews it."}</p>
+    {quotationReapprovalStage ? <p role={quotationState === "source_issue" ? "alert" : "status"}>{quotationCopy}</p>
       : closed ? <p>Design and final estimate approval are recorded. Estimate editing is closed. Super Admin confirms the initial payment before work orders can be issued.</p>
       : lifecycle?.status === "sent_to_client" ? <p>The client is reviewing a frozen submission. Withdraw that review with a reason before editing.</p>
         : lifecycle?.phase === "post" ? <p>Design and procurement preparation can continue. Resolve client requests and approve design for the current scope before submitting the final estimate.</p>
-          : lifecycle ? <p>Prepare the pre-estimate and resolve client requirements before submission. Client approval starts design and procurement preparation.</p>
+          : lifecycle ? <p>{quotationWorkflow ? "Prepare the pre-design quotation and resolve client requirements before submission. Client approval starts design work." : "Prepare the pre-estimate and resolve client requirements before submission. Client approval starts design and procurement preparation."}</p>
             : <p>Move an eligible project to pre/post estimation. Existing commitments and historical sources are checked before this change is accepted.</p>}
     {lifecycle?.workflowVersion === 2 && lifecycle.phase === "post" && !lifecycle.finalApproval && (estimate.designPlanStatus !== "approved" || lifecycle.approvedDesignScopeRevision !== lifecycle.designScopeRevision) ? <p className="staff-estimate-flow__notice">Final submission is waiting for approved design that matches the current estimate scope.</p> : null}
     {lifecycle?.preparationSnapshotId ? <p className="staff-estimate-flow__notice">Procurement has a frozen preparation source. Later draft changes do not update that source automatically.</p> : null}
@@ -121,7 +146,7 @@ export function StaffEstimateCollaboration({ estimate, disabled = false, onVersi
         <div className="ui-dialog__body"><p>Saved estimate version {dialog.estimate.version} · {total(dialog.estimate)}</p>
           <p>{dialog.action === "unlock" ? "This creates a new working revision. Earlier approvals and issued orders remain recorded. The client must approve the revised quotation again." : dialog.action === "withdraw" ? "The client will no longer be able to approve this submission. Its PDF, review history, and any earlier approvals remain recorded." : dialog.action === "release" ? "Only this saved version will be frozen for procurement. Save your draft first to include unsaved edits. This release does not approve the estimate or permit issuing work orders." : "The server will verify that this project can enter the new workflow safely. Existing approvals and project records will be retained."}</p>
           {dialog.action === "enable" ? <div>
-            <p>The client can edit permitted items. Sales and client approval is followed by the Designer's revised quotation, then operational design tasks.</p>
+            <p>The Client-approved quotation stays current while unchanged. If the Designer saves a material revision, the Client must approve that revision before design work continues.</p>
             {preview.isPending || preview.isFetching ? <p role="status">Checking this project's current approvals and commitments…</p> : preview.isError ? <p role="alert">The transition preview is unavailable. <Button variant="secondary" onClick={() => void preview.refetch()}>Retry preview</Button></p>
               : preview.data ? <>{preview.data.blockers.length ? <div role="status"><p>This project needs reconciliation before the workflow can change.</p><ul>{preview.data.blockers.map((blocker, index) => <li key={index}>{blocker}</li>)}</ul></div> : null}
                 {preview.data.estimateVersion !== dialog.estimate.version ? <p role="alert">The estimate changed. Close this dialog and review the latest saved estimate.</p> : preview.data.eligible ? <p>This saved draft is eligible. Existing approval history will be preserved.</p> : null}</> : null}

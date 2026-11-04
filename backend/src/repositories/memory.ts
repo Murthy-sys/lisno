@@ -1,10 +1,13 @@
+import { memoryUserResponsibilityCounts, memoryUserResponsibilities } from "./user-responsibilities.js";
 import { projectNumbersForProjectIds, readProjectNumber } from "../domain/project-number.js";
 import { readProjectInitiationMetadata } from "../domain/project-initiation-metadata.js";
 import { projectManagerAssignmentFromProjection } from "../domain/project-manager-assignment-projection.js";
 import { workflowSpacePlanningSource } from "../domain/workflow-space-planning.js";
+import { workflowTaskDueAt } from "../domain/project-workflow.js";
 import { furnitureUomOption } from "../domain/workflow-uoms.js";
 import { normalizeKnowledgeIdentity } from "../domain/ai-estimator-knowledge.js";
 import { workflowApprovedLines, workflowEstimateRoomDimensions, workflowEstimateRooms, WorkflowEstimateSourceError } from "../domain/workflow-estimate-items.js";
+import { resolveQuotationApprovalFromRounds } from "../services/quotation-approval-state.service.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { timingSafeEqual } from "node:crypto";
 
@@ -104,6 +107,17 @@ interface MemorySnapshot {
   state: SeedData;
   counters: Map<string, number>;
   timestamp: number;
+}
+
+function memoryAdminEstimateSummaries(state: SeedData): EstimateSummaryRecord[] {
+  const rounds = state.estimateReviewRounds ?? [];
+  return (state.estimateSummaries ?? []).map((estimate) => {
+    const project = state.projects.find(candidate => candidate.id === estimate.projectId);
+    return estimate.estimation?.workflowVersion === 3
+      ? { ...estimate, quotationApproval: resolveQuotationApprovalFromRounds({ ...estimate, _id: estimate.id }, rounds,
+        { clientId: project?.clientId, primaryDesignerId: project?.primaryDesignerId }) }
+      : estimate;
+  });
 }
 
 const snapshotReaders = new WeakMap<AppRepository, () => MemorySnapshot>();
@@ -325,13 +339,18 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
       return clone(state.vendorInvitationTargets?.find((vendor) => vendor.id === vendorId) ?? null);
     },
     async findProjectStatusEstimateEvidence(projectId) {
-      return clone(state.projectStatusEstimateEvidence?.find(row => row.projectId === projectId) ?? {
+      const evidence = clone(state.projectStatusEstimateEvidence?.find(row => row.projectId === projectId) ?? {
         projectId,
         estimates: (state.estimateSummaries ?? []).filter(row => row.projectId === projectId || state.leads.some(lead => lead.id === row.leadId && lead.projectId === projectId))
           .map(row => ({ id: row.id, leadId: row.leadId, projectId: row.projectId, version: row.version, status: row.status, clientDecisionAt: row.clientDecisionAt, estimation: row.estimation })),
         rounds: [],
         financeSource: null
       });
+      const approvalByEstimate = new Map(memoryAdminEstimateSummaries(state)
+        .flatMap(estimate => estimate.quotationApproval ? [[estimate.id, estimate.quotationApproval] as const] : []));
+      evidence.estimates = evidence.estimates.map(estimate => ({ ...estimate,
+        ...(approvalByEstimate.has(estimate.id) ? { quotationApproval: approvalByEstimate.get(estimate.id) } : {}) }));
+      return evidence;
     },
     async findDesignWorkflowSpacePlanningSource(projectId) {
       const context = await implementation.findDesignWorkflowRoomContext(projectId);
@@ -424,10 +443,19 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
         }
       }
       if (lock) project.estimationFenceEpoch = (project.estimationFenceEpoch ?? 0) + 1;
+      const quotationApproval = lifecycle.workflowVersion === 3
+        ? resolveQuotationApprovalFromRounds({ ...estimate, _id: estimate.id }, (state.estimateReviewRounds ?? []).map(round => ({
+          ...round, _id: round.id
+        })), { clientId: project.clientId, primaryDesignerId: project.primaryDesignerId }) : null;
+      const memoryAssignedAt = (estimate as unknown as Record<string, unknown>).designPlanAssignedAt;
+      const derivedDesignStartedAt = lifecycle.workflowVersion === 3 && quotationApproval?.currentQuotationApproval && memoryAssignedAt
+        ? new Date(Math.max(Date.parse(quotationApproval.currentQuotationApproval.approvedAt), Date.parse(String(memoryAssignedAt)))).toISOString()
+        : null;
       return clone({ estimateId: estimate.id, workflowVersion: lifecycle.workflowVersion, preApprovedAt: lifecycle.preApproval?.approvedAt ?? null,
-        quotationApprovedAt: lifecycle.workflowVersion === 3 ? lifecycle.finalApproval?.approvedAt ?? null : null,
-        designStartedAt: lifecycle.workflowVersion === 3 ? lifecycle.designStartedAt ?? lifecycle.finalApproval?.approvedAt ?? null : null,
-        quotationLocked: !!lifecycle.editClosedAt, designApproval: lifecycle.workflowVersion === 3 ? lifecycle.designApproval ?? null : null,
+        quotationApprovedAt: lifecycle.workflowVersion === 3 ? quotationApproval?.currentQuotationApproval?.approvedAt ?? null : null,
+        designStartedAt: lifecycle.workflowVersion === 3 ? lifecycle.designStartedAt ?? derivedDesignStartedAt : null,
+        quotationLocked: lifecycle.workflowVersion === 3 ? quotationApproval?.currentQuotationApproved === true : !!lifecycle.editClosedAt,
+        ...(quotationApproval ?? {}), designApproval: lifecycle.workflowVersion === 3 ? lifecycle.designApproval ?? null : null,
         designScopeRevision: lifecycle.designScopeRevision, approvedDesignScopeRevision: lifecycle.approvedDesignScopeRevision,
         finalApproval: lifecycle.finalApproval });
     },
@@ -438,6 +466,28 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
       state.designWorkflowStates ??= [];
       state.designWorkflowStates = state.designWorkflowStates.filter((row) => row.projectId !== projectId);
       state.designWorkflowStates.push(saved);
+      const project = state.projects.find(row => row.id === projectId && row.estimationWorkflowVersion === 3);
+      const estimates = (state.estimateSummaries ?? []).filter(row => row.projectId === projectId && row.estimation?.workflowVersion === 3);
+      if (project && estimates.length !== 1) throw new RepositoryConflictError("The project quotation source is ambiguous.");
+      const estimate = estimates[0];
+      if (project && estimate?.designPlanDesignerId) {
+        const approval = resolveQuotationApprovalFromRounds({ ...estimate, _id: estimate.id }, state.estimateReviewRounds ?? [],
+          { clientId: project.clientId, primaryDesignerId: project.primaryDesignerId });
+        if (approval.currentQuotationApproval && estimate.estimation?.workflowVersion === 3) {
+          const assignedAt = Date.parse(String(estimate.designPlanAssignedAt ?? approval.currentQuotationApproval.approvedAt));
+          const approvedAt = Date.parse(approval.currentQuotationApproval.approvedAt);
+          const openedAt = new Date(Math.max(assignedAt, approvedAt)).toISOString();
+          if (!estimate.estimation.designStartedAt) estimate.estimation.designStartedAt = openedAt;
+          state.projectWorkflowAssignments ??= [];
+          const existing = state.projectWorkflowAssignments.find(task => task.projectId === projectId && task.estimateId === estimate.id &&
+            task.kind === "design_plan_upload" && !task.supersededAt);
+          if (existing) existing.assigneeUserId = estimate.designPlanDesignerId;
+          else state.projectWorkflowAssignments.push({ id: `workflow-task-${estimate.id}-design-plan-upload`, projectId,
+            estimateId: estimate.id, kind: "design_plan_upload", title: "Upload design plan", assigneeRole: "designer",
+            assigneeUserId: estimate.designPlanDesignerId, designPlanVersion: estimate.designPlanVersion ?? 0,
+            preparationOnly: false, status: "open", version: 1, openedAt, dueAt: workflowTaskDueAt("design_plan_upload", new Date(openedAt)).toISOString() });
+        }
+      }
       return clone(saved);
     },
     async listDesignWorkflowPaymentProjects() {
@@ -448,10 +498,11 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
       const actor = state.users.find(row => row.id === actorId && row.active && row.role === "super_admin");
       const context = await implementation.findProjectEstimationContext(projectId, true);
       const payment = await implementation.findDesignWorkflowState(projectId);
-      if (!project || !actor || !context?.finalApproval || !payment?.initialPaymentAt ||
-        payment.initialPaymentEstimateId !== context.estimateId || payment.initialPaymentEstimateVersion !== context.finalApproval.estimateVersion ||
-        payment.initialPaymentReviewRoundId !== context.finalApproval.reviewRoundId || payment.initialPaymentDesignReviewRoundId !== (context.workflowVersion === 3 ? context.designApproval?.reviewRoundId : context.finalApproval.designReviewRoundId) ||
-        context.workflowVersion === 3 && (!context.quotationLocked || context.designApproval?.estimateReviewRoundId !== context.finalApproval.reviewRoundId || context.designApproval.designScopeRevision !== context.designScopeRevision))
+      const approval = context?.workflowVersion === 3 ? context.currentQuotationApproval : context?.finalApproval;
+      if (!project || !actor || !context || !approval || !payment?.initialPaymentAt ||
+        payment.initialPaymentEstimateId !== context.estimateId || payment.initialPaymentEstimateVersion !== approval.estimateVersion ||
+        payment.initialPaymentReviewRoundId !== approval.reviewRoundId || payment.initialPaymentDesignReviewRoundId !== (context.workflowVersion === 3 ? context.designApproval?.reviewRoundId : context.finalApproval!.designReviewRoundId) ||
+        context.workflowVersion === 3 && (!context.quotationLocked || context.designApproval?.estimateReviewRoundId !== approval.reviewRoundId || context.designApproval.designScopeRevision !== context.designScopeRevision))
         throw new RepositoryConflictError("Final estimate approval and matching payment are required for execution.");
       project.status = "active";
       project.actualStartAt ??= occurredAt;
@@ -1277,41 +1328,11 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
     },
 
     async countUserResponsibilities(userId) {
-      return {
-        assignedExecutionProjects: state.projects.filter(project => project.programManagerId === userId && project.status !== "completed").length,
-        assignedWorkflowTasks: (state.projectWorkflowAssignments ?? []).filter(task => task.assigneeUserId === userId && !task.supersededAt && task.status !== "completed").length,
-        ownedActiveLeads: state.leads.filter(
-          (lead) => lead.ownerId === userId && lead.stage !== "won" && lead.stage !== "lost"
-        ).length,
-        ownedActiveEstimates: state.estimateResponsibilities.filter(
-          (estimate) =>
-            estimate.ownerId === userId && estimate.status !== "client_approved"
-        ).length,
-        initiatedActiveProjects: state.projects.filter(
-          (project) =>
-            project.initiatingDesignerId === userId && project.status !== "completed"
-        ).length,
-        assignedActiveProjects: state.projects.filter(
-          (project) =>
-            project.assignedDesignerIds.includes(userId) && project.status !== "completed"
-        ).length,
-        managedActiveProjects: state.projects.filter(
-          (project) => project.managerId === userId && project.status !== "completed"
-        ).length,
-        ownedActiveTasks: state.tasks.filter(
-          (task) => task.ownerId === userId && task.status !== "completed"
-        ).length,
-        directReports: state.users.filter((user) => user.managerId === userId).length,
-        linkedClientProjects: state.projects.filter((project) => project.clientId === userId)
-          .length,
-        adminInitiatorGrants: state.projectAccessGrants.filter(
-          (grant) =>
-            grant.userId === userId &&
-            grant.module === "projects" &&
-            grant.source === "admin_initiator" &&
-            grant.active
-        ).length
-      };
+      return memoryUserResponsibilityCounts(state, userId);
+    },
+
+    async pageUserResponsibilities(userId, query) {
+      return memoryUserResponsibilities(state, userId, query);
     },
 
     async deleteUser(userId, expectedVersion, change) {
@@ -1617,14 +1638,16 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
         input.offset,
         input.offset + input.limit
       );
+      const estimates = memoryAdminEstimateSummaries(state);
       return {
         items: selected.map((project) =>
           adminProjectSummary(
             project,
             state.users,
             state.leads,
-            state.estimateSummaries ?? [],
-            actor
+            estimates,
+            actor,
+            state.estimateReviewRounds ?? []
           )
         ),
         total: filtered.length,
@@ -1637,13 +1660,15 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
         actor,
         "projects"
       )).find((candidate) => candidate.id === projectId);
+      const estimates = memoryAdminEstimateSummaries(state);
       return project
         ? clone(adminProjectSummary(
             project,
             state.users,
             state.leads,
-            state.estimateSummaries ?? [],
-            actor
+            estimates,
+            actor,
+            state.estimateReviewRounds ?? []
           ))
         : null;
     },
@@ -3489,6 +3514,6 @@ function latestTimestamp(seed: SeedData): number {
 }
 
 function memoryManagerOwnsProject(state: SeedData, project: ProjectRecord, userId: string): boolean {
-  const ownership = projectManagerAssignmentFromProjection(project, state.projectWorkflowAssignments ?? [], state.estimateSummaries ?? [], state.users);
+  const ownership = projectManagerAssignmentFromProjection(project, state.projectWorkflowAssignments ?? [], memoryAdminEstimateSummaries(state), state.users);
   return ownership.state === "assigned" && ownership.ownerId === userId;
 }

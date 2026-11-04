@@ -8,6 +8,7 @@ import { paginatedEnvelope, paginationShape } from "../middleware/pagination.js"
 import { validateBody, validateQuery } from "../middleware/validate.js";
 import type { AuthService } from "../services/auth.service.js";
 import type { UserAdministrationService } from "../services/user-administration.service.js";
+import { chatActorFromAuthenticatedRequest } from "../services/project-chat-authentication.js";
 
 const directoryQuerySchema = z
   .object({
@@ -26,11 +27,28 @@ const updateManagedUserSchema = z.union([
   z.object({ version: z.number().int().positive(), active: z.boolean() }).strict()
 ]);
 
+const responsibilitiesQuerySchema = z.object({ destinationRole: roleSchema.optional(), ...paginationShape }).strict();
+
 export function createAdminUsersRouter(
   authService: AuthService,
   userAdministrationService: UserAdministrationService
 ): Router {
   const router = Router();
+
+  router.get(
+    "/admin/users/:userId/responsibilities",
+    authenticate(authService),
+    requireOperation("GET /admin/users/:userId/responsibilities"),
+    validateQuery(responsibilitiesQuerySchema),
+    async (request, response, next) => {
+      try {
+        response.setHeader("Cache-Control", "no-store");
+        response.json({ data: await userAdministrationService.responsibilities(
+          chatActorFromAuthenticatedRequest(request), String(request.params.userId), response.locals.validatedQuery
+        ) });
+      } catch (error) { next(error); }
+    }
+  );
 
   router.get(
     "/admin/users",

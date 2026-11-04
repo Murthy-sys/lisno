@@ -1,0 +1,235 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - generic [ref=e3]:
+      - link "Skip to main content" [ref=e4] [cursor=pointer]:
+        - /url: "#main-content"
+      - complementary "Application sidebar" [ref=e5]:
+        - generic [ref=e6]:
+          - generic [ref=e7]:
+            - img "Lisno" [ref=e8]
+            - generic [ref=e9]: INTERIOR WORKSPACE
+          - navigation "Primary navigation" [ref=e10]:
+            - link "All Projects" [ref=e11] [cursor=pointer]:
+              - /url: /admin/projects
+          - paragraph [ref=e17]: Build Better Spaces
+      - banner "Workspace tools" [ref=e18]:
+        - generic [ref=e19]:
+          - button "Notifications" [ref=e20] [cursor=pointer]
+          - button "Synthetic workspace reviewer" [ref=e25] [cursor=pointer]:
+            - generic [aria-hidden] [ref=e26]: SW
+            - generic [ref=e27]:
+              - generic [ref=e28]: Synthetic workspace reviewer
+              - generic [ref=e29]: Super Admin
+      - main [ref=e32]:
+        - region [ref=e33]:
+          - generic [ref=e35]:
+            - link "Back to All Projects" [ref=e37] [cursor=pointer]:
+              - /url: /admin/projects
+            - generic [ref=e40]:
+              - generic [ref=e41]: Project administration
+              - heading "Synthetic Cedar Residence" [level=1] [ref=e43]
+              - paragraph [ref=e44]: Review the commercial handoff and assign approved design work.
+              - generic [ref=e45]:
+                - generic [ref=e46]: "Project ID: Lisno009901"
+                - generic [ref=e47]: Estimation Approval
+                - generic [ref=e50]: "System ID: project-qa-one"
+                - generic [ref=e51]:
+                  - text: Created
+                  - time [ref=e52]: 4 Nov 2026
+            - group "Page actions" [ref=e53]:
+              - link "Assign Designer" [ref=e54] [cursor=pointer]:
+                - /url: "#design-assignment-title"
+          - generic [ref=e55]:
+            - generic [ref=e56]:
+              - region "Project summary" [ref=e57]:
+                - generic [ref=e58]:
+                  - generic [ref=e59]:
+                    - term [ref=e60]: Client
+                    - definition [ref=e61]: Synthetic Client 1
+                  - generic [ref=e62]:
+                    - term [ref=e63]: Location
+                    - definition [ref=e64]: Pune
+                  - generic [ref=e65]:
+                    - term [ref=e66]: Property type
+                    - definition [ref=e67]: 2BHK
+                  - generic [ref=e68]:
+                    - term [ref=e69]: Created
+                    - definition [ref=e70]:
+                      - time [ref=e71]: 4 Nov 2026
+                  - generic [ref=e72]:
+                    - term [ref=e73]: Client-approved value (incl. GST)
+                    - definition [ref=e74]: ₹1,180
+              - region "Project details" [ref=e75]:
+                - generic [ref=e76]:
+                  - region [ref=e77]:
+                    - heading "Project information" [level=2] [ref=e78]
+                    - button "Project information" [expanded] [ref=e79] [cursor=pointer]:
+                      - generic [ref=e85]:
+                        - generic [aria-hidden] [ref=e86]: Project information
+                        - generic [ref=e87]: Client, property and budget details
+                    - generic [ref=e91]:
+                      - generic [ref=e92]:
+                        - heading "Project" [level=3] [ref=e93]
+                        - generic [ref=e94]:
+                          - generic [ref=e95]:
+                            - term [ref=e96]: Location
+                            - definition [ref=e97]: Pune
+                          - generic [ref=e98]:
+                            - term [ref=e99]: Property type
+                            - definition [ref=e100]: 2BHK
+                          - generic [ref=e101]:
+                            - term [ref=e102]: Initial client budget range
+                            - definition [ref=e103]: ₹3,00,000 – ₹9,00,000
+                      - generic [ref=e104]:
+                        - heading "Client" [level=3] [ref=e105]
+                        - generic [ref=e106]:
+                          - generic [ref=e107]:
+                            - term [ref=e108]: Name
+                            - definition [ref=e109]: Synthetic Client 1
+                          - generic [ref=e110]:
+                            - term [ref=e111]: Email
+                            - definition [ref=e112]: client1@example.test
+                          - generic [ref=e113]:
+                            - term [ref=e114]: Mobile
+                            - definition [ref=e115]: "0000000000"
+                  - region [ref=e116]:
+                    - heading "Assignment & progress" [level=2] [ref=e117]
+                    - button "Assignment & progress" [expanded] [ref=e118] [cursor=pointer]:
+                      - generic [ref=e123]:
+                        - generic [aria-hidden] [ref=e124]: Assignment & progress
+                        - generic [ref=e125]: Sales assignment and lead progress
+                    - generic [ref=e129]:
+                      - generic [ref=e130]:
+                        - heading "Sales" [level=3] [ref=e131]
+                        - generic [ref=e132]:
+                          - generic [ref=e133]:
+                            - term [ref=e134]: Assigned to
+                            - definition [ref=e135]: Synthetic Sales 1
+                          - generic [ref=e136]:
+                            - term [ref=e137]: Email
+                            - definition [ref=e138]: sales1@example.test
+                      - generic [ref=e139]:
+                        - heading "Lead progress" [level=3] [ref=e140]
+                        - generic [ref=e141]:
+                          - generic [ref=e142]:
+                            - term [ref=e143]: Stage
+                            - definition [ref=e144]: New Lead
+                          - generic [ref=e145]:
+                            - term [ref=e146]: Next action
+                            - definition [ref=e147]: Assign Designer
+                          - generic [ref=e148]:
+                            - term [ref=e149]: Next action date
+                            - definition [ref=e150]:
+                              - time [ref=e151]: 4 Nov 2026, 12:00
+                      - generic [ref=e152]:
+                        - heading "Estimate" [level=3] [ref=e153]
+                        - generic [ref=e154]:
+                          - generic [ref=e155]:
+                            - term [ref=e156]: Initial estimate
+                            - definition [ref=e157]: Client approved
+                          - generic [ref=e158]:
+                            - term [ref=e159]: Designer quotation
+                            - definition [ref=e160]: Draft
+                          - generic [ref=e161]:
+                            - term [ref=e162]: Client-approved value (incl. GST)
+                            - definition [ref=e163]: ₹1,180
+                          - generic [ref=e164]:
+                            - term [ref=e165]: Approved estimate baseline
+                            - definition [ref=e166]: Version 4
+              - region "Project workflow" [ref=e168]:
+                - status [ref=e169]: Loading project stages and deadlines…
+              - region "Synthetic Cedar Residence execution tracker" [ref=e170]:
+                - generic [ref=e171]:
+                  - generic [ref=e172]:
+                    - heading "Execution tracker" [level=2] [ref=e173]
+                    - paragraph [ref=e174]: Vendor reports, Project Manager verification and Client acceptance remain separate.
+                  - generic [ref=e175]:
+                    - status [ref=e176]: Offline · updates may be stale
+                    - button "Refresh" [disabled] [ref=e177]:
+                      - generic [ref=e178]:
+                        - generic [ref=e179]: Refresh
+                        - generic [ref=e183]: Working…
+                - generic [ref=e185]:
+                  - generic [ref=e186]:
+                    - generic [ref=e187]: Search Main Lines
+                    - searchbox "Search Main Lines" [ref=e188]
+                  - generic [ref=e189]:
+                    - generic [ref=e190]: Execution status
+                    - combobox "Execution status" [ref=e191] [cursor=pointer]:
+                      - option "All statuses" [selected]
+                      - option "Awaiting acknowledgement"
+                      - option "Awaiting schedule"
+                      - option "Not started"
+                      - option "In progress"
+                      - option "Blocked"
+                      - option "Awaiting Project Manager"
+                      - option "Site verified"
+                      - option "With Client"
+                      - option "Changes requested"
+                      - option "Client accepted"
+                      - option "Superseded"
+                  - generic [ref=e192]:
+                    - generic [ref=e193]: Needs attention
+                    - combobox "Needs attention" [ref=e194] [cursor=pointer]:
+                      - option "All assignments" [selected]
+                      - option "Missing update"
+                      - option "Overdue work"
+                      - option "Blocked"
+                      - option "Needs setup"
+              - region [ref=e198]:
+                - heading "Design plan assignment" [level=2] [ref=e199]
+                - button "Design plan assignment" [expanded] [ref=e200] [cursor=pointer]:
+                  - generic [ref=e207]:
+                    - generic [aria-hidden] [ref=e208]: Design plan assignment
+                    - generic [ref=e209]: Assign and track the Designer handoff
+                - generic [ref=e212]:
+                  - generic [ref=e213]: pending assignment
+                  - generic [ref=e216]:
+                    - generic [ref=e217]:
+                      - generic [ref=e218]: Assigned Designer
+                      - combobox "Assigned Designer" [disabled] [ref=e219]:
+                        - option "Choose an active Designer" [selected]
+                      - paragraph [ref=e220]: Loading active Designers…
+                    - button "Assign Designer" [disabled] [ref=e221]
+            - complementary "Project reference and people" [ref=e225]:
+              - figure "Interior reference" [ref=e226]:
+                - generic [ref=e227]:
+                  - text: Interior reference
+                  - generic [ref=e228]: Illustrative artwork
+              - region [ref=e229]:
+                - heading "Quick summary" [level=2] [ref=e230]
+                - generic [ref=e231]:
+                  - generic [ref=e232]:
+                    - term [ref=e233]: Project status
+                    - definition [ref=e234]: Estimation Approval
+                  - generic [ref=e235]:
+                    - term [ref=e236]: Initial estimate
+                    - definition [ref=e237]: Client approved
+                  - generic [ref=e238]:
+                    - term [ref=e239]: Designer quotation
+                    - definition [ref=e240]: Draft
+                  - generic [ref=e241]:
+                    - term [ref=e242]: Client-approved value (incl. GST)
+                    - definition [ref=e243]: ₹1,180
+                  - generic [ref=e244]:
+                    - term [ref=e245]: Initial client budget range
+                    - definition [ref=e246]: ₹3,00,000 – ₹9,00,000
+              - region [ref=e247]:
+                - heading "Team members" [level=2] [ref=e248]
+                - list [ref=e249]:
+                  - listitem [ref=e250]:
+                    - generic [aria-hidden] [ref=e251]: S
+                    - generic [ref=e252]:
+                      - generic [ref=e253]: Sales
+                      - strong [ref=e254]: Synthetic Sales 1
+                      - generic [ref=e255]: sales1@example.test
+                  - listitem [ref=e256]:
+                    - generic [aria-hidden] [ref=e257]: S
+                    - generic [ref=e258]:
+                      - generic [ref=e259]: Client
+                      - strong [ref=e260]: Synthetic Client 1
+                      - generic [ref=e261]: client1@example.test
+    - status "Application announcements" [ref=e262]
+    - region "Notifications"
+  - status "Content status":
+    - generic: Loading Main Line assignments…

@@ -1,0 +1,19 @@
+.user-responsibilities { min-inline-size: 0; border-block-start: 1px solid var(--color-border); padding-block-start: var(--space-3); }
+.user-responsibilities__header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
+.user-responsibilities h3, .user-responsibilities p, .user-responsibilities dl, .user-responsibilities dd { margin: 0; }
+.user-responsibilities h3 { font-size: 1rem; }
+.user-responsibilities p { color: var(--color-text-muted); font-size: .8125rem; }
+.user-responsibilities__summary { padding-block: var(--space-1) var(--space-2); }
+.user-responsibilities__list { list-style: none; padding: 0; margin: 0; }
+.user-responsibilities__row { padding-block: var(--space-3); border-block-end: 1px solid var(--color-border); min-inline-size: 0; overflow-wrap: anywhere; }
+.user-responsibilities__row-heading { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: var(--space-1) var(--space-2); margin-block-end: var(--space-2); font-size: .875rem; }
+.user-responsibilities__blocker { color: var(--color-danger); font-size: .75rem; }
+.user-responsibilities dl { display: grid; gap: var(--space-1); font-size: .8125rem; }
+.user-responsibilities dl > div { display: grid; grid-template-columns: 7rem minmax(0, 1fr); gap: var(--space-2); }
+.user-responsibilities dt { color: var(--color-text-muted); }
+.user-responsibilities__project-link { display: inline-block; margin-block-start: var(--space-2); font-size: .8125rem; text-underline-offset: 3px; }
+.user-responsibilities__pagination { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--space-1); margin-block-start: var(--space-2); font-size: .75rem; }
+@media (max-width: 420px) {
+  .user-responsibilities dl > div { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .user-responsibilities dl { gap: var(--space-2); }
+}

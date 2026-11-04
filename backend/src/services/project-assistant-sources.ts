@@ -25,6 +25,7 @@ import { calculateAssistantAddition, type AssistantApprovedScope } from "./proje
 import { createProjectStatusService } from "./project-status.service.js";
 import type { Clock } from "./workflow.js";
 import { readAssistantProjectEstimate } from "./project-assistant-estimate.js";
+import { resolveCurrentQuotationApproval } from "./quotation-approval-state.service.js";
 
 type Row = Record<string, any>;
 interface ApprovedRead { scope: AssistantApprovedScope; freshness: AssistantSourceVersion[]; estimateId: string | null; estimateVersion: number | null; roundId: string | null; sourceKeys: string[] }
@@ -65,7 +66,15 @@ async function readApproved(context: AssistantContext, tx?: ChatTransaction): Pr
   const evidence = await tx.app.findProjectStatusEstimateEvidence(projectId);
   const witness = { estimate, lead, rounds, evidence, visibleSourceKeys: null as string[] | null };
   const collaborative = isCollaborativeEstimate(estimate);
-  const approvedReference = currentEstimationApproval(estimate);
+  const quotationApproval = estimate.estimation?.workflowVersion === 3
+    ? await resolveCurrentQuotationApproval(estimate, tx.session)
+    : null;
+  const approvedReference = estimate.estimation?.workflowVersion === 3
+    ? quotationApproval?.currentQuotationApproval ?? null
+    : currentEstimationApproval(estimate);
+  if (estimate.estimation?.workflowVersion === 3 && !quotationApproval?.currentQuotationApproved) {
+    return finish(unavailable, { ...witness, quotationApproval });
+  }
   const matchingRounds = collaborative ? rounds.filter(round => String(round._id) === approvedReference?.reviewRoundId && round.estimateVersion === approvedReference.estimateVersion) : rounds;
   if (matchingRounds.length !== 1) return finish(unavailable, witness);
   const round = matchingRounds[0]!;
@@ -82,7 +91,9 @@ async function readApproved(context: AssistantContext, tx?: ChatTransaction): Pr
   const presented = await presentClientEstimateWithVisibility(createClientQuotationProjectionService(), toPublicUser(context.user), estimate, { ...lead, _id: lead.id }, round, context.sources.project, undefined, tx.session);
   if (!presented?.publishedReview || presented.reviewSourceIssue !== null || presented.projectId !== projectId) return finish(unavailable, witness);
   try {
-    const approval = financeApprovalLineage(estimate, rounds);
+    const approval = financeApprovalLineage(estimate, rounds, {
+      currentApproval: quotationApproval?.currentQuotationApproval ?? undefined
+    });
     if (!approval.immutable || approval.estimateReviewRoundId !== String(round._id)) return finish(unavailable, witness);
     const lines = presented.publishedReview.snapshot.lineItems as Row[];
     const visibleMainLineIds = new Set(lines.filter(line => line.source === "configuration").map(line => line.mainLineId));

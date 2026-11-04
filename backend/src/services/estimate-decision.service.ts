@@ -244,15 +244,6 @@ export function createEstimateDecisionService(input: {
             version: Number(reviewRound.version) + 1
           });
         }
-        if (input.finance && decision === "approve" && isCollaborativeEstimate(estimate) && estimate.estimation.phase === "post") {
-          await syncCollaborativeFinanceBaseline(estimateId, session);
-        }
-        if (decision === "approve" && estimate.estimation?.workflowVersion === 3 && estimate.estimation.phase === "post") {
-          await ensureQuotationDesignTask(estimateResult, occurredAt, session);
-          if (estimateResult.estimation?.designApproval?.designScopeRevision === estimateResult.estimation.designScopeRevision)
-            await recordQuotationDesignHandoff(estimateResult, context.actor.id, occurredAt, session);
-        }
-
         let proofId: string | null = null;
         if (context.source === "admin_proof") {
           proofId = `estimate-client-proof-${randomUUID()}`;
@@ -268,6 +259,16 @@ export function createEstimateDecisionService(input: {
             uploadedById: context.actor.id,
             uploadedAt: occurredAt
           }], { session });
+        }
+        if (input.finance && decision === "approve" && isCollaborativeEstimate(estimate) && estimate.estimation.phase === "post") {
+          await syncCollaborativeFinanceBaseline(estimateId, session);
+        }
+        if (decision === "approve" && estimate.estimation?.workflowVersion === 3 && estimate.estimation.phase === "post") {
+          await ensureQuotationDesignTask(estimateResult, occurredAt, session);
+          if (estimateResult.estimation?.designApproval?.designScopeRevision === estimateResult.estimation.designScopeRevision)
+            await recordQuotationDesignHandoff(estimateResult, context.actor.id, occurredAt, session);
+        }
+        if (context.source === "admin_proof") {
           await appendSourceAudit({
             audit: input.audit,
             actor: context.actor,
@@ -284,7 +285,7 @@ export function createEstimateDecisionService(input: {
             actorId: context.actor.id,
             action: "estimate_client_proof_stored",
             entityType: "estimate_client_response_proof",
-            entityId: proofId,
+            entityId: proofId!,
             occurredAt: occurredAt.toISOString(),
             oldValues: {},
             newValues: {
@@ -671,8 +672,16 @@ async function approveFinal(input: Parameters<typeof approve>[0]): Promise<Row> 
     reviewRoundId: String(reviewRound!._id), estimateVersion: Number(reviewRound!.estimateVersion),
     approvedAt: occurredAt.toISOString(), requirementsVersion: estimate.estimation.requirementsVersion, ...binding
   };
+  let designStartedAt = estimate.estimation.designStartedAt;
+  if (estimate.estimation.workflowVersion === 3 && !designStartedAt) {
+    const preApprovedAt = Date.parse(String(estimate.estimation.preApproval?.approvedAt ?? ""));
+    const assignedAt = new Date(estimate.designPlanAssignedAt ?? "").getTime();
+    if (!Number.isFinite(preApprovedAt) || !Number.isFinite(assignedAt) ||
+        preApprovedAt > occurredAt.getTime() || assignedAt > occurredAt.getTime()) estimateNotReviewable();
+    designStartedAt = new Date(Math.max(preApprovedAt, assignedAt)).toISOString();
+  }
   const estimation = { ...estimate.estimation, status: "client_approved", finalApproval,
-    ...(estimate.estimation.workflowVersion === 3 ? { designStartedAt: estimate.estimation.designStartedAt ?? occurredAt.toISOString() } : {}),
+    ...(estimate.estimation.workflowVersion === 3 ? { designStartedAt } : {}),
     pendingReviewRoundId: null, editClosedAt: occurredAt.toISOString() };
   const review = { actorId: context.actor.id, action: "final_estimate_approved", note, occurredAt };
   const updated = await EstimateModel.updateOne(estimateCasFilter(estimate), {

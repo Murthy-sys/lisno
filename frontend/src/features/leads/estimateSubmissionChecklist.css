@@ -1,0 +1,101 @@
+.ui-dialog.modal.ui-dialog--reference.estimate-submission-checklist {
+  --dialog-padding: 16px;
+  --control-height: 32px;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  width: min(100%, 34rem);
+  overflow: hidden;
+}
+
+.estimate-submission-checklist .ui-dialog-toolbar {
+  min-height: 40px;
+  padding-block: 3px;
+}
+
+.estimate-submission-checklist .ui-dialog-toolbar__context,
+.estimate-submission-checklist .ui-dialog__header .eyebrow {
+  display: none;
+}
+
+.ui-dialog.modal.ui-dialog--reference.estimate-submission-checklist > .ui-dialog__header {
+  padding-block: 12px 6px;
+}
+
+.ui-dialog.modal.ui-dialog--reference.estimate-submission-checklist .ui-dialog__header h2 {
+  font-size: 16px;
+}
+
+.estimate-submission-checklist .estimate-submission-checklist__statements {
+  min-height: 0;
+  grid-auto-rows: max-content;
+  align-content: start;
+  gap: 0;
+  padding-block: 0 8px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.estimate-submission-checklist__statement {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  min-width: 0;
+  min-height: 44px;
+  padding-block: 8px;
+  font-size: 13px;
+  line-height: 1.5;
+  cursor: pointer;
+}
+
+.estimate-submission-checklist__statement + .estimate-submission-checklist__statement {
+  border-top: 1px solid var(--dialog-border);
+}
+
+.estimate-submission-checklist__statement input {
+  width: 16px;
+  height: 16px;
+  min-block-size: 16px;
+  margin: 2px 0 0;
+  accent-color: var(--button-primary-bg);
+}
+
+.estimate-submission-checklist__statement input:focus-visible {
+  outline: 2px solid var(--button-primary-bg);
+  outline-offset: 3px;
+}
+
+.estimate-submission-checklist__statement span {
+  overflow-wrap: anywhere;
+}
+
+.ui-dialog--reference.estimate-submission-checklist .ui-dialog__actions {
+  gap: 8px;
+  padding-block: 8px;
+}
+
+.ui-dialog--reference.estimate-submission-checklist .ui-dialog__actions > .ui-button {
+  min-width: 64px;
+  min-height: 32px;
+  min-block-size: 32px;
+  padding: 5px 12px;
+  font-size: 13px;
+}
+
+@media (max-width: 767px), (pointer: coarse) {
+  .ui-dialog.modal.ui-dialog--reference.estimate-submission-checklist {
+    --control-height: 44px;
+  }
+
+  .ui-dialog--reference.estimate-submission-checklist .ui-dialog__actions > .ui-button {
+    min-height: 44px;
+    min-block-size: 44px;
+  }
+
+  .ui-dialog--reference.estimate-submission-checklist .ui-dialog-toolbar .ui-dialog__close {
+    width: 44px;
+    height: 44px;
+    min-width: 44px;
+    min-height: 44px;
+  }
+}

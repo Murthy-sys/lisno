@@ -2,6 +2,7 @@ import { approvedEstimateLineItemKey } from "./estimate-line-item.js";
 import { configuredEstimateParentIsValid } from "./estimate-client-review.js";
 import { estimatePdfCatalogue } from "./estimate-pdf-catalogue.js";
 import { rupeesToPaise } from "./project-finance.js";
+import type { EstimateClientReviewSnapshot } from "./estimate-client-review.js";
 
 export interface WorkflowEstimateLine {
   id?: string | null;
@@ -28,8 +29,15 @@ export interface WorkflowEstimateRoom { id: string; name: string; estimateDimens
 export interface WorkflowEstimateRoomContext { estimateId: string; estimateVersion: number; rooms: WorkflowEstimateRoom[] }
 export interface WorkflowEstimateApproval {
   phase?: "pre" | "post";
+  workflowVersion?: 2 | 3;
   requirementsVersion?: number;
+  pricedRevision?: number;
   designScopeRevision?: number;
+  sourceDigest?: string;
+  estimateSnapshot?: EstimateClientReviewSnapshot;
+  proofValid?: boolean;
+  submittedById?: string;
+  salesApproval?: import("./estimation-lifecycle.js").SalesQuotationApproval | null;
   id: string;
   estimateId: string;
   projectId: string | null;

@@ -124,6 +124,34 @@ const workflowTasks: ProjectWorkflowTask[] = [
   tradeTask
 ];
 
+const initialCurrentApproval = {
+  estimationPhase: "post" as const,
+  quotationApprovalState: "initial_current" as const,
+  currentQuotationApproved: true,
+  requiresClientReapproval: false,
+  quotationApprovalSource: "initial_unchanged" as const,
+  currentQuotationApproval: {
+    kind: "initial_unchanged" as const,
+    reviewRoundId: "estimate-round-one",
+    estimateVersion: 4,
+    approvedAt: "2026-08-24T09:00:00.000Z"
+  }
+};
+
+const revisionCurrentApproval = {
+  estimationPhase: "post" as const,
+  quotationApprovalState: "revision_current" as const,
+  currentQuotationApproved: true,
+  requiresClientReapproval: false,
+  quotationApprovalSource: "designer_revision" as const,
+  currentQuotationApproval: {
+    kind: "designer_revision" as const,
+    reviewRoundId: "designer-revision-one",
+    estimateVersion: 5,
+    approvedAt: "2026-08-25T09:00:00.000Z"
+  }
+};
+
 const carpentrySection: ProjectWorkflowSectionAssignment = {
   id: "section-assignment-carpentry",
   projectId: project.id,
@@ -316,12 +344,27 @@ describe("Finance project workflow control", () => {
 
 
 describe("Collaborative project preparation snapshot", () => {
+  it("shows a v3 pre-design review as awaiting initial approval, not a broken current approval", () => {
+    const request = vi.fn(() => HttpResponse.json({ data: workflowTasks }));
+    server.use(http.get("/api/v1/admin/projects/project-one/workflow-tasks", request));
+    renderWithQuery(<ProjectWorkflowSnapshot project={{ ...project, estimationWorkflowVersion: 3,
+      estimate: { ...project.estimate!, status: "sent_to_client", estimationPhase: "pre",
+        quotationApprovalState: "source_issue", currentQuotationApproved: false,
+        requiresClientReapproval: false, quotationApprovalSource: null, currentQuotationApproval: null,
+        designPlanStatus: "pending_assignment", designApproved: false } }} />);
+    expect(screen.getByRole("heading", { name: "2. Pre-design approval" }).closest("section")).toHaveTextContent("Sent To Client");
+    expect(screen.getByRole("heading", { name: "4. Design uploaded and submitted to Client" }).closest("section")).toHaveTextContent("Waiting for pre-design approval");
+    expect(screen.getByRole("heading", { name: "6. Execution queues" }).closest("section")).toHaveTextContent("Waiting for pre-design approval");
+    expect(screen.queryByText(/current quotation approval could not be verified|workflow remains paused/i)).not.toBeInTheDocument();
+    expect(request).not.toHaveBeenCalled();
+  });
+
   it.each([false, undefined])("keeps v3 execution closed without verified bound design approval even when the quotation and legacy design status are approved: %s", async designApproved => {
     const request = vi.fn(() => HttpResponse.json({ data: workflowTasks }));
     server.use(http.get("/api/v1/admin/projects/project-one/workflow-tasks", request));
     renderWithQuery(<ProjectWorkflowSnapshot project={{ ...project, estimationWorkflowVersion: 3,
-      estimate: { ...project.estimate!, estimationPhase: "post", finalEstimateApproved: true, designPlanStatus: "approved", designApproved } }} />);
-    expect(screen.getByRole("heading", { name: "4. Post-design quotation approval" }).closest("section")).toHaveTextContent("Approved");
+      estimate: { ...project.estimate!, ...revisionCurrentApproval, version: 5, finalEstimateApproved: true, designPlanStatus: "approved", designApproved } }} />);
+    expect(screen.getByRole("heading", { name: "4. Quotation revision" }).closest("section")).toHaveTextContent("Revised quotation approved");
     expect(screen.getByRole("heading", { name: "6. Design approved" }).closest("section")).toHaveTextContent("Awaiting current design approval");
     expect(screen.getByRole("heading", { name: "7. Execution queues" }).closest("section")).toHaveTextContent("Waiting for design approval");
     expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
@@ -330,10 +373,47 @@ describe("Collaborative project preparation snapshot", () => {
   it("shows v3 execution progress only after the server verifies the later uploaded-design approval and released tasks", async () => {
     server.use(http.get("/api/v1/admin/projects/project-one/workflow-tasks", () => HttpResponse.json({ data: workflowTasks })));
     renderWithQuery(<ProjectWorkflowSnapshot project={{ ...project, estimationWorkflowVersion: 3,
-      estimate: { ...project.estimate!, estimationPhase: "post", finalEstimateApproved: true, designApproved: true } }} />);
+      estimate: { ...project.estimate!, ...revisionCurrentApproval, version: 5, finalEstimateApproved: true, designApproved: true } }} />);
     expect(await screen.findByRole("progressbar", { name: "Overall project execution: 25% complete" })).toBeVisible();
     expect(screen.getByRole("heading", { name: "6. Design approved" }).closest("section")).toHaveTextContent("Approved");
     expect(screen.queryByRole("heading", { name: "6. Final estimate approval" })).not.toBeInTheDocument();
+  });
+
+  it("starts the unchanged initial-current design workflow without inventing a second quotation approval stage", () => {
+    const request = vi.fn(() => HttpResponse.json({ data: workflowTasks }));
+    server.use(http.get("/api/v1/admin/projects/project-one/workflow-tasks", request));
+    renderWithQuery(<ProjectWorkflowSnapshot project={{ ...project, estimationWorkflowVersion: 3,
+      estimate: { ...project.estimate!, ...initialCurrentApproval, finalEstimateApproved: false, designPlanStatus: "assigned", designApproved: false } }} />);
+    expect(screen.getByRole("heading", { name: "2. Pre-design approval" }).closest("section")).toHaveTextContent("initial quotation is approved and current");
+    expect(screen.queryByRole("heading", { name: /Quotation revision/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "4. Design uploaded and submitted to Client" }).closest("section")).toHaveTextContent("Upload pending");
+    expect(screen.getByRole("heading", { name: "6. Execution queues" }).closest("section")).toHaveTextContent("Waiting for design approval");
+    expect(request).not.toHaveBeenCalled();
+  });
+
+  it("pauses the workflow for a material draft revision even if historical approval flags remain true", () => {
+    const request = vi.fn(() => HttpResponse.json({ data: workflowTasks }));
+    server.use(http.get("/api/v1/admin/projects/project-one/workflow-tasks", request));
+    renderWithQuery(<ProjectWorkflowSnapshot project={{ ...project, estimationWorkflowVersion: 3,
+      estimate: { ...project.estimate!, estimationPhase: "post", quotationApprovalState: "revision_draft", currentQuotationApproved: false,
+        requiresClientReapproval: true, quotationApprovalSource: null, currentQuotationApproval: null,
+        finalEstimateApproved: true, designPlanStatus: "approved", designApproved: true } }} />);
+    expect(screen.getByRole("heading", { name: "4. Quotation revision" }).closest("section")).toHaveTextContent("Revision draft");
+    expect(screen.getByRole("heading", { name: "5. Design uploaded and submitted to Client" }).closest("section")).toHaveTextContent("Waiting for quotation approval");
+    expect(screen.getByRole("heading", { name: "7. Execution queues" }).closest("section")).toHaveTextContent("Waiting for quotation approval");
+    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+    expect(request).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the current quotation approval projection is missing", () => {
+    const request = vi.fn(() => HttpResponse.json({ data: workflowTasks }));
+    server.use(http.get("/api/v1/admin/projects/project-one/workflow-tasks", request));
+    renderWithQuery(<ProjectWorkflowSnapshot project={{ ...project, estimationWorkflowVersion: 3,
+      estimate: { ...project.estimate!, estimationPhase: "post", finalEstimateApproved: true, designApproved: true } }} />);
+    expect(screen.getByRole("heading", { name: "2. Pre-design approval" }).closest("section")).toHaveTextContent("Approval status unavailable");
+    expect(screen.queryByRole("heading", { name: /Quotation revision/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "6. Execution queues" }).closest("section")).toHaveTextContent("Waiting for quotation approval");
+    expect(request).not.toHaveBeenCalled();
   });
   it("loads post-estimate preparation during draft review and keeps preparation progress out of execution", async () => {
     const request = vi.fn(() => HttpResponse.json({ data: workflowTasks.map((task) => ({ ...task, preparationOnly: true, progress: 100, status: "completed" })) }));

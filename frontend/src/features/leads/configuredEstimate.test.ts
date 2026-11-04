@@ -1,3 +1,4 @@
+import { configuredLineFixtures } from "./configuredEstimate.test-fixture";
 import { describe, expect, it } from "vitest";
 
 import { configuredInHouseSelectionIssue, configuredModeBaseRate, configuredTierUnavailableReason, buildConfiguredLines, configuredLineAmountPaise, configuredLineKey, configuredLinePreviewAmountPaise, configuredQuantityUnits, deselectConfiguredRecommendationSources, parseSellingRate, restoreConfiguredLine, updateConfiguredLinePricing } from "./configuredEstimate";
@@ -16,14 +17,14 @@ describe("configured estimate line state", () => {
     const current = structuredClone(catalogue);
     current.items[0]!.subBaskets[0]!.mainLines[0]!.estimateNotes = ["Maintain removable access"];
     const rooms = [{ id: "room-a", label: "Bedroom" }], selected = new Set(["basket-a"]);
-    const draft = buildConfiguredLines(current, rooms, selected, [])[0]!;
+    const draft = configuredLineFixtures(current, rooms, selected, [])[0]!;
     expect(draft.estimateNotes).toEqual(["Maintain removable access"]);
     const saved = { ...draft, persistedId: "line-saved", estimateNotes: ["Original agreed access"] };
     expect(buildConfiguredLines(current, rooms, selected, [saved])[0]?.estimateNotes).toEqual(["Maintain removable access"]);
     expect(buildConfiguredLines(current, rooms, selected, [saved], true)[0]?.estimateNotes).toEqual(["Original agreed access"]);
   });
   it("removes recommendation-only descendants but retains shared, manual, and other-room lines", () => {
-    const source = buildConfiguredLines(catalogue, [{ id: "room-a", label: "Bedroom" }], new Set(["basket-a"]), [])[0]!;
+    const source = configuredLineFixtures(catalogue, [{ id: "room-a", label: "Bedroom" }], new Set(["basket-a"]), [])[0]!;
     const line = (roomId: string, mainLineId: string, sources?: string[]) => ({
       ...source, key: configuredLineKey(roomId, mainLineId), roomId, mainLineId,
       included: true, quantity: 2, rateInput: "42",
@@ -52,7 +53,7 @@ describe("configured estimate line state", () => {
   });
 
   it("keeps saved recommendation origin through restore and catalogue refresh", () => {
-    const source = buildConfiguredLines(catalogue, [{ id: "room-a", label: "Bedroom" }], new Set(["basket-a"]), [])[0]!;
+    const source = configuredLineFixtures(catalogue, [{ id: "room-a", label: "Bedroom" }], new Set(["basket-a"]), [])[0]!;
     const saved = restoreConfiguredLine({
       id: "saved-line", source: "configuration", catalogueId: source.mainLineId, roomId: source.roomId,
       roomName: source.roomName, mainBasketId: source.mainBasketId, mainBasketName: source.mainBasketName,
@@ -68,7 +69,7 @@ describe("configured estimate line state", () => {
   it("restores historical Standard and retains an explicit line type through refresh and basket reselection", () => {
     const rooms = [{ id: "room-a", label: "Bedroom" }];
     const selected = new Set(["basket-a"]);
-    const fresh = buildConfiguredLines(catalogue, rooms, selected, [])[0]!;
+    const fresh = configuredLineFixtures(catalogue, rooms, selected, [])[0]!;
     expect(fresh.classification).toBeUndefined();
     const chosen = { ...fresh, classification: "special" as const, included: true };
     const refreshed = buildConfiguredLines(catalogue, rooms, selected, [chosen])[0]!;
@@ -96,7 +97,7 @@ describe("configured estimate line state", () => {
     }] }] };
     const rooms = [{ id: "room-a", label: "Bedroom" }];
     const selected = new Set(["basket-a"]);
-    const first = buildConfiguredLines(priced, rooms, selected, [])[0]!;
+    const first = configuredLineFixtures(priced, rooms, selected, [])[0]!;
     expect(first).toMatchObject({ pricingMode: "sub_vendor", rateSource: "configuration", inHouseBaseRatePaise: 125_000, rateInput: "1050" });
     expect(configuredLineAmountPaise({ ...first, included: true, quantity: 1.25 })).toBe(131_250);
 
@@ -111,17 +112,17 @@ describe("configured estimate line state", () => {
     expect(edited.rateInput).toBe("1100");
     expect(edited.inHouseBaseRatePaise).toBe(135_000);
 
-    const zero = buildConfiguredLines({ ...priced, items: [{ ...priced.items[0]!, subBaskets: [{
+    const zero = configuredLineFixtures({ ...priced, items: [{ ...priced.items[0]!, subBaskets: [{
       ...priced.items[0]!.subBaskets[0]!, mainLines: [{
         ...priced.items[0]!.subBaskets[0]!.mainLines[0]!, modeBaseRatesPaise: { pmc: 900, sub_vendor: 0, in_house: 800 }
       }]
     }] }] }, rooms, selected, [])[0]!;
     expect(zero.rateInput).toBe("0");
-    expect(buildConfiguredLines(catalogue, rooms, selected, [])[0]?.rateInput).toBe("");
+    expect(configuredLineFixtures(catalogue, rooms, selected, [])[0]?.rateInput).toBe("");
   });
 
   it("distinguishes blank from zero and calculates rounded paise at the UOM precision", () => {
-    const line = buildConfiguredLines(catalogue, [{ id: "room-a", label: "Bedroom" }], new Set(["basket-a"]), [])[0]!;
+    const line = configuredLineFixtures(catalogue, [{ id: "room-a", label: "Bedroom" }], new Set(["basket-a"]), [])[0]!;
     expect(parseSellingRate("")).toEqual({ kind: "blank", paise: null });
     expect(parseSellingRate("0")).toEqual({ kind: "value", paise: 0 });
     expect(parseSellingRate("80.05")).toEqual({ kind: "value", paise: 8005 });
@@ -140,7 +141,7 @@ describe("configured estimate line state", () => {
       ...catalogue.items[0]!.subBaskets[0]!, mainLines: [{ ...catalogue.items[0]!.subBaskets[0]!.mainLines[0]!,
         modeBaseRatesPaise: { pmc: 8005, sub_vendor: 10500, in_house: 12000 } }]
     }] }] };
-    const first = buildConfiguredLines(priced, rooms, selected, []);
+    const first = configuredLineFixtures(priced, rooms, selected, []);
     const special = updateConfiguredLinePricing(first[0]!, { included: true, classification: "special" });
     expect(special).toMatchObject({ pricingMode: "sub_vendor", rateInput: "105", rateSource: "configuration" });
     const pmc = updateConfiguredLinePricing(special, { pricingMode: "pmc", quantity: 1.25 });
@@ -159,7 +160,7 @@ describe("configured estimate line state", () => {
   });
 
   it("preserves historical prices until an explicit mode or Special-to-Standard choice", () => {
-    const fresh = buildConfiguredLines(catalogue, [{ id: "room-a", label: "Bedroom" }], new Set(["basket-a"]), [])[0]!;
+    const fresh = configuredLineFixtures(catalogue, [{ id: "room-a", label: "Bedroom" }], new Set(["basket-a"]), [])[0]!;
     const historical = { ...fresh, persistedId: "saved", classification: "standard" as const,
       pricingMode: undefined, rateSource: "manual" as const, rateInput: "99.15",
       modeBaseRatesPaise: { pmc: 8000, sub_vendor: 12000, in_house: 15000 } };
@@ -170,7 +171,7 @@ describe("configured estimate line state", () => {
   });
 
   it("keeps untouched rows inheritable but locks explicit pre-inclusion modes and inherited Special-to-Standard choices", () => {
-    const fresh = buildConfiguredLines(catalogue, [{ id: "room-a", label: "Bedroom" }], new Set(["basket-a"]), [])[0]!;
+    const fresh = configuredLineFixtures(catalogue, [{ id: "room-a", label: "Bedroom" }], new Set(["basket-a"]), [])[0]!;
     const line = { ...fresh, modeBaseRatesPaise: { pmc: 8005, sub_vendor: 12000, in_house: 15000 } };
     const quantityOnly = updateConfiguredLinePricing(line, { quantity: 2 }, "special");
     expect(quantityOnly.classification).toBeUndefined();
@@ -188,7 +189,7 @@ describe("configured estimate line state", () => {
   it("refreshes saved configuration prices but freezes manual and read-only selling values", () => {
     const rooms = [{ id: "room-a", label: "Bedroom" }];
     const selected = new Set(["basket-a"]);
-    const fresh = buildConfiguredLines(catalogue, rooms, selected, [])[0]!;
+    const fresh = configuredLineFixtures(catalogue, rooms, selected, [])[0]!;
     const saved = { ...fresh, persistedId: "saved", classification: "special" as const, pricingMode: "pmc" as const, rateInput: "90" };
     const next: EstimationCatalogue = { ...catalogue, items: [{ ...catalogue.items[0]!, subBaskets: [{
       ...catalogue.items[0]!.subBaskets[0]!, mainLines: [{ ...catalogue.items[0]!.subBaskets[0]!.mainLines[0]!,
@@ -209,13 +210,13 @@ describe("configured estimate line state", () => {
       ...catalogue.items[0]!.subBaskets[0]!, mainLines: [{ ...catalogue.items[0]!.subBaskets[0]!.mainLines[0]!,
         inHouseBaseRatePaise: 9000, modeBaseRatesPaise: { pmc: 7000, sub_vendor: rate, in_house: 9000 } }]
     }] }] };
-    expect(buildConfiguredLines(next, [{ id: "room-a", label: "Bedroom" }], new Set(["basket-a"]), [])[0]?.rateInput).toBe("");
+    expect(configuredLineFixtures(next, [{ id: "room-a", label: "Bedroom" }], new Set(["basket-a"]), [])[0]?.rateInput).toBe("");
     delete next.items[0]!.subBaskets[0]!.mainLines[0]!.modeBaseRatesPaise;
-    expect(buildConfiguredLines(next, [{ id: "room-a", label: "Bedroom" }], new Set(["basket-a"]), [])[0]?.rateInput).toBe("");
+    expect(configuredLineFixtures(next, [{ id: "room-a", label: "Bedroom" }], new Set(["basket-a"]), [])[0]?.rateInput).toBe("");
   });
 
   it("previews quantity times price without including an unchecked line in totals", () => {
-    const line = buildConfiguredLines(catalogue, [{ id: "room-a", label: "Bedroom" }], new Set(["basket-a"]), [])[0]!;
+    const line = configuredLineFixtures(catalogue, [{ id: "room-a", label: "Bedroom" }], new Set(["basket-a"]), [])[0]!;
     const entered = { ...line, quantity: 100, rateInput: "60" };
     expect(entered.included).toBe(false);
     expect(configuredLinePreviewAmountPaise(entered)).toBe(600_000);
@@ -225,7 +226,7 @@ describe("configured estimate line state", () => {
   });
 
   it("uses each UOM's precision and rounds fractional paise half up", () => {
-    const line = buildConfiguredLines(catalogue, [{ id: "room-a", label: "Bedroom" }], new Set(["basket-a"]), [])[0]!;
+    const line = configuredLineFixtures(catalogue, [{ id: "room-a", label: "Bedroom" }], new Set(["basket-a"]), [])[0]!;
     expect(configuredLinePreviewAmountPaise({ ...line, quantity: 1.25, rateInput: "80.05" })).toBe(10_006);
     expect(configuredLinePreviewAmountPaise({ ...line, uomName: "Rft", uomDecimalScale: 0, quantity: 1, rateInput: "60" })).toBe(6_000);
     expect(configuredLinePreviewAmountPaise({ ...line, uomName: "each", uomDecimalScale: 0, quantity: 1.5, rateInput: "60" })).toBeNull();
@@ -233,7 +234,7 @@ describe("configured estimate line state", () => {
   });
 
   it("distinguishes zero rate from incomplete, invalid, and unsafe previews", () => {
-    const line = buildConfiguredLines(catalogue, [{ id: "room-a", label: "Bedroom" }], new Set(["basket-a"]), [])[0]!;
+    const line = configuredLineFixtures(catalogue, [{ id: "room-a", label: "Bedroom" }], new Set(["basket-a"]), [])[0]!;
     expect(configuredLinePreviewAmountPaise({ ...line, quantity: 2, rateInput: "0" })).toBe(0);
     expect(configuredLinePreviewAmountPaise({ ...line, quantity: 2, rateInput: "" })).toBeNull();
     expect(configuredLinePreviewAmountPaise({ ...line, quantity: 2, rateInput: "bad" })).toBeNull();
@@ -264,7 +265,7 @@ describe("configured estimate line state", () => {
   });
 
   it("takes each new line's exact source versions from its catalogue row", () => {
-    const [line] = buildConfiguredLines(catalogue, [{ id: "room-a", label: "Bedroom" }], new Set(["basket-a"]), []);
+    const [line] = configuredLineFixtures(catalogue, [{ id: "room-a", label: "Bedroom" }], new Set(["basket-a"]), []);
     expect(line).toMatchObject({ itemStatus: "draft", revisionStatus: "draft", itemVersion: 7, revisionVersion: 3 });
     expect(line?.persistedId).toBeUndefined();
     const refreshed = buildConfiguredLines({ ...catalogue, items: [{ ...catalogue.items[0]!, subBaskets: [{ ...catalogue.items[0]!.subBaskets[0]!, mainLines: [{ ...catalogue.items[0]!.subBaskets[0]!.mainLines[0]!, revisionVersion: 4 }] }] }] }, [{ id: "room-a", label: "Bedroom" }], new Set(["basket-a"]), [{ ...line!, included: true, rateInput: "42", rateSource: "manual", quantity: 1.5 }])[0]!;
@@ -295,7 +296,7 @@ describe("configured estimate line state", () => {
       }]
     };
     const rooms = [{ id: "room-a", label: "Bedroom" }, { id: "room-b", label: "Living room" }];
-    const lines = buildConfiguredLines(temporaryCatalogue, rooms, new Set(["basket-a"]), []);
+    const lines = configuredLineFixtures(temporaryCatalogue, rooms, new Set(["basket-a"]), []);
     expect(lines).toHaveLength(6);
     expect(lines.filter((line) => line.roomId === "room-a")).toEqual(expect.arrayContaining([
       expect.objectContaining({ mainLineId: "direct-a", itemType: "temporary", subBasketId: null, subBasketName: null, mainBasketName: "Joinery" }),
@@ -316,7 +317,7 @@ describe("configured estimate line state", () => {
     const moved = buildConfiguredLines({ ...temporaryCatalogue, items: [{ ...temporaryCatalogue.items[0]!, directTemporaryItems: [], subBaskets: [{
       ...temporaryCatalogue.items[0]!.subBaskets[0]!, temporaryItems: [{ ...temporaryCatalogue.items[0]!.directTemporaryItems![0]!, subBasketId: "sub-a" }]
     }] }] }, rooms, new Set(["basket-a"]), [savedDirect]);
-    expect(moved.find((line) => line.key === savedDirect.key)).toMatchObject({ persistedId: "saved-direct", itemType: "temporary", subBasketId: "sub-a", subBasketName: "Wardrobes", sourceMissing: true });
+    expect(moved.find((line) => line.key === savedDirect.key)).toMatchObject({ persistedId: "saved-direct", itemType: "temporary", subBasketId: null, subBasketName: null, sourceMissing: true });
   });
 });
 
@@ -329,7 +330,7 @@ describe("In-house estimate component selection", () => {
     const catalog = structuredClone(catalogue);
     catalog.items[0]!.subBaskets[0]!.mainLines[0]!.inHouseComponents = components;
     catalog.items[0]!.subBaskets[0]!.mainLines[0]!.modeBaseRatesPaise = { pmc: null, sub_vendor: null, in_house: 99999 };
-    return { catalog, draft: buildConfiguredLines(catalog, [{ id: "room-a", label: "Bedroom" }], new Set(["basket-a"]), [])[0]! };
+    return { catalog, draft: configuredLineFixtures(catalog, [{ id: "room-a", label: "Bedroom" }], new Set(["basket-a"]), [])[0]! };
   }
   it("requires explicit selection and sums only the selected configured rates", () => {
     const { draft } = line();
@@ -380,7 +381,7 @@ describe("configured estimate tiers", () => {
       ] }
     };
     const rooms = [{ id: "room-a", label: "Bedroom" }], selected = new Set(["basket-a"]);
-    return { current, rooms, selected, line: buildConfiguredLines(current, rooms, selected, [])[0]! };
+    return { current, rooms, selected, line: configuredLineFixtures(current, rooms, selected, [])[0]! };
   }
   it("defaults legacy lines to Signature and adopts only the deliberately selected tier's configured price", () => {
     const { line } = fixture();

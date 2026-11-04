@@ -573,3 +573,9 @@
   .admin-projects__sort { flex: 1 1 auto; }
   .admin-projects__status-button { padding-inline: 8px; }
 }
+
+.admin-project-estimate-stages { display: grid; gap: 3px; margin: 0; font-size: 0.72rem; line-height: 1.4; }
+.admin-project-estimate-stages > div { display: flex; justify-content: space-between; gap: 8px; min-inline-size: 0; }
+.admin-project-estimate-stages dt { color: var(--admin-projects-muted); }
+.admin-project-estimate-stages dd { margin: 0; text-align: end; overflow-wrap: anywhere; }
+.admin-projects .admin-project-card__meta dd.admin-project-estimate-stage { margin-block-start: 3px; font-weight: 400; }

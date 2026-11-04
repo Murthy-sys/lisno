@@ -1,4 +1,5 @@
 import { PROJECT_NUMBER_SCHEMA } from "./openapi/project-number.js";
+import { USER_RESPONSIBILITY_SCHEMAS } from "./openapi/user-responsibilities.js";
 import { DEFAULT_PROJECT_NEXT_ACTION, NATIVE_PLACE_MAX_LENGTH, TENTATIVE_BUDGET_MAX_LENGTH, PROJECT_LANGUAGES, PROJECT_CATEGORIES } from "./contracts/project-initiation.js";
 import { PM_ESTIMATE_SCHEMAS, PM_ESTIMATE_REQUESTS, PM_ESTIMATE_RESPONSES, PM_ESTIMATE_QUERIES, PM_ESTIMATE_SUMMARIES } from "./openapi/project-manager-estimates.js";
 import { ESTIMATE_DIMENSION_INPUT_UNITS, ESTIMATE_DIMENSION_QUANTITY_UNITS } from "./domain/estimate-dimensions.js";
@@ -8,7 +9,7 @@ import { KNOWLEDGE_MODE_TIERS } from "./domain/ai-estimator-knowledge-mode-tiers
 import { DESIGN_REQUIREMENTS_SCHEMAS } from "./openapi/design-requirements.js";
 import { VENDOR_BASKET_REQUEST_NOTIFICATION_SCHEMAS, VENDOR_BASKET_REQUEST_NOTIFICATION_RESPONSES, VENDOR_BASKET_REQUEST_NOTIFICATION_QUERIES, VENDOR_BASKET_REQUEST_NOTIFICATION_BODIES } from "./openapi/vendor-basket-request-notifications.js";
 import { ESTIMATE_COLLABORATION_SCHEMAS, ESTIMATE_COLLABORATION_REQUESTS, ESTIMATE_COLLABORATION_RESPONSES } from "./openapi/estimate-collaboration.js";
-import { QUOTATION_SCHEMAS, QUOTATION_REQUESTS, QUOTATION_RESPONSES } from "./openapi/quotation.js";
+import { QUOTATION_APPROVAL_PROPERTIES, QUOTATION_SCHEMAS, QUOTATION_REQUESTS, QUOTATION_RESPONSES } from "./openapi/quotation.js";
 import { ESTIMATE_REVISION_SCHEMAS, ESTIMATE_REVISION_RESPONSES, ESTIMATE_REVISION_QUERIES } from "./openapi/estimate-revisions.js";
 import { ESTIMATE_PROPOSAL_SCHEMAS } from "./openapi/estimate-proposal.js";
 import { VENDOR_BASKET_PROPOSAL_SCHEMAS, VENDOR_BASKET_PROPOSAL_BODIES, VENDOR_BASKET_PROPOSAL_RESPONSES, VENDOR_BASKET_PROPOSAL_QUERIES } from "./openapi/vendor-basket-proposals.js";
@@ -309,10 +310,11 @@ const responseSchemaByOperation: Readonly<Record<string, string>> = {
   "GET /auth/authorization": "AuthorizationSnapshot",
   "GET /admin/sales-managers": "SalesManagerOptionPage",
   "GET /admin/users": "UserDirectoryPage",
+  "GET /admin/users/:userId/responsibilities": "UserResponsibilitiesPage",
   "DELETE /admin/users/:userId": "ManagedUserDeletionResult",
   "GET /admin/projects": "AdminProjectPage",
   "POST /admin/projects": "ProjectIntakeRecord",
-  "GET /admin/projects/:projectId": "ProjectIntakeRecord",
+  "GET /admin/projects/:projectId": "AdminProjectSummary",
   "GET /leads/:leadId": "ProjectIntakeRecord",
   "GET /leads": "ProjectLeadPage",
   "POST /leads": "ProjectIntakeRecord",
@@ -566,6 +568,7 @@ const paginationOperationKeys = new Set<string>([
   "GET /client/project-summaries",
   "GET /admin/projects",
   "GET /admin/users",
+  "GET /admin/users/:userId/responsibilities",
   "GET /admin/user-invitations",
   "GET /access-requests/mine",
   "GET /access-requests/review",
@@ -688,6 +691,13 @@ const queryParametersByOperation: Readonly<
     { name: "includeReadyNonActive", in: "query", required: false,
       schema: { type: "string", enum: ["true", "false"], default: "false" },
       description: "Use the same Draft and Inactive readiness policy as the opted-in estimator catalogue." }
+  ],
+  "GET /projects/:projectId/quotation/items": [
+    { name: "search", in: "query", required: false, schema: { type: "string", maxLength: 200 } },
+    { name: "mainBasketId", in: "query", required: false, schema: { type: "string", minLength: 1, maxLength: 500 } },
+    { name: "subBasketId", in: "query", required: false, schema: { type: "string", minLength: 1, maxLength: 500 } },
+    { name: "limit", in: "query", required: false, schema: { type: "integer", minimum: 1, maximum: 50, default: 20 } },
+    { name: "offset", in: "query", required: false, schema: { type: "integer", minimum: 0, maximum: 100_000, default: 0 } }
   ],
   "GET /client/estimates/:estimateId/design-plan-documents": [{
     name: "roundId", in: "query", required: false, schema: { type: "string", minLength: 1, maxLength: 200 },
@@ -821,6 +831,9 @@ const queryParametersByOperation: Readonly<
       required: false,
       schema: { type: "integer", minimum: 0, default: 0 }
     }
+  ],
+  "GET /admin/users/:userId/responsibilities": [
+    { name: "destinationRole", in: "query", required: false, schema: { $ref: "#/components/schemas/Role" } }
   ],
   "GET /admin/users": [
     {
@@ -1675,6 +1688,7 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
   return {
     ...ESTIMATE_COLLABORATION_SCHEMAS,
     ...QUOTATION_SCHEMAS,
+    ...USER_RESPONSIBILITY_SCHEMAS,
     ...ESTIMATE_REVISION_SCHEMAS,
     ...ESTIMATE_PROPOSAL_SCHEMAS,
     ...ESTIMATE_TIER_SCHEMAS,
@@ -2186,9 +2200,9 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
       items: { type: "array", items: { $ref: "#/components/schemas/ProjectIntakeRecord" } },
       pagination: { $ref: "#/components/schemas/Pagination" }
     } },
-    NumberedEstimateRecord: { type: "object", additionalProperties: true, properties: { projectNumber },
+    NumberedEstimateRecord: { type: "object", additionalProperties: true, properties: { projectNumber, ...QUOTATION_APPROVAL_PROPERTIES },
       description: "Existing authorized estimate response with its canonical Lead project number. Other estimate fields retain their existing contracts." },
-    NullableNumberedEstimateRecord: { type: "object", nullable: true, additionalProperties: true, properties: { projectNumber },
+    NullableNumberedEstimateRecord: { type: "object", nullable: true, additionalProperties: true, properties: { projectNumber, ...QUOTATION_APPROVAL_PROPERTIES },
       description: "The existing estimate with its canonical Lead project number, or null before an estimate exists." },
     NumberedEstimateList: { type: "array", items: { $ref: "#/components/schemas/NumberedEstimateRecord" } },
     AdminProjectStatusCounts: {
@@ -2204,6 +2218,26 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
         completed: { type: "integer", minimum: 0 }
       }
     },
+    AdminProjectEstimateSummary: {
+      type: "object", nullable: true, additionalProperties: true,
+      required: ["id", "status", "initialEstimateApproval", "canAssignDesigner", "designerAssignmentBlockedReason"],
+      description: "Current commercial status is separate from immutable initial approval. Assignment eligibility is scoped to the requesting actor and rechecked by the mutation.",
+      properties: {
+        id, status: { type: "string", description: "Current working quotation status; may be draft after initial Client approval." },
+        ...QUOTATION_APPROVAL_PROPERTIES,
+        initialEstimateApproval: { type: "object", nullable: true, additionalProperties: false,
+          required: ["reviewRoundId", "estimateVersion", "approvedAt"],
+          properties: { reviewRoundId: id, estimateVersion: { type: "integer", minimum: 1 }, approvedAt: dateTime },
+          description: "Verified immutable initial Client approval, or null when unavailable or invalid." },
+        canAssignDesigner: { type: "boolean", readOnly: true },
+        designerAssignmentBlockedReason: { type: "string", nullable: true, readOnly: true }
+      }
+    },
+    AdminProjectSummary: {
+      type: "object", additionalProperties: true, required: ["id", "estimate"],
+      properties: { ...projectIntakeProperties, id, projectNumber,
+        estimate: { $ref: "#/components/schemas/AdminProjectEstimateSummary" } }
+    },
     AdminProjectPage: {
       type: "object",
       additionalProperties: false,
@@ -2211,7 +2245,7 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
       properties: {
         items: {
           type: "array",
-          items: { $ref: "#/components/schemas/ProjectIntakeRecord" }
+          items: { $ref: "#/components/schemas/AdminProjectSummary" }
         },
         pagination: { $ref: "#/components/schemas/Pagination", description: "Total includes both search and selected status filters." },
         statusCounts: { $ref: "#/components/schemas/AdminProjectStatusCounts" }
@@ -2420,6 +2454,7 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
       description: "Authorized Client proposal. Commercial fields are projected from the published snapshot; live Sales drafts are never exposed. Room and scope context is empty while Sales revises.",
       properties: {
         id, projectId: { type: "string", nullable: true }, status: { type: "string" }, version: { type: "integer", minimum: 1 },
+        ...QUOTATION_APPROVAL_PROPERTIES,
         publishedReview: { allOf: [{ $ref: "#/components/schemas/ClientPublishedEstimateReview" }], nullable: true },
         reviewSourceIssue: { type: "string", nullable: true, enum: ["missing_snapshot", "source_conflict", null] }
       }
@@ -2804,7 +2839,8 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
         id,
         estimateId: id,
         leadId: id,
-        estimationWorkflowVersion: { type: "integer", enum: [2] },
+        estimationWorkflowVersion: { type: "integer", enum: [2, 3] },
+        ...QUOTATION_APPROVAL_PROPERTIES,
         scopeReconciliation: { type: "object", required: ["required", "designScopeRevision", "approvedDesignScopeRevision"], properties: { required: { type: "boolean" }, designScopeRevision: { type: "integer", minimum: 1 }, approvedDesignScopeRevision: { type: "integer", minimum: 1, nullable: true } } },
         projectId: id,
         projectName: { type: "string" },

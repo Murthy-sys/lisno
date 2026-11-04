@@ -1,4 +1,5 @@
 import type { EstimateQueueItem } from "../estimates/estimateWorkflowApi";
+import { quotationApprovalNeedsClient } from "../estimates/quotationApproval";
 import type { QuotationDetail, QuotationRevision } from "./quotationApi";
 
 export interface ClientQuotationReviewState {
@@ -25,7 +26,10 @@ export function canReviewCurrentQuotation(detail: QuotationDetail, estimate: Est
   if (review.phase === "pre") {
     const proof = lifecycle.salesApproval;
     if (!proof || proof.estimateVersion !== review.estimateVersion || proof.pricedRevision !== detail.pricedRevision) return false;
-  } else if (!estimate.preApprovedReview || !estimate.changesFromPre) return false;
+  } else if (!estimate.preApprovedReview || !estimate.changesFromPre ||
+    detail.quotationApprovalState !== "revision_pending_client" ||
+    estimate.quotationApprovalState !== "revision_pending_client" ||
+    !quotationApprovalNeedsClient(detail) || !quotationApprovalNeedsClient(estimate)) return false;
   // The safe projection omits private rows, so its digest/totals cannot validate full-source proof.
   return true;
 }

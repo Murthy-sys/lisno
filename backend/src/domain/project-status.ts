@@ -7,7 +7,8 @@ import { createProjectDesignWorkflow, type DesignStageType } from "./design-work
 import { projectWorkflowBlueprints } from "./project-workflow.js";
 import type { Role } from "./roles.js";
 import type { WorkflowSpacePlanningSource } from "./workflow-space-planning.js";
-import { effectiveCommercialStatus, isEstimationWorkflowVersion, quotationApprovalIsCurrent } from "./estimation-lifecycle.js";
+import { effectiveCommercialStatus, isEstimationWorkflowVersion } from "./estimation-lifecycle.js";
+import type { QuotationApprovalResolution } from "../services/quotation-approval-state.service.js";
 
 /** Approval evidence and source selection are validated by the source reader, not status labels. */
 export interface ProjectStatusInput {
@@ -18,6 +19,7 @@ export interface ProjectStatusInput {
   designAssignmentOwnerIds?: readonly string[];
   /** estimateVersion is the immutable approved snapshot version after approval, otherwise the live version. */
   commercial: { state: "none" | "pending" | "pre_approved" | "approved" | "conflict"; estimateId: string | null; estimateVersion: number | null };
+  quotationApproval?: QuotationApprovalResolution | null;
   workflow: DesignWorkflowState | null;
   design: WorkflowSpacePlanningSource | null;
   tasks: readonly ChatWorkflowSource[];
@@ -48,7 +50,8 @@ export function deriveProjectStatus(input: ProjectStatusInput): ProjectStatusSum
   const { project, estimate, commercial } = input;
   const lifecycle = isEstimationWorkflowVersion(estimate?.estimation?.workflowVersion) ? estimate!.estimation! : null;
   const quotation = lifecycle?.workflowVersion === 3 ? lifecycle : null;
-  const approval = lifecycle?.finalApproval ?? lifecycle?.preApproval;
+  const quotationApproval = quotation ? input.quotationApproval ?? null : null;
+  const approval = quotation ? quotationApproval?.currentQuotationApproval : lifecycle?.finalApproval ?? lifecycle?.preApproval;
   const result: ProjectStatusSummary = {
     projectId: project.id, projectName: project.name, projectStatus: project.status,
     serverNow: input.serverNow, state: "active", currentStage: null, pendingActions: [], issue: null
@@ -100,20 +103,27 @@ export function deriveProjectStatus(input: ProjectStatusInput): ProjectStatusSum
       (lifecycle && project.estimationWorkflowVersion !== lifecycle.workflowVersion) ||
       (estimate && commercial.estimateVersion !== (lifecycle ? approval?.estimateVersion ?? estimate.version : commercial.state === "approved" ? Math.max(1, estimate.version - 1) : estimate.version))) return unavailable("estimate_approval");
 
-  if (project.completionAuthority === "vendor_client" && commercial.state !== "approved" && !quotation?.finalApproval &&
+  if (project.completionAuthority === "vendor_client" && commercial.state !== "approved" && !quotationApproval?.currentQuotationApproved &&
       (input.execution?.hasApprovedOrder || input.participants.some(person => person.role === "vendor"))) return unavailable("estimate_approval");
 
-  if (quotation && !quotationApprovalIsCurrent(estimate!)) {
-    if (quotation.status === "sent_to_client") {
-      add("estimate_approval", `estimate:${estimate!.id}:quotation-review`, quotation.preApproval ? "Review and approve the Designer-revised quotation or request changes." : "Review and approve the pre-design quotation or request changes.", "client", clientIds);
+  if (quotation && !quotationApproval?.currentQuotationApproved) {
+    if (!quotation.preApproval) {
+      if (quotation.status === "sent_to_client") {
+        add("estimate_approval", `estimate:${estimate!.id}:quotation-review`, "Review and approve the pre-design quotation or request changes.", "client", clientIds);
+      } else {
+        add("estimate_preparation", `estimate:${estimate!.id}:prepare-quotation`, "Prepare the pre-design quotation, approve its price, and send it to the Client.", "estimator_sales", salesIds);
+      }
+      return finish();
+    }
+    if (!quotationApproval || quotationApproval.quotationApprovalState === "source_issue") return unavailable("estimate_approval");
+    if (quotationApproval.quotationApprovalState === "revision_pending_client") {
+      add("estimate_approval", `estimate:${estimate!.id}:quotation-review`, "Review and approve the Designer-revised quotation or request changes.", "client", clientIds);
     } else if (quotation.preApproval) {
       if (!project.primaryDesignerId) {
         add("estimate_internal_review", `estimate:${estimate!.id}:assign-primary`, "Assign the primary Designer to revise the quotation.", "super_admin", input.participants.filter(person => person.role === "super_admin").map(person => person.id));
       } else {
         add("estimate_preparation", `estimate:${estimate!.id}:revise-quotation`, "Revise the quotation and submit it to the Client for post-design approval.", "designer", [project.primaryDesignerId]);
       }
-    } else {
-      add("estimate_preparation", `estimate:${estimate!.id}:prepare-quotation`, "Prepare the pre-design quotation, approve its price, and send it to the Client.", "estimator_sales", salesIds);
     }
     return finish();
   }
@@ -153,15 +163,17 @@ export function deriveProjectStatus(input: ProjectStatusInput): ProjectStatusSum
     if (!lifecycle.preApproval || !recordedDate(workflowDesignStartAt(workflow))) return unavailable("internal_kickoff");
     if (workflow.initialPaymentAt && !recordedDate(workflow.initialPaymentAt)) return unavailable("initial_payment");
     const final = lifecycle.finalApproval;
+    const effectiveApproval = quotation ? quotationApproval?.currentQuotationApproval : final;
     const designApproval = quotation ? quotation.designApproval : final;
     const designReviewRoundId = quotation ? quotation.designApproval?.reviewRoundId : final?.designReviewRoundId;
-    if (designApproval && (invalidDesignSource || !input.design?.readyForCompletion || input.design.reviewRoundId !== designReviewRoundId ||
+    if (designApproval && (quotation && quotation.designApproval?.estimateReviewRoundId !== effectiveApproval?.reviewRoundId ||
+        invalidDesignSource || !input.design?.readyForCompletion || input.design.reviewRoundId !== designReviewRoundId ||
         input.design.designPlanVersion !== designApproval.designPlanVersion)) return unavailable("space_planning_tentative_look_feel");
-    const receiptCurrent = final && workflow.initialPaymentAt && workflow.initialPaymentEstimateId === estimate.id &&
-      workflow.initialPaymentEstimateVersion === final.estimateVersion && workflow.initialPaymentReviewRoundId === final.reviewRoundId &&
+    const receiptCurrent = effectiveApproval && workflow.initialPaymentAt && workflow.initialPaymentEstimateId === estimate.id &&
+      workflow.initialPaymentEstimateVersion === effectiveApproval.estimateVersion && workflow.initialPaymentReviewRoundId === effectiveApproval.reviewRoundId &&
       workflow.initialPaymentDesignReviewRoundId === designReviewRoundId;
-    if (final && designApproval && !receiptCurrent) {
-      add("initial_payment", "initial-payment", workflow.initialPaymentAt ? "Confirm the recorded initial payment against the final approved estimate." : "Record confirmation that the initial payment was received.",
+    if (effectiveApproval && designApproval && !receiptCurrent) {
+      add("initial_payment", "initial-payment", workflow.initialPaymentAt ? "Confirm the recorded initial payment against the current approved quotation." : "Record confirmation that the initial payment was received.",
         "super_admin", input.participants.filter(person => person.role === "super_admin").map(person => person.id));
       return finish();
     }

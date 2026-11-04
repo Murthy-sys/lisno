@@ -1,4 +1,5 @@
 import type { ProjectInitiationMetadata } from "../contracts/project-initiation.js";
+import type { UserResponsibilityQuery, UserResponsibilityRow } from "../contracts/user-responsibilities.js";
 import type { ProjectClientInvitationRecord, ProjectInitiationReceipt } from "../domain/project-client-invitations.js";
 import type { DesignRequirementsSource, DesignRequirementsState } from "../domain/design-requirements.js";
 import type { WorkflowDesignPlanData, WorkflowSpacePlanningSource } from "../domain/workflow-space-planning.js";
@@ -392,6 +393,8 @@ export interface EstimateResponsibilityRecord {
   id: string;
   ownerId: string;
   status: EstimateResponsibilityStatus;
+  projectId?: string | null;
+  leadId?: string | null;
 }
 
 export interface LeadFilters {
@@ -413,8 +416,14 @@ export interface EstimatorOption {
 
 export interface EstimateSummaryRecord {
   estimation?: EstimationLifecycle | null;
+  quotationApproval?: import("../services/quotation-approval-state.service.js").QuotationApprovalResolution;
   lineItems?: WorkflowEstimateLine[];
   rooms?: Array<{ id: string; label: string; length?: unknown; width?: unknown }>;
+  propertyType?: string;
+  bedroomCount?: number | null;
+  scopes?: string[];
+  selectedMainBasketIds?: string[];
+  selectedMainBasketClassifications?: Array<{ mainBasketId: string; classification: "standard" | "special" }>;
   id: string;
   leadId: string;
   projectId: string | null;
@@ -434,6 +443,7 @@ export interface EstimateSummaryRecord {
   designPlanStatus?: string | null;
   designPlanVersion?: number;
   designPlanDesignerId?: string | null;
+  designPlanAssignedAt?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -460,6 +470,19 @@ export interface AdminProjectEstimateSummary {
   estimationPhase?: "pre" | "post";
   finalEstimateApproved?: boolean;
   designApproved?: boolean;
+  quotationApprovalState?: import("../services/quotation-approval-state.service.js").QuotationApprovalState;
+  currentQuotationApproved?: boolean;
+  requiresClientReapproval?: boolean;
+  quotationApprovalSource?: import("../services/quotation-approval-state.service.js").QuotationApprovalSource | null;
+  currentQuotationApproval?: Pick<import("../services/quotation-approval-state.service.js").CurrentQuotationApproval,
+    "kind" | "reviewRoundId" | "estimateVersion" | "approvedAt"> | null;
+  initialEstimateApproval: {
+    reviewRoundId: string;
+    estimateVersion: number;
+    approvedAt: string;
+  } | null;
+  canAssignDesigner: boolean;
+  designerAssignmentBlockedReason: string | null;
   id: string;
   leadId: string;
   projectId: string | null;
@@ -962,6 +985,7 @@ export interface SeedData {
   /** Current assignment projection; production reads the canonical workflow task collection. */
   projectWorkflowAssignments?: Array<{
     id?: string;
+    title?: string;
     estimateId?: string;
     version?: number;
     designPlanVersion?: number;
@@ -972,6 +996,8 @@ export interface SeedData {
     assigneeUserId: string | null;
     supersededAt?: string | null;
     status?: string;
+    openedAt?: string;
+    dueAt?: string | null;
   }>;
   projectClientInvitations?: ProjectClientInvitationRecord[];
   projectInitiationReceipts?: ProjectInitiationReceipt[];
@@ -1056,6 +1082,11 @@ export interface AppRepository {
     designScopeRevision: number;
     approvedDesignScopeRevision: number | null;
     finalApproval: FinalEstimationApprovalReference | null;
+    quotationApprovalState?: import("../services/quotation-approval-state.service.js").QuotationApprovalState;
+    currentQuotationApproved?: boolean;
+    requiresClientReapproval?: boolean;
+    quotationApprovalSource?: import("../services/quotation-approval-state.service.js").QuotationApprovalSource | null;
+    currentQuotationApproval?: import("../services/quotation-approval-state.service.js").CurrentQuotationApproval | null;
   } | null>;
   listActiveWorkflowUoms(): Promise<FurnitureUomOption[]>;
   findWorkflowUomsByIdentity(codeNormalized: string, nameNormalized: string): Promise<Array<FurnitureUomOption & { status: "active" | "inactive" }>>;
@@ -1232,6 +1263,12 @@ export interface AppRepository {
   countActiveUsersByRole(role: Role): Promise<number>;
   summarizeUsers(visibleRoles: readonly Role[]): Promise<UserDirectorySummary>;
   countUserResponsibilities(userId: string): Promise<UserResponsibilityCounts>;
+  pageUserResponsibilities(userId: string, query: UserResponsibilityQuery & { currentRole: Role }): Promise<{
+    items: UserResponsibilityRow[];
+    total: number;
+    counts: UserResponsibilityCounts;
+    blockingCount: number;
+  }>;
   deleteUser(
     userId: string,
     expectedVersion: number,

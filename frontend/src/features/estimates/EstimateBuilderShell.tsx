@@ -55,6 +55,8 @@ export interface EstimateBuilderShellProps {
   /** Adapter-owned sections use data-estimate-jump-target with this stable ID. */
   extraJumpTargets?: readonly { id: string; label: string }[];
   renderEmptyBasket?: (basket: EstimateShellBasket) => ReactNode;
+  /** Editable adapters show selected rows while keeping every room available for adding items. */
+  selectedItemsOnly?: boolean;
 }
 
 type GlyphName = "search" | "refresh" | "section" | "basket" | "paint" | "room" | "chevron" | "more";
@@ -79,10 +81,10 @@ const itemCount = (count: number) => `${count} ${count === 1 ? "item" : "items"}
 /** Presentation only: adapters supply authorized rows, amounts, and mutation callbacks. */
 export function EstimateBuilderShell({ rooms, activeRoomId, onSelectRoom, selectedCount, baskets, groups, renderLine,
   viewState, onViewStateChange, onRefresh, refreshing, navigation, beforeGroups, afterGroups, emptyMessage,
-  searchInputRef, extraJumpTargets = [], renderEmptyBasket, scrollMode = "pane" }: EstimateBuilderShellProps) {
+  searchInputRef, extraJumpTargets = [], renderEmptyBasket, scrollMode = "pane", selectedItemsOnly = false }: EstimateBuilderShellProps) {
   const { search, setSearch, basketFilter, setBasketFilter, railView, setRailView, collapsedBasketIds,
     setCollapsedBasketIds, collapsedSubBasketIds, setCollapsedSubBasketIds } = useConfiguredEstimateViewState(viewState, onViewStateChange);
-  const visibleRooms = railView === "selected" ? rooms.filter(room => room.hasSelectedItems) : rooms;
+  const visibleRooms = !selectedItemsOnly && railView === "selected" ? rooms.filter(room => room.hasSelectedItems) : rooms;
   const activeRoom = visibleRooms.find(room => room.id === activeRoomId) ?? visibleRooms[0];
   const mainBasketRefs = useRef<Map<string, HTMLElement>>(new Map());
   const itemPaneRef = useRef<HTMLDivElement>(null);
@@ -130,7 +132,7 @@ export function EstimateBuilderShell({ rooms, activeRoomId, onSelectRoom, select
   const toggleSubBasket = (id: string) => setCollapsedSubBasketIds(current => {
     const next = new Set(current); if (next.has(id)) next.delete(id); else next.add(id); return next;
   });
-  return <div className="configured-estimate-builder">
+  return <div className={`configured-estimate-builder${selectedItemsOnly ? " configured-estimate-builder--selected-items" : ""}`}>
     <div className="configured-estimate-builder__toolbar">
       <label className="configured-estimate-builder__search"><EstimateBuilderGlyph name="search" /><span className="sr-only">Search estimate items</span><input ref={searchInputRef} type="search" value={search} onChange={event => setSearch(event.target.value)} placeholder="Search items, materials, or keywords..." /></label>
       <label className="configured-estimate-builder__filter"><EstimateBuilderGlyph name="section" /><span className="sr-only">Filter Main Baskets</span><select value={visibleBasketFilter} onChange={event => setBasketFilter(event.target.value)}><option value="all">All Sections</option>{baskets.map(basket => <option key={basket.id} value={basket.id}>{basket.name}</option>)}</select><EstimateBuilderGlyph name="chevron" /></label>
@@ -139,9 +141,9 @@ export function EstimateBuilderShell({ rooms, activeRoomId, onSelectRoom, select
     <div className="configured-estimate-builder__layout">
       <aside className="configured-estimate-builder__rail" aria-label="Estimate sections">
         {navigation}
-        <div className="configured-estimate-builder__rail-tabs" role="group" aria-label="Room view"><button type="button" aria-pressed={railView === "section"} onClick={() => setRailView("section")}>By Section</button><button type="button" aria-pressed={railView === "selected"} onClick={() => setRailView("selected")}>Selected ({selectedCount})</button></div>
+        {selectedItemsOnly ? <p className="configured-estimate-builder__selection-count">{selectedCount} selected {selectedCount === 1 ? "item" : "items"}</p> : <div className="configured-estimate-builder__rail-tabs" role="group" aria-label="Room view"><button type="button" aria-pressed={railView === "section"} onClick={() => setRailView("section")}>By Section</button><button type="button" aria-pressed={railView === "selected"} onClick={() => setRailView("selected")}>Selected ({selectedCount})</button></div>}
         <nav aria-label="Rooms" className="configured-estimate-builder__rooms">{visibleRooms.map(room => <button type="button" key={room.id} aria-current={room.id === activeRoom?.id ? "true" : undefined} onClick={() => onSelectRoom(room.id)}><span className="configured-estimate-builder__room-icon"><EstimateBuilderGlyph name="room" /></span><span className="configured-estimate-builder__room-copy"><strong>{room.label}</strong>{room.detail ? <small>{room.detail}</small> : null}</span><EstimateBuilderGlyph name="chevron" /></button>)}</nav>
-        {!visibleRooms.length ? <p className="configured-estimate-builder__rail-empty">No selected items yet. Choose By Section to add items.</p> : null}
+        {!visibleRooms.length ? <p className="configured-estimate-builder__rail-empty">{selectedItemsOnly ? "Choose rooms in Configure estimate to add items." : "No selected items yet. Choose By Section to add items."}</p> : null}
       </aside>
       <div className="configured-estimate-builder__content">
         <nav aria-label="Jump to Main Basket" className="configured-estimate-builder__jump">

@@ -11,6 +11,8 @@ export interface QuotationItemDraft {
   components: string[];
   dimensions: EstimateDimensions;
   included: boolean;
+  /** Omitted means preserve server-owned origins, including any non-visible source. */
+  recommendationSourceMainLineIds?: string[];
 }
 export interface QuotationGroupDraft { group: QuotationGroup; label: string }
 export interface QuotationDraft {
@@ -23,6 +25,27 @@ export const draftQuotationItem = (line: QuotationLine, kind: QuotationItemDraft
   line, kind, quantity: String(line.quantity), modeTier: line.modeTier, components: line.selectedInHouseComponentIds ?? [],
   dimensions: line.dimensions ?? emptyEstimateDimensions(), included: line.included
 });
+
+/** Only explicitly assigned local origins are safe to cascade, including restored saved items. */
+export function prunePendingQuotationRecommendations(draft: QuotationDraft, savedRows: readonly QuotationLine[]): QuotationDraft {
+  let items = draft.items;
+  let changed: boolean;
+  do {
+    changed = false;
+    const rows = new Map([...savedRows, ...Object.values(items).map(item => item.line)].map(line => [line.id, line]));
+    const included = new Set([...rows.values()].filter(line => (items[line.id]?.included ?? line.included) &&
+      !draft.groups.some(({ group }) => quotationGroupContains(group, line))).map(line => JSON.stringify([line.roomId, line.mainLineId])));
+    for (const [id, item] of Object.entries(items)) {
+      if (!item.included || !item.recommendationSourceMainLineIds?.length) continue;
+      const origins = item.recommendationSourceMainLineIds.filter(sourceId => included.has(JSON.stringify([item.line.roomId, sourceId])));
+      if (origins.length !== item.recommendationSourceMainLineIds.length) {
+        items = { ...items, [id]: { ...item, included: origins.length > 0, recommendationSourceMainLineIds: origins } };
+        changed = true;
+      }
+    }
+  } while (changed);
+  return items === draft.items ? draft : { ...draft, items };
+}
 
 export function quotationGroupContains(group: QuotationGroup, line: QuotationLine): boolean {
   return line.mainBasketId === group.mainBasketId && (group.subBasketId === null || line.subBasketId === group.subBasketId)
@@ -51,7 +74,8 @@ export function quotationItemOperation(item: QuotationItemDraft): Exclude<Quotat
   if (!item.included && item.kind === "update") return { kind: "update", lineItemId: item.line.id, source, included: false };
   const selection = { source, quantity, modeTier: item.modeTier,
     ...(item.line.dimensionsMandatory ? { dimensions: item.dimensions } : {}),
-    ...(choice?.inHouseComponents ? { selectedInHouseComponentIds: item.components } : {}) };
+    ...(choice?.inHouseComponents ? { selectedInHouseComponentIds: item.components } : {}),
+    ...(item.recommendationSourceMainLineIds !== undefined ? { recommendationSourceMainLineIds: item.recommendationSourceMainLineIds } : {}) };
   return item.kind === "add" ? { kind: "add", mainLineId: item.line.mainLineId, roomId: item.line.roomId, ...selection }
     : { kind: "update", lineItemId: item.line.id, included: item.included, ...selection };
 }
@@ -93,6 +117,8 @@ export function quotationSaveIsConfirmed(before: QuotationDetail, current: Quota
     if (!line.included || operation.quantity !== undefined && line.quantity !== operation.quantity || operation.modeTier !== undefined && line.modeTier !== operation.modeTier) return false;
     if (operation.dimensions && JSON.stringify(line.dimensions) !== JSON.stringify(operation.dimensions)) return false;
     if (operation.selectedInHouseComponentIds && JSON.stringify([...(line.selectedInHouseComponentIds ?? [])].sort()) !== JSON.stringify([...operation.selectedInHouseComponentIds].sort())) return false;
+    if (operation.recommendationSourceMainLineIds !== undefined && (line.recommendationSourceMainLineIds === undefined ||
+      JSON.stringify([...line.recommendationSourceMainLineIds].sort()) !== JSON.stringify([...operation.recommendationSourceMainLineIds].sort()))) return false;
     return true;
   });
 }

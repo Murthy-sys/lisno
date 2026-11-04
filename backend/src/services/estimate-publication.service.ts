@@ -46,6 +46,7 @@ import type {
   EstimatePdfInput,
   EstimatePdfService
 } from "./estimate-pdf.service.js";
+import { quotationApprovalPublicFields, resolveCurrentQuotationApproval } from "./quotation-approval-state.service.js";
 
 const APPROVAL_THRESHOLD = 1_500_000;
 
@@ -140,6 +141,7 @@ export function createEstimatePublicationService(input: {
     ): Promise<PublishEstimateToClientResult> {
       const preflightEstimate = await findEstimateForPublication(publication);
       if (!preflightEstimate) publicationConflict();
+      await assertRevisedQuotationPublication(preflightEstimate);
       assertPublishableConfiguredLines(preflightEstimate);
       if (publication.expectedStatus === "draft" || preflightEstimate.estimation?.workflowVersion === 3) await assertCurrentConfiguredPublication(preflightEstimate);
       if (
@@ -217,6 +219,7 @@ export function createEstimatePublicationService(input: {
             session
           );
           if (!currentEstimate) publicationConflict();
+          await assertRevisedQuotationPublication(currentEstimate, session);
           assertPublishableConfiguredLines(currentEstimate);
           if (publication.expectedStatus === "draft" || currentEstimate.estimation?.workflowVersion === 3) {
             await fencePublicationConfigurationDependencies(currentEstimate, session);
@@ -425,8 +428,9 @@ export function createEstimatePublicationService(input: {
         } else if (recovery) {
           retainedPdfBytes = null;
           await input.storage.deleteQuietly(stored.storageReference);
+          const recoveredEstimate = await loadCommittedEstimate(publication);
           return {
-            estimate: await loadCommittedEstimate(publication),
+            estimate: await projectQuotationApproval(recoveredEstimate),
             clientReview: mapRoundSummary(recovery)
           };
         } else {
@@ -460,9 +464,24 @@ export function createEstimatePublicationService(input: {
         retainedPdfBytes = null;
       }
 
-      return { estimate: resultEstimate, clientReview };
+      return { estimate: await projectQuotationApproval(resultEstimate), clientReview };
     }
   };
+}
+
+async function projectQuotationApproval(estimate: Record<string, any>): Promise<Record<string, unknown>> {
+  if (estimate.estimation?.workflowVersion !== 3) return estimate;
+  const resolution = await resolveCurrentQuotationApproval(estimate);
+  return { ...estimate, ...quotationApprovalPublicFields(resolution) };
+}
+
+async function assertRevisedQuotationPublication(estimate: PublicationEstimate, session?: mongoose.ClientSession) {
+  if (estimate.estimation?.workflowVersion !== 3 || estimate.estimation.phase !== "post") return;
+  const approval = await resolveCurrentQuotationApproval(estimate, session);
+  if (approval.quotationApprovalState === "initial_current") {
+    throw new ApiError(409, "QUOTATION_UNCHANGED", "The initial Client approval already covers this quotation. Continue the design workflow or save a material revision first.");
+  }
+  if (approval.quotationApprovalState === "source_issue") publicationConflict();
 }
 
 function publicationEstimateFilter(input: PublishEstimateToClientInput, collaborative = false) {

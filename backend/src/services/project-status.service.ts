@@ -2,10 +2,11 @@ import { projectNumbersForProjectIds } from "../domain/project-number.js";
 import type { AssistantReadScope } from "../contracts/project-chat-assistant.js";
 import type { ChatActor } from "../contracts/project-chat.js";
 import type { ProjectStatusSummary } from "../contracts/project-status.js";
+import type { UserResponsibilityProject, UserResponsibilityReader } from "../contracts/user-responsibilities.js";
 import type { ProjectCompletionSummary } from "../domain/project-completion.js";
 import { deriveProjectStatus, type ProjectStatusInput } from "../domain/project-status.js";
 import { resolveChatMembership } from "../domain/project-chat-membership.js";
-import { chatNotFound } from "../domain/project-chat.js";
+import { chatForbidden, chatNotFound } from "../domain/project-chat.js";
 import { ApiError } from "../middleware/errors.js";
 import { RepositoryConflictError, type AppRepository } from "../repositories/types.js";
 import type { ChatEstimateSource, ChatSources, ChatTransaction, ProjectChatRepository } from "../repositories/project-chat.js";
@@ -22,6 +23,8 @@ import { hydrateDesignWorkflowState } from "./design-workflow-state.service.js";
 
 export interface ProjectStatusService {
   get(actor: ChatActor, projectId: string): Promise<ProjectStatusSummary>;
+  /** Administrative read bound to the target's enumerated responsibility page, never arbitrary project IDs. */
+  readUserResponsibilities: UserResponsibilityReader;
   /** Internal scoped read; never accepts a service identity as a human actor. */
   getForClientScope(scope: AssistantReadScope, transaction?: ChatTransaction): Promise<ProjectStatusSummary>;
 }
@@ -29,7 +32,7 @@ export interface ProjectStatusService {
 const validDate = (value: string | null) => Boolean(value && Number.isFinite(Date.parse(value)));
 const positiveInteger = (value: number) => Number.isSafeInteger(value) && value > 0;
 
-function commercialSource(sources: ChatSources, evidence: ProjectStatusEstimateEvidence): Pick<ProjectStatusInput, "estimate" | "commercial"> {
+function commercialSource(sources: ChatSources, evidence: ProjectStatusEstimateEvidence): Pick<ProjectStatusInput, "estimate" | "commercial" | "quotationApproval"> {
   const projectId = sources.project.id;
   const conflict = (estimate: ChatEstimateSource | null = null): Pick<ProjectStatusInput, "estimate" | "commercial"> => ({ estimate,
     commercial: { state: "conflict", estimateId: estimate?.id ?? null, estimateVersion: estimate?.version ?? null } });
@@ -78,21 +81,27 @@ function commercialSource(sources: ChatSources, evidence: ProjectStatusEstimateE
     if (lifecycle.preApproval && (!pre || pre.phase !== "pre") || lifecycle.finalApproval && (!pre || !final ||
       final.phase !== "post" || final.estimateVersion <= pre.estimateVersion || final.requirementsVersion !== lifecycle.finalApproval.requirementsVersion ||
       final.designScopeRevision !== lifecycle.finalApproval.designScopeRevision)) return conflict(estimate);
-    const locked = !!lifecycle.editClosedAt;
-    if (locked && (!final || lifecycle.status !== "client_approved" || lifecycle.editClosedAt !== lifecycle.finalApproval?.approvedAt ||
-      lifecycle.finalApproval.requirementsVersion !== lifecycle.requirementsVersion || lifecycle.finalApproval.designScopeRevision !== lifecycle.designScopeRevision)) return conflict(estimate);
     const pending = lifecycle.pendingReviewRoundId ? rounds.find(round => round.id === lifecycle.pendingReviewRoundId) : null;
     if (lifecycle.status === "sent_to_client" ? !pending || pending.id !== latest?.id || pending.status !== "pending" ||
       pending.phase !== lifecycle.phase || pending.estimateVersion !== estimate.version || pending.decision || pending.decidedAt ||
       pending.requirementsVersion !== lifecycle.requirementsVersion || pending.designScopeRevision !== lifecycle.designScopeRevision
       : Boolean(pending)) return conflict(estimate);
     if (pre ? estimate.status !== "client_approved" : estimate.status !== lifecycle.status || final || evidence.financeSource) return conflict(estimate);
-    const reference = lifecycle.finalApproval ?? lifecycle.preApproval;
-    if (reference && evidence.financeSource && (evidence.financeSource.estimateId !== estimate.id ||
-      evidence.financeSource.estimateVersion !== reference.estimateVersion || evidence.financeSource.reviewRoundId !== reference.reviewRoundId)) return conflict(estimate);
-    commercial.state = locked ? "approved" : pre ? "pre_approved" : pending ? "pending" : "none";
-    commercial.estimateVersion = reference?.estimateVersion ?? estimate.version;
-    return { estimate, commercial };
+    const quotationApproval = row.quotationApproval;
+    if (!pre) {
+      commercial.state = pending ? "pending" : "none";
+      return { estimate, commercial, quotationApproval: quotationApproval ?? null };
+    }
+    if (!quotationApproval || quotationApproval.quotationApprovalState === "source_issue") return conflict(estimate);
+    const current = quotationApproval.currentQuotationApproval;
+    const historical = lifecycle.finalApproval ?? lifecycle.preApproval;
+    const financeReference = current ?? historical;
+    if (evidence.financeSource && (!financeReference || evidence.financeSource.estimateId !== estimate.id ||
+      evidence.financeSource.estimateVersion !== financeReference.estimateVersion || evidence.financeSource.reviewRoundId !== financeReference.reviewRoundId)) return conflict(estimate);
+    commercial.state = quotationApproval.currentQuotationApproved ? "approved" :
+      quotationApproval.quotationApprovalState === "revision_pending_client" ? "pending" : "none";
+    commercial.estimateVersion = current?.estimateVersion ?? estimate.version;
+    return { estimate, commercial, quotationApproval };
   }
   if (sources.project.estimationWorkflowVersion === 2 || isCollaborativeEstimate(estimate)) {
     const lifecycle = estimate.estimation;
@@ -223,10 +232,14 @@ export function createProjectStatusService(options: {
             }
           }
           const final = selected.estimate?.estimation?.finalApproval;
-          const executionReleased = !isCollaborativeEstimate(selected.estimate ?? {}) || Boolean(final && input.workflow?.initialPaymentAt &&
-            input.workflow.initialPaymentEstimateId === selected.estimate?.id && input.workflow.initialPaymentEstimateVersion === final.estimateVersion &&
-            input.workflow.initialPaymentReviewRoundId === final.reviewRoundId && input.workflow.initialPaymentDesignReviewRoundId === (selected.estimate?.estimation?.workflowVersion === 3 ? selected.estimate.estimation.designApproval?.reviewRoundId : final.designReviewRoundId) &&
-            (selected.estimate?.estimation?.workflowVersion !== 3 || !!selected.estimate.estimation.editClosedAt));
+          const effectiveApproval = selected.estimate?.estimation?.workflowVersion === 3
+            ? selected.quotationApproval?.currentQuotationApproval : final;
+          const designReviewRoundId = selected.estimate?.estimation?.workflowVersion === 3
+            ? selected.estimate.estimation.designApproval?.reviewRoundId : final?.designReviewRoundId;
+          const executionReleased = !isCollaborativeEstimate(selected.estimate ?? {}) || Boolean(effectiveApproval && input.workflow?.initialPaymentAt &&
+            input.workflow.initialPaymentEstimateId === selected.estimate?.id && input.workflow.initialPaymentEstimateVersion === effectiveApproval.estimateVersion &&
+            input.workflow.initialPaymentReviewRoundId === effectiveApproval.reviewRoundId &&
+            input.workflow.initialPaymentDesignReviewRoundId === designReviewRoundId);
           if (executionReleased && input.commercial.state === "approved" && sources.project.completionAuthority === "vendor_client" &&
               selected.estimate?.designPlanStatus === "approved" && input.design?.readyForCompletion) {
             try {
@@ -240,6 +253,58 @@ export function createProjectStatusService(options: {
         return { ...deriveProjectStatus(input), projectNumber: projectNumbersForProjectIds([projectId], sources.leads).get(projectId) ?? null };
   };
   return {
+    async readUserResponsibilities(actor, userId, query) {
+      return options.chatRepository.snapshot(async tx => {
+        const user = await authenticatedChatUser(tx, actor, clock, "identity.users.read");
+        if (user.deletedAt) throw new ApiError(401, "INVALID_TOKEN", "Authentication token is no longer valid.");
+        if (user.role !== "super_admin") chatForbidden();
+        const target = await tx.app.findUserById(userId);
+        if (!target || target.deletedAt) chatNotFound();
+        if (!Number.isSafeInteger(query.limit) || query.limit < 1 || query.limit > 100 ||
+            !Number.isSafeInteger(query.offset) || query.offset < 0) {
+          throw new ApiError(400, "VALIDATION_ERROR", "Choose a valid responsibility page.");
+        }
+        const page = await tx.app.pageUserResponsibilities(userId, { ...query, currentRole: target.role });
+        const projects = new Map<string, UserResponsibilityProject | null>();
+        // Sequential reads retain one coherent Mongo snapshot; each page project is enriched only once.
+        for (const projectId of new Set(page.items.flatMap(row => row.projectId ? [row.projectId] : []))) {
+          const project = await tx.app.findProjectById(projectId);
+          if (!project) { projects.set(projectId, null); continue; }
+          const summary: UserResponsibilityProject = {
+            id: project.id, name: project.name, status: project.status,
+            projectNumber: null, currentStage: null, stageState: "unavailable"
+          };
+          projects.set(projectId, summary);
+          try {
+            const sources = await tx.sources(projectId);
+            if (!sources || sources.project.id !== projectId) continue;
+            // Resolve the number separately so incomplete workflow evidence cannot erase a valid Project ID.
+            summary.projectNumber = projectNumbersForProjectIds([projectId], sources.leads).get(projectId) ?? null;
+            const membership = resolveChatMembership(sources, await tx.selections(projectId));
+            const status = await projectSnapshot(tx, sources, membership, await executionEvidence(projectId, tx.session));
+            if (status.state !== "unavailable" && status.currentStage) {
+              summary.currentStage = status.currentStage;
+              summary.stageState = "available";
+            }
+          } catch (error) {
+            // Only known inconsistent source evidence degrades a row. Authentication and storage errors still fail the read.
+            if (!(error instanceof RepositoryConflictError) && !(error instanceof ApiError && error.status === 409 &&
+                ["PROJECT_NUMBER_STATE_CONFLICT", "PROJECT_COMPLETION_LINEAGE_CONFLICT"].includes(error.code))) throw error;
+          }
+        }
+        return {
+          user: { id: target.id, role: target.role, version: target.version },
+          destinationRole: query.destinationRole ?? null,
+          readAt: clock().toISOString(), counts: page.counts, blockingCount: page.blockingCount,
+          items: page.items.map(row => {
+            if (!row.projectId) return row;
+            const project = projects.get(row.projectId) ?? null;
+            return { ...row, project, contextState: project ? "available" as const : "unavailable" as const };
+          }),
+          pagination: { limit: query.limit, offset: query.offset, total: page.total, hasMore: query.offset + page.items.length < page.total }
+        };
+      });
+    },
     async get(actor, projectId) {
       return options.chatRepository.snapshot(async tx => {
         // Membership and every source read share one snapshot; no chat office-hours or write path.

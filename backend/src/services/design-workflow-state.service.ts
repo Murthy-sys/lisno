@@ -88,9 +88,11 @@ export async function hydrateDesignWorkflowState(repository: AppRepository, proj
   const context = await repository.findProjectEstimationContext(projectId, lock);
   state.estimationWorkflowVersion = project.estimationWorkflowVersion;
   if (project.estimationWorkflowVersion === 3) {
-    state.quotationLocked = Boolean(context?.quotationLocked && context.finalApproval &&
-      context.finalApproval.designScopeRevision === context.designScopeRevision);
-    state.designApprovalLocked = Boolean(state.quotationLocked && context?.designApproval?.designScopeRevision === context?.designScopeRevision);
+    state.quotationLocked = context?.currentQuotationApproved === true &&
+      context.currentQuotationApproval?.designScopeRevision === context.designScopeRevision;
+    state.designApprovalLocked = Boolean(state.quotationLocked && context?.designApproval &&
+      context.designApproval.designScopeRevision === context.designScopeRevision &&
+      context.designApproval.estimateReviewRoundId === context.currentQuotationApproval?.reviewRoundId);
     if (!state.designStartedAt && context?.quotationApprovedAt && state.quotationLocked) state.designStartedAt = context.designStartedAt ?? context.quotationApprovedAt;
   } else if (!state.designStartedAt && context?.preApprovedAt) state.designStartedAt = state.initialPaymentAt ?? context.preApprovedAt;
   return state;
@@ -100,17 +102,18 @@ export async function projectInitialPayment(repository: AppRepository, projectId
   const project = await repository.findProjectById(projectId);
   const collaborative = project?.estimationWorkflowVersion === 2 || project?.estimationWorkflowVersion === 3;
   const lifecycle = collaborative ? await repository.findProjectEstimationContext(projectId) : null;
+  const effectiveApproval = project?.estimationWorkflowVersion === 3 ? lifecycle?.currentQuotationApproval : lifecycle?.finalApproval;
   const designReviewRoundId = project?.estimationWorkflowVersion === 3 ? lifecycle?.designApproval?.reviewRoundId : lifecycle?.finalApproval?.designReviewRoundId;
-  const approvedSource = lifecycle?.finalApproval && (project?.estimationWorkflowVersion !== 3 || lifecycle.quotationLocked &&
-    lifecycle.designApproval?.estimateReviewRoundId === lifecycle.finalApproval.reviewRoundId && lifecycle.designApproval.designScopeRevision === lifecycle.designScopeRevision);
-  const exactReceipt = Boolean(lifecycle?.finalApproval && state.initialPaymentEstimateId === lifecycle.estimateId &&
-    state.initialPaymentEstimateVersion === lifecycle.finalApproval.estimateVersion && state.initialPaymentReviewRoundId === lifecycle.finalApproval.reviewRoundId &&
+  const approvedSource = effectiveApproval && (project?.estimationWorkflowVersion !== 3 || lifecycle?.quotationLocked &&
+    lifecycle.designApproval?.estimateReviewRoundId === effectiveApproval.reviewRoundId && lifecycle.designApproval.designScopeRevision === lifecycle.designScopeRevision);
+  const exactReceipt = Boolean(effectiveApproval && state.initialPaymentEstimateId === lifecycle?.estimateId &&
+    state.initialPaymentEstimateVersion === effectiveApproval.estimateVersion && state.initialPaymentReviewRoundId === effectiveApproval.reviewRoundId &&
     state.initialPaymentDesignReviewRoundId === designReviewRoundId && approvedSource);
   const metadata = collaborative ? { workflowVersion: project!.estimationWorkflowVersion, designStartedAt: state.designStartedAt ?? null,
     existingReceiptAt: state.initialPaymentAt, requiresAttestation: Boolean(state.initialPaymentAt && !exactReceipt) } : {};
   if (state.initialPaymentAt && (!collaborative || exactReceipt)) return { ...metadata, confirmedAt: state.initialPaymentAt, canConfirm: false, version: state.version, status: "received" as WorkflowPaymentStatus };
   const { source, issue } = collaborative
-    ? approvedSource && lifecycle?.finalApproval ? { source: { estimateId: lifecycle.estimateId, estimateVersion: lifecycle.finalApproval.estimateVersion }, issue: undefined } : { source: null, issue: project?.estimationWorkflowVersion === 3 ? "Awaiting the current approved quotation and Client design approval." : "Awaiting Client final estimate approval after design completion." }
+    ? approvedSource && effectiveApproval ? { source: { estimateId: lifecycle!.estimateId, estimateVersion: effectiveApproval.estimateVersion }, issue: undefined } : { source: null, issue: project?.estimationWorkflowVersion === 3 ? "Awaiting the current approved quotation and Client design approval." : "Awaiting Client final estimate approval after design completion." }
     : await paymentApprovalSource(repository, projectId);
   return { ...metadata, confirmedAt: null, canConfirm: canConfirm && Boolean(source) && (!collaborative || actorRole === "super_admin"), version: state.version, status: (source ? "awaiting_payment" : "awaiting_estimate_approval") as WorkflowPaymentStatus, ...(issue ? { issue } : {}) };
 }
@@ -532,29 +535,30 @@ export function createDesignWorkflowStateService(repository: AppRepository, audi
             const collaborative = project.estimationWorkflowVersion === 2 || project.estimationWorkflowVersion === 3;
             if (!capabilities.finance || collaborative && actor.role !== "super_admin" || !input.note) throw new ApiError(403, "PAYMENT_CONFIRMATION_NOT_ALLOWED", "Super Admin or Finance must record a payment receipt reference.");
             const lifecycle = collaborative ? await tx.findProjectEstimationContext(projectId, true) : null;
+            const effectiveApproval = project.estimationWorkflowVersion === 3 ? lifecycle?.currentQuotationApproval : lifecycle?.finalApproval;
             const designReviewRoundId = project.estimationWorkflowVersion === 3 ? lifecycle?.designApproval?.reviewRoundId : lifecycle?.finalApproval?.designReviewRoundId;
-            const confirmedCurrentApproval = lifecycle?.finalApproval &&
+            const confirmedCurrentApproval = effectiveApproval && lifecycle &&
               state.initialPaymentEstimateId === lifecycle.estimateId &&
-              state.initialPaymentEstimateVersion === lifecycle.finalApproval.estimateVersion &&
-              state.initialPaymentReviewRoundId === lifecycle.finalApproval.reviewRoundId &&
+              state.initialPaymentEstimateVersion === effectiveApproval.estimateVersion &&
+              state.initialPaymentReviewRoundId === effectiveApproval.reviewRoundId &&
               state.initialPaymentDesignReviewRoundId === designReviewRoundId;
             if (input.stageId || state.initialPaymentAt && (!collaborative || confirmedCurrentApproval)) blocked(["The initial payment is already confirmed or this request names a stage."]);
-            if (collaborative && !lifecycle?.finalApproval) blocked(["The Client must approve the quotation before payment can be confirmed."]);
-            if (project.estimationWorkflowVersion === 3 && (!lifecycle?.quotationLocked || !lifecycle.finalApproval ||
-              lifecycle.designApproval?.estimateReviewRoundId !== lifecycle.finalApproval.reviewRoundId || lifecycle.designApproval.designScopeRevision !== lifecycle.designScopeRevision)) {
+            if (collaborative && !effectiveApproval) blocked(["The Client must approve the quotation before payment can be confirmed."]);
+            if (project.estimationWorkflowVersion === 3 && (!lifecycle?.quotationLocked || !effectiveApproval ||
+              lifecycle.designApproval?.estimateReviewRoundId !== effectiveApproval.reviewRoundId || lifecycle.designApproval.designScopeRevision !== lifecycle.designScopeRevision)) {
               blocked(["Approve the current quotation and uploaded design before confirming payment."]);
             }
-            const { source, issue } = lifecycle?.finalApproval ? { source: { estimateId: lifecycle.estimateId, estimateVersion: lifecycle.finalApproval.estimateVersion }, issue: undefined } : await paymentApprovalSource(tx, projectId);
+            const { source, issue } = effectiveApproval && lifecycle ? { source: { estimateId: lifecycle.estimateId, estimateVersion: effectiveApproval.estimateVersion }, issue: undefined } : await paymentApprovalSource(tx, projectId);
             if (!source) blocked([issue!]);
             const attestation = Boolean(state.initialPaymentAt);
             state.initialPaymentAt ??= timestamp;
-            if (lifecycle?.finalApproval) {
-              state.initialPaymentReviewRoundId = lifecycle.finalApproval.reviewRoundId;
+            if (effectiveApproval) {
+              state.initialPaymentReviewRoundId = effectiveApproval.reviewRoundId;
               state.initialPaymentDesignReviewRoundId = designReviewRoundId ?? undefined;
             }
             state.initialPaymentEstimateId = source.estimateId;
             state.initialPaymentEstimateVersion = source.estimateVersion;
-            recordedData = { estimateId: source.estimateId, estimateVersion: source.estimateVersion, confirmedAt: state.initialPaymentAt, ...(lifecycle?.finalApproval ? { estimateReviewRoundId: lifecycle.finalApproval.reviewRoundId, designReviewRoundId: designReviewRoundId, attestation } : {}) };
+            recordedData = { estimateId: source.estimateId, estimateVersion: source.estimateVersion, confirmedAt: state.initialPaymentAt, ...(effectiveApproval ? { estimateReviewRoundId: effectiveApproval.reviewRoundId, designReviewRoundId: designReviewRoundId, attestation } : {}) };
             auditDetails = recordedData;
           } else {
             const definition = ACTIONS[input.action];

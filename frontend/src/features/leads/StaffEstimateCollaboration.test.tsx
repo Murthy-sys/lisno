@@ -25,14 +25,29 @@ const detail: EstimateRequirementsDetail = { projectId: "project-one", requireme
   requirements: [{ id: "request-one", projectId: "project-one", phase: "post", mainBasketId: "joinery", roomId: "room-one", text: "Add tall storage.", authorId: "client-one", version: 2, status: "open", lineItemIds: [], reason: "", supersededById: null, createdAt: "2026-10-13T10:00:00Z", updatedAt: "2026-10-13T10:00:00Z", resolvedAt: null, canEdit: false }] };
 
 describe("Staff estimate collaboration", () => {
-  it("hides compact actions when the current quotation has no eligible action", () => {
-    const { container } = renderWithQuery(<StaffEstimateCollaboration compact estimate={{ ...estimate, estimation: { ...lifecycle, workflowVersion: 3, pricedRevision: 2 } }} />);
-    expect(container.querySelector(".staff-estimate-flow")).toBeNull();
+  it("fails closed in compact mode when the current quotation approval is unavailable", () => {
+    renderWithQuery(<StaffEstimateCollaboration compact estimate={{ ...estimate, estimation: { ...lifecycle, workflowVersion: 3, pricedRevision: 2 } }} />);
+    expect(screen.getByRole("alert")).toHaveTextContent("The current quotation approval could not be verified");
+  });
+
+  it("keeps a v3 pre-design draft in the normal collaboration stage", () => {
+    renderWithQuery(<StaffEstimateCollaboration estimate={{ ...estimate,
+      quotationApprovalState: "source_issue", currentQuotationApproved: false,
+      requiresClientReapproval: false, quotationApprovalSource: null, currentQuotationApproval: null,
+      estimation: { ...lifecycle, workflowVersion: 3, phase: "pre", status: "draft",
+        pricedRevision: 2, preApproval: null } }} />);
+    expect(screen.getByRole("heading", { name: "Estimate collaboration" })).toBeVisible();
+    expect(screen.getByText(/Prepare the pre-design quotation/)).toBeVisible();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.queryByText(/approval could not be verified|workflow remains paused/i)).not.toBeInTheDocument();
   });
 
   it("keeps v3 quotation revision separate from procurement preparation release", () => {
-    renderWithQuery(<StaffEstimateCollaboration estimate={{ ...estimate, estimation: { ...lifecycle, workflowVersion: 3, pricedRevision: 2 } }} />);
-    expect(screen.getByRole("heading", { name: "Designer-revised quotation" })).toBeVisible();
+    renderWithQuery(<StaffEstimateCollaboration estimate={{ ...estimate, quotationApprovalState: "revision_draft", currentQuotationApproved: false,
+      requiresClientReapproval: true, quotationApprovalSource: null, currentQuotationApproval: null,
+      estimation: { ...lifecycle, workflowVersion: 3, pricedRevision: 2 } }} />);
+    expect(screen.getByRole("heading", { name: "Revised quotation draft" })).toBeVisible();
+    expect(screen.getByText("Client approval is required for the revised quotation before design work continues.")).toBeVisible();
     expect(screen.queryByRole("button", { name: "Release saved estimate for preparation" })).not.toBeInTheDocument();
   });
   it("shows quotation unlock only with server capability and pins the approved source plus reason", async () => {
@@ -41,7 +56,10 @@ describe("Staff estimate collaboration", () => {
       return HttpResponse.json({ data: { ...estimate, version: 8 } });
     });
     server.use(http.post("/api/v1/estimates/estimate-one/unlock", post));
-    renderWithQuery(<StaffEstimateCollaboration estimate={{ ...estimate, capabilities: { canUnlockQuotation: true }, estimation: { ...lifecycle, workflowVersion: 3, pricedRevision: 2,
+    renderWithQuery(<StaffEstimateCollaboration estimate={{ ...estimate, quotationApprovalState: "revision_current", currentQuotationApproved: true,
+      requiresClientReapproval: false, quotationApprovalSource: "designer_revision",
+      currentQuotationApproval: { kind: "designer_revision", reviewRoundId: "quote-approved", estimateVersion: 6, approvedAt: "2026-10-30T10:00:00Z" },
+      capabilities: { canUnlockQuotation: true }, estimation: { ...lifecycle, workflowVersion: 3, pricedRevision: 2,
       editClosedAt: "2026-10-30T10:00:00Z", finalApproval: { reviewRoundId: "quote-approved", estimateVersion: 6, approvedAt: "2026-10-30T10:00:00Z", requirementsVersion: 3, designReviewRoundId: null, designPlanVersion: null, designScopeRevision: 2 } } }} />);
     const user = userEvent.setup(); await user.click(screen.getByRole("button", { name: "Unlock quotation" }));
     expect(screen.getByRole("textbox", { name: "Unlock reason" })).toHaveFocus();
@@ -52,8 +70,11 @@ describe("Staff estimate collaboration", () => {
   });
 
   it("keeps a locked quotation readable without offering unauthorized unlock", () => {
-    renderWithQuery(<StaffEstimateCollaboration estimate={{ ...estimate, capabilities: { canUnlockQuotation: false }, estimation: { ...lifecycle, workflowVersion: 3, pricedRevision: 2, editClosedAt: "2026-10-30T10:00:00Z" } }} />);
-    expect(screen.getByText("Estimation complete")).toBeVisible();
+    renderWithQuery(<StaffEstimateCollaboration estimate={{ ...estimate, quotationApprovalState: "revision_current", currentQuotationApproved: true,
+      requiresClientReapproval: false, quotationApprovalSource: "designer_revision",
+      currentQuotationApproval: { kind: "designer_revision", reviewRoundId: "quote-approved", estimateVersion: 6, approvedAt: "2026-10-30T10:00:00Z" },
+      capabilities: { canUnlockQuotation: false }, estimation: { ...lifecycle, workflowVersion: 3, pricedRevision: 2, editClosedAt: "2026-10-30T10:00:00Z" } }} />);
+    expect(screen.getByText("Revised quotation approved")).toBeVisible();
     expect(screen.queryByRole("button", { name: "Unlock quotation" })).not.toBeInTheDocument();
   });
 
@@ -152,7 +173,7 @@ describe("Staff estimate collaboration", () => {
     expect(screen.getByRole("textbox", { name: "Workflow change reason" })).toHaveFocus();
     await user.type(screen.getByRole("textbox", { name: "Workflow change reason" }), "Start the revised client review process.");
     await user.click(screen.getByRole("button", { name: "Confirm enable collaboration" }));
-    expect(await screen.findByText(/Revised quotation workflow enabled/)).toBeVisible();
+    expect(await screen.findByText(/Quotation workflow enabled/)).toBeVisible();
     expect(post).toHaveBeenCalledOnce();
   });
 

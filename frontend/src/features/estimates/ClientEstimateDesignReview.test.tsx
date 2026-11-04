@@ -56,6 +56,9 @@ function estimate(overrides: Partial<EstimateQueueItem> = {}): EstimateQueueItem
   const value = withPublishedReview({ id: "estimate-one", leadId: "lead-one", projectId: "project-one", propertyType: "2BHK", rooms: [], scopes: [], lineItems: [],
     subtotal: 500, gst: 90, total: 590, status: "client_approved" as const, approvalRequired: false,
     workflowVersion: 3 as const, version: 3, designPlanVersion: 2, designPlanStatus: "ready_for_client" as const,
+    quotationApprovalState: "revision_current" as const, currentQuotationApproved: true, requiresClientReapproval: false,
+    quotationApprovalSource: "designer_revision" as const,
+    currentQuotationApproval: { kind: "designer_revision" as const, reviewRoundId: "post-round", estimateVersion: 3, approvedAt: "2026-11-04T08:00:00Z" },
     lead: { _id: "lead-one", clientName: "Synthetic client", projectName: "Synthetic project", location: "Test location" } });
   value.publishedReview.phase = "post";
   value.publishedReview.workflowVersion = 3;
@@ -77,28 +80,73 @@ beforeEach(() => {
 });
 
 describe("Client estimate design review", () => {
-  it.each(["pre", "unapproved_post", "design_not_submitted", "source_conflict", "not_client"])("does not request or render design tools for %s", async state => {
+  it.each(["approval_unverified", "revision_pending", "design_not_submitted", "source_conflict", "not_client"])("does not request or render design tools for %s", async state => {
     const value = estimate();
-    if (state === "pre") value.publishedReview!.phase = "pre";
-    if (state === "unapproved_post") value.publishedReview!.status = "pending";
+    if (state === "approval_unverified") {
+      value.quotationApprovalState = undefined;
+      value.currentQuotationApproved = undefined;
+      value.quotationApprovalSource = undefined;
+      value.currentQuotationApproval = undefined;
+    }
+    if (state === "revision_pending") {
+      value.quotationApprovalState = "revision_pending_client";
+      value.currentQuotationApproved = false;
+      value.requiresClientReapproval = true;
+      value.quotationApprovalSource = null;
+      value.currentQuotationApproval = null;
+    }
     if (state === "design_not_submitted") value.designPlanVersion = 0;
     if (state === "source_conflict") value.reviewSourceIssue = "source_conflict";
     if (state === "not_client") auth.user.role = "designer";
     const view = renderReview(value);
     await act(async () => undefined);
     expect(view.container).toBeEmptyDOMElement();
+    expect(screen.queryByRole("group", { name: "Space planning completion" })).not.toBeInTheDocument();
     expect(designApi.getClientEstimateDrawings).not.toHaveBeenCalled();
     expect(designApi.getClientPlanWorkspace).not.toHaveBeenCalled();
   });
 
-  it("uses published workflow version when top-level workflow metadata is absent", async () => {
+  it("fails closed using the published workflow version when top-level metadata is absent", async () => {
     const value = estimate({ workflowVersion: undefined });
-    value.publishedReview!.phase = "pre";
+    value.quotationApprovalState = undefined;
+    value.currentQuotationApproved = undefined;
+    value.quotationApprovalSource = undefined;
+    value.currentQuotationApproval = undefined;
     expect(clientEstimateWorkflowVersion(value)).toBe(3);
     const view = renderReview(value);
     await act(async () => undefined);
     expect(view.container).toBeEmptyDOMElement();
     expect(designApi.getClientPlanWorkspace).not.toHaveBeenCalled();
+  });
+
+  it("allows design-plan review from the unchanged approved initial quotation", async () => {
+    const value = estimate({
+      quotationApprovalState: "initial_current",
+      currentQuotationApproved: true,
+      requiresClientReapproval: false,
+      quotationApprovalSource: "initial_unchanged",
+      currentQuotationApproval: { kind: "initial_unchanged", reviewRoundId: "pre-round", estimateVersion: 2, approvedAt: "2026-11-03T08:00:00Z" }
+    });
+    value.publishedReview!.phase = "pre";
+    renderReview(value);
+    expect(await screen.findByRole("button", { name: "Open uploaded plan synthetic-plan.pdf" })).toBeEnabled();
+  });
+
+  it("uses the current quotation and design status when the working estimate is a draft", async () => {
+    const value = estimate({
+      status: "draft",
+      designPlanStatus: "ready_for_client",
+      quotationApprovalState: "initial_current",
+      currentQuotationApproved: true,
+      requiresClientReapproval: false,
+      quotationApprovalSource: "initial_unchanged",
+      currentQuotationApproval: { kind: "initial_unchanged", reviewRoundId: "pre-round", estimateVersion: 2, approvedAt: "2026-11-03T08:00:00Z" }
+    });
+    value.publishedReview!.phase = "pre";
+    renderReview(value);
+    expect(await screen.findByRole("button", { name: "Open uploaded plan synthetic-plan.pdf" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Review a drawing" })).toBeEnabled();
+    expect(screen.getByRole("group", { name: "Space planning completion" })).toHaveTextContent("project-one:estimate-one");
   });
 
   it("retains approved post-design drawing, full-plan and project completion tools", async () => {

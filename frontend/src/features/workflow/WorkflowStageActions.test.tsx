@@ -10,6 +10,7 @@ import { openFurnitureItem } from "./furnitureDisclosureTestUtils";
 import { performDesignWorkflowAction, projectWorkflowKeys, type DesignWorkflowAction, type DesignWorkflowStage, type DesignWorkflowView } from "./projectWorkflowApi";
 
 const acknowledgementLabel = "I acknowledge that the design flow has been handed over to me after initial payment.";
+const quotationAcknowledgementLabel = "I acknowledge the design handover for the current Client-approved quotation.";
 
 function fixture(action?: DesignWorkflowAction) {
   const stage: DesignWorkflowStage = {
@@ -70,6 +71,18 @@ describe("WorkflowStageActions", () => {
     expect(screen.queryByRole("form")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Complete Internal Kick off and save" }));
     expect(screen.getByRole("form", { name: "Complete Internal Kick off and save" })).toBeVisible();
+  });
+
+  it("acknowledges the current Client-approved quotation without implying a mandatory Designer revision", () => {
+    const action: DesignWorkflowAction = { id: "internal_kickoff_complete", label: "Complete Internal Kick off and save", actor: "designer", requiresProof: true };
+    const { workflow, stage, rerender } = setup(action, true);
+    rerender(<WorkflowStageActions
+      expandKickoff
+      workflow={{ ...workflow, initialPayment: { workflowVersion: 3, confirmedAt: null, canConfirm: false, version: 1, status: "awaiting_payment" } }}
+      stage={stage}
+    />);
+    expect(screen.getByRole("checkbox", { name: quotationAcknowledgementLabel })).toBeVisible();
+    expect(screen.queryByText(/following approval of the Designer-revised quotation/)).not.toBeInTheDocument();
   });
 
   it("retains unsaved inline kickoff evidence when cancellation is declined", async () => {

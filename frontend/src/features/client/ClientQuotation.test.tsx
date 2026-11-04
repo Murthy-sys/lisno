@@ -43,7 +43,16 @@ function setup(value: QuotationDetail = structuredClone(detail), readOnly = fals
   server.use(
     http.get("/api/v1/projects/project-one/quotation", () => HttpResponse.json({ data: state.detail })),
     http.get("/api/v1/projects/project-one/quotation/revision", () => HttpResponse.json({ data: { estimateId: "estimate-one", estimateVersion: state.detail.estimateVersion, pricedRevision: state.detail.pricedRevision, status: state.detail.status, phase: state.detail.phase } })),
-    http.get("/api/v1/projects/project-one/quotation/items", () => HttpResponse.json({ data: { items: [candidate], total: 1, limit: 20, offset: 0 } })),
+    http.get("/api/v1/projects/project-one/quotation/items", () => {
+      const items = [candidate, ...(state.detail.excludedLines ?? []).map(line => ({ ...candidate, mainLineId: line.mainLineId,
+        name: line.mainLineName, mainBasketId: line.mainBasketId, subBasketId: line.subBasketId, source: line.source ?? source }))];
+      return HttpResponse.json({ data: { items, total: items.length, limit: 20, offset: 0 } });
+    }),
+    http.post("/api/v1/projects/project-one/quotation/recommendations/query", async ({ request }) => {
+      const input = await request.json() as { roomId: string; offset: number };
+      return HttpResponse.json({ data: { projectId: state.detail.projectId, estimateId: state.detail.estimateId,
+        estimateVersion: state.detail.estimateVersion, roomId: input.roomId, items: [], total: 0, limit: 20, offset: input.offset } });
+    }),
     http.patch("/api/v1/projects/project-one/quotation", async ({ request }) => {
       saves.push(await request.json() as Record<string, unknown>);
       state.detail = { ...state.detail, estimateVersion: 8, pricedRevision: 3, status: "draft", reviewState: "awaiting_staff_review" };
@@ -57,6 +66,12 @@ function setup(value: QuotationDetail = structuredClone(detail), readOnly = fals
   ], { initialEntries: ["/estimate"] }) : null;
   const rendered = renderWithQuery(router ? <RouterProvider router={router} /> : quotation);
   return { state, saves, router, client: () => queryClient, ...rendered };
+}
+
+async function chooseItem(user: ReturnType<typeof userEvent.setup>, name: string) {
+  const trigger = screen.queryByRole("button", { name: "Add items" });
+  if (trigger) await user.click(trigger);
+  await user.click(await screen.findByRole("button", { name: `Add ${name}` }));
 }
 
 describe("Client quotation", () => {
@@ -88,9 +103,8 @@ describe("Client quotation", () => {
     const more = within(row).getByRole("button", { name: "More options for Storage in Living Room" });
     await user.click(more);
     await user.click(screen.getByRole("button", { name: "Remove from estimate" }));
-    expect(more).toHaveFocus();
-    expect(within(row).getByRole("checkbox", { name: "Include Storage in Living Room" })).not.toBeChecked();
-    expect(within(row).getByRole("spinbutton", { name: /Quantity for Storage/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Add items" })).toHaveFocus();
+    expect(screen.queryByRole("group", { name: "Storage Living Room" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(saves[0]).toEqual({ expectedVersion: 7, operations: [{ kind: "update", lineItemId: "line-one", source, included: false }] }));
   });
@@ -173,15 +187,14 @@ describe("Client quotation", () => {
     await waitFor(() => expect(saves[0]).toEqual({ expectedVersion: 7, operations: [{ kind: "update", lineItemId: "line-one", source, included: false }] }));
   });
 
-  it("adds a configured candidate to a project room only after explicit Save", async () => {
+  it("adds a configured candidate inline to one room only after explicit Save", async () => {
     const { saves } = setup(); const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: "Add item" }));
-    const dialog = screen.getByRole("dialog", { name: "Add quotation item" });
-    expect(within(dialog).getByRole("searchbox", { name: "Search items" })).toHaveFocus();
-    await user.selectOptions(await within(dialog).findByRole("combobox", { name: "Item" }), "desk");
-    await user.click(within(dialog).getByRole("button", { name: "Add to changes" }));
+    await screen.findByRole("button", { name: "Add items" });
+    expect(screen.queryByRole("group", { name: "Desk Living Room" })).not.toBeInTheDocument();
+    await chooseItem(user, "Desk");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Include Desk in Living Room" })).toBeChecked();
     expect(saves).toEqual([]);
-    expect(screen.getByRole("button", { name: "Add item" })).toHaveFocus();
     await user.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(saves[0]).toEqual({ expectedVersion: 7, operations: [{ kind: "add", mainLineId: "desk", roomId: "room-one", source, quantity: 1, modeTier: "signature" }] }));
   });
@@ -217,20 +230,35 @@ describe("Client quotation", () => {
   });
 
   it("shows the server-approved total with zero visible rows and does not invent editable items", async () => {
-    setup({ ...detail, editingAllowed: false, editingBlockReason: "closed", reviewState: "approved", lines: [] });
+    setup({ ...detail, phase: "post", status: "client_approved", editingAllowed: false, editingBlockReason: "closed", reviewState: "approved", lines: [],
+      quotationApprovalState: "initial_current", currentQuotationApproved: true, requiresClientReapproval: false,
+      quotationApprovalSource: "initial_unchanged",
+      currentQuotationApproval: { kind: "initial_unchanged", reviewRoundId: "pre-round", estimateVersion: 7, approvedAt: "2026-11-04T08:00:00Z" } });
     expect(await screen.findByText("₹6,180.00")).toBeVisible();
-    expect(screen.getByText("Estimation complete. The quotation is locked.")).toBeVisible();
-    expect(screen.queryByRole("button", { name: "Add item" })).not.toBeInTheDocument();
+    expect(screen.getByText("Initial estimate approved. No quotation changes require Client review.")).toBeVisible();
+    expect(screen.getByText("Initial approval current")).toBeVisible();
+    expect(screen.queryByText("Designer-revised quotation")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add items" })).not.toBeInTheDocument();
   });
 
-  it("has accessible controls and a keyboard-focused add dialog", async () => {
+  it("fails closed when a post-assignment quotation omits current approval fields", async () => {
+    setup({ ...detail, phase: "post", status: "draft", reviewState: "draft" });
+    expect(await screen.findByText("The current quotation approval could not be verified. Refresh before continuing.")).toBeVisible();
+    expect(screen.getByText("Approval status unavailable")).toBeVisible();
+    expect(screen.queryByText("Designer-revised quotation")).not.toBeInTheDocument();
+  });
+
+  it("has accessible inline picker controls and restores focus when it closes", async () => {
     const { container } = setup(); const user = userEvent.setup();
-    await screen.findByRole("checkbox", { name: "Include Storage in Living Room" });
+    await screen.findByRole("button", { name: "Add items" });
+    await user.click(screen.getByRole("button", { name: "Add items" }));
+    expect(screen.getByRole("searchbox", { name: "Search available items" })).toHaveFocus();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await screen.findByRole("button", { name: "Add Desk" });
     expect((await axe.run(container, { rules: { "color-contrast": { enabled: false } } })).violations).toEqual([]);
-    await user.click(screen.getByRole("button", { name: "Add item" }));
-    expect((await axe.run(screen.getByRole("dialog"), { rules: { "color-contrast": { enabled: false } } })).violations).toEqual([]);
     await user.keyboard("{Escape}");
-    expect(screen.getByRole("button", { name: "Add item" })).toHaveFocus();
+    expect(screen.getByRole("button", { name: "Add items" })).toHaveFocus();
+    expect(screen.queryByRole("searchbox", { name: "Search available items" })).not.toBeInTheDocument();
   });
 
   it("uses the shared basket and room screen and keeps the current room through saved navigation", async () => {
@@ -335,12 +363,14 @@ describe("Client quotation", () => {
     fixture.excludedLines = fixture.lines.slice(0, 2).map(line => ({ ...line, included: false, amountPaise: 0, quantity: line.id === "line-one" ? 9 : 3, modeTier: "premium" }));
     fixture.lines = fixture.lines.slice(2);
     const { saves } = setup(fixture); const user = userEvent.setup();
-    await user.click(await screen.findByRole("checkbox", { name: "Include Storage in Kitchen" }));
+    await screen.findByRole("button", { name: "Add items" });
+    expect(screen.queryByRole("checkbox", { name: "Include Storage in Kitchen" })).not.toBeInTheDocument();
+    await chooseItem(user, "Storage");
     expect(screen.getByRole("spinbutton", { name: "Quantity for Storage in Kitchen Unit" })).toHaveValue(9);
     expect(screen.getByRole("radio", { name: "Premium tier for Storage in Kitchen" })).toBeChecked();
-    expect(screen.getByRole("checkbox", { name: "Include Shelf in Kitchen" })).not.toBeChecked();
+    expect(screen.queryByRole("checkbox", { name: "Include Shelf in Kitchen" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Save changes" }));
-    await waitFor(() => expect(saves[0]).toEqual({ expectedVersion: 7, operations: [{ kind: "update", lineItemId: "line-one", included: true, source, quantity: 9, modeTier: "premium" }] }));
+    await waitFor(() => expect(saves[0]).toEqual({ expectedVersion: 7, operations: [{ kind: "update", lineItemId: "line-one", included: true, source, quantity: 9, modeTier: "premium", recommendationSourceMainLineIds: [] }] }));
   });
 
   it("re-adds through the candidate picker using this room's saved choices instead of candidate defaults", async () => {
@@ -349,20 +379,18 @@ describe("Client quotation", () => {
     fixture.lines = fixture.lines.slice(1);
     const { saves } = setup(fixture); const user = userEvent.setup();
     server.use(http.get("/api/v1/projects/project-one/quotation/items", () => HttpResponse.json({ data: { items: [{ ...candidate, mainLineId: "storage", name: "Storage", modeTier: "signature" }], total: 1, limit: 20, offset: 0 } })));
-    await user.click(await screen.findByRole("button", { name: "Add item" }));
-    const dialog = screen.getByRole("dialog", { name: "Add quotation item" });
-    await user.selectOptions(await within(dialog).findByRole("combobox", { name: "Item" }), "storage");
-    expect(within(dialog).getByRole("spinbutton", { name: "Quantity for Storage in Kitchen Unit" })).toHaveValue(9);
-    expect(within(dialog).getByRole("combobox", { name: "Configured option for Storage in Kitchen" })).toHaveValue("premium");
-    await user.click(within(dialog).getByRole("button", { name: "Add to changes" }));
+    await screen.findByRole("button", { name: "Add items" });
+    await chooseItem(user, "Storage");
+    expect(screen.getByRole("spinbutton", { name: "Quantity for Storage in Kitchen Unit" })).toHaveValue(9);
+    expect(screen.getByRole("radio", { name: "Premium tier for Storage in Kitchen" })).toBeChecked();
     await user.click(screen.getByRole("button", { name: "Save changes" }));
-    await waitFor(() => expect(saves[0]).toEqual({ expectedVersion: 7, operations: [{ kind: "update", lineItemId: "line-one", included: true, source, quantity: 9, modeTier: "premium" }] }));
+    await waitFor(() => expect(saves[0]).toEqual({ expectedVersion: 7, operations: [{ kind: "update", lineItemId: "line-one", included: true, source, quantity: 9, modeTier: "premium", recommendationSourceMainLineIds: [] }] }));
   });
 
   it("forces secondary-Designer presentation read-only even if a cached response offers editing", async () => {
     const { saves } = setup(groupedDetail(), true); const user = userEvent.setup();
     expect(await screen.findByRole("checkbox", { name: "Include Storage in Kitchen" })).toBeDisabled();
-    expect(screen.queryByRole("button", { name: "Add item" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add items" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Remove visible items/ })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "View baskets" }));
     expect(screen.getByRole("button", { name: "Choose items in Furniture" })).toBeEnabled();
@@ -452,7 +480,7 @@ describe("Client quotation", () => {
     expect(screen.queryByRole("button", { name: "Verify saved changes" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Continue to item selection" }));
     expect(screen.getByRole("checkbox", { name: "Include Storage in Kitchen" })).toBeChecked();
-    expect(screen.getByRole("checkbox", { name: "Include Shelf in Kitchen" })).not.toBeChecked();
+    expect(screen.queryByRole("checkbox", { name: "Include Shelf in Kitchen" })).not.toBeInTheDocument();
     expect(saves).toHaveLength(1);
   });
 });

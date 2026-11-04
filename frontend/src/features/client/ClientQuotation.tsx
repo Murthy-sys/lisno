@@ -1,37 +1,48 @@
 import { ProjectId } from "../../components/projects/ProjectId";
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
-import { KNOWLEDGE_MODE_TIER_LABELS, type KnowledgeModeTier } from "../../../../shared/knowledge/knowledgeModeTiers";
 import { ApiError } from "../../api/client";
+import { captureLoginReviewSession } from "../../auth/loginReviewSession";
 import { Button } from "../../components/ui/Button";
 import { Dialog } from "../../components/ui/Dialog";
-import { EstimateDimensionsFields } from "../leads/EstimateDimensionsFields";
 import { createConfiguredEstimateViewState } from "../leads/useConfiguredEstimateViewState";
 import { EstimateBuilderShell, type EstimateShellBasket } from "../estimates/EstimateBuilderShell";
 import { EstimateBuilderArea } from "../estimates/EstimateBuilderArea";
 import { EstimateNavigationGuard } from "../estimates/EstimateNavigationGuard";
+import { EstimateItemPicker } from "../estimates/EstimateItemPicker";
+import { EstimateRecommendations } from "../estimates/EstimateRecommendations";
 import { ClientQuotationSetup } from "./ClientQuotationSetup";
 import { ClientQuotationLine } from "./ClientQuotationLine";
 import { quotationCandidateRows } from "./clientQuotationCandidates";
 import { ESTIMATE_PROPERTY_TYPES, requiresBedroomCount, isValidBedroomCount } from "../../../../shared/estimation/estimateRoomOptions";
 import { ClientQuotationSubmittedView } from "./ClientQuotationSubmittedView";
 import { canReviewCurrentQuotation, type ClientQuotationReviewState } from "./clientQuotationReview";
+import { currentQuotationApprovalState, currentQuotationIsApproved } from "../estimates/quotationApproval";
 import { refreshEstimateCollaboration } from "../leads/estimateCollaborationQueries";
 import { useQuotationRevision } from "../leads/useQuotationRevision";
 import { estimateTiersKeys, getEstimateTiers } from "./estimateTiersApi";
-import { getQuotation, getQuotationSetup, getQuotationCandidates, quotationKeys, saveQuotation, type QuotationCandidate, type QuotationConfigureOperation, type QuotationDetail, type QuotationLine, type QuotationOperation } from "./quotationApi";
-import { draftQuotationItem as draftItem, quotationItemOperation as operationFor, quotationDraftOperations, quotationGroupContains,
+import { getQuotation, getQuotationSetup, getQuotationCandidates, getQuotationRecommendations, quotationKeys, saveQuotation, type QuotationCandidate, type QuotationConfigureOperation, type QuotationDetail, type QuotationLine, type QuotationOperation } from "./quotationApi";
+import { draftQuotationItem as draftItem, prunePendingQuotationRecommendations, quotationDraftOperations, quotationGroupContains,
   quotationGroupContainsScope, quotationSaveIsConfirmed, type QuotationItemDraft as ItemDraft, type QuotationDraft, type QuotationGroupDraft } from "./clientQuotationDraft";
 import "../../styles/estimator-dashboard.css";
 import "./clientQuotation.css";
 
 const money = (paise: number | null) => paise == null ? "Unavailable" : new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR" }).format(paise / 100);
-const reviewCopy: Record<QuotationDetail["reviewState"], string> = {
-  draft: "Your team is preparing this quotation.",
-  awaiting_staff_review: "Saved changes. Your team will review and send the updated quotation for approval.",
-  ready_for_approval: "Ready for your approval. Saving changes will send the revised quotation back to your team for review.",
-  approved: "Estimation complete. The quotation is locked."
-};
+function quotationReviewCopy(detail: QuotationDetail) {
+  if (detail.phase === "pre") {
+    return detail.reviewState === "draft" ? "Your team is preparing this quotation."
+      : detail.reviewState === "awaiting_staff_review" ? "Saved changes. Your team will review and send the updated quotation for approval."
+      : detail.reviewState === "ready_for_approval" ? "Ready for your approval. Saving changes will send the revised quotation back to your team for review."
+      : "Your initial estimate approval is recorded.";
+  }
+  const state = currentQuotationApprovalState(detail);
+  if (state === "initial_current" && currentQuotationIsApproved(detail)) return "Initial estimate approved. No quotation changes require Client review.";
+  if (state === "revision_draft") return "The Designer is preparing a revised quotation for your review.";
+  if (state === "revision_pending_client") return "The revised quotation is awaiting your review.";
+  if (state === "revision_changes_requested") return "Your requested quotation changes are being prepared.";
+  if (state === "revision_current" && currentQuotationIsApproved(detail)) return "Your revised quotation approval is recorded. Design work can continue.";
+  return "The current quotation approval could not be verified. Refresh before continuing.";
+}
 type QuotationView = "builder" | "baskets" | "configure" | "summary" | "review";
 type PendingSave = { before: QuotationDetail; operations: QuotationOperation[]; destination?: QuotationView };
 interface ClientQuotationProps { projectId: string; readOnly?: boolean; workspace?: boolean; onPendingChanges?: (pending: boolean) => void; review?: ClientQuotationReviewState }
@@ -49,6 +60,11 @@ function ClientQuotationForProject({ projectId, readOnly = false, workspace = fa
   const [draft, setDraft] = useState<QuotationDraft | null>(null);
   const [setupDraft, setSetupDraft] = useState<{ version: number; operation: QuotationConfigureOperation } | null>(null);
   const [adding, setAdding] = useState(false);
+  const [itemSearch, setItemSearch] = useState("");
+  const [itemOffset, setItemOffset] = useState(0);
+  const [itemBasketId, setItemBasketId] = useState("all");
+  const [itemSubBasketId, setItemSubBasketId] = useState("all");
+  const [activeRoomId, setActiveRoomId] = useState("");
   const [notice, setNotice] = useState("");
   const [validation, setValidation] = useState("");
   const [conflict, setConflict] = useState(false);
@@ -58,18 +74,31 @@ function ClientQuotationForProject({ projectId, readOnly = false, workspace = fa
   const [view, setView] = useState<QuotationView>("builder");
   const setup = useQuery({ queryKey: quotationKeys.setup(projectId), queryFn: () => getQuotationSetup(projectId),
     enabled: view === "configure" && !readOnly && Boolean(query.data?.setup), retry: false, staleTime: 0 });
-  const candidateEnabled = view === "builder" && !readOnly && Boolean(query.data?.setup) && Boolean(query.data?.editingAllowed) &&
+  const candidateEnabled = view === "builder" && (adding || Boolean(Object.values(draft?.items ?? {}).some(item => item.kind === "add" && item.included))) && !readOnly && Boolean(query.data?.editingAllowed) &&
     query.data?.projectId === projectId && !query.isError;
-  const candidates = useInfiniteQuery({ queryKey: quotationKeys.candidates(projectId, query.data?.estimateVersion ?? null),
-    queryFn: ({ pageParam }) => getQuotationCandidates(projectId, "", pageParam), initialPageParam: 0,
-    getNextPageParam: page => page.items.length > 0 && page.offset + page.items.length < page.total ? page.offset + page.items.length : undefined,
+  const sessionKey = captureLoginReviewSession()?.id;
+  const candidateRoomId = query.data?.rooms.find(room => room.id === activeRoomId)?.id ?? query.data?.rooms[0]?.id;
+  const candidates = useQuery({ queryKey: [...quotationKeys.items(projectId, itemSearch, itemOffset), query.data?.estimateVersion, candidateRoomId, itemBasketId, itemSubBasketId, sessionKey],
+    queryFn: () => getQuotationCandidates(projectId, itemSearch, itemOffset, {
+      ...(itemBasketId === "all" ? {} : { mainBasketId: itemBasketId }),
+      ...(itemSubBasketId === "all" ? {} : { subBasketId: itemSubBasketId })
+    }),
     enabled: candidateEnabled, retry: false });
-  const [activeRoomId, setActiveRoomId] = useState("");
+  useEffect(() => {
+    if (!candidates.isSuccess || candidates.isFetching) return;
+    if (itemOffset >= candidates.data.total && itemOffset > 0) setItemOffset(Math.max(0, Math.floor((candidates.data.total - 1) / 20) * 20));
+  }, [candidates.data, candidates.isSuccess, candidates.isFetching, itemOffset]);
+  useEffect(() => {
+    if (itemBasketId !== "all" && query.data?.baskets && !query.data.baskets.some(basket => basket.id === itemBasketId)) {
+      setItemBasketId("all"); setItemSubBasketId("all"); setItemOffset(0);
+    }
+  }, [query.data?.baskets, itemBasketId]);
   const [viewState, setViewState] = useState(createConfiguredEstimateViewState);
   const [removal, setRemoval] = useState<QuotationGroupDraft | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const removalTriggerRef = useRef<HTMLElement | null>(null);
   const sectionRef = useRef<HTMLElement>(null);
+  const focusAfterRemoval = useRef(false);
   const inFlight = useRef(false);
   const previousView = useRef(view);
   useEffect(() => {
@@ -84,6 +113,12 @@ function ClientQuotationForProject({ projectId, readOnly = false, workspace = fa
   const busy = save.isPending || verifying || openingReview;
   useEffect(() => () => { onPendingChanges?.(false); }, [onPendingChanges]);
   useEffect(() => { onPendingChanges?.(dirty || busy || Boolean(unknownSave)); }, [dirty, busy, unknownSave, onPendingChanges]);
+  useEffect(() => {
+    if (!focusAfterRemoval.current) return;
+    focusAfterRemoval.current = false;
+    const next = sectionRef.current?.querySelector<HTMLElement>(".client-quotation__line input:not(:disabled), .client-quotation__line button:not(:disabled)");
+    (next ?? triggerRef.current ?? sectionRef.current)?.focus({ preventScroll: true });
+  }, [draft]);
 
   const accessDenied = query.error instanceof ApiError && [401, 403, 404].includes(query.error.status);
   const notStarted = !dirty && !unknownSave && !query.isFetching && (
@@ -134,13 +169,11 @@ function ClientQuotationForProject({ projectId, readOnly = false, workspace = fa
   const pendingGroups = draft?.groups ?? [];
   const savedRows = [...new Map([...detail.lines, ...(detail.excludedLines ?? []), ...addedItems.map(item => item.line)].map(line => [line.id, line])).values()];
   const activeRoom = detail.rooms.find(room => room.id === activeRoomId) ?? detail.rooms[0];
-  const availableRows = quotationCandidateRows(candidateEnabled && !candidates.isError ? candidates.data?.pages.flatMap(page => page.items) ?? [] : [], activeRoom, savedRows);
-  const candidateIds = new Set(availableRows.map(line => line.id));
-  const rows = [...savedRows, ...availableRows];
+  const rows = savedRows;
   const included = (line: QuotationLine) => !(line.source && pendingGroups.some(({ group }) => quotationGroupContains(group, line))) && (draft?.items[line.id]?.included ?? line.included);
   const currentRoomId = activeRoom?.id ?? "";
   const selectedRows = rows.filter(included);
-  const roomRows = rows.filter(line => line.roomId === currentRoomId && (viewState.railView !== "selected" || included(line)));
+  const roomRows = selectedRows.filter(line => line.roomId === currentRoomId);
   const baskets = detail.baskets ?? [...new Map(rows.flatMap(line => line.mainBasketId && line.mainBasketName
     ? [[line.mainBasketId, { id: line.mainBasketId, name: line.mainBasketName, subBaskets: rows.filter(row => row.mainBasketId === line.mainBasketId && row.subBasketId && row.subBasketName)
       .map(row => ({ id: row.subBasketId!, name: row.subBasketName! })) }] as const] : [])).values()]
@@ -151,22 +184,34 @@ function ClientQuotationForProject({ projectId, readOnly = false, workspace = fa
     const total = saved.reduce((sum, line) => sum + line.amountPaise!, 0);
     return Number.isSafeInteger(total) ? `Saved visible subtotal ${money(total)}` : "Visible subtotal unavailable";
   };
-  const change = (line: QuotationLine, update: Partial<ItemDraft>) => {
-    if (!canEdit || setupDraft || candidateIds.has(line.id) && candidates.isFetching || !line.source || inFlight.current || pendingGroups.some(({ group }) => quotationGroupContains(group, line))) return;
+  const change = (line: QuotationLine, update: Partial<ItemDraft>, restoreFocus = true) => {
+    if (!canEdit || setupDraft || !line.source || inFlight.current || pendingGroups.some(({ group }) => quotationGroupContains(group, line))) return;
     setNotice(""); setValidation(""); save.reset();
-    setDraft(previous => ({ version: previous?.version ?? detail.estimateVersion!, groups: previous?.groups ?? [], items: {
-      ...previous?.items, [line.id]: { ...(previous?.items[line.id] ?? draftItem(line, candidateIds.has(line.id) ? "add" : "update")), ...update }
-    } }));
+    if (update.included === false && restoreFocus) focusAfterRemoval.current = true;
+    setDraft(previous => prunePendingQuotationRecommendations({ version: previous?.version ?? detail.estimateVersion!, groups: previous?.groups ?? [], items: {
+      ...previous?.items, [line.id]: { ...(previous?.items[line.id] ?? draftItem(line)), ...update }
+    } }, rows));
   };
   const add = (item: ItemDraft) => {
-    if (!canEdit || inFlight.current) return;
-    if (!item.line.source) { setValidation("This saved item is unavailable in the current Configuration. Ask your team to review it."); return; }
+    if (!canEdit || setupDraft || inFlight.current) return false;
+    if (!item.line.source) { setValidation("This saved item is unavailable in the current Configuration. Ask your team to review it."); return false; }
     if (pendingGroups.some(({ group }) => quotationGroupContains(group, item.line))) {
-      setValidation("Undo this basket removal or save it before adding an item back."); setAdding(false); return;
+      setValidation("Undo this basket removal or save it before adding an item back."); return false;
     }
     setDraft(previous => ({ version: previous?.version ?? detail.estimateVersion!, groups: previous?.groups ?? [], items: { ...previous?.items, [item.line.id]: item } }));
     setActiveRoomId(item.line.roomId); setViewState(current => ({ ...current, railView: "section", search: "", basketFilter: "all" }));
-    setAdding(false); setNotice(""); setValidation("");
+    setNotice(""); setValidation("");
+    return true;
+  };
+  const addCandidate = (candidate: QuotationCandidate, origins?: string[]) => {
+    if (!activeRoom || !canEdit || !candidate.choices.some(choice => choice.available && choice.source)) return false;
+    const existing = rows.find(line => line.roomId === currentRoomId && line.mainLineId === candidate.mainLineId);
+    if (existing && included(existing)) return false;
+    const pending = existing && draft?.items[existing.id];
+    if (pending) return add({ ...pending, included: true, recommendationSourceMainLineIds: origins ?? [] });
+    if (existing) return add({ ...draftItem(existing), included: true, recommendationSourceMainLineIds: origins ?? [] });
+    const line = quotationCandidateRows([candidate], activeRoom, [])[0];
+    return line ? add({ ...draftItem(line, "add"), included: true, ...(origins ? { recommendationSourceMainLineIds: origins } : {}) }) : false;
   };
   const acceptSaved = async (saved: QuotationDetail, destination?: QuotationView) => {
     client.setQueryData<QuotationDetail>(quotationKeys.detail(projectId), current => (current?.estimateVersion ?? -1) > (saved.estimateVersion ?? -1) ? current : saved);
@@ -232,13 +277,13 @@ function ClientQuotationForProject({ projectId, readOnly = false, workspace = fa
   };
   const stageRemoval = () => {
     if (!removal || !canEdit) return;
-    setDraft(previous => ({ version: previous?.version ?? detail.estimateVersion!, items: previous?.items ?? {},
-      groups: [...(previous?.groups ?? []).filter(entry => !quotationGroupContainsScope(removal.group, entry.group)), removal] }));
+    setDraft(previous => prunePendingQuotationRecommendations({ version: previous?.version ?? detail.estimateVersion!, items: previous?.items ?? {},
+      groups: [...(previous?.groups ?? []).filter(entry => !quotationGroupContainsScope(removal.group, entry.group)), removal] }, rows));
     setRemoval(null); setNotice(""); setValidation(""); save.reset();
   };
   const queryText = viewState.search.trim().toLocaleLowerCase();
   const matches = (line: QuotationLine) => !queryText || [line.mainLineName, line.mainBasketName, line.subBasketName, line.uomName].some(value => value?.toLocaleLowerCase().includes(queryText));
-  const visibleBaskets = baskets.filter(basket => viewState.railView !== "selected" || roomRows.some(line => line.mainBasketId === basket.id));
+  const visibleBaskets = baskets.filter(basket => roomRows.some(line => line.mainBasketId === basket.id));
   const groups: EstimateShellBasket[] = visibleBaskets.filter(basket => viewState.basketFilter === "all" || basket.id === viewState.basketFilter).map(basket => {
     const scopedRows = roomRows.filter(line => line.mainBasketId === basket.id);
     const savedScope = rows.filter(line => line.roomId === currentRoomId && line.mainBasketId === basket.id);
@@ -251,17 +296,17 @@ function ClientQuotationForProject({ projectId, readOnly = false, workspace = fa
         return { id: sub.id, name: sub.name, count: subRows.length, subtotalLabel: subtotal(savedScope.filter(line => line.subBasketId === sub.id)), lines: subRows.filter(matches),
           ...(!readOnly && detail.editingAllowed && group ? { removal: { label: `Remove visible items from ${sub.name} in ${activeRoom?.name ?? "this room"}`,
             disabled: !canEdit || Boolean(queued), onRemove: () => requestRemoval({ group, label: `${sub.name} in ${activeRoom?.name ?? "this room"}` }) } } : {}) };
-      }).filter(sub => !queryText || sub.lines.length > 0) };
-  }).filter(basket => !queryText || basket.directLines.length > 0 || basket.subBaskets.some(sub => sub.lines.length > 0));
+      }).filter(sub => sub.lines.length > 0) };
+  }).filter(basket => basket.directLines.length > 0 || basket.subBaskets.some(sub => sub.lines.length > 0));
   const renderLine = (id: string) => {
     const line = rows.find(row => row.id === id);
     if (!line) return null;
-    const item = draft?.items[line.id] ?? draftItem(line, candidateIds.has(line.id) ? "add" : "update");
+    const item = draft?.items[line.id] ?? draftItem(line);
     const unavailable = !line.source;
     const grouped = !unavailable && pendingGroups.some(({ group }) => quotationGroupContains(group, line));
     const selected = included(line);
     return <ClientQuotationLine item={item} currentLine={line} selected={selected} grouped={grouped}
-      disabled={!canEdit || candidateIds.has(line.id) && candidates.isFetching} onChange={update => change(line, update)} money={money} />;
+      disabled={!canEdit} onChange={update => change(line, update)} money={money} />;
   };
   const ungrouped = roomRows.filter(line => !line.mainBasketId || !baskets.some(basket => basket.id === line.mainBasketId)
     || line.subBasketId !== null && !baskets.some(basket => basket.id === line.mainBasketId && basket.subBaskets.some(sub => sub.id === line.subBasketId))).filter(matches);
@@ -270,18 +315,34 @@ function ClientQuotationForProject({ projectId, readOnly = false, workspace = fa
     if (setupDraft && next !== "configure") { void submit(next); return; }
     setView(next);
   };
-  const builder = <EstimateBuilderShell rooms={detail.rooms.map(room => ({ id: room.id, label: room.name,
+  const builder = <EstimateBuilderShell selectedItemsOnly rooms={detail.rooms.map(room => ({ id: room.id, label: room.name,
       detail: subtotal(rows.filter(line => line.roomId === room.id)), hasSelectedItems: selectedRows.some(line => line.roomId === room.id) }))}
-      activeRoomId={currentRoomId} onSelectRoom={setActiveRoomId} selectedCount={selectedRows.length}
+      activeRoomId={currentRoomId} onSelectRoom={id => { setActiveRoomId(id); setItemOffset(0); }} selectedCount={selectedRows.length}
       baskets={visibleBaskets.map(basket => ({ id: basket.id, name: basket.name, detail: subtotal(rows.filter(line => line.roomId === currentRoomId && line.mainBasketId === basket.id)) }))}
       groups={groups} renderLine={renderLine} viewState={viewState} onViewStateChange={setViewState} scrollMode={workspace ? "pane" : "document"}
-      onRefresh={() => { void query.refetch(); if (candidateEnabled) void candidates.refetch(); void client.invalidateQueries({ queryKey: ["quotation", projectId, "items"] }); }} refreshing={query.isFetching || candidateEnabled && candidates.isFetching}
+      onRefresh={() => { void query.refetch(); if (candidateEnabled) void candidates.refetch(); void client.invalidateQueries({ queryKey: ["quotation", projectId, "items"] }); void client.invalidateQueries({ queryKey: ["quotation", projectId, "recommendations"] }); }} refreshing={query.isFetching}
       beforeGroups={<><p className="client-quotation__hint">Client-visible items. Total includes internal scope.</p>
-        {candidateEnabled && candidates.isPending ? <p role="status">Loading available Main Lines…</p> : null}
-        {candidateEnabled && candidates.isError ? <p role="alert">Available Main Lines could not be refreshed. Saved selections are kept. <Button variant="secondary" onClick={() => void candidates.refetch()}>Retry available Main Lines</Button></p> : null}
-        {candidateEnabled && candidates.hasNextPage ? <Button variant="secondary" disabled={candidates.isFetching || candidates.isError} onClick={() => void candidates.fetchNextPage()}>Load more Main Lines</Button> : null}</>}
+        {!readOnly && detail.editingAllowed ? <>
+          <EstimateItemPicker roomName={activeRoom?.name ?? "this room"} open={adding} onOpenChange={setAdding} triggerRef={triggerRef}
+            items={(candidates.isError ? [] : candidates.data?.items ?? []).map(candidate => {
+              const existing = rows.find(line => line.roomId === currentRoomId && line.mainLineId === candidate.mainLineId);
+              return { id: candidate.mainLineId, name: candidate.name, context: [candidate.mainBasketName, candidate.subBasketName].filter(Boolean).join(" · "),
+                selected: Boolean(existing && included(existing)), disabled: Boolean(existing && !existing.source) || !candidate.choices.some(choice => choice.available && choice.source),
+                ...(!existing?.source && existing ? { message: "Your team must review this saved item's current Configuration." } : {}) };
+            })} total={candidates.isError ? 0 : candidates.data?.total ?? 0} offset={itemOffset} onOffsetChange={setItemOffset}
+            search={itemSearch} onSearchChange={value => { setItemSearch(value); setItemOffset(0); }} baskets={baskets}
+            basketId={itemBasketId} onBasketChange={value => { setItemBasketId(value); setItemSubBasketId("all"); setItemOffset(0); }}
+            subBasketId={itemSubBasketId} onSubBasketChange={value => { setItemSubBasketId(value); setItemOffset(0); }}
+            state={stale ? "stale" : candidates.isError ? "error" : candidates.isPending || candidates.isFetching ? "loading" : "ready"}
+            disabled={!canEdit || !currentRoomId || Boolean(setupDraft)} onRetry={() => void candidates.refetch()}
+            onAdd={id => { const candidate = candidates.data?.items.find(item => item.mainLineId === id); return candidate && !candidates.isError && !candidates.isFetching ? addCandidate(candidate) : false; }} />
+          <ClientQuotationRecommendations projectId={projectId} detail={detail} roomId={currentRoomId} roomName={activeRoom?.name ?? "this room"}
+            rows={selectedRows} disabled={!canEdit || Boolean(setupDraft)} sessionKey={sessionKey}
+            onAdd={addCandidate} onRemove={id => { const line = selectedRows.find(item => item.roomId === currentRoomId && item.mainLineId === id); if (!line || !line.source || !canEdit) return false; change(line, { included: false }, false); return true; }}
+            canConfigure={canConfigure} onConfigure={() => { if (!canConfigure || !canEdit) return false; if (dirty) void submit("configure"); else changeView("configure"); return true; }} />
+        </> : null}</>}
       afterGroups={ungrouped.length ? <section aria-label="Saved items" className="client-quotation__ungrouped"><h3>Saved items</h3>{ungrouped.map(line => <div key={line.id}>{renderLine(line.id)}</div>)}</section> : null}
-      emptyMessage={!groups.length && !ungrouped.length ? queryText ? "No items match your search." : "No items are currently available in this room. Use Add item to choose an available configured item." : undefined} />;
+      emptyMessage={!groups.length && !ungrouped.length ? queryText ? "No selected items match your search." : "No items selected in this room." : undefined} />;
   if (view === "review") {
     if (!publishedEstimate?.publishedReview || review?.error) return <section className="client-quotation" aria-label="Submitted estimate"><h2>Submitted estimate unavailable</h2>
       <p role="alert">{review?.error ?? "The submitted version could not be verified. Refresh before reviewing or making a decision."}</p>
@@ -293,19 +354,21 @@ function ClientQuotationForProject({ projectId, readOnly = false, workspace = fa
   const approvalMessage = review ? dirty || unknownSave ? "Save or discard your quotation changes before reviewing a submitted version."
     : review.error ?? (review.loading ? "Checking submitted estimate…"
       : detail.reviewState === "awaiting_staff_review" ? `Waiting for ${detail.phase === "pre" ? "Sales" : "Designer"} confirmation. Your saved changes must be confirmed before you can approve the revised estimate.`
-      : canDecide ? detail.phase === "pre" ? "Ready for your pre-design approval." : "Ready for your post-design approval."
-      : reviewCopy[detail.reviewState]) : null;
+      : canDecide ? detail.phase === "pre" ? "Ready for your pre-design approval." : "Ready for your revised quotation approval."
+      : quotationReviewCopy(detail)) : null;
+  const currentApprovalState = currentQuotationApprovalState(detail);
+  const revisedQuotation = detail.phase === "post" && ["revision_draft", "revision_pending_client", "revision_changes_requested", "revision_current"].includes(currentApprovalState);
   return <section className={`client-quotation estimate-workspace estimator-dashboard ${view === "configure" ? "estimate-workspace--configure-view" : "estimate-workspace--item-view"}${view === "builder" ? " estimate-workspace--compact-builder" : ""}${workspace ? " client-quotation--workspace" : ""}`} aria-labelledby={`quotation-${projectId}`} ref={sectionRef} tabIndex={-1}>
-    <header className="client-quotation__header"><div className="client-quotation__identity"><h2 id={`quotation-${projectId}`} className={workspace ? "sr-only" : undefined}>{detail.phase === "post" ? "Designer-revised quotation" : "Your quotation"}</h2><p>{detail.phase === "pre" ? "Pre-design approval" : "Post-design approval"}</p>{workspace ? <ProjectId projectNumber={detail.projectNumber} /> : null}</div>
+    <header className="client-quotation__header"><div className="client-quotation__identity"><h2 id={`quotation-${projectId}`} className={workspace ? "sr-only" : undefined}>{revisedQuotation ? "Designer-revised quotation" : "Your quotation"}</h2><p>{detail.phase === "pre" ? "Pre-design approval" : currentApprovalState === "initial_current" ? "Initial approval current" : currentApprovalState === "source_issue" ? "Approval status unavailable" : "Revised quotation approval"}</p>{workspace ? <ProjectId projectNumber={detail.projectNumber} /> : null}</div>
       <dl><dt>Saved total including GST</dt><dd>{detail.isIncomplete ? "Incomplete" : money(detail.totalPaise)}</dd></dl></header>
-    <p className="client-quotation__review-status" role="status">{approvalMessage ?? (notice || reviewCopy[detail.reviewState])}</p>
+    <p className="client-quotation__review-status" role="status">{approvalMessage ?? (notice || quotationReviewCopy(detail))}</p>
     {readOnly ? <p>Read-only estimation. Your current assignment allows you to view this quotation.</p> : null}
     {!detail.editingAllowed && detail.reviewState !== "approved" ? <p>{detail.editingBlockReason === "not_started" ? "Your team has not started the quotation yet." : "Editing is unavailable for the current review stage."}</p> : null}
     <div className="client-quotation__navigation">
       {view !== "baskets" && view !== "configure" ? <Button variant="secondary" title={canConfigure ? "Property type, rooms and Main Baskets" : undefined} disabled={busy || Boolean(unknownSave) || dirty && !canEdit} onClick={() => { const next = canConfigure ? "configure" : "baskets"; if (dirty) void submit(next); else changeView(next); }}>{canConfigure ? dirty ? "Save and configure estimate" : "Configure estimate" : dirty ? "Save and edit baskets" : readOnly || !detail.editingAllowed ? "View baskets" : "Edit baskets"}</Button>
         : view === "baskets" ? <Button variant="secondary" disabled={busy} onClick={() => changeView("builder")}>Continue to item selection</Button> : null}
       <nav aria-label="Estimate views"><Button variant="quiet" aria-pressed={view === "builder"} disabled={busy} onClick={() => changeView("builder")}>Estimate Builder</Button><Button variant="quiet" aria-pressed={view === "summary"} disabled={busy} onClick={() => changeView("summary")}>Summary</Button></nav>
-      {review && publishedEstimate?.publishedReview ? <Button disabled={!canOpenReview} busy={openingReview} onClick={() => void openReview()}>{canDecide ? detail.phase === "pre" ? "Review for pre-design approval" : "Review for post-design approval" : "View submitted version"}</Button> : null}
+      {review && publishedEstimate?.publishedReview ? <Button disabled={!canOpenReview} busy={openingReview} onClick={() => void openReview()}>{canDecide ? detail.phase === "pre" ? "Review for pre-design approval" : "Review revised quotation" : "View submitted version"}</Button> : null}
       {review?.error ? <Button variant="secondary" disabled={busy || review.refreshing} onClick={() => void refreshReview()}>Refresh submitted estimate</Button> : null}
     </div>
     {!readOnly && detail.editingAllowed && !detail.setup ? <p role="status">Property type, rooms and Main Baskets are unavailable. Refresh to check for these setup options. <Button variant="secondary" disabled={query.isFetching || busy || Boolean(unknownSave)} onClick={() => void refreshQuotation()}>Refresh estimate setup</Button></p> : null}
@@ -340,90 +403,72 @@ function ClientQuotationForProject({ projectId, readOnly = false, workspace = fa
     {view === "builder" ? workspace ? <EstimateBuilderArea className="client-quotation__builder">{builder}</EstimateBuilderArea> : <div className="client-quotation__builder client-quotation__builder--embedded">{builder}</div> : null}
     {view === "summary" ? <section className="client-quotation__summary" aria-label="Estimate summary"><h3>Estimate summary</h3><p>Visible subtotals use saved amounts before GST. The overall total may include internal scope.</p>{detail.rooms.map(room => <div key={room.id}><strong>{room.name}</strong><span>{subtotal(rows.filter(line => line.roomId === room.id))}</span></div>)}</section> : null}
     <footer className="estimate-workspace__footer client-quotation__footer"><div className="client-quotation__actions">
-      {!readOnly && detail.editingAllowed && view !== "baskets" && view !== "configure" ? <Button ref={triggerRef} variant="secondary" disabled={!canEdit || !detail.rooms.length} onClick={() => setAdding(true)}>Add item</Button> : null}
       {dirty && view !== "configure" ? <><Button disabled={!canEdit} busy={save.isPending} onClick={() => void submit()}>Save changes</Button><Button variant="secondary" disabled={busy || Boolean(unknownSave)} onClick={() => { setDraft(null); setSetupDraft(null); setConflict(false); setValidation(""); save.reset(); }}>Discard changes</Button></> : null}
     </div>
     {dirty ? <p className="client-quotation__hint">Changes are not saved yet. Rates are set by Configuration. Saved amounts and totals update after the server prices your changes.</p> : null}
     </footer>
-    {adding ? <AddQuotationItem projectId={projectId} rooms={detail.rooms} initialRoomId={currentRoomId}
-      existing={savedRows.map(line => ({ ...line, included: included(line) }))} pendingItems={changedItems} disabled={!canEdit}
-      onAdd={add} onClose={() => setAdding(false)} triggerRef={triggerRef} fallbackRef={sectionRef} /> : null}
     {removal ? <Dialog title={`Remove visible items from ${removal.label}?`} eyebrow="Estimation" description="This removes the visible items in this scope from your estimate when you save. Other items and Configuration are kept."
       onClose={() => setRemoval(null)} returnFocusRef={removalTriggerRef} fallbackFocusRef={sectionRef}><div className="ui-dialog__body"><p>{removal.group.includedCount} saved visible items are in this scope, including any hidden by search or collapsed sections.</p></div><div className="ui-dialog__actions"><Button variant="secondary" onClick={() => setRemoval(null)}>Cancel</Button><Button disabled={!canEdit} onClick={stageRemoval}>Remove visible items</Button></div></Dialog> : null}
     <EstimateNavigationGuard key="quotation-navigation-guard" dirty={dirty || Boolean(unknownSave)} busy={busy} saveDisabled={!canEdit || Boolean(setupDraft && (!setupAvailable || setupProblem))} onSave={() => submit()} />
   </section>;
 }
 
-function ItemFields({ item, disabled, onChange }: { item: ItemDraft; disabled: boolean; onChange: (update: Partial<ItemDraft>) => void }) {
-  const line = item.line;
-  const label = `${line.mainLineName} in ${line.roomName}`;
-  const choice = line.choices.find(value => value.modeTier === item.modeTier);
-  return <div className="client-quotation__fields">
-    {line.dimensionsMandatory ? line.dimensionRule ? <EstimateDimensionsFields label={label} dimensions={item.dimensions} rule={line.dimensionRule} quantityUnit={line.uomName}
-      disabled={disabled} onChange={dimensions => onChange({ dimensions })} /> : <p role="status">Dimensions are unavailable until your team reviews the configured unit.</p>
-      : <label>Quantity ({line.uomName})<input aria-label={`Quantity for ${label} ${line.uomName}`} type="number" inputMode="decimal" min="0" step="any" value={item.quantity} disabled={disabled} onChange={event => onChange({ quantity: event.target.value })} /></label>}
-    <label>Configured option<select aria-label={`Configured option for ${label}`} value={item.modeTier} disabled={disabled} onChange={event => onChange({ modeTier: event.target.value as KnowledgeModeTier, components: [] })}>
-      {line.choices.map(option => <option key={option.modeTier} value={option.modeTier} disabled={!option.available || !option.source}>{KNOWLEDGE_MODE_TIER_LABELS[option.modeTier]}{option.available ? "" : " (unavailable)"}</option>)}
-    </select></label>
-    <p>Rate <strong>{choice?.inHouseComponents ? "Calculated from components" : money(choice?.ratePaise ?? null)}</strong>{!choice?.inHouseComponents && choice?.ratePaise != null ? ` / ${line.uomName}` : ""}</p>
-    {choice?.inHouseComponents ? <fieldset className="client-quotation__components" disabled={disabled}><legend>Components for {label}</legend>{choice.inHouseComponents.map(component => <label key={component.id}>
-      <input type="checkbox" checked={item.components.includes(component.id)} disabled={!component.available && !item.components.includes(component.id)} onChange={event => onChange({ components: event.target.checked ? [...item.components, component.id] : item.components.filter(id => id !== component.id) })} />{component.label}{!component.available ? " (unavailable)" : ""}
-    </label>)}</fieldset> : null}
-  </div>;
-}
 
-function AddQuotationItem({ projectId, rooms, initialRoomId, existing, pendingItems, disabled, onAdd, onClose, triggerRef, fallbackRef }: {
-  projectId: string; rooms: QuotationDetail["rooms"]; initialRoomId: string; existing: QuotationLine[]; disabled: boolean;
-  pendingItems: ItemDraft[];
-  onAdd: (item: ItemDraft) => void; onClose: () => void;
-  triggerRef: React.RefObject<HTMLButtonElement | null>; fallbackRef: React.RefObject<HTMLElement | null>;
+function ClientQuotationRecommendations({ projectId, detail, roomId, roomName, rows, disabled, sessionKey,
+  onAdd, onRemove, canConfigure, onConfigure }: {
+  projectId: string; detail: QuotationDetail; roomId: string; roomName: string; rows: readonly QuotationLine[];
+  disabled: boolean; sessionKey?: string; onAdd: (candidate: QuotationCandidate, origins: string[]) => boolean;
+  onRemove: (mainLineId: string) => boolean; canConfigure: boolean; onConfigure: () => boolean;
 }) {
-  const [search, setSearch] = useState("");
   const [offset, setOffset] = useState(0);
-  const [roomId, setRoomId] = useState(initialRoomId || rooms[0]?.id || "");
-  const [item, setItem] = useState<ItemDraft | null>(null);
-  const [error, setError] = useState("");
-  const searchRef = useRef<HTMLInputElement>(null);
-  const candidates = useQuery({ queryKey: quotationKeys.items(projectId, search, offset), queryFn: () => getQuotationCandidates(projectId, search, offset), retry: false });
-  const choose = (candidate: QuotationCandidate) => {
-    const room = rooms.find(value => value.id === roomId);
-    if (!room) return;
-    setError("");
-    const pending = pendingItems.find(entry => entry.line.roomId === roomId && entry.line.mainLineId === candidate.mainLineId);
-    if (pending) {
-      setItem({ ...pending, included: true });
-      return;
+  const sources = [...new Map(rows.filter(line => line.roomId === roomId && line.source).map(line =>
+    [line.mainLineId, { mainLineId: line.mainLineId, source: line.source! }] as const)).values()]
+    .sort((a, b) => a.mainLineId.localeCompare(b.mainLineId));
+  const sourceKey = JSON.stringify(sources);
+  const contextKey = JSON.stringify([projectId, detail.estimateId, detail.estimateVersion, roomId, sourceKey, sessionKey]);
+  const [pageContext, setPageContext] = useState(contextKey);
+  const currentOffset = pageContext === contextKey ? offset : 0;
+  const input = { expectedVersion: detail.estimateVersion!, roomId, sources, limit: 20, offset: currentOffset };
+  const valid = Boolean(detail.estimateVersion && roomId && sources.length && sources.length <= 200);
+  const query = useQuery({ queryKey: quotationKeys.recommendations(projectId, input, sessionKey),
+    queryFn: () => getQuotationRecommendations(projectId, input), enabled: valid && !disabled, retry: false });
+  useEffect(() => {
+    if (!query.isSuccess || query.isFetching || query.data.projectId !== projectId || query.data.estimateId !== detail.estimateId ||
+      query.data.estimateVersion !== detail.estimateVersion || query.data.roomId !== roomId) return;
+    if (currentOffset >= query.data.total && currentOffset > 0) {
+      setPageContext(contextKey); setOffset(Math.max(0, Math.floor((query.data.total - 1) / 20) * 20));
     }
-    const saved = existing.find(line => line.roomId === roomId && line.mainLineId === candidate.mainLineId);
-    if (saved && !saved.included) {
-      // Saved choices belong to this room; candidate defaults may describe another room's pricing mode.
-      setItem(draftItem({ ...saved, included: true }));
-      return;
-    }
-    setItem(draftItem({ id: `new-${crypto.randomUUID()}`, mainLineId: candidate.mainLineId, mainLineName: candidate.name, roomId, roomName: room.name,
-      mainBasketId: candidate.mainBasketId, mainBasketName: candidate.mainBasketName, subBasketId: candidate.subBasketId, subBasketName: candidate.subBasketName,
-      included: true, source: candidate.source, dimensionsMandatory: candidate.dimensionsMandatory, dimensionRule: candidate.dimensionRule,
-      uomName: candidate.uomName, choices: candidate.choices, pricingMode: candidate.pricingMode, modeTier: candidate.modeTier,
-      ratePaise: null, amountPaise: null, quantity: 1 }, "add"));
-  };
-  const duplicate = Boolean(item && existing.some(line => line.roomId === roomId && line.mainLineId === item.line.mainLineId && line.included));
-  return <Dialog title="Add quotation item" onClose={onClose} initialFocusRef={searchRef} returnFocusRef={triggerRef} fallbackFocusRef={fallbackRef}>
-    <form className="ui-dialog__form" onSubmit={event => {
-      event.preventDefault(); if (!item || disabled || duplicate) return;
-      try { operationFor(item); onAdd(item); } catch (reason) { setError(reason instanceof Error ? reason.message : "Review the selected item."); }
-    }}><div className="ui-dialog__body client-quotation__add">
-      <label>Room<select value={roomId} onChange={event => { setRoomId(event.target.value); setItem(null); setError(""); }}>{rooms.map(room => <option key={room.id} value={room.id}>{room.name}</option>)}</select></label>
-      <label>Search items<input ref={searchRef} type="search" value={search} onChange={event => { setSearch(event.target.value); setOffset(0); }} /></label>
-      {candidates.isPending ? <p role="status">Loading items…</p> : candidates.isError ? <p role="alert">Items could not be loaded. <Button variant="secondary" onClick={() => void candidates.refetch()}>Retry items</Button></p> : <>
-        <label>Item<select value={item && candidates.data.items.some(candidate => candidate.mainLineId === item.line.mainLineId) ? item.line.mainLineId : ""} onChange={event => { const candidate = candidates.data.items.find(value => value.mainLineId === event.target.value); if (candidate) choose(candidate); }}>
-          <option value="">Select an item</option>{candidates.data.items.map(candidate => <option key={candidate.mainLineId} value={candidate.mainLineId}>{candidate.name}</option>)}</select></label>
-        {!candidates.data.items.length ? <p>No matching items.</p> : null}
-        {candidates.data.total > candidates.data.limit ? <div className="client-quotation__actions"><Button variant="secondary" disabled={offset === 0 || candidates.isFetching} onClick={() => setOffset(Math.max(0, offset - candidates.data.limit))}>Previous items</Button><Button variant="secondary" disabled={offset + candidates.data.limit >= candidates.data.total || candidates.isFetching} onClick={() => setOffset(offset + candidates.data.limit)}>Next items</Button></div> : null}
-      </>}
-      {item ? <ItemFields item={item} disabled={disabled || !item.line.source} onChange={update => setItem({ ...item, ...update })} /> : null}
-      {item && !item.line.source ? <p role="status">This saved item is unavailable in the current Configuration. Ask your team to review it before adding it back.</p> : null}
-      {duplicate ? <p role="status">This item is already in the quotation for this room. Edit its quantity or include it there.</p> : null}
-      {error ? <p role="alert">{error}</p> : null}
-    </div><div className="ui-dialog__actions"><Button variant="secondary" onClick={onClose}>Cancel</Button><Button type="submit" disabled={!item?.line.source || disabled || duplicate || candidates.isError}>Add to changes</Button></div></form>
-  </Dialog>;
+  }, [query.data, query.isSuccess, query.isFetching, projectId, detail.estimateId, detail.estimateVersion, roomId, currentOffset, contextKey]);
+  if (!sources.length || !roomId) return null;
+  const response = query.data;
+  const responseMatches = Boolean(response && response.projectId === projectId && response.estimateId === detail.estimateId &&
+    response.estimateVersion === detail.estimateVersion && response.roomId === roomId);
+  const unavailable = query.error instanceof ApiError && [401, 403, 404].includes(query.error.status);
+  const stale = query.error instanceof ApiError && query.error.status === 409 || Boolean(response && !responseMatches);
+  const state = sources.length > 200 ? "error" : unavailable ? "forbidden" : stale ? "stale" : query.isError ? "error"
+    : query.isPending || query.isFetching ? "loading" : "ready";
+  const recommendations = state === "ready" && responseMatches ? response!.items : [];
+  const selected = new Map(rows.filter(line => line.roomId === roomId).map(line => [line.mainLineId, line]));
+  return <EstimateRecommendations roomName={roomName} contextKey={contextKey} state={state} disabled={disabled}
+    total={state === "ready" && responseMatches ? response!.total : 0} offset={currentOffset}
+    onOffsetChange={value => { setPageContext(contextKey); setOffset(value); }}
+    message={sources.length > 200 ? "Recommendations support up to 200 selected source items in a room. Your estimate selections are preserved." : undefined}
+    onRetry={sources.length <= 200 ? () => void query.refetch() : undefined}
+    items={recommendations.map(recommendation => {
+      const saved = selected.get(recommendation.candidate.mainLineId);
+      const available = recommendation.candidate.choices.some(choice => choice.available && choice.source);
+      return { id: recommendation.candidate.mainLineId, name: recommendation.candidate.name,
+        sourceNames: recommendation.sourceMainLines.map(source => source.name), selected: Boolean(saved),
+        disabled: saved ? !saved.source : !available || recommendation.requiresSetup && !canConfigure,
+        ...(!saved && !available ? { message: "No configured option is currently available. Your team needs to review this item." }
+          : recommendation.requiresSetup && !saved ? { addLabel: "Configure basket",
+          message: canConfigure ? `Select ${recommendation.candidate.mainBasketName ?? "the required Main Basket"} in Configure estimate, save setup, then add this item.`
+            : `Your team must add ${recommendation.candidate.mainBasketName ?? "the required Main Basket"} to the estimate before you can select this item.` } : {}) };
+    })}
+    onAdd={id => {
+      if (disabled || state !== "ready") return false;
+      const recommendation = recommendations.find(item => item.candidate.mainLineId === id);
+      if (!recommendation) return false;
+      return recommendation.requiresSetup ? onConfigure() : onAdd(recommendation.candidate, recommendation.sourceMainLines.map(source => source.mainLineId));
+    }} onRemove={id => !disabled && state === "ready" ? onRemove(id) : false} />;
 }

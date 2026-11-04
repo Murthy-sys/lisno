@@ -7,6 +7,7 @@ import { estimateBuilderSections } from "../leads/estimateBuilderCatalogue";
 import { projectWorkflowKeys } from "../workflow/projectWorkflowApi";
 import { estimateWorkflowKeys, type EstimateQueueItem } from "./estimateWorkflowApi";
 import { clientEstimateWorkflowVersion } from "./clientEstimateWorkflow";
+import { currentQuotationIsApproved } from "./quotationApproval";
 import {
   estimateDesignKeys,
   getClientEstimateDrawings,
@@ -28,7 +29,10 @@ import { EstimateSpacePlanningCompletion } from "../workflow/SpacePlanningComple
 import "./clientPublishedEstimate.css";
 
 function canReviewDesign(estimate: EstimateQueueItem) {
-  if (clientEstimateWorkflowVersion(estimate) === 3 && !((estimate.designPlanVersion ?? 0) > 0 && estimate.publishedReview?.phase === "post" && estimate.publishedReview.status === "approved")) return false;
+  if (clientEstimateWorkflowVersion(estimate) === 3) {
+    return (estimate.designPlanVersion ?? 0) > 0 && currentQuotationIsApproved(estimate) &&
+      ["ready_for_client", "changes_requested"].includes(estimate.designPlanStatus ?? "");
+  }
   if (estimate.status === "client_approved") {
     return estimate.designPlanStatus === "ready_for_client";
   }
@@ -49,8 +53,12 @@ function ClientDesignReviewForEstimate({ estimate }: { estimate: EstimateQueueIt
   const publishedReview = estimate.reviewSourceIssue ? null : estimate.publishedReview;
   const unchangedDesignRequest = estimate.status === "client_changes_requested" &&
     publishedReview?.status === "pending" && estimate.version === publishedReview.estimateVersion;
-  const quotationDesignReady = !estimate.reviewSourceIssue && (clientEstimateWorkflowVersion(estimate) !== 3 || (estimate.designPlanVersion ?? 0) > 0 && publishedReview?.phase === "post" && publishedReview.status === "approved");
-  const showDesignTools = quotationDesignReady && (estimate.status === "sent_to_client" || estimate.status === "client_approved" || unchangedDesignRequest);
+  const quotationWorkflow = clientEstimateWorkflowVersion(estimate) === 3;
+  const quotationDesignReady = !estimate.reviewSourceIssue && (!quotationWorkflow ||
+    (estimate.designPlanVersion ?? 0) > 0 && currentQuotationIsApproved(estimate));
+  const showDesignTools = quotationDesignReady && (quotationWorkflow
+    ? ["ready_for_client", "changes_requested", "approved"].includes(estimate.designPlanStatus ?? "")
+    : estimate.status === "sent_to_client" || estimate.status === "client_approved" || unchangedDesignRequest);
   const drawingWorkspace = useQuery({
     queryKey: estimateDesignKeys.clientWorkspace(estimate.id),
     queryFn: () => getClientEstimateDrawings(estimate.id),
@@ -100,7 +108,7 @@ function ClientDesignReviewForEstimate({ estimate }: { estimate: EstimateQueueIt
           planWorkspace={plans}
         />
         </section> : null}
-        {quotationDesignReady && estimate.status === "client_approved" && estimate.projectId ? <EstimateSpacePlanningCompletion projectId={estimate.projectId} estimateId={estimate.id} /> : null}
+        {quotationDesignReady && (quotationWorkflow || estimate.status === "client_approved") && estimate.projectId ? <EstimateSpacePlanningCompletion projectId={estimate.projectId} estimateId={estimate.id} /> : null}
       </div>
       {showDesignTools && plans?.pages.length ? (
         <aside className="client-estimate-workspace__rail" aria-label="Design tools">

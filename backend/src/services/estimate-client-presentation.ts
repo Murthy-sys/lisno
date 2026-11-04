@@ -13,6 +13,7 @@ import { normalizeEmail } from "../domain/email.js";
 import type { PublicUser } from "./auth.service.js";
 import { isDeepStrictEqual } from "node:util";
 import type mongoose from "mongoose";
+import { quotationApprovalPublicFields, resolveCurrentQuotationApproval } from "./quotation-approval-state.service.js";
 
 type Row = Record<string, any>;
 const money = z.number().finite().nonnegative();
@@ -126,11 +127,17 @@ export async function presentClientEstimateWithVisibility(
   // Authorize and validate lineage before querying Configuration for this quotation.
   const readable = presentClientEstimate(actor, estimate, lead, round, project, preRound);
   if (!readable) return null;
+  const quotationApproval = estimate.estimation?.workflowVersion === 3
+    ? await resolveCurrentQuotationApproval(estimate, session)
+    : null;
   const current = readable.publishedReview && round
     ? (await projection.project(round.estimateSnapshot, session)).snapshot : undefined;
   const pre = readable.preApprovedReview && preRound
     ? (await projection.project(preRound.estimateSnapshot, session)).snapshot : undefined;
-  return presentClientEstimate(actor, estimate, lead, round, project, preRound, { current, pre });
+  const presented = presentClientEstimate(actor, estimate, lead, round, project, preRound, { current, pre });
+  return presented && quotationApproval
+    ? { ...presented, ...quotationApprovalPublicFields(quotationApproval) }
+    : presented;
 }
 
 /** Only the immutable published proposal supplies Client commercial fields. */

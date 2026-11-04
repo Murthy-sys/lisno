@@ -1,20 +1,23 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { EstimateModel } from "../src/models/Estimate.js";
 import { EstimateClientReviewRoundModel } from "../src/models/EstimateClientReviewRound.js";
+import { ProjectModel } from "../src/models/Project.js";
 import { AiEstimatorKnowledgeSectionModel } from "../src/models/AiEstimatorKnowledgeSection.js";
 import * as catalogue from "../src/services/estimator-catalogue.service.js";
 import { projectPricingFromPublication, readAssistantProjectEstimate } from "../src/services/project-assistant-estimate.js";
-import { newEstimationLifecycle } from "../src/domain/estimation-lifecycle.js";
+import { newEstimationLifecycle, newQuotationLifecycle } from "../src/domain/estimation-lifecycle.js";
 import { createAssistantReadSources } from "../src/services/project-assistant-sources.js";
 import { createChatFixture } from "./helpers/project-chat.js";
 import { sourceWitness } from "../src/services/project-assistant-context.js";
+import { quotationSnapshotDigest } from "../src/services/quotation-digest.js";
 
 const at = "2026-10-15T00:00:00.000Z";
 const configuredLine = () => ({ id: "published-line", source: "configuration", itemType: "main_line", classification: "standard", pricingMode: "sub_vendor", rateSource: "configuration", catalogueId: "ceiling", roomId: "room-a", roomName: "Hall", specification: null,
   mainBasketId: "pop", mainBasketName: "POP", subBasketId: "pop-sub", subBasketName: "Ceiling", mainLineId: "ceiling", mainLineName: "Published ceiling", revisionId: "old-approved-revision", uomId: "uom", uomName: "Square feet", unit: "sqft", quantity: 2, rate: 10, amount: 20, ratePaise: 1000, amountPaise: 2000, included: true });
 const snapshot = () => ({ clientName: "Client A", projectName: "Project A", location: "Synthetic", propertyType: "villa", lineItems: [configuredLine()], subtotal: 20, gst: 3.6, total: 23.6, subtotalPaise: 2000, gstPaise: 360, totalPaise: 2360 });
 const round = () => ({ _id: "review-a", estimateId: "estimate-a", leadId: "lead-a", projectId: "a", estimateVersion: 3, version: 1, sendGeneration: 1, status: "approved", decision: "approve", decisionSource: "client_portal", decidedById: "client-a", decidedAt: at, createdAt: at, recipientEmailNormalized: "client-a@chat.test", estimateSnapshot: snapshot() });
-const chain = (value: unknown) => { const query: any = { select: () => query, session: () => query, lean: () => query, limit: () => query, exec: async () => value }; return query; };
+const chain = (value: unknown) => { const query: any = { select: () => query, session: () => query, lean: () => query, limit: () => query,
+  exec: async () => value, then: (resolve: (result: unknown) => unknown, reject: (error: unknown) => unknown) => Promise.resolve(value).then(resolve, reject) }; return query; };
 afterEach(() => vi.restoreAllMocks());
 function fixture() {
   const estimate: any = { _id: "estimate-a", leadId: "lead-a", projectId: "a", version: 4, status: "client_approved", clientDecisionAt: at, totalPaise: 99999999, lineItems: [{ private: "draft" }] };
@@ -152,6 +155,18 @@ describe("published estimate read boundary", () => {
     expect((await f.read()).report).toMatchObject({ totalPaise: 2360, reviewRoundId: "review-a", state: "approved" });
     f.estimate.estimation.preApproval.estimateVersion = 2;
     expect((await f.read()).report).toBeNull();
+  });
+  it("fails the workflow-v3 current basis closed after an unapproved saved revision", async () => {
+    const f = fixture();
+    const sourceDigest = quotationSnapshotDigest(f.rounds[0].estimateSnapshot);
+    Object.assign(f.rounds[0], { workflowVersion: 3, phase: "pre", requirementsVersion: 0, pricedRevision: 1,
+      designScopeRevision: 1, sourceDigest, submittedById: "sales-a",
+      salesApproval: { actorId: "sales-a", estimateVersion: 3, pricedRevision: 1, sourceDigest, approvedAt: at } });
+    f.estimate.estimation = { ...newQuotationLifecycle(), phase: "post", status: "draft", pricedRevision: 2,
+      designScopeRevision: 1, preApproval: { reviewRoundId: "review-a", estimateVersion: 3, approvedAt: at } };
+    vi.spyOn(ProjectModel, "findById").mockImplementation(() => chain({ clientId: "client-a", primaryDesignerId: "designer-a" }));
+
+    await expect(f.read("current")).resolves.toMatchObject({ report: null, unavailableReason: "source_conflict" });
   });
   it("selects only the latest valid published round for unapproved estimates", async () => {
     const f = fixture(); f.estimate.status = "sent_to_client"; f.estimate.version = 4;

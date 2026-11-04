@@ -2,6 +2,7 @@ import type { EstimateDimensions } from "../../../../shared/estimation/estimateD
 import type { KnowledgeModeTier } from "../../../../shared/knowledge/knowledgeModeTiers";
 import { apiClient } from "../../api/client";
 import type { EstimateDraft, EstimateStatus } from "../leads/leadsApi";
+import type { CurrentQuotationApprovalStatus } from "../../api/types";
 import type { EstimateTierChoice, EstimateTierLine, EstimateTierSource, EstimateTiersDetail } from "./estimateTiersApi";
 
 /** Additive grouping fields are optional while older servers/fixtures remain readable. */
@@ -27,6 +28,8 @@ export interface QuotationLine extends EstimateTierLine, QuotationGrouping {
   roomId: string;
   included: boolean;
   source: EstimateTierSource | null;
+  /** Omitted when safe projection cannot expose every stored origin. Never infer a cascade from omission. */
+  recommendationSourceMainLineIds?: string[];
 }
 export interface QuotationSetupRoom {
   id: string;
@@ -70,7 +73,7 @@ export interface QuotationConfigureOperation {
   rooms: Array<Pick<QuotationSetupRoom, "id" | "typeId" | "label" | "length" | "width">>;
   selectedMainBasketIds: string[];
 }
-export interface QuotationDetail extends Omit<EstimateTiersDetail, "lines"> {
+export interface QuotationDetail extends Omit<EstimateTiersDetail, "lines">, CurrentQuotationApprovalStatus {
   readonly projectNumber?: string | null;
 
   workflowVersion: 3;
@@ -101,10 +104,12 @@ export type QuotationLineOperation = {
   kind: "add"; mainLineId: string; roomId: string; source: EstimateTierSource;
   quantity: number; modeTier: KnowledgeModeTier; dimensions?: EstimateDimensions;
   selectedInHouseComponentIds?: string[];
+  recommendationSourceMainLineIds?: string[];
 } | {
   kind: "update"; lineItemId: string; source: EstimateTierSource;
   quantity?: number; modeTier?: KnowledgeModeTier; dimensions?: EstimateDimensions;
   selectedInHouseComponentIds?: string[]; included?: boolean;
+  recommendationSourceMainLineIds?: string[];
 } | {
   kind: "exclude_group";
   mainBasketId: string;
@@ -120,22 +125,58 @@ export interface QuotationRevision {
   status: EstimateStatus;
   phase: "pre" | "post";
 }
+export interface QuotationCandidateFilters {
+  mainBasketId?: string;
+  subBasketId?: string;
+}
+export interface QuotationRecommendationQuery {
+  expectedVersion: number;
+  roomId: string;
+  sources: Array<{ mainLineId: string; source: EstimateTierSource }>;
+  limit?: number;
+  offset?: number;
+}
+export interface QuotationRecommendation {
+  candidate: QuotationCandidate;
+  sourceMainLines: Array<{ mainLineId: string; name: string }>;
+  requiresSetup: boolean;
+}
+export interface QuotationRecommendations {
+  projectId: string;
+  estimateId: string;
+  estimateVersion: number;
+  roomId: string;
+  items: QuotationRecommendation[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+const normalizedRecommendationQuery = (input: QuotationRecommendationQuery) => ({
+  ...input, sources: [...input.sources].sort((a, b) => a.mainLineId.localeCompare(b.mainLineId)),
+  limit: input.limit ?? 20, offset: input.offset ?? 0
+});
 export const quotationKeys = {
   all: ["quotation"] as const,
   detail: (projectId: string) => ["quotation", projectId, "detail"] as const,
   setup: (projectId: string) => ["quotation", projectId, "setup"] as const,
   candidates: (projectId: string, estimateVersion: number | null) => ["quotation", projectId, "candidates", estimateVersion] as const,
   items: (projectId: string, search: string, offset: number) => ["quotation", projectId, "items", search, offset] as const,
-  revision: (projectId: string) => ["quotation", projectId, "revision"] as const
+  revision: (projectId: string) => ["quotation", projectId, "revision"] as const,
+  recommendations: (projectId: string, input: QuotationRecommendationQuery, sessionKey?: string) =>
+    ["quotation", projectId, "recommendations", sessionKey ?? "current-session", normalizedRecommendationQuery(input)] as const
 };
 const path = (projectId: string) => `/projects/${encodeURIComponent(projectId)}/quotation`;
 export const getQuotation = (projectId: string) => apiClient.get<QuotationDetail>(path(projectId));
 export const getQuotationSetup = (projectId: string) => apiClient.get<QuotationSetupCatalogue>(`${path(projectId)}/setup`);
 export const getQuotationRevision = (projectId: string) => apiClient.get<QuotationRevision>(`${path(projectId)}/revision`);
-export const getQuotationCandidates = (projectId: string, search: string, offset = 0) => {
+export const getQuotationCandidates = (projectId: string, search: string, offset = 0, filters: QuotationCandidateFilters = {}) => {
   const query = new URLSearchParams({ search, limit: "20", offset: String(offset) });
+  if (filters.mainBasketId) query.set("mainBasketId", filters.mainBasketId);
+  if (filters.subBasketId) query.set("subBasketId", filters.subBasketId);
   return apiClient.get<{ items: QuotationCandidate[]; total: number; limit: number; offset: number }>(`${path(projectId)}/items?${query}`);
 };
+export const getQuotationRecommendations = (projectId: string, input: QuotationRecommendationQuery) =>
+  apiClient.post<QuotationRecommendations>(`${path(projectId)}/recommendations/query`, normalizedRecommendationQuery(input));
 export const saveQuotation = (projectId: string, expectedVersion: number, operations: QuotationOperation[]) =>
   apiClient.patch<QuotationDetail>(path(projectId), { expectedVersion, operations });
 export const unlockQuotation = (estimateId: string, input: { expectedVersion: number; reviewRoundId: string; reason: string; idempotencyKey: string }) =>

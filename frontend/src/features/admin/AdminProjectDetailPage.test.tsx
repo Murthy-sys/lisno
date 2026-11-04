@@ -736,3 +736,61 @@ describe("AdminProjectDetailPage", () => {
     expect(sectionAssignmentRequests).toBe(1);
   });
 });
+
+
+it("enables initial-approved Designer assignment and keeps the unchanged approval current", async () => {
+  installSuperAdminFinanceSession(["design.plan_assignment.manage"]);
+  let financeCalls = 0;
+  server.use(
+    http.get("/api/v1/admin/projects/project-murthy", () => HttpResponse.json({ data: {
+      ...approvedPendingProject, estimationWorkflowVersion: 3,
+      estimate: { ...approvedPendingProject.estimate, status: "draft", estimationPhase: "post", total: 999999,
+        initialEstimateApproval: { reviewRoundId: "initial-round", estimateVersion: 4, approvedAt: "2026-11-04T09:00:00.000Z" },
+        canAssignDesigner: true, designerAssignmentBlockedReason: null,
+        quotationApprovalState: "initial_current", currentQuotationApproved: true, requiresClientReapproval: false,
+        quotationApprovalSource: "initial_unchanged",
+        currentQuotationApproval: { kind: "initial_unchanged", reviewRoundId: "initial-round", estimateVersion: 4, approvedAt: "2026-11-04T09:00:00.000Z" }
+      }
+    } })),
+    http.get("/api/v1/admin/designers", () => HttpResponse.json({ data: [{ id: "designer-one", name: "Designer One", email: "designer-one@example.test" }] })),
+    http.get("/api/v1/finance/projects/project-murthy", () => { financeCalls++; return HttpResponse.json({ data: approvedPendingBucket }); })
+  );
+  renderApp(["/admin/projects/project-murthy"]);
+  await screen.findByRole("heading", { name: "murthy-1" });
+  const details = screen.getByRole("region", { name: "Project details" });
+  expect(within(details).getByText("Initial estimate").closest("div")).toHaveTextContent("Client approved");
+  expect(within(details).getByText("Designer quotation").closest("div")).toHaveTextContent("No changes; initial approval current");
+  expect(within(details).getByText("₹2,78,704")).toBeVisible();
+  expect(screen.queryByText("₹9,99,999")).not.toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "Assign Designer" })).toHaveAttribute("href", "#design-assignment-title");
+  await screen.findByRole("option", { name: /Designer One/ });
+  expect(screen.getByRole("combobox", { name: "Assigned Designer" })).toBeEnabled();
+  await waitFor(() => expect(financeCalls).toBe(1));
+});
+
+it("does not load current finance from a stale historical approval during a quotation revision", async () => {
+  installSuperAdminFinanceSession();
+  let financeCalls = 0;
+  server.use(
+    http.get("/api/v1/admin/projects/project-murthy", () => HttpResponse.json({ data: {
+      ...approvedPendingProject,
+      estimationWorkflowVersion: 3,
+      estimate: {
+        ...approvedPendingProject.estimate,
+        estimationPhase: "post",
+        initialEstimateApproval: { reviewRoundId: "initial-round", estimateVersion: 4, approvedAt: "2026-11-04T09:00:00.000Z" },
+        quotationApprovalState: "revision_draft",
+        currentQuotationApproved: false,
+        requiresClientReapproval: true,
+        quotationApprovalSource: null,
+        currentQuotationApproval: null,
+        canAssignDesigner: false,
+        designerAssignmentBlockedReason: "Designer already assigned."
+      }
+    } })),
+    http.get("/api/v1/finance/projects/project-murthy", () => { financeCalls += 1; return HttpResponse.json({ data: approvedPendingBucket }); })
+  );
+  renderApp(["/admin/projects/project-murthy"]);
+  expect(await screen.findByText("The current approved financial baseline is unavailable until the latest quotation is approved.")).toBeVisible();
+  expect(financeCalls).toBe(0);
+});
