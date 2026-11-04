@@ -231,6 +231,7 @@ export function buildRoomRecommendations({ catalogue, lines, roomId, recommendat
       guidance.push({ id: item.id, sourceId: source.mainLineId, sourceName, name: item.name, reason: item.reason });
     }
     for (const rule of source.rules) {
+      if (rule.requirement !== "must") continue;
       const key = rule.targetKind === "main_line"
         ? `line:${rule.targetMainLineId ?? ""}`
         : `sub-basket:${rule.targetBasketId}:${rule.targetSubBasketId ?? ""}`;

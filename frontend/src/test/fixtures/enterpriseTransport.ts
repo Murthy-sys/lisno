@@ -22,6 +22,7 @@ export interface EnterpriseRequest { method: string; path: string; status: numbe
 const extraPermissions: Partial<Record<Role, readonly PermissionCode[]>> = {
   super_admin: ["estimation.client_response_tasks.read", "estimation.client_response_tasks.decide", "estimation.client_response_proof.read", "projects.design_workflow.read", "projects.design_workflow.payments.read", "access_request.review.decide", "project_access_grant.revoke", "procurement.purchase_orders.read", "procurement.purchase_orders.approve", "procurement.project_completion.decide"],
   admin: ["design.plan_assignment.manage", "design.plan_response_tasks.read", "estimation.client_response_tasks.read", "estimation.client_response_tasks.decide", "projects.design_workflow.read"],
+  designer: ["projects.design_workflow.read"],
   procurement: ["procurement.purchase_orders.read", "procurement.purchase_orders.manage", "procurement.progress.read", "procurement.vendor_work.media.read"],
   vendor: ["procurement.vendor_work.update", "procurement.vendor_work.media.read", "procurement.vendor_work.media.upload"],
   client: ["procurement.client_work.read", "procurement.client_work.decide", "procurement.vendor_work.media.read"],

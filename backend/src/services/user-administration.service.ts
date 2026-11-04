@@ -1,3 +1,6 @@
+import type { ChatActor } from "../contracts/project-chat.js";
+import type { UserResponsibilitiesPage, UserResponsibilityQuery, UserResponsibilityReader } from "../contracts/user-responsibilities.js";
+import { hasIncompatibleResponsibility } from "../domain/user-responsibilities.js";
 import { ACTIVE_ROLE_CODES, ROLE_CODES, type Role } from "../domain/roles.js";
 import { ApiError } from "../middleware/errors.js";
 import {
@@ -53,6 +56,7 @@ export interface UserDirectoryPage {
 }
 
 export interface UserAdministrationService {
+  responsibilities(actor: ChatActor, userId: string, query: UserResponsibilityQuery): Promise<UserResponsibilitiesPage>;
   list(
     actor: PublicUser,
     filters: UserDirectoryFilters,
@@ -66,22 +70,6 @@ export interface UserAdministrationService {
   delete(actor: PublicUser, userId: string, input: { version: number }): Promise<ManagedUserDeletionResult>;
 }
 
-const responsibilityRole: Readonly<
-  Record<keyof UserResponsibilityCounts, Role | null>
-> = {
-  ownedActiveLeads: "estimator_sales",
-  ownedActiveEstimates: "estimator_sales",
-  initiatedActiveProjects: "designer",
-  assignedActiveProjects: "designer",
-  managedActiveProjects: "design_manager",
-  ownedActiveTasks: "designer",
-  directReports: "design_manager",
-  linkedClientProjects: "client",
-  adminInitiatorGrants: "admin",
-  assignedExecutionProjects: "site_manager",
-  assignedWorkflowTasks: null
-};
-
 const FILTER_ROLES: readonly Role[] = [...ROLE_CODES];
 const MANAGEABLE_ROLES: readonly Exclude<Role, "super_admin" | "vendor" | "program_manager">[] = ACTIVE_ROLE_CODES.filter(
   (role): role is Exclude<Role, "super_admin" | "vendor" | "program_manager"> => role !== "super_admin" && role !== "vendor"
@@ -90,9 +78,15 @@ const MANAGEABLE_ROLES: readonly Exclude<Role, "super_admin" | "vendor" | "progr
 export function createUserAdministrationService(
   repository: AppRepository,
   auditService: AuditService,
-  clock: Clock
+  clock: Clock,
+  responsibilityReader?: UserResponsibilityReader
 ): UserAdministrationService {
   return {
+    async responsibilities(actor, userId, query) {
+      if (!responsibilityReader) throw new ApiError(503, "USER_RESPONSIBILITIES_UNAVAILABLE", "Assignments are temporarily unavailable.");
+      return responsibilityReader(actor, userId, query);
+    },
+
     async list(actor, filters, pagination) {
       const storedActor = await requireAdministrativeActor(repository, actor);
       const visibleRoles = FILTER_ROLES;
@@ -350,18 +344,6 @@ async function requireAdministrativeActor(
   }
   if (stored.role !== "super_admin") forbidden();
   return stored as UserRecord & { role: "super_admin" };
-}
-
-function hasIncompatibleResponsibility(
-  counts: UserResponsibilityCounts,
-  destinationRole: Role
-): boolean {
-  return (Object.entries(counts) as Array<
-    [keyof UserResponsibilityCounts, number]
-  >).some(
-    ([responsibility, count]) =>
-      count > 0 && responsibilityRole[responsibility] !== destinationRole
-  );
 }
 
 function toUserDirectoryItem(user: UserRecord): UserDirectoryItem {

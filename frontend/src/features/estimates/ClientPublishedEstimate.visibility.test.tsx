@@ -79,8 +79,34 @@ it("distinguishes the v3 quotation approval from the later drawing approval", ()
   estimate.changesFromPre = { addedLineIds: [], removedLineIds: [], changedLineIds: [], scopeChanged: false, noChanges: true, beforeTotal: 413, afterTotal: 413 };
   renderWithQuery(<ClientPublishedEstimate estimate={estimate} />);
   expect(screen.getByText("Post-design approval: Designer-revised quotation")).toBeVisible();
-  expect(screen.getByText("Estimation is complete and the quotation is locked. Your Designer can now begin design tasks.")).toBeVisible();
+  expect(screen.getByText("Your revised quotation approval is recorded. Design work can continue.")).toBeVisible();
   expect(screen.queryByText(/Design and procurement preparation can continue/)).not.toBeInTheDocument();
+});
+
+it("explains that initial approval remains current until a material revision", () => {
+  const estimate = projectedEstimate(true);
+  estimate.workflowVersion = 3;
+  estimate.status = "client_approved";
+  estimate.publishedReview = { ...estimate.publishedReview!, workflowVersion: 3, phase: "pre", status: "approved", canDecide: false };
+  renderWithQuery(<ClientPublishedEstimate estimate={estimate} />);
+  expect(screen.getByText(/Your approval remains current while the quotation is unchanged/)).toBeVisible();
+  expect(screen.queryByText(/before design tasks begin/)).not.toBeInTheDocument();
+});
+
+it("does not expose a post-quotation decision while the unchanged initial approval is current", () => {
+  const estimate = projectedEstimate(true);
+  estimate.workflowVersion = 3;
+  estimate.publishedReview = { ...estimate.publishedReview!, workflowVersion: 3, phase: "post" };
+  estimate.preApprovedReview = { reviewRoundId: "initial-round", estimateVersion: 1, snapshot: estimate.publishedReview.snapshot };
+  estimate.changesFromPre = { addedLineIds: ["visible-line"], removedLineIds: [], changedLineIds: [], scopeChanged: false, noChanges: false, beforeTotal: 300, afterTotal: 413 };
+  estimate.quotationApprovalState = "initial_current";
+  estimate.currentQuotationApproved = true;
+  estimate.requiresClientReapproval = false;
+  estimate.quotationApprovalSource = "initial_unchanged";
+  estimate.currentQuotationApproval = { kind: "initial_unchanged", reviewRoundId: "initial-round", estimateVersion: 1, approvedAt: "2026-11-04T08:00:00.000Z" };
+  renderWithQuery(<ClientPublishedEstimate estimate={estimate} />);
+  expect(screen.getByText("Review status unavailable")).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Approve designer-revised quotation" })).not.toBeInTheDocument();
 });
 
 it("displays recorded dimensions from the frozen snapshot without adopting working measurements", () => {

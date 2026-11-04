@@ -14,6 +14,7 @@ import type { UserDirectoryItem } from "../../api/types";
 import { authorizationFor } from "../../test/authFixtures";
 import { renderApp } from "../../test/render";
 import { server } from "../../test/server";
+import { emptyResponsibilitiesHandler, responsibilityPage, responsibilityRow } from "./userResponsibilities.test-fixtures";
 
 const actor = {
   id: "user-super-admin-actor",
@@ -58,6 +59,7 @@ function deferred<T>() {
 function installSession(user: typeof actor) {
   tokenStorage.set(`${user.role}-token`);
   server.use(
+    emptyResponsibilitiesHandler([designer]),
     http.get("/api/v1/auth/me", () => HttpResponse.json({ data: user })),
     http.get("/api/v1/auth/authorization", () =>
       HttpResponse.json({
@@ -233,7 +235,14 @@ describe("UserMutationDialog", () => {
   it("responsibility conflict remains actionable", async () => {
     installSession(actor);
     let patchCount = 0;
+    let assignmentReads = 0;
     server.use(
+      http.get("/api/v1/admin/users/user-designer-arun/responsibilities", ({ request }) => {
+        assignmentReads++;
+        return HttpResponse.json({ data: responsibilityPage({ user: designer,
+          destinationRole: new URL(request.url).searchParams.get("destinationRole") as Role,
+          blockingCount: 1, items: [responsibilityRow({ label: patchCount ? "Latest dependent work" : "Existing dependent work", blocksRoleChange: true })] }) });
+      }),
       http.get("/api/v1/admin/users", () =>
         HttpResponse.json(directoryResponse([designer]))
       ),
@@ -256,6 +265,8 @@ describe("UserMutationDialog", () => {
       within(dialog).getByRole("combobox", { name: "Role" }),
       "procurement"
     );
+    await screen.findByText("Existing dependent work");
+    const previousAssignmentReads = assignmentReads;
     await user.click(within(dialog).getByRole("button", { name: "Save role" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
@@ -265,6 +276,9 @@ describe("UserMutationDialog", () => {
       screen.getByRole("dialog", { name: "Manage Arun Patel" })
     ).toBeVisible();
     expect(patchCount).toBe(1);
+    expect(await screen.findByText("Latest dependent work")).toBeVisible();
+    expect(assignmentReads).toBeGreaterThan(previousAssignmentReads);
+    expect(within(dialog).getByRole("combobox", { name: "Role" })).toHaveValue("procurement");
     expect(
       screen.queryByRole("heading", { name: "User access updated" })
     ).not.toBeInTheDocument();

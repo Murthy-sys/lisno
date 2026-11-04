@@ -10,6 +10,7 @@ import { comparePublishedEstimateSnapshots } from "../services/estimate-client-p
 import { effectiveCommercialStatus, estimateCommercialStatusFilter, estimateCommercialStatusFields, isCollaborativeEstimate, newEstimationLifecycle, newQuotationLifecycle, type EstimationLifecycle } from "../domain/estimation-lifecycle.js";
 import { assertEstimateEditable, canStaffEditEstimate, fenceCollaborativeEstimate, estimatePhysicalScopeChanged, estimateQuotationContentChanged, requireEstimateClientMembership, requireEstimateStaffActor } from "../services/estimate-collaboration-policy.service.js";
 import { createMongoRepository } from "../repositories/mongo.js";
+import { ensureQuotationDesignTask } from "../services/project-workflow.service.js";
 import { readProjectNumber, projectNumberStateConflict } from "../domain/project-number.js";
 import { createEstimateProposal, type EstimateProposalMetadata } from "../domain/estimate-proposal.js";
 import { assignProjectNumber, ProjectNumberInitializationConflict } from "../services/project-number.service.js";
@@ -47,6 +48,7 @@ import type { EstimatePublicationService } from "../services/estimate-publicatio
 import { sendDownload } from "./estimate-client-responses.js";
 import type { EstimateRevisionsService } from "../services/estimate-revisions.service.js";
 import { estimateStaffReadFilter } from "../services/estimate-staff-read-scope.js";
+import { quotationApprovalPublicFields, resolveCurrentQuotationApproval } from "../services/quotation-approval-state.service.js";
 
 const stableIdSchema = z.string().trim().min(1).max(128);
 const estimateClassificationSchema = z.enum(["standard", "special"]);
@@ -310,6 +312,13 @@ export function createEstimatesRouter(
       estimate = { ...estimate, projectNumber };
     }
     if (!estimate || !["estimator_sales", "designer", "super_admin"].includes(actor.role)) return estimate;
+    // Approval identity belongs to the saved commercial document. The staff DTO
+    // below hydrates current Configuration names/UOMs for editing and must not
+    // make an unchanged persisted quotation appear modified.
+    const savedLifecycle = estimate.estimation as EstimationLifecycle | undefined;
+    const quotationApproval = savedLifecycle?.workflowVersion === 3
+      ? await resolveCurrentQuotationApproval(estimate)
+      : null;
     if (isEditableEstimateStatus(estimate.status) && Array.isArray(estimate.lineItems)) {
       const savedLines = estimate.lineItems as Record<string, unknown>[];
       const latest = await resolveEstimatorCatalogueLines(savedLines.filter((line) =>
@@ -360,12 +369,13 @@ export function createEstimatesRouter(
     const canUnlockQuotation = lifecycle?.workflowVersion === 3 && !!lifecycle.editClosedAt && !!lifecycle.finalApproval &&
       (actor.role === "estimator_sales" && project?.assignedEstimatorId === actor.id && estimate.ownerId === actor.id ||
         actor.role === "designer" && project?.primaryDesignerId === actor.id && estimate.designPlanDesignerId === actor.id);
-    const canPublishQuotation = lifecycle?.workflowVersion === 3 && !lifecycle.editClosedAt &&
+    const canPublishQuotation = lifecycle?.workflowVersion === 3 &&
+      (lifecycle.phase === "pre" || quotationApproval?.requiresClientReapproval === true) && !lifecycle.editClosedAt &&
       ["draft", "designer_changes_requested", "client_changes_requested", "ready_for_client"].includes(lifecycle.status) &&
       (lifecycle.phase === "pre"
         ? actor.role === "estimator_sales" && project?.assignedEstimatorId === actor.id && estimate.ownerId === actor.id
         : !!lifecycle.preApproval && actor.role === "designer" && project?.primaryDesignerId === actor.id && estimate.designPlanDesignerId === actor.id);
-    return { ...estimate, ...(lifecycle?.workflowVersion === 3 ? { capabilities: { canUnlockQuotation, canPublishQuotation } } : {}), ...(clientReview ? { clientReview } : {}), ...(clientFeedback ? { clientFeedback } : {}),
+    return { ...estimate, ...(lifecycle?.workflowVersion === 3 ? { ...quotationApprovalPublicFields(quotationApproval!), capabilities: { canUnlockQuotation, canPublishQuotation } } : {}), ...(clientReview ? { clientReview } : {}), ...(clientFeedback ? { clientFeedback } : {}),
       ...(isCollaborativeEstimate(estimate) ? { preApprovedReview, changesFromPre: preApprovedReview
         ? comparePublishedEstimateSnapshots(preApprovedReview.snapshot, estimate) : null } : {}) };
   };
@@ -660,6 +670,8 @@ export function createEstimatesRouter(
       if (isCollaborativeEstimate(estimate)) {
         if (previousEstimate && estimatePhysicalScopeChanged(previousEstimate, estimate.toObject())) estimate.estimation.designScopeRevision += 1;
         if (estimate.estimation.workflowVersion === 3 && previousEstimate && estimateQuotationContentChanged(previousEstimate, estimate.toObject())) {
+          const openedAt = await ensureQuotationDesignTask(previousEstimate, new Date(), session);
+          if (openedAt && !estimate.estimation.designStartedAt) estimate.estimation.designStartedAt = openedAt.toISOString();
           estimate.estimation.pricedRevision += 1;
           estimate.estimation.salesApproval = null;
           estimate.estimation.pendingReviewRoundId = null;

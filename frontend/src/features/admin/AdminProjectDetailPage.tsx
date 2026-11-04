@@ -14,6 +14,9 @@ import { PageState } from "../../components/ui/PageState";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { Surface } from "../../components/ui/Surface";
 import {
+  adminEstimateStages,
+  canAssignProjectDesigner,
+  hasInitialEstimateApproval,
   adminProjectNextAction,
   adminProjectStatusLabel,
   formatWorkflowLabel,
@@ -27,6 +30,7 @@ import { WorkerAssignmentPanel } from "./WorkerAssignmentPanel";
 import { ProjectFinancePanel } from "../finance/ProjectFinancePanel";
 import { ProjectWorkflowSnapshot } from "../finance/FinanceProjectWorkflowControl";
 import { ProjectWorkflowPanel } from "../workflow/ProjectWorkflowPanel";
+import { currentQuotationIsApproved } from "../estimates/quotationApproval";
 import "./admin-project-detail.css";
 
 const money = new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 });
@@ -85,11 +89,15 @@ export function AdminProjectDetailPage() {
 
   const nextAction = adminProjectNextAction(project);
   const assignmentPending = isDesignerAssignmentPending(project);
-  const estimateApproved = project.estimate?.status === "client_approved";
+  const estimateApproved = hasInitialEstimateApproval(project);
+  const currentEstimateApproved = project.estimationWorkflowVersion === 3
+    ? currentQuotationIsApproved(project.estimate)
+    : project.estimate?.status === "client_approved";
+  const estimateStages = adminEstimateStages(project);
   const approvedBaseline = estimateApproved
     ? project.estimate?.approvedBaseline ?? null
     : null;
-  const approvedFinanceSource = estimateApproved && project.estimate
+  const approvedFinanceSource = currentEstimateApproved && project.estimate
     ? approvedBaseline
       ? {
         projectId: project.estimate.resolvedProjectId,
@@ -131,7 +139,7 @@ export function AdminProjectDetailPage() {
           <span className="admin-project-reference__identifier">System ID: {project.id}</span>
           <span>Created <time dateTime={project.createdAt}>{createdLabel}</time></span>
         </>}
-        actions={assignmentPending && canAssignDesigner ? (
+        actions={assignmentPending && canAssignDesigner && canAssignProjectDesigner(project) ? (
           <a className="button button--primary" href="#design-assignment-title">
             Assign Designer
           </a>
@@ -147,7 +155,7 @@ export function AdminProjectDetailPage() {
           <div><dt>Location</dt><dd>{project.location}</dd></div>
           <div><dt>Property type</dt><dd>{project.propertyType ?? "Not captured"}</dd></div>
           <div><dt>Created</dt><dd><time dateTime={project.createdAt}>{createdLabel}</time></dd></div>
-          <div><dt>{estimateLabel}</dt><dd>{estimateValue}{project.estimate && !estimateApproved ? <span className="admin-project-reference__estimate-status">{formatWorkflowLabel(project.estimate.status)}</span> : null}</dd></div>
+          <div><dt>{estimateLabel}</dt><dd>{estimateValue}{project.estimate && !estimateApproved && estimateStages.length === 0 ? <span className="admin-project-reference__estimate-status">{formatWorkflowLabel(project.estimate.status)}</span> : null}</dd></div>
         </dl>
       </section>
       <Surface as="section" className="admin-project-detail__surface" aria-label="Project details">
@@ -188,7 +196,7 @@ export function AdminProjectDetailPage() {
             </div>
             <div className="admin-project-reference__estimate-group">
             <h3>Estimate</h3>
-            {project.estimate ? <dl><div><dt>Status</dt><dd>{formatWorkflowLabel(project.estimate.status)}</dd></div><div><dt>{estimateLabel}</dt><dd>{estimateValue}</dd></div>{approvedBaseline ? <div><dt>Approved estimate baseline</dt><dd>Version {approvedBaseline.estimateVersion}</dd></div> : null}</dl> : <p>No estimate yet</p>}
+            {project.estimate ? <dl>{estimateStages.length > 0 ? estimateStages.map(stage => <div key={stage.label}><dt>{stage.label}</dt><dd>{stage.value}</dd></div>) : <div><dt>Status</dt><dd>{formatWorkflowLabel(project.estimate.status)}</dd></div>}<div><dt>{estimateLabel}</dt><dd>{estimateValue}</dd></div>{approvedBaseline ? <div><dt>Approved estimate baseline</dt><dd>Version {approvedBaseline.estimateVersion}</dd></div> : null}</dl> : <p>No estimate yet</p>}
             </div>
             </div>
           </AdminDetailSection>
@@ -199,13 +207,13 @@ export function AdminProjectDetailPage() {
       {canReadFinance ? (
         <ProjectFinancePanel
           projectId={project.id}
-          enabled={estimateApproved}
+          enabled={currentEstimateApproved}
           title={`${project.name} finance`}
           expectedSource={approvedFinanceSource}
         />
       ) : null}
       {canAssignWorkers ? <ProjectWorkflowSnapshot project={project} /> : null}
-      <DesignAssignmentPanel project={project} />
+      <DesignAssignmentPanel key={project.id} project={project} canManage={canAssignDesigner} />
       {canManageProcurementIdentity ? <ProcurementProjectIdentityPanel projectId={project.id} /> : null}
       {canAssignWorkers ? <WorkerAssignmentPanel project={project} /> : null}
       {project.estimate?.clientReview ? (
@@ -250,7 +258,7 @@ export function AdminProjectDetailPage() {
           <h2 id="admin-project-quick-summary-title">Quick summary</h2>
           <dl>
             <div><dt>Project status</dt><dd>{adminProjectStatusLabel(project)}</dd></div>
-            <div><dt>Estimate status</dt><dd>{project.estimate ? formatWorkflowLabel(project.estimate.status) : "No estimate yet"}</dd></div>
+            {estimateStages.length > 0 ? estimateStages.map(stage => <div key={stage.label}><dt>{stage.label}</dt><dd>{stage.value}</dd></div>) : <div><dt>Estimate status</dt><dd>{project.estimate ? formatWorkflowLabel(project.estimate.status) : "No estimate yet"}</dd></div>}
             <div><dt>{estimateLabel}</dt><dd>{estimateValue}</dd></div>
             <div><dt>Initial client budget range</dt><dd>{initialBudget}</dd></div>
           </dl>

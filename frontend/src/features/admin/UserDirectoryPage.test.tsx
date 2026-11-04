@@ -15,6 +15,7 @@ import { authorizationFor } from "../../test/authFixtures";
 import { renderApp } from "../../test/render";
 import { server } from "../../test/server";
 import { adminUserKeys } from "./adminApi";
+import { emptyResponsibilitiesHandler } from "./userResponsibilities.test-fixtures";
 
 const admin = {
   id: "user-admin-meera",
@@ -97,6 +98,7 @@ function installSession(
     "identity.users.update"
   ]);
   server.use(
+    emptyResponsibilitiesHandler(directoryRows),
     http.get("/api/v1/auth/me", () => HttpResponse.json({ data: actor })),
     http.get("/api/v1/auth/authorization", () =>
       HttpResponse.json({

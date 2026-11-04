@@ -11,6 +11,7 @@ import type { ChatTransaction } from "../repositories/project-chat.js";
 import { toPublicUser } from "./auth.service.js";
 import { presentClientEstimateWithVisibility } from "./estimate-client-presentation.js";
 import { financeApprovalLineage } from "./project-finance.service.js";
+import { resolveCurrentQuotationApproval } from "./quotation-approval-state.service.js";
 import { sourceWitness, type AssistantContext } from "./project-assistant-context.js";
 
 type Row = Record<string, any>;
@@ -79,7 +80,16 @@ export async function readAssistantProjectEstimate(context: AssistantContext, in
   const evidence = await tx.app.findProjectStatusEstimateEvidence(projectId);
   const witness = { estimate, lead, rounds, evidence, visibleMainLineIds: null as string[] | null };
   if (rounds.length > 500 || evidence.projectId !== projectId) return finish(null, "source_conflict", witness);
-  const reference = currentEstimationApproval(estimate);
+  const historicalReference = currentEstimationApproval(estimate);
+  const quotationApproval = estimate.estimation?.workflowVersion === 3 && input.basis === "current"
+    ? await resolveCurrentQuotationApproval(estimate, tx.session)
+    : null;
+  if (estimate.estimation?.workflowVersion === 3 && input.basis === "current" && !quotationApproval?.currentQuotationApproved) {
+    return finish(null, "source_conflict", { ...witness, quotationApproval });
+  }
+  const reference = estimate.estimation?.workflowVersion === 3 && input.basis === "current"
+    ? quotationApproval!.currentQuotationApproval
+    : historicalReference;
   const approvedRounds = rounds.filter(row => row.status === "approved" && row.decision === "approve");
   const useApproval = input.basis === "approved" || input.basis === "current" && (reference !== null || estimate.status === "client_approved");
   let round: Row | undefined;
@@ -112,7 +122,11 @@ export async function readAssistantProjectEstimate(context: AssistantContext, in
         !["client_portal", "admin_proof"].includes(round.decisionSource) ||
         round.decisionSource === "client_portal" && round.decidedById !== context.user.id || round.decisionSource === "admin_proof" && !evidenceRound.proofValid) return finish(null, "source_conflict", witness);
     try {
-      const lineage = financeApprovalLineage(estimate, approvedRounds);
+      const lineage = financeApprovalLineage(estimate, approvedRounds, estimate.estimation?.workflowVersion === 3
+        ? input.basis === "current"
+          ? { currentApproval: quotationApproval?.currentQuotationApproval ?? undefined }
+          : { allowHistorical: true }
+        : undefined);
       if (!lineage.immutable || lineage.estimateReviewRoundId !== String(round._id) || lineage.estimateVersion !== round.estimateVersion) return finish(null, "source_conflict", witness);
       baseline = lineage.baseline;
     } catch (error) { if (!(error instanceof ApiError)) throw error; return finish(null, "source_conflict", witness); }

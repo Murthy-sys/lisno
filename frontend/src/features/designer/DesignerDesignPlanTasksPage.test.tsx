@@ -226,29 +226,61 @@ EstimateDesignWorkspace {
 }
 
 describe("DesignerDesignPlanTasksPage", () => {
-  it.each([true, false])("separates quotation revision from operational design work for a v3 team member, primary=%s", async primary => {
-    const task = { ...assignedTask, leadId: "lead-v3", estimationWorkflowVersion: 3 as const, quotationApproved: false, canEditQuotation: primary };
-    const workflow = uploadWorkflow(); workflow.initialPayment = { ...workflow.initialPayment!, workflowVersion: 3, designStartedAt: null };
+  it.each([true, false])("starts operational design from an unchanged initial approval for a v3 team member, primary=%s", async primary => {
+    const task: DesignPlanTask = { ...assignedTask, leadId: "lead-v3", estimationWorkflowVersion: 3, quotationApproved: true,
+      quotationApprovalState: "initial_current", currentQuotationApproved: true, requiresClientReapproval: false,
+      quotationApprovalSource: "initial_unchanged", currentQuotationApproval: { kind: "initial_unchanged", reviewRoundId: "pre-round", estimateVersion: 4, approvedAt: "2026-10-30T09:00:00Z" }, canEditQuotation: primary };
+    const workflow = uploadWorkflow(); workflow.initialPayment = { ...workflow.initialPayment!, workflowVersion: 3, designStartedAt: "2026-10-30T10:00:00Z" };
     server.use(
       http.get("/api/v1/designer/design-plan-tasks", () => HttpResponse.json({ data: [task] })),
       http.get("/api/v1/projects/project-1/design-workflow", () => HttpResponse.json({ data: workflow })),
       http.get("/api/v1/projects/project-1/design-team", () => HttpResponse.json({ data: { projectId: "project-1", version: 1, primary: { id: "designer-1", name: "Primary Designer" }, secondaries: [{ id: "designer-2", name: "Assistant Designer" }], candidates: [], canManage: primary, requiresReason: false } })),
       http.get("/api/v1/estimates/estimate-1/design-uploads", () => HttpResponse.json({ data: emptyWorkspace() }))
     );
-    const view = renderPage();
-    expect(await screen.findByText("Design tasks begin after the Client approves the Designer-revised quotation.")).toBeVisible();
-    expect(screen.queryByRole("heading", { name: "Upload design" })).not.toBeInTheDocument();
+    renderPage();
+    expect(await screen.findByText("Initial estimate approved. No quotation changes require Client review.")).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Upload design" })).toBeVisible();
     if (primary) {
-      expect(screen.getByRole("link", { name: "Review Designer-revised quotation" })).toHaveAttribute("href", "/estimator-sales/leads/lead-v3/estimate");
+      expect(screen.getByRole("link", { name: "Review or update estimate" })).toHaveAttribute("href", "/estimator-sales/leads/lead-v3/estimate");
       expect(screen.queryByRole("link", { name: "View saved estimation" })).not.toBeInTheDocument();
     } else {
-      expect(screen.queryByRole("link", { name: "Review Designer-revised quotation" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("link", { name: "Review or update estimate" })).not.toBeInTheDocument();
       expect(screen.getByRole("link", { name: "View saved estimation" })).toHaveAttribute("href", "/projects/project-1/quotation");
     }
-    task.quotationApproved = true; workflow.initialPayment.designStartedAt = "2026-10-30T10:00:00Z";
+  });
+
+  it("pauses design only after a material quotation revision and resumes after exact approval", async () => {
+    const task: DesignPlanTask = { ...assignedTask, leadId: "lead-v3", estimationWorkflowVersion: 3, quotationApproved: false,
+      quotationApprovalState: "revision_draft", currentQuotationApproved: false, requiresClientReapproval: true,
+      quotationApprovalSource: null, currentQuotationApproval: null, canEditQuotation: true };
+    const workflow = uploadWorkflow(); workflow.initialPayment = { ...workflow.initialPayment!, workflowVersion: 3, designStartedAt: "2026-10-30T10:00:00Z" };
+    server.use(
+      http.get("/api/v1/designer/design-plan-tasks", () => HttpResponse.json({ data: [task] })),
+      http.get("/api/v1/projects/project-1/design-workflow", () => HttpResponse.json({ data: workflow })),
+      http.get("/api/v1/projects/project-1/design-team", () => HttpResponse.json({ data: { projectId: "project-1", version: 1, primary: { id: "designer-1", name: "Primary Designer" }, secondaries: [], candidates: [], canManage: true, requiresReason: false } })),
+      http.get("/api/v1/estimates/estimate-1/design-uploads", () => HttpResponse.json({ data: emptyWorkspace() }))
+    );
+    const view = renderPage();
+    expect(await screen.findByText("Client approval is required for the revised quotation before design work continues.")).toBeVisible();
+    expect(screen.getByRole("link", { name: "Review revised quotation" })).toHaveAttribute("href", "/estimator-sales/leads/lead-v3/estimate");
+    expect(screen.queryByRole("heading", { name: "Upload design" })).not.toBeInTheDocument();
+    task.quotationApproved = true;
+    task.quotationApprovalState = "revision_current";
+    task.currentQuotationApproved = true;
+    task.requiresClientReapproval = false;
+    task.quotationApprovalSource = "designer_revision";
+    task.currentQuotationApproval = { kind: "designer_revision", reviewRoundId: "post-round", estimateVersion: 7, approvedAt: "2026-10-31T10:00:00Z" };
     await act(async () => view.queryClient.invalidateQueries());
-    expect(await screen.findByText("The quotation is approved. Continue the design tasks below.")).toBeVisible();
+    expect(await screen.findByText("The revised quotation is approved. Continue the design tasks below.")).toBeVisible();
     expect(await screen.findByRole("heading", { name: "Upload design" })).toBeVisible();
+  });
+
+  it("fails closed when current quotation approval fields are missing", async () => {
+    const task: DesignPlanTask = { ...assignedTask, estimationWorkflowVersion: 3, canEditQuotation: true, leadId: "lead-v3" };
+    server.use(http.get("/api/v1/designer/design-plan-tasks", () => HttpResponse.json({ data: [task] })));
+    renderPage();
+    expect(await screen.findByRole("alert")).toHaveTextContent("The current quotation approval could not be verified");
+    expect(screen.queryByRole("form", { name: "Complete Internal Kick off" })).not.toBeInTheDocument();
   });
   it("shows acknowledgement after payment and saves the Designer receipt of the design flow with evidence", async () => {
     let completed = false;

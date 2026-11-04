@@ -11,6 +11,7 @@ import { AiEstimatorKnowledgeUomModel } from "../../models/AiEstimatorKnowledgeU
 import { approvedProcurementSnapshotFromRows, type ApprovedProcurementSnapshot } from "../procurement.service.js";
 import { fenceCollaborativeEstimate } from "../estimate-collaboration-policy.service.js";
 import { resolveEstimatorCatalogueLines } from "../estimator-catalogue.service.js";
+import { resolveCurrentQuotationApproval } from "../quotation-approval-state.service.js";
 import type { PMRow } from "./common.js";
 
 export interface PMApprovedSourceRead {
@@ -35,7 +36,19 @@ export async function readPMApprovedSource(projectId: string, session: ClientSes
   result.estimate = estimate;
   const rounds = await EstimateClientReviewRoundModel.find({ estimateId: estimate._id,
     status: "approved", decision: "approve" }).session(session).lean();
-  try { result.snapshot = approvedProcurementSnapshotFromRows(estimate, rounds); }
+  const quotationApproval = estimate.estimation?.workflowVersion === 3
+    ? await resolveCurrentQuotationApproval(estimate, session)
+    : null;
+  if (quotationApproval && (!quotationApproval.currentQuotationApproved || !quotationApproval.currentQuotationApproval)) {
+    result.issues.push("The current quotation requires Client approval before measuring progress.");
+    return result;
+  }
+  const currentRounds = quotationApproval?.currentQuotationApproval
+    ? rounds.map(round => String(round._id) === quotationApproval.currentQuotationApproval!.reviewRoundId
+      ? { ...round, currentQuotationApproval: quotationApproval.currentQuotationApproval }
+      : round)
+    : rounds;
+  try { result.snapshot = approvedProcurementSnapshotFromRows(estimate, currentRounds); }
   catch (error) {
     if (!(error instanceof ApiError) || error.status >= 500) throw error;
     result.issues.push("The client-approved estimate source is not available. Reconcile approval lineage before measuring progress.");

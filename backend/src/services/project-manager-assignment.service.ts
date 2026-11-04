@@ -11,6 +11,7 @@ import { SiteCompletionReviewModel } from "../models/SiteCompletionReview.js";
 import { UserModel } from "../models/User.js";
 import type { AuditService } from "./audit.service.js";
 import { appendExecutionChange } from "./execution-change-events.js";
+import { resolveCurrentQuotationApproval, type QuotationApprovalResolution } from "./quotation-approval-state.service.js";
 
 type Row = Record<string, any>;
 export function projectManagerTaskFact(row: Row): ProjectManagerTaskFact {
@@ -19,9 +20,11 @@ export function projectManagerTaskFact(row: Row): ProjectManagerTaskFact {
     version: Number(row.version ?? 1), designPlanVersion: Number(row.designPlanVersion), preparationOnly: row.preparationOnly === true,
     status: String(row.status), supersededAt: row.supersededAt ?? null };
 }
-export function projectManagerSourceFact(row: Row): ProjectManagerSourceFact {
+export function projectManagerSourceFact(row: Row, quotationApproval?: QuotationApprovalResolution): ProjectManagerSourceFact {
   return { id: String(row._id ?? row.id), projectId: String(row.projectId), status: String(row.status),
-    designPlanStatus: row.designPlanStatus ?? null, designPlanVersion: Number(row.designPlanVersion ?? 0), estimation: row.estimation ?? null };
+    designPlanStatus: row.designPlanStatus ?? null, designPlanVersion: Number(row.designPlanVersion ?? 0), estimation: row.estimation ?? null,
+    ...(quotationApproval ? { currentQuotationApproved: quotationApproval.currentQuotationApproved,
+      currentQuotationApproval: quotationApproval.currentQuotationApproval } : {}) };
 }
 
 /** Read-only batched adapter; does not create missing tasks or reconcile identities. */
@@ -35,7 +38,9 @@ export async function readProjectManagerAssignmentsFacts(projectIds: readonly st
   const ownerIds = [...new Set([...projects.map(project => project.programManagerId), ...current.map(task => task.assigneeUserId)].filter(Boolean).map(String))];
   const users = ownerIds.length ? await UserModel.find({ _id: { $in: ownerIds } }).select({ role: 1, active: 1 }).session(session ?? null).lean() as Row[] : [];
   const sourceProjectIds = [...new Set(current.map(task => String(task.projectId)))];
-  const sources = sourceProjectIds.length ? await EstimateModel.find({ projectId: { $in: sourceProjectIds } }).select({ status: 1, projectId: 1, designPlanStatus: 1, designPlanVersion: 1, estimation: 1 }).session(session ?? null).lean() as Row[] : [];
+  const sources = sourceProjectIds.length ? await EstimateModel.find({ projectId: { $in: sourceProjectIds } }).session(session ?? null).lean() as Row[] : [];
+  const sourceFacts = await Promise.all(sources.map(async source => projectManagerSourceFact(source,
+    source.estimation?.workflowVersion === 3 ? await resolveCurrentQuotationApproval(source, session) : undefined)));
   const completionStates = await SiteCompletionStateModel.find({ projectId: { $in: ids } })
     .select({ projectId: 1, currentRound: 1, status: 1 }).session(session ?? null).lean() as Row[];
   const locksReview = (state: Row) => ["pending_client", "client_approved"].includes(state.status);
@@ -48,7 +53,7 @@ export async function readProjectManagerAssignmentsFacts(projectIds: readonly st
   const sourceByProject = new Map<string, ProjectManagerSourceFact[]>();
   const reviewsByProject = new Map<string, string[]>();
   for (const row of tasks) { const id = String(row.projectId); const list = taskByProject.get(id) ?? []; list.push(projectManagerTaskFact(row)); taskByProject.set(id, list); }
-  for (const row of sources) { const id = String(row.projectId); const list = sourceByProject.get(id) ?? []; list.push(projectManagerSourceFact(row)); sourceByProject.set(id, list); }
+  for (const source of sourceFacts) { const id = source.projectId; const list = sourceByProject.get(id) ?? []; list.push(source); sourceByProject.set(id, list); }
   for (const row of reviews) { const id = String(row.projectId); const list = reviewsByProject.get(id) ?? []; list.push(String(row.managerId)); reviewsByProject.set(id, list); }
   const userFacts = users.map(user => ({ id: String(user._id), role: String(user.role), active: user.active === true }));
   for (const project of projects) {

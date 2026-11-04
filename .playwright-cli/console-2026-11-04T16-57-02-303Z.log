@@ -1,0 +1,76 @@
+[     186ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://127.0.0.1:5193/@fs/private/tmp/lisno-designer-assignment-flow/vite-cache/deps/react-dom_client.js?v=a1c47a51:5
+[   37449ms] [LOG] [vite] server connection lost. Polling for restart... @ http://127.0.0.1:5193/@vite/client:963
+[   38095ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://127.0.0.1:5193/@fs/private/tmp/lisno-designer-assignment-flow/vite-cache/deps/react-dom_client.js?v=a1c47a51:5
+[   42382ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://127.0.0.1:5193/@fs/private/tmp/lisno-designer-assignment-flow/vite-cache/deps/react-dom_client.js?v=a1c47a51:5
+[   86247ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://127.0.0.1:5193/@fs/private/tmp/lisno-designer-assignment-flow/vite-cache/deps/react-dom_client.js?v=a1c47a51:5
+[   86901ms] [WARNING] Couldn't load preload assets:  ProgressEvent @ http://127.0.0.1:5193/@fs/private/tmp/lisno-designer-assignment-flow/vite-cache/deps/axe-core.js?v=a1c47a51:29228
+[   87092ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://127.0.0.1:5193/@fs/private/tmp/lisno-designer-assignment-flow/vite-cache/deps/react-dom_client.js?v=a1c47a51:5
+[   87406ms] [WARNING] Couldn't load preload assets:  ProgressEvent @ http://127.0.0.1:5193/@fs/private/tmp/lisno-designer-assignment-flow/vite-cache/deps/axe-core.js?v=a1c47a51:29228
+[   87577ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://127.0.0.1:5193/@fs/private/tmp/lisno-designer-assignment-flow/vite-cache/deps/react-dom_client.js?v=a1c47a51:5
+[   87948ms] [WARNING] Couldn't load preload assets:  ProgressEvent @ http://127.0.0.1:5193/@fs/private/tmp/lisno-designer-assignment-flow/vite-cache/deps/axe-core.js?v=a1c47a51:29228
+[   88130ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://127.0.0.1:5193/@fs/private/tmp/lisno-designer-assignment-flow/vite-cache/deps/react-dom_client.js?v=a1c47a51:5
+[   88728ms] [WARNING] Couldn't load preload assets:  ProgressEvent @ http://127.0.0.1:5193/@fs/private/tmp/lisno-designer-assignment-flow/vite-cache/deps/axe-core.js?v=a1c47a51:29228
+[   88887ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://127.0.0.1:5193/@fs/private/tmp/lisno-designer-assignment-flow/vite-cache/deps/react-dom_client.js?v=a1c47a51:5
+[   89181ms] [WARNING] Couldn't load preload assets:  ProgressEvent @ http://127.0.0.1:5193/@fs/private/tmp/lisno-designer-assignment-flow/vite-cache/deps/axe-core.js?v=a1c47a51:29228
+[   89341ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://127.0.0.1:5193/@fs/private/tmp/lisno-designer-assignment-flow/vite-cache/deps/react-dom_client.js?v=a1c47a51:5
+[   89630ms] [WARNING] Couldn't load preload assets:  ProgressEvent @ http://127.0.0.1:5193/@fs/private/tmp/lisno-designer-assignment-flow/vite-cache/deps/axe-core.js?v=a1c47a51:29228
+[  113089ms] [LOG] [vite] server connection lost. Polling for restart... @ http://127.0.0.1:5193/@vite/client:963
+[  113090ms] [ERROR] WebSocket connection to 'ws://127.0.0.1:5193/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:5193/@vite/client:1034
+[  114093ms] [ERROR] WebSocket connection to 'ws://127.0.0.1:5193/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:5193/@vite/client:1034
+[  115096ms] [ERROR] WebSocket connection to 'ws://127.0.0.1:5193/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:5193/@vite/client:1034
+[  116101ms] [ERROR] WebSocket connection to 'ws://127.0.0.1:5193/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:5193/@vite/client:1034
+[  117103ms] [ERROR] WebSocket connection to 'ws://127.0.0.1:5193/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:5193/@vite/client:1034
+[  118111ms] [ERROR] WebSocket connection to 'ws://127.0.0.1:5193/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:5193/@vite/client:1034
+[  119118ms] [ERROR] WebSocket connection to 'ws://127.0.0.1:5193/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:5193/@vite/client:1034
+[  120124ms] [ERROR] WebSocket connection to 'ws://127.0.0.1:5193/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:5193/@vite/client:1034
+[  121129ms] [ERROR] WebSocket connection to 'ws://127.0.0.1:5193/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:5193/@vite/client:1034
+[  122131ms] [ERROR] WebSocket connection to 'ws://127.0.0.1:5193/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:5193/@vite/client:1034
+[  123134ms] [ERROR] WebSocket connection to 'ws://127.0.0.1:5193/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:5193/@vite/client:1034
+[  124139ms] [ERROR] WebSocket connection to 'ws://127.0.0.1:5193/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:5193/@vite/client:1034
+[  125142ms] [ERROR] WebSocket connection to 'ws://127.0.0.1:5193/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:5193/@vite/client:1034
+[  126147ms] [ERROR] WebSocket connection to 'ws://127.0.0.1:5193/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:5193/@vite/client:1034
+[  127152ms] [ERROR] WebSocket connection to 'ws://127.0.0.1:5193/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:5193/@vite/client:1034
+[  128157ms] [ERROR] WebSocket connection to 'ws://127.0.0.1:5193/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:5193/@vite/client:1034
+[  129162ms] [ERROR] WebSocket connection to 'ws://127.0.0.1:5193/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:5193/@vite/client:1034
+[  130171ms] [ERROR] WebSocket connection to 'ws://127.0.0.1:5193/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:5193/@vite/client:1034
+[  131174ms] [ERROR] WebSocket connection to 'ws://127.0.0.1:5193/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:5193/@vite/client:1034
+[  132178ms] [ERROR] WebSocket connection to 'ws://127.0.0.1:5193/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:5193/@vite/client:1034
+[  133182ms] [ERROR] WebSocket connection to 'ws://127.0.0.1:5193/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:5193/@vite/client:1034
+[  134185ms] [ERROR] WebSocket connection to 'ws://127.0.0.1:5193/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:5193/@vite/client:1034
+[  135187ms] [ERROR] WebSocket connection to 'ws://127.0.0.1:5193/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:5193/@vite/client:1034
+[  136190ms] [ERROR] WebSocket connection to 'ws://127.0.0.1:5193/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:5193/@vite/client:1034
+[  137192ms] [ERROR] WebSocket connection to 'ws://127.0.0.1:5193/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:5193/@vite/client:1034
+[  138194ms] [ERROR] WebSocket connection to 'ws://127.0.0.1:5193/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:5193/@vite/client:1034
+[  139196ms] [ERROR] WebSocket connection to 'ws://127.0.0.1:5193/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:5193/@vite/client:1034
+[  140198ms] [ERROR] WebSocket connection to 'ws://127.0.0.1:5193/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:5193/@vite/client:1034
+[  141200ms] [ERROR] WebSocket connection to 'ws://127.0.0.1:5193/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:5193/@vite/client:1034
+[  142202ms] [ERROR] WebSocket connection to 'ws://127.0.0.1:5193/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:5193/@vite/client:1034
+[  143205ms] [ERROR] WebSocket connection to 'ws://127.0.0.1:5193/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:5193/@vite/client:1034
+[  144207ms] [ERROR] WebSocket connection to 'ws://127.0.0.1:5193/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:5193/@vite/client:1034
+[  145210ms] [ERROR] WebSocket connection to 'ws://127.0.0.1:5193/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:5193/@vite/client:1034
+[  146212ms] [ERROR] WebSocket connection to 'ws://127.0.0.1:5193/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:5193/@vite/client:1034
+[  147216ms] [ERROR] WebSocket connection to 'ws://127.0.0.1:5193/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:5193/@vite/client:1034
+[  148218ms] [ERROR] WebSocket connection to 'ws://127.0.0.1:5193/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:5193/@vite/client:1034
+[  149219ms] [ERROR] WebSocket connection to 'ws://127.0.0.1:5193/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:5193/@vite/client:1034
+[  150222ms] [ERROR] WebSocket connection to 'ws://127.0.0.1:5193/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:5193/@vite/client:1034
+[  151225ms] [ERROR] WebSocket connection to 'ws://127.0.0.1:5193/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:5193/@vite/client:1034
+[  152227ms] [ERROR] WebSocket connection to 'ws://127.0.0.1:5193/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:5193/@vite/client:1034
+[  153229ms] [ERROR] WebSocket connection to 'ws://127.0.0.1:5193/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:5193/@vite/client:1034
+[  154231ms] [ERROR] WebSocket connection to 'ws://127.0.0.1:5193/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:5193/@vite/client:1034
+[  155233ms] [ERROR] WebSocket connection to 'ws://127.0.0.1:5193/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:5193/@vite/client:1034
+[  156235ms] [ERROR] WebSocket connection to 'ws://127.0.0.1:5193/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:5193/@vite/client:1034
+[  157238ms] [ERROR] WebSocket connection to 'ws://127.0.0.1:5193/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:5193/@vite/client:1034
+[  158240ms] [ERROR] WebSocket connection to 'ws://127.0.0.1:5193/' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:5193/@vite/client:1034
+[  159219ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://127.0.0.1:5193/lisno-logo.svg:0
+[  193309ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://127.0.0.1:5193/@fs/private/tmp/lisno-designer-assignment-flow/vite-cache/deps/react-dom_client.js?v=a1c47a51:5
+[  194336ms] [WARNING] Couldn't load preload assets:  ProgressEvent @ http://127.0.0.1:5193/@fs/private/tmp/lisno-designer-assignment-flow/vite-cache/deps/axe-core.js?v=a1c47a51:29228
+[  194544ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://127.0.0.1:5193/@fs/private/tmp/lisno-designer-assignment-flow/vite-cache/deps/react-dom_client.js?v=a1c47a51:5
+[  194883ms] [WARNING] Couldn't load preload assets:  ProgressEvent @ http://127.0.0.1:5193/@fs/private/tmp/lisno-designer-assignment-flow/vite-cache/deps/axe-core.js?v=a1c47a51:29228
+[  195100ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://127.0.0.1:5193/@fs/private/tmp/lisno-designer-assignment-flow/vite-cache/deps/react-dom_client.js?v=a1c47a51:5
+[  195431ms] [WARNING] Couldn't load preload assets:  ProgressEvent @ http://127.0.0.1:5193/@fs/private/tmp/lisno-designer-assignment-flow/vite-cache/deps/axe-core.js?v=a1c47a51:29228
+[  195646ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://127.0.0.1:5193/@fs/private/tmp/lisno-designer-assignment-flow/vite-cache/deps/react-dom_client.js?v=a1c47a51:5
+[  196505ms] [WARNING] Couldn't load preload assets:  ProgressEvent @ http://127.0.0.1:5193/@fs/private/tmp/lisno-designer-assignment-flow/vite-cache/deps/axe-core.js?v=a1c47a51:29228
+[  196680ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://127.0.0.1:5193/@fs/private/tmp/lisno-designer-assignment-flow/vite-cache/deps/react-dom_client.js?v=a1c47a51:5
+[  197004ms] [WARNING] Couldn't load preload assets:  ProgressEvent @ http://127.0.0.1:5193/@fs/private/tmp/lisno-designer-assignment-flow/vite-cache/deps/axe-core.js?v=a1c47a51:29228
+[  197171ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://127.0.0.1:5193/@fs/private/tmp/lisno-designer-assignment-flow/vite-cache/deps/react-dom_client.js?v=a1c47a51:5
+[  197480ms] [WARNING] Couldn't load preload assets:  ProgressEvent @ http://127.0.0.1:5193/@fs/private/tmp/lisno-designer-assignment-flow/vite-cache/deps/axe-core.js?v=a1c47a51:29228

@@ -17,6 +17,7 @@ import { adminUserKeys } from "./adminApi";
 import { adminProjectKeys } from "./adminProjectsApi";
 import { dashboardKeys } from "./dashboard/superAdminDashboardApi";
 import { userInvitationKeys } from "./userInvitationsApi";
+import { emptyResponsibilitiesHandler } from "./userResponsibilities.test-fixtures";
 
 const actor = { id: "super-admin", name: "Sana Admin", email: "sana@example.test", role: "super_admin" as const };
 const dates = { createdAt: "2026-07-01T09:00:00.000Z", updatedAt: "2026-10-01T09:00:00.000Z" };
@@ -34,6 +35,7 @@ const noResponsibilities: UserResponsibilityCounts = {
 function setupSession(canDelete = true) {
   tokenStorage.set("synthetic-admin-token");
   server.use(
+    emptyResponsibilitiesHandler([protectedUser, staff, vendor]),
     http.get("/api/v1/auth/me", () => HttpResponse.json({ data: actor })),
     http.get("/api/v1/auth/authorization", () => HttpResponse.json({ data: authorizationFor("super_admin", [
       "identity.self.read", "identity.authorization.read", "identity.users.read", "identity.users.update",

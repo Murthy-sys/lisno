@@ -24,6 +24,13 @@ function fixture(phase: "pre" | "post" = "pre") {
     lines: [{ id: "line-one", mainLineId: "cabinet", mainLineName: "Current cabinet", roomId: "kitchen", roomName: "Kitchen", mainBasketId: "joinery", mainBasketName: "Joinery",
       subBasketId: "cabinet", subBasketName: "Cabinet work", included: true, source, quantity: 2, uomName: "Unit", pricingMode: "sub_vendor", modeTier: "signature", ratePaise: 50000, amountPaise: 100000,
       choices: [{ modeTier: "signature", available: true, unavailableReason: null, source, ratePaise: 50000, amountPaise: 100000 }] }] };
+  if (phase === "post") Object.assign(detail, {
+    quotationApprovalState: "revision_pending_client" as const,
+    currentQuotationApproved: false,
+    requiresClientReapproval: true,
+    quotationApprovalSource: null,
+    currentQuotationApproval: null
+  });
   const estimate: EstimateQueueItem = withQuotationApproval(withPublishedReview({ id: "estimate-one", projectId: detail.projectId, propertyType: "Villa", rooms: [], scopes: [], status: "sent_to_client" as const, approvalRequired: true,
     lineItems: [{ id: "line-one", source: "legacy", catalogueId: "cabinet", roomId: "kitchen", roomName: "Kitchen", specification: "Submitted cabinet", unit: "Unit", quantity: 2, rate: 350, amount: 700, included: true }],
     subtotal: 700, gst: 126, total: 826, lead: { _id: "lead-one", clientName: "Synthetic Client", projectName: "Synthetic Home", location: "Test location" } }), detail);
@@ -61,8 +68,11 @@ function setup(options: { workspace?: boolean; phase?: "pre" | "post"; quotation
     http.patch("/api/v1/projects/project-one/quotation", async ({ request }) => {
       const body = await request.json() as { expectedVersion: number; operations: Array<{ quantity?: number }> }; saves.push(body);
       if (state.saveError) return HttpResponse.json({ error: { message: "Save rejected" } }, { status: state.saveError });
-      state.detail = { ...state.detail, estimateVersion: 4, pricedRevision: 3, status: "draft", reviewState: "awaiting_staff_review", lines: state.detail.lines.map(line => ({ ...line, quantity: body.operations[0]!.quantity ?? line.quantity })) };
+      state.detail = { ...state.detail, estimateVersion: 4, pricedRevision: 3, status: "draft", reviewState: "awaiting_staff_review",
+        ...(state.detail.phase === "post" ? { quotationApprovalState: "revision_draft" as const, currentQuotationApproved: false, requiresClientReapproval: true, quotationApprovalSource: null, currentQuotationApproval: null } : {}),
+        lines: state.detail.lines.map(line => ({ ...line, quantity: body.operations[0]!.quantity ?? line.quantity })) };
       state.estimate = { ...state.estimate, version: 4, status: "draft", estimation: { ...state.estimate.estimation!, status: "draft", pendingReviewRoundId: null, salesApproval: null, pricedRevision: 3 },
+        ...(state.detail.phase === "post" ? { quotationApprovalState: "revision_draft" as const, currentQuotationApproved: false, requiresClientReapproval: true, quotationApprovalSource: null, currentQuotationApproval: null } : {}),
         publishedReview: { ...state.estimate.publishedReview!, status: "superseded", canDecide: false } };
       state.queue = [state.estimate]; return HttpResponse.json({ data: state.detail });
     }),
@@ -204,7 +214,9 @@ describe("Unified Client estimation", () => {
     expect(screen.queryByRole("button", { name: "Approve pre-design quotation" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Edit estimate" }));
     expect(screen.getByRole("spinbutton", { name: /Quantity for Current cabinet/ })).toHaveValue(4);
-    view.state.detail = { ...view.state.detail, status: "sent_to_client", reviewState: "ready_for_approval" };
+    view.state.detail = { ...view.state.detail, status: "sent_to_client", reviewState: "ready_for_approval",
+      quotationApprovalState: "revision_pending_client", currentQuotationApproved: false, requiresClientReapproval: true,
+      quotationApprovalSource: null, currentQuotationApproval: null };
     view.state.estimate = withQuotationApproval({ ...view.state.estimate, status: "sent_to_client", publishedReview: { ...view.state.estimate.publishedReview!, id: "round-revised", status: "pending", canDecide: true } }, view.state.detail);
     view.state.queue = [view.state.estimate]; await view.refresh();
     await user.click(await screen.findByRole("button", { name: "Review for pre-design approval" }));
@@ -234,13 +246,15 @@ describe("Unified Client estimation", () => {
     expect(screen.queryByRole("button", { name: "Approve designer-revised quotation" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Edit estimate" }));
     expect(screen.getByRole("spinbutton", { name: /Quantity for Current cabinet/ })).toHaveValue(7);
-    view.state.detail = { ...view.state.detail, status: "sent_to_client", reviewState: "ready_for_approval" };
+    view.state.detail = { ...view.state.detail, status: "sent_to_client", reviewState: "ready_for_approval",
+      quotationApprovalState: "revision_pending_client", currentQuotationApproved: false,
+      requiresClientReapproval: true, quotationApprovalSource: null, currentQuotationApproval: null };
     view.state.estimate = withQuotationApproval({ ...view.state.estimate, status: "sent_to_client", publishedReview: {
       ...view.state.estimate.publishedReview!, id: "round-post-revised", version: 2, status: "pending", canDecide: true
     } }, view.state.detail);
     view.state.estimate.estimation!.salesApproval = null;
     view.state.queue = [view.state.estimate]; await view.refresh();
-    await user.click(await screen.findByRole("button", { name: "Review for post-design approval" }));
+    await user.click(await screen.findByRole("button", { name: "Review revised quotation" }));
     expect(await screen.findByText(/Submitted version 4/)).toBeVisible();
     await user.click(await screen.findByRole("button", { name: "Approve designer-revised quotation" }));
     await user.click(screen.getByRole("button", { name: "Confirm approval" }));

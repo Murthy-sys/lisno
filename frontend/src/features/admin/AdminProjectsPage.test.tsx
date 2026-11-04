@@ -755,3 +755,55 @@ describe("AdminProjectsPage", () => {
     });
   });
 });
+
+
+it("keeps initial approval, Designer draft and approved values consistent across grid, list and quick view", async () => {
+  window.localStorage.removeItem(VIEW_STORAGE_KEY);
+  installSuperAdminSession();
+  const first: AdminProjectSummary = {
+    ...project,
+    id: "project-initial",
+    name: "Initial approved home",
+    estimationWorkflowVersion: 3,
+    estimate: {
+      id: "estimate-initial", leadId: "lead-1", projectId: "project-initial", resolvedProjectId: "project-initial", projectLinkSource: "estimate_and_lead", version: 7,
+      status: "draft", estimationPhase: "post", subtotal: 900, gst: 162, total: 1062,
+      clientDecisionAt: "2026-11-04T09:00:00.000Z", clientDecisionSource: "client_portal",
+      initialEstimateApproval: { reviewRoundId: "round-initial", estimateVersion: 4, approvedAt: "2026-11-04T09:00:00.000Z" },
+      canAssignDesigner: true, designerAssignmentBlockedReason: null,
+      quotationApprovalState: "initial_current", currentQuotationApproved: true, requiresClientReapproval: false,
+      quotationApprovalSource: "initial_unchanged",
+      currentQuotationApproval: { kind: "initial_unchanged", reviewRoundId: "round-initial", estimateVersion: 4, approvedAt: "2026-11-04T09:00:00.000Z" },
+      approvedBaseline: { estimateVersion: 4, reviewRoundId: "round-initial", subtotal: 100, gst: 18, total: 118, decisionAt: "2026-11-04T09:00:00.000Z", decisionSource: "client_portal" },
+      designPlanStatus: "pending_assignment", designPlanDesigner: null
+    }
+  };
+  const second: AdminProjectSummary = {
+    ...first, id: "project-other", name: "Other initial approval",
+    estimate: { ...first.estimate!, id: "estimate-other", projectId: "project-other", resolvedProjectId: "project-other", canAssignDesigner: false, designerAssignmentBlockedReason: "Only Super Admin can assign a Designer.", approvedBaseline: { ...first.estimate!.approvedBaseline!, subtotal: 250, gst: 45, total: 295 } }
+  };
+  server.use(http.get("/api/v1/admin/projects", () => HttpResponse.json(page([first, second]))));
+  const user = userEvent.setup();
+  renderApp(["/admin/projects"]);
+  let firstArticle = await screen.findByRole("article", { name: first.name });
+  expect(within(firstArticle).getByText("Initial estimate")).toBeVisible();
+  expect(within(firstArticle).getByText("Client approved")).toBeVisible();
+  expect(within(firstArticle).getByText("Designer quotation")).toBeVisible();
+  expect(within(firstArticle).getByText("No changes; initial approval current")).toBeVisible();
+  expect(within(firstArticle).getByText("₹118")).toBeVisible();
+  expect(within(firstArticle).queryByText("₹1,062")).not.toBeInTheDocument();
+  expect(within(firstArticle).getByRole("link", { name: "Assign Designer" })).toBeVisible();
+  expect(within(screen.getByRole("article", { name: second.name })).getByText("₹295")).toBeVisible();
+  expect(within(screen.getByRole("article", { name: second.name })).queryByRole("link", { name: "Assign Designer" })).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "List view" }));
+  firstArticle = screen.getByRole("article", { name: first.name });
+  expect(within(firstArticle).getByText("Initial estimate: Client approved")).toBeVisible();
+  expect(within(firstArticle).getByText("Designer quotation: No changes; initial approval current")).toBeVisible();
+  expect(within(firstArticle).getByText("₹118")).toBeVisible();
+  await user.click(within(firstArticle).getByRole("button", { name: `Quick view ${first.name}` }));
+  const quickView = screen.getByRole("dialog", { name: first.name });
+  expect(within(quickView).getByText("Initial estimate").closest("div")).toHaveTextContent("Client approved");
+  expect(within(quickView).getByText("Designer quotation").closest("div")).toHaveTextContent("No changes; initial approval current");
+  expect(within(quickView).getByText("₹118")).toBeVisible();
+  expect(within(quickView).queryByText("₹1,062")).not.toBeInTheDocument();
+});

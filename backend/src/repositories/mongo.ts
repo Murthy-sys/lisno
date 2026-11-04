@@ -1,12 +1,14 @@
+import { mongoUserResponsibilityCounts, mongoUserResponsibilities } from "./user-responsibilities.js";
 import { readProjectNumber } from "../domain/project-number.js";
 import { readProjectNumbers } from "../services/project-number-read.service.js";
 import { readProjectInitiationMetadata } from "../domain/project-initiation-metadata.js";
 import { projectManagerProjectIds } from "../services/project-manager-assignment.service.js";
 import { ProjectClientInvitationModel, ProjectInitiationReceiptModel } from "../models/ProjectClientInvitation.js";
 import { mongoDesignRequirementsSource, mongoDesignRequirementsState, mongoSaveDesignRequirementsState } from "./design-requirements-mongo.js";
-import { activateCollaborativeProjectWorkflow } from "../services/project-workflow.service.js";
+import { activateCollaborativeProjectWorkflow, ensureQuotationDesignTask } from "../services/project-workflow.service.js";
 import { openProjectFinanceBucket } from "../services/project-finance.service.js";
 import { currentEstimationApproval, isCollaborativeEstimate } from "../domain/estimation-lifecycle.js";
+import { resolveCurrentQuotationApproval, resolveQuotationApprovalFromRounds } from "../services/quotation-approval-state.service.js";
 import type { ProjectClientInvitationRecord } from "../domain/project-client-invitations.js";
 import { readProcurementVendorInvitationSource } from "../services/procurement-vendor-invitation-authority.js";
 import { readVendorWorkInvitationSource } from "../services/vendor-work-invitation-authority.js";
@@ -54,6 +56,7 @@ import { EmailCoordinationModel } from "../models/EmailCoordination.js";
 import { EvaluationModel } from "../models/Evaluation.js";
 import { EstimateModel } from "../models/Estimate.js";
 import { EstimateClientReviewRoundModel } from "../models/EstimateClientReviewRound.js";
+import { EstimateClientResponseProofModel } from "../models/EstimateClientResponseProof.js";
 import { FloorModel } from "../models/Floor.js";
 import { LeadModel } from "../models/Lead.js";
 import { LeadActivityModel } from "../models/LeadActivity.js";
@@ -254,6 +257,13 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
         projectId: 1,
         version: 1,
         status: 1,
+        propertyType: 1,
+        bedroomCount: 1,
+        rooms: 1,
+        scopes: 1,
+        selectedMainBasketIds: 1,
+        selectedMainBasketClassifications: 1,
+        lineItems: 1,
         subtotal: 1,
         estimation: 1,
         gst: 1,
@@ -317,6 +327,9 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       .select({
         _id: 1,
         estimateId: 1,
+        projectId: 1,
+        phase: 1,
+        decidedById: 1,
         sendGeneration: 1,
         estimateVersion: 1,
         version: 1,
@@ -328,12 +341,34 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
         decision: 1,
         decisionSource: 1,
         decidedAt: 1,
+        workflowVersion: 1,
+        requirementsVersion: 1,
+        pricedRevision: 1,
+        designScopeRevision: 1,
+        designReviewRoundId: 1,
+        designPlanVersion: 1,
+        sourceDigest: 1,
+        submittedById: 1,
+        salesApproval: 1,
         estimateSnapshot: 1
       })
       .sort({ estimateId: 1, sendGeneration: -1, _id: 1 })
       .lean();
     if (session) roundQuery.session(session);
     const roundDocuments = await roundQuery.exec();
+    const proofQuery = EstimateClientResponseProofModel.find({ reviewRoundId: { $in: roundDocuments.map(round => round._id) } })
+      .select("reviewRoundId estimateId uploadedById uploadedAt originalFilename mimeType byteSize sha256 +storageReference");
+    if (session) proofQuery.session(session);
+    const proofDocuments = await proofQuery.lean();
+    const approvalRoundDocuments = roundDocuments.map(round => {
+      const matching = proofDocuments.filter(proof => String(proof.reviewRoundId) === String(round._id));
+      const proof = matching.length === 1 ? matching[0] : null;
+      return { ...round, proofValid: Boolean(proof && String(proof.estimateId) === String(round.estimateId) &&
+        String(proof.uploadedById) === String(round.decidedById) && typeof proof.storageReference === "string" &&
+        proof.storageReference.length > 0 && typeof proof.originalFilename === "string" && proof.originalFilename.length > 0 &&
+        ["application/pdf", "image/jpeg", "image/png", "image/webp"].includes(String(proof.mimeType)) &&
+        Number.isSafeInteger(proof.byteSize) && proof.byteSize > 0 && /^[a-f0-9]{64}$/.test(String(proof.sha256)) && nullableIso(proof.uploadedAt)) };
+    });
     const currentRoundByEstimateId = new Map<
       string,
       Pick<
@@ -342,7 +377,7 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       >
     >();
     const roundsByEstimateId = new Map<string, Array<Record<string, any>>>();
-    for (const document of roundDocuments) {
+    for (const document of approvalRoundDocuments) {
       const estimateId = String(document.estimateId);
       const estimateRounds = roundsByEstimateId.get(estimateId) ?? [];
       estimateRounds.push(document);
@@ -370,6 +405,14 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
     }));
     const estimates: EstimateSummaryRecord[] = estimateDocuments.map((document) => {
       const currentRound = currentRoundByEstimateId.get(idOf(document));
+      const estimateRounds = roundsByEstimateId.get(idOf(document)) ?? [];
+      const project = projectDocuments.find(project => idOf(project) === String(document.projectId));
+      const quotationApproval = document.estimation?.workflowVersion === 3
+        ? resolveQuotationApprovalFromRounds(document, estimateRounds, {
+          clientId: project?.clientId == null ? null : String(project.clientId),
+          primaryDesignerId: project?.primaryDesignerId == null ? null : String(project.primaryDesignerId)
+        })
+        : null;
       return {
         id: idOf(document),
         leadId: String(document.leadId),
@@ -377,6 +420,14 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
         version: Number(document.version),
         status: String(document.status),
         ...(document.estimation ? { estimation: document.estimation } : {}),
+        ...(quotationApproval ? { quotationApproval } : {}),
+        propertyType: String(document.propertyType ?? ""),
+        bedroomCount: document.bedroomCount == null ? null : Number(document.bedroomCount),
+        rooms: document.rooms ?? [],
+        scopes: document.scopes ?? [],
+        selectedMainBasketIds: document.selectedMainBasketIds ?? [],
+        selectedMainBasketClassifications: document.selectedMainBasketClassifications ?? [],
+        lineItems: document.lineItems ?? [],
         subtotal: Number(document.subtotal),
         gst: Number(document.gst),
         total: Number(document.total),
@@ -387,7 +438,7 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
         clientDecisionSource: currentRound?.clientDecisionSource ?? null,
         approvedBaseline: approvedAdminEstimateBaseline(
           document,
-          roundsByEstimateId.get(idOf(document)) ?? []
+          estimateRounds
         ),
         clientReview: currentRound?.clientReview ?? null,
         assignedAdminId: currentRound?.assignedAdminId ?? null,
@@ -403,8 +454,26 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       };
     });
     const leads = [...leadDocuments, ...lineageLeadDocuments].map(mapLead);
+    const initialApprovalRounds: WorkflowEstimateApproval[] = approvalRoundDocuments.map(round => ({
+      id: idOf(round), estimateId: String(round.estimateId),
+      projectId: round.projectId == null ? null : String(round.projectId),
+      phase: round.phase, estimateVersion: Number(round.estimateVersion),
+      workflowVersion: round.workflowVersion,
+      requirementsVersion: round.requirementsVersion,
+      pricedRevision: round.pricedRevision,
+      designScopeRevision: round.designScopeRevision,
+      sourceDigest: round.sourceDigest,
+      submittedById: round.submittedById,
+      salesApproval: round.salesApproval,
+      proofValid: round.proofValid,
+      estimateSnapshot: round.estimateSnapshot,
+      status: String(round.status), decision: round.decision ?? null,
+      decidedById: round.decidedById == null ? null : String(round.decidedById),
+      decidedAt: nullableIso(round.decidedAt), decisionSource: round.decisionSource ?? null,
+      lineItems: round.estimateSnapshot?.lineItems ?? []
+    }));
     return projectDocuments.map((document) =>
-      adminProjectSummary(mapProject(document), projectUsers, leads, estimates, actor)
+      adminProjectSummary(mapProject(document), projectUsers, leads, estimates, actor, initialApprovalRounds)
     );
   };
 
@@ -619,7 +688,10 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       if (session) projectQuery.session(session);
       const project = await projectQuery.lean();
       if (![2, 3].includes(project?.estimationWorkflowVersion ?? 0)) return null;
-      const query = EstimateModel.find({ projectId }).limit(2).select({ estimation: 1 });
+      // The effective-approval resolver validates the saved commercial content
+      // against the immutable published snapshot. It must receive the complete
+      // estimate rather than a lifecycle-only projection.
+      const query = EstimateModel.find({ projectId }).limit(2);
       if (session) query.session(session);
       const estimates = await query.lean();
       if (estimates.length > 1) throw new RepositoryConflictError("The project estimate source is ambiguous.");
@@ -655,10 +727,15 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
         const result = await ProjectModel.updateOne({ _id: projectId, estimationWorkflowVersion: project!.estimationWorkflowVersion }, { $inc: { estimationFenceEpoch: 1 } }, { session, timestamps: false });
         if (result.matchedCount !== 1) throw new RepositoryConflictError("The project estimate lifecycle changed.");
       }
+      const quotationApproval = lifecycle.workflowVersion === 3 ? await resolveCurrentQuotationApproval(estimate, session) : null;
+      const derivedDesignStartedAt = lifecycle.workflowVersion === 3 && quotationApproval?.currentQuotationApproval && estimate.designPlanAssignedAt
+        ? new Date(Math.max(Date.parse(quotationApproval.currentQuotationApproval.approvedAt), new Date(estimate.designPlanAssignedAt).getTime())).toISOString()
+        : null;
       return { estimateId: String(estimate._id), workflowVersion: lifecycle.workflowVersion, preApprovedAt: lifecycle.preApproval?.approvedAt ?? null,
-        quotationApprovedAt: lifecycle.workflowVersion === 3 ? lifecycle.finalApproval?.approvedAt ?? null : null,
-        designStartedAt: lifecycle.workflowVersion === 3 ? lifecycle.designStartedAt ?? lifecycle.finalApproval?.approvedAt ?? null : null,
-        quotationLocked: !!lifecycle.editClosedAt, designApproval: lifecycle.workflowVersion === 3 ? lifecycle.designApproval ?? null : null,
+        quotationApprovedAt: lifecycle.workflowVersion === 3 ? quotationApproval?.currentQuotationApproval?.approvedAt ?? null : null,
+        designStartedAt: lifecycle.workflowVersion === 3 ? lifecycle.designStartedAt ?? derivedDesignStartedAt : null,
+        quotationLocked: lifecycle.workflowVersion === 3 ? quotationApproval?.currentQuotationApproved === true : !!lifecycle.editClosedAt,
+        ...(quotationApproval ?? {}), designApproval: lifecycle.workflowVersion === 3 ? lifecycle.designApproval ?? null : null,
         designScopeRevision: lifecycle.designScopeRevision, approvedDesignScopeRevision: lifecycle.approvedDesignScopeRevision,
         finalApproval: lifecycle.finalApproval };
     },
@@ -666,7 +743,8 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       if (!session) throw new Error("Activating execution requires a transaction.");
       const context = await repository.findProjectEstimationContext(projectId, true);
       const designPlanVersion = context?.workflowVersion === 3 ? context.designApproval?.designPlanVersion : context?.finalApproval?.designPlanVersion;
-      if (!context?.finalApproval || !designPlanVersion) throw new RepositoryConflictError("Quotation and design approval are required for execution.");
+      const approval = context?.workflowVersion === 3 ? context.currentQuotationApproval : context?.finalApproval;
+      if (!approval || !designPlanVersion) throw new RepositoryConflictError("Quotation and design approval are required for execution.");
       await openProjectFinanceBucket({ projectId, designPlanVersion,
         openedById: actorId, occurredAt: new Date(occurredAt) }, session);
       await activateCollaborativeProjectWorkflow(projectId, actorId, new Date(occurredAt), session);
@@ -679,6 +757,20 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       } else {
         const result = await DesignWorkflowStateModel.updateOne({ _id: projectId, version: expectedVersion }, { $set: saved }, { session, runValidators: true });
         if (result.matchedCount !== 1) throw new RepositoryConflictError("Design workflow changed.");
+      }
+      if (session) {
+        const project = await ProjectModel.findOne({ _id: projectId, estimationWorkflowVersion: 3 }).session(session).lean();
+        if (project) {
+          const estimates = await EstimateModel.find({ projectId, "estimation.workflowVersion": 3 }).limit(2).session(session).lean();
+          if (estimates.length !== 1) throw new RepositoryConflictError("The project quotation source is ambiguous.");
+          const estimate = estimates[0]!;
+          const approval = await resolveCurrentQuotationApproval(estimate, session);
+          if (approval.currentQuotationApproved) {
+            const eventAt = state.history.at(-1)?.at;
+            const occurredAt = eventAt && Number.isFinite(Date.parse(eventAt)) ? new Date(eventAt) : new Date();
+            await ensureQuotationDesignTask(estimate, occurredAt, session, approval);
+          }
+        }
       }
       return saved;
     },
@@ -1539,80 +1631,11 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
     },
 
     async countUserResponsibilities(userId) {
-      const leadQuery = LeadModel.countDocuments({
-        ownerId: userId,
-        stage: { $nin: ["won", "lost"] }
-      });
-      if (session) leadQuery.session(session);
-      const ownedActiveLeads = await leadQuery.exec();
+      return mongoUserResponsibilityCounts(userId, session);
+    },
 
-      const estimateQuery = EstimateModel.countDocuments({
-        ownerId: userId,
-        status: { $ne: "client_approved" }
-      });
-      if (session) estimateQuery.session(session);
-      const ownedActiveEstimates = await estimateQuery.exec();
-
-      const initiatedProjectQuery = ProjectModel.countDocuments({
-        initiatingDesignerId: userId,
-        status: { $ne: "completed" }
-      });
-      if (session) initiatedProjectQuery.session(session);
-      const initiatedActiveProjects = await initiatedProjectQuery.exec();
-
-      const assignedProjectQuery = ProjectModel.countDocuments({
-        assignedDesignerIds: userId,
-        status: { $ne: "completed" }
-      });
-      if (session) assignedProjectQuery.session(session);
-      const assignedActiveProjects = await assignedProjectQuery.exec();
-
-      const managedProjectQuery = ProjectModel.countDocuments({
-        managerId: userId,
-        status: { $ne: "completed" }
-      });
-      if (session) managedProjectQuery.session(session);
-      const managedActiveProjects = await managedProjectQuery.exec();
-
-      const taskQuery = TaskModel.countDocuments({
-        ownerId: userId,
-        status: { $ne: "completed" }
-      });
-      if (session) taskQuery.session(session);
-      const ownedActiveTasks = await taskQuery.exec();
-
-      const directReportQuery = UserModel.countDocuments({ managerId: userId });
-      if (session) directReportQuery.session(session);
-      const directReports = await directReportQuery.exec();
-
-      const clientProjectQuery = ProjectModel.countDocuments({ clientId: userId });
-      if (session) clientProjectQuery.session(session);
-      const linkedClientProjects = await clientProjectQuery.exec();
-
-      const initiatorGrantQuery = ProjectAccessGrantModel.countDocuments({
-        userId,
-        module: "projects",
-        source: "admin_initiator",
-        active: true
-      });
-      if (session) initiatorGrantQuery.session(session);
-      const adminInitiatorGrants = await initiatorGrantQuery.exec();
-
-      const assignedExecutionProjects = await ProjectModel.countDocuments({ programManagerId: userId, status: { $ne: "completed" } }).session(session ?? null);
-      const assignedWorkflowTasks = await ProjectWorkflowTaskModel.countDocuments({ assigneeUserId: userId, supersededAt: null, status: { $ne: "completed" } }).session(session ?? null);
-      return {
-        assignedExecutionProjects,
-        assignedWorkflowTasks,
-        ownedActiveLeads,
-        ownedActiveEstimates,
-        initiatedActiveProjects,
-        assignedActiveProjects,
-        managedActiveProjects,
-        ownedActiveTasks,
-        directReports,
-        linkedClientProjects,
-        adminInitiatorGrants
-      };
+    async pageUserResponsibilities(userId, query) {
+      return mongoUserResponsibilities(userId, query, session);
     },
 
     async deleteUser(userId, expectedVersion, change) {

@@ -18,6 +18,8 @@ export interface ProjectManagerSourceFact {
   status: string;
   designPlanStatus?: string | null;
   designPlanVersion: number;
+  currentQuotationApproved?: boolean;
+  currentQuotationApproval?: { reviewRoundId: string; estimateVersion: number; designScopeRevision: number } | null;
   estimation?: {
     workflowVersion?: number;
     preApproval?: { reviewRoundId: string; estimateVersion: number } | null;
@@ -59,12 +61,12 @@ export function projectManagerTaskSourceIsValid(task: ProjectManagerTaskFact, so
       identity(lifecycle?.preApproval?.reviewRoundId) && positive(lifecycle!.preApproval!.estimateVersion);
     if (source.status !== "client_approved" || source.designPlanStatus !== "approved" || !positive(source.designPlanVersion)) return false;
     if (lifecycle?.workflowVersion === 3) {
-      const final = lifecycle.finalApproval;
+      const current = source.currentQuotationApproval;
       const design = lifecycle.designApproval;
-      return Boolean(final && design && lifecycle.editClosedAt && identity(final.reviewRoundId) && positive(final.estimateVersion) &&
-        design.estimateReviewRoundId === final.reviewRoundId && design.designPlanVersion === source.designPlanVersion &&
-        design.designScopeRevision === lifecycle.designScopeRevision && final.designScopeRevision === lifecycle.designScopeRevision &&
-        final.designScopeRevision === lifecycle.approvedDesignScopeRevision);
+      return Boolean(source.currentQuotationApproved && current && design && identity(current.reviewRoundId) && positive(current.estimateVersion) &&
+        design.estimateReviewRoundId === current.reviewRoundId && design.designPlanVersion === source.designPlanVersion &&
+        design.designScopeRevision === lifecycle.designScopeRevision && current.designScopeRevision === lifecycle.designScopeRevision &&
+        current.designScopeRevision === lifecycle.approvedDesignScopeRevision);
     }
     if (lifecycle?.workflowVersion !== 2) return true;
     const final = lifecycle.finalApproval;

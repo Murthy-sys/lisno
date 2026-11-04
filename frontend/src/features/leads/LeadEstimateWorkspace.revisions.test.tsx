@@ -9,7 +9,7 @@ import { estimateRevisionKeys, type EstimateRevisionDetail } from "./estimateRev
 import { leadKeys, type ConfiguredEstimateLine, type EstimateDraft, type EstimateDraftInput } from "./leadsApi";
 import type { EstimateRequirement, ResolveEstimateRequirementInput } from "../client/estimateRequirementsApi";
 
-vi.mock("../../auth/AuthProvider", () => ({ useAuth: () => ({ user: { id: "sales-one" }, reviewSession: { id: "session-one" }, status: "authenticated" }) }));
+vi.mock("../../auth/AuthProvider", () => ({ useAuth: () => ({ user: { id: "sales-one", role: "estimator_sales" }, authorization: { permissions: ["estimation.estimate.save", "estimation.estimate.submit", "estimation.estimate.send_client"] }, reviewSession: { id: "session-one" }, status: "authenticated" }) }));
 vi.mock("../messages", () => ({ ProjectChatNavigation: () => null }));
 
 const json = (data: unknown) => Response.json({ data });
@@ -100,7 +100,7 @@ describe("Estimate workspace revisions", () => {
     await user.type(screen.getByRole("searchbox", { name: "Search estimate items" }), "Current");
     await user.selectOptions(screen.getByRole("combobox", { name: "Filter Main Baskets" }), "basket");
     await user.click(within(screen.getByRole("navigation", { name: "Rooms" })).getByRole("button", { name: /Bedroom/ }));
-    await user.click(screen.getByRole("button", { name: /Collapse Current interiors/ }));
+    expect(screen.queryByRole("button", { name: /Collapse Current interiors/ })).not.toBeInTheDocument();
     await selectRevision(user, /Pre-estimate · R1/);
     expect(await screen.findByRole("article", { name: "Published ceiling" })).toBeVisible();
     expect(screen.getAllByLabelText("Estimate amount before GST: ₹275")).toHaveLength(2);
@@ -117,7 +117,7 @@ describe("Estimate workspace revisions", () => {
     await user.click(screen.getByRole("button", { name: "Estimate Builder" }));
     await user.click(screen.getByRole("button", { name: "Return to current estimate" }));
     expect(within(screen.getByRole("navigation", { name: "Rooms" })).getByRole("button", { name: /Bedroom/ })).toHaveAttribute("aria-current", "true");
-    await user.click(screen.getByRole("button", { name: /Expand Current interiors/ }));
+    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
     await user.click(within(screen.getByRole("navigation", { name: "Rooms" })).getByRole("button", { name: /Living Room/ }));
     expect(screen.getByRole("spinbutton", { name: /Quantity.*Current ceiling.*Living Room/ })).toHaveValue(3);
     expect(screen.getByRole("searchbox", { name: "Search estimate items" })).toHaveValue("Current");

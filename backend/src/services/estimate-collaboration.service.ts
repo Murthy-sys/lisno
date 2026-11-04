@@ -28,8 +28,16 @@ import type { AuditService } from "./audit.service.js";
 import { assertEstimateEditable, canStaffEditEstimate, fenceCollaborativeEstimate, requireEstimateStaffActor } from "./estimate-collaboration-policy.service.js";
 import { assertCurrentConfiguredPublication, assertPublishableConfiguredLines, toEstimateSnapshot } from "./estimate-publication.service.js";
 import { ensureCollaborativePreparationTask } from "./project-workflow.service.js";
+import { quotationApprovalPublicFields, resolveCurrentQuotationApproval } from "./quotation-approval-state.service.js";
 
 type Row = Record<string, any>;
+
+async function quotationCommandResult(estimate: Row, estimateId: string, status: string,
+  session: mongoose.ClientSession): Promise<Row> {
+  const result = { ...estimate, id: estimateId, status };
+  if (estimate.estimation?.workflowVersion !== 3) return result;
+  return { ...result, ...quotationApprovalPublicFields(await resolveCurrentQuotationApproval(estimate, session)) };
+}
 
 export function createEstimateCollaborationService(audit: AuditService) {
   const load = async (actor: PublicUser, estimateId: string, expectedVersion: number, session: mongoose.ClientSession) => {
@@ -55,7 +63,7 @@ export function createEstimateCollaborationService(audit: AuditService) {
           const receipt = await AuditEventModel.exists({ action: "estimate_collaboration_enabled", entityType: "estimate", entityId: estimateId,
             actorId: actor.id, "newValues.workflowVersion": 3, "newValues.previewFingerprint": input.previewFingerprint,
             "oldValues.estimateVersion": input.expectedVersion, "newValues.reason": input.reason.trim() }).session(session);
-          if (receipt) return { ...estimate, id: estimateId, status: estimate.estimation.status };
+          if (receipt) return quotationCommandResult(estimate, estimateId, estimate.estimation.status, session);
         }
         if (!preview.eligible || preview.estimateVersion !== input.expectedVersion || preview.previewFingerprint !== input.previewFingerprint)
           throw new ApiError(409, "ESTIMATE_TRANSITION_CONFLICT", "The transition preview changed or has unresolved blockers. Refresh the preview.");
@@ -73,7 +81,7 @@ export function createEstimateCollaborationService(audit: AuditService) {
         await audit.appendInMongoTransaction({ actorId: actor.id, action: "estimate_collaboration_enabled", entityType: "estimate", entityId: estimateId,
           occurredAt: new Date().toISOString(), oldValues: { workflowVersion: preview.currentWorkflowVersion, estimateVersion: input.expectedVersion },
           newValues: { workflowVersion: 3, reason: input.reason.trim(), previewFingerprint: input.previewFingerprint, estimateVersion: saved.version } }, session);
-        return { ...saved, id: estimateId, status: "draft" };
+        return quotationCommandResult(saved, estimateId, "draft", session);
       });
     },
     async enable(actor: PublicUser, estimateId: string, expectedVersion: number) {
@@ -145,7 +153,7 @@ export function createEstimateCollaborationService(audit: AuditService) {
         if (receipt) {
           if (receipt.actorId !== actor.id || receipt.expectedVersion !== input.expectedVersion || receipt.reviewRoundId !== input.reviewRoundId || receipt.reason !== input.reason.trim())
             throw new ApiError(409, "QUOTATION_UNLOCK_CONFLICT", "This request identity was already used for a different unlock.");
-          return { ...estimate, id: estimateId, status: estimate.estimation.status };
+          return quotationCommandResult(estimate, estimateId, estimate.estimation.status, session);
         }
         if (estimate.version !== input.expectedVersion || !estimate.estimation.editClosedAt || estimate.estimation.finalApproval?.reviewRoundId !== input.reviewRoundId)
           throw new ApiError(409, "ESTIMATE_VERSION_CONFLICT", "Refresh the current approved quotation before unlocking.");
@@ -162,7 +170,7 @@ export function createEstimateCollaborationService(audit: AuditService) {
         await audit.appendInMongoTransaction({ actorId: actor.id, action: "quotation_unlocked", entityType: "estimate", entityId: estimateId,
           occurredAt: now.toISOString(), oldValues: { estimateVersion: estimate.version, approvedReviewRoundId: input.reviewRoundId },
           newValues: { estimateVersion: saved.version, reason: input.reason.trim(), idempotencyKey: input.idempotencyKey } }, session);
-        return { ...saved, id: estimateId, status: saved.estimation.status };
+        return quotationCommandResult(saved, estimateId, saved.estimation.status, session);
       });
     },
     async withdraw(actor: PublicUser, estimateId: string, input: { expectedVersion: number; reviewRoundId: string; reviewRoundVersion: number; reason: string }) {
@@ -185,7 +193,7 @@ export function createEstimateCollaborationService(audit: AuditService) {
         await audit.appendInMongoTransaction({ actorId: actor.id, action: "estimate_review_withdrawn", entityType: "estimate",
           entityId: estimateId, occurredAt: occurredAt.toISOString(), oldValues: { reviewRoundId: input.reviewRoundId },
           newValues: { status: "superseded", reason: input.reason } }, session);
-        return { ...updated, id: String(updated._id), status: "draft" };
+        return quotationCommandResult(updated, String(updated._id), "draft", session);
       });
     },
     async releasePreparation(actor: PublicUser, estimateId: string, expectedVersion: number) {
@@ -231,23 +239,35 @@ export async function resolveEstimationPreparationSource(estimate: Row, session?
 }> {
   const lifecycle = estimate.estimation;
   if (!isCollaborativeEstimate(estimate) || !lifecycle.preApproval) throw new ApiError(409, "ESTIMATE_PRE_APPROVAL_REQUIRED", "An approved pre-estimate is required.");
-  if (!lifecycle.finalApproval && lifecycle.preparationSnapshotId) {
+  const quotationApproval = lifecycle.workflowVersion === 3
+    ? await resolveCurrentQuotationApproval(estimate, session)
+    : null;
+  if (lifecycle.workflowVersion === 3 && !quotationApproval?.currentQuotationApproved) {
+    throw new ApiError(409, "ESTIMATE_SOURCE_CONFLICT", "The current approved quotation source is unavailable.");
+  }
+  if (lifecycle.workflowVersion !== 3 && !lifecycle.finalApproval && lifecycle.preparationSnapshotId) {
     const query = EstimatePreparationSnapshotModel.findOne({ _id: lifecycle.preparationSnapshotId, estimateId: estimate._id ?? estimate.id, projectId: estimate.projectId });
     if (session) query.session(session);
     const row = await query.lean() as Row | null;
     if (!row || row.sourceDigest !== sha256Hex(JSON.stringify(row.snapshot))) throw new ApiError(409, "ESTIMATE_SOURCE_CONFLICT", "The released preparation source is unavailable.");
     return { source: preparationSource(row, lifecycle.workflowVersion), snapshot: row.snapshot };
   }
-  const reference = lifecycle.finalApproval ?? lifecycle.preApproval;
+  const reference = lifecycle.workflowVersion === 3
+    ? quotationApproval!.currentQuotationApproval
+    : lifecycle.finalApproval ?? lifecycle.preApproval;
+  if (!reference) throw new ApiError(409, "ESTIMATE_SOURCE_CONFLICT", "The current approved quotation source is unavailable.");
+  const phase = lifecycle.workflowVersion === 3
+    ? quotationApproval!.quotationApprovalSource === "designer_revision" ? "post" : "pre"
+    : lifecycle.finalApproval ? "post" : "pre";
   const query = EstimateClientReviewRoundModel.findOne({ _id: reference.reviewRoundId,
     estimateId: estimate._id ?? estimate.id, projectId: estimate.projectId, estimateVersion: reference.estimateVersion,
-    status: "approved", decision: "approve", phase: lifecycle.finalApproval ? "post" : { $in: ["pre", null] } });
+    status: "approved", decision: "approve", phase: phase === "post" ? "post" : { $in: ["pre", null] } });
   if (session) query.session(session);
   const round = await query.lean() as Row | null;
   if (!round) throw new ApiError(409, "ESTIMATE_SOURCE_CONFLICT", "The approved estimate source is unavailable.");
   return { source: { estimateId: String(round.estimateId), estimateVersion: Number(round.estimateVersion),
-    estimateReviewRoundId: String(round._id), workflowVersion: lifecycle.workflowVersion, phase: lifecycle.finalApproval ? "post" : "pre",
-    kind: lifecycle.finalApproval ? "approved_final" : "approved_pre", sourceSnapshotId: String(round._id),
+    estimateReviewRoundId: String(round._id), workflowVersion: lifecycle.workflowVersion, phase,
+    kind: phase === "post" ? "approved_final" : "approved_pre", sourceSnapshotId: String(round._id),
     sourceDigest: sha256Hex(JSON.stringify(round.estimateSnapshot)) }, snapshot: round.estimateSnapshot };
 }
 

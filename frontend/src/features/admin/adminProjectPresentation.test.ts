@@ -2,6 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import type { AdminProjectSummary } from "../../api/types";
 import {
+  adminEstimateStages,
+  adminProjectNextAction,
+  canAssignProjectDesigner,
+  isDesignerAssignmentPending,
+  hasInitialEstimateApproval,
   adminProjectStatusTone,
   formatCreatedRelative,
   personInitials
@@ -99,5 +104,70 @@ describe("personInitials", () => {
     expect(personInitials("Ravi Estimator")).toBe("RE");
     expect(personInitials("  divya  rao kapoor ")).toBe("DK");
     expect(personInitials("Priya")).toBe("P");
+  });
+});
+
+
+describe("workflow-v3 initial approval and working quotation", () => {
+  const approved = (quotationApprovalState: NonNullable<NonNullable<AdminProjectSummary["estimate"]>["quotationApprovalState"]> = "initial_current"): AdminProjectSummary => ({
+    ...withEstimate("draft", "pending_assignment"),
+    estimationWorkflowVersion: 3,
+    estimate: {
+      ...withEstimate("draft", "pending_assignment").estimate!,
+      estimationPhase: "post",
+      initialEstimateApproval: { reviewRoundId: "initial-review", estimateVersion: 1, approvedAt: "2026-11-04T09:00:00.000Z" },
+      canAssignDesigner: true,
+      designerAssignmentBlockedReason: null,
+      quotationApprovalState,
+      currentQuotationApproved: quotationApprovalState === "initial_current" || quotationApprovalState === "revision_current",
+      requiresClientReapproval: ["revision_draft", "revision_pending_client", "revision_changes_requested"].includes(quotationApprovalState),
+      quotationApprovalSource: quotationApprovalState === "initial_current" ? "initial_unchanged"
+        : quotationApprovalState === "revision_current" ? "designer_revision" : null,
+      currentQuotationApproval: quotationApprovalState === "initial_current"
+        ? { kind: "initial_unchanged", reviewRoundId: "initial-review", estimateVersion: 1, approvedAt: "2026-11-04T09:00:00.000Z" }
+        : quotationApprovalState === "revision_current"
+          ? { kind: "designer_revision", reviewRoundId: "revision-review", estimateVersion: 2, approvedAt: "2026-11-04T10:00:00.000Z" }
+          : null
+    }
+  });
+
+  it.each([
+    ["initial_current", "No changes; initial approval current"],
+    ["revision_draft", "Client approval required"],
+    ["revision_pending_client", "Awaiting Client review"],
+    ["revision_changes_requested", "Changes requested"],
+    ["revision_current", "Client approved"]
+  ] as const)("retains initial approval separately from %s", (state, label) => {
+    const project = approved(state);
+    expect(adminEstimateStages(project)).toEqual([
+      { label: "Initial estimate", value: "Client approved" },
+      { label: "Designer quotation", value: label }
+    ]);
+    expect(hasInitialEstimateApproval(project)).toBe(true);
+    expect(isDesignerAssignmentPending(project)).toBe(true);
+    expect(canAssignProjectDesigner(project)).toBe(true);
+    expect(adminProjectNextAction(project)).toBe("Assign Designer");
+  });
+
+  it("does not use a current approved label to bypass absent v3 eligibility", () => {
+    const project = { ...withEstimate("client_approved", "pending_assignment"), estimationWorkflowVersion: 3 as const };
+    expect(hasInitialEstimateApproval(project)).toBe(false);
+    expect(canAssignProjectDesigner(project)).toBe(false);
+    expect(adminEstimateStages(project)[0].value).toBe("Approval status unavailable");
+  });
+
+  it("honors server denial and describes the assigned Designer's next action", () => {
+    const project = approved();
+    project.estimate = { ...project.estimate!, canAssignDesigner: false, designPlanStatus: "assigned", designPlanDesigner: { id: "designer-1", name: "Designer", email: "designer@example.test" } };
+    expect(canAssignProjectDesigner(project)).toBe(false);
+    expect(isDesignerAssignmentPending(project)).toBe(false);
+    expect(adminProjectNextAction(project)).toBe("Continue design workflow");
+  });
+
+  it("fails closed when the assigned project's current approval source is absent", () => {
+    const project = approved("source_issue");
+    project.estimate = { ...project.estimate!, designPlanStatus: "assigned", designPlanDesigner: { id: "designer-1", name: "Designer", email: "designer@example.test" } };
+    expect(adminEstimateStages(project).at(-1)).toEqual({ label: "Designer quotation", value: "Approval status unavailable" });
+    expect(adminProjectNextAction(project)).toBe("Resolve quotation approval status");
   });
 });

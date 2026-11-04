@@ -7,6 +7,7 @@ import sharp from "sharp";
 import { PDFDocument, rgb } from "pdf-lib";
 
 import { sha256Hex } from "../src/domain/estimate-client-review.js";
+import { quotationSnapshotDigest } from "../src/services/quotation-digest.js";
 import type { WorkerRole } from "../src/domain/roles.js";
 import { DesignPlanResponseProofModel } from "../src/models/DesignPlanResponseProof.js";
 import { DesignPlanReviewRoundModel } from "../src/models/DesignPlanReviewRound.js";
@@ -3425,15 +3426,50 @@ describe("collaborative Design approval boundary", () => {
   async function quotationFixture(locked = true) {
     const f = await fixture();
     const prior = (await EstimateModel.findById("evidence-estimate").lean())!;
+    const snapshot = { propertyType: null, bedroomCount: null, rooms: [], scopes: [], selectedMainBasketIds: [],
+      selectedMainBasketClassifications: [], lineItems: [], subtotal: 0, gst: 0, total: 0,
+      subtotalPaise: 0, gstPaise: 0, totalPaise: 0 };
+    const sourceDigest = quotationSnapshotDigest(snapshot);
+    const salesApproval = { actorId: "evidence-sales", estimateVersion: 1, pricedRevision: 1,
+      sourceDigest, approvedAt: NOW.toISOString() };
     const estimation = { ...newQuotationLifecycle(), phase: "post", status: locked ? "client_approved" : "draft",
       preApproval: prior.estimation.preApproval, editClosedAt: locked ? NOW.toISOString() : null,
+      pricedRevision: 2, designScopeRevision: 1, salesApproval,
       finalApproval: locked ? { reviewRoundId: "quotation-final", estimateVersion: 4, approvedAt: NOW.toISOString(),
         requirementsVersion: 0, designReviewRoundId: null, designPlanVersion: null, designScopeRevision: 1 } : null };
     await ProjectModel.updateOne({ _id: "evidence-project" }, { $set: { estimationWorkflowVersion: 3, primaryDesignerId: f.designer.id } });
-    await EstimateModel.updateOne({ _id: "evidence-estimate" }, { $set: { estimation, version: 5 } });
+    await EstimateClientReviewRoundModel.collection.updateOne({ _id: "collaborative-pre-round" } as never, { $set: {
+      workflowVersion: 3, phase: "pre", requirementsVersion: 0, designScopeRevision: 1, pricedRevision: 1,
+      sourceDigest, submittedById: "evidence-sales", estimateSnapshot: snapshot, decisionSource: "client_portal",
+      decidedById: f.client.id, salesApproval
+    } });
+    if (locked) await EstimateClientReviewRoundModel.collection.insertOne({ _id: "quotation-final", dedupeKey: "quotation-final",
+      estimateId: "evidence-estimate", leadId: "evidence-lead", projectId: "evidence-project", estimateVersion: 4,
+      workflowVersion: 3, phase: "post", requirementsVersion: 0, designScopeRevision: 1, pricedRevision: 2,
+      sourceDigest, submittedById: f.designer.id, estimateSnapshot: snapshot, sendGeneration: 2,
+      recipientEmail: f.client.email, recipientEmailNormalized: f.client.email, pdfFilename: "quotation.pdf",
+      pdfMimeType: "application/pdf", pdfByteSize: 1, pdfSha256: sha256Hex("quotation"), pdfStorageReference: "quotation/final.pdf",
+      deliveryStatus: "sent", deliveryAttemptGeneration: 1, deliveryAttemptCount: 1, assignedAdminId: f.admin.id,
+      status: "approved", decision: "approve", decisionSource: "client_portal", decisionNote: "Approved",
+      decidedById: f.client.id, decidedAt: NOW, version: 2 } as never);
+    await EstimateModel.updateOne({ _id: "evidence-estimate" }, { $set: { ...snapshot, estimation, version: 5,
+      designPlanDesignerId: f.designer.id, designPlanAssignedAt: NOW } });
     await DesignPlanReviewRoundModel.collection.updateOne({ _id: "evidence-round" } as never, { $set: { estimateReviewRoundId: "quotation-final" } });
     return f;
   }
+  it("offers Admin design review for the unchanged initial quotation and hides it after a material revision", async () => {
+    const f = await quotationFixture(false);
+    await EstimateModel.updateOne({ _id: "evidence-estimate" }, { $set: { "estimation.pricedRevision": 1 } });
+    await DesignPlanReviewRoundModel.collection.updateOne({ _id: "evidence-round" } as never, {
+      $set: { estimateReviewRoundId: "collaborative-pre-round" }
+    });
+    expect((await f.workflow.listDesignReviewTasks(f.admin, undefined, "evidence-project"))[0])
+      .toMatchObject({ id: "evidence-round", canDecide: true });
+
+    await EstimateModel.updateOne({ _id: "evidence-estimate" }, { $set: { "estimation.pricedRevision": 2 } });
+    expect((await f.workflow.listDesignReviewTasks(f.admin, undefined, "evidence-project"))[0])
+      .toMatchObject({ id: "evidence-round", canDecide: false });
+  });
   it("permits actual design approval after a locked v3 quotation and records a separate procurement handoff", async () => {
     const f = await quotationFixture();
     await f.workflow.decideDesignReviewAsAdmin({ actor: f.admin, roundId: "evidence-round", expectedVersion: 1, decision: "approve", note: "Client proof", proof: f.proof });
@@ -3485,9 +3521,6 @@ describe("collaborative Design approval boundary", () => {
   it.each([2, 3] as const)("serializes v%s drawing approval behind a winning scope change without approving stale drawings", async workflowVersion => {
     const f = workflowVersion === 3 ? await quotationFixture() : await fixture();
     const initial = (await EstimateModel.findById("evidence-estimate").lean())!;
-    if (workflowVersion === 3) await EstimateClientReviewRoundModel.collection.insertOne({ _id: "quotation-final", dedupeKey: "quotation-final", sendGeneration: 2,
-      estimateId: "evidence-estimate", projectId: "evidence-project", phase: "post", estimateVersion: 4,
-      status: "approved", decision: "approve", decidedAt: NOW, estimateSnapshot: { lineItems: [] } } as never);
     const history = await EstimateClientReviewRoundModel.find({ estimateId: "evidence-estimate" }).sort({ _id: 1 }).lean();
     const round = await DesignPlanReviewRoundModel.findById("evidence-round").lean();
     const drawing = await EstimateDesignRevisionModel.findById("evidence-revision").lean();

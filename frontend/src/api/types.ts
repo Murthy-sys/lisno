@@ -400,6 +400,33 @@ export interface EstimateClientResponseDecisionResult {
   clientReview: EstimateClientReviewSummary;
 }
 
+export type QuotationApprovalState =
+  | "initial_current"
+  | "revision_draft"
+  | "revision_pending_client"
+  | "revision_changes_requested"
+  | "revision_current"
+  | "source_issue";
+
+export type QuotationApprovalSource =
+  | "initial_unchanged"
+  | "designer_revision";
+
+export interface CurrentQuotationApproval {
+  kind: QuotationApprovalSource;
+  reviewRoundId: string;
+  estimateVersion: number;
+  approvedAt: string;
+}
+
+export interface CurrentQuotationApprovalStatus {
+  quotationApprovalState?: QuotationApprovalState;
+  currentQuotationApproved?: boolean;
+  requiresClientReapproval?: boolean;
+  quotationApprovalSource?: QuotationApprovalSource | null;
+  currentQuotationApproval?: CurrentQuotationApproval | null;
+}
+
 export interface AdminProjectSummary extends ProjectInitiationMetadata {
   estimationWorkflowVersion?: 2 | 3;
   readonly projectNumber?: string | null;
@@ -421,7 +448,19 @@ export interface AdminProjectSummary extends ProjectInitiationMetadata {
   estimate: {
     estimationPhase?: "pre" | "post";
     finalEstimateApproved?: boolean;
-  designApproved?: boolean;
+    designApproved?: boolean;
+    initialEstimateApproval?: {
+      reviewRoundId: string;
+      estimateVersion: number;
+      approvedAt: string;
+    } | null;
+    canAssignDesigner?: boolean;
+    designerAssignmentBlockedReason?: string | null;
+    quotationApprovalState?: QuotationApprovalState;
+    currentQuotationApproved?: boolean;
+    requiresClientReapproval?: boolean;
+    quotationApprovalSource?: QuotationApprovalSource | null;
+    currentQuotationApproval?: CurrentQuotationApproval | null;
     id: string;
     leadId: string;
     projectId: string | null;
@@ -466,6 +505,11 @@ export interface DesignPlanTask {
   leadId?: string;
   estimationWorkflowVersion?: 2 | 3;
   quotationApproved?: boolean;
+  quotationApprovalState?: QuotationApprovalState;
+  currentQuotationApproved?: boolean;
+  requiresClientReapproval?: boolean;
+  quotationApprovalSource?: QuotationApprovalSource | null;
+  currentQuotationApproval?: CurrentQuotationApproval | null;
   canEditQuotation?: boolean;
   scopeReconciliation?: { required: boolean; designScopeRevision: number; approvedDesignScopeRevision: number | null };
   id: string;
@@ -1027,6 +1071,44 @@ export interface ManagedUserMutationResult {
   user: UserDirectoryItem;
   revokedGrantCount: number;
   responsibilities: UserResponsibilityCounts;
+}
+
+export type UserResponsibilityCategory = keyof UserResponsibilityCounts;
+export interface UserResponsibilityQuery {
+  destinationRole?: Role;
+  limit: number;
+  offset: number;
+}
+export interface UserResponsibilityProject {
+  id: string;
+  projectNumber: string | null;
+  name: string;
+  status: string;
+  currentStage: { key: string; label: string } | null;
+  stageState: "available" | "unavailable";
+}
+export interface UserResponsibilityRow {
+  id: string;
+  category: UserResponsibilityCategory;
+  sourceType: "lead" | "estimate" | "project" | "task" | "user" | "project_access_grant" | "workflow_task";
+  sourceId: string;
+  label: string;
+  workStatus: string | null;
+  workStage: { key: string; label: string } | null;
+  projectId: string | null;
+  project: UserResponsibilityProject | null;
+  contextState: "available" | "unlinked" | "unavailable" | "not_applicable";
+  relatedUser: { id: string; name: string } | null;
+  blocksRoleChange: boolean;
+}
+export interface UserResponsibilitiesPage {
+  user: { id: string; role: Role; version: number };
+  destinationRole: Role | null;
+  readAt: string;
+  counts: UserResponsibilityCounts;
+  blockingCount: number;
+  items: UserResponsibilityRow[];
+  pagination: { limit: number; offset: number; total: number; hasMore: boolean };
 }
 
 export interface OwnAccessRequest {

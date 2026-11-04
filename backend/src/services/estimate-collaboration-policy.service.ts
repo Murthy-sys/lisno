@@ -100,9 +100,13 @@ export function estimatePhysicalScopeChanged(before: Row, after: Row): boolean {
 
 /** Workflow-only updates must not change the immutable priced revision identity. */
 export function estimateQuotationContentChanged(before: Row, after: Row): boolean {
-  const content = (value: Row) => ({ propertyType: value.propertyType, bedroomCount: value.bedroomCount ?? null,
+  return !isDeepStrictEqual(estimateQuotationContent(before), estimateQuotationContent(after));
+}
+
+/** Canonical commercial content used by both revision detection and approval-source validation. */
+export function estimateQuotationContent(value: Row): Record<string, unknown> {
+  return { propertyType: value.propertyType, bedroomCount: value.bedroomCount ?? null,
     rooms: value.rooms ?? [], scopes: value.scopes ?? [], selectedMainBasketIds: value.selectedMainBasketIds ?? [],
     selectedMainBasketClassifications: value.selectedMainBasketClassifications ?? [], lineItems: value.lineItems ?? [],
-    subtotalPaise: value.subtotalPaise, gstPaise: value.gstPaise, totalPaise: value.totalPaise });
-  return !isDeepStrictEqual(content(before), content(after));
+    subtotalPaise: value.subtotalPaise, gstPaise: value.gstPaise, totalPaise: value.totalPaise };
 }

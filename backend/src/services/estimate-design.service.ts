@@ -59,6 +59,8 @@ import { synchronizeEstimateDesignReviewState } from "./estimate-design-review-s
 import { deleteEstimateDesignUpload, uploadDeleteAvailability } from "./estimate-design-upload-deletion.js";
 import { deduplicateExtractionProposals } from "./extraction-worker.service.js";
 import { assertDesignWorkflowSubmissionAllowed } from "./design-workflow-state.service.js";
+import { resolveCurrentQuotationApproval } from "./quotation-approval-state.service.js";
+import { ensureQuotationDesignTask } from "./project-workflow.service.js";
 
 const mutableDesignEstimateStatuses = [
   "draft",
@@ -4572,8 +4574,10 @@ async function guardDesignLifecycle(
 ) {
   if (isCollaborativeEstimate(estimate)) {
     if (estimate.estimation.workflowVersion === 3) {
-      if (!estimate.estimation.finalApproval || !estimate.estimation.editClosedAt || estimate.estimation.status !== "client_approved")
-        throw new ApiError(409, "QUOTATION_APPROVAL_REQUIRED", "Approve the Designer-revised quotation before starting design work.");
+      const approval = await resolveCurrentQuotationApproval(estimate, session);
+      if (!approval.currentQuotationApproved)
+        throw new ApiError(409, "QUOTATION_APPROVAL_REQUIRED", "Approve the current quotation before starting design work.");
+      await ensureQuotationDesignTask(estimate, new Date(), session, approval);
     } else if (estimate.estimation.editClosedAt || estimate.estimation.finalApproval) throw new ApiError(409, "ESTIMATE_EDIT_WINDOW_CLOSED", "The final estimate is approved; design changes are locked.");
     await fenceCollaborativeEstimate(estimate, session);
   }

@@ -20,6 +20,7 @@ import {
 } from "../leads/EstimateDesignUploads";
 import { estimateBuilderSections } from "../leads/estimateBuilderCatalogue";
 import { EstimatePlanChangeRequests } from "../leads/EstimatePlanChangeRequests";
+import { currentQuotationIsApproved } from "../estimates/quotationApproval";
 import {
   estimatePlanChangeRequestKeys,
   getEstimatePlanChangeRequests
@@ -134,17 +135,30 @@ export function DesignerDesignPlanTasksPage() {
   const currentStage = savedWorkflow ? currentProjectWorkflowStage(savedWorkflow) : undefined;
   const uploadStage = savedWorkflow?.projectStages?.find((stage) => stage.type === "space_planning_tentative_look_feel");
   const uploadOperational = uploadStage?.operational;
+  const quotationApprovalState = task?.estimationWorkflowVersion === 3
+    ? task.quotationApprovalState ?? "source_issue"
+    : undefined;
+  const currentQuotationApproved = task?.estimationWorkflowVersion !== 3 || currentQuotationIsApproved(task);
   const atUploadStage = Boolean(uploadStage && currentStage?.id === uploadStage.id);
   const showDesignSection = Boolean(uploadStage && (atUploadStage || workflowStageStatus(uploadStage) === "completed"));
   const canWorkOnUploadStage = Boolean(atUploadStage && uploadOperational?.spacePlanning?.estimateId === task?.estimateId &&
     ([2, 3].includes(savedWorkflow?.initialPayment?.workflowVersion ?? 0) ? savedWorkflow?.initialPayment?.designStartedAt : savedWorkflow?.initialPayment?.confirmedAt) &&
-    (task?.estimationWorkflowVersion !== 3 || task.quotationApproved === true) && uploadOperational &&
+    currentQuotationApproved && uploadOperational &&
     ["in_progress", "in_review"].includes(uploadOperational.status) && uploadOperational.blockingReasons.length === 0 &&
     !["waiting", "paused"].includes(uploadOperational.timing.state) &&
     !workflow.isError && !workflow.isFetching && !tasks.isFetching);
   const canEditDesign = Boolean(canWorkOnUploadStage && task && ["assigned", "in_progress", "changes_requested"].includes(task.status));
-  const nextAction = task?.estimationWorkflowVersion === 3 && task.quotationApproved !== true ? task.canEditQuotation ? "Submit the Designer-revised quotation for Client approval" : "Await Client approval of the Designer-revised quotation" : workflow.isError ? "Refresh the project workflow" : !savedWorkflow ? "Loading project workflow…" :
+  const workflowNextAction = workflow.isError ? "Refresh the project workflow" : !savedWorkflow ? "Loading project workflow…" :
     workflow.isFetching || tasks.isFetching ? "Checking the latest project workflow…" : stageAction(savedWorkflow, currentStage, task!.status, task!.estimateId);
+  const nextAction = task?.estimationWorkflowVersion !== 3 || currentQuotationApproved
+    ? workflowNextAction
+    : quotationApprovalState === "revision_draft"
+      ? task.canEditQuotation ? "Submit the revised quotation for Client approval" : "Await the primary Designer's revised quotation"
+      : quotationApprovalState === "revision_pending_client"
+        ? "Await Client approval of the revised quotation"
+        : quotationApprovalState === "revision_changes_requested"
+          ? task.canEditQuotation ? "Revise the quotation and resubmit it" : "Await the primary Designer's quotation revision"
+          : "Refresh the quotation approval status";
 
   return (
     <section
@@ -239,9 +253,9 @@ export function DesignerDesignPlanTasksPage() {
                 <div><dt>Next action</dt><dd>{nextAction}</dd></div>
               </dl>
               {task.estimationWorkflowVersion === 2 && task.leadId ? <Link to={`/estimator-sales/leads/${encodeURIComponent(task.leadId)}/estimate`}>Review and edit post-estimate</Link> : null}
-              {task.estimationWorkflowVersion === 3 && task.canEditQuotation && task.leadId ? <Link to={`/estimator-sales/leads/${encodeURIComponent(task.leadId)}/estimate`}>Review Designer-revised quotation</Link> : null}
+              {task.estimationWorkflowVersion === 3 && task.canEditQuotation && task.leadId ? <Link to={`/estimator-sales/leads/${encodeURIComponent(task.leadId)}/estimate`}>{quotationApprovalState === "initial_current" || quotationApprovalState === "revision_current" ? "Review or update estimate" : "Review revised quotation"}</Link> : null}
               {task.estimationWorkflowVersion === 3 && !task.canEditQuotation ? <Link to={`/projects/${encodeURIComponent(task.projectId)}/quotation`}>View saved estimation</Link> : null}
-              {task.estimationWorkflowVersion === 3 ? <p className="designer-plan-workspace__notice">{task.quotationApproved ? "The quotation is approved. Continue the design tasks below." : "Design tasks begin after the Client approves the Designer-revised quotation."}</p> : null}
+              {task.estimationWorkflowVersion === 3 ? <QuotationApprovalNotice state={quotationApprovalState!} current={currentQuotationApproved} /> : null}
               {task.estimationWorkflowVersion === 2 ? <p className="designer-plan-workspace__notice">Design starts after pre-estimate approval. Initial payment is confirmed after design and final estimate approval.</p> : null}
               {task.scopeReconciliation?.required ? <DesignScopeReconciliation key={`${task.id}:${task.designPlanVersion}:${task.scopeReconciliation.designScopeRevision}`} task={task} /> : null}
             </Surface>
@@ -285,6 +299,21 @@ export function DesignerDesignPlanTasksPage() {
       )}
     </section>
   );
+}
+
+function QuotationApprovalNotice({ state, current }: { state: NonNullable<DesignPlanTask["quotationApprovalState"]>; current: boolean }) {
+  const message = current
+    ? state === "initial_current"
+      ? "Initial estimate approved. No quotation changes require Client review."
+      : "The revised quotation is approved. Continue the design tasks below."
+    : state === "revision_draft"
+      ? "Client approval is required for the revised quotation before design work continues."
+      : state === "revision_pending_client"
+        ? "The revised quotation is awaiting Client approval."
+        : state === "revision_changes_requested"
+          ? "The Client requested quotation changes. Revise and resubmit before design work continues."
+          : "The current quotation approval could not be verified. Refresh before continuing design work.";
+  return <p className="designer-plan-workspace__notice" role={state === "source_issue" ? "alert" : "status"}>{message}</p>;
 }
 
 function DesignScopeReconciliation({ task }: { task: DesignPlanTask }) {

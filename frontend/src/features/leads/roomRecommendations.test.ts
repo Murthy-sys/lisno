@@ -1,6 +1,6 @@
+import { configuredLineFixtures } from "./configuredEstimate.test-fixture";
 import { describe, expect, it } from "vitest";
 
-import { buildConfiguredLines } from "./configuredEstimate";
 import type { EstimationCatalogue, EstimationCatalogueRecommendations, EstimationRecommendationRule } from "./estimationCatalogueApi";
 import { buildRoomRecommendations, partitionRoomRecommendationSources, recommendationLines,
   recommendationSourceIdentity, recommendationTargetIdentity, type RecommendationDecision } from "./roomRecommendations";
@@ -19,14 +19,14 @@ const catalogue: EstimationCatalogue = { ineligibleLineCount: 0, items: [
   ] }] }
 ] };
 const rooms = [{ id: "room-one", label: "Living room" }, { id: "room-two", label: "Bedroom" }];
-const sourceLines = buildConfiguredLines(catalogue, rooms, new Set(["basket-pop", "basket-paint"]), []).map((line) => ({
+const sourceLines = configuredLineFixtures(catalogue, rooms, new Set(["basket-pop", "basket-paint"]), []).map((line) => ({
   ...line,
   included: line.roomId === "room-one" && (line.mainLineId === "line-pop" || line.mainLineId === "line-functional") ||
     line.roomId === "room-two" && line.mainLineId === "line-paint"
 }));
 
 function rule(overrides: Partial<EstimationRecommendationRule> = {}): EstimationRecommendationRule {
-  return { id: "rule-paint", requirement: "can", reason: "Painting completes the false ceiling surface.", targetKind: "main_line",
+  return { id: "rule-paint", requirement: "must", reason: "Painting completes the false ceiling surface.", targetKind: "main_line",
     targetBasketId: "basket-paint", targetSubBasketId: "sub-paint", targetMainLineId: "line-paint",
     targetRevisionId: "rev-paint", targetRevisionVersion: 1, targetItemVersion: 1,
     available: true, completionRequired: false, ...overrides };
@@ -40,6 +40,13 @@ const recommendations: EstimationCatalogueRecommendations = { sources: [
 ] };
 
 describe("room recommendations", () => {
+  it("omits probable rules even when their target is available", () => {
+    const result = buildRoomRecommendations({ catalogue, lines: sourceLines, roomId: "room-one",
+      recommendations: { sources: recommendations.sources.map(source => ({ ...source, rules: source.rules.map(rule => ({ ...rule, requirement: "can" as const })) })) } });
+    expect(result.decisions).toEqual([]);
+    expect(result.stale).toBe(false);
+  });
+
   it("flattens direct and group targets once with stable location identity and required precedence", () => {
     const direct = buildRoomRecommendations({ catalogue, lines: sourceLines, roomId: "room-one", recommendations }).decisions[0]!;
     const optional: RecommendationDecision = { ...direct, requirement: "can", reasons: [direct.reasons[0]!] };

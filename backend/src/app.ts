@@ -372,11 +372,6 @@ export function createApp(dependencies: AppDependencies) {
     auditService,
     clock
   );
-  const userAdministrationService = createUserAdministrationService(
-    repository,
-    auditService,
-    clock
-  );
   const userInvitationService = createUserInvitationService({
     repository,
     audit: auditService,
@@ -411,6 +406,10 @@ export function createApp(dependencies: AppDependencies) {
   );
   const projectActivityService = createProjectActivityService(repository);
   const chatRepository = dependencies.chatRepository ?? createMemoryProjectChatRepository(repository);
+  const projectStatusService = createProjectStatusService({ repository, chatRepository, clock });
+  const userAdministrationService = createUserAdministrationService(
+    repository, auditService, clock, projectStatusService.readUserResponsibilities
+  );
   const attachmentPolicy = dependencies.chatAttachmentPolicy ?? createProjectChatAttachmentPolicy();
   const notificationHub = createNotificationEventsHub({watchChanges: chatRepository.kind === "mongo" && dependencies.chatEvents?.watchChanges !== false});
   const dailyCriticalTasks = createDailyCriticalTasksService({chatRepository, clock, audit: auditService, onDue: id => notificationHub.wake(id)});
@@ -669,7 +668,7 @@ export function createApp(dependencies: AppDependencies) {
   app.use("/api/v1", createDailyCriticalTasksRouter(authService, dailyCriticalTasks));
   app.use("/api/v1", createProjectChatRouter(authService, projectChatService, projectChatTyping, projectChatAssistant));
   app.use("/api/v1", createAskLisnoRouter(authService, askLisno));
-  app.use("/api/v1", createProjectStatusRouter(createProjectStatusService({ repository, chatRepository, clock }), authService));
+  app.use("/api/v1", createProjectStatusRouter(projectStatusService, authService));
   app.use("/api/v1", createProjectChatAttachmentsRouter(authService, chatAttachments));
   app.use("/api/v1", createProjectChatEventsRouter(authService, projectChatStream));
   app.use("/api/v1", createPasswordResetsRouter(passwordResetService));

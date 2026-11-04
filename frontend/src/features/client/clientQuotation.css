@@ -24,16 +24,16 @@
 .client-quotation__line-status { grid-column: 1 / -1; margin-inline-start: calc(var(--estimate-compact-thumb) + 8px); }
 .client-quotation__line .client-quotation__components { flex-basis: 100%; font-size: 12px; }
 .client-quotation__line .client-quotation__components > label { min-height: 28px; }
-/* Let enlarged text wrap the whole control group instead of splitting financial values. */
+/* Keep the control group compact; wrap it below the item name when space is limited. */
 .client-quotation.estimate-workspace--compact-builder .client-quotation__line { display: flex; flex-wrap: wrap; }
 .client-quotation .client-quotation__line > .configured-estimate-line__choice { flex: 1 1 18em; }
 .client-quotation.estimate-workspace--compact-builder .client-quotation__line > .configured-estimate-line__fields {
-  flex: 0 0 auto; width: min(100%, max(386px, calc(25em + var(--estimate-compact-menu) + 18px)));
-  grid-template-columns: minmax(6em, 1fr) minmax(7.75em, 1fr) minmax(10em, 1.3fr) var(--estimate-compact-menu);
+  flex: 0 0 auto; width: min(100%, var(--estimate-compact-fields));
+  grid-template-columns: minmax(84px, 96px) minmax(84px, 96px) minmax(0, 1fr) var(--estimate-compact-menu);
   margin-left: auto;
 }
 .client-quotation__line > :is(.configured-estimate-line__options, .estimate-line-dimensions, .configured-estimate-line__message, .client-quotation__line-status) { flex: 1 1 100%; }
-.client-quotation .client-quotation__price output { white-space: nowrap; }
+.client-quotation .client-quotation__price output { white-space: normal; }
 .client-quotation__fields { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: end; padding-top: var(--space-1); }
 .client-quotation__fields > label, .client-quotation__add > label { display: grid; gap: var(--space-1); min-width: 0; flex: 1 1 9rem; font-size: var(--text-sm); }
 .client-quotation__fields > p { flex: 1 1 8rem; align-self: center; font-size: var(--text-sm); overflow-wrap: anywhere; }
@@ -94,6 +94,13 @@
   .client-quotation .configured-estimate-builder__rail-tabs { align-self: stretch; }
   .client-quotation .configured-estimate-builder__rooms { display: flex; overflow-x: auto; overflow-y: hidden; border-top: 0; }
   .client-quotation .configured-estimate-builder__rooms button { flex: none; width: 185px; border-top: 0; border-left: 1px solid var(--est-line); }
+}
+@media (max-width: 767px), (pointer: coarse) {
+  .client-quotation.estimate-workspace--compact-builder .client-quotation__line > .configured-estimate-line__fields {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) var(--estimate-compact-menu);
+  }
+  .client-quotation.estimate-workspace--compact-builder .client-quotation__line .configured-estimate-line__amount { grid-column: 1 / 3; grid-row: 2; }
+  .client-quotation.estimate-workspace--compact-builder .client-quotation__line .configured-estimate-line__more { grid-column: 3; grid-row: 1; }
 }
 @media (max-width: 640px) {
   .client-quotation { padding: var(--space-2); }

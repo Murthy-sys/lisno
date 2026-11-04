@@ -16,9 +16,12 @@ import { createMongoRepository } from "../src/repositories/mongo.js";
 import { createMemoryRepository } from "../src/repositories/memory.js";
 import type { AdminProjectListInput, AppRepository, ProjectStatus, SeedData } from "../src/repositories/types.js";
 import { demoSeedData } from "../src/seed/data.js";
+import { newQuotationLifecycle } from "../src/domain/estimation-lifecycle.js";
+import type { EstimateSummaryRecord } from "../src/repositories/types.js";
 import { sha256Hex } from "../src/domain/estimate-client-review.js";
 import { createAuditService } from "../src/services/audit.service.js";
 import type { EstimateClientReviewStorage } from "../src/services/estimate-client-review-storage.js";
+import { createEstimateCollaborationService } from "../src/services/estimate-collaboration.service.js";
 import { createEstimateClientReviewService } from "../src/services/estimate-client-review.service.js";
 import { createEstimateDeliveryService } from "../src/services/estimate-delivery.service.js";
 import { createEstimatePublicationService } from "../src/services/estimate-publication.service.js";
@@ -965,6 +968,7 @@ async function insertApprovedReviewRound(input: {
   gst: number;
   total: number;
   sendGeneration?: number;
+  phase?: "pre" | "post";
 }) {
   const sendGeneration = input.sendGeneration ?? 1;
   await EstimateClientReviewRoundModel.create({
@@ -973,6 +977,7 @@ async function insertApprovedReviewRound(input: {
     leadId: input.leadId,
     projectId: input.projectId,
     estimateVersion: input.estimateVersion,
+    phase: input.phase,
     sendGeneration,
     dedupeKey: String(sendGeneration).padStart(64, "a"),
     recipientEmail: "mongo-client@example.test",
@@ -1009,3 +1014,91 @@ async function insertApprovedReviewRound(input: {
     updatedAt: new Date(NOW)
   });
 }
+
+describe("initial approval assignment summary parity", () => {
+  it("keeps separate approval milestones and assignment eligibility aligned in Mongo and memory across unequal projects", async () => {
+    await Promise.all([insertUser("mongo-super-admin", "super_admin"), insertUser("mongo-estimator", "estimator_sales")]);
+    const mongo = createMongoRepository();
+    const actor = (await mongo.findUserById("mongo-super-admin"))!;
+    const seed = structuredClone(demoSeedData);
+    seed.users = [actor]; seed.projects = []; seed.leads = []; seed.estimateSummaries = [];
+    seed.projectAccessGrants = []; seed.estimateReviewRounds = [];
+    for (const [key, subtotal] of [["a", 100], ["b", 700]] as const) {
+      const projectId = `approval-project-${key}`, leadId = `approval-lead-${key}`;
+      const estimateId = `approval-estimate-${key}`, reviewRoundId = `approval-round-${key}`;
+      await insertAdminProject(projectId, `Approval ${key}`);
+      await insertAdminLead(leadId, projectId);
+      await ProjectModel.collection.updateOne({ _id: projectId }, { $set: { estimationWorkflowVersion: 3, estimateRequirementsVersion: 0 } });
+      await insertApprovedEstimate({ id: estimateId, leadId, projectId, version: 7, subtotal: 999, gst: 180, total: 1179, clientDecisionAt: NOW });
+      const lifecycle = { ...newQuotationLifecycle(), phase: "post" as const,
+        preApproval: { reviewRoundId, estimateVersion: 4, approvedAt: NOW } };
+      await EstimateModel.collection.updateOne({ _id: estimateId }, { $set: { estimation: lifecycle } });
+      await insertApprovedReviewRound({ id: reviewRoundId, estimateId, leadId, projectId,
+        estimateVersion: 4, phase: "pre", sendGeneration: key === "a" ? 1 : 2, decisionSource: "client_portal", subtotal, gst: subtotal * 0.18, total: subtotal * 1.18 });
+      seed.projects.push((await mongo.findProjectById(projectId))!);
+      seed.leads.push((await mongo.findLeadById(leadId))!);
+      const estimate: EstimateSummaryRecord = {
+        id: estimateId, leadId, projectId, version: 7, status: "client_approved", estimation: lifecycle,
+        subtotal: 999, gst: 180, total: 1179, clientDecisionAt: NOW, clientDecisionSource: "client_portal",
+        approvedBaseline: { reviewRoundId, estimateVersion: 4, subtotal, gst: subtotal * 0.18, total: subtotal * 1.18, decisionAt: NOW, decisionSource: "client_portal" },
+        clientReview: null, assignedAdminId: null, designPlanStatus: "pending_assignment",
+        designPlanVersion: 0, designPlanDesignerId: null, createdAt: NOW, updatedAt: NOW
+      };
+      seed.estimateSummaries.push(estimate);
+      seed.estimateReviewRounds.push({ id: reviewRoundId, estimateId, projectId, estimateVersion: 4,
+        phase: "pre", status: "approved", decision: "approve", decidedById: "mongo-super-admin",
+        decidedAt: NOW, decisionSource: "client_portal", lineItems: [] });
+    }
+    const fields = (estimate: NonNullable<Awaited<ReturnType<typeof mongo.findAdminProject>>>["estimate"]) => ({
+      status: estimate?.status, initialEstimateApproval: estimate?.initialEstimateApproval,
+      canAssignDesigner: estimate?.canAssignDesigner, designerAssignmentBlockedReason: estimate?.designerAssignmentBlockedReason,
+      approvedBaseline: estimate?.approvedBaseline
+    });
+    const memory = createMemoryRepository(seed);
+    for (const project of seed.projects) {
+      const actual = (await mongo.findAdminProject(actor, project.id))!;
+      expect(fields(actual.estimate)).toEqual(fields((await memory.findAdminProject(actor, project.id))!.estimate));
+      expect(actual.estimate).toMatchObject({ status: "draft", canAssignDesigner: true, designerAssignmentBlockedReason: null });
+    }
+    const actualPage = await mongo.pageAdminProjects(actor, { offset: 0, limit: 20, sort: "name_asc" });
+    expect(actualPage.items.map(project => fields(project.estimate)))
+      .toEqual((await memory.pageAdminProjects(actor, { offset: 0, limit: 20, sort: "name_asc" })).items.map(project => fields(project.estimate)));
+    expect(actualPage.items.map(project => project.estimate?.approvedBaseline?.total)).toEqual([118, 826]);
+
+    // Corrupt only the synthetic immutable source to prove that a foreign round cannot unlock assignment.
+    await EstimateClientReviewRoundModel.collection.updateOne({ _id: "approval-round-a" }, { $set: { projectId: "approval-project-b" } });
+    seed.estimateReviewRounds[0]!.projectId = "approval-project-b";
+    const invalidMemory = createMemoryRepository(seed);
+    const invalid = (await mongo.findAdminProject(actor, "approval-project-a"))!;
+    expect(invalid.estimate).toMatchObject({ initialEstimateApproval: null, canAssignDesigner: false,
+      designerAssignmentBlockedReason: "The initial Client approval could not be verified." });
+    expect(fields(invalid.estimate)).toEqual(fields((await invalidMemory.findAdminProject(actor, "approval-project-a"))!.estimate));
+    expect((await mongo.findAdminProject(actor, "approval-project-b"))!.estimate?.canAssignDesigner).toBe(true);
+  });
+});
+
+it("preserves assignment eligibility after enabling v2 from an immutable legacy approval without phase", async () => {
+  await Promise.all([insertUser("mongo-super-admin", "super_admin"), insertUser("mongo-estimator", "estimator_sales")]);
+  const projectId = "legacy-enabled-project", leadId = "legacy-enabled-lead", estimateId = "legacy-enabled-estimate";
+  await insertAdminProject(projectId, "Legacy approval");
+  await insertAdminLead(leadId, projectId);
+  await insertApprovedEstimate({ id: estimateId, leadId, projectId, version: 2, subtotal: 1000, gst: 180, total: 1180, clientDecisionAt: NOW });
+  await insertApprovedReviewRound({ id: "legacy-enabled-round", estimateId, leadId, projectId,
+    estimateVersion: 1, decisionSource: "client_portal", subtotal: 1000, gst: 180, total: 1180 });
+  const line = { id: "legacy-stable-line", source: "legacy", catalogueId: "legacy-item", roomName: "Bedroom 1",
+    specification: "Wardrobe", unit: "sqft", rate: 100, quantity: 10, included: true, amount: 1000, amountPaise: 100000 };
+  await EstimateModel.collection.updateOne({ _id: estimateId }, { $set: { lineItems: [line] } });
+  await EstimateClientReviewRoundModel.collection.updateOne({ _id: "legacy-enabled-round" }, { $set: { "estimateSnapshot.lineItems": [line] } });
+  const mongo = createMongoRepository();
+  const superAdmin = (await mongo.findUserById("mongo-super-admin"))!;
+  const sales = (await mongo.findUserById("mongo-estimator"))!;
+  const collaboration = createEstimateCollaborationService(createAuditService(mongo));
+  const enabled = await collaboration.enable(sales, estimateId, 2);
+  expect(enabled).toMatchObject({ estimation: { workflowVersion: 2, phase: "post", preApproval: { reviewRoundId: "legacy-enabled-round", estimateVersion: 1 } } });
+  const historicalRound = await EstimateClientReviewRoundModel.findById("legacy-enabled-round").lean();
+  expect(historicalRound).not.toHaveProperty("phase");
+  expect((await mongo.findAdminProject(superAdmin, projectId))?.estimate).toMatchObject({
+    status: "draft", initialEstimateApproval: { reviewRoundId: "legacy-enabled-round", estimateVersion: 1, approvedAt: NOW },
+    canAssignDesigner: true, designerAssignmentBlockedReason: null
+  });
+});

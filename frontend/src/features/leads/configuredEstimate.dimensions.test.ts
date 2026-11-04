@@ -1,3 +1,4 @@
+import { configuredLineFixtures } from "./configuredEstimate.test-fixture";
 import { describe, expect, it } from "vitest";
 import type { EstimateDimensionRule } from "../../../../shared/estimation/estimateDimensions";
 import type { EstimationCatalogue } from "./estimationCatalogueApi";
@@ -10,7 +11,7 @@ const catalogue = (): EstimationCatalogue => ({ ineligibleLineCount: 0, items: [
     modeBaseRatesPaise: { pmc: 1000, sub_vendor: 1000, in_house: null }, uom: { id: "unit", name: "sq ft", code: "SQFT", decimalScale: 2 } }] }] }] });
 const rooms = [{ id: "living", label: "Living" }];
 const selected = new Set(["basket"]);
-const initial = () => ({ ...buildConfiguredLines(catalogue(), rooms, selected, [])[0]!, included: true, rateSource: "manual" as const, rateInput: "99" });
+const initial = () => ({ ...configuredLineFixtures(catalogue(), rooms, selected, [])[0]!, included: true, rateSource: "manual" as const, rateInput: "99" });
 
 describe("configured estimate measurements", () => {
   it("requires all three inputs and derives quantity from length × width without changing a manual price", () => {

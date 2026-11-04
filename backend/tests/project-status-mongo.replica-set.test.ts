@@ -47,6 +47,27 @@ async function fixture() {
 }
 
 describe("project status Mongo snapshot reads", () => {
+  it("projects only the managed user's responsibility page with canonical stages and no Mongo writes", async () => {
+    const f = await fixture();
+    await LeadModel.collection.updateOne({ _id: "lead-a" }, { $set: { projectNumber: "Lisno000012" } });
+    await ProjectModel.updateOne({ _id: "b" }, { $set: { assignedDesignerIds: ["designer-a"] } });
+    const collections = await mongoose.connection.db!.collections();
+    const before = await Promise.all(collections.map(async collection => ({ name: collection.collectionName, rows: await collection.find({}).sort({ _id: 1 }).toArray() })));
+    const result = await f.statusService.readUserResponsibilities(f.actor("super"), "designer-a", { limit: 20, offset: 0, destinationRole: "procurement" });
+    expect(result).toMatchObject({ user: { id: "designer-a", role: "designer", version: 1 }, blockingCount: 3, pagination: { total: 3, hasMore: false } });
+    expect(result.items.filter(row => row.projectId === "a")).toHaveLength(2);
+    expect(result.items.find(row => row.projectId === "a")!.project).toMatchObject({ projectNumber: "Lisno000012", currentStage: { key: "estimate_approval" }, stageState: "available" });
+    expect(result.items.find(row => row.projectId === "b")!.project).toMatchObject({ projectNumber: null, currentStage: { key: "estimate_preparation" }, stageState: "available" });
+    const first = await f.statusService.readUserResponsibilities(f.actor("super"), "designer-a", { limit: 1, offset: 0, destinationRole: "procurement" });
+    expect(first).toMatchObject({ blockingCount: 3, pagination: { total: 3, hasMore: true } });
+    expect(first.items).toHaveLength(1);
+    await expect(f.statusService.readUserResponsibilities(f.actor("admin-a"), "designer-a", { limit: 20, offset: 0 })).rejects.toMatchObject({ status: 403 });
+    await expect(f.statusService.readUserResponsibilities({ ...f.actor("super"), sessionVersion: 99 }, "designer-a", { limit: 20, offset: 0 })).rejects.toMatchObject({ status: 401 });
+    expect(JSON.stringify(result)).not.toMatch(/clientEmail|clientMobile|pendingActions|lineItems|storageReference|passwordHash/);
+    const after = await Promise.all(collections.map(async collection => ({ name: collection.collectionName, rows: await collection.find({}).sort({ _id: 1 }).toArray() })));
+    expect(after).toEqual(before);
+  });
+
   it("reads the generated Project ID from the authorized Mongo snapshot", async () => {
     const f = await fixture();
     await LeadModel.collection.updateOne({ _id: "lead-a" }, { $set: { projectNumber: "Lisno000012" } });

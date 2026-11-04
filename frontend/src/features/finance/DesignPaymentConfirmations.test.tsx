@@ -35,8 +35,11 @@ describe("DesignPaymentConfirmations", () => {
   it("keeps v3 payment unavailable until server-approved quotation and design prerequisites are satisfied", () => {
     asSuperAdmin();
     setup({ ...projectWorkflow, initialPayment: { ...projectWorkflow.initialPayment!, workflowVersion: 3, status: "awaiting_estimate_approval", canConfirm: false } });
-    expect(screen.getByText("Awaiting quotation and design approval")).toBeVisible();
+    expect(screen.getByText("Awaiting current quotation and design approval")).toBeVisible();
+    expect(screen.getByText(/Design tasks use the current Client-approved quotation/)).toBeVisible();
+    expect(screen.getByText(/If the Designer revises it, Client approval is required/)).toBeVisible();
     expect(screen.getByText(/After the uploaded design is approved, Super Admin confirms/)).toBeVisible();
+    expect(screen.queryByText(/Design tasks start after the Designer-revised quotation is approved/)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Mark initial payment received" })).not.toBeInTheDocument();
   });
   it("keeps v3 Finance access read-only even when a cached capability says payment can be confirmed", async () => {
@@ -51,7 +54,7 @@ describe("DesignPaymentConfirmations", () => {
     const user = userEvent.setup();
     await user.type(screen.getByRole("textbox", { name: "Payment reference / receipt note" }), "Verified quotation receipt");
     await user.click(screen.getByRole("button", { name: "Mark initial payment received" }));
-    expect(await screen.findByText("Initial payment confirmed for the final estimate. Work orders can be issued when procurement checks are complete.")).toBeVisible();
+    expect(await screen.findByText("Initial payment confirmed for the current approved quotation. Work orders can be issued when procurement checks are complete.")).toBeVisible();
     expect(post).toHaveBeenCalledOnce();
     expect(screen.queryByText(/countdown has started/)).not.toBeInTheDocument();
   });
@@ -69,7 +72,7 @@ describe("DesignPaymentConfirmations", () => {
     const link = await within(region).findByRole("link", { name: /Awaiting initial payment confirmation/ });
     await waitFor(() => expect(link).toHaveTextContent("2"));
     expect(link).toHaveAttribute("href", href);
-    expect(region).toHaveTextContent("Review receipts and final-estimate attestations");
+    expect(region).toHaveTextContent("Review receipts and approval attestations");
     expect(within(region).queryByRole("form")).not.toBeInTheDocument();
     expect(within(region).queryByRole("textbox")).not.toBeInTheDocument();
     expect(within(region).queryByRole("button")).not.toBeInTheDocument();

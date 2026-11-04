@@ -1,0 +1,140 @@
+- generic [ref=f16e2]:
+  - generic [ref=f16e12]:
+    - link "Skip to main content" [ref=f16e13] [cursor=pointer]:
+      - /url: "#main-content"
+    - complementary "Application sidebar" [ref=f16e14]:
+      - generic [ref=f16e15]:
+        - generic [ref=f16e16]:
+          - img "Lisno" [ref=f16e17]
+          - generic [ref=f16e18]: INTERIOR WORKSPACE
+        - navigation "Primary navigation" [ref=f16e19]:
+          - link "All Projects" [ref=f16e20] [cursor=pointer]:
+            - /url: /admin/projects
+        - paragraph [ref=f16e26]: Build Better Spaces
+    - banner "Workspace tools" [ref=f16e27]:
+      - generic [ref=f16e28]:
+        - button "Notifications" [ref=f16e29] [cursor=pointer]
+        - button "Synthetic workspace reviewer" [ref=f16e34] [cursor=pointer]:
+          - generic [aria-hidden] [ref=f16e35]: SW
+          - generic [ref=f16e36]:
+            - generic [ref=f16e37]: Synthetic workspace reviewer
+            - generic [ref=f16e38]: Super Admin
+    - main [ref=f16e41]:
+      - region [ref=f16e42]:
+        - generic [ref=f16e45]:
+          - generic [ref=f16e46]: Project administration
+          - heading "All Projects" [level=1] [ref=f16e48]
+          - paragraph [ref=f16e49]: All projects across the organization.
+        - generic [ref=f16e50]:
+          - group "Project status" [ref=f16e51]:
+            - button "All 2" [pressed] [ref=f16e52] [cursor=pointer]:
+              - generic [ref=f16e53]: All
+              - generic [ref=f16e54]: "2"
+            - button "Active 0" [ref=f16e55] [cursor=pointer]:
+              - generic [ref=f16e56]: Active
+              - generic [ref=f16e57]: "0"
+            - button "Planning 2" [ref=f16e58] [cursor=pointer]:
+              - generic [ref=f16e59]: Planning
+              - generic [ref=f16e60]: "2"
+            - button "On Hold 0" [ref=f16e61] [cursor=pointer]:
+              - generic [ref=f16e62]: On Hold
+              - generic [ref=f16e63]: "0"
+            - button "Completed 0" [ref=f16e64] [cursor=pointer]:
+              - generic [ref=f16e65]: Completed
+              - generic [ref=f16e66]: "0"
+          - generic [ref=f16e67]:
+            - group "Project layout" [ref=f16e68]:
+              - button "Grid view" [ref=f16e69] [cursor=pointer]
+              - button "List view" [active] [pressed] [ref=f16e75] [cursor=pointer]
+            - generic [ref=f16e77]:
+              - generic [ref=f16e78]: Sort
+              - combobox "Sort projects" [ref=f16e79] [cursor=pointer]:
+                - option "Newest" [selected]
+                - option "Name A–Z"
+                - option "Name Z–A"
+            - button "Filter" [ref=f16e80] [cursor=pointer]
+        - generic [ref=f16e85]:
+          - generic [ref=f16e188]:
+            - generic [aria-hidden] [ref=f16e189]:
+              - generic [ref=f16e190]: Project
+              - generic [ref=f16e191]:
+                - generic [ref=f16e192]: Location
+                - generic [ref=f16e193]: Sales
+                - generic [ref=f16e194]: Lead progress
+                - generic [ref=f16e195]: Next action
+                - generic [ref=f16e196]: Estimate
+              - generic [ref=f16e197]: Actions
+            - list "All Projects" [ref=f16e198]:
+              - listitem [ref=f16e199]:
+                - article "Synthetic Cedar Residence" [ref=f16e200]:
+                  - link "View details for Synthetic Cedar Residence" [ref=f16e201] [cursor=pointer]:
+                    - /url: /admin/projects/project-qa-one
+                    - generic [ref=f16e202]:
+                      - heading "Synthetic Cedar Residence" [level=2] [ref=f16e203]
+                      - generic [ref=f16e204]: "Project ID: Lisno009901"
+                      - paragraph [ref=f16e205]: Synthetic Client 1
+                      - generic [ref=f16e206]: Estimation Approval
+                    - generic [ref=f16e209]:
+                      - generic [ref=f16e210]:
+                        - term [ref=f16e211]: Location
+                        - definition [ref=f16e212]: 2BHK · Pune
+                      - generic [ref=f16e213]:
+                        - term [ref=f16e214]: Sales
+                        - definition [ref=f16e215]: Synthetic Sales 1
+                      - generic [ref=f16e216]:
+                        - term [ref=f16e217]: Lead progress
+                        - definition [ref=f16e218]: New Lead
+                      - generic [ref=f16e219]:
+                        - term [ref=f16e220]: Next action
+                        - definition [ref=f16e221]: Assign Designer
+                      - generic [ref=f16e222]:
+                        - term [ref=f16e223]: Client-approved value (incl. GST)
+                        - definition [ref=f16e224]: ₹1,180
+                        - definition [ref=f16e225]: "Initial estimate: Client approved"
+                        - definition [ref=f16e226]: "Designer quotation: Draft"
+                    - generic [ref=f16e227]: View project
+                  - generic [ref=f16e231]:
+                    - button "Quick view Synthetic Cedar Residence" [ref=f16e232] [cursor=pointer]:
+                      - generic [ref=f16e233]: Quick view
+                    - link "Assign Designer" [ref=f16e236] [cursor=pointer]:
+                      - /url: /admin/projects/project-qa-one#design-assignment-title
+              - listitem [ref=f16e237]:
+                - article "Synthetic Lake Apartment" [ref=f16e238]:
+                  - link "View details for Synthetic Lake Apartment" [ref=f16e239] [cursor=pointer]:
+                    - /url: /admin/projects/project-qa-two
+                    - generic [ref=f16e240]:
+                      - heading "Synthetic Lake Apartment" [level=2] [ref=f16e241]
+                      - generic [ref=f16e242]: "Project ID: Lisno009902"
+                      - paragraph [ref=f16e243]: Synthetic Client 2
+                      - generic [ref=f16e244]: Estimation Approval
+                    - generic [ref=f16e247]:
+                      - generic [ref=f16e248]:
+                        - term [ref=f16e249]: Location
+                        - definition [ref=f16e250]: 3BHK · Hyderabad
+                      - generic [ref=f16e251]:
+                        - term [ref=f16e252]: Sales
+                        - definition [ref=f16e253]: Synthetic Sales 2
+                      - generic [ref=f16e254]:
+                        - term [ref=f16e255]: Lead progress
+                        - definition [ref=f16e256]: New Lead
+                      - generic [ref=f16e257]:
+                        - term [ref=f16e258]: Next action
+                        - definition [ref=f16e259]: Assign Designer
+                      - generic [ref=f16e260]:
+                        - term [ref=f16e261]: Client-approved value (incl. GST)
+                        - definition [ref=f16e262]: ₹4,130
+                        - definition [ref=f16e263]: "Initial estimate: Client approved"
+                        - definition [ref=f16e264]: "Designer quotation: Draft"
+                    - generic [ref=f16e265]: View project
+                  - generic [ref=f16e269]:
+                    - button "Quick view Synthetic Lake Apartment" [ref=f16e270] [cursor=pointer]:
+                      - generic [ref=f16e271]: Quick view
+                    - link "Assign Designer" [ref=f16e274] [cursor=pointer]:
+                      - /url: /admin/projects/project-qa-two#design-assignment-title
+          - navigation "All Projects pages" [ref=f16e177]:
+            - paragraph [ref=f16e178]: Showing 1–2 of 2
+            - generic [ref=f16e179]:
+              - button "Previous page" [disabled] [ref=f16e180]
+              - button "Next page" [disabled] [ref=f16e184]
+  - status "Application announcements" [ref=f16e11]
+  - region "Notifications"

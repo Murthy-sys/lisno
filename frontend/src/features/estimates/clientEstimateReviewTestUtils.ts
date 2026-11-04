@@ -6,6 +6,11 @@ import type { EstimateQueueItem } from "./estimateWorkflowApi";
 export function withQuotationApproval(estimate: EstimateQueueItem, detail: QuotationDetail): EstimateQueueItem {
   if (!estimate.publishedReview) throw new Error("A submitted snapshot is required for this fixture.");
   return { ...estimate, version: detail.estimateVersion!, workflowVersion: 3,
+    quotationApprovalState: detail.quotationApprovalState,
+    currentQuotationApproved: detail.currentQuotationApproved,
+    requiresClientReapproval: detail.requiresClientReapproval,
+    quotationApprovalSource: detail.quotationApprovalSource,
+    currentQuotationApproval: detail.currentQuotationApproval,
     estimation: { workflowVersion: 3, phase: detail.phase, status: detail.status, requirementsVersion: 1,
       pricedRevision: detail.pricedRevision, editClosedAt: null, preApproval: null, finalApproval: null,
       designScopeRevision: 1, approvedDesignScopeRevision: null, pendingReviewRoundId: estimate.publishedReview.id, preparationSnapshotId: null,

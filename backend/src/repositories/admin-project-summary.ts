@@ -1,8 +1,11 @@
 import { readProjectNumber } from "../domain/project-number.js";
 import { readProjectInitiationMetadata } from "../domain/project-initiation-metadata.js";
 import { ApiError } from "../middleware/errors.js";
-import { effectiveCommercialStatus, isEstimationWorkflowVersion, quotationApprovalIsCurrent } from "../domain/estimation-lifecycle.js";
+import { effectiveCommercialStatus, isEstimationWorkflowVersion } from "../domain/estimation-lifecycle.js";
 import { projectFinanceBaseline } from "../domain/project-finance.js";
+import type { EstimationApprovalReference } from "../domain/estimation-lifecycle.js";
+import type { WorkflowEstimateApproval } from "../domain/workflow-estimate-items.js";
+import { quotationApprovalPublicFields, resolveQuotationApprovalFromRounds } from "../services/quotation-approval-state.service.js";
 import type {
   AdminProjectEstimateLinkSource,
   AdminProjectSummary,
@@ -17,7 +20,8 @@ export function adminProjectSummary(
   users: Array<Pick<UserRecord, "id" | "name" | "email">>,
   leads: LeadRecord[],
   estimates: EstimateSummaryRecord[],
-  actor: Pick<UserRecord, "id" | "role">
+  actor: Pick<UserRecord, "id" | "role">,
+  reviewRounds: readonly InitialApprovalRound[] = []
 ): AdminProjectSummary {
   const linkedLeads = leads.filter((candidate) => candidate.projectId === project.id);
   if (linkedLeads.length > 1 && linkedLeads.some(candidate => readProjectNumber(candidate.projectNumber) !== null)) {
@@ -30,6 +34,12 @@ export function adminProjectSummary(
   const estimateResolution = canonicalProjectEstimate(project.id, leads, estimates);
   const estimate = estimateResolution?.estimate ?? null;
   if (estimate) assertApprovedBaseline(estimate);
+  const initialEstimateApproval = estimate ? validatedInitialApproval(project.id, estimate, reviewRounds) : null;
+  const quotationApproval = estimate?.estimation?.workflowVersion === 3
+    ? estimate.quotationApproval ?? resolveQuotationApprovalFromRounds({ ...estimate, _id: estimate.id }, reviewRounds,
+      { clientId: project.clientId, primaryDesignerId: project.primaryDesignerId })
+    : null;
+  const assignmentBlockedReason = estimate ? designerAssignmentBlockedReason(project, estimate, leads, estimates, actor, initialEstimateApproval) : null;
   const projectNumber = readProjectNumber(lead?.projectNumber);
   if (projectNumber && estimate && estimate.leadId !== lead!.id) {
     throw new ApiError(409, "PROJECT_NUMBER_STATE_CONFLICT", "The project number and estimate identify different Leads.");
@@ -73,11 +83,15 @@ export function adminProjectSummary(
           projectLinkSource: estimateResolution!.projectLinkSource,
           version: estimate.version,
           status: effectiveCommercialStatus(estimate),
+          initialEstimateApproval,
+          canAssignDesigner: assignmentBlockedReason === null,
+          designerAssignmentBlockedReason: assignmentBlockedReason,
           ...(isEstimationWorkflowVersion(estimate.estimation?.workflowVersion) ? { estimationPhase: estimate.estimation!.phase,
-            finalEstimateApproved: estimate.estimation!.workflowVersion === 3 ? quotationApprovalIsCurrent(estimate) : Boolean(estimate.estimation!.finalApproval) } : {}),
+            finalEstimateApproved: estimate.estimation!.workflowVersion === 3 ? quotationApproval?.currentQuotationApproved === true : Boolean(estimate.estimation!.finalApproval) } : {}),
+          ...(quotationApproval ? quotationApprovalPublicFields(quotationApproval) : {}),
           ...(estimate.estimation?.workflowVersion === 3 ? { designApproved: Boolean(
-            quotationApprovalIsCurrent(estimate) && estimate.designPlanStatus === "approved" &&
-            estimate.estimation.designApproval?.estimateReviewRoundId === estimate.estimation.finalApproval?.reviewRoundId &&
+            quotationApproval?.currentQuotationApproved && estimate.designPlanStatus === "approved" &&
+            estimate.estimation.designApproval?.estimateReviewRoundId === quotationApproval.currentQuotationApproval?.reviewRoundId &&
             estimate.estimation.designApproval?.designScopeRevision === estimate.estimation.designScopeRevision &&
             estimate.estimation.designApproval?.designPlanVersion === estimate.designPlanVersion &&
             estimate.estimation.designApproval?.reviewRoundId
@@ -106,6 +120,70 @@ export function adminProjectSummary(
       : null,
     createdAt: project.createdAt
   };
+}
+
+type InitialApprovalRound = WorkflowEstimateApproval;
+
+/** Initial approval is an immutable milestone, independent of the working quotation status. */
+function validatedInitialApproval(
+  projectId: string,
+  estimate: EstimateSummaryRecord,
+  rounds: readonly InitialApprovalRound[]
+): EstimationApprovalReference | null {
+  if (!isEstimationWorkflowVersion(estimate.estimation?.workflowVersion)) return null;
+  const reference = estimate.estimation?.preApproval;
+  if (!reference || !reference.reviewRoundId?.trim() ||
+      !Number.isSafeInteger(reference.estimateVersion) || reference.estimateVersion < 1 ||
+      reference.estimateVersion > estimate.version || !Number.isFinite(Date.parse(reference.approvedAt))) return null;
+  const matches = rounds.filter(round => round.id === reference.reviewRoundId);
+  const round = matches.length === 1 ? matches[0] : undefined;
+  // Enabling v2 can retain an immutable legacy approval that predates phase metadata.
+  const initialPhase = round?.phase === "pre" || estimate.estimation?.workflowVersion === 2 && round?.phase === undefined;
+  if (!round || round.estimateId !== estimate.id || round.projectId !== projectId ||
+      round.estimateVersion !== reference.estimateVersion || !initialPhase ||
+      round.status !== "approved" || round.decision !== "approve" || !round.decidedById?.trim() ||
+      !["client_portal", "admin_proof"].includes(round.decisionSource ?? "") ||
+      !round.decidedAt || !Number.isFinite(Date.parse(round.decidedAt)) ||
+      Date.parse(round.decidedAt) !== Date.parse(reference.approvedAt)) return null;
+  return { reviewRoundId: round.id, estimateVersion: round.estimateVersion,
+    approvedAt: new Date(round.decidedAt).toISOString() };
+}
+
+const assignableDesignStatuses = new Set([null, "pending_assignment", "assigned", "in_progress", "changes_requested"]);
+
+/** Read-only counterpart of assignDesigner; the mutation still rechecks scope and state transactionally. */
+function designerAssignmentBlockedReason(
+  project: ProjectRecord,
+  estimate: EstimateSummaryRecord,
+  leads: readonly LeadRecord[],
+  estimates: readonly EstimateSummaryRecord[],
+  actor: Pick<UserRecord, "id" | "role">,
+  initialApproval: EstimationApprovalReference | null
+): string | null {
+  // The repository has already constrained Admin reads to their initiating-project grants.
+  if (actor.role !== "super_admin" && (actor.role !== "admin" || project.estimationWorkflowVersion === 3)) {
+    return project.estimationWorkflowVersion === 3
+      ? "Only Super Admin can assign the Designer."
+      : "You do not have permission to assign the Designer.";
+  }
+  if (estimate.status !== "client_approved") return "Client approval of the initial estimate is required.";
+  if (!assignableDesignStatuses.has(estimate.designPlanStatus ?? null)) return "The current Design stage cannot be reassigned.";
+  const linkedLeadIds = new Set(leads.filter(lead => lead.projectId === project.id).map(lead => lead.id));
+  const candidates = estimates.filter(candidate => candidate.status === "client_approved" &&
+    assignableDesignStatuses.has(candidate.designPlanStatus ?? null) &&
+    (candidate.projectId === project.id || candidate.projectId === null && linkedLeadIds.has(candidate.leadId)));
+  if (candidates.length !== 1 || candidates[0]?.id !== estimate.id) return "Resolve the project's conflicting approved estimates before assigning a Designer.";
+  if (!linkedLeadIds.has(estimate.leadId)) return "The estimate and Lead must belong to this project.";
+  const lifecycle = estimate.estimation;
+  if (isEstimationWorkflowVersion(lifecycle?.workflowVersion)) {
+    if (!initialApproval) return "The initial Client approval could not be verified.";
+    if (estimate.projectId !== project.id || project.estimationWorkflowVersion !== lifecycle!.workflowVersion ||
+        project.estimateRequirementsVersion !== lifecycle!.requirementsVersion) return "Project requirements changed. Refresh this estimate.";
+    if (lifecycle!.workflowVersion === 2 && (lifecycle!.editClosedAt || lifecycle!.finalApproval)) return "Design changes require an open post-estimate revision.";
+  } else if (isEstimationWorkflowVersion(project.estimationWorkflowVersion)) {
+    return "The estimate workflow does not match this project.";
+  }
+  return null;
 }
 
 interface ResolvedProjectEstimate {

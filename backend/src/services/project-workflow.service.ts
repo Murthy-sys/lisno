@@ -58,6 +58,7 @@ import { synchronizeEstimateDesignReviewState } from "./estimate-design-review-s
 import { approvePlanTargetsForDrawingRevision } from "./estimate-plan-review.service.js";
 import type { OpenFinanceBucketInput } from "./project-finance.service.js";
 import { assertDesignWorkflowSubmissionAllowed, reconcileWorkflowRoomScope } from "./design-workflow-state.service.js";
+import { quotationApprovalPublicFields, resolveCurrentQuotationApproval, type QuotationApprovalResolution } from "./quotation-approval-state.service.js";
 
 type Row = Record<string, any>;
 type AssignableExecutionRole = WorkerRole | "procurement" | "site_manager";
@@ -74,6 +75,11 @@ export interface DesignPlanTaskDto {
   leadId?: string;
   estimationWorkflowVersion?: 2 | 3;
   quotationApproved?: boolean;
+  quotationApprovalState?: QuotationApprovalResolution["quotationApprovalState"];
+  currentQuotationApproved?: boolean;
+  requiresClientReapproval?: boolean;
+  quotationApprovalSource?: QuotationApprovalResolution["quotationApprovalSource"];
+  currentQuotationApproval?: ReturnType<typeof quotationApprovalPublicFields>["currentQuotationApproval"];
   canEditQuotation?: boolean;
   id: string;
   estimateId: string;
@@ -392,7 +398,7 @@ export function createProjectWorkflowService(input: {
         ) {
           designPlanProjectLinkConflict();
         }
-        await guardCollaborativeDesign(estimate, session, undefined, true);
+        const quotationApproval = await guardCollaborativeDesign(estimate, session, undefined, true);
         const designPlanVersion = Number(estimate.designPlanVersion ?? 0);
 
         const estimateUpdated = await EstimateModel.updateOne(
@@ -440,7 +446,9 @@ export function createProjectWorkflowService(input: {
           { _id: lead._id, projectId },
           {
             $set: {
-              nextAction: project.estimationWorkflowVersion === 3 && !estimate.estimation?.editClosedAt ? "Designer to review quotation" : "Designer to upload design plan",
+              nextAction: project.estimationWorkflowVersion === 3
+                ? quotationApproval?.currentQuotationApproved ? "Complete Internal Kick off" : "Designer to review quotation"
+                : "Designer to upload design plan",
               nextActionAt: assignedAt,
               updatedAt: assignedAt
             }
@@ -449,7 +457,7 @@ export function createProjectWorkflowService(input: {
         );
         requireMatched(leadUpdated, "The project handoff changed before the Design assignment could be saved.");
         const dedupeKey = `${String(estimate._id)}:design-plan-upload`;
-        if (project.estimationWorkflowVersion === 3) await ensureQuotationDesignTask({ ...estimate, designPlanDesignerId: String(designer._id) }, assignedAt, session);
+        if (project.estimationWorkflowVersion === 3 && quotationApproval?.currentQuotationApproved) await ensureQuotationDesignTask({ ...estimate, designPlanDesignerId: String(designer._id), designPlanAssignedAt: assignedAt }, assignedAt, session, quotationApproval);
         else await ProjectWorkflowTaskModel.findOneAndUpdate(
           { dedupeKey },
           {
@@ -504,7 +512,7 @@ export function createProjectWorkflowService(input: {
           projectId,
           designPlanStatus: "assigned",
           designPlanDesignerId: designer._id
-        }, project, lead);
+        }, project, lead, undefined, quotationApproval ?? undefined);
       });
       if (!result) throw new Error("Design assignment did not complete.");
       return result;
@@ -529,11 +537,14 @@ export function createProjectWorkflowService(input: {
       const leadById = new Map(leads.map((lead) => [String(lead._id), lead]));
       const projectById = new Map(projects.map((project) => [String(project._id), project]));
       const numbers = await readProjectNumbers(projects.map(project => String(project._id)));
-      return estimates.flatMap((estimate) => {
+      const tasks = await Promise.all(estimates.map(async (estimate) => {
         const lead = leadById.get(String(estimate.leadId));
         const project = projectById.get(String(estimate.projectId));
-        return lead && project ? [{ ...taskDto(estimate, project, lead, actor.id), projectNumber: numbers.get(String(project._id)) ?? null }] : [];
-      });
+        if (!lead || !project) return null;
+        const approval = estimate.estimation?.workflowVersion === 3 ? await resolveCurrentQuotationApproval(estimate) : undefined;
+        return { ...taskDto(estimate, project, lead, actor.id, approval), projectNumber: numbers.get(String(project._id)) ?? null };
+      }));
+      return tasks.filter((task): task is NonNullable<typeof task> => task !== null);
     },
 
     async prepareDesignReview(
@@ -553,7 +564,7 @@ export function createProjectWorkflowService(input: {
         designFrozenAt: { $in: [null] }
       }).session(session).lean();
       if (!estimate || actor.role !== "designer") forbidden();
-      await guardCollaborativeDesign(estimate, session);
+      const quotationApproval = await guardCollaborativeDesign(estimate, session);
       const [lead, project, uploads] = await Promise.all([
         LeadModel.findById(estimate.leadId).session(session).lean(),
         ProjectModel.findById(estimate.projectId).session(session).lean(),
@@ -622,7 +633,7 @@ export function createProjectWorkflowService(input: {
         projectId: String(project._id),
         leadId: String(lead._id),
         designPlanVersion,
-        ...(isCollaborativeEstimate(estimate) ? { designScopeRevision: estimate.estimation.designScopeRevision, ...(estimate.estimation.workflowVersion === 3 ? { estimateReviewRoundId: estimate.estimation.finalApproval.reviewRoundId } : {}) } : {}),
+        ...(isCollaborativeEstimate(estimate) ? { designScopeRevision: estimate.estimation.designScopeRevision, ...(estimate.estimation.workflowVersion === 3 ? { estimateReviewRoundId: quotationApproval?.currentQuotationApproval?.reviewRoundId } : {}) } : {}),
         recipientEmail: String(lead.clientEmail),
         clientName: String(lead.clientName),
         projectName: String(lead.projectName),
@@ -1929,12 +1940,12 @@ async function finalizeDesignApproval(input: {
     ): Promise<unknown>;
   };
 }) {
-  await guardCollaborativeDesign(input.estimate, input.session, input.round);
+  const quotationApproval = await guardCollaborativeDesign(input.estimate, input.session, input.round);
   const collaborative = isCollaborativeEstimate(input.estimate);
   const quotation = input.estimate.estimation?.workflowVersion === 3;
   const designApproval = quotation ? { reviewRoundId: String(input.round._id),
     designPlanVersion: Number(input.round.designPlanVersion), designScopeRevision: input.estimate.estimation.designScopeRevision,
-    estimateReviewRoundId: input.estimate.estimation.finalApproval.reviewRoundId, approvedAt: input.occurredAt.toISOString() } : null;
+    estimateReviewRoundId: quotationApproval?.currentQuotationApproval?.reviewRoundId, approvedAt: input.occurredAt.toISOString() } : null;
   await transitionReviewRound(input.round, {
     status: "approved",
     decision: "approve",
@@ -2034,7 +2045,10 @@ async function generateDownstreamTasks(
   session: mongoose.ClientSession
 ) {
   const estimateId = String(estimate._id);
-  const estimateVersion = isCollaborativeEstimate(estimate) ? estimate.estimation.finalApproval?.estimateVersion : approvedWorkflowEstimateVersion(estimate.version);
+  const effective = estimate.estimation?.workflowVersion === 3 ? await resolveCurrentQuotationApproval(estimate, session) : null;
+  const estimateVersion = isCollaborativeEstimate(estimate) ? estimate.estimation.workflowVersion === 3
+    ? effective?.currentQuotationApproval?.estimateVersion : estimate.estimation.finalApproval?.estimateVersion
+    : approvedWorkflowEstimateVersion(estimate.version);
   if (!estimateVersion) throw new ApiError(409, "ESTIMATE_FINAL_APPROVAL_REQUIRED", "Final approval is required before execution tasks can be opened.");
   const managerAssignment = await resolveProjectManagerAssignment(String(estimate.projectId), session);
   if (managerAssignment.state === "conflict") assignmentConflict(managerAssignment);
@@ -2249,7 +2263,9 @@ async function approvedWorkflowLineSnapshots(
 ): Promise<Row[]> {
   const estimateId = String(estimate._id);
   if (isCollaborativeEstimate(estimate)) {
-    const reference = estimate.estimation.finalApproval;
+    const reference = estimate.estimation.workflowVersion === 3
+      ? (await resolveCurrentQuotationApproval(estimate, session)).currentQuotationApproval
+      : estimate.estimation.finalApproval;
     if (!reference) sectionAssignmentConflict();
     const round = await EstimateClientReviewRoundModel.findOne({ _id: reference.reviewRoundId, estimateId, projectId: estimate.projectId, estimateVersion: reference.estimateVersion, status: "approved", decision: "approve" }).session(session).lean();
     if (!round || !Array.isArray(round.estimateSnapshot?.lineItems)) sectionAssignmentConflict();
@@ -2480,14 +2496,18 @@ function isOperationalTaskRole(role: PublicUser["role"]): boolean {
     isWorkerRole(role);
 }
 
-function taskDto(estimate: Row, project: Row, lead: Row, actorId?: string): DesignPlanTaskDto {
+function taskDto(estimate: Row, project: Row, lead: Row, actorId?: string, quotationApproval?: QuotationApprovalResolution): DesignPlanTaskDto {
   if (String(estimate.leadId) !== String(lead._id) || String(estimate.projectId) !== String(project._id) ||
     lead.projectId != null && String(lead.projectId) !== String(project._id)) throw projectNumberStateConflict();
   return {
     projectNumber: readProjectNumber(lead.projectNumber),
     leadId: String(lead._id),
     ...(isCollaborativeEstimate(estimate) ? { estimationWorkflowVersion: estimate.estimation.workflowVersion } : {}),
-    ...(estimate.estimation?.workflowVersion === 3 ? { canEditQuotation: !!actorId && project.primaryDesignerId === actorId && estimate.designPlanDesignerId === actorId, quotationApproved: !!estimate.estimation.editClosedAt && !!estimate.estimation.finalApproval && estimate.estimation.status === "client_approved" } : {}),
+    ...(estimate.estimation?.workflowVersion === 3 ? {
+      canEditQuotation: !!actorId && project.primaryDesignerId === actorId && estimate.designPlanDesignerId === actorId,
+      quotationApproved: quotationApproval?.currentQuotationApproved === true,
+      ...(quotationApproval ? quotationApprovalPublicFields(quotationApproval) : {})
+    } : {}),
     id: `${String(estimate._id)}:design-plan-upload`,
     estimateId: String(estimate._id),
     projectId: String(project._id),
@@ -2645,15 +2665,23 @@ async function findScopedReviewRound(actor: PublicUser, roundId: string) {
 async function reviewCanBeDecided(round: Row, actor: PublicUser) {
   if (!(actor.role === "admin" || actor.role === "super_admin") || round.status !== "pending") return false;
   if (actor.role === "admin" && String(round.assignedAdminId) !== actor.id) return false;
-  return Boolean(await EstimateModel.exists({
+  const estimate = await EstimateModel.findOne({
     _id: round.estimateId, projectId: round.projectId, status: "client_approved",
     designPlanStatus: "ready_for_client", designPlanVersion: round.designPlanVersion,
-    designFrozenAt: { $in: [null] },
-    $or: [{ "estimation.workflowVersion": { $nin: [2, 3] } },
-      { "estimation.workflowVersion": 2, "estimation.designScopeRevision": round.designScopeRevision, "estimation.finalApproval": null },
-      { "estimation.workflowVersion": 3, "estimation.editClosedAt": { $type: "string" }, "estimation.status": "client_approved",
-        "estimation.designScopeRevision": round.designScopeRevision, "estimation.finalApproval.reviewRoundId": round.estimateReviewRoundId ?? null }]
-  }));
+    designFrozenAt: { $in: [null] }
+  }).lean() as Row | null;
+  if (!estimate) return false;
+  const lifecycle = estimate.estimation;
+  if (lifecycle?.workflowVersion === 3) {
+    const approval = await resolveCurrentQuotationApproval(estimate);
+    return approval.currentQuotationApproved &&
+      approval.currentQuotationApproval?.reviewRoundId === round.estimateReviewRoundId &&
+      lifecycle.designScopeRevision === round.designScopeRevision;
+  }
+  if (lifecycle?.workflowVersion === 2) {
+    return lifecycle.designScopeRevision === round.designScopeRevision && lifecycle.finalApproval == null;
+  }
+  return true;
 }
 
 async function hydrateReviewTasks(rounds: Row[], actor: PublicUser) {
@@ -2686,23 +2714,35 @@ function hasUnknownTransactionCommitResult(error: unknown): boolean {
 }
 
 async function guardCollaborativeDesign(estimate: Row, session: mongoose.ClientSession, round?: Row, assignmentOnly = false) {
-  if (!isCollaborativeEstimate(estimate)) return;
+  if (!isCollaborativeEstimate(estimate)) return null;
   if (estimate.estimation.workflowVersion === 3) {
-    if (!estimate.estimation.preApproval || !assignmentOnly && (!estimate.estimation.editClosedAt || !estimate.estimation.finalApproval || estimate.estimation.status !== "client_approved"))
-      throw new ApiError(409, "QUOTATION_APPROVAL_REQUIRED", "Approve the Designer-revised quotation before starting design work.");
-    if (round && round.estimateReviewRoundId !== estimate.estimation.finalApproval?.reviewRoundId)
+    const approval = await resolveCurrentQuotationApproval(estimate, session);
+    if (!estimate.estimation.preApproval || approval.quotationApprovalState === "source_issue" || !assignmentOnly && !approval.currentQuotationApproved)
+      throw new ApiError(409, "QUOTATION_APPROVAL_REQUIRED", "Client approval is required for the current quotation before design work continues.");
+    if (round && round.estimateReviewRoundId !== approval.currentQuotationApproval?.reviewRoundId)
       throw new ApiError(409, "DESIGN_QUOTATION_CHANGED", "The quotation changed. Submit the design against its current approved revision.");
+    await fenceCollaborativeEstimate(estimate, session);
+    if (round && round.designScopeRevision !== estimate.estimation.designScopeRevision) throw new ApiError(409, "DESIGN_SCOPE_CHANGED", "The estimate scope changed. Reconcile the design and submit it again before approval.");
+    return approval;
   } else if (!estimate.estimation.preApproval || estimate.estimation.editClosedAt || estimate.estimation.finalApproval) throw new ApiError(409, "ESTIMATE_EDIT_WINDOW_CLOSED", "Design changes require an open post-estimate revision.");
   await fenceCollaborativeEstimate(estimate, session);
   if (round && round.designScopeRevision !== estimate.estimation.designScopeRevision) throw new ApiError(409, "DESIGN_SCOPE_CHANGED", "The estimate scope changed. Reconcile the design and submit it again before approval.");
+  return null;
 }
 
 /** The initial task deadline starts at quotation approval and is never reset by a retry or reassignment. */
-export async function ensureQuotationDesignTask(estimate: Row, occurredAt: Date, session: mongoose.ClientSession) {
+export async function ensureQuotationDesignTask(estimate: Row, occurredAt: Date, session: mongoose.ClientSession, resolved?: QuotationApprovalResolution) {
   const lifecycle = estimate.estimation;
-  if (lifecycle?.workflowVersion !== 3 || !lifecycle.finalApproval || !lifecycle.editClosedAt || !estimate.designPlanDesignerId) return;
-  const openedAt = new Date(lifecycle.designStartedAt ?? lifecycle.finalApproval.approvedAt);
+  if (lifecycle?.workflowVersion !== 3 || !estimate.designPlanDesignerId) return null;
+  const approval = resolved ?? await resolveCurrentQuotationApproval(estimate, session);
+  if (!approval.currentQuotationApproval) return null;
+  const assignedAt = new Date(estimate.designPlanAssignedAt ?? occurredAt);
+  const approvedAt = new Date(approval.currentQuotationApproval.approvedAt);
+  const firstActionableAt = new Date(Math.max(assignedAt.getTime(), approvedAt.getTime()));
+  const openedAt = new Date(lifecycle.designStartedAt ?? firstActionableAt);
   if (!Number.isFinite(openedAt.getTime()) || openedAt > occurredAt) throw new ApiError(409, "QUOTATION_SOURCE_CONFLICT", "The quotation approval date is invalid.");
+  if (!lifecycle.designStartedAt) await EstimateModel.updateOne({ _id: estimate._id, "estimation.workflowVersion": 3,
+    "estimation.designStartedAt": null }, { $set: { "estimation.designStartedAt": openedAt.toISOString() } }, { session });
   const dedupeKey = `${String(estimate._id)}:design-plan-upload`;
   await ProjectWorkflowTaskModel.updateOne({ dedupeKey }, {
     $setOnInsert: { _id: `workflow-task-${randomUUID()}`, dedupeKey, projectId: String(estimate.projectId),
@@ -2713,13 +2753,16 @@ export async function ensureQuotationDesignTask(estimate: Row, occurredAt: Date,
       dueAt: workflowTaskDueAt("design_plan_upload", openedAt), plannedEffort: WORKFLOW_TASK_SCHEDULE.design_plan_upload.plannedEffort },
     $set: { assigneeUserId: String(estimate.designPlanDesignerId) }
   }, { session, upsert: true, runValidators: true });
+  return openedAt;
 }
 
 /** Immutable commercial/design binding. Execution still has a separate payment/issue gate. */
 export async function recordQuotationDesignHandoff(estimate: Row, actorId: string, occurredAt: Date, session: mongoose.ClientSession) {
   const lifecycle = estimate.estimation;
-  if (lifecycle?.workflowVersion !== 3 || !lifecycle.editClosedAt || !lifecycle.finalApproval || !lifecycle.designApproval) return;
-  const quote = lifecycle.finalApproval;
+  if (lifecycle?.workflowVersion !== 3 || !lifecycle.designApproval) return;
+  const effective = await resolveCurrentQuotationApproval(estimate, session);
+  if (!effective.currentQuotationApproval) return;
+  const quote = effective.currentQuotationApproval;
   const design = lifecycle.designApproval;
   if (design.designScopeRevision !== lifecycle.designScopeRevision || quote.designScopeRevision !== lifecycle.designScopeRevision)
     throw new ApiError(409, "DESIGN_SCOPE_CHANGED", "Approve design for the current quotation scope before procurement handoff.");
@@ -2732,8 +2775,7 @@ export async function recordQuotationDesignHandoff(estimate: Row, actorId: strin
     projectId: String(estimate.projectId), estimateVersion: quote.estimateVersion, designPlanVersion: design.designPlanVersion,
     designScopeRevision: lifecycle.designScopeRevision, actorId, occurredAt } }, { session, upsert: true, runValidators: true });
   if (design.estimateReviewRoundId !== quote.reviewRoundId) {
-    await EstimateModel.updateOne({ _id: estimate._id, "estimation.finalApproval.reviewRoundId": quote.reviewRoundId,
-      "estimation.designApproval.reviewRoundId": design.reviewRoundId },
+    await EstimateModel.updateOne({ _id: estimate._id, "estimation.designApproval.reviewRoundId": design.reviewRoundId },
     { $set: { "estimation.designApproval.estimateReviewRoundId": quote.reviewRoundId } }, { session, runValidators: true });
   }
   await ProjectWorkflowTaskModel.updateOne({ estimateId: String(estimate._id), kind: "procurement" },
@@ -2764,11 +2806,12 @@ export async function ensureCollaborativePreparationTask(estimate: Row, occurred
 
 export async function activateCollaborativeProjectWorkflow(projectId: string, actorId: string, occurredAt: Date, session: mongoose.ClientSession) {
   const estimate = await EstimateModel.findOne({ projectId, "estimation.workflowVersion": { $in: [2, 3] } }).session(session).lean();
-  const final = estimate?.estimation?.finalApproval;
+  const effective = estimate?.estimation?.workflowVersion === 3 ? await resolveCurrentQuotationApproval(estimate, session) : null;
+  const final = estimate?.estimation?.workflowVersion === 3 ? effective?.currentQuotationApproval : estimate?.estimation?.finalApproval;
   const design = estimate?.estimation?.workflowVersion === 3 ? estimate.estimation.designApproval : { reviewRoundId: final?.designReviewRoundId, designPlanVersion: final?.designPlanVersion };
   const payment = await DesignWorkflowStateModel.findById(projectId).session(session).lean();
   if (!estimate || !final || !design?.reviewRoundId || !design.designPlanVersion ||
-    estimate.estimation.workflowVersion === 3 && (!estimate.estimation.editClosedAt || estimate.estimation.status !== "client_approved" ||
+    estimate.estimation.workflowVersion === 3 && (!effective?.currentQuotationApproved ||
       design.estimateReviewRoundId !== final.reviewRoundId || payment?.initialPaymentEstimateId !== String(estimate._id) || payment?.initialPaymentEstimateVersion !== final.estimateVersion) ||
     estimate.designPlanStatus !== "approved" || estimate.estimation.approvedDesignScopeRevision !== final.designScopeRevision ||
     final.designScopeRevision !== estimate.estimation.designScopeRevision || payment?.initialPaymentReviewRoundId !== final.reviewRoundId ||

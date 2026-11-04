@@ -22,7 +22,9 @@ import { createAuditService } from "../src/services/audit.service.js";
 import { createEstimatePublicationService } from "../src/services/estimate-publication.service.js";
 import { createEstimateDecisionService } from "../src/services/estimate-decision.service.js";
 import { createEstimateClientReviewService } from "../src/services/estimate-client-review.service.js";
-import { createEstimateCollaborationService } from "../src/services/estimate-collaboration.service.js";
+import { createEstimateCollaborationService, resolveEstimationPreparationSource } from "../src/services/estimate-collaboration.service.js";
+import { approvedProcurementSnapshotFromRows, readProcurementDashboardApprovalRounds, readProcurementDashboardPortfolioReport } from "../src/services/procurement.service.js";
+import { createProjectWorkflowService } from "../src/services/project-workflow.service.js";
 import { assertDesignWorkflowSubmissionAllowed, createDesignWorkflowStateService } from "../src/services/design-workflow-state.service.js";
 import type { EstimateClientReviewStorage } from "../src/services/estimate-client-review-storage.js";
 import { startMongoReplicaSet } from "./helpers/mongo-replica-set.js";
@@ -30,6 +32,7 @@ import { startMongoReplicaSet } from "./helpers/mongo-replica-set.js";
 const client = { id: "collab-client", name: "Test Client", email: "collab-client@example.test", role: "client" } as const;
 const sales = { id: "collab-sales", name: "Test Sales", email: "collab-sales@example.test", role: "estimator_sales" } as const;
 const designer = { id: "collab-designer", name: "Test Designer", email: "collab-designer@example.test", role: "designer" } as const;
+const superAdmin = { id: "collab-super", name: "Test Super Admin", email: "collab-super@example.test", role: "super_admin" } as const;
 const now = new Date("2026-10-13T10:00:00Z");
 let replica: Awaited<ReturnType<typeof startMongoReplicaSet>>;
 const bytes = Buffer.from("%PDF-synthetic-test");
@@ -63,7 +66,8 @@ beforeEach(async () => {
   await ProjectModel.create({ _id: "collab-project", name: "Synthetic project", clientId: client.id,
     clientName: client.name, clientEmail: client.email, clientEmailNormalized: client.email, clientMobile: "0000000000",
     clientAddress: "Test location", location: "Test location", assignedEstimatorId: sales.id, status: "planning",
-    plannedStartAt: now, plannedEndAt: now, estimationWorkflowVersion: 3, estimateRequirementsVersion: 0 });
+    plannedStartAt: now, plannedEndAt: now, estimationWorkflowVersion: 3, estimateRequirementsVersion: 0,
+    designWorkflowStages: createProjectDesignWorkflow("collab-project") });
   await LeadModel.create({ _id: "collab-lead", ownerId: sales.id, projectId: "collab-project", clientName: client.name,
     clientEmail: client.email, clientMobile: "0000000000", projectName: "Synthetic project", location: "Test location",
     propertyType: "2BHK", source: "walk_in", stage: "new_lead", nextAction: "Estimation", nextActionAt: now });
@@ -87,7 +91,9 @@ async function decide(round: { id: string; version: number }, decision: "approve
 async function preApprove() { const pre = await publish(); await decide(pre.clientReview); return pre; }
 async function assignPrimary() {
   await ProjectModel.updateOne({ _id: "collab-project" }, { $set: { primaryDesignerId: designer.id, assignedDesignerIds: [designer.id] } });
-  await EstimateModel.updateOne({ _id: "collab-estimate" }, { $set: { designPlanDesignerId: designer.id, designPlanStatus: "draft" } });
+  await EstimateModel.updateOne({ _id: "collab-estimate" }, { $set: {
+    designPlanDesignerId: designer.id, designPlanStatus: "assigned", designPlanAssignedAt: now
+  } });
 }
 async function publishDesigner() {
   const estimate = await EstimateModel.findById("collab-estimate").lean();
@@ -105,6 +111,17 @@ function submissionServer() {
   return app;
 }
 
+async function saveDesignerQuantity(quantity: number) {
+  const current = await EstimateModel.findById("collab-estimate").lean();
+  const line = current!.lineItems[0]!;
+  const response = await request(submissionServer()).put("/leads/collab-lead/estimate").set("Authorization", "Bearer designer")
+    .send({ expectedVersion: current!.version, propertyType: "2BHK", rooms: [{ id: "bedroom-1", label: "Bedroom 1" }], scopes: ["interiors"],
+      lineItems: [{ id: "stable-line", source: "legacy", catalogueId: "legacy-item", roomName: "Bedroom 1", specification: "Wardrobe",
+        unit: "sqft", rate: line.rate, quantity, included: true }] });
+  if (response.status !== 200) throw new Error(`Designer save failed (${response.status}): ${JSON.stringify(response.body)}`);
+  return response;
+}
+
 async function setHighValueQuotation() {
   await EstimateModel.updateOne({ _id: "collab-estimate" }, { $set: {
     "lineItems.0.rate": 200_000, "lineItems.0.amount": 2_000_000, "lineItems.0.amountPaise": 200_000_000,
@@ -114,12 +131,96 @@ async function setHighValueQuotation() {
 }
 
 describe("version 3 two-phase quotation approvals", () => {
+  it("opens design on unchanged initial approval and requires reapproval only after a real Designer edit", async () => {
+    const repository = createMongoRepository();
+    await UserModel.create({ _id: superAdmin.id, name: superAdmin.name, email: superAdmin.email,
+      emailNormalized: superAdmin.email, passwordHash: "synthetic", role: superAdmin.role, active: true, accountKind: "standard", version: 1 });
+    const adminActor = (await repository.findUserById(superAdmin.id))!;
+    const workflow = createProjectWorkflowService({
+      storage: { read: async () => bytes } as never,
+      mailer: { deliveryKind: "disabled" },
+      portalUrl: "https://portal.example.test/client", audit, now: () => now
+    });
+    const otherProject = await ProjectModel.findById("collab-project").lean();
+    const otherLead = await LeadModel.findById("collab-lead").lean();
+    const otherEstimate = await EstimateModel.findById("collab-estimate").lean();
+    await ProjectModel.create({ ...otherProject, _id: "other-project", name: "Separate project" });
+    await LeadModel.create({ ...otherLead, _id: "other-lead", projectId: "other-project" });
+    await EstimateModel.create({ ...otherEstimate, _id: "other-estimate", leadId: "other-lead", projectId: "other-project",
+      subtotal: 2000, gst: 360, total: 2360, subtotalPaise: 200000, gstPaise: 36000, totalPaise: 236000 });
+    const otherBefore = await EstimateModel.findById("other-estimate").lean();
+    await expect(workflow.assignDesigner(superAdmin, "collab-project", designer.id)).rejects.toMatchObject({ code: "DESIGN_PLAN_NOT_ASSIGNABLE" });
+
+    const pre = await preApprove();
+    const initialApprovedAt = new Date(now.getTime() - 60 * 60 * 1000);
+    await EstimateClientReviewRoundModel.collection.updateOne({ _id: pre.clientReview.id as never }, { $set: { decidedAt: initialApprovedAt } });
+    await EstimateModel.updateOne({ _id: "collab-estimate" }, { $set: { "estimation.preApproval.approvedAt": initialApprovedAt.toISOString() } });
+    const initialRound = await EstimateClientReviewRoundModel.findById(pre.clientReview.id).lean();
+    const initiallyApproved = await EstimateModel.findById("collab-estimate").lean();
+    expect(initiallyApproved).toMatchObject({ status: "client_approved", designPlanStatus: "pending_assignment",
+      estimation: { phase: "post", status: "draft", preApproval: { reviewRoundId: pre.clientReview.id } } });
+    expect((await repository.findAdminProject(adminActor, "collab-project"))?.estimate).toMatchObject({
+      status: "draft", canAssignDesigner: true, initialEstimateApproval: { reviewRoundId: pre.clientReview.id },
+      approvedBaseline: { total: 1180 }
+    });
+    await expect(workflow.assignDesigner(designer, "collab-project", designer.id)).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await workflow.assignDesigner(superAdmin, "collab-project", designer.id);
+    expect(await ProjectModel.findById("collab-project").lean()).toMatchObject({ primaryDesignerId: designer.id, assignedDesignerIds: [designer.id] });
+    expect(await workflow.listDesignerTasks(designer)).toEqual([expect.objectContaining({
+      estimateId: "collab-estimate", leadId: "collab-lead", quotationApproved: true,
+      quotationApprovalState: "initial_current", requiresClientReapproval: false, canEditQuotation: true,
+      rooms: [expect.objectContaining({ id: "bedroom-1" })], lineItems: [expect.objectContaining({ specification: "Wardrobe" })]
+    })]);
+    const initialTask = await ProjectWorkflowTaskModel.findOne({ estimateId: "collab-estimate", kind: "design_plan_upload" }).lean();
+    expect(initialTask).toMatchObject({ assigneeUserId: designer.id, status: "open", openedAt: now });
+    expect(initialTask!.openedAt.getTime()).toBeGreaterThan(initialApprovedAt.getTime());
+    await expect(publishDesigner()).rejects.toMatchObject({ code: "QUOTATION_UNCHANGED" });
+    expect(await EstimateClientReviewRoundModel.countDocuments()).toBe(1);
+
+    await saveDesignerQuantity(12);
+    expect(await workflow.listDesignerTasks(designer)).toEqual([expect.objectContaining({
+      quotationApproved: false, quotationApprovalState: "revision_draft", requiresClientReapproval: true
+    })]);
+    await expect(assertDesignWorkflowSubmissionAllowed(repository, "collab-project", { phase: "upload" }))
+      .rejects.toMatchObject({ code: "DESIGN_WORKFLOW_BLOCKED" });
+    const sent = await publishDesigner();
+    expect(await EstimateClientReviewRoundModel.findById(sent.clientReview.id).lean()).toMatchObject({
+      phase: "post", submittedById: designer.id, salesApproval: null,
+      estimateVersion: initiallyApproved!.version + 1
+    });
+    await decide(sent.clientReview, "request_changes");
+    expect((await EstimateModel.findById("collab-estimate").lean())!.estimation).toMatchObject({
+      status: "client_changes_requested", preApproval: initiallyApproved!.estimation.preApproval, finalApproval: null
+    });
+    await saveDesignerQuantity(15);
+    const resent = await publishDesigner();
+    await expect(decide(sent.clientReview)).rejects.toMatchObject({ code: "ESTIMATE_NOT_REVIEWABLE" });
+    await decide(resent.clientReview);
+    const completed = await EstimateModel.findById("collab-estimate").lean();
+    expect(completed).toMatchObject({ total: 1770, estimation: { status: "client_approved", editClosedAt: now.toISOString(),
+      preApproval: initiallyApproved!.estimation.preApproval, finalApproval: { reviewRoundId: resent.clientReview.id } } });
+    const task = await ProjectWorkflowTaskModel.findOne({ estimateId: "collab-estimate", kind: "design_plan_upload" }).lean();
+    expect(task).toMatchObject({ assigneeUserId: designer.id, status: "open", openedAt: initialTask!.openedAt,
+      dueAt: initialTask!.dueAt });
+    expect(await workflow.listDesignerTasks(designer)).toEqual([expect.objectContaining({ quotationApproved: true,
+      quotationApprovalState: "revision_current", requiresClientReapproval: false, canEditQuotation: true })]);
+    await expect(decide(resent.clientReview)).rejects.toMatchObject({ code: "ESTIMATE_NOT_REVIEWABLE" });
+    expect(await ProjectWorkflowTaskModel.countDocuments({ estimateId: "collab-estimate", kind: "design_plan_upload" })).toBe(1);
+    expect(await ProjectWorkflowTaskModel.findById(task!._id).lean()).toEqual(task);
+    expect(await EstimateClientReviewRoundModel.findById(pre.clientReview.id).lean()).toEqual(initialRound);
+    expect(await EstimateModel.findById("other-estimate").lean()).toEqual(otherBefore);
+    expect((await repository.findAdminProject(adminActor, "other-project"))?.estimate).toMatchObject({ canAssignDesigner: false, initialEstimateApproval: null });
+    expect((await ProjectModel.findById("other-project").lean())!.primaryDesignerId).toBeNull();
+  });
+
   it("advertises publication only for assigned Sales before pre-approval and the primary afterwards", async () => {
     const app = submissionServer();
     const detail = async (actor: string) => (await request(app).get("/leads/collab-lead/estimate").set("Authorization", `Bearer ${actor}`).expect(200)).body.data;
     expect((await detail("sales")).capabilities.canPublishQuotation).toBe(true);
     await preApprove(); await assignPrimary();
     expect((await detail("sales")).capabilities.canPublishQuotation).toBe(false);
+    expect((await detail("designer")).capabilities.canPublishQuotation).toBe(false);
+    await saveDesignerQuantity(11);
     expect((await detail("designer")).capabilities.canPublishQuotation).toBe(true);
     await publishDesigner();
     expect((await detail("designer")).capabilities.canPublishQuotation).toBe(false);
@@ -136,12 +237,14 @@ describe("version 3 two-phase quotation approvals", () => {
       salesApproval: { actorId: sales.id, sourceDigest: quotationSnapshotDigest(preRound!.estimateSnapshot) } });
     await decide(pre.body.data.clientReview);
     await assignPrimary();
+    await saveDesignerQuantity(11);
+    const revised = await EstimateModel.findById("collab-estimate").lean();
     const post = await request(app).post("/leads/collab-lead/estimate/submit").set("Authorization", "Bearer designer")
-      .send({ expectedVersion: 2 }).expect(200);
+      .send({ expectedVersion: revised!.version }).expect(200);
     expect(post.body.data).toMatchObject({ status: "sent_to_client", approvalRequired: false,
       estimation: { workflowVersion: 3, phase: "post", status: "sent_to_client" } });
     const postRound = await EstimateClientReviewRoundModel.findById(post.body.data.clientReview.id).lean();
-    expect(postRound).toMatchObject({ phase: "post", estimateVersion: 2, submittedById: designer.id, salesApproval: null });
+    expect(postRound).toMatchObject({ phase: "post", estimateVersion: revised!.version, submittedById: designer.id, salesApproval: null });
     await decide(post.body.data.clientReview);
     const approved = await EstimateModel.findById("collab-estimate").lean();
     expect(approved).toMatchObject({ approvalRequired: false, assignedDesignerId: null,
@@ -175,16 +278,18 @@ describe("version 3 two-phase quotation approvals", () => {
     expect((await EstimateModel.findById("collab-estimate").lean())!.estimation).toMatchObject({ phase: "post", preApproval: { reviewRoundId: published.clientReview.id } });
   });
 
-  it("lets the primary submit and Client approve the second quotation before drawings, then opens design tasks", async () => {
+  it("requires a material primary-Designer revision before a second quotation can be submitted", async () => {
     await preApprove();
     await assignPrimary();
-    await expect(publish()).rejects.toMatchObject({ code: "ESTIMATE_PRIMARY_DESIGNER_REQUIRED" });
+    await expect(publish()).rejects.toMatchObject({ code: "QUOTATION_UNCHANGED" });
+    await expect(publishDesigner()).rejects.toMatchObject({ code: "QUOTATION_UNCHANGED" });
+    await saveDesignerQuantity(12);
     const published = await publishDesigner();
     const frozen = await EstimateClientReviewRoundModel.findById(published.clientReview.id).lean();
     expect(frozen).toMatchObject({ workflowVersion: 3, phase: "post", submittedById: designer.id });
     await decide(published.clientReview);
     const saved = await EstimateModel.findById("collab-estimate").lean();
-    expect(saved).toMatchObject({ designPlanStatus: "draft", designPlanVersion: 0,
+    expect(saved).toMatchObject({ designPlanStatus: "assigned", designPlanVersion: 0,
       estimation: { status: "client_approved", editClosedAt: now.toISOString(), designApproval: null,
         finalApproval: { reviewRoundId: published.clientReview.id, designReviewRoundId: null, designPlanVersion: null } } });
     const task = await ProjectWorkflowTaskModel.findOne({ estimateId: "collab-estimate", kind: "design_plan_upload" }).lean();
@@ -212,21 +317,81 @@ describe("version 3 two-phase quotation approvals", () => {
   });
 
   it("reopens once with a reason and preserves all approved history and the prior baseline", async () => {
-    await preApprove(); await assignPrimary(); const published = await publishDesigner(); await decide(published.clientReview);
+    await preApprove(); await assignPrimary(); await saveDesignerQuantity(12);
+    const published = await publishDesigner(); await decide(published.clientReview);
     const approved = await EstimateModel.findById("collab-estimate").lean();
     const frozen = await EstimateClientReviewRoundModel.findById(published.clientReview.id).lean();
     const input = { expectedVersion: approved!.version, reviewRoundId: published.clientReview.id, reason: "Client requested another room", idempotencyKey: "unlock-request-001" };
     const first = await collaboration.unlock(sales, "collab-estimate", input);
     const retry = await collaboration.unlock(sales, "collab-estimate", input);
-    expect(first).toMatchObject({ version: approved!.version + 1, estimation: { editClosedAt: null, status: "draft", finalApproval: approved!.estimation.finalApproval } });
-    expect(retry.version).toBe(first.version);
+    expect(first).toMatchObject({ version: approved!.version + 1,
+      quotationApprovalState: "revision_draft", currentQuotationApproved: false, requiresClientReapproval: true,
+      quotationApprovalSource: null, currentQuotationApproval: null,
+      estimation: { editClosedAt: null, status: "draft", finalApproval: approved!.estimation.finalApproval } });
+    expect(retry).toMatchObject({ version: first.version,
+      quotationApprovalState: "revision_draft", currentQuotationApproved: false, requiresClientReapproval: true,
+      quotationApprovalSource: null, currentQuotationApproval: null });
     expect(await QuotationUnlockReceiptModel.countDocuments()).toBe(1);
     expect(await EstimateClientReviewRoundModel.findById(published.clientReview.id).lean()).toEqual(frozen);
     await expect(collaboration.unlock(sales, "collab-estimate", { ...input, reason: "Different reason" })).rejects.toMatchObject({ code: "QUOTATION_UNLOCK_CONFLICT" });
   });
 
+  it("returns the canonical approval state when a revised quotation review is withdrawn", async () => {
+    await preApprove(); await assignPrimary(); await saveDesignerQuantity(12);
+    const pending = await publishDesigner();
+    const withdrawn = await collaboration.withdraw(designer, "collab-estimate", {
+      expectedVersion: pending.clientReview.estimateVersion, reviewRoundId: pending.clientReview.id,
+      reviewRoundVersion: pending.clientReview.version, reason: "Recheck the revised scope"
+    });
+    expect(withdrawn).toMatchObject({
+      quotationApprovalState: "revision_draft", currentQuotationApproved: false, requiresClientReapproval: true,
+      quotationApprovalSource: null, currentQuotationApproval: null,
+      estimation: { status: "draft", pendingReviewRoundId: null }
+    });
+  });
+
+  it("fails current preparation and Procurement closed after a saved unapproved Designer revision", async () => {
+    const published = await preApprove();
+    await assignPrimary();
+    const approved = await EstimateModel.findById("collab-estimate").lean();
+    const round = await EstimateClientReviewRoundModel.findById(published.clientReview.id).lean();
+    expect(await resolveEstimationPreparationSource(approved!))
+      .toMatchObject({ source: { estimateReviewRoundId: published.clientReview.id, kind: "approved_pre" } });
+    const currentRounds = await readProcurementDashboardApprovalRounds(["collab-estimate"]);
+    expect(currentRounds.get("collab-estimate")?.[0]).toMatchObject({
+      id: published.clientReview.id,
+      currentQuotationApproval: { kind: "initial_unchanged", reviewRoundId: published.clientReview.id }
+    });
+    expect(approvedProcurementSnapshotFromRows(approved!, currentRounds.get("collab-estimate")!))
+      .toMatchObject({ estimateReviewRoundId: published.clientReview.id,
+        preparationSource: { kind: "approved_pre", estimateReviewRoundId: published.clientReview.id } });
+
+    await EstimatePreparationSnapshotModel.create({ _id: "stale-released-source", projectId: "collab-project",
+      estimateId: "collab-estimate", estimateVersion: approved!.version, requirementsVersion: approved!.estimation.requirementsVersion,
+      designScopeRevision: approved!.estimation.designScopeRevision, phase: "post",
+      sourceDigest: sha256Hex(JSON.stringify(round!.estimateSnapshot)), snapshot: round!.estimateSnapshot,
+      releasedById: superAdmin.id, releasedAt: now });
+    await EstimateModel.updateOne({ _id: "collab-estimate" }, { $set: {
+      version: approved!.version + 1, status: "client_approved",
+      "lineItems.0.quantity": 12, "lineItems.0.amount": 1200, "lineItems.0.amountPaise": 120000,
+      subtotal: 1200, gst: 216, total: 1416, subtotalPaise: 120000, gstPaise: 21600, totalPaise: 141600,
+      "estimation.phase": "post", "estimation.status": "draft",
+      "estimation.pricedRevision": approved!.estimation.pricedRevision + 1,
+      "estimation.preparationSnapshotId": "stale-released-source"
+    } });
+    const revised = await EstimateModel.findById("collab-estimate").lean();
+
+    await expect(resolveEstimationPreparationSource(revised!))
+      .rejects.toMatchObject({ code: "ESTIMATE_SOURCE_CONFLICT" });
+    await expect(readProcurementDashboardApprovalRounds(["collab-estimate"]))
+      .rejects.toMatchObject({ code: "PROCUREMENT_APPROVAL_SOURCE_CONFLICT" });
+    await expect(readProcurementDashboardPortfolioReport())
+      .rejects.toMatchObject({ code: "PROCUREMENT_APPROVAL_SOURCE_CONFLICT" });
+  });
+
   it("denies a removed primary and unrelated Sales before any unlock write", async () => {
-    await preApprove(); await assignPrimary(); const published = await publishDesigner(); await decide(published.clientReview);
+    await preApprove(); await assignPrimary(); await saveDesignerQuantity(12);
+    const published = await publishDesigner(); await decide(published.clientReview);
     const approved = await EstimateModel.findById("collab-estimate").lean();
     await ProjectModel.updateOne({ _id: "collab-project" }, { $set: { primaryDesignerId: "another-designer", assignedEstimatorId: "another-sales" } });
     const input = { expectedVersion: approved!.version, reviewRoundId: published.clientReview.id, reason: "Scope change", idempotencyKey: "unlock-request-002" };
@@ -252,14 +417,19 @@ describe("explicit version 3 transition", () => {
     expect(await AuditEventModel.countDocuments()).toBe(0);
     const input = { expectedVersion: 1, targetVersion: 3 as const, reason: "Enable the revised quotation workflow", previewFingerprint: preview.previewFingerprint };
     const enabled = await collaboration.enableQuotation(sales, "collab-estimate", input);
-    expect(enabled).toMatchObject({ version: 2, estimation: { workflowVersion: 3, phase: "pre", pricedRevision: 1, preApproval: null, salesApproval: null } });
+    expect(enabled).toMatchObject({ version: 2,
+      quotationApprovalState: "source_issue", currentQuotationApproved: false, requiresClientReapproval: false,
+      quotationApprovalSource: null, currentQuotationApproval: null,
+      estimation: { workflowVersion: 3, phase: "pre", pricedRevision: 1, preApproval: null, salesApproval: null } });
     expect((await ProjectModel.findById("collab-project").lean())!.estimationWorkflowVersion).toBe(3);
     expect((await ProjectModel.findById("collab-project").lean())!.designWorkflowStages).toEqual(createProjectDesignWorkflow("collab-project"));
-    expect((await collaboration.enableQuotation(sales, "collab-estimate", input)).version).toBe(2);
+    expect(await collaboration.enableQuotation(sales, "collab-estimate", input)).toMatchObject({ version: 2,
+      quotationApprovalState: "source_issue", currentQuotationApproved: false, requiresClientReapproval: false,
+      quotationApprovalSource: null, currentQuotationApproval: null });
     expect(await AuditEventModel.countDocuments({ action: "estimate_collaboration_enabled" })).toBe(1);
   });
 
-  it("initializes an empty stage list and opens operational actions only after the second quotation approval", async () => {
+  it("reconciles an existing assignment task on the first authorized design write without resetting its deadline", async () => {
     await ProjectModel.updateOne({ _id: "collab-project" }, { $set: { designWorkflowStages: [] } });
     const preview = await collaboration.preview(sales, "collab-estimate");
     await collaboration.enableQuotation(sales, "collab-estimate", { expectedVersion: 1, targetVersion: 3,
@@ -269,13 +439,17 @@ describe("explicit version 3 transition", () => {
       code: "DESIGN_WORKFLOW_BLOCKED", message: expect.stringContaining("Client must approve the current Designer-revised quotation")
     });
     await preApprove(); await assignPrimary();
+    expect(await ProjectWorkflowTaskModel.countDocuments({ estimateId: "collab-estimate", kind: "design_plan_upload" })).toBe(0);
     const workflow = createDesignWorkflowStateService(repository, audit, () => now);
     const input = { action: "internal_kickoff_complete" as const, stageId: createProjectDesignWorkflow("collab-project")[0].id,
       expectedVersion: 0, idempotencyKey: "transition-kickoff-check", note: "Record handover", data: { meetingAt: now.toISOString(), designHandoverAcknowledged: true } };
     const proof = { storageReference: "synthetic-kickoff", originalFilename: "kickoff.pdf", mimeType: "application/pdf" as const, byteSize: bytes.length, sha256: sha256Hex(bytes) };
-    await expect(workflow.act(designer, "collab-project", input, proof)).rejects.toMatchObject({ code: "DESIGN_WORKFLOW_BLOCKED" });
-    const post = await publishDesigner(); await decide(post.clientReview);
     await expect(workflow.act(designer, "collab-project", input, proof)).resolves.toMatchObject({ version: 1, replayed: false });
+    const task = await ProjectWorkflowTaskModel.findOne({ estimateId: "collab-estimate", kind: "design_plan_upload" }).lean();
+    expect(task).toMatchObject({ openedAt: now, assigneeUserId: designer.id, status: "open" });
+    await expect(workflow.act(designer, "collab-project", input, proof)).resolves.toMatchObject({ version: 1, replayed: true });
+    expect(await ProjectWorkflowTaskModel.countDocuments({ estimateId: "collab-estimate", kind: "design_plan_upload" })).toBe(1);
+    expect(await ProjectWorkflowTaskModel.findById(task!._id).lean()).toEqual(task);
     expect((await repository.findDesignWorkflowState("collab-project"))!.stages.internal_kickoff?.completedAt).toBe(now.toISOString());
   });
 

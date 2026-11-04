@@ -8,8 +8,11 @@ const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
 const object = (properties: Record<string, unknown>, required = Object.keys(properties)) => ({ type: "object", additionalProperties: false, properties, ...(required.length ? { required } : {}) });
 const source = object({ revisionId: id, itemVersion: version, revisionVersion: version, uomId: id });
 const tier = { type: "string", enum: ["signature", "premium", "functional"] };
+const origins = { type: "array", maxItems: 200, uniqueItems: true, items: id,
+  description: "Current same-room non-negotiable source Main Line IDs, validated by the server. An empty array marks an independent selection; omitted values preserve existing provenance on ordinary edits." };
 const values = { source, quantity: { type: "number", minimum: 0, exclusiveMinimum: true }, modeTier: tier,
-  dimensions: ref("EstimateDimensions"), selectedInHouseComponentIds: { type: "array", maxItems: 50, uniqueItems: true, items: id } };
+  dimensions: ref("EstimateDimensions"), selectedInHouseComponentIds: { type: "array", maxItems: 50, uniqueItems: true, items: id },
+  recommendationSourceMainLineIds: origins };
 const request = (name: string) => ({ required: true, content: { "application/json": { schema: ref(name) } } });
 const grouping = { mainBasketId: id, mainBasketName: text, subBasketId: { ...id, nullable: true }, subBasketName: { ...text, nullable: true } };
 const groupScope = { mainBasketId: id, subBasketId: { ...id, nullable: true }, roomId: { ...id, nullable: true } };
@@ -20,7 +23,17 @@ const setupFields = { propertyType: { type: "string", minLength: 1, maxLength: 2
   rooms: { type: "array", maxItems: 200, items: object(setupRoom) }, selectedMainBasketIds: { type: "array", maxItems: 200, uniqueItems: true, items: id } };
 const removal = { canRemove: { type: "boolean" }, removalBlockedReason: { type: "string", nullable: true } };
 
+export const QUOTATION_APPROVAL_PROPERTIES = {
+  quotationApprovalState: { type: "string", enum: ["initial_current", "revision_draft", "revision_pending_client", "revision_changes_requested", "revision_current", "source_issue"] },
+  currentQuotationApproved: { type: "boolean" },
+  requiresClientReapproval: { type: "boolean" },
+  quotationApprovalSource: { type: "string", enum: ["initial_unchanged", "designer_revision"], nullable: true },
+  currentQuotationApproval: { allOf: [{ $ref: "#/components/schemas/CurrentQuotationApproval" }], nullable: true }
+} as const;
+
 export const QUOTATION_SCHEMAS = {
+  CurrentQuotationApproval: object({ kind: { type: "string", enum: ["initial_unchanged", "designer_revision"] },
+    reviewRoundId: id, estimateVersion: version, approvedAt: { type: "string", format: "date-time" } }),
   QuotationPublish: object({ expectedVersion: version, approveSales: { type: "boolean", description: "Must be true for the assigned Sales estimator to approve and send a version-3 pre-design quotation. The immutable review records this approval against its priced revision." } }, []),
   QuotationTransition: object({ expectedVersion: version, targetVersion: { type: "integer", enum: [3] },
     reason: { type: "string", minLength: 1, maxLength: 1000 }, previewFingerprint: { type: "string", pattern: "^[a-f0-9]{64}$" } }),
@@ -44,7 +57,8 @@ export const QUOTATION_SCHEMAS = {
     phase: { type: "string", enum: ["pre", "post"] }, status: text }),
   QuotationLine: { ...ESTIMATE_TIER_SCHEMAS.EstimateTierLine,
     properties: { ...ESTIMATE_TIER_SCHEMAS.EstimateTierLine.properties, ...grouping,
-      roomId: id, included: { type: "boolean" }, source: { ...source, nullable: true } },
+      roomId: id, included: { type: "boolean" }, source: { ...source, nullable: true },
+      recommendationSourceMainLineIds: { ...origins, description: "Omitted when any stored origin is not Client-visible. Omission does not imply independent selection or authorize client-side dependent cleanup." } },
     required: [...ESTIMATE_TIER_SCHEMAS.EstimateTierLine.required, ...Object.keys(grouping), "roomId", "included", "source"] },
   QuotationGroup: object({ ...groupScope, includedCount: { type: "integer", minimum: 1 }, sourceToken }),
   QuotationBasket: object({ id, name: text, subBaskets: { type: "array", items: object({ id, name: text }) } }),
@@ -59,17 +73,27 @@ export const QUOTATION_SCHEMAS = {
   Quotation: { type: "object", description: "Actor-scoped editable quotation with server capabilities. Uses EstimateTierChoices fields plus workflowVersion=3, phase, status, pricedRevision, rooms, reviewState and source identities on each visible line. Hidden amounts remain in the true total.",
     properties: { projectNumber: PROJECT_NUMBER_SCHEMA, workflowVersion: { type: "integer", enum: [3] }, projectId: id, estimateId: id, estimateVersion: version,
       pricedRevision: version, phase: { type: "string", enum: ["pre", "post"] }, status: text,
+      ...QUOTATION_APPROVAL_PROPERTIES,
       reviewState: { type: "string", enum: ["draft", "awaiting_staff_review", "ready_for_approval", "approved"] },
       rooms: { type: "array", items: object({ id, name: text }) }, editingAllowed: { type: "boolean" },
       totalPaise: { type: "integer", minimum: 0, nullable: true }, lines: { type: "array", items: ref("QuotationLine") },
       excludedLines: { type: "array", items: ref("QuotationLine"), description: "Visible excluded saved rows retain stable IDs and user choices for re-addition. They do not contribute to totals." },
       baskets: { type: "array", items: ref("QuotationBasket"), description: "Complete safe hierarchy within project-selected baskets, independent of candidate pagination." },
       groups: { type: "array", items: ref("QuotationGroup") }, setup: ref("QuotationSetup") } },
-  QuotationCandidates: object({ items: { type: "array", items: object({ mainLineId: id, name: text, source, ...grouping,
+  QuotationCandidate: object({ mainLineId: id, name: text, source, ...grouping,
     pricingMode: { type: "string", enum: ["pmc", "sub_vendor", "in_house"] }, modeTier: tier, dimensionsMandatory: { type: "boolean" },
     dimensionRule: { ...ref("EstimateDimensionRule"), nullable: true }, uomName: text,
-    choices: { type: "array", items: ref("EstimateTierChoice") } }) }, total: { type: "integer", minimum: 0 },
-    limit: { type: "integer", minimum: 1, maximum: 50 }, offset: { type: "integer", minimum: 0 } })
+    choices: { type: "array", items: ref("EstimateTierChoice") } }),
+  QuotationCandidates: object({ items: { type: "array", items: ref("QuotationCandidate") }, total: { type: "integer", minimum: 0 },
+    limit: { type: "integer", minimum: 1, maximum: 50 }, offset: { type: "integer", minimum: 0 } }),
+  QuotationRecommendationQuery: { ...object({ expectedVersion: version, roomId: id,
+    sources: { type: "array", maxItems: 200, items: object({ mainLineId: id, source }) },
+    limit: { type: "integer", minimum: 1, maximum: 20, default: 20 }, offset: { type: "integer", minimum: 0, maximum: 100_000, default: 0 } }, ["expectedVersion", "roomId", "sources"]),
+    description: "Read-only query for current visible saved or draft sources in one project room. Sources must have distinct Main Line IDs and current revision identities. No estimate or audit writes; hidden items are omitted before pagination and counts." },
+  QuotationRecommendations: object({ projectId: id, estimateId: id, estimateVersion: version, roomId: id,
+    items: { type: "array", maxItems: 20, items: object({ candidate: ref("QuotationCandidate"),
+      sourceMainLines: { type: "array", maxItems: 200, items: object({ mainLineId: id, name: text }) }, requiresSetup: { type: "boolean" } }) },
+    total: { type: "integer", minimum: 0 }, limit: { type: "integer", minimum: 1, maximum: 20 }, offset: { type: "integer", minimum: 0 } })
 };
 export const QUOTATION_REQUESTS = {
   "POST /leads/:leadId/estimate/submit": request("QuotationPublish"),
@@ -78,9 +102,15 @@ export const QUOTATION_REQUESTS = {
     oneOf: [ref("EstimateVersionCommand"), ref("QuotationTransition")] } } } },
   "PUT /projects/:projectId/secondary-designers": request("DesignTeamUpdate"),
   "PATCH /projects/:projectId/quotation": request("QuotationPatch"),
+  "POST /projects/:projectId/quotation/recommendations/query": request("QuotationRecommendationQuery"),
   "POST /estimates/:estimateId/unlock": request("QuotationUnlock")
 };
 export const QUOTATION_RESPONSES = {
+  "POST /leads/:leadId/estimate/submit": "NumberedEstimateRecord",
+  "POST /estimates/:estimateId/send-client": "NumberedEstimateRecord",
+  "POST /estimates/:estimateId/enable-collaboration": "NumberedEstimateRecord",
+  "POST /estimates/:estimateId/withdraw-review": "NumberedEstimateRecord",
+  "POST /estimates/:estimateId/unlock": "NumberedEstimateRecord",
   "GET /estimates/:estimateId/collaboration-preview": "QuotationTransitionPreview",
   "GET /projects/:projectId/design-team": "DesignTeam",
   "PUT /projects/:projectId/secondary-designers": "DesignTeam",
@@ -88,5 +118,6 @@ export const QUOTATION_RESPONSES = {
   "PATCH /projects/:projectId/quotation": "Quotation",
   "GET /projects/:projectId/quotation/revision": "QuotationRevision",
   "GET /projects/:projectId/quotation/items": "QuotationCandidates",
+  "POST /projects/:projectId/quotation/recommendations/query": "QuotationRecommendations",
   "GET /projects/:projectId/quotation/setup": "QuotationSetupCatalogue"
 };

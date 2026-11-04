@@ -4,6 +4,11 @@ import type { ClientProjectSummary } from "../../api/types";
 import { Button } from "../../components/ui/Button";
 import { EstimateReviewPanel } from "../estimates/EstimateReviewPanel";
 import { clientEstimateWorkflowVersion } from "../estimates/clientEstimateWorkflow";
+import {
+  currentQuotationApprovalState,
+  currentQuotationIsApproved,
+  quotationApprovalNeedsClient
+} from "../estimates/quotationApproval";
 import { estimateWorkflowKeys, getClientEstimates, type EstimateQueueItem } from "../estimates/estimateWorkflowApi";
 
 interface ClientEstimateSummaryProps {
@@ -60,6 +65,22 @@ function estimateSummaryState(estimate: EstimateQueueItem): { message: string; r
   const review = estimate.publishedReview;
   const phase = estimate.estimation?.phase ?? review?.phase;
   if (estimate.reviewSourceIssue) return { message: "The submitted version needs to be refreshed in your estimation workspace.", reviewReady: false };
+  if (clientEstimateWorkflowVersion(estimate) === 3 && phase === "post") {
+    const approvalState = currentQuotationApprovalState(estimate);
+    if (approvalState === "initial_current" && currentQuotationIsApproved(estimate)) {
+      return { message: "Initial estimate approved. Design can continue while the quotation remains unchanged.", reviewReady: false };
+    }
+    if (approvalState === "revision_draft") return { message: "Your Designer is preparing a revised quotation.", reviewReady: false };
+    if (approvalState === "revision_pending_client") {
+      const reviewReady = quotationApprovalNeedsClient(estimate) && review?.canDecide === true &&
+        review.status === "pending" && estimate.status === "sent_to_client" &&
+        estimate.version === review.estimateVersion && estimate.estimation?.phase === review.phase;
+      return { message: reviewReady ? "Ready for your revised quotation approval" : "A revised quotation is awaiting your review.", reviewReady };
+    }
+    if (approvalState === "revision_changes_requested") return { message: "Changes requested. Your Designer is revising the quotation.", reviewReady: false };
+    if (approvalState === "revision_current" && currentQuotationIsApproved(estimate)) return { message: "Revised quotation approved", reviewReady: false };
+    return { message: "The current quotation approval could not be verified. Refresh your estimation workspace.", reviewReady: false };
+  }
   if (review?.canDecide && review.status === "pending" && estimate.status === "sent_to_client" &&
     estimate.version === review.estimateVersion && (!estimate.estimation || estimate.estimation.phase === review.phase)) {
     return { message: phase === "post" ? "Ready for your post-design approval" : phase === "pre" ? "Ready for your pre-design approval" : "Ready for your review", reviewReady: true };
@@ -67,7 +88,7 @@ function estimateSummaryState(estimate: EstimateQueueItem): { message: string; r
   if (review?.status === "pending") return { message: "Open your estimation workspace to check the latest review status.", reviewReady: false };
   if (estimate.estimation?.editClosedAt || review?.status === "approved" && review.phase === "post") return { message: "Post-design quotation approved", reviewReady: false };
   if (review?.status === "changes_requested") return { message: "Changes requested. Your team is revising the quotation.", reviewReady: false };
-  if (phase === "post") return { message: "Your Designer is preparing the revised quotation.", reviewReady: false };
+  if (phase === "post") return { message: "Your team is preparing the final estimate.", reviewReady: false };
   if (review?.status === "approved") return { message: "Pre-design approval recorded", reviewReady: false };
   if (review?.status === "superseded" || estimate.status === "draft") return { message: "Waiting for Sales confirmation", reviewReady: false };
   return { message: "Your team is preparing the quotation for your review.", reviewReady: false };

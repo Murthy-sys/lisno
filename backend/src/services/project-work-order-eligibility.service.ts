@@ -5,6 +5,7 @@ import { EstimateModel } from "../models/Estimate.js";
 import { EstimateClientReviewRoundModel } from "../models/EstimateClientReviewRound.js";
 import { DesignPlanReviewRoundModel } from "../models/DesignPlanReviewRound.js";
 import { DesignWorkflowStateModel } from "../models/DesignWorkflowState.js";
+import { resolveCurrentQuotationApproval } from "./quotation-approval-state.service.js";
 
 export interface FinalWorkOrderSource { estimateId: string; estimateVersion: number; estimateReviewRoundId: string }
 
@@ -23,23 +24,30 @@ export async function projectWorkOrderIssueReadiness(projectId: string, session?
   const estimates = await estimateQuery.lean();
   const estimate = estimates.length === 1 ? estimates[0] : null;
   const lifecycle = estimate?.estimation;
-  const final = lifecycle?.workflowVersion === project.estimationWorkflowVersion ? lifecycle.finalApproval : null;
-  if (!estimate || !final || !lifecycle.editClosedAt || lifecycle.status !== "client_approved")
-    return { required: true, canIssue: false, blockers: ["Client approval of the final post-estimate is required."], finalSource: null };
-  const finalSource = { estimateId: String(estimate._id), estimateVersion: final.estimateVersion, estimateReviewRoundId: final.reviewRoundId };
-  const approvalQuery = EstimateClientReviewRoundModel.findOne({ _id: final.reviewRoundId, estimateId: estimate._id, projectId,
-    estimateVersion: final.estimateVersion, phase: "post", status: "approved", decision: "approve" });
+  if (!estimate || lifecycle?.workflowVersion !== project.estimationWorkflowVersion)
+    return { required: true, canIssue: false, blockers: ["Client approval of the current quotation is required."], finalSource: null };
+  const resolved = lifecycle.workflowVersion === 3 ? await resolveCurrentQuotationApproval(estimate, session) : null;
+  const approvalReference = lifecycle.workflowVersion === 3 ? resolved?.currentQuotationApproval : lifecycle.finalApproval;
+  if (!approvalReference)
+    return { required: true, canIssue: false, blockers: ["Client approval of the current quotation is required."], finalSource: null };
+  const finalSource = { estimateId: String(estimate._id), estimateVersion: approvalReference.estimateVersion,
+    estimateReviewRoundId: approvalReference.reviewRoundId };
+  const approvalQuery = EstimateClientReviewRoundModel.findOne({ _id: approvalReference.reviewRoundId, estimateId: estimate._id, projectId,
+    estimateVersion: approvalReference.estimateVersion,
+    phase: lifecycle.workflowVersion === 3 && approvalReference.kind === "initial_unchanged" ? "pre" : "post",
+    status: "approved", decision: "approve" });
   if (session) approvalQuery.session(session);
   const approval = await approvalQuery.lean();
+  const sourceRequirementsVersion = lifecycle.workflowVersion === 3 ? approvalReference.requirementsVersion : approvalReference.requirementsVersion;
   if (!approval || !approval.decidedById || !approval.decidedAt ||
-    final.requirementsVersion !== project.estimateRequirementsVersion || final.requirementsVersion !== lifecycle.requirementsVersion)
-    blockers.push("The final estimate approval or its requirements source needs reconciliation.");
+    sourceRequirementsVersion !== project.estimateRequirementsVersion || sourceRequirementsVersion !== lifecycle.requirementsVersion)
+    blockers.push("The quotation approval or its requirements source needs reconciliation.");
   const designBinding = lifecycle.workflowVersion === 3 ? lifecycle.designApproval : {
-    reviewRoundId: final.designReviewRoundId, designPlanVersion: final.designPlanVersion,
-    designScopeRevision: final.designScopeRevision, estimateReviewRoundId: final.reviewRoundId
+    reviewRoundId: approvalReference.designReviewRoundId, designPlanVersion: approvalReference.designPlanVersion,
+    designScopeRevision: approvalReference.designScopeRevision, estimateReviewRoundId: approvalReference.reviewRoundId
   };
-  if (!designBinding || designBinding.estimateReviewRoundId !== final.reviewRoundId ||
-      designBinding.designScopeRevision !== final.designScopeRevision) {
+  if (!designBinding || designBinding.estimateReviewRoundId !== approvalReference.reviewRoundId ||
+      designBinding.designScopeRevision !== approvalReference.designScopeRevision) {
     blockers.push("Approve the uploaded design for the current quotation before issuing work orders.");
   }
   const designQuery = DesignPlanReviewRoundModel.exists({ _id: designBinding?.reviewRoundId ?? null, estimateId: estimate._id, projectId,
@@ -47,15 +55,15 @@ export async function projectWorkOrderIssueReadiness(projectId: string, session?
     ...(lifecycle.workflowVersion === 3 ? { designScopeRevision: lifecycle.designScopeRevision } : {}) });
   if (session) designQuery.session(session);
   if (estimate.designPlanStatus !== "approved" || estimate.designPlanVersion !== designBinding?.designPlanVersion ||
-    lifecycle.designScopeRevision !== final.designScopeRevision || lifecycle.approvedDesignScopeRevision !== final.designScopeRevision || !await designQuery)
-    blockers.push("Design must be complete and approved for the final estimate scope.");
+    lifecycle.designScopeRevision !== approvalReference.designScopeRevision || lifecycle.approvedDesignScopeRevision !== approvalReference.designScopeRevision || !await designQuery)
+    blockers.push("Design must be complete and approved for the current quotation scope.");
   const paymentQuery = DesignWorkflowStateModel.findById(projectId);
   if (session) paymentQuery.session(session);
   const payment = await paymentQuery.lean();
   if (!payment?.initialPaymentAt || payment.initialPaymentEstimateId !== String(estimate._id) ||
-    payment.initialPaymentEstimateVersion !== final.estimateVersion || payment.initialPaymentReviewRoundId !== final.reviewRoundId ||
+    payment.initialPaymentEstimateVersion !== approvalReference.estimateVersion || payment.initialPaymentReviewRoundId !== approvalReference.reviewRoundId ||
     payment.initialPaymentDesignReviewRoundId !== designBinding?.reviewRoundId)
-    blockers.push("Super Admin must confirm the initial payment against the final estimate.");
+    blockers.push("Super Admin must confirm the initial payment against the current quotation.");
   return { required: true, canIssue: blockers.length === 0, blockers, finalSource };
 }
 

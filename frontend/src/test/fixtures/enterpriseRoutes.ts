@@ -402,6 +402,28 @@ function zeroAggregates(value: unknown): unknown {
 export function enterpriseDataFor(path: string, params: URLSearchParams, scenario: EnterpriseScenario,
   projectRates: ReadonlyMap<string, EnterpriseProjectRate> = new Map()): unknown {
   const empty = scenario.state === "empty";
+  const quotationStates = ["initial_current", "revision_draft", "revision_pending_client", "revision_changes_requested", "revision_current", "source_issue"] as const;
+  const requestedQuotationState = new URLSearchParams(scenario.route.split("?")[1]).get("qaQuotationState");
+  const quotationState = quotationStates.find((state) => state === requestedQuotationState) ?? null;
+  const quotationCurrent = quotationState === "initial_current" || quotationState === "revision_current";
+  const quotationSource = quotationState === "initial_current" ? "initial_unchanged" as const
+    : quotationState === "revision_current" ? "designer_revision" as const : null;
+  const currentQuotationApproval = quotationCurrent ? {
+    kind: quotationSource!, reviewRoundId: quotationState === "initial_current" ? "review-initial-current" : "review-revision-current",
+    estimateVersion: quotationState === "initial_current" ? 1 : 3, approvedAt: "2026-09-13T08:30:00.000Z"
+  } : null;
+  const quotationApprovalFixture = quotationState ? {
+    estimationWorkflowVersion: 3 as const,
+    quotationApproved: quotationCurrent,
+    quotationApprovalState: quotationState,
+    currentQuotationApproved: quotationCurrent,
+    requiresClientReapproval: ["revision_draft", "revision_pending_client", "revision_changes_requested"].includes(quotationState),
+    quotationApprovalSource: quotationSource,
+    currentQuotationApproval,
+    canEditQuotation: true,
+    leadId: "lead-1",
+    projectNumber: "Lisno000001"
+  } : null;
   const estimatorReady = new URLSearchParams(scenario.route.split("?")[1]).get("qaEstimator") === "ready";
   const recommendationReady = new URLSearchParams(scenario.route.split("?")[1]).get("qaRecommendations") === "ready";
   const recommendationCompletionReady = new URLSearchParams(scenario.route.split("?")[1]).get("qaRecommendationCompletion") === "ready";
@@ -481,15 +503,57 @@ export function enterpriseDataFor(path: string, params: URLSearchParams, scenari
     const projectId = decodeURIComponent(path.split("/")[2]);
     return { projectId, projectName: project.project.name, projectStatus: "active", serverNow: "2026-10-01T10:00:00.000Z", state: "no_pending", currentStage: null, pendingActions: [], issue: null };
   }
+  if (/^\/projects\/[^/]+\/design-team$/.test(path)) {
+    const projectId = decodeURIComponent(path.split("/")[2]);
+    return {
+      projectId,
+      version: 1,
+      primary: { id: "user-designer-ananya", name: "Ananya Rao" },
+      secondaries: [],
+      candidates: [],
+      canManage: false,
+      requiresReason: false
+    };
+  }
+  if (/^\/projects\/[^/]+\/design-requirements$/.test(path)) {
+    return { version: 0, sourceToken: "synthetic-empty", entries: [], blockers: [], canReadInternal: true };
+  }
   if (/^\/projects\/[^/]+\/vendor-work-progress$/.test(path)) return { projectId: decodeURIComponent(path.split("/")[2]), assignments: [], pendingOwner: "none" };
   if (path === "/vendor/work") return { items: [], total: 0, limit: Number(params.get("limit") ?? 50), offset: Number(params.get("offset") ?? 0) };
-  if (/^\/projects\/[^/]+\/design-workflow$/.test(path)) return empty ? { projectId: path.split("/")[2], projectName: "Aurora Villa", estimateApprovalStatus: "approved", serverNow: "2026-09-13T10:00:00.000Z", floors: [] } : { ...drawing.drawingWorkflow(path.split("/")[2], scenario.role === "designer"), estimateApprovalStatus: "approved" };
+  if (/^\/projects\/[^/]+\/design-workflow$/.test(path)) {
+    const estimateApprovalStatus = quotationState === "source_issue" ? "source_issue"
+      : quotationState && !quotationCurrent ? "awaiting_approval" : "approved";
+    if (empty) return { projectId: path.split("/")[2], projectName: "Aurora Villa", estimateApprovalStatus, serverNow: "2026-09-13T10:00:00.000Z", floors: [] };
+    const workflow = drawing.drawingWorkflow(path.split("/")[2], scenario.role === "designer");
+    return {
+      ...workflow,
+      estimateApprovalStatus,
+      ...(quotationCurrent ? {
+        initialPayment: { ...workflow.initialPayment!, workflowVersion: 3 as const, confirmedAt: null, designStartedAt: workflow.serverNow },
+        projectStages: workflow.projectStages?.map((stage) => stage.type !== "space_planning_tentative_look_feel" ? stage : {
+          ...stage,
+          operational: {
+            ...stage.operational!,
+            workflowVersion: 3 as const,
+            spacePlanning: {
+              estimateId: "estimate-aurora-villa", designPlanVersion: 1, reviewRoundId: null,
+              totalImages: 1, approvedImages: 0, readyForCompletion: false, completedAt: null,
+              completionBlockingReasons: ["Submit the current design plan for Client review."]
+            }
+          }
+        })
+      } : {})
+    };
+  }
   if (path === "/design-workflow/payment-confirmations") return [];
   if (/^\/projects\/[^/]+\/design-versions$/.test(path)) return page([{ ...drawing.approvedDocument, projectId: path.split("/")[2] }]);
   if (path === "/design-versions/qa-approved-document/sections") return empty ? { ...drawing.approvedExtraction, pages: [], sections: [] } : drawing.approvedExtraction;
   if (/^\/projects\/[^/]+\/activity$/.test(path)) return page([]);
   if (/^\/admin\/projects\/[^/]+\/(workflow-tasks|section-assignments)$/.test(path)) return [];
-  if (path === "/designer/design-plan-tasks") return list(designer.designPlanTasks.map((task) => ({ ...task, rooms: [{ id: "room-living", label: "Living Room" }], scopes: ["EL"], lineItems: [{ catalogueId: "EL01", roomName: "Living Room", specification: "Lighting point", unit: "point", quantity: 6, included: true }] })));
+  if (path === "/designer/design-plan-tasks") return list(designer.designPlanTasks.map((task, index) => ({ ...task,
+    ...(index === 0 && quotationApprovalFixture ? quotationApprovalFixture : {}),
+    rooms: [{ id: "room-living", label: "Living Room" }], scopes: ["EL"],
+    lineItems: [{ catalogueId: "EL01", roomName: "Living Room", specification: "Lighting point", unit: "point", quantity: 6, included: true }] })));
   if (/^\/kpis\/users\/[^/]+\/tasks$/.test(path)) return page(designer.kpiTasks);
   if (/^\/kpis\/users\/[^/]+$/.test(path)) return { userId: path.split("/")[3], periodStartAt: params.get("from"), periodEndAt: params.get("to"), score: empty ? 0 : 84, components: empty ? designer.components.map((c) => ({ ...c, score: null, eligibleCount: 0 })) : designer.components, aggregates: empty ? zeroAggregates(designer.aggregates) : designer.aggregates, tasks: page(designer.kpiTasks) };
   if (/^\/tasks\/[^/]+\/events$/.test(path)) return page(designer.kpiTasks[0].events.items);

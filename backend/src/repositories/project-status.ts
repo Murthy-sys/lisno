@@ -4,6 +4,7 @@ import { EstimateClientReviewRoundModel } from "../models/EstimateClientReviewRo
 import { EstimateClientResponseProofModel } from "../models/EstimateClientResponseProof.js";
 import { LeadModel } from "../models/Lead.js";
 import { ProjectFinanceBucketModel } from "../models/ProjectFinanceBucket.js";
+import { ProjectModel } from "../models/Project.js";
 import { ProjectPurchaseOrderModel } from "../models/ProjectPurchaseOrder.js";
 import { ProjectPurchaseOrderRevisionModel } from "../models/ProjectPurchaseOrderRevision.js";
 import { ProjectProcurementItemModel } from "../models/ProjectProcurementItem.js";
@@ -13,6 +14,7 @@ import { UserModel } from "../models/User.js";
 import { VendorWorkAssignmentModel } from "../models/VendorWorkAssignment.js";
 import { vendorActivations } from "../services/vendor-readiness.service.js";
 import type { EstimationLifecycle } from "../domain/estimation-lifecycle.js";
+import { resolveQuotationApprovalFromRounds, type QuotationApprovalResolution } from "../services/quotation-approval-state.service.js";
 
 export interface ProjectStatusExecutionEvidence {
   hasApprovedOrder: boolean;
@@ -85,6 +87,7 @@ export interface ProjectStatusEstimateEvidence {
     id: string; leadId: string; projectId: string | null; status: string; version: number;
     clientDecisionAt: string | null;
     estimation?: EstimationLifecycle | null;
+    quotationApproval?: QuotationApprovalResolution;
   }>;
   rounds: Array<{
     id: string; estimateId: string; leadId: string; projectId: string | null;
@@ -92,6 +95,10 @@ export interface ProjectStatusEstimateEvidence {
     decision: string | null; decisionSource: string | null; decidedById: string | null;
     decidedAt: string | null; createdAt: string | null; proofValid: boolean;
     phase?: "pre" | "post" | null;
+    workflowVersion?: number | null; pricedRevision?: number | null; sourceDigest?: string | null;
+    estimateSnapshot?: Record<string, unknown>;
+    submittedById?: string | null;
+    salesApproval?: import("../domain/estimation-lifecycle.js").SalesQuotationApproval | null;
     requirementsVersion?: number | null; designReviewRoundId?: string | null;
     designPlanVersion?: number | null; designScopeRevision?: number | null;
   }>;
@@ -106,15 +113,18 @@ function timestamp(value: unknown): string | null {
 
 /** All reads share the caller's snapshot, including immutable decision evidence. */
 export async function readMongoProjectStatusEstimateEvidence(projectId: string, session?: ClientSession): Promise<ProjectStatusEstimateEvidence> {
+  const projectQuery = ProjectModel.findById(projectId).select({ clientId: 1, primaryDesignerId: 1 });
+  if (session) projectQuery.session(session);
+  const project = await projectQuery.lean();
   const leadQuery = LeadModel.find({ projectId }).select("_id");
   if (session) leadQuery.session(session);
   const leads = await leadQuery.lean();
   const estimateQuery = EstimateModel.find({ $or: [{ projectId }, { leadId: { $in: leads.map(row => row._id) } }] })
-    .select("leadId projectId status version clientDecisionAt estimation");
+    .select("leadId projectId status version clientDecisionAt estimation propertyType bedroomCount rooms scopes selectedMainBasketIds selectedMainBasketClassifications lineItems subtotal gst total subtotalPaise gstPaise totalPaise");
   if (session) estimateQuery.session(session);
   const estimates = await estimateQuery.lean();
   const roundQuery = EstimateClientReviewRoundModel.find({ $or: [{ projectId }, { estimateId: { $in: estimates.map(row => row._id) } }] })
-    .select("estimateId leadId projectId estimateVersion sendGeneration status decision decisionSource decidedById decidedAt createdAt phase requirementsVersion designReviewRoundId designPlanVersion designScopeRevision");
+    .select("estimateId leadId projectId estimateVersion sendGeneration status decision decisionSource decidedById decidedAt createdAt phase workflowVersion requirementsVersion pricedRevision sourceDigest submittedById salesApproval estimateSnapshot designReviewRoundId designPlanVersion designScopeRevision");
   const financeQuery = ProjectFinanceBucketModel.findOne({ projectId }).select("estimateId estimateVersion estimateReviewRoundId effectiveBaseline");
   if (session) { roundQuery.session(session); financeQuery.session(session); }
   const rounds = await roundQuery.lean();
@@ -124,26 +134,35 @@ export async function readMongoProjectStatusEstimateEvidence(projectId: string, 
     .select("estimateId reviewRoundId uploadedById uploadedAt originalFilename mimeType byteSize sha256 +storageReference");
   if (session) proofQuery.session(session);
   const proofs = await proofQuery.lean();
+  const roundEvidence: ProjectStatusEstimateEvidence["rounds"] = rounds.map(row => {
+    const matching = proofs.filter(proof => String(proof.reviewRoundId) === String(row._id));
+    const proof = matching.length === 1 ? matching[0] : undefined;
+    return { id: String(row._id), estimateId: String(row.estimateId), leadId: String(row.leadId), projectId: row.projectId ?? null,
+      estimateVersion: Number(row.estimateVersion), sendGeneration: Number(row.sendGeneration), status: String(row.status),
+      decision: row.decision ?? null, decisionSource: row.decisionSource ?? null, decidedById: row.decidedById ?? null,
+      decidedAt: timestamp(row.decidedAt), createdAt: timestamp(row.createdAt), phase: row.phase ?? null,
+      workflowVersion: row.workflowVersion ?? null, requirementsVersion: row.requirementsVersion ?? null,
+      pricedRevision: row.pricedRevision ?? null, sourceDigest: row.sourceDigest ?? null,
+      submittedById: row.submittedById ?? null, salesApproval: row.salesApproval ?? null,
+      estimateSnapshot: row.estimateSnapshot,
+      designReviewRoundId: row.designReviewRoundId ?? null, designPlanVersion: row.designPlanVersion ?? null,
+      designScopeRevision: row.designScopeRevision ?? null,
+      proofValid: Boolean(proof && String(proof.estimateId) === String(row.estimateId) && String(proof.uploadedById) === String(row.decidedById) &&
+        typeof proof.storageReference === "string" && proof.storageReference.length > 0 && typeof proof.originalFilename === "string" && proof.originalFilename.length > 0 &&
+        ["application/pdf", "image/jpeg", "image/png", "image/webp"].includes(String(proof.mimeType)) && Number.isSafeInteger(proof.byteSize) && proof.byteSize > 0 &&
+        /^[a-f0-9]{64}$/.test(String(proof.sha256)) && timestamp(proof.uploadedAt)) };
+  });
   return {
     projectId,
     estimates: estimates.map(row => ({ id: String(row._id), leadId: String(row.leadId), projectId: row.projectId ?? null,
       status: String(row.status), version: Number(row.version), clientDecisionAt: timestamp(row.clientDecisionAt),
-      ...(row.estimation ? { estimation: row.estimation as EstimationLifecycle } : {}) })),
-    rounds: rounds.map(row => {
-      const matching = proofs.filter(proof => String(proof.reviewRoundId) === String(row._id));
-      const proof = matching.length === 1 ? matching[0] : undefined;
-      return { id: String(row._id), estimateId: String(row.estimateId), leadId: String(row.leadId), projectId: row.projectId ?? null,
-        estimateVersion: Number(row.estimateVersion), sendGeneration: Number(row.sendGeneration), status: String(row.status),
-        decision: row.decision ?? null, decisionSource: row.decisionSource ?? null, decidedById: row.decidedById ?? null,
-        decidedAt: timestamp(row.decidedAt), createdAt: timestamp(row.createdAt),
-        phase: row.phase ?? null,
-        requirementsVersion: row.requirementsVersion ?? null, designReviewRoundId: row.designReviewRoundId ?? null,
-        designPlanVersion: row.designPlanVersion ?? null, designScopeRevision: row.designScopeRevision ?? null,
-        proofValid: Boolean(proof && String(proof.estimateId) === String(row.estimateId) && proof.uploadedById === row.decidedById &&
-          typeof proof.storageReference === "string" && proof.storageReference.length > 0 && typeof proof.originalFilename === "string" && proof.originalFilename.length > 0 &&
-          ["application/pdf", "image/jpeg", "image/png", "image/webp"].includes(proof.mimeType) && Number.isSafeInteger(proof.byteSize) && proof.byteSize > 0 &&
-          /^[a-f0-9]{64}$/.test(proof.sha256) && timestamp(proof.uploadedAt)) };
-    }),
+      ...(row.estimation ? { estimation: row.estimation as EstimationLifecycle } : {}),
+      ...(row.estimation?.workflowVersion === 3 ? { quotationApproval: resolveQuotationApprovalFromRounds(row,
+        roundEvidence.filter(round => round.estimateId === String(row._id)), {
+          clientId: project?.clientId == null ? null : String(project.clientId),
+          primaryDesignerId: project?.primaryDesignerId == null ? null : String(project.primaryDesignerId)
+        }) } : {}) })),
+    rounds: roundEvidence,
     financeSource: finance ? { estimateId: String(finance.estimateId), estimateVersion: Number(finance.estimateVersion), reviewRoundId: finance.estimateReviewRoundId ?? null } : null
   };
 }

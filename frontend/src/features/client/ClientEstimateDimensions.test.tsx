@@ -44,6 +44,8 @@ describe("client working estimate dimensions", () => {
   it("requires all inputs, calculates only length × width and sends no rate/tier/quantity edit", async () => {
     setup(); await screen.findByText("Ceiling"); expect(tier("Premium")).toBeDisabled();
     await userEvent.click(screen.getByRole("button", { name: "Enter dimensions for Ceiling" }));
+    expect(screen.getByRole("group", { name: "Dimensions for Ceiling in Living" })).toHaveAccessibleDescription("Enter positive length, width and height with up to 6 decimal places. Quantity = Length × Width. Height is recorded only.");
+    expect(screen.getByText("Dimensions for Ceiling in Living")).toBeVisible();
     enterDimensions("2.5", "3", ""); expect(screen.getByRole("button", { name: "Save dimensions" })).toBeDisabled();
     fireEvent.change(screen.getByRole("textbox", { name: /^Height/ }), { target: { value: "99" } });
     expect(screen.getByLabelText("Calculated quantity for Ceiling in Living")).toHaveTextContent("7.5");

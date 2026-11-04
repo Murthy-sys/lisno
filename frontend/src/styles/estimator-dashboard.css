@@ -1599,11 +1599,12 @@
 /* Dense item-selection workspace. Other estimate views keep their existing geometry. */
 .estimate-workspace.estimator-dashboard.estimate-workspace--compact-builder {
   --estimate-compact-control: 32px;
+  --estimate-compact-price-control: 28px;
   --estimate-compact-input-text: 12px;
   --estimate-compact-step: 26px;
   --estimate-compact-menu: 24px;
   --estimate-compact-thumb: 38px;
-  --estimate-compact-fields: 386px;
+  --estimate-compact-fields: 354px;
   gap: 6px;
 }
 .estimate-workspace--compact-builder :is(input, button, select) { scroll-margin-block: 8px; }
@@ -1776,7 +1777,9 @@
 .estimate-workspace--compact-builder .configured-estimate-line__copy strong { font-size: 12px; }
 .estimate-workspace--compact-builder .configured-estimate-line__copy small { font-size: 11px; }
 .estimate-workspace--compact-builder .configured-estimate-line__fields {
-  grid-template-columns: minmax(84px, 96px) minmax(92px, 108px) minmax(138px, 1fr) var(--estimate-compact-menu);
+  --estimate-compact-control: var(--estimate-compact-price-control);
+  grid-template-columns: minmax(84px, 96px) minmax(84px, 96px) minmax(120px, 1fr) var(--estimate-compact-menu);
+  align-items: start;
   gap: 6px;
   margin-left: 0;
 }
@@ -1798,6 +1801,14 @@
 }
 .estimate-workspace--compact-builder.estimator-dashboard .configured-estimate-line__stepper button { min-block-size: 24px; }
 .estimate-workspace--compact-builder .configured-estimate-line__amount output { min-height: var(--estimate-compact-control); font-size: 12px; }
+.estimate-workspace--compact-builder .configured-estimate-line__fields .configured-estimate-line__quantity--calculated output {
+  display: grid;
+  align-items: center;
+  min-height: var(--estimate-compact-control);
+  padding: 3px 0;
+  font-size: var(--estimate-compact-input-text);
+  line-height: 1.3;
+}
 .estimate-workspace--compact-builder .configured-estimate-line__more,
 .estimate-workspace--compact-builder .configured-estimate-line__more > button { height: var(--estimate-compact-control); }
 .estimate-workspace--compact-builder .configured-estimate-line__more > button { width: var(--estimate-compact-menu); }
@@ -1807,6 +1818,7 @@
 .estimate-workspace--compact-builder .estimate-line-dimensions { grid-column: 1 / -1; margin-top: 4px; padding-top: 6px; font-size: 11px; }
 .estimate-workspace--compact-builder .estimate-line-dimensions__fields { gap: 6px; }
 .estimate-workspace--compact-builder.estimator-dashboard .estimate-line-dimensions__fields input { min-block-size: var(--estimate-compact-control); padding: 4px 6px; font-size: var(--estimate-compact-input-text); }
+.estimate-workspace--compact-builder.estimator-dashboard .estimate-line-dimensions--compact .estimate-line-dimensions__fields input { block-size: var(--estimate-compact-control); min-height: var(--estimate-compact-control); }
 .ui-app-shell[data-role] .estimator-dashboard.estimate-workspace--compact-builder .estimate-workspace__footer {
   min-height: 48px;
   gap: 6px 12px;
@@ -1871,7 +1883,7 @@
     --estimate-compact-step: 40px;
     --estimate-compact-menu: 40px;
     --estimate-compact-thumb: 44px;
-    --estimate-compact-fields: 392px;
+    --estimate-compact-fields: 396px;
   }
   .estimate-workspace--compact-builder .staff-estimate-workspace-tools > summary { min-height: 40px; padding-block: 10px; }
   .estimate-workspace--compact-builder :is(.configured-estimate-builder__jump button, .configured-estimate-basket__toggle, .configured-estimate-sub-basket__toggle) { min-block-size: 40px; min-height: 40px; }
@@ -2602,6 +2614,7 @@
 @media (max-width: 767px), (pointer: coarse) {
   .estimate-workspace.estimator-dashboard.estimate-workspace--compact-builder {
     --estimate-compact-control: 44px;
+    --estimate-compact-price-control: 44px;
     --estimate-compact-step: 44px;
     --estimate-compact-menu: 44px;
   }

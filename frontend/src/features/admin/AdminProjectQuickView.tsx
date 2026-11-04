@@ -5,7 +5,7 @@ import type { AdminProjectSummary } from "../../api/types";
 import { ContextPanel } from "../../components/ui/ContextPanel";
 import { PageState } from "../../components/ui/PageState";
 import { StatusBadge } from "../../components/ui/StatusBadge";
-import { adminProjectNextAction, adminProjectStatusLabel } from "./adminProjectPresentation";
+import { adminEstimateStages, hasInitialEstimateApproval, adminProjectNextAction, adminProjectStatusLabel } from "./adminProjectPresentation";
 
 const money = new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 });
 
@@ -15,7 +15,7 @@ export function AdminProjectQuickView({ project, canOpenWorkspace, onClose }: {
   canOpenWorkspace: boolean;
   onClose: () => void;
 }) {
-  const approved = project?.estimate?.status === "client_approved";
+  const approved = project ? hasInitialEstimateApproval(project) : false;
   const value = approved ? project?.estimate?.approvedBaseline?.total : project?.estimate?.total;
   return (
     <ContextPanel
@@ -39,6 +39,7 @@ export function AdminProjectQuickView({ project, canOpenWorkspace, onClose }: {
           <div><dt>Sales</dt><dd>{project.estimator?.name ?? "Unassigned handoff"}</dd></div>
           <div><dt>Next action</dt><dd>{adminProjectNextAction(project) ?? "No action pending"}</dd></div>
           <div><dt>{approved ? "Client-approved value (incl. GST)" : "Estimate value"}</dt><dd>{value == null ? (approved ? "Approved baseline unavailable" : "No estimate yet") : money.format(value)}</dd></div>
+          {project ? adminEstimateStages(project).map(stage => <div key={stage.label}><dt>{stage.label}</dt><dd>{stage.value}</dd></div>) : null}
           <div><dt>System ID</dt><dd>{project.id}</dd></div>
         </dl>
       ) : <PageState state="empty" message="This project is no longer available in the current view. Close the summary and refresh the list." />}

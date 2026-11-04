@@ -7,6 +7,7 @@ import { emptyDesignWorkflowState } from "../src/domain/design-workflow-state.js
 import { newQuotationLifecycle } from "../src/domain/estimation-lifecycle.js";
 import { createProjectDesignWorkflow } from "../src/domain/design-workflow.js";
 import { sha256Hex } from "../src/domain/estimate-client-review.js";
+import { quotationSnapshotDigest } from "../src/services/quotation-digest.js";
 import { AuditEventModel } from "../src/models/AuditEvent.js";
 import { AuthorizationCoordinationModel } from "../src/models/AuthorizationCoordination.js";
 import { DesignWorkflowStateModel } from "../src/models/DesignWorkflowState.js";
@@ -809,21 +810,34 @@ describe("Mongo all selected items including zero estimate quantities", () => {
 describe("Mongo Client furniture quotation workflow", () => {
   async function readyQuotation() {
     const f = await setup();
-    const snapshot = { clientName: "Synthetic Client", projectName: "Synthetic project", location: "Test city", propertyType: "residential",
-      lineItems: [{ id: "new-work", catalogueId: "CUSTOM", roomName: "Room", specification: "New work", unit: "nos", rate: 1000, quantity: 1, included: true, amount: 1000 }], subtotal: 1000, gst: 0, total: 1000 };
+    await EstimateModel.updateOne({ _id: "workflow-approved-estimate" }, { $set: {
+      "lineItems.0.amountPaise": 100_000, subtotalPaise: 100_000, gstPaise: 0, totalPaise: 100_000,
+      designPlanDesignerId: f.designer.id, designPlanStatus: "assigned", designPlanAssignedAt: BASE
+    } });
+    const current = (await EstimateModel.findById("workflow-approved-estimate").lean())!;
+    const snapshot = { clientName: "Synthetic Client", projectName: "Synthetic project", location: "Test city",
+      propertyType: current.propertyType, bedroomCount: current.bedroomCount ?? null,
+      rooms: current.rooms, scopes: current.scopes ?? [], selectedMainBasketIds: current.selectedMainBasketIds ?? [],
+      selectedMainBasketClassifications: current.selectedMainBasketClassifications ?? [], lineItems: current.lineItems,
+      subtotal: 1000, gst: 0, total: 1000, subtotalPaise: 100_000, gstPaise: 0, totalPaise: 100_000 };
+    const sourceDigest = quotationSnapshotDigest(snapshot);
+    const salesApproval = { actorId: "sales-fixture", estimateVersion: 2, pricedRevision: 1,
+      sourceDigest, approvedAt: BASE.toISOString() };
     await EstimateClientReviewRoundModel.create([2, 4].map(version => ({
       _id: `furniture-round-${version}`, estimateId: "workflow-approved-estimate", leadId: "lead-workflow-approved-estimate", projectId: PROJECT_ID,
-      workflowVersion: 3, phase: version === 2 ? "pre" : "post", requirementsVersion: 0, designScopeRevision: 1, pricedRevision: 1,
-      sourceDigest: sha256Hex(JSON.stringify(snapshot)), submittedById: version === 2 ? "sales-fixture" : f.designer.id,
+      workflowVersion: 3, phase: version === 2 ? "pre" : "post", requirementsVersion: 0, designScopeRevision: 1,
+      pricedRevision: version === 2 ? 1 : 2, sourceDigest, submittedById: version === 2 ? "sales-fixture" : f.designer.id,
       estimateVersion: version, sendGeneration: version / 2, dedupeKey: sha256Hex(`furniture-round-${version}`),
       recipientEmail: f.client.email, recipientEmailNormalized: f.client.email.toLowerCase(), estimateSnapshot: snapshot,
       pdfFilename: "synthetic.pdf", pdfMimeType: "application/pdf", pdfByteSize: 5, pdfSha256: sha256Hex("pdf"), pdfStorageReference: "synthetic-quotation",
       deliveryStatus: "sent", deliveryAttemptGeneration: 1, deliveryAttemptCount: 1, assignedAdminId: "sales-fixture",
-      status: "approved", decision: "approve", decisionSource: "client_portal", decisionNote: "Approved", decidedById: f.client.id, decidedAt: BASE, version: 2
+      status: "approved", decision: "approve", decisionSource: "client_portal", decisionNote: "Approved", decidedById: f.client.id, decidedAt: BASE,
+      salesApproval: version === 2 ? salesApproval : null, version: 2
     })));
     await ProjectModel.updateOne({ _id: PROJECT_ID }, { $set: { estimationWorkflowVersion: 3, primaryDesignerId: f.designer.id, secondaryDesignerIds: [] } });
     await EstimateModel.updateOne({ _id: "workflow-approved-estimate" }, { $set: { version: 5, estimation: {
       ...newQuotationLifecycle(), phase: "post", status: "client_approved", editClosedAt: BASE.toISOString(), designStartedAt: BASE.toISOString(),
+      pricedRevision: 2, designScopeRevision: 1,
       preApproval: { reviewRoundId: "furniture-round-2", estimateVersion: 2, approvedAt: BASE.toISOString() },
       finalApproval: { reviewRoundId: "furniture-round-4", estimateVersion: 4, approvedAt: BASE.toISOString(), requirementsVersion: 0,
         designReviewRoundId: null, designPlanVersion: null, designScopeRevision: 1 }

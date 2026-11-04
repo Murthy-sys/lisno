@@ -3,6 +3,7 @@ import { estimateDimensionSnapshotFields, estimateDimensionSnapshotValid, type E
 import { isCollaborativeEstimate, type EstimationPreparationSource } from "../domain/estimation-lifecycle.js";
 import { isKnowledgeModeTier, type KnowledgeModeTier } from "../domain/ai-estimator-knowledge-mode-tiers.js";
 import { resolveEstimationPreparationSource } from "./estimate-collaboration.service.js";
+import { resolveCurrentQuotationApproval, type CurrentQuotationApproval } from "./quotation-approval-state.service.js";
 import { projectWorkOrderIssueReadiness, assertProjectWorkOrderIssueEligible } from "./project-work-order-eligibility.service.js";
 import { fenceCollaborativeEstimate } from "./estimate-collaboration-policy.service.js";
 import { createHash, randomUUID } from "node:crypto";
@@ -158,6 +159,7 @@ export interface ProcurementDashboardApprovalRound {
   decidedAt: Date | null;
   status: "approved";
   decision: "approve";
+  currentQuotationApproval?: CurrentQuotationApproval;
 }
 
 /**
@@ -174,6 +176,13 @@ export async function readProcurementDashboardApprovalRounds(
     throw new TypeError("Dashboard Procurement approval reads support at most 50 Estimates.");
   }
   return procurementSnapshotRead(async (session) => {
+    const estimates = await EstimateModel.find({ _id: { $in: boundedIds } }).session(session).lean();
+    if (estimates.length !== boundedIds.length) procurementLineageConflict();
+    const currentApprovals = new Map<string, CurrentQuotationApproval>();
+    for (const estimate of estimates) {
+      const approval = await assertCurrentQuotationProcurementSource(estimate, session);
+      if (approval) currentApprovals.set(String(estimate._id), approval);
+    }
     const rows = await EstimateModel.aggregate<Row>([
       { $match: { _id: { $in: boundedIds } } },
       {
@@ -257,7 +266,8 @@ export async function readProcurementDashboardApprovalRounds(
         decidedById: nullableText(round.decidedById),
         decidedAt: round.decidedAt instanceof Date ? round.decidedAt : null,
         status: "approved",
-        decision: "approve"
+        decision: "approve",
+        ...(currentApprovals.get(estimateId) ? { currentQuotationApproval: currentApprovals.get(estimateId)! } : {})
       }]);
     }
     return result;
@@ -267,6 +277,11 @@ export async function readProcurementDashboardApprovalRounds(
 /** Canonical scalar Procurement portfolio projection; no detail arrays leave Mongo. */
 export async function readProcurementDashboardPortfolioReport(): Promise<ProcurementDashboardPortfolioReport> {
   return procurementSnapshotRead(async (session) => {
+    const quotationEstimates = await EstimateModel.find({
+      ...procurementEstimateEligibilityFilter(),
+      "estimation.workflowVersion": 3
+    }).session(session).lean();
+    for (const estimate of quotationEstimates) await assertCurrentQuotationProcurementSource(estimate, session);
     const [result] = await EstimateModel.aggregate<Row>([
       { $match: { ...procurementEstimateEligibilityFilter(), projectId: { $type: "string", $ne: "" } } },
       {
@@ -1485,16 +1500,26 @@ export function approvedProcurementSnapshotFromRows(
   estimate: Row,
   approvedRounds: readonly Row[]
 ): ApprovedProcurementSnapshot {
-  const normalizedRounds = approvedRounds.map(round => ({ ...round, _id: round._id ?? round.id }));
+  const normalizedRounds: Row[] = approvedRounds.map(round => ({ ...round, _id: round._id ?? round.id }));
   if (isCollaborativeEstimate(estimate)) {
-    const approval = financeApprovalLineage(estimate, normalizedRounds);
-    const ref = estimate.estimation.finalApproval ?? estimate.estimation.preApproval;
+    const markedApprovals = normalizedRounds.flatMap(round => round.currentQuotationApproval
+      ? [round.currentQuotationApproval as CurrentQuotationApproval]
+      : []);
+    const currentApproval = estimate.estimation.workflowVersion === 3 && markedApprovals.length === 1
+      ? markedApprovals[0]!
+      : null;
+    if (estimate.estimation.workflowVersion === 3 && !currentApproval) procurementLineageConflict();
+    const approval = financeApprovalLineage(estimate, normalizedRounds, currentApproval ? { currentApproval } : undefined);
+    const ref = currentApproval ?? estimate.estimation.finalApproval ?? estimate.estimation.preApproval;
     if (!ref || !approval.estimateReviewRoundId) procurementLineageConflict();
+    const phase = currentApproval
+      ? currentApproval.kind === "designer_revision" ? "post" : "pre"
+      : estimate.estimation.finalApproval ? "post" : "pre";
     return collaborativeProcurementSnapshot(estimate, { source: {
       estimateId: String(estimate._id), estimateVersion: approval.estimateVersion,
       estimateReviewRoundId: approval.estimateReviewRoundId, workflowVersion: estimate.estimation.workflowVersion,
-      phase: estimate.estimation.finalApproval ? "post" : "pre",
-      kind: estimate.estimation.finalApproval ? "approved_final" : "approved_pre",
+      phase,
+      kind: phase === "post" ? "approved_final" : "approved_pre",
       sourceSnapshotId: approval.estimateReviewRoundId,
       sourceDigest: createHash("sha256").update(JSON.stringify(approval.snapshot)).digest("hex")
     }, snapshot: approval.snapshot as import("../domain/estimate-client-review.js").EstimateClientReviewSnapshot });
@@ -2599,6 +2624,13 @@ function procurementLineageConflict(): never {
     "PROCUREMENT_APPROVAL_SOURCE_CONFLICT",
     "The procurement workspace does not match one immutable approved Estimate."
   );
+}
+
+async function assertCurrentQuotationProcurementSource(estimate: Row, session: ClientSession): Promise<CurrentQuotationApproval | null> {
+  if (estimate.estimation?.workflowVersion !== 3) return null;
+  const approval = await resolveCurrentQuotationApproval(estimate, session);
+  if (!approval.currentQuotationApproved || !approval.currentQuotationApproval) procurementLineageConflict();
+  return approval.currentQuotationApproval;
 }
 
 function financeStateCorrupt(): never {

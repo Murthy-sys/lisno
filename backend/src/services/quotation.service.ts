@@ -12,10 +12,15 @@ import { EstimateClientReviewRoundModel } from "../models/EstimateClientReviewRo
 import { AiEstimatorKnowledgeSectionModel } from "../models/AiEstimatorKnowledgeSection.js";
 import { createMongoRepository } from "../repositories/mongo.js";
 import { assertEstimateEditable, estimatePhysicalScopeChanged, fenceCollaborativeEstimate } from "./estimate-collaboration-policy.service.js";
-import { estimateAmountFor, estimateTierChoices, estimateTierScope, fenceEstimateTierSource, presentEstimateTiers } from "./estimate-tiers.service.js";
+import { estimateAmountFor, estimateTierScope, fenceEstimateTierSource, presentEstimateTiers } from "./estimate-tiers.service.js";
 import { estimatorCatalogueTierPricing, fenceEstimateInHouseComponentReferences, resolveEstimatorCatalogueLines } from "./estimator-catalogue.service.js";
 import { resolveEstimateComponentPricing } from "./estimate-component-pricing.service.js";
 import { configureQuotation, quotationConfigureSchema, quotationVisibleOverview, readQuotationSetup, visibleQuotationSources } from "./quotation-setup.service.js";
+import { quotationCandidateFor, quotationMandatoryTargets, quotationSavedMode as savedMode,
+  quotationSourceGrouping as grouping, quotationSourceIdentity as sourceIdentity,
+  quotationVisibleRecommendationSources, readQuotationRecommendations } from "./quotation-recommendations.service.js";
+import { quotationApprovalPublicFields, resolveCurrentQuotationApproval } from "./quotation-approval-state.service.js";
+import { ensureQuotationDesignTask } from "./project-workflow.service.js";
 import type { AuditService } from "./audit.service.js";
 import type { PublicUser } from "./auth.service.js";
 
@@ -24,13 +29,22 @@ type Source = NonNullable<ReturnType<Awaited<ReturnType<typeof resolveEstimatorC
 const id = z.string().trim().min(1).max(500);
 const version = z.number().int().positive().safe();
 export const quotationSourceSchema = z.object({ revisionId: id, itemVersion: version, revisionVersion: version, uomId: id }).strict();
+const recommendationOrigins = z.array(id).max(200).refine(ids => new Set(ids).size === ids.length,
+  "Select each recommendation source once.");
+export const quotationRecommendationQuerySchema = z.object({
+  expectedVersion: version, roomId: id,
+  sources: z.array(z.object({ mainLineId: id, source: quotationSourceSchema }).strict()).max(200)
+    .refine(sources => new Set(sources.map(source => source.mainLineId)).size === sources.length, "Select each source once."),
+  limit: z.number().int().min(1).max(20).default(20), offset: z.number().int().min(0).max(100_000).default(0)
+}).strict();
 const dimensions = z.object({ length: z.string().max(32), width: z.string().max(32), height: z.string().max(32) }).strict()
   .refine(value => canonicalEstimateDimensions(value) !== null, "Enter positive dimensions.");
 const editableFields = {
   source: quotationSourceSchema,
   quantity: z.number().finite().positive().max(Number.MAX_SAFE_INTEGER).optional(),
   modeTier: z.enum(KNOWLEDGE_MODE_TIERS).optional(), dimensions: dimensions.optional(),
-  selectedInHouseComponentIds: z.array(id).max(50).refine(ids => new Set(ids).size === ids.length).optional()
+  selectedInHouseComponentIds: z.array(id).max(50).refine(ids => new Set(ids).size === ids.length).optional(),
+  recommendationSourceMainLineIds: recommendationOrigins.optional()
 };
 export const quotationPatchSchema = z.object({ expectedVersion: version, operations: z.array(z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("add"), mainLineId: id, roomId: id, ...editableFields }).strict(),
@@ -63,11 +77,6 @@ async function clientVisible(source: Source, session?: ClientSession): Promise<b
   if (session) query.session(session);
   const overview = await query.select({ payload: 1 }).lean() as Row | null;
   return !!overview && quotationVisibleOverview(overview.payload);
-}
-
-function grouping(source: Source) {
-  return { mainBasketId: source.line.basketId, mainBasketName: source.mainBasketName,
-    subBasketId: source.line.subBasketId, subBasketName: source.subBasketName };
 }
 
 function sameParent(saved: Row, source: Source) {
@@ -126,11 +135,6 @@ function quotationBaskets(estimate: Row, sources: ReadonlyMap<string, Source>) {
     .map(basket => ({ ...basket, subBaskets: basket.subBaskets.sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id)) }));
 }
 
-function sourceIdentity(source: Source) {
-  return { revisionId: source.line.revisionId, itemVersion: source.line.itemVersion,
-    revisionVersion: source.line.revisionVersion, uomId: source.line.uom.id };
-}
-
 function currentFields(source: Source) {
   const line = source.line;
   return { mainLineId: line.mainLineId, mainBasketId: line.basketId, subBasketId: line.subBasketId,
@@ -143,14 +147,10 @@ function currentFields(source: Source) {
     designRules: line.designRules, designRulesDigest: line.designRulesDigest, estimateNotes: line.estimateNotes };
 }
 
-function savedMode(estimate: Row, mainLineId: string): "pmc" | "sub_vendor" | "in_house" {
-  const existing = estimate.lineItems.find((line: Row) => line.mainLineId === mainLineId);
-  return ["pmc", "sub_vendor", "in_house"].includes(existing?.pricingMode) ? existing.pricingMode : "sub_vendor";
-}
-
 async function present(context: Awaited<ReturnType<typeof contextFor>>, session?: ClientSession) {
   const detail = await presentEstimateTiers(context, session, { includeExcluded: true });
   const estimate = context.estimate!;
+  const quotationApproval = await resolveCurrentQuotationApproval(estimate, session);
   const current = await resolveEstimatorCatalogueLines(detail.lines.map(line => line.mainLineId), session);
   const visible = await visibleQuotationSources(estimate, session);
   const presented = [];
@@ -158,14 +158,19 @@ async function present(context: Awaited<ReturnType<typeof contextFor>>, session?
     const source = current.get(line.mainLineId);
     const saved = estimate.lineItems.find((entry: Row) => entry.id === line.id);
     if ((context.client || context.secondary) && (!source || !visible.has(line.mainLineId) || !saved)) continue;
+    const origins = Array.isArray(saved?.recommendationSourceMainLineIds) ? saved.recommendationSourceMainLineIds : undefined;
+    const safeOrigins = origins?.every((id: string) => visible.has(id) && !estimate.lineItems.some((row: Row) => row.mainLineId === id && row.clientVisible === false))
+      ? origins : undefined;
     presented.push({ ...line, roomId: saved?.roomId ?? null, included: saved?.included === true,
+      ...(safeOrigins === undefined ? {} : { recommendationSourceMainLineIds: safeOrigins }),
       source: source && saved && sameParent(saved, source) ? sourceIdentity(source) : null,
       ...(source ? grouping(source) : { mainBasketId: saved?.mainBasketId ?? null, mainBasketName: saved?.mainBasketName ?? null,
         subBasketId: saved?.subBasketId ?? null, subBasketName: saved?.subBasketName ?? null }) });
   }
   const status = effectiveCommercialStatus(estimate);
   const { setup } = await readQuotationSetup(estimate, context.client && detail.editingAllowed, session);
-  return { ...detail, lines: presented.filter(line => line.included), excludedLines: presented.filter(line => !line.included),
+  return { ...detail, ...quotationApprovalPublicFields(quotationApproval),
+    lines: presented.filter(line => line.included), excludedLines: presented.filter(line => !line.included),
     baskets: quotationBaskets(estimate, visible), groups: quotationGroups(estimate, groupMembers(estimate, visible)),
     setup, workflowVersion: 3 as const, phase: estimate.estimation.phase as "pre" | "post",
     status, pricedRevision: Number(estimate.estimation.pricedRevision),
@@ -229,6 +234,63 @@ async function pricedLine(prior: Row, source: Source, operation: LineOperation, 
   return next;
 }
 
+async function reconcileRecommendationOrigins(estimate: Row, lineItems: Row[],
+  changes: Array<{ operation: LineOperation; mainLineId: string; roomId: string }>,
+  session: ClientSession, fenced: Set<string>) {
+  const key = (roomId: string, mainLineId: string) => JSON.stringify([roomId, mainLineId]);
+  const current = new Map(lineItems.filter(line => line.source === "configuration").map(line => [key(line.roomId, line.mainLineId), line]));
+  const removed = new Set<string>(estimate.lineItems.filter((line: Row) => line.source === "configuration" && line.included &&
+    !current.get(key(line.roomId, line.mainLineId))?.included).map((line: Row) => key(line.roomId, line.mainLineId)));
+  const requested = changes.filter(change => change.operation.recommendationSourceMainLineIds?.length &&
+    current.get(key(change.roomId, change.mainLineId))?.included);
+  if (!removed.size && !requested.length) return;
+  const sources = await quotationVisibleRecommendationSources(estimate, session,
+    [...new Set(lineItems.filter(line => line.source === "configuration").map(line => String(line.mainLineId)))]);
+  const originIds = [...new Set(requested.flatMap(change => change.operation.recommendationSourceMainLineIds!))];
+  for (const change of requested) for (const originId of change.operation.recommendationSourceMainLineIds!) {
+    const origin = current.get(key(change.roomId, originId));
+    const source = sources.get(originId);
+    if (originId === change.mainLineId || !origin?.included || !source || origin.clientVisible === false || !sameParent(origin, source)) {
+      throw new ApiError(400, "QUOTATION_RECOMMENDATION_SOURCE_INVALID", "Choose a current recommendation source in the same room.");
+    }
+  }
+  const edges = await quotationMandatoryTargets(originIds, sources, session);
+  for (const change of requested) for (const originId of change.operation.recommendationSourceMainLineIds!) {
+    if (!edges.get(originId)?.has(change.mainLineId)) unavailable();
+    if (!fenced.has(originId)) {
+      await fenceEstimateTierSource({ ...current.get(key(change.roomId, originId))!, ...currentFields(sources.get(originId)!) }, session);
+      fenced.add(originId);
+    }
+  }
+  let changed: boolean;
+  do {
+    changed = false;
+    for (const line of lineItems) {
+      if (line.source !== "configuration" || !line.included || !Array.isArray(line.recommendationSourceMainLineIds) ||
+        !line.recommendationSourceMainLineIds.some((id: string) => removed.has(key(line.roomId, id)))) continue;
+      const source = sources.get(line.mainLineId);
+      // Client edits never cascade into hidden, unavailable or remapped saved scope.
+      if (!source || line.clientVisible === false || !sameParent(line, source)) continue;
+      const remaining = line.recommendationSourceMainLineIds.filter((id: string) => current.get(key(line.roomId, id))?.included);
+      if (remaining.length === line.recommendationSourceMainLineIds.length) continue;
+      if (!fenced.has(line.mainLineId)) {
+        await fenceEstimateTierSource({ ...line, ...currentFields(source) }, session);
+        fenced.add(line.mainLineId);
+      }
+      line.recommendationSourceMainLineIds = remaining;
+      if (!remaining.length) {
+        line.included = false;
+        line.amountPaise = 0;
+        line.amount = 0;
+        delete line.componentPricing;
+        delete line.pricingBasis;
+        removed.add(key(line.roomId, line.mainLineId));
+        changed = true;
+      }
+    }
+  } while (changed);
+}
+
 export function createQuotationService({ audit }: { audit: AuditService }) {
   return {
     async detail(actor: PublicUser, projectId: string) { return present(await contextFor(actor, projectId)); },
@@ -242,7 +304,14 @@ export function createQuotationService({ audit }: { audit: AuditService }) {
       return { estimateId: String(estimate!._id), estimateVersion: Number(estimate!.version), pricedRevision: Number(estimate!.estimation.pricedRevision),
         status: effectiveCommercialStatus(estimate!), phase: estimate!.estimation.phase as "pre" | "post" };
     },
-    async items(actor: PublicUser, projectId: string, input: { search?: string; limit?: number; offset?: number } = {}) {
+    async recommendations(actor: PublicUser, projectId: string, input: z.input<typeof quotationRecommendationQuerySchema>) {
+      const parsed = quotationRecommendationQuerySchema.safeParse(input);
+      if (!parsed.success) throw new ApiError(400, "VALIDATION_ERROR", "Choose valid recommendation sources and page.");
+      const context = await contextFor(actor, projectId);
+      return readQuotationRecommendations(context.estimate!, parsed.data);
+    },
+    async items(actor: PublicUser, projectId: string, input: { search?: string; limit?: number; offset?: number;
+      mainBasketId?: string; subBasketId?: string } = {}) {
       const context = await contextFor(actor, projectId);
       const estimate = context.estimate!;
       const limit = Math.min(50, Math.max(1, input.limit ?? 20));
@@ -250,16 +319,13 @@ export function createQuotationService({ audit }: { audit: AuditService }) {
       const sources = await visibleQuotationSources(estimate);
       const candidates = [];
       for (const source of sources.values()) {
-        if (input.search && !source.line.name.toLocaleLowerCase().includes(input.search.toLocaleLowerCase())) continue;
-        const prior = estimate.lineItems.find((line: Row) => line.mainLineId === source.line.mainLineId);
-        if (prior?.clientVisible === false) continue;
-        const modeTier = prior?.modeTier ?? source.line.applicableTiers[0] ?? "signature";
-        const pricingMode = savedMode(estimate, source.line.mainLineId);
-        const choices = await estimateTierChoices({ quantity: 1, uomId: source.line.uom.id, pricingMode, modeTier }, source);
-        if (!choices.some(choice => choice.available)) continue;
-        candidates.push({ mainLineId: source.line.mainLineId, name: source.line.name, source: sourceIdentity(source), ...grouping(source),
-          pricingMode, modeTier, dimensionsMandatory: source.line.dimensionsMandatory, dimensionRule: source.line.dimensionRule,
-          uomName: source.line.uom.name, choices });
+        if (input.mainBasketId && source.line.basketId !== input.mainBasketId ||
+          input.subBasketId && source.line.subBasketId !== input.subBasketId) continue;
+        if (input.search && ![source.line.name, source.mainBasketName, source.subBasketName ?? ""].join(" ")
+          .toLocaleLowerCase().includes(input.search.trim().toLocaleLowerCase())) continue;
+        if (estimate.lineItems.some((line: Row) => line.mainLineId === source.line.mainLineId && line.clientVisible === false)) continue;
+        const candidate = await quotationCandidateFor(estimate, source);
+        if (candidate.choices.some(choice => choice.available)) candidates.push(candidate);
       }
       candidates.sort((a, b) => a.name.localeCompare(b.name) || a.mainLineId.localeCompare(b.mainLineId));
       return { items: candidates.slice(offset, offset + limit), total: candidates.length, limit, offset };
@@ -312,6 +378,7 @@ export function createQuotationService({ audit }: { audit: AuditService }) {
             }
           }
           const fenced = new Set<string>();
+          const recommendationChanges: Array<{ operation: LineOperation; mainLineId: string; roomId: string }> = [];
           for (const operation of operations) {
             let index = operation.kind === "update" ? lineItems.findIndex(line => line.id === operation.lineItemId) :
               lineItems.findIndex(line => line.mainLineId === operation.mainLineId && line.roomId === operation.roomId);
@@ -340,9 +407,16 @@ export function createQuotationService({ audit }: { audit: AuditService }) {
               fenced.add(mainLineId);
             }
             const next = await pricedLine(base, source, operation, session);
+            if (!next.included || operation.kind === "add" || operation.included === true && !prior?.included) {
+              next.recommendationSourceMainLineIds = next.included ? operation.recommendationSourceMainLineIds ?? [] : [];
+            } else if (operation.recommendationSourceMainLineIds !== undefined) {
+              next.recommendationSourceMainLineIds = operation.recommendationSourceMainLineIds;
+            }
+            recommendationChanges.push({ operation, mainLineId, roomId });
             if (next.included) await fenceEstimateInHouseComponentReferences([next], new Map([[mainLineId, source]]), session);
             if (index < 0) lineItems.push(next); else lineItems[index] = next;
           }
+          await reconcileRecommendationOrigins(estimate, lineItems, recommendationChanges, session, fenced);
           if (isDeepStrictEqual(lineItems, estimate.lineItems) && (!setupChanges || Object.entries(setupChanges).every(([key, value]) => isDeepStrictEqual(value, estimate[key])))) {
             result = await present(context, session);
             return;
@@ -357,6 +431,10 @@ export function createQuotationService({ audit }: { audit: AuditService }) {
           const gstPaise = Number((BigInt(subtotalPaise) * 18n + 50n) / 100n);
           const totalPaise = subtotalPaise + gstPaise;
           if (!money(totalPaise)) unavailable();
+          // Persist the first-actionable anchor before this material save
+          // invalidates the current quotation approval. The task upsert keeps
+          // its original opened/due dates across later revisions.
+          await ensureQuotationDesignTask(estimate, now, session);
           await supersedePending(estimate, actor, session, now);
           const physicalChange = estimatePhysicalScopeChanged(estimate, { ...estimate, ...setupChanges, lineItems });
           const saved = await EstimateModel.findOneAndUpdate({ _id: estimate._id, version: parsed.data.expectedVersion, "estimation.editClosedAt": null },
