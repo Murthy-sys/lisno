@@ -147,7 +147,7 @@ function ruleBody(source: string, selector: string) {
 }
 
 describe("EstimateReviewPanel client disclosures", () => {
-  it("waits for an actual design submission after the designer-revised quotation is approved", async () => {
+  it("keeps version-3 design tools in the project workspace after quotation approval", async () => {
     const quotation = withPublishedReview({ ...clientEstimates[0]!, status: "client_approved", workflowVersion: 3, designPlanVersion: 0 });
     quotation.publishedReview.workflowVersion = 3;
     quotation.publishedReview.phase = "post";
@@ -155,7 +155,8 @@ describe("EstimateReviewPanel client disclosures", () => {
     installClientApi(() => [quotation]);
     renderApp(["/client?estimate=estimate-ready"]);
 
-    expect(await screen.findByText("Post-design quotation approved")).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Aurora Villa" })).toBeVisible();
+    expect(screen.queryByRole("region", { name: "Submitted estimate" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Design review" })).not.toBeInTheDocument();
     expect(vi.mocked(fetch).mock.calls.some(([input]) => /\/(plan-review|design-drawings|design-workflow)$/.test(String(input)))).toBe(false);
   });

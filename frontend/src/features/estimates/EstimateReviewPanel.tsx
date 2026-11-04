@@ -17,39 +17,22 @@ import {
   getEstimateDesigners,
   getEstimateReviewQueue
 } from "./estimateWorkflowApi";
-import { estimateBuilderSections } from "../leads/estimateBuilderCatalogue";
-import {
-  estimateDesignKeys,
-  getClientEstimateDrawings,
-  getClientPlanWorkspace,
-  previewClientPlanTargets,
-  saveClientPlanDraft,
-  submitClientPlanChangeRequest,
-  updateClientPlanChangeRequest
-} from "../leads/estimateDesignApi";
-import {
-  ClientEstimateDrawings,
-  projectDrawingAnnotationsToPage,
-  projectDrawingCommentsToPage
-} from "./ClientEstimateDrawings";
-import { clientKeys } from "../client/clientApi";
-import type { EstimatePlanPage } from "../../api/types";
-import { ClientFullPlanNav } from "./ClientFullPlanNav";
-import { ClientPlanPageReview } from "./ClientPlanPageReview";
-import { EstimateSpacePlanningCompletion } from "../workflow/SpacePlanningCompletion";
 import { projectWorkflowKeys } from "../workflow/projectWorkflowApi";
 import { ClientPublishedEstimate, clientEstimateMoney } from "./ClientPublishedEstimate";
+import { ClientEstimateDesignReview } from "./ClientEstimateDesignReview";
+import { clientEstimateWorkflowVersion } from "./clientEstimateWorkflow";
 import "./clientPublishedEstimate.css";
 
 const money = (value: number) => `₹${value.toLocaleString("en-IN")}`;
-export function EstimateReviewPanel({ selectedEstimateId, projectId, decisionBlocked = false }: { selectedEstimateId?: string; projectId?: string; decisionBlocked?: boolean } = {}) {
+export function EstimateReviewPanel({ selectedEstimateId, projectId, decisionBlocked = false, workflowFilter, refetchOnMount }: { selectedEstimateId?: string; projectId?: string; decisionBlocked?: boolean; workflowFilter?: "legacy"; refetchOnMount?: boolean } = {}) {
   const role = useAuth().user!.role;
   const queryClient = useQueryClient();
   const [designerByEstimate, setDesignerByEstimate] = useState<Record<string, string>>({});
   const [noteByEstimate, setNoteByEstimate] = useState<Record<string, string>>({});
   const queue = useQuery({
     queryKey: role === "client" ? estimateWorkflowKeys.client : estimateWorkflowKeys.reviewQueue,
-    queryFn: role === "client" ? getClientEstimates : getEstimateReviewQueue
+    queryFn: role === "client" ? getClientEstimates : getEstimateReviewQueue,
+    refetchOnMount
   });
   const designers = useQuery({
     queryKey: estimateWorkflowKeys.designers,
@@ -75,7 +58,8 @@ export function EstimateReviewPanel({ selectedEstimateId, projectId, decisionBlo
   const panelTitle = projectId ? "Project estimate" : role === "client" ? "Estimates ready for you" : "Estimate approvals";
   if (queue.isPending) return <section className={panelClass}><h2>{panelTitle}</h2><p role="status">Loading submitted estimates…</p></section>;
   if (queue.isError) return <section className={panelClass}><h2>{panelTitle}</h2><p role="alert">Submitted estimates could not be loaded. Refresh before reviewing or making a decision.</p><Button variant="secondary" disabled={queue.isFetching} onClick={() => void queue.refetch()}>Retry estimates</Button></section>;
-  const estimates = projectId ? queue.data.filter((estimate) => estimate.projectId === projectId) : queue.data;
+  const visibleEstimates = workflowFilter === "legacy" ? queue.data.filter((estimate) => clientEstimateWorkflowVersion(estimate) !== 3) : queue.data;
+  const estimates = projectId ? visibleEstimates.filter((estimate) => estimate.projectId === projectId) : visibleEstimates;
   if (projectId && estimates.length > 1) return <section className={panelClass}><h2>{panelTitle}</h2><p role="alert">The current estimate for this project could not be verified. Please contact your Sales team.</p></section>;
   if (!estimates.length) return <section className={panelClass}><p className="eyebrow">Estimate review</p><h2>{panelTitle}</h2><p className="inline-empty">{projectId ? "No submitted estimate is linked to this project yet. Your Sales team will share it here when it is ready." : "Nothing needs your action right now."}</p></section>;
   const actionableCount = estimates.filter((estimate) => role === "client" ? estimate.publishedReview?.canDecide : canActOnEstimate(role, estimate.status)).length;
@@ -110,15 +94,6 @@ function canActOnEstimate(role: string, status: EstimateQueueItem["status"]) {
   return status === "pending_designer_approval";
 }
 
-function canReviewDesign(role: Role, estimate: EstimateQueueItem) {
-  if (role !== "client") return false;
-  if (estimate.workflowVersion === 3 && !((estimate.designPlanVersion ?? 0) > 0 && estimate.publishedReview?.phase === "post" && estimate.publishedReview.status === "approved")) return false;
-  if (estimate.status === "client_approved") {
-    return estimate.designPlanStatus === "ready_for_client";
-  }
-  return estimate.status === "sent_to_client" ||
-    estimate.status === "client_changes_requested";
-}
 
 function EstimateReviewCard({
   estimate,
@@ -151,43 +126,13 @@ function EstimateReviewCard({
 }) {
   const queryClient = useQueryClient();
   const [clientExpanded, setClientExpanded] = useState(initiallyExpanded);
-  const [selectedPlanPage, setSelectedPlanPage] = useState<EstimatePlanPage>();
   const [pdfNeedsRefresh, setPdfNeedsRefresh] = useState(false);
   const isClient = role === "client";
   const detailsId = `client-estimate-${estimate.id}-details`;
   const headingId = `client-estimate-${estimate.id}-title`;
   const includedItemCount = estimate.lineItems.filter((item) => item.included).length;
   const publishedReview = estimate.reviewSourceIssue ? null : estimate.publishedReview;
-  const unchangedDesignRequest = estimate.status === "client_changes_requested" &&
-    publishedReview?.status === "pending" && estimate.version === publishedReview.estimateVersion;
-  const quotationDesignReady = estimate.workflowVersion !== 3 || (estimate.designPlanVersion ?? 0) > 0 && publishedReview?.phase === "post" && publishedReview.status === "approved";
-  const showDesignTools = isClient && quotationDesignReady && (estimate.status === "sent_to_client" || estimate.status === "client_approved" || unchangedDesignRequest);
   const clientTitle = publishedReview?.snapshot.projectName ?? estimate.lead?.projectName ?? "Project estimate";
-  const drawingWorkspace = useQuery({
-    queryKey: estimateDesignKeys.clientWorkspace(estimate.id),
-    queryFn: () => getClientEstimateDrawings(estimate.id),
-    enabled: showDesignTools && clientExpanded
-  });
-  const planWorkspace = useQuery({
-    queryKey: estimateDesignKeys.clientPlanWorkspace(estimate.id),
-    queryFn: () => getClientPlanWorkspace(estimate.id),
-    enabled: showDesignTools && clientExpanded
-  });
-  const roomOptions = estimate.rooms.flatMap((room) => {
-    const id = typeof room.id === "string" ? room.id : "";
-    const label = typeof room.label === "string" ? room.label : "";
-    return id && label ? [{ id, label }] : [];
-  });
-  const scopeOptions = estimate.scopes.map((id) => ({
-    id,
-    label: estimateBuilderSections.find((section) => section.id === id)?.label ?? id
-  }));
-  for (const line of estimate.lineItems) {
-    if (line.source !== "configuration" || !line.included || !line.mainBasketId) continue;
-    if (!scopeOptions.some((option) => option.id === line.mainBasketId)) {
-      scopeOptions.push({ id: line.mainBasketId, label: line.mainBasketName });
-    }
-  }
   const reviewControls = !isClient && actionable ? <>
     {role === "design_manager" ? <label>Assign approval to<Select disabled={actionPending} value={selectedDesignerId} onChange={(event) => onDesignerChange(event.target.value)}><option value="">Choose designer</option>{designers.map((designer) => <option value={designer.id} key={designer.id}>{designer.name}</option>)}</Select></label> : <label>Review note<Textarea disabled={actionPending} value={note} onChange={(event) => onNoteChange(event.target.value)} placeholder={isClient ? "Optional note for the Lisno team" : "Add approval context or requested corrections"} /></label>}
     <div className="estimate-review-card__actions">
@@ -220,82 +165,7 @@ function EstimateReviewCard({
         {pdfNeedsRefresh ? <div className="client-commercial-state" role="status"><p>Refresh the submitted estimate before trying the PDF or making a decision.</p><Button variant="secondary" onClick={async () => { await queryClient.invalidateQueries({ queryKey: estimateWorkflowKeys.client }); setPdfNeedsRefresh(false); }}>Refresh estimate</Button></div> : null}
         {decisionBlocked ? <p role="status">Save or discard your quotation changes before approving a submitted version.</p> : null}
         <ClientPublishedEstimate estimate={estimate} decisionBlocked={pdfNeedsRefresh || decisionBlocked} />
-        <div className={`client-estimate-workspace${showDesignTools && planWorkspace.data?.pages.length ? "" : " client-estimate-workspace--single"}`}>
-          <div className="client-estimate-workspace__main">
-            {showDesignTools && (drawingWorkspace.isPending || drawingWorkspace.isError || planWorkspace.isPending || planWorkspace.isError || drawingWorkspace.data?.drawings.length || planWorkspace.data?.pages.length) ? <section className="client-estimate-design-review" aria-label="Design review">
-              <div className="client-estimate-design-review__heading"><p className="eyebrow">Design review</p><h4>Drawings and plans</h4><p>Review design drawings separately from your estimate decision.</p></div>
-            {planWorkspace.isPending ? <p role="status">Loading full design pages…</p> : null}
-            {planWorkspace.isError ? <p className="inline-empty">No full design pages are available for this estimate.</p> : null}
-            <ClientEstimateDrawings
-              estimateId={estimate.id}
-              rooms={roomOptions}
-              scopes={scopeOptions}
-              workspace={drawingWorkspace.data}
-              isPending={drawingWorkspace.isPending}
-              isError={drawingWorkspace.isError}
-              canReview={canReviewDesign(role, estimate)}
-              planWorkspace={planWorkspace.data}
-            />
-            </section> : null}
-            {quotationDesignReady && estimate.status === "client_approved" && estimate.projectId ? <EstimateSpacePlanningCompletion projectId={estimate.projectId} estimateId={estimate.id} /> : null}
-          </div>
-          {showDesignTools && planWorkspace.data?.pages.length ? (
-            <aside className="client-estimate-workspace__rail" aria-label="Design tools">
-              <ClientFullPlanNav
-                workspace={planWorkspace.data}
-                selectedPageId={selectedPlanPage?.id}
-                onSelectPage={setSelectedPlanPage}
-              />
-            </aside>
-          ) : null}
-        </div>
-        {showDesignTools && selectedPlanPage ? (
-          <ClientPlanPageReview
-            key={`${selectedPlanPage.id}:${selectedPlanPage.reviewRoundId ?? "estimate"}`}
-            page={selectedPlanPage}
-            editableRequest={planWorkspace.data?.openRequests.filter((request) => request.sourcePageId === selectedPlanPage.id).at(-1)}
-            sharedAnnotations={drawingWorkspace.data && planWorkspace.data
-              ? projectDrawingAnnotationsToPage(
-                  selectedPlanPage,
-                  drawingWorkspace.data,
-                  planWorkspace.data,
-                  planWorkspace.data.openRequests.filter((request) => request.sourcePageId === selectedPlanPage.id).at(-1)?.id
-                )
-              : []}
-            sharedComments={drawingWorkspace.data && planWorkspace.data
-              ? projectDrawingCommentsToPage(selectedPlanPage, drawingWorkspace.data, planWorkspace.data)
-              : []}
-            pages={planWorkspace.data?.uploads.find((upload) => upload.id === selectedPlanPage.uploadId)?.pages ?? [selectedPlanPage]}
-            onSelectPage={setSelectedPlanPage}
-            canReview={canReviewDesign(role, estimate)}
-            onClose={() => setSelectedPlanPage(undefined)}
-            saveDraft={async (annotations) => {
-              await saveClientPlanDraft(selectedPlanPage.id, selectedPlanPage.annotationDraft?.version ?? 0, annotations, selectedPlanPage.reviewRoundId);
-              await queryClient.invalidateQueries({ queryKey: estimateDesignKeys.clientPlanWorkspace(estimate.id) });
-            }}
-            previewTargets={(annotations) => previewClientPlanTargets(selectedPlanPage.id, annotations, selectedPlanPage.reviewRoundId)}
-            submitRequest={async (input) => {
-              await submitClientPlanChangeRequest(selectedPlanPage.id, { ...input, reviewRoundId: selectedPlanPage.reviewRoundId ?? undefined });
-              await Promise.all([
-                queryClient.invalidateQueries({ queryKey: estimateDesignKeys.clientPlanWorkspace(estimate.id) }),
-                queryClient.invalidateQueries({ queryKey: estimateDesignKeys.clientWorkspace(estimate.id) }),
-                queryClient.invalidateQueries({ queryKey: estimateWorkflowKeys.client }),
-                queryClient.invalidateQueries({ queryKey: projectWorkflowKeys.all }),
-                queryClient.invalidateQueries({ queryKey: clientKeys.projects })
-              ]);
-            }}
-            updateRequest={async ({ requestId, version, summary, annotations }) => {
-              await updateClientPlanChangeRequest(requestId, { version, summary, annotations });
-              await Promise.all([
-                queryClient.invalidateQueries({ queryKey: estimateDesignKeys.clientPlanWorkspace(estimate.id) }),
-                queryClient.invalidateQueries({ queryKey: estimateDesignKeys.clientWorkspace(estimate.id) }),
-                queryClient.invalidateQueries({ queryKey: estimateWorkflowKeys.client }),
-                queryClient.invalidateQueries({ queryKey: projectWorkflowKeys.all }),
-                queryClient.invalidateQueries({ queryKey: clientKeys.projects })
-              ]);
-            }}
-          />
-        ) : null}
+        <ClientEstimateDesignReview estimate={estimate} />
       </div> : null}
     </article>;
   }

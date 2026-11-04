@@ -37,7 +37,7 @@
 }
 
 .ui-app-shell.ui-common-shell[data-configuration-backdrop="true"] > .ui-workspace {
-  --configuration-paint-offset: calc(var(--workspace-topbar-height) + var(--workspace-safe-top));
+  --configuration-paint-offset: var(--workspace-toolbar-size);
 }
 
 @media (max-width: 1024px) {

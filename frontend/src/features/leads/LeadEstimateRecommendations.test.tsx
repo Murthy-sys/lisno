@@ -395,7 +395,7 @@ describe("estimator room recommendations", () => {
 
   it("cleans related items when a Main Basket is deselected and keeps its revealed Basket", async () => {
     const user = userEvent.setup();
-    installReads();
+    const { savedInputs } = installReads(false, null, undefined, false, undefined, true);
     renderWorkspace();
     await openBuilder(user);
     const pop = screen.getByText("POP false ceiling").closest(".configured-estimate-line") as HTMLElement;
@@ -404,19 +404,36 @@ describe("estimator room recommendations", () => {
     await user.click(within(dialog).getByRole("button", { name: "Add False ceiling painting for Living & Dining" }));
     await user.click(within(dialog).getByRole("button", { name: "Done" }));
 
-    await user.click(screen.getByRole("button", { name: "Back to Asha Shah" }));
+    await user.click(screen.getByRole("button", { name: "Save and edit baskets" }));
+    await screen.findByRole("heading", { name: "Configure estimate" });
+    expect(savedInputs).toHaveLength(1);
+    expect(savedInputs[0]!.lineItems).toEqual(expect.arrayContaining([
+      expect.objectContaining({ mainLineId: "line-pop", included: true }),
+      expect.objectContaining({ mainLineId: "line-paint", included: true, recommendationSourceMainLineIds: ["line-pop"] })
+    ]));
     const popBasket = screen.getByRole("button", { name: /^(?:Add|Added) POP \/ Gypsum$/ });
     const paintingBasket = screen.getByRole("button", { name: /^(?:Add|Added) Painting$/ });
     await user.click(popBasket);
+    const removal = await screen.findByRole("alertdialog", { name: "Remove POP / Gypsum?" });
+    expect(popBasket).toHaveAttribute("aria-pressed", "true");
+    await user.click(within(removal).getByRole("button", { name: "Remove from estimate" }));
+    expect(popBasket).toHaveAttribute("aria-pressed", "false");
     expect(paintingBasket).toHaveAttribute("aria-pressed", "true");
     await user.click(screen.getByRole("button", { name: "Continue to item selection" }));
     const painting = within(screen.getByRole("region", { name: "Painting" }))
       .getByText("False ceiling painting").closest(".configured-estimate-line") as HTMLElement;
     expect(within(painting).getByRole("checkbox", { name: /False ceiling painting/ })).not.toBeChecked();
     expect(screen.getByText("₹0 total")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Save draft" }));
+    await waitFor(() => expect(savedInputs).toHaveLength(2));
+    expect(savedInputs[1]!.selectedMainBasketIds).toEqual(["basket-paint"]);
+    expect(savedInputs[1]!.lineItems).toEqual(expect.arrayContaining([
+      expect.objectContaining({ mainLineId: "line-pop", included: false }),
+      expect.objectContaining({ mainLineId: "line-paint", included: false, recommendationSourceMainLineIds: [] })
+    ]));
   });
 
-  it("clears filtered and hidden baskets without writes, preserves saved and edited data, and clears recommendation inclusion when re-added", async () => {
+  it("saves before returning, confirms clearing filtered and hidden baskets locally, and preserves values while clearing recommendation inclusion", async () => {
     const user = userEvent.setup();
     const { savedInputs, requests } = installReads(false, null, undefined, false, undefined, true);
     renderWorkspace();
@@ -458,7 +475,14 @@ describe("estimator room recommendations", () => {
     const paintingQuantity = screen.getByRole("spinbutton", { name: /Quantity.*False ceiling painting/ });
     await user.clear(paintingQuantity);
     await user.type(paintingQuantity, "3.25");
-    await user.click(screen.getByRole("button", { name: "Back to Asha Shah" }));
+    await user.click(screen.getByRole("button", { name: "Save and edit baskets" }));
+    await screen.findByRole("heading", { name: "Configure estimate" });
+    expect(savedInputs).toHaveLength(2);
+    const returnSavedInputs = structuredClone(savedInputs[1]!);
+    expect(returnSavedInputs.lineItems).toEqual(expect.arrayContaining([
+      expect.objectContaining({ mainLineId: "line-pop", included: true, quantity: 4.75, ratePaise: 12345 }),
+      expect.objectContaining({ mainLineId: "line-paint", included: true, quantity: 3.25, ratePaise: 28765, recommendationSourceMainLineIds: ["line-pop"] })
+    ]));
     expect(screen.getByRole("region", { name: /Living & Dining dimensions/ })).toBeVisible();
     expect(screen.getByRole("region", { name: /Bedroom 1 dimensions/ })).toBeVisible();
     const search = screen.getByRole("searchbox", { name: "Search baskets" });
@@ -472,14 +496,19 @@ describe("estimator room recommendations", () => {
     const clearAll = within(selection).getByRole("button", { name: "Clear all" });
     clearAll.focus();
     await user.keyboard("{Enter}");
+    const removal = await screen.findByRole("alertdialog", { name: "Remove all selected Main Baskets?" });
+    expect(within(selection).getByRole("status")).toHaveTextContent("3 selected");
+    expect(requests).toEqual(beforeClear);
+    await user.click(within(removal).getByRole("button", { name: "Remove from estimate" }));
     expect(within(selection).getByRole("status")).toHaveTextContent("0 selected");
     expect(clearAll).toBeDisabled();
     expect(within(selection).getByRole("button", { name: "Continue to item selection" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Add POP / Gypsum" })).toHaveAttribute("aria-pressed", "false");
     expect(search).toHaveValue("pop");
     expect(requests).toEqual(beforeClear);
-    expect(savedInputs).toEqual([persistedInputs]);
+    expect(savedInputs).toEqual([persistedInputs, returnSavedInputs]);
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Clear search" }));
     for (const name of ["POP / Gypsum", "Painting", "Lights"]) {
@@ -499,11 +528,11 @@ describe("estimator room recommendations", () => {
     expect(screen.getByRole("textbox", { name: /Selling rate.*False ceiling painting/ })).toHaveValue("287.65");
     expect(screen.getByRole("navigation", { name: "Rooms" })).toHaveTextContent("Bedroom 1");
     expect(screen.getByRole("navigation", { name: "Rooms" })).toHaveTextContent("Living & Dining");
-    expect(savedInputs).toHaveLength(1);
+    expect(savedInputs).toHaveLength(2);
 
     await user.click(screen.getByRole("button", { name: "Save draft" }));
-    await waitFor(() => expect(savedInputs).toHaveLength(2));
-    const cleared = savedInputs[1]!;
+    await waitFor(() => expect(savedInputs).toHaveLength(3));
+    const cleared = savedInputs[2]!;
     expect(cleared.rooms).toEqual(firstSaved.rooms);
     expect(cleared.lineItems).toHaveLength(4);
     expect(cleared.lineItems.every((line) => !line.included && line.recommendationSourceMainLineIds?.length === 0)).toBe(true);

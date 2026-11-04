@@ -59,8 +59,8 @@
   --font-tabular: var(--font-interface);
   display: grid;
   min-width: 0;
-  gap: 18px;
-  padding: 20px;
+  gap: var(--space-3);
+  padding: 0;
   background: var(--dashboard-canvas);
   color: var(--dashboard-ink);
   font-family: var(--font-interface);
@@ -72,22 +72,22 @@
 .super-admin-dashboard a { color: var(--dashboard-green); text-underline-offset: 3px; }
 .super-admin-dashboard :is(h2, h3, p) { overflow-wrap: anywhere; }
 .super-admin-dashboard :is(.ui-surface, .metric-card, .ui-button) { box-shadow: none; border-radius: 0; }
-.super-admin-dashboard .ui-surface, .ui-app-shell[data-role="super_admin"] section.super-admin-dashboard .ui-surface { background: var(--dashboard-surface); border: 1px solid var(--dashboard-border); padding: 18px; border-radius: 0; box-shadow: none; }
-.super-admin-dashboard .ui-button { min-height: 40px; }
+.super-admin-dashboard .ui-surface, .ui-app-shell[data-role="super_admin"] section.super-admin-dashboard .ui-surface { background: var(--dashboard-surface); border: 1px solid var(--dashboard-border); padding: var(--space-3); border-radius: 0; box-shadow: none; }
+.super-admin-dashboard .ui-button { min-height: var(--control-height-compact); }
 .super-admin-dashboard .ui-page-header { align-items: center; margin: 0; gap: 12px; }
 .ui-app-shell[data-role="super_admin"] section.super-admin-dashboard .ui-page-header__title,
-.super-admin-dashboard .ui-page-header__title { color: var(--dashboard-ink); font: 600 clamp(24px, 2.4vw, 32px)/1.15 var(--font-interface); letter-spacing: -.035em; }
+.super-admin-dashboard .ui-page-header__title { color: var(--dashboard-ink); font-family: var(--font-interface); }
 .super-admin-dashboard .ui-page-header__actions { align-items: center; }
-.super-admin-dashboard .dashboard-export { background: var(--dashboard-green); color: #fafbf8; border: 1px solid var(--dashboard-green); padding: 9px 16px; font-weight: 600; }
+.super-admin-dashboard .dashboard-export { background: var(--dashboard-green); color: #fafbf8; border: 1px solid var(--dashboard-green); padding: 4px 12px; font-weight: 600; }
 .dashboard-export svg { width: 17px; height: 17px; flex: none; }
 .dashboard-export .ui-button__content > span { display: flex; align-items: center; gap: 8px; }
-.dashboard-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 18px; padding-block: 0 12px; border-bottom: 1px solid var(--dashboard-border); }
-.dashboard-toolbar__controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.dashboard-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 8px; padding-block: 0 8px; border-bottom: 1px solid var(--dashboard-border); }
+.dashboard-toolbar__controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .dashboard-freshness { display: grid; gap: 3px; color: var(--dashboard-muted); font-size: 11px; }
 .dashboard-period, .dashboard-comparison-toggle { display: flex; align-items: center; gap: 8px; color: var(--dashboard-muted); font-size: 11px; }
-.dashboard-comparison-toggle { min-height: 40px; cursor: pointer; }
+.dashboard-comparison-toggle { min-height: var(--control-height); cursor: pointer; }
 .dashboard-comparison-toggle input { width: 15px; height: 15px; accent-color: var(--dashboard-green); }
-.dashboard-period select, .dashboard-filters :is(input, select) { width: 100%; min-height: 40px; padding: 8px 10px; border: 1px solid var(--dashboard-border); border-radius: 0; background: var(--dashboard-surface); color: var(--dashboard-ink); font: inherit; }
+.dashboard-period select, .dashboard-filters :is(input, select) { width: 100%; min-height: var(--control-height); padding: 4px 8px; border: 1px solid var(--dashboard-border); border-radius: 0; background: var(--dashboard-surface); color: var(--dashboard-ink); font: inherit; }
 .dashboard-period select { width: auto; min-width: 120px; }
 .dashboard-panel, .dashboard-overview, .dashboard-tab-summary, .dashboard-drilldown { display: grid; min-width: 0; gap: 18px; }
 .dashboard-panel > h2 { margin: 0; font-size: 16px; font-weight: 600; }
@@ -237,18 +237,17 @@
   .dashboard-module-links { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 640px) {
-  .super-admin-dashboard, .ui-app-shell[data-role="super_admin"] section.super-admin-dashboard { padding: 12px; gap: 14px; }
+  .super-admin-dashboard, .ui-app-shell[data-role="super_admin"] section.super-admin-dashboard { padding: 0; gap: var(--space-3); }
   .super-admin-dashboard .ui-page-header { display: flex; flex-direction: row; align-items: center; justify-content: space-between; }
   .super-admin-dashboard .ui-page-header__content { flex: 1; min-width: 0; }
   .super-admin-dashboard .ui-page-header__actions { width: auto; flex: none; }
-  .super-admin-dashboard .dashboard-export { min-height: 40px; padding: 8px 10px; font-size: 10px; }
-  .super-admin-dashboard .ui-page-header__title { font-size: 24px; }
+  .super-admin-dashboard .dashboard-export { min-height: 44px; padding: 8px 10px; font-size: 10px; }
   .dashboard-toolbar { gap: 10px; }
   .dashboard-toolbar__controls { width: 100%; gap: 8px; }
   .dashboard-period { flex: 1; }
   .dashboard-period > span { display: none; }
   .dashboard-period select { width: 100%; }
-  .dashboard-comparison-toggle { order: 3; width: 100%; min-height: 30px; }
+  .dashboard-comparison-toggle { order: 3; width: 100%; min-height: 44px; }
   .dashboard-headline-metric { gap: 10px; padding: 13px 11px; }
   .dashboard-headline-metric > strong { font-size: clamp(18px, 5vw, 25px); }
   .dashboard-headline-metric__label { font-size: 11px; }
@@ -274,6 +273,14 @@
 }
 @media (max-width: 350px) {
   .dashboard-headline-grid, .dashboard-definition-grid { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 760px), (pointer: coarse) {
+  .super-admin-dashboard .ui-button,
+  .dashboard-comparison-toggle,
+  .dashboard-period select,
+  .dashboard-filters :is(input, select) {
+    min-height: 44px;
+  }
 }
 @media (prefers-reduced-motion: reduce) {
   .super-admin-dashboard *, .super-admin-dashboard *::before, .super-admin-dashboard *::after { animation: none !important; transition: none !important; }

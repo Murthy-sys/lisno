@@ -7,7 +7,7 @@ import { tokenStorage } from "../../api/client";
 import { authorizationFor } from "../../test/authFixtures";
 import { renderApp } from "../../test/render";
 import { estimateWorkflowKeys, type EstimateQueueItem } from "../estimates/estimateWorkflowApi";
-import { withPublishedReview } from "../estimates/clientEstimateReviewTestUtils";
+import { withPublishedReview, withQuotationApproval } from "../estimates/clientEstimateReviewTestUtils";
 import { projectWorkflowKeys } from "../workflow/projectWorkflowApi";
 import type { EstimateRequirementsDetail } from "./estimateRequirementsApi";
 import type { QuotationDetail } from "./quotationApi";
@@ -65,17 +65,33 @@ describe("Client project published estimate review", () => {
     const selected = estimate(); selected.workflowVersion = 3; selected.publishedReview!.workflowVersion = 3; selected.publishedReview!.phase = "pre";
     const source = { revisionId: "revision-one", itemVersion: 2, revisionVersion: 3, uomId: "unit" };
     const quotation: QuotationDetail = { projectId: project.id, estimateId: selected.id, estimateVersion: 3, workflowVersion: 3, pricedRevision: 2, phase: "pre", status: "sent_to_client", reviewState: "ready_for_approval", editingAllowed: true, editingBlockReason: null, totalPaise: 88500, isIncomplete: false, rooms: [{ id: "living", name: "Living room" }], lines: [{ id: "storage", mainLineId: "storage", mainLineName: "Storage", roomId: "living", roomName: "Living room", included: true, source, quantity: 2, uomName: "Unit", pricingMode: "sub_vendor", modeTier: "signature", ratePaise: 40000, amountPaise: 75000, choices: [] }] };
-    installApi([selected], { quotation, requirements: { projectId: project.id, requirementsVersion: 0, estimateVersion: 3, phase: "pre", editingAllowed: true, editingBlockReason: null, canResolve: false, requirements: [], mainBaskets: [], rooms: [], indicativeTotalPaise: null, pricingComplete: false } });
+    installApi([withQuotationApproval(selected, quotation)], { quotation, requirements: { projectId: project.id, requirementsVersion: 0, estimateVersion: 3, phase: "pre", editingAllowed: true, editingBlockReason: null, canResolve: false, requirements: [], mainBaskets: [], rooms: [], indicativeTotalPaise: null, pricingComplete: false } });
     renderApp([`/client/projects/${project.id}`]); const user = userEvent.setup();
     const quantity = await screen.findByRole("spinbutton", { name: /Quantity for Storage/ });
-    const approve = await screen.findByRole("button", { name: "Approve pre-design quotation" });
+    const requirements = await screen.findByText("Additional requirements");
+    expect(requirements.closest("details")).not.toHaveAttribute("open");
+    expect(quantity.compareDocumentPosition(requirements) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "Open estimation" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Indicative total")).not.toBeInTheDocument();
+    expect(screen.queryByText(/No requirements yet/)).not.toBeInTheDocument();
+    const approve = await screen.findByRole("button", { name: "Review for pre-design approval" });
     expect(approve).toBeEnabled();
     await user.clear(quantity); await user.type(quantity, "4");
     expect(screen.queryByRole("button", { name: "Approve pre-design quotation" })).not.toBeInTheDocument();
     expect(screen.getByText(/Save or discard your quotation changes/)).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Discard changes" }));
-    expect(screen.getByRole("button", { name: "Approve pre-design quotation" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Review for pre-design approval" })).toBeEnabled();
     expect(screen.queryByRole("region", { name: "Design review" })).not.toBeInTheDocument();
+  });
+  it("keeps requirements available before the first v3 quotation exists", async () => {
+    const quotation: QuotationDetail = { projectId: project.id, estimateId: null, estimateVersion: null, workflowVersion: 3, pricedRevision: 0, phase: "pre", status: "draft", reviewState: "draft", editingAllowed: false, editingBlockReason: "not_started", totalPaise: null, isIncomplete: false, rooms: [], lines: [] };
+    installApi([], { quotation, requirements: { projectId: project.id, requirementsVersion: 0, estimateVersion: null, phase: "pre", editingAllowed: true, editingBlockReason: null, canResolve: false, requirements: [], mainBaskets: [{ id: "joinery", name: "Joinery" }], rooms: [], indicativeTotalPaise: null, pricingComplete: false } });
+    renderApp([`/client/projects/${project.id}`]);
+    expect(await screen.findByText(/Your team has not prepared the quotation yet/)).toBeVisible();
+    const summary = await screen.findByText("Additional requirements");
+    expect(summary.closest("details")).toHaveAttribute("open");
+    await userEvent.click(screen.getByRole("button", { name: "Add requirement" }));
+    expect(screen.getByRole("form", { name: "Add estimate requirement" })).toBeVisible();
   });
   it("offers project requirements immediately after invited membership, before the first estimate exists", async () => {
     installApi([], { requirements: {
@@ -273,7 +289,7 @@ describe("Client project published estimate review", () => {
     expect(await screen.findByText("Custom shelving")).toBeVisible();
     status = 403;
     await act(async () => { await queryClient.refetchQueries({ queryKey: estimateWorkflowKeys.client }); });
-    expect(screen.queryByText("Custom shelving")).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText("Custom shelving")).not.toBeInTheDocument());
     expect(screen.getByRole("button", { name: "Retry estimates" })).toBeVisible();
     status = 503;
     await userEvent.click(screen.getByRole("button", { name: "Retry estimates" }));

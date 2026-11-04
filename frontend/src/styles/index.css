@@ -949,9 +949,9 @@
 
 .role-landing {
   display: grid;
-  gap: var(--space-6);
-  width: min(100%, 80rem);
-  margin: 0 auto;
+  gap: var(--space-3);
+  width: 100%;
+  min-width: 0;
 }
 
 .workspace-header {
@@ -1064,8 +1064,8 @@
 }
 
 .designer-page {
-  width: min(100%, 86rem);
-  margin: 0 auto;
+  width: 100%;
+  min-width: 0;
 }
 
 .project-hero {
@@ -2853,7 +2853,7 @@
 
 .procurement-project-page {
   display: grid;
-  gap: var(--space-5);
+  gap: var(--space-3);
 }
 
 .procurement-workspace__heading {
@@ -5472,6 +5472,8 @@
 .finance-overview,
 .finance-project-page {
   isolation: isolate;
+  min-width: 0;
+  gap: var(--space-3);
 }
 
 .finance-projects__heading p {

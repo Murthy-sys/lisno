@@ -616,7 +616,7 @@ describe("role landing staging contract", () => {
 
 describe("public invitation route", () => {
   it("mounts directly while staying outside the protected registry", async () => {
-    expect(ROUTE_REGISTRY).toHaveLength(49);
+    expect(ROUTE_REGISTRY).toHaveLength(50);
     expect(ROUTE_REGISTRY.map(({ path }) => path)).not.toContain(
       "/accept-invitation"
     );
@@ -703,6 +703,46 @@ describe("public password recovery routes", () => {
   });
 });
 
+describe("project quotation route", () => {
+  it.each(["client", "designer"] as const)("opens the saved estimation for an authorized %s", async role => {
+    tokenStorage.set(`${role}-quotation-token`);
+    vi.spyOn(globalThis, "fetch").mockImplementation(async input => {
+      const path = apiRequestPath(input);
+      if (path === "/api/v1/auth/me") return Response.json({ data: { id: `${role}-one`, name: "Quotation viewer", email: "quotation@example.test", role } });
+      if (path === "/api/v1/auth/authorization") return Response.json({ data: authorizationFor(role, ["estimation.quotation.read"]) });
+      if (path === "/api/v1/projects/project-one/quotation") return Response.json({ data: {
+        projectId: "project-one", estimateId: "estimate-one", estimateVersion: 3, workflowVersion: 3,
+        pricedRevision: 1, phase: "pre", status: "sent_to_client", reviewState: "ready_for_approval",
+        editingAllowed: false, editingBlockReason: "read_only", totalPaise: 628000, isIncomplete: false,
+        rooms: [], lines: []
+      } });
+      if (path === "/api/v1/projects/project-one/quotation/revision") return Response.json({ data: { estimateId: "estimate-one", estimateVersion: 3, pricedRevision: 1, phase: "pre", status: "sent_to_client" } });
+      if (path === "/api/v1/client/estimates") return Response.json({ data: [] });
+      throw new Error(`Unhandled request: ${path}`);
+    });
+    const { router } = renderApp(["/projects/project-one/quotation"]);
+    expect(await screen.findByRole("heading", { name: "Estimation", level: 1 })).toBeVisible();
+    expect(await screen.findByText("₹6,280.00")).toBeVisible();
+    expect(router.state.location.pathname).toBe("/projects/project-one/quotation");
+    expect(screen.getByRole("link", { name: role === "client" ? "Back to project" : "Back to design plans" }))
+      .toHaveAttribute("href", role === "client" ? "/client/projects/project-one" : "/designer/design-plans");
+  });
+
+  it.each(["client", "designer"] as const)("requires quotation read permission for %s", async role => {
+    installAuthorizationSession(role, []);
+    renderApp(["/projects/project-one/quotation"]);
+    expect(await screen.findByRole("heading", { name: /access denied/i })).toBeVisible();
+    expect(vi.mocked(fetch).mock.calls.some(([input]) => apiRequestPath(input).includes("/quotation"))).toBe(false);
+  });
+
+  it.each(["estimator_sales", "vendor", "super_admin"] as const)("keeps the client-safe presentation unavailable to %s with misplaced permission", async role => {
+    installAuthorizationSession(role, ["estimation.quotation.read"]);
+    renderApp(["/projects/project-one/quotation"]);
+    expect(await screen.findByRole("heading", { name: /access denied/i })).toBeVisible();
+    expect(vi.mocked(fetch).mock.calls.some(([input]) => apiRequestPath(input).includes("/quotation"))).toBe(false);
+  });
+});
+
 describe("registered permission routes", () => {
   it.each(["super_admin", "site_manager", "procurement"] as const)("opens execution oversight and project work for an authorized %s", async role => {
     installAuthorizationSession(role, ["execution.tracker.read"]);
@@ -749,11 +789,12 @@ describe("registered permission routes", () => {
       (path) => !(historicalProtectedPaths as readonly string[]).includes(path)
     );
 
-    expect(paths).toHaveLength(historicalProtectedPaths.length + 28);
+    expect(paths).toHaveLength(historicalProtectedPaths.length + 29);
     expect(additions).toEqual([
       "/execution", "/projects/:projectId/estimations", "/projects/:projectId/execution",
       "/project-messages", "/project-manager/leaderboard", "/project-manager/bonus", "/projects/:projectId/messages",
       "/designer/design-plans",
+      "/projects/:projectId/quotation",
       "/vendor",
       knowledgeConfigurationPaths[0],
       "/admin/procurement", "/admin/procurement/vendors", "/admin/procurement/vendors/:vendorId", "/admin/purchase-orders", "/admin/project-completion", "/procurement", "/work-order-approvals", "/procurement/vendors", "/procurement/vendors/:vendorId", "/procurement/requests",
@@ -769,6 +810,7 @@ describe("registered permission routes", () => {
         "/project-manager/leaderboard", "/project-manager/bonus",
         "/project-messages", "/projects/:projectId/messages",
         "/designer/design-plans",
+        "/projects/:projectId/quotation",
         "/vendor",
         ...knowledgeConfigurationPaths,
         "/admin/procurement", "/admin/procurement/vendors", "/admin/procurement/vendors/:vendorId", "/admin/purchase-orders", "/admin/project-completion", "/procurement", "/work-order-approvals", "/procurement/vendors", "/procurement/vendors/:vendorId", "/procurement/requests",
@@ -1364,7 +1406,7 @@ describe("protected role routing", () => {
     await user.click(screen.getByRole("button", { name: "Done" }));
     await user.click(await screen.findByRole("button", { name: "Add Joinery" }));
     await user.click(screen.getByRole("button", { name: /continue to item selection/i }));
-    expect(await screen.findByRole("heading", { name: /select estimate items/i })).toBeVisible();
+    expect(await screen.findByRole("region", { name: /Estimate items/i })).toBeVisible();
     expect(screen.getByText("Wardrobe carcass")).toBeVisible();
   });
 
@@ -1387,8 +1429,9 @@ describe("protected role routing", () => {
 
     renderApp(["/estimator-sales/leads/lead-1/estimate"]);
 
-    expect(await screen.findByRole("heading", { name: /select estimate items/i })).toBeVisible();
+    expect(await screen.findByRole("region", { name: "Earlier catalogue items" })).toBeVisible();
     expect(screen.getByRole("checkbox", { name: /FC01/i })).toBeChecked();
+    await userEvent.click(screen.getByRole("button", { name: "Summary" }));
     expect(screen.getByText("₹22,420")).toBeVisible();
   });
 

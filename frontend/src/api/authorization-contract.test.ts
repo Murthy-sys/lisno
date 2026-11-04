@@ -216,13 +216,14 @@ describe("frontend authorization contract", () => {
     ).toEqual(projectFinancePermissions);
   });
 
-  it("keeps the protected frontend registry at exactly 49 routes", () => {
-    expect(ROUTE_REGISTRY).toHaveLength(49);
+  it("keeps the protected frontend registry at exactly 50 routes", () => {
+    expect(ROUTE_REGISTRY).toHaveLength(50);
     expect(ROUTE_REGISTRY.map(({ path }) => path)).toEqual(
       expect.arrayContaining([
         "/execution", "/projects/:projectId/execution",
         "/project-messages", "/projects/:projectId/messages",
         "/designer/design-plans",
+        "/projects/:projectId/quotation",
         "/admin/dashboard",
         "/admin/design-approvals",
         "/admin/configuration/estimation",

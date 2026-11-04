@@ -46,6 +46,7 @@ import { ClientProject } from "../features/client/ClientProject";
 import { LeadDashboard } from "../features/leads/LeadDashboard";
 import { LeadDetail } from "../features/leads/LeadDetail";
 import { LeadEstimateWorkspace } from "../features/leads/LeadEstimateWorkspace";
+import { ProjectQuotationWorkspace } from "../features/estimates/ProjectQuotationWorkspace";
 import { UserDirectoryPage } from "../features/admin/UserDirectoryPage";
 import { AdminProjectsPage } from "../features/admin/AdminProjectsPage";
 import { AdminProjectDetailPage } from "../features/admin/AdminProjectDetailPage";
@@ -518,6 +519,7 @@ export function AppRoutes() {
           path="/client"
           element={registeredElement("/client", <ClientDashboard />)}
         />
+        <Route path="/projects/:projectId/quotation" element={registeredElement("/projects/:projectId/quotation", <ProjectQuotationWorkspace />)} />
         <Route
           path="/client/projects/:projectId"
           element={registeredElement(

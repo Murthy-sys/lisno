@@ -19,9 +19,9 @@
 }
 
 .purchase-orders--admin > .ui-page-header {
-  min-block-size: 136px;
-  margin: 0 0 18px;
-  padding: 20px 26px;
+  min-block-size: 0;
+  margin: 0 0 12px;
+  padding: 10px 12px;
   align-items: center;
   border-radius: 4px;
   background-color: #eeeae1;
@@ -60,11 +60,11 @@
   display: grid;
   gap: 10px;
   min-inline-size: 0;
-  padding: 0 0 18px;
+  padding: 0 0 12px;
   border-bottom: 1px solid var(--approval-line);
 }
 .purchase-orders--admin .purchase-orders__individual-queue {
-  padding: 18px 0 0;
+  padding: 12px 0 0;
   border-bottom: 0;
 }
 .purchase-orders--admin .purchase-orders__project-queue > header,
@@ -388,8 +388,8 @@
 
 @media (max-width: 800px) {
   .purchase-orders--admin > .ui-page-header {
-    min-block-size: 112px;
-    padding: 17px 18px;
+    min-block-size: 0;
+    padding: 10px;
     background-image: linear-gradient(90deg, #eeeae1, rgb(238 234 225 / 92%)), url("../../assets/projects-living-room.webp");
     background-size: cover, cover;
   }

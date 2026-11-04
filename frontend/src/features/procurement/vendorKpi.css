@@ -1,5 +1,6 @@
 .vendor-kpi { --kpi-paper: #fdfcf9; --kpi-ink: #20231d; --kpi-muted: #676c74; --kpi-border: #e4e5df; --kpi-olive: #454f34; display: grid; gap: 18px; width: min(100%, 1160px); min-width: 0; color: var(--kpi-ink); }
 .vendor-kpi--public { width: min(100% - 32px, 760px); margin: 28px auto 70px; }
+.vendor-kpi:not(.vendor-kpi--public) { width: 100%; gap: 12px; }
 .vendor-kpi__back { width: fit-content; color: var(--kpi-olive); font-size: 13px; font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
 .vendor-kpi__back:focus-visible, .vendor-directory__name-link:focus-visible { outline: 2px solid var(--kpi-olive, #454f34); outline-offset: 3px; }
 .vendor-kpi__header { display: flex; align-items: stretch; justify-content: space-between; gap: 20px; padding: 24px; background: #f5f2eb; border: 1px solid #e5e2d8; border-radius: 10px; }
@@ -50,3 +51,10 @@
 .vendor-directory__name-link { display: inline; padding: 0; border: 0; color: #303f2d; background: none; text-align: left; font: inherit; font-weight: inherit; text-decoration: underline; text-decoration-color: #aeb7a7; text-underline-offset: 3px; cursor: pointer; }
 @media (max-width: 760px) { .vendor-kpi__columns { grid-template-columns: minmax(0, 1fr); } .vendor-kpi__header { flex-direction: column; } .vendor-kpi__official { border-left: 0; border-top: 1px solid #d9dbd5; padding: 16px 0 0; } }
 @media (max-width: 500px) { .vendor-kpi { gap: 14px; } .vendor-kpi--public { margin: 16px auto 48px; } .vendor-kpi__header, .vendor-kpi__identity, .vendor-kpi__public-identity, .vendor-kpi__assessment, .vendor-kpi__receipt { padding: 17px; } .vendor-kpi__identity { flex-direction: column; } .vendor-kpi__title-row > .ui-button { width: 100%; } .vendor-kpi__fields .ui-field { grid-template-columns: minmax(0, 1fr) 88px; } }
+
+/* The authenticated staff workspace shares the app density; public assessments keep their layout. */
+.vendor-kpi:not(.vendor-kpi--public) :is(.vendor-kpi__header, .vendor-kpi__identity, .vendor-kpi__assessment) { padding: 12px; gap: 12px; }
+.vendor-kpi:not(.vendor-kpi--public) .vendor-kpi__eyebrow { margin-bottom: 4px; }
+.ui-app-shell[data-role] .vendor-kpi:not(.vendor-kpi--public) h1 { font-size: clamp(24px, 2vw, 28px); }
+.vendor-kpi:not(.vendor-kpi--public) .vendor-kpi__header > div:first-child > p:last-child { margin-top: 6px; }
+.vendor-kpi:not(.vendor-kpi--public) .vendor-kpi__columns { gap: 12px; }

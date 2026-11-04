@@ -1,7 +1,7 @@
 import { quotationSnapshotDigest } from "../src/services/quotation-digest.js";
 import { toEstimateSnapshot } from "../src/services/estimate-publication.service.js";
 import { createEstimateDecisionService } from "../src/services/estimate-decision.service.js";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { startMongoReplicaSet } from "./helpers/mongo-replica-set.js";
 import { newQuotationLifecycle } from "../src/domain/estimation-lifecycle.js";
 import { createQuotationService } from "../src/services/quotation.service.js";
@@ -21,6 +21,12 @@ import { AiEstimatorKnowledgeMainLineModel as MainLine } from "../src/models/AiE
 import { AiEstimatorKnowledgeRevisionModel as Revision } from "../src/models/AiEstimatorKnowledgeRevision.js";
 import { AiEstimatorKnowledgeSectionModel as Section } from "../src/models/AiEstimatorKnowledgeSection.js";
 import { AiEstimatorKnowledgeUomModel as Uom } from "../src/models/AiEstimatorKnowledgeUom.js";
+import { EstimateRequirementModel } from "../src/models/EstimateRequirement.js";
+import { DesignRequirementsStateModel } from "../src/models/DesignRequirementsState.js";
+import { EstimateDesignDrawingModel } from "../src/models/EstimateDesignDrawing.js";
+import { EstimateDesignRevisionModel } from "../src/models/EstimateDesignRevision.js";
+import { EstimateDesignUploadModel } from "../src/models/EstimateDesignUpload.js";
+import { DesignPlanReviewRoundModel } from "../src/models/DesignPlanReviewRound.js";
 
 const client: PublicUser = { id: "tier-client", name: "Client", email: "client@tier.invalid", role: "client" };
 const sales: PublicUser = { id: "tier-sales", name: "Sales", email: "sales@tier.invalid", role: "estimator_sales" };
@@ -72,6 +78,13 @@ beforeEach(async () => {
 const source = { revisionId: "revision-visible", itemVersion: 1, revisionVersion: 1, uomId: "tier-uom" };
 const quantityChange = (expectedVersion = 1, quantity = 4) => ({ expectedVersion,
   operations: [{ kind: "update" as const, lineItemId: "line-one", source, quantity }] });
+const removeGroup = async (scope: { subBasketId: string | null; roomId: string | null }, projectId = "tier-project") => {
+  const detail = await service.detail(client, projectId);
+  const group = detail.groups.find(value => value.mainBasketId === "tier-basket" && value.subBasketId === scope.subBasketId && value.roomId === scope.roomId);
+  if (!group) throw new Error("Synthetic group missing");
+  const { includedCount: _count, ...identity } = group;
+  return { expectedVersion: detail.estimateVersion!, operations: [{ kind: "exclude_group" as const, ...identity }] };
+};
 
 describe("version 3 Client quotation commands", () => {
   it("allows current secondary Designers a safe read but no commercial mutation", async () => {
@@ -83,6 +96,7 @@ describe("version 3 Client quotation commands", () => {
     expect(detail.editingAllowed).toBe(false);
     expect(detail.lines.map(line => line.id)).toEqual(["line-one", "line-two"]);
     await expect(service.save(secondary, "tier-project", quantityChange())).rejects.toMatchObject({ code: "QUOTATION_NOT_FOUND" });
+    await expect(service.save(secondary, "tier-project", await removeGroup({ subBasketId: null, roomId: null }))).rejects.toMatchObject({ code: "QUOTATION_NOT_FOUND" });
     await ProjectModel.updateOne({ _id: "tier-project" }, { $set: { secondaryDesignerIds: [] } });
     await expect(service.revision(secondary, "tier-project")).rejects.toMatchObject({ code: "ESTIMATE_TIERS_NOT_FOUND" });
   });
@@ -111,8 +125,167 @@ describe("version 3 Client quotation commands", () => {
     const removed = await service.save(client, "tier-project", { expectedVersion: 1, operations: [{ kind: "update", lineItemId: "line-one", source, included: false }] });
     expect(removed.lines.map(line => line.id)).toEqual(["line-two"]);
     expect(removed.totalPaise).toBe(8260);
+    expect(removed.excludedLines).toEqual([expect.objectContaining({ id: "line-one", included: false, quantity: 2,
+      mainBasketId: "tier-basket", mainBasketName: "Painting", subBasketId: "tier-sub", subBasketName: "Walls" })]);
     const restored = await service.save(client, "tier-project", { expectedVersion: 2, operations: [{ kind: "add", mainLineId: "visible", roomId: "Room1", source, quantity: 1, modeTier: "premium" }] });
     expect(restored.lines.find(line => line.roomId === "Room1")).toMatchObject({ id: "line-one", quantity: 1, ratePaise: 5000 });
+  });
+
+  it("returns the complete safe hierarchy and scope tokens independent of candidate pagination", async () => {
+    const detail = await service.detail(client, "tier-project");
+    expect(detail.baskets).toEqual([{ id: "tier-basket", name: "Painting", subBaskets: [{ id: "tier-sub", name: "Walls" }] }]);
+    expect(detail.groups).toHaveLength(5);
+    expect(detail.groups.find(group => group.roomId === null)).toMatchObject({ mainBasketId: "tier-basket", subBasketId: null,
+      includedCount: 2, sourceToken: expect.stringMatching(/^[a-f0-9]{64}$/u) });
+    expect(detail.lines[0]).toMatchObject({ mainBasketId: "tier-basket", mainBasketName: "Painting", subBasketId: "tier-sub", subBasketName: "Walls" });
+    const candidates = await service.items(client, "tier-project", { limit: 1, offset: 1 });
+    expect(candidates.items).toEqual([]);
+    expect((await service.detail(client, "tier-project")).groups).toEqual(detail.groups);
+    expect((await service.items(client, "tier-project")).items[0]).toMatchObject({ mainBasketId: "tier-basket", subBasketId: "tier-sub" });
+    expect(JSON.stringify(detail)).not.toContain("hidden painting");
+    expect(JSON.stringify(detail)).not.toContain("never-expose-this");
+  });
+
+  it("removes a Sub Basket in one room while preserving hidden siblings, other rooms and saved choices", async () => {
+    const before = (await EstimateModel.findById("tier-estimate").lean())!;
+    const sections = await Section.find().lean();
+    const result = await service.save(client, "tier-project", await removeGroup({ subBasketId: "tier-sub", roomId: "Room1" }));
+    expect(result.lines.map(line => line.id)).toEqual(["line-two"]);
+    expect(result.totalPaise).toBe(8260);
+    expect(result.excludedLines[0]).toMatchObject({ id: "line-one", included: false, quantity: 2, modeTier: "signature" });
+    const after = (await EstimateModel.findById("tier-estimate").lean())!;
+    expect(after.lineItems[1]).toEqual(before.lineItems[1]);
+    expect(after.lineItems[2]).toEqual(before.lineItems[2]);
+    expect(after.selectedMainBasketIds).toEqual(before.selectedMainBasketIds);
+    expect(await Section.find().lean()).toEqual(sections);
+    const restored = await service.save(client, "tier-project", { expectedVersion: 2, operations: [{ kind: "update", lineItemId: "line-one", source, included: true }] });
+    expect(restored.lines.find(line => line.id === "line-one")).toMatchObject({ quantity: 2, amountPaise: 4000 });
+    expect(restored.totalPaise).toBe(12980);
+  });
+
+  it("can exclude an In-house group with unavailable component references and retains measurements and component choices", async () => {
+    const settings = { baseRatePaise: 1000, lowQuantityLimit: "10", impactBps: 1000, minimumMarkupBps: 1500, startingMarkupBps: 2000 };
+    await Section.collection.updateOne({ _id: "advanced-visible" as never }, { $set: { "payload.inHouseComponents": [
+      { id: "retained-component", basketId: "missing-component-basket", subBasketId: null, inclusions: [], exclusions: [], labor: settings, material: settings }
+    ] } });
+    await EstimateModel.updateOne({ _id: "tier-estimate" }, { $set: { "lineItems.0.classification": "special", "lineItems.0.pricingMode": "in_house",
+      "lineItems.0.selectedInHouseComponentIds": ["retained-component"], "lineItems.0.dimensions": { length: "2", width: "1", height: "9" } } });
+    const result = await service.save(client, "tier-project", await removeGroup({ subBasketId: "tier-sub", roomId: "Room1" }));
+    expect(result.excludedLines[0]).toMatchObject({ id: "line-one", quantity: 2, included: false,
+      selectedInHouseComponentIds: ["retained-component"], dimensions: { length: "2", width: "1", height: "9" } });
+    expect(result.totalPaise).toBe(8260);
+    expect(result.lines.map(line => line.id)).toEqual(["line-two"]);
+  });
+
+  it.each([100, 101])("atomically removes a Main Basket with %i visible members without splitting the request", async count => {
+    const before = (await EstimateModel.findById("tier-estimate").lean())!;
+    const original = before.lineItems[0];
+    const hidden = before.lineItems[2];
+    const members = Array.from({ length: count }, (_, index) => ({ ...original, id: `bulk-line-${index}`, roomId: `bulk-room-${index}`, roomName: `Bulk room ${index}` }));
+    const subtotalPaise = count * 4000 + 1000;
+    await EstimateModel.updateOne({ _id: "tier-estimate" }, { $set: { lineItems: [...members, hidden],
+      rooms: [...members.map(line => ({ id: line.roomId, label: line.roomName })), { id: "Room1", label: "Room1" }],
+      subtotalPaise, gstPaise: Math.round(subtotalPaise * .18), totalPaise: Math.round(subtotalPaise * 1.18),
+      subtotal: subtotalPaise / 100, gst: Math.round(subtotalPaise * .18) / 100, total: Math.round(subtotalPaise * 1.18) / 100 } });
+    const command = await removeGroup({ subBasketId: null, roomId: null });
+    expect(command.operations).toHaveLength(1);
+    const result = await service.save(client, "tier-project", command);
+    expect(result).toMatchObject({ estimateVersion: 2, pricedRevision: 2, totalPaise: 1180, lines: [], groups: [] });
+    expect(result.excludedLines).toHaveLength(count);
+    expect((await EstimateModel.findById("tier-estimate").lean())!.lineItems.at(-1)).toEqual(hidden);
+    expect(await AuditEventModel.countDocuments({ action: "quotation_saved" })).toBe(1);
+  });
+
+  it.each(["hide", "malformed", "missing", "revision", "parent"] as const)("rejects the entire group after a %s Configuration change", async change => {
+    const command = await removeGroup({ subBasketId: null, roomId: null });
+    if (change === "hide" || change === "malformed") await Section.collection.updateOne({ _id: "overview-visible" as never }, { $set: { "payload.clientVisible": change === "hide" ? false : "yes" } });
+    if (change === "missing") await Revision.deleteOne({ _id: "revision-visible" });
+    if (change === "revision") await MainLine.updateOne({ _id: "visible" }, { $inc: { version: 1 } });
+    if (change === "parent") {
+      await SubBasket.collection.insertOne({ _id: "moved-sub" as never, basketId: "tier-basket", name: "Moved", status: "active", displayOrder: 2, version: 1 });
+      await MainLine.updateOne({ _id: "visible" }, { $set: { subBasketId: "moved-sub" }, $inc: { version: 1 } });
+    }
+    const before = await EstimateModel.findById("tier-estimate").lean();
+    await expect(service.save(client, "tier-project", command)).rejects.toMatchObject({ code: "QUOTATION_CONFIGURATION_CHANGED" });
+    expect(await EstimateModel.findById("tier-estimate").lean()).toEqual(before);
+    expect(await AuditEventModel.countDocuments()).toBe(0);
+  });
+
+  it("rejects a group token when a previously hidden current line becomes visible", async () => {
+    await EstimateModel.updateOne({ _id: "tier-estimate" }, { $set: { "lineItems.2.clientVisible": true } });
+    const command = await removeGroup({ subBasketId: null, roomId: null });
+    await Section.collection.updateOne({ _id: "overview-hidden" as never }, { $set: { "payload.clientVisible": true } });
+    const before = await EstimateModel.findById("tier-estimate").lean();
+    await expect(service.save(client, "tier-project", command)).rejects.toMatchObject({ code: "QUOTATION_CONFIGURATION_CHANGED" });
+    expect(await EstimateModel.findById("tier-estimate").lean()).toEqual(before);
+  });
+
+  it("keeps visible saved rows readable when the configured unit needs reconciliation, without granting group removal", async () => {
+    const command = await removeGroup({ subBasketId: null, roomId: null });
+    await Uom.collection.insertOne({ _id: "new-uom" as never, name: "square metre", code: "SQM", decimalScale: 2, status: "active", version: 1 });
+    await Section.collection.updateOne({ _id: "overview-visible" as never }, { $set: { "payload.uomId": "new-uom" } });
+    const detail = await service.detail(client, "tier-project");
+    expect(detail.lines).toHaveLength(2);
+    expect(detail.lines[0]).toMatchObject({ id: "line-one", quantity: 2, source: null });
+    expect(detail.lines[0].choices.every(choice => !choice.available)).toBe(true);
+    expect(detail.groups).toEqual([]);
+    await expect(service.save(client, "tier-project", command)).rejects.toMatchObject({ code: "QUOTATION_CONFIGURATION_CHANGED" });
+  });
+
+  it("rejects overlapping group/line operations and forged scopes without writes", async () => {
+    const command = await removeGroup({ subBasketId: null, roomId: null });
+    const sub = await removeGroup({ subBasketId: "tier-sub", roomId: "Room1" });
+    const before = await EstimateModel.findById("tier-estimate").lean();
+    for (const operations of [
+      [...command.operations, ...quantityChange().operations],
+      [...command.operations, ...sub.operations],
+      [{ ...command.operations[0], roomId: "foreign-room" }],
+      [{ ...command.operations[0], sourceToken: "a".repeat(64) }],
+      [{ ...command.operations[0], mainBasketId: "foreign-basket" }],
+      [{ ...command.operations[0], ratePaise: 1 }]
+    ]) {
+      await expect(service.save(client, "tier-project", { expectedVersion: 1, operations } as any)).rejects.toBeDefined();
+      expect(await EstimateModel.findById("tier-estimate").lean()).toEqual(before);
+    }
+    expect(await AuditEventModel.countDocuments()).toBe(0);
+  });
+
+  it("rolls back group exclusions, dependency fences and review changes when audit persistence fails", async () => {
+    const command = await removeGroup({ subBasketId: null, roomId: null });
+    await EstimateClientReviewRoundModel.collection.insertOne({ _id: "group-review" as never, estimateId: "tier-estimate", projectId: "tier-project", estimateVersion: 1, version: 1, status: "pending", estimateSnapshot: { unchanged: true } });
+    await EstimateModel.updateOne({ _id: "tier-estimate" }, { $set: { "estimation.status": "sent_to_client", "estimation.pendingReviewRoundId": "group-review" } });
+    const before = await EstimateModel.findById("tier-estimate").lean();
+    const sourceBefore = await MainLine.find().lean();
+    const failing = createQuotationService({ audit: { appendInMongoTransaction: async () => { throw new Error("Synthetic audit failure"); } } as any });
+    await expect(failing.save(client, "tier-project", command)).rejects.toThrow("Synthetic audit failure");
+    expect(await EstimateModel.findById("tier-estimate").lean()).toEqual(before);
+    expect(await MainLine.find().lean()).toEqual(sourceBefore);
+    expect(await EstimateClientReviewRoundModel.findById("group-review").lean()).toMatchObject({ status: "pending", version: 1, estimateSnapshot: { unchanged: true } });
+  });
+
+  it("keeps group tokens and writes scoped to the correct project and current assignment", async () => {
+    const command = await removeGroup({ subBasketId: null, roomId: null });
+    const original = (await EstimateModel.findById("tier-estimate").lean())!;
+    await ProjectModel.collection.insertOne({ _id: "other-project" as never, clientId: client.id, assignedEstimatorId: sales.id,
+      estimationWorkflowVersion: 3, estimateRequirementsVersion: 0, estimationFenceEpoch: 0, status: "planning" });
+    await LeadModel.collection.insertOne({ _id: "other-lead" as never, projectId: "other-project", ownerId: sales.id });
+    await EstimateModel.collection.insertOne({ ...original, _id: "other-estimate" as never, projectId: "other-project", leadId: "other-lead",
+      lineItems: original.lineItems.map(line => ({ ...line, quantity: line.quantity * 2, amountPaise: line.amountPaise! * 2, amount: line.amount! * 2 })),
+      subtotalPaise: 22000, gstPaise: 3960, totalPaise: 25960, subtotal: 220, gst: 39.6, total: 259.6 });
+    await expect(service.save(client, "other-project", command)).rejects.toMatchObject({ code: "QUOTATION_CONFIGURATION_CHANGED" });
+    await expect(service.save(other, "tier-project", command)).rejects.toMatchObject({ status: 404 });
+    await ProjectModel.updateOne({ _id: "tier-project" }, { $set: { clientId: other.id } });
+    await expect(service.save(client, "tier-project", command)).rejects.toMatchObject({ status: 404 });
+    expect(await EstimateModel.findById("tier-estimate").lean()).toEqual(original);
+    expect((await EstimateModel.findById("other-estimate").lean())!.totalPaise).toBe(25960);
+  });
+
+  it("serializes group removal with another actor's save", async () => {
+    const command = await removeGroup({ subBasketId: null, roomId: null });
+    const outcomes = await Promise.allSettled([service.save(client, "tier-project", command), service.save(sales, "tier-project", quantityChange(1, 5))]);
+    expect(outcomes.filter(outcome => outcome.status === "fulfilled")).toHaveLength(1);
+    expect(outcomes.find(outcome => outcome.status === "rejected")).toMatchObject({ reason: { code: "ESTIMATE_VERSION_CONFLICT" } });
+    expect((await EstimateModel.findById("tier-estimate").lean())!.version).toBe(2);
   });
 
   it("adds a visible configured item only into an owned room and selected basket", async () => {
@@ -200,3 +373,263 @@ describe("version 3 Client quotation commands", () => {
   });
 });
 
+const setupCommand = async (projectId = "tier-project") => {
+  const response = await service.setup(client, projectId);
+  const { canConfigure: _allowed, ...setup } = response.setup;
+  return { expectedVersion: response.estimateVersion, operations: [{ kind: "configure" as const, ...setup,
+    rooms: setup.rooms.map(({ canRemove: _remove, removalBlockedReason: _reason, sqft: _sqft, ...room }: any) => room) }] };
+};
+const newRoom = { id: "kitchen-stable-new", typeId: "kitchen", label: "Kitchen", length: 10, width: 12 };
+async function extraBasket(id = "floor-basket", visible = true) {
+  await Basket.collection.insertOne({ _id: id as never, name: `${id} name`, status: "active", displayOrder: 2, version: 1 });
+  await MainLine.collection.insertOne({ _id: `${id}-line` as never, name: `${id} line`, basketId: id, subBasketId: null,
+    itemType: "temporary", status: "active", version: 1, activeRevisionId: `${id}-revision`, displayOrder: 1 });
+  await Revision.collection.insertOne({ _id: `${id}-revision` as never, mainLineId: `${id}-line`, status: "active", revisionNumber: 1, version: 1 });
+  await Section.collection.insertMany([
+    { _id: `${id}-overview` as never, mainLineId: `${id}-line`, revisionId: `${id}-revision`, sectionKey: "overview", applicability: "configured", version: 1,
+      payload: { uomId: "tier-uom", clientVisible: visible, applicableTiers: ["signature"] } },
+    { _id: `${id}-advanced` as never, mainLineId: `${id}-line`, revisionId: `${id}-revision`, sectionKey: "advanced", applicability: "configured", version: 1,
+      payload: { modeCalculations: { sub_vendor: { baseRatePaise: 3210 } } } }
+  ]);
+}
+
+describe("Client quotation setup parity", () => {
+  it("returns saved legacy-safe metadata and eligible unselected baskets without protected hierarchy or counts", async () => {
+    await extraBasket();
+    await extraBasket("private-basket", false);
+    await EstimateModel.updateOne({ _id: "tier-estimate" }, { $push: { selectedMainBasketIds: "private-basket" } });
+    const result = await service.setup(client, "tier-project");
+    expect(result.setup).toMatchObject({ propertyType: "2BHK", bedroomCount: null, canConfigure: true, selectedMainBasketIds: ["tier-basket"],
+      sourceToken: expect.stringMatching(/^[a-f0-9]{64}$/u), rooms: [
+        { id: "Room1", typeId: null, label: "Room1", length: null, width: null, sqft: 0, canRemove: false },
+        { id: "Room2", typeId: null, label: "Room2", canRemove: true }
+      ] });
+    expect(result.baskets).toEqual([
+      { id: "floor-basket", name: "floor-basket name", directTemporaryItemCount: 1, subBaskets: [], canSelect: true, canRemove: true, removalBlockedReason: null },
+      { id: "tier-basket", name: "Painting", directTemporaryItemCount: 0,
+        subBaskets: [{ id: "tier-sub", name: "Walls", mainLineCount: 1, temporaryItemCount: 0 }], canSelect: true, canRemove: false, removalBlockedReason: expect.any(String) }
+    ]);
+    expect(JSON.stringify(result)).not.toMatch(/private-basket|hidden painting|never-expose-this|ratePaise|classification/);
+    expect((await service.items(client, "tier-project")).items.map(item => item.mainLineId)).toEqual(["visible"]);
+    expect((await service.detail(client, "tier-project")).setup).toEqual(result.setup);
+    expect((await service.setup(sales, "tier-project")).setup.canConfigure).toBe(false);
+  });
+
+  it("saves property, room dimensions and new basket into the same estimate and preserves hidden membership and amounts", async () => {
+    await extraBasket(); await extraBasket("private-basket", false);
+    await EstimateModel.updateOne({ _id: "tier-estimate" }, { $push: { selectedMainBasketIds: "private-basket" } });
+    const before = (await EstimateModel.findById("tier-estimate").lean())!;
+    const command = await setupCommand();
+    command.operations[0].propertyType = "1BHK";
+    command.operations[0].rooms.push(newRoom);
+    command.operations[0].selectedMainBasketIds.push("floor-basket");
+    const saved = await service.save(client, "tier-project", command);
+    expect(saved).toMatchObject({ estimateId: "tier-estimate", estimateVersion: 2, pricedRevision: 2, totalPaise: 12980, reviewState: "awaiting_staff_review",
+      setup: { propertyType: "1BHK", rooms: [expect.objectContaining({ id: "Room1" }), expect.objectContaining({ id: "Room2" }), expect.objectContaining({ ...newRoom, sqft: 120 })] } });
+    const after = (await EstimateModel.findById("tier-estimate").lean())!;
+    expect(after.lineItems).toEqual(before.lineItems);
+    expect(after.rooms.slice(0, 2)).toEqual(before.rooms);
+    expect(after.selectedMainBasketIds).toEqual(["tier-basket", "private-basket", "floor-basket"]);
+    expect(after.selectedMainBasketClassifications).toEqual([{ mainBasketId: "floor-basket", classification: "standard" }]);
+    expect((await service.detail(sales, "tier-project")).setup.propertyType).toBe("1BHK");
+    expect((await service.items(client, "tier-project")).items.map(item => item.mainLineId)).toContain("floor-basket-line");
+    expect((await LeadModel.findById("tier-lead").lean())!.propertyType).toBeUndefined();
+    const candidate = (await service.items(client, "tier-project")).items.find(item => item.mainLineId === "floor-basket-line")!;
+    const added = await service.save(client, "tier-project", { expectedVersion: 2, operations: [
+      { kind: "add", mainLineId: candidate.mainLineId, roomId: newRoom.id, source: candidate.source, quantity: 2 }
+    ] });
+    expect(added.lines.find(line => line.roomId === newRoom.id)).toMatchObject({ roomName: "Kitchen", quantity: 2, amountPaise: 6420 });
+    expect(added.totalPaise).toBe(20556);
+  });
+
+  it("does not change estimate, review, audit or Configuration on exact no-op, including old missing metadata", async () => {
+    await EstimateModel.updateOne({ _id: "tier-estimate" }, { $set: { propertyType: "Historical home", "estimation.status": "sent_to_client", "estimation.pendingReviewRoundId": "noop-review" } });
+    await EstimateClientReviewRoundModel.collection.insertOne({ _id: "noop-review" as never, estimateId: "tier-estimate", projectId: "tier-project", estimateVersion: 1, version: 1, status: "pending", estimateSnapshot: { untouched: true } });
+    const before = await EstimateModel.findById("tier-estimate").lean();
+    const sources = await MainLine.find().lean();
+    const saved = await service.save(client, "tier-project", await setupCommand());
+    expect(saved).toMatchObject({ estimateVersion: 1, pricedRevision: 1, reviewState: "ready_for_approval" });
+    expect(await EstimateModel.findById("tier-estimate").lean()).toEqual(before);
+    expect(await MainLine.find().lean()).toEqual(sources);
+    expect(await EstimateClientReviewRoundModel.findById("noop-review").lean()).toMatchObject({ status: "pending", version: 1 });
+    expect(await AuditEventModel.countDocuments()).toBe(0);
+  });
+
+  it.each(["pre", "post"])("invalidates staff confirmation after a meaningful %s setup-only change without changing immutable snapshots", async phase => {
+    const snapshot = { immutable: true, totalPaise: 12980 };
+    await EstimateClientReviewRoundModel.collection.insertOne({ _id: "setup-review" as never, estimateId: "tier-estimate", projectId: "tier-project", estimateVersion: 1, version: 1, status: "pending", estimateSnapshot: snapshot });
+    await EstimateModel.updateOne({ _id: "tier-estimate" }, { $set: { "estimation.phase": phase, "estimation.status": "sent_to_client",
+      "estimation.pendingReviewRoundId": "setup-review", "estimation.salesApproval": { actorId: sales.id, estimateVersion: 1, pricedRevision: 1, sourceDigest: "a".repeat(64), approvedAt: new Date().toISOString() } } });
+    const command = await setupCommand(); command.operations[0].propertyType = "Studio";
+    const result = await service.save(client, "tier-project", command);
+    expect(result).toMatchObject({ estimateVersion: 2, pricedRevision: 2, reviewState: "awaiting_staff_review", totalPaise: 12980 });
+    expect((await EstimateModel.findById("tier-estimate").lean())!.estimation).toMatchObject({ phase, status: "draft", pendingReviewRoundId: null, salesApproval: null, designScopeRevision: 2 });
+    expect(await EstimateClientReviewRoundModel.findById("setup-review").lean()).toMatchObject({ status: "superseded", version: 2, estimateSnapshot: snapshot });
+    expect(await AuditEventModel.findOne().lean()).toMatchObject({ actorId: client.id, action: "quotation_saved", newValues: { setupChanged: true, physicalChange: true } });
+  });
+
+  it("removes a permitted room and its mutable included/excluded rows without orphans, preserving other rooms", async () => {
+    const before = (await EstimateModel.findById("tier-estimate").lean())!;
+    const command = await setupCommand(); command.operations[0].rooms = command.operations[0].rooms.filter((room: any) => room.id !== "Room2");
+    const result = await service.save(client, "tier-project", command);
+    expect(result.totalPaise).toBe(5900);
+    const after = (await EstimateModel.findById("tier-estimate").lean())!;
+    expect(after.rooms).toEqual([before.rooms[0]]);
+    expect(after.lineItems).toEqual([before.lineItems[0], before.lineItems[2]]);
+    const restore = await setupCommand(); restore.operations[0].rooms.push(newRoom);
+    const restored = await service.save(client, "tier-project", restore);
+    expect(restored.lines.some(line => line.roomId === newRoom.id)).toBe(false);
+  });
+
+  it("excludes all safe basket rows once and retains IDs and choices without restoring siblings on re-selection", async () => {
+    await EstimateModel.updateOne({ _id: "tier-estimate" }, { $pull: { lineItems: { id: "line-hidden" } } });
+    const command = await setupCommand(); command.operations[0].selectedMainBasketIds = [];
+    const result = await service.save(client, "tier-project", command);
+    expect(result).toMatchObject({ totalPaise: 0, lines: [] });
+    expect((await EstimateModel.findById("tier-estimate").lean())!.lineItems.map((line: any) => ({ id: line.id, included: line.included, quantity: line.quantity })))
+      .toEqual([{ id: "line-one", included: false, quantity: 2 }, { id: "line-two", included: false, quantity: 3 }]);
+    const restore = await setupCommand(); restore.operations[0].selectedMainBasketIds = ["tier-basket"];
+    const restored = await service.save(client, "tier-project", restore);
+    expect(restored.lines).toEqual([]); expect(restored.excludedLines).toHaveLength(2);
+  });
+
+  it.each(["room", "basket"])("blocks protected %s removal without revealing protected details", async kind => {
+    const before = await EstimateModel.findById("tier-estimate").lean();
+    const command = await setupCommand();
+    if (kind === "room") command.operations[0].rooms = command.operations[0].rooms.filter((room: any) => room.id !== "Room1");
+    else command.operations[0].selectedMainBasketIds = [];
+    await expect(service.save(client, "tier-project", command)).rejects.toMatchObject({ code: "QUOTATION_SETUP_REMOVAL_BLOCKED", message: "Ask your team to review this selection before removing it." });
+    expect(await EstimateModel.findById("tier-estimate").lean()).toEqual(before);
+  });
+
+  it.each(["requirement", "project_requirement", "design_obligation", "drawing", "latest_revision", "pinned_revision", "queued_upload", "retry_mapping"])("blocks removal of a room with an active %s dependency", async kind => {
+    if (kind === "requirement" || kind === "project_requirement") await EstimateRequirementModel.collection.insertOne({ _id: "setup-requirement" as never,
+      estimateId: kind === "requirement" ? "tier-estimate" : null, projectId: "tier-project", status: "open", roomId: "Room2", mainBasketId: "tier-basket", lineItemIds: ["line-two"], version: 1 });
+    if (kind === "design_obligation") await DesignRequirementsStateModel.collection.insertOne({ _id: "tier-project" as never, projectId: "tier-project", version: 1, history: [{ id: "recorded-obligation", lineItemId: "line-two" }] });
+    if (["drawing", "latest_revision", "pinned_revision"].includes(kind)) {
+      await EstimateDesignDrawingModel.collection.insertOne({ _id: "setup-drawing" as never, estimateId: "tier-estimate", active: true, deletedAt: null,
+        roomId: kind === "drawing" ? "Room2" : null, scopeSectionId: null, catalogueId: null });
+      if (kind !== "drawing") await EstimateDesignRevisionModel.collection.insertOne({ _id: "setup-revision" as never, drawingId: "setup-drawing", revisionNumber: 1, roomId: "Room2", scopeSectionId: null, catalogueId: null });
+      if (kind === "pinned_revision") {
+        await EstimateDesignRevisionModel.collection.insertOne({ _id: "newer-revision" as never, drawingId: "setup-drawing", revisionNumber: 2, roomId: null, scopeSectionId: null, catalogueId: null });
+        await EstimateModel.updateOne({ _id: "tier-estimate" }, { $set: { designPlanVersion: 3, status: "client_approved" } });
+        await DesignPlanReviewRoundModel.collection.insertOne({ _id: "pinned-round" as never, estimateId: "tier-estimate", projectId: "tier-project", designPlanVersion: 3, status: "pending", submittedRevisionIds: ["setup-revision"] });
+      }
+    }
+    if (kind === "queued_upload" || kind === "retry_mapping") await EstimateDesignUploadModel.collection.insertOne({ _id: "setup-upload" as never, estimateId: "tier-estimate", deletedAt: null,
+      extractionStatus: kind === "queued_upload" ? "queued" : "processing_failed", planRequestReplacement: { targets: [{ mapping: { roomId: "Room2" } }] } });
+    const command = await setupCommand();
+    expect(command.operations[0].rooms).toHaveLength(2);
+    expect((await service.setup(client, "tier-project")).setup.rooms.find((room: any) => room.id === "Room2")!.canRemove).toBe(false);
+    command.operations[0].rooms = command.operations[0].rooms.filter((room: any) => room.id !== "Room2");
+    const before = await EstimateModel.findById("tier-estimate").lean();
+    await expect(service.save(client, "tier-project", command)).rejects.toMatchObject({ code: "QUOTATION_SETUP_REMOVAL_BLOCKED" });
+    expect(await EstimateModel.findById("tier-estimate").lean()).toEqual(before);
+  });
+
+  it("ignores old unpinned revision and retired requirement mappings while retaining their immutable history", async () => {
+    await EstimateRequirementModel.collection.insertOne({ _id: "retired-requirement" as never, projectId: "tier-project", status: "withdrawn", roomId: "Room2", mainBasketId: "tier-basket", version: 2 });
+    await EstimateDesignDrawingModel.collection.insertOne({ _id: "history-drawing" as never, estimateId: "tier-estimate", active: true, deletedAt: null, roomId: null });
+    await EstimateDesignRevisionModel.collection.insertMany([
+      { _id: "historic-revision" as never, drawingId: "history-drawing", revisionNumber: 1, roomId: "Room2" },
+      { _id: "current-revision" as never, drawingId: "history-drawing", revisionNumber: 2, roomId: null }
+    ]);
+    const command = await setupCommand(); command.operations[0].rooms = command.operations[0].rooms.filter((room: any) => room.id !== "Room2");
+    await service.save(client, "tier-project", command);
+    expect(await EstimateDesignRevisionModel.findById("historic-revision").lean()).toMatchObject({ roomId: "Room2" });
+    expect(await EstimateRequirementModel.findById("retired-requirement").lean()).toMatchObject({ status: "withdrawn", roomId: "Room2" });
+  });
+
+  it.each(["visibility", "source", "parent", "new_dependency"])("rejects a stale setup token after %s changes without partial writes", async change => {
+    const command = await setupCommand(); command.operations[0].rooms = command.operations[0].rooms.filter((room: any) => room.id !== "Room2");
+    if (change === "visibility") await Section.collection.updateOne({ _id: "overview-visible" as never }, { $set: { "payload.clientVisible": false } });
+    if (change === "source") await MainLine.updateOne({ _id: "visible" }, { $inc: { version: 1 } });
+    if (change === "parent") await MainLine.collection.updateOne({ _id: "visible" as never }, { $set: { subBasketId: null } });
+    if (change === "new_dependency") await EstimateRequirementModel.collection.insertOne({ _id: "new-dependency" as never, projectId: "tier-project", status: "included", roomId: "Room2", mainBasketId: "tier-basket", version: 1 });
+    const before = await EstimateModel.findById("tier-estimate").lean();
+    await expect(service.save(client, "tier-project", command)).rejects.toMatchObject({ code: "QUOTATION_CONFIGURATION_CHANGED" });
+    expect(await EstimateModel.findById("tier-estimate").lean()).toEqual(before);
+    expect(await AuditEventModel.countDocuments()).toBe(0);
+  });
+
+  it("validates variable bedrooms and preserves out-of-type rooms without accepting forged setup fields", async () => {
+    const before = await EstimateModel.findById("tier-estimate").lean();
+    const base = await setupCommand();
+    const variants = [
+      { propertyType: "unsupported-new-home" }, { propertyType: "Villa", bedroomCount: null }, { propertyType: "Duplex", bedroomCount: 51 },
+      { rooms: [...base.operations[0].rooms, { ...newRoom, typeId: "bedroom50" }] },
+      { rooms: [...base.operations[0].rooms, { ...newRoom, length: -1 }] },
+      { rooms: [...base.operations[0].rooms, { ...newRoom, length: 1_000_001 }] },
+      { rooms: [base.operations[0].rooms[0], base.operations[0].rooms[0]] },
+      { rooms: base.operations[0].rooms.map((room: any) => ({ ...room, label: "forged name" })) },
+      { selectedMainBasketIds: ["hidden-or-unknown-basket"] }, { selectedMainBasketIds: ["tier-basket", "tier-basket"] },
+      { ratePaise: 1 }, { selectedMainBasketClassifications: [] }
+    ];
+    for (const changes of variants) await expect(service.save(client, "tier-project", { ...base, operations: [{ ...base.operations[0], ...changes }] } as any)).rejects.toBeDefined();
+    await expect(service.save(client, "tier-project", { ...base, operations: [...base.operations, ...quantityChange().operations] })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(await EstimateModel.findById("tier-estimate").lean()).toEqual(before);
+    base.operations[0].propertyType = "Villa"; base.operations[0].bedroomCount = 3;
+    base.operations[0].rooms.push({ id: "bedroom3-stable-new", typeId: "bedroom3", label: "Bedroom 3", length: null, width: null });
+    const saved = await service.save(client, "tier-project", base);
+    expect(saved.setup).toMatchObject({ propertyType: "Villa", bedroomCount: 3, rooms: expect.arrayContaining([expect.objectContaining({ id: "Room1" }), expect.objectContaining({ id: "bedroom3-stable-new" })]) });
+  });
+
+  it("rolls back setup, source fences and pending review if audit persistence fails", async () => {
+    const command = await setupCommand(); command.operations[0].propertyType = "Studio";
+    const before = await EstimateModel.findById("tier-estimate").lean(); const sources = await MainLine.find().lean();
+    const failing = createQuotationService({ audit: { appendInMongoTransaction: async () => { throw new Error("Synthetic setup audit failure"); } } as any });
+    await expect(failing.save(client, "tier-project", command)).rejects.toThrow("Synthetic setup audit failure");
+    expect(await EstimateModel.findById("tier-estimate").lean()).toEqual(before);
+    expect(await MainLine.find().lean()).toEqual(sources);
+  });
+
+  it("denies staff setup commands, unrelated identities and locked Client setup", async () => {
+    const command = await setupCommand(); command.operations[0].propertyType = "Studio";
+    await expect(service.setup(other, "tier-project")).rejects.toMatchObject({ status: 404 });
+    await expect(service.save(sales, "tier-project", command)).rejects.toMatchObject({ status: 404 });
+    await EstimateModel.updateOne({ _id: "tier-estimate" }, { $set: { "estimation.editClosedAt": new Date().toISOString() } });
+    expect((await service.setup(client, "tier-project")).setup.canConfigure).toBe(false);
+    await expect(service.save(client, "tier-project", command)).rejects.toMatchObject({ code: "ESTIMATE_LOCKED" });
+  });
+
+  it("serializes a setup save against a competing Sales item change", async () => {
+    const command = await setupCommand(); command.operations[0].propertyType = "Studio";
+    const results = await Promise.allSettled([service.save(client, "tier-project", command), service.save(sales, "tier-project", quantityChange())]);
+    expect(results.filter(result => result.status === "fulfilled")).toHaveLength(1);
+    expect(results.find(result => result.status === "rejected")).toMatchObject({ reason: { code: "ESTIMATE_VERSION_CONFLICT" } });
+    expect((await EstimateModel.findById("tier-estimate").lean())!.version).toBe(2);
+  });
+
+  it("retries a source-write race and rejects the stale setup without any estimate change", async () => {
+    const command = await setupCommand(); command.operations[0].propertyType = "Studio";
+    const before = await EstimateModel.findById("tier-estimate").lean();
+    const original = MainLine.updateOne.bind(MainLine);
+    const fence = vi.spyOn(MainLine, "updateOne").mockImplementationOnce((...args: any[]) => {
+      return (async () => {
+        await MainLine.collection.updateOne({ _id: "visible" as never }, { $inc: { version: 1 } });
+        return await (original as any)(...args);
+      })() as any;
+    });
+    try {
+      await expect(service.save(client, "tier-project", command)).rejects.toMatchObject({ code: "QUOTATION_CONFIGURATION_CHANGED" });
+    } finally { fence.mockRestore(); }
+    expect(await EstimateModel.findById("tier-estimate").lean()).toEqual(before);
+    expect(await AuditEventModel.countDocuments()).toBe(0);
+  });
+
+  it("binds setup tokens to the exact estimate and current Client assignment", async () => {
+    const original = (await EstimateModel.findById("tier-estimate").lean())!;
+    const command = await setupCommand(); command.operations[0].propertyType = "Studio";
+    await ProjectModel.collection.insertOne({ _id: "setup-other-project" as never, clientId: client.id, assignedEstimatorId: sales.id,
+      estimationWorkflowVersion: 3, estimateRequirementsVersion: 0, estimationFenceEpoch: 0, status: "planning" });
+    await LeadModel.collection.insertOne({ _id: "setup-other-lead" as never, projectId: "setup-other-project", ownerId: sales.id });
+    await EstimateModel.collection.insertOne({ ...original, _id: "setup-other-estimate" as never, projectId: "setup-other-project", leadId: "setup-other-lead",
+      subtotalPaise: 22000, gstPaise: 3960, totalPaise: 25960, subtotal: 220, gst: 39.6, total: 259.6,
+      lineItems: original.lineItems.map(line => ({ ...line, quantity: line.quantity * 2, amountPaise: line.amountPaise! * 2, amount: line.amount! * 2 })) });
+    await expect(service.save(client, "setup-other-project", command)).rejects.toMatchObject({ code: "QUOTATION_CONFIGURATION_CHANGED" });
+    await ProjectModel.updateOne({ _id: "tier-project" }, { $set: { clientId: other.id } });
+    await expect(service.save(client, "tier-project", command)).rejects.toMatchObject({ status: 404 });
+    expect(await EstimateModel.findById("tier-estimate").lean()).toEqual(original);
+    expect((await EstimateModel.findById("setup-other-estimate").lean())!.totalPaise).toBe(25960);
+  });
+});

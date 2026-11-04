@@ -548,6 +548,7 @@ export function enterpriseDataFor(path: string, params: URLSearchParams, scenari
   }) };
   if (path === "/estimation/catalogue") return { ...page(estimatorReady ? (recommendationReady ? recommendationCatalogue : estimatorCatalogue) : []), ineligibleLineCount: estimatorReady ? 1 : 0 };
   if (path === "/estimates") return list([estimate]);
+  if (/^\/estimates\/(estimate-1|estimate-components)\/revisions$/.test(path)) return { items: [], pagination: { limit: 20, nextCursor: null } };
   if (/^\/estimates\/(estimate-1|estimate-aurora-villa|estimate-aurora-studio)\/design-uploads$/.test(path)) return empty ? { uploads: [], pages: [], drawings: [], revisions: [] } : drawing.extractedWorkspace(path.split("/")[2]);
   if (/^\/estimates\/(estimate-1|estimate-aurora-villa|estimate-aurora-studio)\/design-plan-documents$/.test(path)) return { manifestHash: `synthetic-${path.split("/")[2]}`, readyForSubmission: false, documents: [], reviewRoundId: null };
   if (path === "/estimates/pending-review" || path === "/estimates/review-queue") return [];

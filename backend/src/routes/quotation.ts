@@ -21,6 +21,8 @@ export function createQuotationRouter(auth: AuthService, audit: AuditService) {
     async (req, res, next) => { try { res.json({ data: await service.detail(req.authenticatedUser!, String(req.params.projectId)) }); } catch (error) { next(error); } });
   router.get("/projects/:projectId/quotation/revision", authenticate(auth), requireOperation("GET /projects/:projectId/quotation/revision"), privateResponse,
     async (req, res, next) => { try { res.json({ data: await service.revision(req.authenticatedUser!, String(req.params.projectId)) }); } catch (error) { next(error); } });
+  router.get("/projects/:projectId/quotation/setup", authenticate(auth), requireOperation("GET /projects/:projectId/quotation/setup"), privateResponse,
+    async (req, res, next) => { try { res.json({ data: await service.setup(req.authenticatedUser!, String(req.params.projectId)) }); } catch (error) { next(error); } });
   router.get("/projects/:projectId/quotation/items", authenticate(auth), requireOperation("GET /projects/:projectId/quotation/items"), privateResponse,
     async (req, res, next) => { try {
       const query = candidatesQuery.safeParse(req.query);

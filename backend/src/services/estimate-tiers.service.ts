@@ -147,14 +147,17 @@ export async function estimateTierChoices(line: Row, source?: Source, session?: 
   return choices;
 }
 
-export async function presentEstimateTiers(context: Awaited<ReturnType<typeof estimateTierScope>>, session?: ClientSession) {
+export async function presentEstimateTiers(context: Awaited<ReturnType<typeof estimateTierScope>>, session?: ClientSession,
+  options: { includeExcluded?: boolean } = {}) {
   const estimate = context.estimate;
   const savedLines: Row[] = (estimate?.lineItems ?? []).filter((line: Row) => line.source === "configuration" && line.included);
-  const current = await resolveEstimatorCatalogueLines(savedLines.map(line => String(line.mainLineId)), session);
+  const presentedLines: Row[] = options.includeExcluded
+    ? (estimate?.lineItems ?? []).filter((line: Row) => line.source === "configuration") : savedLines;
+  const current = await resolveEstimatorCatalogueLines(presentedLines.map(line => String(line.mainLineId)), session);
   // An unresolved current source cannot establish client visibility. Keep its cost in the total,
   // but let staff repair it without exposing a formerly visible line to the client.
   const lines = [];
-  for (const line of savedLines.filter(line => !(context.client || context.secondary) || current.has(line.mainLineId) &&
+  for (const line of presentedLines.filter(line => !(context.client || context.secondary) || current.has(line.mainLineId) &&
     line.clientVisible !== false && current.get(line.mainLineId)!.line.clientVisible !== false)) {
       const source = current.get(line.mainLineId);
       lines.push({ id: String(line.id), mainLineId: String(line.mainLineId), mainLineName: source?.line.name ?? line.mainLineName,

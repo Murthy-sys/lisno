@@ -17,7 +17,7 @@
   --basket-forest: #264f38;
   --basket-danger: #9c3340;
 }
-.procurement-basket { min-width: 0; padding-block: 22px 26px; }
+.procurement-basket { min-width: 0; padding-block: 8px 12px; }
 .procurement-basket * { box-sizing: border-box; }
 .procurement-basket button, .vendor-boq button { font: inherit; cursor: pointer; }
 .procurement-basket button:disabled, .vendor-boq button:disabled { cursor: not-allowed; opacity: .56; }
@@ -25,23 +25,23 @@
 .procurement-basket :is(input,select,textarea), .vendor-boq :is(input,select,textarea) { min-width: 0; min-height: 38px; padding: 8px 10px; border: 1px solid var(--basket-border); border-radius: 3px; background: #fbfbf8; color: var(--basket-ink); font: inherit; font-size: 13px; }
 .procurement-basket textarea, .vendor-boq textarea { min-height: 78px; resize: vertical; }
 .procurement-basket input[type="checkbox"], .procurement-basket input[type="radio"] { min-height: 0; width: 16px; height: 16px; padding: 0; accent-color: var(--basket-forest); }
-.procurement-basket__breadcrumb { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; margin-bottom: 19px; color: var(--basket-muted); font-size: 12px; }
+.procurement-basket__breadcrumb { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; margin-bottom: 8px; color: var(--basket-muted); font-size: 12px; }
 .procurement-basket__breadcrumb button { padding: 3px 0; border: 0; background: none; color: #395844; text-align: left; }
 .procurement-basket__breadcrumb strong { color: var(--basket-ink); font-weight: 700; }
 .procurement-basket__breadcrumb button:disabled { opacity: 1; cursor: default; color: var(--basket-muted); }
 .procurement-basket__intro, .procurement-basket__section-head { display: flex; align-items: start; justify-content: space-between; gap: 16px; }
-.procurement-basket__intro { margin-bottom: 14px; }
+.procurement-basket__intro { margin-bottom: 8px; }
 .procurement-basket :is(h2,h3,h4,p,dl) { margin: 0; }
-.procurement-basket__intro h2 { margin-top: 3px; font-size: clamp(22px,2.4vw,32px); line-height: 1.17; letter-spacing: -.025em; }
+.procurement-basket__intro h2 { margin-top: 3px; font-size: clamp(22px,2vw,26px); line-height: 1.17; letter-spacing: -.025em; }
 .procurement-basket__intro p:last-child, .procurement-basket__section-head p:last-child { margin-top: 5px; color: var(--basket-muted); font-size: 13px; line-height: 1.45; }
 .procurement-basket__intro > span, .procurement-basket__section-head > span { color: var(--basket-muted); font-size: 12px; white-space: nowrap; }
 .procurement-basket__cards { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; }
-.procurement-basket__card { display: grid; gap: 13px; min-width: 0; min-height: 182px; padding: 18px; border: 1px solid var(--basket-border); border-radius: 4px; background: var(--basket-surface); color: var(--basket-ink); text-align: left; }
+.procurement-basket__card { display: grid; gap: 8px; min-width: 0; padding: 12px; border: 1px solid var(--basket-border); border-radius: 4px; background: var(--basket-surface); color: var(--basket-ink); text-align: left; }
 .procurement-basket__card-top, .procurement-basket__card-foot { display: flex; align-items: start; justify-content: space-between; gap: 10px; }
 .procurement-basket__card-top strong { font-size: 18px; line-height: 1.25; }
 .procurement-basket__card-top > span { color: var(--basket-forest); font-size: 20px; line-height: 1; }
 .procurement-basket__card-detail, .procurement-basket__card-foot { color: var(--basket-muted); font-size: 12px; }
-.procurement-basket__card-values { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding-block: 12px; border-block: 1px solid var(--basket-border); }
+.procurement-basket__card-values { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding-block: 8px; border-block: 1px solid var(--basket-border); }
 .procurement-basket__card-values > span { display: grid; gap: 4px; color: var(--basket-muted); font-size: 11px; }
 .procurement-basket__card-values strong { color: var(--basket-ink); font-size: 16px; font-weight: 700; overflow-wrap: anywhere; }
 .procurement-basket__card-cost-state { color: #745b2e; font-size: 11px; line-height: 1.4; }
@@ -58,7 +58,7 @@
 }
 .procurement-basket__budget-note, .procurement-basket__stale { color: var(--basket-muted); font-size: 12px; line-height: 1.5; }
 .procurement-basket__stale { padding: 9px 12px; border: 1px solid #ceb987; background: #f7f1e2; color: #6a5327; }
-.procurement-basket__scope, .procurement-basket__boq, .procurement-basket__vendors, .procurement-basket__comparison, .procurement-basket__monitor { display: grid; gap: 15px; min-width: 0; padding: 18px; border: 1px solid var(--basket-border); background: var(--basket-surface); }
+.procurement-basket__scope, .procurement-basket__boq, .procurement-basket__vendors, .procurement-basket__comparison, .procurement-basket__monitor { display: grid; gap: 10px; min-width: 0; padding: 12px; border: 1px solid var(--basket-border); background: var(--basket-surface); }
 .procurement-basket__section-head { align-items: center; }
 .procurement-basket__section-head h3 { margin-top: 3px; font-size: 17px; line-height: 1.25; }
 .procurement-basket__section-head > button, .procurement-basket__mode-head button, .procurement-basket__row-actions button:first-child, .procurement-basket__drawer-actions button:first-child { padding: 7px 10px; border: 1px solid var(--basket-border); border-radius: 3px; background: transparent; color: var(--basket-forest); font-size: 12px; font-weight: 700; }

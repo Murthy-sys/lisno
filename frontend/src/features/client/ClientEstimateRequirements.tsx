@@ -44,7 +44,7 @@ const statusLabels: Record<EstimateRequirement["status"], string> = {
 
 const formatPrice = new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 2 });
 
-export function ClientEstimateRequirements({ projectId }: { projectId: string }) {
+export function ClientEstimateRequirements({ projectId, compact = false }: { projectId: string; compact?: boolean }) {
   const queryClient = useQueryClient();
   const id = useId();
   const sectionRef = useRef<HTMLElement>(null);
@@ -56,6 +56,7 @@ export function ClientEstimateRequirements({ projectId }: { projectId: string })
   const withdrawTriggerRef = useRef<HTMLButtonElement>(null);
   const submitting = useRef(false);
   const [draft, setDraft] = useState<RequestDraft | null>(null);
+  const [expanded, setExpanded] = useState<boolean | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [feedback, setFeedback] = useState<string | null>(null);
   const [conflict, setConflict] = useState(false);
@@ -187,16 +188,16 @@ export function ClientEstimateRequirements({ projectId }: { projectId: string })
     ? "The estimate or its requests changed. Your draft is preserved. Review the latest requests below before continuing."
     : "We couldn't save this change. Your draft is preserved; please try again.";
 
-  return <section className="client-requirements" aria-labelledby={`${id}-title`} ref={sectionRef} tabIndex={-1}>
-    <header className="client-requirements__header">
+  const content = <section className={`client-requirements${compact ? " client-requirements--compact" : ""}`} aria-labelledby={`${id}-title`} ref={sectionRef} tabIndex={-1}>
+    {!compact ? <header className="client-requirements__header">
       <div><p className="eyebrow">{phaseLabel}</p><h2 id={`${id}-title`}>Your estimate requirements</h2>
         <p>Select a Main Basket and describe what you need. You can also choose an available Main Line. Your team will prepare the pricing.</p></div>
       <dl className="client-requirements__price"><div><dt>Indicative total</dt><dd>{safePrice ? formatPrice.format(detail.indicativeTotalPaise! / 100) : "Awaiting estimate"}</dd></div></dl>
-    </header>
-    <p className="client-requirements__hint">Prices are read-only. {detail.pricingComplete ? "Review the submitted estimate below for approval." : "Your team is still preparing the estimate or pricing outstanding requests."}</p>
+    </header> : null}
+    {!compact ? <p className="client-requirements__hint">Prices are read-only. {detail.pricingComplete ? "Review the submitted estimate below for approval." : "Your team is still preparing the estimate or pricing outstanding requests."}</p> : null}
     {!detail.editingAllowed ? <div className="client-requirements__notice" role="status">
-      <strong>{detail.editingBlockReason === "review_pending" ? "Estimate review in progress" : "Requirements are read-only"}</strong>
-      <p>{detail.editingBlockReason === "review_pending" ? "Use Request changes in the submitted estimate before updating your requirements." : "The estimate is closed for changes. Your recorded requirements remain available here."}</p>
+      {compact ? <p>{detail.editingBlockReason === "review_pending" ? "Requirements are locked during estimate review." : "Requirements are read-only."}</p> : <><strong>{detail.editingBlockReason === "review_pending" ? "Estimate review in progress" : "Requirements are read-only"}</strong>
+      <p>{detail.editingBlockReason === "review_pending" ? "Use Request changes in the submitted estimate before updating your requirements." : "The estimate is closed for changes. Your recorded requirements remain available here."}</p></>}
       {detail.editingBlockReason === "review_pending" ? <a href="#estimate-review-title">Review the submitted estimate</a> : null}
     </div> : null}
     {feedback ? <p role="status" className="client-requirements__notice">{feedback}</p> : null}
@@ -234,8 +235,8 @@ export function ClientEstimateRequirements({ projectId }: { projectId: string })
         <Button variant="secondary" disabled={mutation.isPending} onClick={() => { setDraft(null); setErrors({}); setConflict(false); mutation.reset(); sectionRef.current?.focus(); }}>Cancel</Button>
       </div>
     </form> : null}
-    <div className="client-requirements__list" aria-label="Your requests">
-      {!detail.requirements.length ? <p className="client-requirements__empty">No requirements yet. Add what you would like your team to include in the estimate.</p> : detail.requirements.map((request, index) => <article key={request.id} className="client-requirements__request" aria-labelledby={`${id}-request-${index}`}>
+    <div className="client-requirements__list" role="group" aria-label="Your requests">
+      {!detail.requirements.length ? !compact ? <p className="client-requirements__empty">No requirements yet. Add what you would like your team to include in the estimate.</p> : null : detail.requirements.map((request, index) => <article key={request.id} className="client-requirements__request" aria-labelledby={`${id}-request-${index}`}>
         <div className="client-requirements__request-heading"><h3 id={`${id}-request-${index}`}>{detail.mainBaskets.find((basket) => basket.id === request.mainBasketId)?.name ?? "Basket no longer available"}</h3><span>{statusLabels[request.status]}</span></div>
         <p className="client-requirements__hint">{request.phase === "post" ? "Post-estimation" : "Pre-estimation"} · {request.roomId ? detail.rooms.find((room) => room.id === request.roomId)?.label ?? "Previous room" : "Whole project"}</p>
         {request.mainLineId ? <p className="client-requirements__hint">Requested Main Line: {detail.mainLines?.find((line) => line.id === request.mainLineId && line.mainBasketId === request.mainBasketId)?.name ?? "Selected item unavailable"}</p> : null}
@@ -258,6 +259,15 @@ export function ClientEstimateRequirements({ projectId }: { projectId: string })
         }}>Withdraw requirement</Button></div>
     </Dialog> : null}
   </section>;
+  if (!compact) return content;
+  const open = expanded ?? (detail.estimateVersion === null || Boolean(draft));
+  return <details className="client-project-disclosure client-requirements-disclosure" open={open}>
+    <summary id={`${id}-title`} aria-disabled={mutation.isPending || undefined} onClick={event => {
+      event.preventDefault();
+      if (!mutation.isPending) setExpanded(!open);
+    }}>Additional requirements{detail.requirements.length ? <span>{detail.requirements.length}</span> : null}{draft ? <span>Unsaved changes</span> : null}</summary>
+    {content}
+  </details>;
 }
 
 function selectedRequestHasLine(detail: EstimateRequirementsDetail, requestId: string | null): boolean {

@@ -336,6 +336,7 @@ export interface EstimateClientReviewSnapshot {
 
 export interface ClientPublishedEstimateReview {
   workflowVersion?: 2 | 3;
+  requirementsVersion?: number;
   phase?: "pre" | "post";
   id: string;
   version: number;

@@ -13,7 +13,7 @@
   line-height: 1.55;
   min-width: 0;
 }
-.pm-workspace { display: grid; gap: 18px; padding: 2px; background: var(--pm-canvas); }
+.pm-workspace { display: grid; gap: 12px; padding: 0; background: var(--pm-canvas); }
 .ui-workspace[data-role="site_manager"]:has(.pm-workspace) { background: #f5f5ef; }
 .pm-workspace :is(h1,h2,h3,p,dl), .pm-dialog :is(h1,h2,h3,p,dl) { margin: 0; font-family: inherit; }
 .pm-workspace h1, .pm-dialog h1 { font-size: 22px; line-height: 1.35; font-weight: 650; letter-spacing: -.025em; }
@@ -27,7 +27,7 @@
 .pm-workspace .ui-button--secondary, .pm-dialog .ui-button--secondary { background: var(--pm-panel); border-color: var(--pm-border); }
 .pm-workspace small, .pm-dialog small, .pm-meta { font-size: 11px; color: var(--pm-muted); line-height: 1.5; }
 .pm-page-heading, .pm-section-heading, .pm-record__head, .pm-room__heading, .pm-project__main, .pm-pagination, .pm-summary__caption { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-width: 0; }
-.pm-page-heading { align-items: start; }
+.pm-page-heading { align-items: center; flex-wrap: wrap; gap: 8px; }
 .pm-page-heading > div:first-child, .pm-section-heading > div:first-child, .pm-record__head > div { min-width: 0; }
 .pm-page-heading p, .pm-section-heading p { font-size: 12px; color: var(--pm-muted); margin-top: 4px; }
 .pm-page-heading .pm-eyebrow { font-size: 11px; font-weight: 600; letter-spacing: .035em; margin: 0 0 4px; }
@@ -208,7 +208,7 @@
 .pm-table-wrap table { width: 100%; border-collapse: collapse; font-size: 12px; }
 .pm-table-wrap :is(th,td) { padding: 10px 13px; text-align: left; border-bottom: 1px solid var(--pm-border); }
 .pm-table-wrap th { font-size: 11px; color: var(--pm-muted); font-weight: 550; background: #eef0e6; }
-@media (pointer: coarse) {
+@media (max-width: 767px), (pointer: coarse) {
   .pm-workspace .ui-button, .pm-dialog .ui-button, .pm-tabs a, .pm-link-button { min-height: 44px; }
   .pm-filters :is(input,select), .pm-form :is(input,select), .pm-dialog :is(input,select) { min-height: 44px; }
   .pm-trade-table td > a { padding: 10px 4px; }

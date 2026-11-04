@@ -74,65 +74,7 @@ body:has(.ui-app-shell[data-role="super_admin"]) {
   border-radius: var(--radius-control);
 }
 
-/* ------------------------------------------------------------- responsive */
-
-/*
- * shell.css only swaps the fixed sidebar rail for the hamburger-triggered
- * MobileHeader/Drawer below 767px, so a tablet viewport (768–1024px) got
- * the full 17rem rail squeezed against the content — that's what was
- * crushing the 5-column meta grid into overlapping text. MobileHeader is
- * already rendered unconditionally in AppShell and is role-agnostic (same
- * component every role gets); this just mirrors shell.css's own mobile
- * block at a wider breakpoint, scoped to admin/super_admin only, so the
- * existing toggle/drawer mechanism activates for tablets here without
- * changing the breakpoint for every other role app-wide.
- */
-@media (max-width: 1024px) {
-  .ui-app-shell[data-role="admin"],
-  .ui-app-shell[data-role="super_admin"] {
-    display: block;
-    padding-block-start: calc(4.25rem + env(safe-area-inset-top));
-  }
-
-  .ui-app-shell[data-role="admin"] .ui-sidebar-rail,
-  .ui-app-shell[data-role="super_admin"] .ui-sidebar-rail {
-    display: none;
-  }
-
-  .ui-app-shell[data-role="admin"] .ui-mobile-header,
-  .ui-app-shell[data-role="super_admin"] .ui-mobile-header {
-    align-items: center;
-    background: var(--role-rail);
-    border-block-end: 1px solid rgb(255 255 255 / 8%);
-    box-shadow: 0 10px 30px -18px rgb(12 16 10 / 70%);
-    color: var(--role-rail-ink);
-    display: flex;
-    inset-block-start: 0;
-    inset-inline: 0;
-    justify-content: space-between;
-    min-block-size: calc(4.25rem + env(safe-area-inset-top));
-    padding: env(safe-area-inset-top)
-      max(var(--space-4), env(safe-area-inset-right))
-      0
-      max(var(--space-4), env(safe-area-inset-left));
-    position: fixed;
-    z-index: var(--z-raised);
-  }
-
-  .ui-app-shell[data-role="admin"] .ui-mobile-header__trigger,
-  .ui-app-shell[data-role="super_admin"] .ui-mobile-header__trigger {
-    color: var(--role-rail-ink);
-  }
-
-  .ui-app-shell[data-role="admin"] .ui-workspace,
-  .ui-app-shell[data-role="super_admin"] .ui-workspace {
-    min-block-size: calc(100vh - 4.25rem);
-    padding: var(--space-6)
-      max(var(--space-4), env(safe-area-inset-right))
-      max(var(--space-8), env(safe-area-inset-bottom))
-      max(var(--space-4), env(safe-area-inset-left));
-  }
-}
+/* Responsive shell geometry is shared in common-shell.css. */
 
 /* ------------------------------------------------------------------ rail */
 
@@ -229,9 +171,7 @@ body:has(.ui-app-shell[data-role="super_admin"]) {
 .ui-app-shell[data-role="admin"] .ui-page-header__title,
 .ui-app-shell[data-role="super_admin"] .ui-page-header__title {
   color: #07070d;
-  font-size: var(--text-3xl);
   font-weight: 600;
-  line-height: 1.25;
 }
 
 .ui-app-shell[data-role="admin"] .ui-page-header__description,
@@ -254,8 +194,6 @@ body:has(.ui-app-shell[data-role="super_admin"]) {
   border: 1px solid var(--button-primary-bg);
   background: var(--button-primary-bg);
   color: var(--button-primary-ink);
-  padding-inline: 1.5rem;
-  min-block-size: var(--control-height);
   box-shadow: 0 8px 18px -12px rgb(31 42 28 / 65%);
 }
 

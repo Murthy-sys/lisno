@@ -673,8 +673,25 @@
 /* Collapse to the icon on small screens so it stops covering content. */
 @media (max-width: 560px) {
   .ui-app-shell[data-role] .ask-lisno-launcher {
-    min-width: 0;
-    padding: 0.6rem;
+    inset-block-end: max(12px, env(safe-area-inset-bottom));
+    inset-inline-end: max(8px, env(safe-area-inset-right));
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
+    min-height: 44px;
+    padding: 4px;
+    gap: 0;
+  }
+
+  .ui-app-shell[data-role] .ask-lisno-launcher__icon {
+    flex-basis: 32px;
+    width: 32px;
+    height: 32px;
+  }
+
+  .ui-app-shell[data-role] .ask-lisno-launcher__icon svg {
+    width: 20px;
+    height: 20px;
   }
 
   .ui-app-shell[data-role] .ask-lisno-launcher > span:last-child {

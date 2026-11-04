@@ -106,6 +106,9 @@ describe("Estimate workspace revisions", () => {
     expect(screen.getAllByLabelText("Estimate amount before GST: ₹275")).toHaveLength(2);
     expect(screen.queryByRole("button", { name: "Save draft" })).not.toBeInTheDocument();
     expect(screen.queryByRole("spinbutton")).not.toBeInTheDocument();
+    const pendingDraftUnload = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(pendingDraftUnload);
+    expect(pendingDraftUnload.defaultPrevented).toBe(true);
     for (const view of ["Summary", "Proposal"]) {
       await user.click(screen.getByRole("button", { name: view }));
       expect(screen.getByRole("region", { name: view === "Summary" ? "Saved revision summary" : "Saved revision proposal" })).toBeVisible();

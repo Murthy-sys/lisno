@@ -1,14 +1,14 @@
 @import "./proposal-quality.css";
 .basket-proposal.ui-drawer.ui-drawer--contextual { width: 70vw; inline-size: 70vw; max-width: none; max-inline-size: none; }
 .basket-proposal .ui-drawer__body { padding: 0; }
-.basket-proposal__content { padding: 24px; color: var(--color-text); min-inline-size: 0; }
-.basket-proposal__metadata .basket-proposal__form:where(:not(.ui-dialog__form)) { padding: 24px; }
+.basket-proposal__content { padding: 12px; color: var(--color-text); min-inline-size: 0; }
+.basket-proposal__metadata .basket-proposal__form:where(:not(.ui-dialog__form)) { padding: 12px; }
 .basket-proposal__parent { line-height: 1.6; overflow-wrap: anywhere; }
 .basket-proposal__form:where(:not(.ui-dialog__form)) { display: grid; gap: 18px; }
 .basket-proposal__actions:where(:not(.ui-dialog__actions)) { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 10px; }
-.basket-proposal__toolbar { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px; padding-block: 0 18px; border-bottom: 1px solid var(--color-border, #d4d9d4); }
+.basket-proposal__toolbar { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; padding-block: 0 10px; border-bottom: 1px solid var(--color-border, #d4d9d4); }
 .basket-proposal__toolbar p { margin: 0; }
-.basket-proposal__body { display: grid; grid-template-columns: 190px minmax(0, 1fr); gap: 24px; padding-top: 20px; }
+.basket-proposal__body { display: grid; grid-template-columns: 190px minmax(0, 1fr); gap: 12px; padding-top: 12px; }
 .basket-proposal__hierarchy { min-width: 0; border-right: 1px solid var(--color-border, #d4d9d4); padding-right: 16px; }
 .basket-proposal__hierarchy h3 { margin-block: 0 14px; font-size: 15px; }
 .basket-proposal__hierarchy ul { list-style: none; margin: 0; padding: 0; }
@@ -19,7 +19,7 @@
 .basket-proposal__line:focus-visible { outline: 2px solid var(--color-primary, #3f6754); outline-offset: 2px; }
 .basket-proposal__workspace { min-width: 0; }
 .basket-proposal__workspace h3 { overflow-wrap: anywhere; }
-.basket-proposal__tabs { display: flex; flex-wrap: wrap; gap: 4px; border-bottom: 1px solid var(--color-border, #d4d9d4); padding-bottom: 8px; margin-bottom: 20px; }
+.basket-proposal__tabs { display: flex; flex-wrap: wrap; gap: 4px; border-bottom: 1px solid var(--color-border, #d4d9d4); padding-bottom: 8px; margin-bottom: 12px; }
 .basket-proposal__tabs [role="tab"] { border-radius: 0; border: 0; border-bottom: 2px solid transparent; background: transparent; }
 .basket-proposal__tabs [aria-selected="true"] { font-weight: 600; color: var(--color-primary); border-bottom-color: var(--color-primary); }
 .basket-proposal__state { padding-block: 14px; }
@@ -36,7 +36,7 @@
   .basket-proposal.ui-drawer.ui-drawer--contextual { width: 100vw; inline-size: 100vw; }
 }
 @media (max-width: 740px) {
-  .basket-proposal__content { padding: 16px; }
+  .basket-proposal__content { padding: 10px; }
   .basket-proposal__body { grid-template-columns: minmax(0, 1fr); gap: 16px; }
   .basket-proposal__hierarchy { border-right: 0; border-bottom: 1px solid var(--color-border, #d4d9d4); padding: 0 0 16px; }
   .basket-proposal__request-list > li { align-items: flex-start; flex-direction: column; }

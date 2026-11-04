@@ -1,7 +1,7 @@
 .client-responses {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: var(--space-5);
+  gap: var(--space-3);
   min-inline-size: 0;
 }
 
@@ -14,12 +14,12 @@
   align-items: center;
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-3);
+  gap: var(--space-2);
 }
 
 .client-responses__filters {
   border-block-end: 1px solid var(--color-border);
-  padding-block-end: var(--space-3);
+  padding-block-end: var(--space-2);
 }
 
 .client-responses__directory,

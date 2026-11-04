@@ -212,7 +212,7 @@ describe("synthetic enterprise route harness", () => {
   it("renders component estimate previews, retries failures and saves exact null-rate amounts", async () => {
     const user = userEvent.setup();
     mount("/estimator-sales/leads/lead-1/estimate?qaComponentAmounts=ready", "estimator_sales");
-    await screen.findByRole("heading", { name: "Select estimate items" });
+    await screen.findByRole("region", { name: "Estimate items for Living Room" });
     await waitFor(() => expect(screen.getByRole("button", { name: "Save draft" })).toBeEnabled());
     expect(screen.getByRole("region", { name: "In-house amounts by component Sub-Basket" })).toHaveTextContent("₹1,233.33");
     window.dispatchEvent(new CustomEvent("enterprise-qa-component-preview", { detail: { fail: true } }));

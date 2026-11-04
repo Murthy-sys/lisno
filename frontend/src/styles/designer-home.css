@@ -68,55 +68,7 @@ body:has(.ui-app-shell[data-role="designer"]) {
   --role-glass-strong: #ffffff;
 }
 
-/* ------------------------------------------------------------- responsive */
-
-/*
- * shell.css only swaps the fixed sidebar rail for the hamburger-triggered
- * MobileHeader/Drawer below 767px, so a tablet viewport (768-1024px) got
- * the full 17rem rail squeezed against the content instead of the
- * collapsible drawer. MobileHeader is already rendered unconditionally in
- * AppShell and is role-agnostic; this mirrors admin-home.css's identical
- * fix — shell.css's own mobile block, at a wider breakpoint, scoped to
- * designer only, so the existing toggle/drawer mechanism activates for
- * tablets here without changing the breakpoint for every other role.
- */
-@media (max-width: 1024px) {
-  .ui-app-shell[data-role="designer"] {
-    display: block;
-    padding-block-start: calc(4.25rem + env(safe-area-inset-top));
-  }
-
-  .ui-app-shell[data-role="designer"] .ui-sidebar-rail {
-    display: none;
-  }
-
-  .ui-app-shell[data-role="designer"] .ui-mobile-header {
-    align-items: center;
-    background: var(--role-rail);
-    border-block-end: 1px solid rgb(255 255 255 / 8%);
-    box-shadow: 0 10px 30px -18px rgb(12 16 10 / 70%);
-    color: var(--role-rail-ink);
-    display: flex;
-    inset-block-start: 0;
-    inset-inline: 0;
-    justify-content: space-between;
-    min-block-size: calc(4.25rem + env(safe-area-inset-top));
-    padding: env(safe-area-inset-top)
-      max(var(--space-4), env(safe-area-inset-right))
-      0
-      max(var(--space-4), env(safe-area-inset-left));
-    position: fixed;
-    z-index: var(--z-raised);
-  }
-
-  .ui-app-shell[data-role="designer"] .ui-workspace {
-    min-block-size: calc(100vh - 4.25rem);
-    padding: var(--space-6)
-      max(var(--space-4), env(safe-area-inset-right))
-      max(var(--space-8), env(safe-area-inset-bottom))
-      max(var(--space-4), env(safe-area-inset-left));
-  }
-}
+/* Responsive shell geometry is shared in common-shell.css. */
 
 /* Compact section rhythm and shared page-title scale. Scoped to the designer page only —
    PageHeader and .ui-workspace > * spacing are shared by every role. */
@@ -125,7 +77,6 @@ body:has(.ui-app-shell[data-role="designer"]) {
 }
 
 .ui-app-shell[data-role="designer"] .ui-page-header__title {
-  font-size: var(--text-3xl);
   color: #241e41;
 }
 
@@ -133,53 +84,12 @@ body:has(.ui-app-shell[data-role="designer"]) {
   color: var(--color-primary);
 }
 
-/* .ui-page-header is a shared flex row with justify-content: space-between,
-   which put the breadcrumb link and the title/description at opposite ends
-   of the same row on pages that add a breadcrumb (e.g. Design plan
-   workspace's "Back to dashboard"), and left no way to keep an action
-   button level with the title specifically. A 2-row grid fixes both: the
-   breadcrumb (when present) spans its own row on top, and the title block
-   shares a row with the action button, so the button sits directly across
-   from the title instead of floating separately below everything. */
-.ui-app-shell[data-role="designer"] .ui-page-header {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  grid-template-areas:
-    "breadcrumb breadcrumb"
-    "content actions";
-  align-items: start;
-  column-gap: var(--space-4);
-  row-gap: var(--space-2);
-}
-
-/* role-themes.css styles every "Back to X" link as a bordered/filled pill
-   button (Teak convention); flatten it to a plain gold text link here, and
-   drop its own 2rem margin-bottom (index.css .back-link), which was the
-   real source of the big gap above the title — the grid's own row-gap
-   above is enough on its own. */
-.ui-app-shell[data-role="designer"] .ui-page-header__breadcrumb {
-  grid-area: breadcrumb;
-}
-
+/* Use the shared compact header layout while retaining the Designer link tone. */
 .ui-app-shell[data-role="designer"] .back-link {
   margin-bottom: 0;
-  padding: 0;
   border: 0;
   background: none;
   color: var(--color-primary);
-}
-
-.ui-app-shell[data-role="designer"] .back-link:hover {
-  color: #a66a1f;
-}
-
-.ui-app-shell[data-role="designer"] .ui-page-header__content {
-  grid-area: content;
-}
-
-.ui-app-shell[data-role="designer"] .ui-page-header__actions {
-  grid-area: actions;
-  align-self: center;
 }
 
 /* Header actions use the primary button tokens; negative actions keep their
@@ -315,11 +225,6 @@ body:has(.ui-app-shell[data-role="designer"]) .access-request-dialog__actions {
 .ui-app-shell[data-role="designer"] .kpi-score strong,
 .ui-app-shell[data-role="designer"] .designer-metric-chip__value {
   font-family: var(--font-interface);
-}
-
-/* Less dead air above the title and below the sidebar footer. */
-.ui-workspace[data-role="designer"] {
-  padding-block: var(--space-3) var(--space-6);
 }
 
 .ui-app-shell[data-role="designer"] .ui-sidebar__account {
@@ -521,12 +426,10 @@ body:has(.ui-app-shell[data-role="designer"]) .access-request-dialog__actions {
   color: #d7d2e6;
 }
 
-/* More outer padding so the dashed empty-state box reads as a distinct
-   nested card with clear breathing room from the white card's own edges
-   (top, sides, and bottom alike), instead of nearly touching them. */
+/* Keep the project list inset compact without merging its empty-state border. */
 .ui-app-shell[data-role="designer"] .designer-projects {
   gap: var(--space-3);
-  padding: var(--space-4) !important;
+  padding: var(--space-3) !important;
 }
 
 /* Numeral on the left; the icon+copy group centers itself in the remaining
@@ -780,7 +683,7 @@ body:has(.ui-app-shell[data-role="designer"]) .ui-button__busy {
 .designer-project-review dt { font: var(--type-metadata); color: var(--color-text-muted); }
 .designer-project-review dd { margin: var(--space-1) 0 0; font: var(--type-body); }
 .ui-app-shell[data-role="designer"] .designer-project-row__actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
-.ui-app-shell[data-role="designer"] .project-workspace .workspace-overview { gap: var(--space-4); padding: var(--space-4); }
+.ui-app-shell[data-role="designer"] .project-workspace .workspace-overview { gap: var(--space-3); margin-block-start: 0; padding: var(--space-3); }
 .ui-app-shell[data-role="designer"] .project-workspace .workspace-overview strong { font: var(--type-heading-3); overflow-wrap: anywhere; }
 @media (max-width: 480px) { .designer-project-review { grid-template-columns: minmax(0, 1fr); } }
 

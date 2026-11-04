@@ -77,6 +77,7 @@ export const ROUTE_REGISTRY = [
   { path: "/estimator-sales/leads/:leadId/estimate", permission: "estimation.estimate.read", presentationRoles: ["estimator_sales", "designer"], navigation: null },
   { path: "/client", permission: "projects.client_summary.read", presentationRoles: ["client"], navigation: { roles: ["client"], item: { label: "My projects", to: "/client", end: true, icon: FolderKanban } } },
   { path: "/client/projects/:projectId", permission: "projects.read", presentationRoles: ["client"], navigation: null },
+  { path: "/projects/:projectId/quotation", permission: "estimation.quotation.read", presentationRoles: ["client", "designer"], navigation: null },
   { path: "/vendor", permission: "procurement.vendor_work.read", presentationRoles: ["vendor"], navigation: { roles: ["vendor"], item: { label: "My work", to: "/vendor", end: true, icon: ClipboardCheck } } },
   { path: "/admin/dashboard", permission: "admin.dashboard.read", presentationRoles: ["super_admin"], navigation: { roles: ["super_admin"], item: { label: "Dashboard", to: "/admin/dashboard", end: true, icon: LayoutDashboard } } },
   { path: "/admin/projects", permission: "projects.list", presentationRoles: ["admin", "super_admin"], navigation: { roles: ["admin", "super_admin"], item: { label: "My Projects", to: "/admin/projects", end: true, icon: FolderKanban }, labels: { super_admin: "All Projects" } } },

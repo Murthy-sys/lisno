@@ -201,18 +201,12 @@ describe("Super Admin knowledge item workspace layout", () => {
     const header = declarations(
       ".knowledge-page--item-workspace > .ui-page-header"
     );
-    expect(header.get("display")).toBe("grid");
-    expect(header.get("grid-template-columns")).toBe("minmax(0, 1fr) auto");
-
-    const breadcrumb = declarations(
-      ".knowledge-page--item-workspace > .ui-page-header .ui-page-header__breadcrumb"
-    );
-    expect(breadcrumb.get("grid-column")).toBe("1 / -1");
+    expect(header.get("display")).toBe("flex");
+    expect(header.get("flex-wrap")).toBe("wrap");
 
     const actions = declarations(
       ".knowledge-page--item-workspace > .ui-page-header .ui-page-header__actions"
     );
-    expect(actions.get("grid-column")).toBe("2");
     expect(actions.get("justify-content")).toBe("flex-end");
 
     const tabs = declarations(
@@ -237,13 +231,13 @@ describe("Super Admin knowledge item workspace layout", () => {
     );
   });
 
-  it("uses the 90rem shell measure with a flexible main column and secondary history rail", () => {
+  it("uses the available shell width with a flexible main column and secondary history rail", () => {
     const page = declarations(
       ".knowledge-page--item-workspace",
       professionalWorkspaceStart
     );
     expect(page.get("inline-size")).toBe("100%");
-    expect(page.get("max-inline-size")).toBe("var(--content-wide)");
+    expect(page.get("max-inline-size")).toBe("100%");
     expect(page.get("min-inline-size")).toBe("0");
 
     const layout = declarations(
@@ -884,10 +878,10 @@ describe("Super Admin knowledge item workspace layout", () => {
     expect(responsiveStart).toBeGreaterThan(-1);
     expect(
       declarations(
-        ".knowledge-page--item-workspace > .ui-page-header",
+        ".knowledge-page--item-workspace > .ui-page-header .ui-page-header__actions",
         responsiveStart
-      ).get("grid-template-columns")
-    ).toBe("minmax(0, 1fr)");
+      ).get("justify-content")
+    ).toBe("flex-start");
 
     const railStart = stylesheet.indexOf(
       "@media (max-width: 1180px)",

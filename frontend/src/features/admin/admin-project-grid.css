@@ -20,7 +20,7 @@
   position: relative;
   isolation: isolate;
   min-inline-size: 0;
-  min-block-size: 8.25rem;
+  min-block-size: 0;
   overflow: hidden;
   border-radius: 0.5rem;
   background: #eee9df;
@@ -43,15 +43,14 @@
   position: relative;
   z-index: 1;
   margin: 0;
-  min-block-size: 8.25rem;
+  min-block-size: 0;
   align-items: center;
-  padding: 0.9rem clamp(1rem, 1.7vw, 1.5rem);
-  gap: 1rem;
+  padding: var(--space-2) var(--space-3);
+  gap: var(--space-2);
 }
 
 .admin-projects__hero .ui-page-header__content {
-  max-inline-size: 41rem;
-  gap: 0.2rem;
+  min-inline-size: 0;
 }
 
 .ui-app-shell .admin-projects .admin-projects__hero .ui-page-header__eyebrow {
@@ -62,11 +61,6 @@
 }
 
 .ui-app-shell .admin-projects .admin-projects__hero .ui-page-header__title {
-  font-family: var(--font-interface, "Poppins", sans-serif);
-  font-size: clamp(1.65rem, 2vw, 1.9rem);
-  font-weight: 650;
-  line-height: 1.12;
-  letter-spacing: -0.045em;
   color: var(--admin-projects-ink);
 }
 
@@ -76,8 +70,8 @@
   line-height: 1.5;
 }
 .ui-app-shell .admin-projects .admin-projects__hero .ui-page-header__actions .ui-button {
-  min-block-size: 2.6rem;
-  padding-inline: 0.9rem;
+  min-block-size: var(--control-height-compact);
+  padding-inline: var(--space-3);
   border-radius: 0.4rem;
   box-shadow: none !important;
   font-size: 0.77rem;
@@ -550,8 +544,17 @@
   outline: 2px solid var(--admin-projects-olive);
   outline-offset: 2px;
 }
-/* Keep the existing shared list, but make every page control touch-sized. */
-.ui-app-shell .admin-projects :is(.ui-button, .button) { min-block-size: 44px !important; }
+/* Fine-pointer toolbars stay compact; touch controls retain their target size. */
+@media (min-width: 761px) and (pointer: fine) {
+  .admin-projects :is(.admin-projects__status-button, .admin-projects__filter-button, .admin-projects__view-button, .admin-projects__sort select, .admin-projects__search-row input) {
+    min-block-size: var(--control-height);
+    padding-block: var(--space-1);
+  }
+}
+@media (max-width: 760px), (pointer: coarse) {
+  .ui-app-shell .admin-projects :is(.ui-button, .button),
+  .ui-app-shell .admin-projects .admin-projects__hero .ui-page-header__actions .ui-button { min-block-size: 44px; }
+}
 @media (max-width: 540px) {
   .admin-projects__hero {
     min-block-size: 0;
@@ -564,9 +567,8 @@
   }
   .admin-projects .admin-projects__hero .ui-page-header {
     min-block-size: 0;
-    padding-block: 0.85rem;
+    padding-block: var(--space-2);
   }
-  .ui-app-shell .admin-projects .admin-projects__hero .ui-page-header__title { font-size: 1.55rem; }
   .admin-projects__tools { margin-inline-start: 0; inline-size: 100%; gap: 6px; }
   .admin-projects__sort { flex: 1 1 auto; }
   .admin-projects__status-button { padding-inline: 8px; }

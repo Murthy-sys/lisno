@@ -236,8 +236,13 @@ describe("DesignerDesignPlanTasksPage", () => {
     const view = renderPage();
     expect(await screen.findByText("Design tasks begin after the Client approves the Designer-revised quotation.")).toBeVisible();
     expect(screen.queryByRole("heading", { name: "Upload design" })).not.toBeInTheDocument();
-    if (primary) expect(screen.getByRole("link", { name: "Review Designer-revised quotation" })).toHaveAttribute("href", "/estimator-sales/leads/lead-v3/estimate");
-    else expect(screen.queryByRole("link", { name: "Review Designer-revised quotation" })).not.toBeInTheDocument();
+    if (primary) {
+      expect(screen.getByRole("link", { name: "Review Designer-revised quotation" })).toHaveAttribute("href", "/estimator-sales/leads/lead-v3/estimate");
+      expect(screen.queryByRole("link", { name: "View saved estimation" })).not.toBeInTheDocument();
+    } else {
+      expect(screen.queryByRole("link", { name: "Review Designer-revised quotation" })).not.toBeInTheDocument();
+      expect(screen.getByRole("link", { name: "View saved estimation" })).toHaveAttribute("href", "/projects/project-1/quotation");
+    }
     task.quotationApproved = true; workflow.initialPayment.designStartedAt = "2026-10-30T10:00:00Z";
     await act(async () => view.queryClient.invalidateQueries());
     expect(await screen.findByText("The quotation is approved. Continue the design tasks below.")).toBeVisible();

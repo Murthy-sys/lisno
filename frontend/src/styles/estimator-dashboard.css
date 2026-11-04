@@ -1366,6 +1366,17 @@
 .configured-estimate-sub-basket__toggle span { font-size: 12px; font-weight: 700; }
 .configured-estimate-sub-basket > [hidden] { display: none; }
 .configured-estimate-sub-basket__empty { margin: 0; padding: 12px 14px; color: var(--est-muted, #5b6883); font-size: 12px; }
+.configured-estimate-sub-basket__header { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.configured-estimate-sub-basket__header > h3 { flex: 1; min-width: 0; }
+.configured-estimate-sub-basket__remove { flex: none; min-height: 40px; padding: 6px 10px; border: 1px solid var(--color-border); border-radius: 0; color: var(--color-text); background: transparent; font: inherit; font-size: 12px; cursor: pointer; }
+.configured-estimate-sub-basket__remove:disabled { opacity: .55; cursor: default; }
+.configured-estimate-sub-basket__remove:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 3px; }
+.estimate-setup-save { justify-self: start; }
+@media (max-width: 640px) {
+  .configured-estimate-sub-basket__header { flex-wrap: wrap; }
+  .configured-estimate-sub-basket__header > h3 { flex-basis: 100%; }
+  .configured-estimate-sub-basket__remove { margin-block: 4px; }
+}
 .configured-estimate-basket__empty { padding: 12px 15px; font-size: 12px; }
 .configured-estimate-line { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 354px); align-items: center; gap: 6px 10px; min-height: 66px; margin: 6px 8px; padding: 8px; border: 1px solid var(--est-line, #dce1e8); border-radius: 5px; }
 .configured-estimate-line--included { border-color: #c5d5bf; background: #fbfcf9; }
@@ -2586,4 +2597,18 @@
   .estimate-workspace--revision-workspace .estimate-workspace__footer .button,
   .ui-app-shell[data-role] .estimator-dashboard.estimate-workspace--revision-workspace .estimate-workspace__back,
   .estimate-workspace--revision-workspace .estimate-workspace__messages .project-chat-navigation :is(a, button) { min-block-size: 40px; min-height: 40px; }
+}
+
+@media (max-width: 767px), (pointer: coarse) {
+  .estimate-workspace.estimator-dashboard.estimate-workspace--compact-builder {
+    --estimate-compact-control: 44px;
+    --estimate-compact-step: 44px;
+    --estimate-compact-menu: 44px;
+  }
+  .ui-app-shell[data-role] .estimate-workspace--revision-workspace :is(button, input:not([type="checkbox"]), select),
+  .ui-app-shell[data-role] .estimate-workspace--revision-workspace .estimate-workspace__back,
+  .ui-app-shell[data-role] .estimate-workspace--revision-workspace .project-chat-navigation a {
+    min-block-size: 44px;
+    min-height: 44px;
+  }
 }

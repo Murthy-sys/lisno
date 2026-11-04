@@ -5,7 +5,7 @@
   --project-detail-line: #dedfd5;
   --project-detail-paper: #fbfaf6;
   --project-detail-olive: #3d4a32;
-  gap: 16px;
+  gap: var(--space-3);
   min-inline-size: 0;
   inline-size: 100%;
   max-inline-size: none;
@@ -13,7 +13,7 @@
 
 .admin-project-reference__hero {
   min-inline-size: 0;
-  padding: 20px 22px 24px;
+  padding: var(--space-2) var(--space-3);
   background-color: #f2f0e8;
   background-image:
     linear-gradient(90deg, #f2f0e8 0%, rgb(242 240 232 / 97%) 28%, rgb(242 240 232 / 82%) 48%, rgb(242 240 232 / 12%) 100%),
@@ -24,14 +24,12 @@
   border-radius: 3px;
 }
 .ui-app-shell .admin-project-detail.admin-project-reference .admin-project-reference__hero .ui-page-header {
-  min-block-size: 148px;
+  min-block-size: 0;
   align-content: center;
-  gap: 14px 24px;
+  gap: var(--space-2);
 }
 .ui-app-shell .admin-project-detail.admin-project-reference .ui-page-header__title {
   color: var(--project-detail-ink);
-  font: 700 clamp(1.65rem, 2.2vw, 2.15rem)/1.2 var(--font-interface, sans-serif);
-  letter-spacing: -0.025em;
   overflow-wrap: anywhere;
 }
 .ui-app-shell .admin-project-detail.admin-project-reference .ui-page-header__description {
@@ -50,7 +48,7 @@
 }
 .admin-project-reference__identifier { overflow-wrap: anywhere; }
 .ui-app-shell .admin-project-detail.admin-project-reference .ui-page-header__actions .button {
-  min-block-size: 44px;
+  min-block-size: var(--control-height-compact);
   border-radius: 3px;
   box-shadow: none;
   transform: none;
@@ -58,7 +56,7 @@
 }
 .ui-app-shell .admin-project-detail.admin-project-reference .ui-page-header__breadcrumb a {
   display: inline-flex;
-  min-block-size: 44px;
+  min-block-size: var(--control-height-compact);
   align-items: center;
   gap: 7px;
   color: var(--project-detail-olive);
@@ -173,7 +171,7 @@
 }
 @media (max-width: 640px) {
   .admin-project-reference__hero {
-    padding: 12px 14px 18px;
+    padding: var(--space-2);
     background-image: linear-gradient(90deg, rgb(242 240 232 / 98%), rgb(242 240 232 / 92%)), url("../../assets/projects-living-room.webp");
     background-size: cover, auto 100%;
     background-position: center, 68% center;
@@ -184,4 +182,11 @@
   .admin-project-reference__facts dl > div:last-child { grid-column: 1 / -1; }
   .admin-project-reference__detail-groups { grid-template-columns: minmax(0, 1fr); }
   .ui-app-shell .admin-project-detail.admin-project-reference .admin-project-detail__sections .admin-project-detail__section-body dl { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+}
+
+@media (max-width: 760px), (pointer: coarse) {
+  .ui-app-shell .admin-project-detail.admin-project-reference .ui-page-header__actions .button,
+  .ui-app-shell .admin-project-detail.admin-project-reference .ui-page-header__breadcrumb a {
+    min-block-size: 44px;
+  }
 }
