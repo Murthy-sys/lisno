@@ -1,3 +1,4 @@
+import { ProjectId } from "../../components/projects/ProjectId";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft } from "lucide-react";
 import { useRef, useState } from "react";
@@ -203,6 +204,7 @@ export function DesignerDesignPlanTasksPage() {
                           label={statusLabels[item.status]}
                         />
                       </span>
+                      <ProjectId projectNumber={item.projectNumber} />
                       <span>{item.clientName}</span>
                     </button>
                   </li>
@@ -225,6 +227,7 @@ export function DesignerDesignPlanTasksPage() {
                 <div>
                   <p className="eyebrow">Selected project</p>
                   <h2 id="designer-plan-project-title">{task.projectName}</h2>
+                  <ProjectId projectNumber={task.projectNumber} />
                 </div>
                 <StatusBadge
                   tone={statusTones[task.status]}

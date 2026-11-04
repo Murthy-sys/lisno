@@ -1,3 +1,4 @@
+import { ProjectId } from "../../components/projects/ProjectId";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import type { Project } from "../../api/types";
@@ -13,7 +14,7 @@ export function AssignedProcurementProjectCard({ project, preparationKnown }: { 
       </div>
       <div className="procurement-gallery-card__body">
         <div className="procurement-gallery-card__identity">
-          <h3>{project.name}</h3>
+          <h3>{project.name}</h3><ProjectId projectNumber={project.projectNumber} />
           <div className="procurement-gallery-card__details">{project.clientName ? <span>{project.clientName}</span> : null}{project.location ? <span>{project.location}</span> : null}</div>
           <p className="procurement-gallery-card__sections">{preparationKnown ? "Awaiting procurement preparation" : "Preparation status unavailable"}</p>
           <p className="procurement-gallery-card__sections">Project details are available to your assigned team.</p>

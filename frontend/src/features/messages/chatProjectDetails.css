@@ -31,6 +31,7 @@
 .chat-project-details__identity { display: flex; align-items: center; gap: 9px; padding: 14px 12px; }
 .chat-project-details__identity > div { min-width: 0; }
 .chat-project-details__identity h3 { font-size: 14px; }
+.chat-project-details__identity .project-id { display: block; }
 .chat-project-details__avatar {
   display: grid;
   flex: 0 0 36px;

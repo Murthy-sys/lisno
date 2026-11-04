@@ -1,3 +1,4 @@
+import { projectNumbersForProjectIds } from "../domain/project-number.js";
 import type { AssistantReadScope } from "../contracts/project-chat-assistant.js";
 import type { ChatActor } from "../contracts/project-chat.js";
 import type { ProjectStatusSummary } from "../contracts/project-status.js";
@@ -236,7 +237,7 @@ export function createProjectStatusService(options: {
             }
           }
         }
-        return deriveProjectStatus(input);
+        return { ...deriveProjectStatus(input), projectNumber: projectNumbersForProjectIds([projectId], sources.leads).get(projectId) ?? null };
   };
   return {
     async get(actor, projectId) {

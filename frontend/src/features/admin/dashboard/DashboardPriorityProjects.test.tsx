@@ -16,6 +16,19 @@ function renderPriority(overrides: Partial<DashboardPriorityQuery> = {}, canRead
 }
 
 describe("Dashboard priority projects", () => {
+  it("retains distinct IDs for same-named projects without adding project-read permission", () => {
+    const data = structuredClone(superAdminDashboardProjectsPageFixture);
+    data.items[0].projectName = data.items[1].projectName = "Shared home";
+    data.items[0] = { ...data.items[0], projectNumber: "Lisno000021" };
+    data.items[1] = { ...data.items[1], projectNumber: "Lisno000083" };
+    renderPriority({ data }, false);
+    const rows = screen.getAllByRole("row", { name: /Shared home/ });
+    expect(within(rows[0]).getByText("Project ID: Lisno000021")).toBeVisible();
+    expect(within(rows[0]).queryByText("Project ID: Lisno000083")).not.toBeInTheDocument();
+    expect(within(rows[1]).getByText("Project ID: Lisno000083")).toBeVisible();
+    expect(screen.queryByRole("link", { name: "Shared home" })).not.toBeInTheDocument();
+  });
+
   it("keeps stable project identities, backend progress, manager and UTC deadline", () => {
     renderPriority();
     const table = screen.getByRole("table", { name: "Priority projects ordered by risk" });

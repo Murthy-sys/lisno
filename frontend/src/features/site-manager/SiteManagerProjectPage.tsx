@@ -1,3 +1,4 @@
+import { ProjectId } from "../../components/projects/ProjectId";
 import { PMCounterpartPanel } from "../project-manager/PMCounterpartPanel";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
@@ -18,13 +19,13 @@ import { isSiteAccessError, SiteExecutionSummary, SitePagination, siteManagerRet
 import "../execution/execution.css";
 import "./site-manager.css";
 
-export function SiteManagerProjectPage({ projectId: suppliedProjectId, embedded = false }: { projectId?: string; embedded?: boolean }) {
+export function SiteManagerProjectPage({ projectId: suppliedProjectId, embedded = false, showProjectIdentity = !embedded }: { projectId?: string; embedded?: boolean; showProjectIdentity?: boolean }) {
   const { projectId: routeProjectId } = useParams();
   const projectId = suppliedProjectId ?? routeProjectId;
-  return projectId ? <SelectedSiteProject key={projectId} projectId={projectId} embedded={embedded} /> : <PageState state="error" message="Choose a project to view its execution." />;
+  return projectId ? <SelectedSiteProject key={projectId} projectId={projectId} embedded={embedded} showProjectIdentity={showProjectIdentity} /> : <PageState state="error" message="Choose a project to view its execution." />;
 }
 
-function SelectedSiteProject({ projectId, embedded }: { projectId: string; embedded: boolean }) {
+function SelectedSiteProject({ projectId, embedded, showProjectIdentity }: { projectId: string; embedded: boolean; showProjectIdentity: boolean }) {
   const client = useQueryClient();
   const location = useLocation();
   const connection = useExecutionConnection();
@@ -72,7 +73,7 @@ function SelectedSiteProject({ projectId, embedded }: { projectId: string; embed
     {!embedded ? <Link className="site-workspace__back" to={returnTo}>Back to assigned projects</Link> : null}
     {denied ? <PageState state="error" message="You no longer have access to this project." /> : <>
       <PMCounterpartPanel projectId={projectId} />
-      <header className="site-workspace__heading"><div>{embedded ? <h2>Execution operations</h2> : <h1>{project?.name ?? "Project execution"}</h1>}{project ? <p className="site-workspace__muted">{executionLabel(project.status)}</p> : null}</div><div className="site-workspace__controls"><ExecutionConnection state={connection} /><Button size="compact" variant="secondary" busy={query.isFetching} onClick={() => void query.refetch()}>Refresh project</Button>{project ? <SiteManagerProjectActions disabled={query.isError} project={project} onDirty={setProjectDirty} onBusy={setProjectBusy} canManagePolicy={data?.canManagePolicy ?? false} /> : null}</div></header>
+      <header className="site-workspace__heading"><div>{embedded ? <h2>{showProjectIdentity && project ? project.name : "Execution operations"}</h2> : <h1>{project?.name ?? "Project execution"}</h1>}{project && showProjectIdentity ? <ProjectId projectNumber={project.projectNumber} /> : null}{project ? <p className="site-workspace__muted">{executionLabel(project.status)}</p> : null}</div><div className="site-workspace__controls"><ExecutionConnection state={connection} /><Button size="compact" variant="secondary" busy={query.isFetching} onClick={() => void query.refetch()}>Refresh project</Button>{project ? <SiteManagerProjectActions disabled={query.isError} project={project} onDirty={setProjectDirty} onBusy={setProjectBusy} canManagePolicy={data?.canManagePolicy ?? false} /> : null}</div></header>
       {query.isError && data ? <InlineMessage tone="warning">Refresh failed. Project information may be out of date. Retry before making a decision.</InlineMessage> : null}
       {data?.projectCounts ? <SiteExecutionSummary counts={data.projectCounts} /> : query.isPending ? <p role="status">Loading project statistics…</p> : query.isError ? null : <InlineMessage tone="warning">Project statistics are unavailable. Refresh this project.</InlineMessage>}
       {query.isError && !data ? <PageState state="error" message={procurementError(query.error, "Project execution could not be loaded.")} action={{ label: "Try again", onAction: () => void query.refetch() }} /> : <section aria-labelledby="site-project-vendor-work" className="site-workspace__work">

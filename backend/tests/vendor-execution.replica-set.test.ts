@@ -5,6 +5,7 @@ import { executionCommandSchema, executionCutoff, executionLocalDate } from "../
 import { AuditEventModel } from "../src/models/AuditEvent.js";
 import { AiEstimatorKnowledgeVendorModel } from "../src/models/AiEstimatorKnowledgeVendor.js";
 import { ProjectModel } from "../src/models/Project.js";
+import { LeadModel } from "../src/models/Lead.js";
 import { ProjectPurchaseOrderModel } from "../src/models/ProjectPurchaseOrder.js";
 import { ProjectPurchaseOrderRevisionModel } from "../src/models/ProjectPurchaseOrderRevision.js";
 import { ProjectWorkflowTaskModel } from "../src/models/ProjectWorkflowTask.js";
@@ -83,6 +84,30 @@ beforeEach(async () => {
 afterAll(async () => { await replica?.stop(); });
 
 describe("execution commitment and reporting", () => {
+  it("projects live Project IDs in one portfolio batch and retains them on commands", async () => {
+    await LeadModel.collection.insertMany([
+      { _id: "lead-a", projectId: "project-a", projectNumber: "Lisno000012" },
+      { _id: "lead-b", projectId: "project-b", projectNumber: "Lisno000087" }
+    ]);
+    await initialize();
+    const before = await ProjectPurchaseOrderRevisionModel.find().lean();
+    expect(await service.detail(vendor, id)).toMatchObject({ projectId: "project-a", projectNumber: "Lisno000012" });
+    expect((await service.listMine(vendor)).items).toMatchObject([{ projectNumber: "Lisno000012" }]);
+    expect((await service.project(site, "project-a")).project).toMatchObject({ id: "project-a", projectNumber: "Lisno000012" });
+    const find = vi.spyOn(LeadModel, "find");
+    try {
+      const portfolio = await service.portfolio(admin);
+      expect(portfolio.items.map(row => [row.id, row.projectNumber]).sort()).toEqual([
+        ["project-a", "Lisno000012"], ["project-b", "Lisno000087"]
+      ]);
+      expect(find).toHaveBeenCalledTimes(1);
+      expect(find).toHaveBeenCalledWith({ projectId: { $in: ["project-a", "project-b"] } });
+    } finally { find.mockRestore(); }
+    expect(await command(vendor, "acknowledge")).toMatchObject({ projectNumber: "Lisno000012" });
+    expect(await ProjectPurchaseOrderRevisionModel.find().lean()).toEqual(before);
+    await expect(service.detail(otherVendor, id)).rejects.toMatchObject({ status: 404 });
+  });
+
   it("creates distinct assignments once and scopes split vendors, project managers and history", async () => {
     await initialize(); await initialize(); await initialize("order-b", "project-a", "vendor-b");
     expect(await VendorExecutionStateModel.countDocuments()).toBe(2);

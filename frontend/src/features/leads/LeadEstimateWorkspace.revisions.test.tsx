@@ -93,7 +93,7 @@ describe("Estimate workspace revisions", () => {
     await screen.findByRole("spinbutton", { name: /Quantity.*Current ceiling.*Living Room/ });
     expect(screen.getByLabelText("Estimate amount before GST: ₹100")).toBeVisible();
     expect(screen.queryByText("Total including GST")).not.toBeInTheDocument();
-    expect(screen.queryByText("Project number: Lisno000009")).not.toBeInTheDocument();
+    expect(screen.queryByText("Project ID: Lisno000009")).not.toBeInTheDocument();
     expect(screen.queryByText(/workflow and client requirements/)).not.toBeInTheDocument();
     const quantity = screen.getByRole("spinbutton", { name: /Quantity.*Current ceiling.*Living Room/ });
     await user.clear(quantity); await user.type(quantity, "3");

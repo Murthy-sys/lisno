@@ -26,6 +26,17 @@ function componentSchemas(): Record<string, OpenApiObject> {
 }
 
 describe("OpenAPI and Swagger UI", () => {
+  it("documents generated project identity only as read-only response metadata", () => {
+    const schemas = componentSchemas();
+    for (const name of ["NumberedProjectRead", "DashboardProjectRow", "ProjectStatusSummary", "DesignPlanTask", "ProcurementProject", "ProjectFinanceBucket", "PMProject", "ExecutionProjectMetadata", "ExecutionWork", "EstimateTierChoices", "Quotation"]) {
+      expect(schemas[name], name).toHaveProperty("properties.projectNumber.readOnly", true);
+      expect(schemas[name], name).toHaveProperty("properties.projectNumber.nullable", true);
+    }
+    for (const name of ["ConfiguredEstimateLineInput", "PMVendorSuggestionCreate", "PMVendorSuggestionUpdate"]) {
+      expect(schemas[name], name).not.toHaveProperty("properties.projectNumber");
+    }
+    expect(openApiDocument.paths["/projects/{projectId}"]!.get).toHaveProperty("responses.2XX.content.application/json.schema.properties.data.$ref", "#/components/schemas/NumberedProjectRead");
+  });
   it("documents optional frozen proposal metadata without changing legacy snapshots", () => {
     const schemas = componentSchemas();
     expect(schemas.ClientEstimateSnapshot).toHaveProperty("properties.proposal.$ref", "#/components/schemas/EstimateProposalMetadata");

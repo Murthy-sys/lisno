@@ -35,7 +35,7 @@ function groupedDetail(): QuotationDetail {
       { mainBasketId: "furniture", subBasketId: "storage", roomId: "room-two", includedCount: 1, sourceToken: "storage-bedroom" }] };
 }
 
-function setup(value: QuotationDetail = structuredClone(detail), readOnly = false, withRouter = false) {
+function setup(value: QuotationDetail = structuredClone(detail), readOnly = false, withRouter = false, workspace = false) {
   const state = { detail: value };
   const saves: Array<Record<string, unknown>> = [];
   let queryClient!: QueryClient;
@@ -50,7 +50,7 @@ function setup(value: QuotationDetail = structuredClone(detail), readOnly = fals
       return HttpResponse.json({ data: state.detail });
     })
   );
-  const quotation = <><Capture /><ClientQuotation projectId="project-one" readOnly={readOnly} /></>;
+  const quotation = <><Capture /><ClientQuotation projectId="project-one" readOnly={readOnly} workspace={workspace} /></>;
   const router = withRouter ? createMemoryRouter([
     { path: "/estimate", element: <><Link to="/project">Back to project</Link>{quotation}</> },
     { path: "/project", element: <h1>Project overview</h1> }
@@ -60,6 +60,23 @@ function setup(value: QuotationDetail = structuredClone(detail), readOnly = fals
 }
 
 describe("Client quotation", () => {
+  it.each([false, true])("shows loaded project identity only in standalone mode (%s)", async workspace => {
+    setup({ ...structuredClone(detail), projectNumber: "Lisno000031" }, false, false, workspace);
+    expect(screen.queryByText(/Project ID/)).not.toBeInTheDocument();
+    await screen.findByRole("spinbutton", { name: /Quantity for Storage/ });
+    if (workspace) expect(screen.getByText("Project ID: Lisno000031")).toBeVisible();
+    else expect(screen.queryByText(/Project ID/)).not.toBeInTheDocument();
+  });
+
+  it("clears standalone project identity after access is revoked", async () => {
+    const { client } = setup({ ...structuredClone(detail), projectNumber: "Lisno000031" }, true, false, true);
+    expect(await screen.findByText("Project ID: Lisno000031")).toBeVisible();
+    server.use(http.get("/api/v1/projects/project-one/quotation", () => HttpResponse.json({ error: { message: "Unavailable" } }, { status: 403 })));
+    await act(() => client().invalidateQueries({ queryKey: quotationKeys.detail("project-one") }));
+    expect(await screen.findByText(/Quotation access is unavailable/)).toBeVisible();
+    expect(screen.queryByText(/Project ID/)).not.toBeInTheDocument();
+  });
+
   it("uses the Sales row controls while preserving saved amounts and a scoped removal payload", async () => {
     const { saves } = setup(); const user = userEvent.setup();
     const row = await screen.findByRole("group", { name: "Storage Living Room" });

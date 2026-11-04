@@ -1,3 +1,4 @@
+import { ProjectId } from "../../components/projects/ProjectId";
 import { Link } from "react-router-dom";
 
 import type { AdminProjectSummary } from "../../api/types";
@@ -22,7 +23,7 @@ export function AdminProjectQuickView({ project, canOpenWorkspace, onClose }: {
       eyebrow="Project summary"
       className="administration-context-panel"
       onClose={onClose}
-      metadata={project ? <StatusBadge label={adminProjectStatusLabel(project)} tone="info" /> : undefined}
+      metadata={project ? <><ProjectId projectNumber={project.projectNumber} /><StatusBadge label={adminProjectStatusLabel(project)} tone="info" /></> : undefined}
       footer={project && canOpenWorkspace ? (
         <Link className="ui-button ui-button--primary" to={`/admin/projects/${encodeURIComponent(project.id)}`}>
           Open project workspace
@@ -38,7 +39,7 @@ export function AdminProjectQuickView({ project, canOpenWorkspace, onClose }: {
           <div><dt>Sales</dt><dd>{project.estimator?.name ?? "Unassigned handoff"}</dd></div>
           <div><dt>Next action</dt><dd>{adminProjectNextAction(project) ?? "No action pending"}</dd></div>
           <div><dt>{approved ? "Client-approved value (incl. GST)" : "Estimate value"}</dt><dd>{value == null ? (approved ? "Approved baseline unavailable" : "No estimate yet") : money.format(value)}</dd></div>
-          <div><dt>Project ID</dt><dd>{project.id}</dd></div>
+          <div><dt>System ID</dt><dd>{project.id}</dd></div>
         </dl>
       ) : <PageState state="empty" message="This project is no longer available in the current view. Close the summary and refresh the list." />}
     </ContextPanel>

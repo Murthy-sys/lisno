@@ -32,8 +32,8 @@ function installDesigner(canCreate = true) {
 
 async function submit(dialog: HTMLElement, projectId: string, reason: string) {
   const user = userEvent.setup();
-  await user.clear(within(dialog).getByRole("textbox", { name: "Project ID" }));
-  await user.type(within(dialog).getByRole("textbox", { name: "Project ID" }), projectId);
+  await user.clear(within(dialog).getByRole("textbox", { name: "System ID" }));
+  await user.type(within(dialog).getByRole("textbox", { name: "System ID" }), projectId);
   await user.clear(within(dialog).getByRole("textbox", { name: "Reason" }));
   if (reason) await user.type(within(dialog).getByRole("textbox", { name: "Reason" }), reason);
   await user.click(within(dialog).getByRole("button", { name: "Create request" }));
@@ -107,9 +107,9 @@ describe("AccessRequestDialog", () => {
   });
 
   it.each([
-    ["project/unsafe", "Need access", "Use an opaque project ID"],
-    ["project unsafe", "Need access", "Use an opaque project ID"],
-    ["p".repeat(129), "Need access", "Use an opaque project ID"],
+    ["project/unsafe", "Need access", "Use a System ID"],
+    ["project unsafe", "Need access", "Use a System ID"],
+    ["p".repeat(129), "Need access", "Use a System ID"],
     ["project-safe", "", "Explain why access is needed"],
     ["project-safe", "r".repeat(1001), "Keep the reason within 1000 characters"]
   ])("invalid submission %s never calls the API", async (projectId, reason, message) => {
@@ -130,7 +130,7 @@ describe("AccessRequestDialog", () => {
     installDesigner();
     renderApp(["/access-requests/mine?projectId=project-aurora-villa&module=design"]);
     const dialog = await screen.findByRole("dialog", { name: "Request project access" });
-    expect(within(dialog).getByRole("textbox", { name: "Project ID" })).toHaveValue("project-aurora-villa");
+    expect(within(dialog).getByRole("textbox", { name: "System ID" })).toHaveValue("project-aurora-villa");
     expect(within(dialog).getByRole("combobox", { name: "Module" })).toHaveValue("design");
   });
 

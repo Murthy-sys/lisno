@@ -1,4 +1,5 @@
 import { ESTIMATE_COMPONENT_PRICING_BASIS, estimateComponentLineAmountIsValid } from "../domain/estimate-component-pricing.js";
+import { readProjectNumbers } from "./project-number-read.service.js";
 import { calculateEstimateComponentPricing, readCurrentEstimateComponentConfiguration, resolveEstimateComponentPricing, currentEstimateComponentPricingMatches } from "./estimate-component-pricing.service.js";
 import mongoose, { type ClientSession } from "mongoose";
 import { z } from "zod";
@@ -150,6 +151,8 @@ export async function estimateTierChoices(line: Row, source?: Source, session?: 
 export async function presentEstimateTiers(context: Awaited<ReturnType<typeof estimateTierScope>>, session?: ClientSession,
   options: { includeExcluded?: boolean } = {}) {
   const estimate = context.estimate;
+  const projectId = String(context.project._id);
+  const projectNumber = (await readProjectNumbers([projectId], session)).get(projectId) ?? null;
   const savedLines: Row[] = (estimate?.lineItems ?? []).filter((line: Row) => line.source === "configuration" && line.included);
   const presentedLines: Row[] = options.includeExcluded
     ? (estimate?.lineItems ?? []).filter((line: Row) => line.source === "configuration") : savedLines;
@@ -173,7 +176,7 @@ export async function presentEstimateTiers(context: Awaited<ReturnType<typeof es
         choices: await estimateTierChoices(line, source, session) });
     }
   const totalPaise = estimate?.totalPaise ?? (typeof estimate?.total === "number" ? Math.round(estimate.total * 100) : null);
-  return { projectId: String(context.project._id), estimateId: estimate ? String(estimate._id) : null,
+  return { projectId, projectNumber, estimateId: estimate ? String(estimate._id) : null,
     estimateVersion: estimate?.version ?? null, ...editing(context), totalPaise: validMoney(totalPaise) ? totalPaise : null,
     isIncomplete: Boolean(estimate?.isIncomplete) || savedLines.some(line => {
       const source = current.get(line.mainLineId);

@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { Readable } from "node:stream";
 import { createHash } from "node:crypto";
+import { LeadModel } from "../src/models/Lead.js";
 import { ProjectModel } from "../src/models/Project.js";
 import { UserModel } from "../src/models/User.js";
 import { ProjectManagerEvidenceModel, ProjectManagerEvidenceCleanupModel } from "../src/models/ProjectManagerEvidence.js";
@@ -25,6 +26,17 @@ beforeAll(async()=>{replica=await startMongoReplicaSet("pm-workspace-isolated");
 afterAll(async()=>replica?.stop());
 beforeEach(async()=>{vi.restoreAllMocks();await replica.clear();await UserModel.create([pm,other].map(user=>({...user,_id:user.id,emailNormalized:user.email,passwordHash:"fixture-only",active:true})));await ProjectModel.create([['a',pm.id,'active'],['b',pm.id,'on_hold'],['c',other.id,'active']].map(([id,owner,status])=>({_id:id,name:`Project ${id}`,programManagerId:owner,clientName:`Client ${id}`,clientEmail:`client-${id}@example.test`,clientEmailNormalized:`client-${id}@example.test`,clientMobile:"9000000000",status,plannedStartAt:at,plannedEndAt:new Date("2026-12-01")})));});
 describe("PM workspace scoping and truthful portfolio",()=>{
+ it("uses live Lead numbers for authorized project identities without copying them into Projects",async()=>{
+  await LeadModel.collection.insertMany([{_id:"id-lead-a",projectId:"a",projectNumber:"Lisno000012"},{_id:"id-lead-b",projectId:"b",projectNumber:"Lisno000087"}] as never);
+  const service=createProjectManagerWorkspace({audit,now:()=>at,panels:{}});
+  const page=await service.portfolio(pm);
+  expect(page.items.find(project=>project.id==="a")).toMatchObject({projectNumber:"Lisno000012"});
+  expect(page.items.find(project=>project.id==="b")).toMatchObject({projectNumber:"Lisno000087"});
+  expect((await service.overview(pm,"a")).project).toMatchObject({id:"a",projectNumber:"Lisno000012"});
+  await expect(service.overview(other,"a")).rejects.toMatchObject({status:404});
+  expect(await ProjectModel.findById("a").lean()).not.toHaveProperty("projectNumber");
+ });
+
  it("delivers escalation details only to the current designated manager and uses visible source targets",async()=>{
   const manager:PublicUser={id:"manager-a",role:"design_manager",name:"Design Manager",email:"manager-a@example.test"};
   await UserModel.create({...manager,_id:manager.id,emailNormalized:manager.email,passwordHash:"fixture-only",active:true});

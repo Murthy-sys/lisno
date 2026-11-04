@@ -127,7 +127,7 @@ export function MyAccessRequestsPage() {
         <Surface as="section" padding="compact" className="access-administration__directory" aria-label="My access request history" aria-busy={ownQuery.isFetching || undefined}>
           <div className="access-administration__table-scroll" role="region" aria-label="Own access request records" tabIndex={0}>
             <table className="access-administration__table access-requests__table">
-              <thead><tr><th scope="col">Project ID</th><th scope="col">Module</th><th scope="col">Status</th><th scope="col">Reason</th><th scope="col">Created</th><th scope="col">Updated</th><th scope="col">Reviewed</th><th scope="col"><span className="sr-only">Actions</span></th></tr></thead>
+              <thead><tr><th scope="col">System ID</th><th scope="col">Module</th><th scope="col">Status</th><th scope="col">Reason</th><th scope="col">Created</th><th scope="col">Updated</th><th scope="col">Reviewed</th><th scope="col"><span className="sr-only">Actions</span></th></tr></thead>
               <tbody>
                 {page.items.map((request) => (
                   <tr key={request.id}>
@@ -175,7 +175,7 @@ export function MyAccessRequestsPage() {
         <ContextPanel key={summaryId} title="My request details" eyebrow="Project access" className="administration-context-panel" onClose={() => setSummaryId(null)}>
           {summary ? (
             <dl className="administration-summary">
-              <div><dt>Project ID</dt><dd>{summary.projectId}</dd></div>
+              <div><dt>System ID</dt><dd>{summary.projectId}</dd></div>
               <div><dt>Module</dt><dd>{summary.module}</dd></div>
               <div><dt>Status</dt><dd>{labelStatus(summary.status)}</dd></div>
               <div><dt>Reason</dt><dd>{summary.reason}</dd></div>

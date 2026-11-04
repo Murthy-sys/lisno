@@ -1,3 +1,4 @@
+import { readProjectNumbers } from "./project-number-read.service.js";
 import { estimateDimensionSnapshotFields, estimateDimensionSnapshotValid, type EstimateDimensionMetadata } from "../domain/estimate-dimension-snapshot.js";
 import { isCollaborativeEstimate, type EstimationPreparationSource } from "../domain/estimation-lifecycle.js";
 import { isKnowledgeModeTier, type KnowledgeModeTier } from "../domain/ai-estimator-knowledge-mode-tiers.js";
@@ -101,6 +102,7 @@ export interface ProcurementSectionDto {
 }
 
 export interface ProcurementProjectDto {
+  readonly projectNumber: string | null;
   preparationSource?: EstimationPreparationSource;
   issueReadiness?: Awaited<ReturnType<typeof projectWorkOrderIssueReadiness>>;
   taskId: string;
@@ -853,14 +855,19 @@ export function createProcurementService(input: {
           tasks.map((task) => [String(task.estimateId), task])
         );
 
-        const projects: ProcurementProjectDto[] = [];
+        const resolvedProjects: ResolvedProcurementProject[] = [];
         for (const estimate of estimates) {
           const resolved = await resolveProcurementProjectFromEstimate(
             estimate,
             taskByEstimateId.get(String(estimate._id)) ?? null,
             session
           );
-          projects.push(await procurementProjectDto(resolved, session));
+          resolvedProjects.push(resolved);
+        }
+        const numbers = await readProjectNumbers(resolvedProjects.map(({ project }) => String(project._id)), session);
+        const projects: ProcurementProjectDto[] = [];
+        for (const resolved of resolvedProjects) {
+          projects.push(await procurementProjectDto(resolved, session, numbers.get(String(resolved.project._id)) ?? null));
         }
         return projects;
       });
@@ -1259,7 +1266,8 @@ async function probeCommittedExpense(
 
 async function procurementProjectDto(
   resolved: ResolvedProcurementProject,
-  session: ClientSession
+  session: ClientSession,
+  projectNumber: string | null
 ): Promise<ProcurementProjectDto> {
   const { task, project, snapshot } = resolved;
   const bucket = await ProjectFinanceBucketModel.findOne({
@@ -1389,6 +1397,7 @@ async function procurementProjectDto(
     updatedAt: validDate(task.updatedAt ?? task.openedAt).toISOString(),
     projectId: String(project._id),
     projectName: String(project.name),
+    projectNumber,
     clientName: typeof project.clientName === "string" ? project.clientName.trim() || null : null,
     estimateId: snapshot.estimateId,
     estimateVersion: snapshot.estimateVersion,

@@ -71,6 +71,8 @@ export interface QuotationConfigureOperation {
   selectedMainBasketIds: string[];
 }
 export interface QuotationDetail extends Omit<EstimateTiersDetail, "lines"> {
+  readonly projectNumber?: string | null;
+
   workflowVersion: 3;
   phase: "pre" | "post";
   status: EstimateStatus;

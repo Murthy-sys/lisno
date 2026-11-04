@@ -1,4 +1,4 @@
-import { readProjectNumber } from "../domain/project-number.js";
+import { projectNumbersForProjectIds, readProjectNumber } from "../domain/project-number.js";
 import { readProjectInitiationMetadata } from "../domain/project-initiation-metadata.js";
 import { projectManagerAssignmentFromProjection } from "../domain/project-manager-assignment-projection.js";
 import { workflowSpacePlanningSource } from "../domain/workflow-space-planning.js";
@@ -1546,6 +1546,10 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
         )
         .sort(byNameThenId);
       return clone(limit === undefined ? projects : projects.slice(0, limit));
+    },
+
+    async findProjectNumbers(projectIds) {
+      return projectNumbersForProjectIds(projectIds, state.leads);
     },
 
     async pageProjectsForUserRead(user, pagination) {

@@ -1,3 +1,4 @@
+import { ProjectId } from "../../components/projects/ProjectId";
 import { PMCounterpartPanel } from "../project-manager/PMCounterpartPanel";
 import { ProjectChatNavigation } from "../messages";
 import { useState } from "react";
@@ -114,7 +115,7 @@ export function ProjectWorkspace() {
         title={project.name}
         eyebrow="Project workspace"
         breadcrumb={<Link to="/designer" className="back-link"><ArrowLeft aria-hidden="true" /> Back to dashboard</Link>}
-        metadata={<div className="project-hero__meta"><span><MapPin aria-hidden="true" /> {project.location}</span><span><Building2 aria-hidden="true" /> {project.floors.length} floors</span></div>}
+        metadata={<div className="project-hero__meta"><ProjectId projectNumber={project.projectNumber} /><span><MapPin aria-hidden="true" /> {project.location}</span><span><Building2 aria-hidden="true" /> {project.floors.length} floors</span></div>}
         actions={<StatusBadge label={projectStatuses[project.status]} tone={projectTones[project.status]} />}
       />
 

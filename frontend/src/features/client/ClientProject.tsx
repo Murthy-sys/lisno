@@ -1,3 +1,4 @@
+import { ProjectId } from "../../components/projects/ProjectId";
 import { ProjectChatNavigation } from "../messages";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
@@ -31,7 +32,7 @@ export function ClientProject() {
   const sharedEstimation = project.estimationWorkflowVersion === 3;
   const versions = (versionsQuery.data ?? []).filter((version) => version.approvalStatus === "approved" && version.clientVisible);
   return <section className="client-page client-page--project" data-theme="sidebar" aria-labelledby="client-project-title">
-    <PageHeader id="client-project-title" title={project.name} description={project.location} breadcrumb={<Link className="client-project-back" to="/client">Back to projects</Link>} metadata={<span className="client-project-status">{project.status.replaceAll("_", " ")}</span>} actions={sharedEstimation ? <ProjectChatNavigation projectId={projectId} overviewTo={`/client/projects/${projectId}`} presentation="client-project" /> : undefined} />
+    <PageHeader id="client-project-title" title={project.name} description={project.location} breadcrumb={<Link className="client-project-back" to="/client">Back to projects</Link>} metadata={<><ProjectId projectNumber={project.projectNumber} /><span className="client-project-status">{project.status.replaceAll("_", " ")}</span></>} actions={sharedEstimation ? <ProjectChatNavigation projectId={projectId} overviewTo={`/client/projects/${projectId}`} presentation="client-project" /> : undefined} />
     {!sharedEstimation ? <><ProjectChatNavigation projectId={projectId} overviewTo={`/client/projects/${projectId}`} /><PMCounterpartPanel projectId={projectId} /></> : null}
     {project.estimationWorkflowVersion === 2 ? <ClientEstimateRequirements key={`requirements-${projectId}`} projectId={projectId} /> : null}
     {project.estimationWorkflowVersion === 2 ? <ClientEstimateTiers key={`tiers-${projectId}`} projectId={projectId} /> : null}

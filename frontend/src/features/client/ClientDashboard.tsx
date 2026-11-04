@@ -1,3 +1,4 @@
+import { ProjectId } from "../../components/projects/ProjectId";
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronDown } from "lucide-react";
@@ -84,6 +85,7 @@ function ClientProjectCard({ project, latest, loading, failed, onRetry, onQuickV
       <div className="client-project-card__identity">
         <span className="eyebrow">{project.location}</span>
         <h2 id={headingId}>{project.name}</h2>
+        <ProjectId projectNumber={project.projectNumber} />
         <span className={`client-project-card__status client-project-card__status--${project.status}`}>
           {project.status.replaceAll("_", " ").replace(/^./, (letter) => letter.toUpperCase())}
         </span>

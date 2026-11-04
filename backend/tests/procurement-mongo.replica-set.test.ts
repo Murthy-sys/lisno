@@ -73,6 +73,16 @@ afterAll(async () => {
 });
 
 describe("Procurement approved-item workspace and receipt ledger", () => {
+  it("adds live Project ID metadata without rewriting the approved procurement source", async () => {
+    await LeadModel.collection.insertOne({ _id: "procurement-lead", projectId: PROJECT_ID, projectNumber: "Lisno000012" });
+    const before = await EstimateClientReviewRoundModel.findById(ROUND_ID).lean();
+    const service = procurementService(new MemoryStorage());
+    expect(await service.listProjects(procurementActor())).toMatchObject([{ projectId: PROJECT_ID, projectNumber: "Lisno000012" }]);
+    expect(await EstimateClientReviewRoundModel.findById(ROUND_ID).lean()).toEqual(before);
+    await LeadModel.collection.deleteOne({ _id: "procurement-lead" });
+    expect(await service.listProjects(procurementActor())).toMatchObject([{ projectNumber: null }]);
+  });
+
   it("reads immutable pre-approval preparation while design and payment are pending, and blocks spending", async () => {
     await collaborativePreparationFixture();
     const storage = new MemoryStorage();
@@ -193,6 +203,7 @@ describe("Procurement approved-item workspace and receipt ledger", () => {
       return totals;
     }, {});
     expect(counts).toEqual({
+      [`${LeadModel.collection.name}.find`]: 1,
       [`${UserModel.collection.name}.findOne`]: 1,
       [`${EstimateModel.collection.name}.find`]: 1,
       [`${ProjectWorkflowTaskModel.collection.name}.find`]: 1,

@@ -48,6 +48,17 @@ function expectAmount(card: HTMLElement, label: string, value: string) {
 }
 
 describe("Procurement project gallery", () => {
+  it("keeps same-name project references distinct and leaves missing identity explicit", async () => {
+    const source = createProcurementGalleryFixture();
+    const data = source.map((project, index) => ({ ...project, projectName: "Shared residence", projectNumber: ["Lisno000011", "Lisno000027", null][index] }));
+    install(data); mount();
+    const projects = await screen.findAllByRole("article", { name: "Shared residence" });
+    for (const [index, label] of ["Project ID: Lisno000011", "Project ID: Lisno000027", "Project ID not assigned"].entries()) {
+      expect(within(projects[index]!).getByText(label)).toBeVisible();
+      expect(within(projects[index]!).getByRole("link")).toHaveAttribute("href", `/procurement/projects/${data[index]!.projectId}`);
+    }
+  });
+
   it("reconciles unequal projects, real occurrence counts, opened date and client metadata", async () => {
     const data = createProcurementGalleryFixture();
     // A repeated catalogue item in a different room remains a distinct selected occurrence.

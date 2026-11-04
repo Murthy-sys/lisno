@@ -153,6 +153,7 @@ const procurementProject: ProcurementProject = {
 };
 
 const assignedProject: Project = {
+  projectNumber: "Lisno000027",
   id: "project-unestimated", name: "Cedar planning", clientId: "client-cedar", clientName: "Cedar client", clientEmail: "cedar@example.test", clientMobile: "", clientAddress: "",
   initiatingDesignerId: null, assignedEstimatorId: null, assignedDesignerIds: [], managerId: null,
   status: "planning", location: "Chennai", plannedStartAt: "2026-11-01T00:00:00Z", plannedEndAt: "2027-01-01T00:00:00Z", actualStartAt: null, actualEndAt: null,
@@ -245,6 +246,7 @@ describe("ProcurementWorkspace", () => {
     renderApp(["/home"]);
     const assigned = await screen.findByRole("article", { name: "Cedar planning" });
     expect(within(assigned).getByText("Awaiting procurement preparation")).toBeVisible();
+    expect(within(assigned).getByText("Project ID: Lisno000027")).toBeVisible();
     expect(within(assigned).queryByText(/₹|Estimate v|Selected estimate value/)).not.toBeInTheDocument();
     const summary = screen.getByRole("region", { name: "Procurement portfolio summary" });
     expect(within(summary).getByText("2")).toBeVisible();

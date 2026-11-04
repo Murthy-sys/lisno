@@ -27,6 +27,7 @@ const assignedTask: DesignPlanTask = {
   estimateId: "estimate-1",
   projectId: "project-1",
   projectName: "Aurora Villa",
+  projectNumber: "Lisno000031",
   clientName: "Priya Shah",
   status: "assigned",
   designPlanVersion: 0,
@@ -50,6 +51,7 @@ const secondTask: DesignPlanTask = {
   estimateId: "estimate-2",
   projectId: "project-2",
   projectName: "Coastal Apartment",
+  projectNumber: "Lisno000084",
   clientName: "Rhea Kapoor",
   status: "in_progress"
 };
@@ -301,6 +303,8 @@ describe("DesignerDesignPlanTasksPage", () => {
     const stageBar = screen.getByRole("list", { name: "Project workflow stages" });
     const queue = screen.getByRole("region", { name: "Assigned projects" });
     const selectedProject = screen.getByRole("region", { name: "Selected project workspace" });
+    expect(within(queue).getByText("Project ID: Lisno000031")).toBeVisible();
+    expect(within(selectedProject).getByText("Project ID: Lisno000031")).toBeVisible();
     expect(stageBar.compareDocumentPosition(queue) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(stageBar.compareDocumentPosition(selectedProject) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(selectedProject).toContainElement(progress);

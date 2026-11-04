@@ -1,3 +1,4 @@
+import { PROJECT_NUMBER_SCHEMA } from "./project-number.js";
 /** Runtime Zod/service validation remains authoritative for role, source and transition checks. */
 const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
 const text = { type: "string" };
@@ -55,7 +56,7 @@ export const PROJECT_MANAGER_SCHEMAS = {
     description: "Authorized operational view. Paginated tabs report the exact matching record total before offset/limit. Vendor records are flat (summary, notice, certification and milestone); quality includes current weekly candidates and historical audits. Reads do not create workflow records." },
   PMProgress: { ...object({ basis: { ...text, enum: ["approved_execution_scope_v1"] }, actual: percentage, planned: percentage, availability, sourceRevision: nullableText, issues: { type: "array", items: text }, requiredLines: integer, coveredLines: integer, zeroValueLines: integer, reportedComplete: integer, siteVerified: integer, clientAccepted: integer }),
     description: "Quantity-normalized executable progress weighted by frozen client-approved ex-GST line amounts. Missing/ambiguous required source returns null, never fabricated zero. Planned progress uses inclusive confirmed calendar dates. Reported progress, Site verification and Client acceptance are distinct." },
-  PMProject: object({ id, name: text, clientName: text, location: text, status: { ...text, enum: ["planning", "active", "on_hold", "completed"] }, health, progress: ref("PMProgress"), plannedEndAt: { ...dateTime, nullable: true }, approvedNetPaise: paise, issues: { type: "array", items: text }, activeAlerts: integer }),
+  PMProject: object({ projectNumber: PROJECT_NUMBER_SCHEMA, id, name: text, clientName: text, location: text, status: { ...text, enum: ["planning", "active", "on_hold", "completed"] }, health, progress: ref("PMProgress"), plannedEndAt: { ...dateTime, nullable: true }, approvedNetPaise: paise, issues: { type: "array", items: text }, activeAlerts: integer }),
   PMAlert: object({ id: sourceId, projectId: id, projectName: text, tab, entityId: { ...sourceId, nullable: true }, offset: integer, title: text, detail: text, severity, dueAt: { ...text, nullable: true } }, ["id", "projectId", "projectName", "tab", "entityId", "title", "detail", "severity", "dueAt"]),
   PMPortfolio: object({ items: array("PMProject"), total: integer, counts: object({ active: integer, atRisk: integer, critical: integer, setup: integer, onTrack: integer, incomplete: integer }), alerts: { ...array("PMAlert"), maxItems: 8 }, alertTotal: integer, calculatedAt: dateTime }),
   PMAlertPage: object({ items: array("PMAlert"), total: integer }),

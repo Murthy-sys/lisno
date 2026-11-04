@@ -1,3 +1,4 @@
+import { PROJECT_NUMBER_SCHEMA } from "./project-number.js";
 const id = { type: "string", minLength: 1, maxLength: 500 };
 const version = { type: "integer", minimum: 1, maximum: Number.MAX_SAFE_INTEGER };
 const tier = { type: "string", enum: ["signature", "premium", "functional"] };
@@ -28,7 +29,7 @@ export const ESTIMATE_TIER_SCHEMAS = {
     ratePaise: money, amountPaise: money, selectedInHouseComponentIds: { type: "array", items: id },
     choices: { type: "array", maxItems: 3, items: ref("EstimateTierChoice") } },
     ["id", "mainLineId", "mainLineName", "roomName", "quantity", "uomName", "pricingMode", "modeTier", "ratePaise", "amountPaise", "choices"]),
-  EstimateTierChoices: { ...object({ projectId: id, estimateId: { ...id, nullable: true }, estimateVersion: { ...version, nullable: true },
+  EstimateTierChoices: { ...object({ projectNumber: PROJECT_NUMBER_SCHEMA, projectId: id, estimateId: { ...id, nullable: true }, estimateVersion: { ...version, nullable: true },
     editingAllowed: boolean, editingBlockReason: { type: "string", enum: ["review_pending", "closed", "not_started"], nullable: true },
     totalPaise: money, isIncomplete: boolean, lines: { type: "array", items: ref("EstimateTierLine") } }),
     description: "Safe working-estimate projection, separate from immutable submitted quotations. Clients receive only their visible included lines. The total still includes hidden amounts. Tier prices contain no raw Configuration or margin payloads." }

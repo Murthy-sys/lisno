@@ -1,3 +1,5 @@
+import { ProjectId } from "../../components/projects/ProjectId";
+import { invalidateProjectIdentityQueries } from "../../api/projectNameSync";
 import { useEstimateInHousePricing } from "./useEstimateInHousePricing";
 import { ESTIMATE_COMPONENT_PRICING_BASIS } from "../../../../shared/estimation/estimateComponentPricing";
 import { canonicalEstimateDimensions, estimateDimensionRulesEqual } from "../../../../shared/estimation/estimateDimensions";
@@ -536,6 +538,7 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
   };
   const rememberDraftSave = (estimate: EstimateDraft, submittedLeadId: string, submittedInput: EstimateDraftInput, submittedLineState: readonly ConfiguredLineDraft[]) => {
     if (submittedLeadId === leadId) cancelRecommendationOpening();
+    const previousNumber = queryClient.getQueryData<EstimateDraft>(leadKeys.estimate(submittedLeadId))?.projectNumber;
     const cached = queryClient.setQueryData<EstimateDraft>(leadKeys.estimate(submittedLeadId), (current) => ({
       ...retainProjectNumber(estimate, current), clientFeedback: estimate.clientFeedback === undefined ? current?.clientFeedback : estimate.clientFeedback
     }));
@@ -543,6 +546,10 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
       queryClient.setQueryData<Lead>(leadKeys.detail(submittedLeadId), (current) => current
         ? { ...current, projectNumber: cached.projectNumber }
         : undefined);
+      const savedProjectId = cached.projectId ?? queryClient.getQueryData<Lead>(leadKeys.detail(submittedLeadId))?.projectId;
+      if (savedProjectId && previousNumber !== cached.projectNumber) {
+        void invalidateProjectIdentityQueries(queryClient, savedProjectId);
+      }
     }
     // The draft is committed even if the following submission fails.
     void Promise.all([
@@ -1123,7 +1130,7 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
   return <section ref={workspaceRef} className={`estimate-workspace estimator-dashboard${tab === "configure" ? " estimate-workspace--configure-view" : " estimate-workspace--item-view estimate-workspace--revision-workspace"}${boundedBuilder || historical ? " estimate-workspace--compact-builder" : ""}`} aria-labelledby="estimate-title">
     {tab === "configure" ? <>
       {backControl}
-      <header className="estimate-workspace__header"><div className="estimate-workspace__title"><p className="eyebrow">Estimate draft · {leadItem.clientName}</p><h1 id="estimate-title">Configure estimate</h1><p>{leadItem.projectName} · {leadItem.location}<span className="estimate-workspace__project-number">{(saved.data?.projectNumber ?? leadItem.projectNumber) ? `Project number: ${saved.data?.projectNumber ?? leadItem.projectNumber}` : "Project number not assigned"}</span></p></div><div className="estimate-workspace__summary"><strong>{totalLabel(totals.total)}</strong><span>Total including GST</span></div></header>
+      <header className="estimate-workspace__header"><div className="estimate-workspace__title"><p className="eyebrow">Estimate draft · {leadItem.clientName}</p><h1 id="estimate-title">Configure estimate</h1><p>{leadItem.projectName} · {leadItem.location}<ProjectId className="estimate-workspace__project-number" projectNumber={saved.data?.projectNumber ?? leadItem.projectNumber} /></p></div><div className="estimate-workspace__summary"><strong>{totalLabel(totals.total)}</strong><span>Total including GST</span></div></header>
       {projectNavigation}
     </> : <><h1 id="estimate-title" className="sr-only">Estimate workspace</h1>{viewControls}</>}
     {!historical && publicationBlocked ? <p className="estimate-notice" role="status">{quotationWorkflow ? "Resolve client requests before submitting this quotation." : "Submission is unavailable until client requests are resolved and the current design scope is approved for post-estimation."}</p> : null}

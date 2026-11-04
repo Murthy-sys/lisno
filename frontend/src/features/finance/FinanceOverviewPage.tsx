@@ -1,3 +1,4 @@
+import { ProjectId } from "../../components/projects/ProjectId";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { ArrowUpRight, CalendarClock } from "lucide-react";
 import { Link } from "react-router-dom";
@@ -120,7 +121,7 @@ function FinanceProjectCard({ bucket }: { bucket: ProjectFinanceBucket }) {
           aria-label={`View ${bucket.projectName} financial details`}
         >
           <div className="finance-project-card__identity">
-            <h3>{bucket.projectName}</h3>
+            <h3>{bucket.projectName}</h3><ProjectId projectNumber={bucket.projectNumber} />
             <div className="finance-project-card__badges">
               <StatusBadge tone={workflowStatus.tone} label={workflowStatus.label} />
               {bucket.overBudget ? <StatusBadge tone="danger" label="Over budget" /> : null}

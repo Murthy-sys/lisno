@@ -45,6 +45,7 @@ export interface EstimateTierLine {
 }
 
 export interface EstimateTiersDetail {
+  readonly projectNumber?: string | null;
   projectId: string;
   estimateId: string | null;
   estimateVersion: number | null;

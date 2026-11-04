@@ -134,6 +134,8 @@ export type TaskEventType =
   | "deadline_revised";
 
 export interface Project {
+  readonly projectNumber?: string | null;
+
   estimationWorkflowVersion?: 2 | 3;
   id: string;
   name: string;
@@ -459,6 +461,8 @@ export type DesignPlanStatus =
   | "approved";
 
 export interface DesignPlanTask {
+  readonly projectNumber?: string | null;
+
   leadId?: string;
   estimationWorkflowVersion?: 2 | 3;
   quotationApproved?: boolean;
@@ -591,6 +595,8 @@ export interface WorkerAssignmentOption {
 }
 
 export interface ProjectFinanceBucket {
+  readonly projectNumber?: string | null;
+
   baselinePhase?: "pre" | "post";
   originalApprovedContractTotalPaise?: number;
   id: string;
@@ -746,6 +752,8 @@ export interface WorkOrderIssueReadiness {
 }
 
 export interface ProcurementProject {
+  readonly projectNumber?: string | null;
+
   preparationSource?: EstimationPreparationSource;
   issueReadiness?: WorkOrderIssueReadiness;
   taskId: string;
@@ -1256,6 +1264,8 @@ export interface CreateTaskInput {
 }
 
 export interface ClientProjectSummary {
+  readonly projectNumber?: string | null;
+
   id: string;
   name: string;
   status: ProjectStatus;
@@ -1690,6 +1700,8 @@ export interface ProjectPendingAction {
 }
 
 export interface ProjectStatusSummary {
+  readonly projectNumber?: string | null;
+
   projectId: string;
   projectName: string;
   projectStatus: string;

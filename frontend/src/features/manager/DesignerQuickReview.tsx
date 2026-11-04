@@ -1,3 +1,4 @@
+import { ProjectId } from "../../components/projects/ProjectId";
 import { Link } from "react-router-dom";
 import type { DesignerSummary, PublicUser } from "../../api/types";
 import { Button } from "../../components/ui/Button";
@@ -41,7 +42,7 @@ export function DesignerQuickReview({ designer, base, onClose }: { designer: Rev
           <div><dt>Delivery risk</dt><dd>{designer.overdueCount} red · {designer.yellowRiskCount} yellow</dd></div>
           <div><dt>Evaluation</dt><dd>{designer.pendingEvaluation ? "Pending" : "Recorded"}</dd></div>
         </dl>
-        <section><h3>Assigned projects</h3>{designer.projects.length ? <ul className="management-review__list">{designer.projects.map((project) => <li key={project.id}><Link to={`${base}/projects/${encodeURIComponent(project.id)}`}>{project.name}</Link>{project.progress !== undefined ? <span>{project.progress}% complete</span> : null}</li>)}</ul> : <p>No assigned projects.</p>}</section>
+        <section><h3>Assigned projects</h3>{designer.projects.length ? <ul className="management-review__list">{designer.projects.map((project) => <li key={project.id}><Link to={`${base}/projects/${encodeURIComponent(project.id)}`}>{project.name}</Link><ProjectId projectNumber={project.projectNumber} />{project.progress !== undefined ? <span>{project.progress}% complete</span> : null}</li>)}</ul> : <p>No assigned projects.</p>}</section>
         <section><h3>Risk queue</h3>{riskTasks.length ? <ul className="management-review__list">{riskTasks.map((task) => <li key={task.id}><strong>{task.title}</strong><RiskBadge risk={task.risk} /><span>{task.risk.reason}</span></li>)}</ul> : <p>No red or yellow tasks in this delivery record.</p>}</section>
         <p className="management-review__note">Calculated KPI and manager or head evaluations are separate records. Open the workspace to review evaluation history and deadlines.</p>
       </div>

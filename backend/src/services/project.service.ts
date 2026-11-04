@@ -79,11 +79,13 @@ export interface CreateTaskInput {
 }
 
 export type DerivedProject = ProjectRecord & { progress: number };
+export type NumberedProject = DerivedProject & { readonly projectNumber: string | null };
 
 export type ClientProject = Pick<
-  DerivedProject,
+  NumberedProject,
   | "estimationWorkflowVersion"
   | "id"
+  | "projectNumber"
   | "name"
   | "status"
   | "location"
@@ -140,7 +142,7 @@ export interface ProjectService {
   list(
     actor: PublicUser,
     pagination: PaginationInput
-  ): Promise<PageResult<DerivedProject | ClientProject>>;
+  ): Promise<PageResult<NumberedProject | ClientProject>>;
   clientSummaries(
     actor: PublicUser,
     pagination: PaginationInput
@@ -168,6 +170,7 @@ export interface ProjectService {
 }
 
 export type RiskDecoratedProjectHierarchy = Omit<ProjectHierarchy, "floors"> & {
+  readonly projectNumber: string | null;
   progress: number;
   floors: Array<
     FloorRecord & {
@@ -367,12 +370,15 @@ export function createProjectService(
       const page = user.role === "procurement" || user.role === "site_manager"
         ? await repository.pageProjectsForUserRead(user, pagination)
         : await repository.pageProjectsForUserInModule(user, module, pagination);
-      const tasks = await repository.listTasksForProjectIds(
-        page.items.map((project) => project.id)
-      );
-      const items = page.items.map((project) =>
-        deriveProjectRead(project, tasks.filter((task) => task.projectId === project.id))
-      );
+      const projectIds = page.items.map((project) => project.id);
+      const [tasks, numbers] = await Promise.all([
+        repository.listTasksForProjectIds(projectIds),
+        repository.findProjectNumbers(projectIds)
+      ]);
+      const items = page.items.map((project) => ({
+        ...deriveProjectRead(project, tasks.filter((task) => task.projectId === project.id)),
+        projectNumber: numbers.get(project.id) ?? null
+      }));
       return {
         ...page,
         items:
@@ -391,19 +397,21 @@ export function createProjectService(
         pagination
       );
       const projectIds = page.items.map((project) => project.id);
-      const [tasks, floors] = await Promise.all([
+      const [tasks, floors, numbers] = await Promise.all([
         repository.listTasksForProjectIds(projectIds),
-        repository.listFloorsForProjectIds(projectIds)
+        repository.listFloorsForProjectIds(projectIds),
+        repository.findProjectNumbers(projectIds)
       ]);
       return {
         ...page,
         items: page.items.map((project) => ({
-          ...toClientProject(
-            deriveProjectRead(
+          ...toClientProject({
+            ...deriveProjectRead(
               project,
               tasks.filter((task) => task.projectId === project.id)
-            )
-          ),
+            ),
+            projectNumber: numbers.get(project.id) ?? null
+          }),
           floorCount: floors.filter((floor) => floor.projectId === project.id).length
         }))
       };
@@ -513,7 +521,8 @@ export function createProjectService(
       if (!hierarchy) {
         throw new ApiError(404, "NOT_FOUND", "The requested resource was not found.");
       }
-      const derivedHierarchy = deriveHierarchy(hierarchy);
+      const numbers = await repository.findProjectNumbers([projectId]);
+      const derivedHierarchy = { ...deriveHierarchy(hierarchy), projectNumber: numbers.get(projectId) ?? null };
       if (actor.role !== "client") {
         const now = clock();
         return {
@@ -757,10 +766,11 @@ export function createProjectService(
   };
 }
 
-function toClientProject(project: DerivedProject): ClientProject {
+function toClientProject(project: NumberedProject): ClientProject {
   return {
     ...([2, 3].includes(project.estimationWorkflowVersion ?? 0) ? { estimationWorkflowVersion: project.estimationWorkflowVersion } : {}),
     id: project.id,
+    projectNumber: project.projectNumber,
     name: project.name,
     status: project.status,
     location: project.location,

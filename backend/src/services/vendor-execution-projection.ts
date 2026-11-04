@@ -1,3 +1,4 @@
+import { readProjectNumbers } from "./project-number-read.service.js";
 import { resolveProjectManagerAssignment } from "./project-manager-assignment.service.js";
 import type { ClientSession } from "mongoose";
 import type { ExecutionAction, ExecutionCounts, ExecutionDailyStatus, ExecutionPolicy, ExecutionVendorReport, ExecutionWork } from "../contracts/vendor-execution.js";
@@ -24,6 +25,13 @@ export type ExecutionProjectionCache = Map<string, Promise<any>>;
 export function executionCached<T>(cache: ExecutionProjectionCache, key: string, read: () => Promise<T>): Promise<T> {
   if (!cache.has(key)) cache.set(key, read());
   return cache.get(key)!;
+}
+
+export async function cacheExecutionProjectNumbers(projectIds: readonly string[], session: ClientSession, cache: ExecutionProjectionCache): Promise<void> {
+  const pending = [...new Set(projectIds)].filter(id => !cache.has(`project-number:${id}`));
+  if (!pending.length) return;
+  const numbers = await readProjectNumbers(pending, session);
+  for (const id of pending) cache.set(`project-number:${id}`, Promise.resolve(numbers.get(id) ?? null));
 }
 export type DailyReader = (assignment: ExecutionRow, state: ExecutionRow | null, policy: ExecutionPolicy, at: Date, session: ClientSession) => Promise<ExecutionDailyStatus>;
 export function iso(value: unknown): string | null { return value ? new Date(value as string | Date).toISOString() : null; }
@@ -73,7 +81,10 @@ export async function defaultExecutionDaily(assignment: ExecutionRow, state: Exe
   return { localDate, dueAt: due.toISOString(), state: report ? new Date(report.occurredAt) <= due ? "on_time" : "late" : at >= due ? "missing" : "due", reportedAt: iso(report?.occurredAt) };
 }
 
-export async function executionWorkDto(assignment: ExecutionRow, state: ExecutionRow | null, actor: PublicUser, policy: ExecutionPolicy, at: Date, session: ClientSession, readDaily: DailyReader, cache: ExecutionProjectionCache = new Map()): Promise<ExecutionWork> {
+export async function executionWorkDto(assignment: ExecutionRow, state: ExecutionRow | null, actor: PublicUser, policy: ExecutionPolicy, at: Date, session: ClientSession, readDaily: DailyReader, cache: ExecutionProjectionCache = new Map(), options: { includeProjectNumber?: boolean } = {}): Promise<ExecutionWork> {
+  const includeProjectNumber = options.includeProjectNumber !== false;
+  if (includeProjectNumber) await cacheExecutionProjectNumbers([String(assignment.projectId)], session, cache);
+  const projectNumber = includeProjectNumber ? await cache.get(`project-number:${assignment.projectId}`) as string | null : undefined;
   await cacheLatestVendorReports([assignment], new Map(state ? [[String(assignment._id), state]] : []), session, cache);
   const latestVendorReport = await cache.get(reportCacheKey(assignment, state)) as ExecutionVendorReport | null;
   const project = await executionCached(cache, `project:${assignment.projectId}`, async () => ProjectModel.findById(assignment.projectId).session(session).lean()) as ExecutionRow | null;
@@ -147,7 +158,7 @@ export async function executionWorkDto(assignment: ExecutionRow, state: Executio
   let nextOwner: ExecutionWork["nextOwner"] = accepted || !currentOrder ? "none" : !accessActive ? "super_admin" : !state ? legacyReview ? "client" : "site_manager" : !state.acknowledgedAt ? "vendor" : !state.schedule || state.status === "awaiting_verification" || state.hold ? "site_manager" : status === "site_verified" ? "client" : "vendor";
   if (!siteManager && nextOwner === "site_manager") nextOwner = "super_admin";
   return {
-    id: String(assignment._id), projectId: assignment.projectId, projectName: project?.name ?? assignment.projectId, vendorId: assignment.vendorId, vendorName: vendor?.name ?? order?.vendorName ?? assignment.vendorId,
+    id: String(assignment._id), projectId: assignment.projectId, projectName: project?.name ?? assignment.projectId, ...(includeProjectNumber ? { projectNumber } : {}), vendorId: assignment.vendorId, vendorName: vendor?.name ?? order?.vendorName ?? assignment.vendorId,
     orderId: assignment.orderId, orderNumber: revision?.orderNumber ?? order?.orderNumber ?? assignment.orderId, orderRevision: assignment.orderRevision, lineId: assignment.lineId, sourceLineItemKey: assignment.sourceLineItemKey,
     itemName: assignment.itemName, roomName: assignment.roomName, description: assignment.description, scopeType: assignment.scopeType ?? null,
     mainBasketId: source?.mainBasketId ?? null, mainBasketName: source?.mainBasketName ?? null, subBasketId: source?.subBasketId ?? null, subBasketName: source?.subBasketName ?? null, mainLineId: source?.mainLineId ?? null,

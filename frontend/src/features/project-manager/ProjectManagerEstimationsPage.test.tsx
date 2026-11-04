@@ -19,7 +19,7 @@ const lineOne: PMMainLineScope = { mainLineId: "main-line-one", mainLineName: "O
 ], scopeDigest: "1".repeat(64), canSuggest: true, unavailableReason: null };
 const lineTwo: PMMainLineScope = { ...lineOne, mainLineId: "main-line-two", mainLineName: "Wardrobe", occurrences: [{ sourceLineItemKey: "scope-three", sectionId: "room-two", roomId: "room-two", roomName: "Bedroom" }], scopeDigest: "2".repeat(64) };
 const approved: PMEstimateView = {
-  project: { id: "project-a", name: "Cedar residence" }, availability: "available", reason: null, source, approvedAt: "2026-10-20T10:00:00.000Z",
+  project: { id: "project-a", name: "Cedar residence", projectNumber: "Lisno000011" }, availability: "available", reason: null, source, approvedAt: "2026-10-20T10:00:00.000Z",
   lines: [
     { ...lineOne.occurrences[0]!, mainLineId: lineOne.mainLineId, mainLineName: lineOne.mainLineName, mainBasketId: "basket-one", mainBasketName: "Carpentry", specification: "Saved approved timber specification", included: true, quantity: 2, unit: "sq ft", ratePaise: 12345, amountPaise: 24690, dimensions: [{ label: "Length", value: "2.050", unit: "ft" }] },
     { ...lineOne.occurrences[1]!, mainLineId: lineOne.mainLineId, mainLineName: lineOne.mainLineName, mainBasketId: "basket-one", mainBasketName: "Carpentry", specification: "Bedroom approved specification", included: true, quantity: 1, unit: "sq ft", ratePaise: null, amountPaise: 0, dimensions: [] },
@@ -97,6 +97,12 @@ async function openCreate(line = "Oak panelling", room = "Living room") {
   await userEvent.click(trigger);
   return screen.findByRole("dialog", { name: "Suggest a vendor" });
 }
+
+it("shows the canonical ID beside the loaded estimate project name", async () => {
+  mount();
+  expect(await screen.findByText("Project ID: Lisno000011")).toBeVisible();
+  expect(screen.getByRole("heading", { level: 1, name: "Cedar residence" })).toBeVisible();
+});
 
 describe("Project Manager approved estimations", () => {
   it("shows the chosen Main Line's linked vendors in the shared picker", async () => {

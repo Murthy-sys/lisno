@@ -1,3 +1,4 @@
+import { ProjectId } from "../../../components/projects/ProjectId";
 import { useEffect, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 
@@ -97,7 +98,7 @@ function ProjectRow({ tab, row, dataQuality, mobile = false }: { tab: DashboardT
   const link = `/admin/projects/${encodeURIComponent(row.projectId)}`;
   if (mobile) return (
     <li className="dashboard-mobile-row">
-      <div><Link to={link}>{row.projectName}</Link><StatusBadge label={risk.label} tone={risk.tone} /></div>
+      <div><span className="dashboard-mobile-row__identity"><Link to={link}>{row.projectName}</Link><small><ProjectId projectNumber={row.projectNumber} /></small></span><StatusBadge label={risk.label} tone={risk.tone} /></div>
       <dl>
         <div><dt>Status</dt><dd>{humanize(row.projectStatus)}</dd></div>
         <div><dt>Location</dt><dd>{row.location}</dd></div>
@@ -109,7 +110,7 @@ function ProjectRow({ tab, row, dataQuality, mobile = false }: { tab: DashboardT
   );
   return (
     <tr>
-      <th scope="row"><Link to={link}>{row.projectName}</Link><small>{row.location}</small></th>
+      <th scope="row"><Link to={link}>{row.projectName}</Link><small><ProjectId projectNumber={row.projectNumber} /></small><small>{row.location}</small></th>
       <td>{humanize(row.projectStatus)}</td>
       <td><ModuleSummary tab={tab} row={row} dataQuality={dataQuality} />{tab === "procurement" && row.procurement && !isDashboardMetricUnavailable(dataQuality, "procurement.averageProgress") ? <ProgressBar value={row.procurement.progress} label={`${row.projectName} procurement progress`} valueText={`${row.procurement.progress}%`} /> : null}</td>
       <td>{formatDashboardDate(row.plannedEndAt)}</td>

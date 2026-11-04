@@ -179,9 +179,9 @@ describe("LeadDashboard", () => {
     renderApp(["/estimator-sales"]);
     const first = await screen.findByRole("article", { name: "Aurora Villa" });
     const second = screen.getByRole("article", { name: "Cedar Loft" });
-    expect(within(first).getByText("Project number: Lisno000021")).toBeVisible();
-    expect(within(first).queryByText("Project number: Lisno1000000")).not.toBeInTheDocument();
-    expect(within(second).getByText("Project number: Lisno1000000")).toBeVisible();
+    expect(within(first).getByText("Project ID: Lisno000021")).toBeVisible();
+    expect(within(first).queryByText("Project ID: Lisno1000000")).not.toBeInTheDocument();
+    expect(within(second).getByText("Project ID: Lisno1000000")).toBeVisible();
   });
 
   it("shows truthful metrics, lead details, next actions, and the existing estimate routes", async () => {

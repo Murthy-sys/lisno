@@ -2,6 +2,7 @@ import { apiClient } from "../../api/client";
 import type { ProcurementVendorReference } from "../../api/types";
 
 export interface VendorSuggestionProject {
+  readonly projectNumber?: string | null;
   projectId: string;
   projectName: string;
   estimateId: string;

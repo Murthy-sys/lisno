@@ -1,5 +1,5 @@
 import { QueryClient } from "@tanstack/react-query";
-import { screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { MemoryRouter } from "react-router-dom";
@@ -8,7 +8,7 @@ import type { AuthorizationSnapshot } from "../../api/authorization-contract";
 import { authorizationFor } from "../../test/authFixtures";
 import { renderWithQuery } from "../../test/render";
 import { server } from "../../test/server";
-import { ExecutionPortfolioPage, ProjectExecutionPage, ProjectExecutionTracker } from "./ExecutionWorkspace";
+import { ExecutionPortfolioPage, ProjectExecutionPage, ProjectExecutionTracker, VendorExecutionWorkspace } from "./ExecutionWorkspace";
 import { ExecutionPolicyPanel } from "./ExecutionPolicyPanel";
 import { executionFixture, executionPageFixture } from "./executionTestFixtures";
 const authState = vi.hoisted(() => ({ user: { id: "manager-one", role: "site_manager" }, authorization: null as AuthorizationSnapshot | null }));
@@ -17,6 +17,27 @@ beforeEach(() => { authState.authorization = authorizationFor("site_manager", []
 vi.mock("./ExecutionLiveProvider",() => ({useExecutionConnection:() => "live"}));
 
 describe("execution project workflow", () => {
+  it("shows the authorized execution identity without general project read permission", async () => {
+    const page = executionPageFixture([]);
+    server.use(http.get("/api/v1/projects/project-one/execution", () => HttpResponse.json({ data: { ...page, project: { ...page.project!, projectNumber: "Lisno000011" } } })));
+    renderWithQuery(<MemoryRouter><ProjectExecutionPage projectId="project-one" /></MemoryRouter>);
+    expect(await screen.findByText("Project ID: Lisno000011")).toBeVisible();
+    expect(screen.queryByText("Project ID not assigned")).not.toBeInTheDocument();
+  });
+
+  it("distinguishes same-name vendor project assignments using authorized work metadata", async () => {
+    const items = [
+      { ...executionFixture, projectNumber: "Lisno000011" },
+      { ...executionFixture, id: "work-two", projectId: "project-two", projectNumber: "Lisno000027" }
+    ];
+    server.use(http.get("/api/v1/vendor/work/execution", () => HttpResponse.json({ data: executionPageFixture(items) })));
+    renderWithQuery(<MemoryRouter><VendorExecutionWorkspace /></MemoryRouter>);
+    const rows = await screen.findByRole("region", { name: "Main Line assignments" });
+    expect(within(rows).getByText("Project ID: Lisno000011")).toBeVisible();
+    expect(within(rows).getByText("Project ID: Lisno000027")).toBeVisible();
+    expect(within(rows).getAllByText("Oak residence")).toHaveLength(2);
+  });
+
   it("shows assigned project details and pending progress before any work is issued", async () => {
     authState.authorization = authorizationFor("site_manager", ["projects.read", "projects.design_workflow.read"]);
     server.use(http.get("/api/v1/projects/project-one", () => HttpResponse.json({ data: { id: "project-one", name: "Oak residence", clientName: "Oak client", location: "Pune", status: "planning", plannedStartAt: "", plannedEndAt: "", floors: [] } })),
@@ -60,11 +81,12 @@ describe("execution project workflow", () => {
     expect(screen.queryByRole("option",{name:"Daily update"})).not.toBeInTheDocument();
   });
   it("links project rows with backend aggregates and real project identity", async () => {
-    server.use(http.get("/api/v1/execution/projects",() => HttpResponse.json({data:{items:[{id:"project-one",name:"Oak residence",status:"active",counts:{...executionPageFixture().counts,open:17}}],total:1,limit:25,offset:0}})));
+    server.use(http.get("/api/v1/execution/projects",() => HttpResponse.json({data:{items:[{id:"project-one",name:"Oak residence",projectNumber:"Lisno000011",status:"active",counts:{...executionPageFixture().counts,open:17}}],total:1,limit:25,offset:0}})));
     renderWithQuery(<MemoryRouter><ExecutionPortfolioPage /></MemoryRouter>);
     const link = await screen.findByRole("link",{name:"Open Oak residence execution"});
     expect(link).toHaveAttribute("href","/projects/project-one/execution");
     expect(screen.getByText("17")).toBeVisible();
+    expect(screen.getByText("Project ID: Lisno000011")).toBeVisible();
     expect(screen.getByText("Live updates")).toBeVisible();
   });
   it("records schedule policy changes with reason and expected version", async () => {

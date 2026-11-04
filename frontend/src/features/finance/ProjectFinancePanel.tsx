@@ -1,3 +1,4 @@
+import { ProjectId } from "../../components/projects/ProjectId";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 
@@ -114,6 +115,7 @@ export function ProjectFinancePanel({
         <div>
           <p className="eyebrow">Project financial details</p>
           <h2 id={`project-finance-${projectId}`}>{heading}</h2>
+          {trustedBucket ? <ProjectId projectNumber={trustedBucket.projectNumber} /> : null}
         </div>
         {trustedBucket ? (
           <StatusBadge

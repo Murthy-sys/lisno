@@ -7,8 +7,8 @@ import { projectFinanceKeys } from "../features/finance/projectFinanceApi";
 import { projectWorkflowKeys } from "../features/workflow/projectWorkflowApi";
 import { projectReadKeys } from "../features/projects/projectReadQueries";
 
-/** Refresh live project presentations after a canonical rename, without editing snapshots. */
-export async function invalidateProjectNameQueries(client: QueryClient, projectId: string): Promise<void> {
+/** Refresh live project identity after a committed name or number change. */
+export async function invalidateProjectIdentityQueries(client: QueryClient, projectId: string): Promise<void> {
   await Promise.all([
     client.invalidateQueries({ queryKey: [...adminProjectKeys.all, "page"] }),
     client.invalidateQueries({ queryKey: adminProjectKeys.detail(projectId) }),
@@ -21,6 +21,24 @@ export async function invalidateProjectNameQueries(client: QueryClient, projectI
     client.invalidateQueries({ queryKey: projectFinanceKeys.bucket(projectId) }),
     client.invalidateQueries({ queryKey: projectWorkflowKeys.all }),
     client.invalidateQueries({ queryKey: ["management"] }),
-    client.invalidateQueries({ queryKey: ["access-requests"] })
+    client.invalidateQueries({ queryKey: ["access-requests"] }),
+    client.invalidateQueries({ queryKey: ["quotation", projectId, "detail"] }),
+    client.invalidateQueries({ queryKey: ["estimate-tiers", projectId] }),
+    client.invalidateQueries({ queryKey: ["procurement", "projects"] }),
+    client.invalidateQueries({ queryKey: ["procurement", "suggestion-projects"] }),
+    client.invalidateQueries({ queryKey: ["procurement", "vendor-suggestions", projectId] }),
+    client.invalidateQueries({ queryKey: ["project-manager"], predicate: query =>
+      query.queryKey[1] === "estimations" && query.queryKey[3] === projectId || query.queryKey.some(part => typeof part === "string" &&
+        (part.startsWith("/project-manager/projects") || part.startsWith(`/projects/${encodeURIComponent(projectId)}/pm/`))) }),
+    client.invalidateQueries({ queryKey: ["execution"], predicate: query => {
+      const kind = query.queryKey[1];
+      return kind === "projects" || kind === "mine" || kind === "project" && query.queryKey[2] === projectId ||
+        kind === "detail" && (query.state.data as { projectId?: string } | undefined)?.projectId === projectId;
+    } }),
+    client.invalidateQueries({ queryKey: ["project-chat"], predicate: query =>
+      query.queryKey[2] === "conversations" || query.queryKey[2] === "project" &&
+      query.queryKey[3] === projectId && query.queryKey[4] === "summary" })
   ]);
 }
+
+export const invalidateProjectNameQueries = invalidateProjectIdentityQueries;

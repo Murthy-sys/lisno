@@ -1,3 +1,4 @@
+import { ProjectId, projectIdLabel } from "../../components/projects/ProjectId";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useEffect, useState, type FormEvent } from "react";
 import { Link, useLocation, useSearchParams } from "react-router-dom";
@@ -95,7 +96,7 @@ export function SuperAdminProjectBudgets() {
         <label>Project<select value={filters.projectId ?? ""} onChange={(event) => updateFilters({ projectId: event.target.value })}>
           <option value="">All projects</option>
           {filters.projectId && !page?.filterOptions?.projects.some((project) => project.id === filters.projectId) ? <option value={filters.projectId}>Selected project</option> : null}
-          {page?.filterOptions?.projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}
+          {page?.filterOptions?.projects.map((project) => <option key={project.id} value={project.id}>{project.name} · {projectIdLabel(project.projectNumber)}</option>)}
         </select></label>
         <form className="project-budgets__dates" onSubmit={applyDates}>
           <fieldset><legend>Budget approved between</legend><div>
@@ -200,7 +201,7 @@ function BudgetRow({ bucket, number, returnSearch }: { bucket: ProjectFinanceBuc
   const utilization = bucket.budgetUtilizationBps;
   return <tr>
     <td>{number}</td>
-    <th scope="row"><Link to={href}>{bucket.projectName}</Link><small>{utilization == null ? "Utilization unavailable" : `${compactNumber.format(utilization / 100)}% of usable budget spent`}</small><small>{financeStageLabels[bucket.status]}</small></th>
+    <th scope="row"><Link to={href}>{bucket.projectName}</Link><small><ProjectId projectNumber={bucket.projectNumber} /></small><small>{utilization == null ? "Utilization unavailable" : `${compactNumber.format(utilization / 100)}% of usable budget spent`}</small><small>{financeStageLabels[bucket.status]}</small></th>
     <td>{bucket.clientName ?? (bucket.clientId === null ? "Unlinked client" : "Name unavailable")}</td>
     <td>{tableMoney.format(bucket.approvedSubtotalPaise / 100)}</td><td>{tableMoney.format(bucket.recordedCostPaise / 100)}</td><td>{tableMoney.format(bucket.overheadPaise / 100)}</td><td>{tableMoney.format(bucket.targetProfitPaise / 100)}</td><td>{tableMoney.format(bucket.costBudgetPaise / 100)}</td>
     <td className={bucket.remainingBudgetPaise < 0 ? "project-budgets__negative" : undefined}>{tableMoney.format(bucket.remainingBudgetPaise / 100)}</td>

@@ -1,3 +1,4 @@
+import { ProjectId } from "../../components/projects/ProjectId";
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError } from "../../api/client";
@@ -52,6 +53,7 @@ function StatusControl({ projectId, identity, participant, projectName }: { proj
     <Button ref={trigger} variant="secondary" className="project-status-button" aria-label={projectName ? `Project status for ${projectName}` : undefined} aria-haspopup="dialog" aria-expanded={open} onClick={() => { setOpen(true); if (participant === undefined) void status.refetch(); }}>Project status</Button>
     <Drawer id={`project-status-${projectId}`} open={open} title="Project status" eyebrow="Project overview" description={summary?.projectName} variant="contextual" width="medium" className="project-status-drawer" onClose={() => setOpen(false)} returnFocusRef={trigger}>
       <div className="project-status-content">
+        {summary ? <ProjectId projectNumber={summary.projectNumber} /> : null}
         <div className="project-status-toolbar"><span className="project-status-caption">Current progress and responsibility</span><Button variant="secondary" busy={status.isFetching} onClick={() => void status.refetch()}>Refresh</Button></div>
         {status.isPending ? <p role="status">Loading project status…</p> : null}
         {status.isError ? <p className="project-status-notice" role="alert">{summary ? "Status may be out of date. Refresh to get the latest update." : "Project status could not be loaded. Please try Refresh."}</p> : null}

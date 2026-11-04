@@ -74,6 +74,20 @@ afterEach(() => {
 });
 
 describe("conversation list request scheduling", () => {
+  it("keeps identical conversation names distinct by Project ID without changing links", async () => {
+    const references = ["Lisno000011", "Lisno000027", null];
+    vi.mocked(projectChatApi.conversations).mockResolvedValue({ ...page(), items: references.map((projectNumber, index) => ({
+      ...chatTestSummary({ project: { id: `project-${index}`, name: "Shared residence", projectNumber, status: "active" } }), lastMessageAt: null, lastMessage: null
+    })) });
+    app();
+    await advance();
+    for (const [index, label] of ["Project ID: Lisno000011", "Project ID: Lisno000027", "Project ID not assigned"].entries()) {
+      const link = screen.getByText(label).closest("a")!;
+      expect(link).toHaveAccessibleName(expect.stringContaining("Shared residence"));
+      expect(link).toHaveAttribute("href", `/projects/project-${index}/messages`);
+    }
+  });
+
   it("reconciles a visible idle sidebar at most once per minute", async () => {
     app("project-0");
     await advance();

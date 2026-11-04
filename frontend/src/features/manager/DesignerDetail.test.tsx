@@ -1,4 +1,4 @@
-import { screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -13,7 +13,10 @@ describe("DesignerDetail", () => {
       const url = String(input);
       if (url === "/api/v1/auth/me") return Response.json({ data: { id: "manager-1", name: "Aarav Shah", email: "aarav@lisno.example", role: "design_manager" } });
       if (url === "/api/v1/auth/authorization") return Response.json({ data: authorizationFor("design_manager") });
-      if (url === "/api/v1/designers/designer-1/summary") return Response.json({ data: { user: { id: "designer-1", name: "Ananya Rao", email: "ananya@lisno.example", role: "designer" }, activeProjectCount: 1, workload: 8, overdueCount: 0, yellowRiskCount: 0, pendingEvaluation: true, kpi: { score: 84, components: [] }, projects: [], tasks: [] } });
+      if (url === "/api/v1/designers/designer-1/summary") return Response.json({ data: { user: { id: "designer-1", name: "Ananya Rao", email: "ananya@lisno.example", role: "designer" }, activeProjectCount: 1, workload: 8, overdueCount: 0, yellowRiskCount: 0, pendingEvaluation: true, kpi: { score: 84, components: [] }, projects: [
+        { id: "project-one", name: "Shared home", projectNumber: "Lisno000031" },
+        { id: "project-two", name: "Shared home", projectNumber: "Lisno000084" }
+      ], tasks: [] } });
       if (url.startsWith("/api/v1/evaluations/designer-1?")) return Response.json({ data: { items: [], pagination: { limit: 100, offset: 0, total: 0, hasMore: false } } });
       if (url.startsWith("/api/v1/designers/designer-1/audit?")) return Response.json({ data: { items: [], pagination: { limit: 100, offset: 0, total: 0, hasMore: false } } });
       throw new Error(`Unhandled request: ${url}`);
@@ -22,6 +25,11 @@ describe("DesignerDetail", () => {
     expect(await screen.findByRole("heading", { name: "Ananya Rao" })).toBeVisible();
     expect(screen.getByText("Calculated KPI remains separate from manager evaluation.")).toBeVisible();
     expect(screen.getByRole("button", { name: "Save evaluation" })).toBeVisible();
+    const projectLinks = screen.getAllByRole("link", { name: "Shared home" });
+    expect(projectLinks[0]).toHaveAttribute("href", "/manager/projects/project-one");
+    expect(projectLinks[1]).toHaveAttribute("href", "/manager/projects/project-two");
+    expect(within(projectLinks[0]!.closest("li")!).getByText("Project ID: Lisno000031")).toBeVisible();
+    expect(within(projectLinks[1]!.closest("li")!).getByText("Project ID: Lisno000084")).toBeVisible();
   });
 
   it("offers only the signed-in evaluator's corrections and retains the original ISO period", async () => {

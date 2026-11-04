@@ -1263,6 +1263,8 @@ export interface AppRepository {
   pageAllLeads(filters: LeadFilters, pagination: PaginationInput): Promise<PageResult<LeadRecord>>;
   pageLeadsForOwner(ownerId: string, filters: LeadFilters, pagination: PaginationInput): Promise<PageResult<LeadRecord>>;
   findLeadById(id: string): Promise<LeadRecord | null>;
+  /** Read-only metadata lookup; caller must first authorize each requested project ID. */
+  findProjectNumbers(projectIds: readonly string[]): Promise<Map<string, string | null>>;
   createLead(input: NewLead): Promise<LeadRecord>;
   updateLead(id: string, change: LeadChange): Promise<LeadRecord>;
   appendLeadActivity(input: NewLeadActivity): Promise<LeadActivityRecord>;

@@ -76,7 +76,7 @@ export function AccessRequestDialog({
     const parsed = accessRequestFormSchema.safeParse({ projectId, module, reason });
     const nextErrors: FormErrors = {};
     if (!opaqueProjectIdSchema.safeParse(projectId).success) {
-      nextErrors.projectId = "Use an opaque project ID without spaces or slashes.";
+      nextErrors.projectId = "Use a System ID without spaces or slashes.";
     }
     const trimmedReason = reason.trim();
     if (trimmedReason.length === 0) {
@@ -102,7 +102,7 @@ export function AccessRequestDialog({
     <ContextPanel
       title="Request project access"
       eyebrow="Project access"
-      description="Submit the opaque project identifier supplied to you."
+      description="Submit the internal System ID supplied to you."
       busy={mutation.isPending}
       width="medium"
       dirty={projectId !== initialProjectId || reason.length > 0}
@@ -135,9 +135,9 @@ export function AccessRequestDialog({
         ) : null}
         <Field
           id="access-request-project-id"
-          label="Project ID"
+          label="System ID"
           required
-          hint="Paste the identifier exactly as provided."
+          hint="Paste the internal project identifier provided by your administrator, not the generated Lisno Project ID."
           error={errors.projectId ? <span role="alert">{errors.projectId}</span> : undefined}
         >
           {(controlProps) => (
@@ -147,7 +147,7 @@ export function AccessRequestDialog({
               value={projectId}
               disabled={mutation.isPending}
               autoComplete="off"
-              placeholder="Enter the opaque project identifier"
+              placeholder="Enter the System ID"
               onChange={(event) => {
                 setProjectId(event.target.value);
                 setErrors((current) => ({ ...current, projectId: undefined, form: undefined }));

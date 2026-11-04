@@ -1,3 +1,4 @@
+import { ProjectId } from "../../components/projects/ProjectId";
 import { PMCounterpartPanel } from "../project-manager/PMCounterpartPanel";
 import { VendorAccessPanel } from "../execution/VendorAccessPanel";
 import { ProjectChatNavigation } from "../messages";
@@ -52,6 +53,7 @@ export function ProcurementProjectPage() {
         title={canRead ? details.project?.name ?? visibleProject?.projectName ?? "Project procurement" : "Project procurement"}
         description="Plan each main basket, compare vendor BOQs and issue approved work orders."
         breadcrumb={<Link to="/procurement">Back to projects</Link>}
+        metadata={canRead && (details.project || visibleProject) ? <ProjectId projectNumber={details.project ? details.project.projectNumber : visibleProject!.projectNumber} /> : undefined}
       />
 
       {canRead && (details.project || visibleProject) ? <ProjectChatNavigation projectId={projectId} overviewTo={`/procurement/projects/${projectId}`} overviewLabel="Procurement" /> : null}

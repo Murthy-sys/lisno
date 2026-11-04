@@ -58,7 +58,7 @@ beforeEach(() => {
   vi.spyOn(projectStatusApi, "getProjectStatus").mockRejectedValue(new ApiError(404, "NOT_FOUND", "Unavailable"));
   tokenStorage.set("chat-test-session");
   window.matchMedia = vi.fn().mockImplementation((query: string) => ({ matches: query.includes("pointer: fine"), addEventListener: vi.fn(), removeEventListener: vi.fn() }));
-  vi.spyOn(projectChatApi, "summary").mockImplementation(async projectId => chatTestSummary({ project: { id: projectId, name: projectId === "project-a" ? "Courtyard residence" : "Garden residence", status: "active" } }));
+  vi.spyOn(projectChatApi, "summary").mockImplementation(async projectId => chatTestSummary({ project: { id: projectId, projectNumber: projectId === "project-a" ? "Lisno000011" : "Lisno000027", name: projectId === "project-a" ? "Courtyard residence" : "Garden residence", status: "active" } }));
   vi.spyOn(projectChatApi, "actionTypes").mockResolvedValue({ items: [{ id: "action", name: "Action", priority: "important", builtIn: true }, { id: "escalation", name: "Escalation", priority: "critical", builtIn: true }], canCreate: false });
   vi.spyOn(projectChatApi, "attachmentPolicy").mockResolvedValue(chatTestPolicy());
   vi.spyOn(projectChatApi, "participants").mockResolvedValue({ items: chatTestPeople, setupWarnings: [] });
@@ -70,6 +70,17 @@ beforeEach(() => {
 });
 
 describe("shared project messages", () => {
+  it("exposes a copyable project reference outside the participants control", async () => {
+    vi.mocked(projectChatApi.summary).mockResolvedValue(chatTestSummary({ project: { id: "project-a", name: "Courtyard residence", status: "active", projectNumber: "Lisno000011" } }));
+    app();
+    const reference = await screen.findByText("Project ID: Lisno000011");
+    expect(reference.closest("button")).toBeNull();
+    expect(reference.closest("header")).not.toBeNull();
+    expect(screen.getByRole("button", { name: "3 participants" })).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Project details" }));
+    expect(within(screen.getByRole("dialog", { name: "Project details" })).getByText("Project ID: Lisno000011")).toBeVisible();
+  });
+
   it("shows Project status on a project overview when messaging is unavailable", async () => {
     mocks.chatAllowed = false;
     vi.mocked(projectStatusApi.getProjectStatus).mockImplementation(async projectId => statusFixture(projectId));
@@ -207,6 +218,7 @@ describe("shared project messages", () => {
     act(() => stream.onDenied());
     expect(await screen.findByText("Your account does not currently have access to this conversation.")).toBeVisible();
     expect(screen.queryByText(chatTestMessage().body)).not.toBeInTheDocument();
+    expect(screen.queryByText("Project ID: Lisno000011")).not.toBeInTheDocument();
     expect(screen.queryByRole("textbox", { name: "Message the project team" })).not.toBeInTheDocument();
     await waitFor(() => expect(stream.signal.aborted).toBe(true));
     await waitFor(() => expect(queryClient.getQueryCache().getAll().filter(query => query.queryKey.includes("project-a") && query.state.data)).toHaveLength(0));

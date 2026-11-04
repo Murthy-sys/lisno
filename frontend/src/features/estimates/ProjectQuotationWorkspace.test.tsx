@@ -24,7 +24,7 @@ beforeEach(() => {
 function quotation(projectId: string, name: string, quantity: number): QuotationDetail {
   const source = { revisionId: `revision-${projectId}`, itemVersion: 2, revisionVersion: 3, uomId: "unit" };
   return {
-    projectId, estimateId: `estimate-${projectId}`, estimateVersion: 3, workflowVersion: 3, pricedRevision: 2,
+    projectId, projectNumber: projectId === "project-one" ? "Lisno000031" : "Lisno000084", estimateId: `estimate-${projectId}`, estimateVersion: 3, workflowVersion: 3, pricedRevision: 2,
     phase: "pre", status: "sent_to_client", reviewState: "ready_for_approval", editingAllowed: true,
     editingBlockReason: null, totalPaise: quantity * 40000, isIncomplete: false,
     rooms: [{ id: `room-${projectId}`, name }],
@@ -79,6 +79,7 @@ describe("ProjectQuotationWorkspace", () => {
     const user = userEvent.setup();
     const quantity = await screen.findByRole("spinbutton", { name: "Quantity for Storage in Kitchen Unit" });
     expect(quantity).toHaveValue(2);
+    expect(screen.getByText("Project ID: Lisno000031")).toBeVisible();
     expect(await screen.findByRole("button", { name: "Review for pre-design approval" })).toBeEnabled();
     expect(screen.getByRole("link", { name: "Back to project" })).toHaveAttribute("href", "/client/projects/project-one");
     expect((await axe.run(container, { rules: { "color-contrast": { enabled: false } } })).violations).toEqual([]);
@@ -92,6 +93,9 @@ describe("ProjectQuotationWorkspace", () => {
     await user.click(screen.getByRole("button", { name: "Discard changes" }));
     expect(quantity).toHaveValue(2);
     expect(screen.getByRole("button", { name: "Review for pre-design approval" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Review for pre-design approval" }));
+    expect(await screen.findByRole("heading", { name: "Pre-design quotation review" })).toBeVisible();
+    expect(screen.getAllByText("Project ID: Lisno000031")).toHaveLength(1);
     expect(writes).toEqual([]);
   });
 
@@ -103,6 +107,8 @@ describe("ProjectQuotationWorkspace", () => {
     // MemoryRouter represents an externally changed project; navigation confirmation is covered separately.
     await user.click(screen.getByRole("link", { name: "Open second project" }));
     expect(await screen.findByRole("spinbutton", { name: "Quantity for Storage in Bedroom Unit" })).toHaveValue(7);
+    expect(screen.getByText("Project ID: Lisno000084")).toBeVisible();
+    expect(screen.queryByText("Project ID: Lisno000031")).not.toBeInTheDocument();
     expect(screen.queryByRole("spinbutton", { name: /Kitchen/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Save changes" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Review for pre-design approval" })).toBeEnabled();
@@ -127,7 +133,7 @@ describe("ProjectQuotationWorkspace", () => {
     const { writes } = setup(); const user = userEvent.setup();
     expect(await screen.findByRole("spinbutton", { name: "Quantity for Storage in Kitchen Unit" })).toBeDisabled();
     expect(screen.getByRole("checkbox", { name: "Include Storage in Kitchen" })).toBeDisabled();
-    expect(screen.getByRole("combobox", { name: "Configured option for Storage in Kitchen" })).toBeDisabled();
+    expect(screen.getByRole("radio", { name: "Signature tier for Storage in Kitchen" })).toBeDisabled();
     expect(screen.queryByRole("button", { name: "Add item" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /approve/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Project estimate" })).not.toBeInTheDocument();

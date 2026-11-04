@@ -233,7 +233,7 @@ function RefetchSavedEstimate() {
 
 describe("LeadEstimateWorkspace", () => {
   it.each([false, true])("refreshes the committed project number when submission fails: %s", async (submit) => {
-    const unnumbered = estimateFixture("draft");
+    const unnumbered = { ...estimateFixture("draft"), projectId: "project-numbered" };
     const numbered = { ...unnumbered, projectNumber: "Lisno000021" };
     const harness = installWorkspaceHarness({ initialEstimate: unnumbered, refetchedEstimate: numbered, savedEstimate: numbered, failure: "submit" });
     const { queryClient } = renderWorkspace();
@@ -243,7 +243,7 @@ describe("LeadEstimateWorkspace", () => {
     queryClient.setQueryData(searchedPage, { items: [], pagination: { total: 0 } });
     expect(queryClient.getQueryState(searchedPage)?.isInvalidated).toBe(false);
     await screen.findByRole("button", { name: "Save draft" });
-    expect(screen.queryByText("Project number not assigned")).not.toBeInTheDocument();
+    expect(screen.queryByText("Project ID not assigned")).not.toBeInTheDocument();
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: submit ? "Submit estimate" : "Save draft" }));
     await waitFor(() => expect(queryClient.getQueryData(leadKeys.estimate("lead-1"))).toMatchObject({ projectNumber: "Lisno000021" }));
@@ -257,6 +257,9 @@ describe("LeadEstimateWorkspace", () => {
     for (const key of [["leads"], ["admin-projects"], ["projects"], ["assigned-projects"], ["super-admin-dashboard"]]) {
       expect(invalidations).toHaveBeenCalledWith(expect.objectContaining({ queryKey: key }));
     }
+    for (const key of [["quotation", "project-numbered", "detail"], ["estimate-tiers", "project-numbered"], ["procurement", "projects"], ["project-finance", "bucket", "project-numbered"], ["project-manager"], ["execution"], ["project-chat"]]) {
+      expect(invalidations).toHaveBeenCalledWith(expect.objectContaining({ queryKey: key }));
+    }
     const payload = JSON.parse(String(harness.requests.find(request => request.method === "PUT")?.body));
     expect(payload).not.toHaveProperty("projectNumber");
   });
@@ -268,17 +271,17 @@ describe("LeadEstimateWorkspace", () => {
     installWorkspaceHarness(options);
     const { queryClient } = renderWorkspace();
     await screen.findByRole("button", { name: "Save draft" });
-    expect(screen.queryByText("Project number not assigned")).not.toBeInTheDocument();
+    expect(screen.queryByText("Project ID not assigned")).not.toBeInTheDocument();
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "Save draft" }));
     expect(await screen.findByText("Save failed.")).toBeVisible();
-    expect(screen.queryByText("Project number not assigned")).not.toBeInTheDocument();
-    expect(screen.queryByText("Project number: Lisno1000000")).not.toBeInTheDocument();
+    expect(screen.queryByText("Project ID not assigned")).not.toBeInTheDocument();
+    expect(screen.queryByText("Project ID: Lisno1000000")).not.toBeInTheDocument();
     options.failure = undefined;
     await user.click(screen.getByRole("button", { name: "Save draft" }));
     await waitFor(() => expect(queryClient.getQueryData(leadKeys.estimate("lead-1"))).toMatchObject({ projectNumber: "Lisno1000000" }));
     await user.click(screen.getByRole("button", { name: /^(?:Save and edit|Edit|View) baskets$/ }));
-    expect(screen.getByText("Project number: Lisno1000000")).toBeVisible();
+    expect(screen.getByText("Project ID: Lisno1000000")).toBeVisible();
   });
 
   it("retains the saved number when publication and older read responses omit it", async () => {
@@ -289,7 +292,7 @@ describe("LeadEstimateWorkspace", () => {
       publication: { endpoint: "submit", result: published } });
     const { queryClient } = renderWorkspace(<RefetchSavedEstimate />);
     await screen.findByRole("button", { name: "Save draft" });
-    expect(screen.queryByText("Project number not assigned")).not.toBeInTheDocument();
+    expect(screen.queryByText("Project ID not assigned")).not.toBeInTheDocument();
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "Submit estimate" }));
     await waitFor(() => expect(harness.counts.estimateGets).toBeGreaterThan(1));
@@ -297,7 +300,7 @@ describe("LeadEstimateWorkspace", () => {
     await user.click(screen.getByRole("button", { name: "Refetch saved estimate" }));
     await waitFor(() => expect(harness.counts.estimateGets).toBeGreaterThan(2));
     expect(queryClient.getQueryData(leadKeys.estimate("lead-1"))).toMatchObject({ projectNumber: "Lisno000032" });
-    expect(screen.queryByText("Project number: Lisno000032")).not.toBeInTheDocument();
+    expect(screen.queryByText("Project ID: Lisno000032")).not.toBeInTheDocument();
   });
 
   it("shows the current submit failure after a previously failed draft save succeeds", async () => {
@@ -310,7 +313,7 @@ describe("LeadEstimateWorkspace", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Save draft" })).toBeEnabled());
     await user.click(screen.getByRole("button", { name: "Save draft" }));
     expect(await screen.findByText("Save failed.")).toBeVisible();
-    expect(screen.queryByText("Project number not assigned")).not.toBeInTheDocument();
+    expect(screen.queryByText("Project ID not assigned")).not.toBeInTheDocument();
     options.failure = "submit";
     await user.click(screen.getByRole("button", { name: "Submit estimate" }));
     expect(await screen.findByText("Submit failed.")).toBeVisible();
@@ -348,7 +351,7 @@ describe("LeadEstimateWorkspace", () => {
     await waitFor(() => expect(queryClient.getQueryData(leadKeys.estimate("lead-1"))).toMatchObject({ projectNumber: "Lisno000021" }));
     expect(queryClient.getQueryData(leadKeys.estimate("lead-other"))).toMatchObject({ projectNumber: "Lisno000087" });
     expect(screen.getByRole("button", { name: /^(?:Save and edit|Edit|View) baskets$/ })).toBeVisible();
-    expect(screen.queryByText("Project number: Lisno000021")).not.toBeInTheDocument();
+    expect(screen.queryByText("Project ID: Lisno000021")).not.toBeInTheDocument();
   });
 
   it("keeps photo-card controls usable after image failure, omits descriptions and counts, and preserves independent keyboard toggles and disclosures", async () => {
@@ -702,7 +705,7 @@ describe("LeadEstimateWorkspace", () => {
     const builderHeader = screen.getByRole("button", { name: /^(?:Save and edit|Edit|View) baskets$/ }).parentElement!;
     expect(within(builderHeader).getByRole("button", { name: /^(?:Save and edit|Edit|View) baskets$/ })).toBeEnabled();
     expect(screen.getAllByRole("button", { name: /^(?:Save and edit|Edit|View) baskets$/ })).toHaveLength(1);
-    expect(screen.queryByText("Project number not assigned")).not.toBeInTheDocument();
+    expect(screen.queryByText("Project ID not assigned")).not.toBeInTheDocument();
     expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
     await user.click(screen.getByRole("checkbox", { name: /Wardrobe carcass/ }));
     await user.click(screen.getByRole("radio", { name: /Special item type for Joinery, Wardrobes, Wardrobe carcass in Living & Dining/ }));
@@ -712,7 +715,7 @@ describe("LeadEstimateWorkspace", () => {
       const header = screen.getByRole("button", { name: /^(?:Save and edit|Edit|View) baskets$/ }).parentElement!;
       expect(header).toContainElement(screen.getByRole("navigation", { name: "Estimate views" }));
       expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
-      expect(screen.queryByText("Project number not assigned")).not.toBeInTheDocument();
+      expect(screen.queryByText("Project ID not assigned")).not.toBeInTheDocument();
     }
     await user.click(screen.getByRole("button", { name: "Estimate Builder" }));
     expect(screen.getByRole("radio", { name: /Special item type for Joinery, Wardrobes, Wardrobe carcass in Living & Dining/ })).toBeChecked();
@@ -741,7 +744,7 @@ describe("LeadEstimateWorkspace", () => {
     expect(saves[1]!.selectedMainBasketClassifications).toEqual([{ mainBasketId: "basket-joinery", classification: "standard" }]);
     expect(await screen.findByText("Estimate draft saved.")).toBeVisible();
     await user.click(screen.getByRole("button", { name: /^(?:Save and edit|Edit|View) baskets$/ }));
-    expect(screen.getByText("Project number: Lisno000001")).toBeVisible();
+    expect(screen.getByText("Project ID: Lisno000001")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Return to saved items" }));
     expect(saves[1]).not.toHaveProperty("projectNumber");
     expect(estimateGets).toBe(1);

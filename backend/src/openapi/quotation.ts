@@ -1,3 +1,4 @@
+import { PROJECT_NUMBER_SCHEMA } from "./project-number.js";
 import { ESTIMATE_TIER_SCHEMAS } from "./estimate-tiers.js";
 
 const id = { type: "string", minLength: 1, maxLength: 500 };
@@ -56,7 +57,7 @@ export const QUOTATION_SCHEMAS = {
   QuotationSetupCatalogue: object({ projectId: id, estimateId: id, estimateVersion: version, setup: ref("QuotationSetup"),
     baskets: { type: "array", items: ref("QuotationSetupBasket"), description: "Current Client-visible eligible basket hierarchy, including unselected baskets; counts exclude protected lines." } }),
   Quotation: { type: "object", description: "Actor-scoped editable quotation with server capabilities. Uses EstimateTierChoices fields plus workflowVersion=3, phase, status, pricedRevision, rooms, reviewState and source identities on each visible line. Hidden amounts remain in the true total.",
-    properties: { workflowVersion: { type: "integer", enum: [3] }, projectId: id, estimateId: id, estimateVersion: version,
+    properties: { projectNumber: PROJECT_NUMBER_SCHEMA, workflowVersion: { type: "integer", enum: [3] }, projectId: id, estimateId: id, estimateVersion: version,
       pricedRevision: version, phase: { type: "string", enum: ["pre", "post"] }, status: text,
       reviewState: { type: "string", enum: ["draft", "awaiting_staff_review", "ready_for_approval", "approved"] },
       rooms: { type: "array", items: object({ id, name: text }) }, editingAllowed: { type: "boolean" },

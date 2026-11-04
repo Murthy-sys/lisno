@@ -1,3 +1,4 @@
+import { ProjectId } from "../../components/projects/ProjectId";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
 import { useState } from "react";
@@ -200,7 +201,7 @@ function LeadRow({
     <div className="lead-row__project" data-label="Project">
       <span className="lead-row__field-label">Project</span>
       <h3 id={projectHeadingId}>{lead.projectName}</h3>
-      {lead.projectNumber ? <small className="lead-row__project-number">Project number: {lead.projectNumber}</small> : null}
+      <ProjectId className="lead-row__project-number" projectNumber={lead.projectNumber} />
       <small>{lead.propertyType} · {lead.location}</small>
     </div>
     <div className="lead-row__stage" data-label="Stage"><span className="lead-row__field-label">Stage</span><span className={`lead-stage-badge lead-stage-badge--${lead.stage}`}>{labels[lead.stage]}</span></div>

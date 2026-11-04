@@ -1,3 +1,4 @@
+import { ProjectId } from "../../components/projects/ProjectId";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import projectInterior from "../../assets/projects-living-room.webp";
@@ -28,6 +29,7 @@ function ProjectIdentity({ project, href }: { project: PMProject; href: string }
     <ProjectThumbnail />
     <div className="pm-dashboard__project-copy">
       <Link to={href} aria-label={`Open project ${project.name}`}>{project.name}</Link>
+      <ProjectId projectNumber={project.projectNumber} />
       <span className="pm-dashboard__project-value">Approved net value: {pmMoney(project.approvedNetPaise)}</span>
       {project.issues.length ? <p className="pm-dashboard__source-note">Details need review</p> : null}
     </div>

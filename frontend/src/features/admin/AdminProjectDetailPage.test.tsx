@@ -183,9 +183,9 @@ describe("AdminProjectDetailPage", () => {
     installSession();
     server.use(http.get("/api/v1/admin/projects/:id", () => HttpResponse.json({ data: { ...project, projectNumber } })));
     renderApp(["/admin/projects/project-1"]);
-    expect(await screen.findByText(projectNumber ? `Project number: ${projectNumber}` : "Project number not assigned")).toBeVisible();
+    expect(await screen.findByText(projectNumber ? `Project ID: ${projectNumber}` : "Project ID not assigned")).toBeVisible();
     expect(screen.getByRole("heading", { name: project.name })).toBeVisible();
-    expect(screen.getByText(`Project ID: ${project.id}`)).toBeVisible();
+    expect(screen.getByText(`System ID: ${project.id}`)).toBeVisible();
   });
 
   it("presents captured summary facts, clearly labelled reference artwork and only known team members", async () => {

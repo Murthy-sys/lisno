@@ -24,6 +24,7 @@ const projects = [
   {
     id: "project-aurora-villa",
     name: "Aurora Villa",
+    projectNumber: "Lisno000031",
     clientId: "user-client-aurora",
     initiatingDesignerId: designer.id,
     assignedDesignerIds: [designer.id, "user-designer-kabir"],
@@ -61,6 +62,7 @@ const designPlanTasks = [
     estimateId: "estimate-aurora-villa",
     projectId: "project-aurora-villa",
     projectName: "Aurora Villa",
+    projectNumber: "Lisno000031",
     clientName: "Priya Shah",
     status: "in_progress",
     designPlanVersion: 1,
@@ -346,6 +348,8 @@ describe("DesignerDashboard", () => {
     installDashboardApi({ unestimated: true });
     renderApp(["/designer"]);
     const row = await screen.findByRole("article", { name: "Aurora Villa" });
+    expect(within(row).getByText("Project ID: Lisno000031")).toBeVisible();
+    expect(within(screen.getByRole("article", { name: "Aurora Studio" })).getByText("Project ID not assigned")).toBeVisible();
     expect(within(row).getByText("Design task not available yet")).toBeVisible();
     expect(within(row).getByRole("link", { name: "View project details for Aurora Villa" })).toHaveAttribute("href", "/designer/projects/project-aurora-villa");
     expect(within(row).queryByRole("link", { name: /Upload design|Continue design|View images/ })).not.toBeInTheDocument();
@@ -393,6 +397,8 @@ describe("DesignerDashboard", () => {
       .not.toBeInTheDocument();
 
     const projectRow = screen.getByRole("article", { name: "Aurora Villa" });
+    expect(within(projectRow).getByText("Project ID: Lisno000031")).toBeVisible();
+    expect(within(screen.getByRole("article", { name: "Aurora Studio" })).getByText("Project ID not assigned")).toBeVisible();
     expect(within(projectRow).getByText("Priya Shah")).toBeVisible();
     expect(within(projectRow).getByText("Design plan v1")).toBeVisible();
     expect(within(projectRow).getByText("Extraction in progress")).toBeVisible();
@@ -472,12 +478,15 @@ describe("DesignerDashboard", () => {
     const trigger = await screen.findByRole("button", { name: "Quick review Aurora Villa" });
     await user.click(trigger);
     const panel = screen.getByRole("dialog", { name: "Aurora Villa" });
+    expect(within(panel).getByText("Project ID: Lisno000031")).toBeVisible();
     expect(within(panel).getByText("Priya Shah")).toBeVisible();
     expect(within(panel).getByRole("link", { name: "Open design workspace" })).toHaveAttribute("href", "/designer/design-plans?estimate=estimate-aurora-villa");
     await user.keyboard("{Escape}");
     await waitFor(() => expect(trigger).toHaveFocus());
     await user.click(screen.getByRole("button", { name: "Quick review Aurora Studio" }));
     const second = screen.getByRole("dialog", { name: "Aurora Studio" });
+    expect(within(second).getByText("Project ID not assigned")).toBeVisible();
+    expect(within(second).queryByText("Project ID: Lisno000031")).not.toBeInTheDocument();
     expect(within(second).getByText("Rhea Kapoor")).toBeVisible();
     expect(within(second).queryByText("Priya Shah")).not.toBeInTheDocument();
     expect(within(second).getByRole("link", { name: "Open design workspace" })).toHaveAttribute("href", "/designer/design-plans?estimate=estimate-aurora-studio");

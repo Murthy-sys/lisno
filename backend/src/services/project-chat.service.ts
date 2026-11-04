@@ -1,3 +1,4 @@
+import { projectNumbersForProjectIds } from "../domain/project-number.js";
 import type { ProjectChatAssistantService } from "./project-chat-assistant.service.js";
 import { LISNO_AI } from "../contracts/project-chat-assistant.js";
 import { randomUUID } from "node:crypto";
@@ -72,7 +73,7 @@ export function createProjectChatService(options: ProjectChatServiceOptions): Pr
         const state = await tx.state(project.id);
         const read = await tx.readState(project.id, actor.id);
         const writable = chatAvailability(actor.role, clock()).writable;
-        return { assistant: options.assistant?.participant ?? {...LISNO_AI, available: false}, project: { id: project.id, name: project.name, status: project.status, nameVersion: project.nameVersion ?? 1 }, counts: counts ?? await tx.counts(project.id, actor.id, read?.sequence ?? 0), participantCount: ctx.membership.participants.length, cursor: chatCursor(project.id, state.sequence), lastReadSequence: read?.sequence ?? 0, latestMessageSequence: state.latestMessageSequence, capabilities: { canSend: writable && hasPermission(actor.role, "chat.send"), canManageParticipants: writable && canManage(actor, ctx), canManageIssues: writable && chatManager(actor), canRenameProject: writable && canManage(actor, ctx) && hasPermission(actor.role, "chat.project_name.manage") }, setupWarnings: canManage(actor, ctx) ? ctx.membership.warnings : [] };
+        return { assistant: options.assistant?.participant ?? {...LISNO_AI, available: false}, project: { id: project.id, name: project.name, projectNumber: projectNumbersForProjectIds([project.id], ctx.sources.leads).get(project.id) ?? null, status: project.status, nameVersion: project.nameVersion ?? 1 }, counts: counts ?? await tx.counts(project.id, actor.id, read?.sequence ?? 0), participantCount: ctx.membership.participants.length, cursor: chatCursor(project.id, state.sequence), lastReadSequence: read?.sequence ?? 0, latestMessageSequence: state.latestMessageSequence, capabilities: { canSend: writable && hasPermission(actor.role, "chat.send"), canManageParticipants: writable && canManage(actor, ctx), canManageIssues: writable && chatManager(actor), canRenameProject: writable && canManage(actor, ctx) && hasPermission(actor.role, "chat.project_name.manage") }, setupWarnings: canManage(actor, ctx) ? ctx.membership.warnings : [] };
     }
     async function present(tx: ChatTransaction, actor: ChatActor, ctx: Context, row: ChatStoredMessage): Promise<ChatMessage> {
         const responsible = row.responsible ? ctx.membership.participants.find((person) => person.id === row.responsible!.id) : null;

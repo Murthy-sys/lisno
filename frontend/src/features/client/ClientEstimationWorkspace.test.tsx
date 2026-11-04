@@ -40,7 +40,7 @@ function revision(detail: QuotationDetail): QuotationRevision {
   return { estimateId: detail.estimateId!, estimateVersion: detail.estimateVersion!, pricedRevision: detail.pricedRevision, phase: detail.phase, status: detail.status };
 }
 
-function setup(options: { phase?: "pre" | "post"; quotationError?: number; tiersError?: number; tiersProjectId?: string; tiersGate?: Promise<void> } = {}) {
+function setup(options: { workspace?: boolean; phase?: "pre" | "post"; quotationError?: number; tiersError?: number; tiersProjectId?: string; tiersGate?: Promise<void> } = {}) {
   const initial = fixture(options.phase);
   const tiers: EstimateTiersDetail = { projectId: options.tiersProjectId ?? "project-one", estimateId: null, estimateVersion: null, editingAllowed: false,
     editingBlockReason: "not_started", totalPaise: null, isIncomplete: false, lines: [] };
@@ -73,7 +73,7 @@ function setup(options: { phase?: "pre" | "post"; quotationError?: number; tiers
       state.queue = [state.estimate]; return HttpResponse.json({ data: state.estimate });
     })
   );
-  const rendered = renderWithQuery(<><Capture /><ClientEstimationWorkspace projectId="project-one" /></>);
+  const rendered = renderWithQuery(<><Capture /><ClientEstimationWorkspace projectId="project-one" workspace={options.workspace} /></>);
   return { ...rendered, state, decisions, saves, refresh: () => act(async () => { await cache.invalidateQueries(); }),
     refreshTiers: () => act(async () => { await cache.invalidateQueries({ queryKey: estimateTiersKeys.detail("project-one") }); }),
     refreshReview: () => act(async () => { await cache.invalidateQueries({ queryKey: estimateWorkflowKeys.client }); }),
@@ -81,6 +81,20 @@ function setup(options: { phase?: "pre" | "post"; quotationError?: number; tiers
 }
 
 describe("Unified Client estimation", () => {
+  it("shows the standalone ID only after the authorized availability probe and clears it on denial", async () => {
+    let release!: () => void;
+    const tiersGate = new Promise<void>(resolve => { release = resolve; });
+    const view = setup({ quotationError: 404, tiersGate, workspace: true });
+    view.state.tiers = { ...view.state.tiers, projectNumber: "Lisno000031" };
+    expect(await screen.findByText("Checking quotation availability…")).toBeVisible();
+    expect(screen.queryByText(/Project ID/)).not.toBeInTheDocument();
+    await act(async () => { release(); });
+    expect(await screen.findByText("Project ID: Lisno000031")).toBeVisible();
+    view.state.tiersError = 403; await view.refreshTiers();
+    expect(await screen.findByText(/Quotation access is unavailable/)).toBeVisible();
+    expect(screen.queryByText(/Project ID/)).not.toBeInTheDocument();
+  });
+
   it("shows not-started after an actual quotation 404 only when the authorized project probe succeeds", async () => {
     let release!: () => void;
     const tiersGate = new Promise<void>(resolve => { release = resolve; });

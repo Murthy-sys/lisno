@@ -87,6 +87,13 @@ const removeGroup = async (scope: { subBasketId: string | null; roomId: string |
 };
 
 describe("version 3 Client quotation commands", () => {
+  it("uses the live Lead Project ID without changing the quotation snapshot", async () => {
+    await LeadModel.collection.updateOne({ _id: "tier-lead" as never }, { $set: { projectNumber: "Lisno000012" } });
+    const before = await EstimateModel.findById("tier-estimate").lean();
+    expect(await service.detail(client, "tier-project")).toMatchObject({ projectId: "tier-project", projectNumber: "Lisno000012" });
+    expect(await EstimateModel.findById("tier-estimate").lean()).toEqual(before);
+  });
+
   it("allows current secondary Designers a safe read but no commercial mutation", async () => {
     const secondary = { id: "secondary-quotation-designer", name: "Secondary", email: "secondary@quote.invalid", role: "designer" } as const;
     await UserModel.create({ _id: secondary.id, ...secondary, emailNormalized: secondary.email, passwordHash: "synthetic", active: true });

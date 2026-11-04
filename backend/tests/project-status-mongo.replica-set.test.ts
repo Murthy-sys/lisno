@@ -1,3 +1,4 @@
+import { LeadModel } from "../src/models/Lead.js";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import mongoose from "mongoose";
 import { startMongoReplicaSet } from "./helpers/mongo-replica-set.js";
@@ -46,6 +47,14 @@ async function fixture() {
 }
 
 describe("project status Mongo snapshot reads", () => {
+  it("reads the generated Project ID from the authorized Mongo snapshot", async () => {
+    const f = await fixture();
+    await LeadModel.collection.updateOne({ _id: "lead-a" }, { $set: { projectNumber: "Lisno000012" } });
+    const result = await f.statusService.get(f.actor("client-a"), "a");
+    expect(result.projectNumber).toBe("Lisno000012");
+    await expect(f.statusService.get(f.actor("client-b"), "a")).rejects.toMatchObject({ status: 404 });
+  });
+
   it("denies an explicitly selected Project Manager who is not the current assignee", async () => {
     const f = await fixture();
     await UserModel.create({ ...chatUser("selected-pm", "site_manager"), _id: "selected-pm" });

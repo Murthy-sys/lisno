@@ -1,3 +1,4 @@
+import { ProjectId } from "../../components/projects/ProjectId";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { KNOWLEDGE_MODE_TIER_LABELS, type KnowledgeModeTier } from "../../../../shared/knowledge/knowledgeModeTiers";
@@ -95,7 +96,7 @@ function ClientQuotationForProject({ projectId, readOnly = false, workspace = fa
   };
   if (query.isPending) return <section className="client-quotation" aria-label="Quotation"><h2>Quotation</h2><p role="status">Loading your quotation…</p>
     <EstimateNavigationGuard key="quotation-navigation-guard" dirty={dirty || Boolean(unknownSave)} busy={busy} saveDisabled onSave={async () => false} /></section>;
-  if (notStarted) return <section className="client-quotation" aria-label="Quotation"><h2>Estimation</h2><p role="status">Your team has not prepared the quotation yet. Your saved requirements remain available in the project.</p><Button variant="secondary" onClick={() => void refreshQuotation()}>Refresh quotation</Button></section>;
+  if (notStarted) return <section className="client-quotation" aria-label="Quotation"><h2>Estimation</h2>{workspace ? <ProjectId projectNumber={query.isSuccess && query.data.projectId === projectId ? query.data.projectNumber : tiers.data?.projectNumber} /> : null}<p role="status">Your team has not prepared the quotation yet. Your saved requirements remain available in the project.</p><Button variant="secondary" onClick={() => void refreshQuotation()}>Refresh quotation</Button></section>;
   if (!query.data || query.data.projectId !== projectId || accessDenied || query.data.estimateId === null) return <section className="client-quotation" aria-label="Quotation"><h2>Quotation</h2>{probeNotStarted && (tiers.isPending || tiers.isFetching)
     ? <p role="status">Checking quotation availability…</p> : <p role="alert">{accessDenied
     ? "Quotation access is unavailable. Any unsaved changes are preserved; retry access before continuing."
@@ -286,7 +287,7 @@ function ClientQuotationForProject({ projectId, readOnly = false, workspace = fa
       <p role="alert">{review?.error ?? "The submitted version could not be verified. Refresh before reviewing or making a decision."}</p>
       <div className="client-quotation__actions"><Button variant="secondary" onClick={() => setView("builder")}>Back to estimate</Button><Button disabled={query.isFetching || review?.refreshing} onClick={() => void refreshReview()}>Refresh estimate</Button></div></section>;
     return <ClientQuotationSubmittedView key={`${publishedEstimate.publishedReview.id}:${publishedEstimate.publishedReview.version}`} estimate={publishedEstimate}
-      workspace={workspace} canDecide={canDecide} refreshing={query.isFetching || Boolean(review?.refreshing)}
+      workspace={workspace} projectNumber={detail.projectNumber} canDecide={canDecide} refreshing={query.isFetching || Boolean(review?.refreshing)}
       onEdit={() => setView("builder")} onRefresh={refreshReview} />;
   }
   const approvalMessage = review ? dirty || unknownSave ? "Save or discard your quotation changes before reviewing a submitted version."
@@ -295,7 +296,7 @@ function ClientQuotationForProject({ projectId, readOnly = false, workspace = fa
       : canDecide ? detail.phase === "pre" ? "Ready for your pre-design approval." : "Ready for your post-design approval."
       : reviewCopy[detail.reviewState]) : null;
   return <section className={`client-quotation estimate-workspace estimator-dashboard ${view === "configure" ? "estimate-workspace--configure-view" : "estimate-workspace--item-view"}${view === "builder" ? " estimate-workspace--compact-builder" : ""}${workspace ? " client-quotation--workspace" : ""}`} aria-labelledby={`quotation-${projectId}`} ref={sectionRef} tabIndex={-1}>
-    <header className="client-quotation__header"><div className="client-quotation__identity"><h2 id={`quotation-${projectId}`} className={workspace ? "sr-only" : undefined}>{detail.phase === "post" ? "Designer-revised quotation" : "Your quotation"}</h2><p>{detail.phase === "pre" ? "Pre-design approval" : "Post-design approval"}</p></div>
+    <header className="client-quotation__header"><div className="client-quotation__identity"><h2 id={`quotation-${projectId}`} className={workspace ? "sr-only" : undefined}>{detail.phase === "post" ? "Designer-revised quotation" : "Your quotation"}</h2><p>{detail.phase === "pre" ? "Pre-design approval" : "Post-design approval"}</p>{workspace ? <ProjectId projectNumber={detail.projectNumber} /> : null}</div>
       <dl><dt>Saved total including GST</dt><dd>{detail.isIncomplete ? "Incomplete" : money(detail.totalPaise)}</dd></dl></header>
     <p className="client-quotation__review-status" role="status">{approvalMessage ?? (notice || reviewCopy[detail.reviewState])}</p>
     {readOnly ? <p>Read-only estimation. Your current assignment allows you to view this quotation.</p> : null}

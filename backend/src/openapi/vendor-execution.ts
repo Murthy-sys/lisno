@@ -1,3 +1,4 @@
+import { PROJECT_NUMBER_SCHEMA } from "./project-number.js";
 const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
 const text = { type: "string" };
 const integer = { type: "integer", minimum: 0 };
@@ -20,10 +21,10 @@ export const EXECUTION_SCHEMAS = {
   ExecutionPolicy: object({ projectId: text, version: integer, ...policyFields }),
   ExecutionPolicyUpdate: object({ ...policyFields, expectedVersion: integer, idempotencyKey: { ...text, minLength: 8, maxLength: 128 }, reason: { ...text, minLength: 1, maxLength: 2000 } }),
   ExecutionCounts: counts,
-  ExecutionProjectMetadata: object({ id: text, name: text, status: { ...text, enum: ["planning", "active", "on_hold", "completed"] }, completionAuthority: { ...text, enum: ["legacy_staff", "vendor_client"] } }),
+  ExecutionProjectMetadata: object({ projectNumber: PROJECT_NUMBER_SCHEMA, id: text, name: text, status: { ...text, enum: ["planning", "active", "on_hold", "completed"] }, completionAuthority: { ...text, enum: ["legacy_staff", "vendor_client"] } }),
   ExecutionVendorReport: object({ eventId: text, executionRound: integer, reportedAt: dateTime, note: text, reason: nullableText, nextAction: nullableText, progress: { type: "integer", minimum: 0, maximum: 100 }, status: { ...text, enum: ["not_started", "in_progress", "blocked"] } }),
   ExecutionDailyStatus: object({ localDate: date, dueAt: { ...dateTime, nullable: true }, state: { ...text, enum: ["not_due", "due", "on_time", "late", "missing", "exempt"] }, reportedAt: { ...dateTime, nullable: true } }),
-  ExecutionWork: object({
+  ExecutionWork: object({ projectNumber: PROJECT_NUMBER_SCHEMA,
     ...Object.fromEntries(["id", "projectId", "projectName", "vendorId", "vendorName", "orderId", "orderNumber", "lineId", "sourceLineItemKey", "itemName", "roomName", "description", "legacyStatus", "latestNote"].map(key => [key, text])),
     ...Object.fromEntries(["scopeType", "mainBasketId", "mainBasketName", "subBasketId", "subBasketName", "mainLineId", "uomCode"].map(key => [key, nullableText])),
     orderRevision: integer, sourceAvailable: { type: "boolean" }, quantityMilliUnits: { ...integer, nullable: true }, originalTargetDate: { ...date, nullable: true }, timezone: text,
@@ -40,7 +41,7 @@ export const EXECUTION_SCHEMAS = {
     nextOwner: { ...text, enum: ["vendor", "site_manager", "program_manager", "client", "super_admin", "none"] }, allowedActions: { type: "array", items: { ...text, enum: actions } }, canSubmitToClient: { type: "boolean" }
   }),
   ExecutionPage: page("ExecutionWork", { project: { allOf: [ref("ExecutionProjectMetadata")], nullable: true }, projectCounts: { allOf: [ref("ExecutionCounts")], nullable: true }, counts: ref("ExecutionCounts"), policy: { allOf: [ref("ExecutionPolicy")], nullable: true }, canManagePolicy: { type: "boolean" } }),
-  ExecutionProject: object({ id: text, name: text, status: text, counts: ref("ExecutionCounts") }),
+  ExecutionProject: object({ projectNumber: PROJECT_NUMBER_SCHEMA, id: text, name: text, status: text, counts: ref("ExecutionCounts") }),
   ExecutionDeliveryHealth: object({ schedulerEnabled: { type: "boolean" }, accessDeliveryEnabled: { type: "boolean" }, lastSchedulerSuccessAt: { ...dateTime, nullable: true }, lastSchedulerFailureCode: nullableText, pendingEmails: integer, failedEmails: integer }),
   ExecutionPortfolio: page("ExecutionProject", { deliveryHealth: { allOf: [ref("ExecutionDeliveryHealth")], nullable: true, description: "Super Admin only. Other roles receive null." } }),
   ExecutionHistoryEvent: object({ id: text, assignmentId: text, action: text, actorId: text, occurredAt: dateTime, executionRound: integer, localDate: date, note: text, reason: nullableText, nextAction: nullableText, startDate: { ...date, nullable: true }, finishDate: { ...date, nullable: true }, reviewDate: { ...date, nullable: true }, progress: { ...integer, nullable: true }, status: nullableText }),
