@@ -53,6 +53,37 @@ afterAll(async () => {
 });
 
 describe("project finance lifecycle and ledger", () => {
+  it("keeps Project IDs aligned across unequal same-name budgets, details, and filter options", async () => {
+    await createProject("numbered-alpha", "Same name", { financeLink: "lead" });
+    await createProject("numbered-beta", "Same name", { financeLink: "lead", approvedMoney: {
+      subtotalRupees: 500_000, gstRupees: 90_000, totalRupees: 590_000
+    } });
+    await LeadModel.collection.updateOne({ _id: "lead-numbered-alpha" }, { $set: { projectNumber: "Lisno000012" } });
+    await LeadModel.collection.updateOne({ _id: "lead-numbered-beta" }, { $set: { projectNumber: "Lisno000087" } });
+    const service = createProjectFinanceService({ now: () => NOW });
+    const page = await service.listProjects(superAdminActor(), { limit: 10, offset: 0 });
+    expect(page.items.map(row => [row.projectId, row.projectNumber]).sort()).toEqual([
+      ["numbered-alpha", "Lisno000012"], ["numbered-beta", "Lisno000087"]
+    ]);
+    expect(page.filterOptions.projects).toEqual([
+      { id: "numbered-alpha", name: "Same name", projectNumber: "Lisno000012" },
+      { id: "numbered-beta", name: "Same name", projectNumber: "Lisno000087" }
+    ]);
+    expect(page.summary).toMatchObject({ projectCount: 2, approvedSubtotalPaise: 150_000_000, approvedContractTotalPaise: 177_000_000 });
+    for (const item of page.items) expect(await service.getBucket(superAdminActor(), item.projectId)).toEqual(item);
+    expect(await ProjectFinanceBucketModel.countDocuments()).toBe(0);
+    await mongoose.connection.transaction(async session => {
+      await ensurePendingProjectFinanceBucket(approvedBudgetInput("numbered-alpha"), session);
+      await openProjectFinanceBucket({ projectId: "numbered-alpha", designPlanVersion: 1, openedById: SUPER_ADMIN_ID, occurredAt: NOW }, session);
+    });
+    const posted = await service.postEntry(superAdminActor(), "numbered-alpha", {
+      type: "overhead", category: "Site overhead", amountPaise: 500, incurredAt: NOW.toISOString(),
+      description: "Project ID mutation response", idempotencyKey: "numbered-alpha-overhead"
+    });
+    expect(posted.bucket).toMatchObject({ projectId: "numbered-alpha", projectNumber: "Lisno000012", recordedCostPaise: 500 });
+    expect(await ProjectFinanceBucketModel.findOne({ projectId: "numbered-alpha" }).lean()).not.toHaveProperty("projectNumber");
+  });
+
   it("lists only existing project budgets when stale approvals and Finance Head tasks reference a deleted project", async () => {
     await createProject("existing-alpha", "Alpha budget", { clientId: "existing-client", clientName: "Existing Client" });
     await createProject("existing-beta", "Beta budget", { approvedMoney: {
@@ -76,7 +107,7 @@ describe("project finance lifecycle and ledger", () => {
       approvedGstPaise: 27_000_000, approvedContractTotalPaise: 177_000_000, targetProfitPaise: 30_000_000,
       costBudgetPaise: 120_000_000, recordedCostPaise: 1_000, remainingBudgetPaise: 119_999_000 });
     expect(first.filterOptions).toEqual({ projects: [
-      { id: "existing-alpha", name: "Alpha budget" }, { id: "existing-beta", name: "Beta budget" }
+      { id: "existing-alpha", name: "Alpha budget", projectNumber: null }, { id: "existing-beta", name: "Beta budget", projectNumber: null }
     ], clients: [{ id: "existing-client", name: "Existing Client" }], hasUnlinkedClients: true });
     expect(second.filterOptions).toEqual(first.filterOptions);
     const items = [...first.items, ...second.items];
@@ -87,7 +118,7 @@ describe("project finance lifecycle and ledger", () => {
     const scoped = await service.listProjects(financeActor, { limit: 10, offset: 0 });
     expect(scoped.items).toEqual([items.find(item => item.projectId === "existing-alpha")]);
     expect(scoped.summary).toMatchObject({ projectCount: 1, approvedSubtotalPaise: 100_000_000, recordedCostPaise: 1_000 });
-    expect(scoped.filterOptions).toEqual({ projects: [{ id: "existing-alpha", name: "Alpha budget" }],
+    expect(scoped.filterOptions).toEqual({ projects: [{ id: "existing-alpha", name: "Alpha budget", projectNumber: null }],
       clients: [{ id: "existing-client", name: "Existing Client" }], hasUnlinkedClients: false });
     expect(await service.listProjects(financeActor, { limit: 10, offset: 0, projectId: "deleted-project" })).toMatchObject({ total: 0, items: [], summary: { projectCount: 0 } });
     expect(await EstimateModel.countDocuments({ _id: "estimate-deleted-project" })).toBe(1);
@@ -136,7 +167,7 @@ describe("project finance lifecycle and ledger", () => {
       directSpendPaise: 500_000_000, overheadPaise: 50_000_000, recordedCostPaise: 550_000_000, remainingBudgetPaise: 10_000_000 });
     expect(first.observedAt).toBe(NOW.toISOString());
     expect(first.filterOptions).toEqual({ projects: [
-      { id: "budget-alpha", name: "Aurora Residence" }, { id: "budget-beta", name: "Birch Residence" }, { id: "budget-unlinked", name: "Cedar Residence" }
+      { id: "budget-alpha", name: "Aurora Residence", projectNumber: null }, { id: "budget-beta", name: "Birch Residence", projectNumber: null }, { id: "budget-unlinked", name: "Cedar Residence", projectNumber: null }
     ], clients: [{ id: "client-a", name: "Same Client" }, { id: "client-b", name: "Same Client" }], hasUnlinkedClients: true });
     for (const row of rows) {
       const detail = await service.getBucket(superAdminActor(), row.id);
@@ -195,7 +226,7 @@ describe("project finance lifecycle and ledger", () => {
       filterOptions: { projects: [], clients: [], hasUnlinkedClients: false }, observedAt: NOW.toISOString() });
     await createFinanceWorkflowTask("assigned-budget");
     const visible = await service.listProjects(actor, { limit: 10, offset: 0 });
-    expect(visible.filterOptions).toEqual({ projects: [{ id: "assigned-budget", name: "Assigned" }],
+    expect(visible.filterOptions).toEqual({ projects: [{ id: "assigned-budget", name: "Assigned", projectNumber: null }],
       clients: [{ id: "client-authorized", name: "Visible client" }], hasUnlinkedClients: false });
     const hidden = await service.listProjects(actor, { limit: 10, offset: 0, projectId: "foreign-budget", clientId: "client-foreign" });
     expect(hidden).toMatchObject({ total: 0, items: [], summary: { projectCount: 0 }, filterOptions: visible.filterOptions });

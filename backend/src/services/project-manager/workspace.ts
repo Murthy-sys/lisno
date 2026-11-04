@@ -1,3 +1,4 @@
+import { readProjectNumbers } from "../project-number-read.service.js";
 import { projectManagerProjectIds } from "../project-manager-assignment.service.js";
 import { requireExecutionActor } from "../vendor-execution-access.js";
 import { ProjectPurchaseOrderModel } from "../../models/ProjectPurchaseOrder.js";
@@ -17,9 +18,9 @@ type Reader = (actor: PublicUser, id: string, query?: { limit?: number; offset?:
 export function createProjectManagerWorkspace(deps: PMDependencies & { panels: Partial<Record<PMTab, Reader>> }) {
   const now = deps.now ?? (() => new Date());
   async function actorAccess(actor: PublicUser) { if (actor.role !== "site_manager" || !await UserModel.exists({ _id: actor.id, active: true, role: "site_manager" })) pmMissing(); }
-  async function snapshot(actor: PublicUser, projectId: string) { return pmTransaction(async session => { const project = await requirePMProject(actor, projectId, session); return { project, ...await readPMSources(actor, project, session, now()) }; }); }
-  async function projectSummary(actor: PublicUser, projectId: string): Promise<{ project: PMProject; alerts: PMAlert[]; source: Awaited<ReturnType<typeof snapshot>> }> {
-    const source = await snapshot(actor, projectId); const project = source.project;
+  async function snapshot(actor: PublicUser, projectId: string, includeNumber = false) { return pmTransaction(async session => { const project = await requirePMProject(actor, projectId, session); return { project, projectNumber: includeNumber ? (await readProjectNumbers([projectId], session)).get(projectId) ?? null : null, ...await readPMSources(actor, project, session, now()) }; }); }
+  async function projectSummary(actor: PublicUser, projectId: string, includeNumber = false): Promise<{ project: PMProject; alerts: PMAlert[]; source: Awaited<ReturnType<typeof snapshot>> }> {
+    const source = await snapshot(actor, projectId, includeNumber); const project = source.project;
     const alerts: PMAlert[] = [];
     for (const work of source.work) for (const flag of work.flags) {
       if (["setup_required", "schedule_required", "source_unavailable"].includes(flag)) continue;
@@ -52,7 +53,7 @@ export function createProjectManagerWorkspace(deps: PMDependencies & { panels: P
     const progress = source.progress;
     const health = pmHealth({ status: project.status, critical: alerts.some(a => a.severity === "critical"), warning: alerts.some(a => a.severity === "warning"), progress: healthIssues.length ? { ...progress, actual: null } : progress,
       started: source.work.some(w => w.progress > 0 || ["in_progress", "blocked", "awaiting_verification", "site_verified", "awaiting_client", "client_approved"].includes(w.status)), setup: !source.work.length || source.work.some(w => ["setup_required", "schedule_required"].some(flag => w.flags.includes(flag)) || ["assigned", "awaiting_schedule", "not_started"].includes(w.status)) });
-    return { source, project: { id: projectId, name: String(project.name), clientName: String(project.clientName ?? ""), location: String(project.location ?? ""), status: project.status, health, progress,
+    return { source, project: { id: projectId, name: String(project.name), projectNumber: source.projectNumber, clientName: String(project.clientName ?? ""), location: String(project.location ?? ""), status: project.status, health, progress,
       plannedEndAt: project.plannedEndAt ? new Date(project.plannedEndAt).toISOString() : null, approvedNetPaise: source.source?.subtotalPaise ?? null, issues: [...new Set([...progress.issues, ...healthIssues])], activeAlerts: alerts.length }, alerts };
   }
   async function portfolio(actor: PublicUser, query: Query = {}): Promise<PMPortfolio> {
@@ -69,14 +70,16 @@ export function createProjectManagerWorkspace(deps: PMDependencies & { panels: P
     const filtered = results.filter(({ project: p }) => q.health === "all" || q.health === "at_risk" && p.health === "critical" || p.health === q.health);
     const alerts = filtered.flatMap(row => row.alerts).sort((a,b) => Number(b.severity === "critical") - Number(a.severity === "critical") || (a.dueAt ?? "9999").localeCompare(b.dueAt ?? "9999") || a.projectId.localeCompare(b.projectId) || a.id.localeCompare(b.id));
     await actorAccess(actor);
-    return { items: filtered.slice(q.offset, q.offset + q.limit).map(row => row.project), total: filtered.length, counts, alerts: alerts.slice(0, 8), alertTotal: alerts.length, calculatedAt: now().toISOString() };
+    const visible = filtered.slice(q.offset, q.offset + q.limit);
+    const numbers = await readProjectNumbers(visible.map(row => row.project.id));
+    return { items: visible.map(row => ({ ...row.project, projectNumber: numbers.get(row.project.id) ?? null })), total: filtered.length, counts, alerts: alerts.slice(0, 8), alertTotal: alerts.length, calculatedAt: now().toISOString() };
   }
   return {
     portfolio,
     async alerts(actor: PublicUser, query: Query = {}) { const q = pmPortfolioQuerySchema.parse(query); await actorAccess(actor); const rows = await ProjectModel.find({ _id: { $in: await projectManagerProjectIds(actor.id) } }).select({ _id: 1, status: 1, name: 1, clientName: 1, location: 1 }).sort({ _id: 1 }).lean(); const all: PMAlert[] = [];
       for (const row of rows) { if (q.status === "current" && row.status === "completed" || !["all", "current"].includes(q.status) && row.status !== q.status || q.q && ![row.name,row.clientName,row.location].join(" ").toLowerCase().includes(q.q.toLowerCase())) continue; const summary = await projectSummary(actor, String(row._id)); if (q.health === "all" || summary.project.health === q.health || q.health === "at_risk" && summary.project.health === "critical") all.push(...summary.alerts); }
       all.sort((a,b) => Number(b.severity === "critical") - Number(a.severity === "critical") || (a.dueAt ?? "9999").localeCompare(b.dueAt ?? "9999") || a.projectId.localeCompare(b.projectId) || a.id.localeCompare(b.id)); return { items: all.slice(q.offset,q.offset+q.limit), total: all.length }; },
-    async overview(actor: PublicUser, id: string): Promise<PMOverview> { const result = await projectSummary(actor,id); return { project: result.project, capabilities: ["project_messages", "execution_detail"], calculatedAt: now().toISOString() }; },
+    async overview(actor: PublicUser, id: string): Promise<PMOverview> { const result = await projectSummary(actor,id,true); return { project: result.project, capabilities: ["project_messages", "execution_detail"], calculatedAt: now().toISOString() }; },
     async site(actor: PublicUser, id: string): Promise<PMPanel> {
       const data = await snapshot(actor,id); const panel = pmPanel("site",now()); panel.availability = data.progress.availability; panel.issues = data.progress.issues;
       const rooms = new Map<string, PMItem>();

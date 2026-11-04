@@ -221,6 +221,8 @@ export interface DashboardFactorDistributionItem {
   reasonCode: DashboardRiskReasonCode; occurrenceCount: number; projectCount: number;
 }
 export interface DashboardTopRiskProject {
+  readonly projectNumber?: string | null;
+
   projectId: string; projectName: string; projectStatus: ProjectStatus; risk: DashboardProjectRisk;
 }
 export interface DashboardRiskMetrics {
@@ -250,6 +252,8 @@ export interface DashboardProjectFilters {
   limit?: number; offset?: number;
 }
 export interface DashboardProjectRow {
+  readonly projectNumber?: string | null;
+
   projectId: string; projectName: string; projectStatus: ProjectStatus; location: string;
   plannedStartAt: string; plannedEndAt: string; actualEndAt: string | null;
   manager: { id: string; name: string } | null;

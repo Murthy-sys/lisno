@@ -76,6 +76,7 @@ const completedTask = {
 const project = {
   id: "project-aurora-villa",
   name: "Aurora Villa",
+  projectNumber: "Lisno000031",
   clientId: "user-client-aurora",
   initiatingDesignerId: designer.id,
   assignedDesignerIds: [designer.id],
@@ -381,6 +382,7 @@ describe("ProjectWorkspace", () => {
     renderApp([`/designer/projects/${project.id}`]);
 
     await screen.findByRole("heading", { name: "Aurora Villa" });
+    expect(screen.getByText("Project ID: Lisno000031")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Add floor" }));
     const floorDialog = screen.getByRole("dialog", { name: "Add floor" });
     await user.type(within(floorDialog).getByLabelText("Floor name"), "Terrace");

@@ -9,74 +9,9 @@
   --client-line: #d9dfd4;
   --client-surface: #fcfcf8;
   min-inline-size: 0;
-  gap: clamp(0.75rem, 1.3vw, 1rem);
+  gap: var(--space-2);
   color: var(--client-ink);
   font-family: var(--font-interface);
-}
-
-.ui-app-shell[data-role="client"] .client-dashboard .workspace-header.client-dashboard__hero {
-  position: relative;
-  isolation: isolate;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  align-items: center;
-  min-block-size: 8.25rem;
-  padding: 0;
-  border: 0;
-  border-radius: 0.4rem;
-  background: #eee9df;
-  box-shadow: none;
-  overflow: hidden;
-}
-
-.ui-app-shell[data-role="client"] .client-dashboard__hero-image {
-  position: absolute;
-  z-index: 0;
-  inset-block: 0;
-  inset-inline-end: 0;
-  inline-size: 61%;
-  block-size: 100%;
-  object-fit: cover;
-  object-position: 52% center;
-  -webkit-mask-image: linear-gradient(90deg, transparent 0%, rgb(0 0 0 / 30%) 16%, #000 47%);
-  mask-image: linear-gradient(90deg, transparent 0%, rgb(0 0 0 / 30%) 16%, #000 47%);
-  pointer-events: none;
-}
-
-.ui-app-shell[data-role="client"] .client-dashboard__hero-copy {
-  position: relative;
-  z-index: 1;
-  min-inline-size: 0;
-  max-inline-size: 36rem;
-  padding: 0.9rem clamp(1rem, 1.7vw, 1.5rem);
-}
-
-.ui-app-shell[data-role="client"] .client-dashboard .workspace-header.client-dashboard__hero .eyebrow {
-  margin: 0 0 0.2rem;
-  color: #294d32;
-  font-size: 0.66rem;
-  font-weight: 700;
-  letter-spacing: 0.13em;
-  text-transform: uppercase;
-}
-
-.ui-app-shell[data-role="client"] .client-dashboard .workspace-header.client-dashboard__hero h1 {
-  margin: 0;
-  color: #1d3023;
-  font-family: var(--font-interface);
-  font-size: clamp(1.65rem, 2vw, 2rem);
-  font-weight: 650;
-  letter-spacing: -0.045em;
-  line-height: 1.12;
-}
-
-.ui-app-shell[data-role="client"] .client-dashboard .workspace-header.client-dashboard__hero .client-dashboard__hero-copy > p:last-child {
-  max-inline-size: 37rem;
-  margin: 0.35rem 0 0;
-  color: #526356;
-  font-size: 0.78rem;
-  font-weight: 400;
-  line-height: 1.5;
 }
 
 /* One information band replaces the three raised metric tiles. */
@@ -97,9 +32,9 @@
   display: grid;
   align-content: center;
   min-inline-size: 0;
-  min-block-size: 4.75rem;
+  min-block-size: 0;
   gap: 0.1rem;
-  padding: 0.65rem 1rem;
+  padding: var(--space-2) var(--space-3);
   border: 0;
   border-inline-end: 1px solid var(--client-line);
   border-radius: 0;
@@ -149,6 +84,35 @@
 
 .ui-app-shell[data-role="client"] .client-dashboard__estimates,
 .ui-app-shell[data-role="client"] .client-dashboard__projects { min-inline-size: 0; }
+
+.ui-app-shell[data-role="client"] .client-estimate-summary {
+  display: grid;
+  gap: var(--space-2);
+  min-inline-size: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--client-line);
+  background: var(--client-surface);
+}
+
+.ui-app-shell[data-role="client"] .client-estimate-summary h2,
+.ui-app-shell[data-role="client"] .client-estimate-summary h3,
+.ui-app-shell[data-role="client"] .client-estimate-summary p { margin: 0; }
+.ui-app-shell[data-role="client"] .client-estimate-summary h2 { font-size: var(--text-lg); }
+.ui-app-shell[data-role="client"] .client-estimate-summary h3 { font-size: var(--text-base); }
+.ui-app-shell[data-role="client"] .client-estimate-summary header,
+.ui-app-shell[data-role="client"] .client-estimate-summary__row > div { display: grid; gap: var(--space-1); min-inline-size: 0; }
+.ui-app-shell[data-role="client"] .client-estimate-summary p,
+.ui-app-shell[data-role="client"] .client-estimate-summary__selected { color: var(--client-muted); font-size: var(--text-sm); overflow-wrap: anywhere; }
+.ui-app-shell[data-role="client"] .client-estimate-summary__list { margin: 0; padding: 0; list-style: none; }
+.ui-app-shell[data-role="client"] .client-estimate-summary__row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2) var(--space-3); padding-block: var(--space-2); }
+.ui-app-shell[data-role="client"] .client-estimate-summary__row + .client-estimate-summary__row { border-block-start: 1px solid var(--client-line); }
+.ui-app-shell[data-role="client"] .client-estimate-summary__row > div { flex: 1 1 16rem; }
+.ui-app-shell[data-role="client"] .client-estimate-summary__row .button { max-inline-size: 100%; white-space: normal; overflow-wrap: anywhere; }
+.ui-app-shell[data-role="client"] .client-estimate-summary__notice { margin: 0 0 var(--space-2); color: var(--client-muted); }
+
+@media (max-width: 48rem), (pointer: coarse) {
+  .ui-app-shell[data-role="client"] .client-estimate-summary .button { min-block-size: 44px; }
+}
 
 .ui-app-shell[data-role="client"] .client-dashboard .estimate-review-panel.estimate-review-panel--client {
   gap: 0.6rem;
@@ -433,20 +397,11 @@
   .ui-app-shell[data-role="client"] .client-dashboard .client-project-grid { grid-template-columns: minmax(0, 1fr); }
 }
 
-@media (max-width: 900px) {
-  .ui-app-shell[data-role="client"] .client-dashboard__hero-copy { max-inline-size: 26rem; }
-}
-
 @media (max-width: 760px) {
-  .ui-app-shell[data-role="client"] .client-dashboard .workspace-header.client-dashboard__hero { min-block-size: 7.5rem; }
-  .ui-app-shell[data-role="client"] .client-dashboard__hero-image { inline-size: 68%; opacity: 0.72; }
-  .ui-app-shell[data-role="client"] .client-dashboard__hero-copy { max-inline-size: 24rem; }
   .ui-app-shell[data-role="client"] .client-dashboard .estimate-review-panel.estimate-review-panel--client > header { align-items: start; }
 }
 
 @media (max-width: 620px) {
-  .ui-app-shell[data-role="client"] .client-dashboard .workspace-header.client-dashboard__hero { min-block-size: 7rem; }
-  .ui-app-shell[data-role="client"] .client-dashboard__hero-image { display: none; }
   .ui-app-shell[data-role="client"] .client-dashboard .client-dashboard__overview dl { grid-template-columns: minmax(0, 1fr); }
   .ui-app-shell[data-role="client"] .client-dashboard .client-dashboard__overview dl > div,
   .ui-app-shell[data-role="client"] .client-dashboard .client-dashboard__overview dl > div:last-child {

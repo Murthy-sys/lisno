@@ -71,10 +71,12 @@ describe("ClientProject", () => {
   it("shows the active Client task and one top countdown, then closes the task and stops its timer", async () => {
     let completed = false;
     const saved: unknown[] = [];
-    installKickoffApi(() => kickoffWorkflow(completed ? "keys" : "client"), undefined, (body) => { saved.push(body); completed = true; });
+    const numberedProject = { ...project, projectNumber: "Lisno000031" };
+    installKickoffApi(() => kickoffWorkflow(completed ? "keys" : "client"), undefined, (body) => { saved.push(body); completed = true; }, numberedProject);
     renderApp(["/client/projects/project-villa"]);
     const user = userEvent.setup();
     const complete = await screen.findByRole("button", { name: "Complete Client Kick off" });
+    expect(screen.getByText("Project ID: Lisno000031")).toBeVisible();
     const timer = screen.getByRole("timer");
     expect(timer).toHaveAttribute("dateTime", "2026-09-15T09:00:00.000Z");
     expect(screen.getAllByRole("timer")).toHaveLength(1);

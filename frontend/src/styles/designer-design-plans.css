@@ -1,14 +1,14 @@
 .designer-plan-page {
   display: grid;
-  gap: var(--space-6);
-  inline-size: min(100%, var(--content-wide));
-  margin-inline: auto;
+  gap: var(--space-3);
+  inline-size: 100%;
+  min-inline-size: 0;
 }
 
 .designer-plan-layout {
   display: grid;
   grid-template-columns: minmax(17rem, 20rem) minmax(0, 1fr);
-  gap: var(--space-5);
+  gap: var(--space-3);
   align-items: start;
 }
 
@@ -19,10 +19,10 @@
 
 .designer-plan-queue {
   position: sticky;
-  inset-block-start: var(--space-5);
+  inset-block-start: calc(var(--workspace-toolbar-size, 56px) + var(--space-2));
   display: grid;
-  gap: var(--space-4);
-  max-block-size: calc(100vh - 3rem);
+  gap: var(--space-3);
+  max-block-size: calc(100dvh - var(--workspace-toolbar-size, 56px) - var(--space-4));
   overflow: auto;
 }
 
@@ -124,7 +124,7 @@
   display: grid;
   min-inline-size: 0;
   gap: var(--space-4);
-  scroll-margin-block-start: var(--space-5);
+  scroll-margin-block-start: calc(var(--workspace-toolbar-size, 56px) + var(--space-2));
 }
 
 .designer-plan-project {
@@ -168,8 +168,8 @@
 }
 
 .estimate-design-uploads--designer {
-  gap: var(--space-5);
-  padding: var(--space-4);
+  gap: var(--space-3);
+  padding: var(--space-3);
   border-radius: var(--radius-surface);
   background: var(--color-surface);
   box-shadow: var(--shadow-soft);
@@ -443,6 +443,10 @@
   .estimate-design-uploads--designer .estimate-drawing-row {
     grid-template-columns: minmax(0, 1fr) auto;
   }
+}
+
+@media (max-width: 760px), (pointer: coarse) {
+  .designer-plan-task { min-block-size: 44px; }
 }
 
 .designer-plan-queue__heading h2, .designer-plan-project__heading h2 { font: var(--type-heading-3); }

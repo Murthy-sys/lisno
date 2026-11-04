@@ -312,11 +312,8 @@ describe("shell CSS contract", () => {
     expect(appShell.get("grid-template-columns")).toContain("minmax(0, 1fr)");
 
     const staffWorkspace = declarations(shell, ".ui-workspace");
-    const clientWorkspace = declarations(shell, '.ui-workspace[data-role="client"]');
-    expect(staffWorkspace.get("--ui-workspace-measure")).toBe("var(--content-wide)");
-    expect(clientWorkspace.get("--ui-workspace-measure")).toBe(
-      "var(--content-default)"
-    );
+    expect(declarations(shell, ".ui-workspace > *").get("inline-size")).toBe("100%");
+    expect(shell).not.toContain("--ui-workspace-measure");
     expect(staffWorkspace.get("padding")).toContain("env(safe-area-inset-top)");
     expect(staffWorkspace.get("padding")).toContain("env(safe-area-inset-right)");
     expect(staffWorkspace.get("padding")).toContain("env(safe-area-inset-bottom)");

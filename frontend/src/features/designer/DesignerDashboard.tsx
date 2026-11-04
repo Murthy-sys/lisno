@@ -1,3 +1,4 @@
+import { ProjectId } from "../../components/projects/ProjectId";
 import {
   AlertTriangle,
   ArrowUpRight,
@@ -218,7 +219,7 @@ export function DesignerDashboard() {
       </Surface>
 
       {selected ? (
-        <ContextPanel key={selected.task.id} title={selected.task.projectName} eyebrow="Project quick review" description={selected.task.clientName} onClose={() => setSelectedTaskId(null)}
+        <ContextPanel key={selected.task.id} title={selected.task.projectName} eyebrow="Project quick review" description={selected.task.clientName} metadata={<ProjectId projectNumber={selected.task.projectNumber} />} onClose={() => setSelectedTaskId(null)}
           footer={<Link className="ui-button ui-button--primary" to={`/designer/design-plans?estimate=${encodeURIComponent(selected.task.estimateId)}`}>Open design workspace</Link>}>
           <dl className="designer-project-review">
             <div><dt>Design status</dt><dd><StatusBadge label={designStatusLabels[selected.task.status]} tone={designStatusTones[selected.task.status]} /></dd></div>
@@ -280,6 +281,7 @@ function DesignProjectRow({
       </div>
       <div className="designer-project-row__project" data-label="Project">
         <h3 id={headingId}>{task.projectName}</h3>
+        <ProjectId projectNumber={task.projectNumber} />
         {priority ? (
           <StatusBadge
             tone={priority === "red" ? "danger" : "warning"}
@@ -331,7 +333,7 @@ function AssignedProjectRow({ project }: { project: Project }) {
   const headingId = `designer-project-${project.id}`;
   return <article className="designer-project-row" aria-labelledby={headingId}>
     <div className="designer-project-row__client" data-label="Client"><strong>{project.clientName || "Client details pending"}</strong></div>
-    <div className="designer-project-row__project" data-label="Project"><h3 id={headingId}>{project.name}</h3><small>{project.location}</small></div>
+    <div className="designer-project-row__project" data-label="Project"><h3 id={headingId}>{project.name}</h3><ProjectId projectNumber={project.projectNumber} /><small>{project.location}</small></div>
     <div className="designer-project-row__status" data-label="Design status"><StatusBadge tone="neutral" label="Design task not available yet" /></div>
     <div className="designer-project-row__health" data-label="Health"><span>Not available</span></div>
     <div className="designer-project-row__actions" data-label="Actions"><Link to={`/designer/projects/${encodeURIComponent(project.id)}`} aria-label={`View project details for ${project.name}`}>View project</Link></div>

@@ -122,7 +122,7 @@ export interface ChatCounts {
 }
 export interface ChatSummary {
   assistant?: ChatAssistantParticipant;
-  project: { id: string; name: string; status: string; nameVersion?: number };
+  project: { id: string; name: string; status: string; nameVersion?: number; readonly projectNumber?: string | null };
   counts: ChatCounts;
   participantCount: number;
   cursor: string;

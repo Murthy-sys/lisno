@@ -1,6 +1,6 @@
 .knowledge-page {
   display: grid;
-  gap: var(--space-4);
+  gap: var(--space-3);
   min-width: 0;
 }
 
@@ -79,25 +79,15 @@
   border-radius: var(--radius-surface);
 }
 
-/* The item workspace uses the shared PageHeader DOM with a page-specific grid:
-   the breadcrumb owns the first row, then context and commands read together. */
+/* The item workspace shares the compact, wrapping page identity/action row. */
 .knowledge-page--item-workspace > .ui-page-header {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: start;
-  gap: var(--space-3) var(--space-6);
-}
-
-.knowledge-page--item-workspace > .ui-page-header .ui-page-header__breadcrumb {
-  grid-column: 1 / -1;
-}
-
-.knowledge-page--item-workspace > .ui-page-header .ui-page-header__content {
-  grid-column: 1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
 }
 
 .knowledge-page--item-workspace > .ui-page-header .ui-page-header__actions {
-  grid-column: 2;
   justify-content: flex-end;
 }
 
@@ -1351,15 +1341,6 @@
 }
 
 @media (max-width: 1100px) {
-  .knowledge-page--item-workspace > .ui-page-header {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .knowledge-page--item-workspace > .ui-page-header .ui-page-header__content,
-  .knowledge-page--item-workspace > .ui-page-header .ui-page-header__actions {
-    grid-column: 1;
-  }
-
   .knowledge-page--item-workspace > .ui-page-header .ui-page-header__actions {
     justify-content: flex-start;
   }
@@ -2863,9 +2844,9 @@ body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions:where(:not(.
    ========================================================================== */
 
 .knowledge-page--item-workspace {
-  --knowledge-workspace-sticky-top: calc(var(--workspace-topbar-height, 0px) + var(--workspace-safe-top, 0px) + var(--space-2));
+  --knowledge-workspace-sticky-top: calc(var(--workspace-toolbar-size, 56px) + var(--space-2));
   inline-size: 100%;
-  max-inline-size: var(--content-wide);
+  max-inline-size: 100%;
   min-inline-size: 0;
   overflow-wrap: anywhere;
 }
@@ -2891,12 +2872,12 @@ body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions:where(:not(.
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-3) var(--space-6);
+  gap: var(--space-2) var(--space-3);
   /* One row is always as tall as it is with Save (44px, padding and border),
      so the tabs below hold still when Quality drops the page-level commands. */
-  min-block-size: calc(44px + 2 * var(--space-3) + 2px);
+  min-block-size: calc(44px + 2 * var(--space-2) + 2px);
   min-inline-size: 0;
-  padding: var(--space-3) var(--space-5);
+  padding: var(--space-2) var(--space-3);
   box-shadow: none;
 }
 
@@ -4776,7 +4757,7 @@ body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions:where(:not(.
 
 .knowledge-workspace-history-rail {
   position: sticky;
-  inset-block-start: var(--space-2);
+  inset-block-start: var(--knowledge-workspace-sticky-top);
   align-self: start;
   inline-size: 100%;
   max-inline-size: 18rem;
@@ -4817,7 +4798,7 @@ body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions:where(:not(.
   min-inline-size: 0;
   max-inline-size: 18rem;
   position: sticky;
-  inset-block-start: var(--space-2);
+  inset-block-start: var(--knowledge-workspace-sticky-top);
 }
 
 /* History that cannot fit beside a usable summary stays reachable on the page. */

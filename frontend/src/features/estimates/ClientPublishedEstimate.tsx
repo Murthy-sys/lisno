@@ -45,7 +45,7 @@ export function ClientPublishedEstimate({ estimate, decisionBlocked = false }: {
   </section>;
 }
 
-function PreEstimateComparison({ estimate }: { estimate: EstimateQueueItem }) {
+export function PreEstimateComparison({ estimate }: { estimate: EstimateQueueItem }) {
   const before = estimate.preApprovedReview;
   const after = estimate.publishedReview;
   const changes = estimate.changesFromPre;
@@ -122,7 +122,7 @@ function PublishedEstimateDetails({ snapshot }: { snapshot: EstimateClientReview
   </details>;
 }
 
-function ClientEstimateDecision({ estimate, review, decisionBlocked, fallbackRef }: { estimate: EstimateQueueItem; review: NonNullable<EstimateQueueItem["publishedReview"]>; decisionBlocked: boolean; fallbackRef: RefObject<HTMLElement | null> }) {
+export function ClientEstimateDecision({ estimate, review, decisionBlocked, fallbackRef }: { estimate: EstimateQueueItem; review: NonNullable<EstimateQueueItem["publishedReview"]>; decisionBlocked: boolean; fallbackRef: RefObject<HTMLElement | null> }) {
   const queryClient = useQueryClient();
   const [dialog, setDialog] = useState<"approve" | "request_changes" | null>(null);
   const [note, setNote] = useState("");

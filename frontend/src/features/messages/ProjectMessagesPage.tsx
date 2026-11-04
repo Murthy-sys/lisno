@@ -1,3 +1,4 @@
+import { ProjectId } from "../../components/projects/ProjectId";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { ChatIcon } from "./ChatIcon";
 import { useQueryClient } from "@tanstack/react-query";
@@ -123,6 +124,7 @@ function ProjectConversation({ projectId }: { projectId: string }) {
           <span className="project-chat-identity__copy"><span className="project-chat-identity__name" aria-hidden="true">{name}</span><span className="project-chat-identity__summary">{summary.data && !unavailable ? `${summary.data.participantCount} participants${summary.data.assistant ? " · Lisno AI" : ""}` : "Project messages"}</span></span>
         </button>
         <h1 id="project-chat-title" className="sr-only">{name}</h1>
+        {summary.data && !unavailable ? <ProjectId projectNumber={summary.data.project.projectNumber} /> : null}
       </div>
       {summary.data?.capabilities.canRenameProject && !unavailable && canWriteNow ? <button type="button" className="project-chat-icon project-chat-rename" aria-label="Edit project name" onClick={() => setRenameOpen(true)}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><path d="m15 5 4 4M4 20l4-1L20 7a2.8 2.8 0 0 0-4-4L4 15Z" /></svg></button> : null}
       <div className="project-chat-header__actions">

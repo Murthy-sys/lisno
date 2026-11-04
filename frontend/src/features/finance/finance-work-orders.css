@@ -1,5 +1,5 @@
-.finance-work-orders { margin-top: 1.5rem; padding: 1.25rem; border: 1px solid var(--border, #d8ded7); background: var(--surface, #f7f8f5); }
-.finance-work-orders__heading { display: flex; justify-content: space-between; gap: 1rem; align-items: start; margin-bottom: 1rem; }
+.finance-work-orders { margin-top: .75rem; padding: .75rem; border: 1px solid var(--border, #d8ded7); background: var(--surface, #f7f8f5); }
+.finance-work-orders__heading { display: flex; justify-content: space-between; gap: .5rem; align-items: start; margin-bottom: .75rem; }
 .finance-work-orders__heading h2 { margin: .15rem 0 .35rem; }
 .finance-work-orders__heading p:last-child { max-width: 62ch; margin: 0; }
 .finance-work-orders__list { list-style: none; padding: 0; margin: 0; border-top: 1px solid #d8ded7; }

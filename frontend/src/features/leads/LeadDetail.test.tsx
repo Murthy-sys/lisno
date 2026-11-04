@@ -122,7 +122,7 @@ describe("Lead details", () => {
     const lead = makeLead({ projectNumber });
     const api = mockLeadApi([lead]);
     renderApp([`/estimator-sales/leads/${lead.id}`]);
-    expect(await screen.findByText(projectNumber ? `Project number: ${projectNumber}` : "Project number not assigned")).toBeVisible();
+    expect(await screen.findByText(projectNumber ? `Project ID: ${projectNumber}` : "Project ID not assigned")).toBeVisible();
     expect(screen.getByRole("heading", { name: lead.projectName })).toBeVisible();
     expect(api.updates).toEqual([]);
   });

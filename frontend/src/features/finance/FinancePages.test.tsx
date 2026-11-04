@@ -19,6 +19,7 @@ const baseBucket: ProjectFinanceBucket = {
   id: "finance-bucket-project-one",
   projectId: "project-one",
   projectName: "Aurora Villa",
+  projectNumber: "Lisno000011",
   projectStatus: "active",
   estimateId: "estimate-one",
   estimateVersion: 4,
@@ -450,10 +451,12 @@ describe("FinanceOverviewPage", () => {
     renderApp(["/finance"]);
 
     expect(await screen.findByText("1 project")).toBeVisible();
+    expect(screen.getByText("Project ID: Lisno000011")).toBeVisible();
     await user.click(screen.getByRole("link", { name: "View Aurora Villa financial details" }));
 
     expect(await screen.findByRole("heading", { name: "Aurora Villa finance" })).toBeVisible();
     expect(screen.getByRole("heading", { name: "Budget detail" })).toBeVisible();
+    expect(screen.getAllByText("Project ID: Lisno000011")).toHaveLength(1);
     expect(screen.getByRole("img", { name: /Cost budget consumed/ }))
       .toHaveAccessibleName(new RegExp(`of a ${escapeForRegExp(formatPaise(80_000_000))} cost budget`));
     expect(screen.getByText("50%")).toBeVisible();

@@ -26,6 +26,17 @@ function componentSchemas(): Record<string, OpenApiObject> {
 }
 
 describe("OpenAPI and Swagger UI", () => {
+  it("documents generated project identity only as read-only response metadata", () => {
+    const schemas = componentSchemas();
+    for (const name of ["NumberedProjectRead", "DashboardProjectRow", "ProjectStatusSummary", "DesignPlanTask", "ProcurementProject", "ProjectFinanceBucket", "PMProject", "ExecutionProjectMetadata", "ExecutionWork", "EstimateTierChoices", "Quotation"]) {
+      expect(schemas[name], name).toHaveProperty("properties.projectNumber.readOnly", true);
+      expect(schemas[name], name).toHaveProperty("properties.projectNumber.nullable", true);
+    }
+    for (const name of ["ConfiguredEstimateLineInput", "PMVendorSuggestionCreate", "PMVendorSuggestionUpdate"]) {
+      expect(schemas[name], name).not.toHaveProperty("properties.projectNumber");
+    }
+    expect(openApiDocument.paths["/projects/{projectId}"]!.get).toHaveProperty("responses.2XX.content.application/json.schema.properties.data.$ref", "#/components/schemas/NumberedProjectRead");
+  });
   it("documents optional frozen proposal metadata without changing legacy snapshots", () => {
     const schemas = componentSchemas();
     expect(schemas.ClientEstimateSnapshot).toHaveProperty("properties.proposal.$ref", "#/components/schemas/EstimateProposalMetadata");
@@ -1279,7 +1290,7 @@ describe("OpenAPI and Swagger UI", () => {
     }
   });
 
-  it("contains all 519 routes without versioning paths twice", () => {
+  it("contains all 520 routes without versioning paths twice", () => {
     const methods = new Set(["get", "post", "put", "patch", "delete"]);
     const operationCount = Object.values(openApiDocument.paths).reduce(
       (total, pathItem) =>
@@ -1288,7 +1299,7 @@ describe("OpenAPI and Swagger UI", () => {
     );
 
     expect(operationCount).toBe(HUMAN_JWT_OPERATION_LIST.length + 21);
-    expect(operationCount).toBe(519);
+    expect(operationCount).toBe(520);
     expect(Object.keys(openApiDocument.paths).some((path) =>
       path.startsWith("/api/v1")
     )).toBe(false);

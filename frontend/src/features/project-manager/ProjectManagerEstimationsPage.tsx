@@ -1,3 +1,4 @@
+import { ProjectId } from "../../components/projects/ProjectId";
 import { useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { safeReturnPath } from "../../app/routePaths";
@@ -98,7 +99,7 @@ function EstimatePageContent({ projectId, returnTo }: { projectId: string; retur
     <Link to={returnTo} className="pm-estimates__back">Back to project</Link>
     <PMQueryState query={query}>{estimate => <>
       <header className="pm-estimates__header">
-        <div><p className="pm-estimates__eyebrow">Project estimations</p><h1>{estimate.project.name}</h1>
+        <div><p className="pm-estimates__eyebrow">Project estimations</p><h1>{estimate.project.name}</h1><ProjectId projectNumber={estimate.project.projectNumber} />
           <div className="pm-estimates__source"><PMBadge value="Read only" />{estimate.source ? <span>{pmApprovedPhaseLabel(estimate.source.phase)} · Version {estimate.source.estimateVersion}</span> : null}</div>
           {estimate.approvedAt ? <p className="pm-estimates__approval">Approved {pmDate(estimate.approvedAt)}</p> : null}
         </div>

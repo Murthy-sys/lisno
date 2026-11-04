@@ -1,3 +1,4 @@
+import { ProjectId } from "../../components/projects/ProjectId";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft } from "lucide-react";
 import { useRef, useState } from "react";
@@ -203,6 +204,7 @@ export function DesignerDesignPlanTasksPage() {
                           label={statusLabels[item.status]}
                         />
                       </span>
+                      <ProjectId projectNumber={item.projectNumber} />
                       <span>{item.clientName}</span>
                     </button>
                   </li>
@@ -225,6 +227,7 @@ export function DesignerDesignPlanTasksPage() {
                 <div>
                   <p className="eyebrow">Selected project</p>
                   <h2 id="designer-plan-project-title">{task.projectName}</h2>
+                  <ProjectId projectNumber={task.projectNumber} />
                 </div>
                 <StatusBadge
                   tone={statusTones[task.status]}
@@ -237,6 +240,7 @@ export function DesignerDesignPlanTasksPage() {
               </dl>
               {task.estimationWorkflowVersion === 2 && task.leadId ? <Link to={`/estimator-sales/leads/${encodeURIComponent(task.leadId)}/estimate`}>Review and edit post-estimate</Link> : null}
               {task.estimationWorkflowVersion === 3 && task.canEditQuotation && task.leadId ? <Link to={`/estimator-sales/leads/${encodeURIComponent(task.leadId)}/estimate`}>Review Designer-revised quotation</Link> : null}
+              {task.estimationWorkflowVersion === 3 && !task.canEditQuotation ? <Link to={`/projects/${encodeURIComponent(task.projectId)}/quotation`}>View saved estimation</Link> : null}
               {task.estimationWorkflowVersion === 3 ? <p className="designer-plan-workspace__notice">{task.quotationApproved ? "The quotation is approved. Continue the design tasks below." : "Design tasks begin after the Client approves the Designer-revised quotation."}</p> : null}
               {task.estimationWorkflowVersion === 2 ? <p className="designer-plan-workspace__notice">Design starts after pre-estimate approval. Initial payment is confirmed after design and final estimate approval.</p> : null}
               {task.scopeReconciliation?.required ? <DesignScopeReconciliation key={`${task.id}:${task.designPlanVersion}:${task.scopeReconciliation.designScopeRevision}`} task={task} /> : null}

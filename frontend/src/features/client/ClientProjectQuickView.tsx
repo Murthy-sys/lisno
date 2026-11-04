@@ -1,3 +1,4 @@
+import { ProjectId } from "../../components/projects/ProjectId";
 import type { RefObject } from "react";
 import { Link } from "react-router-dom";
 
@@ -23,6 +24,7 @@ export function ClientProjectQuickView({ project, stale, latest, loading, failed
     title={project?.name ?? "Project unavailable"}
     eyebrow="Project details"
     description={project?.location}
+    metadata={project ? <ProjectId projectNumber={project.projectNumber} /> : undefined}
     width="medium"
     fallbackFocusRef={fallbackFocusRef}
     onClose={onClose}

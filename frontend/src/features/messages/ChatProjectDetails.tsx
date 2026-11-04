@@ -1,3 +1,4 @@
+import { ProjectId } from "../../components/projects/ProjectId";
 import { useEffect, useId, useMemo, useState, useSyncExternalStore } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
@@ -58,7 +59,7 @@ export function ChatProjectDetails(props: ChatProjectDetailsProps) {
     </header>
     <div className="chat-project-details__identity">
       <span className="chat-project-details__avatar" aria-hidden="true">{initials(summary.project.name)}</span>
-      <div><h3>{summary.project.name}</h3><span className="chat-project-details__project-status">{summary.project.status.replaceAll("_", " ")}</span></div>
+      <div><h3>{summary.project.name}</h3><ProjectId projectNumber={summary.project.projectNumber} /><span className="chat-project-details__project-status">{summary.project.status.replaceAll("_", " ")}</span></div>
     </div>
     {canReadStatus ? <WorkflowStatus key={`${chat.scope}:${auth.user!.id}:${auth.user!.role}:${summary.project.id}`} projectId={summary.project.id} identity={`${chat.scope}:${auth.user!.id}:${auth.user!.role}`} visible={visible} /> : null}
     <section className="chat-project-details__section" aria-labelledby={participantHeadingId}>

@@ -29,7 +29,7 @@ export interface DesignerSummary {
   overdueCount: number;
   yellowRiskCount: number;
   pendingEvaluation: boolean;
-  projects: Array<ProjectRecord & { progress: number }>;
+  projects: Array<ProjectRecord & { progress: number; readonly projectNumber: string | null }>;
   tasks: Array<TaskRecord & { risk: ReturnType<typeof calculateTaskRisk> }>;
 }
 
@@ -123,6 +123,7 @@ export function createHierarchyService(
         `Hierarchy summaries support at most ${MAX_SUMMARY_RECORDS} records per bounded page.`
       );
     }
+    const projectNumbers = await repository.findProjectNumbers(relevantProjects.map(project => project.id));
     const now = clock();
     const period = kpiPeriod(ownerTasks, now);
     const enrichedTasks = await enrichKpiTasks(
@@ -142,12 +143,10 @@ export function createHierarchyService(
             project.estimationWorkflowVersion !== 3 && project.initiatingDesignerId === designer.id ||
             project.assignedDesignerIds.includes(designer.id)
         )
-        .map((project) =>
-          deriveProjectRead(
-            project,
-            projectTasks.filter((task) => task.projectId === project.id)
-          )
-        );
+        .map((project) => ({
+          ...deriveProjectRead(project, projectTasks.filter((task) => task.projectId === project.id)),
+          projectNumber: projectNumbers.get(project.id) ?? null
+        }));
       const withRisk = tasks.map((task) => ({
         ...task,
         risk: calculateTaskRisk(task, now)

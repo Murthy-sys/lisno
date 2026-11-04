@@ -1,0 +1,7 @@
+.project-id {
+  color: var(--color-text-muted);
+  font: var(--type-metadata);
+  overflow-wrap: anywhere;
+  min-inline-size: 0;
+  user-select: text;
+}

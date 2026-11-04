@@ -1,3 +1,4 @@
+import { ProjectId } from "../../components/projects/ProjectId";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 
@@ -47,7 +48,7 @@ export function ProcurementProjectCard({ project, eagerImage }: ProcurementProje
         <div className="procurement-gallery-card__body">
           <div className="procurement-gallery-card__identity">
             <p className="procurement-gallery-card__version">Estimate v{project.estimateVersion}</p>
-            <h3>{project.projectName}</h3>
+            <h3>{project.projectName}</h3><ProjectId projectNumber={project.projectNumber} />
             <div className="procurement-gallery-card__details">
               {openedLabel ? <span>
                 <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="16" rx="1" /><path d="M8 2v6M16 2v6M4 10h16" /></svg>

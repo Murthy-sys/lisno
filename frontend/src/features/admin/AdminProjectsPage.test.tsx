@@ -144,14 +144,14 @@ describe("AdminProjectsPage", () => {
     ]))));
     const user = userEvent.setup();
     renderApp(["/admin/projects"]);
-    expect(await screen.findByText("Project number: Lisno000021")).toBeVisible();
-    expect(screen.getByText("Project number: Lisno1000000")).toBeVisible();
+    expect(await screen.findByText("Project ID: Lisno000021")).toBeVisible();
+    expect(screen.getByText("Project ID: Lisno1000000")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "List view" }));
     const first = screen.getByRole("article", { name: project.name });
     const other = screen.getByRole("article", { name: second.name });
-    expect(within(first).getByText("Project number: Lisno000021")).toBeVisible();
-    expect(within(first).queryByText("Project number: Lisno1000000")).not.toBeInTheDocument();
-    expect(within(other).getByText("Project number: Lisno1000000")).toBeVisible();
+    expect(within(first).getByText("Project ID: Lisno000021")).toBeVisible();
+    expect(within(first).queryByText("Project ID: Lisno1000000")).not.toBeInTheDocument();
+    expect(within(other).getByText("Project ID: Lisno1000000")).toBeVisible();
   });
 
   it("keeps quick view tied to the selected ID, preserves the list route, and never fetches detail", async () => {

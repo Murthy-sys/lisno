@@ -93,7 +93,7 @@ describe("Estimate workspace revisions", () => {
     await screen.findByRole("spinbutton", { name: /Quantity.*Current ceiling.*Living Room/ });
     expect(screen.getByLabelText("Estimate amount before GST: ₹100")).toBeVisible();
     expect(screen.queryByText("Total including GST")).not.toBeInTheDocument();
-    expect(screen.queryByText("Project number: Lisno000009")).not.toBeInTheDocument();
+    expect(screen.queryByText("Project ID: Lisno000009")).not.toBeInTheDocument();
     expect(screen.queryByText(/workflow and client requirements/)).not.toBeInTheDocument();
     const quantity = screen.getByRole("spinbutton", { name: /Quantity.*Current ceiling.*Living Room/ });
     await user.clear(quantity); await user.type(quantity, "3");
@@ -106,6 +106,9 @@ describe("Estimate workspace revisions", () => {
     expect(screen.getAllByLabelText("Estimate amount before GST: ₹275")).toHaveLength(2);
     expect(screen.queryByRole("button", { name: "Save draft" })).not.toBeInTheDocument();
     expect(screen.queryByRole("spinbutton")).not.toBeInTheDocument();
+    const pendingDraftUnload = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(pendingDraftUnload);
+    expect(pendingDraftUnload.defaultPrevented).toBe(true);
     for (const view of ["Summary", "Proposal"]) {
       await user.click(screen.getByRole("button", { name: view }));
       expect(screen.getByRole("region", { name: view === "Summary" ? "Saved revision summary" : "Saved revision proposal" })).toBeVisible();

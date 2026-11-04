@@ -244,7 +244,7 @@
   --chat-canvas: #f7f8f4; --chat-outgoing: #e9f1e9; --chat-focus: #225b45;
 }
 .project-chat-page { position: relative; font-size: 13px; }
-.project-chat-header { min-height: 66px; gap: 6px; padding: 10px 16px; background: var(--chat-surface); }
+.project-chat-header { min-height: 52px; gap: 6px; padding: 8px 12px; background: var(--chat-surface); }
 .project-chat-header__actions { display: flex; align-items: center; gap: 4px; flex: 0 0 auto; }
 .project-chat-avatar { width: 36px; height: 36px; flex-basis: 36px; font-size: 13px; background: #e3ebe0; color: var(--chat-green); }
 .project-chat-identity__button { gap: 10px; }

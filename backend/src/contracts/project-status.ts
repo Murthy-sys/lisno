@@ -21,6 +21,8 @@ export interface ProjectPendingAction {
 
 /** A participant-safe projection; never include source records or commercial values. */
 export interface ProjectStatusSummary {
+  readonly projectNumber?: string | null;
+
   projectId: string;
   projectName: string;
   projectStatus: string;

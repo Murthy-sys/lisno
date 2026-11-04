@@ -1,3 +1,4 @@
+import { readProjectNumbers } from "./project-number-read.service.js";
 import { createHash, randomUUID } from "node:crypto";
 import mongoose, { type ClientSession } from "mongoose";
 import type { ZodType } from "zod";
@@ -62,7 +63,9 @@ export function createProjectVendorSuggestionService(input: { audit: AuditServic
           try { items.push(summary(String(project._id), String(project.name), await procurementItemSourceSnapshot(String(project._id), session))); }
           catch (error) { if (!(error instanceof ApiError) || !["NOT_FOUND", "PROCUREMENT_APPROVAL_SOURCE_CONFLICT"].includes(error.code)) throw error; }
         }
-        return { items: items.slice(offset, offset + limit), total: items.length, limit, offset };
+        const visible = items.slice(offset, offset + limit);
+        const numbers = await readProjectNumbers(visible.map(project => project.projectId), session);
+        return { items: visible.map(project => ({ ...project, projectNumber: numbers.get(project.projectId) ?? null })), total: items.length, limit, offset };
       });
     },
     async list(actor, projectId, query) {
@@ -76,7 +79,8 @@ export function createProjectVendorSuggestionService(input: { audit: AuditServic
         const filter = { ...sourceFilter(projectId, source), ...(q ? { $or: [{ vendorId: { $in: matchingVendors.map((row) => row._id) } }, { vendorNameSnapshot: { $regex: literal(q), $options: "i" } }, { note: { $regex: literal(q), $options: "i" } }] } : {}) };
         const total = await ProjectVendorSuggestionModel.countDocuments(filter).session(session);
         const rows = await ProjectVendorSuggestionModel.find(filter).sort({ createdAt: -1, _id: 1 }).skip(offset).limit(limit).session(session).lean();
-        return { project: summary(projectId, String(project.name), source), items: await dtos(rows, session, actor), total, limit, offset, performance: { status: "not_available", recommendations: [] } };
+        const projectNumber = (await readProjectNumbers([projectId], session)).get(projectId) ?? null;
+        return { project: summary(projectId, String(project.name), source, projectNumber), items: await dtos(rows, session, actor), total, limit, offset, performance: { status: "not_available", recommendations: [] } };
       });
     },
     async create(actor, projectId, value) {
@@ -137,8 +141,8 @@ export function createProjectVendorSuggestionService(input: { audit: AuditServic
 function sourceFilter(projectId: string, source: Source) {
   return { projectId, mainLineId: null, estimateId: source.estimateId, estimateVersion: source.estimateVersion, estimateReviewRoundId: source.estimateReviewRoundId, designPlanVersion: source.designPlanVersion };
 }
-function summary(projectId: string, projectName: string, source: Source): VendorSuggestionProject {
-  return { projectId, projectName, estimateId: source.estimateId, estimateVersion: source.estimateVersion, designPlanVersion: source.designPlanVersion };
+function summary(projectId: string, projectName: string, source: Source, projectNumber: string | null = null): VendorSuggestionProject {
+  return { projectId, projectName, projectNumber, estimateId: source.estimateId, estimateVersion: source.estimateVersion, designPlanVersion: source.designPlanVersion };
 }
 function requireSource(source: Source, input: { estimateId: string; estimateVersion: number; designPlanVersion: number }) {
   if (source.estimateId !== input.estimateId || source.estimateVersion !== input.estimateVersion || source.designPlanVersion !== input.designPlanVersion) sourceConflict();

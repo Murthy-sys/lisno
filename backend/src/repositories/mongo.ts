@@ -1,4 +1,5 @@
 import { readProjectNumber } from "../domain/project-number.js";
+import { readProjectNumbers } from "../services/project-number-read.service.js";
 import { readProjectInitiationMetadata } from "../domain/project-initiation-metadata.js";
 import { projectManagerProjectIds } from "../services/project-manager-assignment.service.js";
 import { ProjectClientInvitationModel, ProjectInitiationReceiptModel } from "../models/ProjectClientInvitation.js";
@@ -1896,6 +1897,10 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       if (session) { itemQuery.session(session); countQuery.session(session); }
       const [documents, total] = await Promise.all([itemQuery.exec(), countQuery.exec()]);
       return { items: documents.map(mapProject), total };
+    },
+
+    async findProjectNumbers(projectIds) {
+      return readProjectNumbers(projectIds, session);
     },
 
     async findProjectForUserRead(user, projectId) {

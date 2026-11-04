@@ -24,13 +24,13 @@ const empty: EstimateRequirementsDetail = {
   rooms: [], indicativeTotalPaise: null, pricingComplete: false
 };
 
-function setup(initial: EstimateRequirementsDetail = structuredClone(empty), initialStatus = 200) {
+function setup(initial: EstimateRequirementsDetail = structuredClone(empty), initialStatus = 200, compact = false) {
   const state = { detail: initial, status: initialStatus };
   let queryClient!: QueryClient;
   function CaptureQueryClient() { queryClient = useQueryClient(); return null; }
   server.use(http.get(path, () => state.status === 200 ? HttpResponse.json({ data: state.detail })
     : HttpResponse.json({ error: { code: "UNAVAILABLE", message: "Private provider detail" } }, { status: state.status })));
-  const rendered = renderWithQuery(<><CaptureQueryClient /><ClientEstimateRequirements projectId="project-one" /></>);
+  const rendered = renderWithQuery(<><CaptureQueryClient /><ClientEstimateRequirements projectId="project-one" compact={compact} /></>);
   return { state, queryClient, ...rendered };
 }
 
@@ -43,6 +43,34 @@ async function addDraft() {
 }
 
 describe("ClientEstimateRequirements", () => {
+  it("collapses saved-estimate requirements without repeating totals or review instructions", async () => {
+    setup({ ...empty, estimateVersion: 3, indicativeTotalPaise: 1180700, pricingComplete: true, editingAllowed: false, editingBlockReason: "review_pending" }, 200, true);
+    const summary = await screen.findByText("Additional requirements");
+    expect(summary.closest("details")).not.toHaveAttribute("open");
+    expect(screen.queryByText("Indicative total")).not.toBeInTheDocument();
+    expect(screen.queryByText(/No requirements yet/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Prices are read-only/)).not.toBeInTheDocument();
+    await userEvent.click(summary);
+    expect(screen.getByText("Requirements are locked during estimate review.")).toBeVisible();
+    expect(screen.getByRole("link", { name: "Review the submitted estimate" })).toHaveAttribute("href", "#estimate-review-title");
+  });
+
+  it("keeps first-estimate requirements open and preserves drafts across disclosure toggles and refresh", async () => {
+    const { state, queryClient, container } = setup(structuredClone(empty), 200, true);
+    const summary = await screen.findByText("Additional requirements");
+    expect(summary.closest("details")).toHaveAttribute("open");
+    const user = await addDraft();
+    await user.click(summary);
+    expect(summary.closest("details")).not.toHaveAttribute("open");
+    expect(summary).toHaveTextContent("Unsaved changes");
+    state.detail = { ...state.detail, estimateVersion: 2 };
+    await act(async () => { await queryClient.refetchQueries({ queryKey: estimateRequirementsKeys.detail("project-one") }); });
+    await user.click(summary);
+    expect(screen.getByRole("textbox", { name: "What would you like?" })).toHaveValue(`  ${request.text}  `);
+    expect(screen.getByRole("combobox", { name: "Main Basket" })).toHaveValue("basket-one");
+    expect((await axe.run(container, { rules: { "color-contrast": { enabled: false } } })).violations).toEqual([]);
+  });
+
   it("refreshes stale Main Line options after a server validation rejection without losing the draft", async () => {
     const { state } = setup({ ...empty, mainLines: [{ id: "line-one", name: "Wall storage", mainBasketId: "basket-one", subBasketId: null, subBasketName: null }] });
     server.use(http.post(path, () => {

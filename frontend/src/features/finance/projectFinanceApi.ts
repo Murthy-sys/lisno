@@ -27,7 +27,7 @@ export interface ProjectBudgetFilters {
 
 export interface ProjectBudgetPage extends ProjectFinanceBucketPage {
   filterOptions: {
-    projects: Array<{ id: string; name: string }>;
+    projects: Array<{ id: string; name: string; readonly projectNumber?: string | null }>;
     clients: Array<{ id: string; name: string }>;
     hasUnlinkedClients: boolean;
   };

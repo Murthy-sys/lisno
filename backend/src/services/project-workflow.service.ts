@@ -1,3 +1,5 @@
+import { readProjectNumber, projectNumberStateConflict } from "../domain/project-number.js";
+import { readProjectNumbers } from "./project-number-read.service.js";
 import { assignmentConflict, projectManagerProjectIds, resolveProjectManagerAssignment, setProjectManagerAssignment } from "./project-manager-assignment.service.js";
 import { isCollaborativeEstimate } from "../domain/estimation-lifecycle.js";
 import { fenceCollaborativeEstimate } from "./estimate-collaboration-policy.service.js";
@@ -68,6 +70,7 @@ const DOWNSTREAM_EXECUTION_TASK_KINDS = [
 ] as const;
 
 export interface DesignPlanTaskDto {
+  readonly projectNumber?: string | null;
   leadId?: string;
   estimationWorkflowVersion?: 2 | 3;
   quotationApproved?: boolean;
@@ -525,10 +528,11 @@ export function createProjectWorkflowService(input: {
       }).lean();
       const leadById = new Map(leads.map((lead) => [String(lead._id), lead]));
       const projectById = new Map(projects.map((project) => [String(project._id), project]));
+      const numbers = await readProjectNumbers(projects.map(project => String(project._id)));
       return estimates.flatMap((estimate) => {
         const lead = leadById.get(String(estimate.leadId));
         const project = projectById.get(String(estimate.projectId));
-        return lead && project ? [taskDto(estimate, project, lead, actor.id)] : [];
+        return lead && project ? [{ ...taskDto(estimate, project, lead, actor.id), projectNumber: numbers.get(String(project._id)) ?? null }] : [];
       });
     },
 
@@ -2477,7 +2481,10 @@ function isOperationalTaskRole(role: PublicUser["role"]): boolean {
 }
 
 function taskDto(estimate: Row, project: Row, lead: Row, actorId?: string): DesignPlanTaskDto {
+  if (String(estimate.leadId) !== String(lead._id) || String(estimate.projectId) !== String(project._id) ||
+    lead.projectId != null && String(lead.projectId) !== String(project._id)) throw projectNumberStateConflict();
   return {
+    projectNumber: readProjectNumber(lead.projectNumber),
     leadId: String(lead._id),
     ...(isCollaborativeEstimate(estimate) ? { estimationWorkflowVersion: estimate.estimation.workflowVersion } : {}),
     ...(estimate.estimation?.workflowVersion === 3 ? { canEditQuotation: !!actorId && project.primaryDesignerId === actorId && estimate.designPlanDesignerId === actorId, quotationApproved: !!estimate.estimation.editClosedAt && !!estimate.estimation.finalApproval && estimate.estimation.status === "client_approved" } : {}),

@@ -17,7 +17,7 @@ const proposal: ExecutionWork = { ...executionFixture, status: "awaiting_schedul
   proposedSchedule: { startDate: "2026-10-09", finishDate: "2026-10-13", reason: "Site ready" }, allowedActions: ["hold", "confirm_schedule"] };
 function mount(path = "/projects/project-one/execution") { return renderWithQuery(<MemoryRouter initialEntries={[path]}><SiteManagerProjectPage projectId="project-one" /></MemoryRouter>); }
 function setup(items: ExecutionWork[] = [proposal]) {
-  server.use(http.get("/api/v1/projects/project-one/execution", () => HttpResponse.json({ data: executionPageFixture(items) })), http.get("/api/v1/execution/work/:id", ({ params }) => HttpResponse.json({ data: items.find(item => item.id === params.id) ?? proposal })),
+  server.use(http.get("/api/v1/projects/project-one/execution", () => HttpResponse.json({ data: { ...executionPageFixture(items), project: { ...executionPageFixture(items).project!, projectNumber: "Lisno000011" } } })), http.get("/api/v1/execution/work/:id", ({ params }) => HttpResponse.json({ data: items.find(item => item.id === params.id) ?? proposal })),
     http.get("/api/v1/execution/work/:id/history", () => HttpResponse.json({ data: { items: [], total: 0, limit: 20, offset: 0 } })));
 }
 
@@ -30,6 +30,7 @@ describe("selected Project Manager project", () => {
     const user = userEvent.setup(); mount();
     expect(await screen.findByRole("heading", { level: 1, name: "Oak residence" })).toBeVisible();
     expect(screen.getByText("Schedule proposed")).toBeVisible();
+    expect(screen.getByText("Project ID: Lisno000011")).toBeVisible();
     const trigger = screen.getByRole("button", { name: "Confirm schedule: Oak wall panelling, Oak Works" });
     await user.click(trigger);
     const dialog = await screen.findByRole("dialog", { name: "Oak wall panelling" });
@@ -137,6 +138,8 @@ describe("selected Project Manager project", () => {
     await user.click(screen.getByRole("button", { name: "Refresh project" }));
     expect(await screen.findByText("You no longer have access to this project.")).toBeVisible();
     expect(screen.queryByText("Oak residence")).not.toBeInTheDocument();
+    expect(screen.queryByText("Project ID: Lisno000011")).not.toBeInTheDocument();
+    expect(screen.queryByText("Project ID not assigned")).not.toBeInTheDocument();
     expect(screen.queryByText("Oak Works")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Confirm schedule:/ })).not.toBeInTheDocument();
   });

@@ -62,6 +62,24 @@ function renderList(url = "/finance") {
 beforeEach(() => { vi.mocked(getProjectBudgetPage).mockReset().mockResolvedValue(response()); });
 
 describe("Super Admin project budgets", () => {
+  it("labels same-name projects with canonical IDs while selecting and routing by UUID", async () => {
+    const first = { ...bucket, projectNumber: "Lisno000011" };
+    const second = { ...unequalBucket, projectName: bucket.projectName, projectNumber: "Lisno000027" };
+    const third = { ...bucket, id: "bucket-three", projectId: "project-three", projectNumber: null };
+    const page = response([first, second, third], 3);
+    page.filterOptions.projects = [first, second, third].map(item => ({ id: item.projectId, name: item.projectName, projectNumber: item.projectNumber }));
+    vi.mocked(getProjectBudgetPage).mockResolvedValue(page);
+    renderList();
+    const select = await screen.findByRole("combobox", { name: "Project" });
+    await screen.findByRole("option", { name: "Aurora Villa · Project ID: Lisno000011" });
+    expect(within(select).getByRole("option", { name: "Aurora Villa · Project ID: Lisno000027" })).toHaveValue("project-two");
+    expect(within(select).getByRole("option", { name: "Aurora Villa · Project ID not assigned" })).toHaveValue("project-three");
+    const row = screen.getByText("Project ID: Lisno000027").closest("tr")!;
+    expect(within(row).getByRole("link", { name: "View details for Aurora Villa" }).getAttribute("href")).toContain("project-two");
+    await userEvent.selectOptions(select, "project-two");
+    await waitFor(() => expect(getProjectBudgetPage).toHaveBeenLastCalledWith({ limit: 10, offset: 0, projectId: "project-two" }));
+  });
+
   it("uses matching portfolio totals rather than loaded rows, and shows exact source budget arithmetic", async () => {
     renderList();
     const totals = await screen.findByRole("definition", { name: formatPaise(250_010_003) });

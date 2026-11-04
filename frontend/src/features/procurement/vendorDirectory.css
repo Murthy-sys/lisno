@@ -6,17 +6,17 @@
   --directory-olive: #454f34;
   --directory-selected: #f1f3eb;
   --directory-card-field-min: 300px;
-  display: grid; gap: 14px; min-width: 0; color: var(--directory-ink);
+  display: grid; gap: 12px; min-width: 0; color: var(--directory-ink);
 }
 .ui-workspace > .vendor-procurement:has(> .vendor-directory) { inline-size: 100%; }
-.vendor-directory__hero { position: relative; isolation: isolate; display: flex; align-items: flex-start; gap: 20px; overflow: hidden; border-radius: 10px; background: #f5f2eb; padding: 16px 24px 60px; }
+.vendor-directory__hero { position: relative; isolation: isolate; display: flex; align-items: flex-start; gap: 8px; overflow: hidden; border-radius: 10px; background: #f5f2eb; padding: 10px 12px; }
 .vendor-directory__art { position: absolute; z-index: -1; inset: 0 0 0 auto; width: 52%; height: 100%; object-fit: cover; object-position: 38% 56%; }
-.vendor-directory__intro { max-width: 48%; padding: 0 12px 0 0; }
+.vendor-directory__intro { flex: 1; min-width: 0; max-width: 100%; padding: 0; }
 :is(.ui-app-shell[data-role], body) .vendor-directory__eyebrow { margin: 0 0 3px; text-transform: uppercase; letter-spacing: .09em; font-size: 13px; line-height: 1.3; font-weight: 600; color: var(--directory-olive); }
-:is(.ui-app-shell[data-role], body) .vendor-directory__intro h1 { margin: 0; font-family: Georgia, "Times New Roman", serif; font-size: clamp(32px, 3vw, 42px); font-weight: 500; letter-spacing: -.035em; line-height: 1.06; color: #171913; }
+:is(.ui-app-shell[data-role], body) .vendor-directory__intro h1 { margin: 0; font-family: Georgia, "Times New Roman", serif; font-size: clamp(24px, 2vw, 28px); font-weight: 500; letter-spacing: -.035em; line-height: 1.06; color: #171913; }
 :is(.ui-app-shell[data-role], body) .vendor-directory__intro > p:last-child { margin: 5px 0 0; font-size: 14px; line-height: 1.5; color: #555c5a; max-width: 690px; }
-:is(.ui-app-shell[data-role], body) .vendor-directory__quote { margin: 0 0 0 auto; flex: 0 0 auto; max-width: none; white-space: nowrap; padding: 11px 18px; border-radius: 12px; background: #5f664b; color: #fffdf4; font-family: Georgia, "Times New Roman", serif; font-size: clamp(16px, 1.35vw, 19px); font-weight: 400; line-height: 1.15; }
-.vendor-directory__overview { position: relative; margin: -62px 0 0; z-index: 1; }
+:is(.ui-app-shell[data-role], body) .vendor-directory__quote { display: none; margin: 0 0 0 auto; flex: 0 0 auto; max-width: none; white-space: nowrap; padding: 11px 18px; border-radius: 12px; background: #5f664b; color: #fffdf4; font-family: Georgia, "Times New Roman", serif; font-size: clamp(16px, 1.35vw, 19px); font-weight: 400; line-height: 1.15; }
+.vendor-directory__overview { position: relative; margin: 0; z-index: 1; }
 .vendor-directory__metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
 .vendor-directory__metric { display: flex; align-items: flex-start; gap: 14px; min-width: 0; padding: 10px 16px; border: 1px solid var(--directory-border); border-radius: 14px; background: var(--directory-paper); }
 .vendor-directory__metric > div { min-width: 0; }
@@ -31,7 +31,7 @@
 .vendor-directory__metric--review .vendor-directory__value small { color: #98630f; }
 :is(.ui-app-shell[data-role], body) .vendor-directory__metric p { font-size: 12px; line-height: 1.35; margin: 1px 0 0; color: var(--directory-muted); }
 .vendor-directory__overview-error { display: flex; align-items: center; gap: 12px; justify-content: flex-end; font-size: 12px; padding-top: 6px; }
-:is(.ui-app-shell[data-role], body) .vendor-directory__workspace { display: grid; gap: 12px; min-width: 0; padding: 14px 18px 14px; background: var(--directory-paper); border: 1px solid var(--directory-border); border-radius: 14px; container-type: inline-size; }
+:is(.ui-app-shell[data-role], body) .vendor-directory__workspace { display: grid; gap: 8px; min-width: 0; padding: 10px 12px; background: var(--directory-paper); border: 1px solid var(--directory-border); border-radius: 14px; container-type: inline-size; }
 .vendor-directory__heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 :is(.ui-app-shell[data-role], body) .vendor-directory__heading h2 { margin: 0; color: #191d17; font-size: 22px; line-height: 1.2; font-weight: 600; letter-spacing: -.025em; }
 :is(.ui-app-shell[data-role], body) .vendor-directory__heading p { margin: 3px 0 0; font-size: 14px; line-height: 1.4; color: var(--directory-muted); }
@@ -43,7 +43,7 @@
 .vendor-directory__workspace .ui-button svg { width: 20px; height: 20px; }
 :is(.ui-app-shell[data-role], body) .vendor-directory__heading > .ui-button { min-height: 48px; padding: 11px 18px; font-size: 14px; white-space: nowrap; flex-shrink: 0; }
 .vendor-directory__heading > .ui-button svg { width: 23px; height: 23px; }
-.vendor-directory__filters { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; margin: 0; }
+.vendor-directory__filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; margin: 0; }
 .vendor-directory__filters > .ui-field { flex: 1 1 136px; min-width: 0; gap: 4px; }
 .vendor-directory__filters > .vendor-directory__search { flex: 1.6 1 220px; }
 .vendor-directory__filters > .ui-button { flex: 0 0 auto; margin-left: auto; }
@@ -154,18 +154,18 @@
 }
 @media (max-width: 1100px) {
   .vendor-directory__metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-  .vendor-directory__intro { max-width: 48%; }
+  .vendor-directory__intro { max-width: 100%; }
   :is(.ui-app-shell[data-role], body) .vendor-directory__quote { padding: 10px 14px; font-size: 17px; }
 }
 @media (max-width: 640px) {
   :is(.ui-app-shell[data-role], body) .vendor-directory { gap: 12px; }
-  .vendor-directory__hero { padding: 18px 16px 58px; }
+  .vendor-directory__hero { padding: 10px; }
   .vendor-directory__intro { max-width: 100%; padding-right: 0; }
   .vendor-directory__art { width: 100%; opacity: .13; }
   :is(.ui-app-shell[data-role], body) .vendor-directory__quote { display: none; }
-  :is(.ui-app-shell[data-role], body) .vendor-directory__intro h1 { font-size: 32px; }
+  :is(.ui-app-shell[data-role], body) .vendor-directory__intro h1 { font-size: 24px; }
   :is(.ui-app-shell[data-role], body) .vendor-directory__intro > p:last-child { font-size: 12px; }
-  .vendor-directory__overview { margin-top: -58px; }
+  .vendor-directory__overview { margin-top: 0; }
   .vendor-directory__metrics { gap: 8px; }
   .vendor-directory__metric { gap: 7px; padding: 10px; flex-direction: column; align-items: flex-start; border-radius: 10px; }
   .vendor-directory__metric-icon { width: 34px; height: 34px; border-radius: 8px; }
@@ -175,7 +175,7 @@
   :is(.ui-app-shell[data-role], body) .vendor-directory__value--text { font-size: 15px; line-height: 1.66; }
   .vendor-directory__value small { font-size: 11px; }
   :is(.ui-app-shell[data-role], body) .vendor-directory__metric p { font-size: 10px; }
-  :is(.ui-app-shell[data-role], body) .vendor-directory__workspace { padding: 16px 12px 12px; gap: 14px; }
+  :is(.ui-app-shell[data-role], body) .vendor-directory__workspace { padding: 10px; gap: 8px; }
   .vendor-directory__heading { flex-wrap: wrap; }
   :is(.ui-app-shell[data-role], body) .vendor-directory__heading h2 { font-size: 20px; }
   .vendor-directory__filters { gap: 12px 10px; }
@@ -186,4 +186,14 @@
   :is(.ui-app-shell[data-role], body) .vendor-directory__footer .vendor-directory__page-size .ui-control { font-size: 16px; }
   .vendor-directory__footer nav { gap: 3px; }
   :is(.ui-app-shell[data-role], body) .vendor-directory__footer .ui-button { width: 44px; }
+}
+
+@media (min-width: 768px) and (pointer: fine) {
+  .ui-app-shell[data-role] :is(.vendor-directory__workspace, .vendor-directory__overview) .ui-button {
+    min-height: 36px;
+    padding: 6px 10px;
+  }
+  .ui-app-shell[data-role] .vendor-directory__heading > .ui-button { min-height: 36px; padding: 6px 10px; font-size: 13px; }
+  .ui-app-shell[data-role] .vendor-directory__filters .ui-control { min-height: 36px; height: auto; padding-block: 6px; }
+  .vendor-directory__search-control > svg { top: 8px; }
 }

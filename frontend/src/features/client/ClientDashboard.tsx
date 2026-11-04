@@ -1,3 +1,4 @@
+import { ProjectId } from "../../components/projects/ProjectId";
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronDown } from "lucide-react";
@@ -9,10 +10,10 @@ import { AsyncState } from "../../components/ui/AsyncState";
 import { Button } from "../../components/ui/Button";
 import "../../styles/client-dashboard.css";
 import { getClientLatestApprovedVersions, getClientProjectSummaries, clientKeys } from "./clientApi";
-import { EstimateReviewPanel } from "../estimates/EstimateReviewPanel";
+import { ClientEstimateSummary } from "./ClientEstimateSummary";
 import { ClientWorkflowTaskSummary } from "./ClientWorkflowTaskSummary";
 import { ClientProjectQuickView } from "./ClientProjectQuickView";
-import livingRoomImage from "../../assets/projects-living-room.webp";
+import { PageHeader } from "../../components/ui/PageHeader";
 
 export function ClientDashboard() {
   const [searchParams] = useSearchParams();
@@ -43,14 +44,7 @@ export function ClientDashboard() {
     : 0;
 
   return <section className="client-page client-dashboard" aria-labelledby="client-dashboard-title">
-    <header className="workspace-header client-dashboard__hero">
-      <img className="client-dashboard__hero-image" src={livingRoomImage} alt="" aria-hidden="true" />
-      <div className="client-dashboard__hero-copy">
-        <p className="eyebrow">Client portal</p>
-        <h1 id="client-dashboard-title">Your design plans</h1>
-        <p>Follow your projects and view plans once they are approved for sharing.</p>
-      </div>
-    </header>
+    <PageHeader id="client-dashboard-title" title="Your design plans" />
     {projectsQuery.isError ? <AsyncState state="error" message="Your project list could not be refreshed. Previously loaded projects are shown." actionLabel="Refresh projects" onAction={() => void projectsQuery.refetch()} /> : null}
     <section className="client-dashboard__overview" aria-label="Client overview">
       <dl>
@@ -61,7 +55,7 @@ export function ClientDashboard() {
       {latestQuery.isError ? <div className="client-dashboard__notice" role="status"><span>Approved plan information is unavailable.</span><Button variant="quiet" size="compact" disabled={latestQuery.isFetching} onClick={() => void latestQuery.refetch()}>Retry approved plans</Button></div> : null}
     </section>
     <section className="client-dashboard__estimates" aria-label="Estimate review">
-      <EstimateReviewPanel selectedEstimateId={searchParams.get("estimate") ?? undefined} />
+      <ClientEstimateSummary projects={projects} projectsFresh={projectsQuery.isSuccess && !projectsQuery.isFetching} selectedEstimateId={searchParams.get("estimate") ?? undefined} />
     </section>
     {/*
       Nothing is rendered for an empty account: the "Shared projects" tile
@@ -91,6 +85,7 @@ function ClientProjectCard({ project, latest, loading, failed, onRetry, onQuickV
       <div className="client-project-card__identity">
         <span className="eyebrow">{project.location}</span>
         <h2 id={headingId}>{project.name}</h2>
+        <ProjectId projectNumber={project.projectNumber} />
         <span className={`client-project-card__status client-project-card__status--${project.status}`}>
           {project.status.replaceAll("_", " ").replace(/^./, (letter) => letter.toUpperCase())}
         </span>

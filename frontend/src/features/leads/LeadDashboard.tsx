@@ -1,9 +1,10 @@
+import { ProjectId } from "../../components/projects/ProjectId";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
 import { useState } from "react";
 
 import type { Lead, LeadStage } from "../../api/types";
-import projectInterior from "../../assets/projects-living-room.webp";
+import { PageHeader } from "../../components/ui/PageHeader";
 import { useAuth } from "../../auth/AuthProvider";
 import { hasFrontendPermission } from "../../auth/authorization";
 import { AsyncState } from "../../components/ui/AsyncState";
@@ -85,19 +86,9 @@ export function LeadDashboard() {
   const filtered = search.trim().length > 0 || stage !== "all";
 
   return <section className="lead-page estimator-dashboard lead-workspace" aria-labelledby="lead-title">
-    <header className="workspace-header lead-workspace__hero">
-      <div className="lead-workspace__hero-copy">
-        <p className="eyebrow">Sales</p>
-        <h1 id="lead-title">Lead workspace</h1>
-        <p>Track client conversations and continue every saved estimate.</p>
-      </div>
-      <img className="lead-workspace__hero-image" src={projectInterior} alt="" aria-hidden="true" />
-      {canInitiate ? (
-        <Button className="lead-workspace__initiate" onClick={() => setInitiationOpen(true)}>
-          Initiate project
-        </Button>
-      ) : null}
-    </header>
+    <PageHeader id="lead-title" title="Lead workspace" actions={canInitiate ? (
+      <Button onClick={() => setInitiationOpen(true)}>Initiate project</Button>
+    ) : undefined} />
 
     <section className="estimator-dashboard__overview lead-workspace__overview" aria-label="Pipeline overview">
       <dl>
@@ -210,7 +201,7 @@ function LeadRow({
     <div className="lead-row__project" data-label="Project">
       <span className="lead-row__field-label">Project</span>
       <h3 id={projectHeadingId}>{lead.projectName}</h3>
-      {lead.projectNumber ? <small className="lead-row__project-number">Project number: {lead.projectNumber}</small> : null}
+      <ProjectId className="lead-row__project-number" projectNumber={lead.projectNumber} />
       <small>{lead.propertyType} · {lead.location}</small>
     </div>
     <div className="lead-row__stage" data-label="Stage"><span className="lead-row__field-label">Stage</span><span className={`lead-stage-badge lead-stage-badge--${lead.stage}`}>{labels[lead.stage]}</span></div>

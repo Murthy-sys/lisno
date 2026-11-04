@@ -42,12 +42,16 @@ export interface ExecutionVendorReport {
   status: "not_started" | "in_progress" | "blocked";
 }
 export interface ExecutionProjectMetadata {
+  readonly projectNumber?: string | null;
+
   id: string;
   name: string;
   status: "planning" | "active" | "on_hold" | "completed";
   completionAuthority: "legacy_staff" | "vendor_client";
 }
 export interface ExecutionWork {
+  readonly projectNumber?: string | null;
+
   id: string;
   projectId: string;
   projectName: string;
@@ -129,7 +133,9 @@ export interface ExecutionQuery { limit?: number; offset?: number; q?: string; v
 export interface ExecutionPortfolioQuery extends ExecutionQuery { projectScope?: "current" | "all" }
 export interface ExecutionPage { project: ExecutionProjectMetadata | null; projectCounts: ExecutionCounts | null; items: ExecutionWork[]; total: number; limit: number; offset: number; counts: ExecutionCounts; policy: ExecutionPolicy | null; canManagePolicy: boolean }
 export interface ExecutionHistoryPage { items: ExecutionHistoryEvent[]; total: number; limit: number; offset: number }
-export interface ExecutionProjectSummary { id: string; name: string; status: string; counts: ExecutionCounts }
+export interface ExecutionProjectSummary {
+  readonly projectNumber?: string | null;
+ id: string; name: string; status: string; counts: ExecutionCounts }
 export interface ExecutionDeliveryHealth {
   schedulerEnabled: boolean; accessDeliveryEnabled: boolean; lastSchedulerSuccessAt: string | null;
   lastSchedulerFailureCode: string | null; pendingEmails: number; failedEmails: number;

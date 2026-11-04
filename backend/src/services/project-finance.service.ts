@@ -1,3 +1,4 @@
+import { readProjectNumbers } from "./project-number-read.service.js";
 import { createHash, randomUUID } from "node:crypto";
 
 import mongoose, { type ClientSession } from "mongoose";
@@ -63,12 +64,13 @@ export interface ProjectFinanceListQuery extends ProjectFinancePagination {
 }
 
 export interface ProjectFinanceFilterOptions {
-  projects: { id: string; name: string }[];
+  projects: { id: string; name: string; readonly projectNumber: string | null }[];
   clients: { id: string; name: string }[];
   hasUnlinkedClients: boolean;
 }
 
 export interface ProjectFinanceBucketDto {
+  readonly projectNumber: string | null;
   baselinePhase?: "pre" | "post";
   originalApprovedContractTotalPaise?: number;
   id: string;
@@ -173,7 +175,7 @@ function financeFilterOptions(buckets: readonly ProjectFinanceBucketDto[]): Proj
     }
   }
   return {
-    projects: buckets.map((bucket) => ({ id: bucket.projectId, name: bucket.projectName })).sort(compare),
+    projects: buckets.map((bucket) => ({ id: bucket.projectId, name: bucket.projectName, projectNumber: bucket.projectNumber })).sort(compare),
     clients: [...clients.values()].sort(compare),
     hasUnlinkedClients: buckets.some((bucket) => bucket.clientId === null)
   };
@@ -1828,6 +1830,7 @@ function normalizeEntryInput(input: PostFinanceEntryInput): NormalizedEntryInput
 }
 
 interface FinanceEnrichment {
+  projectNumber: string | null;
   procurementCostPaise: number;
   employeePaymentPaise: number;
   otherExpensePaise: number;
@@ -1878,6 +1881,7 @@ function bucketDto(
     id: String(bucket._id),
     projectId: String(bucket.projectId),
     projectName: String(project.name),
+    projectNumber: resolvedEnrichment.projectNumber,
     projectStatus: String(project.status),
     clientId: nonEmptyIdentifier(project.clientId),
     clientName: nonEmptyIdentifier(project.clientName),
@@ -1942,6 +1946,8 @@ async function loadFinanceEnrichments(
     uniqueIds.map((projectId) => [projectId, emptyEnrichment()])
   );
   if (uniqueIds.length === 0) return result;
+  const numbers = await readProjectNumbers(uniqueIds, session);
+  for (const projectId of uniqueIds) result.get(projectId)!.projectNumber = numbers.get(projectId) ?? null;
 
   const spendingAggregate = FinanceLedgerEntryModel.aggregate<Row>([
     {
@@ -2136,6 +2142,7 @@ function emptyPortfolioSummary(): ProjectFinancePortfolioSummary {
 
 function emptyEnrichment(): FinanceEnrichment {
   return {
+    projectNumber: null,
     procurementCostPaise: 0,
     employeePaymentPaise: 0,
     otherExpensePaise: 0,

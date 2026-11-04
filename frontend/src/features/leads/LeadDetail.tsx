@@ -1,3 +1,4 @@
+import { ProjectId } from "../../components/projects/ProjectId";
 import { ProjectChatNavigation } from "../messages";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "react-router-dom";
@@ -82,7 +83,7 @@ function LeadDetailContent({ leadId, returnTo }: { leadId: string; returnTo?: st
             <h1 id="lead-detail-title">{item.projectName}</h1>
             {item.propertyType ? <span className="estimation-progress__property">{item.propertyType}</span> : null}
           </div>
-          <p className="estimation-progress__project-number">{item.projectNumber ? `Project number: ${item.projectNumber}` : "Project number not assigned"}</p>
+          <ProjectId className="estimation-progress__project-number" projectNumber={item.projectNumber} />
           <ul className="estimation-progress__contacts" aria-label="Client contact details">
             <li>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="7" r="4" /><path d="M4 21v-3a5 5 0 0 1 5-5h6a5 5 0 0 1 5 5v3H4Z" /></svg>

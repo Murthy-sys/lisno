@@ -1,3 +1,4 @@
+import { LeadModel } from "../src/models/Lead.js";
 import { ProjectModel } from "../src/models/Project.js";
 import { EstimateModel } from "../src/models/Estimate.js";
 import { afterAll, beforeAll, beforeEach, describe, it, expect, vi } from "vitest";
@@ -15,6 +16,14 @@ beforeAll(async () => { replica = await startMongoReplicaSet("chat-repository");
 beforeEach(async () => replica.clear());
 afterAll(async () => replica?.stop());
 describe("project chat Mongo transactions", () => {
+  it("reads the generated Project ID from the authorized Mongo snapshot", async () => {
+    const f = await insertChatMongoFixture();
+    await LeadModel.collection.updateOne({ _id: "lead-a" }, { $set: { projectNumber: "Lisno000012" } });
+    const result = await f.service.summary(f.actor("client-a"), "a");
+    expect(result.project.projectNumber).toBe("Lisno000012");
+    await expect(f.service.summary(f.actor("client-b"), "a")).rejects.toMatchObject({ status: 404 });
+  });
+
     it("atomically deduplicates concurrent first sends across independent adapters and survives restart", async () => {
         const f = await insertChatMongoFixture();
         const second = createProjectChatService({ repository: f.repository, audit: f.audit, chatRepository: createMongoProjectChatRepository(), clock: f.clock });

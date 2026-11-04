@@ -6,6 +6,7 @@ import { VendorInductionReviewModel } from "../src/models/VendorInduction.js";
 import { AuditEventModel } from "../src/models/AuditEvent.js";
 import { AuthorizationCoordinationModel } from "../src/models/AuthorizationCoordination.js";
 import { ProjectModel } from "../src/models/Project.js";
+import { LeadModel } from "../src/models/Lead.js";
 import { ProjectAccessGrantModel } from "../src/models/ProjectAccessGrant.js";
 import { EstimateModel } from "../src/models/Estimate.js";
 import { EstimateClientReviewRoundModel } from "../src/models/EstimateClientReviewRound.js";
@@ -88,6 +89,22 @@ async function createProject(projectId: string, assigneeId: string, subtotal: nu
 }
 
 describe("project vendor suggestions", () => {
+  it("resolves Project IDs by authorized project identity for lists and detail", async () => {
+    await LeadModel.collection.insertMany([
+      { _id: "lead-project-a", projectId: "project-a", projectNumber: "Lisno000012" },
+      { _id: "lead-project-b", projectId: "project-b", projectNumber: "Lisno000087" }
+    ]);
+    await ProjectModel.updateMany({}, { $set: { name: "Same name" } });
+    expect((await service.projects(actor, query)).items).toMatchObject([{ projectId: "project-a", projectNumber: "Lisno000012" }]);
+    expect((await service.projects(buyer, query)).items.map(row => [row.projectId, row.projectNumber]).sort()).toEqual([
+      ["project-a", "Lisno000012"], ["project-b", "Lisno000087"]
+    ]);
+    expect((await service.list(actor, "project-a", query)).project).toMatchObject({ projectId: "project-a", projectNumber: "Lisno000012" });
+    await expect(service.list(actor, "project-b", query)).rejects.toMatchObject({ status: 404 });
+    await LeadModel.collection.deleteOne({ _id: "lead-project-a" });
+    expect((await service.list(actor, "project-a", query)).project).toMatchObject({ projectNumber: null });
+  });
+
   it("keeps induction-independent suggestions available and blocks reinstatement after KPI generation changes", async () => {
     const created = await service.create(actor, "project-a", fields);
     const withdrawn = await service.update(actor, "project-a", created.suggestion.id,
@@ -132,7 +149,7 @@ describe("project vendor suggestions", () => {
     const page = await service.list(buyer, "project-a", query);
     expect(page.items).toEqual([{ ...created.suggestion, kpi: { status: "rated", score: 0 } }]);
     expect(page.performance).toEqual({ status: "not_available", recommendations: [] });
-    expect(page.project).toEqual({ projectId: "project-a", projectName: "project-a", estimateId: fields.estimateId, estimateVersion: 1, designPlanVersion: 1 });
+    expect(page.project).toEqual({ projectId: "project-a", projectName: "project-a", projectNumber: null, estimateId: fields.estimateId, estimateVersion: 1, designPlanVersion: 1 });
     expect(await EstimateModel.find().select({ procurementSourceEpoch: 0 }).sort({ _id: 1 }).lean()).toEqual(estimates);
     expect(await EstimateClientReviewRoundModel.find().sort({ _id: 1 }).lean()).toEqual(rounds);
     expect(await ProjectWorkflowTaskModel.find().sort({ _id: 1 }).lean()).toEqual(tasks);

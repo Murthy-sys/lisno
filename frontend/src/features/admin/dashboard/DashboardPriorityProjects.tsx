@@ -1,3 +1,4 @@
+import { ProjectId } from "../../../components/projects/ProjectId";
 import { Link } from "react-router-dom";
 
 import { Button } from "../../../components/ui/Button";
@@ -61,6 +62,7 @@ export function DashboardPriorityProjects({ query, canReadProjects, viewAllHref 
             return <tr key={row.projectId}>
               <th scope="row">
                 {canReadProjects ? <Link to={`/admin/projects/${encodeURIComponent(row.projectId)}`}>{row.projectName}</Link> : <span>{row.projectName}</span>}
+                <small><ProjectId projectNumber={row.projectNumber} /></small>
                 <small className="dashboard-priority-project-state">{humanize(row.projectStatus)}</small>
                 <span className={`dashboard-status dashboard-status--${presentation.risk.tone}`} title={presentation.riskReason}>{presentation.risk.label}</span>
               </th>

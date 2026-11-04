@@ -24,6 +24,6 @@ export function useConfiguredEstimateViewState(
   const field = <K extends keyof ConfiguredEstimateViewState>(key: K) => (value: SetStateAction<ConfiguredEstimateViewState[K]>) =>
     update(current => ({ ...current, [key]: typeof value === "function"
       ? (value as (previous: ConfiguredEstimateViewState[K]) => ConfiguredEstimateViewState[K])(current[key]) : value }));
-  return { ...state, setSearch: field("search"), setBasketFilter: field("basketFilter"), setRailView: field("railView"),
+  return { ...state, state, setState: update, setSearch: field("search"), setBasketFilter: field("basketFilter"), setRailView: field("railView"),
     setCollapsedBasketIds: field("collapsedBasketIds"), setCollapsedSubBasketIds: field("collapsedSubBasketIds") };
 }

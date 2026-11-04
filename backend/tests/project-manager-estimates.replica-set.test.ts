@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import mongoose from "mongoose";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { UserModel } from "../src/models/User.js";
+import { LeadModel } from "../src/models/Lead.js";
 import { ProjectModel } from "../src/models/Project.js";
 import { newEstimationLifecycle } from "../src/domain/estimation-lifecycle.js";
 import { EstimateModel } from "../src/models/Estimate.js";
@@ -32,6 +33,16 @@ beforeEach(async () => { await replica.clear(); fixture = await seedPMEstimateHa
 afterAll(async () => replica?.stop());
 
 describe("PM approved estimate reads", () => {
+  it("adds only live project identity outside the approved estimate source", async () => {
+    const before = await service.estimate(fixture.pm, fixture.projectId);
+    await LeadModel.collection.insertOne({ _id: "identity-pm-lead", projectId: fixture.projectId, projectNumber: "Lisno000012" } as never);
+    const after = await service.estimate(fixture.pm, fixture.projectId);
+    expect(after.project).toMatchObject({ id: fixture.projectId, projectNumber: "Lisno000012" });
+    expect(after.source).toEqual(before.source);
+    expect(after.totals).toEqual(before.totals);
+    await expect(service.estimate(fixture.otherPM, fixture.projectId)).rejects.toMatchObject({ status: 404 });
+  });
+
   it("uses immutable approved amounts and groups repeated Main Line room occurrences", async () => {
     approvedProcurementSnapshotFromRows((await EstimateModel.findById(fixture.estimateId).lean())!,
       await EstimateClientReviewRoundModel.find({ estimateId: fixture.estimateId }).lean());

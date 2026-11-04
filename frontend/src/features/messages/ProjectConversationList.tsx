@@ -1,3 +1,4 @@
+import { ProjectId } from "../../components/projects/ProjectId";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
@@ -140,6 +141,7 @@ export function ProjectConversationList({ selectedProjectId }: { selectedProject
             <span className="project-messaging-avatar" aria-hidden="true">{initials || <ChatIcon name="people" size={19} />}</span>
             <span className="project-messaging-row-content">
               <span className="project-messaging-row-top"><strong title={project.name}>{project.name}</strong>{conversation.lastMessageAt ? <time className={counts.unread ? "project-messaging-time--unread" : undefined} dateTime={conversation.lastMessageAt}>{messageTime(conversation.lastMessageAt)}</time> : null}</span>
+              <ProjectId projectNumber={project.projectNumber} />
               <span className="project-messaging-row-bottom"><span className="project-messaging-row-meta">{conversation.participantCount} participants · {project.status.replaceAll("_", " ")}</span><span className="project-messaging-row-counts">
                 {counts.unreadMentions > 0 ? <span className="project-messaging-mention" aria-label={`${counts.unreadMentions} unread mentions`}>@</span> : null}
                 {counts.unread > 0 ? <span className="project-messaging-unread" aria-label={`${counts.unread} unread messages`}>{counts.unread > 99 ? "99+" : counts.unread}</span> : null}

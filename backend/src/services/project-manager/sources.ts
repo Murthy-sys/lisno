@@ -24,8 +24,9 @@ export async function readPMSources(actor: PublicUser, project: PMRow, session: 
   const policyRow = await ExecutionReportingPolicyModel.findOne({ projectId, effectiveAt: { $lte: at } }).sort({ version: -1 }).session(session).lean();
   const policy = policyRow ? { ...defaultExecutionPolicy(projectId, at), ...policyRow, projectId } : defaultExecutionPolicy(projectId, at);
   await cacheLatestVendorReports(assignments, stateById, session, cache);
+  // PM exposes its own project identity; these internal rows only derive work and progress.
   const work: ExecutionWork[] = [];
-  for (const assignment of assignments) work.push(await executionWorkDto(assignment, stateById.get(String(assignment._id)) ?? null, actor, policy, at, session, defaultExecutionDaily, cache));
+  for (const assignment of assignments) work.push(await executionWorkDto(assignment, stateById.get(String(assignment._id)) ?? null, actor, policy, at, session, defaultExecutionDaily, cache, { includeProjectNumber: false }));
   const orders = await ProjectPurchaseOrderModel.find({ projectId, approvedRevisionId: { $ne: null }, cancelledAt: null }).session(session).lean();
   const revisions = await ProjectPurchaseOrderRevisionModel.find({ _id: { $in: orders.map(row => row.approvedRevisionId) }, projectId }).session(session).lean();
   const exceptions = source ? await ProjectScopeExceptionModel.find({ projectId, estimateId: source.estimateId, estimateVersion: source.estimateVersion, estimateReviewRoundId: source.estimateReviewRoundId }).session(session).lean() : [];

@@ -1,3 +1,4 @@
+import { readProjectNumbers } from "../project-number-read.service.js";
 import type { ZodType } from "zod";
 import type { PMEstimateLine, PMEstimateView, PMVendorCandidatePage, PMVendorCandidateQuery,
   PMVendorSuggestionPage, PMVendorSuggestionQuery } from "../../contracts/project-manager-estimates.js";
@@ -28,7 +29,7 @@ export function createPMEstimateReadService(options: { now?: () => Date } = {}):
       const project = await requirePMProject(actor, projectId, session);
       const approved = await readPMApprovedSource(projectId, session);
       const ready = await readVendorSuggestionWriteAvailability(session);
-      return { project: { id: projectId, name: String(project.name) },
+      return { project: { id: projectId, name: String(project.name), projectNumber: (await readProjectNumbers([projectId], session)).get(projectId) ?? null },
         availability: approved.source ? "available" : "unavailable", reason: approved.issues[0] ?? null,
         source: approved.source, approvedAt: validDate(approved.round?.decidedAt),
         lines: pmEstimateLines(approved), mainLines: await readPMMainLineScopes(approved, session),

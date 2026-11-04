@@ -46,6 +46,22 @@ function expectFact(label: string, value: string) {
 }
 
 describe("Project Manager workspace", () => {
+  it.each(["list", "grid"])("distinguishes same-name project IDs in %s view without changing routes", async view => {
+    const items = [
+      { ...project, projectNumber: "Lisno000011" },
+      { ...project, id: "project-b", projectNumber: "Lisno000027" },
+      { ...project, id: "project-c", projectNumber: null }
+    ];
+    server.use(http.get("/api/v1/project-manager/projects", () => HttpResponse.json({ data: { ...portfolio, items, total: 3 } })));
+    renderWorkspace(`/execution?view=${view}`);
+    await screen.findByText("Project ID: Lisno000011");
+    for (const [index, label] of ["Project ID: Lisno000011", "Project ID: Lisno000027", "Project ID not assigned"].entries()) {
+      const identity = screen.getByText(label).parentElement!;
+      const link = within(identity).getByRole("link", { name: "Open project Cedar residence" });
+      expect(link.getAttribute("href")).toContain(`/projects/${items[index]!.id}/execution`);
+    }
+  });
+
   it("opens the linked-vendor picker from the project's Procurement tab", async () => {
     const source = { estimateId: "estimate-a", estimateVersion: 3, estimateReviewRoundId: "round-a", phase: "post", designPlanVersion: 0, sourceSnapshotId: "round-a", sourceDigest: "a".repeat(64) };
     const mainLine = { mainLineId: "line-joinery", mainLineName: "Approved joinery", mainBasketId: "basket-a", mainBasketName: "Joinery", occurrences: [{ sourceLineItemKey: "joinery-living", sectionId: "living", roomId: "living", roomName: "Living room" }], scopeDigest: "b".repeat(64), canSuggest: true, unavailableReason: null };

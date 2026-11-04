@@ -52,6 +52,35 @@ function LiveBuilder({ initialLines, editable = true, availableCatalogue = catal
 }
 
 describe("ConfiguredEstimateBuilder", () => {
+  it("removes a canonical Sub Basket scope even when the included sibling is outside search or collapsed", async () => {
+    const user = userEvent.setup();
+    const allRooms = [...rooms, { id: "room-bed", typeId: "bedroom", label: "Bedroom", sqft: 150 }];
+    const lines = buildConfiguredLines(catalogue, allRooms, new Set(["basket-pop"]), [])
+      .map(line => ({ ...line, included: line.mainLineId === "line-cove" }));
+    const onRemoveSubBasket = vi.fn();
+    const onUpdateLine = vi.fn();
+    const props = { rooms: allRooms, activeRoomId: "room-living", onSelectRoom: vi.fn(), catalogue,
+      selectedMainBasketIds: new Set(["basket-pop"]), lines, onUpdateLine, onRemoveSubBasket,
+      onRefreshAvailableItems: vi.fn(), refreshingAvailableItems: false, roomTotal: () => 0,
+      roomIcons: {}, moneyPaise, editable: true };
+    const view = render(<ConfiguredEstimateBuilder {...props} />);
+    await user.type(screen.getByRole("searchbox", { name: "Search estimate items" }), "POP false");
+    expect(screen.queryByText("Cove in Gypsum")).not.toBeInTheDocument();
+    const subBasket = screen.getByRole("region", { name: "NA" });
+    const disclosure = within(subBasket).getByRole("button", { name: /NA.*2 items/ });
+    await user.click(disclosure);
+    expect(disclosure).toHaveAttribute("aria-expanded", "false");
+    const remove = within(subBasket).getByRole("button", { name: "Remove NA Sub Basket from Living & Dining" });
+    expect(remove).toBeEnabled();
+    expect(disclosure).not.toContainElement(remove);
+    remove.focus();
+    await user.keyboard("{Enter}");
+    expect(onRemoveSubBasket).toHaveBeenCalledExactlyOnceWith({ roomId: "room-living", mainBasketId: "basket-pop", subBasketId: "sub-na" });
+    expect(onUpdateLine).not.toHaveBeenCalled();
+    view.rerender(<ConfiguredEstimateBuilder {...props} editable={false} />);
+    expect(screen.getByRole("button", { name: "Remove NA Sub Basket from Living & Dining" })).toBeDisabled();
+  });
+
   it("keeps navigation outside the keyboard-accessible item pane and preserves scroll through edits and selection", async () => {
     const user = userEvent.setup();
     const initialLines = buildConfiguredLines(catalogue, rooms, new Set(["basket-pop"]), []);

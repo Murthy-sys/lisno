@@ -1,3 +1,4 @@
+import { PROJECT_NUMBER_SCHEMA } from "./project-number.js";
 const text = { type: "string" };
 const id = { ...text, minLength: 1, maxLength: 500 };
 const integer = { type: "integer", minimum: 0 };
@@ -38,7 +39,7 @@ export const PM_ESTIMATE_SCHEMAS = {
   PMMainLineScope: withItemType(object({ mainLineId: id, mainLineName: text, mainBasketId: { ...id, nullable: true }, mainBasketName: nullableText,
     occurrences: array("PMLineOccurrence"), scopeDigest: text, canSuggest: bool, unavailableReason: nullableText })),
   PMWriteAvailability: object({ available: bool, reason: nullableText }),
-  PMEstimateView: object({ project: actor, availability: { ...text, enum: ["available", "unavailable"] }, reason: nullableText,
+  PMEstimateView: object({ project: object({ id, name: text, projectNumber: PROJECT_NUMBER_SCHEMA }), availability: { ...text, enum: ["available", "unavailable"] }, reason: nullableText,
     source: nullableRef("PMApprovedSourceRef"), approvedAt: time, lines: array("PMEstimateLine"), mainLines: array("PMMainLineScope"),
     totals: object({ subtotalPaise: paise, gstPaise: paise, totalPaise: paise }), writeAvailability: ref("PMWriteAvailability") }),
   PMVendorCandidate: object({ id, code: text, name: text, classification: strings, canSuggest: bool, bidEligible: bool, reasons: strings }),

@@ -32,6 +32,8 @@ export interface PMProgress {
   reportedComplete: number; siteVerified: number; clientAccepted: number;
 }
 export interface PMProject {
+  readonly projectNumber?: string | null;
+
   id: string; name: string; clientName: string; location: string; status: string; health: PMHealth;
   progress: PMProgress; plannedEndAt: string | null; approvedNetPaise: number | null;
   issues: string[]; activeAlerts: number;

@@ -16,6 +16,7 @@ export type VendorSuggestionCreate = z.infer<typeof vendorSuggestionCreateSchema
 export type VendorSuggestionUpdate = z.infer<typeof vendorSuggestionUpdateSchema>;
 export type VendorSuggestionQuery = z.infer<typeof vendorSuggestionQuerySchema>;
 export interface VendorSuggestionProject {
+  readonly projectNumber: string | null;
   projectId: string; projectName: string; estimateId: string; estimateVersion: number; designPlanVersion: number;
 }
 export interface ProjectVendorSuggestion {

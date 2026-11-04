@@ -119,7 +119,7 @@ describe("AccessRequestInboxPage", () => {
     renderApp(["/admin/access-requests"]);
     await user.click(await screen.findByRole("button", { name: "Approve request request-1" }));
     const dialog = screen.getByRole("dialog", { name: "Approve access request" });
-    expect(within(dialog).queryByRole("textbox", { name: /Project ID/i })).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole("textbox", { name: /System ID/i })).not.toBeInTheDocument();
     await user.click(within(dialog).getByRole("button", { name: "Approve request" }));
     expect(body).toEqual({ version: 2, decision: "approved" });
     expect(await screen.findByRole("status", { name: "Application announcements" })).toHaveTextContent("Access request decision saved.");

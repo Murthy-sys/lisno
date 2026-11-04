@@ -1,5 +1,7 @@
+import * as projectNumberRead from "../src/services/project-number-read.service.js";
+import { LeadModel } from "../src/models/Lead.js";
 import mongoose from "mongoose";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { ProjectModel } from "../src/models/Project.js";
 import { UserModel } from "../src/models/User.js";
 import { EstimateModel } from "../src/models/Estimate.js";
@@ -36,6 +38,7 @@ beforeAll(async () => {
 }, 120_000);
 afterAll(async () => replica?.stop());
 beforeEach(async () => {
+  vi.restoreAllMocks();
   await replica.clear();
   await UserModel.create({ ...pm, _id: pm.id, emailNormalized: pm.email, passwordHash: "fixture-only", active: true });
   await ProjectModel.create({ _id: "project-source", name: "Source project", status: "active", programManagerId: pm.id, plannedStartAt: at, plannedEndAt: new Date("2026-12-01T00:00:00Z"),
@@ -78,6 +81,32 @@ function source() {
 }
 
 describe("PM immutable progress source integration", () => {
+  it("batches visible project numbers once even when multiple projects contain execution work", async () => {
+    const second = await ProjectModel.findById("project-source").lean();
+    await ProjectModel.collection.insertOne({ ...second!, _id: "project-second" } as never);
+    const work = await VendorWorkAssignmentModel.findOne({ projectId: "project-source" }).lean();
+    await VendorWorkAssignmentModel.collection.insertOne({ ...work!, _id: "work-second", projectId: "project-second", orderId: "order-second" } as never);
+    await LeadModel.collection.insertMany([
+      { _id: "number-source", projectId: "project-source", projectNumber: "Lisno000012" },
+      { _id: "number-second", projectId: "project-second", projectNumber: "Lisno000087" }
+    ] as never);
+    const read = vi.spyOn(projectNumberRead, "readProjectNumbers");
+    const page = await workspace.portfolio(pm, { limit: 1 });
+    expect(page.total).toBe(2);
+    expect(page.items).toHaveLength(1);
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(read.mock.calls[0]![0]).toEqual([page.items[0]!.id]);
+    expect(page.items[0]!.projectNumber).toMatch(/^Lisno/);
+    read.mockClear();
+    expect((await workspace.overview(pm, "project-source")).project.projectNumber).toBe("Lisno000012");
+    expect(read).toHaveBeenCalledTimes(1);
+    read.mockClear();
+    const internal = await source();
+    expect(internal.work.length).toBeGreaterThan(0);
+    expect(internal.work[0]).not.toHaveProperty("projectNumber");
+    expect(read).not.toHaveBeenCalled();
+  });
+
   it("weights approved net amounts after quantity splitting and separates rooms by frozen ID", async () => {
     const data = await source();
     // A is 40% of ₹1,000 and B is 80% of ₹3,000: ₹2,800 / ₹4,000 = 70%.

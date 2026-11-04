@@ -1,5 +1,5 @@
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
-import { act, screen, waitFor } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { http, HttpResponse } from "msw";
@@ -30,6 +30,7 @@ const requirements: EstimateRequirementsDetail = { projectId: "project-one", req
 function setup(value: EstimateDraft = structuredClone(estimate), requests = structuredClone(requirements), catalogue?: EstimationCatalogue) {
   const state = { estimate: value, requests }; let queryClient!: QueryClient;
   let saveGate: Promise<void> | undefined;
+  let saveFailure: { status: number; commit: boolean } | null = null;
   function Capture() { queryClient = useQueryClient(); return null; }
   const saves: unknown[] = []; const submits: unknown[] = [];
   server.use(
@@ -42,15 +43,17 @@ function setup(value: EstimateDraft = structuredClone(estimate), requests = stru
     http.put("/api/v1/leads/lead-one/estimate", async ({ request }) => {
       const body = await request.json() as EstimateDraftInput; saves.push(body);
       await saveGate;
+      if (saveFailure && !saveFailure.commit) return HttpResponse.json({ error: { code: "SAVE_REJECTED", message: "Review this estimate before saving." } }, { status: saveFailure.status });
       state.estimate = { ...state.estimate, ...body, version: state.estimate.version! + 1,
         lineItems: body.lineItems.map(line => line.source === "configuration"
           ? { ...state.estimate.lineItems.find(saved => saved.id === line.id), ...line } as ConfiguredEstimateLine : line) };
-      return HttpResponse.json({ data: state.estimate });
+      return saveFailure ? HttpResponse.json({ error: { code: "UNAVAILABLE", message: "Save response unavailable." } }, { status: saveFailure.status }) : HttpResponse.json({ data: state.estimate });
     }),
     http.post("/api/v1/leads/lead-one/estimate/submit", async ({ request }) => { submits.push(await request.json()); state.estimate = { ...state.estimate, status: "sent_to_client", estimation: { ...state.estimate.estimation!, status: "sent_to_client", pendingReviewRoundId: "post-round" } }; return HttpResponse.json({ data: state.estimate }); })
   );
-  renderWithQuery(<MemoryRouter initialEntries={["/estimator-sales/leads/lead-one/estimate"]}><Capture /><Routes><Route path="/estimator-sales/leads/:leadId/estimate" element={<LeadEstimateWorkspace returnTo="/designer/design-plans" />} /></Routes></MemoryRouter>);
-  return { state, saves, submits, getClient: () => queryClient, pauseSave: (gate: Promise<void>) => { saveGate = gate; } };
+  const view = renderWithQuery(<MemoryRouter initialEntries={["/estimator-sales/leads/lead-one/estimate"]}><Capture /><Routes><Route path="/estimator-sales/leads/:leadId/estimate" element={<LeadEstimateWorkspace returnTo="/designer/design-plans" />} /></Routes></MemoryRouter>);
+  return { state, saves, submits, unmount: view.unmount, getClient: () => queryClient, pauseSave: (gate: Promise<void>) => { saveGate = gate; },
+    failSave: (status: number, commit = false) => { saveFailure = { status, commit }; }, allowSave: () => { saveFailure = null; } };
 }
 
 function configuredFixture() {
@@ -85,6 +88,133 @@ function configuredFixture() {
 }
 
 describe("Collaborative estimate workspace", () => {
+  it.each([403, 503])("preserves dirty exit protection and input after lead refresh failure %s", async status => {
+    const { draft, catalogue } = configuredFixture();
+    const data = setup(draft, structuredClone(requirements), catalogue);
+    const user = userEvent.setup();
+    const quantity = () => screen.getByRole("spinbutton", { name: /Quantity.*Visible finish.*Living Room/i });
+    await waitFor(() => expect(quantity()).toBeEnabled());
+    await user.clear(quantity()); await user.type(quantity(), "8");
+    let unavailable = true;
+    server.use(http.get("/api/v1/leads/lead-one", () => unavailable
+      ? HttpResponse.json({ error: { code: "LEAD_UNAVAILABLE", message: "Lead unavailable" } }, { status })
+      : HttpResponse.json({ data: { id: "lead-one", projectId: "project-one", clientName: "Sample client", projectName: "Sample project", propertyType: "2BHK", estimationWorkflowVersion: 2 } })));
+    await act(async () => { await data.getClient().invalidateQueries({ queryKey: leadKeys.detail("lead-one") }); });
+    await screen.findByText(/We couldn't load this lead/);
+    expect(screen.queryByRole("spinbutton", { name: /Quantity.*Visible finish/ })).not.toBeInTheDocument();
+    const unload = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(unload);
+    expect(unload.defaultPrevented).toBe(true);
+    unavailable = false;
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    await waitFor(() => expect(quantity()).toHaveValue(8));
+    expect(data.saves).toEqual([]);
+  });
+
+  it("saves once before returning to baskets, keeps the selected room, and restores the edited quantity", async () => {
+    const { draft, catalogue } = configuredFixture();
+    const data = setup(draft, structuredClone(requirements), catalogue);
+    const user = userEvent.setup();
+    await screen.findByRole("spinbutton", { name: /Quantity.*Visible finish.*Living Room/i });
+    await user.click(screen.getByRole("button", { name: /Bedroom.*sqft/i }));
+    const quantity = screen.getByRole("spinbutton", { name: /Quantity.*Visible finish.*Bedroom/i });
+    await user.clear(quantity); await user.type(quantity, "9");
+    let finish!: () => void;
+    data.pauseSave(new Promise<void>(resolve => { finish = resolve; }));
+    await user.dblClick(screen.getByRole("button", { name: "Save and edit baskets" }));
+    await waitFor(() => expect(data.saves).toHaveLength(1));
+    expect(screen.queryByRole("heading", { name: "Configure estimate" })).not.toBeInTheDocument();
+    expect(quantity).toBeDisabled();
+    await act(async () => finish());
+    expect(await screen.findByRole("heading", { name: "Configure estimate" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Save draft" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Continue to item selection" }));
+    expect(screen.getByRole("region", { name: "Estimate items for Bedroom" })).toBeVisible();
+    expect(screen.getByRole("spinbutton", { name: /Quantity.*Visible finish.*Bedroom/i })).toHaveValue(9);
+    expect((data.saves[0] as EstimateDraftInput).lineItems).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "visible-bedroom", quantity: 9 }), expect.objectContaining({ id: "visible-living", quantity: 2 })
+    ]));
+    expect(data.submits).toEqual([]);
+  });
+
+  it("confirms a Sub Basket removal for the full current room despite search, saves from setup, and keeps the other room", async () => {
+    const { draft, catalogue } = configuredFixture();
+    const data = setup(draft, structuredClone(requirements), catalogue);
+    const user = userEvent.setup();
+    await screen.findByRole("spinbutton", { name: /Quantity.*Visible finish.*Living Room/i });
+    await user.type(screen.getByRole("searchbox", { name: "Search estimate items" }), "Visible");
+    expect(screen.queryByText("Internal finish")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Remove Finishes Sub Basket from Living Room" }));
+    const dialog = await screen.findByRole("alertdialog", { name: "Remove Finishes in Living Room?" });
+    expect(dialog).toHaveTextContent("All selected items in this Sub Basket will be removed from this room");
+    await user.click(within(dialog).getByRole("button", { name: "Remove from estimate" }));
+    expect(screen.getByRole("checkbox", { name: /Visible finish/ })).not.toBeChecked();
+    await user.clear(screen.getByRole("searchbox", { name: "Search estimate items" }));
+    expect(screen.getByRole("checkbox", { name: /Internal finish/ })).not.toBeChecked();
+    await user.click(screen.getByRole("button", { name: "Save and edit baskets" }));
+    await screen.findByRole("heading", { name: "Configure estimate" });
+    await user.click(screen.getByRole("button", { name: "Save draft" }));
+    await waitFor(() => expect(data.saves).toHaveLength(2));
+    await screen.findByText("Estimate draft saved.");
+    const savedLines = (data.saves[1] as EstimateDraftInput).lineItems;
+    expect(savedLines).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "visible-living", included: false, quantity: 2 }),
+      expect.objectContaining({ id: "internal-living", included: false, quantity: 1 }),
+      expect.objectContaining({ id: "visible-bedroom", included: true, quantity: 3 })
+    ]));
+    const stored = structuredClone(data.state.estimate);
+    data.unmount();
+    setup(stored, structuredClone(requirements), catalogue);
+    await screen.findByRole("checkbox", { name: /Visible finish/ });
+    expect(screen.getByRole("checkbox", { name: /Visible finish/ })).not.toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /Internal finish/ })).not.toBeChecked();
+    await user.click(screen.getByRole("button", { name: /Bedroom.*sqft/i }));
+    expect(screen.getByRole("checkbox", { name: /Visible finish/ })).toBeChecked();
+    expect(screen.getByRole("spinbutton", { name: /Quantity.*Visible finish.*Bedroom/i })).toHaveValue(3);
+    expect(data.submits).toEqual([]);
+  });
+
+  it("stays in item selection after a rejected navigation save and retries the preserved input", async () => {
+    const { draft, catalogue } = configuredFixture();
+    const data = setup(draft, structuredClone(requirements), catalogue);
+    const user = userEvent.setup();
+    const quantity = () => screen.getByRole("spinbutton", { name: /Quantity.*Visible finish.*Living Room/i });
+    await waitFor(() => expect(quantity()).toBeEnabled());
+    await user.clear(quantity()); await user.type(quantity(), "8");
+    data.failSave(422);
+    await user.click(screen.getByRole("button", { name: "Save and edit baskets" }));
+    expect(await screen.findByText("Review this estimate before saving.")).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "Configure estimate" })).not.toBeInTheDocument();
+    expect(quantity()).toHaveValue(8);
+    expect(quantity()).toBeEnabled();
+    data.allowSave();
+    await user.click(screen.getByRole("button", { name: "Save and edit baskets" }));
+    await screen.findByRole("heading", { name: "Configure estimate" });
+    expect(data.saves).toHaveLength(2);
+    expect((data.saves[1] as EstimateDraftInput).lineItems).toEqual(expect.arrayContaining([expect.objectContaining({ id: "visible-living", quantity: 8 })]));
+  });
+
+  it("verifies an unknown committed save before permitting navigation without resubmitting", async () => {
+    const { draft, catalogue } = configuredFixture();
+    const data = setup(draft, structuredClone(requirements), catalogue);
+    const user = userEvent.setup();
+    const quantity = () => screen.getByRole("spinbutton", { name: /Quantity.*Visible finish.*Living Room/i });
+    await waitFor(() => expect(quantity()).toBeEnabled());
+    await user.clear(quantity()); await user.type(quantity(), "6");
+    data.failSave(503, true);
+    await user.click(screen.getByRole("button", { name: "Save and edit baskets" }));
+    await screen.findByRole("button", { name: "Verify saved estimate" });
+    expect(screen.queryByRole("heading", { name: "Configure estimate" })).not.toBeInTheDocument();
+    expect(quantity()).toHaveValue(6);
+    expect(screen.getByRole("button", { name: "Save draft" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Verify saved estimate" }));
+    expect(await screen.findByText("Estimate save confirmed. You can continue editing.")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Edit baskets" }));
+    await screen.findByRole("heading", { name: "Configure estimate" });
+    expect(data.saves).toHaveLength(1);
+    expect(data.submits).toEqual([]);
+  });
+
   it("preserves an incomplete manual rate when both the old rate and serialized edit are null", async () => {
     const { draft, catalogue } = configuredFixture();
     draft.lineItems = draft.lineItems.map(line => line.id === "visible-living"
@@ -243,7 +373,7 @@ describe("Collaborative estimate workspace", () => {
     await waitFor(() => expect(submits).toEqual([{ expectedVersion: 8 }]));
     expect(saves[0]).toMatchObject({ expectedVersion: 7, lineItems: [expect.objectContaining({ quantity: 120 })] });
     expect(screen.queryByRole("button", { name: "Save draft" })).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Back to Sample client" }));
+    await user.click(screen.getByRole("button", { name: /^(?:Save and edit|Edit|View) baskets$/ }));
     expect(screen.getByRole("link", { name: "Back to design plans" })).toHaveAttribute("href", "/designer/design-plans");
   });
 

@@ -96,7 +96,7 @@ describe("project status participant-safe source projection", () => {
     expect(await f.service.get(f.actor("sales-a"), "a")).toEqual(client);
     expect(await f.service.get(f.actor("admin-a"), "a")).toEqual(client);
     expect(await f.service.get(f.actor("super"), "a")).toEqual(client);
-    expect(Object.keys(client).sort()).toEqual(["projectId", "projectName", "projectStatus", "serverNow", "state", "currentStage", "pendingActions", "issue"].sort());
+    expect(Object.keys(client).sort()).toEqual(["projectId", "projectName", "projectNumber", "projectStatus", "serverNow", "state", "currentStage", "pendingActions", "issue"].sort());
     expect(JSON.stringify(client)).not.toMatch(/chat\.test|subtotal|total|lineItems|proof|storageReference|clientEmail|nextActionAt/);
     expect(mutate).not.toHaveBeenCalled();
     expect(await f.chatRepository.snapshot(async tx => ({ messages: await tx.messages({ projectId: "a", userId: "client-a", filter: "all", limit: 100 }), selections: await tx.selections("a") }))).toEqual(before);

@@ -358,6 +358,8 @@ export interface DashboardFactorDistributionItem {
 }
 
 export interface DashboardTopRiskProject {
+  readonly projectNumber?: string | null;
+
   projectId: string;
   projectName: string;
   projectStatus: ProjectStatus;
@@ -411,6 +413,8 @@ export interface DashboardProjectFilters {
 }
 
 export interface DashboardProjectRow {
+  readonly projectNumber?: string | null;
+
   projectId: string;
   projectName: string;
   projectStatus: ProjectStatus;

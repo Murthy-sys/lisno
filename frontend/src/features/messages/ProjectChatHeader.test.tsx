@@ -31,22 +31,23 @@ vi.mock("./projectChatStream", () => ({ runProjectChatStream: async (options: St
 
 interface NavigationOptions {
   projectId: string;
+  overviewTo?: string;
   destination: "inline" | "portal" | "pending";
-  presentation: "default" | "estimate-progress";
+  presentation: "default" | "estimate-progress" | "client-project";
 }
-function NavigationHarness({ projectId, destination, presentation }: NavigationOptions) {
+function NavigationHarness({ projectId, overviewTo, destination, presentation }: NavigationOptions) {
   const [header, setHeader] = useState<HTMLElement | null>(null);
   return <main>
     <h1>Estimate in progress</h1>
     <section aria-label="Header alerts" ref={setHeader} />
     <section aria-label="Project navigation">
-      <ProjectChatNavigation projectId={projectId} overviewTo="/lead" overviewLabel="Lead" presentation={presentation}
+      <ProjectChatNavigation projectId={projectId} overviewTo={overviewTo} overviewLabel="Lead" presentation={presentation}
         summaryContainer={destination === "inline" ? undefined : destination === "pending" ? null : header} />
     </section>
   </main>;
 }
 function mount(options: Partial<NavigationOptions> = {}) {
-  let current: NavigationOptions = { projectId: "project-a", destination: "portal", presentation: "estimate-progress", ...options };
+  let current: NavigationOptions = { projectId: "project-a", overviewTo: "/lead", destination: "portal", presentation: "estimate-progress", ...options };
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, retryDelay: 0, gcTime: Infinity } } });
   const content = () => <QueryClientProvider client={client}><MemoryRouter initialEntries={["/lead"]}><ProjectChatProvider><NavigationHarness {...current} /></ProjectChatProvider></MemoryRouter></QueryClientProvider>;
   const view = render(content());
@@ -68,6 +69,56 @@ beforeEach(() => {
 });
 
 describe("project navigation summary composition", () => {
+  it("keeps client header actions and alerts while remembering the omitted overview destination", async () => {
+    const view = mount({ destination: "inline", presentation: "client-project" });
+    const navigation = screen.getByRole("region", { name: "Project navigation" });
+    expect(await within(navigation).findByRole("link", { name: "Critical 3" })).toHaveAttribute("href", "/projects/project-a/messages?filter=critical");
+    expect(view.container.querySelector(".project-chat-navigation--client-project")).not.toBeNull();
+    expect(within(navigation).queryByRole("link", { name: "Lead" })).not.toBeInTheDocument();
+    expect(within(navigation).getByLabelText("2 unread messages")).toBeVisible();
+    expect(within(navigation).getByLabelText("1 unread mentions")).toBeVisible();
+    expect(await within(navigation).findByRole("button", { name: "Project status" })).toBeVisible();
+    await waitFor(() => expect(mocks.streams.filter(stream => !stream.signal.aborted)).toHaveLength(1));
+
+    await userEvent.click(within(navigation).getByRole("link", { name: /Messages/ }));
+    expect(within(navigation).getByRole("link", { name: /Messages/ })).toHaveAttribute("aria-current", "page");
+    view.change({ presentation: "default", overviewTo: undefined });
+    const overview = within(navigation).getByRole("link", { name: "Lead" });
+    expect(overview).toHaveAttribute("href", "/lead");
+    await userEvent.click(overview);
+    expect(overview).toHaveAttribute("aria-current", "page");
+  });
+
+  it.each(["default", "estimate-progress", "client-project"] as const)("hides a confirmed zero critical count only for client headers (%s)", async presentation => {
+    vi.mocked(projectChatApi.summary).mockImplementation(async projectId => chatTestSummary({
+      project: { id: projectId, name: "Courtyard residence", status: "active" },
+      counts: { openCritical: 0, openImportant: 0, unread: 2, unreadMentions: 1 }
+    }));
+    mount({ destination: "inline", presentation });
+    await screen.findByLabelText("2 unread messages");
+    if (presentation === "client-project") {
+      expect(screen.queryByRole("link", { name: "Critical 0" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    } else {
+      expect(screen.getByRole("link", { name: "Critical 0" })).toBeVisible();
+    }
+  });
+
+  it("shows a stale zero critical count and its warning in the client header", async () => {
+    vi.mocked(projectChatApi.summary).mockImplementation(async projectId => chatTestSummary({
+      project: { id: projectId, name: "Courtyard residence", status: "active" },
+      counts: { openCritical: 0, openImportant: 0, unread: 2, unreadMentions: 1 }
+    }));
+    const view = mount({ destination: "inline", presentation: "client-project" });
+    await screen.findByLabelText("2 unread messages");
+    expect(screen.queryByRole("link", { name: "Critical 0" })).not.toBeInTheDocument();
+    vi.mocked(projectChatApi.summary).mockRejectedValue(new ApiError(503, "UNAVAILABLE", "Unavailable"));
+    await act(async () => { await view.refresh(); });
+    expect(await screen.findByText("Counts may be out of date")).toBeVisible();
+    expect(screen.getByRole("link", { name: "Critical 0" })).toHaveAttribute("href", "/projects/project-a/messages?filter=critical");
+    expect(screen.getByRole("link", { name: /Messages/ })).toBeVisible();
+  });
+
   it("keeps the default summary inline and preserves existing navigation", async () => {
     const view = mount({ destination: "inline", presentation: "default" });
     const navigation = screen.getByRole("region", { name: "Project navigation" });
@@ -110,10 +161,10 @@ describe("project navigation summary composition", () => {
     expect(mocks.streams.filter(stream => !stream.signal.aborted)).toHaveLength(1);
   });
 
-  it("places loading and unavailable states in the destination without inventing a count", async () => {
+  it.each(["estimate-progress", "client-project"] as const)("places loading and unavailable states in the destination without inventing a count (%s)", async presentation => {
     let rejectSummary!: (error: Error) => void;
     vi.mocked(projectChatApi.summary).mockImplementation(() => new Promise((_resolve, reject) => { rejectSummary = reject; }));
-    mount();
+    mount({ presentation });
     const header = screen.getByRole("region", { name: "Header alerts" });
     expect(within(header).getByRole("status")).toHaveTextContent("Loading chat counts");
     expect(within(screen.getByRole("region", { name: "Project navigation" })).queryByRole("status")).not.toBeInTheDocument();
@@ -135,16 +186,20 @@ describe("project navigation summary composition", () => {
     expect(screen.getAllByRole("link", { name: "Critical 3" })).toHaveLength(1);
   });
 
-  it.each(["disabled", "denied"] as const)("retains independently authorized status when chat is %s", async access => {
+  it.each([
+    ["estimate-progress", "disabled"], ["estimate-progress", "denied"],
+    ["client-project", "disabled"], ["client-project", "denied"]
+  ] as const)("retains independently authorized status for %s when chat is %s", async (presentation, access) => {
     if (access === "disabled") mocks.chatAllowed = false;
     else vi.mocked(projectChatApi.summary).mockRejectedValue(new ApiError(404, "NOT_FOUND", "Unavailable"));
-    mount();
+    const view = mount({ presentation });
     await waitFor(() => expect(screen.queryByRole("link", { name: /Messages/ })).not.toBeInTheDocument());
     expect(screen.queryByRole("link", { name: "Lead" })).not.toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Header alerts" })).toBeEmptyDOMElement();
     expect(mocks.streams).toHaveLength(0);
     expect(projectChatApi.summary).toHaveBeenCalledTimes(access === "disabled" ? 0 : 1);
     const trigger = await screen.findByRole("button", { name: "Project status" });
+    expect(view.container.querySelector(`.project-chat-navigation--${presentation}`)).toContainElement(trigger);
     await userEvent.click(trigger);
     expect(await screen.findByRole("dialog", { name: "Project status" })).toBeVisible();
   });

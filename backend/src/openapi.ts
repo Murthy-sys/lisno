@@ -1,3 +1,4 @@
+import { PROJECT_NUMBER_SCHEMA } from "./openapi/project-number.js";
 import { DEFAULT_PROJECT_NEXT_ACTION, NATIVE_PLACE_MAX_LENGTH, TENTATIVE_BUDGET_MAX_LENGTH, PROJECT_LANGUAGES, PROJECT_CATEGORIES } from "./contracts/project-initiation.js";
 import { PM_ESTIMATE_SCHEMAS, PM_ESTIMATE_REQUESTS, PM_ESTIMATE_RESPONSES, PM_ESTIMATE_QUERIES, PM_ESTIMATE_SUMMARIES } from "./openapi/project-manager-estimates.js";
 import { ESTIMATE_DIMENSION_INPUT_UNITS, ESTIMATE_DIMENSION_QUANTITY_UNITS } from "./domain/estimate-dimensions.js";
@@ -292,6 +293,9 @@ const responseSchemaByOperation: Readonly<Record<string, string>> = {
   "POST /auth/password-reset/inspect": "PasswordResetAvailable",
   "POST /auth/password-reset/complete": "PasswordResetCompleted",
   "GET /auth/me": "PublicUser",
+  "GET /projects": "NumberedProjectPage",
+  "GET /client/project-summaries": "NumberedProjectPage",
+  "GET /projects/:projectId": "NumberedProjectRead",
   "PUT /auth/me/profile-photo": "ProfilePhotoUserResult",
   "DELETE /auth/me/profile-photo": "ProfilePhotoUserResult",
   "DELETE /estimate-design-uploads/:uploadId": "EstimateDesignUploadDeleted",
@@ -1659,9 +1663,7 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
     properties: { id, basketId: id, basketName: { type: "string" }, subBasketId: { ...id, nullable: true },
       subBasketName: { type: "string", nullable: true }, baseRatePaise: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER, nullable: true },
       unavailableReason: { type: "string", nullable: true } } } };
-  const projectNumber: OpenApiSchema = { type: "string", nullable: true, readOnly: true,
-    pattern: "^Lisno[0-9]{6,16}$", example: "Lisno000001",
-    description: "Server-assigned immutable global reference from the linked Lead, allocated on the first successful estimate creation. The positive safe-integer suffix is padded to at least six digits. Unassigned and historical saved estimates remain null." };
+  const projectNumber: OpenApiSchema = PROJECT_NUMBER_SCHEMA;
   const projectIntakeProperties: Record<string, OpenApiSchema> = {
     nativePlace: { type: "string", nullable: true, maxLength: NATIVE_PLACE_MAX_LENGTH, description: "Optional native place; trimmed, empty or absent values become null." },
     tentativeBudget: { type: "string", nullable: true, maxLength: TENTATIVE_BUDGET_MAX_LENGTH, description: "Optional descriptive budget, not a financial amount; trimmed, empty or absent values become null." },
@@ -1914,7 +1916,7 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
       properties: {
         projectDistribution: { type: "object", additionalProperties: false, required: ["gray", "green", "yellow", "red"], properties: Object.fromEntries(DASHBOARD_RISK_LEVELS.map((level) => [level, { type: "integer", minimum: 0 }])) },
         factorDistribution: { type: "array", items: { type: "object", additionalProperties: false, required: ["kind", "level", "reasonCode", "occurrenceCount", "projectCount"], properties: { kind: { type: "string", enum: [...DASHBOARD_RISK_FACTORS] }, level: { type: "string", enum: ["yellow", "red"] }, reasonCode: { type: "string", enum: [...DASHBOARD_RISK_REASON_CODES] }, occurrenceCount: { type: "integer", minimum: 0 }, projectCount: { type: "integer", minimum: 0 } } } },
-        topProjects: { type: "array", maxItems: 10, items: { type: "object", additionalProperties: false, required: ["projectId", "projectName", "projectStatus", "risk"], properties: { projectId: id, projectName: { type: "string" }, projectStatus: { type: "string", enum: ["planning", "active", "on_hold", "completed"] }, risk: { $ref: "#/components/schemas/DashboardProjectRisk" } } } }
+        topProjects: { type: "array", maxItems: 10, items: { type: "object", additionalProperties: false, required: ["projectId", "projectName", "projectStatus", "risk"], properties: { projectNumber, projectId: id, projectName: { type: "string" }, projectStatus: { type: "string", enum: ["planning", "active", "on_hold", "completed"] }, risk: { $ref: "#/components/schemas/DashboardProjectRisk" } } } }
       }
     },
     DashboardProjectRisk: {
@@ -1930,6 +1932,7 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
       type: "object", additionalProperties: false,
       required: ["projectId", "projectName", "projectStatus", "location", "plannedStartAt", "plannedEndAt", "actualEndAt", "manager", "estimate", "designPlan", "procurement", "execution", "finance", "risk"],
       properties: {
+        projectNumber,
         projectId: id, projectName: { type: "string" }, projectStatus: { type: "string", enum: ["planning", "active", "on_hold", "completed"] }, location: { type: "string" }, plannedStartAt: dateTime, plannedEndAt: dateTime, actualEndAt: { ...dateTime, nullable: true },
         manager: { type: "object", nullable: true, additionalProperties: false, required: ["id", "name"], properties: { id, name: { type: "string" } } },
         estimate: { type: "object", nullable: true, additionalProperties: false, required: ["id", "projectId", "resolvedProjectId", "projectLinkSource", "version", "reviewRoundId", "status"], properties: { id, projectId: { type: "string", nullable: true }, resolvedProjectId: id, projectLinkSource: { type: "string", enum: ["estimate", "lead", "estimate_and_lead"] }, version: { type: "integer", minimum: 1 }, reviewRoundId: { type: "string", nullable: true }, status: { type: "string" } } },
@@ -2171,6 +2174,13 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
         }
       }
     },
+    NumberedProjectRead: { type: "object", additionalProperties: true,
+      required: ["id", "name", "projectNumber"], properties: { id, name: { type: "string" }, projectNumber },
+      description: "Existing role-scoped Project projection. Additional fields depend on the caller; generated Project ID is live read-only metadata." },
+    NumberedProjectPage: { type: "object", required: ["items", "pagination"], properties: {
+      items: { type: "array", items: { $ref: "#/components/schemas/NumberedProjectRead" } },
+      pagination: { $ref: "#/components/schemas/Pagination" }
+    } },
     ProjectIntakeRecord: { type: "object", additionalProperties: true, properties: { ...projectIntakeProperties, projectNumber }, description: "Existing authorized Lead or Admin project record with additive intake metadata. Historical missing scalar metadata reads as null and known languages as an empty array; other record fields retain their existing contracts." },
     ProjectLeadPage: { type: "object", required: ["items", "pagination"], properties: {
       items: { type: "array", items: { $ref: "#/components/schemas/ProjectIntakeRecord" } },
@@ -2419,6 +2429,7 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
       required: ["projectId", "projectName", "projectStatus", "serverNow", "state", "currentStage", "pendingActions", "issue"],
       description: "Read-only status for current project participants. Contains no commercial values, proof files, or internal notes.",
       properties: {
+        projectNumber,
         projectId: id, projectName: { type: "string" }, projectStatus: { type: "string" }, serverNow: dateTime,
         state: { type: "string", enum: ["active", "scheduled", "paused", "completed", "no_pending", "unavailable"] },
         currentStage: { type: "object", nullable: true, additionalProperties: false, required: ["key", "label"], properties: { key: id, label: { type: "string" } } },
@@ -2789,6 +2800,7 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
       type: "object",
       required: ["id", "estimateId", "projectId", "projectName", "clientName", "status", "designPlanVersion", "rooms", "scopes", "lineItems"],
       properties: {
+        projectNumber,
         id,
         estimateId: id,
         leadId: id,
@@ -3627,6 +3639,7 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
         "estimateVersion", "sections"
       ],
       properties: {
+        projectNumber,
         taskId: id,
         taskVersion: { type: "integer", minimum: 1 },
         taskStatus: { type: "string", enum: [...PROJECT_WORKFLOW_TASK_STATUSES] },
@@ -3703,6 +3716,7 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
         "createdAt", "updatedAt"
       ],
       properties: {
+        projectNumber,
         id,
         projectId: id,
         projectName: { type: "string", minLength: 1 },
@@ -3855,7 +3869,7 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
         filterOptions: {
           type: "object", required: ["projects", "clients", "hasUnlinkedClients"],
           properties: {
-            projects: { type: "array", items: { type: "object", required: ["id", "name"], properties: { id, name: { type: "string" } } } },
+            projects: { type: "array", items: { type: "object", required: ["id", "name"], properties: { projectNumber, id, name: { type: "string" } } } },
             clients: { type: "array", items: { type: "object", required: ["id", "name"], properties: { id, name: { type: "string" } } } },
             hasUnlinkedClients: { type: "boolean" }
           }

@@ -66,6 +66,17 @@ beforeEach(async () => {
 });
 
 describe("client working estimate tier selection", () => {
+  it("carries the Lead-owned Project ID through reads, edits, and the empty estimate state", async () => {
+    await LeadModel.collection.updateOne({ _id: "tier-lead" as never }, { $set: { projectNumber: "Lisno000012" } });
+    expect(await service.detail(client, "tier-project")).toMatchObject({ projectId: "tier-project", projectNumber: "Lisno000012" });
+    expect(await service.select(client, "tier-project", "line-one", command)).toMatchObject({ projectNumber: "Lisno000012", estimateVersion: 2 });
+    await EstimateModel.deleteOne({ _id: "tier-estimate" });
+    expect(await service.detail(client, "tier-project")).toMatchObject({ projectNumber: "Lisno000012", estimateId: null });
+    await LeadModel.collection.updateOne({ _id: "tier-lead" as never }, { $unset: { projectNumber: "" } });
+    expect(await service.detail(client, "tier-project")).toMatchObject({ projectNumber: null });
+    await expect(service.detail(other, "tier-project")).rejects.toMatchObject({ status: 404 });
+  });
+
   it("returns configured choices without internal payloads or hidden lines and retains full totals", async () => {
     const view = await service.detail(client, "tier-project");
     expect(view.lines.map(line => line.id)).toEqual(["line-one", "line-two"]);

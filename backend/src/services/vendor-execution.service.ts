@@ -18,7 +18,7 @@ import type { PublicUser } from "./auth.service.js";
 import { appendExecutionChange } from "./execution-change-events.js";
 import { assertCompletionReviewAllowsOrderChanges } from "./site-completion-fence.js";
 import { executionNotFound, executionProjectIds, requireExecutionActor, requireExecutionProject } from "./vendor-execution-access.js";
-import { cacheLatestVendorReports, currentExecutionImages, defaultExecutionDaily, editableExecutionStates, executionCached, executionCounts, executionWorkDto, iso, type DailyReader, type ExecutionProjectionCache, type ExecutionRow as Row } from "./vendor-execution-projection.js";
+import { cacheExecutionProjectNumbers, cacheLatestVendorReports, currentExecutionImages, defaultExecutionDaily, editableExecutionStates, executionCached, executionCounts, executionWorkDto, iso, type DailyReader, type ExecutionProjectionCache, type ExecutionRow as Row } from "./vendor-execution-projection.js";
 import { vendorActivation } from "./vendor-readiness.service.js";
 
 function conflict(message = "This work has changed. Refresh it before trying again."): never { throw new ApiError(409, "EXECUTION_VERSION_CONFLICT", message); }
@@ -127,11 +127,11 @@ export function createVendorExecutionService(input: { audit: AuditService; now?:
   const dto = async (actor: PublicUser, row: Row, session: ClientSession, cache: ExecutionProjectionCache = new Map()): Promise<ExecutionWork> => executionWorkDto(row,
     await executionCached(cache, `state:${row._id}`, async () => VendorExecutionStateModel.findById(row._id).session(session).lean()) as Row | null,
     actor, await executionCached(cache, `policy:${row.projectId}`, () => readPolicy(row.projectId, session)), now(), session, readDaily, cache);
-  async function page(actor: PublicUser, filter: Row, query: ExecutionQuery, session: ClientSession, project?: Row): Promise<ExecutionPage> {
+  async function page(actor: PublicUser, filter: Row, query: ExecutionQuery, session: ClientSession, project?: Row, cache: ExecutionProjectionCache = new Map()): Promise<ExecutionPage> {
     const parsed = executionQuerySchema.safeParse(query); if (!parsed.success) invalid("Execution filters are invalid.");
     const { limit, offset, q, vendorId, status, flag } = parsed.data;
     const rows = await VendorWorkAssignmentModel.find({ ...filter, status: { $ne: "superseded" } }).sort({ targetDate: 1, _id: 1 }).session(session).lean() as Row[];
-    const cache: ExecutionProjectionCache = new Map();
+    await cacheExecutionProjectNumbers([...rows.map(row => String(row.projectId)), ...(project ? [String(project._id)] : [])], session, cache);
     if (project) cache.set(`project:${project._id}`, Promise.resolve(project));
     const states = await VendorExecutionStateModel.find({ _id: { $in: rows.map(row => row._id) } }).session(session).lean() as Row[];
     const stateById = new Map(states.map(state => [String(state._id), state]));
@@ -147,7 +147,7 @@ export function createVendorExecutionService(input: { audit: AuditService; now?:
       if (q && ![item.itemName, item.roomName, item.vendorName, item.orderNumber, item.mainBasketName ?? "", item.subBasketName ?? ""].join(" ").toLocaleLowerCase().includes(q.toLocaleLowerCase())) continue;
       items.push(item);
     }
-    return { project: project ? { id: String(project._id), name: project.name, status: project.status, completionAuthority: project.completionAuthority ?? "legacy_staff" } : null,
+    return { project: project ? { id: String(project._id), name: project.name, projectNumber: await cache.get(`project-number:${project._id}`) as string | null, status: project.status, completionAuthority: project.completionAuthority ?? "legacy_staff" } : null,
       projectCounts: project ? executionCounts(projectItems) : null, items: items.slice(offset, offset + limit), total: items.length, limit, offset, counts: executionCounts(items), policy: project ? await readPolicy(String(project._id), session) : null,
       canManagePolicy: Boolean(project && ["site_manager", "super_admin"].includes(actor.role)) };
   }
@@ -241,8 +241,11 @@ export function createVendorExecutionService(input: { audit: AuditService; now?:
       const { limit, offset, q, projectScope, ...workFilters } = parsed.data;
       const projects = await ProjectModel.find({ ...(ids === null ? {} : { _id: { $in: ids } }), ...(projectScope === "current" ? { status: { $in: ["planning", "active", "on_hold"] } } : {}) }).sort({ name: 1, _id: 1 }).session(session).lean() as Row[];
       const matching = projects.filter(project => !q || String(project.name).toLowerCase().includes(q.toLowerCase()));
+      const pageProjects = matching.slice(offset, offset + limit);
+      const cache: ExecutionProjectionCache = new Map();
+      await cacheExecutionProjectNumbers(pageProjects.map(project => String(project._id)), session, cache);
       const items = [];
-      for (const project of matching.slice(offset, offset + limit)) { const work = await page(actor, { projectId: project._id }, { ...workFilters, offset: 0, limit: 1 }, session, project); items.push({ id: String(project._id), name: project.name, status: project.status, counts: work.counts }); }
+      for (const project of pageProjects) { const work = await page(actor, { projectId: project._id }, { ...workFilters, offset: 0, limit: 1 }, session, project, cache); items.push({ id: String(project._id), name: project.name, projectNumber: await cache.get(`project-number:${project._id}`) as string | null, status: project.status, counts: work.counts }); }
       return { items, total: matching.length, limit, offset, deliveryHealth: actor.role === "super_admin" ? await input.readDeliveryHealth?.() ?? null : null };
     }); },
     detail(actor, assignmentId) { return transaction(async session => dto(actor, await assignmentFor(actor, assignmentId, session), session)); },

@@ -15,7 +15,7 @@ export function ProjectChatNavigation({ projectId, overviewTo, overviewLabel = "
   overviewLabel?: string;
   /** Undefined keeps the summary inline; null waits for a portal destination to mount. */
   summaryContainer?: HTMLElement | null;
-  presentation?: "default" | "estimate-progress";
+  presentation?: "default" | "estimate-progress" | "client-project";
 }) {
   useChatProjectRegistration(projectId);
   const chat = useOptionalProjectChat();
@@ -25,19 +25,22 @@ export function ProjectChatNavigation({ projectId, overviewTo, overviewLabel = "
   useEffect(() => { if (overviewTo) remember?.(projectId, overviewTo, overviewLabel); }, [overviewTo, overviewLabel, projectId, remember]);
   const target = overviewTo ? { to: overviewTo, label: overviewLabel } : chat?.overview[projectId];
   const estimateProgress = presentation === "estimate-progress";
-  const navigationClass = `project-chat-navigation${estimateProgress ? " project-chat-navigation--estimate-progress" : ""}`;
-  if (!chat?.enabled || chat.denied.has(projectId)) return estimateProgress
+  const clientProject = presentation === "client-project";
+  const compact = estimateProgress || clientProject;
+  const navigationClass = `project-chat-navigation${presentation === "default" ? "" : ` project-chat-navigation--${presentation}`}`;
+  if (!chat?.enabled || chat.denied.has(projectId)) return compact
     ? <div className={navigationClass}><ProjectStatusButton projectId={projectId} /></div>
     : <ProjectStatusButton projectId={projectId} />;
   const path = projectMessagesPath(projectId);
-  const criticalSummary = summary.data ? <div className="project-chat-navigation__summary">
-    <Link className="project-chat-priority project-chat-priority--critical" to={`${path}?filter=critical`}>{estimateProgress ? <NavigationSymbol kind="critical" /> : null}Critical {summary.data.counts.openCritical}</Link>
+  const hideCriticalSummary = clientProject && summary.data?.counts.openCritical === 0 && !summary.isError;
+  const criticalSummary = hideCriticalSummary ? null : summary.data ? <div className="project-chat-navigation__summary">
+    <Link className="project-chat-priority project-chat-priority--critical" to={`${path}?filter=critical`}>{compact ? <NavigationSymbol kind="critical" /> : null}Critical {summary.data.counts.openCritical}</Link>
     {summary.isError ? <span role="status">Counts may be out of date</span> : null}
   </div> : <span className="project-chat-muted" role="status">{summary.isError ? "Chat counts unavailable" : "Loading chat counts…"}</span>;
   return <div className={navigationClass}>
     <nav aria-label="Project sections">
-      {target ? <Link to={target.to} aria-current={location.pathname === target.to ? "page" : undefined}>{estimateProgress ? <NavigationSymbol kind="lead" /> : null}{target.label}</Link> : null}
-      <Link to={path} aria-current={location.pathname === path ? "page" : undefined}>{estimateProgress ? <NavigationSymbol kind="messages" /> : <MessageCircle size={16} aria-hidden="true" />}Messages
+      {target && !clientProject ? <Link to={target.to} aria-current={location.pathname === target.to ? "page" : undefined}>{estimateProgress ? <NavigationSymbol kind="lead" /> : null}{target.label}</Link> : null}
+      <Link to={path} aria-current={location.pathname === path ? "page" : undefined}>{compact ? <NavigationSymbol kind="messages" /> : <MessageCircle size={16} aria-hidden="true" />}Messages
         {summary.data && summary.data.counts.unread > 0 ? <span className="project-chat-badge" aria-label={`${summary.data.counts.unread} unread messages`}>{summary.data.counts.unread}</span> : null}
         {summary.data && summary.data.counts.unreadMentions > 0 ? <span aria-label={`${summary.data.counts.unreadMentions} unread mentions`}>@ {summary.data.counts.unreadMentions}</span> : null}
       </Link>

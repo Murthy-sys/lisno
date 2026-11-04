@@ -1,16 +1,133 @@
-.client-quotation { display: grid; gap: var(--space-4); padding: var(--space-5); border: 1px solid var(--color-border); background: var(--color-surface); }
-.client-quotation__header, .client-quotation__item-top { display: flex; justify-content: space-between; align-items: start; gap: var(--space-4); }
+.project-quotation-workspace { display: grid; gap: var(--space-2); min-width: 0; }
+.client-estimation-workspace { display: grid; gap: var(--space-2); min-width: 0; scroll-margin-block-start: calc(var(--workspace-toolbar-size, 56px) + var(--space-2)); }
+.client-quotation__review-footer { display: grid; gap: var(--space-2); }
+.client-quotation__review-footer > .client-commercial-decision { min-width: 0; width: 100%; }
+.client-quotation__review-footer .client-commercial-decision__actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.client-quotation__review-footer .client-commercial-decision__actions > div { flex: 1 1 16rem; min-width: 0; }
+.ui-app-shell[data-role] .client-quotation :is(.client-quotation__footer, .client-quotation__review-footer) .ui-button span { color: inherit; }
+.client-quotation__submitted-taxes { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4); }
+.client-quotation__submitted-taxes > div { display: flex; gap: var(--space-2); }
+.client-quotation__submitted-taxes dd { margin: 0; font-weight: 600; }
+.client-quotation { display: grid; gap: var(--space-2); min-width: 0; padding: var(--space-3); border: 1px solid var(--color-border); background: var(--color-surface); scroll-margin-block-start: calc(var(--workspace-toolbar-size, 56px) + var(--space-2)); }
+.client-quotation.estimate-workspace.estimator-dashboard { gap: var(--space-2); width: 100%; max-width: none; }
+.client-quotation--workspace { padding: var(--space-2); }
+.client-quotation__header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: var(--space-1) var(--space-2); }
 .client-quotation h2, .client-quotation p, .client-quotation dl { margin: 0; }
-.client-quotation__header dd { margin: var(--space-1) 0 0; font: var(--type-heading-3); font-variant-numeric: tabular-nums; }
-.client-quotation__item { margin: 0; padding: var(--space-4) 0; min-width: 0; border: 0; border-top: 1px solid var(--color-border); }
-.client-quotation__item legend { padding: 0 var(--space-2) 0 0; font-weight: 600; }
-.client-quotation__item legend span { font-weight: 400; margin-inline-start: var(--space-2); color: var(--color-text-muted); }
-.client-quotation__fields { display: flex; flex-wrap: wrap; gap: var(--space-4); align-items: end; padding-top: var(--space-3); }
-.client-quotation__fields > label, .client-quotation__add > label { display: grid; gap: var(--space-2); flex: 1 1 13rem; }
-.client-quotation input:not([type="checkbox"]), .client-quotation select, .client-quotation__add input:not([type="checkbox"]), .client-quotation__add select { width: 100%; min-height: 44px; padding: var(--space-2); border: 1px solid var(--color-border); background: var(--color-surface); color: inherit; font: inherit; }
-.client-quotation__components { display: grid; gap: var(--space-2); flex: 1 1 100%; padding: var(--space-3); border: 1px solid var(--color-border); }
+.client-quotation__identity { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--space-1) var(--space-2); min-width: 0; }
+.client-quotation__identity h2 { font: var(--type-heading-3); }
+.client-quotation__identity > p, .client-quotation__header dt { color: var(--color-text-muted); font-size: var(--text-sm); }
+.client-quotation__header dl { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--space-1) var(--space-2); }
+.client-quotation__header dd { margin: 0; font: var(--type-heading-3); font-variant-numeric: tabular-nums; }
+.client-quotation__review-status { color: var(--color-text-muted); font-size: var(--text-sm); }
+.client-quotation__price { display: grid; gap: 2px; min-width: 0; color: var(--color-text-muted); font-size: 11px; font-weight: 600; }
+.client-quotation .client-quotation__price output { display: grid; place-items: center; min-height: var(--estimate-compact-control); padding: 4px 6px; border: 1px solid var(--color-border); color: var(--color-text-strong); background: var(--color-surface); font-size: 12px; text-align: center; overflow-wrap: anywhere; }
+.client-quotation__line-status { grid-column: 1 / -1; margin-inline-start: calc(var(--estimate-compact-thumb) + 8px); }
+.client-quotation__line .client-quotation__components { flex-basis: 100%; font-size: 12px; }
+.client-quotation__line .client-quotation__components > label { min-height: 28px; }
+/* Let enlarged text wrap the whole control group instead of splitting financial values. */
+.client-quotation.estimate-workspace--compact-builder .client-quotation__line { display: flex; flex-wrap: wrap; }
+.client-quotation .client-quotation__line > .configured-estimate-line__choice { flex: 1 1 18em; }
+.client-quotation.estimate-workspace--compact-builder .client-quotation__line > .configured-estimate-line__fields {
+  flex: 0 0 auto; width: min(100%, max(386px, calc(25em + var(--estimate-compact-menu) + 18px)));
+  grid-template-columns: minmax(6em, 1fr) minmax(7.75em, 1fr) minmax(10em, 1.3fr) var(--estimate-compact-menu);
+  margin-left: auto;
+}
+.client-quotation__line > :is(.configured-estimate-line__options, .estimate-line-dimensions, .configured-estimate-line__message, .client-quotation__line-status) { flex: 1 1 100%; }
+.client-quotation .client-quotation__price output { white-space: nowrap; }
+.client-quotation__fields { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: end; padding-top: var(--space-1); }
+.client-quotation__fields > label, .client-quotation__add > label { display: grid; gap: var(--space-1); min-width: 0; flex: 1 1 9rem; font-size: var(--text-sm); }
+.client-quotation__fields > p { flex: 1 1 8rem; align-self: center; font-size: var(--text-sm); overflow-wrap: anywhere; }
+.client-quotation__fields :is(input:not([type="checkbox"]), select), .client-quotation__add :is(input:not([type="checkbox"]), select) { width: 100%; min-height: var(--control-height); padding: var(--space-1) var(--space-2); border: 1px solid var(--color-border); background: var(--color-surface); color: inherit; font: inherit; }
+.client-quotation__fields > .estimate-line-dimensions, .client-quotation__components { flex: 1 1 100%; }
+.client-quotation__components { display: grid; gap: var(--space-1); margin: 0; min-width: 0; padding: var(--space-2); border: 1px solid var(--color-border); }
+.client-quotation__components > label { display: flex; align-items: center; min-height: var(--control-height-compact); }
 .client-quotation input[type="checkbox"], .client-quotation__add input[type="checkbox"] { width: 1.1rem; height: 1.1rem; accent-color: var(--color-text); margin-inline-end: var(--space-2); }
-.client-quotation__actions { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: center; }
+.client-quotation__actions { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
 .client-quotation__hint { color: var(--color-text-muted); font-size: var(--text-sm); }
-.client-quotation__add { display: grid; gap: var(--space-4); }
-@media (max-width: 640px) { .client-quotation { padding: var(--space-3); } .client-quotation__header, .client-quotation__item-top { flex-direction: column; } .client-quotation__fields > * { min-width: 0; max-width: 100%; } .client-quotation__actions > button { flex: 1 1 auto; } }
+.client-quotation__add { display: grid; gap: var(--space-3); }
+.client-quotation__navigation, .client-quotation__navigation nav { display: flex; flex-wrap: wrap; gap: var(--space-1); align-items: center; min-width: 0; }
+.client-quotation__navigation nav { margin-inline-start: auto; }
+.client-quotation__navigation .ui-button { min-width: 0; white-space: normal; }
+.client-quotation__navigation .ui-button__stack { min-width: 0; grid-template-columns: minmax(0, 1fr); }
+.client-quotation__navigation :is(.ui-button__content, .ui-button__busy) { min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+.client-quotation__navigation :is(.ui-button__content, .ui-button__busy) > span { min-width: 0; }
+.client-quotation__baskets, .client-quotation__summary, .client-quotation__removals { display: grid; gap: var(--space-2); min-width: 0; }
+.client-quotation__basket, .client-quotation__summary > div { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: var(--space-2); padding: var(--space-2) 0; border-block-end: 1px solid var(--color-border); }
+.client-quotation__basket h4 { margin: 0 0 var(--space-1); }
+.client-quotation__builder { min-width: 0; }
+.client-quotation__builder.estimate-workspace__builder-area { min-height: 280px; gap: var(--space-2); }
+.client-quotation .configured-estimate-builder { gap: var(--space-2); }
+.client-quotation .configured-estimate-builder__toolbar { gap: var(--space-2); }
+.client-quotation.estimate-workspace--compact-builder .configured-estimate-builder__toolbar { grid-template-columns: minmax(0, 1fr) minmax(145px, 11em) minmax(125px, 9.5em); }
+.client-quotation.estimate-workspace--compact-builder .configured-estimate-builder__refresh { white-space: normal; }
+.client-quotation .configured-estimate-builder__layout { grid-template-columns: minmax(180px, 210px) minmax(0, 1fr); gap: var(--space-2); }
+.client-quotation .configured-estimate-builder__content { gap: var(--space-2); }
+.client-quotation .configured-estimate-builder__jump button { min-height: var(--control-height); padding: var(--space-1) var(--space-2); }
+.client-quotation .configured-estimate-builder__jump button > svg { width: 18px; height: 18px; }
+.client-quotation .configured-estimate-builder__scroll-pane { max-height: none; gap: var(--space-2); }
+.client-quotation__builder--embedded .configured-estimate-builder__scroll-pane { overflow: visible; }
+.client-quotation__builder--embedded :is(.configured-estimate-basket, [data-estimate-jump-target]) { scroll-margin-block-start: calc(var(--workspace-toolbar-size, 56px) + var(--space-2)); }
+.client-quotation .configured-estimate-builder__baskets { gap: var(--space-2); }
+.client-quotation .configured-estimate-sub-basket { padding: var(--space-1) var(--space-2) 0; }
+.client-quotation .configured-estimate-basket__toggle { padding: var(--space-1) var(--space-2); }
+.client-quotation__ungrouped { min-width: 0; }
+.client-quotation__summary span { color: var(--color-text-muted); font-variant-numeric: tabular-nums; }
+.client-quotation__removals { border-block: 1px solid var(--color-border); padding: var(--space-2) 0; }
+.client-quotation .configured-estimate-builder__room-copy small { white-space: normal; }
+.client-quotation .configured-estimate-basket__toggle strong, .client-quotation .configured-estimate-sub-basket__toggle strong { white-space: normal; }
+.ui-app-shell[data-role] .client-quotation .client-quotation__footer { display: grid; gap: var(--space-1); min-height: 0; margin: 0; padding: 0; border: 0; background: transparent; box-shadow: none; position: static; }
+.ui-app-shell[data-role] .client-quotation .client-quotation__footer:not(.client-quotation__review-footer):not(:has(button)) { display: none; }
+
+.client-quotation__setup { display: grid; gap: var(--space-2); min-width: 0; }
+.client-quotation__setup > .estimate-continue { justify-self: start; margin: 0; }
+.client-quotation__setup > .estimate-setup-save { justify-self: start; }
+.client-quotation__setup .estimate-selection-footer { padding-inline-end: 68px; }
+/* Keep the support action available without covering the setup continue button. */
+.ui-app-shell[data-role]:has(.client-quotation.estimate-workspace--configure-view) .ask-lisno-launcher {
+  width: 44px; min-width: 44px; height: 44px; min-height: 44px; padding: 0; justify-content: center;
+}
+.ui-app-shell[data-role]:has(.client-quotation.estimate-workspace--configure-view) .ask-lisno-launcher > span:last-child { display: none; }
+
+@media (max-width: 1024px) {
+  .client-quotation .configured-estimate-builder__layout { grid-template-columns: minmax(0, 1fr); }
+  .client-quotation .configured-estimate-builder__rail { display: grid; grid-template-columns: 170px minmax(0, 1fr); align-items: stretch; }
+  .client-quotation .configured-estimate-builder__rail-tabs { align-self: stretch; }
+  .client-quotation .configured-estimate-builder__rooms { display: flex; overflow-x: auto; overflow-y: hidden; border-top: 0; }
+  .client-quotation .configured-estimate-builder__rooms button { flex: none; width: 185px; border-top: 0; border-left: 1px solid var(--est-line); }
+}
+@media (max-width: 640px) {
+  .client-quotation { padding: var(--space-2); }
+  .client-quotation__header { align-items: baseline; }
+  .client-quotation__header dl { gap: var(--space-1); }
+  .client-quotation__header dd { font-size: var(--text-md); }
+  .client-quotation__fields > * { min-width: 0; max-width: 100%; }
+  .client-quotation__fields > label { flex-basis: calc(50% - var(--space-2)); }
+  .client-quotation__fields > p { flex-basis: 100%; }
+  .client-quotation__line-status { margin-inline-start: 0; }
+  .client-quotation__navigation > .ui-button { flex: 1 1 6.5rem; }
+  .client-quotation__navigation nav { flex: 2 1 12rem; margin-inline-start: 0; }
+  .client-quotation__navigation nav > .ui-button { flex: 1 1 6rem; }
+  .client-quotation__navigation .ui-button { padding-inline: var(--space-1); }
+  .client-quotation :is(.configured-estimate-builder, .configured-estimate-builder__layout, .configured-estimate-builder__content) { gap: var(--space-1); }
+  .client-quotation .configured-estimate-builder__toolbar { grid-template-columns: minmax(0, 1fr) 130px; }
+  .client-quotation.estimate-workspace--compact-builder .configured-estimate-builder__toolbar { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .client-quotation.estimate-workspace--compact-builder .client-quotation__line > .configured-estimate-line__fields { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) var(--estimate-compact-menu); width: 100%; }
+  .client-quotation .configured-estimate-builder__search { grid-column: 1 / -1; }
+  .client-quotation .configured-estimate-builder__rail { grid-template-columns: 145px minmax(0, 1fr); }
+  .client-quotation .configured-estimate-builder__rail-tabs { padding: var(--space-1); gap: var(--space-1); }
+  .client-quotation .configured-estimate-builder__rooms button { width: 170px; padding: var(--space-1); grid-template-columns: minmax(0, 1fr) 14px; gap: var(--space-1); }
+  .client-quotation .configured-estimate-builder__room-icon { display: none; }
+  .client-quotation .configured-estimate-builder__jump button { min-width: 160px; }
+  .client-quotation :is(.configured-estimate-basket__toggle, .configured-estimate-sub-basket__toggle) { grid-template-columns: 22px minmax(0, 1fr) 14px; }
+  .client-quotation :is(.configured-estimate-basket__toggle, .configured-estimate-sub-basket__toggle) > strong { grid-column: 1 / -1; grid-row: 2; text-align: start; padding-left: 0; border-left: 0; }
+  .client-quotation :is(.configured-estimate-basket__toggle, .configured-estimate-sub-basket__toggle) > svg:last-child { grid-column: 3; grid-row: 1; }
+  .client-quotation .configured-estimate-sub-basket__header { flex-wrap: nowrap; gap: var(--space-1); }
+  .client-quotation .configured-estimate-sub-basket__header > h3 { flex-basis: 0; }
+  .client-quotation .configured-estimate-sub-basket__remove { width: 88px; margin: 0; padding: var(--space-1); white-space: normal; }
+}
+@media (max-width: 767px), (pointer: coarse) {
+  .client-quotation :is(.ui-button, .client-quotation__components > label) { min-height: 44px; min-block-size: 44px; }
+  .client-quotation__fields :is(input:not([type="checkbox"]), select), .client-quotation__add :is(input:not([type="checkbox"]), select) { min-height: 44px; min-block-size: 44px; font-size: 16px; }
+  .client-quotation .configured-estimate-builder :is(button, input:not([type="checkbox"]), select) { min-height: 44px; min-block-size: 44px; }
+  .client-quotation .configured-estimate-builder__toolbar :is(label, button) { min-height: 44px; }
+}

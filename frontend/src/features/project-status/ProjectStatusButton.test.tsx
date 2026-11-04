@@ -13,7 +13,7 @@ const mocks = vi.hoisted(() => ({ role: "client" as "client" | "designer" | "wor
 vi.mock("../../auth/AuthProvider", () => ({ useAuth: () => ({ user: { id: mocks.id, role: mocks.role }, status: "authenticated", authorization: authorizationFor(mocks.role) }) }));
 
 const fixture = (projectId = "project-a"): ProjectStatusSummary => ({
-  projectId, projectName: projectId === "project-a" ? "Courtyard residence" : "Garden residence", projectStatus: "active", serverNow: "2026-10-01T08:00:00Z", state: "active",
+  projectId, projectNumber: projectId === "project-a" ? "Lisno000011" : "Lisno000027", projectName: projectId === "project-a" ? "Courtyard residence" : "Garden residence", projectStatus: "active", serverNow: "2026-10-01T08:00:00Z", state: "active",
   currentStage: { key: "estimate_review", label: "Estimate approval" }, issue: null,
   pendingActions: [{ id: "review-a", stageKey: "estimate_review", stageLabel: "Estimate approval", action: "Review the submitted estimate", responsibleRole: "client", people: [{ id: "client-a", name: "Maya Client", role: "client" }], state: "pending", scheduledAt: null, deadlineAt: null, blocker: null }]
 });
@@ -30,6 +30,16 @@ beforeEach(() => {
 });
 
 describe("Project status", () => {
+  it("shows missing identity only after an authorized status has loaded", async () => {
+    let resolve!: (data: ProjectStatusSummary) => void;
+    vi.mocked(api.getProjectStatus).mockImplementation(() => new Promise(done => { resolve = done; }));
+    mount();
+    await userEvent.click(screen.getByRole("button", { name: "Project status" }));
+    expect(screen.queryByText("Project ID not assigned")).not.toBeInTheDocument();
+    await act(async () => { resolve({ ...fixture(), projectNumber: null }); });
+    expect(await screen.findByText("Project ID not assigned")).toBeVisible();
+  });
+
   it.each(["client", "designer", "worker_electrician"] as const)("shows the same read-only pending owner to a participating %s", async role => {
     mocks.role = role;
     mount();
@@ -105,6 +115,8 @@ describe("Project status", () => {
     await act(async () => { pending.get("project-b")!(fixture("project-b")); });
     await userEvent.click(await screen.findByRole("button", { name: "Project status" }));
     expect(await screen.findByText("Garden residence")).toBeVisible();
+    expect(screen.getByText("Project ID: Lisno000027")).toBeVisible();
+    expect(screen.queryByText("Project ID: Lisno000011")).not.toBeInTheDocument();
     expect(screen.queryByText("Courtyard residence")).not.toBeInTheDocument();
   });
   it("supports keyboard dismissal and focus restoration with accessible dialog content", async () => {
@@ -176,6 +188,8 @@ describe("Project status", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Project status" }));
     expect(await screen.findByText("Garden residence")).toBeVisible();
+    expect(screen.getByText("Project ID: Lisno000027")).toBeVisible();
+    expect(screen.queryByText("Project ID: Lisno000011")).not.toBeInTheDocument();
     expect(screen.queryByText("Courtyard residence")).not.toBeInTheDocument();
   });
   it("resets the open panel when the signed-in identity changes", async () => {

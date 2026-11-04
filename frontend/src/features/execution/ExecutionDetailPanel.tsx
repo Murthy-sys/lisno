@@ -1,3 +1,4 @@
+import { ProjectId } from "../../components/projects/ProjectId";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { ApiError, apiClient } from "../../api/client";
@@ -89,7 +90,7 @@ export function ExecutionDetailPanel({ assignmentId, vendor, onClose, renderLega
   return <ContextPanel className={compact ? "execution-panel site-execution-panel" : "execution-panel"} title={work?.itemName ?? "Main Line assignment"} eyebrow="Execution detail" width="wide" dirty={Boolean(draft || uploadDirty || clientDirty)} busy={mutation.isPending || uploadBusy || clientBusy} onClose={onClose}>
     {query.isPending ? <PageState state="loading" message="Loading assignment…" /> : denied ? <PageState state="error" message="You no longer have access to this assignment." /> : !work ? <PageState state="error" message={procurementError(query.error,"Assignment could not be loaded.")} action={{ label: "Try again", onAction: () => void query.refetch() }} /> : <div className="execution__detail">
       {query.isError ? <InlineMessage tone="warning">Refresh failed. This assignment may be out of date.</InlineMessage> : null}
-      <div><p className="execution__muted">{work.projectName} · {work.vendorName}</p><p>{[work.mainBasketName,work.subBasketName,work.roomName].filter(Boolean).join(" · ")}</p></div>
+      <div><p className="execution__muted">{work.projectName} · {work.vendorName}</p><ProjectId projectNumber={work.projectNumber} /><p>{[work.mainBasketName,work.subBasketName,work.roomName].filter(Boolean).join(" · ")}</p></div>
       <div className="execution__actions"><span className="execution__status" data-status={work.status}>{work.tracking === "legacy_review" && work.legacyStatus === "submitted_for_client" ? "With Client (existing review)" : executionStatusLabels[work.status]}</span><Button size="compact" variant="secondary" busy={query.isFetching} onClick={() => void query.refetch()}>Refresh assignment</Button></div>
       {!compact ? <p>{work.description}</p> : null}
       {!work.sourceAvailable ? <InlineMessage tone="warning">The Configuration link is unavailable. Issued scope is retained; no replacement Main Line is assumed.</InlineMessage> : null}

@@ -56,7 +56,8 @@ describe("project chat REST authorization and strict validation", () => {
         const response = await request(f.app).get("/api/v1/projects/a/chat").auth(f.token("client-a"), { type: "bearer" });
         expect(response.status).toBe(200);
         expect(response.headers["cache-control"]).toBe("no-store");
-        expect(Object.keys(response.body.data.project).sort()).toEqual(["id", "name", "nameVersion", "status"]);
+        expect(Object.keys(response.body.data.project).sort()).toEqual(["id", "name", "nameVersion", "projectNumber", "status"]);
+        expect(response.body.data.project.projectNumber).toBeNull();
     });
     it("rejects spoofed author fields, invalid limits and foreign quotes", async () => {
         const f = fixture();

@@ -1,3 +1,4 @@
+import { PROJECT_NUMBER_SCHEMA } from "./project-number.js";
 const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
 const id = { type: "string", minLength: 1, maxLength: 500 };
 const version = { type: "integer", minimum: 1, maximum: Number.MAX_SAFE_INTEGER - 1 };
@@ -5,7 +6,7 @@ const text = { type: "string" };
 const note = { type: "string", maxLength: 1000 };
 const status = { type: "string", enum: ["suggested", "withdrawn"] };
 const object = (properties: Record<string, unknown>, required = Object.keys(properties)) => ({ type: "object", additionalProperties: false, properties, required });
-const project = { projectId: id, projectName: text, estimateId: id, estimateVersion: version, designPlanVersion: version };
+const project = { projectNumber: PROJECT_NUMBER_SCHEMA, projectId: id, projectName: text, estimateId: id, estimateVersion: version, designPlanVersion: version };
 const person = object({ id, name: text });
 const pagination = { total: { type: "integer", minimum: 0 }, limit: { type: "integer", minimum: 1, maximum: 100 }, offset: { type: "integer", minimum: 0 } };
 export const VENDOR_SUGGESTION_SCHEMAS = {

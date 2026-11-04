@@ -1,3 +1,4 @@
+import { ProjectId } from "../../components/projects/ProjectId";
 import { useEffect, useRef, useState } from "react";
 import { Link, useLocation, useParams, useSearchParams } from "react-router-dom";
 import { useAuth } from "../../auth/AuthProvider";
@@ -163,7 +164,7 @@ export function ProjectManagerProjectPage({ projectId: suppliedId }: { projectId
       <header className="pm-page-heading pm-project-heading pm-project-detail__header">
         <div className="pm-project-detail__intro">
           <p className="pm-eyebrow">Project workspace</p>
-          <div className="pm-project__identity"><h1>{data.project.name}</h1><PMBadge value={data.project.health} severity={healthSeverity(data.project.health)} /></div>
+          <div className="pm-project__identity"><h1>{data.project.name}</h1><ProjectId projectNumber={data.project.projectNumber} /><PMBadge value={data.project.health} severity={healthSeverity(data.project.health)} /></div>
           <p className="pm-project-detail__client">{[data.project.clientName, data.project.location].filter(Boolean).join(" · ") || "Project details pending"}</p>
           <dl className="pm-project-detail__metadata">
             <div><dt>Approved net value</dt><dd>{pmMoney(data.project.approvedNetPaise)}</dd></div>

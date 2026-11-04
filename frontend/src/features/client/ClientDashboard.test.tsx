@@ -29,6 +29,35 @@ const summaries = projects.map((project, index) => ({
 }));
 
 describe("ClientDashboard", () => {
+  it("keeps generated IDs attached to same-named projects and their selected quick view", async () => {
+    tokenStorage.set("client-token");
+    const rows: Array<(typeof summaries)[number] & { projectNumber: string | null }> = summaries.map((project, index) => ({ ...project, name: "Shared home", projectNumber: index === 0 ? "Lisno000021" : "Lisno000083" }));
+    rows.push({ ...rows[0]!, id: "project-new", name: "New home", projectNumber: null });
+    const requests: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async input => {
+      const url = String(input); requests.push(url);
+      if (url.endsWith("/auth/me")) return Response.json({ data: client });
+      if (url.endsWith("/auth/authorization")) return Response.json({ data: authorizationFor(client.role) });
+      if (url.includes("/client/project-summaries?")) return Response.json({ data: { items: rows, pagination: { limit: 100, offset: 0, total: rows.length, hasMore: false } } });
+      if (url.endsWith("/client/latest-approved-versions") || url.endsWith("/client/estimates")) return Response.json({ data: [] });
+      if (url.endsWith("/design-workflow")) return Response.json({ data: { projectId: url.split("/").at(-2), projectName: "Shared home", serverNow: new Date().toISOString(), floors: [] } });
+      throw new Error(`Unhandled request: ${url}`);
+    });
+    renderApp(["/client"]);
+    expect(screen.queryByText(/Project ID/)).not.toBeInTheDocument();
+    const headings = await screen.findAllByRole("heading", { name: "Shared home" });
+    const first = headings[0]!.closest("article")!, second = headings[1]!.closest("article")!;
+    expect(within(first).getByText("Project ID: Lisno000021")).toBeVisible();
+    expect(within(first).queryByText("Project ID: Lisno000083")).not.toBeInTheDocument();
+    expect(within(second).getByText("Project ID: Lisno000083")).toBeVisible();
+    expect(screen.getByText("Project ID not assigned")).toBeVisible();
+    await userEvent.click(within(second).getByRole("button", { name: "Project details: Shared home" }));
+    const dialog = screen.getByRole("dialog", { name: "Shared home" });
+    expect(within(dialog).getByText("Project ID: Lisno000083")).toBeVisible();
+    expect(within(dialog).getByRole("link", { name: "Open full project" })).toHaveAttribute("href", "/client/projects/project-loft");
+    expect(requests.some(url => /\/projects\/[^/]+$/.test(url))).toBe(false);
+  });
+
   it("surfaces an active Client task without expanding the project or waiting for approved plans", async () => {
     tokenStorage.set("client-token");
     const workflowReads: string[] = [];
@@ -152,9 +181,7 @@ describe("ClientDashboard", () => {
     renderApp(["/client"]);
 
     expect(await screen.findByRole("heading", { name: "Your design plans" })).toBeVisible();
-    const hero = document.querySelector(".client-dashboard__hero");
-    expect(hero?.querySelector(".client-dashboard__hero-image")).toHaveAttribute("alt", "");
-    expect(hero).not.toHaveTextContent("projects shared");
+    expect(screen.getByRole("heading", { name: "Your design plans", level: 1 })).toBeVisible();
     const overview = screen.getByRole("region", { name: "Client overview" });
     expect(overview.querySelectorAll("dl > div")).toHaveLength(3);
     expect(within(overview).getByText("Shared projects")).toBeVisible();

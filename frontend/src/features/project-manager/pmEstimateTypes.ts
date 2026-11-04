@@ -42,7 +42,7 @@ export interface PMMainLineScope {
 }
 export interface PMWriteAvailability { available: boolean; reason: string | null; }
 export interface PMEstimateView {
-  project: { id: string; name: string };
+  project: { id: string; name: string; readonly projectNumber?: string | null };
   availability: "available" | "unavailable";
   reason: string | null;
   source: PMApprovedSourceRef | null;

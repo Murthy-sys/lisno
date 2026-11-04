@@ -1,3 +1,4 @@
+import { PROJECT_NUMBER_SCHEMA } from "./project-number.js";
 import { CHAT_ASSISTANT_SCHEMAS } from "./project-chat-assistant.js";
 import { ROLE_CODES } from "../domain/roles.js";
 
@@ -18,7 +19,7 @@ const issueAction = { type: "string", enum: ["raise", "escalate", "resolve", "re
 const json = (name: string) => ({ required: true, content: { "application/json": { schema: ref(name) } } });
 const query = (name: string, schema: unknown) => ({ name, in: "query", required: false, schema });
 
-const summaryProperties = { assistant: ref("ChatAssistantParticipant"), project: object({ id, name: { type: "string" }, status: { type: "string" }, nameVersion: version }, ["id", "name", "status"]), counts: ref("ChatCounts"), participantCount: integer, cursor: { type: "string" }, lastReadSequence: integer, latestMessageSequence: integer, capabilities: ref("ChatCapabilities"), setupWarnings: { type: "array", items: { type: "string" } } };
+const summaryProperties = { assistant: ref("ChatAssistantParticipant"), project: object({ projectNumber: PROJECT_NUMBER_SCHEMA, id, name: { type: "string" }, status: { type: "string" }, nameVersion: version }, ["id", "name", "status"]), counts: ref("ChatCounts"), participantCount: integer, cursor: { type: "string" }, lastReadSequence: integer, latestMessageSequence: integer, capabilities: ref("ChatCapabilities"), setupWarnings: { type: "array", items: { type: "string" } } };
 
 export const CHAT_COMPONENT_SCHEMAS: Record<string, Record<string, unknown>> = {
   ...CHAT_ASSISTANT_SCHEMAS,

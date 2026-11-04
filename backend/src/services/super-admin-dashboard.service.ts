@@ -36,7 +36,7 @@ export function createSuperAdminDashboardService(
       await requireSoleActiveSuperAdmin(repository, actor);
       const observedAt = clock();
       const comparisonWindow = dashboardComparisonWindow(observedAt, periodDays);
-      return repository.readSuperAdminDashboardOverview({
+      const overview = await repository.readSuperAdminDashboardOverview({
         observedAt: observedAt.toISOString(),
         startAt: comparisonWindow.current.startAt,
         endAt: comparisonWindow.current.endAt,
@@ -44,6 +44,10 @@ export function createSuperAdminDashboardService(
         previousEndAt: comparisonWindow.previous.endAt,
         periodDays
       });
+      const numbers = await repository.findProjectNumbers(overview.risk.topProjects.map(project => project.projectId));
+      return { ...overview, risk: { ...overview.risk, topProjects: overview.risk.topProjects.map(project => ({
+        ...project, projectNumber: numbers.get(project.projectId) ?? null
+      })) } };
     },
 
     async projects(actor, periodDays, filters) {
@@ -54,11 +58,12 @@ export function createSuperAdminDashboardService(
         observedAt.toISOString(),
         filters
       );
+      const numbers = await repository.findProjectNumbers(page.items.map(project => project.projectId));
       return dashboardPage(
         observedAt,
         reportingPeriod,
         filters,
-        page
+        { ...page, items: page.items.map(project => ({ ...project, projectNumber: numbers.get(project.projectId) ?? null })) }
       );
     },
 

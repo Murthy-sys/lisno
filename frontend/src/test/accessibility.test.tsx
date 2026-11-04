@@ -1367,10 +1367,10 @@ describe("accessibility smoke coverage", () => {
     const trigger = await screen.findByRole("button", { name: "Create request" });
     await user.click(trigger);
     let dialog = screen.getByRole("dialog", { name: "Request project access" });
-    await waitFor(() => expect(within(dialog).getByRole("textbox", { name: "Project ID" })).toHaveFocus());
+    await waitFor(() => expect(within(dialog).getByRole("textbox", { name: "System ID" })).toHaveFocus());
     await user.tab({ shift: true });
     // The scrollable body is keyboard reachable before the first form field.
-    expect(within(dialog).getByRole("textbox", { name: "Project ID" }).closest("form")?.parentElement).toHaveFocus();
+    expect(within(dialog).getByRole("textbox", { name: "System ID" }).closest("form")?.parentElement).toHaveFocus();
     await user.tab({ shift: true });
     expect(within(dialog).getByRole("button", { name: "Close request project access" })).toHaveFocus();
     await user.tab({ shift: true });
@@ -1383,7 +1383,7 @@ describe("accessibility smoke coverage", () => {
     await user.click(trigger);
     dialog = screen.getByRole("dialog", { name: "Request project access" });
     await user.click(within(dialog).getByRole("button", { name: "Create request" }));
-    expect(within(dialog).getByRole("textbox", { name: "Project ID" })).toHaveAccessibleDescription(/opaque project ID/i);
+    expect(within(dialog).getByRole("textbox", { name: "System ID" })).toHaveAccessibleDescription(/System ID/i);
     await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
     expect(trigger).toHaveFocus();
   });

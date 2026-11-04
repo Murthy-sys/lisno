@@ -28,6 +28,7 @@ describe("ManagementProjectWorkspace", () => {
           data: {
             id: "project-1",
             name: "Aurora Villa",
+            projectNumber: "Lisno000031",
             status: "active",
             location: "Bengaluru",
             floors: [
@@ -214,6 +215,7 @@ describe("ManagementProjectWorkspace", () => {
     expect(
       await screen.findByRole("heading", { name: "Aurora Villa" })
     ).toBeVisible();
+    expect(screen.getByText("Project ID: Lisno000031")).toBeVisible();
     expect(await screen.findByText(/Second page.pdf/)).toBeVisible();
     expect(screen.getByText("Original deadline: 20 Jul 2026")).toBeVisible();
     expect(screen.getByText("Current deadline: 03 Aug 2026")).toBeVisible();
