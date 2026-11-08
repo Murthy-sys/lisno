@@ -3,6 +3,7 @@ import type { KnowledgeModeTier } from "../../../../shared/knowledge/knowledgeMo
 import { ApiError, apiClient, type Pagination } from "../../api/client";
 import type { EstimatePricingMode } from "./leadsApi";
 
+/** Legacy name: final unit rates include configured maximum profit; components are priced separately. */
 export type EstimationModeBaseRatesPaise = Record<EstimatePricingMode, number | null>;
 
 export interface EstimationCatalogueUom {

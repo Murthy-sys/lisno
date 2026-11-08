@@ -39,7 +39,8 @@ function deferred() {
   return { promise, resolve };
 }
 
-function setup(options: { status?: EstimateStatus; workflow3?: boolean; configured?: boolean } = {}) {
+function setup(options: { status?: EstimateStatus; workflow3?: boolean; configured?: boolean;
+  amendEstimate?: (estimate: EstimateDraft) => void; revisionGate?: Promise<void>; openRequest?: boolean } = {}) {
   const estimate = fixture(options.status);
   if (options.workflow3) {
     estimate.estimation = { workflowVersion: 3, phase: "pre", status: estimate.status, requirementsVersion: 1,
@@ -55,8 +56,9 @@ function setup(options: { status?: EstimateStatus; workflow3?: boolean; configur
       amount: 19000, amountPaise: 1900000, specification: null };
     estimate.selectedMainBasketIds = ["basket"]; estimate.scopes = []; estimate.lineItems = [line];
   }
-  const state = { estimate, failure: null as "save" | "submit" | "send" | null, gate: undefined as Promise<void> | undefined,
-    getGate: undefined as Promise<void> | undefined };
+  options.amendEstimate?.(estimate);
+  const state = { estimate, failure: null as "save" | "saveUnknown" | "submit" | "send" | null, gate: undefined as Promise<void> | undefined,
+    getGate: undefined as Promise<void> | undefined, revisionGate: options.revisionGate };
   const writes: Array<{ method: string; path: string; body: Record<string, unknown> }> = [];
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
@@ -72,6 +74,7 @@ function setup(options: { status?: EstimateStatus; workflow3?: boolean; configur
       state.estimate = { ...state.estimate, ...body, version: state.estimate.version! + 1,
         lineItems: body.lineItems.map(line => line.source === "configuration"
           ? { ...state.estimate.lineItems.find(saved => saved.source === "configuration" && saved.id === line.id), ...line } as ConfiguredEstimateLine : line) };
+      if (state.failure === "saveUnknown") return Response.json({ error: { code: "SAVE_UNCONFIRMED", message: "Save outcome unknown." } }, { status: 503 });
       return response(state.estimate);
     }
     if (path === "/leads/lead-one/estimate/submit" || path === "/estimates/estimate-one/send-client") {
@@ -80,9 +83,9 @@ function setup(options: { status?: EstimateStatus; workflow3?: boolean; configur
       state.estimate = { ...state.estimate, status: "sent_to_client", ...(state.estimate.estimation ? { estimation: { ...state.estimate.estimation, status: "sent_to_client" } } : {}) };
       return response(state.estimate);
     }
-    if (path === "/projects/project-one/quotation/revision") return response({ estimateId: state.estimate.id, estimateVersion: state.estimate.version, pricedRevision: 3, phase: "pre", status: state.estimate.status });
+    if (path === "/projects/project-one/quotation/revision") { await state.revisionGate; return response({ estimateId: state.estimate.id, estimateVersion: state.estimate.version, pricedRevision: 3, phase: state.estimate.estimation?.phase ?? "pre", status: state.estimate.status }); }
     if (path === "/projects/project-one/estimate-requirements") return response({ projectId: "project-one", requirementsVersion: 1, estimateVersion: state.estimate.version, phase: "pre", editingAllowed: true, editingBlockReason: null,
-      canResolve: true, requirements: [], mainBaskets: [], rooms: [], indicativeTotalPaise: 2242000, pricingComplete: true });
+      canResolve: true, requirements: options.openRequest ? [{ id: "request-one", status: "open", requestKind: "item", roomId: "living", mainBasketId: "basket", message: "Review ceiling" }] : [], mainBaskets: [], rooms: [], indicativeTotalPaise: 2242000, pricingComplete: true });
     if (path === "/estimation/catalogue") return response({ items: [{ id: "basket", name: "Finishes", displayOrder: 1, subBaskets: [{ id: "sub", basketId: "basket", name: "Ceilings", displayOrder: 1,
       mainLines: [{ id: "ceiling", mainLineId: "ceiling", basketId: "basket", subBasketId: "sub", name: "Ceiling finish", displayOrder: 1,
         revisionId: "revision-ceiling", itemVersion: 1, revisionVersion: 1, uom: { id: "sqft", name: "sq ft", code: "SQFT", decimalScale: 2 },
@@ -99,9 +102,9 @@ function setup(options: { status?: EstimateStatus; workflow3?: boolean; configur
   return { state, writes, queryClient, refreshAuth: () => view.rerender(tree()) };
 }
 
-async function openChecklist(user: ReturnType<typeof userEvent.setup>, name = "Submit estimate") {
+async function openChecklist(user: ReturnType<typeof userEvent.setup>, name = "Submit") {
   const button = await screen.findByRole("button", { name });
-  await waitFor(() => expect(button).toBeEnabled());
+  await waitFor(() => expect(button).not.toHaveAttribute("aria-describedby"));
   await user.click(button);
   return screen.findByRole("dialog", { name: title });
 }
@@ -118,6 +121,149 @@ beforeEach(() => {
 });
 
 describe("Estimator submission checklist integration", () => {
+  it("shows Save draft and Submit after setup and hides them when editing Main Baskets", async () => {
+    const data = setup({ workflow3: true, configured: true }); const user = userEvent.setup();
+    await screen.findByRole("button", { name: "Submit" });
+    const expectActions = () => {
+      expect(screen.getAllByRole("button", { name: "Save draft" })).toHaveLength(1);
+      expect(screen.getAllByRole("button", { name: "Submit" })).toHaveLength(1);
+      const footer = screen.getByRole("button", { name: "Submit" }).closest("footer");
+      expect(footer).toContainElement(screen.getByRole("button", { name: "Save draft" }));
+    };
+    await waitFor(() => expect(screen.getByRole("button", { name: "Submit" })).toBeEnabled());
+    expectActions();
+    for (const name of ["Summary", "Proposal"]) {
+      await user.click(screen.getByRole("button", { name }));
+      expectActions();
+    }
+    await user.click(screen.getByRole("button", { name: "Edit baskets" }));
+    await screen.findByRole("heading", { name: "Configure estimate" });
+    expect(screen.queryByRole("button", { name: "Submit" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Save draft" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Continue to item selection" })).toBeEnabled();
+    expect(document.querySelector(".estimate-workspace__footer")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Continue to item selection" }));
+    expectActions();
+    expect(data.writes).toEqual([]);
+  });
+
+  it("continues from Setup before submitting the exact current items and returned version", async () => {
+    const data = setup({ workflow3: true, configured: true }); const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Edit baskets" }));
+    expect(screen.queryByRole("button", { name: "Submit" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Continue to item selection" }));
+    const dialog = await openChecklist(user);
+    expect(dialog).toHaveAccessibleDescription(/saves your current draft, approves it as Sales, and sends the quotation to the client for approval/);
+    await user.click(await completeChecklist(user));
+    await waitFor(() => expect(data.writes).toHaveLength(2));
+    expect(data.writes[0]).toMatchObject({ method: "PUT", body: { expectedVersion: 7, selectedMainBasketIds: ["basket"],
+      lineItems: [{ id: "saved-ceiling", roomId: "living", mainLineId: "ceiling", quantity: 200, included: true, ratePaise: 9500 }] } });
+    expect(data.writes[1]).toEqual({ method: "POST", path: "/leads/lead-one/estimate/submit", body: { expectedVersion: 8, approveSales: true } });
+  });
+
+  it("keeps empty Setup focused on continuing without save or publication actions", async () => {
+    const data = setup({ workflow3: true, configured: true, amendEstimate: estimate => { estimate.lineItems = []; estimate.rooms = []; estimate.scopes = []; } });
+    expect(await screen.findByRole("heading", { name: "Configure estimate" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Submit" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Save draft" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Continue to item selection" })).toBeDisabled();
+    expect(document.querySelector(".estimate-workspace__footer")).not.toBeInTheDocument();
+    expect(data.writes).toEqual([]);
+  });
+
+  it.each(["missing", "denied", "post"] as const)("keeps Submit visible without %s publication capability", async kind => {
+    const data = setup({ workflow3: true, amendEstimate: estimate => {
+      if (kind === "missing") delete estimate.capabilities;
+      else estimate.capabilities = { canUnlockQuotation: false, canPublishQuotation: false };
+      if (kind === "post") estimate.estimation!.phase = "post";
+    } });
+    const submit = await screen.findByRole("button", { name: "Submit" });
+    await waitFor(() => expect(submit).toHaveAccessibleDescription(kind === "post"
+      ? "The assigned Designer submits revised quotations. You can still save this draft."
+      : kind === "missing" ? "Submission access could not be verified. Refresh the estimate to check your access. Your local edits are preserved."
+      : "This estimate cannot be submitted with your current access and workflow state. Refresh the estimate to check for updates."));
+    expect(submit).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Save draft" })).toBeEnabled();
+    fireEvent.click(submit);
+    expect(document.getElementById(submit.getAttribute("aria-describedby")!)).toHaveFocus();
+    expect(data.writes).toEqual([]);
+  });
+
+  it("waits for a verified quotation revision before allowing Submit", async () => {
+    const gate = deferred(); const data = setup({ workflow3: true, revisionGate: gate.promise });
+    const submit = await screen.findByRole("button", { name: "Submit" });
+    expect(submit).toBeEnabled();
+    expect(submit).toHaveAttribute("aria-describedby");
+    expect(document.getElementById(submit.getAttribute("aria-describedby")!)).toHaveTextContent(/latest estimate|before submitting/);
+    fireEvent.click(submit); expect(data.writes).toEqual([]);
+    await act(async () => { gate.resolve(); });
+    await waitFor(() => expect(submit).not.toHaveAttribute("aria-describedby"));
+  });
+
+  it("keeps checked confirmation stable while the verified revision token is polled", async () => {
+    const data = setup({ workflow3: true }); const user = userEvent.setup();
+    const dialog = await openChecklist(user); const confirm = await completeChecklist(user);
+    const gate = deferred(); data.state.revisionGate = gate.promise;
+    let refreshed!: Promise<void>;
+    await act(async () => { refreshed = data.queryClient.refetchQueries({ queryKey: quotationKeys.revision("project-one"), exact: true }); });
+    expect(dialog).toBeVisible();
+    within(dialog).getAllByRole("checkbox").forEach(check => expect(check).toBeChecked());
+    expect(confirm).toBeEnabled();
+    expect(data.writes).toEqual([]);
+    await act(async () => { gate.resolve(); await refreshed; });
+    expect(dialog).toBeVisible();
+    within(dialog).getAllByRole("checkbox").forEach(check => expect(check).toBeChecked());
+  });
+
+  it("explains outstanding client requests when Submit is activated", async () => {
+    setup({ workflow3: true, openRequest: true });
+    const submit = await screen.findByRole("button", { name: "Submit" });
+    await waitFor(() => expect(submit).toHaveAccessibleDescription("Resolve the open client requests before submitting."));
+    expect(submit).toBeEnabled();
+  });
+
+  it("explains internal routing for a legacy estimate above the approval threshold", async () => {
+    setup({ amendEstimate: estimate => { estimate.lineItems[0]!.quantity = 20_000; } });
+    const dialog = await openChecklist(userEvent.setup());
+    expect(dialog).toHaveAccessibleDescription(/submits it for internal approval.*design manager must assign a designer/);
+  });
+
+  it("preserves publication feedback while Setup hides actions and restores it on returning to items", async () => {
+    const data = setup({ workflow3: true, configured: true }); data.state.failure = "submit"; const user = userEvent.setup();
+    await openChecklist(user);
+    await user.click(await completeChecklist(user));
+    await screen.findByText("Publication rejected.");
+    expect(data.writes).toHaveLength(2);
+    expect(data.queryClient.getQueryData<EstimateDraft>(leadKeys.estimate("lead-one"))?.version).toBe(8);
+    expect(data.state.estimate.lineItems[0]).toMatchObject({ id: "saved-ceiling", quantity: 200, included: true });
+    await user.click(screen.getByRole("button", { name: "Edit baskets" }));
+    expect(screen.getByRole("heading", { name: "Configure estimate" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Submit" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Save draft" })).not.toBeInTheDocument();
+    expect(document.querySelector(".estimate-workspace__footer")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Return to saved items" }));
+    expect(screen.getByRole("button", { name: "Submit" })).toBeVisible();
+    expect(screen.getByText("Publication rejected.")).toBeVisible();
+  });
+
+  it("requires verification after an unknown item-selection save and never submits the unconfirmed version", async () => {
+    const data = setup({ workflow3: true }); data.state.failure = "saveUnknown"; const user = userEvent.setup();
+    await openChecklist(user);
+    await user.click(await completeChecklist(user));
+    const verify = await screen.findByRole("button", { name: "Verify saved estimate" });
+    const submit = screen.getByRole("button", { name: "Submit" });
+    expect(submit).toBeEnabled();
+    expect(submit).toHaveAccessibleDescription("Verify the saved estimate before submitting.");
+    expect(screen.getByRole("button", { name: "Save draft" })).toBeDisabled();
+    expect(data.writes).toHaveLength(1);
+    expect(data.writes[0]?.method).toBe("PUT");
+    await user.click(verify);
+    await screen.findByText("Estimate save confirmed. You can continue editing.");
+    expect(data.queryClient.getQueryData<EstimateDraft>(leadKeys.estimate("lead-one"))?.version).toBe(8);
+    expect(data.writes).toHaveLength(1);
+    expect(screen.queryByRole("dialog", { name: title })).not.toBeInTheDocument();
+  });
+
   it("does not save on opening, partial confirmation or cancellation, and requires fresh checks", async () => {
     const { writes } = setup(); const user = userEvent.setup();
     const dialog = await openChecklist(user);
@@ -126,12 +272,13 @@ describe("Estimator submission checklist integration", () => {
     checks.forEach(check => expect(check).not.toBeChecked());
     await user.click(checks[0]!); await user.click(checks[1]!);
     const confirm = within(dialog).getByRole("button", { name: "Confirm and submit" });
-    expect(confirm).toBeDisabled();
-    await user.keyboard("{Enter}");
+    expect(confirm).toBeEnabled();
+    confirm.focus(); await user.keyboard("{Enter}");
+    expect(checks[2]).toHaveFocus();
     expect(writes).toEqual([]);
     await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
     expect(screen.queryByRole("dialog", { name: title })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Submit estimate" })).toHaveFocus();
+    expect(screen.getByRole("button", { name: "Submit" })).toHaveFocus();
     const reopened = await openChecklist(user);
     within(reopened).getAllByRole("checkbox").forEach(check => expect(check).not.toBeChecked());
     await user.keyboard("{Escape}");
@@ -140,7 +287,7 @@ describe("Estimator submission checklist integration", () => {
 
   it("saves then submits the confirmed Sales version once despite duplicate pending clicks", async () => {
     const data = setup({ workflow3: true }); const user = userEvent.setup();
-    await openChecklist(user, "Approve and send to client");
+    await openChecklist(user, "Submit");
     const confirm = await completeChecklist(user);
     const gate = deferred(); data.state.gate = gate.promise;
     fireEvent.click(confirm); fireEvent.click(confirm);
@@ -166,6 +313,32 @@ describe("Estimator submission checklist integration", () => {
     expect(data.writes).toHaveLength(1);
   });
 
+  it("keeps Designer ready-for-client Submit operable and sends only once while busy", async () => {
+    session.current = { ...session.current, user: { id: "designer-one", role: "designer" }, authorization: authorizationFor("designer", permissions) };
+    const data = setup({ status: "ready_for_client" }); const user = userEvent.setup();
+    const submit = await screen.findByRole("button", { name: "Submit" });
+    await waitFor(() => expect(submit).not.toHaveAttribute("aria-describedby"));
+    const gate = deferred(); data.state.gate = gate.promise;
+    await user.dblClick(submit);
+    const pending = screen.getByRole("button", { name: "Submitting…" });
+    expect(pending).toBeEnabled(); expect(pending).toHaveAttribute("aria-busy", "true");
+    await user.click(pending);
+    expect(data.writes).toEqual([{ method: "POST", path: "/estimates/estimate-one/send-client", body: {} }]);
+    expect(screen.queryByRole("dialog", { name: title })).not.toBeInTheDocument();
+    await act(async () => gate.resolve());
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Submitting…" })).not.toBeInTheDocument());
+    expect(data.writes).toHaveLength(1);
+  });
+
+  it("keeps publication available to another role already offered the legacy Submit action", async () => {
+    session.current = { ...session.current, user: { id: "admin-one", role: "super_admin" }, authorization: authorizationFor("super_admin", permissions) };
+    const data = setup(); const user = userEvent.setup();
+    const submit = await screen.findByRole("button", { name: "Submit estimate" });
+    expect(submit).toBeEnabled(); await user.click(submit);
+    await waitFor(() => expect(data.writes).toHaveLength(2));
+    expect(data.writes.map(write => write.method)).toEqual(["PUT", "POST"]);
+  });
+
   it("requires fresh checks after a failed confirmed attempt", async () => {
     const data = setup(); data.state.failure = "save"; const user = userEvent.setup();
     await openChecklist(user);
@@ -185,6 +358,27 @@ describe("Estimator submission checklist integration", () => {
     await waitFor(() => expect(screen.queryByRole("dialog", { name: title })).not.toBeInTheDocument());
     fireEvent.click(confirm);
     expect(data.writes).toEqual([]);
+    const submit = screen.getByRole("button", { name: "Submit" });
+    const feedback = document.getElementById(submit.getAttribute("aria-describedby")!);
+    expect(feedback).toHaveTextContent("The estimate or your access changed.");
+    await waitFor(() => expect([submit, feedback]).toContain(document.activeElement));
+  });
+
+  it("explains a read-only transition while the checklist is open in item selection", async () => {
+    const data = setup({ workflow3: true, configured: true }); const user = userEvent.setup();
+    const submit = await screen.findByRole("button", { name: "Submit" });
+    await waitFor(() => expect(submit).not.toHaveAttribute("aria-describedby"));
+    await openChecklist(user); const confirm = await completeChecklist(user);
+    data.state.estimate = { ...data.state.estimate, version: 8, status: "sent_to_client",
+      estimation: { ...data.state.estimate.estimation!, status: "sent_to_client" } };
+    await act(async () => { data.queryClient.setQueryData(leadKeys.estimate("lead-one"), data.state.estimate); });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: title })).not.toBeInTheDocument());
+    fireEvent.click(confirm);
+    const feedback = screen.getByText("The estimate or your access changed. Review the latest details and submit again.").closest('[role="alert"]');
+    expect(feedback).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Submit" })).not.toBeInTheDocument();
+    expect(data.writes).toEqual([]);
+    await waitFor(() => expect(feedback).toHaveFocus());
   });
 
   it("invalidates a raw configured price edit even when its numeric saved value is unchanged", async () => {
@@ -207,12 +401,17 @@ describe("Estimator submission checklist integration", () => {
     await waitFor(() => expect(screen.queryByRole("dialog", { name: title })).not.toBeInTheDocument());
     fireEvent.click(oldConfirm);
     expect(data.writes).toEqual([]);
-    if (change === "permission") expect(screen.getByRole("button", { name: "Submit estimate" })).toBeDisabled();
+    if (change === "permission") {
+      const submit = screen.getByRole("button", { name: "Submit" });
+      expect(submit).toBeEnabled(); await user.click(submit);
+      expect(submit).toHaveAccessibleDescription("Your current access does not allow estimate submission.");
+      expect(data.writes).toEqual([]);
+    }
   });
 
   it("rejects a newer quotation token before the saved estimate refresh completes", async () => {
     const data = setup({ workflow3: true }); const user = userEvent.setup();
-    await openChecklist(user, "Approve and send to client"); const confirm = await completeChecklist(user);
+    await openChecklist(user, "Submit"); const confirm = await completeChecklist(user);
     const gate = deferred(); data.state.getGate = gate.promise;
     await act(async () => { data.queryClient.setQueryData(quotationKeys.revision("project-one"), {
       estimateId: "estimate-one", estimateVersion: 8, pricedRevision: 4, phase: "pre", status: "draft"
@@ -223,19 +422,15 @@ describe("Estimator submission checklist integration", () => {
     await act(async () => { gate.resolve(); });
   });
 
-  it("keeps Save draft and authorized Designer submission outside the estimator checklist", async () => {
+  it("submits directly for an authorized Designer without a draft button or Sales checklist", async () => {
     session.current = { ...session.current, user: { id: "designer-one", role: "designer" }, authorization: authorizationFor("designer", permissions) };
     const data = setup(); const user = userEvent.setup();
-    await screen.findByRole("button", { name: "Submit estimate" });
-    await waitFor(() => expect(screen.getByRole("button", { name: "Save draft" })).toBeEnabled());
-    await user.click(screen.getByRole("button", { name: "Save draft" }));
-    await waitFor(() => expect(data.queryClient.getQueryData<EstimateDraft>(leadKeys.estimate("lead-one"))?.version).toBe(8));
-    expect(screen.queryByRole("dialog", { name: title })).not.toBeInTheDocument();
-    const submit = screen.getByRole("button", { name: "Submit estimate" });
+    const submit = await screen.findByRole("button", { name: "Submit" });
     await waitFor(() => expect(submit).toBeEnabled());
+    expect(screen.queryByRole("button", { name: "Save draft" })).not.toBeInTheDocument();
     await user.click(submit);
     await waitFor(() => expect(data.writes.map(write => write.path)).toEqual([
-      "/leads/lead-one/estimate", "/leads/lead-one/estimate", "/leads/lead-one/estimate/submit"
+      "/leads/lead-one/estimate", "/leads/lead-one/estimate/submit"
     ]));
     expect(screen.queryByRole("dialog", { name: title })).not.toBeInTheDocument();
   });

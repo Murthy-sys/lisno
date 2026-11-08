@@ -6,6 +6,26 @@ import { publishedPriceFixture } from "./assistantPricingFixtures";
 const answer = () => ({ disclosurePolicy: "project-publication-v1", kind: "price", facts: [], candidates: [], missingInputs: [], commercial: null, projectPricing: publishedPriceFixture() });
 const result = () => ({ ...answer(), id: "result-a", projectId: "project-a", messageId: "message-a", checkedAt: "2026-10-15T00:00:00Z", commercialAccess: "allowed", stale: false });
 describe("published project pricing contract", () => {
+  it.each([
+    { gstPaise: 224, totalPaise: 10200, roundOffPaise: -24 },
+    { gstPaise: 250, totalPaise: 10200, roundOffPaise: -50 },
+    { gstPaise: 252, totalPaise: 10300, roundOffPaise: 48 }
+  ])("accepts reconciled published rounding without altering saved line amounts (%j)", totals => {
+    const pricing = publishedPriceFixture({ subtotalPaise: 10000, ...totals });
+    const parsed = parseAssistantResult({ ...result(), projectPricing: pricing }, "project-a", "result-a");
+    expect(parsed.projectPricing).toMatchObject({ subtotalPaise: 10000, ...totals });
+    expect(parsed.projectPricing?.lines).toEqual(pricing.lines);
+    const response = { projectId: "project-a", checkedAt: result().checkedAt, answer: { ...answer(), projectPricing: pricing } };
+    expect(parseAskLisnoResponse(response, { projectId: "project-a", message: "Cost", history: [] }).answer.projectPricing).toEqual(pricing);
+  });
+
+  it.each([
+    { roundOffPaise: -51 }, { roundOffPaise: 50 }, { roundOffPaise: 0.5 }, { roundOffPaise: null },
+    { roundOffPaise: -23 }, { totalPaise: 10300 }, { subtotalPaise: null }, { gstPaise: null }, { totalPaise: null }
+  ])("rejects inconsistent or invalid published rounding (%j)", invalid => {
+    const pricing = { ...publishedPriceFixture({ subtotalPaise: 10000, gstPaise: 224, totalPaise: 10200, roundOffPaise: -24 }), ...invalid };
+    expect(() => parseAssistantResult({ ...result(), projectPricing: pricing }, "project-a", "result-a")).toThrow();
+  });
   it("preserves unequal project totals and exact paise, including zero and unavailable fields", () => {
     expect(parseAssistantResult(result(), "project-a", "result-a").projectPricing?.totalPaise).toBe(973500);
     const other = { ...result(), projectId: "project-b", id: "result-b", projectPricing: publishedPriceFixture({ estimateId: "estimate-b", totalPaise: 101, gstPaise: 0, subtotalPaise: null }) };

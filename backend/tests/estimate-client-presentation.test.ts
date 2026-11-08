@@ -26,6 +26,20 @@ const visibilitySnapshot = (lineItems: ReturnType<typeof visibilityLine>[]) => {
 };
 
 describe("published Client estimate presentation", () => {
+  it("presents frozen rounding and rejects a manipulated adjustment while preserving historical totals", () => {
+    const original = visibilitySnapshot([visibilityLine("rounded", true, 10_252)]);
+    const rounded = { ...original, total: 103, totalPaise: 10_300, roundOffPaise: 48 };
+    const result = presentClientEstimate(actor, estimate, lead, { ...round, estimateSnapshot: rounded });
+    expect(result).toMatchObject({ subtotal: 102.52, gst: 0, total: 103, roundOffPaise: 48,
+      publishedReview: { snapshot: { subtotalPaise: 10_252, gstPaise: 0, totalPaise: 10_300, roundOffPaise: 48 } } });
+    expect(result?.lineItems[0]).toMatchObject({ ratePaise: 10_252, amountPaise: 10_252 });
+    expect(presentClientEstimate(actor, estimate, lead, { ...round, estimateSnapshot: { ...rounded, roundOffPaise: 47 } })?.publishedReview).toBeNull();
+    const legacy = presentClientEstimate(actor, estimate, lead, { ...round, estimateSnapshot: original });
+    expect(legacy?.total).toBe(102.52);
+    expect(legacy?.publishedReview.snapshot).not.toHaveProperty("roundOffPaise");
+    expect(comparePublishedEstimateSnapshots(original, rounded).noChanges).toBe(false);
+  });
+
   it("retains frozen proposal defaults and rejects malformed explicit metadata", () => {
     const proposal = createEstimateProposal({ issuedAt: new Date("2026-10-25T12:00:00Z"), estimateId: estimate._id, projectNumber: "Lisno000076" });
     const result = presentClientEstimate(actor, estimate, lead, { ...round, estimateSnapshot: { ...snapshot, proposal } });

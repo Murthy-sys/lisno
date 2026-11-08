@@ -34,7 +34,8 @@ export function createPMEstimateReadService(options: { now?: () => Date } = {}):
         source: approved.source, approvedAt: validDate(approved.round?.decidedAt),
         lines: pmEstimateLines(approved), mainLines: await readPMMainLineScopes(approved, session),
         totals: { subtotalPaise: approved.snapshot?.subtotalPaise ?? null, gstPaise: approved.snapshot?.gstPaise ?? null,
-          totalPaise: approved.snapshot?.totalPaise ?? null },
+          totalPaise: approved.snapshot?.totalPaise ?? null,
+          ...(approved.snapshot?.roundOffPaise === undefined ? {} : { roundOffPaise: approved.snapshot.roundOffPaise }) },
         writeAvailability: approved.source ? ready : { available: false, reason: approved.issues[0] ?? "An approved estimate is required." } };
     }),
     candidates: (actor, projectId, value) => pmTransaction(async session => {

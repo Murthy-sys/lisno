@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Dialog } from "../../components/ui/Dialog";
 import { EstimateSetupFields } from "../estimates/EstimateSetupFields";
-import { ConfigureSelectionFooter, EstimateSetupBaskets } from "../estimates/EstimateSetupBaskets";
+import { EstimateSetupBaskets } from "../estimates/EstimateSetupBaskets";
 import { MainBasketSelectionCard } from "../leads/MainBasketSelectionCard";
 import { getEstimateRoomDefinitions, getRoomIcon, mergeSelectedRoomDefinitions, parseBedroomCount, requiresBedroomCount } from "../leads/estimateRoomOptions";
 import { propertyTypes } from "../leads/propertyTypes";
@@ -17,6 +17,7 @@ export interface ClientQuotationSetupProps {
   loading?: boolean;
   refreshing?: boolean;
   catalogueError?: string | null;
+  recoveryActions?: ReactNode;
   onRefresh: () => void;
   onChange: (value: QuotationConfigureOperation) => void;
   onSave: (continueToItems: boolean) => void;
@@ -37,7 +38,7 @@ const removalBlockedMessage = "This selection needs team review before it can be
 /** Controlled draft adapter: the workspace owns mutations, version recovery and navigation guards. */
 export function ClientQuotationSetup({
   detail, catalogue, value, disabled, busy, loading = false, refreshing = false,
-  catalogueError, onRefresh, onChange, onSave, onCancel
+  catalogueError, recoveryActions, onRefresh, onChange, onSave, onCancel
 }: ClientQuotationSetupProps) {
   const catalogueMatches = Boolean(catalogue && catalogue.projectId === detail.projectId && catalogue.estimateId === detail.estimateId && catalogue.estimateVersion === detail.estimateVersion);
   const saved = catalogueMatches ? catalogue!.setup : detail.setup;
@@ -117,6 +118,7 @@ export function ClientQuotationSetup({
   const selectedBasketCount = draft?.selectedMainBasketIds.length ?? 0;
   const hasEligibleBasket = catalogue?.baskets.some((basket) => basket.canSelect && draft?.selectedMainBasketIds.includes(basket.id)) ?? false;
   const valid = propertyValid && !bedroomCountRequired && !dimensionsInvalid;
+  const canContinue = rooms.length > 0 && hasEligibleBasket;
 
   return <div ref={rootRef} className="client-quotation__setup" tabIndex={-1}>
     {!detail.setup || !draft ? <p className="estimate-notice" role="status">Saved estimate setup is unavailable. Refresh to load compatible setup information.</p> : <>
@@ -151,10 +153,19 @@ export function ClientQuotationSetup({
       {catalogueMatches && searchTerm && Boolean(catalogue?.baskets.length) && !visibleBaskets.length ? <p className="configured-estimate-chooser__state" role="status">No baskets match your search.</p> : null}
     </EstimateSetupBaskets>
     {notice ? <p className="estimate-notice" role="alert">{notice}</p> : null}
-    {draft && detail.setup ? <button type="button" className="button button--secondary estimate-setup-save" disabled={controlsDisabled || !valid || !value} onClick={() => onSave(false)}>{busy ? "Saving…" : "Save changes"}</button> : null}
-    <button type="button" className="button button--secondary estimate-continue" disabled={busy} onClick={onCancel}>{value ? "Discard setup changes and return" : "Return to saved items"}</button>
-    {draft && detail.setup ? <ConfigureSelectionFooter count={selectedBasketCount} clearDisabled={controlsDisabled || !selectedBasketCount} continueDisabled={controlsDisabled || !valid || !rooms.length || !hasEligibleBasket}
-      onClear={() => requestRemoval({ ...draft, selectedMainBasketIds: [] }, [], draft.selectedMainBasketIds)} onContinue={() => onSave(true)} /> : null}
+    <footer className="estimate-workspace__footer client-quotation__footer client-quotation__setup-footer">
+      <div className="client-quotation__footer-copy"><p>{selectedBasketCount} Main {selectedBasketCount === 1 ? "Basket" : "Baskets"} selected</p>
+        {draft && !canContinue ? <p className="client-quotation__hint">Select a room and an available Main Basket to continue to items.</p> : null}
+        {value ? <p className="client-quotation__hint">Setup changes are not saved yet.</p> : null}
+      </div>
+      <div className="client-quotation__actions">
+        {recoveryActions ?? <>
+        <button type="button" className="button button--secondary" disabled={busy} onClick={onCancel}>{value ? "Discard setup changes and return" : "Return to saved items"}</button>
+        {draft && detail.setup ? <button type="button" className="button button--primary" disabled={controlsDisabled || !valid || !value && !canContinue}
+          onClick={() => onSave(canContinue)}>{busy ? "Saving…" : value ? canContinue ? "Save and continue to items" : "Save setup changes" : "Continue to items"}</button> : null}
+        </>}
+      </div>
+    </footer>
     {removal ? <Dialog title={removal.roomIds.length ? "Remove selected rooms?" : "Remove selected Main Baskets?"} eyebrow="Estimate selection" role="alertdialog"
       description="This updates your estimate when you save. Review all affected visible items before continuing." onClose={() => setRemoval(null)} returnFocusRef={removalTriggerRef} fallbackFocusRef={rootRef} initialFocusRef={cancelRemovalRef}>
       <div className="ui-dialog__body"><p>{removal.labels.join(", ")}</p><p>{removal.visibleItemCount} saved visible {removal.visibleItemCount === 1 ? "item is" : "items are"} in this selection, including items hidden by search or collapsed sections.</p></div>

@@ -162,7 +162,46 @@ export function updateConfiguredLinePricing(
     return { ...next, rateInput: formatRateInput(configuredModeBaseRate(next, "in_house")) };
   }
   if (change.rateInput !== undefined) return { ...next, rateSource: "manual" };
+  if (change.rateSource === "configuration" && next.pricingMode) {
+    return { ...next, rateInput: formatRateInput(configuredModeBaseRate(next, next.pricingMode)) };
+  }
   return next;
+}
+
+export interface ConfiguredTierGroupScope {
+  roomId: string;
+  mainBasketId: string;
+  subBasketId: string | null;
+}
+export type ConfiguredTierGroupChoice = "mode" | KnowledgeModeTier;
+export const configuredTierGroupKey = (scope: ConfiguredTierGroupScope) =>
+  JSON.stringify([scope.roomId, scope.mainBasketId, scope.subBasketId]);
+export const configuredLineInTierGroup = (line: ConfiguredLineDraft, scope: ConfiguredTierGroupScope) =>
+  line.included && line.roomId === scope.roomId && line.mainBasketId === scope.mainBasketId && line.subBasketId === scope.subBasketId;
+
+/** Mode retains the editing session's original per-line choices; optional tiers adopt current Configuration. */
+export function applyConfiguredGroupTier(lines: readonly ConfiguredLineDraft[], scope: ConfiguredTierGroupScope,
+  choice: ConfiguredTierGroupChoice, baselines: ReadonlyMap<string, ConfiguredLineDraft>,
+  inheritedClassification: EstimateClassification = "standard"
+): { lines: ConfiguredLineDraft[]; baselines: Map<string, ConfiguredLineDraft> } | null {
+  const group = lines.filter(line => configuredLineInTierGroup(line, scope));
+  if (!group.length || choice !== "mode" && group.some(line => line.sourceMissing || configuredTierUnavailableReason(
+    line, choice, line.pricingMode ?? ((line.classification ?? inheritedClassification) === "standard" ? "sub_vendor" : undefined)
+  ))) return null;
+  const nextBaselines = new Map(baselines);
+  if (choice !== "mode") for (const line of group) if (!nextBaselines.has(line.key)) nextBaselines.set(line.key, line);
+  return { baselines: nextBaselines, lines: lines.map(line => {
+    if (!configuredLineInTierGroup(line, scope)) return line;
+    if (choice !== "mode") return updateConfiguredLinePricing(line, { modeTier: choice, rateSource: "configuration" }, inheritedClassification);
+    const original = nextBaselines.get(line.key);
+    if (!original) return line;
+    const restored = updateConfiguredLinePricing(line, { modeTier: original.modeTier ?? "signature" }, inheritedClassification);
+    // Restore selection identities, but recompute against the current tier's Configuration and current quantity.
+    const selected = updateConfiguredLinePricing(restored, { selectedInHouseComponentIds: original.selectedInHouseComponentIds?.slice(),
+      rateSource: original.rateSource ?? "manual" }, inheritedClassification);
+    return original.rateSource === "configuration" ? selected
+      : updateConfiguredLinePricing(selected, { rateInput: original.rateInput }, inheritedClassification);
+  }) };
 }
 
 export function deselectConfiguredRecommendationSources(

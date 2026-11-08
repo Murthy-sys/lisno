@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import { renderWithQuery } from "../../test/render";
 import { ClientPublishedEstimate } from "./ClientPublishedEstimate";
+import { ClientQuotationSubmittedView } from "../client/ClientQuotationSubmittedView";
 import type { EstimateQueueItem } from "./estimateWorkflowApi";
 import { componentPricingFixture } from "../leads/estimateComponentPricing.testFixtures";
 
@@ -27,6 +28,32 @@ function projectedEstimate(showLine: boolean): EstimateQueueItem {
 }
 
 describe("client screen visibility projection", () => {
+  it("shows the submitted rounding adjustment alongside the saved GST without changing line amounts", () => {
+    const estimate = projectedEstimate(true);
+    Object.assign(estimate.publishedReview!.snapshot, { subtotal: 86.64, subtotalPaise: 8664, gst: 15.6, gstPaise: 1560,
+      total: 102, totalPaise: 10200, roundOffPaise: -24 });
+    renderWithQuery(<ClientQuotationSubmittedView estimate={estimate} workspace={false} canDecide={false}
+      refreshing={false} onEdit={() => {}} onRefresh={async () => true} />);
+    expect(screen.getByText("Submitted total including GST").nextElementSibling).toHaveTextContent("₹102");
+    expect(screen.getByText("GST").nextElementSibling).toHaveTextContent("₹15.6");
+    expect(screen.getByText("Round off").nextElementSibling).toHaveTextContent("−₹0.24");
+    expect(screen.getByText("Rate").nextElementSibling).toHaveTextContent("₹100.00");
+  });
+  it.each([undefined, 48])("preserves published totals and only displays recorded round off (%s)", roundOffPaise => {
+    const estimate = projectedEstimate(true);
+    Object.assign(estimate.publishedReview!.snapshot, {
+      subtotal: 86.88, subtotalPaise: 8688, gst: 15.64, gstPaise: 1564,
+      total: roundOffPaise === undefined ? 102.52 : 103,
+      totalPaise: roundOffPaise === undefined ? 10252 : 10300,
+      ...(roundOffPaise === undefined ? {} : { roundOffPaise })
+    });
+    renderWithQuery(<ClientPublishedEstimate estimate={estimate} />);
+    expect(screen.getByText(roundOffPaise === undefined ? "₹102.52" : "₹103")).toBeVisible();
+    expect(screen.getByText("₹15.64")).toBeVisible();
+    expect(screen.getByText("1 sq ft × ₹100")).toBeVisible();
+    if (roundOffPaise === undefined) expect(screen.queryByText("Round off")).not.toBeInTheDocument();
+    else expect(screen.getByText("+₹0.48")).toBeVisible();
+  });
   it("displays a frozen component amount with no rate and does not use working values", () => {
     const estimate = projectedEstimate(true);
     const line = estimate.publishedReview!.snapshot.lineItems[0]!;

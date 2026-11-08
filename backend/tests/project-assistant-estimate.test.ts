@@ -1,3 +1,4 @@
+import { assistantProjectPricingSchema } from "../src/contracts/assistant-project-pricing.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { EstimateModel } from "../src/models/Estimate.js";
 import { EstimateClientReviewRoundModel } from "../src/models/EstimateClientReviewRound.js";
@@ -36,6 +37,34 @@ function fixture() {
 }
 
 describe("immutable customer estimate projection", () => {
+  it.each([[360, 2_400, 40], [350, 2_300, -50], [300, 2_300, 0]])(
+    "preserves validated published final rounding and rejects altered evidence (%i GST)", (gstPaise, totalPaise, roundOffPaise) => {
+      const saved = { ...snapshot(), gst: gstPaise / 100, gstPaise, total: totalPaise / 100, totalPaise, roundOffPaise };
+      const input = { estimateId: "estimate-a", projectId: "a", round: round(), snapshot: saved, approved: true };
+      const report = projectPricingFromPublication(input)!;
+      expect(report).toMatchObject({ subtotalPaise: 2_000, gstPaise, totalPaise, roundOffPaise });
+      expect(report.lines[0]).toMatchObject({ ratePaise: 1_000, amountPaise: 2_000 });
+      expect(assistantProjectPricingSchema.safeParse(report).success).toBe(true);
+      expect(assistantProjectPricingSchema.safeParse({ ...report, roundOffPaise: roundOffPaise + 1 }).success).toBe(false);
+      expect(projectPricingFromPublication({ ...input, snapshot: { ...saved, roundOffPaise: roundOffPaise + 1 } })).toBeNull();
+      if (roundOffPaise) {
+        expect(projectPricingFromPublication({ ...input, snapshot: { ...saved, roundOffPaise: undefined } })).toBeNull();
+        expect(assistantProjectPricingSchema.safeParse({ ...report, roundOffPaise: undefined }).success).toBe(false);
+      }
+      const legacy = projectPricingFromPublication({ ...input, snapshot: snapshot() })!;
+      expect(legacy.totalPaise).toBe(2_360);
+      expect(legacy).not.toHaveProperty("roundOffPaise");
+      expect(assistantProjectPricingSchema.safeParse(legacy).success).toBe(true);
+    });
+
+  it("reads a rounded approved estimate through its finance lineage", async () => {
+    const f = fixture();
+    Object.assign(f.rounds[0].estimateSnapshot, { total: 24, totalPaise: 2_400, roundOffPaise: 40 });
+    const result = await f.read();
+    expect(result.unavailableReason).toBeNull();
+    expect(result.report).toMatchObject({ subtotalPaise: 2_000, gstPaise: 360, totalPaise: 2_400, roundOffPaise: 40 });
+  });
+
   it("returns exact published selling amounts with no configuration metadata or working copy values", () => {
     const report = projectPricingFromPublication({ estimateId: "estimate-a", projectId: "a", round: round(), snapshot: snapshot(), approved: true });
     expect(report).toMatchObject({ totalPaise: 2360, subtotalPaise: 2000, gstPaise: 360, state: "approved", source: { href: null } });

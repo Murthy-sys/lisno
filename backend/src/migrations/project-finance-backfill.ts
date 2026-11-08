@@ -469,7 +469,8 @@ async function resolveEstimateApproval(
 
 function approvedMoney(value: unknown): Pick<
   EnsurePendingFinanceBucketInput,
-  "approvedSubtotalRupees" | "approvedGstRupees" | "approvedContractTotalRupees"
+  "approvedSubtotalRupees" | "approvedGstRupees" | "approvedContractTotalRupees" |
+  "approvedSubtotalPaise" | "approvedGstPaise" | "approvedContractTotalPaise" | "approvedRoundOffPaise"
 > | null {
   if (!isRow(value)) return null;
   const approvedSubtotalRupees = Number(value.subtotal);
@@ -479,7 +480,8 @@ function approvedMoney(value: unknown): Pick<
     projectFinanceBaseline({
       subtotalRupees: approvedSubtotalRupees,
       gstRupees: approvedGstRupees,
-      totalRupees: approvedContractTotalRupees
+      totalRupees: approvedContractTotalRupees,
+      subtotalPaise: value.subtotalPaise, gstPaise: value.gstPaise, totalPaise: value.totalPaise, roundOffPaise: value.roundOffPaise
     });
   } catch {
     return null;
@@ -487,7 +489,11 @@ function approvedMoney(value: unknown): Pick<
   return {
     approvedSubtotalRupees,
     approvedGstRupees,
-    approvedContractTotalRupees
+    approvedContractTotalRupees,
+    ...(value.subtotalPaise === undefined ? {} : { approvedSubtotalPaise: value.subtotalPaise }),
+    ...(value.gstPaise === undefined ? {} : { approvedGstPaise: value.gstPaise }),
+    ...(value.totalPaise === undefined ? {} : { approvedContractTotalPaise: value.totalPaise }),
+    ...(value.roundOffPaise === undefined ? {} : { approvedRoundOffPaise: value.roundOffPaise })
   };
 }
 
@@ -504,7 +510,9 @@ function expectedStoredBaseline(
     ...projectFinanceBaseline({
       subtotalRupees: approval.input.approvedSubtotalRupees,
       gstRupees: approval.input.approvedGstRupees,
-      totalRupees: approval.input.approvedContractTotalRupees
+      totalRupees: approval.input.approvedContractTotalRupees,
+      subtotalPaise: approval.input.approvedSubtotalPaise, gstPaise: approval.input.approvedGstPaise,
+      totalPaise: approval.input.approvedContractTotalPaise, roundOffPaise: approval.input.approvedRoundOffPaise
     })
   };
 }
@@ -519,12 +527,15 @@ function storedBaselineMatches(bucket: Row, expected: Row): boolean {
     "approvedSubtotalPaise",
     "approvedGstPaise",
     "approvedContractTotalPaise",
+    "approvedRoundOffPaise",
     "targetMarginBps",
     "targetProfitPaise",
     "costBudgetPaise"
   ] as const;
   return keys.every(
-    (key) => String(bucket[key] ?? "") === String(expected[key] ?? "")
+    (key) => key === "approvedRoundOffPaise"
+      ? bucket[key] === expected[key]
+      : String(bucket[key] ?? "") === String(expected[key] ?? "")
   );
 }
 

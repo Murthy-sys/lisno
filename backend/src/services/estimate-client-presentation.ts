@@ -1,3 +1,4 @@
+import { estimateTotalsReconcile } from "../domain/estimate-total-rounding.js";
 import { ESTIMATE_COMPONENT_PRICING_BASIS, estimateComponentLineAmountIsValid, readEstimateComponentPricing, type EstimateComponentPricing } from "../domain/estimate-component-pricing.js";
 import { estimateDimensionSnapshotValid } from "../domain/estimate-dimension-snapshot.js";
 import { canonicalEstimateDimensions, readEstimateDimensionRule, type EstimateDimensions, type EstimateDimensionRule } from "../domain/estimate-dimensions.js";
@@ -64,6 +65,7 @@ const snapshotSchema = z.object({
   lineItems: z.array(z.union([configuredLine, legacyLine])).min(1),
   subtotal: money, gst: money, total: money,
   subtotalPaise: paise.optional(), gstPaise: paise.optional(), totalPaise: paise.optional(),
+  roundOffPaise: z.number().int().min(-50).max(49).optional(),
   selectedMainBasketIds: z.array(z.string().min(1)).optional(),
   selectedMainBasketClassifications: z.array(z.object({
     mainBasketId: z.string().min(1), classification: z.enum(["standard", "special"])
@@ -78,9 +80,15 @@ const snapshotSchema = z.object({
       ctx.addIssue({ code: "custom", message: "Published basket classifications do not match selected Main Baskets." });
     }
   }
-  if (!snapshot.lineItems.some((line) => line.source === "configuration")) return;
+  if (!snapshot.lineItems.some((line) => line.source === "configuration") && snapshot.roundOffPaise === undefined) {
+    if ([snapshot.subtotalPaise, snapshot.gstPaise, snapshot.totalPaise].some(value => value !== undefined) &&
+      !estimateTotalsReconcile(snapshot)) {
+      ctx.addIssue({ code: "custom", message: "Published estimate totals must reconcile in paise." });
+    }
+    return;
+  }
   if (snapshot.subtotalPaise === undefined || snapshot.gstPaise === undefined || snapshot.totalPaise === undefined ||
-    snapshot.subtotalPaise + snapshot.gstPaise !== snapshot.totalPaise ||
+    !estimateTotalsReconcile(snapshot) ||
     snapshot.subtotal !== snapshot.subtotalPaise / 100 || snapshot.gst !== snapshot.gstPaise / 100 ||
     snapshot.total !== snapshot.totalPaise / 100) {
     ctx.addIssue({ code: "custom", message: "Configured review totals require exact paise." });
@@ -231,6 +239,7 @@ export function presentClientEstimate(
     subtotalPaise: snapshot?.subtotalPaise ?? null,
     gstPaise: snapshot?.gstPaise ?? null,
     totalPaise: snapshot?.totalPaise ?? null,
+    ...(snapshot?.roundOffPaise === undefined ? {} : { roundOffPaise: snapshot.roundOffPaise }),
     selectedMainBasketIds: stableDrawingMetadata ? snapshot?.selectedMainBasketIds ?? [] : [],
     selectedMainBasketClassifications: stableDrawingMetadata ? snapshot?.selectedMainBasketClassifications ?? [] : [],
     rooms: collaborative ? snapshot?.rooms ?? [] : stableDrawingMetadata ? estimate.rooms ?? [] : [],
@@ -276,6 +285,7 @@ export function comparePublishedEstimateSnapshots(before: Row, after: Row) {
   const scopeChanged = ["propertyType", "bedroomCount", "rooms", "scopes", "selectedMainBasketIds"].some((field) =>
     !isDeepStrictEqual(before[field] ?? null, after[field] ?? null));
   return { addedLineIds, removedLineIds, changedLineIds, scopeChanged,
-    noChanges: !addedLineIds.length && !removedLineIds.length && !changedLineIds.length && !scopeChanged && before.total === after.total,
+    noChanges: !addedLineIds.length && !removedLineIds.length && !changedLineIds.length && !scopeChanged && before.total === after.total &&
+      (before.roundOffPaise ?? 0) === (after.roundOffPaise ?? 0),
     beforeTotal: before.total, afterTotal: after.total };
 }

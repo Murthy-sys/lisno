@@ -50,6 +50,8 @@ export interface RecommendationLine {
   key: string;
   target: RecommendedLineTarget;
   name: string;
+  basketName: string | null;
+  subBasketName: string | null;
   requirement: "must" | "can";
   selected: boolean;
   reasons: RecommendationReason[];
@@ -64,10 +66,14 @@ export function recommendationLines(decisions: readonly RecommendationDecision[]
   const add = (target: RecommendedLineTarget, name: string, selected: boolean, decision: RecommendationDecision) => {
     const key = recommendationTargetIdentity(target);
     const existing = lines.get(key);
+    const subBasketName = decision.kind === "sub_basket" ? decision.name : decision.subBasketName;
     if (!existing) {
-      lines.set(key, { key, target, name, selected, requirement: decision.requirement, reasons: [...decision.reasons] });
+      lines.set(key, { key, target, name, basketName: decision.basketName, subBasketName,
+        selected, requirement: decision.requirement, reasons: [...decision.reasons] });
       return;
     }
+    existing.basketName ??= decision.basketName;
+    existing.subBasketName ??= subBasketName;
     existing.selected ||= selected;
     if (decision.requirement === "must") existing.requirement = "must";
     for (const reason of decision.reasons) {

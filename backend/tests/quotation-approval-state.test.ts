@@ -148,6 +148,21 @@ function materiallyRevise(estimate: Row): void {
 }
 
 describe("effective current quotation approval", () => {
+  it("keeps a rounded approval current and fails closed when its adjustment is tampered", () => {
+    const { estimate, preRound } = fixture();
+    const amounts = { subtotal: 100.24, subtotalPaise: 10_024, gst: 18.04, gstPaise: 1_804,
+      total: 118, totalPaise: 11_800, roundOffPaise: -28 };
+    Object.assign(estimate, amounts);
+    Object.assign(preRound.estimateSnapshot, amounts);
+    const digest = quotationSnapshotDigest(preRound.estimateSnapshot);
+    preRound.sourceDigest = digest;
+    preRound.salesApproval.sourceDigest = digest;
+    expect(resolve(estimate, [preRound]).currentQuotationApproved).toBe(true);
+    estimate.roundOffPaise = -27;
+    expect(resolve(estimate, [preRound]).currentQuotationApproved).toBe(false);
+    expect(quotationSnapshotDigest({ ...preRound.estimateSnapshot, roundOffPaise: -27 })).not.toBe(digest);
+  });
+
   it("keeps an unchanged configured quotation current while ignoring internal-only saved line fields", () => {
     const { estimate, preRound } = fixture();
     expect(resolve(estimate, [preRound])).toEqual({

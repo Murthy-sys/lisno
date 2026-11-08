@@ -123,7 +123,7 @@ body:has(.ui-app-shell[data-role="designer"]) .ui-button:not(.modal-backdrop):no
    --button-* tokens. */
 .ui-app-shell[data-role="designer"] .ui-button:not(.modal-backdrop):not(.ui-drawer-backdrop),
 body:has(.ui-app-shell[data-role="designer"]) .ui-button:not(.modal-backdrop):not(.ui-drawer-backdrop) {
-  font-size: 0.875rem;
+  font-size: var(--form-button-font-size);
 }
 
 .ui-app-shell[data-role="designer"] :is(.ui-button--primary, .button--primary):not(:focus-visible),

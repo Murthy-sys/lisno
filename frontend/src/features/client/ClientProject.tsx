@@ -6,6 +6,7 @@ import { Link, useParams } from "react-router-dom";
 
 import { PageHeader } from "../../components/ui/PageHeader";
 import { EstimateReviewPanel } from "../estimates/EstimateReviewPanel";
+import { estimateWorkflowKeys, getClientEstimates } from "../estimates/estimateWorkflowApi";
 import type { ClientDesignVersion } from "../../api/types";
 import { FilePreview } from "../../components/ui/FilePreview";
 import { AsyncState } from "../../components/ui/AsyncState";
@@ -26,21 +27,25 @@ export function ClientProject() {
   const [timelineContainer, setTimelineContainer] = useState<HTMLDivElement | null>(null);
   const projectQuery = useQuery({ queryKey: clientKeys.project(projectId), queryFn: () => getClientProject(projectId), enabled: Boolean(projectId) });
   const versionsQuery = useQuery({ queryKey: clientKeys.versions(projectId), queryFn: () => getClientVersions(projectId), enabled: Boolean(projectId) });
+  const requiresPublication = projectQuery.data?.estimationWorkflowVersion === 2 || projectQuery.data?.estimationWorkflowVersion === 3;
+  const reviews = useQuery({ queryKey: estimateWorkflowKeys.client, queryFn: getClientEstimates, enabled: projectQuery.isSuccess && requiresPublication, retry: false });
   if (projectQuery.isPending) return <AsyncState state="loading" message="Loading your project…" />;
   if (projectQuery.isError) return <AsyncState state="error" message="We couldn't load this project." actionLabel="Try again" onAction={() => void projectQuery.refetch()} />;
   const project = projectQuery.data;
   const sharedEstimation = project.estimationWorkflowVersion === 3;
+  const matchingReviews = reviews.isSuccess ? reviews.data.filter(estimate => estimate.projectId === projectId) : [];
+  const showSubmittedSections = !requiresPublication || matchingReviews.length === 1 && Boolean(matchingReviews[0]!.publishedReview) && !matchingReviews[0]!.reviewSourceIssue;
   const versions = (versionsQuery.data ?? []).filter((version) => version.approvalStatus === "approved" && version.clientVisible);
   return <section className="client-page client-page--project" data-theme="sidebar" aria-labelledby="client-project-title">
     <PageHeader id="client-project-title" title={project.name} description={project.location} breadcrumb={<Link className="client-project-back" to="/client">Back to projects</Link>} metadata={<><ProjectId projectNumber={project.projectNumber} /><span className="client-project-status">{project.status.replaceAll("_", " ")}</span></>} actions={sharedEstimation ? <ProjectChatNavigation projectId={projectId} overviewTo={`/client/projects/${projectId}`} presentation="client-project" /> : undefined} />
-    {!sharedEstimation ? <><ProjectChatNavigation projectId={projectId} overviewTo={`/client/projects/${projectId}`} /><PMCounterpartPanel projectId={projectId} /></> : null}
-    {project.estimationWorkflowVersion === 2 ? <ClientEstimateRequirements key={`requirements-${projectId}`} projectId={projectId} /> : null}
+    {!sharedEstimation ? <><ProjectChatNavigation projectId={projectId} overviewTo={`/client/projects/${projectId}`} />{showSubmittedSections ? <PMCounterpartPanel projectId={projectId} /> : null}</> : null}
+    {project.estimationWorkflowVersion === 2 && showSubmittedSections ? <ClientEstimateRequirements key={`requirements-${projectId}`} projectId={projectId} /> : null}
     {project.estimationWorkflowVersion === 2 ? <ClientEstimateTiers key={`tiers-${projectId}`} projectId={projectId} /> : null}
     {project.estimationWorkflowVersion === 3 ? <ClientEstimationWorkspace key={`quotation-${projectId}`} projectId={projectId} />
       : <EstimateReviewPanel key={`estimate-${projectId}`} projectId={projectId} />}
-    {sharedEstimation ? <><ClientEstimateRequirements key={`requirements-${projectId}`} projectId={projectId} compact /><PMCounterpartPanel key={`coordination-${projectId}`} projectId={projectId} /></> : null}
+    {sharedEstimation && showSubmittedSections ? <><ClientEstimateRequirements key={`requirements-${projectId}`} projectId={projectId} compact /><PMCounterpartPanel key={`coordination-${projectId}`} projectId={projectId} /></> : null}
     <div className="client-project-workflow" ref={setTimelineContainer} />
-    <ProjectWorkflowPanel key={projectId} projectId={projectId} timelineContainer={timelineContainer} presentation="client" />
+    <ProjectWorkflowPanel key={projectId} projectId={projectId} timelineContainer={timelineContainer} presentation="client" showDesignRequirements={showSubmittedSections} />
     <ClientSiteCompletionReview key={`site-completion-${projectId}`} projectId={projectId} />
     <ClientVendorWorkReview key={`vendor-work-${projectId}`} projectId={projectId} />
     {project.floors.length ? <details key={`floors-${projectId}`} className="client-project-disclosure">

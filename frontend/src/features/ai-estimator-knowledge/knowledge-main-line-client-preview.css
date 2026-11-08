@@ -1,0 +1,33 @@
+.ui-drawer--contextual.ui-drawer.knowledge-client-preview {
+  inline-size: 80vw;
+  max-inline-size: 100vw;
+  box-shadow: none;
+}
+
+.knowledge-client-preview .ui-drawer__header::before,
+.knowledge-client-preview .ui-drawer__header::after { display: none; }
+.ui-drawer--contextual.ui-drawer--wide.knowledge-client-preview .ui-drawer__heading { padding-inline-end: 0; }
+.knowledge-client-preview .ui-drawer__header h2 { font-size: 20px; }
+.knowledge-client-preview .ui-drawer__description { font-size: 12px; }
+.knowledge-client-preview__name { margin: 4px 0 0; font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
+.knowledge-client-preview__notice { margin: 0 0 16px; color: var(--color-text-muted); font-size: 12px; line-height: 1.5; }
+.knowledge-client-preview__state { display: grid; justify-items: start; gap: 12px; margin: 0; font-size: 14px; }
+.knowledge-client-preview__state p { margin: 0; }
+.knowledge-client-preview__content { min-width: 0; }
+.knowledge-client-preview__context { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 12px; }
+.knowledge-client-preview__context > p { margin: 0; font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
+.knowledge-client-preview__scenario { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.knowledge-client-preview__scenario select { min-height: 32px; padding: 4px 24px 4px 8px; border: 1px solid var(--color-border); border-radius: 0; background: var(--color-surface); color: inherit; font: inherit; }
+.knowledge-client-preview__estimate.client-quotation { padding: 0; border: 0; background: transparent; }
+.knowledge-client-preview__estimate .configured-estimate-line--reference { margin: 0; box-shadow: none; }
+.knowledge-client-preview__estimate .configured-estimate-line__fields { grid-template-columns: minmax(78px, 1fr) minmax(90px, 1fr) minmax(90px, 1fr); }
+
+@media (max-width: 900px) {
+  .ui-drawer--contextual.ui-drawer.knowledge-client-preview { inline-size: 100vw; }
+}
+
+@media (max-width: 767px), (pointer: coarse) {
+  .knowledge-client-preview__scenario select { min-height: 44px; font-size: 16px; }
+  .knowledge-client-preview__estimate .configured-estimate-line__fields { grid-template-columns: minmax(120px, 1fr) minmax(100px, 1fr); }
+  .knowledge-client-preview__estimate .configured-estimate-line__amount { grid-column: 1 / -1; grid-row: 2; padding-right: 0; }
+}

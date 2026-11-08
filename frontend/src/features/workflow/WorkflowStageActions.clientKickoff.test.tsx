@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { apiClient } from "../../api/client";
 import { WorkflowStageActions } from "./WorkflowStageActions";
-import type { DesignWorkflowStage, DesignWorkflowView } from "./projectWorkflowApi";
+import type { DesignWorkflowAction, DesignWorkflowStage, DesignWorkflowView } from "./projectWorkflowApi";
 
 const acknowledgement = "I have reviewed the document submitted by the Designer";
 const createUrl = vi.fn(() => "blob:internal-proof");
@@ -28,7 +28,7 @@ function fixture() {
   return { workflow, stage };
 }
 
-function setup(data = fixture(), presentation: "client" | "full" = "client") {
+function setup(data = fixture(), presentation: "client" | "full" | "designer" = "client") {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   const view = render(<WorkflowStageActions key={data.workflow.projectId} {...data} presentation={presentation} />, {
     wrapper: ({ children }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>
@@ -53,6 +53,55 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe("Client Kick off document review", () => {
+  const retiredAction = () => ({ id: "client_kickoff_not_required", label: "Mark meeting not necessary", actor: "designer", requiresProof: false } as unknown as DesignWorkflowAction);
+
+  it.each(["client", "full", "designer"] as const)("suppresses a stale exemption in the %s view without selecting a replacement automatically", (presentation) => {
+    const data = fixture();
+    data.stage.operational!.availableActions = [retiredAction()];
+    const post = vi.spyOn(apiClient, "post");
+    const upload = vi.spyOn(apiClient, "postMultipartWithProgress");
+    const { rerender } = setup(data, presentation);
+    rerender(<WorkflowStageActions key={data.workflow.projectId} {...data} presentation={presentation} expandKickoff />);
+    expect(screen.queryByRole("button", { name: /not necessary/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("form")).not.toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: /reason/i })).not.toBeInTheDocument();
+    expect(post).not.toHaveBeenCalled();
+    expect(upload).not.toHaveBeenCalled();
+  });
+
+  it("keeps the Designer request as the only current action and exposes a legacy exemption only in history", async () => {
+    const data = fixture();
+    data.stage.operational!.availableActions = [retiredAction(), { id: "client_kickoff_request", label: "Request Client kickoff", actor: "designer", requiresProof: false }];
+    data.stage.operational!.history = [{ id: "legacy-exemption", action: "client_kickoff_not_required", actorName: "Designer A", actorRole: "designer", at: "2026-09-10T09:00:00.000Z", onBehalfOfClient: false, proofAvailable: true, note: "Historical meeting decision" }];
+    setup(data, "designer");
+    expect(screen.getByRole("button", { name: "Request Client kickoff" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: /not necessary/i })).not.toBeInTheDocument();
+    expect(screen.getByText("Historical Client Kick off exemption")).not.toBeVisible();
+    const user = userEvent.setup();
+    await user.click(screen.getByText("Action history"));
+    expect(screen.getByText("Historical Client Kick off exemption")).toBeVisible();
+    expect(screen.getByText("Historical meeting decision")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Download evidence" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Request Client kickoff" }));
+    expect(screen.getByRole("dialog", { name: "Request Client kickoff" })).toBeVisible();
+  });
+
+  it("removes a retained form when its action is retired and restores keyboard focus", async () => {
+    const data = fixture();
+    const request: DesignWorkflowAction = { id: "client_kickoff_request", label: "Request Client kickoff", actor: "designer", requiresProof: false };
+    data.stage.operational!.availableActions = [request];
+    const post = vi.spyOn(apiClient, "post");
+    const { rerender, container } = setup(data, "designer");
+    await userEvent.setup().click(screen.getByRole("button", { name: "Request Client kickoff" }));
+    expect(screen.getByRole("dialog", { name: "Request Client kickoff" })).toBeVisible();
+    Object.assign(request, retiredAction());
+    rerender(<WorkflowStageActions key={data.workflow.projectId} {...data} presentation="designer" />);
+    expect(screen.queryByRole("form")).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await waitFor(() => expect(container.querySelector(".workflow-stage-actions")).toHaveFocus());
+    expect(post).not.toHaveBeenCalled();
+  });
+
   it("opens only the committed Internal proof from View document and submits its exact event ID after acknowledgement", async () => {
     const post = vi.spyOn(apiClient, "post").mockResolvedValue({ version: 5 });
     const user = userEvent.setup();

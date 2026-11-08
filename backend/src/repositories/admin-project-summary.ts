@@ -290,7 +290,8 @@ function assertApprovedBaseline(estimate: EstimateSummaryRecord): void {
       totalRupees: baseline.total,
       ...(baseline.subtotalPaise === undefined ? {} : { subtotalPaise: baseline.subtotalPaise }),
       ...(baseline.gstPaise === undefined ? {} : { gstPaise: baseline.gstPaise }),
-      ...(baseline.totalPaise === undefined ? {} : { totalPaise: baseline.totalPaise })
+      ...(baseline.totalPaise === undefined ? {} : { totalPaise: baseline.totalPaise }),
+      ...(baseline.roundOffPaise === undefined ? {} : { roundOffPaise: baseline.roundOffPaise })
     });
   } catch {
     throw new ApiError(

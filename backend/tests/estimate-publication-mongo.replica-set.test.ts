@@ -466,9 +466,9 @@ describe("Estimate publication and delivery on a Mongo replica set", () => {
     const fixture = await seedConfiguredPublication();
     await AiEstimatorKnowledgeSectionModel.collection.insertOne({
       _id: "publication-advanced", mainLineId: "publication-main-line", revisionId: "publication-revision",
-      sectionKey: "advanced", applicability: "configured", payload: { modeCalculations: {
+      sectionKey: "advanced", applicability: "configured", payload: { pmcMarginBps: 0, subVendorMarginBps: 0, modeCalculations: {
         pmc: { baseRatePaise: 10_000 }, sub_vendor: { baseRatePaise: 10_000 },
-        in_house_labor: { baseRatePaise: 3001 }, in_house_material: { baseRatePaise: 6999 }
+        in_house_labor: { baseRatePaise: 3001, startingMarkupBps: 0 }, in_house_material: { baseRatePaise: 6999, startingMarkupBps: 0 }
       } }
     } as never);
     await EstimateModel.updateOne({ _id: fixture.estimateId }, { $set: {
@@ -494,7 +494,7 @@ describe("Estimate publication and delivery on a Mongo replica set", () => {
     const fixture = await seedConfiguredPublication();
     await AiEstimatorKnowledgeSectionModel.collection.insertOne({
       _id: "publication-advanced", mainLineId: "publication-main-line", revisionId: "publication-revision",
-      sectionKey: "advanced", applicability: "configured", payload: { modeCalculations: { sub_vendor: { baseRatePaise: 20_001 } } }
+      sectionKey: "advanced", applicability: "configured", payload: { pmcMarginBps: 0, subVendorMarginBps: 0, modeCalculations: { sub_vendor: { baseRatePaise: 20_001 } } }
     } as never);
     await EstimateModel.updateOne({ _id: fixture.estimateId }, { $set: {
       "lineItems.0.pricingMode": "sub_vendor", "lineItems.0.rateSource": "configuration"
@@ -636,8 +636,8 @@ describe("Estimate publication and delivery on a Mongo replica set", () => {
           subBasketName: "Cabinets", mainLineName: "Main Line", uomName: "Square feet"
         }
       ],
-      subtotal: 167.03, gst: 30.07, total: 197.10,
-      subtotalPaise: 16_703, gstPaise: 3_007, totalPaise: 19_710
+      subtotal: 167.03, gst: 30.07, total: 197,
+      subtotalPaise: 16_703, gstPaise: 3_007, totalPaise: 19_700, roundOffPaise: -10
     } });
     const storage = createReviewStorage();
     const harness = createHarness({ storage: storage.storage, mailer: createSequencedMailer().mailer,
@@ -652,9 +652,10 @@ describe("Estimate publication and delivery on a Mongo replica set", () => {
         { id: "estimate-line-temporary", itemType: "temporary", classification: "special", amountPaise: 7_003 },
         { id: "estimate-line-main", itemType: "main_line", classification: "standard", amountPaise: 9_700 }
       ],
-      subtotalPaise: 16_703, gstPaise: 3_007, totalPaise: 19_710
+      subtotalPaise: 16_703, gstPaise: 3_007, totalPaise: 19_700, roundOffPaise: -10
     });
     const detail = await harness.reviews.detail(ADMIN, published.clientReview.id);
+    expect(detail.estimateSnapshot).toMatchObject({ subtotalPaise: 16_703, gstPaise: 3_007, totalPaise: 19_700, roundOffPaise: -10 });
     expect(detail.estimateSnapshot.selectedMainBasketClassifications).toEqual(selectedMainBasketClassifications);
     expect(detail.estimateSnapshot.lineItems.map((line) => line.classification)).toEqual(["special", "standard"]);
     await EstimateModel.updateOne({ _id: fixture.estimateId }, { $set: {

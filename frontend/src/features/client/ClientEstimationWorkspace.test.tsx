@@ -77,9 +77,11 @@ function setup(options: { workspace?: boolean; phase?: "pre" | "post"; quotation
       state.queue = [state.estimate]; return HttpResponse.json({ data: state.detail });
     }),
     http.post("/api/v1/client/estimates/estimate-one/decision", async ({ request }) => {
-      decisions.push(await request.json() as Record<string, unknown>);
+      const decision = await request.json() as Record<string, unknown>;
+      decisions.push(decision);
       if (state.decisionError) return HttpResponse.json({ error: { message: "A newer estimate was submitted." } }, { status: state.decisionError });
-      state.estimate = { ...state.estimate, status: "client_approved", publishedReview: { ...state.estimate.publishedReview!, version: 2, status: "approved", canDecide: false } };
+      state.estimate = { ...state.estimate, status: decision.decision === "approve" ? "client_approved" : "client_changes_requested",
+        publishedReview: { ...state.estimate.publishedReview!, version: 2, status: decision.decision === "approve" ? "approved" : "changes_requested", canDecide: false, decisionNote: String(decision.note ?? "") } };
       state.queue = [state.estimate]; return HttpResponse.json({ data: state.estimate });
     })
   );
@@ -116,6 +118,19 @@ describe("Unified Client estimation", () => {
     expect(await screen.findByText(/has not prepared the quotation yet/)).toBeVisible();
     expect(view.state.tiersRequests).toBe(1);
     expect(screen.queryByRole("button", { name: /Approve|Review for/ })).not.toBeInTheDocument();
+  });
+
+  it("loads the newly submitted review when refreshing a previously not-started quotation", async () => {
+    const view = setup({ quotationError: 404 }), user = userEvent.setup();
+    await screen.findByText(/has not prepared the quotation yet/);
+    view.state.quotationError = 0;
+    view.state.queue = [view.state.estimate];
+    await user.click(screen.getByRole("button", { name: "Refresh quotation" }));
+    expect(await screen.findByRole("button", { name: "Review quotation" })).toBeEnabled();
+    expect(screen.getByRole("spinbutton", { name: /Quantity for Current cabinet/ })).toHaveValue(2);
+    expect(view.state.tiersRequests).toBe(1);
+    expect(view.decisions).toEqual([]);
+    expect(view.saves).toEqual([]);
   });
 
   it.each([403, 500])("does not infer not-started from a quotation 404 when the authorized probe fails with %s", async tiersError => {
@@ -167,10 +182,10 @@ describe("Unified Client estimation", () => {
 
   it("returns keyboard focus to the editor when leaving the submitted review", async () => {
     setup(); const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: "Review for pre-design approval" }));
+    await user.click(await screen.findByRole("button", { name: "Review quotation" }));
     expect(await screen.findByRole("region", { name: "Submitted estimate" })).toHaveFocus();
     await user.tab();
-    expect(screen.getByRole("button", { name: "Edit estimate" })).toHaveFocus();
+    expect(screen.getByRole("button", { name: "Back to estimate" })).toHaveFocus();
     await user.keyboard("{Enter}");
     expect(await screen.findByRole("region", { name: "Your quotation" })).toHaveFocus();
     expect(screen.getByRole("spinbutton", { name: /Quantity for Current cabinet/ })).toHaveValue(2);
@@ -183,8 +198,8 @@ describe("Unified Client estimation", () => {
     // Existing requirements links still lead to the unified commercial workspace.
     expect(view.container.querySelector("#estimate-review-title")).toContainElement(quantity);
     expect(screen.queryByText("Review section-wise estimate")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Approve pre-design quotation" })).not.toBeInTheDocument();
-    await user.click(await screen.findByRole("button", { name: "Review for pre-design approval" }));
+    expect(screen.queryByRole("button", { name: "Approve quotation" })).not.toBeInTheDocument();
+    await user.click(await screen.findByRole("button", { name: "Review quotation" }));
     const submitted = await screen.findByRole("region", { name: "Submitted estimate" });
     expect(view.container.querySelector("#estimate-review-title")).toContainElement(submitted);
     expect(submitted).toHaveFocus();
@@ -193,7 +208,7 @@ describe("Unified Client estimation", () => {
     expect(within(submitted).getByText("₹826")).toBeVisible();
     expect(within(submitted).queryByText("₹1,180.00")).not.toBeInTheDocument();
     expect((await axe.run(view.container, { rules: { "color-contrast": { enabled: false } } })).violations).toEqual([]);
-    await user.click(screen.getByRole("button", { name: "Approve pre-design quotation" }));
+    await user.click(screen.getByRole("button", { name: "Approve quotation" }));
     const dialog = screen.getByRole("dialog", { name: "Approve this pre-design quotation?" });
     expect(within(dialog).getByText("Version 3 · Submission 1")).toBeVisible();
     expect(within(dialog).getByText("₹826")).toBeVisible();
@@ -202,25 +217,73 @@ describe("Unified Client estimation", () => {
     expect(await screen.findByText("Pre-design approval recorded")).toBeVisible();
   });
 
+  it.each(["pre", "post"] as const)("routes %s change requests to the correct team member and preserves the approved baseline", async phase => {
+    const view = setup({ phase }), user = userEvent.setup();
+    const baseline = structuredClone(view.state.estimate.preApprovedReview);
+    const owner = phase === "post" ? "Designer" : "Sales";
+    await user.click(await screen.findByRole("button", { name: "Review quotation" }));
+    await user.click(screen.getByRole("button", { name: "Request changes" }));
+    const dialog = screen.getByRole("dialog", { name: "Request estimate changes" });
+    expect(within(dialog).getByText(new RegExp(`Tell ${owner} which items`))).toBeVisible();
+    await user.type(within(dialog).getByRole("textbox", { name: /Changes needed/ }), "Revise the cabinet quantity.");
+    await user.click(within(dialog).getByRole("button", { name: "Send change request" }));
+    expect(await screen.findByText(`${owner} is revising your estimate`)).toBeVisible();
+    expect(view.decisions).toEqual([{ decision: "request_changes", note: "Revise the cabinet quantity.",
+      reviewRoundId: "round-estimate-one", reviewRoundVersion: 1 }]);
+    expect(view.state.estimate.preApprovedReview).toEqual(baseline);
+    expect(screen.queryByRole("button", { name: "Approve quotation" })).not.toBeInTheDocument();
+  });
+
+  it("submits a review decision once when confirmation events arrive before a render", async () => {
+    const view = setup(), user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Review quotation" }));
+    await user.click(screen.getByRole("button", { name: "Approve quotation" }));
+    const form = screen.getByRole("form", { name: "Confirm estimate approval" });
+    act(() => {
+      form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+    await screen.findByText("Pre-design approval recorded");
+    expect(view.decisions).toEqual([{ decision: "approve", note: "", reviewRoundId: "round-estimate-one", reviewRoundVersion: 1 }]);
+  });
+
+  it("allows another confirmation only after a failed decision is refreshed", async () => {
+    const view = setup(), user = userEvent.setup();
+    view.state.decisionError = 409;
+    await user.click(await screen.findByRole("button", { name: "Review quotation" }));
+    await user.click(screen.getByRole("button", { name: "Approve quotation" }));
+    await user.click(screen.getByRole("button", { name: "Confirm approval" }));
+    await screen.findByText("This estimate has changed");
+    expect(screen.queryByRole("button", { name: "Approve quotation" })).not.toBeInTheDocument();
+    view.state.decisionError = 0;
+    await user.click(screen.getByRole("button", { name: "Refresh estimate" }));
+    await user.click(await screen.findByRole("button", { name: "Approve quotation" }));
+    await user.click(screen.getByRole("button", { name: "Confirm approval" }));
+    await screen.findByText("Pre-design approval recorded");
+    expect(view.decisions).toHaveLength(2);
+    expect(view.decisions[1]).toEqual(view.decisions[0]);
+  });
+
   it("saves edits, waits for Sales, and only approves the newly confirmed version", async () => {
     const view = setup(), user = userEvent.setup();
     const quantity = await screen.findByRole("spinbutton", { name: /Quantity for Current cabinet/ });
     await user.clear(quantity); await user.type(quantity, "4");
+    await user.click(screen.getByText("Estimate options"));
     expect(screen.getByRole("button", { name: "View submitted version" })).toBeDisabled();
     await user.click(screen.getByRole("button", { name: "Save changes" }));
     expect(await screen.findByText(/Waiting for Sales confirmation/)).toBeVisible();
     await user.click(await screen.findByRole("button", { name: "View submitted version" }));
     expect(await screen.findByText("This quotation has been superseded")).toBeVisible();
-    expect(screen.queryByRole("button", { name: "Approve pre-design quotation" })).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Edit estimate" }));
+    expect(screen.queryByRole("button", { name: "Approve quotation" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Back to estimate" }));
     expect(screen.getByRole("spinbutton", { name: /Quantity for Current cabinet/ })).toHaveValue(4);
     view.state.detail = { ...view.state.detail, status: "sent_to_client", reviewState: "ready_for_approval",
       quotationApprovalState: "revision_pending_client", currentQuotationApproved: false, requiresClientReapproval: true,
       quotationApprovalSource: null, currentQuotationApproval: null };
     view.state.estimate = withQuotationApproval({ ...view.state.estimate, status: "sent_to_client", publishedReview: { ...view.state.estimate.publishedReview!, id: "round-revised", status: "pending", canDecide: true } }, view.state.detail);
     view.state.queue = [view.state.estimate]; await view.refresh();
-    await user.click(await screen.findByRole("button", { name: "Review for pre-design approval" }));
-    await user.click(await screen.findByRole("button", { name: "Approve pre-design quotation" }));
+    await user.click(await screen.findByRole("button", { name: "Review quotation" }));
+    await user.click(await screen.findByRole("button", { name: "Approve quotation" }));
     await user.click(screen.getByRole("button", { name: "Confirm approval" }));
     await waitFor(() => expect(view.decisions[0]).toMatchObject({ reviewRoundId: "round-revised", reviewRoundVersion: 1 }));
     expect(view.saves).toHaveLength(1);
@@ -231,6 +294,7 @@ describe("Unified Client estimation", () => {
     const quantity = await screen.findByRole("spinbutton", { name: /Quantity for Current cabinet/ });
     await user.clear(quantity); await user.type(quantity, "5"); await user.click(screen.getByRole("button", { name: "Save changes" }));
     expect(await screen.findByText("Save rejected")).toBeVisible(); expect(quantity).toHaveValue(5);
+    await user.click(screen.getByText("Estimate options"));
     expect(screen.getByRole("button", { name: "View submitted version" })).toBeDisabled(); expect(view.decisions).toEqual([]);
   });
 
@@ -241,10 +305,11 @@ describe("Unified Client estimation", () => {
     await user.click(screen.getByRole("button", { name: "Save changes" }));
     expect(await screen.findByText(/Waiting for Designer confirmation/)).toBeVisible();
     expect(screen.queryByText(/Waiting for Sales confirmation/)).not.toBeInTheDocument();
+    await user.click(screen.getByText("Estimate options"));
     await user.click(await screen.findByRole("button", { name: "View submitted version" }));
     expect(await screen.findByText("This quotation has been superseded")).toBeVisible();
-    expect(screen.queryByRole("button", { name: "Approve designer-revised quotation" })).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Edit estimate" }));
+    expect(screen.queryByRole("button", { name: "Approve quotation" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Back to estimate" }));
     expect(screen.getByRole("spinbutton", { name: /Quantity for Current cabinet/ })).toHaveValue(7);
     view.state.detail = { ...view.state.detail, status: "sent_to_client", reviewState: "ready_for_approval",
       quotationApprovalState: "revision_pending_client", currentQuotationApproved: false,
@@ -254,9 +319,9 @@ describe("Unified Client estimation", () => {
     } }, view.state.detail);
     view.state.estimate.estimation!.salesApproval = null;
     view.state.queue = [view.state.estimate]; await view.refresh();
-    await user.click(await screen.findByRole("button", { name: "Review revised quotation" }));
+    await user.click(await screen.findByRole("button", { name: "Review quotation" }));
     expect(await screen.findByText(/Submitted version 4/)).toBeVisible();
-    await user.click(await screen.findByRole("button", { name: "Approve designer-revised quotation" }));
+    await user.click(await screen.findByRole("button", { name: "Approve quotation" }));
     await user.click(screen.getByRole("button", { name: "Confirm approval" }));
     await waitFor(() => expect(view.decisions).toEqual([{ decision: "approve", note: "", reviewRoundId: "round-post-revised", reviewRoundVersion: 2 }]));
     expect(view.saves).toHaveLength(1);
@@ -264,43 +329,44 @@ describe("Unified Client estimation", () => {
 
   it("retires a stale decision after 409 until an explicit refreshed review", async () => {
     const view = setup(), user = userEvent.setup(); view.state.decisionError = 409;
-    await user.click(await screen.findByRole("button", { name: "Review for pre-design approval" }));
-    await user.click(await screen.findByRole("button", { name: "Approve pre-design quotation" })); await user.click(screen.getByRole("button", { name: "Confirm approval" }));
+    await user.click(await screen.findByRole("button", { name: "Review quotation" }));
+    await user.click(await screen.findByRole("button", { name: "Approve quotation" })); await user.click(screen.getByRole("button", { name: "Confirm approval" }));
     expect(await screen.findByText("This estimate has changed")).toBeVisible(); expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Approve pre-design quotation" })).not.toBeInTheDocument(); expect(view.decisions).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: "Approve quotation" })).not.toBeInTheDocument(); expect(view.decisions).toHaveLength(1);
     view.state.estimate.publishedReview!.canDecide = false;
     await user.click(screen.getByRole("button", { name: "Refresh estimate" }));
-    expect(screen.queryByRole("button", { name: "Approve pre-design quotation" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Approve quotation" })).not.toBeInTheDocument();
   });
 
   it.each([403, 500])("hides the submitted copy and decisions after review refresh fails with %s", async status => {
     const view = setup(), user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: "Review for pre-design approval" }));
+    await user.click(await screen.findByRole("button", { name: "Review quotation" }));
     expect(await screen.findByRole("article", { name: "Submitted cabinet in Kitchen" })).toBeVisible();
     view.state.queueError = status; await view.refreshReview();
     expect(await screen.findByRole("heading", { name: "Submitted estimate unavailable" })).toBeVisible();
     expect(screen.queryByRole("article", { name: "Submitted cabinet in Kitchen" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Approve pre-design quotation" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Approve quotation" })).not.toBeInTheDocument();
   });
 
   it("blocks duplicate/foreign project reviews and revision mismatches", async () => {
     const view = setup();
-    await screen.findByRole("button", { name: "Review for pre-design approval" });
+    await screen.findByRole("button", { name: "Review quotation" });
     await view.mismatchRevision();
-    await waitFor(() => expect(screen.queryByRole("button", { name: "Review for pre-design approval" })).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Review quotation" })).not.toBeInTheDocument());
     view.state.queue = [view.state.estimate, { ...view.state.estimate, id: "another-estimate" }]; await view.refreshReview();
     expect(await screen.findByText(/current estimate for this project could not be verified/)).toBeVisible();
-    expect(screen.queryByRole("button", { name: "View submitted version" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "View submitted version", hidden: true })).not.toBeInTheDocument();
     view.state.queue = [{ ...view.state.estimate, projectId: "project-other" }]; await view.refreshReview();
-    await waitFor(() => expect(screen.queryByRole("button", { name: "View submitted version" })).not.toBeInTheDocument()); expect(view.decisions).toEqual([]);
+    await waitFor(() => expect(screen.queryByRole("button", { name: "View submitted version", hidden: true })).not.toBeInTheDocument()); expect(view.decisions).toEqual([]);
   });
 
   it("blocks approval after PDF verification fails until refresh", async () => {
     const view = setup(), user = userEvent.setup(); view.state.pdfError = 409;
-    await user.click(await screen.findByRole("button", { name: "Review for pre-design approval" }));
-    await user.click(await screen.findByRole("button", { name: /Export submitted PDF/ }));
+    await user.click(await screen.findByRole("button", { name: "Review quotation" }));
+    await user.click(screen.getByText("Estimate options"));
+    await user.click(await screen.findByRole("button", { name: /Download PDF/ }));
     expect(await screen.findByText("Refresh the submitted version before making a decision.")).toBeVisible();
-    expect(screen.queryByRole("button", { name: "Approve pre-design quotation" })).not.toBeInTheDocument(); expect(view.decisions).toEqual([]);
+    expect(screen.queryByRole("button", { name: "Approve quotation" })).not.toBeInTheDocument(); expect(view.decisions).toEqual([]);
   });
 });
 

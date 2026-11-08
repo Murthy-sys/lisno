@@ -1,19 +1,24 @@
+import { EstimateSubBasketModes } from "../estimates/EstimateSubBasketModes";
+import type { EstimateTierComparisonInput } from "../estimates/estimateTierComparisonApi";
 import { EstimateComponentPricingStatus, EstimateSubBasketAmounts } from "./EstimateComponentBreakdown";
 import { EstimateDimensionsFields } from "./EstimateDimensionsFields";
-import { KNOWLEDGE_MODE_TIERS, KNOWLEDGE_MODE_TIER_LABELS } from "../../../../shared/knowledge/knowledgeModeTiers";
-import { useEffect, useMemo, useRef, useState, type ReactNode, type Dispatch, type SetStateAction } from "react";
+import { KNOWLEDGE_MODE_TIERS } from "../../../../shared/knowledge/knowledgeModeTiers";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type Dispatch, type SetStateAction } from "react";
 import { useConfiguredEstimateViewState, type ConfiguredEstimateViewState } from "./useConfiguredEstimateViewState";
 import type { LucideIcon } from "lucide-react";
 
+import { EstimatePricingModeControl } from "../estimates/EstimatePricingModeControl";
 import { EstimateItemPicker, EstimateSelectionPagination } from "../estimates/EstimateItemPicker";
+import type { EstimateRecommendationsPopup } from "../estimates/EstimateRecommendations";
 import type { EstimationCatalogue } from "./estimationCatalogueApi";
-import type { EstimateClassification } from "./leadsApi";
-import { configuredAttributedAmountPaise, configuredUsesComponentPricing, configuredDimensionsIssue, configuredLineAmountPaise, configuredLinePreviewAmountPaise, configuredModeBaseRate, configuredTierUnavailableReason, configuredQuantityUnits, estimatePricingModeLabels, parseSellingRate, type ConfiguredLineDraft } from "./configuredEstimate";
+import type { EstimateClassification, EstimatePricingMode } from "./leadsApi";
+import { configuredTierGroupKey, configuredLineInTierGroup, type ConfiguredTierGroupScope, type ConfiguredTierGroupChoice, configuredAttributedAmountPaise, configuredUsesComponentPricing, configuredDimensionsIssue, configuredInHouseSelectionIssue, configuredLineAmountPaise, configuredLinePreviewAmountPaise, configuredTierUnavailableReason, configuredQuantityUnits, parseSellingRate, type ConfiguredLineDraft } from "./configuredEstimate";
 import { EstimateInHouseComponents } from "./EstimateInHouseComponents";
 import { EstimatorRecommendations, type RecommendationReadState } from "./EstimatorRecommendations";
 import { recommendationTargetIdentity, type RoomRecommendationView, type RecommendedLineTarget } from "./roomRecommendations";
 import { EstimateBuilderShell, type EstimateShellBasket } from "../estimates/EstimateBuilderShell";
-import { EstimateLineActions, EstimateLineChoice, EstimateLineLayout, EstimateLineTierOptions } from "../estimates/EstimateLineRow";
+import { EstimateLineActions, EstimateLineChoice, EstimateLineLayout } from "../estimates/EstimateLineRow";
+import { buildSalesEstimateCatalogue } from "./salesEstimateCatalogue";
 
 interface Room {
   id: string;
@@ -26,10 +31,11 @@ const itemCount = (count: number) => `${count} ${count === 1 ? "item" : "items"}
 
 export function ConfiguredEstimateBuilder({
   rooms, activeRoomId, onSelectRoom, catalogue, selectedMainBasketIds, mainBasketClassifications, lines,
-  onUpdateLine, onRefreshAvailableItems, refreshingAvailableItems, availableItemsState = "ready", roomTotal, moneyPaise, editable,
+  onUpdateLine, onUpdateGroupTier, groupTierChoices, getTierComparison, onRefreshAvailableItems, refreshingAvailableItems, availableItemsState = "ready", roomTotal, moneyPaise, editable, pricingModeEditable = editable,
   recommendationSourceCount = 0, recommendationState = "ready", recommendationView = null,
   onRetryRecommendations = () => {}, onSelectRecommendedLine = () => false, onRemoveRecommendedLine = () => false, onAddLine, recommendationContextKey,
-  navigation, viewState, onViewStateChange, onRemoveSubBasket, excludedReviewKeys, reviewContextKey = "current"
+  navigation, viewState, onViewStateChange, onRemoveSubBasket, excludedReviewKeys, reviewContextKey = "current",
+  itemPresentation = "selected", onUpdateAvailableLine, recommendationPopup, browseMainBasketIds, onBrowseRecommendationBasket
 }: {
   rooms: readonly Room[];
   activeRoomId: string;
@@ -40,6 +46,11 @@ export function ConfiguredEstimateBuilder({
   lines: readonly ConfiguredLineDraft[];
   onRemoveSubBasket?: (scope: { roomId: string; mainBasketId: string; subBasketId: string }) => void;
   onUpdateLine: (key: string, change: Partial<ConfiguredLineDraft>) => void;
+  onUpdateGroupTier?: (scope: ConfiguredTierGroupScope, choice: ConfiguredTierGroupChoice) => void;
+  groupTierChoices?: Readonly<Record<string, ConfiguredTierGroupChoice>>;
+  getTierComparison?: (scope: ConfiguredTierGroupScope, lines: readonly ConfiguredLineDraft[]) => {
+    target: { kind: "lead" | "project"; id: string }; input: EstimateTierComparisonInput;
+  } | undefined;
   onRefreshAvailableItems: () => void;
   refreshingAvailableItems: boolean;
   availableItemsState?: "ready" | "loading" | "error" | "stale";
@@ -47,6 +58,7 @@ export function ConfiguredEstimateBuilder({
   roomIcons: Record<string, LucideIcon>;
   moneyPaise: (value: number) => string;
   editable: boolean;
+  pricingModeEditable?: boolean;
   recommendationSourceCount?: number;
   recommendationState?: RecommendationReadState;
   recommendationView?: RoomRecommendationView | null;
@@ -60,15 +72,85 @@ export function ConfiguredEstimateBuilder({
   onViewStateChange?: Dispatch<SetStateAction<ConfiguredEstimateViewState>>;
   excludedReviewKeys?: ReadonlySet<string>;
   reviewContextKey?: string;
+  itemPresentation?: "selected" | "catalogue";
+  browseMainBasketIds?: ReadonlySet<string>;
+  onBrowseRecommendationBasket?: (basketId: string) => boolean | void;
+  recommendationPopup?: Pick<EstimateRecommendationsPopup, "open" | "onOpenChange" | "footerRef">;
+  onUpdateAvailableLine?: (roomId: string, target: RecommendedLineTarget, change: Partial<ConfiguredLineDraft>) => void;
 }) {
   const { state, setState, search, setSearch, basketFilter, setBasketFilter,
     setCollapsedBasketIds, setCollapsedSubBasketIds } = useConfiguredEstimateViewState(viewState, onViewStateChange);
   const recommendationFallbackFocusRef = useRef<HTMLInputElement>(null);
+  const toolbarRef = useRef<HTMLDivElement>(null);
   const pickerTriggerRef = useRef<HTMLButtonElement>(null);
+  const nonPmcModes = useRef<{ context: string; modes: Map<string, "sub_vendor" | "in_house"> }>({
+    context: reviewContextKey, modes: new Map()
+  });
+  useLayoutEffect(() => {
+    nonPmcModes.current = { context: reviewContextKey, modes: new Map() };
+  }, [reviewContextKey]);
+  const getPmcToggleMode = (line: ConfiguredLineDraft): EstimatePricingMode => {
+    if (nonPmcModes.current.context !== reviewContextKey) {
+      nonPmcModes.current = { context: reviewContextKey, modes: new Map() };
+    }
+    const remembered = nonPmcModes.current.modes;
+    if (line.pricingMode === "pmc") return remembered.get(line.key) ?? "sub_vendor";
+    if (line.pricingMode === "sub_vendor" || line.pricingMode === "in_house") remembered.set(line.key, line.pricingMode);
+    else remembered.delete(line.key);
+    return "pmc";
+  };
   const selectedCount = lines.filter(line => line.included).length;
   const activeRoom = rooms.find(room => room.id === activeRoomId) ?? rooms[0];
   const roomLines = lines.filter(line => line.roomId === activeRoom?.id && line.included);
-  const visibleBaskets = catalogue.items.filter(basket => selectedMainBasketIds.has(basket.id));
+  const browseCatalogue = itemPresentation === "catalogue";
+  const browsableBaskets = browseMainBasketIds ?? selectedMainBasketIds;
+  const visibleBaskets = catalogue.items.filter(basket => selectedMainBasketIds.has(basket.id) &&
+    (browseCatalogue && browsableBaskets.has(basket.id) || roomLines.some(line =>
+      line.mainBasketId === basket.id && !line.sourceMissing)));
+  const catalogueRows = useMemo(() => browseCatalogue && activeRoom
+    ? buildSalesEstimateCatalogue({ catalogue, room: activeRoom, selectedMainBasketIds, browseMainBasketIds: browsableBaskets, lines }) : [],
+  [browseCatalogue, catalogue, activeRoom, selectedMainBasketIds, browsableBaskets, lines]);
+  const [retainedReview, setRetainedReview] = useState<{ context: string; keys: Set<string> }>(() => ({ context: reviewContextKey, keys: new Set() }));
+  useEffect(() => { setRetainedReview({ context: reviewContextKey, keys: new Set() }); }, [reviewContextKey]);
+  const inlineEditContext = JSON.stringify([reviewContextKey, activeRoom?.id, search, basketFilter]);
+  const [focusedInlineLine, setFocusedInlineLine] = useState<{ context: string; key: string } | null>(null);
+  const inlineReviewKey = browseCatalogue && focusedInlineLine?.context === inlineEditContext &&
+    catalogueRows.some(row => row.line.key === focusedInlineLine.key) ? focusedInlineLine.key : null;
+  const requiredReviewKeys = lines.filter(line => line.persistedId && !line.included && excludedReviewKeys?.has(line.key)).map(line => line.key);
+  const reviewKeys = new Set([...(retainedReview.context === reviewContextKey ? retainedReview.keys : []), ...requiredReviewKeys]);
+  const reviewLines = lines.filter(line => line.persistedId && !line.included && reviewKeys.has(line.key) && line.key !== inlineReviewKey);
+  const displayedReviewKeys = new Set(reviewLines.map(line => line.key));
+  const availableRoomLines = browseCatalogue ? catalogueRows.filter(row => !displayedReviewKeys.has(row.line.key)).map(row => row.line) : roomLines;
+  const [groupOffsets, setGroupOffsets] = useState<Record<string, number>>({});
+  const recommendationToReveal = useRef<{ roomId: string; target: RecommendedLineTarget } | null>(null);
+  const browseFocus = useRef<{ roomId: string; basketId: string; trigger: HTMLButtonElement; fallback: HTMLButtonElement | null } | null>(null);
+  useLayoutEffect(() => {
+    const pending = browseFocus.current;
+    if (!pending) return;
+    if (pending.roomId !== activeRoom?.id || !selectedMainBasketIds.has(pending.basketId) ||
+      document.activeElement !== pending.trigger && document.activeElement !== document.body) {
+      browseFocus.current = null;
+      return;
+    }
+    if (!browseCatalogue || !browsableBaskets.has(pending.basketId)) return;
+    browseFocus.current = null;
+    if (!pending.trigger.isConnected && pending.fallback?.isConnected && !pending.fallback.closest("[inert], [hidden]")) {
+      pending.fallback.focus({ preventScroll: true });
+    }
+  }, [activeRoom?.id, selectedMainBasketIds, browseCatalogue, browsableBaskets]);
+  useEffect(() => { setGroupOffsets({}); }, [activeRoom?.id, search, basketFilter, catalogue]);
+  useEffect(() => {
+    const pending = recommendationToReveal.current;
+    if (!pending) return;
+    if (pending.roomId !== activeRoom?.id) { recommendationToReveal.current = null; return; }
+    const target = pending.target;
+    const group = availableRoomLines.filter(line => line.mainBasketId === target.basketId && line.subBasketId === target.subBasketId);
+    const index = group.findIndex(line => line.mainLineId === target.mainLineId && line.included);
+    if (index < 0) return;
+    recommendationToReveal.current = null;
+    const key = `${target.basketId}:${target.subBasketId ?? "direct"}`;
+    setGroupOffsets(current => ({ ...current, [key]: Math.floor(index / 20) * 20 }));
+  }, [activeRoom?.id, availableRoomLines]);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerSearch, setPickerSearch] = useState("");
   const [pickerBasket, setPickerBasket] = useState("all");
@@ -77,7 +159,15 @@ export function ConfiguredEstimateBuilder({
   useEffect(() => {
     setPickerOpen(false); setPickerSearch(""); setPickerBasket("all"); setPickerSubBasket("all"); setPickerOffset(0);
   }, [activeRoom?.id]);
-  const pickerBaskets = useMemo(() => catalogue.items.filter(basket => selectedMainBasketIds.has(basket.id)), [catalogue, selectedMainBasketIds]);
+  const pickerBaskets = catalogue.items;
+  useEffect(() => {
+    const basket = pickerBaskets.find(item => item.id === pickerBasket);
+    if (pickerBasket !== "all" && !basket) {
+      setPickerBasket("all"); setPickerSubBasket("all"); setPickerOffset(0);
+    } else if (pickerSubBasket !== "all" && !basket?.subBaskets.some(item => item.id === pickerSubBasket)) {
+      setPickerSubBasket("all"); setPickerOffset(0);
+    }
+  }, [pickerBaskets, pickerBasket, pickerSubBasket]);
   const availableTargets = useMemo(() => pickerBaskets.flatMap(basket => [
     ...(basket.directTemporaryItems ?? []).map(item => ({ item, basket, subBasket: null })),
     ...basket.subBaskets.flatMap(subBasket => [...subBasket.mainLines, ...(subBasket.temporaryItems ?? [])].map(item => ({ item, basket, subBasket })))
@@ -117,24 +207,79 @@ export function ConfiguredEstimateBuilder({
   };
   const roomAmountLabel = (roomId: string) => lines.some(line => line.roomId === roomId && configuredLineAmountPaise(line) === null)
     ? "Incomplete" : moneyPaise(roomTotal(roomId));
+  const browseCountLabel = (groupLines: readonly ConfiguredLineDraft[]) => `${groupLines.filter(line => line.included).length} selected · ${groupLines.length} available`;
+  const pageGroup = (groupLines: readonly ConfiguredLineDraft[], key: string, label: string) => {
+    const filtered = groupLines.filter(matches);
+    const offset = Math.min(groupOffsets[key] ?? 0, Math.max(0, Math.ceil(filtered.length / 20) - 1) * 20);
+    return {
+      lines: (browseCatalogue ? filtered.slice(offset, offset + 20) : filtered).map(line => ({ id: line.key })),
+      afterLines: browseCatalogue && filtered.length > 20 ? <EstimateSelectionPagination total={filtered.length} offset={offset}
+        onChange={value => setGroupOffsets(current => ({ ...current, [key]: value }))} disabled={false} label={`${label} item pages`} /> : undefined
+    };
+  };
+  const groupTierControl = (mainBasketId: string, subBasketId: string | null, name: string) => {
+    if (!activeRoom) return undefined;
+    const scope = { roomId: activeRoom.id, mainBasketId, subBasketId };
+    // Use the full included group, independent of search, collapsed state, or pagination.
+    const included = lines.filter(line => configuredLineInTierGroup(line, scope));
+    if (!included.length) return undefined;
+    const selected = groupTierChoices?.[configuredTierGroupKey(scope)] ?? "mode";
+    const value = selected === "mode" || included.every(line => (line.modeTier ?? "signature") === selected) ? selected : "mode";
+    const options = KNOWLEDGE_MODE_TIERS.map(tier => {
+      const unavailable = included.find(line => line.sourceMissing || configuredTierUnavailableReason(line, tier,
+        line.pricingMode ?? ((line.classification ?? mainBasketClassifications?.get(line.mainBasketId) ?? "standard") === "standard" ? "sub_vendor" : undefined)));
+      return { tier, available: !unavailable, reason: unavailable ? `${unavailable.mainLineName}: ${unavailable.sourceMissing ? "Current Configuration unavailable" : configuredTierUnavailableReason(unavailable, tier,
+        unavailable.pricingMode ?? ((unavailable.classification ?? mainBasketClassifications?.get(unavailable.mainBasketId) ?? "standard") === "standard" ? "sub_vendor" : undefined))}` : null };
+    });
+    const comparison = getTierComparison?.(scope, included);
+    return <EstimateSubBasketModes label={`${name} in ${activeRoom.label}`} value={value} options={options}
+      disabled={refreshingAvailableItems || availableItemsState !== "ready" || !onUpdateGroupTier} readOnly={!editable}
+      onChange={choice => onUpdateGroupTier?.(scope, choice)} comparison={comparison}
+      detailsDisabledReason={!comparison ? "Refresh the estimate and complete quantities to compare current tier prices." : undefined} />;
+  };
   const catalogueGroups: EstimateShellBasket[] = (activeRoom ? visibleBaskets : [])
-    .filter(basket => roomLines.some(line => line.mainBasketId === basket.id && !line.sourceMissing))
+    .filter(basket => browseCatalogue || roomLines.some(line => line.mainBasketId === basket.id && !line.sourceMissing))
     .filter(basket => visibleBasketFilter === "all" || visibleBasketFilter === basket.id)
     .map(basket => {
-      const directLines = roomLines.filter(line => line.mainBasketId === basket.id && line.itemType === "temporary" && line.subBasketId === null && !line.sourceMissing);
+      const compact = browseCatalogue && !browsableBaskets.has(basket.id);
+      const directLines = availableRoomLines.filter(line => line.mainBasketId === basket.id && line.itemType === "temporary" && line.subBasketId === null && !line.sourceMissing);
+      const directPage = pageGroup(directLines, `${basket.id}:direct`, `Direct ${basket.name}`);
+      const basketLines = availableRoomLines.filter(line => line.mainBasketId === basket.id && !line.sourceMissing);
       const subBaskets = basket.subBaskets.map(subBasket => ({
         id: subBasket.id, name: subBasket.name,
-        lines: roomLines.filter(line => line.mainBasketId === basket.id && line.subBasketId === subBasket.id && !line.sourceMissing)
+        lines: availableRoomLines.filter(line => line.mainBasketId === basket.id && line.subBasketId === subBasket.id && !line.sourceMissing)
       }));
       return { id: basket.id, name: basket.name,
         count: directLines.length + subBaskets.reduce((sum, subBasket) => sum + subBasket.lines.length, 0),
+        countLabel: compact ? `${basketLines.length} selected` : browseCatalogue ? browseCountLabel(basketLines) : undefined,
+        beforeLines: compact ? <div className="configured-estimate-basket__empty">
+          <p>Showing selected items in this room.</p>
+          <button type="button" className="button button--secondary"
+            disabled={!editable || refreshingAvailableItems || availableItemsState !== "ready" || !onBrowseRecommendationBasket}
+            onBlur={event => { if (browseFocus.current?.trigger === event.currentTarget) browseFocus.current = null; }}
+            onClick={event => {
+              const trigger = event.currentTarget;
+              browseFocus.current = activeRoom && document.activeElement === trigger ? {
+                roomId: activeRoom.id, basketId: basket.id, trigger,
+                fallback: trigger.closest(".configured-estimate-basket")?.querySelector<HTMLButtonElement>(".configured-estimate-basket__toggle") ?? null
+              } : null;
+              if (onBrowseRecommendationBasket?.(basket.id) === false) browseFocus.current = null;
+            }}>Browse other items in {basket.name}</button>
+        </div> : undefined,
         subtotalLabel: attributedSubtotalLabel(basket.id),
         directSubtotalLabel: attributedSubtotalLabel(basket.id, null),
-        directLines: directLines.filter(matches).map(line => ({ id: line.key })),
-        subBaskets: subBaskets.filter(subBasket => subBasket.lines.length > 0)
+        directHeaderActions: groupTierControl(basket.id, null, `Direct items in ${basket.name}`),
+        directCountLabel: compact ? `${directLines.length} selected` : browseCatalogue ? browseCountLabel(directLines) : undefined,
+        directLines: directPage.lines,
+        afterDirectLines: directPage.afterLines,
+        subBaskets: subBaskets.filter(subBasket => browseCatalogue && !compact || subBasket.lines.length > 0)
           .map(subBasket => ({ id: subBasket.id, name: subBasket.name, count: subBasket.lines.length,
+            countLabel: compact ? `${subBasket.lines.length} selected` : browseCatalogue ? browseCountLabel(subBasket.lines) : undefined,
+            emptyMessage: browseCatalogue && reviewLines.some(line => line.roomId === activeRoom?.id && line.mainBasketId === basket.id && line.subBasketId === subBasket.id)
+              ? "Excluded items in this Sub Basket are shown above for review." : undefined,
             subtotalLabel: attributedSubtotalLabel(basket.id, subBasket.id),
-            lines: subBasket.lines.filter(matches).map(line => ({ id: line.key })),
+            headerActions: groupTierControl(basket.id, subBasket.id, `${basket.name}, ${subBasket.name}`),
+            ...pageGroup(subBasket.lines, `${basket.id}:${subBasket.id}`, `${basket.name}, ${subBasket.name}`),
             ...(onRemoveSubBasket && activeRoom ? { removal: {
               label: `Remove ${subBasket.name} Sub Basket from ${activeRoom.label}`,
               disabled: !editable || !lines.some(line => line.roomId === activeRoom.id && line.mainBasketId === basket.id && line.subBasketId === subBasket.id && line.included),
@@ -149,6 +294,7 @@ export function ConfiguredEstimateBuilder({
   const selectRecommendedLine = (target: RecommendedLineTarget) => {
     const accepted = onSelectRecommendedLine(target);
     if (accepted === false) return false;
+    if (activeRoom) recommendationToReveal.current = { roomId: activeRoom.id, target };
     setSearch(""); setBasketFilter("all");
     setCollapsedBasketIds(current => { const next = new Set(current); next.delete(target.basketId); return next; });
     if (target.subBasketId) setCollapsedSubBasketIds(current => {
@@ -157,37 +303,73 @@ export function ConfiguredEstimateBuilder({
     return accepted;
   };
   const byId = new Map(lines.map(line => [line.key, line]));
+  for (const row of catalogueRows) byId.set(row.line.key, row.line);
+  const previewById = new Map(catalogueRows.filter(row => row.isPreview).map(row => [row.line.key, row]));
   const updateVisibleLine = (key: string, change: Partial<ConfiguredLineDraft>) => {
+    const preview = previewById.get(key);
+    if (preview) {
+      if (editable && !refreshingAvailableItems && availableItemsState === "ready") onUpdateAvailableLine?.(preview.line.roomId, preview.target, change);
+      return;
+    }
+    if (browseCatalogue && change.included === true && (refreshingAvailableItems || availableItemsState !== "ready")) return;
     const focused = document.activeElement;
     onUpdateLine(key, change);
-    if (change.included === false && focused instanceof HTMLElement) window.requestAnimationFrame(() => {
+    if ((!browseCatalogue || !browsableBaskets.has(byId.get(key)?.mainBasketId ?? "")) && change.included === false && focused instanceof HTMLElement) window.requestAnimationFrame(() => {
       if (!focused.isConnected && document.activeElement === document.body) (pickerTriggerRef.current ?? recommendationFallbackFocusRef.current)?.focus();
     });
   };
   const renderLine = (id: string) => {
     const line = byId.get(id);
-    return line ? <ConfiguredLineRow line={line} inheritedClassification={mainBasketClassifications?.get(line.mainBasketId)} editable={editable} onUpdateLine={updateVisibleLine} moneyPaise={moneyPaise} /> : null;
+    if (!line) return null;
+    const rowEditable = editable && (!previewById.has(id) || Boolean(onUpdateAvailableLine)) &&
+      (!browseCatalogue || line.included || !refreshingAvailableItems && availableItemsState === "ready");
+    const row = <ConfiguredLineRow pricingModeEditable={pricingModeEditable} getPmcToggleMode={getPmcToggleMode} line={line} inheritedClassification={mainBasketClassifications?.get(line.mainBasketId)} editable={Boolean(rowEditable)} onUpdateLine={updateVisibleLine} moneyPaise={moneyPaise} />;
+    return browseCatalogue ? <div onFocusCapture={() => setFocusedInlineLine({ context: inlineEditContext, key: id })}
+      onBlurCapture={event => {
+        if (!event.currentTarget.contains(event.relatedTarget)) setFocusedInlineLine(current => current?.key === id ? null : current);
+      }}>{row}</div> : row;
   };
+  const recommendations = activeRoom ? <EstimatorRecommendations key={activeRoom.id}
+    roomName={activeRoom.label} sourceCount={activeRoom.id === activeRoomId ? recommendationSourceCount : 0}
+    state={recommendationState} view={recommendationView} editable={editable}
+    contextKey={recommendationContextKey ?? activeRoom.id}
+    selectionFeedback={browseCatalogue ? { contextKey: activeRoom.id } : undefined}
+    popup={recommendationPopup ? { ...recommendationPopup, toolbarRef, fallbackFocusRef: recommendationFallbackFocusRef } : undefined}
+    onRemove={onRemoveRecommendedLine}
+    onRetry={onRetryRecommendations} onRefresh={onRefreshAvailableItems} onSelect={selectRecommendedLine}
+  /> : null;
   return <EstimateBuilderShell selectedItemsOnly
     rooms={rooms.map(room => ({ id: room.id, label: room.label, detail: `${room.sqft} sqft · ${roomAmountLabel(room.id)}`,
       hasSelectedItems: lines.some(line => line.roomId === room.id && line.included) }))}
     activeRoomId={activeRoomId} onSelectRoom={onSelectRoom} selectedCount={selectedCount}
     baskets={visibleBaskets.map(basket => ({ id: basket.id, name: basket.name,
-      detail: `${itemCount(roomLines.filter(line => line.mainBasketId === basket.id && !line.sourceMissing).length)} · ${attributedSubtotalLabel(basket.id)}` }))}
+      detail: `${browseCatalogue ? `${roomLines.filter(line => line.mainBasketId === basket.id && !line.sourceMissing).length} selected` : itemCount(roomLines.filter(line => line.mainBasketId === basket.id && !line.sourceMissing).length)} · ${attributedSubtotalLabel(basket.id)}` }))}
     groups={catalogueGroups} renderLine={renderLine}
     viewState={state} onViewStateChange={setState}
     onRefresh={onRefreshAvailableItems} refreshing={refreshingAvailableItems}
     navigation={navigation} searchInputRef={recommendationFallbackFocusRef}
+    toolbarRef={toolbarRef} toolbarActions={recommendationPopup ? recommendations : undefined}
     extraJumpTargets={[
       ...(unselected.length ? [{ id: "unselected-items", label: "Unselected saved items" }] : []),
       ...(unavailableSaved.length ? [{ id: "saved-items", label: "Saved items" }] : []),
       ...(unavailableNew.length ? [{ id: "unavailable-selections", label: "Unavailable selections" }] : [])
     ]}
     beforeGroups={<>
-      <ExcludedEstimateReview lines={lines} blockingKeys={excludedReviewKeys} contextKey={reviewContextKey}
-        editable={editable} onUpdateLine={onUpdateLine} moneyPaise={moneyPaise}
-        onFinish={() => (pickerTriggerRef.current ?? recommendationFallbackFocusRef.current)?.focus()} />
-      {activeRoom && editable ? <EstimateItemPicker roomName={activeRoom.label} open={pickerOpen} onOpenChange={setPickerOpen} triggerRef={pickerTriggerRef}
+      <ExcludedEstimateReview pricingModeEditable={pricingModeEditable} getPmcToggleMode={getPmcToggleMode} lines={reviewLines} requiredCount={reviewLines.filter(line => excludedReviewKeys?.has(line.key)).length} contextKey={reviewContextKey}
+        editable={editable && (!browseCatalogue || !refreshingAvailableItems && availableItemsState === "ready")} onUpdateLine={(key, change) => {
+          setRetainedReview(current => {
+            const keys = new Set(current.context === reviewContextKey ? current.keys : []);
+            if (change.included === true) keys.delete(key); else keys.add(key);
+            return { context: reviewContextKey, keys };
+          });
+          onUpdateLine(key, change);
+        }} moneyPaise={moneyPaise}
+        onFinish={() => { setRetainedReview({ context: reviewContextKey, keys: new Set() }); (pickerTriggerRef.current ?? recommendationFallbackFocusRef.current)?.focus(); }} />
+      {browseCatalogue && !refreshingAvailableItems && availableItemsState !== "ready" ? <div role={availableItemsState === "loading" ? "status" : "alert"}>
+        <p>{availableItemsState === "loading" ? "Loading available items…" : availableItemsState === "error" ? "Available items could not be refreshed. Your selections are preserved." : "Available items are out of date. Refresh before selecting more items."}</p>
+        {availableItemsState !== "loading" ? <button type="button" className="button button--secondary" onClick={onRefreshAvailableItems}>Retry available items</button> : null}
+      </div> : null}
+      {!browseCatalogue && activeRoom && editable ? <EstimateItemPicker roomName={activeRoom.label} open={pickerOpen} onOpenChange={setPickerOpen} triggerRef={pickerTriggerRef}
         items={pickerResults.slice(pageOffset, pageOffset + 20).map(item => {
           const saved = lines.find(line => line.roomId === activeRoom.id && line.mainLineId === item.target.mainLineId);
           const incompatible = Boolean(saved && (saved.mainBasketId !== item.target.basketId || saved.subBasketId !== item.target.subBasketId));
@@ -200,17 +382,14 @@ export function ConfiguredEstimateBuilder({
         subBasketId={pickerSubBasket} onSubBasketChange={value => { setPickerSubBasket(value); setPickerOffset(0); }}
         state={refreshingAvailableItems ? "loading" : availableItemsState} disabled={!editable || refreshingAvailableItems}
         onRetry={onRefreshAvailableItems} onAdd={addItem} /> : null}
-      {activeRoom ? <EstimatorRecommendations
-        roomName={activeRoom.label} sourceCount={activeRoom.id === activeRoomId ? recommendationSourceCount : 0}
-        state={recommendationState} view={recommendationView} editable={editable}
-        contextKey={recommendationContextKey ?? activeRoom.id}
-        onRemove={onRemoveRecommendedLine}
-        onRetry={onRetryRecommendations} onRefresh={onRefreshAvailableItems} onSelect={selectRecommendedLine}
-      /> : null}
+      {recommendationPopup ? null : recommendations}
       <EstimateSubBasketAmounts lines={roomLines} />
     </>}
-    renderEmptyBasket={() => <div className="configured-estimate-basket__empty">
-      <p>No available items.</p>
+    renderEmptyBasket={basket => browseCatalogue && !browsableBaskets.has(basket.id)
+      ? <p className="configured-estimate-basket__empty">No items selected in this room.</p>
+      : <div className="configured-estimate-basket__empty">
+      <p>{browseCatalogue && reviewLines.some(line => line.roomId === activeRoom?.id && line.mainBasketId === basket.id)
+        ? "Excluded items in this Main Basket are shown above for review." : "No available items."}</p>
       <button type="button" className="button button--secondary" disabled={refreshingAvailableItems} onClick={onRefreshAvailableItems}>Refresh available items</button>
     </div>}
     afterGroups={<>
@@ -222,7 +401,7 @@ export function ConfiguredEstimateBuilder({
           <header><h2>Unselected saved items</h2><span>Recheck the Main Basket to edit or include these items.</span></header>
           {unselected.map((line) => <div className="configured-estimate-saved-line" key={line.key}>
             <p>{line.subBasketName ? `${line.mainBasketName} / ${line.subBasketName}` : line.mainBasketName}</p>
-            <ConfiguredLineRow line={line} editable={false} onUpdateLine={onUpdateLine} moneyPaise={moneyPaise} />
+            <ConfiguredLineRow pricingModeEditable={pricingModeEditable} getPmcToggleMode={getPmcToggleMode} line={line} editable={false} onUpdateLine={onUpdateLine} moneyPaise={moneyPaise} />
           </div>)}
         </section> : null}
         {unavailableSaved.length ? <section
@@ -233,7 +412,7 @@ export function ConfiguredEstimateBuilder({
           <header><h2>Saved items</h2><span>Unavailable in current Configuration</span></header>
           {unavailableSaved.map((line) => <div className="configured-estimate-saved-line" key={line.key}>
             <p>{line.subBasketName ? `${line.mainBasketName} / ${line.subBasketName}` : line.mainBasketName}</p>
-            <ConfiguredLineRow line={line} editable={editable} onUpdateLine={onUpdateLine} moneyPaise={moneyPaise} />
+            <ConfiguredLineRow pricingModeEditable={pricingModeEditable} getPmcToggleMode={getPmcToggleMode} line={line} editable={editable} onUpdateLine={onUpdateLine} moneyPaise={moneyPaise} />
           </div>)}
         </section> : null}
         {unavailableNew.length ? <section
@@ -244,60 +423,52 @@ export function ConfiguredEstimateBuilder({
           <header><h2>Unavailable selections</h2><span>Refresh available items or uncheck these new lines before saving.</span></header>
           {unavailableNew.map((line) => <div className="configured-estimate-saved-line" key={line.key}>
             <p>{line.subBasketName ? `${line.mainBasketName} / ${line.subBasketName}` : line.mainBasketName}</p>
-            <ConfiguredLineRow line={line} editable={editable} onUpdateLine={onUpdateLine} moneyPaise={moneyPaise} />
+            <ConfiguredLineRow pricingModeEditable={pricingModeEditable} getPmcToggleMode={getPmcToggleMode} line={line} editable={editable} onUpdateLine={onUpdateLine} moneyPaise={moneyPaise} />
           </div>)}
         </section> : null}
     </>}
     emptyMessage={!catalogueGroups.length && !unselected.length && !unavailableSaved.length && !unavailableNew.length
       ? !selectedMainBasketIds.size ? "Select a Main Basket to choose items."
         : !activeRoom ? "Select a room to see its available items."
-        : query ? `No selected items match “${search.trim()}”.` : "No items selected in this room. Use Add items to choose what is needed."
+        : query ? `No ${browseCatalogue ? "available" : "selected"} items match “${search.trim()}”.`
+        : browseCatalogue ? "No available items in the selected Main Baskets. Refresh available items to check again." : "No items selected in this room. Use Add items to choose what is needed."
       : undefined}
   />;
 }
 
 /** Keep only blocking excluded rows discoverable until a complete correction is entered. */
-function ExcludedEstimateReview({ lines, blockingKeys, contextKey, editable, onUpdateLine, moneyPaise, onFinish }: {
+function ExcludedEstimateReview({ lines, requiredCount, contextKey, editable, pricingModeEditable, onUpdateLine, moneyPaise, onFinish, getPmcToggleMode }: {
+  pricingModeEditable: boolean;
+  getPmcToggleMode: (line: ConfiguredLineDraft) => EstimatePricingMode;
   lines: readonly ConfiguredLineDraft[];
-  blockingKeys?: ReadonlySet<string>;
+  requiredCount: number;
   contextKey: string;
   editable: boolean;
   onUpdateLine: (key: string, change: Partial<ConfiguredLineDraft>) => void;
   moneyPaise: (value: number) => string;
   onFinish: () => void;
 }) {
-  const required = lines.filter(line => line.persistedId && !line.included && blockingKeys?.has(line.key)).map(line => line.key);
-  const [retained, setRetained] = useState<{ context: string; keys: Set<string> }>(() => ({ context: contextKey, keys: new Set() }));
   const [offset, setOffset] = useState(0);
-  useEffect(() => {
-    setRetained({ context: contextKey, keys: new Set() }); setOffset(0);
-  }, [contextKey]);
-  const keys = new Set([...(retained.context === contextKey ? retained.keys : []), ...required]);
-  const reviewLines = lines.filter(line => line.persistedId && !line.included && keys.has(line.key));
-  if (!reviewLines.length) return null;
-  const pageOffset = Math.min(offset, Math.max(0, Math.ceil(reviewLines.length / 20) - 1) * 20);
+  useEffect(() => { setOffset(0); }, [contextKey]);
+  if (!lines.length) return null;
+  const pageOffset = Math.min(offset, Math.max(0, Math.ceil(lines.length / 20) - 1) * 20);
   return <section className="estimate-selection" aria-label="Excluded items needing review">
-    <div className="estimate-selection__heading"><h2>Excluded items needing review</h2><span>{required.length} to review</span></div>
+    <div className="estimate-selection__heading"><h2>Excluded items needing review</h2><span>{requiredCount} to review</span></div>
     <p>These saved items stay excluded. Correct the highlighted values before saving.</p>
-    {reviewLines.slice(pageOffset, pageOffset + 20).map(line => <div key={line.key} className="configured-estimate-saved-line">
+    {lines.slice(pageOffset, pageOffset + 20).map(line => <div key={line.key} className="configured-estimate-saved-line">
       <p>{line.roomName} · {line.mainBasketName}{line.subBasketName ? ` / ${line.subBasketName}` : ""}</p>
       {line.sourceMissing ? <p role="status">This saved item is unavailable in current Configuration. Refresh available items or review its saved basket.</p> : null}
-      <ConfiguredLineRow line={line} editable={editable} onUpdateLine={(key, change) => {
-        setRetained(current => {
-          const keys = new Set(current.context === contextKey ? current.keys : []);
-          if (change.included === true) keys.delete(key); else keys.add(key);
-          return { context: contextKey, keys };
-        });
-        onUpdateLine(key, change);
-      }} moneyPaise={moneyPaise} />
+      <ConfiguredLineRow pricingModeEditable={pricingModeEditable} getPmcToggleMode={getPmcToggleMode} line={line} editable={editable} onUpdateLine={onUpdateLine} moneyPaise={moneyPaise} />
     </div>)}
-    <EstimateSelectionPagination total={reviewLines.length} offset={pageOffset} onChange={setOffset}
+    <EstimateSelectionPagination total={lines.length} offset={pageOffset} onChange={setOffset}
       disabled={false} label="Excluded review pages" />
-    <button type="button" disabled={required.length > 0} onClick={() => { setRetained({ context: contextKey, keys: new Set() }); setOffset(0); onFinish(); }}>Finish reviewing excluded items</button>
+    <button type="button" disabled={requiredCount > 0} onClick={() => { setOffset(0); onFinish(); }}>Finish reviewing excluded items</button>
   </section>;
 }
 
-function ConfiguredLineRow({ line, inheritedClassification = "standard", editable, onUpdateLine, moneyPaise }: {
+function ConfiguredLineRow({ line, inheritedClassification = "standard", editable, pricingModeEditable, onUpdateLine, moneyPaise, getPmcToggleMode }: {
+  pricingModeEditable: boolean;
+  getPmcToggleMode: (line: ConfiguredLineDraft) => EstimatePricingMode;
   line: ConfiguredLineDraft;
   inheritedClassification?: EstimateClassification;
   editable: boolean;
@@ -316,8 +487,8 @@ function ConfiguredLineRow({ line, inheritedClassification = "standard", editabl
   const sourceStatus = line.persistedId ? line.sourceItemStatus : line.itemStatus;
   const inputId = `rate-${encodeURIComponent(line.key)}`;
   const classification = line.classification ?? inheritedClassification;
+  const canEditMode = editable && pricingModeEditable && !line.sourceMissing;
   const referenceMode = line.pricingMode ?? (classification !== "special" ? "sub_vendor" : undefined);
-  const baseRate = referenceMode ? configuredModeBaseRate(line, referenceMode) : null;
   const step = 10 ** -line.uomDecimalScale;
   const changeQuantity = (direction: -1 | 1) => {
     const units = Math.round((Number.isFinite(line.quantity) ? line.quantity : 0) / step);
@@ -326,46 +497,41 @@ function ConfiguredLineRow({ line, inheritedClassification = "standard", editabl
   };
   return <EstimateLineLayout included={line.included}
     choice={<EstimateLineChoice name={line.mainLineName} unit={line.uomName} included={line.included} disabled={!editable}
-      onToggle={included => onUpdateLine(line.key, { included })}>
-      {line.estimateNotes?.map((note, index) => <small key={index}>{note}</small>)}
-      {sourceStatus === "draft" || sourceStatus === "inactive" ? <small className="configured-estimate-line__source">{sourceStatus === "draft" ? "Draft" : "Inactive"} source</small> : null}
-    </EstimateLineChoice>}
+      accessibleLabel={`Include ${line.mainLineName} in ${line.roomName}`}
+      onToggle={included => onUpdateLine(line.key, { included })} />}
+    type={line.included ? editable ? <fieldset className="estimate-classification configured-estimate-line__classification" aria-label={`Item type for ${label}`}>
+      <legend>Type</legend>
+      <div className="configured-estimate-line__choices">
+        {(["standard", "special"] as const).map((value) => <label key={value}><input type="radio" name={`line-classification-${line.key}`} value={value} checked={classification === value} disabled={!canEditMode && value === "standard" && classification === "special" && line.pricingMode !== "sub_vendor"} aria-label={`${value === "standard" ? "Standard" : "Special"} item type for ${label}`} onChange={() => onUpdateLine(line.key, { classification: value })} /><span>{value === "standard" ? "Standard" : "Special"}</span></label>)}
+      </div>
+    </fieldset> : <div className="configured-estimate-line__readonly"><span>Type</span><strong>{classification === "special" ? "Special" : "Standard"}</strong></div> : null}
+    pricing={line.included ? <EstimatePricingModeControl mode={line.pricingMode ?? (editable ? referenceMode : undefined)} label={label}
+      groupName={`line-pricing-mode-${line.key}`} editable={canEditMode && classification === "special"}
+      onTogglePmc={() => onUpdateLine(line.key, { pricingMode: getPmcToggleMode(line) })}
+      onChange={pricingMode => onUpdateLine(line.key, { pricingMode })} /> : null}
     fields={<>
-      {line.dimensionsMandatory ? <div className="configured-estimate-line__quantity configured-estimate-line__quantity--calculated"><span>Quantity ({line.uomName})</span><output aria-label={`Quantity (${line.uomName}) for ${label}`}>{Number.isFinite(line.quantity) && !configuredDimensionsIssue(line) ? line.quantity : "Pending"}</output></div> : <label className="configured-estimate-line__quantity"><span>Quantity ({line.uomName})</span><span className="configured-estimate-line__stepper"><button type="button" aria-label={`Decrease quantity for ${label}`} disabled={!editable || !Number.isFinite(line.quantity) || line.quantity <= (line.included ? step : 0)} onClick={() => changeQuantity(-1)}>−</button><input type="number" min={line.included ? step : 0} step={step} value={Number.isFinite(line.quantity) ? line.quantity : ""} disabled={!editable} aria-label={`Quantity (${line.uomName}) for ${label}`} aria-invalid={quantityInvalid || amountTooLarge} aria-describedby={amountTooLarge ? `${inputId}-amount-overflow` : undefined} onChange={(event) => onUpdateLine(line.key, { quantity: event.target.value === "" ? Number.NaN : Number(event.target.value) })} /><button type="button" aria-label={`Increase quantity for ${label}`} disabled={!editable} onClick={() => changeQuantity(1)}>+</button></span></label>}
-      <label className="configured-estimate-line__rate" htmlFor={inputId}><span aria-hidden="true">Price (₹/{line.uomName})</span><span className="sr-only">Selling rate (₹/{line.uomName}) for {label}</span><input id={inputId} type="text" inputMode="decimal" value={componentCalculated ? "" : line.rateInput} placeholder={componentCalculated ? "Manual override" : undefined} disabled={!editable} aria-label={`Selling rate (₹/${line.uomName}) for ${label}`} aria-invalid={rateInvalid || rateRequired || amountTooLarge} aria-describedby={amountTooLarge ? `${inputId}-amount-overflow` : rateInvalid || rateRequired ? `${inputId}-message` : undefined} onChange={(event) => onUpdateLine(line.key, { rateInput: event.target.value })} />{componentCalculated ? <small className="configured-estimate-line__component-rate">Calculated from components. Enter a rate to override.</small> : line.rateSource === "manual" ? <small className="configured-estimate-line__component-rate">Manual price</small> : null}</label>
-      <div className="configured-estimate-line__amount"><span>Amount{line.included ? "" : " · Not included"}</span><output aria-label={line.included ? `Amount for ${label}` : `Preview amount for ${label}, not included in totals`} aria-describedby={amountTooLarge ? `${inputId}-amount-overflow` : undefined}>{amountTooLarge ? "Too large" : amount === null ? "Pending" : moneyPaise(amount)}</output></div>
+      {line.dimensionsMandatory ? <div className="configured-estimate-line__quantity configured-estimate-line__quantity--calculated"><span>Qty ({line.uomName})</span><output aria-label={`Quantity (${line.uomName}) for ${label}`}>{Number.isFinite(line.quantity) && !configuredDimensionsIssue(line) ? line.quantity : "Pending"}</output></div> : <label className="configured-estimate-line__quantity"><span>Qty ({line.uomName})</span><span className="configured-estimate-line__stepper"><button type="button" aria-label={`Decrease quantity for ${label}`} disabled={!editable || !Number.isFinite(line.quantity) || line.quantity <= (line.included ? step : 0)} onClick={() => changeQuantity(-1)}>−</button><input type="number" min={line.included ? step : 0} step={step} value={Number.isFinite(line.quantity) ? line.quantity : ""} disabled={!editable} aria-label={`Quantity (${line.uomName}) for ${label}`} aria-invalid={quantityInvalid || amountTooLarge} aria-describedby={amountTooLarge ? `${inputId}-amount-overflow` : undefined} onChange={(event) => onUpdateLine(line.key, { quantity: event.target.value === "" ? Number.NaN : Number(event.target.value) })} /><button type="button" aria-label={`Increase quantity for ${label}`} disabled={!editable} onClick={() => changeQuantity(1)}>+</button></span></label>}
+      <label className="configured-estimate-line__rate" htmlFor={inputId}><span aria-hidden="true">Rate (₹/{line.uomName})</span><span className="sr-only">Selling rate (₹/{line.uomName}) for {label}</span><input id={inputId} type="text" inputMode="decimal" value={componentCalculated ? "" : line.rateInput} placeholder={componentCalculated ? "Override" : undefined} disabled={!editable} aria-label={`Selling rate (₹/${line.uomName}) for ${label}`} aria-invalid={rateInvalid || rateRequired || amountTooLarge} aria-describedby={amountTooLarge ? `${inputId}-amount-overflow` : rateInvalid || rateRequired ? `${inputId}-message` : undefined} onChange={(event) => onUpdateLine(line.key, { rateInput: event.target.value })} /></label>
+      <div className="configured-estimate-line__amount"><span className={line.included ? "sr-only" : undefined}>Amount{line.included ? "" : " · Not included"}</span><output aria-label={line.included ? `Amount for ${label}` : `Preview amount for ${label}, not included in totals`} aria-describedby={amountTooLarge ? `${inputId}-amount-overflow` : undefined}>{amountTooLarge ? "Too large" : amount === null ? "Pending" : moneyPaise(amount)}</output></div>
       <EstimateLineActions name={line.mainLineName} disabled={!editable} included={line.included}
         onToggle={() => onUpdateLine(line.key, { included: !line.included })}
         onResetQuantity={line.dimensionsMandatory ? undefined : () => onUpdateLine(line.key, { quantity: 1 })} />
     </>}>
+    {line.estimateNotes?.map((note, index) => <small key={index}>{note}</small>)}
+    {sourceStatus === "draft" || sourceStatus === "inactive" ? <small className="configured-estimate-line__source">{sourceStatus === "draft" ? "Draft" : "Inactive"} source</small> : null}
+    {componentCalculated ? <small className="configured-estimate-line__component-rate">Calculated rate · Enter a rate to override.</small> : line.rateSource === "manual" ? <small className="configured-estimate-line__component-rate">Manual price</small> : null}
     {line.dimensionsMandatory ? <EstimateDimensionsFields compact label={label} dimensions={line.dimensions} rule={line.dimensionRule} quantityUnit={line.uomName} disabled={!editable}
       needsReview={line.dimensionsNeedReview} onChange={dimensions => onUpdateLine(line.key, { dimensions })}
       onConfirm={() => onUpdateLine(line.key, { dimensionsNeedReview: false, uomNeedsQuantityReview: false, previousUomName: undefined })} /> : null}
-    {line.included ? <div className="configured-estimate-line__options">
-      {editable ? <EstimateLineTierOptions label={label} groupName={`line-tier-${line.key}`} value={line.modeTier ?? "signature"}
-        options={KNOWLEDGE_MODE_TIERS.map(modeTier => ({ value: modeTier, label: KNOWLEDGE_MODE_TIER_LABELS[modeTier],
-          disabledReason: configuredTierUnavailableReason(line, modeTier, referenceMode) }))}
-        onChange={modeTier => onUpdateLine(line.key, { modeTier })} /> : <p className="configured-estimate-line__classification-readonly">Configuration tier: <strong>{KNOWLEDGE_MODE_TIER_LABELS[line.modeTier ?? "signature"]}</strong></p>}
-      {editable ? <fieldset className="estimate-classification configured-estimate-line__classification" aria-label={`Item type for ${label}`}>
-        <legend>Item type</legend>
-        {(["standard", "special"] as const).map((value) => <label key={value}><input type="radio" name={`line-classification-${line.key}`} value={value} checked={classification === value} aria-label={`${value === "standard" ? "Standard" : "Special"} item type for ${label}`} onChange={() => onUpdateLine(line.key, { classification: value })} /><span>{value === "standard" ? "Standard" : "Special"}</span></label>)}
-      </fieldset> : <p className="configured-estimate-line__classification-readonly">Item type: <strong>{classification === "special" ? "Special" : "Standard"}</strong></p>}
-      <div className="configured-estimate-line__pricing">
-        {editable && classification === "special" ? <fieldset className="estimate-classification configured-estimate-line__modes" aria-label={`Pricing mode for ${label}`}>
-          <legend>Pricing mode</legend>
-          {(["pmc", "sub_vendor", "in_house"] as const).map((mode) => <label key={mode}><input type="radio" name={`line-pricing-mode-${line.key}`} value={mode} checked={line.pricingMode === mode} aria-label={`${estimatePricingModeLabels[mode]} pricing mode for ${label}`} onChange={() => onUpdateLine(line.key, { pricingMode: mode })} /><span>{estimatePricingModeLabels[mode]}</span></label>)}
-        </fieldset> : <p>Pricing mode: <strong>{line.pricingMode ? estimatePricingModeLabels[line.pricingMode] : editable && referenceMode ? "Sub-Vendor (current base reference)" : "Not recorded"}</strong></p>}
-        {editable ? <p className="configured-estimate-line__base" id={`${inputId}-base`}>
-          {!referenceMode ? "Choose pricing mode" : baseRate === null ? "Base price not configured" : `Base price: ${moneyPaise(baseRate)} / ${line.uomName}`}
-        </p> : null}
-      </div>
-      {editable && line.pricingMode === "in_house" && line.inHouseComponents !== undefined && line.rateSource === "manual" ? <button type="button" className="button button--secondary" onClick={() => onUpdateLine(line.key, { rateSource: "configuration" })}>Use component calculation for {line.mainLineName}</button> : null}
+    {line.included && line.pricingMode === "in_house" && line.inHouseComponents !== undefined ? <div className="configured-estimate-line__options">
+      {editable && line.rateSource === "manual" ? <button type="button" className="button button--secondary estimate-component-action" aria-label={`Use component calculation for ${line.mainLineName}`} onClick={() => onUpdateLine(line.key, { rateSource: "configuration" })}>Use calculated rate</button> : null}
       <EstimateInHouseComponents line={line} editable={editable} onChange={(selectedInHouseComponentIds) => onUpdateLine(line.key, { selectedInHouseComponentIds })} />
     </div> : null}
-    <EstimateComponentPricingStatus line={line} editable={editable} />
-    {rateRequired || rateInvalid ? <p id={`${inputId}-message`} className="configured-estimate-line__message">{rateRequired ? "Rate required" : "Enter a non-negative rate with up to two decimal places."}</p> : null}
-    {quantityInvalid && !line.dimensionsMandatory ? <p className="configured-estimate-line__message">Quantity must match {line.uomName} precision.</p> : null}
-    {amountTooLarge ? <p id={`${inputId}-amount-overflow`} className="configured-estimate-line__message">Amount too large for this quantity and price.</p> : null}
+    <EstimateComponentPricingStatus line={line} editable={editable}
+      displayedIssue={editable ? configuredInHouseSelectionIssue(line) : undefined} />
+    {rateRequired || rateInvalid ? <p id={`${inputId}-message`} className="configured-estimate-line__message error">{rateRequired ? "Rate required" : "Enter a non-negative rate with up to two decimal places."}</p> : null}
+    {quantityInvalid && !line.dimensionsMandatory ? <p className="configured-estimate-line__message error">Quantity must match {line.uomName} precision.</p> : null}
+    {amountTooLarge ? <p id={`${inputId}-amount-overflow`} className="configured-estimate-line__message error">Amount too large for this quantity and price.</p> : null}
     {line.uomNeedsQuantityReview && !line.sourceMissing && !line.dimensionsMandatory ? <p className="configured-estimate-line__message" role="alert">Unit changed{line.previousUomName ? ` from ${line.previousUomName}` : ""} to {line.uomName}. Re-enter the quantity for this unit.</p> : null}
   </EstimateLineLayout>;
 }

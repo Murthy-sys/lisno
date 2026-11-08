@@ -74,6 +74,19 @@ beforeEach(async () => {
 });
 
 describe("staff immutable estimate revision reads", () => {
+  it("returns immutable rounded totals and rejects corrupt adjustment evidence", async () => {
+    const saved = { ...snapshot(100.25), subtotal: 100.25, subtotalPaise: 10_025, gst: 18.05, gstPaise: 1_805,
+      total: 118, totalPaise: 11_800, roundOffPaise: -30 };
+    await round("round-rounded", 3, { estimateSnapshot: saved });
+    expect((await get("/round-rounded").expect(200)).body.data.snapshot).toMatchObject({
+      subtotal: 100.25, subtotalPaise: 10_025, gst: 18.05, gstPaise: 1_805,
+      total: 118, totalPaise: 11_800, roundOffPaise: -30, lineItems: [{ rate: 100.25, amount: 100.25 }]
+    });
+    await round("round-bad-rounding", 4, { estimateSnapshot: { ...saved, roundOffPaise: -29 } });
+    expect((await get("/round-bad-rounding").expect(409)).body.error.code).toBe("ESTIMATE_REVISION_UNAVAILABLE");
+    expect((await get("/round-a-1").expect(200)).body.data.snapshot).not.toHaveProperty("roundOffPaise");
+  });
+
   it("preserves frozen proposal terms and original PDF bytes without accepting corrupt metadata", async () => {
     const proposal = createEstimateProposal({ issuedAt: now, estimateId: "estimate-a", projectNumber: "Lisno000076" });
     await round("round-proposal", 3, { estimateSnapshot: { ...snapshot(100.25), proposal } });

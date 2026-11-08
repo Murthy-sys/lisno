@@ -1,24 +1,32 @@
 import { useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import type { KnowledgeModeTier } from "../../../../shared/knowledge/knowledgeModeTiers";
-import ceilingImage from "../../assets/project-card-default.jpg";
+import ceilingImage from "../../assets/main-baskets/pop-gypsum.webp";
 import interiorImage from "../../assets/projects-living-room.webp";
 import { EstimateBuilderGlyph } from "./EstimateBuilderShell";
 
 /** Shared presentation only; each role supplies its permitted controls and values. */
-export function EstimateLineLayout({ included, choice, fields, children, className = "", label }: {
+export function EstimateLineLayout({ included, choice, tier, type, pricing, fields, children, className = "", label }: {
   included: boolean;
   choice: ReactNode;
+  tier?: ReactNode;
+  type?: ReactNode;
+  pricing?: ReactNode;
   fields: ReactNode;
   children?: ReactNode;
   className?: string;
   label?: string;
 }) {
-  return <div className={`configured-estimate-line${included ? " configured-estimate-line--included" : ""}${className ? ` ${className}` : ""}`}
+  return <div className={`configured-estimate-line configured-estimate-line--reference${included ? " configured-estimate-line--included" : ""}${className ? ` ${className}` : ""}`}
     role={label ? "group" : undefined} aria-label={label}>
-    {choice}
-    <div className="configured-estimate-line__fields">{fields}</div>
-    {children}
+    <div className="configured-estimate-line__primary">
+      {choice}
+      {tier ? <div className="configured-estimate-line__group configured-estimate-line__tier-group">{tier}</div> : null}
+      {type ? <div className="configured-estimate-line__group configured-estimate-line__type-group">{type}</div> : null}
+      {pricing ? <div className="configured-estimate-line__group configured-estimate-line__pricing-group">{pricing}</div> : null}
+      <div className="configured-estimate-line__fields">{fields}</div>
+    </div>
+    <div className="configured-estimate-line__details">{children}</div>
   </div>;
 }
 
@@ -32,29 +40,45 @@ export function EstimateLineChoice({ name, unit, included, disabled, onToggle, a
   children?: ReactNode;
 }) {
   return <label className="configured-estimate-line__choice">
+    <input className="configured-estimate-line__include" type="checkbox" checked={included} disabled={disabled}
+      aria-label={accessibleLabel ?? `Include ${name}`} onChange={event => onToggle(event.target.checked)} />
     <span className="configured-estimate-line__thumb">
       <img src={/ceiling|cove|gypsum/i.test(name) ? ceilingImage : interiorImage} alt="" loading="lazy" />
-      <input type="checkbox" checked={included} disabled={disabled} aria-label={accessibleLabel} onChange={event => onToggle(event.target.checked)} />
     </span>
     <span className="configured-estimate-line__copy"><strong>{name}</strong><small>{unit}</small>{children}</span>
   </label>;
 }
 
-export function EstimateLineTierOptions({ label, groupName, value, options, disabled = false, onChange }: {
+export interface EstimateLineTierOption {
+  value: KnowledgeModeTier;
+  label: string;
+  disabledReason?: string | null;
+}
+
+export function EstimateLineTierNotes({ options, id }: { options: readonly EstimateLineTierOption[]; id: string }) {
+  const unavailable = options.filter(option => option.disabledReason);
+  return unavailable.length ? <p id={id} className="sr-only">
+    {unavailable.map(option => `${option.label}: ${option.disabledReason}`).join(" · ")}
+  </p> : null;
+}
+
+export function EstimateLineTierOptions({ label, groupName, value, options, disabled = false, availabilityId, onChange }: {
   label: string;
   groupName: string;
   value: KnowledgeModeTier;
-  options: ReadonlyArray<{ value: KnowledgeModeTier; label: string; disabledReason?: string | null }>;
+  options: readonly EstimateLineTierOption[];
   disabled?: boolean;
+  availabilityId?: string;
   onChange: (value: KnowledgeModeTier) => void;
 }) {
-  return <fieldset className="estimate-classification configured-estimate-line__tiers" aria-label={`Configuration tier for ${label}`} disabled={disabled}>
-    <legend>Configuration tier</legend>
-    {options.map(option => <label key={option.value} title={option.disabledReason ?? undefined}>
+  return <fieldset className="estimate-classification configured-estimate-line__tiers" aria-label={`Configuration tier for ${label}`}
+    aria-describedby={options.some(option => option.disabledReason) ? availabilityId : undefined} disabled={disabled}>
+    <legend>Tier</legend>
+    <div className="configured-estimate-line__choices">{options.map(option => <label key={option.value} title={option.disabledReason ?? undefined}>
       <input type="radio" name={groupName} checked={value === option.value} disabled={disabled || Boolean(option.disabledReason)}
         aria-label={`${option.label} tier for ${label}`} onChange={() => onChange(option.value)} />
-      <span>{option.label}{option.disabledReason ? ` · ${option.disabledReason}` : ""}</span>
-    </label>)}
+      <span>{option.label}</span>
+    </label>)}</div>
   </fieldset>;
 }
 

@@ -2,18 +2,21 @@ import type { ProjectPendingAction, ProjectStatusPerson, ProjectStatusSummary } 
 import type { ProjectCompletionSummary } from "./project-completion.js";
 import type { ChatEstimateSource, ChatWorkflowSource } from "../repositories/project-chat.js";
 import type { ProjectRecord } from "../repositories/types.js";
-import { emptyDesignWorkflowState, workflowDesignStartAt, workflowFurnitureRoomReady, workflowIsPaused, workflowStagePrerequisiteBlockers, workflowSubmissionBlockers, type DesignWorkflowState } from "./design-workflow-state.js";
+import { emptyDesignWorkflowState, workflowClientKickoffCompleted, workflowDesignStartAt, workflowFurnitureRoomReady, workflowIsPaused, workflowStageHistoricalPrerequisiteBlockers, workflowStagePrerequisiteBlockers, workflowSubmissionBlockers, type DesignWorkflowState } from "./design-workflow-state.js";
 import { createProjectDesignWorkflow, type DesignStageType } from "./design-workflow.js";
 import { projectWorkflowBlueprints } from "./project-workflow.js";
 import type { Role } from "./roles.js";
 import type { WorkflowSpacePlanningSource } from "./workflow-space-planning.js";
 import { effectiveCommercialStatus, isEstimationWorkflowVersion } from "./estimation-lifecycle.js";
 import type { QuotationApprovalResolution } from "../services/quotation-approval-state.service.js";
+import { secondaryMeasurementAssignmentReason, secondaryMeasurementDesignerIds, type SecondaryMeasurementDesigner } from "./measurement-ownership.js";
 
 /** Approval evidence and source selection are validated by the source reader, not status labels. */
 export interface ProjectStatusInput {
   project: Pick<ProjectRecord, "id" | "name" | "status" | "clientId" | "assignedEstimatorId" | "initiatingDesignerId" | "assignedDesignerIds" | "managerId" | "designWorkflowStages" | "completionAuthority" | "completionAuthorityVersion" | "completionDecisionId" | "estimationWorkflowVersion" | "primaryDesignerId" | "secondaryDesignerIds">;
   participants: readonly ProjectStatusPerson[];
+  /** Current eligible team from the project source, independent of chat membership mirrors. */
+  measurementOwners?: readonly SecondaryMeasurementDesigner[];
   estimate: ChatEstimateSource | null;
   salesOwnerIds: readonly string[];
   designAssignmentOwnerIds?: readonly string[];
@@ -67,8 +70,8 @@ export function deriveProjectStatus(input: ProjectStatusInput): ProjectStatusSum
   const salesIds = project.assignedEstimatorId ? [project.assignedEstimatorId] : salesCandidates.length === 1 ? salesCandidates : [];
   const designerIds = quotation ? [project.primaryDesignerId, ...(project.secondaryDesignerIds ?? [])] : [...project.assignedDesignerIds, project.initiatingDesignerId];
   const clientIds = [project.clientId];
-  const add = (key: string, source: string, action: string, role: Role, ids: readonly (string | null | undefined)[], extra: Partial<Pick<ProjectPendingAction, "state" | "scheduledAt" | "deadlineAt" | "blocker">> = {}, eligibleRoles: readonly Role[] = [role]) => {
-    const assigned = people(eligibleRoles, ids);
+  const add = (key: string, source: string, action: string, role: Role, ids: readonly (string | null | undefined)[], extra: Partial<Pick<ProjectPendingAction, "state" | "scheduledAt" | "deadlineAt" | "blocker">> = {}, eligibleRoles: readonly Role[] = [role], resolvedPeople?: readonly ProjectStatusPerson[]) => {
+    const assigned = resolvedPeople ? [...resolvedPeople] : people(eligibleRoles, ids);
     const item: ProjectPendingAction = {
       id: `${project.id}:${source}`, stageKey: key, stageLabel: stageLabel(key), action,
       state: assigned.length ? "pending" : "unassigned", responsibleRole: role, people: assigned,
@@ -199,7 +202,7 @@ export function deriveProjectStatus(input: ProjectStatusInput): ProjectStatusSum
   const furniture = workflow.stages.existing_furniture_dimensions ?? {};
   const planning = workflow.stages.space_planning_tentative_look_feel ?? {};
   for (const [key, stage] of Object.entries(workflow.stages)) {
-    if (stage?.completedAt && (!recordedDate(stage.completedAt) || Date.parse(stage.completedAt) > Date.parse(input.serverNow) || workflowStagePrerequisiteBlockers(workflow, key as DesignStageType).length)) return unavailable(key);
+    if (stage?.completedAt && (!recordedDate(stage.completedAt) || Date.parse(stage.completedAt) > Date.parse(input.serverNow) || workflowStageHistoricalPrerequisiteBlockers(workflow, key as DesignStageType, stage.completedAt).length)) return unavailable(key);
   }
   if (furniture.rooms && (input.issues?.furniture || furniture.scopeEstimateId && furniture.scopeEstimateId !== estimate.id || furniture.scopeEstimateVersion !== undefined && furniture.scopeEstimateVersion !== (lifecycle?.designScopeRevision ?? commercial.estimateVersion))) return unavailable("existing_furniture_dimensions");
   if (furniture.completedAt && (!furniture.acceptedAt || !furniture.rooms || furniture.scopeReturn || !furniture.noExistingFurniture && furniture.rooms.some(room => !workflowFurnitureRoomReady(furniture, room)))) return unavailable("existing_furniture_dimensions");
@@ -216,7 +219,7 @@ export function deriveProjectStatus(input: ProjectStatusInput): ProjectStatusSum
   let current: DesignStageType = "space_planning_tentative_look_feel";
   if (workflowEnabled) {
     if (!internal.completedAt) current = "internal_kickoff";
-    else if (!kickoff.completedAt) current = "client_kickoff";
+    else if (!workflowClientKickoffCompleted(workflow)) current = "client_kickoff";
     else if (!keys.completedAt || !keys.handedOverAt || !keys.receivedAt) current = "key_collection";
     else if (!measurement.completedAt) current = "site_measurement";
     else if (!furniture.completedAt) current = "existing_furniture_dimensions";
@@ -226,7 +229,7 @@ export function deriveProjectStatus(input: ProjectStatusInput): ProjectStatusSum
   if (current === "internal_kickoff") {
     add(current, "internal-kickoff:complete", "Complete Internal Kick off and submit the signed checklist.", "designer", designerIds);
   } else if (current === "client_kickoff") {
-    if (!kickoff.requestedAt) add(current, "client-kickoff:request", "Request Client Kick off or record that the meeting is not required.", "designer", designerIds);
+    if (!kickoff.requestedAt) add(current, "client-kickoff:request", "Request Client Kick off.", "designer", designerIds);
     else if (!kickoff.scheduledAt) add(current, "client-kickoff:schedule", "Choose a date for Client Kick off.", "client", clientIds);
     else {
       const scheduledAt = recordedDate(kickoff.scheduledAt);
@@ -239,7 +242,14 @@ export function deriveProjectStatus(input: ProjectStatusInput): ProjectStatusSum
     if (!keys.receivedAt) add(current, "keys:receipt", "Confirm receipt of the keys.", "designer", designerIds);
     if (keys.handedOverAt && keys.receivedAt && !keys.completedAt) return unavailable(current);
   } else if (current === "site_measurement" && !isPaused) {
-    if (!measurement.assignedDesignerId) add(current, "measurement:assign", "Assign a project Designer to complete the site measurement.", "designer", designerIds);
+    if (project.estimationWorkflowVersion === 3) {
+      const ids = new Set(secondaryMeasurementDesignerIds(project));
+      const owners = (input.measurementOwners ?? input.participants).filter(person => ids.has(person.id) && person.role === "designer")
+        .filter((person, index, all) => all.findIndex(candidate => candidate.id === person.id) === index)
+        .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
+      if (owners.length) add(current, "measurement:complete", "Complete the site measurement and upload the site photos or videos.", "designer", [], {}, ["designer"], owners);
+      else add(current, "measurement:assign-secondary", secondaryMeasurementAssignmentReason(project), "designer", [project.primaryDesignerId], { blocker: secondaryMeasurementAssignmentReason(project) });
+    } else if (!measurement.assignedDesignerId) add(current, "measurement:assign", "Assign a project Designer to complete the site measurement.", "designer", designerIds);
     else add(current, "measurement:complete", "Complete the site measurement and upload the site photos or videos.", "designer", project.assignedDesignerIds.includes(measurement.assignedDesignerId) ? [measurement.assignedDesignerId] : []);
   } else if (current === "existing_furniture_dimensions") {
     if (input.issues?.furniture) return unavailable(current);

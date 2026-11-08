@@ -1,3 +1,5 @@
+import { estimateTotalsReconcile } from "./estimate-total-rounding.js";
+
 export const PROJECT_FINANCE_CURRENCY = "INR" as const;
 
 export const PROJECT_FINANCE_TARGET_MARGIN_BPS = 2_000 as const;
@@ -64,12 +66,14 @@ export interface ApprovedEstimateMoney {
   subtotalPaise?: number;
   gstPaise?: number;
   totalPaise?: number;
+  roundOffPaise?: number;
 }
 
 export interface ProjectFinanceBaseline {
   approvedSubtotalPaise: number;
   approvedGstPaise: number;
   approvedContractTotalPaise: number;
+  approvedRoundOffPaise?: number;
   targetMarginBps: typeof PROJECT_FINANCE_TARGET_MARGIN_BPS;
   targetProfitPaise: number;
   costBudgetPaise: number;
@@ -117,10 +121,12 @@ export function projectFinanceBaseline(
     approved.gstRupees !== approvedGstPaise / 100 ||
     approved.totalRupees !== approvedContractTotalPaise / 100
   )) throw new TypeError("Approved Estimate rupee and paise fields disagree.");
-  if (
-    approvedSubtotalPaise + approvedGstPaise !==
-    approvedContractTotalPaise
-  ) {
+  if (!estimateTotalsReconcile({
+    subtotalPaise: approvedSubtotalPaise,
+    gstPaise: approvedGstPaise,
+    totalPaise: approvedContractTotalPaise,
+    roundOffPaise: approved.roundOffPaise
+  })) {
     throw new TypeError("Approved Estimate subtotal and GST must equal its total.");
   }
   const targetProfitPaise = multiplyByBasisPoints(
@@ -131,6 +137,7 @@ export function projectFinanceBaseline(
     approvedSubtotalPaise,
     approvedGstPaise,
     approvedContractTotalPaise,
+    ...(approved.roundOffPaise === undefined ? {} : { approvedRoundOffPaise: approved.roundOffPaise }),
     targetMarginBps: PROJECT_FINANCE_TARGET_MARGIN_BPS,
     targetProfitPaise,
     costBudgetPaise: approvedSubtotalPaise - targetProfitPaise

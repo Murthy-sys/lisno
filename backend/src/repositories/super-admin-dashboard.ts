@@ -1,3 +1,4 @@
+import { effectiveFinanceBaselineExpression, financeRoundOffMatchesExpression, financeTotalsReconcileExpression } from "../domain/project-finance-rounding-expression.js";
 import type {
   DashboardClientMetrics,
   DashboardComparison,
@@ -109,7 +110,7 @@ function approvedEstimateRoundExpression(path: string): Record<string, unknown> 
 
 // Keep the original pre-estimate fields immutable; project the approved revision for current reporting.
 const effectiveFinanceBaselineStage: PipelineStage.ReplaceRoot = {
-  $replaceRoot: { newRoot: { $mergeObjects: ["$$ROOT", { $ifNull: ["$effectiveBaseline", {}] }] } }
+  $replaceRoot: { newRoot: effectiveFinanceBaselineExpression("$$ROOT", "$effectiveBaseline") }
 };
 
 export function memorySuperAdminDashboardOverview(
@@ -146,7 +147,8 @@ export function memorySuperAdminDashboardOverview(
           totalRupees: estimate.approvedBaseline.total,
           ...(estimate.approvedBaseline.subtotalPaise === undefined ? {} : { subtotalPaise: estimate.approvedBaseline.subtotalPaise }),
           ...(estimate.approvedBaseline.gstPaise === undefined ? {} : { gstPaise: estimate.approvedBaseline.gstPaise }),
-          ...(estimate.approvedBaseline.totalPaise === undefined ? {} : { totalPaise: estimate.approvedBaseline.totalPaise })
+          ...(estimate.approvedBaseline.totalPaise === undefined ? {} : { totalPaise: estimate.approvedBaseline.totalPaise }),
+          ...(estimate.approvedBaseline.roundOffPaise === undefined ? {} : { roundOffPaise: estimate.approvedBaseline.roundOffPaise })
         })]
       : []
   );
@@ -154,6 +156,9 @@ export function memorySuperAdminDashboardOverview(
     (summary, baseline) => {
       summary.projectCount += 1;
       summary.approvedContractTotalPaise += baseline.approvedContractTotalPaise;
+      if (baseline.approvedRoundOffPaise !== undefined) {
+        summary.approvedRoundOffPaise = (summary.approvedRoundOffPaise ?? 0) + baseline.approvedRoundOffPaise;
+      }
       summary.approvedGstPaise += baseline.approvedGstPaise;
       summary.approvedSubtotalPaise += baseline.approvedSubtotalPaise;
       summary.targetProfitPaise += baseline.targetProfitPaise;
@@ -5280,7 +5285,7 @@ function mongoProjectDerivedFilterStages(
               _id: 1, projectId: 1, estimateId: 1, estimateVersion: 1,
               estimateReviewRoundId: 1, designPlanVersion: 1, currency: 1,
               approvedSubtotalPaise: 1, approvedGstPaise: 1,
-              approvedContractTotalPaise: 1, targetMarginBps: 1,
+              approvedContractTotalPaise: 1, approvedRoundOffPaise: 1, targetMarginBps: 1,
               targetProfitPaise: 1, costBudgetPaise: 1,
               directSpendPaise: 1, overheadPaise: 1, status: 1
             }
@@ -5457,7 +5462,7 @@ function mongoProjectDerivedFilterStages(
             { $lte: ["$_dashboardApprovedContractTotalPaise", MAX_FINANCE_AMOUNT_PAISE] },
             { $eq: ["$_dashboardApprovedSubtotalPaise", { $trunc: "$_dashboardApprovedSubtotalPaise" }] },
             { $eq: ["$_dashboardApprovedGstPaise", { $trunc: "$_dashboardApprovedGstPaise" }] },
-            { $eq: [{ $add: ["$_dashboardApprovedSubtotalPaise", "$_dashboardApprovedGstPaise"] }, "$_dashboardApprovedContractTotalPaise"] }
+            financeTotalsReconcileExpression("$_dashboardApprovedSubtotalPaise", "$_dashboardApprovedGstPaise", "$_dashboardApprovedContractTotalPaise", "$_dashboardFinanceSnapshot.roundOffPaise")
           ]
         },
         _dashboardFinanceTargetProfitPaise: {
@@ -5523,6 +5528,7 @@ function mongoProjectDerivedFilterStages(
                     { $eq: ["$_dashboardFinanceBucket.approvedSubtotalPaise", "$_dashboardApprovedSubtotalPaise"] },
                     { $eq: ["$_dashboardFinanceBucket.approvedGstPaise", "$_dashboardApprovedGstPaise"] },
                     { $eq: ["$_dashboardFinanceBucket.approvedContractTotalPaise", "$_dashboardApprovedContractTotalPaise"] },
+                    financeRoundOffMatchesExpression("$_dashboardFinanceBucket.approvedRoundOffPaise", "$_dashboardFinanceSnapshot.roundOffPaise"),
                     { $eq: ["$_dashboardFinanceBucket.currency", "INR"] },
                     { $eq: ["$_dashboardFinanceBucket.targetMarginBps", PROJECT_FINANCE_TARGET_MARGIN_BPS] },
                     { $eq: ["$_dashboardFinanceBucket.targetProfitPaise", "$_dashboardFinanceTargetProfitPaise"] },

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { quotationCandidateRows } from "./clientQuotationCandidates";
+import { quotationCandidateHasAvailableChoice, quotationCandidateRows } from "./clientQuotationCandidates";
 import type { QuotationCandidate, QuotationLine } from "./quotationApi";
 
 const source = { revisionId: "revision-one", itemVersion: 2, revisionVersion: 3, uomId: "unit-one" };
@@ -28,5 +28,16 @@ describe("Client builder candidate projection", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]!.id).toBe(first!.id);
     expect(quotationCandidateRows([candidate], { id: "bedroom-two", name: "Bedroom 2" }, [])[0]!.id).not.toBe(first!.id);
+  });
+
+  it("preserves safe mode options and permits explicit mode selection only with capability and Special eligibility", () => {
+    const option = { modeTier: "signature" as const, available: true, unavailableReason: null, ratePaise: 250, amountPaise: 250, source };
+    const special: QuotationCandidate = { ...candidate, classification: "special", pricingModeChoices: [{ pricingMode: "pmc", choices: [option] }] };
+    const [row] = quotationCandidateRows([special], kitchen, []);
+    expect(row).toMatchObject({ classification: "special", pricingMode: "sub_vendor", pricingModeChoices: special.pricingModeChoices });
+    expect(quotationCandidateHasAvailableChoice(special, true)).toBe(true);
+    expect(quotationCandidateHasAvailableChoice(special, false)).toBe(false);
+    expect(quotationCandidateHasAvailableChoice({ ...special, classification: "standard" }, true)).toBe(false);
+    expect(quotationCandidateHasAvailableChoice({ ...special, classification: undefined }, true)).toBe(false);
   });
 });

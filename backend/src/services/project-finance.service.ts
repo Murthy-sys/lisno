@@ -94,6 +94,7 @@ export interface ProjectFinanceBucketDto {
   approvedSubtotalPaise: number;
   approvedGstPaise: number;
   approvedContractTotalPaise: number;
+  approvedRoundOffPaise?: number;
   targetMarginBps: typeof PROJECT_FINANCE_TARGET_MARGIN_BPS;
   targetProfitPaise: number;
   costBudgetPaise: number;
@@ -221,6 +222,7 @@ export interface PostFinanceEntryResult {
 export interface ProjectFinancePortfolioSummary {
   projectCount: number;
   approvedContractTotalPaise: number;
+  approvedRoundOffPaise?: number;
   approvedGstPaise: number;
   approvedSubtotalPaise: number;
   targetProfitPaise: number;
@@ -491,6 +493,7 @@ export interface EnsurePendingFinanceBucketInput {
   approvedSubtotalPaise?: number;
   approvedGstPaise?: number;
   approvedContractTotalPaise?: number;
+  approvedRoundOffPaise?: number;
   createdById: string;
   occurredAt: Date;
 }
@@ -510,6 +513,7 @@ export interface OpenFinanceBucketInput {
     approvedSubtotalPaise?: number;
     approvedGstPaise?: number;
     approvedContractTotalPaise?: number;
+    approvedRoundOffPaise?: number;
   };
 }
 
@@ -949,7 +953,8 @@ export async function ensurePendingProjectFinanceBucket(
     totalRupees: input.approvedContractTotalRupees,
     subtotalPaise: input.approvedSubtotalPaise,
     gstPaise: input.approvedGstPaise,
-    totalPaise: input.approvedContractTotalPaise
+    totalPaise: input.approvedContractTotalPaise,
+    roundOffPaise: input.approvedRoundOffPaise
   });
   const candidate = {
     ...([2, 3].includes(input.workflowVersion ?? 0) ? { estimationWorkflowVersion: input.workflowVersion } : {}),
@@ -992,8 +997,10 @@ export async function ensurePendingProjectFinanceBucket(
 
 /** Original approved fields remain immutable; this projection selects the final revision. */
 export function effectiveProjectFinanceBucket(bucket: Row): Row {
-  return bucket.effectiveBaseline ? { ...bucket, ...bucket.effectiveBaseline,
-    originalApprovedContractTotalPaise: bucket.originalApprovedContractTotalPaise ?? bucket.approvedContractTotalPaise } : bucket;
+  if (!bucket.effectiveBaseline) return bucket;
+  const { approvedRoundOffPaise: _originalRoundOff, ...original } = bucket;
+  return { ...original, ...bucket.effectiveBaseline,
+    originalApprovedContractTotalPaise: bucket.originalApprovedContractTotalPaise ?? bucket.approvedContractTotalPaise };
 }
 
 async function storeFinanceBaselineRevision(source: Row, session: ClientSession): Promise<Row> {
@@ -1280,6 +1287,7 @@ async function approvedFinanceEstimates(
       subtotalPaise: 1,
       gstPaise: 1,
       totalPaise: 1,
+      roundOffPaise: 1,
       designPlanStatus: 1,
       designPlanVersion: 1,
       designPlanApprovedAt: 1,
@@ -1650,7 +1658,8 @@ function approvedMoneyBaseline(value: Row): ReturnType<typeof projectFinanceBase
       totalRupees: Number(source.total),
       subtotalPaise: source.subtotalPaise === undefined ? undefined : Number(source.subtotalPaise),
       gstPaise: source.gstPaise === undefined ? undefined : Number(source.gstPaise),
-      totalPaise: source.totalPaise === undefined ? undefined : Number(source.totalPaise)
+      totalPaise: source.totalPaise === undefined ? undefined : Number(source.totalPaise),
+      roundOffPaise: source.roundOffPaise
     });
   } catch {
     financeSourceConflict("The approved Estimate contains invalid financial values.");
@@ -1750,6 +1759,7 @@ function pendingBucketInput(estimate: Row): EnsurePendingFinanceBucketInput {
     approvedSubtotalPaise: approval.baseline.approvedSubtotalPaise,
     approvedGstPaise: approval.baseline.approvedGstPaise,
     approvedContractTotalPaise: approval.baseline.approvedContractTotalPaise,
+    ...(approval.baseline.approvedRoundOffPaise === undefined ? {} : { approvedRoundOffPaise: approval.baseline.approvedRoundOffPaise }),
     createdById: approval.createdById,
     occurredAt: approval.occurredAt
   };
@@ -1953,6 +1963,7 @@ function bucketDto(
     approvedSubtotalPaise: Number(bucket.approvedSubtotalPaise),
     approvedGstPaise: Number(bucket.approvedGstPaise),
     approvedContractTotalPaise: Number(bucket.approvedContractTotalPaise),
+    ...(bucket.approvedRoundOffPaise === undefined ? {} : { approvedRoundOffPaise: Number(bucket.approvedRoundOffPaise) }),
     targetMarginBps: PROJECT_FINANCE_TARGET_MARGIN_BPS,
     targetProfitPaise: Number(bucket.targetProfitPaise),
     costBudgetPaise: Number(bucket.costBudgetPaise),
@@ -2150,6 +2161,11 @@ function portfolioSummary(
     ] as const) {
       summary[key] = safePortfolioAdd(summary[key], item[key], key, true);
     }
+    if (item.approvedRoundOffPaise !== undefined) {
+      summary.approvedRoundOffPaise = safePortfolioAdd(
+        summary.approvedRoundOffPaise ?? 0, item.approvedRoundOffPaise, "approvedRoundOffPaise", true
+      );
+    }
     if (item.overBudget) summary.overBudgetProjectCount += 1;
     if (item.deadlineStatus === "overdue") {
       summary.overdueProjectCount += 1;
@@ -2322,11 +2338,14 @@ function requireMatchingBaseline(bucket: Row, expected: Row): void {
     "approvedSubtotalPaise",
     "approvedGstPaise",
     "approvedContractTotalPaise",
+    "approvedRoundOffPaise",
     "targetMarginBps",
     "targetProfitPaise",
     "costBudgetPaise"
   ] as const;
-  if (keys.some((key) => String(bucket[key] ?? "") !== String(expected[key] ?? ""))) {
+  if (keys.some((key) => key === "approvedRoundOffPaise"
+    ? bucket[key] !== expected[key]
+    : String(bucket[key] ?? "") !== String(expected[key] ?? ""))) {
     throw new ApiError(
       409,
       "FINANCE_BUCKET_SOURCE_CONFLICT",

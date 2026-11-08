@@ -1,9 +1,12 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import axe from "axe-core";
 import { describe, expect, it, vi } from "vitest";
-import { apiClient } from "../../api/client";
+import { ApiError, apiClient } from "../../api/client";
+import { projectStatusKeys } from "../project-status/projectStatusApi";
+import { projectWorkflowKeys } from "../workflow/projectWorkflowApi";
+import { designerKeys } from "./designerApi";
 import { DesignTeamPicker } from "./DesignTeamPicker";
 import { designTeamKeys, type DesignTeamDetail } from "./designTeamApi";
 
@@ -14,7 +17,59 @@ function setup(team = fixture()) {
   render(<QueryClientProvider client={client}><DesignTeamPicker projectId="project-a" /></QueryClientProvider>);
   return client;
 }
+
+function OwnerSnapshot({ label, queryKey, readOwner }: { label: string; queryKey: readonly string[]; readOwner: () => Promise<string> }) {
+  const owner = useQuery({ queryKey, queryFn: readOwner, staleTime: Infinity });
+  return <output aria-label={label}>{owner.data ?? "Loading"}</output>;
+}
+
 describe("Design team selection", () => {
+  it("refreshes saved measurement ownership in workflow, Project status and designer queries after one team save", async () => {
+    let saved = fixture();
+    const client = setup(saved);
+    vi.mocked(apiClient.get).mockImplementation(async <T,>() => saved as T);
+    const put = vi.spyOn(apiClient, "put").mockImplementation(async <T,>() => {
+      saved = { ...saved, version: 5, secondaries: [saved.candidates[0]!] };
+      return saved as T;
+    });
+    const readOwner = vi.fn(async () => saved.secondaries.map(member => member.name).join(", ") || "Assignment needed");
+    const consumers = [
+      { label: "Workflow owner", queryKey: projectWorkflowKeys.designWorkflow("project-a") },
+      { label: "Project status owner", queryKey: projectStatusKeys.detail("project-a", "primary:designer") },
+      { label: "Designer task owner", queryKey: projectWorkflowKeys.designerPlans },
+      { label: "Designer project owner", queryKey: designerKeys.project("project-a") }
+    ];
+    render(<QueryClientProvider client={client}>{consumers.map(consumer => <OwnerSnapshot key={consumer.label} {...consumer} readOwner={readOwner} />)}</QueryClientProvider>);
+    await waitFor(() => consumers.forEach(({ label }) => expect(screen.getByLabelText(label)).toHaveTextContent("Assignment needed")));
+    expect(screen.getByText(/Secondary Designers carry out onsite measurement/)).toBeVisible();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Secondary Designers" }));
+    await user.click(screen.getByRole("option", { name: "Designer A" }));
+    consumers.forEach(({ label }) => expect(screen.getByLabelText(label)).toHaveTextContent("Assignment needed"));
+    await user.click(screen.getByRole("button", { name: "Save team" }));
+    await waitFor(() => consumers.forEach(({ label }) => expect(screen.getByLabelText(label)).toHaveTextContent("Designer A")));
+    expect(screen.getByText("Secondary Designers: Designer A")).toBeVisible();
+    expect(put).toHaveBeenCalledExactlyOnceWith("/projects/project-a/secondary-designers", { expectedVersion: 4, designerIds: ["A"] });
+    expect(screen.queryByRole("button", { name: "Assign measurement team member" })).not.toBeInTheDocument();
+  });
+
+  it("keeps committed secondary ownership when saving a replacement team fails", async () => {
+    const team = fixture(); team.secondaries = [team.candidates[0]!];
+    setup(team);
+    const put = vi.spyOn(apiClient, "put").mockRejectedValue(new ApiError(503, "TEAM_UNAVAILABLE", "The team could not be saved. Try again."));
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Secondary Designers" }));
+    await user.click(screen.getByRole("option", { name: "Designer A" }));
+    await user.click(screen.getByRole("option", { name: "Designer B" }));
+    await user.click(screen.getByRole("button", { name: "Save team" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("The team could not be saved");
+    expect(screen.getByText("Secondary Designers: Designer A")).toBeVisible();
+    expect(screen.queryByText("Secondary Designers: Designer B")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Remove Designer B" })).toBeVisible();
+    expect(screen.queryByText("Design team saved.")).not.toBeInTheDocument();
+    expect(put).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps primary read-only, limits secondary selection to three and saves the scoped version", async () => {
     const team = fixture(); const put = vi.spyOn(apiClient, "put").mockResolvedValue(team); setup(team);
     const user = userEvent.setup(); await user.click(await screen.findByRole("button", { name: "Secondary Designers" }));

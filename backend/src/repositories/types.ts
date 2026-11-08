@@ -435,6 +435,7 @@ export interface EstimateSummaryRecord {
   subtotalPaise?: number;
   gstPaise?: number;
   totalPaise?: number;
+  roundOffPaise?: number;
   clientDecisionAt: string | null;
   clientDecisionSource: EstimateClientDecisionSource | null;
   approvedBaseline: AdminProjectApprovedEstimateBaseline | null;
@@ -457,6 +458,7 @@ export interface AdminProjectApprovedEstimateBaseline {
   subtotalPaise?: number;
   gstPaise?: number;
   totalPaise?: number;
+  roundOffPaise?: number;
   decisionAt: string | null;
   decisionSource: EstimateClientDecisionSource | null;
 }

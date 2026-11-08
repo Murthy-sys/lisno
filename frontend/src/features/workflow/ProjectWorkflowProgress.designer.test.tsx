@@ -64,6 +64,41 @@ function setup(workflow = fixture(), onOpenTask?: (taskId: string) => void) {
 }
 
 describe("Designer workflow stage panels", () => {
+  it.each(["primary", "secondary"])("shows the saved Secondary Designers and only the server-granted measurement action to the %s", actor => {
+    const data = fixture();
+    data.initialPayment!.workflowVersion = 3;
+    data.projectStages = [{
+      ...data.projectStages![0]!, id: "project-a:measurement", type: "site_measurement", name: "On Site Actual Measurement",
+      operational: operational({ workflowVersion: 3,
+        facts: [{ label: "Secondary Designers", value: "Avery Secondary Designer, Morgan Secondary Designer, Riley Secondary Designer" }],
+        availableActions: actor === "secondary" ? [{ id: "measurement_complete", label: "Complete measurement", actor: "designer", requiresProof: false }] : []
+      })
+    }];
+    setup(data);
+    const panel = screen.getByRole("region", { name: "On Site Actual Measurement details" });
+    expect(within(panel).getByText("Secondary Designers")).toBeVisible();
+    expect(within(panel).getByText("Avery Secondary Designer, Morgan Secondary Designer, Riley Secondary Designer")).toBeVisible();
+    expect(within(panel).queryByRole("button", { name: "Assign measurement team member" })).not.toBeInTheDocument();
+    expect(within(panel).queryByLabelText(/Measurement taker/)).not.toBeInTheDocument();
+    if (actor === "secondary") expect(within(panel).getByRole("button", { name: "Complete measurement" })).toBeEnabled();
+    else expect(within(panel).queryByRole("button", { name: "Complete measurement" })).not.toBeInTheDocument();
+  });
+
+  it.each([
+    "Assign a Secondary Designer in Design team to carry out onsite measurement.",
+    "Assign an active Secondary Designer in Design team to carry out onsite measurement."
+  ])("shows the server's missing measurement-team guidance: %s", blocker => {
+    const data = fixture();
+    data.initialPayment!.workflowVersion = 3;
+    data.projectStages = [{ ...data.projectStages![0]!, id: "project-a:measurement", type: "site_measurement", name: "On Site Actual Measurement",
+      operational: operational({ workflowVersion: 3, blockingReasons: [blocker], availableActions: [] }) }];
+    setup(data);
+    const panel = screen.getByRole("region", { name: "On Site Actual Measurement details" });
+    expect(within(panel).getByText(blocker)).toBeVisible();
+    expect(within(panel).queryByRole("button", { name: "Complete measurement" })).not.toBeInTheDocument();
+    expect(within(panel).queryByRole("button", { name: "Assign measurement team member" })).not.toBeInTheDocument();
+  });
+
   it.each([
     { filename: "signed-checklist.pdf", mimeType: "application/pdf" },
     { filename: "signed-checklist.png", mimeType: "image/png" }

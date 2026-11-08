@@ -27,6 +27,16 @@ const revision: EstimateRevisionDetail = {
 const props = { revision, view: "builder" as const, activeRoomId: null, onSelectRoom: vi.fn(), navigation: <nav aria-label="Test revisions">Current estimate</nav> };
 
 describe("EstimateRevisionView", () => {
+  it.each(["summary", "proposal"] as const)("shows the recorded rounding adjustment in %s without changing GST", view => {
+    const rounded = structuredClone(revision);
+    Object.assign(rounded.snapshot, { total: 324, totalPaise: 32400, roundOffPaise: -50 });
+    render(<EstimateRevisionView {...props} revision={rounded} view={view} />);
+    const totals = screen.getByLabelText("Saved revision totals");
+    expect(totals).toHaveTextContent("Subtotal before GST₹275.00");
+    expect(totals).toHaveTextContent("GST₹49.50");
+    expect(totals).toHaveTextContent("Round off−₹0.50");
+    expect(totals).toHaveTextContent("Total including GST₹324.00");
+  });
   it("renders only frozen values, including recorded amounts that differ from quantity times rate", () => {
     const { container } = render(<EstimateRevisionView {...props} />);
     const line = screen.getByRole("article", { name: "Archived ceiling" });

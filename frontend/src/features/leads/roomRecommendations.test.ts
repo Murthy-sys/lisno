@@ -51,7 +51,7 @@ describe("room recommendations", () => {
     const direct = buildRoomRecommendations({ catalogue, lines: sourceLines, roomId: "room-one", recommendations }).decisions[0]!;
     const optional: RecommendationDecision = { ...direct, requirement: "can", reasons: [direct.reasons[0]!] };
     const group: RecommendationDecision = {
-      ...direct, key: "sub-basket:basket-paint:sub-paint", kind: "sub_basket", target: null,
+      ...direct, key: "sub-basket:basket-paint:sub-paint", kind: "sub_basket", name: direct.subBasketName!, subBasketName: null, target: null,
       reasons: [direct.reasons[1]!], children: [
         { target: direct.target!, name: direct.name, selected: false, completionRequired: false },
         { target: { mainLineId: "line-accent", basketId: "basket-paint", subBasketId: "sub-paint" },
@@ -63,10 +63,12 @@ describe("room recommendations", () => {
       const lines = recommendationLines(decisions);
       expect(lines).toHaveLength(2);
       const shared = lines.find((line) => line.target.mainLineId === "line-paint")!;
-      expect(shared).toMatchObject({ key: recommendationTargetIdentity(direct.target!), requirement: "must", selected: false });
+      expect(shared).toMatchObject({ key: recommendationTargetIdentity(direct.target!), requirement: "must", selected: false,
+        basketName: direct.basketName, subBasketName: direct.subBasketName });
       expect(shared.reasons).toHaveLength(2);
       expect(new Set(shared.reasons.map((reason) => reason.sourceId))).toEqual(new Set(["line-pop", "line-functional"]));
-      expect(lines.find((line) => line.target.mainLineId === "line-accent")).toMatchObject({ selected: true, requirement: "must" });
+      expect(lines.find((line) => line.target.mainLineId === "line-accent")).toMatchObject({ selected: true, requirement: "must",
+        basketName: direct.basketName, subBasketName: direct.subBasketName });
     }
     expect([optional, group]).toEqual(before);
   });

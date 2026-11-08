@@ -24,7 +24,7 @@
 .procurement-basket :is(button,input,textarea,select,summary):focus-visible, .vendor-boq :is(button,input,textarea,select,summary):focus-visible { outline: 2px solid #315c47; outline-offset: 3px; }
 .procurement-basket :is(input,select,textarea), .vendor-boq :is(input,select,textarea) { min-width: 0; min-height: 38px; padding: 8px 10px; border: 1px solid var(--basket-border); border-radius: 3px; background: #fbfbf8; color: var(--basket-ink); font: inherit; font-size: 13px; }
 .procurement-basket textarea, .vendor-boq textarea { min-height: 78px; resize: vertical; }
-.procurement-basket input[type="checkbox"], .procurement-basket input[type="radio"] { min-height: 0; width: 16px; height: 16px; padding: 0; accent-color: var(--basket-forest); }
+.procurement-basket input[type="checkbox"], .procurement-basket input[type="radio"] { min-height: var(--form-choice-size); width: var(--form-choice-size); height: var(--form-choice-size); padding: 0; accent-color: var(--basket-forest); }
 .procurement-basket__breadcrumb { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; margin-bottom: 8px; color: var(--basket-muted); font-size: 12px; }
 .procurement-basket__breadcrumb button { padding: 3px 0; border: 0; background: none; color: #395844; text-align: left; }
 .procurement-basket__breadcrumb strong { color: var(--basket-ink); font-weight: 700; }

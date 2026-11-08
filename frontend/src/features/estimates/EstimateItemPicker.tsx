@@ -90,7 +90,7 @@ export function EstimateItemPicker({ roomName, open, onOpenChange, triggerRef, i
           placeholder="Find an item…" onChange={event => { onSearchChange(event.target.value); onOffsetChange(0); }} /></label>
         <label>Main Basket<select value={basketId} disabled={disabled} onChange={event => {
           onBasketChange(event.target.value); onSubBasketChange("all"); onOffsetChange(0);
-        }}><option value="all">All selected baskets</option>{baskets.map(basket => <option key={basket.id} value={basket.id}>{basket.name}</option>)}</select></label>
+        }}><option value="all">All Main Baskets</option>{baskets.map(basket => <option key={basket.id} value={basket.id}>{basket.name}</option>)}</select></label>
         <label>Sub Basket<select value={subBasketId} disabled={disabled || !subBaskets.length} onChange={event => {
           onSubBasketChange(event.target.value); onOffsetChange(0);
         }}><option value="all">All sub baskets</option>{subBaskets.map(basket => <option key={basket.id} value={basket.id}>{basket.name}</option>)}</select></label>
@@ -98,7 +98,7 @@ export function EstimateItemPicker({ roomName, open, onOpenChange, triggerRef, i
       {state === "loading" ? <p role="status">Loading available items…</p> : null}
       {state === "error" || state === "stale" ? <p role="alert">{message ?? (state === "stale" ? "Available items changed. Refresh before adding." : "Available items could not be loaded.")}{onRetry ? <> <button type="button" onClick={onRetry}>Retry items</button></> : null}</p> : null}
       {state === "ready" && message ? <p role="status">{message}</p> : null}
-      {state === "ready" && !page.length ? <p>No matching items. Adjust your search or selected baskets.</p> : null}
+      {state === "ready" && !page.length ? <p>No matching items. Adjust your search or basket filters.</p> : null}
       {page.length ? <ul ref={listRef} className="estimate-selection__list" aria-label="Available items" aria-busy={state === "loading"}>
         {page.map((item, index) => <li key={item.id}>
           <div className="estimate-selection__copy"><strong>{item.name}</strong>{item.context ? <span>{item.context}</span> : null}{item.message ? <small>{item.message}</small> : null}</div>

@@ -2,15 +2,18 @@ import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import axe from "axe-core";
 import { describe, expect, it, vi } from "vitest";
+import { Link, MemoryRouter, Route, Routes } from "react-router-dom";
 
 import { tokenStorage } from "../../api/client";
 import { authorizationFor } from "../../test/authFixtures";
-import { renderApp } from "../../test/render";
+import { renderApp, renderWithQuery } from "../../test/render";
+import { AuthProvider } from "../../auth/AuthProvider";
 import { estimateWorkflowKeys, type EstimateQueueItem } from "../estimates/estimateWorkflowApi";
 import { withPublishedReview, withQuotationApproval } from "../estimates/clientEstimateReviewTestUtils";
 import { projectWorkflowKeys } from "../workflow/projectWorkflowApi";
 import type { EstimateRequirementsDetail } from "./estimateRequirementsApi";
 import type { QuotationDetail } from "./quotationApi";
+import { ClientProject } from "./ClientProject";
 
 const client = { id: "client-1", name: "Review Client", email: "review@example.test", role: "client" as const };
 const project = { id: "project-villa", name: "Submitted Villa", clientId: client.id, status: "active", location: "Bengaluru", floors: [], progress: 0 };
@@ -25,14 +28,17 @@ function estimate(id = "estimate-villa", projectId: string | null = project.id):
   });
 }
 
-function installApi(rows: EstimateQueueItem[], options: { quotation?: QuotationDetail; requirements?: EstimateRequirementsDetail; decisionStatus?: number; getError?: () => number | undefined; pending?: Promise<Response>; decisionPending?: Promise<void> } = {}) {
+function installApi(rows: EstimateQueueItem[], options: { quotation?: QuotationDetail; requirements?: EstimateRequirementsDetail; projectPanels?: boolean; otherProject?: typeof project; decisionStatus?: number; getError?: () => number | undefined; pending?: Promise<Response>; decisionPending?: Promise<void> } = {}) {
   tokenStorage.set("client-token");
   const decisions: unknown[] = [];
   const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input);
     if (url.endsWith("/auth/me")) return Response.json({ data: client });
-    if (url.endsWith("/auth/authorization")) return Response.json({ data: authorizationFor("client") });
+    if (url.endsWith("/auth/authorization")) return Response.json({ data: options.projectPanels ? authorizationFor("client", [...authorizationFor("client").permissions, "projects.design_workflow.read", "pm.workspace.read"]) : authorizationFor("client") });
     if (url.endsWith(`/projects/${project.id}`)) return Response.json({ data: { ...project, ...(options.quotation ? { estimationWorkflowVersion: 3 } : options.requirements ? { estimationWorkflowVersion: 2 } : {}) } });
+    if (options.otherProject && url.endsWith(`/projects/${options.otherProject.id}`)) return Response.json({ data: { ...options.otherProject, estimationWorkflowVersion: 3 } });
+    if (options.otherProject && url.endsWith(`/projects/${options.otherProject.id}/quotation`)) return Response.json({ data: { ...notStartedQuotation(), projectId: options.otherProject.id } });
+    if (options.otherProject && url.endsWith(`/projects/${options.otherProject.id}/quotation/revision`)) return Response.json({ data: { estimateId: null, estimateVersion: null, pricedRevision: 0, status: "draft", phase: "pre" } });
     if (url.endsWith(`/projects/${project.id}/quotation`) && options.quotation) return Response.json({ data: options.quotation });
     if (url.endsWith(`/projects/${project.id}/quotation/revision`) && options.quotation) return Response.json({ data: { estimateId: options.quotation.estimateId, estimateVersion: options.quotation.estimateVersion, pricedRevision: options.quotation.pricedRevision, status: options.quotation.status, phase: options.quotation.phase } });
     if (url.endsWith(`/projects/${project.id}/estimate-requirements`) && options.requirements) return Response.json({ data: options.requirements });
@@ -49,7 +55,9 @@ function installApi(rows: EstimateQueueItem[], options: { quotation?: QuotationD
       rows[0] = { ...rows[0]!, status: body.decision === "approve" ? "client_approved" : "client_changes_requested", publishedReview: { ...rows[0]!.publishedReview!, version: 2, canDecide: false, status: body.decision === "approve" ? "approved" : "changes_requested", decisionNote: body.note } };
       return Response.json({ data: rows[0] });
     }
-    if (url.endsWith("/design-workflow")) return Response.json({ data: { projectId: project.id, projectName: project.name, estimateApprovalStatus: rows[0]?.status === "client_approved" ? "approved" : "awaiting_approval", serverNow: new Date().toISOString(), floors: [], projectStages: [] } });
+    if (url.endsWith("/design-workflow")) return Response.json({ data: { projectId: options.otherProject && url.includes(options.otherProject.id) ? options.otherProject.id : project.id, projectName: project.name, estimateApprovalStatus: rows[0]?.status === "client_approved" ? "approved" : "awaiting_approval", serverNow: new Date().toISOString(), floors: [], projectStages: [] } });
+    if (url.endsWith("/design-requirements")) return Response.json({ data: { version: 0, sourceToken: "no-selections", entries: [], blockers: [], canReadInternal: false } });
+    if (url.includes("/pm/client?")) return Response.json({ data: { tab: "client", availability: "no_data", calculatedAt: "2026-11-05T00:00:00Z", items: [], total: 0, issues: [], sources: [], people: [], actions: [] } });
     if (url.endsWith("/design-sections")) return Response.json({ data: { projectId: project.id, sections: [], progress: { total: 0, approved: 0, rejected: 0, awaitingReview: 0 } } });
     if (url.includes("/design-versions?") || url.includes("/client/project-summaries?")) return Response.json({ data: { items: [], pagination: { limit: 100, offset: 0, total: 0, hasMore: false } } });
     if (url.endsWith("/latest-approved-versions")) return Response.json({ data: [] });
@@ -58,6 +66,32 @@ function installApi(rows: EstimateQueueItem[], options: { quotation?: QuotationD
     throw new Error(`Unhandled request: ${url}`);
   });
   return { fetch, decisions };
+}
+
+function notStartedQuotation(): QuotationDetail {
+  return { projectId: project.id, estimateId: null, estimateVersion: null, workflowVersion: 3, pricedRevision: 0, phase: "pre", status: "draft", reviewState: "draft", editingAllowed: false, editingBlockReason: "not_started", totalPaise: null, isIncomplete: false, rooms: [], lines: [] };
+}
+
+function projectRequirements(): EstimateRequirementsDetail {
+  return { projectId: project.id, requirementsVersion: 0, estimateVersion: null, phase: "pre", editingAllowed: true, editingBlockReason: null, canResolve: false, requirements: [], mainBaskets: [{ id: "joinery", name: "Joinery" }], rooms: [], indicativeTotalPaise: null, pricingComplete: false };
+}
+
+function workingQuotation(): QuotationDetail {
+  const source = { revisionId: "revision-one", itemVersion: 2, revisionVersion: 3, uomId: "unit" };
+  return { ...notStartedQuotation(), estimateId: "estimate-villa", estimateVersion: 3, pricedRevision: 2,
+    status: "sent_to_client", reviewState: "ready_for_approval", editingAllowed: true, editingBlockReason: null, totalPaise: 88500,
+    rooms: [{ id: "living", name: "Living room" }], lines: [{ id: "storage", mainLineId: "storage", mainLineName: "Storage", roomId: "living", roomName: "Living room", included: true, source, quantity: 2, uomName: "Unit", pricingMode: "sub_vendor", modeTier: "signature", ratePaise: 40000, amountPaise: 75000, choices: [] }] };
+}
+
+function expectSubmittedSectionsHidden(fetch?: ReturnType<typeof installApi>["fetch"]) {
+  expect(screen.queryByText("Additional requirements")).not.toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "Your estimate requirements" })).not.toBeInTheDocument();
+  expect(screen.queryByText("Project coordination")).not.toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "Selections requiring your approval" })).not.toBeInTheDocument();
+  expect(screen.queryByText("No configured design requirements for the current estimate.")).not.toBeInTheDocument();
+  expect(screen.queryByText("Unsaved changes")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Add requirement" })).not.toBeInTheDocument();
+  if (fetch) expect(fetch.mock.calls.filter(([input]) => /\/(estimate-requirements|design-requirements|pm\/client)(\?|$)/.test(String(input)))).toHaveLength(0);
 }
 
 describe("Client project published estimate review", () => {
@@ -74,36 +108,172 @@ describe("Client project published estimate review", () => {
     expect(screen.queryByRole("link", { name: "Open estimation" })).not.toBeInTheDocument();
     expect(screen.queryByText("Indicative total")).not.toBeInTheDocument();
     expect(screen.queryByText(/No requirements yet/)).not.toBeInTheDocument();
-    const approve = await screen.findByRole("button", { name: "Review for pre-design approval" });
+    const approve = await screen.findByRole("button", { name: "Review quotation" });
     expect(approve).toBeEnabled();
     await user.clear(quantity); await user.type(quantity, "4");
-    expect(screen.queryByRole("button", { name: "Approve pre-design quotation" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Approve quotation" })).not.toBeInTheDocument();
     expect(screen.getByText(/Save or discard your quotation changes/)).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Discard changes" }));
-    expect(screen.getByRole("button", { name: "Review for pre-design approval" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Review quotation" })).toBeEnabled();
     expect(screen.queryByRole("region", { name: "Design review" })).not.toBeInTheDocument();
   });
-  it("keeps requirements available before the first v3 quotation exists", async () => {
-    const quotation: QuotationDetail = { projectId: project.id, estimateId: null, estimateVersion: null, workflowVersion: 3, pricedRevision: 0, phase: "pre", status: "draft", reviewState: "draft", editingAllowed: false, editingBlockReason: "not_started", totalPaise: null, isIncomplete: false, rooms: [], lines: [] };
-    installApi([], { quotation, requirements: { projectId: project.id, requirementsVersion: 0, estimateVersion: null, phase: "pre", editingAllowed: true, editingBlockReason: null, canResolve: false, requirements: [], mainBaskets: [{ id: "joinery", name: "Joinery" }], rooms: [], indicativeTotalPaise: null, pricingComplete: false } });
-    renderApp([`/client/projects/${project.id}`]);
+  it("omits the three sections and their reads before the first v3 quotation exists", async () => {
+    const { fetch } = installApi([], { quotation: notStartedQuotation(), requirements: projectRequirements(), projectPanels: true });
+    const view = renderApp([`/client/projects/${project.id}?pm=client`]);
     expect(await screen.findByText(/Your team has not prepared the quotation yet/)).toBeVisible();
-    const summary = await screen.findByText("Additional requirements");
-    expect(summary.closest("details")).toHaveAttribute("open");
-    await userEvent.click(screen.getByRole("button", { name: "Add requirement" }));
-    expect(screen.getByRole("form", { name: "Add estimate requirement" })).toBeVisible();
+    await waitFor(() => expect(view.queryClient.getQueryState(estimateWorkflowKeys.client)?.status).toBe("success"));
+    expectSubmittedSectionsHidden(fetch);
+    expect(screen.getByRole("link", { name: "Back to projects" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Refresh quotation" })).toBeEnabled();
+    expect((await axe.run(view.container, { rules: { "color-contrast": { enabled: false } } })).violations).toEqual([]);
   });
-  it("offers project requirements immediately after invited membership, before the first estimate exists", async () => {
-    installApi([], { requirements: {
-      projectId: project.id, requirementsVersion: 0, estimateVersion: null, phase: "pre", editingAllowed: true,
-      editingBlockReason: null, canResolve: false, requirements: [], mainBaskets: [{ id: "joinery", name: "Joinery" }],
-      rooms: [], indicativeTotalPaise: null, pricingComplete: false
-    } });
+  it("omits the three sections immediately after v2 invited membership", async () => {
+    const { fetch } = installApi([], { requirements: projectRequirements(), projectPanels: true });
     renderApp([`/client/projects/${project.id}`]);
-    await userEvent.click(await screen.findByRole("button", { name: "Add requirement" }));
-    expect(screen.getByRole("form", { name: "Add estimate requirement" })).toBeVisible();
-    expect(screen.getByText("Awaiting estimate")).toBeVisible();
     expect(await screen.findByText(/No submitted estimate is linked/)).toBeVisible();
+    expectSubmittedSectionsHidden(fetch);
+  });
+
+  it("keeps populated internal estimates and editable requirements from revealing the sections", async () => {
+    const quotation = { ...workingQuotation(), status: "draft" as const, reviewState: "draft" as const };
+    const unpublished = { ...estimate(), status: "draft" as const, publishedReview: null };
+    const { fetch, decisions } = installApi([unpublished], { quotation, requirements: projectRequirements(), projectPanels: true });
+    const view = renderApp([`/client/projects/${project.id}?pm=client`]);
+    expect(await screen.findByRole("spinbutton", { name: /Quantity for Storage/ })).toHaveValue(2);
+    await waitFor(() => expect(view.queryClient.getQueryState(estimateWorkflowKeys.client)?.status).toBe("success"));
+    expectSubmittedSectionsHidden(fetch);
+    expect(decisions).toEqual([]);
+  });
+
+  it.each(["approved", "changes_requested", "superseded"] as const)("retains sections for a valid %s published review", async status => {
+    const quotation = workingQuotation();
+    quotation.status = status === "approved" ? "client_approved" : status === "changes_requested" ? "client_changes_requested" : "draft";
+    quotation.reviewState = status === "approved" ? "approved" : "awaiting_staff_review";
+    const selected = withQuotationApproval(estimate(), quotation);
+    selected.status = quotation.status;
+    selected.publishedReview = { ...selected.publishedReview!, status, canDecide: false };
+    installApi([selected], { quotation, requirements: projectRequirements(), projectPanels: true });
+    renderApp([`/client/projects/${project.id}`]);
+    expect(await screen.findByText("Additional requirements")).toBeVisible();
+    expect(screen.getByText("Project coordination")).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Selections requiring your approval" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Review quotation" })).not.toBeInTheDocument();
+  });
+
+  it("restores all three sections after Sales submission through the existing quotation refresh", async () => {
+    const rows: EstimateQueueItem[] = [];
+    const options = { quotation: notStartedQuotation(), requirements: projectRequirements(), projectPanels: true };
+    const { fetch, decisions } = installApi(rows, options);
+    const view = renderApp([`/client/projects/${project.id}?pm=client`]);
+    await screen.findByText(/Your team has not prepared the quotation yet/);
+    expectSubmittedSectionsHidden(fetch);
+    const savedRequirements = structuredClone(options.requirements);
+    options.quotation = workingQuotation();
+    rows.push(withQuotationApproval(estimate(), options.quotation));
+    await userEvent.click(screen.getByRole("button", { name: "Refresh quotation" }));
+    expect(await screen.findByText("Additional requirements")).toBeVisible();
+    expect(screen.getByText("Project coordination")).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Selections requiring your approval" })).toBeVisible();
+    expect(await screen.findByRole("region", { name: "Client follow-up" })).toBeVisible();
+    expect(await screen.findByRole("spinbutton", { name: /Quantity for Storage/ })).toHaveValue(2);
+    expect(options.requirements).toEqual(savedRequirements);
+    expect(decisions).toEqual([]);
+    expect(fetch.mock.calls.filter(([input, init]) => /\/(estimate-requirements(?:\/[^/?]+)?|quotation|decision)(\?|$)/.test(String(input)) && init?.method && init.method !== "GET")).toHaveLength(0);
+    expect((await axe.run(view.container, { rules: { "color-contrast": { enabled: false } } })).violations).toEqual([]);
+  });
+
+  it("restores v2 sections when the shared review query receives its first publication", async () => {
+    const rows: EstimateQueueItem[] = [];
+    installApi(rows, { requirements: projectRequirements(), projectPanels: true });
+    const view = renderApp([`/client/projects/${project.id}`]);
+    await screen.findByText(/No submitted estimate is linked/);
+    expectSubmittedSectionsHidden();
+    rows.push(estimate());
+    await act(async () => { await view.queryClient.refetchQueries({ queryKey: estimateWorkflowKeys.client }); });
+    expect(await screen.findByRole("heading", { name: "Your estimate requirements" })).toBeVisible();
+    expect(screen.getByText("Project coordination")).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Selections requiring your approval" })).toBeVisible();
+  });
+
+  it.each(["foreign", "duplicate", "missing_snapshot", "source_conflict"] as const)("hides all three sections for %s publication evidence", async issue => {
+    const quotation = workingQuotation();
+    const selected = withQuotationApproval(estimate(), quotation);
+    const rows = issue === "foreign" ? [{ ...selected, projectId: "project-other" }]
+      : issue === "duplicate" ? [selected, { ...selected, id: "estimate-other" }]
+      : [{ ...selected, reviewSourceIssue: issue, ...(issue === "missing_snapshot" ? { publishedReview: null } : {}) }];
+    const { fetch } = installApi(rows, { quotation, requirements: projectRequirements(), projectPanels: true });
+    const view = renderApp([`/client/projects/${project.id}?pm=client`]);
+    await screen.findByRole("spinbutton", { name: /Quantity for Storage/ });
+    await waitFor(() => expect(view.queryClient.getQueryState(estimateWorkflowKeys.client)?.status).toBe("success"));
+    expectSubmittedSectionsHidden(fetch);
+  });
+
+  it("does not flash sections before the initial publication lookup succeeds", async () => {
+    let release!: (response: Response) => void;
+    const pending = new Promise<Response>(resolve => { release = resolve; });
+    const quotation = workingQuotation(), selected = withQuotationApproval(estimate(), quotation);
+    const { fetch } = installApi([selected], { quotation, requirements: projectRequirements(), projectPanels: true, pending });
+    renderApp([`/client/projects/${project.id}`]);
+    await screen.findByRole("spinbutton", { name: /Quantity for Storage/ });
+    expectSubmittedSectionsHidden(fetch);
+    await act(async () => { release(Response.json({ data: [selected] })); });
+    expect(await screen.findByText("Additional requirements")).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Selections requiring your approval" })).toBeVisible();
+  });
+
+  it.each([403, 500])("hides retained sections after a %s refresh and recovers without losing quotation edits", async status => {
+    let failure: number | undefined;
+    const quotation = workingQuotation(), rows = [withQuotationApproval(estimate(), quotation)];
+    installApi(rows, { quotation, requirements: projectRequirements(), projectPanels: true, getError: () => failure });
+    const view = renderApp([`/client/projects/${project.id}`]), user = userEvent.setup();
+    await screen.findByRole("heading", { name: "Selections requiring your approval" });
+    const quantity = screen.getByRole("spinbutton", { name: /Quantity for Storage/ });
+    await user.clear(quantity); await user.type(quantity, "6");
+    failure = status;
+    await act(async () => { await view.queryClient.refetchQueries({ queryKey: estimateWorkflowKeys.client }); });
+    await waitFor(() => expectSubmittedSectionsHidden());
+    expect(quantity).toHaveValue(6);
+    failure = undefined;
+    await user.click(screen.getByRole("button", { name: "Refresh available items" }));
+    expect(await screen.findByText("Additional requirements")).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Selections requiring your approval" })).toBeVisible();
+    expect(screen.getByRole("spinbutton", { name: /Quantity for Storage/ })).toHaveValue(6);
+    expect(screen.getByRole("button", { name: "Save changes" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Review quotation" })).not.toBeInTheDocument();
+  });
+
+  it("keeps mounted sections through a background publication check", async () => {
+    const quotation = workingQuotation(), rows = [withQuotationApproval(estimate(), quotation)];
+    const options: Parameters<typeof installApi>[1] = { quotation, requirements: projectRequirements(), projectPanels: true };
+    installApi(rows, options);
+    const view = renderApp([`/client/projects/${project.id}`]);
+    const requirements = await screen.findByText("Additional requirements");
+    await screen.findByRole("heading", { name: "Selections requiring your approval" });
+    let release!: (response: Response) => void;
+    options.pending = new Promise<Response>(resolve => { release = resolve; });
+    let refresh!: Promise<unknown>;
+    act(() => { refresh = view.queryClient.refetchQueries({ queryKey: estimateWorkflowKeys.client }); });
+    await waitFor(() => expect(view.queryClient.getQueryState(estimateWorkflowKeys.client)?.fetchStatus).toBe("fetching"));
+    expect(screen.getByText("Additional requirements")).toBe(requirements);
+    expect(screen.getByRole("heading", { name: "Selections requiring your approval" })).toBeVisible();
+    await act(async () => { release(Response.json({ data: rows })); await refresh; });
+    expect(screen.getByText("Additional requirements")).toBe(requirements);
+  });
+
+  it("does not reuse publication evidence when navigating to another invited project", async () => {
+    const quotation = workingQuotation(), rows = [withQuotationApproval(estimate(), quotation)];
+    const otherProject = { ...project, id: "project-other", name: "Unsubmitted Cottage" };
+    const { fetch } = installApi(rows, { quotation, requirements: projectRequirements(), projectPanels: true, otherProject });
+    renderWithQuery(<MemoryRouter initialEntries={[`/client/projects/${project.id}`]}><AuthProvider>
+      <Link to={`/client/projects/${otherProject.id}`}>Open other project</Link>
+      <Routes><Route path="/client/projects/:projectId" element={<ClientProject />} /></Routes>
+    </AuthProvider></MemoryRouter>);
+    await screen.findByRole("heading", { name: "Selections requiring your approval" });
+    await userEvent.click(screen.getByRole("link", { name: "Open other project" }));
+    expect(await screen.findByRole("heading", { name: otherProject.name })).toBeVisible();
+    await screen.findByText(/Your team has not prepared the quotation yet/);
+    expectSubmittedSectionsHidden();
+    expect(fetch.mock.calls.filter(([input]) => String(input).includes(otherProject.id) && /\/(estimate-requirements|design-requirements|pm\/client)(\?|$)/.test(String(input)))).toHaveLength(0);
   });
 
   it("names the immutable pre-estimate phase on its approval action", async () => {

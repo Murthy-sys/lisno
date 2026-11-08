@@ -100,6 +100,8 @@ const estimateSchema = new Schema({
   lineItems: { type: [estimateLineSchema], required: true, default: [] },
   subtotal: { type: Number, required: true, default: 0 }, gst: { type: Number, required: true, default: 0 }, total: { type: Number, required: true, default: 0 },
   subtotalPaise: { type: Number }, gstPaise: { type: Number }, totalPaise: { type: Number },
+  roundOffPaise: { type: Number, default: undefined, cast: false, min: -50, max: 49,
+    validate: (value: unknown) => value === undefined || Number.isSafeInteger(value) },
   isIncomplete: { type: Boolean, default: false },
   approvalRequired: { type: Boolean, required: true, default: false },
   assignedManagerId: { type: String, ref: "User", default: null },

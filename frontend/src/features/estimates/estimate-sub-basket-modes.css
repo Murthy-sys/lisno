@@ -1,0 +1,24 @@
+.estimate-sub-basket-modes { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 16px; padding: 10px 14px; border-block-end: 1px solid var(--color-border, #d7d9ce); background: var(--color-surface-muted, #f5f5ef); }
+.estimate-sub-basket-modes fieldset { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; margin: 0; padding: 0; border: 0; min-width: 0; }
+.estimate-sub-basket-modes label { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; white-space: nowrap; }
+.estimate-sub-basket-modes input { accent-color: var(--color-primary, #414d32); margin: 0; }
+.estimate-sub-basket-modes label:has(input:disabled) { color: var(--color-text-muted, #667064); }
+.estimate-sub-basket-modes__help { font-size: 12px; color: var(--color-text-muted, #667064); }
+.estimate-sub-basket-modes > .button { margin-inline-start: auto; font-size: 12px; min-height: 32px; }
+.ui-dialog.modal.estimate-tier-comparison { width: min(1100px, calc(100vw - 32px)); max-width: 1100px; border-radius: 0; }
+.estimate-tier-comparison__body { padding: 0 16px 16px; min-height: 0; overflow: auto; }
+.estimate-tier-comparison__body > p { font-size: 13px; }
+.estimate-tier-comparison__scroll { max-width: 100%; overflow-x: auto; }
+.estimate-tier-comparison table { width: 100%; min-width: 680px; border-collapse: collapse; font-size: 13px; }
+.estimate-tier-comparison th, .estimate-tier-comparison td { padding: 12px; border-block-end: 1px solid var(--color-border, #d7d9ce); text-align: start; vertical-align: top; }
+.estimate-tier-comparison th { font-weight: 600; }
+.estimate-tier-comparison thead, .estimate-tier-comparison tfoot { background: var(--color-surface-muted, #f5f5ef); }
+.estimate-tier-comparison td small, .estimate-tier-comparison th small { display: block; margin-top: 4px; font-weight: 400; color: var(--color-text-muted, #667064); }
+.estimate-tier-comparison__actions { display: flex; justify-content: flex-end; gap: 10px; padding: 12px 16px; border-top: 1px solid var(--color-border, #d7d9ce); }
+@media (max-width: 640px) {
+  .estimate-sub-basket-modes { gap: 8px; padding: 10px; }
+  .estimate-sub-basket-modes fieldset { width: 100%; justify-content: space-between; gap: 8px; }
+  .estimate-sub-basket-modes label { font-size: 12px; }
+  .estimate-sub-basket-modes__help { flex: 1 1 150px; }
+  .ui-dialog.modal.estimate-tier-comparison { width: calc(100vw - 16px); }
+}

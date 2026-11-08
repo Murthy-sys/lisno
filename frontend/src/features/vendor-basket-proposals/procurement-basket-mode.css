@@ -101,13 +101,13 @@
   gap: 12px;
   min-inline-size: 0;
   max-inline-size: 100%;
-  min-block-size: 48px;
-  padding: 10px 16px;
+  min-block-size: var(--form-choice-target-size);
+  padding: 6px 12px;
   border: 1px solid var(--color-border);
   border-radius: 6px;
   background: var(--proposal-reference-surface, var(--color-surface));
   color: var(--color-text);
-  font-size: 15px;
+  font-size: var(--text-md);
   font-weight: 600;
   line-height: 1.4;
 }
@@ -125,11 +125,11 @@
   .knowledge-mode-configuration__source-choice
 ) .ui-checkbox {
   position: static;
-  flex: 0 0 20px;
-  inline-size: 20px;
-  block-size: 20px;
-  min-inline-size: 20px;
-  min-block-size: 20px;
+  flex: 0 0 var(--form-choice-size);
+  inline-size: var(--form-choice-size);
+  block-size: var(--form-choice-size);
+  min-inline-size: var(--form-choice-size);
+  min-block-size: var(--form-choice-size);
   margin: 0;
   opacity: 1;
   accent-color: var(--knowledge-mode-accent);
@@ -357,17 +357,17 @@
 .basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-pmc-margin__control .ui-input {
   inline-size: 100%;
   min-inline-size: 0;
-  min-block-size: 44px;
-  block-size: 44px;
+  min-block-size: var(--control-height);
+  block-size: var(--control-height);
   border-color: var(--color-border-strong);
   border-radius: 5px;
   background: var(--proposal-reference-surface, var(--color-surface));
-  font-size: 14px;
+  font-size: var(--form-control-font-size);
   font-weight: 500;
 }
 
 .basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-mode-calculation__fixed dd {
-  min-block-size: 44px;
+  min-block-size: var(--control-height);
   border-radius: 5px;
   background: var(--proposal-reference-tint, var(--color-surface-subtle));
 }
@@ -404,11 +404,11 @@
 }
 
 .basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-mode-calculation__actions .ui-button {
-  min-block-size: 44px;
-  padding: 10px 16px;
+  min-block-size: var(--control-height);
+  padding: 6px 12px;
   border-radius: 6px;
   background: transparent;
-  font-size: 13px;
+  font-size: var(--form-button-font-size);
   line-height: 1.4;
   white-space: normal;
 }
@@ -455,7 +455,7 @@
 }
 
 .basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-pmc-scope__items label {
-  min-block-size: 36px;
+  min-block-size: var(--form-choice-target-size);
   font-size: 13px;
   line-height: 1.5;
 }
@@ -595,7 +595,7 @@
   }
 }
 
-@media (max-width: 600px), (pointer: coarse) {
+@media (max-width: 767px), (pointer: coarse) {
   .basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-mode-description__display .ui-icon-button,
   .basket-proposal--procurement-reference .knowledge-mode-panel .knowledge-pmc-scope__delete {
     flex-basis: 44px;

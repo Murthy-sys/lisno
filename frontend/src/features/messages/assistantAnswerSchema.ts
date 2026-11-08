@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { estimateTotalsReconcile } from "../../../../shared/estimation/estimateTotalRounding";
 
 export const disclosurePolicy = "project-publication-v1" as const;
 export const assistantId = z.string().min(1).max(200);
@@ -17,8 +18,10 @@ export const projectPricingSchema = z.object({
   estimateId: assistantId, estimateVersion: z.number().int().safe().positive(), reviewRoundId: assistantId, reviewVersion: z.number().int().safe().positive(),
   publishedAt: z.string().datetime({ offset: true }), source,
   lines: z.array(z.object({ id: assistantId, label: z.string().min(1).max(300), quantity: z.string().max(80).nullable(), unit: z.string().max(80).nullable(), ratePaise: money, amountPaise: money }).strict()).max(100),
-  lineCount: z.number().int().safe().nonnegative(), hasMoreLines: z.boolean(), subtotalPaise: money, gstPaise: money, totalPaise: money
-}).strict().refine(value => unique(value.lines.map(line => line.id)) && value.lineCount >= value.lines.length && value.hasMoreLines === (value.lineCount > value.lines.length));
+  lineCount: z.number().int().safe().nonnegative(), hasMoreLines: z.boolean(), subtotalPaise: money, gstPaise: money, totalPaise: money,
+  roundOffPaise: z.number().int().safe().min(-50).max(49).optional()
+}).strict().refine(value => unique(value.lines.map(line => line.id)) && value.lineCount >= value.lines.length && value.hasMoreLines === (value.lineCount > value.lines.length))
+  .refine(value => value.roundOffPaise === undefined || estimateTotalsReconcile(value));
 export type AssistantProjectPricing = z.infer<typeof projectPricingSchema>;
 const answerSchema = z.object({
   disclosurePolicy: z.literal(disclosurePolicy), projectPricing: projectPricingSchema.nullable().optional(),

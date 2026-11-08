@@ -128,7 +128,7 @@ export function scope(pdf: ProposalDocument, groups: ProposalGroup[]) {
   }
 }
 
-export function investment(pdf: ProposalDocument, input: Input, groups: ProposalGroup[], totals: { subtotal: number; gst: number; total: number }) {
+export function investment(pdf: ProposalDocument, input: Input, groups: ProposalGroup[], totals: { subtotal: number; gst: number; total: number; roundOff: number }) {
   pdf.addPage(); pdf.heading("Investment", "Your project price");
   let y = 138;
   pdf.label("Area", 74, y, 160, palette.faint); pdf.line("VISIBLE SCOPE (₹)", 184, y, 110, 6.7, { spacing: 1, color: palette.faint, align: "right" });
@@ -147,17 +147,22 @@ export function investment(pdf: ProposalDocument, input: Input, groups: Proposal
   y += 12;
   pdf.text("Estimate subtotal", 74, y, 137, 9.5, { font: "medium" }); pdf.text(money(totals.subtotal, false), 211, y, 83, 9.5, { font: "medium", align: "right" });
   const panelX = 323, panelY = 137, panelW = 221;
-  pdf.rect(panelX, panelY, panelW, 207, palette.ink);
+  const roundOffHeight = totals.roundOff ? 29 : 0;
+  pdf.rect(panelX, panelY, panelW, 207 + roundOffHeight, palette.ink);
   pdf.label("Your project price", panelX + 19, panelY + 23, panelW - 38, palette.goldLight);
   fitted(pdf, money(totals.total), panelX + 19, panelY + 49, panelW - 38, 57, 28, palette.white);
-  const entries = [["Subtotal", totals.subtotal], ["GST", totals.gst], ["Total payable", totals.total]] as const;
+  const entries: Array<[string, number]> = [["Subtotal", totals.subtotal], ["GST", totals.gst]];
+  if (totals.roundOff) entries.push(["Round off", totals.roundOff]);
+  entries.push(["Total payable", totals.total]);
   entries.forEach(([label, value], index) => {
     const rowY = panelY + 106 + index * 29;
-    pdf.rule(panelX + 19, rowY - 7, panelW - 38, index === 2 ? palette.goldLight : "#4e4763");
-    pdf.text(label, panelX + 19, rowY, 84, 9, { color: palette.white, font: index === 2 ? "medium" : "body" });
-    pdf.text(money(value, index === 2), panelX + 102, rowY, panelW - 121, 9, { color: palette.white, align: "right", font: index === 2 ? "medium" : "body" });
+    const final = index === entries.length - 1;
+    const amount = label === "Round off" ? `${value < 0 ? "-" : "+"}${money(Math.abs(value))}` : money(value, final);
+    pdf.rule(panelX + 19, rowY - 7, panelW - 38, final ? palette.goldLight : "#4e4763");
+    pdf.text(label, panelX + 19, rowY, 84, 9, { color: palette.white, font: final ? "medium" : "body" });
+    pdf.text(amount, panelX + 102, rowY, panelW - 121, 9, { color: palette.white, align: "right", font: final ? "medium" : "body" });
   });
-  pdf.text(groups.reduce((sum, group) => sum + BigInt(group.amountPaise), 0n) === BigInt(totals.subtotal) ? "This price applies to the selected scope above. Payment stages are calculated on the total payable including GST. Any changes are quoted separately for your approval." : "Area subtotals cover the item details in this view. The project price is the recorded total for the complete estimate, including GST. Payment stages use that full total.", panelX, panelY + 222, panelW, 8.6, { color: palette.muted, lineHeight: 12.6 });
+  pdf.text(groups.reduce((sum, group) => sum + BigInt(group.amountPaise), 0n) === BigInt(totals.subtotal) ? "This price applies to the selected scope above. Payment stages are calculated on the total payable including GST. Any changes are quoted separately for your approval." : "Area subtotals cover the item details in this view. The project price is the recorded total for the complete estimate, including GST. Payment stages use that full total.", panelX, panelY + 222 + roundOffHeight, panelW, 8.6, { color: palette.muted, lineHeight: 12.6 });
   pdf.photo("price-living", 0, 507, page.width, 284);
 }
 

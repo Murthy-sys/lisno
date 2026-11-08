@@ -5,7 +5,7 @@ import { normalizeKnowledgeIdentity } from "../domain/ai-estimator-knowledge.js"
 import type { WorkflowEstimateRoomContext } from "../domain/workflow-estimate-items.js";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { CALENDAR_DAY_MS as DAY, DESIGN_WORKFLOW_ACTIONS, emptyDesignWorkflowState, WORKFLOW_STAGE_CLOCKS, workflowStageElapsedMs, workflowStageStartAt, workflowDesignStartAt, workflowStagePrerequisiteBlockers, workflowIsPaused, workflowPausedMs, workflowSubmissionBlockers, workflowFurnitureRoomReady, type DesignWorkflowAction, type DesignWorkflowState, type WorkflowStageState, type StoredWorkflowMedia, type WorkflowRoom, type DesignWorkflowHistoryEvent } from "../domain/design-workflow-state.js";
+import { CALENDAR_DAY_MS as DAY, DESIGN_WORKFLOW_ACTIONS, emptyDesignWorkflowState, WORKFLOW_STAGE_CLOCKS, workflowStageElapsedMs, workflowStageStartAt, workflowStageTimingStartAt, workflowClientKickoffCompleted, workflowDesignStartAt, workflowStagePrerequisiteBlockers, workflowIsPaused, workflowPausedMs, workflowSubmissionBlockers, workflowFurnitureRoomReady, type DesignWorkflowAction, type DesignWorkflowState, type WorkflowStageState, type StoredWorkflowMedia, type WorkflowRoom, type DesignWorkflowHistoryEvent } from "../domain/design-workflow-state.js";
 import type { DesignStageType, ProjectDesignWorkflowStage } from "../domain/design-workflow.js";
 import { sha256Hex, type StoredEstimateClientResponseProof } from "../domain/estimate-client-review.js";
 import { ApiError } from "../middleware/errors.js";
@@ -13,6 +13,7 @@ import { RepositoryConflictError, type AppRepository } from "../repositories/typ
 import type { PublicUser } from "./auth.service.js";
 import type { AuditService } from "./audit.service.js";
 import { requireActor, type Clock } from "./workflow.js";
+import { isSecondaryMeasurementDesigner, type SecondaryMeasurementDesigner } from "../domain/measurement-ownership.js";
 
 export const workflowActionSchema = z.object({
   expectedVersion: z.coerce.number().int().nonnegative(),
@@ -26,7 +27,7 @@ export const workflowActionSchema = z.object({
   }, z.record(z.unknown()).default({}))
 }).strict();
 export type WorkflowActionInput = z.infer<typeof workflowActionSchema>;
-export type WorkflowCapabilities = { designer: boolean; primaryDesigner?: boolean; client: boolean; sales: boolean; finance: boolean; representative: boolean; manager: boolean };
+export type WorkflowCapabilities = { designer: boolean; primaryDesigner?: boolean; secondaryDesigner?: boolean; client: boolean; sales: boolean; finance: boolean; representative: boolean; manager: boolean };
 export interface WorkflowAvailableAction { id: DesignWorkflowAction; label: string; actor: "designer" | "client" | "sales" | "finance"; requiresProof: boolean; disabledReason?: string }
 const ACTIONS: Record<Exclude<DesignWorkflowAction, "confirm_initial_payment">, { type: DesignStageType; label: string; actor: WorkflowAvailableAction["actor"]; file?: boolean }> = {
   internal_kickoff_complete: { type: "internal_kickoff", label: "Complete Internal Kick off and save", actor: "designer", file: true },
@@ -34,7 +35,6 @@ const ACTIONS: Record<Exclude<DesignWorkflowAction, "confirm_initial_payment">, 
   client_kickoff_request: { type: "client_kickoff", label: "Request Client kickoff", actor: "designer" },
   client_kickoff_schedule: { type: "client_kickoff", label: "Choose meeting date", actor: "client" },
   client_kickoff_complete: { type: "client_kickoff", label: "Complete Client Kick off", actor: "client" },
-  client_kickoff_not_required: { type: "client_kickoff", label: "Mark meeting not necessary", actor: "designer" },
   keys_handed_over: { type: "key_collection", label: "Confirm keys handed over", actor: "client" },
   keys_received: { type: "key_collection", label: "Confirm keys received", actor: "designer" },
   measurement_assign: { type: "site_measurement", label: "Assign measurement team member", actor: "designer" },
@@ -55,7 +55,7 @@ const ACTIONS: Record<Exclude<DesignWorkflowAction, "confirm_initial_payment">, 
 function missing(): never { throw new ApiError(404, "NOT_FOUND", "The requested resource was not found."); }
 function blocked(reasons: string[]): never { throw new ApiError(409, "DESIGN_WORKFLOW_BLOCKED", reasons.join(" ")); }
 export type WorkflowPaymentStatus = "awaiting_estimate_approval" | "awaiting_payment" | "received";
-type WorkflowStageContext = { spacePlanning?: WorkflowSpacePlanningSource | null; spacePlanningIssue?: string; paymentStatus: WorkflowPaymentStatus; projectId?: string; internalKickoffStageId?: string; measurementStageId?: string };
+type WorkflowStageContext = { spacePlanning?: WorkflowSpacePlanningSource | null; spacePlanningIssue?: string; paymentStatus: WorkflowPaymentStatus; projectId?: string; internalKickoffStageId?: string; measurementStageId?: string; measurementOwners?: readonly SecondaryMeasurementDesigner[]; measurementAssignmentReason?: string };
 const PAYMENT_APPROVAL_REQUIRED = "The project needs a confirmed approved estimate before Initial payment received can be recorded.";
 const PAYMENT_SOURCE_ISSUE = "Reconcile the project's approved estimate source before confirming Initial payment received.";
 const KICKOFF_DOCUMENT_UNAVAILABLE = "The submitted Internal Kick off document is unavailable. Contact your Designer to resolve the missing document.";
@@ -120,6 +120,7 @@ export async function projectInitialPayment(repository: AppRepository, projectId
 
 export async function requireDesignWorkflowScope(repository: AppRepository, actor: PublicUser, projectId: string, allowFinance = false) {
   const user = await requireActor(repository, actor);
+  if (user.deletedAt) missing();
   const project = await repository.findProjectById(projectId);
   if (!project) missing();
   const representative = user.role === "super_admin" || user.role === "admin" && Boolean(await repository.findActiveProjectAccessGrant(user.id, projectId, "projects").then((grant) => grant?.source === "admin_initiator" && grant.active));
@@ -127,12 +128,13 @@ export async function requireDesignWorkflowScope(repository: AppRepository, acto
     ? project.primaryDesignerId === user.id || project.secondaryDesignerIds?.includes(user.id) === true
     : project.assignedDesignerIds.includes(user.id) || project.initiatingDesignerId === user.id);
   const primaryDesigner = designer && project.primaryDesignerId === user.id;
+  const secondaryDesigner = isSecondaryMeasurementDesigner(project, user);
   const client = user.role === "client" && project.clientId === user.id;
   const sales = user.role === "estimator_sales" && project.assignedEstimatorId === user.id;
   const finance = user.role === "finance_head" || user.role === "super_admin";
   const manager = user.role === "design_head" || user.role === "design_manager" && project.managerId === user.id;
   if (!(representative || designer || client || sales || manager || allowFinance && finance)) missing();
-  return { project, capabilities: { designer, primaryDesigner, client: client || representative, sales, finance, representative, manager: manager || representative } };
+  return { project, capabilities: { designer, primaryDesigner, secondaryDesigner, client: client || representative, sales, finance, representative, manager: manager || representative } };
 }
 
 /** Observers can inspect progress but never acquire an existing stage-action capability. */
@@ -182,7 +184,7 @@ function allowed(state: DesignWorkflowState, action: Exclude<DesignWorkflowActio
   if (state.estimationWorkflowVersion === 3 && !state.quotationLocked) return false;
   if (!workflowDesignStartAt(state)) return false;
   if (state.estimationWorkflowVersion === 3 && action.startsWith("furniture_")) {
-    if (state.designApprovalLocked) return false;
+    if (state.designApprovalLocked || state.stages.client_kickoff?.notRequired === true && !workflowClientKickoffCompleted(state)) return false;
     const furniture = state.stages.existing_furniture_dimensions;
     const request = furniture?.clientFurnitureRequest;
     if (action === "furniture_request") return !request || request.hasFurniture === null;
@@ -207,15 +209,14 @@ function allowed(state: DesignWorkflowState, action: Exclude<DesignWorkflowActio
   switch (action) {
     case "internal_kickoff_complete": return !internal.completedAt;
     case "sales_calendar_accept": return !internal.calendarAcceptedAt;
-    case "client_kickoff_request": return !kickoff.completedAt && !kickoff.requestedAt;
-    case "client_kickoff_schedule": return Boolean(kickoff.requestedAt && !kickoff.completedAt);
-    case "client_kickoff_complete": return !kickoff.completedAt;
-    case "client_kickoff_not_required": return !kickoff.completedAt;
+    case "client_kickoff_request": return !workflowClientKickoffCompleted(state) && !kickoff.requestedAt;
+    case "client_kickoff_schedule": return Boolean(kickoff.requestedAt && !workflowClientKickoffCompleted(state));
+    case "client_kickoff_complete": return !workflowClientKickoffCompleted(state);
     case "keys_handed_over": return !keys.handedOverAt;
     case "keys_received": return !keys.receivedAt;
-    case "measurement_assign": return !measurement.completedAt;
+    case "measurement_assign": return state.estimationWorkflowVersion !== 3 && !measurement.completedAt;
     case "measurement_access_block": return !measurement.completedAt && !paused;
-    case "measurement_complete": return !measurement.completedAt && Boolean(measurement.assignedDesignerId) && (!actorId || measurement.assignedDesignerId === actorId);
+    case "measurement_complete": return !measurement.completedAt && (state.estimationWorkflowVersion === 3 || Boolean(measurement.assignedDesignerId) && (!actorId || measurement.assignedDesignerId === actorId));
     case "furniture_scope": return !furniture.acceptedAt && !furniture.completedAt;
     case "furniture_accept":
     case "furniture_scope_return": return Boolean(furniture.rooms) && !furniture.acceptedAt && !furniture.completedAt && !furniture.scopeReturn;
@@ -228,6 +229,10 @@ function allowed(state: DesignWorkflowState, action: Exclude<DesignWorkflowActio
 }
 
 function workflowActionActor(state: DesignWorkflowState, action: keyof typeof ACTIONS, capabilities: WorkflowCapabilities): WorkflowAvailableAction["actor"] | null {
+  if (state.estimationWorkflowVersion === 3) {
+    if (action === "measurement_assign") return null;
+    if (action === "measurement_complete") return capabilities.secondaryDesigner ? "designer" : null;
+  }
   if (state.estimationWorkflowVersion === 3 && action.startsWith("furniture_")) {
     if (action === "furniture_request") return capabilities.primaryDesigner ? "designer" : null;
     if (capabilities.representative) return null;
@@ -512,6 +517,7 @@ export function createDesignWorkflowStateService(repository: AppRepository, audi
         return await repository.runInTransaction(async (tx) => {
           await tx.coordinateAuthorizationMutation();
           const { project, capabilities } = await requireDesignWorkflowScope(tx, actor, projectId, true);
+          if ((input.action as string) === "client_kickoff_not_required") throw new ApiError(400, "WORKFLOW_ACTION_RETIRED", "Client Kick off is mandatory. Complete it after reviewing the Internal Kick off document.");
           if (!project.designWorkflowStages?.length) blocked(["This project does not have the configured design workflow."]);
           const state = await hydrateDesignWorkflowState(tx, projectId, await tx.findDesignWorkflowState(projectId) ?? emptyDesignWorkflowState(projectId), true);
           if (input.action === "space_planning_complete" && (actor.role !== "client" || project.clientId !== actor.id || capabilities.representative)) throw new ApiError(403, "FORBIDDEN", "Only the project Client can complete this stage.");
@@ -598,12 +604,13 @@ export function createDesignWorkflowStateService(repository: AppRepository, audi
                 const submitted = submittedInternalKickoffEvent(state, projectId, project.designWorkflowStages.find((stage) => stage.type === "internal_kickoff")?.id);
                 if (!submitted) throw new ApiError(409, "KICKOFF_DOCUMENT_UNAVAILABLE", KICKOFF_DOCUMENT_UNAVAILABLE);
                 if (input.data.reviewedDocumentEventId !== submitted.id) throw new ApiError(400, "KICKOFF_DOCUMENT_REVIEW_REQUIRED", "Review the submitted Internal Kick off document and confirm it before completing Client Kick off.");
+                const supersededClientKickoff = current.notRequired === true && current.completedAt ? { completedAt: current.completedAt, timingBasis: current.timingBasis ?? "legacy" } : undefined;
                 current.completedAt = timestamp;
-                recordedData = { reviewedDocumentEventId: submitted.id, completedAt: timestamp };
+                delete current.notRequired;
+                recordedData = { reviewedDocumentEventId: submitted.id, completedAt: timestamp, ...(supersededClientKickoff ? { supersededClientKickoff } : {}) };
                 auditDetails = recordedData;
                 break;
               }
-              case "client_kickoff_not_required": checkData(input.data, []); if (!input.note) throw new ApiError(400, "WORKFLOW_NOTE_REQUIRED", "Explain why the meeting is not necessary."); current.notRequired = true; current.completedAt = timestamp; break;
               case "keys_handed_over": checkData(input.data, []); current.handedOverAt = timestamp; if (current.receivedAt) current.completedAt = timestamp; break;
               case "keys_received": checkData(input.data, []); current.receivedAt = timestamp; if (current.handedOverAt) current.completedAt = timestamp; break;
               case "measurement_assign": {
@@ -772,7 +779,8 @@ export function createDesignWorkflowStateService(repository: AppRepository, audi
               }
               case "furniture_proceed": blocked(["Required furniture dimensions need Client approval before proceeding."]);
             }
-            if (["internal_kickoff_complete", "client_kickoff_complete", "client_kickoff_not_required", "measurement_complete"].includes(input.action)) {
+            if (["internal_kickoff_complete", "client_kickoff_complete", "measurement_complete"].includes(input.action) &&
+              !(input.action === "client_kickoff_complete" && (recordedData.supersededClientKickoff as { timingBasis?: string } | undefined)?.timingBasis === "legacy")) {
               current.timingBasis = "sequential";
               recordedData = { ...recordedData, timingBasis: "sequential" };
               auditDetails = { ...auditDetails, timingBasis: "sequential" };
@@ -980,12 +988,13 @@ export function projectOperationalStage(stage: ProjectDesignWorkflowStage, state
   const stored = state.stages[stage.type] ?? {};
   const spacePlanning = stage.type === "space_planning_tentative_look_feel" ? context?.spacePlanning : undefined;
   const validSpaceCompletion = stage.type !== "space_planning_tentative_look_feel" || confirmedSpacePlanning(state, stage.id, spacePlanning);
-  const current = validSpaceCompletion ? stored : { ...stored, completedAt: undefined };
+  const validKickoffCompletion = stage.type !== "client_kickoff" || workflowClientKickoffCompleted(state);
+  const current = validSpaceCompletion && validKickoffCompletion ? stored : { ...stored, completedAt: undefined };
   const at = current.completedAt ? Date.parse(current.completedAt) : now.getTime();
   const clock = WORKFLOW_STAGE_CLOCKS[stage.type];
-  const legacyCompleted = Boolean(clock && current.completedAt && !current.timingBasis);
+  const legacyCompleted = Boolean(clock && stored.completedAt && !stored.timingBasis);
   const legacyStartDays = legacyCompleted && stage.type !== "internal_kickoff" ? 3 : 0;
-  const startsAt = legacyCompleted ? workflowDesignStartAt(state) : workflowStageStartAt(state, stage.type, at);
+  const startsAt = legacyCompleted ? workflowDesignStartAt(state) : workflowStageTimingStartAt(state, stage.type, at);
   const elapsed = workflowStageElapsedMs(state, startsAt, at);
   const paused = Boolean(startsAt) && workflowIsPaused(state) && !current.completedAt;
   const activeElapsed = clock ? Math.max(0, elapsed - legacyStartDays * DAY) : 0;
@@ -1026,6 +1035,9 @@ export function projectOperationalStage(stage: ProjectDesignWorkflowStage, state
   if (paused) reasons.push("Site access is unavailable. All workflow clocks are paused.");
   if (stage.type === "existing_furniture_dimensions" && state.estimationWorkflowVersion === 3 && state.designApprovalLocked) reasons.push("Reopen design review before changing furniture information.");
   if (!current.completedAt && (stage.type !== "space_planning_tentative_look_feel" || spacePlanning || context?.spacePlanningIssue || stored.spacePlanningApproval)) reasons.push(...workflowStagePrerequisiteBlockers(state, stage.type));
+  if (stage.type === "site_measurement" && state.estimationWorkflowVersion === 3 && !current.completedAt && !context?.measurementOwners?.length) {
+    reasons.push(context?.measurementAssignmentReason ?? "Assign a Secondary Designer in Design team to carry out onsite measurement.");
+  }
   const completionReasons: string[] = [];
   if (stage.type === "space_planning_tentative_look_feel") {
     reasons.push(...workflowSubmissionBlockers(state, undefined, "upload"));
@@ -1044,10 +1056,13 @@ export function projectOperationalStage(stage: ProjectDesignWorkflowStage, state
   }
   const facts: Array<{ label: string; value: string }> = [];
   for (const [field, label] of [["meetingAt", "Meeting conducted"], ["calendarAcceptedAt", "Sales calendar accepted"], ["requestedAt", "Meeting requested"], ["preferredAt", "Requested meeting date"], ["scheduledAt", "Client meeting date"], ["handedOverAt", "Client handed over keys"], ["receivedAt", "Designer received keys"], ["mediaFolderUrl", "Photos and videos folder"]] as const) if (current[field]) facts.push({ label, value: current[field]! });
-  if (current.assignedDesignerId) facts.push({ label: "Assigned measurement Designer", value: measurementAssigneeName ?? "Assigned project Designer" });
+  if (stage.type === "site_measurement" && state.estimationWorkflowVersion === 3) {
+    if (context?.measurementOwners?.length) facts.push({ label: current.completedAt ? "Current Secondary Designers" : context.measurementOwners.length === 1 ? "Secondary Designer" : "Secondary Designers", value: context.measurementOwners.map(person => person.name).join(", ") });
+    const completion = current.completedAt ? state.history.find(event => event.action === "measurement_complete" && event.stageId === stage.id && event.at === current.completedAt) : undefined;
+    if (completion) facts.push({ label: "Measurement completed by", value: completion.actorName });
+  } else if (current.assignedDesignerId) facts.push({ label: "Assigned measurement Designer", value: measurementAssigneeName ?? "Assigned project Designer" });
   if (current.handoverAcknowledgedAt) facts.push({ label: "Design handover acknowledged by", value: current.handoverAcknowledgedByName ?? "Designer" }, { label: "Design handover acknowledged at", value: current.handoverAcknowledgedAt });
   if (current.managerHandedOverAt) facts.push({ label: "Previous manager handover", value: current.handoverManagerName ?? "Design Manager" }, { label: "Previous manager handover recorded at", value: current.managerHandedOverAt });
-  if (current.notRequired) facts.push({ label: "Client kickoff", value: "Not necessary" });
   if (current.noExistingFurniture) facts.push({ label: "Existing furniture", value: current.acceptedAt ? "Not applicable — accepted by Client" : "Not applicable — Client confirmation required" });
   const history = state.history.filter((event) => event.stageId === stage.id).map((event) => ({ id: event.id, action: event.action, actorName: event.actorName, actorRole: event.actorRole, onBehalfOfClient: event.onBehalfOfClient, at: event.at, mediaFiles: canReadProof ? (event.mediaFiles ?? []).map(({ id, originalFilename, mimeType, byteSize, kind }) => ({ id, filename: originalFilename, mimeType, byteSize, kind })) : [], note: event.action === "internal_kickoff_complete" && actorId && !capabilities.designer && !capabilities.sales && !capabilities.manager ? "" : event.note, proofAvailable: Boolean(event.proof) && (event.action !== "internal_kickoff_complete" || capabilities.designer || capabilities.sales || capabilities.manager || capabilities.client && submitted?.id === event.id) }));
   const reminders: Array<{ id: string; label: string; dueAt: string }> = [];
@@ -1061,7 +1076,7 @@ export function projectOperationalStage(stage: ProjectDesignWorkflowStage, state
     status: (current.completedAt ? "completed" : !startsAt ? "not_started" : reasons.length ? "blocked" : "in_progress") as "completed" | "blocked" | "not_started" | "in_progress",
     version: state.version, availableActions: actions,
     timing: {
-      state: current.completedAt ? current.notRequired || current.noExistingFurniture ? "not_applicable" : "completed" : !startsAt ? "waiting" : paused ? "paused" : clock ? "running" : "not_applicable",
+      state: current.completedAt ? current.noExistingFurniture ? "not_applicable" : "completed" : !startsAt ? "waiting" : paused ? "paused" : clock ? "running" : "not_applicable",
       startsAt: legacyCompleted ? wallAt(state, startsAt, legacyStartDays * DAY, at) : startsAt,
       originalTargetAt: startsAt && clock ? new Date(Date.parse(startsAt) + clock.bands[0] * DAY).toISOString() : null,
       targetAt: clock ? wallAt(state, startsAt, clock.bands[0] * DAY, at) : null,

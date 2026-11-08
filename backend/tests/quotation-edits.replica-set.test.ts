@@ -63,8 +63,8 @@ beforeEach(async () => {
       { _id: `overview-${id}` as never, mainLineId: id, revisionId: `revision-${id}`, sectionKey: "overview", applicability: "configured", version: 1,
         payload: { uomId: "tier-uom", clientVisible: id !== "hidden", applicableTiers: ["signature", "premium", "functional"] } },
       { _id: `advanced-${id}` as never, mainLineId: id, revisionId: `revision-${id}`, sectionKey: "advanced", applicability: "configured", version: 1,
-        payload: { modeCalculations: { sub_vendor: { baseRatePaise: 2000 } }, privateMargin: "never-expose-this",
-          tierConfigurations: { premium: { applicability: "configured", payload: { modeCalculations: { sub_vendor: { baseRatePaise: 5000 } } } } } } }
+        payload: { pmcMarginBps: 0, subVendorMarginBps: 0, modeCalculations: { sub_vendor: { baseRatePaise: 2000 } }, privateMargin: "never-expose-this",
+          tierConfigurations: { premium: { applicability: "configured", payload: { pmcMarginBps: 0, subVendorMarginBps: 0, modeCalculations: { sub_vendor: { baseRatePaise: 5000 } } } } } } }
     ]);
   }
   const line = (id: string, mainLineId: string, roomName: string, quantity: number, ratePaise: number) => ({ id, source: "configuration", itemType: "main_line",
@@ -83,6 +83,146 @@ const source = { revisionId: "revision-visible", itemVersion: 1, revisionVersion
 const quantityChange = (expectedVersion = 1, quantity = 4) => ({ expectedVersion,
   operations: [{ kind: "update" as const, lineItemId: "line-one", source, quantity }] });
 
+describe("quotation pricing-mode changes", () => {
+  const designer: PublicUser = { id: "mode-designer", name: "Designer", email: "designer@mode.invalid", role: "designer" };
+  const modeChange = (pricingMode: "pmc" | "sub_vendor" | "in_house", expectedVersion = 1) => ({ expectedVersion,
+    operations: [{ kind: "update" as const, lineItemId: "line-one", source, pricingMode }] });
+  async function eligibleModes() {
+    await EstimateModel.updateOne({ _id: "tier-estimate" }, { $set: { "lineItems.0.classification": "special" } });
+    await Section.collection.updateOne({ _id: "advanced-visible" as never }, { $set: {
+      "payload.modeCalculations.pmc": { baseRatePaise: 4100 },
+      "payload.modeCalculations.in_house_labor": { baseRatePaise: 1000, startingMarkupBps: 0 },
+      "payload.modeCalculations.in_house_material": { baseRatePaise: 2300, startingMarkupBps: 0 }
+    } });
+  }
+  async function handoff() {
+    await UserModel.create({ _id: designer.id, ...designer, emailNormalized: designer.email, passwordHash: "synthetic-only", active: true });
+    await ProjectModel.updateOne({ _id: "tier-project" }, { $set: { primaryDesignerId: designer.id } });
+    await EstimateModel.updateOne({ _id: "tier-estimate" }, { $set: { designPlanDesignerId: designer.id, "estimation.phase": "post",
+      "estimation.preApproval": { reviewRoundId: "initial-approved", estimateVersion: 1, approvedAt: new Date().toISOString() } } });
+  }
+
+  it("projects safe mode-specific choices and changes Client modes without touching another room or hidden lines", async () => {
+    await eligibleModes();
+    const before = (await EstimateModel.findById("tier-estimate").lean())!;
+    const detail = await service.detail(client, "tier-project");
+    expect(detail.canChangePricingMode).toBe(true);
+    expect((await service.detail(sales, "tier-project")).canChangePricingMode).toBe(true);
+    expect(detail.lines[0]).toMatchObject({ classification: "special", pricingMode: "sub_vendor" });
+    expect(detail.lines[0]!.pricingModeChoices.map(option => option.pricingMode)).toEqual(["pmc", "sub_vendor", "in_house"]);
+    expect(detail.lines[1]!.pricingModeChoices.map(option => option.pricingMode)).toEqual(["sub_vendor"]);
+    expect(JSON.stringify(detail)).not.toMatch(/privateMargin|never-expose-this|modeCalculations|minimumMarkupBps/);
+    const pmc = await service.save(client, "tier-project", modeChange("pmc"));
+    expect(pmc.lines[0]).toMatchObject({ pricingMode: "pmc", quantity: 2, ratePaise: 4100, amountPaise: 8200 });
+    expect(pmc.totalPaise).toBe(17900);
+    const inHouse = await service.save(client, "tier-project", modeChange("in_house", 2));
+    expect(inHouse.lines[0]).toMatchObject({ pricingMode: "in_house", quantity: 2, ratePaise: 3300, amountPaise: 6600 });
+    const subVendor = await service.save(client, "tier-project", modeChange("sub_vendor", 3));
+    expect(subVendor.lines[0]).toMatchObject({ pricingMode: "sub_vendor", quantity: 2, ratePaise: 2000, amountPaise: 4000 });
+    const stored = (await EstimateModel.findById("tier-estimate").lean())!;
+    expect(stored.lineItems.slice(1)).toEqual(before.lineItems.slice(1));
+    expect((await service.detail(client, "tier-project")).lines[0]!.pricingMode).toBe("sub_vendor");
+  });
+
+  it("rejects Standard and unavailable-tier mode changes without partial saves", async () => {
+    const before = await EstimateModel.findById("tier-estimate").lean();
+    await expect(service.save(client, "tier-project", modeChange("pmc"))).rejects.toMatchObject({ code: "ESTIMATE_PRICING_MODE_INVALID" });
+    expect(await EstimateModel.findById("tier-estimate").lean()).toEqual(before);
+    await eligibleModes();
+    await expect(service.save(client, "tier-project", { expectedVersion: 1, operations: [{ ...modeChange("pmc").operations[0]!, modeTier: "premium" }] }))
+      .rejects.toMatchObject({ code: "QUOTATION_CONFIGURATION_CHANGED" });
+    expect((await EstimateModel.findById("tier-estimate").lean())!.version).toBe(1);
+    expect(await AuditEventModel.countDocuments()).toBe(0);
+  });
+
+  it("lets Client PATCH exclude a saved mode-less manual Standard row without inventing a mode", async () => {
+    await EstimateModel.updateOne({ _id: "tier-estimate" }, {
+      $unset: { "lineItems.0.pricingMode": 1 }, $set: { "lineItems.0.rateSource": "manual" }
+    });
+    const before = (await EstimateModel.findById("tier-estimate").lean())!;
+    const auth = { authenticate: async () => client } as unknown as Parameters<typeof createQuotationRouter>[0];
+    const server = express();
+    server.use(express.json());
+    server.use("/api/v1", createQuotationRouter(auth, createAuditService(createMongoRepository())));
+    server.use(errorHandler);
+    const path = "/api/v1/projects/tier-project/quotation";
+    // Keeping it included still requires a recorded, valid mode for repricing.
+    await request(server).patch(path).set("Authorization", "Bearer client").send(quantityChange()).expect(409);
+    await request(server).patch(path).set("Authorization", "Bearer client").send({ expectedVersion: 1,
+      operations: [{ kind: "update", lineItemId: "line-one", source, included: false, pricingMode: "pmc" }] }).expect(400);
+    const response = await request(server).patch(path).set("Authorization", "Bearer client").send({ expectedVersion: 1,
+      operations: [{ kind: "update", lineItemId: "line-one", source, included: false }] }).expect(200);
+    expect(response.body.data.excludedLines[0]).toMatchObject({ id: "line-one", pricingMode: null, included: false });
+    const stored = (await EstimateModel.findById("tier-estimate").lean())!;
+    expect(stored.lineItems[0]).toMatchObject({ classification: "standard", rateSource: "manual", ratePaise: 2000, included: false, amountPaise: 0 });
+    expect(stored.lineItems[0]).not.toHaveProperty("pricingMode");
+    expect(stored.lineItems.slice(1)).toEqual(before.lineItems.slice(1));
+  });
+
+  it("moves mode authority to Client and primary Designer while retaining unchanged-mode Sales edits", async () => {
+    await eligibleModes();
+    await handoff();
+    expect((await service.detail(client, "tier-project")).canChangePricingMode).toBe(true);
+    expect((await service.detail(designer, "tier-project")).canChangePricingMode).toBe(true);
+    expect((await service.detail(sales, "tier-project")).canChangePricingMode).toBe(false);
+    await expect(service.save(sales, "tier-project", modeChange("pmc"))).rejects.toMatchObject({ code: "ESTIMATE_PRICING_MODE_FORBIDDEN" });
+    expect((await EstimateModel.findById("tier-estimate").lean())!.version).toBe(1);
+    await service.save(sales, "tier-project", quantityChange(1, 3));
+    const result = await service.save(designer, "tier-project", modeChange("pmc", 2));
+    expect(result.lines[0]).toMatchObject({ pricingMode: "pmc", amountPaise: 12300 });
+    const priorApproval = (await EstimateModel.findById("tier-estimate").lean())!.estimation!.preApproval;
+    const clientSaved = await service.save(client, "tier-project", modeChange("sub_vendor", 3));
+    expect(clientSaved.lines[0]).toMatchObject({ pricingMode: "sub_vendor", amountPaise: 6000 });
+    expect((await EstimateModel.findById("tier-estimate").lean())!.estimation!.preApproval).toEqual(priorApproval);
+    await expect(service.save(other, "tier-project", modeChange("pmc", 4))).rejects.toMatchObject({ code: "ESTIMATE_TIERS_NOT_FOUND" });
+    await ProjectModel.updateOne({ _id: "tier-project" }, { $set: { primaryDesignerId: "different-designer" } });
+    await expect(service.save(designer, "tier-project", modeChange("pmc", 4))).rejects.toMatchObject({ code: "ESTIMATE_TIERS_NOT_FOUND" });
+  });
+
+  it("supersedes a pending Client review on a mode change without rewriting its snapshot", async () => {
+    await eligibleModes();
+    const snapshot = { original: "approved price evidence", totalPaise: 12980 };
+    await EstimateClientReviewRoundModel.collection.insertOne({ _id: "mode-review" as never, estimateId: "tier-estimate", projectId: "tier-project",
+      estimateVersion: 1, version: 1, status: "pending", estimateSnapshot: snapshot });
+    await EstimateModel.updateOne({ _id: "tier-estimate" }, { $set: { "estimation.status": "sent_to_client", "estimation.pendingReviewRoundId": "mode-review" } });
+    expect((await service.detail(client, "tier-project")).canChangePricingMode).toBe(true);
+    expect((await service.detail(sales, "tier-project")).canChangePricingMode).toBe(false);
+    await service.save(client, "tier-project", modeChange("pmc"));
+    expect(await EstimateClientReviewRoundModel.findById("mode-review").lean()).toMatchObject({ status: "superseded", estimateSnapshot: snapshot });
+    expect((await EstimateModel.findById("tier-estimate").lean())!.estimation).toMatchObject({ pricedRevision: 2, status: "draft", salesApproval: null, pendingReviewRoundId: null });
+    await expect(service.save(client, "tier-project", modeChange("sub_vendor"))).rejects.toMatchObject({ code: "ESTIMATE_VERSION_CONFLICT" });
+  });
+
+  it("keeps mode eligibility and saved defaults when adding an eligible item in another room", async () => {
+    await eligibleModes();
+    await EstimateModel.updateOne({ _id: "tier-estimate" }, { $push: { rooms: { id: "Room3", label: "Room3" } } });
+    const candidates = await service.items(client, "tier-project", {});
+    expect(candidates.items.find(item => item.mainLineId === "visible")).toMatchObject({ classification: "special", pricingModeChoices: expect.arrayContaining([
+      expect.objectContaining({ pricingMode: "pmc" }) ]) });
+    const saved = await service.save(client, "tier-project", { expectedVersion: 1, operations: [{ kind: "add", mainLineId: "visible", roomId: "Room3", source,
+      quantity: 5, pricingMode: "pmc", modeTier: "signature" }] });
+    expect(saved.lines.find(line => line.roomId === "Room3")).toMatchObject({ pricingMode: "pmc", classification: "special", amountPaise: 20500 });
+    expect(saved.lines.find(line => line.roomId === "Room1")!.pricingMode).toBe("sub_vendor");
+  });
+
+  it("validates In-house components and clears their metadata when selecting PMC", async () => {
+    await eligibleModes();
+    const settings = { baseRatePaise: 1000, lowQuantityLimit: "10", impactBps: 1000, minimumMarkupBps: 1500, startingMarkupBps: 2000 };
+    await Section.collection.updateOne({ _id: "advanced-visible" as never }, { $set: { "payload.inHouseComponents": [
+      { id: "component", basketId: "tier-basket", subBasketId: "tier-sub", inclusions: [], exclusions: [], labor: settings, material: settings }
+    ] } });
+    await expect(service.save(client, "tier-project", modeChange("in_house"))).rejects.toMatchObject({ code: "ESTIMATE_COMPONENT_PRICING_UNAVAILABLE" });
+    const calculated = await service.save(client, "tier-project", { expectedVersion: 1, operations: [{ ...modeChange("in_house").operations[0]!, selectedInHouseComponentIds: ["component"] }] });
+    expect(calculated.lines[0]).toMatchObject({ pricingMode: "in_house", pricingBasis: "in_house_components_v1", selectedInHouseComponentIds: ["component"] });
+    await service.save(client, "tier-project", modeChange("pmc", 2));
+    const line = (await EstimateModel.findById("tier-estimate").lean())!.lineItems[0]!;
+    expect(line).toMatchObject({ pricingMode: "pmc", ratePaise: 4100, amountPaise: 8200 });
+    expect(line.selectedInHouseComponentIds).toBeUndefined();
+    expect(line.componentPricing).toBeUndefined();
+    expect(line.pricingBasis).toBeUndefined();
+  });
+});
+
 async function recommendationLine(id: string, input: { visible?: boolean; basketId?: string; subBasketId?: string; priced?: boolean } = {}) {
   const basketId = input.basketId ?? "tier-basket";
   const subBasketId = input.subBasketId ?? "tier-sub";
@@ -93,7 +233,7 @@ async function recommendationLine(id: string, input: { visible?: boolean; basket
     { _id: `overview-${id}` as never, mainLineId: id, revisionId: `revision-${id}`, sectionKey: "overview", applicability: "configured", version: 1,
       payload: { uomId: "tier-uom", clientVisible: input.visible !== false, applicableTiers: ["signature"] } },
     { _id: `advanced-${id}` as never, mainLineId: id, revisionId: `revision-${id}`, sectionKey: "advanced", applicability: "configured", version: 1,
-      payload: { modeCalculations: input.priced === false ? {} : { sub_vendor: { baseRatePaise: 2000 } } } }
+      payload: { pmcMarginBps: 0, subVendorMarginBps: 0, modeCalculations: input.priced === false ? {} : { sub_vendor: { baseRatePaise: 2000 } } } }
   ]);
 }
 const mustRule = (targetMainLineId: string, overrides: Record<string, unknown> = {}) => ({ id: `rule-${targetMainLineId}`, active: true,
@@ -201,7 +341,7 @@ describe("Client inline non-negotiable recommendations", () => {
     expect(result.items[0]!.requiresSetup).toBe(true);
     expect(result.items[0]!.candidate.choices.every(choice => !choice.available)).toBe(true);
     expect((await service.items(client, "tier-project")).items.some(item => item.mainLineId === "target")).toBe(false);
-    await expect(service.save(client, "tier-project", { expectedVersion: 1, operations: [addRecommendation()] })).rejects.toMatchObject({ status: 404 });
+    await expect(service.save(client, "tier-project", { expectedVersion: 1, operations: [addRecommendation()] })).rejects.toMatchObject({ code: "QUOTATION_CONFIGURATION_CHANGED" });
   });
 
   it("uses the latest draft source rules and rejects stale current identities", async () => {
@@ -373,6 +513,19 @@ describe("version 3 Client quotation commands", () => {
     await expect(service.revision(secondary, "tier-project")).rejects.toMatchObject({ code: "ESTIMATE_TIERS_NOT_FOUND" });
   });
 
+  it.each([[1664, 8664, 1560, 10200, -24], [1688, 8688, 1564, 10300, 48], [3042, 10042, 1808, 11800, -50]])(
+    "rounds the final quotation total after an edit at rate %i, preserving GST and unit rates", async (ratePaise, subtotalPaise, gstPaise, totalPaise, roundOffPaise) => {
+      await Section.collection.updateOne({ _id: "advanced-visible" as never }, { $set: {
+        "payload.modeCalculations.sub_vendor.baseRatePaise": ratePaise
+      } });
+      expect(await service.detail(client, "tier-project")).not.toHaveProperty("roundOffPaise");
+      const result = await service.save(client, "tier-project", quantityChange(1, 1));
+      expect(result).toMatchObject({ totalPaise, roundOffPaise });
+      expect(result.lines[0]).toMatchObject({ quantity: 1, ratePaise, amountPaise: ratePaise });
+      expect(await EstimateModel.findById("tier-estimate").lean()).toMatchObject({ subtotalPaise, gstPaise, totalPaise, roundOffPaise });
+      expect(await service.detail(client, "tier-project")).toMatchObject({ totalPaise, roundOffPaise });
+    });
+
   it("recalculates the edited quantity and preserves hidden internal rows and true totals", async () => {
     const hidden = (await EstimateModel.findById("tier-estimate").lean())!.lineItems[2];
     const result = await service.save(client, "tier-project", quantityChange());
@@ -396,7 +549,7 @@ describe("version 3 Client quotation commands", () => {
   it("removes and restores an item without losing its stable identity", async () => {
     const removed = await service.save(client, "tier-project", { expectedVersion: 1, operations: [{ kind: "update", lineItemId: "line-one", source, included: false }] });
     expect(removed.lines.map(line => line.id)).toEqual(["line-two"]);
-    expect(removed.totalPaise).toBe(8260);
+    expect(removed.totalPaise).toBe(8300);
     expect(removed.excludedLines).toEqual([expect.objectContaining({ id: "line-one", included: false, quantity: 2,
       mainBasketId: "tier-basket", mainBasketName: "Painting", subBasketId: "tier-sub", subBasketName: "Walls" })]);
     const restored = await service.save(client, "tier-project", { expectedVersion: 2, operations: [{ kind: "add", mainLineId: "visible", roomId: "Room1", source, quantity: 1, modeTier: "premium" }] });
@@ -423,7 +576,7 @@ describe("version 3 Client quotation commands", () => {
     const sections = await Section.find().lean();
     const result = await service.save(client, "tier-project", await removeGroup({ subBasketId: "tier-sub", roomId: "Room1" }));
     expect(result.lines.map(line => line.id)).toEqual(["line-two"]);
-    expect(result.totalPaise).toBe(8260);
+    expect(result.totalPaise).toBe(8300);
     expect(result.excludedLines[0]).toMatchObject({ id: "line-one", included: false, quantity: 2, modeTier: "signature" });
     const after = (await EstimateModel.findById("tier-estimate").lean())!;
     expect(after.lineItems[1]).toEqual(before.lineItems[1]);
@@ -432,7 +585,7 @@ describe("version 3 Client quotation commands", () => {
     expect(await Section.find().lean()).toEqual(sections);
     const restored = await service.save(client, "tier-project", { expectedVersion: 2, operations: [{ kind: "update", lineItemId: "line-one", source, included: true }] });
     expect(restored.lines.find(line => line.id === "line-one")).toMatchObject({ quantity: 2, amountPaise: 4000 });
-    expect(restored.totalPaise).toBe(12980);
+    expect(restored.totalPaise).toBe(13000);
   });
 
   it("can exclude an In-house group with unavailable component references and retains measurements and component choices", async () => {
@@ -445,7 +598,7 @@ describe("version 3 Client quotation commands", () => {
     const result = await service.save(client, "tier-project", await removeGroup({ subBasketId: "tier-sub", roomId: "Room1" }));
     expect(result.excludedLines[0]).toMatchObject({ id: "line-one", quantity: 2, included: false,
       selectedInHouseComponentIds: ["retained-component"], dimensions: { length: "2", width: "1", height: "9" } });
-    expect(result.totalPaise).toBe(8260);
+    expect(result.totalPaise).toBe(8300);
     expect(result.lines.map(line => line.id)).toEqual(["line-two"]);
   });
 
@@ -462,7 +615,7 @@ describe("version 3 Client quotation commands", () => {
     const command = await removeGroup({ subBasketId: null, roomId: null });
     expect(command.operations).toHaveLength(1);
     const result = await service.save(client, "tier-project", command);
-    expect(result).toMatchObject({ estimateVersion: 2, pricedRevision: 2, totalPaise: 1180, lines: [], groups: [] });
+    expect(result).toMatchObject({ estimateVersion: 2, pricedRevision: 2, totalPaise: 1200, roundOffPaise: 20, lines: [], groups: [] });
     expect(result.excludedLines).toHaveLength(count);
     expect((await EstimateModel.findById("tier-estimate").lean())!.lineItems.at(-1)).toEqual(hidden);
     expect(await AuditEventModel.countDocuments({ action: "quotation_saved" })).toBe(1);
@@ -572,7 +725,7 @@ describe("version 3 Client quotation commands", () => {
     await Section.collection.updateOne({ _id: "advanced-visible" as never }, { $set: { "payload.modeCalculations.sub_vendor.baseRatePaise": null } });
     const result = await service.save(client, "tier-project", { expectedVersion: 1, operations: [{ kind: "update", lineItemId: "line-one", source, included: false }] });
     expect(result.lines.map(line => line.id)).toEqual(["line-two"]);
-    expect(result.totalPaise).toBe(8260);
+    expect(result.totalPaise).toBe(8300);
   });
 
   it.each([
@@ -661,9 +814,160 @@ async function extraBasket(id = "floor-basket", visible = true) {
     { _id: `${id}-overview` as never, mainLineId: `${id}-line`, revisionId: `${id}-revision`, sectionKey: "overview", applicability: "configured", version: 1,
       payload: { uomId: "tier-uom", clientVisible: visible, applicableTiers: ["signature"] } },
     { _id: `${id}-advanced` as never, mainLineId: `${id}-line`, revisionId: `${id}-revision`, sectionKey: "advanced", applicability: "configured", version: 1,
-      payload: { modeCalculations: { sub_vendor: { baseRatePaise: 3210 } } } }
+      payload: { pmcMarginBps: 0, subVendorMarginBps: 0, modeCalculations: { sub_vendor: { baseRatePaise: 3210 } } } }
   ]);
 }
+
+const addBasketItem = (basketId = "floor-basket", roomId = "Room1") => ({ kind: "add" as const,
+  mainLineId: `${basketId}-line`, roomId, source: { revisionId: `${basketId}-revision`, itemVersion: 1, revisionVersion: 1, uomId: "tier-uom" },
+  quantity: 2, modeTier: "signature" as const });
+
+describe("Client additions across all eligible baskets", () => {
+  it("browses unselected basket hierarchies and filters before pagination without revealing hidden items", async () => {
+    await extraBasket();
+    await extraBasket("private-basket", false);
+    await SubBasket.collection.insertOne({ _id: "floor-sub" as never, basketId: "floor-basket", name: "Floor finishes", status: "active", displayOrder: 1, version: 1 });
+    for (const name of ["floor-main", "floor-sibling"]) await recommendationLine(name, { basketId: "floor-basket", subBasketId: "floor-sub" });
+    await recommendationLine("floor-unpriced", { basketId: "floor-basket", subBasketId: "floor-sub", priced: false });
+    await recommendationLine("floor-secret", { basketId: "floor-basket", subBasketId: "floor-sub", visible: false });
+    const before = await EstimateModel.findById("tier-estimate").lean();
+    const all = await service.items(client, "tier-project");
+    expect(all.items.map(item => item.mainLineId)).toEqual(["floor-basket-line", "floor-main", "floor-sibling", "visible"]);
+    expect(all.total).toBe(4);
+    const page = await service.items(client, "tier-project", { mainBasketId: "floor-basket", subBasketId: "floor-sub", search: "Floor finishes", offset: 1, limit: 1 });
+    expect(page).toMatchObject({ total: 2, offset: 1, limit: 1, items: [{ mainLineId: "floor-sibling", mainBasketId: "floor-basket", subBasketId: "floor-sub" }] });
+    expect((await service.items(client, "tier-project", { mainBasketId: "tier-basket", subBasketId: "floor-sub" })).total).toBe(0);
+    expect(JSON.stringify(all)).not.toMatch(/private-basket|floor-secret|floor-unpriced|hidden painting|never-expose-this/);
+    expect((await service.setup(client, "tier-project")).baskets.find(basket => basket.id === "floor-basket"))
+      .toMatchObject({ directTemporaryItemCount: 1, subBaskets: [{ id: "floor-sub", name: "Floor finishes" }] });
+    expect(await EstimateModel.findById("tier-estimate").lean()).toEqual(before);
+    expect(await AuditEventModel.countDocuments()).toBe(0);
+  });
+
+  it("saves only the chosen item and its parent, preserving siblings, other rooms, classifications and another project", async () => {
+    await extraBasket();
+    await SubBasket.collection.insertOne({ _id: "floor-sub" as never, basketId: "floor-basket", name: "Floor finishes", status: "active", displayOrder: 1, version: 1 });
+    await recommendationLine("unselected-sibling", { basketId: "floor-basket", subBasketId: "floor-sub" });
+    await EstimateModel.updateOne({ _id: "tier-estimate" }, { $set: { selectedMainBasketClassifications: [{ mainBasketId: "tier-basket", classification: "special" }] } });
+    const before = (await EstimateModel.findById("tier-estimate").lean())!;
+    await ProjectModel.collection.insertOne({ _id: "other-project" as never, clientId: other.id, assignedEstimatorId: sales.id,
+      estimationWorkflowVersion: 3, estimateRequirementsVersion: 0, estimationFenceEpoch: 0, status: "planning" });
+    await LeadModel.collection.insertOne({ _id: "other-lead" as never, projectId: "other-project", ownerId: sales.id });
+    await EstimateModel.collection.insertOne({ ...before, _id: "other-estimate" as never, projectId: "other-project", leadId: "other-lead", version: 7,
+      subtotalPaise: 22000, gstPaise: 3960, totalPaise: 25960, subtotal: 220, gst: 39.6, total: 259.6,
+      lineItems: before.lineItems.map(line => ({ ...line, quantity: line.quantity * 2, amountPaise: line.amountPaise! * 2, amount: line.amount! * 2 })) });
+    const otherBefore = await EstimateModel.findById("other-estimate").lean();
+    await expect(service.items(other, "tier-project")).rejects.toMatchObject({ status: 404 });
+    await expect(service.save(client, "other-project", { expectedVersion: 7, operations: [addBasketItem()] })).rejects.toMatchObject({ status: 404 });
+    const result = await service.save(client, "tier-project", { expectedVersion: 1, operations: [addBasketItem()] });
+    expect(result).toMatchObject({ estimateVersion: 2, pricedRevision: 2, totalPaise: 20600, roundOffPaise: 44, reviewState: "awaiting_staff_review" });
+    const saved = (await EstimateModel.findById("tier-estimate").lean())!;
+    expect(saved.selectedMainBasketIds).toEqual(["tier-basket", "floor-basket"]);
+    expect(saved.selectedMainBasketClassifications).toEqual([
+      { mainBasketId: "tier-basket", classification: "special" }, { mainBasketId: "floor-basket", classification: "standard" }
+    ]);
+    expect(saved.lineItems.slice(0, 3)).toEqual(before.lineItems);
+    expect(saved.lineItems).toHaveLength(4);
+    expect(saved.lineItems[3]).toMatchObject({ mainLineId: "floor-basket-line", roomId: "Room1", mainBasketId: "floor-basket",
+      subBasketId: null, included: true, classification: "standard", quantity: 2, amountPaise: 6420 });
+    expect((await service.detail(client, "tier-project")).lines.filter(line => line.mainBasketId === "floor-basket"))
+      .toEqual([expect.objectContaining({ mainLineId: "floor-basket-line", roomId: "Room1" })]);
+    expect(await EstimateModel.findById("other-estimate").lean()).toEqual(otherBefore);
+    await expect(service.save(client, "tier-project", { expectedVersion: 2, operations: [addBasketItem()] })).rejects.toMatchObject({ code: "QUOTATION_ITEM_EXISTS" });
+    expect(await EstimateModel.findById("tier-estimate").lean()).toEqual(saved);
+  });
+
+  it("deduplicates parent scope for two chosen items and rolls back a later invalid add", async () => {
+    await extraBasket();
+    const before = await EstimateModel.findById("tier-estimate").lean();
+    const sourceBefore = await MainLine.find().sort({ _id: 1 }).lean();
+    await expect(service.save(client, "tier-project", { expectedVersion: 1, operations: [addBasketItem(), addBasketItem("floor-basket", "not-owned")] }))
+      .rejects.toMatchObject({ status: 404 });
+    expect(await EstimateModel.findById("tier-estimate").lean()).toEqual(before);
+    expect(await MainLine.find().sort({ _id: 1 }).lean()).toEqual(sourceBefore);
+    expect(await AuditEventModel.countDocuments()).toBe(0);
+    await service.save(client, "tier-project", { expectedVersion: 1, operations: [addBasketItem(), addBasketItem("floor-basket", "Room2")] });
+    const saved = (await EstimateModel.findById("tier-estimate").lean())!;
+    expect(saved.selectedMainBasketIds).toEqual(["tier-basket", "floor-basket"]);
+    expect(saved.selectedMainBasketClassifications).toEqual([{ mainBasketId: "floor-basket", classification: "standard" }]);
+    expect(saved.lineItems.filter(line => line.mainBasketId === "floor-basket").map(line => line.roomId)).toEqual(["Room1", "Room2"]);
+  });
+
+  it("rejects overlapping group removal and item addition while allowing a separate new-basket addition", async () => {
+    await extraBasket();
+    await recommendationLine("target");
+    const removal = await removeGroup({ subBasketId: null, roomId: "Room1" });
+    const before = (await EstimateModel.findById("tier-estimate").lean())!;
+    await expect(service.save(client, "tier-project", { expectedVersion: 1, operations: [
+      ...removal.operations, addRecommendation([], "target")
+    ] })).rejects.toMatchObject({ code: "QUOTATION_DUPLICATE_OPERATION" });
+    expect(await EstimateModel.findById("tier-estimate").lean()).toEqual(before);
+    await service.save(client, "tier-project", { expectedVersion: 1, operations: [...removal.operations, addBasketItem()] });
+    const saved = (await EstimateModel.findById("tier-estimate").lean())!;
+    expect(saved.selectedMainBasketIds).toEqual(["tier-basket", "floor-basket"]);
+    expect(saved.lineItems.find(line => line.id === "line-one")).toMatchObject({ included: false, amountPaise: 0 });
+    expect(saved.lineItems.find(line => line.id === "line-two")).toEqual(before.lineItems[1]);
+    expect(saved.lineItems.find(line => line.id === "line-hidden")).toEqual(before.lineItems[2]);
+    expect(saved.lineItems.filter(line => line.mainBasketId === "floor-basket")).toEqual([
+      expect.objectContaining({ mainLineId: "floor-basket-line", roomId: "Room1", included: true })
+    ]);
+  });
+
+  it("rolls back the new parent, item, source fences and pending review when audit persistence fails", async () => {
+    await extraBasket();
+    await EstimateClientReviewRoundModel.collection.insertOne({ _id: "add-review" as never, estimateId: "tier-estimate", projectId: "tier-project",
+      estimateVersion: 1, version: 1, status: "pending", estimateSnapshot: { unchanged: true } });
+    await EstimateModel.updateOne({ _id: "tier-estimate" }, { $set: { "estimation.status": "sent_to_client", "estimation.pendingReviewRoundId": "add-review" } });
+    const before = await EstimateModel.findById("tier-estimate").lean();
+    const sourceBefore = await MainLine.find().sort({ _id: 1 }).lean();
+    const failing = createQuotationService({ audit: { appendInMongoTransaction: async () => { throw new Error("Synthetic add audit failure"); } } as any });
+    await expect(failing.save(client, "tier-project", { expectedVersion: 1, operations: [addBasketItem()] })).rejects.toThrow("Synthetic add audit failure");
+    expect(await EstimateModel.findById("tier-estimate").lean()).toEqual(before);
+    expect(await MainLine.find().sort({ _id: 1 }).lean()).toEqual(sourceBefore);
+    expect(await EstimateClientReviewRoundModel.findById("add-review").lean()).toMatchObject({ version: 1, status: "pending", estimateSnapshot: { unchanged: true } });
+  });
+
+  it("rejects stale or closed additions without selecting their basket", async () => {
+    await extraBasket();
+    const before = await EstimateModel.findById("tier-estimate").lean();
+    await expect(service.save(client, "tier-project", { expectedVersion: 99, operations: [addBasketItem()] })).rejects.toMatchObject({ code: "ESTIMATE_VERSION_CONFLICT" });
+    const addition = addBasketItem();
+    await expect(service.save(client, "tier-project", { expectedVersion: 1, operations: [{ ...addition, source: { ...addition.source, itemVersion: 99 } }] }))
+      .rejects.toMatchObject({ code: "QUOTATION_CONFIGURATION_CHANGED" });
+    expect(await EstimateModel.findById("tier-estimate").lean()).toEqual(before);
+    await EstimateModel.updateOne({ _id: "tier-estimate" }, { $set: { "estimation.editClosedAt": new Date().toISOString() } });
+    const closed = await EstimateModel.findById("tier-estimate").lean();
+    await expect(service.save(client, "tier-project", { expectedVersion: 1, operations: [addition] })).rejects.toMatchObject({ code: "ESTIMATE_LOCKED" });
+    expect(await EstimateModel.findById("tier-estimate").lean()).toEqual(closed);
+  });
+
+  it("keeps a saved hidden identity unavailable across rooms even when its current Configuration is visible", async () => {
+    await extraBasket();
+    const original = (await EstimateModel.findById("tier-estimate").lean())!;
+    const hidden = { ...original.lineItems[0], id: "hidden-floor", mainLineId: "floor-basket-line", catalogueId: "floor-basket-line",
+      mainBasketId: "floor-basket", subBasketId: null, revisionId: "floor-basket-revision", roomId: "Room2", clientVisible: false };
+    await EstimateModel.collection.updateOne({ _id: "tier-estimate" as never }, { $push: { lineItems: hidden } });
+    const before = await EstimateModel.findById("tier-estimate").lean();
+    expect((await service.items(client, "tier-project", { mainBasketId: "floor-basket" })).total).toBe(0);
+    expect((await service.setup(client, "tier-project")).baskets.some(basket => basket.id === "floor-basket")).toBe(false);
+    await expect(service.save(client, "tier-project", { expectedVersion: 1, operations: [addBasketItem()] })).rejects.toMatchObject({ status: 404 });
+    expect(await EstimateModel.findById("tier-estimate").lean()).toEqual(before);
+  });
+
+  it("lets only one concurrent addition commit its parent scope", async () => {
+    await extraBasket(); await extraBasket("lighting-basket");
+    const results = await Promise.allSettled(["floor-basket", "lighting-basket"].map(basketId =>
+      service.save(client, "tier-project", { expectedVersion: 1, operations: [addBasketItem(basketId)] })));
+    expect(results.filter(result => result.status === "fulfilled")).toHaveLength(1);
+    expect(results.find(result => result.status === "rejected")).toMatchObject({ reason: { code: "ESTIMATE_VERSION_CONFLICT" } });
+    const saved = (await EstimateModel.findById("tier-estimate").lean())!;
+    expect(saved.version).toBe(2);
+    expect(saved.selectedMainBasketIds).toHaveLength(2);
+    expect(saved.lineItems).toHaveLength(4);
+    expect(saved.selectedMainBasketIds).toContain(saved.lineItems[3].mainBasketId);
+    expect(await AuditEventModel.countDocuments({ action: "quotation_saved" })).toBe(1);
+  });
+});
 
 describe("Client quotation setup parity", () => {
   it("returns saved legacy-safe metadata and eligible unselected baskets without protected hierarchy or counts", async () => {
@@ -682,7 +986,7 @@ describe("Client quotation setup parity", () => {
         subBaskets: [{ id: "tier-sub", name: "Walls", mainLineCount: 1, temporaryItemCount: 0 }], canSelect: true, canRemove: false, removalBlockedReason: expect.any(String) }
     ]);
     expect(JSON.stringify(result)).not.toMatch(/private-basket|hidden painting|never-expose-this|ratePaise|classification/);
-    expect((await service.items(client, "tier-project")).items.map(item => item.mainLineId)).toEqual(["visible"]);
+    expect((await service.items(client, "tier-project")).items.map(item => item.mainLineId)).toEqual(["floor-basket-line", "visible"]);
     expect((await service.detail(client, "tier-project")).setup).toEqual(result.setup);
     expect((await service.setup(sales, "tier-project")).setup.canConfigure).toBe(false);
   });
@@ -696,7 +1000,7 @@ describe("Client quotation setup parity", () => {
     command.operations[0].rooms.push(newRoom);
     command.operations[0].selectedMainBasketIds.push("floor-basket");
     const saved = await service.save(client, "tier-project", command);
-    expect(saved).toMatchObject({ estimateId: "tier-estimate", estimateVersion: 2, pricedRevision: 2, totalPaise: 12980, reviewState: "awaiting_staff_review",
+    expect(saved).toMatchObject({ estimateId: "tier-estimate", estimateVersion: 2, pricedRevision: 2, totalPaise: 13000, roundOffPaise: 20, reviewState: "awaiting_staff_review",
       setup: { propertyType: "1BHK", rooms: [expect.objectContaining({ id: "Room1" }), expect.objectContaining({ id: "Room2" }), expect.objectContaining({ ...newRoom, sqft: 120 })] } });
     const after = (await EstimateModel.findById("tier-estimate").lean())!;
     expect(after.lineItems).toEqual(before.lineItems);
@@ -711,7 +1015,7 @@ describe("Client quotation setup parity", () => {
       { kind: "add", mainLineId: candidate.mainLineId, roomId: newRoom.id, source: candidate.source, quantity: 2 }
     ] });
     expect(added.lines.find(line => line.roomId === newRoom.id)).toMatchObject({ roomName: "Kitchen", quantity: 2, amountPaise: 6420 });
-    expect(added.totalPaise).toBe(20556);
+    expect(added.totalPaise).toBe(20600);
   });
 
   it("does not change estimate, review, audit or Configuration on exact no-op, including old missing metadata", async () => {
@@ -734,7 +1038,7 @@ describe("Client quotation setup parity", () => {
       "estimation.pendingReviewRoundId": "setup-review", "estimation.salesApproval": { actorId: sales.id, estimateVersion: 1, pricedRevision: 1, sourceDigest: "a".repeat(64), approvedAt: new Date().toISOString() } } });
     const command = await setupCommand(); command.operations[0].propertyType = "Studio";
     const result = await service.save(client, "tier-project", command);
-    expect(result).toMatchObject({ estimateVersion: 2, pricedRevision: 2, reviewState: "awaiting_staff_review", totalPaise: 12980 });
+    expect(result).toMatchObject({ estimateVersion: 2, pricedRevision: 2, reviewState: "awaiting_staff_review", totalPaise: 13000, roundOffPaise: 20 });
     expect((await EstimateModel.findById("tier-estimate").lean())!.estimation).toMatchObject({ phase, status: "draft", pendingReviewRoundId: null, salesApproval: null, designScopeRevision: 2 });
     expect(await EstimateClientReviewRoundModel.findById("setup-review").lean()).toMatchObject({ status: "superseded", version: 2, estimateSnapshot: snapshot });
     expect(await AuditEventModel.findOne().lean()).toMatchObject({ actorId: client.id, action: "quotation_saved", newValues: { setupChanged: true, physicalChange: true } });
@@ -904,4 +1208,74 @@ describe("Client quotation setup parity", () => {
     expect(await EstimateModel.findById("tier-estimate").lean()).toEqual(original);
     expect((await EstimateModel.findById("setup-other-estimate").lean())!.totalPaise).toBe(25960);
   });
+});
+
+describe("atomic sub-basket tier choices", () => {
+  async function groupTier(subBasketId: string | null = "tier-sub") {
+    const view = await service.detail(client, "tier-project");
+    const group = view.groups.find(group => group.mainBasketId === "tier-basket" && group.subBasketId === subBasketId && group.roomId === "Room1")!;
+    return { kind: "set_group_tier" as const, mainBasketId: "tier-basket", subBasketId, roomId: "Room1", sourceToken: group.sourceToken, modeTier: "premium" as const };
+  }
+  it("merges staged quantity changes and switches only the room's visible group in one save", async () => {
+    const before = (await EstimateModel.findById("tier-estimate").lean())!;
+    const group = await groupTier();
+    const result = await service.save(client, "tier-project", { expectedVersion: 1, operations: [group, ...quantityChange().operations] });
+    expect(result).toMatchObject({ estimateVersion: 2, totalPaise: 31900, roundOffPaise: 40 });
+    expect(result.lines[0]).toMatchObject({ quantity: 4, modeTier: "premium", ratePaise: 5000, amountPaise: 20000 });
+    const saved = (await EstimateModel.findById("tier-estimate").lean())!;
+    expect(saved.lineItems[1]).toEqual(before.lineItems[1]); expect(saved.lineItems[2]).toEqual(before.lineItems[2]);
+    expect(await AuditEventModel.countDocuments({ action: "quotation_saved" })).toBe(1);
+  });
+  it("rejects stale groups and conflicting row tiers without a partial write", async () => {
+    const group = await groupTier(); const before = await EstimateModel.findById("tier-estimate").lean();
+    await expect(service.save(client, "tier-project", { expectedVersion: 1, operations: [{ ...group, sourceToken: "0".repeat(64) }] })).rejects.toMatchObject({ code: "QUOTATION_CONFIGURATION_CHANGED" });
+    await expect(service.save(client, "tier-project", { expectedVersion: 1, operations: [group,
+      { kind: "update", lineItemId: "line-one", source, modeTier: "signature" }] })).rejects.toMatchObject({ code: "QUOTATION_DUPLICATE_OPERATION" });
+    expect(await EstimateModel.findById("tier-estimate").lean()).toEqual(before);
+  });
+  it.each(["revision", "unit"])("rejects a previously displayed group after its %s changes", async change => {
+    const group = await groupTier();
+    if (change === "revision") await Revision.updateOne({ _id: "revision-visible" }, { $inc: { version: 1 } });
+    else await Uom.updateOne({ _id: "tier-uom" }, { $set: { decimalScale: 3 } });
+    const before = await EstimateModel.findById("tier-estimate").lean();
+    await expect(service.save(client, "tier-project", { expectedVersion: 1, operations: [group] })).rejects.toMatchObject({ code: "QUOTATION_CONFIGURATION_CHANGED" });
+    expect(await EstimateModel.findById("tier-estimate").lean()).toEqual(before);
+  });
+  it("keeps excluded row edits excluded when the same group changes tier", async () => {
+    const result = await service.save(client, "tier-project", { expectedVersion: 1, operations: [await groupTier(),
+      { kind: "update", lineItemId: "line-one", source, included: false }] });
+    expect(result.lines.map(line => line.id)).toEqual(["line-two"]);
+    expect(result.excludedLines[0]).toMatchObject({ id: "line-one", included: false });
+  });
+  it("treats a null sub-basket as direct items, never as every sub-basket", async () => {
+    const before = (await EstimateModel.findById("tier-estimate").lean())!;
+    await MainLine.collection.insertOne({ _id: "direct" as never, name: "Direct fixture", basketId: "tier-basket", subBasketId: null,
+      itemType: "temporary", status: "active", version: 1, activeRevisionId: "revision-direct" });
+    await Revision.collection.insertOne({ _id: "revision-direct" as never, mainLineId: "direct", status: "active", version: 1 });
+    await Section.collection.insertMany((await Section.find({ mainLineId: "visible" }).lean()).map(section => ({ ...section,
+      _id: `${section.sectionKey}-direct` as never, mainLineId: "direct", revisionId: "revision-direct" })));
+    await EstimateModel.updateOne({ _id: "tier-estimate" }, { $push: { lineItems: { ...before.lineItems[0], id: "direct-line", mainLineId: "direct", catalogueId: "direct",
+      itemType: "temporary", subBasketId: null, revisionId: "revision-direct", quantity: 1, amountPaise: 2000, amount: 20 } } });
+    const result = await service.save(client, "tier-project", { expectedVersion: 1, operations: [await groupTier(null)] });
+    expect(result.lines.find(line => line.id === "direct-line")).toMatchObject({ modeTier: "premium", amountPaise: 5000 });
+    const saved = (await EstimateModel.findById("tier-estimate").lean())!;
+    expect(saved.lineItems.slice(0, 3)).toEqual(before.lineItems);
+  });
+  it("changes more than 100 visible lines atomically with one bounded group command", async () => {
+    const before = (await EstimateModel.findById("tier-estimate").lean())!;
+    const templates = await Section.find({ mainLineId: "visible" }).lean();
+    const ids = Array.from({ length: 101 }, (_, i) => `group-line-${i}`);
+    await MainLine.collection.insertMany(ids.map(id => ({ _id: id as never, name: id, basketId: "tier-basket", subBasketId: "tier-sub",
+      itemType: "main_line", status: "active", version: 1, activeRevisionId: `revision-${id}` })));
+    await Revision.collection.insertMany(ids.map(id => ({ _id: `revision-${id}` as never, mainLineId: id, status: "active", version: 1 })));
+    await Section.collection.insertMany(ids.flatMap(id => templates.map(section => ({ ...section, _id: `${section.sectionKey}-${id}` as never,
+      mainLineId: id, revisionId: `revision-${id}` }))));
+    await EstimateModel.updateOne({ _id: "tier-estimate" }, { $push: { lineItems: { $each: ids.map(id => ({ ...before.lineItems[0], id,
+      mainLineId: id, catalogueId: id, revisionId: `revision-${id}`, quantity: 1, amountPaise: 2000, amount: 20 })) } } });
+    const result = await service.save(client, "tier-project", { expectedVersion: 1, operations: [await groupTier()] });
+    expect(result.estimateVersion).toBe(2);
+    expect(result.lines.filter(line => line.roomId === "Room1")).toHaveLength(102);
+    expect(result.lines.filter(line => line.roomId === "Room1").every(line => line.modeTier === "premium")).toBe(true);
+    expect((await EstimateModel.findById("tier-estimate").lean())!.lineItems[2]).toEqual(before.lineItems[2]);
+  }, 30_000);
 });

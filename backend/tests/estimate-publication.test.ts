@@ -374,6 +374,20 @@ afterEach(() => {
 });
 
 describe("ordinary transactional Estimate publication", () => {
+  it.each([
+    [8_664, 1_560, 10_200, -24], [8_688, 1_564, 10_300, 48], [8_686, 1_564, 10_200, -50], [10_000, 1_800, 11_800, 0]
+  ])("freezes the final rounded total and exact adjustment (%i + %i)", async (subtotalPaise, gstPaise, totalPaise, roundOffPaise) => {
+    const source = estimate({ subtotal: subtotalPaise / 100, gst: gstPaise / 100, total: totalPaise / 100,
+      subtotalPaise, gstPaise, totalPaise, roundOffPaise });
+    const harness = setupHarness({ estimate: source });
+    await harness.publication.publishEstimateToClient(publicationInput());
+    const snapshot = harness.createRound.mock.calls[0]![0][0].estimateSnapshot;
+    expect(snapshot).toMatchObject({ subtotalPaise, gstPaise, totalPaise, roundOffPaise, lineItems: source.lineItems });
+    expect(harness.pdf.generate.mock.calls[0]![0]).toMatchObject({ subtotalPaise, gstPaise, totalPaise, roundOffPaise });
+    await expect(new EstimateClientReviewRoundModel(harness.createRound.mock.calls[0]![0][0]).validate()).resolves.toBeUndefined();
+    expect(toEstimateSnapshot(estimate() as never, lead())).not.toHaveProperty("roundOffPaise");
+  });
+
   it("freezes one proposal in the rendered artifact and committed round without adding defaults to ordinary snapshots", async () => {
     const sourceLead = lead({ projectNumber: "Lisno000027" });
     const harness = setupHarness({ lead: sourceLead });

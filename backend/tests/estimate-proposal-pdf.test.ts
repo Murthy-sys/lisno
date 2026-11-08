@@ -20,6 +20,24 @@ async function readPdf(bytes: Buffer) {
 }
 
 describe("reference proposal booklet", () => {
+  it.each([[2_222, 33, 14_600], [2_205, -50, 14_500], [2_255, 0, 14_600]])(
+    "shows the saved final adjustment without changing GST (%i paise)", async (gstPaise, roundOffPaise, totalPaise) => {
+      const fixture = proposalFixture();
+      Object.assign(fixture, { subtotal: 123.45, subtotalPaise: 12_345, gst: gstPaise / 100, gstPaise,
+        total: totalPaise / 100, totalPaise, roundOffPaise });
+      const pdf = await readPdf(await renderEstimateProposalPdf(fixture));
+      const investment = pdf.pages.find(text => text.includes("Total payable"))!;
+      expect(investment).toContain(money(gstPaise, false));
+      expect(investment).toContain(money(totalPaise));
+      if (roundOffPaise) {
+        expect(investment).toContain(`${roundOffPaise < 0 ? "-" : "+"}${money(Math.abs(roundOffPaise))}`);
+        expect(investment.indexOf("Round off")).toBeGreaterThan(investment.indexOf("GST"));
+        expect(investment.indexOf("Round off")).toBeLessThan(investment.indexOf("Total payable"));
+      } else expect(investment).not.toContain("Round off");
+      for (const bound of pdf.bounds) expect(bound.x + bound.width, bound.text).toBeLessThan(550);
+      await expect(renderEstimateProposalPdf({ ...fixture, roundOffPaise: roundOffPaise + 1 })).rejects.toThrow("totals do not reconcile");
+    });
+
   it("renders the complete twelve-page composition with exact saved financial amounts and embedded searchable text", async () => {
     const fixture = proposalFixture();
     const { bytes } = await createEstimatePdfService().generate(fixture);

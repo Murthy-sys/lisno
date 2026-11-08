@@ -1,17 +1,19 @@
 import { calculateDimensionQuantity } from "../../../../shared/estimation/estimateDimensions";
-import { KNOWLEDGE_MODE_TIER_LABELS } from "../../../../shared/knowledge/knowledgeModeTiers";
-import { EstimateLineActions, EstimateLineChoice, EstimateLineLayout, EstimateLineTierOptions } from "../estimates/EstimateLineRow";
+import { EstimateLineActions, EstimateLineChoice, EstimateLineLayout } from "../estimates/EstimateLineRow";
 import { EstimateDimensionsFields } from "../leads/EstimateDimensionsFields";
-import type { QuotationItemDraft } from "./clientQuotationDraft";
+import { EstimatePricingModeControl } from "../estimates/EstimatePricingModeControl";
+import { quotationItemChoices, type QuotationItemDraft } from "./clientQuotationDraft";
 import type { QuotationLine } from "./quotationApi";
 
 /** The shared Sales row, driven only by the scoped quotation response and commands. */
-export function ClientQuotationLine({ item, currentLine, selected, disabled, grouped, onChange, money }: {
+export function ClientQuotationLine({ item, currentLine, selected, disabled, grouped, canChangePricingMode, onTogglePmc, onChange, money }: {
   item: QuotationItemDraft;
   currentLine: QuotationLine;
   selected: boolean;
   disabled: boolean;
   grouped: boolean;
+  canChangePricingMode: boolean;
+  onTogglePmc: () => void;
   onChange: (update: Partial<QuotationItemDraft>) => void;
   money: (paise: number | null) => string;
 }) {
@@ -20,7 +22,11 @@ export function ClientQuotationLine({ item, currentLine, selected, disabled, gro
   const unavailable = !currentLine.source;
   const blocked = disabled || unavailable || grouped;
   const fieldsDisabled = blocked || !selected;
-  const choice = line.choices.find(option => option.modeTier === item.modeTier);
+  const choices = quotationItemChoices(item);
+  const choice = choices.find(option => option.modeTier === item.modeTier);
+  const editableMode = canChangePricingMode && currentLine.classification === "special" &&
+    Boolean(currentLine.pricingModeChoices?.length) && !unavailable;
+  const modePricingUnavailable = Boolean(line.pricingModeChoices?.length) && (!choice?.available || !choice.source);
   const quantity = Number(item.quantity);
   const measured = line.dimensionsMandatory ? calculateDimensionQuantity(line.dimensionRule, item.dimensions) : null;
   const changeQuantity = (direction: -1 | 1) => {
@@ -34,15 +40,19 @@ export function ClientQuotationLine({ item, currentLine, selected, disabled, gro
   return <EstimateLineLayout included={selected} label={`${currentLine.mainLineName} ${currentLine.roomName}`} className="client-quotation__line"
     choice={<EstimateLineChoice name={currentLine.mainLineName} unit={line.uomName} included={selected} disabled={blocked}
       accessibleLabel={`Include ${label}`} onToggle={included => onChange({ included })} />}
+    type={selected ? <div className="configured-estimate-line__readonly"><span>Type</span><strong>{currentLine.classification === "standard" ? "Standard" : currentLine.classification === "special" ? "Special" : "Not recorded"}</strong></div> : null}
+    pricing={selected ? <EstimatePricingModeControl mode={item.pricingMode} label={label} groupName={`client-line-pricing-mode-${line.id}`}
+      editable={editableMode} disabled={fieldsDisabled} onTogglePmc={onTogglePmc}
+      onChange={pricingMode => onChange({ pricingMode, components: [] })} /> : null}
     fields={<>
       {line.dimensionsMandatory
-        ? <div className="configured-estimate-line__quantity configured-estimate-line__quantity--calculated"><span>Quantity ({line.uomName})</span><output aria-label={`Quantity for ${label} ${line.uomName}`}>{measured?.quantity ?? "Pending"}</output></div>
-        : <label className="configured-estimate-line__quantity"><span>Quantity ({line.uomName})</span><span className="configured-estimate-line__stepper">
+        ? <div className="configured-estimate-line__quantity configured-estimate-line__quantity--calculated"><span>Qty ({line.uomName})</span><output aria-label={`Quantity for ${label} ${line.uomName}`}>{measured?.quantity ?? "Pending"}</output></div>
+        : <label className="configured-estimate-line__quantity"><span>Qty ({line.uomName})</span><span className="configured-estimate-line__stepper">
           <button type="button" aria-label={`Decrease quantity for ${label}`} disabled={fieldsDisabled || !Number.isFinite(quantity) || quantity <= 1} onClick={() => changeQuantity(-1)}>−</button>
           <input aria-label={`Quantity for ${label} ${line.uomName}`} type="number" inputMode="decimal" min="0" step="any" value={item.quantity} disabled={fieldsDisabled} onChange={event => onChange({ quantity: event.target.value })} />
           <button type="button" aria-label={`Increase quantity for ${label}`} disabled={fieldsDisabled} onClick={() => changeQuantity(1)}>+</button>
         </span></label>}
-      <div className="configured-estimate-line__rate client-quotation__price"><span>Price (₹/{line.uomName})</span><output aria-label={`Configured price for ${label}`}>{choice?.inHouseComponents ? "From components" : money(choice?.ratePaise ?? null)}</output></div>
+      <div className="configured-estimate-line__rate client-quotation__price"><span>Rate (₹/{line.uomName})</span><output className={choice?.inHouseComponents ? "client-quotation__component-rate" : undefined} aria-label={`Configured price for ${label}`}>{choice?.inHouseComponents ? "From components" : money(choice?.ratePaise ?? null)}</output></div>
       <div className="configured-estimate-line__amount"><span>{item.kind === "update" ? "Saved amount" : "Amount"}</span><output aria-label={`${item.kind === "update" ? "Saved amount" : "Amount"} for ${label}`}>{item.kind === "update" ? money(currentLine.amountPaise) : "After save"}</output></div>
       <EstimateLineActions name={label} disabled={blocked} included={selected} onToggle={() => onChange({ included: !selected })}
         {...(!line.dimensionsMandatory && selected ? { onResetQuantity: () => onChange({ quantity: "1" }) } : {})} />
@@ -51,13 +61,12 @@ export function ClientQuotationLine({ item, currentLine, selected, disabled, gro
     {selected && line.dimensionsMandatory ? line.dimensionRule
       ? <EstimateDimensionsFields label={label} dimensions={item.dimensions} rule={line.dimensionRule} quantityUnit={line.uomName} disabled={fieldsDisabled} onChange={dimensions => onChange({ dimensions })} />
       : <p className="configured-estimate-line__message" role="status">Dimensions are unavailable until your team reviews the configured unit.</p> : null}
-    {selected ? <div className="configured-estimate-line__options">
-      <EstimateLineTierOptions label={label} groupName={`client-line-tier-${line.id}`} value={item.modeTier} disabled={fieldsDisabled}
-        options={line.choices.map(option => ({ value: option.modeTier, label: KNOWLEDGE_MODE_TIER_LABELS[option.modeTier], disabledReason: option.available && option.source ? null : "Unavailable" }))}
-        onChange={modeTier => onChange({ modeTier, components: [] })} />
-      {choice?.inHouseComponents ? <fieldset className="client-quotation__components" disabled={fieldsDisabled}><legend>Components for {label}</legend>{choice.inHouseComponents.map(component => <label key={component.id}>
-        <input type="checkbox" checked={item.components.includes(component.id)} disabled={fieldsDisabled || !component.available && !item.components.includes(component.id)} onChange={event => onChange({ components: event.target.checked ? [...item.components, component.id] : item.components.filter(id => id !== component.id) })} />{component.label}{!component.available ? " (unavailable)" : ""}
+    {selected ? <>
+      {modePricingUnavailable ? <p className="configured-estimate-line__message" role="status">{choice?.unavailableReason ?? "Price is unavailable for the selected mode and tier. Review the available options before saving."}</p> : null}
+      {choice?.inHouseComponents ? <fieldset className="client-quotation__components" aria-label={`Components for ${label}`} disabled={fieldsDisabled}><legend>In-house components</legend>{choice.inHouseComponents.map(component => <label key={component.id}>
+        <input type="checkbox" checked={item.components.includes(component.id)} disabled={fieldsDisabled || !component.available && !item.components.includes(component.id)} onChange={event => onChange({ components: event.target.checked ? [...item.components, component.id] : item.components.filter(id => id !== component.id) })} />
+        <span className="client-quotation__component-copy"><span>{component.label}</span>{!component.available ? <span className="client-quotation__component-status">(unavailable)</span> : null}</span>
       </label>)}</fieldset> : null}
-    </div> : <p className="configured-estimate-line__classification-readonly client-quotation__line-status">{grouped || item.included !== line.included ? "Removed when you save." : item.kind === "add" ? "Select this Main Line to add it to the room." : "Not included. Select it to restore the saved choices."}</p>}
+    </> : <p className="configured-estimate-line__classification-readonly client-quotation__line-status">{grouped || item.included !== line.included ? "Removed when you save." : item.kind === "add" ? "Select this Main Line to add it to the room." : "Not included. Select it to restore the saved choices."}</p>}
   </EstimateLineLayout>;
 }

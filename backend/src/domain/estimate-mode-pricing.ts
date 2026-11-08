@@ -28,6 +28,42 @@ export function estimateModeBaseRatesPaise(payload: unknown): EstimateModeBaseRa
   return { pmc: base(scopes?.pmc), sub_vendor: base(scopes?.sub_vendor), in_house: hasInHouseComponents(payload) ? null : inHouse };
 }
 
+/** Estimation adds each unit-rate mode's configured maximum to its cost; margins stay private. */
+export function estimateModeSellingRatesPaise(payload: unknown): EstimateModeBaseRatesPaise {
+  const bases = estimateModeBaseRatesPaise(payload);
+  const settings = object(payload);
+  const sellingRate = (baseRatePaise: unknown, maximumMarginBps: unknown, marginLimit = 9_500): number | null => {
+    if (typeof baseRatePaise !== "number" || !Number.isSafeInteger(baseRatePaise) || baseRatePaise < 0 ||
+      typeof maximumMarginBps !== "number" || !Number.isSafeInteger(maximumMarginBps) ||
+      maximumMarginBps < 0 || maximumMarginBps > marginLimit) return null;
+    const total = (BigInt(baseRatePaise) * (10_000n + BigInt(maximumMarginBps)) + 5_000n) / 10_000n;
+    return total <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(total) : null;
+  };
+  const inHouseRate = (value: unknown): number | null => {
+    const cost = object(value);
+    return sellingRate(cost?.baseRatePaise, cost?.startingMarkupBps, 9_999);
+  };
+  let inHouse: number | null = null;
+  if (!hasInHouseComponents(payload)) {
+    const scopes = object(settings?.modeCalculations);
+    if (scopes && (Object.hasOwn(scopes, "in_house_labor") || Object.hasOwn(scopes, "in_house_material"))) {
+      const labor = inHouseRate(scopes.in_house_labor);
+      const material = inHouseRate(scopes.in_house_material);
+      if (labor !== null && material !== null) {
+        const total = BigInt(labor) + BigInt(material);
+        inHouse = total <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(total) : null;
+      }
+    } else {
+      inHouse = inHouseRate(scopes?.in_house);
+    }
+  }
+  return {
+    pmc: sellingRate(bases.pmc, settings?.pmcMarginBps),
+    sub_vendor: sellingRate(bases.sub_vendor, settings?.subVendorMarginBps),
+    in_house: inHouse
+  };
+}
+
 export function estimatePricingMetadataIsValid(line: {
   classification?: unknown; pricingMode?: unknown; rateSource?: unknown; modeTier?: unknown;
 }): boolean {

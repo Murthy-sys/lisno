@@ -2,7 +2,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import axe from "axe-core";
-import { EstimateLineActions, EstimateLineChoice, EstimateLineLayout, EstimateLineTierOptions } from "./EstimateLineRow";
+import { EstimateLineActions, EstimateLineChoice, EstimateLineLayout, EstimateLineTierNotes, EstimateLineTierOptions } from "./EstimateLineRow";
 
 describe("Shared estimate line presentation", () => {
   it("uses only supplied tier choices and disables unavailable or locked choices", async () => {
@@ -55,6 +55,26 @@ describe("Shared estimate line presentation", () => {
     const row = screen.getByRole("group", { name: "Storage Kitchen" });
     expect(within(row).getByRole("checkbox", { name: "Include Storage in Kitchen" })).toBeDisabled();
     expect(within(row).getByLabelText("Saved amount for Storage in Kitchen")).toHaveTextContent("₹1,000.00");
+    expect((await axe.run(container, { rules: { "color-contrast": { enabled: false } } })).violations).toEqual([]);
+  });
+
+  it("keeps unavailable tier explanations associated with the compact controls", async () => {
+    const options = [{ value: "signature" as const, label: "Signature" },
+      { value: "premium" as const, label: "Premium", disabledReason: "Not configured" },
+      { value: "functional" as const, label: "Functional", disabledReason: "Not applicable" }];
+    const { container } = render(<EstimateLineLayout included label="Ceiling in Bedroom"
+      choice={<EstimateLineChoice name="Ceiling" unit="sq-ft" included disabled={false} onToggle={vi.fn()} />}
+      tier={<EstimateLineTierOptions label="Ceiling in Bedroom" groupName="bedroom-tier" value="signature"
+        options={options} availabilityId="bedroom-availability" onChange={vi.fn()} />}
+      fields={<output aria-label="Amount for Ceiling in Bedroom">₹81,000</output>}>
+      <EstimateLineTierNotes options={options} id="bedroom-availability" />
+    </EstimateLineLayout>);
+    expect(screen.getByRole("group", { name: "Configuration tier for Ceiling in Bedroom" }))
+      .toHaveAccessibleDescription("Premium: Not configured · Functional: Not applicable");
+    expect(screen.getByRole("radio", { name: "Premium tier for Ceiling in Bedroom" })).toBeDisabled();
+    expect(screen.getByRole("radio", { name: "Functional tier for Ceiling in Bedroom" })).toBeDisabled();
+    expect(screen.getByTitle("Not configured")).toContainElement(screen.getByRole("radio", { name: "Premium tier for Ceiling in Bedroom" }));
+    expect(screen.getByRole("checkbox", { name: "Include Ceiling" })).toBeChecked();
     expect((await axe.run(container, { rules: { "color-contrast": { enabled: false } } })).violations).toEqual([]);
   });
 });

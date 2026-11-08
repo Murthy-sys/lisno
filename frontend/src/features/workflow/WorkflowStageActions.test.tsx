@@ -319,3 +319,16 @@ it("serializes evidence and versioned action data using the protected multipart 
   expect((body.get("file") as File).name).toBe("sketch.pdf");
   expect(body.getAll("mediaFiles").map((file) => (file as File).name)).toEqual(["site.jpg", "tour.mp4"]);
 });
+
+it.each([false, true])("rejects a retired kickoff request before sending data or evidence (file: %s)", async (withFile) => {
+  const post = vi.spyOn(apiClient, "post");
+  const upload = vi.spyOn(apiClient, "postMultipartWithProgress");
+  await expect(performDesignWorkflowAction({
+    projectId: "project-a", stageId: "client-kickoff", expectedVersion: 4,
+    action: "client_kickoff_not_required" as Parameters<typeof performDesignWorkflowAction>[0]["action"],
+    idempotencyKey: "stale-exemption", note: "Old decision",
+    file: withFile ? new File(["Evidence"], "proof.pdf", { type: "application/pdf" }) : undefined
+  })).rejects.toThrow("Client Kick off is mandatory");
+  expect(post).not.toHaveBeenCalled();
+  expect(upload).not.toHaveBeenCalled();
+});

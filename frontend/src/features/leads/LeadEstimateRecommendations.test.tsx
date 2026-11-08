@@ -1,8 +1,19 @@
 import { act, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
-vi.mock("../../auth/AuthProvider", () => ({ useAuth: () => ({ user: { id: "test-estimator" }, reviewSession: { id: "test-session" }, status: "authenticated" }) }));
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { ComponentProps } from "react";
+const authState = vi.hoisted(() => ({ role: undefined as string | undefined }));
+const builderActions = vi.hoisted(() => ({ select: undefined as ComponentProps<typeof import("./ConfiguredEstimateBuilder").ConfiguredEstimateBuilder>["onSelectRecommendedLine"] }));
+vi.mock("./ConfiguredEstimateBuilder", async importOriginal => {
+  const actual = await importOriginal<typeof import("./ConfiguredEstimateBuilder")>();
+  return { ...actual, ConfiguredEstimateBuilder: (props: ComponentProps<typeof actual.ConfiguredEstimateBuilder>) => {
+    builderActions.select = props.onSelectRecommendedLine;
+    return <actual.ConfiguredEstimateBuilder {...props} />;
+  } };
+});
+vi.mock("../../auth/AuthProvider", () => ({ useAuth: () => ({ user: { id: "test-estimator", role: authState.role }, reviewSession: { id: "test-session" }, status: "authenticated" }) }));
+beforeEach(() => { authState.role = undefined; });
 vi.mock("./estimateRevisionsApi", async importOriginal => ({
   ...await importOriginal<typeof import("./estimateRevisionsApi")>(),
   getEstimateRevisions: vi.fn(async () => ({ items: [], pagination: { limit: 20, nextCursor: null } }))
@@ -21,7 +32,11 @@ const catalogue = { items: [
     { id: "line-functional", mainLineId: "line-functional", basketId: "basket-pop", subBasketId: "sub-ceiling", name: "Functional Lights", displayOrder: 2, revisionId: "rev-functional", revisionVersion: 1, itemVersion: 1, inHouseBaseRatePaise: 15_000, modeBaseRatesPaise: { pmc: 8_000, sub_vendor: 15_000, in_house: 15_000 }, uom }
   ] }] },
   { id: "basket-paint", name: "Painting", displayOrder: 2, directTemporaryItems: [], subBaskets: [{ id: "sub-paint", basketId: "basket-paint", name: "Ceiling finish", displayOrder: 1, mainLines: [
-    { id: "line-paint", mainLineId: "line-paint", basketId: "basket-paint", subBasketId: "sub-paint", name: "False ceiling painting", displayOrder: 1, revisionId: "rev-paint", revisionVersion: 1, itemVersion: 1, inHouseBaseRatePaise: 25_000, modeBaseRatesPaise: { pmc: 8_000, sub_vendor: 25_000, in_house: 25_000 }, uom }
+    { id: "line-paint", mainLineId: "line-paint", basketId: "basket-paint", subBasketId: "sub-paint", name: "False ceiling painting", displayOrder: 1, revisionId: "rev-paint", revisionVersion: 1, itemVersion: 1, inHouseBaseRatePaise: 25_000, modeBaseRatesPaise: { pmc: 8_000, sub_vendor: 25_000, in_house: 25_000 }, uom },
+    { id: "line-primer", mainLineId: "line-primer", basketId: "basket-paint", subBasketId: "sub-paint", name: "Ceiling primer", displayOrder: 2, revisionId: "rev-primer", revisionVersion: 1, itemVersion: 1, inHouseBaseRatePaise: 12_000, modeBaseRatesPaise: { pmc: 5_000, sub_vendor: 12_000, in_house: 12_000 }, uom },
+    { id: "line-coating", mainLineId: "line-coating", basketId: "basket-paint", subBasketId: "sub-paint", name: "Protective coating", displayOrder: 3, revisionId: "rev-coating", revisionVersion: 1, itemVersion: 1, inHouseBaseRatePaise: 18_000, modeBaseRatesPaise: { pmc: 7_000, sub_vendor: 18_000, in_house: 18_000 }, uom }
+  ] }, { id: "sub-wall", basketId: "basket-paint", name: "Wall finish", displayOrder: 2, mainLines: [
+    { id: "line-wall", mainLineId: "line-wall", basketId: "basket-paint", subBasketId: "sub-wall", name: "Feature wall texture", displayOrder: 1, revisionId: "rev-wall", revisionVersion: 1, itemVersion: 1, inHouseBaseRatePaise: 32_000, modeBaseRatesPaise: { pmc: 10_000, sub_vendor: 32_000, in_house: 32_000 }, uom }
   ] }] },
   { id: "basket-light", name: "Lights", displayOrder: 3, directTemporaryItems: [], subBaskets: [{ id: "sub-light", basketId: "basket-light", name: "Integrated lights", displayOrder: 1, mainLines: [
     { id: "line-light", mainLineId: "line-light", basketId: "basket-light", subBasketId: "sub-light", name: "False ceiling functional lights", displayOrder: 1, revisionId: "rev-light", revisionVersion: 1, itemVersion: 1, inHouseBaseRatePaise: 35_000, modeBaseRatesPaise: { pmc: 8_000, sub_vendor: 35_000, in_house: 35_000 }, uom }
@@ -138,6 +153,8 @@ async function addItem(user: ReturnType<typeof userEvent.setup>, name: string) {
   const trigger = screen.getByRole("button", { name: "Add items" });
   if (trigger.getAttribute("aria-expanded") !== "true") await user.click(trigger);
   await user.click(screen.getByRole("button", { name: `Add ${name}` }));
+  const closePicker = screen.queryByRole("button", { name: "Close item picker" });
+  if (closePicker) await user.click(closePicker);
 }
 const selectedItem = (name: RegExp) => screen.getByRole("checkbox", { name });
 
@@ -237,4 +254,369 @@ describe("estimator inline recommendations", () => {
     expect(calls).toEqual([]);
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
+});
+
+describe("Sales recommendation popup", () => {
+  beforeEach(() => { authState.role = "estimator_sales"; });
+
+  it("accepts one Sub Basket child once when equivalent Add callbacks arrive before a render", async () => {
+    const user = userEvent.setup();
+    const { savedInputs } = installReads(false, { ...savedConfiguredEstimate("rev-pop"), status: "draft" },
+      undefined, false, undefined, true, source => source !== "line-pop" ? [] : [{
+        id: "rule-finish", requirement: "must", reason: "Complete the ceiling finish.", targetKind: "sub_basket",
+        targetBasketId: "basket-paint", targetSubBasketId: "sub-paint", targetMainLineId: null,
+        targetRevisionId: null, targetRevisionVersion: null, targetItemVersion: null, available: true, completionRequired: false,
+        children: ["paint", "primer", "coating"].map(name => ({ mainLineId: `line-${name}`, revisionId: `rev-${name}`,
+          revisionVersion: 1, itemVersion: 1, available: true, completionRequired: false }))
+      }]);
+    renderWorkspace();
+    await screen.findByRole("button", { name: "Add False ceiling painting" });
+    expect(screen.getByRole("button", { name: "Add Ceiling primer" })).toBeEnabled();
+    const target = { mainLineId: "line-paint", basketId: "basket-paint", subBasketId: "sub-paint" };
+    const add = builderActions.select!;
+    act(() => {
+      expect(add(target)).toBe(true);
+      expect(add(target)).toBe(false);
+    });
+    await user.click(screen.getByRole("button", { name: "Close recommendations" }));
+    expect(selectedItem(/False ceiling painting/)).toBeChecked();
+    expect(screen.queryByRole("checkbox", { name: /Ceiling primer|Protective coating|Feature wall texture/ })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Save draft" }));
+    await screen.findByText("Estimate draft saved.");
+    expect(savedInputs[0]!.lineItems).toHaveLength(2);
+    expect(savedInputs[0]!.lineItems.filter(line => line.mainBasketId === "basket-paint")).toEqual([
+      expect.objectContaining({ mainLineId: "line-paint", roomId: "room-living", quantity: 1, recommendationSourceMainLineIds: ["line-pop"], included: true })
+    ]);
+  });
+
+  it("adds exactly one item, preserves both rooms and restores compact scope after saving", async () => {
+    const user = userEvent.setup();
+    const base = savedConfiguredEstimate("rev-pop");
+    const saved = { ...base, status: "draft",
+      rooms: [...base.rooms, { id: "room-bed", label: "Bedroom 1", icon: "", typeId: "bedroom_1", sqft: 144, length: null, width: null }],
+      lineItems: [
+        { ...base.lineItems[0], quantity: 2, rate: 123.45, ratePaise: 12345, rateSource: "manual", amount: 246.9, amountPaise: 24690 },
+        { ...base.lineItems[0], id: "saved-functional", roomId: "room-bed", roomName: "Bedroom 1",
+          catalogueId: "line-functional", mainLineId: "line-functional", mainLineName: "Functional Lights",
+          revisionId: "rev-functional", sourceItemVersion: 1, sourceRevisionVersion: 1,
+          quantity: 3, rate: 150, ratePaise: 15000, amount: 450, amountPaise: 45000 }
+      ] };
+    const { savedInputs } = installReads(false, saved, undefined, false, undefined, true);
+    let rendered = renderWorkspace();
+    const add = await screen.findByRole("button", { name: "Add False ceiling painting" });
+    expect(screen.getByLabelText("Estimate amount before GST: ₹696.9")).toBeVisible();
+    await user.click(add);
+    expect(await screen.findByText("Added 1 item: False ceiling painting to Living & Dining.")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Close recommendations" }));
+    expect(screen.getAllByRole("checkbox").filter(item => (item as HTMLInputElement).checked)).toHaveLength(2);
+    expect(selectedItem(/False ceiling painting/)).toBeChecked();
+    expect(screen.queryByRole("checkbox", { name: /Ceiling primer|Protective coating|Feature wall texture/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Wall finish" })).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Estimate amount before GST: ₹946.9")).toBeVisible();
+    expect(screen.getByRole("spinbutton", { name: /Quantity.*POP false ceiling/ })).toHaveValue(2);
+    expect(screen.getByRole("textbox", { name: /Selling rate.*POP false ceiling/ })).toHaveValue("123.45");
+    await user.click(screen.getByRole("button", { name: "Save draft" }));
+    await screen.findByText("Estimate draft saved.");
+    expect(savedInputs).toHaveLength(1);
+    expect(savedInputs[0]!.selectedMainBasketIds).toEqual(["basket-pop", "basket-paint"]);
+    expect(savedInputs[0]!.lineItems).toEqual([
+      expect.objectContaining({ id: "saved-pop", roomId: "room-living", mainLineId: "line-pop", quantity: 2, ratePaise: 12345, rateSource: "manual", included: true }),
+      expect.objectContaining({ id: "saved-functional", roomId: "room-bed", mainLineId: "line-functional", quantity: 3, ratePaise: 15000, included: true }),
+      expect.objectContaining({ roomId: "room-living", mainLineId: "line-paint", quantity: 1, ratePaise: 25000, recommendationSourceMainLineIds: ["line-pop"], included: true })
+    ]);
+
+    await user.click(screen.getByRole("button", { name: "Browse other items in Painting" }));
+    expect(selectedItem(/Ceiling primer/)).not.toBeChecked();
+    expect(selectedItem(/Protective coating/)).not.toBeChecked();
+    expect(selectedItem(/Feature wall texture/)).not.toBeChecked();
+    expect(screen.getByRole("button", { name: "Edit baskets" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Save draft" }));
+    await waitFor(() => expect(savedInputs).toHaveLength(2));
+    await screen.findByText("Estimate draft saved.");
+    expect(selectedItem(/Ceiling primer/)).not.toBeChecked();
+    expect(savedInputs[1]!.lineItems).toEqual(savedInputs[0]!.lineItems.map(line =>
+      line.mainLineId === "line-paint" ? { ...line, id: "saved-line-paint" } : line));
+    await user.click(screen.getByRole("button", { name: "Refresh available items" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Refresh available items" })).toBeEnabled());
+    expect(selectedItem(/Ceiling primer/)).not.toBeChecked();
+    await user.click(screen.getByRole("button", { name: "Summary" }));
+    expect(screen.getByText("GST @ 18%").parentElement).toHaveTextContent("₹170.44");
+    expect(screen.getByText("Total (incl. GST)").querySelector("strong")).toHaveTextContent(/^₹1,117$/);
+    expect(screen.getByText("Round off").parentElement).toHaveTextContent("−₹0.34");
+    await user.click(screen.getByRole("button", { name: "Estimate Builder" }));
+    expect(selectedItem(/Ceiling primer/)).not.toBeChecked();
+    await user.click(screen.getByRole("button", { name: /Bedroom 1/ }));
+    expect(screen.getByRole("button", { name: /^Bedroom 1/ })).toHaveTextContent("₹450");
+    expect(selectedItem(/Functional Lights/)).toBeChecked();
+    expect(screen.queryByRole("checkbox", { name: /False ceiling painting|Ceiling primer|Protective coating|Feature wall texture/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Browse other items in Painting" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Painting" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Added 1 item: False ceiling painting to Living & Dining.")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Living & Dining/ }));
+    expect(selectedItem(/Ceiling primer/)).not.toBeChecked();
+    expect(savedInputs).toHaveLength(2);
+
+    rendered.unmount(); rendered = renderWorkspace();
+    await user.click(await screen.findByRole("button", { name: "Close recommendations" }));
+    expect(await screen.findByRole("checkbox", { name: /False ceiling painting/ })).toBeChecked();
+    expect(screen.queryByRole("checkbox", { name: /Ceiling primer|Protective coating|Feature wall texture/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Browse other items in Painting" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Recommendations (1)" }));
+    await user.click(await screen.findByRole("button", { name: "Remove False ceiling painting" }));
+    await user.click(await screen.findByRole("button", { name: "Add False ceiling painting" }));
+    await user.click(screen.getByRole("button", { name: "Close recommendations" }));
+    await user.click(screen.getByRole("button", { name: "Save draft" }));
+    await waitFor(() => expect(savedInputs).toHaveLength(3));
+    expect(savedInputs[2]!.lineItems.filter(line => line.mainLineId === "line-paint")).toEqual([
+      expect.objectContaining({ id: "saved-line-paint", roomId: "room-living", quantity: 1, ratePaise: 25000, included: true, recommendationSourceMainLineIds: ["line-pop"] })
+    ]);
+  });
+
+  it("keeps dismissal through source changes, refresh and Summary while rooms remain independent", async () => {
+    const user = userEvent.setup();
+    const { savedInputs } = installReads(); renderWorkspace(); await openBuilder(user);
+    await user.click(selectedItem(/POP false ceiling/));
+    const trigger = await screen.findByRole("button", { name: "Recommendations (1)" });
+    await user.click(await screen.findByRole("button", { name: "Close recommendations" }));
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    expect(trigger).toHaveFocus();
+    await user.click(selectedItem(/Functional Lights/));
+    await waitFor(() => expect(trigger).toHaveAccessibleName("Recommendations (1)"));
+    expect(screen.queryByRole("button", { name: "Close recommendations" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Refresh available items" }));
+    await waitFor(() => expect(trigger).toHaveAccessibleName("Recommendations (1)"));
+    await user.click(screen.getByRole("button", { name: "Summary" }));
+    await user.click(screen.getByRole("button", { name: "Estimate Builder" }));
+    expect(screen.getByRole("button", { name: "Recommendations (1)" })).toHaveAttribute("aria-expanded", "false");
+    await user.click(screen.getByRole("button", { name: /Bedroom 1/ }));
+    expect(screen.queryByRole("button", { name: /Recommendations/ })).not.toBeInTheDocument();
+    await user.click(selectedItem(/POP false ceiling/));
+    const bedroom = await screen.findByRole("region", { name: "Non-negotiable recommendations for Bedroom 1" });
+    expect(bedroom).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Close recommendations" }));
+    await user.click(screen.getByRole("button", { name: /Living & Dining/ }));
+    expect(screen.getByRole("button", { name: "Recommendations (1)" })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("region", { name: /Non-negotiable recommendations/ })).not.toBeInTheDocument();
+    expect(savedInputs).toEqual([]);
+  });
+
+  it("preserves entered values when discovery opens a modal and saves only explicit selections", async () => {
+    const user = userEvent.setup(); let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const { savedInputs } = installReads(false, null, gate, false, undefined, true);
+    renderWorkspace(); await openBuilder(user);
+    await user.click(selectedItem(/POP false ceiling/));
+    const quantity = screen.getByRole("spinbutton", { name: /Quantity.*POP false ceiling/ });
+    await user.clear(quantity); await user.type(quantity, "7");
+    const price = screen.getByRole("textbox", { name: /Selling rate.*POP false ceiling/ });
+    await user.clear(price); await user.type(price, "123.");
+    await act(async () => release());
+    const close = await screen.findByRole("button", { name: "Close recommendations" });
+    await waitFor(() => expect(close).toHaveFocus());
+    expect(price).toHaveValue("123.");
+    await user.click(close);
+    await user.type(price, "45");
+    expect(price).toHaveValue("123.45");
+    await user.click(screen.getByRole("button", { name: "Recommendations (1)" }));
+    const popup = screen.getByRole("region", { name: "Non-negotiable recommendations for Living & Dining" });
+    await user.click(within(popup).getByRole("button", { name: "Add False ceiling painting" }));
+    expect(await within(popup).findByRole("button", { name: "Remove False ceiling painting" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Close recommendations" }));
+    expect(selectedItem(/False ceiling painting/)).toBeChecked();
+    await user.click(screen.getByRole("button", { name: "Recommendations (1)" }));
+    await user.click(screen.getByRole("button", { name: "Remove False ceiling painting" }));
+    await user.click(screen.getByRole("button", { name: "Close recommendations" }));
+    expect(screen.queryByRole("checkbox", { name: /False ceiling painting/ })).not.toBeInTheDocument();
+    const trigger = screen.getByRole("button", { name: "Recommendations (1)" });
+    await user.keyboard("{Enter}");
+    expect(screen.getByRole("button", { name: "Close recommendations" })).toHaveFocus();
+    await user.keyboard("{Escape}");
+    expect(trigger).toHaveFocus();
+    expect(quantity).toHaveValue(7); expect(price).toHaveValue("123.45");
+    await user.click(screen.getByRole("button", { name: "Save draft" }));
+    await screen.findByText("Estimate draft saved.");
+    expect(savedInputs).toHaveLength(1);
+    expect(savedInputs[0]!.lineItems).toEqual([expect.objectContaining({ mainLineId: "line-pop", quantity: 7, ratePaise: 12345, included: true })]);
+    expect(screen.getByRole("button", { name: "Recommendations (1)" })).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("keeps late results in their source room and restores recommendations after a separate confirmation", async () => {
+    const user = userEvent.setup(); let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    installReads(false, null, gate); renderWorkspace(); await openBuilder(user);
+    await user.click(selectedItem(/POP false ceiling/));
+    await user.click(screen.getByRole("button", { name: /Bedroom 1/ }));
+    await act(async () => release());
+    expect(screen.queryByRole("button", { name: /Recommendations/ })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Living & Dining/ }));
+    await screen.findByRole("region", { name: "Non-negotiable recommendations for Living & Dining" });
+    await user.click(screen.getByRole("button", { name: "Close recommendations" }));
+    await user.click(screen.getByRole("button", { name: "Remove False Ceiling Sub Basket from Living & Dining" }));
+    const dialog = await screen.findByRole("alertdialog");
+    expect(screen.queryByRole("dialog", { name: "Non-negotiable recommendations" })).not.toBeInTheDocument();
+    await waitFor(() => expect(dialog).toContainElement(document.activeElement as HTMLElement));
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(selectedItem(/POP false ceiling/)).toBeChecked();
+    await user.click(screen.getByRole("button", { name: "Recommendations (1)" }));
+    expect(screen.getByRole("dialog", { name: "Non-negotiable recommendations" })).toBeVisible();
+  });
+
+  it("keeps failed reads discoverable while closed and supports retry without changing selections", async () => {
+    const user = userEvent.setup();
+    installReads(true); renderWorkspace(); await openBuilder(user);
+    await user.click(selectedItem(/POP false ceiling/));
+    const trigger = await screen.findByRole("button", { name: /Recommendations.*Could not load/ });
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    await user.click(trigger);
+    await user.click(screen.getByRole("button", { name: "Retry recommendations" }));
+    expect(await screen.findByRole("button", { name: "Add False ceiling painting" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Close recommendations" }));
+    expect(selectedItem(/POP false ceiling/)).toBeChecked();
+  });
+
+  it("leaves submitted Sales estimates in their existing read-only inline presentation", async () => {
+    installReads(false, savedConfiguredEstimate("rev-pop")); renderWorkspace();
+    expect(await screen.findByRole("button", { name: "Add False ceiling painting" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Non-negotiable recommendations (1)" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Close recommendations" })).not.toBeInTheDocument();
+    expect(await screen.findByRole("checkbox", { name: /POP false ceiling/ })).toBeDisabled();
+  });
+
+  it("uses each room's current targets and preserves the popup during a reopened draft save", async () => {
+    const user = userEvent.setup(); let releaseSave!: () => void;
+    const saveGate = new Promise<void>(resolve => { releaseSave = resolve; });
+    const saved = { ...savedConfiguredEstimate("rev-pop"), status: "client_changes_requested",
+      rooms: [...savedConfiguredEstimate("rev-pop").rooms, { id: "room-bed", label: "Bedroom 1", icon: "", typeId: "bedroom_1", sqft: 144, length: null, width: null }] };
+    const { savedInputs } = installReads(false, saved, undefined, false, saveGate, true, source => {
+      const target = source === "line-pop" ? "paint" : source === "line-functional" ? "light" : null;
+      return target ? [{ id: `rule-${target}`, requirement: "must", reason: "Complete the selected work.", targetKind: "main_line", targetBasketId: `basket-${target}`, targetSubBasketId: `sub-${target}`, targetMainLineId: `line-${target}`, targetRevisionId: `rev-${target}`, targetRevisionVersion: 1, targetItemVersion: 1, available: true, completionRequired: false }] : [];
+    });
+    renderWorkspace();
+    await screen.findByRole("button", { name: "Add False ceiling painting" });
+    await user.click(screen.getByRole("button", { name: "Close recommendations" }));
+    await user.click(screen.getByRole("button", { name: /Bedroom 1/ }));
+    await user.click(selectedItem(/Functional Lights/));
+    const popup = await screen.findByRole("region", { name: "Non-negotiable recommendations for Bedroom 1" });
+    expect(within(popup).queryByText("False ceiling painting")).not.toBeInTheDocument();
+    await user.click(within(popup).getByRole("button", { name: "Add False ceiling functional lights" }));
+    await user.click(screen.getByRole("button", { name: "Close recommendations" }));
+    await user.click(screen.getByRole("button", { name: "Save draft" }));
+    await waitFor(() => expect(savedInputs).toHaveLength(1));
+    await user.click(screen.getByRole("button", { name: /^Recommendations/ }));
+    expect(screen.getByRole("region", { name: "Non-negotiable recommendations for Bedroom 1" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Non-negotiable recommendations (1)" })).not.toBeInTheDocument();
+    await act(async () => releaseSave());
+    await screen.findByText("Estimate draft saved.");
+    expect(savedInputs[0]!.lineItems.filter(line => line.included)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ roomId: "room-living", mainLineId: "line-pop", ratePaise: 10000, quantity: 1 }),
+      expect.objectContaining({ roomId: "room-bed", mainLineId: "line-functional", ratePaise: 15000 }),
+      expect.objectContaining({ roomId: "room-bed", mainLineId: "line-light", recommendationSourceMainLineIds: ["line-functional"] })
+    ]));
+    expect(savedInputs[0]!.lineItems.filter(line => line.included)).toHaveLength(3);
+    await user.click(screen.getByRole("button", { name: "Close recommendations" }));
+    await user.click(screen.getByRole("button", { name: /Living & Dining/ }));
+    expect(screen.getByRole("button", { name: "Recommendations (1)" })).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("removes an automatic basket after its saved recommendation is removed and keeps it absent after save/reload", async () => {
+    const user = userEvent.setup();
+    const { savedInputs } = installReads(false, { ...savedConfiguredEstimate("rev-pop"), status: "draft" }, undefined, false, undefined, true);
+    let view = renderWorkspace();
+    await user.click(await screen.findByRole("button", { name: "Add False ceiling painting" }));
+    await user.click(screen.getByRole("button", { name: "Close recommendations" }));
+    expect(screen.getByRole("region", { name: "Painting" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Save draft" }));
+    await screen.findByText("Estimate draft saved.");
+    await user.click(screen.getByRole("button", { name: "Recommendations (1)" }));
+    await user.click(await screen.findByRole("button", { name: "Remove False ceiling painting" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Add False ceiling painting" })).toHaveFocus());
+    await user.click(screen.getByRole("button", { name: "Close recommendations" }));
+    expect(screen.queryByRole("region", { name: "Painting" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Browse other items in Painting" })).not.toBeInTheDocument();
+    expect(selectedItem(/POP false ceiling/)).toBeChecked();
+    await user.click(screen.getByRole("button", { name: "Save draft" }));
+    await waitFor(() => expect(savedInputs).toHaveLength(2));
+    expect(savedInputs[1]!.selectedMainBasketIds).toEqual(["basket-pop"]);
+    expect(savedInputs[1]!.lineItems.find(line => line.mainLineId === "line-paint"))
+      .toMatchObject({ id: "saved-line-paint", included: false });
+    view.unmount(); view = renderWorkspace();
+    await screen.findByRole("button", { name: "Add False ceiling painting" });
+    await user.click(screen.getByRole("button", { name: "Close recommendations" }));
+    expect(screen.queryByRole("region", { name: "Painting" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Recommendations (1)" }));
+    await user.click(screen.getByRole("button", { name: "Add False ceiling painting" }));
+    await user.click(screen.getByRole("button", { name: "Close recommendations" }));
+    expect(selectedItem(/False ceiling painting/)).toBeChecked();
+    expect(screen.queryByRole("checkbox", { name: /Ceiling primer|Protective coating|Feature wall texture/ })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Save draft" }));
+    await waitFor(() => expect(savedInputs).toHaveLength(3));
+    expect(savedInputs[2]!.lineItems.filter(line => line.mainBasketId === "basket-paint"))
+      .toEqual([expect.objectContaining({ id: "saved-line-paint", included: true })]);
+  });
+
+  it.each(["other room", "explicit setup"] as const)("preserves %s basket intent when removing the current room recommendation", async retainedBy => {
+    const user = userEvent.setup();
+    const base = savedConfiguredEstimate("rev-pop");
+    const bedroomSource = { ...base.lineItems[0]!, id: "bed-source", roomId: "room-bed", roomName: "Bedroom 1" };
+    const bedroomPaint = { ...bedroomSource, id: "bed-paint", catalogueId: "line-paint", mainLineId: "line-paint",
+      mainLineName: "False ceiling painting", mainBasketId: "basket-paint", mainBasketName: "Painting",
+      subBasketId: "sub-paint", subBasketName: "Ceiling finish", revisionId: "rev-paint", quantity: 3,
+      ratePaise: 25000, rate: 250, amountPaise: 75000, amount: 750, recommendationSourceMainLineIds: ["line-pop"] };
+    const saved = { ...base, status: "draft", selectedMainBasketIds: ["basket-pop", "basket-paint"],
+      rooms: retainedBy === "other room" ? [...base.rooms, { ...base.rooms[0]!, id: "room-bed", label: "Bedroom 1", typeId: "bedroom_1" }] : base.rooms,
+      lineItems: retainedBy === "other room" ? [...base.lineItems, bedroomSource, bedroomPaint] : base.lineItems };
+    const { savedInputs } = installReads(false, saved, undefined, false, undefined, true);
+    renderWorkspace();
+    await user.click(await screen.findByRole("button", { name: "Add False ceiling painting" }));
+    await user.click(await screen.findByRole("button", { name: "Remove False ceiling painting" }));
+    await user.click(screen.getByRole("button", { name: "Close recommendations" }));
+    if (retainedBy === "other room") {
+      expect(screen.queryByRole("region", { name: "Painting" })).not.toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: /Bedroom 1/ }));
+      await user.click(await screen.findByRole("button", { name: "Close recommendations" }));
+      expect(screen.getByRole("region", { name: "Painting" })).toBeVisible();
+      expect(selectedItem(/False ceiling painting/)).toBeChecked();
+      expect(screen.getByRole("spinbutton", { name: /Quantity.*False ceiling painting/ })).toHaveValue(3);
+    } else {
+      expect(screen.getByRole("region", { name: "Painting" })).toBeVisible();
+      expect(selectedItem(/False ceiling painting/)).not.toBeChecked();
+    }
+    await user.click(screen.getByRole("button", { name: "Save draft" }));
+    await waitFor(() => expect(savedInputs).toHaveLength(1));
+    expect(savedInputs[0]!.selectedMainBasketIds).toEqual(["basket-pop", "basket-paint"]);
+    if (retainedBy === "other room") expect(savedInputs[0]!.lineItems.find(line => line.id === "bed-paint"))
+      .toMatchObject({ roomId: "room-bed", included: true, quantity: 3, ratePaise: 25000 });
+  });
+
+
+  it("preserves explicit saved Setup scope after recommendation-only items are removed following a full reload", async () => {
+    const user = userEvent.setup();
+    const { savedInputs } = installReads(false, { ...savedConfiguredEstimate("rev-pop"), status: "draft",
+      selectedMainBasketIds: ["basket-pop", "basket-paint"] }, undefined, false, undefined, true);
+    let view = renderWorkspace();
+    await user.click(await screen.findByRole("button", { name: "Add False ceiling painting" }));
+    await user.click(screen.getByRole("button", { name: "Close recommendations" }));
+    await user.click(screen.getByRole("button", { name: "Save draft" }));
+    await screen.findByText("Estimate draft saved.");
+    view.unmount(); view = renderWorkspace();
+    await user.click(await screen.findByRole("button", { name: "Remove False ceiling painting" }));
+    await user.click(screen.getByRole("button", { name: "Close recommendations" }));
+    expect(screen.queryByRole("region", { name: "Painting" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Save draft" }));
+    await waitFor(() => expect(savedInputs).toHaveLength(2));
+    expect(savedInputs[1]!.selectedMainBasketIds).toEqual(["basket-pop", "basket-paint"]);
+    expect(savedInputs[1]!.lineItems.find(line => line.mainLineId === "line-paint"))
+      .toMatchObject({ id: "saved-line-paint", included: false });
+    view.unmount(); view = renderWorkspace();
+    await user.click(await screen.findByRole("button", { name: "Close recommendations" }));
+    expect(screen.queryByRole("region", { name: "Painting" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Edit baskets" }));
+    expect(await screen.findByRole("button", { name: "Added Painting" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Continue to item selection" }));
+    expect(screen.getByRole("region", { name: "Painting" })).toBeVisible();
+    expect(selectedItem(/False ceiling painting/)).not.toBeChecked();
+    expect(selectedItem(/Ceiling primer/)).not.toBeChecked();
+  });
+
 });

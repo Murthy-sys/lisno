@@ -120,7 +120,7 @@ export async function readMongoProjectStatusEstimateEvidence(projectId: string, 
   if (session) leadQuery.session(session);
   const leads = await leadQuery.lean();
   const estimateQuery = EstimateModel.find({ $or: [{ projectId }, { leadId: { $in: leads.map(row => row._id) } }] })
-    .select("leadId projectId status version clientDecisionAt estimation propertyType bedroomCount rooms scopes selectedMainBasketIds selectedMainBasketClassifications lineItems subtotal gst total subtotalPaise gstPaise totalPaise");
+    .select("leadId projectId status version clientDecisionAt estimation propertyType bedroomCount rooms scopes selectedMainBasketIds selectedMainBasketClassifications lineItems subtotal gst total subtotalPaise gstPaise totalPaise roundOffPaise");
   if (session) estimateQuery.session(session);
   const estimates = await estimateQuery.lean();
   const roundQuery = EstimateClientReviewRoundModel.find({ $or: [{ projectId }, { estimateId: { $in: estimates.map(row => row._id) } }] })

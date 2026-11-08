@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { draftQuotationItem, prunePendingQuotationRecommendations, quotationDraftOperations, quotationSaveIsConfirmed } from "./clientQuotationDraft";
+import { draftQuotationItem, prunePendingQuotationRecommendations, quotationDraftOperations, quotationItemChoices, quotationItemOperation, quotationSaveIsConfirmed } from "./clientQuotationDraft";
 import type { QuotationDetail, QuotationLine } from "./quotationApi";
 
 const source = { revisionId: "revision", itemVersion: 1, revisionVersion: 1, uomId: "unit" };
@@ -69,5 +69,51 @@ describe("Client recommendation draft lineage", () => {
     expect(quotationSaveIsConfirmed(before, current, [operation])).toBe(false);
     current.lines[0] = { ...current.lines[0]!, recommendationSourceMainLineIds: ["source"] };
     expect(quotationSaveIsConfirmed(before, current, [operation])).toBe(true);
+  });
+});
+
+describe("Client pricing-mode drafts", () => {
+  const special = (): QuotationLine => {
+    const saved = line("special");
+    return { ...saved, classification: "special", pricingModeChoices: [
+      { pricingMode: "sub_vendor", choices: saved.choices },
+      { pricingMode: "pmc", choices: [{ ...saved.choices[0]!, ratePaise: 240, amountPaise: 240 }] },
+      { pricingMode: "in_house", choices: [{ ...saved.choices[0]!, ratePaise: null, inHouseComponents: [
+        { id: "finish", label: "Finish", ratePaise: 90, available: true }
+      ] }] }
+    ] };
+  };
+
+  it("keeps the saved mode and existing request shape until explicitly changed", () => {
+    const draft = draftQuotationItem(special());
+    expect(draft.pricingMode).toBe("sub_vendor");
+    expect(quotationItemOperation({ ...draft, quantity: "3" })).not.toHaveProperty("pricingMode");
+    const changed = { ...draft, quantity: "3", pricingMode: "pmc" as const };
+    expect(quotationItemChoices(changed)[0]!.ratePaise).toBe(240);
+    expect(quotationItemOperation(changed)).toMatchObject({ kind: "update", quantity: 3, pricingMode: "pmc", modeTier: "signature", source });
+    expect(draft.line.pricingMode).toBe("sub_vendor");
+  });
+
+  it("serializes a new item's explicit mode and validates its component choices", () => {
+    const draft = { ...draftQuotationItem(special(), "add"), pricingMode: "in_house" as const, components: ["finish"] };
+    expect(quotationItemOperation(draft)).toMatchObject({ kind: "add", mainLineId: "special", roomId: "kitchen", pricingMode: "in_house", selectedInHouseComponentIds: ["finish"] });
+    expect(() => quotationItemOperation({ ...draft, components: [] })).toThrow("Select available components");
+    expect(() => quotationItemOperation({ ...draft, components: ["stale"] })).toThrow("Select available components");
+  });
+
+  it("never borrows the saved mode's price when a requested mode or tier is missing", () => {
+    const draft = { ...draftQuotationItem(line("legacy")), pricingMode: "pmc" as const };
+    expect(quotationItemChoices(draft)).toEqual([]);
+    expect(() => quotationItemOperation(draft)).toThrow("Refresh the configured options");
+    expect(() => quotationItemOperation({ ...draftQuotationItem(special()), pricingMode: "pmc", modeTier: "premium" })).toThrow("Refresh the configured options");
+  });
+
+  it("requires the requested mode to match before accepting an uncertain save", () => {
+    const saved = special();
+    const before = { projectId: "project", estimateId: "estimate", estimateVersion: 4, lines: [saved] } as unknown as QuotationDetail;
+    const operation = quotationItemOperation({ ...draftQuotationItem(saved), pricingMode: "pmc" });
+    const current = { ...before, estimateVersion: 5, lines: [saved] };
+    expect(quotationSaveIsConfirmed(before, current, [operation])).toBe(false);
+    expect(quotationSaveIsConfirmed(before, { ...current, lines: [{ ...saved, pricingMode: "pmc", ratePaise: 240, amountPaise: 240, choices: saved.pricingModeChoices![1]!.choices }] }, [operation])).toBe(true);
   });
 });

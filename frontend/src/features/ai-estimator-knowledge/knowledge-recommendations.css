@@ -118,8 +118,8 @@
 .knowledge-recommendations__editor .knowledge-budget-rule__targets { grid-template-columns: minmax(0, 1fr); }
 .knowledge-recommendations__editor .knowledge-budget-rule__heading { padding-block-end: 12px; border-block-end: 1px solid var(--color-border); }
 .knowledge-recommendations__editor .knowledge-budget-rule__heading h4 { display: none; }
-.knowledge-recommendations__editor .knowledge-budget-rule__enabled { min-block-size: 44px; }
-.knowledge-recommendations__editor .knowledge-budget-rule__enabled .ui-checkbox { inline-size: 16px; block-size: 16px; min-inline-size: 16px; min-block-size: 16px; }
+.knowledge-recommendations__editor .knowledge-budget-rule__enabled { min-block-size: var(--form-choice-target-size); }
+.knowledge-recommendations__editor .knowledge-budget-rule__enabled .ui-checkbox { inline-size: var(--form-choice-size); block-size: var(--form-choice-size); min-inline-size: var(--form-choice-size); min-block-size: var(--form-choice-size); }
 .knowledge-recommendations__editor .knowledge-budget-rule__preview { margin-block-end: 8px; }
 .knowledge-budget-rule__sub-items { display: grid; gap: 9px; padding: 11px 12px; border: 1px solid var(--color-border); border-radius: 5px; background: var(--color-surface-subtle); }
 .knowledge-budget-rule__sub-items-heading { display: flex; align-items: center; gap: 12px; }
@@ -169,4 +169,20 @@ body:has(.ui-app-shell[data-role]) .ui-dialog:has(.knowledge-draft-catalog-dialo
   .knowledge-budget-rule__sub-item-actions { inline-size: 100%; }
   .knowledge-budget-rule__sub-item-actions > .ui-button { flex: 1 1 0; min-block-size: 36px; }
   .knowledge-budget-rule__sub-item-open { align-self: flex-start; min-block-size: 34px; padding-block: 8px; }
+}
+
+
+@media (pointer: coarse), (max-width: 767px) {
+  .knowledge-recommendations .knowledge-recommendations__group-heading > .ui-button,
+  .knowledge-budget-rule__sub-item-actions .ui-button,
+  .knowledge-recommendations__menu-items > button,
+  .ui-app-shell[data-role] .knowledge-page .knowledge-recommendations__menu-items > button.ui-button.ui-button--destructive-outline {
+    min-block-size: var(--control-height);
+    font-size: var(--form-button-font-size);
+  }
+  .knowledge-recommendations__menu > summary {
+    width: var(--control-height);
+    height: var(--control-height);
+  }
+  .knowledge-budget-rule__sub-item-open { min-block-size: var(--control-height); }
 }

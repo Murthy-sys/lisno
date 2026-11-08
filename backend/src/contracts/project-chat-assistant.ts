@@ -125,6 +125,7 @@ export interface AssistantProjectPricing {
   subtotalPaise: number | null;
   gstPaise: number | null;
   totalPaise: number | null;
+  roundOffPaise?: number;
 }
 export const ASSISTANT_DISCLOSURE_POLICY = "project-publication-v1" as const;
 export interface AssistantProjectEstimate {

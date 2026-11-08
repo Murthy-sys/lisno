@@ -2004,7 +2004,8 @@ async function finalizeDesignApproval(input: {
         approvedContractTotalRupees: Number(input.estimate.total),
         ...(input.estimate.subtotalPaise == null ? {} : { approvedSubtotalPaise: Number(input.estimate.subtotalPaise) }),
         ...(input.estimate.gstPaise == null ? {} : { approvedGstPaise: Number(input.estimate.gstPaise) }),
-        ...(input.estimate.totalPaise == null ? {} : { approvedContractTotalPaise: Number(input.estimate.totalPaise) })
+        ...(input.estimate.totalPaise == null ? {} : { approvedContractTotalPaise: Number(input.estimate.totalPaise) }),
+        ...(input.estimate.roundOffPaise === undefined ? {} : { approvedRoundOffPaise: input.estimate.roundOffPaise })
       }
     }, input.session);
   }

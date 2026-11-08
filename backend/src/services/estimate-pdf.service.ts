@@ -1,3 +1,4 @@
+import { estimateTotalsReconcile } from "../domain/estimate-total-rounding.js";
 import { estimateComponentLineAmountIsValid, type EstimateComponentPricing, type ESTIMATE_COMPONENT_PRICING_BASIS } from "../domain/estimate-component-pricing.js";
 import { estimateDimensionSnapshotValid, type EstimateDimensionMetadata } from "../domain/estimate-dimension-snapshot.js";
 import { readFile } from "node:fs/promises";
@@ -58,6 +59,7 @@ export interface EstimatePdfInput {
   subtotalPaise?: number;
   gstPaise?: number;
   totalPaise?: number;
+  roundOffPaise?: number;
   lineItems: EstimatePdfLine[];
   lead: {
     clientName: string;
@@ -763,13 +765,13 @@ function drawTotals(
   input: EstimatePdfInput,
   profile: EstimatePdfProfile
 ): void {
-  ensureSpace(doc, 174);
+  ensureSpace(doc, input.roundOffPaise ? 194 : 174);
   doc.y += 16;
 
   const labelX = doc.page.width - doc.page.margins.right - 220;
   const amountX = labelX + 100;
   const amountWidth = 120;
-  const row = (label: string, amount: number, bold = false) => {
+  const row = (label: string, amount: number, bold = false, signed = false) => {
     const y = doc.y;
     doc
       .font(bold ? "Helvetica-Bold" : "Helvetica")
@@ -777,7 +779,7 @@ function drawTotals(
       .fillColor(bold ? colors.ink : colors.muted)
       .text(label, labelX, y, { width: 100, lineBreak: false })
       .fillColor(colors.ink)
-      .text(formatInr(amount), amountX, y, {
+      .text(signed ? `${amount < 0 ? "-" : "+"}INR ${Math.abs(amount).toFixed(2)}` : formatInr(amount), amountX, y, {
         width: amountWidth,
         align: "right",
         lineBreak: false
@@ -787,6 +789,7 @@ function drawTotals(
 
   row("Subtotal", input.subtotalPaise === undefined ? input.subtotal : input.subtotalPaise / 100);
   row("GST @ 18%", input.gstPaise === undefined ? input.gst : input.gstPaise / 100);
+  if (input.roundOffPaise) row("Round off", input.roundOffPaise / 100, false, true);
   doc
     .strokeColor(colors.red)
     .lineWidth(1)
@@ -855,6 +858,10 @@ export function createEstimatePdfService(options?: {
 
   return {
     async generate(input, generateOptions) {
+      if ([input.subtotalPaise, input.gstPaise, input.totalPaise, input.roundOffPaise].some(value => value !== undefined) &&
+        !estimateTotalsReconcile(input)) {
+        throw new TypeError("The estimate totals do not reconcile.");
+      }
       if (input.proposal !== undefined) {
         const proposal = estimateProposalSchema.parse(input.proposal);
         const bytes = await renderEstimateProposalPdf({ ...input, proposal }, { logoSvg: options?.logoSvg });

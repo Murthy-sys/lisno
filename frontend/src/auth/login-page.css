@@ -570,8 +570,8 @@
 }
 
 .login-remember input[type="checkbox"] {
-  width: 16px;
-  height: 16px;
+  width: var(--form-choice-size);
+  height: var(--form-choice-size);
   accent-color: var(--color-primary);
 }
 
@@ -1143,8 +1143,8 @@
 }
 
 .login-screen--sage .login-remember input[type="checkbox"] {
-  width: 20px;
-  height: 20px;
+  width: var(--form-choice-size);
+  height: var(--form-choice-size);
   margin: 0;
   accent-color: var(--sage-olive);
 }

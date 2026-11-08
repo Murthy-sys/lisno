@@ -1,5 +1,5 @@
 import type { EstimateComponentPricing } from "../../../../shared/estimation/estimateComponentPricing";
-import { configuredComponentPricing, configuredUsesComponentPricing, type ConfiguredLineDraft } from "./configuredEstimate";
+import { configuredComponentPricing, configuredDimensionsIssue, configuredInHouseSelectionIssue, configuredUsesComponentPricing, type ConfiguredLineDraft } from "./configuredEstimate";
 import "./estimate-in-house-components.css";
 
 const money = (paise: number) => `₹${(paise / 100).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -14,13 +14,23 @@ export function EstimateComponentBreakdown({ pricing, label }: { pricing: Estima
   </details>;
 }
 
-export function EstimateComponentPricingStatus({ line, editable }: { line: ConfiguredLineDraft; editable: boolean }) {
+export function EstimateComponentPricingStatus({ line, editable, displayedIssue }: {
+  line: ConfiguredLineDraft;
+  editable: boolean;
+  displayedIssue?: string | null;
+}) {
   if (!configuredUsesComponentPricing(line) || !line.included) return null;
   const pricing = configuredComponentPricing(line);
   if (pricing) return <EstimateComponentBreakdown pricing={pricing} label={`${line.mainLineName} in ${line.roomName}`} />;
-  return <div className="estimate-component-breakdown" role="status">
-    <p>{line.componentPricingIssue ?? "Component amounts are incomplete."}</p>
-    {editable && line.componentPricingRetry && line.componentPricingState !== "loading" ? <button type="button" className="button button--secondary" onClick={line.componentPricingRetry}>Retry component calculation for {line.mainLineName}</button> : null}
+  const inputIssue = configuredInHouseSelectionIssue(line) ?? configuredDimensionsIssue(line);
+  const issue = line.componentPricingIssue ?? inputIssue ?? "Component amounts are incomplete.";
+  const showIssue = issue !== displayedIssue;
+  const canRetry = editable && line.componentPricingRetry && line.componentPricingState !== "loading" && !inputIssue;
+  if (!showIssue && !canRetry) return null;
+  return <div className="estimate-component-breakdown estimate-component-breakdown--status" role="status">
+    {showIssue ? <p>{issue}</p> : null}
+    {canRetry ? <button type="button" className="button button--secondary estimate-component-action"
+      aria-label={`Retry component calculation for ${line.mainLineName}`} onClick={line.componentPricingRetry}>Retry calculation</button> : null}
   </div>;
 }
 

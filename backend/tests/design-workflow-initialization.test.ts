@@ -65,7 +65,7 @@ describe("project-owned Excel design workflow", () => {
   });
 
   it.each([
-    { label: "in-progress", complete: false, blocked: false, status: "in_progress", timing: "not_applicable", progress: 65 },
+    { label: "in-progress with a historical kickoff exemption", complete: false, blocked: false, status: "blocked", timing: "waiting", progress: 65 },
     { label: "completed", complete: true, blocked: false, status: "completed", timing: "completed", progress: 100 },
     { label: "completed but blocked by site access", complete: true, blocked: true, status: "blocked", timing: "waiting", progress: 100 }
   ])("preserves $label space-planning task projection when stage information is present", async ({ complete, blocked, status, timing, progress }) => {
@@ -106,7 +106,7 @@ describe("project-owned Excel design workflow", () => {
     expect(result.operational!.blockingReasons).toEqual(blocked ? [
       "Site access is unavailable. All workflow clocks are paused.",
       "The Client has blocked site access. Restore access to resume the workflow."
-    ] : []);
+    ] : complete ? [] : ["Complete Client Kick off."]);
     expect(await repository.getProjectHierarchy(project.id)).toEqual(before);
     expect(await repository.findDesignWorkflowState(project.id)).toEqual(beforeState);
   });

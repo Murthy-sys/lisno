@@ -2,8 +2,9 @@ import type { WorkflowSpacePlanningSource } from "../domain/workflow-space-plann
 import type { WorkflowEstimateRoom } from "../domain/workflow-estimate-items.js";
 import { RepositoryConflictError } from "../repositories/types.js";
 import { instructionsForStage, type DesignStageInstructions } from "../domain/design-workflow-instructions.js";
-import { emptyDesignWorkflowState, workflowStageStartAt, workflowIsPaused, workflowDesignStartAt } from "../domain/design-workflow-state.js";
+import { emptyDesignWorkflowState, workflowClientKickoffCompleted, workflowStageHistoricalPrerequisiteBlockers, workflowStageStartAt, workflowIsPaused, workflowDesignStartAt } from "../domain/design-workflow-state.js";
 import { projectInitialPayment, projectOperationalStage, requireDesignWorkflowReadScope, hydrateDesignWorkflowState } from "./design-workflow-state.service.js";
+import { secondaryMeasurementAssignmentReason, secondaryMeasurementDesignerIds, secondaryMeasurementDesigners } from "../domain/measurement-ownership.js";
 import { createProjectDesignWorkflow } from "../domain/design-workflow.js";
 import { randomUUID } from "node:crypto";
 
@@ -210,7 +211,7 @@ export function createProjectService(
 ): ProjectService {
   return {
     async designWorkflow(actor, projectId) {
-      const { capabilities } = await requireDesignWorkflowReadScope(repository, actor, projectId).catch((error: unknown) => {
+      const { project, capabilities } = await requireDesignWorkflowReadScope(repository, actor, projectId).catch((error: unknown) => {
         if (error instanceof ApiError && error.status === 401) throw new ApiError(404, "NOT_FOUND", "The requested resource was not found.");
         throw error;
       });
@@ -269,7 +270,9 @@ export function createProjectService(
         estimateApprovalStatus = "source_issue";
       }
       const initialPayment = operationalState ? await projectInitialPayment(repository, projectId, operationalState, capabilities.finance, actor.role) : undefined;
-      const measurementDesigners = savedStages && capabilities.designer ? (await Promise.all(hierarchy.assignedDesignerIds.map((id) => repository.findUserById(id)))).flatMap((user) => user?.active && user.role === "designer" ? [{ id: user.id, name: user.name }] : []) : undefined;
+      const measurementOwners = savedStages && project.estimationWorkflowVersion === 3 ? secondaryMeasurementDesigners(project,
+        await Promise.all(secondaryMeasurementDesignerIds(project).map(id => repository.findUserById(id)))) : undefined;
+      const measurementDesigners = savedStages && project.estimationWorkflowVersion !== 3 && capabilities.designer ? (await Promise.all(hierarchy.assignedDesignerIds.map((id) => repository.findUserById(id)))).flatMap((user) => user?.active && user.role === "designer" ? [{ id: user.id, name: user.name }] : []) : undefined;
       const measurementAssigneeId = operationalState?.stages.site_measurement?.assignedDesignerId;
       const measurementAssigneeName = measurementAssigneeId ? (await repository.findUserById(measurementAssigneeId))?.name : undefined;
       let furnitureRooms: WorkflowEstimateRoom[] | undefined;
@@ -298,9 +301,9 @@ export function createProjectService(
           if (stage) notices.push({ id: `${projectId}:${key}`, stageId: stage.id, message });
         };
         if (!operationalState.stages.internal_kickoff?.completedAt) addNotice("internal_kickoff", "internal-alignment", "Thanks for confirming the order. We are aligning the internal processes, roughly a three-day process, and your Designer will request a meeting.");
-        if (workflowStageStartAt(operationalState, "client_kickoff", now.getTime()) && !operationalState.stages.client_kickoff?.completedAt) addNotice("client_kickoff", "kickoff-pending", "Internal Kick off is complete. Your Client Kick off task is ready with a four-day countdown. Complete it once the meeting is done.");
+        if (workflowStageStartAt(operationalState, "client_kickoff", now.getTime()) && !workflowClientKickoffCompleted(operationalState)) addNotice("client_kickoff", "kickoff-pending", "Internal Kick off is complete. Your Client Kick off task is ready with a four-day countdown. Complete it once the meeting is done.");
         if (workflowStageStartAt(operationalState, "key_collection", now.getTime()) && !operationalState.stages.key_collection?.completedAt) addNotice("key_collection", "key-handover", operationalState.stages.key_collection?.handedOverAt ? "Key handover recorded; awaiting Designer receipt." : "Confirm that the keys have been handed over. Your Designer will separately confirm receipt.");
-        if (operationalState.stages.client_kickoff?.completedAt) addNotice("client_kickoff", "kickoff-complete", "Congratulations, we have officially kickstarted your project.");
+        if (workflowClientKickoffCompleted(operationalState)) addNotice("client_kickoff", "kickoff-complete", "Congratulations, we have officially kickstarted your project.");
         if (workflowIsPaused(operationalState)) addNotice("site_measurement", "site-access-blocked", "Site access is unavailable. Measurement and all workflow clocks are paused; technical drawing preparation cannot proceed until access is restored.");
         else if (operationalState.stages.site_measurement?.completedAt) addNotice("site_measurement", "measurement-complete", "Measurements are complete. Your project is on the right path.");
       }
@@ -327,7 +330,7 @@ export function createProjectService(
           projectStages: ordered(savedStages).map((stage) => {
             const sources = linkedStages.filter(({ stage: actual }) => actual.workflowStageId === stage.id);
             const view = stageView({ ...stage, dependencyStageIds: [] }, sources.flatMap(({ stage: actual, floor }) => actual.tasks.map((task) => ({ ...task, floorName: floor.name }))));
-            const operational = projectOperationalStage(stage, operationalState!, capabilities, now, actor.id, measurementAssigneeName, { spacePlanning, spacePlanningIssue, paymentStatus: initialPayment!.status, projectId: hierarchy.id, internalKickoffStageId: savedStages.find((configured) => configured.type === "internal_kickoff")?.id, measurementStageId: savedStages.find((configured) => configured.type === "site_measurement")?.id });
+            const operational = projectOperationalStage(stage, operationalState!, capabilities, now, actor.id, measurementAssigneeName, { spacePlanning, spacePlanningIssue, paymentStatus: initialPayment!.status, projectId: hierarchy.id, internalKickoffStageId: savedStages.find((configured) => configured.type === "internal_kickoff")?.id, measurementStageId: savedStages.find((configured) => configured.type === "site_measurement")?.id, measurementOwners, measurementAssignmentReason: secondaryMeasurementAssignmentReason(project) });
             const instructions = instructionsForStage(stage.type, hierarchy.estimationWorkflowVersion);
             // Review-backed plans require the Client's explicit acknowledgement; legacy
             // floor-only projects keep their established task-derived progress.
@@ -339,6 +342,12 @@ export function createProjectService(
               operational.status = "blocked";
             }
             if (taskDerivedProgress) {
+              // A retired exemption blocks new work, without reopening completed legacy tasks.
+              const historicalCompletion = view.status === "completed" && view.tasks.length > 0 && view.tasks.every(task =>
+                task.completedAt && workflowStageHistoricalPrerequisiteBlockers(operationalState!, stage.type, task.completedAt).length === 0);
+              if (historicalCompletion && !workflowClientKickoffCompleted(operationalState!)) {
+                operational.blockingReasons = operational.blockingReasons.filter(reason => reason !== "Complete Client Kick off.");
+              }
               operational.status = operational.blockingReasons.length ? "blocked" : (view.status === "completed" ? "completed" : view.status === "blocked" ? "blocked" : view.status === "in_progress" || view.status === "in_review" ? "in_progress" : "not_started");
               operational.timing.state = operational.status === "completed" ? "completed" : operational.blockingReasons.length ? "waiting" : "not_applicable";
               operational.timing.startsAt = null;

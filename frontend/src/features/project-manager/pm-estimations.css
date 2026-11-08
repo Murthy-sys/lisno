@@ -106,7 +106,7 @@
 .pm-estimate-dialog__context p, .pm-estimate-dialog__context details { font-size: 12px; color: var(--pm-muted); }
 .pm-estimate-dialog__context summary { padding-block: 5px; cursor: pointer; color: var(--pm-ink); }
 .pm-estimate-dialog__context ul { padding-left: 18px; margin: 6px 0 0; }
-.pm-estimate-dialog__body :is(input:not([type="radio"]), textarea, select) { min-height: 44px; }
+.pm-estimate-dialog__body :is(input:not([type="radio"]):not([type="checkbox"]), select) { min-height: var(--control-height); font-size: var(--form-control-font-size); }
 .pm-vendor-candidates { border: 0; padding: 0; margin: 0; min-width: 0; }
 .pm-vendor-candidates legend { font-weight: 550; font-size: 12px; padding: 0 0 8px; }
 .pm-vendor-candidates > p { color: var(--pm-muted); font-size: 12px; padding: 12px 0; }

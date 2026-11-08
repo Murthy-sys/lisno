@@ -1,3 +1,5 @@
+import { compareLeadEstimateTiers, estimateTierComparisonSchema, renderEstimateTierComparisonPdf } from "../services/estimate-tier-comparison.service.js";
+import { calculateEstimateTotal } from "../domain/estimate-total-rounding.js";
 import { ESTIMATE_COMPONENT_PRICING_BASIS, estimateComponentLineAmountIsValid, type EstimateComponentPricingLine, type EstimateInHousePreviewResult } from "../domain/estimate-component-pricing.js";
 import { estimateInHousePreviewSchema, resolveEstimateComponentPricing, currentEstimateComponentPricingMatches } from "../services/estimate-component-pricing.service.js";
 import { ESTIMATE_DIMENSION_INPUT_UNITS, ESTIMATE_DIMENSION_QUANTITY_UNITS, calculateDimensionQuantity, canonicalEstimateDimensions, estimateDimensionRulesEqual, estimateLineDimensionsValid, readEstimateDimensionRule } from "../domain/estimate-dimensions.js";
@@ -7,8 +9,8 @@ import { normalizeDesignRules, designRulesDigest, designRuleEstimateNotes } from
 import { ProjectModel } from "../models/Project.js";
 import { EstimateClientReviewRoundModel } from "../models/EstimateClientReviewRound.js";
 import { comparePublishedEstimateSnapshots } from "../services/estimate-client-presentation.js";
-import { effectiveCommercialStatus, estimateCommercialStatusFilter, estimateCommercialStatusFields, isCollaborativeEstimate, newEstimationLifecycle, newQuotationLifecycle, type EstimationLifecycle } from "../domain/estimation-lifecycle.js";
-import { assertEstimateEditable, canStaffEditEstimate, fenceCollaborativeEstimate, estimatePhysicalScopeChanged, estimateQuotationContentChanged, requireEstimateClientMembership, requireEstimateStaffActor } from "../services/estimate-collaboration-policy.service.js";
+import { effectiveCommercialStatus, estimateCommercialStatusFilter, estimateCommercialStatusFields, estimateWorkingCopyEditable, isCollaborativeEstimate, newEstimationLifecycle, newQuotationLifecycle, type EstimationLifecycle } from "../domain/estimation-lifecycle.js";
+import { assertEstimateEditable, assertEstimatePricingModeChanges, canChangeEstimatePricingMode, canStaffEditEstimate, fenceCollaborativeEstimate, estimatePhysicalScopeChanged, estimateQuotationContentChanged, requireEstimateClientMembership, requireEstimateStaffActor } from "../services/estimate-collaboration-policy.service.js";
 import { createMongoRepository } from "../repositories/mongo.js";
 import { ensureQuotationDesignTask } from "../services/project-workflow.service.js";
 import { readProjectNumber, projectNumberStateConflict } from "../domain/project-number.js";
@@ -365,7 +367,7 @@ export function createEstimatesRouter(
         projectId: estimate.projectId, estimateVersion: reference.estimateVersion, status: "approved", decision: "approve" }).lean();
       if (pre) preApprovedReview = { reviewRoundId: String(pre._id), estimateVersion: Number(pre.estimateVersion), snapshot: pre.estimateSnapshot };
     }
-    const project = lifecycle?.workflowVersion === 3 ? await ProjectModel.findById(estimate.projectId).select({ assignedEstimatorId: 1, primaryDesignerId: 1 }).lean() : null;
+    const project = lifecycle?.workflowVersion === 3 ? await ProjectModel.findById(estimate.projectId).select({ assignedEstimatorId: 1, primaryDesignerId: 1, estimationWorkflowVersion: 1 }).lean() : null;
     const canUnlockQuotation = lifecycle?.workflowVersion === 3 && !!lifecycle.editClosedAt && !!lifecycle.finalApproval &&
       (actor.role === "estimator_sales" && project?.assignedEstimatorId === actor.id && estimate.ownerId === actor.id ||
         actor.role === "designer" && project?.primaryDesignerId === actor.id && estimate.designPlanDesignerId === actor.id);
@@ -375,7 +377,11 @@ export function createEstimatesRouter(
       (lifecycle.phase === "pre"
         ? actor.role === "estimator_sales" && project?.assignedEstimatorId === actor.id && estimate.ownerId === actor.id
         : !!lifecycle.preApproval && actor.role === "designer" && project?.primaryDesignerId === actor.id && estimate.designPlanDesignerId === actor.id);
-    return { ...estimate, ...(lifecycle?.workflowVersion === 3 ? { ...quotationApprovalPublicFields(quotationApproval!), capabilities: { canUnlockQuotation, canPublishQuotation } } : {}), ...(clientReview ? { clientReview } : {}), ...(clientFeedback ? { clientFeedback } : {}),
+    const canPrepareQuotationSubmission = lifecycle?.workflowVersion === 3 && project?.estimationWorkflowVersion === 3 &&
+      lifecycle.phase === "post" && !!lifecycle.preApproval && estimateWorkingCopyEditable(estimate) &&
+      actor.role === "designer" && project.primaryDesignerId === actor.id && estimate.designPlanDesignerId === actor.id;
+    const canChangePricingMode = canChangeEstimatePricingMode(actor, estimate, project);
+    return { ...estimate, ...(lifecycle?.workflowVersion === 3 ? { ...quotationApprovalPublicFields(quotationApproval!), capabilities: { canUnlockQuotation, canPublishQuotation, canPrepareQuotationSubmission, canChangePricingMode } } : {}), ...(clientReview ? { clientReview } : {}), ...(clientFeedback ? { clientFeedback } : {}),
       ...(isCollaborativeEstimate(estimate) ? { preApprovedReview, changesFromPre: preApprovedReview
         ? comparePublishedEstimateSnapshots(preApprovedReview.snapshot, estimate) : null } : {}) };
   };
@@ -393,6 +399,16 @@ export function createEstimatesRouter(
       return { ...await estimatorEstimate(req.authenticatedUser!, estimate, lead ?? null), lead: lead ? { ...lead, projectNumber: readProjectNumber(lead.projectNumber), id: lead._id, _id: undefined } : null };
     })) });
   } catch (error) { next(error); } });
+  router.post("/leads/:leadId/estimate/tier-comparison", protectedRoute, requireOperation("POST /leads/:leadId/estimate/tier-comparison"),
+    validateBody(estimateTierComparisonSchema), async (req, res, next) => { try {
+      res.set("Cache-Control", "private, no-store").json({ data: await compareLeadEstimateTiers(req.authenticatedUser!, String(req.params.leadId), req.body, leads) });
+    } catch (error) { next(error); } });
+  router.post("/leads/:leadId/estimate/tier-comparison/pdf", protectedRoute, requireOperation("POST /leads/:leadId/estimate/tier-comparison/pdf"),
+    validateBody(estimateTierComparisonSchema), async (req, res, next) => { try {
+      const comparison = await compareLeadEstimateTiers(req.authenticatedUser!, String(req.params.leadId), req.body, leads);
+      res.set("Cache-Control", "private, no-store").set("Content-Type", "application/pdf").set("X-Content-Type-Options", "nosniff")
+        .set("Content-Disposition", 'attachment; filename="lisno-tier-comparison.pdf"').send(await renderEstimateTierComparisonPdf(comparison));
+    } catch (error) { next(error); } });
   router.post("/leads/:leadId/estimate/in-house-preview", protectedRoute,
     requireOperation("POST /leads/:leadId/estimate/in-house-preview"), validateBody(estimateInHousePreviewSchema), async (req, res, next) => { try {
       const actor = req.authenticatedUser!;
@@ -623,14 +639,16 @@ export function createEstimatesRouter(
         if (!Number.isSafeInteger(next)) throw new ApiError(400, "ESTIMATE_AMOUNT_INVALID", "The estimate total is too large.");
         return next;
       }, 0);
+      if (previousEstimate) assertEstimatePricingModeChanges(req.authenticatedUser!, previousEstimate, project, lineItems);
       const hasConfigured = lineItems.some((line) => line.source === "configuration");
       const gstPaise = hasConfigured
         ? Number((BigInt(subtotalPaise) * 18n + 50n) / 100n)
         : Math.round(subtotalPaise / 100 * .18) * 100;
-      const totalPaise = subtotalPaise + gstPaise;
-      if (!Number.isSafeInteger(gstPaise) || !Number.isSafeInteger(totalPaise)) {
+      const rounded = calculateEstimateTotal(subtotalPaise, gstPaise);
+      if (!rounded) {
         throw new ApiError(400, "ESTIMATE_AMOUNT_INVALID", "The estimate total is too large.");
       }
+      const { totalPaise, roundOffPaise } = rounded;
       const isIncomplete = lineItems.some((line) => line.source === "configuration" && line.included && line.ratePaise === null && !estimateComponentLineAmountIsValid(line));
       const leadProjectId = lead.projectId ?? null;
       const estimateProjectId = estimate?.projectId ?? null;
@@ -662,6 +680,7 @@ export function createEstimatesRouter(
       estimate.subtotalPaise = subtotalPaise;
       estimate.gstPaise = gstPaise;
       estimate.totalPaise = totalPaise;
+      estimate.roundOffPaise = roundOffPaise;
       estimate.subtotal = subtotalPaise / 100;
       estimate.gst = gstPaise / 100;
       estimate.total = totalPaise / 100;
@@ -1193,6 +1212,7 @@ function toEstimatePdfInput(
     subtotalPaise?: number;
     gstPaise?: number;
     totalPaise?: number;
+    roundOffPaise?: number;
     lineItems: EstimatePdfInput["lineItems"];
   },
   lead: {
@@ -1215,6 +1235,7 @@ function toEstimatePdfInput(
     ...(estimate.subtotalPaise !== undefined ? { subtotalPaise: estimate.subtotalPaise } : {}),
     ...(estimate.gstPaise !== undefined ? { gstPaise: estimate.gstPaise } : {}),
     ...(estimate.totalPaise !== undefined ? { totalPaise: estimate.totalPaise } : {}),
+    ...(estimate.roundOffPaise !== undefined ? { roundOffPaise: estimate.roundOffPaise } : {}),
     lineItems: estimate.lineItems,
     lead: {
       clientName: lead.clientName,

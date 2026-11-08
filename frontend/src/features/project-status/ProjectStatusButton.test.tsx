@@ -30,6 +30,31 @@ beforeEach(() => {
 });
 
 describe("Project status", () => {
+  it("shows all secondary measurement owners from the server and refreshes to the primary's team-assignment responsibility", async () => {
+    mocks.role = "designer";
+    const data = fixture();
+    data.currentStage = { key: "site_measurement", label: "On Site Actual Measurement" };
+    data.pendingActions = [{ id: "measurement", stageKey: "site_measurement", stageLabel: "On Site Actual Measurement",
+      action: "Complete the site measurement and upload the site photos or videos.", responsibleRole: "designer", state: "pending",
+      people: [{ id: "secondary-a", name: "Secondary A", role: "designer" }, { id: "secondary-b", name: "Secondary B", role: "designer" }],
+      scheduledAt: null, deadlineAt: null, blocker: null }];
+    vi.mocked(api.getProjectStatus).mockResolvedValue(data);
+    const view = mount();
+    await userEvent.click(screen.getByRole("button", { name: "Project status" }));
+    expect(await screen.findByText("Secondary A")).toBeVisible();
+    expect(screen.getByText("Secondary B")).toBeVisible();
+    expect(screen.queryByText("Primary Designer")).not.toBeInTheDocument();
+    const emptyTeam = { ...data, pendingActions: [{ ...data.pendingActions[0]!,
+      action: "Assign a Secondary Designer in Design team to carry out onsite measurement.",
+      people: [{ id: "primary", name: "Primary Designer", role: "designer" as const }] }] };
+    vi.mocked(api.getProjectStatus).mockResolvedValue(emptyTeam);
+    await act(async () => { await view.client.invalidateQueries({ queryKey: api.projectStatusKeys.project("project-a") }); });
+    expect(await screen.findByText("Primary Designer")).toBeVisible();
+    expect(screen.getByText("Assign a Secondary Designer in Design team to carry out onsite measurement.")).toBeVisible();
+    expect(screen.queryByText("Secondary A")).not.toBeInTheDocument();
+    expect(screen.queryByText("Secondary B")).not.toBeInTheDocument();
+  });
+
   it("shows missing identity only after an authorized status has loaded", async () => {
     let resolve!: (data: ProjectStatusSummary) => void;
     vi.mocked(api.getProjectStatus).mockImplementation(() => new Promise(done => { resolve = done; }));

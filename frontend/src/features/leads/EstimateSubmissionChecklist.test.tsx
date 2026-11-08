@@ -21,10 +21,10 @@ function Harness({ action = "submit", onConfirm = vi.fn() }: { action?: "submit"
 }
 
 describe("EstimateSubmissionChecklist", () => {
-  it("requires each approved statement and blocks partial confirmation including Enter", async () => {
+  it.each(["submit", "send"] as const)("keeps %s confirmation actionable and focuses each missing statement", async action => {
     const user = userEvent.setup();
     const onConfirm = vi.fn();
-    render(<Harness onConfirm={onConfirm} />);
+    render(<Harness action={action} onConfirm={onConfirm} />);
     await user.click(screen.getByRole("button", { name: "Submit estimate" }));
     const dialog = screen.getByRole("dialog", { name: "Before submitting your estimate" });
     expect(dialog).toHaveAccessibleDescription("Confirm all three statements to continue.");
@@ -32,20 +32,29 @@ describe("EstimateSubmissionChecklist", () => {
     expect(within(dialog).getAllByRole("checkbox")).toHaveLength(3);
     for (const checkbox of checkboxes) expect(checkbox).not.toBeChecked();
     await waitFor(() => expect(checkboxes[0]).toHaveFocus());
-    const confirm = within(dialog).getByRole("button", { name: "Confirm and submit" });
-    expect(confirm).toBeDisabled();
+    const confirm = within(dialog).getByRole("button", { name: `Confirm and ${action}` });
+    expect(confirm).toBeEnabled();
+    confirm.focus();
     await user.keyboard("{Enter}");
     expect(onConfirm).not.toHaveBeenCalled();
-    for (const name of statements.slice(0, 2)) {
-      await user.click(screen.getByText(name));
-      expect(confirm).toBeDisabled();
-      await user.keyboard("{Enter}");
+    expect(screen.getByRole("alert")).toHaveTextContent("Confirm the 3 unchecked statements before continuing.");
+    expect(checkboxes[0]).toHaveFocus();
+    expect(checkboxes[0]).toHaveAccessibleDescription("Confirm the 3 unchecked statements before continuing.");
+    for (let index = 0; index < 2; index++) {
+      await user.click(checkboxes[index]!);
+      expect(confirm).toBeEnabled();
+      await user.click(confirm);
+      expect(checkboxes[index + 1]).toHaveFocus();
       expect(onConfirm).not.toHaveBeenCalled();
     }
     await user.click(screen.getByText(statements[2]!));
     expect(confirm).toBeEnabled();
     await user.click(checkboxes[1]!);
-    expect(confirm).toBeDisabled();
+    confirm.focus();
+    await user.keyboard(" ");
+    expect(checkboxes[1]).toHaveFocus();
+    expect(screen.getByRole("alert")).toHaveTextContent("Confirm the 1 unchecked statement before continuing.");
+    expect(onConfirm).not.toHaveBeenCalled();
     await user.click(checkboxes[1]!);
     await user.click(confirm);
     expect(onConfirm).toHaveBeenCalledTimes(1);
@@ -68,7 +77,8 @@ describe("EstimateSubmissionChecklist", () => {
     await waitFor(() => expect(trigger).toHaveFocus());
     await user.click(trigger);
     for (const checkbox of screen.getAllByRole("checkbox")) expect(checkbox).not.toBeChecked();
-    expect(screen.getByRole("button", { name: "Confirm and submit" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Confirm and submit" })).toBeEnabled();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it("uses the send action and respects changing eligibility even after all checks", async () => {
@@ -78,29 +88,60 @@ describe("EstimateSubmissionChecklist", () => {
     const { rerender } = render(<EstimateSubmissionChecklist {...props} canConfirm />);
     for (const checkbox of screen.getAllByRole("checkbox")) await user.click(checkbox);
     expect(screen.getByRole("button", { name: "Confirm and send" })).toBeEnabled();
-    rerender(<EstimateSubmissionChecklist {...props} canConfirm={false} />);
-    await user.click(screen.getByRole("button", { name: "Confirm and send" }));
+    rerender(<EstimateSubmissionChecklist {...props} canConfirm={false}
+      blockingReason="Reload the latest estimate before submitting. Your edits are preserved." />);
+    const confirm = screen.getByRole("button", { name: "Confirm and send" });
+    expect(confirm).toBeEnabled();
+    expect(confirm).not.toHaveAttribute("aria-disabled");
+    await user.click(confirm);
+    const feedback = screen.getByRole("alert");
+    expect(feedback).toHaveTextContent("Reload the latest estimate before submitting. Your edits are preserved.");
+    expect(feedback).toHaveFocus();
     expect(onConfirm).not.toHaveBeenCalled();
     rerender(<EstimateSubmissionChecklist {...props} canConfirm />);
     await user.click(screen.getByRole("button", { name: "Confirm and send" }));
     expect(onConfirm).toHaveBeenCalledTimes(1);
   });
 
-  it("blocks repeat activation and dismissal while the parent action is busy", async () => {
+  it("explains unavailable eligibility without inventing an assignment restriction", async () => {
+    const user = userEvent.setup();
+    const onConfirm = vi.fn();
+    render(<EstimateSubmissionChecklist action="submit" busy={false} canConfirm={false}
+      onConfirm={onConfirm} onClose={vi.fn()} />);
+    for (const checkbox of screen.getAllByRole("checkbox")) await user.click(checkbox);
+    const confirm = screen.getByRole("button", { name: "Confirm and submit" });
+    confirm.focus();
+    await user.keyboard("{Enter}");
+    expect(confirm).toBeEnabled();
+    expect(screen.getByRole("alert")).toHaveTextContent("The estimate is not ready for submission. Close this checklist and review the latest estimate updates.");
+    expect(screen.getByRole("alert")).toHaveFocus();
+    expect(onConfirm).not.toHaveBeenCalled();
+  });
+
+  it.each(["submit", "send"] as const)("keeps busy %s actionable while blocking repeat activation and dismissal", async action => {
     const user = userEvent.setup();
     const onConfirm = vi.fn();
     const onClose = vi.fn();
     function BusyHarness() {
       const [busy, setBusy] = useState(false);
-      return <EstimateSubmissionChecklist action="submit" busy={busy} canConfirm
+      return <EstimateSubmissionChecklist action={action} busy={busy} canConfirm
         onConfirm={() => { onConfirm(); setBusy(true); }} onClose={onClose} />;
     }
     render(<BusyHarness />);
     for (const checkbox of screen.getAllByRole("checkbox")) await user.click(checkbox);
-    const confirm = screen.getByRole("button", { name: "Confirm and submit" });
+    const confirm = screen.getByRole("button", { name: `Confirm and ${action}` });
     await user.dblClick(confirm);
     expect(onConfirm).toHaveBeenCalledTimes(1);
-    expect(confirm).toBeDisabled();
+    expect(confirm).toBeEnabled();
+    expect(confirm).toHaveAccessibleName(action === "send" ? "Sending…" : "Submitting…");
+    expect(confirm).toHaveAttribute("aria-busy", "true");
+    expect(confirm).not.toHaveAttribute("aria-disabled");
+    expect(screen.getByRole("status")).toHaveTextContent(action === "send"
+      ? "Your estimate is being sent. Please wait." : "Your estimate is being submitted. Please wait.");
+    confirm.focus();
+    await user.keyboard("{Enter} ");
+    await user.click(confirm);
+    expect(onConfirm).toHaveBeenCalledTimes(1);
     expect(screen.getByRole("dialog")).toHaveAttribute("aria-busy", "true");
     for (const checkbox of screen.getAllByRole("checkbox")) expect(checkbox).toBeDisabled();
     await user.keyboard("{Escape}");

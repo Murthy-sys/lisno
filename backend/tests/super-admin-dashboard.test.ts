@@ -23,7 +23,11 @@ function bearer(id: string, role: string): string {
 }
 
 describe("Super Admin dashboard routes", () => {
-  it("uses exact approved paise in the memory finance overview", async () => {
+  it.each([
+    { subtotalPaise: 16_249, gstPaise: 2_925, totalPaise: 19_174, roundOffPaise: undefined },
+    { subtotalPaise: 16_249, gstPaise: 2_925, totalPaise: 19_200, roundOffPaise: 26 },
+    { subtotalPaise: 16_200, gstPaise: 2_916, totalPaise: 19_100, roundOffPaise: -16 }
+  ])("uses approved paise and adjustment $roundOffPaise in the memory finance overview", async ({ subtotalPaise, gstPaise, totalPaise, roundOffPaise }) => {
     const seed = structuredClone(demoSeedData);
     seed.estimateSummaries = [{
       id: "configured-dashboard-estimate", leadId: "configured-dashboard-lead",
@@ -31,8 +35,9 @@ describe("Super Admin dashboard routes", () => {
       subtotal: 999, gst: 180, total: 1_179,
       clientDecisionAt: "2026-08-26T09:00:00.000Z", clientDecisionSource: "client_portal",
       approvedBaseline: { estimateVersion: 1, reviewRoundId: "configured-dashboard-round",
-        subtotal: 162.49, gst: 29.25, total: 191.74,
-        subtotalPaise: 16_249, gstPaise: 2_925, totalPaise: 19_174,
+        subtotal: subtotalPaise / 100, gst: gstPaise / 100, total: totalPaise / 100,
+        subtotalPaise, gstPaise, totalPaise,
+        ...(roundOffPaise === undefined ? {} : { roundOffPaise }),
         decisionAt: "2026-08-26T09:00:00.000Z", decisionSource: "client_portal" },
       clientReview: null, assignedAdminId: null, designPlanStatus: "pending_assignment",
       designPlanVersion: 0, designPlanDesignerId: null,
@@ -41,8 +46,10 @@ describe("Super Admin dashboard routes", () => {
     const response = await request(createApp(createMemoryRepository(seed)))
       .get("/api/v1/admin/dashboard/overview?periodDays=30")
       .set("Authorization", bearer("user-super-admin", "super_admin")).expect(200);
-    expect(response.body.data.finance).toMatchObject({ approvedSubtotalPaise: 16_249,
-      approvedGstPaise: 2_925, approvedContractTotalPaise: 19_174 });
+    expect(response.body.data.finance).toMatchObject({ approvedSubtotalPaise: subtotalPaise,
+      approvedGstPaise: gstPaise, approvedContractTotalPaise: totalPaise });
+    if (roundOffPaise === undefined) expect(response.body.data.finance).not.toHaveProperty("approvedRoundOffPaise");
+    else expect(response.body.data.finance).toHaveProperty("approvedRoundOffPaise", roundOffPaise);
   });
 
   it("protects all reads and denies every non-Super-Admin before repository aggregation", async () => {
