@@ -19,7 +19,7 @@
 .workflow-stage-actions__rooms input { flex-shrink: 0; margin-block-start: 3px; }
 .workflow-stage-actions__handover { display: grid; gap: var(--space-2); grid-column: 1 / -1; padding-block-end: var(--space-3); border-block-end: 1px solid var(--color-border); }
 .workflow-stage-actions__handover label { display: flex; align-items: center; min-block-size: 44px; gap: var(--space-2); font-size: var(--text-sm); overflow-wrap: anywhere; cursor: pointer; }
-.workflow-stage-actions__handover .ui-checkbox { flex-shrink: 0; inline-size: 20px; block-size: 20px; min-inline-size: 20px; min-block-size: 20px; margin: 0; }
+.workflow-stage-actions__handover .ui-checkbox { flex-shrink: 0; inline-size: var(--form-choice-size); block-size: var(--form-choice-size); min-inline-size: var(--form-choice-size); min-block-size: var(--form-choice-size); margin: 0; }
 .workflow-stage-actions__handover p { margin: 0; color: var(--color-text-muted); }
 .workflow-stage-actions__history { border-block-start: 1px solid var(--color-border); padding-block-start: var(--space-3); font-size: var(--text-sm); }
 .workflow-stage-actions__history summary { cursor: pointer; font-weight: 600; padding-block: var(--space-2); }
@@ -91,7 +91,7 @@
 }
 .workflow-action-panel .ui-drawer__header {
   gap: var(--space-3);
-  padding: max(var(--space-5), env(safe-area-inset-top)) var(--space-6) var(--space-4);
+  padding: max(var(--space-4), env(safe-area-inset-top)) var(--space-4) var(--space-4);
 }
 .workflow-action-panel .ui-drawer__header h2 {
   font: 600 var(--text-xl)/1.4 var(--font-interface);
@@ -99,7 +99,7 @@
 .workflow-action-panel .ui-drawer__eyebrow {
   margin-block: 0 var(--space-2);
   color: var(--color-text-muted);
-  font: 500 var(--text-xs)/1.5 var(--font-interface);
+  font: 500 11px/1.5 var(--font-interface);
   letter-spacing: 0.02em;
   text-transform: none;
 }
@@ -108,21 +108,21 @@
   font: 400 var(--text-sm)/1.6 var(--font-interface);
 }
 .workflow-action-panel.ui-drawer--contextual .ui-drawer__body {
-  padding: var(--space-5) var(--space-6);
+  padding: var(--space-4) var(--space-4);
 }
 .workflow-action-panel .ui-drawer__footer {
-  padding: var(--space-3) var(--space-6) max(var(--space-3), env(safe-area-inset-bottom));
+  padding: var(--space-3) var(--space-4) max(var(--space-3), env(safe-area-inset-bottom));
 }
 .workflow-action-panel .ui-drawer__footer .ui-button {
-  min-block-size: 44px;
+  min-block-size: var(--control-height);
   max-inline-size: 100%;
   white-space: normal;
 }
 .workflow-action-panel .workflow-stage-actions__form {
-  gap: var(--space-4);
+  gap: var(--form-group-gap);
 }
 .workflow-action-panel .workflow-stage-actions__form > fieldset {
-  gap: var(--space-4);
+  gap: var(--form-group-gap);
 }
 .workflow-action-panel .workflow-stage-actions__form p {
   margin-block: 0;
@@ -136,12 +136,12 @@
   line-height: 1.5;
 }
 .workflow-action-panel .workflow-stage-actions__form .ui-control {
-  min-block-size: 40px;
-  min-height: 40px;
-  font-size: var(--text-sm);
+  min-block-size: var(--control-height);
+  min-height: var(--control-height);
+  font-size: var(--form-control-font-size);
 }
 .workflow-action-panel .workflow-stage-actions__form textarea.ui-control {
-  min-block-size: 96px;
+  min-block-size: 84px;
   padding: var(--space-2) var(--space-3);
   line-height: 1.6;
 }
@@ -149,7 +149,7 @@
   padding: var(--space-1) var(--space-2);
 }
 .workflow-action-panel .ui-file-input::file-selector-button {
-  min-block-size: 32px;
+  min-block-size: var(--control-height);
   padding-inline: var(--space-3);
   font: 500 var(--text-sm)/1.5 var(--font-interface);
 }
@@ -166,9 +166,9 @@
 }
 .workflow-action-panel :is(.workflow-stage-actions__rooms, .workflow-stage-actions__handover) label {
   align-items: center;
-  min-block-size: 44px;
-  gap: var(--space-3);
-  padding: var(--space-2);
+  min-block-size: var(--form-choice-target-size);
+  gap: var(--space-2);
+  padding: 4px var(--space-2);
   border: 1px solid transparent;
   border-radius: var(--radius-control);
   font-size: var(--text-sm);
@@ -186,15 +186,15 @@
   cursor: not-allowed;
 }
 .workflow-action-panel .workflow-stage-actions__form .ui-checkbox {
-  flex: 0 0 18px;
-  width: 18px;
-  height: 18px;
-  min-width: 18px;
-  min-height: 18px;
-  inline-size: 18px;
-  block-size: 18px;
-  min-inline-size: 18px;
-  min-block-size: 18px;
+  flex: 0 0 var(--form-choice-size);
+  width: var(--form-choice-size);
+  height: var(--form-choice-size);
+  min-width: var(--form-choice-size);
+  min-height: var(--form-choice-size);
+  inline-size: var(--form-choice-size);
+  block-size: var(--form-choice-size);
+  min-inline-size: var(--form-choice-size);
+  min-block-size: var(--form-choice-size);
   margin: 0;
 }
 .workflow-action-panel .workflow-stage-actions__rooms > p {
@@ -255,7 +255,7 @@
 .workflow-action-panel--furniture .workflow-stage-actions__submit-footer > .workflow-stage-actions__buttons .ui-button {
   min-inline-size: 0;
   max-inline-size: none;
-  min-block-size: 48px;
+  min-block-size: var(--control-height);
   padding-inline: var(--space-3);
   line-height: 1.35;
   overflow-wrap: anywhere;
@@ -283,12 +283,12 @@
 }
 @media (pointer: coarse), (max-width: 767px) {
   .workflow-action-panel .workflow-stage-actions__form .ui-control {
-    min-block-size: 44px;
-    min-height: 44px;
-    font-size: 1rem;
+    min-block-size: var(--control-height);
+    min-height: var(--control-height);
+    font-size: var(--form-control-font-size);
   }
   .workflow-action-panel .ui-file-input::file-selector-button {
-    min-block-size: 36px;
+    min-block-size: var(--control-height);
   }
 }
 @media (max-width: 480px) {

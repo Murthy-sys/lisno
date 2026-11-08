@@ -118,6 +118,19 @@ describe("Unified Client estimation", () => {
     expect(screen.queryByRole("button", { name: /Approve|Review for/ })).not.toBeInTheDocument();
   });
 
+  it("loads the newly submitted review when refreshing a previously not-started quotation", async () => {
+    const view = setup({ quotationError: 404 }), user = userEvent.setup();
+    await screen.findByText(/has not prepared the quotation yet/);
+    view.state.quotationError = 0;
+    view.state.queue = [view.state.estimate];
+    await user.click(screen.getByRole("button", { name: "Refresh quotation" }));
+    expect(await screen.findByRole("button", { name: "Review for pre-design approval" })).toBeEnabled();
+    expect(screen.getByRole("spinbutton", { name: /Quantity for Current cabinet/ })).toHaveValue(2);
+    expect(view.state.tiersRequests).toBe(1);
+    expect(view.decisions).toEqual([]);
+    expect(view.saves).toEqual([]);
+  });
+
   it.each([403, 500])("does not infer not-started from a quotation 404 when the authorized probe fails with %s", async tiersError => {
     const view = setup({ quotationError: 404, tiersError });
     await waitFor(() => expect(view.state.tiersRequests).toBe(1));

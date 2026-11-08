@@ -1015,17 +1015,17 @@
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  min-height: 44px;
+  min-height: var(--form-choice-target-size);
   font-weight: 600;
   cursor: pointer;
 }
 
 .knowledge-checkbox-row .ui-checkbox {
   flex: 0 0 auto;
-  block-size: var(--space-5);
-  inline-size: var(--space-5);
-  min-block-size: var(--space-5);
-  min-inline-size: var(--space-5);
+  block-size: var(--form-choice-size);
+  inline-size: var(--form-choice-size);
+  min-block-size: var(--form-choice-size);
+  min-inline-size: var(--form-choice-size);
 }
 
 /* The readiness meter reads as the primary figure; the revision stats sit in a
@@ -3626,17 +3626,17 @@ body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions:where(:not(.
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  min-block-size: 44px;
+  min-block-size: var(--form-choice-target-size);
   font-size: 14px;
   line-height: 1.4;
 }
 
 .knowledge-mode-configuration__mode-options .ui-checkbox {
-  inline-size: 16px;
-  block-size: 16px;
-  min-inline-size: 16px;
-  min-block-size: 16px;
-  flex: 0 0 16px;
+  inline-size: var(--form-choice-size);
+  block-size: var(--form-choice-size);
+  min-inline-size: var(--form-choice-size);
+  min-block-size: var(--form-choice-size);
+  flex: 0 0 var(--form-choice-size);
   margin: 0;
 }
 
@@ -4566,11 +4566,11 @@ body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions:where(:not(.
 }
 
 .knowledge-mode-configuration__source-choice .ui-checkbox {
-  inline-size: 16px;
-  block-size: 16px;
-  min-inline-size: 16px;
-  min-block-size: 16px;
-  flex: 0 0 16px;
+  inline-size: var(--form-choice-size);
+  block-size: var(--form-choice-size);
+  min-inline-size: var(--form-choice-size);
+  min-block-size: var(--form-choice-size);
+  flex: 0 0 var(--form-choice-size);
   margin: 0;
   accent-color: var(--knowledge-mode-accent);
 }
@@ -4663,11 +4663,11 @@ body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions:where(:not(.
 }
 
 .knowledge-pmc-scope__items .ui-checkbox {
-  inline-size: 12px;
-  block-size: 12px;
-  min-inline-size: 12px;
-  min-block-size: 12px;
-  flex: 0 0 12px;
+  inline-size: var(--form-choice-size);
+  block-size: var(--form-choice-size);
+  min-inline-size: var(--form-choice-size);
+  min-block-size: var(--form-choice-size);
+  flex: 0 0 var(--form-choice-size);
   margin: 0;
 }
 
@@ -5288,7 +5288,7 @@ body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions:where(:not(.
 .knowledge-budget-rule__targets { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
 .knowledge-budget-rule .ui-field { min-inline-size: 0; }
 .knowledge-budget-rule .ui-field__label { font-size: 12px; }
-.knowledge-budget-rule .ui-control { font-size: 13px; border-radius: 8px; }
+.knowledge-budget-rule .ui-control { font-size: var(--form-control-font-size); border-radius: 8px; }
 .knowledge-budget-rule__temporary { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; color: var(--color-text-muted); font-size: 12px; }
 .knowledge-budget-rule__temporary a { color: var(--color-text); text-decoration: underline; text-underline-offset: 3px; }
 .knowledge-budget-rule__preview { padding: 12px 14px; border-inline-start: 3px solid var(--color-border-strong); background: var(--color-surface-subtle); border-radius: 0 8px 8px 0; overflow-wrap: anywhere; }
@@ -5305,15 +5305,15 @@ body:has(.ui-app-shell[data-role]) .modal .knowledge-dialog-actions:where(:not(.
   color: var(--role-ink, var(--color-text));
 }
 .ui-app-shell[data-role] .knowledge-budget-rule .knowledge-budget-rule__enabled .ui-checkbox {
-  inline-size: 14px;
-  block-size: 14px;
-  min-inline-size: 14px;
-  min-block-size: 14px;
+  inline-size: var(--form-choice-size);
+  block-size: var(--form-choice-size);
+  min-inline-size: var(--form-choice-size);
+  min-block-size: var(--form-choice-size);
   padding: 0;
   margin: 0;
-  flex: 0 0 14px;
+  flex: 0 0 var(--form-choice-size);
 }
-.knowledge-budget-rule__enabled { min-block-size: 44px; cursor: pointer; }
+.knowledge-budget-rule__enabled { min-block-size: var(--form-choice-target-size); cursor: pointer; }
 
 .knowledge-temporary-main-lines {
   min-inline-size: 0;

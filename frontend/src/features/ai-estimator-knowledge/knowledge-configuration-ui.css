@@ -63,12 +63,12 @@
 :is(.ui-dialog.modal:where(:not(.ui-dialog--reference)):has(.knowledge-dialog-body, .knowledge-quality-import), .knowledge-context-panel) .ui-button {
   min-block-size: var(--control-height);
   max-inline-size: 100%;
-  padding: var(--space-2) var(--space-4);
+  padding: 6px var(--space-4);
   border-width: 1px;
   border-style: solid;
   border-radius: var(--radius-field);
   box-shadow: none;
-  font-size: var(--text-sm);
+  font-size: var(--form-button-font-size);
   line-height: 1.4;
   white-space: normal;
 }
@@ -172,7 +172,7 @@
   max-inline-size: 100%;
   min-block-size: var(--control-height);
   border-radius: var(--radius-field);
-  font-size: var(--text-sm);
+  font-size: var(--form-control-font-size);
   line-height: 1.5;
 }
 
@@ -205,7 +205,7 @@
 }
 
 .ui-app-shell[data-role] .knowledge-page .ui-field__label {
-  font-size: var(--text-sm);
+  font-size: var(--form-label-font-size);
   font-weight: 600;
 }
 
@@ -464,7 +464,7 @@
 
 .ui-app-shell[data-role] .knowledge-page .knowledge-mode-configuration__mode-options label,
 .ui-app-shell[data-role] .knowledge-page .knowledge-pmc-scope__items label {
-  min-block-size: var(--control-height);
+  min-block-size: var(--form-choice-target-size);
   gap: var(--space-2);
   font-size: var(--text-sm);
   line-height: 1.5;
@@ -483,11 +483,11 @@
 }
 
 .ui-app-shell[data-role] .knowledge-page :is(.knowledge-mode-configuration__mode-options, .knowledge-pmc-scope__items) .ui-checkbox {
-  flex: 0 0 16px;
-  inline-size: 16px;
-  block-size: 16px;
-  min-inline-size: 16px;
-  min-block-size: 16px;
+  flex: 0 0 var(--form-choice-size);
+  inline-size: var(--form-choice-size);
+  block-size: var(--form-choice-size);
+  min-inline-size: var(--form-choice-size);
+  min-block-size: var(--form-choice-size);
 }
 
 .ui-app-shell[data-role] .knowledge-page .knowledge-pmc-scope__list :is(legend, .knowledge-pmc-scope__empty, .ui-field__label, .ui-field__error),
@@ -498,7 +498,7 @@
 
 .ui-app-shell[data-role] .knowledge-page .knowledge-pmc-scope__add :is(.ui-control, .ui-button) {
   min-block-size: var(--control-height);
-  padding: var(--space-2) var(--space-3);
+  padding: 6px var(--space-3);
 }
 
 .ui-app-shell[data-role] .knowledge-page .knowledge-pmc-scope__list {
@@ -539,38 +539,42 @@
 }
 
 .ui-app-shell[data-role] .knowledge-page .knowledge-pmc-scope__items label {
-  min-block-size: 28px;
+  min-block-size: var(--form-choice-target-size);
   gap: 4px;
-  font-size: 11px;
+  font-size: var(--form-label-font-size);
   line-height: 1.3;
 }
 
 .ui-app-shell[data-role] .knowledge-page .knowledge-pmc-scope__items .ui-checkbox {
-  flex: 0 0 14px;
-  inline-size: 14px;
-  block-size: 14px;
-  min-inline-size: 14px;
-  min-block-size: 14px;
+  flex: 0 0 var(--form-choice-size);
+  inline-size: var(--form-choice-size);
+  block-size: var(--form-choice-size);
+  min-inline-size: var(--form-choice-size);
+  min-block-size: var(--form-choice-size);
 }
 
 .ui-app-shell[data-role] .knowledge-page .knowledge-pmc-scope__delete {
-  flex: 0 0 24px;
-  inline-size: 24px;
-  block-size: 24px;
-  min-inline-size: 24px;
-  min-block-size: 24px;
+  flex: 0 0 var(--form-choice-target-inline-size);
+  inline-size: var(--form-choice-target-inline-size);
+  block-size: var(--form-choice-target-inline-size);
+  min-inline-size: var(--form-choice-target-inline-size);
+  min-block-size: var(--form-choice-target-inline-size);
   padding: 4px;
 }
 
 .ui-app-shell[data-role] .knowledge-page .knowledge-pmc-scope__add .ui-button {
-  min-block-size: 28px;
+  min-block-size: var(--control-height);
   padding: 4px var(--space-2);
-  font-size: 11px;
+  font-size: var(--form-button-font-size);
 }
 
 .ui-app-shell[data-role] .knowledge-page .knowledge-mode-calculation__control {
   block-size: var(--control-height);
   min-block-size: var(--control-height);
+}
+
+.ui-app-shell[data-role] .knowledge-page .knowledge-pmc-scope__add .ui-control {
+  font-size: var(--form-control-font-size);
 }
 
 /* Keep saved-mode cards compact without resizing the calculation dialogs. */

@@ -537,13 +537,13 @@
 }
 .ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-overview.knowledge-overview--surface-table.knowledge-overview--configuration :is(.ui-field__label, .knowledge-surface-multiselect__label, .knowledge-overview__setting legend) {
   min-block-size: 0;
-  margin: 0 0 8px;
+  margin: 0 0 var(--form-field-gap);
   padding: 0;
   color: var(--overview-ink);
   font-family: var(--font-interface);
   font-weight: 600;
   line-height: 1.45;
-  font-size: 15px;
+  font-size: var(--form-label-font-size);
   letter-spacing: -0.015em;
 }
 .ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-overview.knowledge-overview--surface-table.knowledge-overview--configuration .knowledge-overview__setting {
@@ -637,13 +637,13 @@
   align-items: end;
 }
 .ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-overview.knowledge-overview--surface-table.knowledge-overview--configuration :is(.knowledge-overview__uom-control-row .ui-control, .knowledge-surface-multiselect__trigger) {
-  min-block-size: 48px;
+  min-block-size: var(--control-height);
   border: 1px solid #d5d8ce;
   border-radius: var(--overview-radius);
   background-color: var(--overview-panel);
   color: var(--overview-ink);
-  padding: 12px 14px;
-  font-size: 14px;
+  padding: 6px var(--space-3);
+  font-size: var(--form-control-font-size);
   line-height: 1.5;
   box-shadow: none;
 }
@@ -661,8 +661,8 @@
   inline-size: 46px;
   min-inline-size: 46px;
   max-inline-size: 46px;
-  block-size: 48px;
-  min-block-size: 48px;
+  block-size: var(--control-height);
+  min-block-size: var(--control-height);
   padding: 0;
   margin: 0;
   border: 1px solid var(--overview-line);
@@ -676,13 +676,13 @@
   background: var(--overview-selected);
 }
 .ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-overview.knowledge-overview--surface-table.knowledge-overview--configuration .knowledge-overview-surfaces__header-actions > .ui-button {
-  min-block-size: 48px;
-  padding: 12px 18px;
+  min-block-size: var(--control-height);
+  padding: 6px var(--space-3);
   border: 1px solid var(--overview-olive);
   border-radius: var(--overview-radius);
   background: var(--overview-olive);
   color: #fcfcf8;
-  font-size: 14px;
+  font-size: var(--form-button-font-size);
   line-height: 1.5;
   box-shadow: none;
 }

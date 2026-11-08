@@ -5,6 +5,7 @@ import type { ProjectStatusSummary } from "../contracts/project-status.js";
 import type { UserResponsibilityProject, UserResponsibilityReader } from "../contracts/user-responsibilities.js";
 import type { ProjectCompletionSummary } from "../domain/project-completion.js";
 import { deriveProjectStatus, type ProjectStatusInput } from "../domain/project-status.js";
+import { secondaryMeasurementDesignerIds, secondaryMeasurementDesigners } from "../domain/measurement-ownership.js";
 import { resolveChatMembership } from "../domain/project-chat-membership.js";
 import { chatForbidden, chatNotFound } from "../domain/project-chat.js";
 import { ApiError } from "../middleware/errors.js";
@@ -192,6 +193,8 @@ export function createProjectStatusService(options: {
         const input: ProjectStatusInput = {
           project: sources.project,
           participants: [...membership.participants.map(({ id, name, role }) => ({ id, name, role })), ...execution.people],
+          ...(sources.project.estimationWorkflowVersion === 3 ? { measurementOwners: secondaryMeasurementDesigners(sources.project,
+            await Promise.all(secondaryMeasurementDesignerIds(sources.project).map(id => tx.app.findUserById(id)))) } : {}),
           ...selected,
           salesOwnerIds: [...sources.leads.filter(lead => lead.projectId === projectId).map(lead => lead.ownerId), ...(selected.estimate ? [selected.estimate.ownerId] : [])],
           designAssignmentOwnerIds: sources.grants.filter(grant => grant.projectId === projectId && grant.active && grant.source === "admin_initiator").map(grant => grant.userId),

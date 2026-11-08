@@ -1,12 +1,12 @@
-import { useState } from "react";
+import { createRef, useState } from "react";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useForm } from "react-hook-form";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { Checkbox, Field, FileInput, Input, Select, Textarea } from "./Field";
+import { Checkbox, Field, FileInput, Input, Radio, Select, Textarea } from "./Field";
 
 const primitives = readFileSync(resolve(process.cwd(), "src/styles/primitives.css"), "utf8");
 
@@ -170,7 +170,7 @@ function HookFormHarness() {
 }
 
 describe("native form controls", () => {
-  it("gives an invalid native checkbox a non-color-only outline and 44px interactive target", () => {
+  it("keeps an invalid native checkbox associated with its label and a non-color-only outline", () => {
     render(
       <Field id="approved" label="Client approved" error="Client approval is required.">
         {(controlProps) => <Checkbox {...controlProps} />}
@@ -180,10 +180,71 @@ describe("native form controls", () => {
     const checkbox = screen.getByRole("checkbox", { name: "Client approved" });
 
     expect(checkbox).toHaveAttribute("aria-invalid", "true");
-    expect(primitives).toMatch(/\.ui-checkbox\s*\{[^}]*min-block-size:\s*44px[^}]*min-inline-size:\s*44px/s);
+    expect(checkbox).toHaveAccessibleDescription("Client approval is required.");
+    expect((checkbox as HTMLInputElement).labels?.[0]).toBe(screen.getByText("Client approved"));
     expect(primitives).toMatch(
       /\.ui-checkbox\[aria-invalid="true"\]\s*\{[^}]*outline:\s*var\(--space-1\) dashed var\(--color-danger\)/s
     );
+  });
+
+  it("toggles separate and wrapping labels once while preserving checkbox refs, mixed state and native form values", async () => {
+    const user = userEvent.setup();
+    const ref = createRef<HTMLInputElement>();
+    const onChange = vi.fn();
+    const renderChoices = (disabled = false) => <form aria-label="Room selection">
+      <Field id="living" label="Living room" hint="Include the existing furniture.">
+        {props => <Checkbox {...props} ref={ref} name="rooms" value="living" disabled={disabled} onChange={onChange} />}
+      </Field>
+      <label><Checkbox name="rooms" value="kitchen" />Kitchen</label>
+    </form>;
+    const { rerender } = render(renderChoices());
+    const living = screen.getByRole("checkbox", { name: "Living room" });
+    const kitchen = screen.getByRole("checkbox", { name: "Kitchen" });
+    const form = screen.getByRole("form", { name: "Room selection" }) as HTMLFormElement;
+
+    expect(ref.current).toBe(living);
+    expect(ref.current).toBeInstanceOf(HTMLInputElement);
+    await user.click(screen.getByText("Living room"));
+    expect(living).toBeChecked();
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(living).toHaveFocus();
+
+    ref.current!.indeterminate = true;
+    expect(living).toBePartiallyChecked();
+    await user.keyboard(" ");
+    expect(living).not.toBePartiallyChecked();
+    expect(living).not.toBeChecked();
+    expect(onChange).toHaveBeenCalledTimes(2);
+
+    await user.click(screen.getByText("Kitchen"));
+    expect(kitchen).toBeChecked();
+    expect(new FormData(form).getAll("rooms")).toEqual(["kitchen"]);
+    rerender(renderChoices(true));
+    await user.click(screen.getByText("Living room"));
+    expect(living).toBeDisabled();
+    expect(living).not.toBeChecked();
+    expect(onChange).toHaveBeenCalledTimes(2);
+    expect(new FormData(form).getAll("rooms")).toEqual(["kitchen"]);
+  });
+
+  it("preserves native radio grouping, forwarded focus and keyboard selection", async () => {
+    const user = userEvent.setup();
+    const ref = createRef<HTMLInputElement>();
+    render(<form aria-label="Measurement method">
+      <label><Radio ref={ref} name="method" value="dimensions" defaultChecked />Dimensions</label>
+      <label><Radio name="method" value="count" />Count</label>
+    </form>);
+    const dimensions = screen.getByRole("radio", { name: "Dimensions" });
+    const count = screen.getByRole("radio", { name: "Count" });
+    expect(ref.current).toBe(dimensions);
+    ref.current!.focus();
+    expect(dimensions).toHaveFocus();
+    await user.keyboard("{ArrowRight}");
+    expect(count).toHaveFocus();
+    expect(count).toBeChecked();
+    expect(dimensions).not.toBeChecked();
+    const form = screen.getByRole("form", { name: "Measurement method" }) as HTMLFormElement;
+    expect(new FormData(form).get("method")).toBe("count");
   });
 
   it("keeps React Hook Form registration, native attributes, submitted values, and invalid focus intact", async () => {

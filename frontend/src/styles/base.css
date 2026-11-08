@@ -99,6 +99,9 @@ svg {
     --control-height: 44px;
     --control-height-compact: 44px;
     --control-height-large: 48px;
+    --form-control-font-size: 16px;
+    --form-choice-target-size: 44px;
+    --form-choice-target-inline-size: 44px;
   }
 
   input,

@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
+import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { authorizationFor } from "../../test/authFixtures";
 import { server } from "../../test/server";
@@ -28,7 +29,7 @@ let ready: boolean;
 function setup() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   const onDecision = vi.fn(); const onSubmitted = vi.fn(); const onClose = vi.fn();
-  const view = () => <QueryClientProvider client={client}><ProposalWorkspace proposalId="proposal-one" scope={role === "super_admin" ? "admin" : "procurement"} onClose={onClose} onDecision={onDecision} onSubmitted={onSubmitted} /></QueryClientProvider>;
+  const view = () => <MemoryRouter><QueryClientProvider client={client}><ProposalWorkspace proposalId="proposal-one" scope={role === "super_admin" ? "admin" : "procurement"} onClose={onClose} onDecision={onDecision} onSubmitted={onSubmitted} /></QueryClientProvider></MemoryRouter>;
   return { ...render(view()), client, onDecision, onSubmitted, onClose, update: () => view() };
 }
 beforeEach(() => {

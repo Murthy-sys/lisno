@@ -6,6 +6,7 @@ import { useConfiguredEstimateViewState, type ConfiguredEstimateViewState } from
 import type { LucideIcon } from "lucide-react";
 
 import { EstimateItemPicker, EstimateSelectionPagination } from "../estimates/EstimateItemPicker";
+import type { EstimateRecommendationsPopup } from "../estimates/EstimateRecommendations";
 import type { EstimationCatalogue } from "./estimationCatalogueApi";
 import type { EstimateClassification } from "./leadsApi";
 import { configuredAttributedAmountPaise, configuredUsesComponentPricing, configuredDimensionsIssue, configuredLineAmountPaise, configuredLinePreviewAmountPaise, configuredModeBaseRate, configuredTierUnavailableReason, configuredQuantityUnits, estimatePricingModeLabels, parseSellingRate, type ConfiguredLineDraft } from "./configuredEstimate";
@@ -14,6 +15,7 @@ import { EstimatorRecommendations, type RecommendationReadState } from "./Estima
 import { recommendationTargetIdentity, type RoomRecommendationView, type RecommendedLineTarget } from "./roomRecommendations";
 import { EstimateBuilderShell, type EstimateShellBasket } from "../estimates/EstimateBuilderShell";
 import { EstimateLineActions, EstimateLineChoice, EstimateLineLayout, EstimateLineTierOptions } from "../estimates/EstimateLineRow";
+import { buildSalesEstimateCatalogue } from "./salesEstimateCatalogue";
 
 interface Room {
   id: string;
@@ -29,7 +31,8 @@ export function ConfiguredEstimateBuilder({
   onUpdateLine, onRefreshAvailableItems, refreshingAvailableItems, availableItemsState = "ready", roomTotal, moneyPaise, editable,
   recommendationSourceCount = 0, recommendationState = "ready", recommendationView = null,
   onRetryRecommendations = () => {}, onSelectRecommendedLine = () => false, onRemoveRecommendedLine = () => false, onAddLine, recommendationContextKey,
-  navigation, viewState, onViewStateChange, onRemoveSubBasket, excludedReviewKeys, reviewContextKey = "current"
+  navigation, viewState, onViewStateChange, onRemoveSubBasket, excludedReviewKeys, reviewContextKey = "current",
+  itemPresentation = "selected", onUpdateAvailableLine, recommendationPopup
 }: {
   rooms: readonly Room[];
   activeRoomId: string;
@@ -60,15 +63,36 @@ export function ConfiguredEstimateBuilder({
   onViewStateChange?: Dispatch<SetStateAction<ConfiguredEstimateViewState>>;
   excludedReviewKeys?: ReadonlySet<string>;
   reviewContextKey?: string;
+  itemPresentation?: "selected" | "catalogue";
+  recommendationPopup?: Pick<EstimateRecommendationsPopup, "open" | "onOpenChange" | "footerRef">;
+  onUpdateAvailableLine?: (roomId: string, target: RecommendedLineTarget, change: Partial<ConfiguredLineDraft>) => void;
 }) {
   const { state, setState, search, setSearch, basketFilter, setBasketFilter,
     setCollapsedBasketIds, setCollapsedSubBasketIds } = useConfiguredEstimateViewState(viewState, onViewStateChange);
   const recommendationFallbackFocusRef = useRef<HTMLInputElement>(null);
+  const toolbarRef = useRef<HTMLDivElement>(null);
   const pickerTriggerRef = useRef<HTMLButtonElement>(null);
   const selectedCount = lines.filter(line => line.included).length;
   const activeRoom = rooms.find(room => room.id === activeRoomId) ?? rooms[0];
   const roomLines = lines.filter(line => line.roomId === activeRoom?.id && line.included);
   const visibleBaskets = catalogue.items.filter(basket => selectedMainBasketIds.has(basket.id));
+  const browseCatalogue = itemPresentation === "catalogue";
+  const catalogueRows = useMemo(() => browseCatalogue && activeRoom
+    ? buildSalesEstimateCatalogue({ catalogue, room: activeRoom, selectedMainBasketIds, lines }) : [],
+  [browseCatalogue, catalogue, activeRoom, selectedMainBasketIds, lines]);
+  const [retainedReview, setRetainedReview] = useState<{ context: string; keys: Set<string> }>(() => ({ context: reviewContextKey, keys: new Set() }));
+  useEffect(() => { setRetainedReview({ context: reviewContextKey, keys: new Set() }); }, [reviewContextKey]);
+  const inlineEditContext = JSON.stringify([reviewContextKey, activeRoom?.id, search, basketFilter]);
+  const [focusedInlineLine, setFocusedInlineLine] = useState<{ context: string; key: string } | null>(null);
+  const inlineReviewKey = browseCatalogue && focusedInlineLine?.context === inlineEditContext &&
+    catalogueRows.some(row => row.line.key === focusedInlineLine.key) ? focusedInlineLine.key : null;
+  const requiredReviewKeys = lines.filter(line => line.persistedId && !line.included && excludedReviewKeys?.has(line.key)).map(line => line.key);
+  const reviewKeys = new Set([...(retainedReview.context === reviewContextKey ? retainedReview.keys : []), ...requiredReviewKeys]);
+  const reviewLines = lines.filter(line => line.persistedId && !line.included && reviewKeys.has(line.key) && line.key !== inlineReviewKey);
+  const displayedReviewKeys = new Set(reviewLines.map(line => line.key));
+  const availableRoomLines = browseCatalogue ? catalogueRows.filter(row => !displayedReviewKeys.has(row.line.key)).map(row => row.line) : roomLines;
+  const [groupOffsets, setGroupOffsets] = useState<Record<string, number>>({});
+  useEffect(() => { setGroupOffsets({}); }, [activeRoom?.id, search, basketFilter, catalogue]);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerSearch, setPickerSearch] = useState("");
   const [pickerBasket, setPickerBasket] = useState("all");
@@ -117,24 +141,42 @@ export function ConfiguredEstimateBuilder({
   };
   const roomAmountLabel = (roomId: string) => lines.some(line => line.roomId === roomId && configuredLineAmountPaise(line) === null)
     ? "Incomplete" : moneyPaise(roomTotal(roomId));
+  const browseCountLabel = (groupLines: readonly ConfiguredLineDraft[]) => `${groupLines.filter(line => line.included).length} selected · ${groupLines.length} available`;
+  const pageGroup = (groupLines: readonly ConfiguredLineDraft[], key: string, label: string) => {
+    const filtered = groupLines.filter(matches);
+    const offset = Math.min(groupOffsets[key] ?? 0, Math.max(0, Math.ceil(filtered.length / 20) - 1) * 20);
+    return {
+      lines: (browseCatalogue ? filtered.slice(offset, offset + 20) : filtered).map(line => ({ id: line.key })),
+      afterLines: browseCatalogue && filtered.length > 20 ? <EstimateSelectionPagination total={filtered.length} offset={offset}
+        onChange={value => setGroupOffsets(current => ({ ...current, [key]: value }))} disabled={false} label={`${label} item pages`} /> : undefined
+    };
+  };
   const catalogueGroups: EstimateShellBasket[] = (activeRoom ? visibleBaskets : [])
-    .filter(basket => roomLines.some(line => line.mainBasketId === basket.id && !line.sourceMissing))
+    .filter(basket => browseCatalogue || roomLines.some(line => line.mainBasketId === basket.id && !line.sourceMissing))
     .filter(basket => visibleBasketFilter === "all" || visibleBasketFilter === basket.id)
     .map(basket => {
-      const directLines = roomLines.filter(line => line.mainBasketId === basket.id && line.itemType === "temporary" && line.subBasketId === null && !line.sourceMissing);
+      const directLines = availableRoomLines.filter(line => line.mainBasketId === basket.id && line.itemType === "temporary" && line.subBasketId === null && !line.sourceMissing);
+      const directPage = pageGroup(directLines, `${basket.id}:direct`, `Direct ${basket.name}`);
+      const basketLines = availableRoomLines.filter(line => line.mainBasketId === basket.id && !line.sourceMissing);
       const subBaskets = basket.subBaskets.map(subBasket => ({
         id: subBasket.id, name: subBasket.name,
-        lines: roomLines.filter(line => line.mainBasketId === basket.id && line.subBasketId === subBasket.id && !line.sourceMissing)
+        lines: availableRoomLines.filter(line => line.mainBasketId === basket.id && line.subBasketId === subBasket.id && !line.sourceMissing)
       }));
       return { id: basket.id, name: basket.name,
         count: directLines.length + subBaskets.reduce((sum, subBasket) => sum + subBasket.lines.length, 0),
+        countLabel: browseCatalogue ? browseCountLabel(basketLines) : undefined,
         subtotalLabel: attributedSubtotalLabel(basket.id),
         directSubtotalLabel: attributedSubtotalLabel(basket.id, null),
-        directLines: directLines.filter(matches).map(line => ({ id: line.key })),
-        subBaskets: subBaskets.filter(subBasket => subBasket.lines.length > 0)
+        directCountLabel: browseCatalogue ? browseCountLabel(directLines) : undefined,
+        directLines: directPage.lines,
+        afterDirectLines: directPage.afterLines,
+        subBaskets: subBaskets.filter(subBasket => browseCatalogue || subBasket.lines.length > 0)
           .map(subBasket => ({ id: subBasket.id, name: subBasket.name, count: subBasket.lines.length,
+            countLabel: browseCatalogue ? browseCountLabel(subBasket.lines) : undefined,
+            emptyMessage: browseCatalogue && reviewLines.some(line => line.roomId === activeRoom?.id && line.mainBasketId === basket.id && line.subBasketId === subBasket.id)
+              ? "Excluded items in this Sub Basket are shown above for review." : undefined,
             subtotalLabel: attributedSubtotalLabel(basket.id, subBasket.id),
-            lines: subBasket.lines.filter(matches).map(line => ({ id: line.key })),
+            ...pageGroup(subBasket.lines, `${basket.id}:${subBasket.id}`, `${basket.name}, ${subBasket.name}`),
             ...(onRemoveSubBasket && activeRoom ? { removal: {
               label: `Remove ${subBasket.name} Sub Basket from ${activeRoom.label}`,
               disabled: !editable || !lines.some(line => line.roomId === activeRoom.id && line.mainBasketId === basket.id && line.subBasketId === subBasket.id && line.included),
@@ -157,37 +199,72 @@ export function ConfiguredEstimateBuilder({
     return accepted;
   };
   const byId = new Map(lines.map(line => [line.key, line]));
+  for (const row of catalogueRows) byId.set(row.line.key, row.line);
+  const previewById = new Map(catalogueRows.filter(row => row.isPreview).map(row => [row.line.key, row]));
   const updateVisibleLine = (key: string, change: Partial<ConfiguredLineDraft>) => {
+    const preview = previewById.get(key);
+    if (preview) {
+      if (editable && !refreshingAvailableItems && availableItemsState === "ready") onUpdateAvailableLine?.(preview.line.roomId, preview.target, change);
+      return;
+    }
+    if (browseCatalogue && change.included === true && (refreshingAvailableItems || availableItemsState !== "ready")) return;
     const focused = document.activeElement;
     onUpdateLine(key, change);
-    if (change.included === false && focused instanceof HTMLElement) window.requestAnimationFrame(() => {
+    if (!browseCatalogue && change.included === false && focused instanceof HTMLElement) window.requestAnimationFrame(() => {
       if (!focused.isConnected && document.activeElement === document.body) (pickerTriggerRef.current ?? recommendationFallbackFocusRef.current)?.focus();
     });
   };
   const renderLine = (id: string) => {
     const line = byId.get(id);
-    return line ? <ConfiguredLineRow line={line} inheritedClassification={mainBasketClassifications?.get(line.mainBasketId)} editable={editable} onUpdateLine={updateVisibleLine} moneyPaise={moneyPaise} /> : null;
+    if (!line) return null;
+    const rowEditable = editable && (!previewById.has(id) || Boolean(onUpdateAvailableLine)) &&
+      (!browseCatalogue || line.included || !refreshingAvailableItems && availableItemsState === "ready");
+    const row = <ConfiguredLineRow line={line} inheritedClassification={mainBasketClassifications?.get(line.mainBasketId)} editable={Boolean(rowEditable)} onUpdateLine={updateVisibleLine} moneyPaise={moneyPaise} />;
+    return browseCatalogue ? <div onFocusCapture={() => setFocusedInlineLine({ context: inlineEditContext, key: id })}
+      onBlurCapture={event => {
+        if (!event.currentTarget.contains(event.relatedTarget)) setFocusedInlineLine(current => current?.key === id ? null : current);
+      }}>{row}</div> : row;
   };
+  const recommendations = activeRoom ? <EstimatorRecommendations key={activeRoom.id}
+    roomName={activeRoom.label} sourceCount={activeRoom.id === activeRoomId ? recommendationSourceCount : 0}
+    state={recommendationState} view={recommendationView} editable={editable}
+    contextKey={recommendationContextKey ?? activeRoom.id}
+    popup={recommendationPopup ? { ...recommendationPopup, toolbarRef, fallbackFocusRef: recommendationFallbackFocusRef } : undefined}
+    onRemove={onRemoveRecommendedLine}
+    onRetry={onRetryRecommendations} onRefresh={onRefreshAvailableItems} onSelect={selectRecommendedLine}
+  /> : null;
   return <EstimateBuilderShell selectedItemsOnly
     rooms={rooms.map(room => ({ id: room.id, label: room.label, detail: `${room.sqft} sqft · ${roomAmountLabel(room.id)}`,
       hasSelectedItems: lines.some(line => line.roomId === room.id && line.included) }))}
     activeRoomId={activeRoomId} onSelectRoom={onSelectRoom} selectedCount={selectedCount}
     baskets={visibleBaskets.map(basket => ({ id: basket.id, name: basket.name,
-      detail: `${itemCount(roomLines.filter(line => line.mainBasketId === basket.id && !line.sourceMissing).length)} · ${attributedSubtotalLabel(basket.id)}` }))}
+      detail: `${browseCatalogue ? `${roomLines.filter(line => line.mainBasketId === basket.id && !line.sourceMissing).length} selected` : itemCount(roomLines.filter(line => line.mainBasketId === basket.id && !line.sourceMissing).length)} · ${attributedSubtotalLabel(basket.id)}` }))}
     groups={catalogueGroups} renderLine={renderLine}
     viewState={state} onViewStateChange={setState}
     onRefresh={onRefreshAvailableItems} refreshing={refreshingAvailableItems}
     navigation={navigation} searchInputRef={recommendationFallbackFocusRef}
+    toolbarRef={toolbarRef} toolbarActions={recommendationPopup ? recommendations : undefined}
     extraJumpTargets={[
       ...(unselected.length ? [{ id: "unselected-items", label: "Unselected saved items" }] : []),
       ...(unavailableSaved.length ? [{ id: "saved-items", label: "Saved items" }] : []),
       ...(unavailableNew.length ? [{ id: "unavailable-selections", label: "Unavailable selections" }] : [])
     ]}
     beforeGroups={<>
-      <ExcludedEstimateReview lines={lines} blockingKeys={excludedReviewKeys} contextKey={reviewContextKey}
-        editable={editable} onUpdateLine={onUpdateLine} moneyPaise={moneyPaise}
-        onFinish={() => (pickerTriggerRef.current ?? recommendationFallbackFocusRef.current)?.focus()} />
-      {activeRoom && editable ? <EstimateItemPicker roomName={activeRoom.label} open={pickerOpen} onOpenChange={setPickerOpen} triggerRef={pickerTriggerRef}
+      <ExcludedEstimateReview lines={reviewLines} requiredCount={reviewLines.filter(line => excludedReviewKeys?.has(line.key)).length} contextKey={reviewContextKey}
+        editable={editable && (!browseCatalogue || !refreshingAvailableItems && availableItemsState === "ready")} onUpdateLine={(key, change) => {
+          setRetainedReview(current => {
+            const keys = new Set(current.context === reviewContextKey ? current.keys : []);
+            if (change.included === true) keys.delete(key); else keys.add(key);
+            return { context: reviewContextKey, keys };
+          });
+          onUpdateLine(key, change);
+        }} moneyPaise={moneyPaise}
+        onFinish={() => { setRetainedReview({ context: reviewContextKey, keys: new Set() }); (pickerTriggerRef.current ?? recommendationFallbackFocusRef.current)?.focus(); }} />
+      {browseCatalogue && !refreshingAvailableItems && availableItemsState !== "ready" ? <div role={availableItemsState === "loading" ? "status" : "alert"}>
+        <p>{availableItemsState === "loading" ? "Loading available items…" : availableItemsState === "error" ? "Available items could not be refreshed. Your selections are preserved." : "Available items are out of date. Refresh before selecting more items."}</p>
+        {availableItemsState !== "loading" ? <button type="button" className="button button--secondary" onClick={onRefreshAvailableItems}>Retry available items</button> : null}
+      </div> : null}
+      {!browseCatalogue && activeRoom && editable ? <EstimateItemPicker roomName={activeRoom.label} open={pickerOpen} onOpenChange={setPickerOpen} triggerRef={pickerTriggerRef}
         items={pickerResults.slice(pageOffset, pageOffset + 20).map(item => {
           const saved = lines.find(line => line.roomId === activeRoom.id && line.mainLineId === item.target.mainLineId);
           const incompatible = Boolean(saved && (saved.mainBasketId !== item.target.basketId || saved.subBasketId !== item.target.subBasketId));
@@ -200,17 +277,12 @@ export function ConfiguredEstimateBuilder({
         subBasketId={pickerSubBasket} onSubBasketChange={value => { setPickerSubBasket(value); setPickerOffset(0); }}
         state={refreshingAvailableItems ? "loading" : availableItemsState} disabled={!editable || refreshingAvailableItems}
         onRetry={onRefreshAvailableItems} onAdd={addItem} /> : null}
-      {activeRoom ? <EstimatorRecommendations
-        roomName={activeRoom.label} sourceCount={activeRoom.id === activeRoomId ? recommendationSourceCount : 0}
-        state={recommendationState} view={recommendationView} editable={editable}
-        contextKey={recommendationContextKey ?? activeRoom.id}
-        onRemove={onRemoveRecommendedLine}
-        onRetry={onRetryRecommendations} onRefresh={onRefreshAvailableItems} onSelect={selectRecommendedLine}
-      /> : null}
+      {recommendationPopup ? null : recommendations}
       <EstimateSubBasketAmounts lines={roomLines} />
     </>}
-    renderEmptyBasket={() => <div className="configured-estimate-basket__empty">
-      <p>No available items.</p>
+    renderEmptyBasket={basket => <div className="configured-estimate-basket__empty">
+      <p>{browseCatalogue && reviewLines.some(line => line.roomId === activeRoom?.id && line.mainBasketId === basket.id)
+        ? "Excluded items in this Main Basket are shown above for review." : "No available items."}</p>
       <button type="button" className="button button--secondary" disabled={refreshingAvailableItems} onClick={onRefreshAvailableItems}>Refresh available items</button>
     </div>}
     afterGroups={<>
@@ -251,49 +323,37 @@ export function ConfiguredEstimateBuilder({
     emptyMessage={!catalogueGroups.length && !unselected.length && !unavailableSaved.length && !unavailableNew.length
       ? !selectedMainBasketIds.size ? "Select a Main Basket to choose items."
         : !activeRoom ? "Select a room to see its available items."
-        : query ? `No selected items match “${search.trim()}”.` : "No items selected in this room. Use Add items to choose what is needed."
+        : query ? `No ${browseCatalogue ? "available" : "selected"} items match “${search.trim()}”.`
+        : browseCatalogue ? "No available items in the selected Main Baskets. Refresh available items to check again." : "No items selected in this room. Use Add items to choose what is needed."
       : undefined}
   />;
 }
 
 /** Keep only blocking excluded rows discoverable until a complete correction is entered. */
-function ExcludedEstimateReview({ lines, blockingKeys, contextKey, editable, onUpdateLine, moneyPaise, onFinish }: {
+function ExcludedEstimateReview({ lines, requiredCount, contextKey, editable, onUpdateLine, moneyPaise, onFinish }: {
   lines: readonly ConfiguredLineDraft[];
-  blockingKeys?: ReadonlySet<string>;
+  requiredCount: number;
   contextKey: string;
   editable: boolean;
   onUpdateLine: (key: string, change: Partial<ConfiguredLineDraft>) => void;
   moneyPaise: (value: number) => string;
   onFinish: () => void;
 }) {
-  const required = lines.filter(line => line.persistedId && !line.included && blockingKeys?.has(line.key)).map(line => line.key);
-  const [retained, setRetained] = useState<{ context: string; keys: Set<string> }>(() => ({ context: contextKey, keys: new Set() }));
   const [offset, setOffset] = useState(0);
-  useEffect(() => {
-    setRetained({ context: contextKey, keys: new Set() }); setOffset(0);
-  }, [contextKey]);
-  const keys = new Set([...(retained.context === contextKey ? retained.keys : []), ...required]);
-  const reviewLines = lines.filter(line => line.persistedId && !line.included && keys.has(line.key));
-  if (!reviewLines.length) return null;
-  const pageOffset = Math.min(offset, Math.max(0, Math.ceil(reviewLines.length / 20) - 1) * 20);
+  useEffect(() => { setOffset(0); }, [contextKey]);
+  if (!lines.length) return null;
+  const pageOffset = Math.min(offset, Math.max(0, Math.ceil(lines.length / 20) - 1) * 20);
   return <section className="estimate-selection" aria-label="Excluded items needing review">
-    <div className="estimate-selection__heading"><h2>Excluded items needing review</h2><span>{required.length} to review</span></div>
+    <div className="estimate-selection__heading"><h2>Excluded items needing review</h2><span>{requiredCount} to review</span></div>
     <p>These saved items stay excluded. Correct the highlighted values before saving.</p>
-    {reviewLines.slice(pageOffset, pageOffset + 20).map(line => <div key={line.key} className="configured-estimate-saved-line">
+    {lines.slice(pageOffset, pageOffset + 20).map(line => <div key={line.key} className="configured-estimate-saved-line">
       <p>{line.roomName} · {line.mainBasketName}{line.subBasketName ? ` / ${line.subBasketName}` : ""}</p>
       {line.sourceMissing ? <p role="status">This saved item is unavailable in current Configuration. Refresh available items or review its saved basket.</p> : null}
-      <ConfiguredLineRow line={line} editable={editable} onUpdateLine={(key, change) => {
-        setRetained(current => {
-          const keys = new Set(current.context === contextKey ? current.keys : []);
-          if (change.included === true) keys.delete(key); else keys.add(key);
-          return { context: contextKey, keys };
-        });
-        onUpdateLine(key, change);
-      }} moneyPaise={moneyPaise} />
+      <ConfiguredLineRow line={line} editable={editable} onUpdateLine={onUpdateLine} moneyPaise={moneyPaise} />
     </div>)}
-    <EstimateSelectionPagination total={reviewLines.length} offset={pageOffset} onChange={setOffset}
+    <EstimateSelectionPagination total={lines.length} offset={pageOffset} onChange={setOffset}
       disabled={false} label="Excluded review pages" />
-    <button type="button" disabled={required.length > 0} onClick={() => { setRetained({ context: contextKey, keys: new Set() }); setOffset(0); onFinish(); }}>Finish reviewing excluded items</button>
+    <button type="button" disabled={requiredCount > 0} onClick={() => { setOffset(0); onFinish(); }}>Finish reviewing excluded items</button>
   </section>;
 }
 

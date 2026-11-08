@@ -226,6 +226,43 @@ EstimateDesignWorkspace {
 }
 
 describe("DesignerDesignPlanTasksPage", () => {
+  it.each(["primary_missing_team", "primary_assigned_team", "secondary"] as const)("uses the saved measurement stage for the %s next action without another assignment", async scenario => {
+    const primary = scenario !== "secondary";
+    const missingTeam = scenario === "primary_missing_team";
+    const blocker = "Assign a Secondary Designer in Design team to carry out onsite measurement.";
+    const secondaries = missingTeam ? [] : [{ id: primary ? "designer-2" : "designer-1", name: "Secondary A" }, { id: "designer-3", name: "Secondary B" }];
+    const task: DesignPlanTask = { ...assignedTask, leadId: "lead-v3", estimationWorkflowVersion: 3, quotationApproved: true,
+      quotationApprovalState: "initial_current", currentQuotationApproved: true, requiresClientReapproval: false,
+      quotationApprovalSource: "initial_unchanged", currentQuotationApproval: { kind: "initial_unchanged", reviewRoundId: "pre-round", estimateVersion: 4, approvedAt: "2026-10-30T09:00:00Z" }, canEditQuotation: primary };
+    const workflow = uploadWorkflow();
+    workflow.initialPayment = { ...workflow.initialPayment!, workflowVersion: 3, designStartedAt: "2026-10-30T10:00:00Z" };
+    workflow.projectStages = workflow.projectStages!.map(stage => {
+      const measurement = stage.type === "site_measurement";
+      const status = stage.order < 4 ? "completed" : measurement ? "in_progress" : "not_started";
+      return { ...stage, status, progress: status === "completed" ? 100 : 0,
+        operational: { ...stage.operational!, status, workflowVersion: 3, spacePlanning: undefined,
+          availableActions: measurement && !primary ? [{ id: "measurement_complete", label: "Complete measurement", actor: "designer", requiresProof: false }] : [],
+          blockingReasons: measurement && missingTeam ? [blocker] : [],
+          facts: measurement && !missingTeam ? [{ label: "Secondary Designers", value: "Secondary A, Secondary B" }] : []
+        } };
+    });
+    server.use(
+      http.get("/api/v1/designer/design-plan-tasks", () => HttpResponse.json({ data: [task] })),
+      http.get("/api/v1/projects/project-1/design-workflow", () => HttpResponse.json({ data: workflow })),
+      http.get("/api/v1/projects/project-1/design-team", () => HttpResponse.json({ data: { projectId: "project-1", version: 1,
+        primary: { id: primary ? "designer-1" : "primary", name: "Primary Designer" }, secondaries, candidates: [], canManage: primary, requiresReason: false } }))
+    );
+    renderPage();
+    const panel = await screen.findByRole("region", { name: "On Site Actual Measurement details" });
+    const nextAction = screen.getByText("Next action").parentElement!;
+    await waitFor(() => expect(nextAction).toHaveTextContent(missingTeam ? blocker : primary ? "Await completion of On Site Actual Measurement" : "Complete measurement"));
+    if (missingTeam) expect(within(panel).getByText(blocker)).toBeVisible();
+    else expect(within(panel).getByText("Secondary A, Secondary B")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Assign measurement team member" })).not.toBeInTheDocument();
+    if (primary) expect(within(panel).queryByRole("button", { name: "Complete measurement" })).not.toBeInTheDocument();
+    else expect(within(panel).getByRole("button", { name: "Complete measurement" })).toBeEnabled();
+  });
+
   it.each([true, false])("starts operational design from an unchanged initial approval for a v3 team member, primary=%s", async primary => {
     const task: DesignPlanTask = { ...assignedTask, leadId: "lead-v3", estimationWorkflowVersion: 3, quotationApproved: true,
       quotationApprovalState: "initial_current", currentQuotationApproved: true, requiresClientReapproval: false,

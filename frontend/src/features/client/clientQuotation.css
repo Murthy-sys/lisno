@@ -41,7 +41,7 @@
 .client-quotation__fields > .estimate-line-dimensions, .client-quotation__components { flex: 1 1 100%; }
 .client-quotation__components { display: grid; gap: var(--space-1); margin: 0; min-width: 0; padding: var(--space-2); border: 1px solid var(--color-border); }
 .client-quotation__components > label { display: flex; align-items: center; min-height: var(--control-height-compact); }
-.client-quotation input[type="checkbox"], .client-quotation__add input[type="checkbox"] { width: 1.1rem; height: 1.1rem; accent-color: var(--color-text); margin-inline-end: var(--space-2); }
+.client-quotation input[type="checkbox"], .client-quotation__add input[type="checkbox"] { width: var(--form-choice-size); height: var(--form-choice-size); accent-color: var(--color-text); margin-inline-end: var(--space-2); }
 .client-quotation__actions { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
 .client-quotation__hint { color: var(--color-text-muted); font-size: var(--text-sm); }
 .client-quotation__add { display: grid; gap: var(--space-3); }

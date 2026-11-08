@@ -7,7 +7,7 @@ import { LeadEstimateWorkspace } from "./LeadEstimateWorkspace";
 import { leadKeys, type ConfiguredEstimateLine, type EstimateDraft, type EstimateDraftInput } from "./leadsApi";
 import { estimationCatalogueKeys } from "./estimationCatalogueApi";
 import type { EstimationCatalogueMainLine } from "./estimationCatalogueApi";
-vi.mock("../../auth/AuthProvider", () => ({ useAuth: () => ({ user: { id: "test-estimator" }, reviewSession: { id: "test-session" }, status: "authenticated" }) }));
+vi.mock("../../auth/AuthProvider", () => ({ useAuth: () => ({ user: { id: "test-estimator", role: "estimator_sales" }, reviewSession: { id: "test-session" }, status: "authenticated" }) }));
 vi.mock("./estimateRevisionsApi", async importOriginal => ({
   ...await importOriginal<typeof import("./estimateRevisionsApi")>(),
   getEstimateRevisions: vi.fn(async () => ({ items: [], pagination: { limit: 20, nextCursor: null } }))

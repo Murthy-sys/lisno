@@ -33,6 +33,57 @@ function setup(presentation: "full" | "client" | "designer" = "full", timelineCo
 }
 
 describe("ProjectWorkflowPanel", () => {
+  it.each([
+    { role: "client", presentation: "full", title: "Selections requiring your approval" },
+    { role: "client", presentation: "client", title: "Selections requiring your approval" },
+    { role: "designer", presentation: "designer", title: "Design requirements" }
+  ] as const)("retains design requirements by default for $role in $presentation presentation", async ({ role, presentation, title }) => {
+    authState.user.role = role;
+    server.use(
+      http.get("/api/v1/projects/project-ui/design-workflow", () => HttpResponse.json({ data: workflow })),
+      http.get("/api/v1/projects/project-ui/design-requirements", () => HttpResponse.json({ data: {
+        version: 0, sourceToken: "empty", entries: [], blockers: [], canReadInternal: role !== "client"
+      } }))
+    );
+    setup(presentation);
+    expect(await screen.findByRole("heading", { name: title })).toBeVisible();
+    expect(await screen.findByText("No configured design requirements for the current estimate.")).toBeVisible();
+  });
+
+  it("omits hidden selections and their read while retaining workflow actions through visibility changes", async () => {
+    const readRequirements = vi.fn(() => HttpResponse.json({ data: {
+      version: 0, sourceToken: "empty", entries: [], blockers: [], canReadInternal: false
+    } }));
+    server.use(
+      http.get("/api/v1/projects/project-ui/design-workflow", () => HttpResponse.json({ data: workflow })),
+      http.get("/api/v1/projects/project-ui/design-requirements", readRequirements)
+    );
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    const content = (showDesignRequirements: boolean) => <QueryClientProvider client={client}>
+      <ProjectWorkflowPanel projectId="project-ui" showDesignRequirements={showDesignRequirements} />
+    </QueryClientProvider>;
+    const view = render(content(false));
+    const user = userEvent.setup();
+    expect(await screen.findByRole("heading", { name: "Project progress" })).toBeVisible();
+    expect(screen.queryByRole("heading", { name: /Selections requiring your approval|Design requirements/ })).not.toBeInTheDocument();
+    expect(screen.queryByText("No configured design requirements for the current estimate.")).not.toBeInTheDocument();
+    expect(readRequirements).not.toHaveBeenCalled();
+    await user.click(await screen.findByRole("button", { name: "Confirm keys handed over" }));
+    await user.type(screen.getByRole("textbox", { name: "Note" }), "Keep this handover note");
+
+    view.rerender(content(true));
+    expect(await screen.findByRole("heading", { name: "Selections requiring your approval" })).toBeVisible();
+    expect(readRequirements).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("textbox", { name: "Note" })).toHaveValue("Keep this handover note");
+
+    view.rerender(content(false));
+    expect(screen.queryByRole("heading", { name: "Selections requiring your approval" })).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Project progress" })).toBeVisible();
+    expect(screen.getByRole("form", { name: "Confirm keys handed over" })).toBeVisible();
+    expect(screen.getByRole("textbox", { name: "Note" })).toHaveValue("Keep this handover note");
+    expect(readRequirements).toHaveBeenCalledTimes(1);
+  });
+
   it.each(["designer", "procurement", "site_manager"] as const)("shows pending and source-issue progress for %s without mounting actions", async (role) => {
     authState.user.role = role;
     let status: DesignWorkflowView["estimateApprovalStatus"] = "awaiting_approval";

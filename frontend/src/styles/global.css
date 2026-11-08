@@ -113,6 +113,14 @@
   --control-height: 36px;
   --control-height-compact: 32px;
   --control-height-large: 44px;
+  --form-control-font-size: 14px;
+  --form-label-font-size: 13px;
+  --form-button-font-size: 13px;
+  --form-choice-size: 18px;
+  --form-choice-target-size: 32px;
+  --form-choice-target-inline-size: 24px;
+  --form-field-gap: 6px;
+  --form-group-gap: 12px;
   --panel-width-narrow: 360px;
   --panel-width-medium: 480px;
   --panel-width-wide: 720px;

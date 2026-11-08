@@ -110,4 +110,15 @@ describe("inline staff recommendations", () => {
     expect(screen.queryByText("False ceiling painting added to Living room.")).not.toBeInTheDocument();
     expect(onSelect).toHaveBeenCalledTimes(1);
   });
+
+  it("refreshes Configuration for a popup historical-source warning instead of retrying an empty source query", async () => {
+    const user = userEvent.setup();
+    const onRefresh = vi.fn(), onRetry = vi.fn();
+    render(<EstimatorRecommendations {...defaults} onRefresh={onRefresh} onRetry={onRetry}
+      popup={{ open: true, onOpenChange: vi.fn(), toolbarRef: { current: null }, footerRef: { current: null }, fallbackFocusRef: { current: null } }}
+      view={{ ...groupView, decisions: [], historicalSources: [{ mainLineId: "historical-pop", name: "Earlier ceiling" }] }} />);
+    await user.click(screen.getByRole("button", { name: "Refresh recommendations" }));
+    expect(onRefresh).toHaveBeenCalledOnce();
+    expect(onRetry).not.toHaveBeenCalled();
+  });
 });

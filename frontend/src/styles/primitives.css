@@ -6,6 +6,7 @@
   display: inline-flex;
   font: var(--type-body);
   font-family: var(--button-font);
+  font-size: var(--form-button-font-size);
   font-weight: var(--button-weight);
   justify-content: center;
   letter-spacing: normal;
@@ -14,8 +15,11 @@
 
 .ui-button {
   cursor: pointer;
+  max-inline-size: 100%;
   min-block-size: var(--control-height);
   padding: 0 var(--space-4);
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .ui-button--compact {
@@ -146,6 +150,7 @@
 .ui-button__stack {
   display: grid;
   inline-size: 100%;
+  min-inline-size: 0;
 }
 
 .ui-button__content,
@@ -155,7 +160,12 @@
   gap: var(--space-2);
   grid-area: 1 / 1;
   justify-content: center;
+  min-inline-size: 0;
   transition: opacity var(--duration-fast) var(--ease-standard), visibility var(--duration-fast) var(--ease-standard);
+}
+
+.ui-button__content > span {
+  min-inline-size: 0;
 }
 
 .ui-button__icon,
@@ -449,13 +459,13 @@
 
 .ui-field {
   display: grid;
-  gap: var(--space-1);
+  gap: var(--form-field-gap);
   min-inline-size: 0;
 }
 
 .ui-field__label {
   color: var(--color-text);
-  font: 500 var(--text-sm)/1.4 var(--font-interface);
+  font: 500 var(--form-label-font-size)/1.4 var(--font-interface);
   font-weight: 600;
 }
 
@@ -569,7 +579,9 @@
   border-radius: var(--radius-field);
   color: var(--color-text);
   font: var(--type-body);
+  font-size: var(--form-control-font-size);
   inline-size: 100%;
+  min-inline-size: 0;
   min-block-size: var(--control-height);
   padding: 0 var(--space-3);
   transition: background-color var(--duration-fast) var(--ease-standard), border-color var(--duration-fast) var(--ease-standard), box-shadow var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard);
@@ -580,7 +592,8 @@
 }
 
 .ui-control:focus-visible,
-.ui-checkbox:focus-visible {
+.ui-checkbox:focus-visible,
+.ui-radio:focus-visible {
   box-shadow: var(--focus-ring);
   outline: none;
 }
@@ -590,7 +603,8 @@
 }
 
 .ui-control:disabled,
-.ui-checkbox:disabled {
+.ui-checkbox:disabled,
+.ui-radio:disabled {
   background-color: var(--color-surface-subtle);
   color: var(--color-text-muted);
   cursor: not-allowed;
@@ -675,7 +689,7 @@
 .ui-file-input {
   cursor: pointer;
   color: var(--color-text-muted);
-  padding-block: var(--space-2);
+  padding-block: var(--space-1);
 }
 
 .ui-file-input::file-selector-button {
@@ -685,9 +699,10 @@
   color: var(--color-brand-midnight);
   cursor: pointer;
   font: var(--type-body);
+  font-size: var(--form-button-font-size);
   font-weight: 600;
   margin-inline-end: var(--space-3);
-  min-block-size: 36px;
+  min-block-size: var(--control-height);
   padding: 0 var(--space-4);
   transition: background-color var(--duration-fast) var(--ease-standard), border-color var(--duration-fast) var(--ease-standard), box-shadow var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard);
 }
@@ -712,30 +727,60 @@
   opacity: 0.72;
 }
 
-.ui-checkbox {
-  accent-color: var(--color-brand-violet);
-  block-size: 44px;
-  cursor: pointer;
-  inline-size: 44px;
-  min-block-size: 44px;
-  min-inline-size: 44px;
-}
-
+.ui-checkbox,
 .ui-radio {
   accent-color: var(--color-brand-violet);
-  block-size: var(--space-5);
+}
+
+.ui-checkbox,
+.ui-radio,
+:where(input[type="checkbox"], input[type="radio"]) {
+  block-size: var(--form-choice-size);
   cursor: pointer;
-  inline-size: var(--space-5);
+  inline-size: var(--form-choice-size);
+  min-block-size: var(--form-choice-size);
+  min-inline-size: var(--form-choice-size);
   flex: 0 0 auto;
   margin: 0;
 }
 
-.ui-radio:disabled {
+:where(input[type="checkbox"], input[type="radio"]):disabled {
   cursor: not-allowed;
 }
 
-/* A radio's hit area is the whole option row, so the 44px target lives here
-   rather than on the control, which must stay its drawn size. */
+/* Labels carry the larger target; native inputs retain their small visual size. */
+label:has(> :where(input[type="checkbox"], input[type="radio"])) {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-block-size: var(--form-choice-target-size);
+  min-inline-size: var(--form-choice-target-inline-size);
+}
+
+/* Separate Field labels stay native labels and share the input's grid row. */
+.ui-field:has(> :is(.ui-checkbox, .ui-radio)) {
+  grid-template-columns: var(--form-choice-size) minmax(0, 1fr);
+}
+
+.ui-field:has(> :is(.ui-checkbox, .ui-radio)) > .ui-field__label {
+  display: flex;
+  align-items: center;
+  grid-area: 1 / 1 / 2 / -1;
+  min-block-size: var(--form-choice-target-size);
+  min-inline-size: var(--form-choice-target-inline-size);
+  padding-inline-start: calc(var(--form-choice-size) + var(--space-2));
+}
+
+.ui-field > :is(.ui-checkbox, .ui-radio) {
+  align-self: center;
+  grid-area: 1 / 1;
+  position: relative;
+}
+
+.ui-field:has(> :is(.ui-checkbox, .ui-radio)) > :is(.ui-field__hint, .ui-field__error) {
+  grid-column: 1 / -1;
+}
+
 .ui-radio-group {
   display: grid;
   gap: var(--space-2);
@@ -745,7 +790,7 @@
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  min-block-size: 44px;
+  min-block-size: var(--form-choice-target-size);
   padding-inline: var(--space-3);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-control);

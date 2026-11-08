@@ -4,6 +4,7 @@ import { RepositoryConflictError } from "../repositories/types.js";
 import { instructionsForStage, type DesignStageInstructions } from "../domain/design-workflow-instructions.js";
 import { emptyDesignWorkflowState, workflowStageStartAt, workflowIsPaused, workflowDesignStartAt } from "../domain/design-workflow-state.js";
 import { projectInitialPayment, projectOperationalStage, requireDesignWorkflowReadScope, hydrateDesignWorkflowState } from "./design-workflow-state.service.js";
+import { secondaryMeasurementAssignmentReason, secondaryMeasurementDesignerIds, secondaryMeasurementDesigners } from "../domain/measurement-ownership.js";
 import { createProjectDesignWorkflow } from "../domain/design-workflow.js";
 import { randomUUID } from "node:crypto";
 
@@ -210,7 +211,7 @@ export function createProjectService(
 ): ProjectService {
   return {
     async designWorkflow(actor, projectId) {
-      const { capabilities } = await requireDesignWorkflowReadScope(repository, actor, projectId).catch((error: unknown) => {
+      const { project, capabilities } = await requireDesignWorkflowReadScope(repository, actor, projectId).catch((error: unknown) => {
         if (error instanceof ApiError && error.status === 401) throw new ApiError(404, "NOT_FOUND", "The requested resource was not found.");
         throw error;
       });
@@ -269,7 +270,9 @@ export function createProjectService(
         estimateApprovalStatus = "source_issue";
       }
       const initialPayment = operationalState ? await projectInitialPayment(repository, projectId, operationalState, capabilities.finance, actor.role) : undefined;
-      const measurementDesigners = savedStages && capabilities.designer ? (await Promise.all(hierarchy.assignedDesignerIds.map((id) => repository.findUserById(id)))).flatMap((user) => user?.active && user.role === "designer" ? [{ id: user.id, name: user.name }] : []) : undefined;
+      const measurementOwners = savedStages && project.estimationWorkflowVersion === 3 ? secondaryMeasurementDesigners(project,
+        await Promise.all(secondaryMeasurementDesignerIds(project).map(id => repository.findUserById(id)))) : undefined;
+      const measurementDesigners = savedStages && project.estimationWorkflowVersion !== 3 && capabilities.designer ? (await Promise.all(hierarchy.assignedDesignerIds.map((id) => repository.findUserById(id)))).flatMap((user) => user?.active && user.role === "designer" ? [{ id: user.id, name: user.name }] : []) : undefined;
       const measurementAssigneeId = operationalState?.stages.site_measurement?.assignedDesignerId;
       const measurementAssigneeName = measurementAssigneeId ? (await repository.findUserById(measurementAssigneeId))?.name : undefined;
       let furnitureRooms: WorkflowEstimateRoom[] | undefined;
@@ -327,7 +330,7 @@ export function createProjectService(
           projectStages: ordered(savedStages).map((stage) => {
             const sources = linkedStages.filter(({ stage: actual }) => actual.workflowStageId === stage.id);
             const view = stageView({ ...stage, dependencyStageIds: [] }, sources.flatMap(({ stage: actual, floor }) => actual.tasks.map((task) => ({ ...task, floorName: floor.name }))));
-            const operational = projectOperationalStage(stage, operationalState!, capabilities, now, actor.id, measurementAssigneeName, { spacePlanning, spacePlanningIssue, paymentStatus: initialPayment!.status, projectId: hierarchy.id, internalKickoffStageId: savedStages.find((configured) => configured.type === "internal_kickoff")?.id, measurementStageId: savedStages.find((configured) => configured.type === "site_measurement")?.id });
+            const operational = projectOperationalStage(stage, operationalState!, capabilities, now, actor.id, measurementAssigneeName, { spacePlanning, spacePlanningIssue, paymentStatus: initialPayment!.status, projectId: hierarchy.id, internalKickoffStageId: savedStages.find((configured) => configured.type === "internal_kickoff")?.id, measurementStageId: savedStages.find((configured) => configured.type === "site_measurement")?.id, measurementOwners, measurementAssignmentReason: secondaryMeasurementAssignmentReason(project) });
             const instructions = instructionsForStage(stage.type, hierarchy.estimationWorkflowVersion);
             // Review-backed plans require the Client's explicit acknowledgement; legacy
             // floor-only projects keep their established task-derived progress.

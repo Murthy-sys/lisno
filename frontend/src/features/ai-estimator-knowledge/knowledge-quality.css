@@ -293,17 +293,17 @@
 .knowledge-quality-flags label {
   display: inline-flex;
   align-items: center;
-  min-height: 32px;
+  min-height: var(--form-choice-target-size);
   gap: 8px;
   font-size: 12px;
 }
 
 .knowledge-quality-flags input[type="checkbox"] {
-  flex: 0 0 14px;
-  width: 14px;
-  height: 14px;
-  min-width: 14px;
-  min-height: 14px;
+  flex: 0 0 var(--form-choice-size);
+  width: var(--form-choice-size);
+  height: var(--form-choice-size);
+  min-width: var(--form-choice-size);
+  min-height: var(--form-choice-size);
   padding: 0;
 }
 

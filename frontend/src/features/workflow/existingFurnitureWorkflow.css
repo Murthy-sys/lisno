@@ -1,10 +1,16 @@
-.existing-furniture, .existing-furniture__form { display: grid; gap: var(--space-4); min-width: 0; }
-.existing-furniture p { margin: 0; }
-.existing-furniture__actions { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: start; }
+.existing-furniture, .existing-furniture__form { display: grid; gap: var(--form-group-gap); min-width: 0; }
+.existing-furniture p, .existing-furniture__form p { margin: 0; }
+.existing-furniture__actions { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: start; max-inline-size: 100%; }
 .existing-furniture__actions > div { display: grid; gap: var(--space-2); }
-.existing-furniture__form > fieldset { border: 0; margin: 0; padding: 0; display: grid; gap: var(--space-4); }
-.existing-furniture__form fieldset > label { display: flex; gap: var(--space-2); align-items: start; }
-.existing-furniture__room { display: grid; gap: var(--space-3); border-block-start: 1px solid var(--color-border); padding-block-start: var(--space-4); }
-.existing-furniture__item { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-3); border: 1px solid var(--color-border); padding: var(--space-3); min-width: 0; }
-.existing-furniture__item legend { font-weight: 600; padding-inline: var(--space-2); }
+.existing-furniture__form > fieldset { border: 0; margin: 0; padding: 0; display: grid; gap: var(--form-group-gap); }
+.existing-furniture__form fieldset { min-inline-size: 0; }
+.existing-furniture__form > fieldset > fieldset { border: 0; margin: 0; padding: 0; display: grid; gap: var(--space-2); }
+.existing-furniture__form > fieldset > fieldset > legend { padding: 0; margin-block-end: var(--space-2); font-size: var(--text-md); }
+.existing-furniture__form fieldset > label { display: flex; gap: var(--space-2); align-items: center; min-block-size: var(--form-choice-target-size); min-inline-size: var(--form-choice-target-inline-size); overflow-wrap: anywhere; }
+.existing-furniture__room { display: grid; gap: var(--form-group-gap); border-block-start: 1px solid var(--color-border); padding-block-start: var(--form-group-gap); min-inline-size: 0; }
+.existing-furniture__room h3 { margin: 0; font-size: var(--text-lg); line-height: 1.4; overflow-wrap: anywhere; }
+.existing-furniture__item { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--form-group-gap); border: 1px solid var(--color-border); padding: var(--form-group-gap); min-width: 0; }
+.existing-furniture__item legend { font-size: var(--form-label-font-size); font-weight: 600; padding-inline: var(--space-2); overflow-wrap: anywhere; }
+.existing-furniture-panel .ui-button { max-inline-size: 100%; white-space: normal; overflow-wrap: anywhere; }
+.existing-furniture-panel :is(.ui-button__stack, .ui-button__content, .ui-button__content > span) { min-inline-size: 0; }
 @media (max-width: 600px) { .existing-furniture__item { grid-template-columns: minmax(0, 1fr); } .existing-furniture__actions > button { flex: 1 1 auto; } }

@@ -4,7 +4,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
-import { buildConfiguredLines, createConfiguredLine, configuredLineAmountPaise, updateConfiguredLinePricing, type ConfiguredLineDraft } from "./configuredEstimate";
+import { buildConfiguredLines, createConfiguredLine, configuredLineAmountPaise, configuredQuantityUnits, parseSellingRate, updateConfiguredLinePricing, type ConfiguredLineDraft } from "./configuredEstimate";
 import { ConfiguredEstimateBuilder } from "./ConfiguredEstimateBuilder";
 import type { EstimationCatalogue } from "./estimationCatalogueApi";
 
@@ -25,15 +25,23 @@ const catalogue: EstimationCatalogue = {
 const rooms = [{ id: "room-living", typeId: "living", label: "Living & Dining", sqft: 300 }];
 const moneyPaise = (value: number) => `₹${(value / 100).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
 
-function LiveBuilder({ initialLines = [], editable = true, availableCatalogue = catalogue, roomList = rooms, onLinesChange }: {
+function LiveBuilder({ initialLines = [], editable = true, availableCatalogue = catalogue, roomList = rooms, onLinesChange, itemPresentation = "selected", validateExcluded = false }: {
   initialLines?: ConfiguredLineDraft[]; editable?: boolean; availableCatalogue?: EstimationCatalogue;
-  roomList?: typeof rooms; onLinesChange?: (lines: ConfiguredLineDraft[]) => void;
+  roomList?: typeof rooms; onLinesChange?: (lines: ConfiguredLineDraft[]) => void; itemPresentation?: "selected" | "catalogue";
+  validateExcluded?: boolean;
 }) {
   const [lines, setLines] = useState(initialLines);
   const [roomId, setRoomId] = useState(roomList[0]!.id);
   const update = (next: ConfiguredLineDraft[]) => { setLines(next); onLinesChange?.(next); };
   return <ConfiguredEstimateBuilder rooms={roomList} activeRoomId={roomId} onSelectRoom={setRoomId} catalogue={availableCatalogue}
-    selectedMainBasketIds={new Set(availableCatalogue.items.map(basket => basket.id))} lines={lines}
+    selectedMainBasketIds={new Set(availableCatalogue.items.map(basket => basket.id))} lines={lines} itemPresentation={itemPresentation}
+    excludedReviewKeys={validateExcluded ? new Set(lines.filter(line => line.persistedId && !line.included &&
+      (configuredQuantityUnits(line.quantity, line.uomDecimalScale, false) === null || parseSellingRate(line.rateInput).kind === "invalid")).map(line => line.key)) : undefined}
+    onUpdateAvailableLine={(targetRoomId, target, change) => {
+      const room = roomList.find(room => room.id === targetRoomId)!;
+      const fresh = createConfiguredLine(availableCatalogue, room, target);
+      if (fresh) update([...lines, updateConfiguredLinePricing(fresh, change)]);
+    }}
     onUpdateLine={(key, change) => update(lines.map(line => line.key === key ? updateConfiguredLinePricing(line, change) : line))}
     onAddLine={target => {
       const room = roomList.find(room => room.id === roomId)!;
@@ -48,6 +56,186 @@ function LiveBuilder({ initialLines = [], editable = true, availableCatalogue = 
     roomIcons={{}} moneyPaise={moneyPaise} editable={editable} />;
 }
 const chosen = () => configuredLineFixtures(catalogue, rooms, new Set(["basket-pop"]), []).map(line => ({ ...line, included: true }));
+
+describe("Sales direct catalogue browsing", () => {
+  it("shows Sub Baskets and unchecked items immediately without materializing draft lines", () => {
+    const onLinesChange = vi.fn();
+    render(<LiveBuilder itemPresentation="catalogue" onLinesChange={onLinesChange} />);
+    expect(screen.getByRole("region", { name: "NA" })).toBeVisible();
+    expect(screen.getByRole("region", { name: "Unused Sub Basket" })).toHaveTextContent("No available items");
+    expect(screen.getByRole("checkbox", { name: /POP false ceiling/ })).not.toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /Cove in Gypsum/ })).not.toBeChecked();
+    expect(screen.getByText("0 selected items")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Add items" })).not.toBeInTheDocument();
+    expect(onLinesChange).not.toHaveBeenCalled();
+  });
+
+  it("keeps deliberate excluded edits and selection independent across rooms", async () => {
+    const user = userEvent.setup(), onLinesChange = vi.fn();
+    render(<LiveBuilder itemPresentation="catalogue" roomList={[...rooms, { id: "room-kitchen", typeId: "kitchen", label: "Kitchen", sqft: 90 }]} onLinesChange={onLinesChange} />);
+    const rate = screen.getByRole("textbox", { name: /Selling rate.*POP false ceiling/ });
+    fireEvent.change(rate, { target: { value: "777" } });
+    expect(onLinesChange.mock.lastCall?.[0]).toEqual([expect.objectContaining({ roomId: "room-living", included: false, rateInput: "777" })]);
+    await user.click(screen.getByRole("button", { name: /Kitchen 90/ }));
+    expect(screen.getByRole("textbox", { name: /Selling rate.*POP false ceiling/ })).toHaveValue("1050");
+    await user.click(screen.getByRole("checkbox", { name: /Cove in Gypsum/ }));
+    await user.click(screen.getByRole("button", { name: /Living & Dining 300/ }));
+    expect(screen.getByRole("textbox", { name: /Selling rate.*POP false ceiling/ })).toHaveValue("777");
+    expect(screen.getByRole("checkbox", { name: /Cove in Gypsum/ })).not.toBeChecked();
+    const selected = screen.getByRole("checkbox", { name: /POP false ceiling/ });
+    selected.focus(); await user.keyboard(" ");
+    expect(selected).toBeChecked();
+    await user.keyboard(" ");
+    expect(selected).not.toBeChecked();
+    expect(selected).toHaveFocus();
+    expect(screen.getByRole("textbox", { name: /Selling rate.*POP false ceiling/ })).toHaveValue("777");
+    expect(onLinesChange.mock.lastCall?.[0]).toHaveLength(2);
+    expect(onLinesChange.mock.lastCall?.[0].find((line: ConfiguredLineDraft) => line.roomId === "room-kitchen")).toMatchObject({ mainLineId: "line-cove", included: true });
+  });
+
+  it("uses main search, filter and basket jumps for never-selected rows", async () => {
+    const user = userEvent.setup(), onLinesChange = vi.fn();
+    const both = structuredClone(catalogue);
+    both.items.push({ id: "basket-paint", name: "Painting", displayOrder: 2, subBaskets: [{ id: "sub-walls", basketId: "basket-paint", name: "Walls", displayOrder: 1,
+      mainLines: [{ ...catalogue.items[0]!.subBaskets[0]!.mainLines[0]!, id: "line-paint", mainLineId: "line-paint", basketId: "basket-paint", subBasketId: "sub-walls", name: "Wall painting" }] }] });
+    render(<LiveBuilder itemPresentation="catalogue" availableCatalogue={both} onLinesChange={onLinesChange} />);
+    expect(screen.getByRole("checkbox", { name: /Wall painting/ })).not.toBeChecked();
+    await user.type(screen.getByRole("searchbox", { name: "Search estimate items" }), "Cove");
+    expect(screen.getByRole("checkbox", { name: /Cove in Gypsum/ })).toBeVisible();
+    expect(screen.queryByRole("checkbox", { name: /POP false ceiling/ })).not.toBeInTheDocument();
+    const jump = within(screen.getByRole("navigation", { name: "Jump to Main Basket" })).getByRole("button", { name: /Painting/ });
+    await user.click(jump);
+    expect(screen.getByRole("searchbox", { name: "Search estimate items" })).toHaveValue("");
+    await user.selectOptions(screen.getByRole("combobox", { name: "Filter Main Baskets" }), "basket-paint");
+    expect(screen.getByRole("checkbox", { name: /Wall painting/ })).toBeVisible();
+    expect(screen.queryByRole("checkbox", { name: /Cove in Gypsum/ })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Collapse Painting/ }));
+    expect(screen.queryByRole("checkbox", { name: /Wall painting/ })).not.toBeInTheDocument();
+    await user.click(jump);
+    expect(screen.getByRole("checkbox", { name: /Wall painting/ })).toBeVisible();
+    expect(onLinesChange).not.toHaveBeenCalled();
+  });
+
+  it("bounds a thousand available rows per group and searches before paging", async () => {
+    const user = userEvent.setup(), onLinesChange = vi.fn();
+    const large = structuredClone(catalogue);
+    large.items[0]!.subBaskets[0]!.mainLines = Array.from({ length: 1000 }, (_, index) => ({ ...catalogue.items[0]!.subBaskets[0]!.mainLines[0]!, id: `line-${index}`, mainLineId: `line-${index}`, name: `Ceiling choice ${index}` }));
+    large.items[0]!.subBaskets[0]!.temporaryItems = [];
+    render(<LiveBuilder itemPresentation="catalogue" availableCatalogue={large} onLinesChange={onLinesChange} />);
+    expect(screen.getAllByRole("checkbox")).toHaveLength(20);
+    expect(screen.getByRole("region", { name: "Unused Sub Basket" })).toBeVisible();
+    expect(screen.getAllByText("0 selected · 1000 available")).toHaveLength(2);
+    await user.click(screen.getByRole("button", { name: "Next" }));
+    expect(screen.getByRole("checkbox", { name: /^Ceiling choice 20\b/ })).toBeVisible();
+    await user.type(screen.getByRole("searchbox", { name: "Search estimate items" }), "Ceiling choice 999");
+    expect(screen.getAllByRole("checkbox")).toHaveLength(1);
+    expect(screen.getByRole("checkbox", { name: /^Ceiling choice 999\b/ })).toBeVisible();
+    expect(onLinesChange).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("checkbox", { name: /^Ceiling choice 999\b/ }));
+    expect(onLinesChange.mock.lastCall?.[0]).toEqual([expect.objectContaining({ mainLineId: "line-999", included: true })]);
+    await user.clear(screen.getByRole("searchbox", { name: "Search estimate items" }));
+    expect(screen.getByRole("checkbox", { name: /^Ceiling choice 0\b/ })).toBeVisible();
+    expect(screen.getAllByRole("checkbox")).toHaveLength(20);
+  });
+
+  it.each(["loading", "error", "stale"] as const)("keeps rows visible but blocks new edits while catalogue is %s", (availableItemsState) => {
+    const onUpdateAvailableLine = vi.fn();
+    render(<ConfiguredEstimateBuilder rooms={rooms} activeRoomId="room-living" onSelectRoom={vi.fn()} catalogue={catalogue}
+      selectedMainBasketIds={new Set(["basket-pop"])} lines={[]} itemPresentation="catalogue" onUpdateAvailableLine={onUpdateAvailableLine}
+      onUpdateLine={vi.fn()} onRefreshAvailableItems={vi.fn()} refreshingAvailableItems={false} availableItemsState={availableItemsState}
+      roomTotal={() => 0} roomIcons={{}} moneyPaise={moneyPaise} editable />);
+    expect(screen.getByRole("checkbox", { name: /POP false ceiling/ })).toBeDisabled();
+    expect(screen.getByRole("textbox", { name: /Selling rate.*POP false ceiling/ })).toBeDisabled();
+    expect(screen.getByText(availableItemsState === "loading" ? "Loading available items…" : availableItemsState === "error" ? "Available items could not be refreshed. Your selections are preserved." : "Available items are out of date. Refresh before selecting more items.")).toBeVisible();
+    expect(onUpdateAvailableLine).not.toHaveBeenCalled();
+  });
+
+  it("retains unchecked rows during a transient editing lock", () => {
+    const view = render(<LiveBuilder itemPresentation="catalogue" />);
+    expect(screen.getByRole("checkbox", { name: /POP false ceiling/ })).toBeEnabled();
+    view.rerender(<LiveBuilder itemPresentation="catalogue" editable={false} />);
+    expect(screen.getByRole("checkbox", { name: /POP false ceiling/ })).toBeDisabled();
+    expect(screen.getByRole("region", { name: "NA" })).toBeVisible();
+  });
+
+  it.each(["selected", "catalogue"] as const)("keeps saved exclusions needing correction in one editor until review finishes in %s mode", async (itemPresentation) => {
+    function ReviewingBuilder() {
+      const [lines, setLines] = useState([{ ...chosen()[0]!, persistedId: "saved-pop", included: false, quantity: -1 }]);
+      return <ConfiguredEstimateBuilder rooms={rooms} activeRoomId="room-living" onSelectRoom={vi.fn()} catalogue={catalogue}
+        selectedMainBasketIds={new Set(["basket-pop"])} lines={lines} itemPresentation={itemPresentation}
+        excludedReviewKeys={new Set(lines.filter(line => line.quantity < 0).map(line => line.key))}
+        onUpdateLine={(key, change) => setLines(current => current.map(line => line.key === key ? { ...line, ...change } : line))}
+        onRefreshAvailableItems={vi.fn()} refreshingAvailableItems={false} roomTotal={() => 0} roomIcons={{}} moneyPaise={moneyPaise} editable />;
+    }
+    render(<ReviewingBuilder />);
+    const review = screen.getByRole("region", { name: "Excluded items needing review" });
+    expect(screen.getAllByRole("checkbox", { name: /POP false ceiling/ })).toHaveLength(1);
+    expect(within(review).getByRole("checkbox", { name: /POP false ceiling/ })).not.toBeChecked();
+    fireEvent.change(within(review).getByRole("spinbutton", { name: /Quantity/ }), { target: { value: "4" } });
+    expect(screen.getAllByRole("checkbox", { name: /POP false ceiling/ })).toHaveLength(1);
+    expect(within(review).getByRole("spinbutton", { name: /Quantity/ })).toHaveValue(4);
+    await userEvent.click(within(review).getByRole("button", { name: "Finish reviewing excluded items" }));
+    expect(screen.queryByRole("region", { name: "Excluded items needing review" })).not.toBeInTheDocument();
+    if (itemPresentation === "catalogue") {
+      expect(within(screen.getByRole("region", { name: "NA" })).getByRole("checkbox", { name: /POP false ceiling/ })).not.toBeChecked();
+      expect(screen.getByRole("spinbutton", { name: /Quantity.*POP false ceiling/ })).toHaveValue(4);
+    } else {
+      expect(screen.queryByRole("checkbox", { name: /POP false ceiling/ })).not.toBeInTheDocument();
+    }
+  });
+
+  it("keeps a changed saved source in its correction section without a new catalogue copy", () => {
+    const saved = { ...chosen()[0]!, persistedId: "saved-pop", sourceMissing: true, subBasketId: "old-sub", subBasketName: "Previous grouping", rateInput: "777" };
+    render(<LiveBuilder itemPresentation="catalogue" initialLines={[saved]} />);
+    const unavailable = screen.getByRole("region", { name: "Saved items unavailable in current Configuration" });
+    expect(screen.getAllByRole("checkbox", { name: /POP false ceiling/ })).toHaveLength(1);
+    expect(within(unavailable).getByRole("textbox", { name: /Selling rate.*POP false ceiling/ })).toHaveValue("777");
+    expect(within(screen.getByRole("region", { name: "NA" })).queryByRole("checkbox", { name: /POP false ceiling/ })).not.toBeInTheDocument();
+  });
+
+  it("keeps a saved excluded quantity editor mounted while clearing and typing its replacement", async () => {
+    const user = userEvent.setup(), onLinesChange = vi.fn();
+    render(<LiveBuilder itemPresentation="catalogue" validateExcluded initialLines={[{ ...chosen()[0]!, persistedId: "saved-pop", included: false, quantity: 2 }]} onLinesChange={onLinesChange} />);
+    const quantity = screen.getByRole("spinbutton", { name: /Quantity.*POP false ceiling/ });
+    await user.clear(quantity);
+    expect(quantity).toHaveFocus();
+    expect(quantity).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByRole("spinbutton", { name: /Quantity.*POP false ceiling/ })).toBe(quantity);
+    expect(screen.queryByRole("region", { name: "Excluded items needing review" })).not.toBeInTheDocument();
+    await user.type(quantity, "4");
+    expect(quantity).toHaveFocus();
+    expect(quantity).toHaveValue(4);
+    expect(screen.getAllByRole("checkbox", { name: /POP false ceiling/ })).toHaveLength(1);
+    expect(screen.getByRole("checkbox", { name: /POP false ceiling/ })).not.toBeChecked();
+    expect(onLinesChange.mock.lastCall?.[0]).toEqual([expect.objectContaining({ persistedId: "saved-pop", included: false, quantity: 4 })]);
+  });
+
+  it("keeps malformed excluded rate edits inline until focus leaves the row", async () => {
+    const user = userEvent.setup();
+    render(<LiveBuilder itemPresentation="catalogue" validateExcluded initialLines={[{ ...chosen()[0]!, persistedId: "saved-pop", included: false }]} />);
+    const rate = screen.getByRole("textbox", { name: /Selling rate.*POP false ceiling/ });
+    await user.clear(rate); await user.type(rate, "bad");
+    expect(rate).toHaveFocus();
+    expect(rate).toHaveValue("bad");
+    expect(rate).toHaveAttribute("aria-invalid", "true");
+    expect(screen.queryByRole("region", { name: "Excluded items needing review" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("searchbox", { name: "Search estimate items" }));
+    const review = screen.getByRole("region", { name: "Excluded items needing review" });
+    expect(within(review).getByRole("textbox", { name: /Selling rate.*POP false ceiling/ })).toHaveValue("bad");
+    expect(screen.getAllByRole("checkbox", { name: /POP false ceiling/ })).toHaveLength(1);
+    expect(within(review).getByText("1 to review")).toBeVisible();
+  });
+
+  it("keeps checkbox focus when deselecting a saved row with an invalid value", async () => {
+    const user = userEvent.setup();
+    render(<LiveBuilder itemPresentation="catalogue" validateExcluded initialLines={[{ ...chosen()[0]!, persistedId: "saved-pop", quantity: Number.NaN }]} />);
+    const inclusion = screen.getByRole("checkbox", { name: /POP false ceiling/ });
+    inclusion.focus(); await user.keyboard(" ");
+    expect(inclusion).toHaveFocus();
+    expect(inclusion).not.toBeChecked();
+    expect(screen.getAllByRole("checkbox", { name: /POP false ceiling/ })).toHaveLength(1);
+  });
+});
 
 describe("selected project items and inline picker", () => {
   it("keeps empty rooms navigable and adds only the chosen item in the active room", async () => {

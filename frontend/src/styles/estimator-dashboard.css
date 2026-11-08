@@ -1024,7 +1024,7 @@
 .estimate-workspace.estimator-dashboard .estimate-actions { gap: var(--space-2); }
 .estimate-workspace.estimator-dashboard :is(button, [role="button"]) { min-block-size: var(--control-height-compact); }
 .estimate-workspace.estimator-dashboard :is(input, select) { min-block-size: var(--control-height); }
-.estimate-workspace.estimator-dashboard input[type="checkbox"] { min-block-size: 1rem; }
+.estimate-workspace.estimator-dashboard input[type="checkbox"] { min-block-size: var(--form-choice-size); }
 .estimate-workspace.estimator-dashboard :is(button, [role="button"], input, select):focus-visible { outline: 2px solid var(--focus-ring-color); outline-offset: 2px; }
 .estimate-workspace.estimator-dashboard :is(.ui-button, .ui-icon-button, .button):focus-visible { outline-color: var(--button-primary-bg); }
 .estimate-scope-section > button:focus-visible { outline-offset: -3px; }
@@ -1384,7 +1384,7 @@
 .configured-estimate-line__thumb { position: relative; flex: none; display: block; width: 50px; height: 50px; border-radius: 3px; overflow: hidden; background: #e1e3dc; }
 .configured-estimate-line__thumb img { width: 100%; height: 100%; object-fit: cover; }
 .configured-estimate-line__thumb input,
-.estimate-workspace.estimator-dashboard .configured-estimate-line__thumb input { position: absolute; top: 2px; left: 2px; width: 15px; height: 15px; min-height: 15px; margin: 0; accent-color: #1f5a2f; background: #fff; }
+.estimate-workspace.estimator-dashboard .configured-estimate-line__thumb input { position: absolute; top: 2px; left: 2px; width: var(--form-choice-size); height: var(--form-choice-size); min-height: var(--form-choice-size); margin: 0; accent-color: #1f5a2f; background: #fff; }
 .configured-estimate-line__copy { display: grid; gap: 3px; min-width: 0; }
 .configured-estimate-line__copy strong { color: #151d35; font-size: 11px; font-weight: 700; line-height: 1.28; overflow-wrap: anywhere; }
 .configured-estimate-line__copy small { color: #69748b; font-size: 10px; line-height: 1.25; }
@@ -1421,7 +1421,7 @@
 .estimate-classification legend { padding: 0; margin-bottom: 5px; font-weight: 600; }
 .estimate-classification label { display: inline-flex; align-items: center; gap: 5px; min-height: 28px; margin-right: 15px; color: #172344; cursor: pointer; }
 .estimate-classification label:last-child { margin-right: 0; }
-.estimate-classification input[type="radio"] { width: 15px; height: 15px; min-height: 15px; margin: 0; accent-color: #255c35; }
+.estimate-classification input[type="radio"] { width: var(--form-choice-size); height: var(--form-choice-size); min-height: var(--form-choice-size); margin: 0; accent-color: #255c35; }
 .estimate-classification input[type="radio"]:focus-visible { outline: 2px solid #255c35; outline-offset: 2px; }
 .configured-estimate-line__choice { grid-column: 1; grid-row: 1; }
 .configured-estimate-line__fields { grid-column: 2; grid-row: 1; }

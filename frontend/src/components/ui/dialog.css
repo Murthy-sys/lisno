@@ -6,12 +6,10 @@
   --dialog-border: #dcded5;
   --dialog-ink: #202633;
   --dialog-muted: #667064;
-  --dialog-padding: 20px;
+  --dialog-padding: 16px;
   --radius-control: 4px;
   --radius-field: 4px;
   --radius-surface: 6px;
-  --control-height: 36px;
-  --control-height-large: 40px;
   --button-primary-bg: #414d32;
   --button-primary-bg-hover: #35402a;
   --button-primary-ink: #fafbf7;
@@ -101,18 +99,18 @@
 .ui-dialog.modal.ui-dialog--danger > .ui-dialog__header { flex-direction: column; align-items: center; text-align: center; padding-top: 22px; padding-bottom: 18px; }
 
 .ui-dialog--reference .ui-dialog__form { display: grid; min-width: 0; gap: 0; margin: 0; padding: 0; }
-.ui-dialog--reference .ui-dialog__body { display: grid; justify-self: stretch; gap: 14px; min-width: 0; padding: 8px var(--dialog-padding) 20px; }
-.ui-dialog--reference .ui-dialog__body:has(> .ui-field) { display: grid; gap: 14px; }
-.ui-dialog--reference .modal-form { min-width: 0; padding: 8px var(--dialog-padding) 20px; }
+.ui-dialog--reference .ui-dialog__body { display: grid; justify-self: stretch; gap: var(--form-group-gap); min-width: 0; padding: 8px var(--dialog-padding) 16px; }
+.ui-dialog--reference .ui-dialog__body:has(> .ui-field) { display: grid; gap: var(--form-group-gap); }
+.ui-dialog--reference .modal-form { min-width: 0; padding: 8px var(--dialog-padding) 16px; }
 .ui-dialog--reference :is(.ui-field, .field) { min-width: 0; }
-.ui-dialog--reference .ui-field { gap: 5px; }
-.ui-dialog--reference :is(.ui-field__label, .field-label) { font-size: 12px; line-height: 1.45; font-weight: 500; }
-.ui-dialog--reference .ui-control { min-width: 0; min-height: 36px; padding: 7px 10px; border: 1px solid #d5d9de; border-radius: 4px; background: #fdfdfa; color: var(--dialog-ink); font: 400 13px/1.5 var(--font-interface); box-shadow: none; }
+.ui-dialog--reference .ui-field { gap: var(--form-field-gap); }
+.ui-dialog--reference :is(.ui-field__label, .field-label) { font-size: var(--form-label-font-size); line-height: 1.45; font-weight: 500; }
+.ui-dialog--reference .ui-control { min-width: 0; min-height: var(--control-height); padding: 6px 10px; border: 1px solid #d5d9de; border-radius: 4px; background: #fdfdfa; color: var(--dialog-ink); font: 400 var(--form-control-font-size)/1.5 var(--font-interface); box-shadow: none; }
 .ui-dialog--reference textarea.ui-control { min-height: 84px; resize: vertical; }
 .ui-dialog--reference select.ui-control { padding-inline-end: 32px; }
 .ui-dialog--reference .ui-control:focus-visible { border-color: #526549; outline: 2px solid #526549; outline-offset: 2px; }
 .ui-dialog--reference .ui-control[aria-invalid="true"] { border-color: #bc3c36; }
-.ui-dialog--reference :is(.ui-button, .ui-icon-button) { font-size: 13px; line-height: 1.4; box-shadow: none; transition: none; }
+.ui-dialog--reference :is(.ui-button, .ui-icon-button) { font-size: var(--form-button-font-size); line-height: 1.4; box-shadow: none; transition: none; }
 .ui-dialog--reference :is(.ui-button, .ui-icon-button):not(:disabled):is(:hover, :active) { box-shadow: none; transform: none; }
 .ui-dialog--reference :is(.ui-button, .ui-icon-button):focus-visible { outline: 2px solid #526549; outline-offset: 2px; box-shadow: none; }
 .ui-dialog--reference .ui-button--destructive { background: #bf3531; border-color: #bf3531; color: #fffaf7; }
@@ -125,14 +123,15 @@
   align-items: center;
   justify-content: flex-end;
   justify-self: stretch;
-  gap: 10px;
+  gap: 8px;
   margin: 0;
   padding: 12px var(--dialog-padding);
   border-top: 1px solid var(--dialog-border);
   background: var(--dialog-footer);
 }
-.ui-dialog--reference :is(.ui-dialog__actions, .modal__actions, .modal-form__actions) > .ui-button { width: auto; min-width: 96px; min-height: 36px; padding: 7px 16px; }
-.ui-dialog--reference .modal-form > :is(.modal-form__actions, .ui-dialog__actions) { margin: 18px calc(-1 * var(--dialog-padding)) -20px; }
+.ui-dialog--reference :is(.ui-dialog__actions, .modal__actions, .modal-form__actions) > .ui-button { width: auto; min-width: 96px; max-width: 100%; min-height: var(--control-height); padding: 6px 12px; white-space: normal; overflow-wrap: anywhere; }
+.ui-dialog--reference :is(.ui-button__stack, .ui-button__content, .ui-button__content > span) { min-inline-size: 0; }
+.ui-dialog--reference .modal-form > :is(.modal-form__actions, .ui-dialog__actions) { margin: 12px calc(-1 * var(--dialog-padding)) -16px; }
 .ui-dialog--reference :is(.file-preview__modal, .section-review-card__modal, .design-review__source-modal) { gap: 0; }
 
 @media (max-width: 768px) {
@@ -146,7 +145,14 @@
   .ui-dialog-toolbar { gap: 8px; }
   .ui-dialog-toolbar__identity { gap: 8px; }
   .ui-dialog-toolbar__context { padding-left: 8px; }
-  .ui-dialog--reference .ui-control { font-size: 16px; }
   .ui-dialog--reference :is(.ui-dialog__actions, .modal__actions, .modal-form__actions) { gap: 8px; }
-  .ui-dialog--reference :is(.ui-dialog__actions, .modal__actions, .modal-form__actions) > .ui-button { min-height: 40px; }
+}
+
+@media (max-width: 767px), (pointer: coarse) {
+  .ui-dialog--reference .ui-dialog-toolbar .ui-dialog__close {
+    width: 44px;
+    height: 44px;
+    min-width: 44px;
+    min-height: 44px;
+  }
 }

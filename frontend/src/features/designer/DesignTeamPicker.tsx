@@ -58,6 +58,7 @@ export function DesignTeamPicker({ projectId }: { projectId: string }) {
     <div className="design-team-picker__heading"><h3 id={`design-team-${projectId}`}>Design team</h3></div>
     <p>Primary Designer: <strong>{team.primary?.name ?? "Not assigned"}</strong></p>
     {team.secondaries.length ? <p>Secondary Designers: {team.secondaries.map(member => member.name).join(", ")}</p> : <p>No secondary Designers selected.</p>}
+    <p>Secondary Designers carry out onsite measurement. Any assigned Secondary Designer can complete the shared task.</p>
     {notice ? <p role="status">{notice}</p> : null}
     {team.canManage ? <>
       <div className="design-team-picker__control" ref={pickerRef} onKeyDown={event => {

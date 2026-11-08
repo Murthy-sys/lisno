@@ -196,7 +196,7 @@
 .purchase-orders__mode-choice { display: flex; align-items: flex-start; gap: 8px; flex: 1 1 178px; max-width: 280px; min-width: 0; padding: 9px 10px; border: 1px solid var(--color-border); background: var(--color-surface); cursor: pointer; }
 .purchase-orders__mode-choice:has(input:checked) { border-color: var(--color-primary); background: var(--color-surface-subtle); }
 .purchase-orders__mode-choice:has(input:disabled) { opacity: .65; cursor: not-allowed; }
-.purchase-orders__mode-choice input[type="radio"] { flex: 0 0 auto; width: 15px; min-width: 15px; height: 15px; min-height: 15px; margin: 1px 0 0; padding: 0; accent-color: var(--color-primary); }
+.purchase-orders__mode-choice input[type="radio"] { flex: 0 0 auto; width: var(--form-choice-size); min-width: var(--form-choice-size); height: var(--form-choice-size); min-height: var(--form-choice-size); margin: 1px 0 0; padding: 0; accent-color: var(--color-primary); }
 .purchase-orders__mode-choice input[type="radio"]:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 3px; }
 .purchase-orders__mode-choice span { display: grid; gap: 2px; min-width: 0; }
 .purchase-orders__mode-choice strong { font-size: 12px; line-height: 1.25; }
@@ -208,7 +208,7 @@
 .purchase-orders__recovery-fields { display: grid; gap: 10px; min-width: 0; padding-top: 9px; border-top: 1px solid var(--color-border); }
 .purchase-orders__recovery-fields > label:first-child { display: grid; gap: 5px; min-width: 0; font-size: 11px; font-weight: 650; }
 .purchase-orders__recovery-acknowledgment { display: flex; align-items: flex-start; gap: 8px; max-width: 68ch; color: var(--color-text-strong); font-size: 11px; line-height: 1.5; cursor: pointer; }
-.purchase-orders__estimate-tree .purchase-orders__recovery-acknowledgment input[type="checkbox"] { flex: 0 0 auto; width: 16px; min-width: 16px; height: 16px; min-height: 16px; margin: 1px 0 0; padding: 0; accent-color: var(--color-primary); }
+.purchase-orders__estimate-tree .purchase-orders__recovery-acknowledgment input[type="checkbox"] { flex: 0 0 auto; width: var(--form-choice-size); min-width: var(--form-choice-size); height: var(--form-choice-size); min-height: var(--form-choice-size); margin: 1px 0 0; padding: 0; accent-color: var(--color-primary); }
 .purchase-orders__estimate-tree input, .purchase-orders__estimate-tree select, .purchase-orders__estimate-tree textarea, .purchase-orders__project-request .purchase-orders__vendor-terms textarea { box-sizing: border-box; width: 100%; min-width: 0; min-height: 36px; padding: 7px 9px; border: 1px solid var(--color-border); border-radius: 3px; background: var(--color-surface); color: var(--color-text-strong); font: inherit; font-size: 12px; }
 .purchase-orders__estimate-tree :is(input,select,textarea):focus-visible, .purchase-orders__project-request .purchase-orders__vendor-terms textarea:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 1px; }
 .purchase-orders__estimate-tree :is(input,select,textarea):disabled, .purchase-orders__project-request .purchase-orders__vendor-terms textarea:disabled { opacity: .7; }

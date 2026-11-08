@@ -1,8 +1,10 @@
 import { act, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
-vi.mock("../../auth/AuthProvider", () => ({ useAuth: () => ({ user: { id: "test-estimator" }, reviewSession: { id: "test-session" }, status: "authenticated" }) }));
+import { beforeEach, describe, expect, it, vi } from "vitest";
+const authState = vi.hoisted(() => ({ role: undefined as string | undefined }));
+vi.mock("../../auth/AuthProvider", () => ({ useAuth: () => ({ user: { id: "test-estimator", role: authState.role }, reviewSession: { id: "test-session" }, status: "authenticated" }) }));
+beforeEach(() => { authState.role = undefined; });
 vi.mock("./estimateRevisionsApi", async importOriginal => ({
   ...await importOriginal<typeof import("./estimateRevisionsApi")>(),
   getEstimateRevisions: vi.fn(async () => ({ items: [], pagination: { limit: 20, nextCursor: null } }))
@@ -236,5 +238,145 @@ describe("estimator inline recommendations", () => {
     expect(await screen.findByText("Saved recommendation sources need review against current Configuration.")).toBeVisible();
     expect(calls).toEqual([]);
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+});
+
+describe("Sales recommendation popup", () => {
+  beforeEach(() => { authState.role = "estimator_sales"; });
+
+  it("keeps dismissal through source changes, refresh and Summary while rooms remain independent", async () => {
+    const user = userEvent.setup();
+    const { savedInputs } = installReads(); renderWorkspace(); await openBuilder(user);
+    await user.click(selectedItem(/POP false ceiling/));
+    const trigger = await screen.findByRole("button", { name: "Recommendations (1)" });
+    await user.click(await screen.findByRole("button", { name: "Close recommendations" }));
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    expect(trigger).toHaveFocus();
+    await user.click(selectedItem(/Functional Lights/));
+    await waitFor(() => expect(trigger).toHaveAccessibleName("Recommendations (1)"));
+    expect(screen.queryByRole("button", { name: "Close recommendations" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Refresh available items" }));
+    await waitFor(() => expect(trigger).toHaveAccessibleName("Recommendations (1)"));
+    await user.click(screen.getByRole("button", { name: "Summary" }));
+    await user.click(screen.getByRole("button", { name: "Estimate Builder" }));
+    expect(screen.getByRole("button", { name: "Recommendations (1)" })).toHaveAttribute("aria-expanded", "false");
+    await user.click(screen.getByRole("button", { name: /Bedroom 1/ }));
+    expect(screen.queryByRole("button", { name: /Recommendations/ })).not.toBeInTheDocument();
+    await user.click(selectedItem(/POP false ceiling/));
+    const bedroom = await screen.findByRole("region", { name: "Non-negotiable recommendations for Bedroom 1" });
+    expect(bedroom).toBeVisible();
+    await user.click(within(bedroom).getByRole("button", { name: "Close recommendations" }));
+    await user.click(screen.getByRole("button", { name: /Living & Dining/ }));
+    expect(screen.getByRole("button", { name: "Recommendations (1)" })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("region", { name: /Non-negotiable recommendations/ })).not.toBeInTheDocument();
+    expect(savedInputs).toEqual([]);
+  });
+
+  it("preserves typing during automatic discovery and saves only explicit selections with their original values", async () => {
+    const user = userEvent.setup(); let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const { savedInputs } = installReads(false, null, gate, false, undefined, true);
+    renderWorkspace(); await openBuilder(user);
+    await user.click(selectedItem(/POP false ceiling/));
+    const quantity = screen.getByRole("spinbutton", { name: /Quantity.*POP false ceiling/ });
+    await user.clear(quantity); await user.type(quantity, "7");
+    const price = screen.getByRole("textbox", { name: /Selling rate.*POP false ceiling/ });
+    await user.clear(price); await user.type(price, "123.");
+    await act(async () => release());
+    await screen.findByRole("button", { name: "Close recommendations" });
+    expect(price).toHaveFocus();
+    await user.type(price, "45");
+    expect(price).toHaveValue("123.45");
+    const popup = screen.getByRole("region", { name: "Non-negotiable recommendations for Living & Dining" });
+    await user.click(within(popup).getByRole("button", { name: "Add False ceiling painting" }));
+    expect(await within(popup).findByRole("button", { name: "Remove False ceiling painting" })).toBeEnabled();
+    expect(selectedItem(/False ceiling painting/)).toBeChecked();
+    await user.click(within(popup).getByRole("button", { name: "Remove False ceiling painting" }));
+    expect(selectedItem(/False ceiling painting/)).not.toBeChecked();
+    await user.click(within(popup).getByRole("button", { name: "Close recommendations" }));
+    const trigger = screen.getByRole("button", { name: "Recommendations (1)" });
+    await user.keyboard("{Enter}");
+    expect(screen.getByRole("button", { name: "Close recommendations" })).toHaveFocus();
+    await user.keyboard("{Escape}");
+    expect(trigger).toHaveFocus();
+    expect(quantity).toHaveValue(7); expect(price).toHaveValue("123.45");
+    await user.click(screen.getByRole("button", { name: "Save draft" }));
+    await screen.findByText("Estimate draft saved.");
+    expect(savedInputs).toHaveLength(1);
+    expect(savedInputs[0]!.lineItems).toEqual([expect.objectContaining({ mainLineId: "line-pop", quantity: 7, ratePaise: 12345, included: true })]);
+    expect(screen.getByRole("button", { name: "Recommendations (1)" })).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("keeps late results in their source room and does not close when another modal handles Escape", async () => {
+    const user = userEvent.setup(); let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    installReads(false, null, gate); renderWorkspace(); await openBuilder(user);
+    await user.click(selectedItem(/POP false ceiling/));
+    await user.click(screen.getByRole("button", { name: /Bedroom 1/ }));
+    await act(async () => release());
+    expect(screen.queryByRole("button", { name: /Recommendations/ })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Living & Dining/ }));
+    const popup = await screen.findByRole("region", { name: "Non-negotiable recommendations for Living & Dining" });
+    await user.click(screen.getByRole("button", { name: "Remove False Ceiling Sub Basket from Living & Dining" }));
+    const dialog = await screen.findByRole("alertdialog");
+    expect(popup.closest("[inert]")).not.toBeNull();
+    expect(dialog).toContainElement(document.activeElement as HTMLElement);
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Close recommendations" })).toBeVisible();
+    expect(selectedItem(/POP false ceiling/)).toBeChecked();
+  });
+
+  it("keeps failed reads discoverable while closed and supports retry without changing selections", async () => {
+    const user = userEvent.setup();
+    installReads(true); renderWorkspace(); await openBuilder(user);
+    await user.click(selectedItem(/POP false ceiling/));
+    const trigger = await screen.findByRole("button", { name: /Recommendations.*Could not load/ });
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    await user.click(trigger);
+    await user.click(screen.getByRole("button", { name: "Retry recommendations" }));
+    expect(await screen.findByRole("button", { name: "Add False ceiling painting" })).toBeEnabled();
+    expect(selectedItem(/POP false ceiling/)).toBeChecked();
+  });
+
+  it("leaves submitted Sales estimates in their existing read-only inline presentation", async () => {
+    installReads(false, savedConfiguredEstimate("rev-pop")); renderWorkspace();
+    expect(await screen.findByRole("button", { name: "Add False ceiling painting" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Non-negotiable recommendations (1)" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Close recommendations" })).not.toBeInTheDocument();
+    expect(await screen.findByRole("checkbox", { name: /POP false ceiling/ })).toBeDisabled();
+  });
+
+  it("uses each room's current targets and preserves the popup during a reopened draft save", async () => {
+    const user = userEvent.setup(); let releaseSave!: () => void;
+    const saveGate = new Promise<void>(resolve => { releaseSave = resolve; });
+    const saved = { ...savedConfiguredEstimate("rev-pop"), status: "client_changes_requested",
+      rooms: [...savedConfiguredEstimate("rev-pop").rooms, { id: "room-bed", label: "Bedroom 1", icon: "", typeId: "bedroom_1", sqft: 144, length: null, width: null }] };
+    const { savedInputs } = installReads(false, saved, undefined, false, saveGate, true, source => {
+      const target = source === "line-pop" ? "paint" : source === "line-functional" ? "light" : null;
+      return target ? [{ id: `rule-${target}`, requirement: "must", reason: "Complete the selected work.", targetKind: "main_line", targetBasketId: `basket-${target}`, targetSubBasketId: `sub-${target}`, targetMainLineId: `line-${target}`, targetRevisionId: `rev-${target}`, targetRevisionVersion: 1, targetItemVersion: 1, available: true, completionRequired: false }] : [];
+    });
+    renderWorkspace();
+    await screen.findByRole("button", { name: "Add False ceiling painting" });
+    await user.click(screen.getByRole("button", { name: "Close recommendations" }));
+    await user.click(screen.getByRole("button", { name: /Bedroom 1/ }));
+    await user.click(selectedItem(/Functional Lights/));
+    const popup = await screen.findByRole("region", { name: "Non-negotiable recommendations for Bedroom 1" });
+    expect(within(popup).queryByText("False ceiling painting")).not.toBeInTheDocument();
+    await user.click(within(popup).getByRole("button", { name: "Add False ceiling functional lights" }));
+    await user.click(screen.getByRole("button", { name: "Save draft" }));
+    await waitFor(() => expect(savedInputs).toHaveLength(1));
+    expect(screen.getByRole("region", { name: "Non-negotiable recommendations for Bedroom 1" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Non-negotiable recommendations (1)" })).not.toBeInTheDocument();
+    await act(async () => releaseSave());
+    await screen.findByText("Estimate draft saved.");
+    expect(savedInputs[0]!.lineItems.filter(line => line.included)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ roomId: "room-living", mainLineId: "line-pop", ratePaise: 10000, quantity: 1 }),
+      expect.objectContaining({ roomId: "room-bed", mainLineId: "line-functional", ratePaise: 15000 }),
+      expect.objectContaining({ roomId: "room-bed", mainLineId: "line-light", recommendationSourceMainLineIds: ["line-functional"] })
+    ]));
+    expect(savedInputs[0]!.lineItems.filter(line => line.included)).toHaveLength(3);
+    await user.click(screen.getByRole("button", { name: /Living & Dining/ }));
+    expect(screen.getByRole("button", { name: "Recommendations (1)" })).toHaveAttribute("aria-expanded", "false");
   });
 });

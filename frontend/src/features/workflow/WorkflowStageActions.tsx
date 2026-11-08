@@ -206,7 +206,7 @@ function StageActionForm({ action, workflow, stage, onClose, onSaved, autoFocus 
     }, setProgress),
     onSuccess: async (result) => { await refresh(); onSaved(result.version); },
     onError: async (error) => {
-      if (error instanceof ApiError && error.status === 409) await refresh();
+      if (error instanceof ApiError && (error.status === 409 || action.id === "measurement_complete" && [403, 404].includes(error.status))) await refresh();
       if (dimensionsNeeded) await uoms.refetch();
     },
     onSettled: () => { inFlight.current = false; }
@@ -235,8 +235,9 @@ function StageActionForm({ action, workflow, stage, onClose, onSaved, autoFocus 
   const estimateItemsChanged = isDimensionEntry && JSON.stringify(workflow.furnitureRooms ?? []) !== initialEstimateSource;
   const unavailableRoomIds = dimensionsNeeded ? roomIds.filter((roomId) => !workflow.furnitureRooms?.find((room) => room.id === roomId)?.estimateItems?.length) : [];
   const unavailableItems = unavailableRoomIds.length > 0;
-  const stale = stage.operational?.version !== version || documentChanged || dimensionsChanged || requirementsChanged || missingRequirementsReference || estimateItemsChanged || Boolean(blockedReason) || !stage.operational?.availableActions.some((candidate) => candidate.id === action.id);
   const isMeasurement = action.id === "measurement_complete";
+  const measurementAccessDenied = isMeasurement && mutation.error instanceof ApiError && [403, 404].includes(mutation.error.status);
+  const stale = measurementAccessDenied || stage.operational?.version !== version || documentChanged || dimensionsChanged || requirementsChanged || missingRequirementsReference || estimateItemsChanged || Boolean(blockedReason) || !stage.operational?.availableActions.some((candidate) => candidate.id === action.id);
   const needsFile = !isMeasurement && (action.requiresProof || evidenceActions.has(action.id) || (isScope && dimensionsNeeded));
   const hasEvidence = Boolean(submissionFile || mediaFiles.length);
   const isInternalKickoff = action.id === "internal_kickoff_complete";
@@ -251,7 +252,7 @@ function StageActionForm({ action, workflow, stage, onClose, onSaved, autoFocus 
     workflow.furnitureRooms?.some((source) => source.id === room.id && Array.isArray(source.estimateItems) && source.estimateItems.length === 0)
   );
   const selectRoom = (roomId: string, checked: boolean) => setRoomIds((current) => checked ? [...current.filter((value) => value !== roomId), roomId] : current.filter((value) => value !== roomId));
-  const staleMessage = blockedReason ?? "The workflow changed while this form was open. Close it and reopen the action to review the latest state.";
+  const staleMessage = measurementAccessDenied ? "Your measurement access changed. Close this form and review the current project team." : blockedReason ?? "The workflow changed while this form was open. Close it and reopen the action to review the latest state.";
   const unavailableRoomNames = unavailableRoomIds.map((roomId) => rooms.find((room) => room.id === roomId)?.name ?? roomId);
   const unavailableRoomSummary = unavailableRoomNames.slice(0, 3).join(", ") + (unavailableRoomNames.length > 3 ? ` and ${unavailableRoomNames.length - 3} more` : "");
   const entryBlocker = !isDimensionEntry || mutation.isPending ? undefined

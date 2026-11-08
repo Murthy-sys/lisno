@@ -1,4 +1,4 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import axe from "axe-core";
@@ -219,6 +219,72 @@ describe("measurement photo and video uploads", () => {
     expect(upload).toHaveBeenCalledTimes(2);
     expect(upload.mock.calls[0]![1].get("idempotencyKey")).toBe(upload.mock.calls[1]![1].get("idempotencyKey"));
     expect(upload.mock.calls[1]![1].getAll("mediaFiles")).toHaveLength(1);
+  });
+
+  it.each([403, 404])("refreshes and blocks the cached measurement form after HTTP %s even if the refreshed workflow is unavailable", async status => {
+    const data = fixture();
+    data.stage.operational!.workflowVersion = 3;
+    let refreshFails = false;
+    const readWorkflow = vi.fn(async () => {
+      if (refreshFails) throw new ApiError(503, "UNAVAILABLE", "The workflow is temporarily unavailable.");
+      return data.workflow;
+    });
+    const upload = vi.spyOn(apiClient, "postMultipartWithProgress").mockImplementation(async () => {
+      refreshFails = true;
+      throw new ApiError(status, status === 403 ? "FORBIDDEN" : "NOT_FOUND", "Measurement permission is no longer available.");
+    });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    const key = projectWorkflowKeys.designWorkflow(data.workflow.projectId);
+    function CachedMeasurement() {
+      const query = useQuery({ queryKey: key, queryFn: readWorkflow });
+      return query.data ? <WorkflowStageActions workflow={query.data} stage={query.data.projectStages![0]!} /> : null;
+    }
+    render(<QueryClientProvider client={client}><CachedMeasurement /></QueryClientProvider>);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Complete measurement" }));
+    await user.upload(mediaInput(), photo());
+    await user.type(screen.getByLabelText("Note"), "North wall measured.");
+    submit();
+    expect(await screen.findByText("Your measurement access changed. Close this form and review the current project team.")).toBeVisible();
+    expect(screen.getByText("Measurement permission is no longer available.")).toBeVisible();
+    expect(readWorkflow).toHaveBeenCalledTimes(2);
+    expect(client.getQueryState(key)?.status).toBe("error");
+    expect(screen.getByText("site.jpg")).toBeVisible();
+    expect(screen.getByLabelText("Note")).toHaveValue("North wall measured.");
+    expect(screen.getByRole("button", { name: "Complete measurement" })).toBeDisabled();
+    expect(mediaInput()).toBeDisabled();
+    submit();
+    expect(upload).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText("Action recorded. The project workflow has been updated.")).not.toBeInTheDocument();
+  });
+
+  it("blocks an open measurement form when team membership removes its action without changing the workflow version", async () => {
+    const upload = vi.spyOn(apiClient, "postMultipartWithProgress");
+    const { workflow, stage, rerender } = setup();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Complete measurement" }));
+    await user.upload(mediaInput(), photo());
+    rerender(<WorkflowStageActions workflow={workflow} stage={{ ...stage, operational: { ...stage.operational!, availableActions: [] } }} />);
+    expect(screen.getByRole("alert")).toHaveTextContent("workflow changed");
+    expect(screen.getByRole("button", { name: "Complete measurement" })).toBeDisabled();
+    expect(screen.getByText("site.jpg")).toBeVisible();
+    submit();
+    expect(upload).not.toHaveBeenCalled();
+  });
+
+  it("retains the separate measurement-taker selector for a legacy workflow action", async () => {
+    const post = vi.spyOn(apiClient, "post").mockResolvedValue({ version: 7 });
+    const data = fixture();
+    data.stage.operational!.workflowVersion = 2;
+    data.stage.operational!.availableActions = [{ id: "measurement_assign", label: "Assign measurement team member", actor: "designer", requiresProof: false }];
+    data.workflow.measurementDesigners = [{ id: "legacy-designer", name: "Legacy Designer" }];
+    setup(data);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Assign measurement team member" }));
+    await user.selectOptions(screen.getByLabelText(/Measurement taker/), "legacy-designer");
+    await user.click(screen.getByRole("button", { name: "Assign measurement team member" }));
+    await screen.findByText("Action recorded. The project workflow has been updated.");
+    expect(post).toHaveBeenCalledWith("/projects/project-a/design-workflow/actions", expect.objectContaining({ action: "measurement_assign", expectedVersion: 6, data: { designerId: "legacy-designer" } }), { showGlobalLoader: false });
   });
 
   it("keeps the media draft visible and blocks completion if the workflow changes", async () => {

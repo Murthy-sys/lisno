@@ -126,7 +126,7 @@ function ClientQuotationForProject({ projectId, readOnly = false, workspace = fa
     || probeNotStarted && tiers.isSuccess && !tiers.isFetching && tiers.isFetchedAfterMount && tiers.dataUpdatedAt >= query.errorUpdatedAt
       && tiers.data.projectId === projectId && tiers.data.estimateId === null && tiers.data.editingBlockReason === "not_started");
   const refreshQuotation = async () => {
-    const refreshed = await query.refetch();
+    const [refreshed] = await Promise.all([query.refetch(), review?.refresh()]);
     if (review && !readOnly && refreshed.error instanceof ApiError && refreshed.error.status === 404) await tiers.refetch({ cancelRefetch: false });
   };
   if (query.isPending) return <section className="client-quotation" aria-label="Quotation"><h2>Quotation</h2><p role="status">Loading your quotation…</p>
@@ -320,7 +320,7 @@ function ClientQuotationForProject({ projectId, readOnly = false, workspace = fa
       activeRoomId={currentRoomId} onSelectRoom={id => { setActiveRoomId(id); setItemOffset(0); }} selectedCount={selectedRows.length}
       baskets={visibleBaskets.map(basket => ({ id: basket.id, name: basket.name, detail: subtotal(rows.filter(line => line.roomId === currentRoomId && line.mainBasketId === basket.id)) }))}
       groups={groups} renderLine={renderLine} viewState={viewState} onViewStateChange={setViewState} scrollMode={workspace ? "pane" : "document"}
-      onRefresh={() => { void query.refetch(); if (candidateEnabled) void candidates.refetch(); void client.invalidateQueries({ queryKey: ["quotation", projectId, "items"] }); void client.invalidateQueries({ queryKey: ["quotation", projectId, "recommendations"] }); }} refreshing={query.isFetching}
+      onRefresh={() => { void refreshQuotation(); if (candidateEnabled) void candidates.refetch(); void client.invalidateQueries({ queryKey: ["quotation", projectId, "items"] }); void client.invalidateQueries({ queryKey: ["quotation", projectId, "recommendations"] }); }} refreshing={query.isFetching || Boolean(review?.refreshing)}
       beforeGroups={<><p className="client-quotation__hint">Client-visible items. Total includes internal scope.</p>
         {!readOnly && detail.editingAllowed ? <>
           <EstimateItemPicker roomName={activeRoom?.name ?? "this room"} open={adding} onOpenChange={setAdding} triggerRef={triggerRef}
@@ -373,7 +373,7 @@ function ClientQuotationForProject({ projectId, readOnly = false, workspace = fa
     </div>
     {!readOnly && detail.editingAllowed && !detail.setup ? <p role="status">Property type, rooms and Main Baskets are unavailable. Refresh to check for these setup options. <Button variant="secondary" disabled={query.isFetching || busy || Boolean(unknownSave)} onClick={() => void refreshQuotation()}>Refresh estimate setup</Button></p> : null}
     {revision.isError ? <p role="alert">Updates could not be checked. Your changes are preserved. <Button variant="secondary" onClick={() => void revision.refetch()}>Retry updates</Button></p> : null}
-    {query.isError ? <div role="alert"><p>The saved quotation could not be refreshed. Your local edits are preserved. Refresh before saving.</p><Button variant="secondary" disabled={query.isFetching || busy} onClick={() => void query.refetch()}>Refresh quotation</Button></div> : null}
+    {query.isError ? <div role="alert"><p>The saved quotation could not be refreshed. Your local edits are preserved. Refresh before saving.</p><Button variant="secondary" disabled={query.isFetching || busy} onClick={() => void refreshQuotation()}>Refresh quotation</Button></div> : null}
     {stale ? <div role="alert"><p>The quotation changed elsewhere. Your unsaved changes are preserved. Review them before loading the latest quotation.</p><Button variant="secondary" disabled={busy || query.isFetching} onClick={() => void reset()}>Load latest quotation and discard changes</Button></div> : null}
     {unknownSave ? <div role="alert"><p>The save response could not be verified. Your changes are preserved. Verify the saved quotation before continuing.</p><Button variant="secondary" busy={verifying} disabled={save.isPending} onClick={() => void verifySaved()}>Verify saved changes</Button>{!stale ? <Button variant="secondary" disabled={busy || query.isFetching} onClick={() => void reset()}>Load latest quotation and discard changes</Button> : null}</div> : null}
     {save.isError && !unknownSave ? <p role="alert">{save.error instanceof ApiError ? save.error.message : "Your changes could not be saved. Try again."}</p> : null}
@@ -386,7 +386,7 @@ function ClientQuotationForProject({ projectId, readOnly = false, workspace = fa
     {view === "configure" ? <ClientQuotationSetup detail={detail} catalogue={setupCurrent ? setup.data : undefined}
       value={setupDraft?.operation ?? null} disabled={!canEdit || !canConfigure || !setupAvailable} busy={busy}
       loading={setup.isPending} refreshing={setup.isFetching} catalogueError={setup.isError ? "Available setup could not be loaded. Your changes are preserved; retry before continuing." : setupSourceChanged ? "Configuration changed. Load the latest quotation and discard setup changes before continuing." : !setupCurrent && !setup.isPending && !setup.isFetching ? "Setup changed elsewhere. Refresh the saved quotation and available setup before continuing." : null}
-      onRefresh={() => { void query.refetch(); void setup.refetch(); }}
+      onRefresh={() => { void refreshQuotation(); void setup.refetch(); }}
       onChange={operation => { if (!canEdit || !setupAvailable || inFlight.current) return; setSetupDraft({ version: detail.estimateVersion!, operation }); setValidation(""); setNotice(""); save.reset(); }}
       onSave={next => { void submit(next ? "builder" : undefined); }}
       onCancel={() => { if (inFlight.current || busy || unknownSave) return; setSetupDraft(null); setValidation(""); save.reset(); setView("builder"); }} /> : null}

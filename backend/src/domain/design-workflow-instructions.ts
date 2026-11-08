@@ -155,6 +155,14 @@ export function instructionsForStage(type: DesignStageType, workflowVersion?: 2 
     result.trigger = "The Client approves the Designer-revised quotation. Estimation is complete and operational design can begin.";
     result.start = "After Client approval of the Designer-revised quotation.";
   }
+  if (type === "site_measurement") {
+    result.owner = "Secondary Designers";
+    result.completion = ["Select the Secondary Designers in Design team; no separate measurement assignment is needed.",
+      "Any assigned Secondary Designer can complete the shared measurement task and upload site photos or videos. An as-built sketch is optional.",
+      "Client-reported access issues pause the workflow; restore access before completing measurement."];
+    result.requirements = ["An active Secondary Designer must be assigned in Design team.",
+      "Upload at least one site photo or video to complete measurement. An as-built sketch is optional."];
+  }
   if (type === "existing_furniture_dimensions") {
     result.trigger = "After quotation approval, the primary Designer requests existing furniture details from the Client.";
     result.start = "The Client can respond once requested; stage completion also requires the earlier design workflow confirmations.";

@@ -9,6 +9,7 @@ import { createDesignWorkflowStateService, hydrateDesignWorkflowState, projectOp
   requireDesignWorkflowScope, type WorkflowActionInput } from "../src/services/design-workflow-state.service.js";
 import type { PublicUser } from "../src/services/auth.service.js";
 import { sha256Hex } from "../src/domain/estimate-client-review.js";
+import { quotationSnapshotDigest } from "../src/services/quotation-digest.js";
 
 const AT = "2026-10-30T10:00:00.000Z";
 const proof = { storageReference: "synthetic-proof", originalFilename: "dimensions.pdf", mimeType: "application/pdf" as const,
@@ -32,7 +33,7 @@ function setup(options: { locked?: boolean; primary?: boolean; designApproved?: 
   Object.assign(project, { estimationWorkflowVersion: 3, primaryDesignerId: options.primary === false ? null : actors.designer.id,
     secondaryDesignerIds: [actors.secondary.id], assignedDesignerIds: [actors.designer.id, actors.secondary.id],
     clientId: actors.client.id, assignedEstimatorId: actors.estimator_sales.id, designWorkflowStages: createProjectDesignWorkflow(project.id) });
-  const lifecycle = { ...newQuotationLifecycle(), phase: "post" as const, status: "client_approved" as const,
+  const lifecycle = { ...newQuotationLifecycle(), phase: "post" as const, status: options.locked === false ? "draft" as const : "client_approved" as const, pricedRevision: options.locked === false ? 3 : 2,
     preApproval: { reviewRoundId: "furniture-pre", estimateVersion: 2, approvedAt: AT },
     finalApproval: { reviewRoundId: "furniture-post", estimateVersion: 4, approvedAt: AT, requirementsVersion: 0,
         designReviewRoundId: null, designPlanVersion: null, designScopeRevision: 1 }, editClosedAt: options.locked === false ? null : AT,
@@ -40,10 +41,15 @@ function setup(options: { locked?: boolean; primary?: boolean; designApproved?: 
       estimateReviewRoundId: options.designQuoteId ?? "furniture-post", approvedAt: AT } : null };
   const lines = [{ id: "quoted-new-work", catalogueId: "CUSTOM", roomId: "living", roomName: "Living room", specification: "New work", unit: "nos", quantity: 1, included: true, amount: 1_000 }];
   seed.estimateSummaries = [{ id: "furniture-estimate", leadId: "furniture-lead", projectId: project.id, version: 5,
-    status: "client_approved", subtotal: 1_000, gst: 0, total: 1_000, clientDecisionAt: AT, clientDecisionSource: "client_portal",
+    status: "client_approved", propertyType: "2BHK", subtotal: 1_000, gst: 0, total: 1_000, subtotalPaise: 100_000, gstPaise: 0, totalPaise: 100_000, clientDecisionAt: AT, clientDecisionSource: "client_portal",
     assignedAdminId: actors.super_admin.id, approvedBaseline: null, clientReview: null, createdAt: AT, updatedAt: AT,
     rooms: [{ id: "living", label: "Living room" }, { id: "personal-only", label: "Study" }], lineItems: lines, estimation: lifecycle }];
+  const snapshot = { clientName: "Synthetic Client", projectName: "Synthetic project", location: "Synthetic location", propertyType: "2BHK",
+    rooms: seed.estimateSummaries[0]!.rooms!, scopes: [], lineItems: lines, subtotal: 1_000, gst: 0, total: 1_000, subtotalPaise: 100_000, gstPaise: 0, totalPaise: 100_000 };
+  const sourceDigest = quotationSnapshotDigest(snapshot);
   seed.estimateReviewRounds = [2, 4].map(version => ({ id: version === 2 ? "furniture-pre" : "furniture-post", estimateId: "furniture-estimate", projectId: project.id,
+    workflowVersion: 3, pricedRevision: version / 2, sourceDigest, estimateSnapshot: snapshot, submittedById: version === 2 ? actors.estimator_sales.id : actors.designer.id,
+    salesApproval: version === 2 ? { actorId: actors.estimator_sales.id, estimateVersion: 2, pricedRevision: 1, sourceDigest, approvedAt: AT } : null,
     estimateVersion: version, phase: version === 2 ? "pre" : "post", requirementsVersion: 0, designScopeRevision: 1,
     status: "approved", decision: "approve", decidedById: actors.client.id, decidedAt: AT, decisionSource: "client_portal", lineItems: lines }));
   seed.designWorkflowStates = [];
@@ -70,7 +76,7 @@ function setup(options: { locked?: boolean; primary?: boolean; designApproved?: 
     await act("designer", "internal_kickoff_complete", { meetingAt: AT, designHandoverAcknowledged: true }, proof);
     await act("designer", "client_kickoff_not_required");
     await act("client", "keys_handed_over"); await act("designer", "keys_received");
-    await act("designer", "measurement_assign", { designerId: actors.designer.id }); await act("designer", "measurement_complete");
+    await act("secondary", "measurement_complete");
   };
   const request = () => act("designer", "furniture_request", { roomIds: ["personal-only"] });
   const upload = (confirmed = true) => ({ ...(confirmed ? { confirmed: true } : {}), rooms: [{ roomId: "personal-only", items: [

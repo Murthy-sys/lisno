@@ -13,12 +13,13 @@ import { WorkflowStageActions } from "./WorkflowStageActions";
 import { getDesignWorkflow, projectWorkflowKeys } from "./projectWorkflowApi";
 import { currentProjectWorkflowStage } from "./projectWorkflowSelectors";
 
-export function ProjectWorkflowPanel({ projectId, onOpenTask, timelineContainer, presentation = "full", showInitialPayment = true }: {
+export function ProjectWorkflowPanel({ projectId, onOpenTask, timelineContainer, presentation = "full", showInitialPayment = true, showDesignRequirements = true }: {
   projectId: string;
   onOpenTask?: (taskId: string) => void;
   timelineContainer?: HTMLElement | null;
   presentation?: "full" | "client" | "designer";
   showInitialPayment?: boolean;
+  showDesignRequirements?: boolean;
 }) {
   const { user, authorization } = useAuth();
   const canRead = Boolean(user) && hasFrontendPermission(authorization, "projects.design_workflow.read");
@@ -63,7 +64,7 @@ export function ProjectWorkflowPanel({ projectId, onOpenTask, timelineContainer,
             renderStageActions={showStageActions ? (stage) => <WorkflowStageActions key={`${data!.projectId}:${stage.id}`} workflow={data!} stage={stage} expandKickoff={stage.type === "internal_kickoff"} presentation={presentation} refreshError={workflow.isError} refreshing={workflow.isFetching} /> : undefined} /> : null}
         </>
       )}
-      {canRead && data && !projectReadDenied(workflow.error) ? <ProjectDesignRequirementsPanel key={`requirements-${user?.id}-${projectId}`} projectId={projectId} identity={`${user?.id}:${user?.role}`} /> : null}
+      {showDesignRequirements && canRead && data && !projectReadDenied(workflow.error) ? <ProjectDesignRequirementsPanel key={`requirements-${user?.id}-${projectId}`} projectId={projectId} identity={`${user?.id}:${user?.role}`} /> : null}
       {canRead && !projectReadDenied(workflow.error) ? <ProjectClientActions key={`${user?.id}-${projectId}`} projectId={projectId} hideWhenEmpty={presentation !== "full"} /> : null}
     </div>
   );

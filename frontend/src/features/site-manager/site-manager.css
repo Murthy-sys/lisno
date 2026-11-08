@@ -5,9 +5,10 @@
 .site-workspace h3 { font-size: 14px; line-height: 1.45; overflow-wrap: anywhere; }
 .site-workspace__muted, .site-workspace small { color: var(--color-text-muted); font-size: 12px; line-height: 1.55; }
 .site-workspace :is(a,summary,button):focus-visible { outline: 2px solid var(--button-primary-bg); outline-offset: 3px; }
-.site-workspace .ui-button, .site-workspace-panel .ui-button { font-size: 12px; min-height: 34px; padding: 6px 10px; transition: none; }
-.site-workspace .ui-control, .site-workspace-panel .ui-control { min-height: 36px; width: 100%; font-size: 13px; padding: 7px 10px; }
-.site-workspace .ui-field__label { font-size: 12px; }
+.site-workspace .ui-button, .site-workspace-panel .ui-button { font-size: var(--form-button-font-size); min-height: var(--control-height); padding: 6px 10px; transition: none; }
+.site-workspace .ui-button--compact, .site-workspace-panel .ui-button--compact { min-height: var(--control-height-compact); }
+.site-workspace .ui-control, .site-workspace-panel .ui-control { min-height: var(--control-height); width: 100%; font-size: var(--form-control-font-size); padding: 6px 10px; }
+.site-workspace .ui-field__label { font-size: var(--form-label-font-size); }
 .site-workspace__heading, .site-workspace__controls, .site-workspace__pagination, .site-workspace__pagination > div { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
 .site-workspace__heading, .site-workspace__pagination { justify-content: space-between; }
 .site-workspace__heading > div:first-child { min-width: 0; }
@@ -62,7 +63,7 @@
 .site-workspace-panel .workflow-task-card h3 { font-size: 15px; }
 .site-execution-panel .ui-drawer__header { padding-block: 14px; background-image: none; }
 .site-execution-panel .ui-drawer__header::before, .site-execution-panel .ui-drawer__header::after { display: none; }
-.site-execution-panel .ui-drawer__heading h2 { font-size: 22px; }
+.site-execution-panel .ui-drawer__heading h2 { font-size: 18px; }
 .site-execution-panel .execution__detail { gap: 12px; }
 .site-execution-panel .execution__disclosure { border-block-start: 1px solid var(--color-border); padding-top: 10px; }
 .site-execution-panel .execution__disclosure > summary { cursor: pointer; font-size: 13px; font-weight: 600; }

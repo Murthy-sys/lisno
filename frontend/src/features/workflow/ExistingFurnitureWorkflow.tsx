@@ -119,7 +119,7 @@ function FurnitureActionForm({ action, workflow, stage, blocked, onClose, onSave
     if (file && !/\.(pdf|png|jpe?g|webp)$/iu.test(file.name)) { setError("Choose a PDF, JPG, PNG or WebP file."); return; }
     setError(""); submitting.current = true; mutation.mutate(data);
   };
-  return <ContextPanel title={action.label} eyebrow="Existing furniture" width={upload ? "wide" : "medium"} dirty={dirty} busy={mutation.isPending} onClose={onClose}
+  return <ContextPanel title={action.label} eyebrow="Existing furniture" className="existing-furniture-panel" width={upload ? "wide" : "medium"} dirty={dirty} busy={mutation.isPending} onClose={onClose}
     footer={({ requestClose }) => <div className="existing-furniture__actions"><Button type="submit" form={`${id}-form`} busy={mutation.isPending} disabled={disabled || upload && (uoms.isPending || uoms.isError)}>{action.label}</Button><Button variant="secondary" disabled={mutation.isPending} onClick={requestClose}>Cancel</Button></div>}>
     <form id={`${id}-form`} className="existing-furniture__form" noValidate aria-label={action.label} onSubmit={event => { event.preventDefault(); submit(); }}>
       <fieldset disabled={disabled}>

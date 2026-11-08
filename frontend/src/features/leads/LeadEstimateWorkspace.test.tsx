@@ -19,10 +19,9 @@ import { estimateWorkflowKeys } from "../estimates/estimateWorkflowApi";
 import { projectWorkflowKeys } from "../workflow/projectWorkflowApi";
 
 async function addConfiguredItem(user: ReturnType<typeof userEvent.setup>, name: string) {
-  const opener = screen.queryByRole("button", { name: "Add items" });
-  if (opener) { await waitFor(() => expect(opener).toBeEnabled()); await user.click(opener); }
-  await user.click(await screen.findByRole("button", { name: `Add ${name}` }));
-  await user.click(screen.getByRole("button", { name: "Close item picker" }));
+  const checkbox = await screen.findByRole("checkbox", { name: accessibleName => accessibleName.includes(name) });
+  await waitFor(() => expect(checkbox).toBeEnabled());
+  if (!(checkbox as HTMLInputElement).checked) await user.click(checkbox);
 }
 
 async function completeSubmissionChecklist(user: ReturnType<typeof userEvent.setup>) {
@@ -536,9 +535,9 @@ describe("LeadEstimateWorkspace", () => {
     expect(requests).toHaveLength(readsBeforeSearch);
     await user.click(continueButton);
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Add items" }));
-    expect(within(screen.getByRole("region", { name: "Add items to Living & Dining" })).getByRole("option", { name: "Zinc finishes" })).toBeInTheDocument();
-    expect(within(screen.getByRole("region", { name: "Add items to Living & Dining" })).getByRole("option", { name: "Painting" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add items" })).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /^Zinc finishes / })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /^Painting / })).toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Ceiling finishes" })).not.toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Basket selection" })).not.toBeInTheDocument();
     expect(requests.every((request) => request.method === "GET")).toBe(true);
@@ -900,7 +899,7 @@ describe("LeadEstimateWorkspace", () => {
     expect(screen.queryByRole("radio", { name: /item type for Main Basket/ })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Continue to item selection" }));
     const row = () => screen.getByText("POP false ceiling").closest(".configured-estimate-line") as HTMLElement;
-    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+    expect(screen.getAllByRole("checkbox").every(checkbox => !(checkbox as HTMLInputElement).checked)).toBe(true);
     await addConfiguredItem(user, "POP false ceiling");
     await user.click(within(row()).getByRole("radio", { name: /Special item type/ }));
     await user.click(within(row()).getByRole("radio", { name: /PMC pricing mode/ }));
@@ -911,7 +910,7 @@ describe("LeadEstimateWorkspace", () => {
     await user.clear(within(row()).getByRole("spinbutton", { name: /Quantity/ }));
     await user.type(within(row()).getByRole("spinbutton", { name: /Quantity/ }), "1.25");
     await user.click(within(row()).getByRole("checkbox"));
-    expect(screen.queryByRole("checkbox", { name: /POP false ceiling/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: /POP false ceiling/ })).not.toBeChecked();
 
     expect(screen.getByText("₹0 total")).toBeVisible();
     await user.click(screen.getByRole("button", { name: /^(?:Save and edit|Edit|View) baskets$/ }));
@@ -922,15 +921,15 @@ describe("LeadEstimateWorkspace", () => {
     await user.click(screen.getByRole("button", { name: /^(?:Add|Added) POP \/ Gypsum$/ }));
     await user.click(screen.getByRole("button", { name: /^(?:Add|Added) POP \/ Gypsum$/ }));
     await user.click(screen.getByRole("button", { name: "Continue to item selection" }));
-    expect(screen.queryByRole("checkbox", { name: /POP false ceiling/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: /POP false ceiling/ })).not.toBeChecked();
     await addConfiguredItem(user, "POP false ceiling");
     expect(within(row()).getByRole("radio", { name: /Special item type/ })).toBeChecked();
     expect(within(row()).getByRole("radio", { name: /PMC pricing mode/ })).toBeChecked();
     expect(within(row()).getByRole("textbox", { name: /Selling rate/ })).toHaveValue("177.35");
-    expect(screen.queryByRole("checkbox", { name: /Cove in Gypsum/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: /Cove in Gypsum/ })).not.toBeChecked();
     await user.click(within(row()).getByRole("checkbox"));
     await user.click(screen.getByRole("button", { name: /Bedroom 1.*₹0/ }));
-    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+    expect(screen.getAllByRole("checkbox").every(checkbox => !(checkbox as HTMLInputElement).checked)).toBe(true);
     await addConfiguredItem(user, "POP false ceiling");
     expect(within(row()).getByRole("textbox", { name: /Selling rate/ })).toHaveValue("150");
     await user.click(within(row()).getByRole("checkbox"));
@@ -951,7 +950,7 @@ describe("LeadEstimateWorkspace", () => {
     await waitFor(() => expect(within(row()).getByRole("radio", { name: /PMC pricing mode/ })).toBeChecked());
     expect(within(row()).getByRole("textbox", { name: /Selling rate/ })).toHaveValue("177.35");
     await user.click(within(row()).getByRole("checkbox"));
-    expect(screen.queryByRole("checkbox", { name: /POP false ceiling/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: /POP false ceiling/ })).not.toBeChecked();
     await user.click(screen.getByRole("button", { name: "Save draft" }));
     await screen.findByText("Estimate draft saved.");
     expect(saves[2]!.lineItems).toEqual(expect.arrayContaining([
@@ -1247,7 +1246,7 @@ describe("LeadEstimateWorkspace", () => {
     await user.type(popRate, "60");
     expect(screen.getByRole("button", { name: "Save draft" })).toBeEnabled();
     await user.click(within(popRow).getByRole("checkbox", { name: /POP false ceiling/ }));
-    expect(screen.queryByRole("checkbox", { name: /POP false ceiling/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: /POP false ceiling/ })).not.toBeChecked();
     expect(screen.getByText("₹0 total")).toBeVisible();
 
     await user.click(within(screen.getByRole("navigation", { name: "Rooms" })).getByRole("button", { name: /Bedroom 1/ }));
@@ -1337,7 +1336,7 @@ describe("LeadEstimateWorkspace", () => {
     expect(screen.getByRole("button", { name: /^(?:Add|Added) General Items$/ })).toHaveAttribute("aria-pressed", "true");
     expect(screen.queryByRole("radio", { name: /item type for Main Basket/ })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Continue to item selection" }));
-    expect(screen.queryByRole("region", { name: "Miscellaneous" })).not.toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Miscellaneous" })).toHaveTextContent("No available items in this Sub Basket.");
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Submit estimate" })).toBeDisabled();
     await user.click(screen.getByRole("button", { name: "Save draft" }));
@@ -1416,7 +1415,7 @@ describe("LeadEstimateWorkspace", () => {
     await user.click(screen.getByRole("button", { name: /^(?:Save and edit|Edit|View) baskets$/ }));
     await user.click(screen.getByRole("button", { name: /^(?:Add|Added) Painting$/ }));
     await user.click(screen.getByRole("button", { name: "Continue to item selection" }));
-    expect(screen.queryByRole("checkbox", { name: /Site protection/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: /Site protection/ })).not.toBeChecked();
     await addConfiguredItem(user, "Site protection");
     expect(screen.getByRole("textbox", { name: /Selling rate.*Site protection/ })).toHaveValue("80.05");
     expect(screen.getByRole("radio", { name: /Special item type for Painting, Site protection in Living & Dining/ })).toBeChecked();
@@ -1716,20 +1715,19 @@ describe("LeadEstimateWorkspace", () => {
     expect(screen.getByRole("button", { name: /^(?:Add|Added) POP \/ Gypsum$/ })).toHaveAttribute("aria-pressed", "true");
     await user.click(screen.getByRole("button", { name: "Continue to item selection" }));
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Refresh available items" }));
+    await user.click(screen.getAllByRole("button", { name: "Refresh available items" })[0]!);
     await waitFor(() => expect(catalogueReads).toBe(3));
-    expect(screen.getByText("Refreshing available items…")).toBeVisible();
+    expect(screen.getByText("Refreshing…")).toBeVisible();
     for (const button of screen.getAllByRole("button", { name: "Refresh available items" })) expect(button).toBeDisabled();
     pendingRefresh.resolve(response({ items: [populatedBasket], pagination: { limit: 100, offset: 0, total: 1, hasMore: false }, ineligibleLineCount: 0 }));
-    await waitFor(() => expect(screen.getByRole("button", { name: "Add items" })).toBeEnabled());
-    await user.click(screen.getByRole("button", { name: "Add items" }));
-    expect(await screen.findByRole("button", { name: "Add Gypsum finishing" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Add Site protection" })).toBeEnabled();
+    await waitFor(() => expect(screen.getByRole("checkbox", { name: /Gypsum finishing/ })).toBeEnabled());
+    expect(screen.queryByRole("button", { name: "Add items" })).not.toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: /Site protection/ })).toBeEnabled();
     expect(screen.queryByText(/No available items in this Main Basket/)).not.toBeInTheDocument();
     expect(screen.getByRole("navigation", { name: "Rooms" })).toHaveTextContent("Living & Dining");
     await user.click(screen.getByRole("button", { name: "Refresh available items" }));
     expect((await screen.findAllByRole("alert"))[0]).toHaveTextContent("Available items could not be refreshed. The last loaded catalogue is shown. Try again.");
-    expect(screen.getByRole("button", { name: "Add Gypsum finishing" })).toBeDisabled();
+    expect(screen.getByRole("checkbox", { name: /Gypsum finishing/ })).toBeDisabled();
     await user.click(screen.getByRole("button", { name: "Refresh available items" }));
     await waitFor(() => expect(catalogueReads).toBe(5));
     await waitFor(() => expect(screen.queryByRole("alert")).not.toBeInTheDocument());

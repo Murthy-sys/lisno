@@ -39,7 +39,7 @@
 .pm-filters { display: grid; grid-template-columns: minmax(190px, 1.6fr) minmax(150px, .8fr) minmax(180px, 1fr); gap: 12px; align-items: end; }
 .pm-filters label, .pm-form label, .pm-dialog label { display: grid; gap: 5px; font-size: 12px; font-weight: 500; }
 .pm-filters :is(input,select), .pm-form :is(input,select,textarea), .pm-dialog :is(input,select,textarea), .pm-workspace .pm-record :is(input,select,textarea) { color: var(--pm-ink); background: var(--pm-panel); border: 1px solid var(--pm-border); border-radius: 3px; padding: 8px 10px; min-height: 35px; width: 100%; max-width: 100%; font-size: 12px; line-height: 1.5; box-shadow: none; }
-.pm-form input:is([type="checkbox"],[type="radio"]), .pm-dialog input:is([type="checkbox"],[type="radio"]), .pm-workspace .pm-record input:is([type="checkbox"],[type="radio"]) { width: auto; min-height: auto; accent-color: var(--pm-accent); }
+.pm-form input:is([type="checkbox"],[type="radio"]), .pm-dialog input:is([type="checkbox"],[type="radio"]), .pm-workspace .pm-record input:is([type="checkbox"],[type="radio"]) { width: var(--form-choice-size); min-height: var(--form-choice-size); accent-color: var(--pm-accent); }
 .pm-workspace textarea, .pm-dialog textarea { resize: vertical; }
 .pm-summary__metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border: 1px solid var(--pm-border); background: var(--pm-panel); }
 .pm-summary__metric { text-align: start; display: grid; gap: 4px; padding: 13px 16px; border: 0; border-radius: 0; color: var(--pm-ink); background: transparent; cursor: pointer; }

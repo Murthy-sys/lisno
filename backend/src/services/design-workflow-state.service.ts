@@ -13,6 +13,7 @@ import { RepositoryConflictError, type AppRepository } from "../repositories/typ
 import type { PublicUser } from "./auth.service.js";
 import type { AuditService } from "./audit.service.js";
 import { requireActor, type Clock } from "./workflow.js";
+import { isSecondaryMeasurementDesigner, type SecondaryMeasurementDesigner } from "../domain/measurement-ownership.js";
 
 export const workflowActionSchema = z.object({
   expectedVersion: z.coerce.number().int().nonnegative(),
@@ -26,7 +27,7 @@ export const workflowActionSchema = z.object({
   }, z.record(z.unknown()).default({}))
 }).strict();
 export type WorkflowActionInput = z.infer<typeof workflowActionSchema>;
-export type WorkflowCapabilities = { designer: boolean; primaryDesigner?: boolean; client: boolean; sales: boolean; finance: boolean; representative: boolean; manager: boolean };
+export type WorkflowCapabilities = { designer: boolean; primaryDesigner?: boolean; secondaryDesigner?: boolean; client: boolean; sales: boolean; finance: boolean; representative: boolean; manager: boolean };
 export interface WorkflowAvailableAction { id: DesignWorkflowAction; label: string; actor: "designer" | "client" | "sales" | "finance"; requiresProof: boolean; disabledReason?: string }
 const ACTIONS: Record<Exclude<DesignWorkflowAction, "confirm_initial_payment">, { type: DesignStageType; label: string; actor: WorkflowAvailableAction["actor"]; file?: boolean }> = {
   internal_kickoff_complete: { type: "internal_kickoff", label: "Complete Internal Kick off and save", actor: "designer", file: true },
@@ -55,7 +56,7 @@ const ACTIONS: Record<Exclude<DesignWorkflowAction, "confirm_initial_payment">, 
 function missing(): never { throw new ApiError(404, "NOT_FOUND", "The requested resource was not found."); }
 function blocked(reasons: string[]): never { throw new ApiError(409, "DESIGN_WORKFLOW_BLOCKED", reasons.join(" ")); }
 export type WorkflowPaymentStatus = "awaiting_estimate_approval" | "awaiting_payment" | "received";
-type WorkflowStageContext = { spacePlanning?: WorkflowSpacePlanningSource | null; spacePlanningIssue?: string; paymentStatus: WorkflowPaymentStatus; projectId?: string; internalKickoffStageId?: string; measurementStageId?: string };
+type WorkflowStageContext = { spacePlanning?: WorkflowSpacePlanningSource | null; spacePlanningIssue?: string; paymentStatus: WorkflowPaymentStatus; projectId?: string; internalKickoffStageId?: string; measurementStageId?: string; measurementOwners?: readonly SecondaryMeasurementDesigner[]; measurementAssignmentReason?: string };
 const PAYMENT_APPROVAL_REQUIRED = "The project needs a confirmed approved estimate before Initial payment received can be recorded.";
 const PAYMENT_SOURCE_ISSUE = "Reconcile the project's approved estimate source before confirming Initial payment received.";
 const KICKOFF_DOCUMENT_UNAVAILABLE = "The submitted Internal Kick off document is unavailable. Contact your Designer to resolve the missing document.";
@@ -120,6 +121,7 @@ export async function projectInitialPayment(repository: AppRepository, projectId
 
 export async function requireDesignWorkflowScope(repository: AppRepository, actor: PublicUser, projectId: string, allowFinance = false) {
   const user = await requireActor(repository, actor);
+  if (user.deletedAt) missing();
   const project = await repository.findProjectById(projectId);
   if (!project) missing();
   const representative = user.role === "super_admin" || user.role === "admin" && Boolean(await repository.findActiveProjectAccessGrant(user.id, projectId, "projects").then((grant) => grant?.source === "admin_initiator" && grant.active));
@@ -127,12 +129,13 @@ export async function requireDesignWorkflowScope(repository: AppRepository, acto
     ? project.primaryDesignerId === user.id || project.secondaryDesignerIds?.includes(user.id) === true
     : project.assignedDesignerIds.includes(user.id) || project.initiatingDesignerId === user.id);
   const primaryDesigner = designer && project.primaryDesignerId === user.id;
+  const secondaryDesigner = isSecondaryMeasurementDesigner(project, user);
   const client = user.role === "client" && project.clientId === user.id;
   const sales = user.role === "estimator_sales" && project.assignedEstimatorId === user.id;
   const finance = user.role === "finance_head" || user.role === "super_admin";
   const manager = user.role === "design_head" || user.role === "design_manager" && project.managerId === user.id;
   if (!(representative || designer || client || sales || manager || allowFinance && finance)) missing();
-  return { project, capabilities: { designer, primaryDesigner, client: client || representative, sales, finance, representative, manager: manager || representative } };
+  return { project, capabilities: { designer, primaryDesigner, secondaryDesigner, client: client || representative, sales, finance, representative, manager: manager || representative } };
 }
 
 /** Observers can inspect progress but never acquire an existing stage-action capability. */
@@ -213,9 +216,9 @@ function allowed(state: DesignWorkflowState, action: Exclude<DesignWorkflowActio
     case "client_kickoff_not_required": return !kickoff.completedAt;
     case "keys_handed_over": return !keys.handedOverAt;
     case "keys_received": return !keys.receivedAt;
-    case "measurement_assign": return !measurement.completedAt;
+    case "measurement_assign": return state.estimationWorkflowVersion !== 3 && !measurement.completedAt;
     case "measurement_access_block": return !measurement.completedAt && !paused;
-    case "measurement_complete": return !measurement.completedAt && Boolean(measurement.assignedDesignerId) && (!actorId || measurement.assignedDesignerId === actorId);
+    case "measurement_complete": return !measurement.completedAt && (state.estimationWorkflowVersion === 3 || Boolean(measurement.assignedDesignerId) && (!actorId || measurement.assignedDesignerId === actorId));
     case "furniture_scope": return !furniture.acceptedAt && !furniture.completedAt;
     case "furniture_accept":
     case "furniture_scope_return": return Boolean(furniture.rooms) && !furniture.acceptedAt && !furniture.completedAt && !furniture.scopeReturn;
@@ -228,6 +231,10 @@ function allowed(state: DesignWorkflowState, action: Exclude<DesignWorkflowActio
 }
 
 function workflowActionActor(state: DesignWorkflowState, action: keyof typeof ACTIONS, capabilities: WorkflowCapabilities): WorkflowAvailableAction["actor"] | null {
+  if (state.estimationWorkflowVersion === 3) {
+    if (action === "measurement_assign") return null;
+    if (action === "measurement_complete") return capabilities.secondaryDesigner ? "designer" : null;
+  }
   if (state.estimationWorkflowVersion === 3 && action.startsWith("furniture_")) {
     if (action === "furniture_request") return capabilities.primaryDesigner ? "designer" : null;
     if (capabilities.representative) return null;
@@ -1026,6 +1033,9 @@ export function projectOperationalStage(stage: ProjectDesignWorkflowStage, state
   if (paused) reasons.push("Site access is unavailable. All workflow clocks are paused.");
   if (stage.type === "existing_furniture_dimensions" && state.estimationWorkflowVersion === 3 && state.designApprovalLocked) reasons.push("Reopen design review before changing furniture information.");
   if (!current.completedAt && (stage.type !== "space_planning_tentative_look_feel" || spacePlanning || context?.spacePlanningIssue || stored.spacePlanningApproval)) reasons.push(...workflowStagePrerequisiteBlockers(state, stage.type));
+  if (stage.type === "site_measurement" && state.estimationWorkflowVersion === 3 && !current.completedAt && !context?.measurementOwners?.length) {
+    reasons.push(context?.measurementAssignmentReason ?? "Assign a Secondary Designer in Design team to carry out onsite measurement.");
+  }
   const completionReasons: string[] = [];
   if (stage.type === "space_planning_tentative_look_feel") {
     reasons.push(...workflowSubmissionBlockers(state, undefined, "upload"));
@@ -1044,7 +1054,11 @@ export function projectOperationalStage(stage: ProjectDesignWorkflowStage, state
   }
   const facts: Array<{ label: string; value: string }> = [];
   for (const [field, label] of [["meetingAt", "Meeting conducted"], ["calendarAcceptedAt", "Sales calendar accepted"], ["requestedAt", "Meeting requested"], ["preferredAt", "Requested meeting date"], ["scheduledAt", "Client meeting date"], ["handedOverAt", "Client handed over keys"], ["receivedAt", "Designer received keys"], ["mediaFolderUrl", "Photos and videos folder"]] as const) if (current[field]) facts.push({ label, value: current[field]! });
-  if (current.assignedDesignerId) facts.push({ label: "Assigned measurement Designer", value: measurementAssigneeName ?? "Assigned project Designer" });
+  if (stage.type === "site_measurement" && state.estimationWorkflowVersion === 3) {
+    if (context?.measurementOwners?.length) facts.push({ label: current.completedAt ? "Current Secondary Designers" : context.measurementOwners.length === 1 ? "Secondary Designer" : "Secondary Designers", value: context.measurementOwners.map(person => person.name).join(", ") });
+    const completion = current.completedAt ? state.history.find(event => event.action === "measurement_complete" && event.stageId === stage.id && event.at === current.completedAt) : undefined;
+    if (completion) facts.push({ label: "Measurement completed by", value: completion.actorName });
+  } else if (current.assignedDesignerId) facts.push({ label: "Assigned measurement Designer", value: measurementAssigneeName ?? "Assigned project Designer" });
   if (current.handoverAcknowledgedAt) facts.push({ label: "Design handover acknowledged by", value: current.handoverAcknowledgedByName ?? "Designer" }, { label: "Design handover acknowledged at", value: current.handoverAcknowledgedAt });
   if (current.managerHandedOverAt) facts.push({ label: "Previous manager handover", value: current.handoverManagerName ?? "Design Manager" }, { label: "Previous manager handover recorded at", value: current.managerHandedOverAt });
   if (current.notRequired) facts.push({ label: "Client kickoff", value: "Not necessary" });

@@ -32,3 +32,68 @@
   .estimate-selection__list > li { align-items: start; gap: 8px; }
   .estimate-selection__list > li > button { max-width: 42%; white-space: normal; overflow-wrap: anywhere; }
 }
+
+/* Only Sales opts into this toolbar helper; inline recommendations keep their layout. */
+.configured-estimate-builder .configured-estimate-builder__toolbar.configured-estimate-builder__toolbar--with-actions {
+  grid-template-columns: minmax(0, 1fr) minmax(110px, 150px) auto;
+}
+.configured-estimate-builder__toolbar-actions { display: flex; flex-wrap: wrap; align-items: stretch; justify-content: flex-end; gap: 6px; min-width: 0; }
+.configured-estimate-builder__toolbar-actions > button { flex: 1 1 auto; }
+/* Bridge selection presentation to the common popup palette, including body portals. */
+.estimate-recommendations-popup,
+.estimate-recommendations-trigger {
+  --color-surface-subtle: var(--dialog-surface);
+  --color-surface: var(--dialog-surface);
+  --color-border: var(--dialog-border);
+  --color-text-strong: var(--dialog-ink);
+  --color-text-muted: var(--dialog-muted);
+  --color-primary: var(--button-primary-bg);
+}
+.configured-estimate-builder__toolbar-actions .estimate-recommendations-trigger {
+  display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 3px 7px;
+  min-width: 0; padding: 5px 10px; border: 1px solid var(--button-secondary-border); border-radius: 0;
+  background: var(--button-secondary-bg); color: var(--button-secondary-ink);
+  font: inherit; font-family: var(--button-font); font-size: var(--text-sm, 13px); font-weight: var(--button-weight); cursor: pointer;
+}
+.estimate-recommendations-trigger > span { color: var(--color-text-muted); font-size: 11px; font-weight: 500; }
+.estimate-recommendations-trigger:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+.estimate-selection.estimate-recommendations-popup {
+  position: fixed; z-index: calc(var(--z-modal, 30) - 3); box-sizing: border-box;
+  display: flex; flex-direction: column; overflow: hidden; margin: 0; padding: 0;
+  border: 1px solid var(--color-border); border-radius: 0; box-shadow: none;
+  background: var(--color-surface-subtle, var(--color-surface)); color: var(--color-text-strong);
+  font-family: var(--font-interface); line-height: 1.45;
+}
+.estimate-recommendations-popup__heading { display: flex; flex: none; align-items: start; justify-content: space-between; gap: 12px; padding: 12px; border-bottom: 1px solid var(--color-border); }
+.estimate-recommendations-popup__heading > div { min-width: 0; }
+.estimate-recommendations-popup__heading h2 { margin: 0; color: var(--dialog-ink); font: inherit; font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
+.estimate-recommendations-popup__heading p { margin: 3px 0 0; color: var(--color-text-muted); }
+.estimate-recommendations-popup__heading > button { flex: none; }
+.estimate-recommendations-popup__content { min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 4px 12px 12px; }
+.estimate-recommendations-popup .estimate-selection__list > li { align-items: start; padding-block: 10px; }
+.estimate-recommendations-popup .estimate-selection__list > li > button { max-width: 42%; white-space: normal; overflow-wrap: anywhere; }
+.estimate-recommendations-popup .estimate-selection__pagination { justify-content: flex-start; }
+.estimate-recommendations-popup button {
+  min-height: var(--control-height); border-color: var(--button-secondary-border);
+  background: var(--button-secondary-bg); color: var(--button-secondary-ink);
+  font-family: var(--button-font); font-weight: var(--button-weight); line-height: 1.4;
+}
+.estimate-recommendations-popup .ui-button--primary {
+  border-color: var(--button-primary-bg); background: var(--button-primary-bg); color: var(--button-primary-ink);
+}
+.estimate-recommendations-popup .ui-button--primary:not(:disabled):hover {
+  border-color: var(--button-primary-bg-hover); background: var(--button-primary-bg-hover); color: var(--button-primary-ink);
+}
+.estimate-recommendations-popup__content > p > button { margin-block-start: 6px; max-width: 100%; white-space: normal; }
+@container estimate-builder-area (max-width: 800px) {
+  .configured-estimate-builder .configured-estimate-builder__toolbar.configured-estimate-builder__toolbar--with-actions { grid-template-columns: minmax(0, 1fr) 145px; }
+  .configured-estimate-builder__toolbar--with-actions .configured-estimate-builder__search { grid-column: 1 / -1; }
+}
+@container estimate-builder-area (max-width: 500px) {
+  .configured-estimate-builder .configured-estimate-builder__toolbar.configured-estimate-builder__toolbar--with-actions { grid-template-columns: minmax(0, 1fr); }
+  .configured-estimate-builder__toolbar-actions { justify-content: stretch; }
+  .configured-estimate-builder__toolbar-actions :is(.estimate-recommendations-trigger, .configured-estimate-builder__refresh) { min-height: 44px; }
+}
+@media (max-width: 640px) {
+  .estimate-recommendations-popup button { min-height: 44px; }
+}
