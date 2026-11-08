@@ -1,3 +1,4 @@
+import { estimateTotalsReconcile } from "../domain/estimate-total-rounding.js";
 import { quotationSnapshotDigest } from "./quotation-digest.js";
 import { createEstimateProposal, type EstimateProposalMetadata } from "../domain/estimate-proposal.js";
 import { readProjectNumber } from "../domain/project-number.js";
@@ -87,6 +88,7 @@ interface PublicationEstimate {
   subtotalPaise?: number;
   gstPaise?: number;
   totalPaise?: number;
+  roundOffPaise?: number;
   selectedMainBasketIds?: string[];
   selectedMainBasketClassifications?: SelectedMainBasketClassification[];
   approvalRequired: boolean;
@@ -538,6 +540,7 @@ function toPostTransitionPdfInput(
     subtotalPaise: estimate.subtotalPaise,
     gstPaise: estimate.gstPaise,
     totalPaise: estimate.totalPaise,
+    ...(estimate.roundOffPaise === undefined ? {} : { roundOffPaise: estimate.roundOffPaise }),
     lineItems: estimate.lineItems.map((line) => ({ ...line })),
     lead: {
       clientName: lead.clientName,
@@ -615,6 +618,7 @@ export function toEstimateSnapshot(
     ...(estimate.subtotalPaise === undefined ? {} : { subtotalPaise: estimate.subtotalPaise }),
     ...(estimate.gstPaise === undefined ? {} : { gstPaise: estimate.gstPaise }),
     ...(estimate.totalPaise === undefined ? {} : { totalPaise: estimate.totalPaise }),
+    ...(estimate.roundOffPaise === undefined ? {} : { roundOffPaise: estimate.roundOffPaise }),
     ...(estimate.selectedMainBasketIds === undefined ? {} : {
       selectedMainBasketIds: [...estimate.selectedMainBasketIds],
       selectedMainBasketClassifications: estimate.selectedMainBasketIds.map((mainBasketId) => ({
@@ -628,7 +632,13 @@ export function toEstimateSnapshot(
 
 export function assertPublishableConfiguredLines(estimate: PublicationEstimate): void {
   const configured = estimate.lineItems.filter((line) => line.source === "configuration" && line.included);
-  if (configured.length === 0) return;
+  if (configured.length === 0 && estimate.roundOffPaise === undefined) {
+    if ([estimate.subtotalPaise, estimate.gstPaise, estimate.totalPaise].some(value => value !== undefined) &&
+      !estimateTotalsReconcile(estimate)) {
+      throw new ApiError(409, "ESTIMATE_INCOMPLETE", "Saved estimate totals must reconcile in paise.");
+    }
+    return;
+  }
   if (configured.some((line) =>
     !estimateDimensionSnapshotValid(line) ||
     line.pricingBasis !== undefined && !estimateComponentLineAmountIsValid(line) ||
@@ -644,9 +654,9 @@ export function assertPublishableConfiguredLines(estimate: PublicationEstimate):
     (line.rate !== Number(line.ratePaise) / 100 && !estimateComponentLineAmountIsValid(line)) ||
     line.amount !== Number(line.amountPaise) / 100
   ) || ![estimate.subtotalPaise, estimate.gstPaise, estimate.totalPaise].every(Number.isSafeInteger) ||
-    estimate.subtotalPaise !== estimate.lineItems.reduce((sum, line) =>
+    configured.length > 0 && estimate.subtotalPaise !== estimate.lineItems.reduce((sum, line) =>
       sum + (line.included ? Number(line.amountPaise ?? Number(line.amount) * 100) : 0), 0) ||
-    estimate.subtotalPaise! + estimate.gstPaise! !== estimate.totalPaise ||
+    !estimateTotalsReconcile(estimate) ||
     estimate.subtotal !== estimate.subtotalPaise! / 100 ||
     estimate.gst !== estimate.gstPaise! / 100 ||
     estimate.total !== estimate.totalPaise! / 100) {

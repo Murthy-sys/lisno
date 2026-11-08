@@ -58,20 +58,20 @@ const instructions: Partial<Record<DesignStageType, DesignStageInstructions>> = 
     owner: "Client · Designer coordination",
     trigger: "The Designer completes and saves Internal Kick off.",
     start: "Immediately after Internal Kick off is complete.",
-    completion: ["Client reviews the Internal Kick off document and completes Client Kick off after the meeting.", "If no meeting is needed, Designer marks it not necessary with a reason.", "Authorized Sales Manager or Super Admin completing on behalf must review the same document and attach evidence."],
+    completion: ["Client reviews the Internal Kick off document and completes Client Kick off after the meeting.", "Authorized Sales Manager or Super Admin completing on behalf must review the same document and attach evidence."],
     sla: {
       enabled: true,
       bands: [
-        { label: "On track", description: "Within 4 days, or marked not necessary", tone: "success" },
+        { label: "On track", description: "Within 4 days", tone: "success" },
         { label: "Yellow", description: "4 to 5 days", tone: "warning" },
         { label: "Late", description: "5 to 6 days", tone: "warning" },
         { label: "Overdue", description: "Beyond 6 days", tone: "danger" }
       ],
       clockOwner: "Designer, then Client where applicable",
-      clockRule: `${calendarRule} After the request is sent, the Designer owns time through day 4. If the Client chooses a meeting beyond day 4, time after day 4 belongs to the Client. The clock stops when kick-off is marked done or not necessary.`,
+      clockRule: `${calendarRule} After the request is sent, the Designer owns time through day 4. If the Client chooses a meeting beyond day 4, time after day 4 belongs to the Client. The clock stops when kick-off is completed.`,
       pauseRule: accessPause
     },
-    dependencies: ["Internal Kick off must be complete first.", "Complete Client Kick off or mark it not necessary to open Key Collection."],
+    dependencies: ["Internal Kick off must be complete first.", "Complete Client Kick off to open Key Collection."],
     clientExperience: ["The Client can complete the kick-off task as soon as Internal Kick off is complete; a separate Designer request is not required to close it.", "The first checkpoint records kick-off completion and elapsed time.", "The Client can share preferred availability, such as weekends, when confirming the meeting time."],
     clientMessage: "Congratulations, we have officially kick started.",
     managerReminders: ["The Line Manager sees Project Kick off progress.", ...reminderRules],
@@ -80,8 +80,8 @@ const instructions: Partial<Record<DesignStageType, DesignStageInstructions>> = 
   key_collection: {
     objective: null,
     owner: "Automatic · Client and Designer confirmations",
-    trigger: "Client Kick off is complete or marked not necessary.",
-    start: "After Client Kick off is complete or marked not necessary.",
+    trigger: "Client Kick off is complete.",
+    start: "After Client Kick off is complete.",
     completion: ["Client confirms keys handed over.", "Designer confirms keys received; both confirmations are required."],
     sla: { enabled: false, bands: [], clockOwner: null, clockRule: "No SLA or time bands apply to Key Collection.", pauseRule: "No stage SLA applies." },
     dependencies: ["Client Kick off must be complete first.", "Both key handover and receipt are required before On Site Actual Measurement starts."],

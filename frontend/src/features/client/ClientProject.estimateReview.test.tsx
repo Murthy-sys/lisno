@@ -108,13 +108,13 @@ describe("Client project published estimate review", () => {
     expect(screen.queryByRole("link", { name: "Open estimation" })).not.toBeInTheDocument();
     expect(screen.queryByText("Indicative total")).not.toBeInTheDocument();
     expect(screen.queryByText(/No requirements yet/)).not.toBeInTheDocument();
-    const approve = await screen.findByRole("button", { name: "Review for pre-design approval" });
+    const approve = await screen.findByRole("button", { name: "Review quotation" });
     expect(approve).toBeEnabled();
     await user.clear(quantity); await user.type(quantity, "4");
-    expect(screen.queryByRole("button", { name: "Approve pre-design quotation" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Approve quotation" })).not.toBeInTheDocument();
     expect(screen.getByText(/Save or discard your quotation changes/)).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Discard changes" }));
-    expect(screen.getByRole("button", { name: "Review for pre-design approval" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Review quotation" })).toBeEnabled();
     expect(screen.queryByRole("region", { name: "Design review" })).not.toBeInTheDocument();
   });
   it("omits the three sections and their reads before the first v3 quotation exists", async () => {
@@ -157,7 +157,7 @@ describe("Client project published estimate review", () => {
     expect(await screen.findByText("Additional requirements")).toBeVisible();
     expect(screen.getByText("Project coordination")).toBeVisible();
     expect(await screen.findByRole("heading", { name: "Selections requiring your approval" })).toBeVisible();
-    expect(screen.queryByRole("button", { name: "Review for pre-design approval" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Review quotation" })).not.toBeInTheDocument();
   });
 
   it("restores all three sections after Sales submission through the existing quotation refresh", async () => {
@@ -239,7 +239,7 @@ describe("Client project published estimate review", () => {
     expect(await screen.findByRole("heading", { name: "Selections requiring your approval" })).toBeVisible();
     expect(screen.getByRole("spinbutton", { name: /Quantity for Storage/ })).toHaveValue(6);
     expect(screen.getByRole("button", { name: "Save changes" })).toBeEnabled();
-    expect(screen.queryByRole("button", { name: "Review for pre-design approval" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Review quotation" })).not.toBeInTheDocument();
   });
 
   it("keeps mounted sections through a background publication check", async () => {

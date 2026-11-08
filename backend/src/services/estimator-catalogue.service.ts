@@ -5,7 +5,7 @@ import { readInHouseComponents, inHouseComponentBaseRate } from "../domain/ai-es
 import { normalizeDesignRules, validateDesignRules, designRulesDigest, designRuleEstimateNotes, type DesignRules } from "../domain/main-line-design-rules.js";
 import type mongoose from "mongoose";
 
-import { estimateModeBaseRatesPaise, type EstimateModeBaseRatesPaise } from "../domain/estimate-mode-pricing.js";
+import { estimateModeSellingRatesPaise, type EstimateModeBaseRatesPaise } from "../domain/estimate-mode-pricing.js";
 
 import { selectCurrentMainLineRevision } from "../domain/ai-estimator-knowledge-current-revision.js";
 import { normalizeKnowledgeBudgetAlterationTarget } from "../domain/ai-estimator-knowledge-recommendation.js";
@@ -20,6 +20,7 @@ import { UserModel } from "../models/User.js";
 import type { PublicUser } from "./auth.service.js";
 
 export interface EstimatorCatalogueTierPricing {
+  /** Legacy wire name: unit-rate modes contain final selling rates, including their configured maximum. */
   modeBaseRatesPaise: EstimateModeBaseRatesPaise;
   inHouseComponents?: Array<{ id: string; basketId: string; subBasketId: string | null;
     basketName: string; subBasketName: string | null; baseRatePaise: number | null; unavailableReason?: string | null }>;
@@ -47,6 +48,7 @@ export interface EstimatorCatalogueLine {
   applicableTiers: KnowledgeModeTier[];
   tierPricing: Partial<Record<KnowledgeModeTier, EstimatorCatalogueTierPricing>>;
   inHouseComponents?: EstimatorCatalogueTierPricing["inHouseComponents"];
+  /** Legacy wire name: combined/split In-house selling rate; component-priced lines remain null. */
   inHouseBaseRatePaise: number | null;
   modeBaseRatesPaise: EstimateModeBaseRatesPaise;
   uom: { id: string; code: string; name: string; decimalScale: number };
@@ -124,7 +126,7 @@ export interface EstimatorCatalogueRecommendationSource {
   guidance: RecommendationGuidance[];
 }
 
-/** Project base unit rates only; markup and source cost details stay in Configuration. */
+/** Project estimation rates only; margin percentages and source cost details stay in Configuration. */
 export async function listEstimatorCatalogue(
   actor: PublicUser,
   pagination: { limit: number; offset: number },
@@ -580,7 +582,7 @@ async function projectLines(
       const configured = section?.applicability === "configured";
       const components = section ? readInHouseComponents(section.payload) : undefined;
       return {
-        modeBaseRatesPaise: estimateModeBaseRatesPaise(configured ? section!.payload : null),
+        modeBaseRatesPaise: estimateModeSellingRatesPaise(configured ? section!.payload : null),
         ...(components === undefined ? {} : { inHouseComponents: (components ?? []).map(component => {
           const basket = componentBaskets.get(component.basketId);
           const subBasket = component.subBasketId ? componentSubBaskets.get(component.subBasketId) : undefined;

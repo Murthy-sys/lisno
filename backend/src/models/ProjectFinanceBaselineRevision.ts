@@ -1,3 +1,4 @@
+import { estimateTotalsReconcile } from "../domain/estimate-total-rounding.js";
 import { model, models, Schema } from "./mongoose.js";
 import { MAX_FINANCE_AMOUNT_PAISE, PROJECT_FINANCE_TARGET_MARGIN_BPS } from "../domain/project-finance.js";
 
@@ -12,12 +13,22 @@ export const financeBaselineSourceSchema = new Schema({
   approvedSubtotalPaise: money,
   approvedGstPaise: money,
   approvedContractTotalPaise: money,
+  approvedRoundOffPaise: { type: Number, min: -50, max: 49, validate: integer },
   targetMarginBps: { type: Number, required: true, enum: [PROJECT_FINANCE_TARGET_MARGIN_BPS] },
   targetProfitPaise: money,
   costBudgetPaise: money,
   approvedAt: { type: Date, required: true },
   approvedById: { type: String, required: true }
 }, { _id: false, strict: "throw" });
+
+financeBaselineSourceSchema.pre("validate", function validateApprovedMoney() {
+  if (!estimateTotalsReconcile({
+    subtotalPaise: this.get("approvedSubtotalPaise"),
+    gstPaise: this.get("approvedGstPaise"),
+    totalPaise: this.get("approvedContractTotalPaise"),
+    roundOffPaise: this.get("approvedRoundOffPaise")
+  })) this.invalidate("approvedContractTotalPaise", "Approved subtotal and GST must reconcile with the contract total and round-off.");
+});
 
 const schema = new Schema({
   _id: { type: String, required: true, immutable: true },

@@ -417,6 +417,14 @@ describe("apiClient", () => {
     await expect(apiClient.getBlob("/download", { maxBytes: 2 })).rejects.toMatchObject({ code: "FILE_TOO_LARGE" });
   });
 
+  it("cancels an oversized chunked comparison PDF before reading the rest", async () => {
+    const cancelled = vi.fn();
+    const stream = new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(new Uint8Array([1, 2, 3])); }, cancel: cancelled });
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(new Response(stream));
+    await expect(apiClient.postBlob("/comparison/pdf", {}, { maxBytes: 2 })).rejects.toMatchObject({ code: "FILE_TOO_LARGE" });
+    expect(cancelled).toHaveBeenCalledOnce(); expect(requestActivity.getSnapshot()).toBe(0);
+  });
+
   it("clears multipart activity after an invalid response or synchronous send failure", async () => {
     const XMLHttpRequest = installFakeXMLHttpRequest();
     const upload = apiClient.postMultipartWithProgress("/design-versions", new FormData(), vi.fn());
@@ -432,6 +440,26 @@ describe("apiClient", () => {
     });
     await expect(apiClient.postMultipartWithProgress("/design-versions", new FormData(), vi.fn()))
       .rejects.toThrow("Could not send");
+  });
+
+  it("posts comparison inputs through the authenticated download boundary", async () => {
+    tokenStorage.set("comparison-token");
+    const input = { roomId: "room-a", lines: [{ mainLineId: "line-a", quantity: 2 }] };
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementationOnce(async (url, init) => {
+      expect(String(url)).toBe("/api/v1/comparison/pdf"); expect(init?.method).toBe("POST");
+      expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer comparison-token");
+      expect(JSON.parse(String(init?.body))).toEqual(input);
+      return new Response("pdf", { headers: { "Content-Type": "application/pdf", "Content-Disposition": 'attachment; filename="comparison.pdf"' } });
+    });
+    const result = await apiClient.postBlob("/comparison/pdf", input, { maxBytes: 100 });
+    expect(result.filename).toBe("comparison.pdf"); expect(result.blob.size).toBe(3); expect(fetchSpy).toHaveBeenCalledOnce();
+  });
+
+  it("rejects a comparison PDF that finishes after the session changes", async () => {
+    tokenStorage.set("synthetic-a"); const body = deferred<Blob>(); const response = new Response();
+    const blob = vi.spyOn(response, "blob").mockReturnValue(body.promise); vi.spyOn(globalThis, "fetch").mockResolvedValue(response);
+    const pending = apiClient.postBlob("/comparison/pdf", {}); await vi.waitFor(() => expect(blob).toHaveBeenCalledOnce());
+    tokenStorage.set("synthetic-b"); body.resolve(new Blob(["private-a"])); await expect(pending).rejects.toMatchObject({ name: "AbortError" });
   });
 
   it("returns authenticated downloads with the server filename", async () => {

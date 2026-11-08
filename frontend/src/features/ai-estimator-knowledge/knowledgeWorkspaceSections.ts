@@ -15,7 +15,7 @@ export type KnowledgeWorkspaceTabKey = (typeof KNOWLEDGE_WORKSPACE_TAB_KEYS)[num
 
 export const KNOWLEDGE_WORKSPACE_TAB_LABELS = {
   ...KNOWLEDGE_WORKSPACE_SECTION_LABELS,
-  mode: "Signature mode",
+  mode: "Mode",
   "premium-mode": "Premium mode",
   "functional-mode": "Functional mode",
   design: "Design",
@@ -29,6 +29,6 @@ export function knowledgeWorkspaceModeTier(section: KnowledgeWorkspaceTabKey): K
 export function knowledgeWorkspaceSectionsForTiers(tiers: readonly KnowledgeModeTier[]): readonly KnowledgeWorkspaceTabKey[] {
   return KNOWLEDGE_WORKSPACE_TAB_KEYS.filter(section => {
     const tier = knowledgeWorkspaceModeTier(section);
-    return tier === null || tiers.includes(tier);
+    return section === "mode" || tier === null || tiers.includes(tier);
   });
 }

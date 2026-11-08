@@ -1,3 +1,4 @@
+import { quotationSnapshotDigest } from "../src/services/quotation-digest.js";
 import { LeadModel } from "../src/models/Lead.js";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import mongoose from "mongoose";
@@ -18,9 +19,9 @@ import { ProjectPurchaseOrderRevisionModel } from "../src/models/ProjectPurchase
 import { ProjectProcurementItemModel } from "../src/models/ProjectProcurementItem.js";
 import { ProjectWorkflowTaskModel } from "../src/models/ProjectWorkflowTask.js";
 import { AiEstimatorKnowledgeVendorModel } from "../src/models/AiEstimatorKnowledgeVendor.js";
-import { readMongoProjectStatusExecutionEvidence } from "../src/repositories/project-status.js";
+import { readMongoProjectStatusEstimateEvidence, readMongoProjectStatusExecutionEvidence } from "../src/repositories/project-status.js";
 import { chatUser } from "./helpers/project-chat.js";
-import { newEstimationLifecycle } from "../src/domain/estimation-lifecycle.js";
+import { newEstimationLifecycle, newQuotationLifecycle } from "../src/domain/estimation-lifecycle.js";
 import { DesignPlanReviewRoundModel } from "../src/models/DesignPlanReviewRound.js";
 import { EstimateDesignDrawingModel } from "../src/models/EstimateDesignDrawing.js";
 import { EstimateDesignRevisionModel } from "../src/models/EstimateDesignRevision.js";
@@ -47,6 +48,32 @@ async function fixture() {
 }
 
 describe("project status Mongo snapshot reads", () => {
+  it("keeps rounded quotation approval current in the selected status evidence", async () => {
+    await fixture();
+    const approvedAt = new Date(CHAT_NOW).toISOString();
+    const snapshot = { propertyType: "Villa", bedroomCount: null, rooms: [], scopes: [], selectedMainBasketIds: [],
+      selectedMainBasketClassifications: [],
+      lineItems: [{ id: "line-one", source: "legacy", catalogueId: "EL01", included: true, roomName: "Hall",
+        specification: "Electrical", unit: "unit", quantity: 1, amount: 100.24, rate: 100.24 }],
+      subtotal: 100.24, gst: 18.04, total: 118, subtotalPaise: 10_024, gstPaise: 1_804, totalPaise: 11_800, roundOffPaise: -28 };
+    const sourceDigest = quotationSnapshotDigest(snapshot);
+    const salesApproval = { actorId: "sales-a", pricedRevision: 1, estimateVersion: 4, sourceDigest, approvedAt };
+    const estimation = { ...newQuotationLifecycle(1), phase: "post", status: "draft", pricedRevision: 1, designScopeRevision: 1,
+      preApproval: { reviewRoundId: "review-a", estimateVersion: 4, approvedAt }, salesApproval };
+    await ProjectModel.collection.updateOne({ _id: "a" }, { $set: { clientId: "client-a" } });
+    await EstimateModel.collection.updateOne({ _id: "estimate-a" }, { $set: { ...snapshot, estimation, status: "client_approved", version: 5 } });
+    await EstimateClientReviewRoundModel.collection.updateOne({ _id: "review-a" }, { $set: { estimateSnapshot: snapshot,
+      status: "approved", decision: "approve", decisionSource: "client_portal", decidedById: "client-a", decidedAt: approvedAt,
+      workflowVersion: 3, phase: "pre", requirementsVersion: 1, pricedRevision: 1, designScopeRevision: 1,
+      submittedById: "sales-a", salesApproval, sourceDigest } });
+    const evidence = await readMongoProjectStatusEstimateEvidence("a");
+    expect(evidence.estimates.find(estimate => estimate.id === "estimate-a")?.quotationApproval).toMatchObject({
+      quotationApprovalState: "initial_current", currentQuotationApproved: true, requiresClientReapproval: false
+    });
+    await EstimateModel.collection.updateOne({ _id: "estimate-a" }, { $unset: { roundOffPaise: "" } });
+    expect((await readMongoProjectStatusEstimateEvidence("a")).estimates.find(estimate => estimate.id === "estimate-a")?.quotationApproval.currentQuotationApproved).toBe(false);
+  });
+
   it("projects only the managed user's responsibility page with canonical stages and no Mongo writes", async () => {
     const f = await fixture();
     await LeadModel.collection.updateOne({ _id: "lead-a" }, { $set: { projectNumber: "Lisno000012" } });

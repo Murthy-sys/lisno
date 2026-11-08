@@ -1,3 +1,4 @@
+import { calculateEstimateTotal } from "../domain/estimate-total-rounding.js";
 import { isDeepStrictEqual } from "node:util";
 import { createHash, randomUUID } from "node:crypto";
 import mongoose, { type ClientSession } from "mongoose";
@@ -6,17 +7,18 @@ import { KNOWLEDGE_MODE_TIERS, type KnowledgeModeTier } from "../domain/ai-estim
 import { canonicalEstimateDimensions, calculateDimensionQuantity, estimateLineDimensionsValid } from "../domain/estimate-dimensions.js";
 import { ESTIMATE_COMPONENT_PRICING_BASIS, estimateComponentLineAmountIsValid } from "../domain/estimate-component-pricing.js";
 import { clientQuotationEditable, effectiveCommercialStatus } from "../domain/estimation-lifecycle.js";
+import { ESTIMATE_PRICING_MODES } from "../domain/estimate-mode-pricing.js";
 import { ApiError } from "../middleware/errors.js";
 import { EstimateModel } from "../models/Estimate.js";
 import { EstimateClientReviewRoundModel } from "../models/EstimateClientReviewRound.js";
 import { AiEstimatorKnowledgeSectionModel } from "../models/AiEstimatorKnowledgeSection.js";
 import { createMongoRepository } from "../repositories/mongo.js";
-import { assertEstimateEditable, estimatePhysicalScopeChanged, fenceCollaborativeEstimate } from "./estimate-collaboration-policy.service.js";
+import { assertEstimateEditable, assertEstimatePricingModeChanges, canChangeEstimatePricingMode, estimatePhysicalScopeChanged, fenceCollaborativeEstimate } from "./estimate-collaboration-policy.service.js";
 import { estimateAmountFor, estimateTierScope, fenceEstimateTierSource, presentEstimateTiers } from "./estimate-tiers.service.js";
 import { estimatorCatalogueTierPricing, fenceEstimateInHouseComponentReferences, resolveEstimatorCatalogueLines } from "./estimator-catalogue.service.js";
 import { resolveEstimateComponentPricing } from "./estimate-component-pricing.service.js";
 import { configureQuotation, quotationConfigureSchema, quotationVisibleOverview, readQuotationSetup, visibleQuotationSources } from "./quotation-setup.service.js";
-import { quotationCandidateFor, quotationMandatoryTargets, quotationSavedMode as savedMode,
+import { quotationCandidateFor, quotationClassification, quotationPricingModeChoices, quotationMandatoryTargets, quotationSavedMode as savedMode,
   quotationSourceGrouping as grouping, quotationSourceIdentity as sourceIdentity,
   quotationVisibleRecommendationSources, readQuotationRecommendations } from "./quotation-recommendations.service.js";
 import { quotationApprovalPublicFields, resolveCurrentQuotationApproval } from "./quotation-approval-state.service.js";
@@ -42,6 +44,7 @@ const dimensions = z.object({ length: z.string().max(32), width: z.string().max(
 const editableFields = {
   source: quotationSourceSchema,
   quantity: z.number().finite().positive().max(Number.MAX_SAFE_INTEGER).optional(),
+  pricingMode: z.enum(ESTIMATE_PRICING_MODES).optional(),
   modeTier: z.enum(KNOWLEDGE_MODE_TIERS).optional(), dimensions: dimensions.optional(),
   selectedInHouseComponentIds: z.array(id).max(50).refine(ids => new Set(ids).size === ids.length).optional(),
   recommendationSourceMainLineIds: recommendationOrigins.optional()
@@ -51,11 +54,17 @@ export const quotationPatchSchema = z.object({ expectedVersion: version, operati
   z.object({ kind: z.literal("update"), lineItemId: id, included: z.boolean().optional(), ...editableFields }).strict(),
   z.object({ kind: z.literal("exclude_group"), mainBasketId: id, subBasketId: id.nullable(), roomId: id.nullable(),
     sourceToken: z.string().regex(/^[a-f0-9]{64}$/u) }).strict(),
+  z.object({ kind: z.literal("set_group_tier"), mainBasketId: id, subBasketId: id.nullable(), roomId: id,
+    sourceToken: z.string().regex(/^[a-f0-9]{64}$/u), modeTier: z.enum(KNOWLEDGE_MODE_TIERS),
+    componentSelections: z.array(z.object({ lineItemId: id,
+      selectedInHouseComponentIds: z.array(id).max(50).refine(ids => new Set(ids).size === ids.length)
+    }).strict()).max(1000).refine(lines => new Set(lines.map(line => line.lineItemId)).size === lines.length).optional()
+  }).strict(),
   quotationConfigureSchema
 ])).min(1).max(100) }).strict().refine(command => !command.operations.some(operation => operation.kind === "configure") || command.operations.length === 1,
   "Save setup separately from quotation items.");
 export type QuotationPatch = z.infer<typeof quotationPatchSchema>;
-type LineOperation = Exclude<QuotationPatch["operations"][number], { kind: "exclude_group" | "configure" }>;
+type LineOperation = Exclude<QuotationPatch["operations"][number], { kind: "exclude_group" | "set_group_tier" | "configure" }>;
 type GroupScope = { mainBasketId: string; subBasketId: string | null; roomId: string | null };
 type GroupMember = { saved: Row; source: Source };
 type QuotationGroup = GroupScope & { includedCount: number; sourceToken: string };
@@ -87,7 +96,7 @@ function groupMembers(estimate: Row, sources: ReadonlyMap<string, Source>): Grou
   const rooms = new Set((estimate.rooms ?? []).map((room: Row) => room.id));
   return estimate.lineItems.flatMap((saved: Row) => {
     const source = sources.get(saved.mainLineId);
-    return saved.source === "configuration" && saved.included && saved.clientVisible !== false &&
+    return saved.source === "configuration" && saved.included && (saved.clientVisible === undefined || saved.clientVisible === true) &&
       source && rooms.has(saved.roomId) && sameParent(saved, source) ? [{ saved, source }] : [];
   });
 }
@@ -101,7 +110,9 @@ function groupToken(estimate: Row, scope: GroupScope, members: readonly GroupMem
   const identities = members.map(({ saved, source }) => ({ id: saved.id, roomId: saved.roomId, mainLineId: saved.mainLineId,
     mainBasketId: saved.mainBasketId, subBasketId: saved.subBasketId, uomId: saved.uomId, included: saved.included,
     savedVisible: saved.clientVisible !== false, currentVisible: source.line.clientVisible,
-    currentParent: grouping(source), source: sourceIdentity(source) })).sort((a, b) => String(a.id).localeCompare(String(b.id)));
+    currentParent: grouping(source), source: sourceIdentity(source), uom: source.line.uom,
+    dimensionsMandatory: source.line.dimensionsMandatory, dimensionRule: source.line.dimensionRule,
+    applicableTiers: source.line.applicableTiers, tierPricing: source.line.tierPricing })).sort((a, b) => String(a.id).localeCompare(String(b.id)));
   return createHash("sha256").update(JSON.stringify({ estimateId: String(estimate._id ?? estimate.id), estimateVersion: estimate.version,
     scope: { mainBasketId: scope.mainBasketId, subBasketId: scope.subBasketId, roomId: scope.roomId }, identities })).digest("hex");
 }
@@ -161,7 +172,10 @@ async function present(context: Awaited<ReturnType<typeof contextFor>>, session?
     const origins = Array.isArray(saved?.recommendationSourceMainLineIds) ? saved.recommendationSourceMainLineIds : undefined;
     const safeOrigins = origins?.every((id: string) => visible.has(id) && !estimate.lineItems.some((row: Row) => row.mainLineId === id && row.clientVisible === false))
       ? origins : undefined;
+    const classification = saved?.classification ?? quotationClassification(estimate, line.mainLineId, saved?.mainBasketId);
+    const pricingModeChoices = saved ? await quotationPricingModeChoices({ ...saved, classification }, source, session) : [];
     presented.push({ ...line, roomId: saved?.roomId ?? null, included: saved?.included === true,
+      classification, pricingModeChoices,
       ...(safeOrigins === undefined ? {} : { recommendationSourceMainLineIds: safeOrigins }),
       source: source && saved && sameParent(saved, source) ? sourceIdentity(source) : null,
       ...(source ? grouping(source) : { mainBasketId: saved?.mainBasketId ?? null, mainBasketName: saved?.mainBasketName ?? null,
@@ -170,6 +184,7 @@ async function present(context: Awaited<ReturnType<typeof contextFor>>, session?
   const status = effectiveCommercialStatus(estimate);
   const { setup } = await readQuotationSetup(estimate, context.client && detail.editingAllowed, session);
   return { ...detail, ...quotationApprovalPublicFields(quotationApproval),
+    canChangePricingMode: canChangeEstimatePricingMode(context.actor, estimate, context.project),
     lines: presented.filter(line => line.included), excludedLines: presented.filter(line => !line.included),
     baskets: quotationBaskets(estimate, visible), groups: quotationGroups(estimate, groupMembers(estimate, visible)),
     setup, workflowVersion: 3 as const, phase: estimate.estimation.phase as "pre" | "post",
@@ -190,6 +205,11 @@ async function supersedePending(estimate: Row, actor: PublicUser, session: Clien
 
 async function pricedLine(prior: Row, source: Source, operation: LineOperation, session: ClientSession): Promise<Row> {
   const next: Row = { ...prior, ...currentFields(source) };
+  if (operation.pricingMode !== undefined) next.pricingMode = operation.pricingMode;
+  if (next.classification !== "special" && next.pricingMode !== undefined && next.pricingMode !== "sub_vendor") {
+    throw new ApiError(400, "ESTIMATE_PRICING_MODE_INVALID", "Standard items use Sub-Vendor pricing.");
+  }
+  if (next.pricingMode !== prior.pricingMode) delete next.selectedInHouseComponentIds;
   const tier = operation.modeTier ?? prior.modeTier ?? "signature";
   next.modeTier = tier;
   next.included = operation.kind === "update" ? operation.included ?? prior.included : true;
@@ -202,6 +222,7 @@ async function pricedLine(prior: Row, source: Source, operation: LineOperation, 
     next.amount = 0;
     return next;
   }
+  if (!ESTIMATE_PRICING_MODES.includes(next.pricingMode)) return unavailable();
   const pricing = estimatorCatalogueTierPricing(source.line, tier);
   if (!pricing) return unavailable();
   if (source.line.dimensionsMandatory && next.included) {
@@ -214,7 +235,7 @@ async function pricedLine(prior: Row, source: Source, operation: LineOperation, 
   delete next.componentPricing;
   delete next.pricingBasis;
   if (next.pricingMode === "in_house" && pricing.inHouseComponents !== undefined) {
-    next.selectedInHouseComponentIds = operation.selectedInHouseComponentIds ?? prior.selectedInHouseComponentIds;
+    next.selectedInHouseComponentIds = operation.selectedInHouseComponentIds ?? next.selectedInHouseComponentIds;
     const calculation = await resolveEstimateComponentPricing(source, tier as KnowledgeModeTier, next.quantity, next.selectedInHouseComponentIds, session);
     next.pricingBasis = ESTIMATE_COMPONENT_PRICING_BASIS;
     next.componentPricing = calculation;
@@ -316,16 +337,17 @@ export function createQuotationService({ audit }: { audit: AuditService }) {
       const estimate = context.estimate!;
       const limit = Math.min(50, Math.max(1, input.limit ?? 20));
       const offset = Math.max(0, input.offset ?? 0);
-      const sources = await visibleQuotationSources(estimate);
+      const sources = await visibleQuotationSources(estimate, undefined, true);
       const candidates = [];
       for (const source of sources.values()) {
         if (input.mainBasketId && source.line.basketId !== input.mainBasketId ||
           input.subBasketId && source.line.subBasketId !== input.subBasketId) continue;
         if (input.search && ![source.line.name, source.mainBasketName, source.subBasketName ?? ""].join(" ")
           .toLocaleLowerCase().includes(input.search.trim().toLocaleLowerCase())) continue;
-        if (estimate.lineItems.some((line: Row) => line.mainLineId === source.line.mainLineId && line.clientVisible === false)) continue;
+        if (estimate.lineItems.some((line: Row) => line.mainLineId === source.line.mainLineId &&
+          line.clientVisible !== undefined && line.clientVisible !== true)) continue;
         const candidate = await quotationCandidateFor(estimate, source);
-        if (candidate.choices.some(choice => choice.available)) candidates.push(candidate);
+        if (candidate.pricingModeChoices.some(option => option.choices.some(choice => choice.available))) candidates.push(candidate);
       }
       candidates.sort((a, b) => a.name.localeCompare(b.name) || a.mainLineId.localeCompare(b.mainLineId));
       return { items: candidates.slice(offset, offset + limit), total: candidates.length, limit, offset };
@@ -350,9 +372,10 @@ export function createQuotationService({ audit }: { audit: AuditService }) {
           if (setupOperation && !context.client) return missing();
           const setupChanges = setupOperation ? await configureQuotation(estimate, setupOperation, session) : null;
           const lineItems: Row[] = structuredClone(setupChanges?.lineItems ?? estimate.lineItems);
+          const addedBasketIds = new Set<string>();
           const touched = new Set<string>();
           const groupOperations = parsed.data.operations.filter(operation => operation.kind === "exclude_group");
-          const operations: LineOperation[] = parsed.data.operations.filter(operation => operation.kind !== "exclude_group" && operation.kind !== "configure");
+          const operations: LineOperation[] = parsed.data.operations.filter(operation => operation.kind !== "exclude_group" && operation.kind !== "set_group_tier" && operation.kind !== "configure");
           const resolved = new Map<string, Source>();
           const visible = new Set<string>();
           if (groupOperations.length) {
@@ -377,6 +400,48 @@ export function createQuotationService({ audit }: { audit: AuditService }) {
               }
             }
           }
+          const tierGroups = parsed.data.operations.filter(operation => operation.kind === "set_group_tier");
+          if (tierGroups.length) {
+            const sources = await visibleQuotationSources(estimate, session);
+            const members = groupMembers(estimate, sources);
+            const availableGroups = quotationGroups(estimate, members);
+            const grouped = new Set<string>();
+            for (const operation of tierGroups) {
+              const group = availableGroups.find(candidate => candidate.mainBasketId === operation.mainBasketId &&
+                candidate.subBasketId === operation.subBasketId && candidate.roomId === operation.roomId);
+              if (!group || group.sourceToken !== operation.sourceToken) unavailable();
+              const selected = members.filter(({ saved }) => saved.mainBasketId === operation.mainBasketId &&
+                (saved.subBasketId ?? null) === operation.subBasketId && saved.roomId === operation.roomId);
+              if (!selected.length || selected.length > 1000 || operation.componentSelections?.some(selection =>
+                !selected.some(member => member.saved.id === selection.lineItemId))) unavailable();
+              for (const member of selected) {
+                if (grouped.has(member.saved.id)) throw new ApiError(400, "QUOTATION_DUPLICATE_OPERATION", "Change each group once per save.");
+                grouped.add(member.saved.id);
+                const existing = operations.find(candidate => candidate.kind === "update" && candidate.lineItemId === member.saved.id);
+                if (existing?.kind === "update" && existing.included === false) continue;
+                if (existing?.modeTier !== undefined && existing.modeTier !== operation.modeTier) {
+                  throw new ApiError(400, "QUOTATION_DUPLICATE_OPERATION", "The item and its group must select the same tier.");
+                }
+                const componentIds = operation.componentSelections?.find(selection => selection.lineItemId === member.saved.id)?.selectedInHouseComponentIds;
+                if (componentIds && existing?.selectedInHouseComponentIds &&
+                  !isDeepStrictEqual([...componentIds].sort(), [...existing.selectedInHouseComponentIds].sort())) {
+                  throw new ApiError(400, "QUOTATION_DUPLICATE_OPERATION", "The item and its group must select the same components.");
+                }
+                const components = componentIds ?? existing?.selectedInHouseComponentIds;
+                const pricing = estimatorCatalogueTierPricing(member.source.line, operation.modeTier);
+                if ((existing?.pricingMode ?? member.saved.pricingMode) === "in_house" && pricing?.inHouseComponents !== undefined &&
+                  (member.saved.modeTier ?? "signature") !== operation.modeTier && components === undefined) unavailable();
+                if (existing) {
+                  existing.modeTier = operation.modeTier;
+                  if (components !== undefined) existing.selectedInHouseComponentIds = components;
+                } else operations.push({ kind: "update", lineItemId: member.saved.id, source: sourceIdentity(member.source),
+                  modeTier: operation.modeTier, ...(components === undefined ? {} : { selectedInHouseComponentIds: components }) });
+                resolved.set(member.source.line.mainLineId, member.source);
+                visible.add(member.source.line.mainLineId);
+              }
+            }
+            if (operations.length > 1000) throw new ApiError(400, "VALIDATION_ERROR", "Change at most 1000 quotation items per save.");
+          }
           const fenced = new Set<string>();
           const recommendationChanges: Array<{ operation: LineOperation; mainLineId: string; roomId: string }> = [];
           for (const operation of operations) {
@@ -385,6 +450,8 @@ export function createQuotationService({ audit }: { audit: AuditService }) {
             const prior = index < 0 ? null : lineItems[index]!;
             if (operation.kind === "update" && (!prior || prior.source !== "configuration")) return missing();
             const mainLineId = operation.kind === "add" ? operation.mainLineId : String(prior!.mainLineId);
+            if (operation.kind === "add" && estimate.lineItems.some((line: Row) => line.mainLineId === mainLineId &&
+              line.clientVisible !== undefined && line.clientVisible !== true)) return missing();
             const source = resolved.get(mainLineId) ?? (await resolveEstimatorCatalogueLines([mainLineId], session)).get(mainLineId);
             if (!source || (!visible.has(mainLineId) && !await clientVisible(source, session)) || prior?.clientVisible === false) return missing();
             resolved.set(mainLineId, source);
@@ -393,14 +460,14 @@ export function createQuotationService({ audit }: { audit: AuditService }) {
             if (prior && (prior.uomId !== source.line.uom.id || prior.mainBasketId !== source.line.basketId || prior.subBasketId !== source.line.subBasketId)) unavailable();
             const roomId = operation.kind === "add" ? operation.roomId : prior!.roomId;
             const room = estimate.rooms.find((row: Row) => row.id === roomId);
-            if (!room || !(estimate.selectedMainBasketIds ?? []).includes(source.line.basketId)) return missing();
+            if (!room || operation.kind !== "add" && !(estimate.selectedMainBasketIds ?? []).includes(source.line.basketId)) return missing();
             const key = `${roomId}\u0000${mainLineId}`;
             if (touched.has(key)) throw new ApiError(400, "QUOTATION_DUPLICATE_OPERATION", "Change each quotation item once per save.");
             touched.add(key);
             if (operation.kind === "add" && prior?.included) throw new ApiError(409, "QUOTATION_ITEM_EXISTS", "This item is already selected in the room.");
-            const base: Row = prior ?? { id: `estimate-line-${randomUUID()}`, source: "configuration", catalogueId: mainLineId,
+            const base: Row = prior ? { ...prior, classification: prior.classification ?? quotationClassification(estimate, mainLineId, source.line.basketId) } : { id: `estimate-line-${randomUUID()}`, source: "configuration", catalogueId: mainLineId,
               roomId, roomName: String(room.label ?? room.name ?? room.id), specification: null, included: true,
-              classification: estimate.lineItems.find((line: Row) => line.mainLineId === mainLineId)?.classification ?? estimate.selectedMainBasketClassifications?.find((entry: Row) => entry.mainBasketId === source.line.basketId)?.classification ?? "standard",
+              classification: quotationClassification(estimate, mainLineId, source.line.basketId),
               pricingMode: savedMode(estimate, mainLineId) };
             if (!fenced.has(mainLineId)) {
               await fenceEstimateTierSource({ ...base, ...currentFields(source) }, session);
@@ -415,9 +482,23 @@ export function createQuotationService({ audit }: { audit: AuditService }) {
             recommendationChanges.push({ operation, mainLineId, roomId });
             if (next.included) await fenceEstimateInHouseComponentReferences([next], new Map([[mainLineId, source]]), session);
             if (index < 0) lineItems.push(next); else lineItems[index] = next;
+            if (operation.kind === "add" && !(estimate.selectedMainBasketIds ?? []).includes(source.line.basketId)) {
+              addedBasketIds.add(source.line.basketId);
+            }
           }
           await reconcileRecommendationOrigins(estimate, lineItems, recommendationChanges, session, fenced);
-          if (isDeepStrictEqual(lineItems, estimate.lineItems) && (!setupChanges || Object.entries(setupChanges).every(([key, value]) => isDeepStrictEqual(value, estimate[key])))) {
+          assertEstimatePricingModeChanges(actor, estimate, context.project, lineItems);
+          // An item and its required parent scope commit together; browsing adds no scope.
+          const scopeChanges = addedBasketIds.size ? {
+            selectedMainBasketIds: [...(estimate.selectedMainBasketIds ?? []), ...addedBasketIds],
+            selectedMainBasketClassifications: [
+              ...(estimate.selectedMainBasketClassifications ?? []),
+              ...[...addedBasketIds].filter(mainBasketId => !estimate.selectedMainBasketClassifications?.some((entry: Row) => entry.mainBasketId === mainBasketId))
+                .map(mainBasketId => ({ mainBasketId, classification: "standard" }))
+            ]
+          } : null;
+          const membershipChanges = { ...setupChanges, ...scopeChanges };
+          if (isDeepStrictEqual(lineItems, estimate.lineItems) && Object.entries(membershipChanges).every(([key, value]) => isDeepStrictEqual(value, estimate[key]))) {
             result = await present(context, session);
             return;
           }
@@ -429,16 +510,17 @@ export function createQuotationService({ audit }: { audit: AuditService }) {
             subtotalPaise += amount;
           }
           const gstPaise = Number((BigInt(subtotalPaise) * 18n + 50n) / 100n);
-          const totalPaise = subtotalPaise + gstPaise;
-          if (!money(totalPaise)) unavailable();
+          const rounded = calculateEstimateTotal(subtotalPaise, gstPaise);
+          if (!rounded) return unavailable();
+          const { totalPaise, roundOffPaise } = rounded;
           // Persist the first-actionable anchor before this material save
           // invalidates the current quotation approval. The task upsert keeps
           // its original opened/due dates across later revisions.
           await ensureQuotationDesignTask(estimate, now, session);
           await supersedePending(estimate, actor, session, now);
-          const physicalChange = estimatePhysicalScopeChanged(estimate, { ...estimate, ...setupChanges, lineItems });
+          const physicalChange = estimatePhysicalScopeChanged(estimate, { ...estimate, ...membershipChanges, lineItems });
           const saved = await EstimateModel.findOneAndUpdate({ _id: estimate._id, version: parsed.data.expectedVersion, "estimation.editClosedAt": null },
-            { $set: { ...setupChanges, lineItems, subtotalPaise, gstPaise, totalPaise, subtotal: subtotalPaise / 100, gst: gstPaise / 100, total: totalPaise / 100,
+            { $set: { ...membershipChanges, lineItems, subtotalPaise, gstPaise, totalPaise, roundOffPaise, subtotal: subtotalPaise / 100, gst: gstPaise / 100, total: totalPaise / 100,
               isIncomplete: lineItems.some(line => line.included && line.source === "configuration" &&
                 (!estimateLineDimensionsValid(line) || !estimateComponentLineAmountIsValid(line) && (!money(line.ratePaise) || !money(line.amountPaise)))),
               status: estimate.estimation.preApproval ? "client_approved" : "draft", "estimation.status": "draft", "estimation.pendingReviewRoundId": null,

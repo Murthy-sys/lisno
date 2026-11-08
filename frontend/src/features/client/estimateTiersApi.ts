@@ -30,6 +30,11 @@ export interface EstimateTierLine {
   mainLineId: string;
   mainLineName: string;
   roomName: string;
+  roomId?: string;
+  mainBasketId?: string;
+  mainBasketName?: string;
+  subBasketId?: string | null;
+  subBasketName?: string | null;
   dimensionsMandatory?: boolean;
   dimensionRule?: EstimateDimensionRule | null;
   dimensions?: EstimateDimensions;
@@ -52,6 +57,7 @@ export interface EstimateTiersDetail {
   editingAllowed: boolean;
   editingBlockReason: "review_pending" | "closed" | "not_started" | null;
   totalPaise: number | null;
+  roundOffPaise?: number;
   isIncomplete: boolean;
   lines: EstimateTierLine[];
 }
@@ -74,6 +80,13 @@ export const updateEstimateTier = (projectId: string, lineItemId: string, input:
     revisionId: input.revisionId, itemVersion: input.itemVersion, revisionVersion: input.revisionVersion, uomId: input.uomId,
     ...(input.selectedInHouseComponentIds === undefined ? {} : { selectedInHouseComponentIds: input.selectedInHouseComponentIds })
   });
+
+export interface UpdateEstimateTierGroupInput {
+  expectedVersion: number;
+  lines: Array<Omit<UpdateEstimateTierInput, "expectedVersion"> & { lineItemId: string }>;
+}
+export const updateEstimateTierGroup = (projectId: string, input: UpdateEstimateTierGroupInput) =>
+  apiClient.patch<EstimateTiersDetail>(path(projectId), input);
 
 export interface UpdateEstimateDimensionsInput extends EstimateTierSource {
   expectedVersion: number;

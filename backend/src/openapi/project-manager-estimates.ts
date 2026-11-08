@@ -41,7 +41,9 @@ export const PM_ESTIMATE_SCHEMAS = {
   PMWriteAvailability: object({ available: bool, reason: nullableText }),
   PMEstimateView: object({ project: object({ id, name: text, projectNumber: PROJECT_NUMBER_SCHEMA }), availability: { ...text, enum: ["available", "unavailable"] }, reason: nullableText,
     source: nullableRef("PMApprovedSourceRef"), approvedAt: time, lines: array("PMEstimateLine"), mainLines: array("PMMainLineScope"),
-    totals: object({ subtotalPaise: paise, gstPaise: paise, totalPaise: paise }), writeAvailability: ref("PMWriteAvailability") }),
+    totals: object({ subtotalPaise: paise, gstPaise: paise, totalPaise: paise,
+      roundOffPaise: { type: "integer", minimum: -50, maximum: 49, description: "Saved final estimate adjustment in paise; absent for historical exact totals." }
+    }, ["subtotalPaise", "gstPaise", "totalPaise"]), writeAvailability: ref("PMWriteAvailability") }),
   PMVendorCandidate: object({ id, code: text, name: text, classification: strings, canSuggest: bool, bidEligible: bool, reasons: strings }),
   PMVendorCandidatePage: { ...object({ source: ref("PMApprovedSourceRef"), mainLine: ref("PMMainLineScope"), items: array("PMVendorCandidate"), ...page }),
     description: "Distinct vendors linked by retained budget references in the Main Line's saved draft, otherwise active Configuration revision. A valid empty linked set returns an empty page; unverifiable Configuration returns HTTP 409 PM_MAIN_LINE_VENDOR_CONFIGURATION_UNAVAILABLE." },

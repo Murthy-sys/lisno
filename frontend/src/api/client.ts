@@ -258,6 +258,51 @@ function filenameFromDisposition(disposition: string | null): string | undefined
   return disposition.match(/filename="?([^";]+)"?/i)?.[1];
 }
 
+async function readBlobResponse(response: Response, scope: RequestScope, { signal, onProgress, maxBytes }: BlobOptions) {
+  const sizeHeader = response.headers.get("Content-Length");
+  const declaredSize = sizeHeader === null ? NaN : Number(sizeHeader);
+  const totalBytes = Number.isSafeInteger(declaredSize) && declaredSize >= 0 ? declaredSize : null;
+  const tooLarge = () => new ApiError(413, "FILE_TOO_LARGE", "This file exceeds the download size limit.");
+  if (maxBytes !== undefined && totalBytes !== null && totalBytes > maxBytes) {
+    await response.body?.cancel();
+    throw tooLarge();
+  }
+  let blob: Blob;
+  if (response.body && (onProgress || maxBytes !== undefined)) {
+    const reader = response.body.getReader();
+    const chunks: BlobPart[] = [];
+    let loadedBytes = 0;
+    try {
+      while (true) {
+        signal?.throwIfAborted();
+        const { done, value } = await readScoped(scope, () => reader.read());
+        assertCurrent(scope);
+        signal?.throwIfAborted();
+        if (done) break;
+        loadedBytes += value.byteLength;
+        if (maxBytes !== undefined && loadedBytes > maxBytes) throw tooLarge();
+        chunks.push(value);
+        onProgress?.({ loadedBytes, totalBytes });
+      }
+      blob = new Blob(chunks, { type: response.headers.get("Content-Type") ?? "application/octet-stream" });
+    } catch (error) {
+      await reader.cancel().catch(() => {});
+      throw error;
+    } finally { reader.releaseLock(); }
+  } else {
+    blob = await readScoped(scope, () => response.blob());
+    assertCurrent(scope);
+    signal?.throwIfAborted();
+    if (maxBytes !== undefined && blob.size > maxBytes) throw tooLarge();
+    onProgress?.({ loadedBytes: blob.size, totalBytes });
+  }
+  assertCurrent(scope);
+  return {
+    blob,
+    filename: filenameFromDisposition(response.headers.get("Content-Disposition"))
+  };
+}
+
 export const apiClient = {
   /** Authenticated long-lived response; the caller owns stream parsing and cleanup. */
   async stream(path: string, options: RequestOptions = {}): Promise<Response> {
@@ -414,6 +459,16 @@ export const apiClient = {
       try { xhr.send(body); } catch (error) { fail(error); }
     }).finally(finish);
   },
+  async postBlob(path: string, body: unknown, { signal, showGlobalLoader = true, maxBytes }: BlobOptions = {}): Promise<{ blob: Blob; filename: string | undefined }> {
+    const finish = showGlobalLoader ? beginApiRequest() : () => {};
+    try {
+      const scope = captureScope();
+      const headers = buildHeaders(undefined, true, scope.token);
+      headers.set("Accept", "application/pdf");
+      const response = await fetchApi(path, { method: "POST", headers, body: JSON.stringify(body), signal, cache: "no-store" }, scope);
+      return await readBlobResponse(response, scope, { signal, maxBytes });
+    } finally { finish(); }
+  },
   async getBlob(
     path: string,
     { signal, showGlobalLoader = true, onProgress, maxBytes }: BlobOptions = {}
@@ -426,48 +481,7 @@ export const apiClient = {
         headers: buildHeaders(undefined, false, scope.token),
         signal
       }, scope);
-      const sizeHeader = response.headers.get("Content-Length");
-      const declaredSize = sizeHeader === null ? NaN : Number(sizeHeader);
-      const totalBytes = Number.isSafeInteger(declaredSize) && declaredSize >= 0 ? declaredSize : null;
-      const tooLarge = () => new ApiError(413, "FILE_TOO_LARGE", "This file exceeds the download size limit.");
-      if (maxBytes !== undefined && totalBytes !== null && totalBytes > maxBytes) {
-        await response.body?.cancel();
-        throw tooLarge();
-      }
-      let blob: Blob;
-      if (response.body && (onProgress || maxBytes !== undefined)) {
-        const reader = response.body.getReader();
-        const chunks: BlobPart[] = [];
-        let loadedBytes = 0;
-        try {
-          while (true) {
-            signal?.throwIfAborted();
-            const { done, value } = await readScoped(scope, () => reader.read());
-            assertCurrent(scope);
-            signal?.throwIfAborted();
-            if (done) break;
-            loadedBytes += value.byteLength;
-            if (maxBytes !== undefined && loadedBytes > maxBytes) throw tooLarge();
-            chunks.push(value);
-            onProgress?.({ loadedBytes, totalBytes });
-          }
-          blob = new Blob(chunks, { type: response.headers.get("Content-Type") ?? "application/octet-stream" });
-        } catch (error) {
-          await reader.cancel().catch(() => {});
-          throw error;
-        } finally { reader.releaseLock(); }
-      } else {
-        blob = await readScoped(scope, () => response.blob());
-        assertCurrent(scope);
-        signal?.throwIfAborted();
-        if (maxBytes !== undefined && blob.size > maxBytes) throw tooLarge();
-        onProgress?.({ loadedBytes: blob.size, totalBytes });
-      }
-      assertCurrent(scope);
-      return {
-        blob,
-        filename: filenameFromDisposition(response.headers.get("Content-Disposition"))
-      };
+      return await readBlobResponse(response, scope, { signal, onProgress, maxBytes });
     } finally {
       finish();
     }

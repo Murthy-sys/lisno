@@ -32,6 +32,8 @@ import { startMongoReplicaSet } from "./helpers/mongo-replica-set.js";
 const client = { id: "collab-client", name: "Test Client", email: "collab-client@example.test", role: "client" } as const;
 const sales = { id: "collab-sales", name: "Test Sales", email: "collab-sales@example.test", role: "estimator_sales" } as const;
 const designer = { id: "collab-designer", name: "Test Designer", email: "collab-designer@example.test", role: "designer" } as const;
+const secondaryDesigner = { ...designer, id: "secondary-designer", email: "secondary-designer@example.test" };
+const unrelatedDesigner = { ...designer, id: "unrelated-designer", email: "unrelated-designer@example.test" };
 const superAdmin = { id: "collab-super", name: "Test Super Admin", email: "collab-super@example.test", role: "super_admin" } as const;
 const now = new Date("2026-10-13T10:00:00Z");
 let replica: Awaited<ReturnType<typeof startMongoReplicaSet>>;
@@ -104,7 +106,8 @@ async function publishDesigner() {
 function submissionServer() {
   const app = express();
   app.use(express.json());
-  const auth = { authenticate: async (token: string) => token === "designer" ? designer : sales } as any;
+  const auth = { authenticate: async (token: string) => token === "designer" ? designer :
+    token === "secondary" ? secondaryDesigner : token === "unrelated" ? unrelatedDesigner : sales } as any;
   const leads = { get: async () => ({ id: "collab-lead", ownerId: sales.id, projectId: "collab-project" }) } as any;
   app.use(createEstimatesRouter(auth, leads, audit, {} as any, {} as any, publication, decisions, reviews));
   app.use(errorHandler);
@@ -213,17 +216,55 @@ describe("version 3 two-phase quotation approvals", () => {
     expect((await ProjectModel.findById("other-project").lean())!.primaryDesignerId).toBeNull();
   });
 
-  it("advertises publication only for assigned Sales before pre-approval and the primary afterwards", async () => {
+  it("separates primary Designer submission preparation from publication of a saved revision", async () => {
     const app = submissionServer();
     const detail = async (actor: string) => (await request(app).get("/leads/collab-lead/estimate").set("Authorization", `Bearer ${actor}`).expect(200)).body.data;
-    expect((await detail("sales")).capabilities.canPublishQuotation).toBe(true);
+    expect((await detail("sales")).capabilities).toMatchObject({ canPublishQuotation: true, canPrepareQuotationSubmission: false });
+    expect(await detail("designer")).toBeNull();
+    const pre = await preApprove(); await assignPrimary();
+    const approvedHistory = await EstimateClientReviewRoundModel.findById(pre.clientReview.id).lean();
+    expect((await detail("sales")).capabilities).toMatchObject({ canPublishQuotation: false, canPrepareQuotationSubmission: false });
+    expect((await detail("designer")).capabilities).toMatchObject({ canPublishQuotation: false, canPrepareQuotationSubmission: true });
+    const saved = await saveDesignerQuantity(11);
+    expect(saved.body.data.capabilities).toMatchObject({ canPublishQuotation: true, canPrepareQuotationSubmission: true });
+    expect((await detail("designer")).capabilities).toMatchObject({ canPublishQuotation: true, canPrepareQuotationSubmission: true });
+    const post = await publishDesigner();
+    expect((await detail("designer")).capabilities).toMatchObject({ canPublishQuotation: false, canPrepareQuotationSubmission: false });
+    await decide(post.clientReview, "request_changes");
+    expect((await detail("designer")).capabilities).toMatchObject({ canPublishQuotation: true, canPrepareQuotationSubmission: true });
+    await saveDesignerQuantity(12);
+    const resubmitted = await publishDesigner();
+    await decide(resubmitted.clientReview);
+    expect((await detail("designer")).capabilities).toMatchObject({ canPublishQuotation: false, canPrepareQuotationSubmission: false });
+    expect(await EstimateClientReviewRoundModel.findById(pre.clientReview.id).lean()).toEqual(approvedHistory);
+  });
+
+  it("never advertises submission preparation to secondary, unrelated or removed primary Designers", async () => {
     await preApprove(); await assignPrimary();
-    expect((await detail("sales")).capabilities.canPublishQuotation).toBe(false);
-    expect((await detail("designer")).capabilities.canPublishQuotation).toBe(false);
-    await saveDesignerQuantity(11);
-    expect((await detail("designer")).capabilities.canPublishQuotation).toBe(true);
-    await publishDesigner();
-    expect((await detail("designer")).capabilities.canPublishQuotation).toBe(false);
+    await ProjectModel.updateOne({ _id: "collab-project" }, { $addToSet: { assignedDesignerIds: secondaryDesigner.id } });
+    const app = submissionServer();
+    const detail = async (actor: string) => (await request(app).get("/leads/collab-lead/estimate").set("Authorization", `Bearer ${actor}`).expect(200)).body.data;
+    expect(await detail("secondary")).toBeNull();
+    expect(await detail("unrelated")).toBeNull();
+    await ProjectModel.updateOne({ _id: "collab-project" }, { $set: { primaryDesignerId: secondaryDesigner.id } });
+    expect((await detail("designer")).capabilities.canPrepareQuotationSubmission).toBe(false);
+    expect(await detail("secondary")).toBeNull();
+  });
+
+  it("requires matching V3 project, initial approval and an editable working copy for preparation", async () => {
+    await preApprove(); await assignPrimary();
+    const app = submissionServer();
+    const detail = async () => (await request(app).get("/leads/collab-lead/estimate").set("Authorization", "Bearer designer").expect(200)).body.data;
+    const initial = await EstimateModel.findById("collab-estimate").lean();
+    await EstimateModel.updateOne({ _id: "collab-estimate" }, { $set: { "estimation.status": "ready_for_client" } });
+    expect((await detail()).capabilities.canPrepareQuotationSubmission).toBe(false);
+    await EstimateModel.updateOne({ _id: "collab-estimate" }, { $set: { "estimation.status": "draft", "estimation.editClosedAt": now.toISOString() } });
+    expect((await detail()).capabilities.canPrepareQuotationSubmission).toBe(false);
+    await EstimateModel.updateOne({ _id: "collab-estimate" }, { $set: { "estimation.editClosedAt": null, "estimation.preApproval": null } });
+    expect((await detail()).capabilities.canPrepareQuotationSubmission).toBe(false);
+    await EstimateModel.updateOne({ _id: "collab-estimate" }, { $set: { "estimation.preApproval": initial!.estimation!.preApproval } });
+    await ProjectModel.updateOne({ _id: "collab-project" }, { $set: { estimationWorkflowVersion: 2 } });
+    expect((await detail()).capabilities.canPrepareQuotationSubmission).toBe(false);
   });
   it("submits both quotation phases above ₹15 lakh directly to the Client with the required actor evidence", async () => {
     await setHighValueQuotation();

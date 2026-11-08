@@ -28,7 +28,8 @@ const catalogue = (): EstimationCatalogue => ({
 });
 const selected = new Set(["pop", "painting"]);
 const project = (current: EstimationCatalogue, lines: readonly ConfiguredLineDraft[] = [], room = living,
-  selectedMainBasketIds: ReadonlySet<string> = selected) => buildSalesEstimateCatalogue({ catalogue: current, room, selectedMainBasketIds, lines });
+  selectedMainBasketIds: ReadonlySet<string> = selected, browseMainBasketIds?: ReadonlySet<string>) =>
+  buildSalesEstimateCatalogue({ catalogue: current, room, selectedMainBasketIds, browseMainBasketIds, lines });
 const draft = (current: EstimationCatalogue, room = living) => createConfiguredLine(current, room,
   { mainLineId: "gypsum", basketId: "pop", subBasketId: "ceiling" })!;
 
@@ -66,6 +67,72 @@ describe("Sales active-room catalogue presentation", () => {
     expect(project(current, [saved, otherRoom], kitchen).find(row => row.target.mainLineId === "gypsum")!.line).toBe(otherRoom);
     expect(project(current, [saved], kitchen).find(row => row.target.mainLineId === "gypsum")!.line)
       .toMatchObject({ included: false, quantity: 1, rateInput: "12.5", roomName: "Kitchen" });
+  });
+
+  it("shows only included room items in a compact basket without sibling or other-group previews", () => {
+    const current = catalogue();
+    current.items[0]!.subBaskets[0]!.mainLines.push(line("sibling"));
+    current.items[0]!.subBaskets[1]!.mainLines.push(line("other-group", "pop", "empty"));
+    const chosen: ConfiguredLineDraft = { ...draft(current), included: true, quantity: 3, rateInput: "75",
+      recommendationSourceMainLineIds: ["living-source"], itemVersion: 7, revisionVersion: 9 };
+    const otherRoom: ConfiguredLineDraft = { ...createConfiguredLine(current, kitchen,
+      { mainLineId: "sibling", basketId: "pop", subBasketId: "ceiling" })!, included: true,
+      quantity: 2, rateInput: "44", recommendationSourceMainLineIds: ["kitchen-source"] };
+    const browse = new Set(["painting"]);
+    const drafts = [chosen, otherRoom];
+    const before = structuredClone(drafts);
+    const livingRows = project(current, drafts, living, selected, browse);
+    expect(livingRows.map(row => row.target.mainLineId)).toEqual(["gypsum", "paint"]);
+    expect(livingRows[0]!.line).toBe(chosen);
+    expect(livingRows[0]!.isPreview).toBe(false);
+    expect(livingRows[1]!.isPreview).toBe(true);
+    expect(project(current, drafts, kitchen, selected, browse).map(row => row.target.mainLineId)).toEqual(["sibling", "paint"]);
+    expect(project(current, [chosen], kitchen, selected, browse).map(row => row.target.mainLineId)).toEqual(["paint"]);
+    expect(livingRows.reduce((amount, row) => amount + configuredLineAmountPaise(row.line)!, 0)).toBe(22_500);
+    expect(project(current, drafts, kitchen, selected, browse)
+      .reduce((amount, row) => amount + configuredLineAmountPaise(row.line)!, 0)).toBe(8_800);
+    expect(drafts).toEqual(before);
+    expect(browse).toEqual(new Set(["painting"]));
+    expect(selected).toEqual(new Set(["pop", "painting"]));
+  });
+
+  it("reveals unchecked choices and preserved exclusions on explicit browse without altering selected amounts", () => {
+    const current = catalogue();
+    current.items[0]!.subBaskets[0]!.mainLines.push(line("sibling"), line("never-selected"));
+    current.items[0]!.subBaskets[1]!.mainLines.push(line("other-group", "pop", "empty"));
+    const chosen: ConfiguredLineDraft = { ...draft(current), included: true, quantity: 3, rateInput: "75",
+      recommendationSourceMainLineIds: ["source"] };
+    const excluded: ConfiguredLineDraft = { ...createConfiguredLine(current, living,
+      { mainLineId: "sibling", basketId: "pop", subBasketId: "ceiling" })!, persistedId: "saved-excluded",
+      included: false, quantity: 7.25, rateInput: "123.45", rateSource: "manual", pricingMode: "in_house",
+      classification: "special", sourceItemVersion: 4, sourceRevisionVersion: 5,
+      dimensions: { length: "1", width: "2", height: "3" }, selectedInHouseComponentIds: ["frame"] };
+    const drafts = [chosen, excluded];
+    const before = structuredClone(drafts);
+    const compactRows = project(current, drafts, living, selected, new Set(["painting"]));
+    const browsedRows = project(current, drafts, living, selected, selected);
+    expect(compactRows.map(row => row.target.mainLineId)).toEqual(["gypsum", "paint"]);
+    expect(browsedRows.map(row => row.target.mainLineId)).toEqual([
+      "direct", "gypsum", "sibling", "never-selected", "temporary-ceiling", "other-group", "paint"
+    ]);
+    expect(browsedRows.find(row => row.target.mainLineId === "sibling")!.line).toBe(excluded);
+    expect(browsedRows.filter(row => row.line.included).map(row => row.target.mainLineId)).toEqual(["gypsum"]);
+    expect(browsedRows.filter(row => row.isPreview).every(row => !row.line.included)).toBe(true);
+    for (const rows of [compactRows, browsedRows]) {
+      expect(rows.reduce((amount, row) => amount + configuredLineAmountPaise(row.line)!, 0)).toBe(22_500);
+    }
+    expect(drafts).toEqual(before);
+  });
+
+  it("keeps identity and saved-source guards for included compact rows and ignores unselected browse IDs", () => {
+    const current = catalogue();
+    const chosen: ConfiguredLineDraft = { ...draft(current), included: true };
+    expect(project(current, [chosen], living, new Set(["pop"]), new Set(["painting"]))
+      .map(row => row.target.mainLineId)).toEqual(["gypsum"]);
+    expect(project(current, [{ ...chosen, sourceMissing: true }], living, new Set(["pop"]), new Set())).toEqual([]);
+    expect(project(current, [chosen, { ...chosen, persistedId: "duplicate" }], living, new Set(["pop"]), new Set())).toEqual([]);
+    current.items[1]!.subBaskets[0]!.mainLines.push(line("gypsum", "painting", "wall"));
+    expect(project(current, [chosen], living, new Set(["pop"]), new Set())).toEqual([]);
   });
 
   it("restricts choices to selected baskets and reflects current Configuration defaults without fabricating a price", () => {

@@ -42,6 +42,12 @@ function setup(value: QuotationDetail = structuredClone(detail), readOnly = fals
   function Capture() { queryClient = useQueryClient(); return null; }
   server.use(
     http.get("/api/v1/projects/project-one/quotation", () => HttpResponse.json({ data: state.detail })),
+    http.get("/api/v1/projects/project-one/quotation/setup", () => HttpResponse.json({ data: {
+      projectId: state.detail.projectId, estimateId: state.detail.estimateId, estimateVersion: state.detail.estimateVersion,
+      setup: state.detail.setup ?? { propertyType: "1BHK", bedroomCount: null, rooms: [], selectedMainBasketIds: [], sourceToken: "fixture-scope", canConfigure: false },
+      baskets: (state.detail.baskets ?? []).map(basket => ({ ...basket, canSelect: true, canRemove: true, removalBlockedReason: null, directTemporaryItemCount: 0,
+        subBaskets: basket.subBaskets.map(sub => ({ ...sub, mainLineCount: 1, temporaryItemCount: 0 })) }))
+    } })),
     http.get("/api/v1/projects/project-one/quotation/revision", () => HttpResponse.json({ data: { estimateId: "estimate-one", estimateVersion: state.detail.estimateVersion, pricedRevision: state.detail.pricedRevision, status: state.detail.status, phase: state.detail.phase } })),
     http.get("/api/v1/projects/project-one/quotation/items", () => {
       const items = [candidate, ...(state.detail.excludedLines ?? []).map(line => ({ ...candidate, mainLineId: line.mainLineId,
@@ -75,6 +81,142 @@ async function chooseItem(user: ReturnType<typeof userEvent.setup>, name: string
 }
 
 describe("Client quotation", () => {
+  it("applies a sub-basket mode to every included row despite search and saves one room-scoped command", async () => {
+    const fixture = groupedDetail(); const { saves } = setup(fixture); const user = userEvent.setup();
+    await screen.findByRole("group", { name: "Storage Kitchen" });
+    await user.type(screen.getByRole("searchbox", { name: "Search estimate items" }), "Shelf");
+    expect(screen.queryByRole("group", { name: "Storage Kitchen" })).not.toBeInTheDocument();
+    const modes = screen.getByRole("group", { name: "Modes for Storage units in Kitchen" });
+    expect(within(modes).getByRole("radio", { name: "Mode for Storage units in Kitchen" })).toBeChecked();
+    await user.click(within(modes).getByRole("radio", { name: "Premium tier for Storage units in Kitchen" }));
+    await user.clear(screen.getByRole("searchbox", { name: "Search estimate items" }));
+    expect(screen.getByRole("status", { name: "Configured price for Storage in Kitchen" })).toHaveTextContent("₹750.00");
+    expect(screen.queryByRole("radio", { name: "Premium tier for Shelf in Kitchen" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(saves[0]).toEqual({ expectedVersion: 7, operations: [{ kind: "set_group_tier", mainBasketId: "furniture", subBasketId: "storage",
+      roomId: "room-one", sourceToken: "storage-kitchen", modeTier: "premium" }] }));
+  });
+
+  it("uses the Direct-items group token without including nested sub-basket edits", async () => {
+    const fixture = groupedDetail();
+    fixture.lines.push({ ...fixture.lines[0]!, id: "direct", mainLineId: "direct", mainLineName: "Direct work", subBasketId: null, subBasketName: null });
+    fixture.groups!.push({ mainBasketId: "furniture", subBasketId: null, roomId: "room-one", includedCount: 3, sourceToken: "room-basket" });
+    const { saves } = setup(fixture); const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Increase quantity for Storage in Kitchen" }));
+    await user.click(screen.getByRole("radio", { name: "Premium tier for Direct items in Furniture, Kitchen" }));
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(saves[0]).toEqual({ expectedVersion: 7, operations: [
+      { kind: "set_group_tier", mainBasketId: "furniture", subBasketId: null, roomId: "room-one", sourceToken: "room-basket", modeTier: "premium" },
+      { kind: "update", lineItemId: "line-one", source, quantity: 3, included: true, modeTier: "signature" }
+    ] }));
+  });
+
+  it.each([false, true])("saves an explicit same-tier selection and verifies its configured price after a lost response (applied=%s)", async applied => {
+    const fixture = groupedDetail();
+    fixture.lines = [fixture.lines[0]!];
+    fixture.lines[0] = { ...fixture.lines[0]!, ratePaise: 30000, amountPaise: 60000 };
+    const { state, saves } = setup(fixture); const user = userEvent.setup();
+    server.use(http.patch("/api/v1/projects/project-one/quotation", async ({ request }) => {
+      saves.push(await request.json() as Record<string, unknown>);
+      state.detail = { ...state.detail, estimateVersion: 8, lines: state.detail.lines.map(line => applied
+        ? { ...line, ratePaise: 50000, amountPaise: 100000 } : line) };
+      return HttpResponse.error();
+    }));
+    await user.click(await screen.findByRole("radio", { name: "Signature tier for Storage units in Kitchen" }));
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(saves).toHaveLength(1));
+    expect(saves[0]).toMatchObject({ operations: [{ kind: "set_group_tier", modeTier: "signature" }] });
+    if (applied) {
+      expect(await screen.findByText(/Changes saved. Your team will review/)).toBeVisible();
+      expect(screen.queryByRole("button", { name: "Verify saved changes" })).not.toBeInTheDocument();
+    } else expect(await screen.findByRole("button", { name: "Verify saved changes" })).toBeVisible();
+  });
+
+  it.each([false, true])("compares the complete visible sub-basket before search without saving (readOnly=%s)", async readOnly => {
+    const fixture = groupedDetail(); const requests: Array<Record<string, unknown>> = [];
+    const { saves } = setup(fixture, readOnly); const user = userEvent.setup();
+    server.use(http.post("/api/v1/projects/project-one/estimate-tier-comparison", async ({ request }) => {
+      requests.push(await request.json() as Record<string, unknown>);
+      return HttpResponse.json({ data: { mainBasketId: "furniture", subBasketId: "storage", roomId: "room-one", roomName: "Kitchen",
+        mainBasketName: "Furniture", subBasketName: "Storage units", estimateVersion: 7,
+        tiers: [{ modeTier: "current", label: "Current choices", available: true, subtotalPaise: 250000,
+          lines: fixture.lines.slice(0, 2).map(line => ({ mainLineId: line.mainLineId, name: line.mainLineName, quantity: line.quantity,
+            uomName: line.uomName, ratePaise: line.ratePaise, amountPaise: line.amountPaise, unavailableReason: null })) }] } });
+    }));
+    await screen.findByRole("group", { name: "Storage Kitchen" });
+    await user.type(screen.getByRole("searchbox", { name: "Search estimate items" }), "Shelf");
+    await user.click(screen.getByRole("button", { name: "Check tier comparison for Storage units in Kitchen" }));
+    const dialog = await screen.findByRole("dialog", { name: "Price comparison: Storage units in Kitchen" });
+    expect(await within(dialog).findByRole("rowheader", { name: "Storage 2 Unit" })).toBeVisible();
+    expect(within(dialog).getByRole("rowheader", { name: "Shelf 3 Unit" })).toBeVisible();
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toMatchObject({ expectedVersion: 7, mainBasketId: "furniture", subBasketId: "storage", roomId: "room-one",
+      lines: [{ mainLineId: "storage", lineItemId: "line-one", quantity: 2, modeTier: "signature", ...source },
+        { mainLineId: "shelf", lineItemId: "line-shelf", quantity: 3, modeTier: "signature", ...source }] });
+    expect(JSON.stringify(requests)).not.toContain("line-bedroom"); expect(saves).toEqual([]);
+    await user.click(within(dialog).getByRole("button", { name: "Close" }));
+  });
+
+  it("Mode restores prior mixed tiers while preserving an independent quantity edit", async () => {
+    const fixture = groupedDetail(); fixture.lines[1]!.modeTier = "premium";
+    const { saves } = setup(fixture); const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Increase quantity for Storage in Kitchen" }));
+    await user.click(screen.getByRole("radio", { name: "Premium tier for Storage units in Kitchen" }));
+    await user.click(screen.getByRole("radio", { name: "Mode for Storage units in Kitchen" }));
+    expect(screen.getByRole("status", { name: "Configured price for Storage in Kitchen" })).toHaveTextContent("₹500.00");
+    expect(screen.getByRole("status", { name: "Configured price for Shelf in Kitchen" })).toHaveTextContent("₹750.00");
+    expect(screen.getByRole("spinbutton", { name: "Quantity for Storage in Kitchen Unit" })).toHaveValue(3);
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(saves[0]).toEqual({ expectedVersion: 7, operations: [{ kind: "update", lineItemId: "line-one", source,
+      included: true, quantity: 3, modeTier: "signature" }] }));
+  });
+
+  it("does not apply a group tier when an included line hidden by search lacks that tier", async () => {
+    const fixture = groupedDetail(); fixture.lines[0]!.choices = [{ ...choices[0]! }];
+    const { saves } = setup(fixture); const user = userEvent.setup();
+    await screen.findByRole("group", { name: "Storage Kitchen" });
+    await user.type(screen.getByRole("searchbox", { name: "Search estimate items" }), "Shelf");
+    expect(screen.getByRole("radio", { name: "Premium tier for Storage units in Kitchen" })).toBeDisabled();
+    expect(screen.getByRole("radio", { name: "Mode for Storage units in Kitchen" })).toBeChecked();
+    expect(saves).toEqual([]);
+  });
+
+  it.each([false, true])("shows the server's round off while preserving saved unit amounts (readOnly=%s)", async readOnly => {
+    setup({ ...structuredClone(detail), totalPaise: 10200, roundOffPaise: -24 }, readOnly);
+    expect(await screen.findByText("₹102.00")).toBeVisible();
+    expect(screen.getByText("Round off")).toBeVisible();
+    expect(screen.getByText("−₹0.24")).toBeVisible();
+    expect(screen.getByRole("status", { name: "Saved amount for Storage in Living Room" })).toHaveTextContent("₹1,000.00");
+  });
+
+  it("keeps an unrounded legacy saved quotation total until the server returns an update", async () => {
+    setup({ ...structuredClone(detail), totalPaise: 10252 });
+    expect(await screen.findByText("₹102.52")).toBeVisible();
+    expect(screen.queryByText("Round off")).not.toBeInTheDocument();
+  });
+  it("groups secondary options and shows a single save area only after item edits", async () => {
+    const { container, saves } = setup(); const user = userEvent.setup();
+    await screen.findByRole("button", { name: "Add items" });
+    const navigation = screen.getByRole("navigation", { name: "Estimate views" });
+    expect(within(navigation).getAllByRole("button")).toHaveLength(2);
+    expect(within(navigation).getByRole("button", { name: "Items" })).toHaveAttribute("aria-pressed", "true");
+    expect(within(navigation).getByRole("button", { name: "Summary" })).toHaveAttribute("aria-pressed", "false");
+    expect(container.querySelector(".client-quotation__options")).not.toHaveAttribute("open");
+    expect(container.querySelector(".client-quotation__footer")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Save changes" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Increase quantity for Storage in Living Room" }));
+    const footer = screen.getByLabelText("Estimate actions");
+    expect(within(footer).getAllByRole("button")).toHaveLength(2);
+    expect(within(footer).getByRole("button", { name: "Discard changes" })).toBeEnabled();
+    expect(within(footer).getByRole("button", { name: "Save changes" })).toBeEnabled();
+    expect(screen.getAllByRole("button", { name: "Save changes" })).toHaveLength(1);
+    expect(screen.getByText("₹6,180.00")).toBeVisible();
+    await user.click(within(footer).getByRole("button", { name: "Discard changes" }));
+    expect(screen.getByRole("spinbutton", { name: /Quantity for Storage/ })).toHaveValue(2);
+    expect(container.querySelector(".client-quotation__footer")).toBeNull();
+    expect(saves).toEqual([]);
+  });
+
   it.each([false, true])("shows loaded project identity only in standalone mode (%s)", async workspace => {
     setup({ ...structuredClone(detail), projectNumber: "Lisno000031" }, false, false, workspace);
     expect(screen.queryByText(/Project ID/)).not.toBeInTheDocument();
@@ -113,10 +255,10 @@ describe("Client quotation", () => {
     const fixture = structuredClone(detail);
     fixture.lines[0]!.choices[1] = { ...fixture.lines[0]!.choices[1]!, source: null };
     const { saves } = setup(fixture); const user = userEvent.setup();
-    const premium = await screen.findByRole("radio", { name: "Premium tier for Storage in Living Room" });
+    const premium = await screen.findByRole("radio", { name: "Premium tier for Items in Living Room" });
     expect(premium).toBeDisabled();
     await user.click(premium);
-    expect(screen.getByRole("radio", { name: "Signature tier for Storage in Living Room" })).toBeChecked();
+    expect(screen.getByRole("radio", { name: "Mode for Items in Living Room" })).toBeChecked();
     expect(screen.queryByRole("radio", { name: /Functional/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("textbox", { name: /Selling rate/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("group", { name: /Item type|Pricing mode/ })).not.toBeInTheDocument();
@@ -154,7 +296,7 @@ describe("Client quotation", () => {
       : [{ id: "new-component", label: "Premium shutter", available: true, ratePaise: 75000 }, { id: "unavailable-component", label: "Retired hinge", available: false, ratePaise: null }] })) };
     const { saves } = setup(fixture); const user = userEvent.setup();
     expect(await screen.findByRole("checkbox", { name: "Original shutter" })).toBeChecked();
-    await user.click(screen.getByRole("radio", { name: "Premium tier for Storage in Living Room" }));
+    await user.click(screen.getByRole("radio", { name: "Premium tier for Items in Living Room" }));
     expect(screen.queryByRole("checkbox", { name: "Original shutter" })).not.toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: "Premium shutter" })).not.toBeChecked();
     expect(screen.getByRole("checkbox", { name: "Retired hinge (unavailable)" })).toBeDisabled();
@@ -170,7 +312,7 @@ describe("Client quotation", () => {
     const { saves } = setup(); const user = userEvent.setup();
     const quantity = await screen.findByRole("spinbutton", { name: "Quantity for Storage in Living Room Unit" });
     await user.clear(quantity); await user.type(quantity, "4");
-    await user.click(screen.getByRole("radio", { name: "Premium tier for Storage in Living Room" }));
+    await user.click(screen.getByRole("radio", { name: "Premium tier for Items in Living Room" }));
     expect(screen.getByText("₹6,180.00")).toBeVisible();
     expect(screen.queryByRole("spinbutton", { name: /rate/i })).not.toBeInTheDocument();
     expect(saves).toEqual([]);
@@ -205,7 +347,7 @@ describe("Client quotation", () => {
     await user.clear(quantity); await user.type(quantity, "9");
     state.detail = { ...state.detail, estimateVersion: 8, lines: [{ ...state.detail.lines[0]!, quantity: 3, amountPaise: 150000 }] };
     await act(async () => { await client().refetchQueries({ queryKey: quotationKeys.detail("project-one") }); });
-    await waitFor(() => expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled());
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Save changes" })).not.toBeInTheDocument());
     expect(quantity).toHaveValue(9);
     expect(screen.getByRole("status", { name: "Saved amount for Storage in Living Room" })).toHaveTextContent("₹1,500.00");
     expect(saves).toEqual([]);
@@ -222,7 +364,7 @@ describe("Client quotation", () => {
     await waitFor(() => expect(quantity).toBeDisabled());
     expect(quantity).toHaveValue(9);
     expect(screen.getByRole("checkbox", { name: "Include Storage in Living Room" })).toBeDisabled();
-    expect(screen.getByRole("radio", { name: "Premium tier for Storage in Living Room" })).toBeDisabled();
+    expect(screen.getByRole("radio", { name: "Premium tier for Items in Living Room" })).toBeDisabled();
     expect(screen.getByText(/This saved item is unavailable in the current Configuration/)).toBeVisible();
     await user.click(screen.getByRole("button", { name: "More options for Storage in Living Room" }));
     expect(screen.getByRole("button", { name: "Remove from estimate" })).toBeDisabled();
@@ -266,9 +408,10 @@ describe("Client quotation", () => {
     await user.click(await screen.findByRole("button", { name: /^Bedroom Saved visible subtotal/ }));
     expect(screen.getByRole("spinbutton", { name: "Quantity for Storage in Bedroom Unit" })).toHaveValue(5);
     expect(screen.queryByRole("spinbutton", { name: /Kitchen/ })).not.toBeInTheDocument();
+    await user.click(screen.getByText("Estimate options", { selector: "summary" }));
     await user.click(screen.getByRole("button", { name: "Edit baskets" }));
     expect(screen.getByRole("heading", { name: "Main Baskets" })).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "Continue to item selection" }));
+    await user.click(screen.getByRole("button", { name: "Items" }));
     expect(screen.getByRole("spinbutton", { name: "Quantity for Storage in Bedroom Unit" })).toHaveValue(5);
     expect(saves).toEqual([]);
     expect((await axe.run(container, { rules: { "color-contrast": { enabled: false } } })).violations).toEqual([]);
@@ -280,7 +423,7 @@ describe("Client quotation", () => {
     const pending = new Promise<void>(resolve => { release = resolve; });
     server.use(http.patch("/api/v1/projects/project-one/quotation", async ({ request }) => {
       saves.push(await request.json() as Record<string, unknown>); await pending;
-      state.detail = { ...state.detail, estimateVersion: 8, lines: state.detail.lines.map(line => line.id === "line-one" ? { ...line, quantity: 4 } : line) };
+      state.detail = { ...state.detail, estimateVersion: 8, lines: state.detail.lines.map(line => line.id === "line-one" ? { ...line, quantity: 4, amountPaise: 200000, choices: line.choices.map(choice => ({ ...choice, amountPaise: choice.ratePaise! * 4 })) } : line) };
       return HttpResponse.json({ data: state.detail });
     }));
     const quantity = await screen.findByRole("spinbutton", { name: "Quantity for Storage in Kitchen Unit" });
@@ -291,7 +434,7 @@ describe("Client quotation", () => {
     expect(quantity).toBeDisabled();
     await act(async () => { release(); });
     expect(await screen.findByRole("heading", { name: "Main Baskets" })).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "Continue to item selection" }));
+    await user.click(screen.getByRole("button", { name: "Items" }));
     expect(screen.getByRole("spinbutton", { name: "Quantity for Storage in Kitchen Unit" })).toHaveValue(4);
   });
 
@@ -302,11 +445,12 @@ describe("Client quotation", () => {
     }));
     const quantity = await screen.findByRole("spinbutton", { name: "Quantity for Storage in Kitchen Unit" });
     await user.clear(quantity); await user.type(quantity, "4");
+    await user.click(screen.getByText("Estimate options", { selector: "summary" }));
     await user.click(screen.getByRole("button", { name: "Save and edit baskets" }));
     expect(await screen.findByRole("button", { name: "Verify saved changes" })).toBeVisible();
     expect(quantity).toHaveValue(4);
     expect(screen.queryByRole("heading", { name: "Main Baskets" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Save changes" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Verify saved changes" }));
     expect(saves).toHaveLength(1);
   });
@@ -320,6 +464,7 @@ describe("Client quotation", () => {
     }));
     const quantity = await screen.findByRole("spinbutton", { name: "Quantity for Storage in Kitchen Unit" });
     await user.clear(quantity); await user.type(quantity, "4");
+    await user.click(screen.getByText("Estimate options", { selector: "summary" }));
     await user.click(screen.getByRole("button", { name: "Save and edit baskets" }));
     expect(await screen.findByRole("heading", { name: "Main Baskets" })).toBeVisible();
     expect(saves).toHaveLength(1);
@@ -345,7 +490,8 @@ describe("Client quotation", () => {
   it("removes a large Main Basket through one canonical command and supports Undo before save", async () => {
     const fixture = groupedDetail(); fixture.groups![0]!.includedCount = 101;
     const { saves } = setup(fixture); const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: "Edit baskets" }));
+    await user.click(await screen.findByText("Estimate options", { selector: "summary" }));
+    await user.click(screen.getByRole("button", { name: "Edit baskets" }));
     await user.click(screen.getByRole("button", { name: "Remove visible items from Furniture" }));
     await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Remove visible items" }));
     await user.click(screen.getByRole("button", { name: "Undo removal of Furniture across all rooms" }));
@@ -367,7 +513,8 @@ describe("Client quotation", () => {
     expect(screen.queryByRole("checkbox", { name: "Include Storage in Kitchen" })).not.toBeInTheDocument();
     await chooseItem(user, "Storage");
     expect(screen.getByRole("spinbutton", { name: "Quantity for Storage in Kitchen Unit" })).toHaveValue(9);
-    expect(screen.getByRole("radio", { name: "Premium tier for Storage in Kitchen" })).toBeChecked();
+    expect(screen.getByRole("radio", { name: "Mode for Storage units in Kitchen" })).toBeChecked();
+    expect(screen.queryByRole("radio", { name: /tier for Storage in Kitchen/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("checkbox", { name: "Include Shelf in Kitchen" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(saves[0]).toEqual({ expectedVersion: 7, operations: [{ kind: "update", lineItemId: "line-one", included: true, source, quantity: 9, modeTier: "premium", recommendationSourceMainLineIds: [] }] }));
@@ -382,7 +529,8 @@ describe("Client quotation", () => {
     await screen.findByRole("button", { name: "Add items" });
     await chooseItem(user, "Storage");
     expect(screen.getByRole("spinbutton", { name: "Quantity for Storage in Kitchen Unit" })).toHaveValue(9);
-    expect(screen.getByRole("radio", { name: "Premium tier for Storage in Kitchen" })).toBeChecked();
+    expect(screen.getByRole("radio", { name: "Mode for Storage units in Kitchen" })).toBeChecked();
+    expect(screen.queryByRole("radio", { name: /tier for Storage in Kitchen/ })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(saves[0]).toEqual({ expectedVersion: 7, operations: [{ kind: "update", lineItemId: "line-one", included: true, source, quantity: 9, modeTier: "premium", recommendationSourceMainLineIds: [] }] }));
   });
@@ -392,6 +540,7 @@ describe("Client quotation", () => {
     expect(await screen.findByRole("checkbox", { name: "Include Storage in Kitchen" })).toBeDisabled();
     expect(screen.queryByRole("button", { name: "Add items" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Remove visible items/ })).not.toBeInTheDocument();
+    await user.click(screen.getByText("Estimate options", { selector: "summary" }));
     await user.click(screen.getByRole("button", { name: "View baskets" }));
     expect(screen.getByRole("button", { name: "Choose items in Furniture" })).toBeEnabled();
     expect(screen.queryByRole("button", { name: "Remove visible items from Furniture" })).not.toBeInTheDocument();
@@ -406,7 +555,8 @@ describe("Client quotation", () => {
     const inclusion = within(row).getByRole("checkbox", { name: "Include Storage in Kitchen" });
     const quantity = within(row).getByRole("spinbutton", { name: "Quantity for Storage in Kitchen Unit" });
     expect(inclusion).toBeDisabled(); expect(quantity).toBeDisabled();
-    expect(within(row).getByRole("radio", { name: "Signature tier for Storage in Kitchen" })).toBeDisabled();
+    expect(within(row).queryByRole("radio", { name: /tier/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "Premium tier for Storage units in Kitchen" })).toBeDisabled();
     expect(within(row).getByText(/This saved item is unavailable in the current Configuration/)).toBeVisible();
     expect(within(row).getByText("₹1,000.00")).toBeVisible();
     await user.click(inclusion);
@@ -426,7 +576,7 @@ describe("Client quotation", () => {
     await act(async () => { await client().refetchQueries({ queryKey: quotationKeys.detail("project-one") }); });
     expect(await screen.findByText(/The saved quotation could not be refreshed/)).toBeVisible();
     expect(quantity).toHaveValue(9); expect(quantity).toBeVisible(); expect(quantity).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Save changes" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("link", { name: "Back to project" }));
     expect(await screen.findByRole("alertdialog", { name: "Leave estimate with unsaved changes?" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Save and leave" })).toBeDisabled();
@@ -475,10 +625,11 @@ describe("Client quotation", () => {
     await user.click(await screen.findByRole("button", { name: "Remove visible items from Storage units in Kitchen" }));
     await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Remove visible items" }));
     expect(screen.getByRole("checkbox", { name: "Include Storage in Kitchen" })).toBeChecked();
+    await user.click(screen.getByText("Estimate options", { selector: "summary" }));
     await user.click(screen.getByRole("button", { name: "Save and edit baskets" }));
     expect(await screen.findByRole("heading", { name: "Main Baskets" })).toBeVisible();
     expect(screen.queryByRole("button", { name: "Verify saved changes" })).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Continue to item selection" }));
+    await user.click(screen.getByRole("button", { name: "Items" }));
     expect(screen.getByRole("checkbox", { name: "Include Storage in Kitchen" })).toBeChecked();
     expect(screen.queryByRole("checkbox", { name: "Include Shelf in Kitchen" })).not.toBeInTheDocument();
     expect(saves).toHaveLength(1);

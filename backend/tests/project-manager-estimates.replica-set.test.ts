@@ -33,6 +33,21 @@ beforeEach(async () => { await replica.clear(); fixture = await seedPMEstimateHa
 afterAll(async () => replica?.stop());
 
 describe("PM approved estimate reads", () => {
+  it("preserves the approved round-off amount without altering item values or GST", async () => {
+    const before = await service.estimate(fixture.pm, fixture.projectId);
+    await EstimateClientReviewRoundModel.collection.updateOne({ _id: fixture.roundId }, { $set: {
+      "estimateSnapshot.gst": 387.24, "estimateSnapshot.gstPaise": 38_724,
+      "estimateSnapshot.total": 2537, "estimateSnapshot.totalPaise": 253_700, "estimateSnapshot.roundOffPaise": -24
+    } });
+    const view = await service.estimate(fixture.pm, fixture.projectId);
+    expect(view.availability).toBe("available");
+    expect(view.totals).toEqual({ subtotalPaise: 215_000, gstPaise: 38_724, totalPaise: 253_700, roundOffPaise: -24 });
+    expect(view.lines).toEqual(before.lines);
+    expect(before.totals).not.toHaveProperty("roundOffPaise");
+    await EstimateClientReviewRoundModel.collection.updateOne({ _id: fixture.roundId }, { $set: { "estimateSnapshot.roundOffPaise": -23 } });
+    expect((await service.estimate(fixture.pm, fixture.projectId)).availability).toBe("unavailable");
+  });
+
   it("adds only live project identity outside the approved estimate source", async () => {
     const before = await service.estimate(fixture.pm, fixture.projectId);
     await LeadModel.collection.insertOne({ _id: "identity-pm-lead", projectId: fixture.projectId, projectNumber: "Lisno000012" } as never);

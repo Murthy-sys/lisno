@@ -40,7 +40,7 @@ function through(input: ProjectStatusInput, stage: "payment" | "internal" | "kic
   if (stage === "payment") return;
   workflow.stages.internal_kickoff = { completedAt: BEFORE, calendarAcceptedAt: BEFORE };
   if (stage === "internal") return;
-  workflow.stages.client_kickoff = { completedAt: BEFORE, notRequired: true };
+  workflow.stages.client_kickoff = { completedAt: BEFORE };
   if (stage === "kickoff") return;
   workflow.stages.key_collection = { handedOverAt: BEFORE, receivedAt: BEFORE, completedAt: BEFORE };
   if (stage === "keys") return;
@@ -190,6 +190,15 @@ describe("project status commercial responsibility", () => {
 });
 
 describe("project status workflow responsibility", () => {
+  it("returns a skipped project to mandatory kickoff while retaining completed downstream work", () => {
+    const input = fixture(); through(input, "measurement");
+    input.workflow!.stages.client_kickoff!.notRequired = true;
+    const before = structuredClone(input);
+    const output = deriveProjectStatus(input);
+    expect(output).toMatchObject({ state: "active", currentStage: { key: "client_kickoff" } });
+    expect(output.pendingActions).toContainEqual(expect.objectContaining({ stageKey: "client_kickoff", action: "Request Client Kick off." }));
+    expect(input).toEqual(before);
+  });
   it("shows independent Designer completion and Sales calendar acceptance", () => {
     const input = fixture(); through(input, "payment");
     const output = deriveProjectStatus(input);

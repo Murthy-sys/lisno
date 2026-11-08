@@ -1,4 +1,10 @@
 export const EXPECTED_ESTIMATE_COLLABORATION_OPERATIONS = [
+  { key: "PATCH /projects/:projectId/estimate-tiers", permission: "estimation.tiers.select", scope: { kind: "project", module: "projects" }, operationClass: "personal", superAdminBehavior: "deny_personal", availability: "baseline" },
+  { key: "POST /projects/:projectId/estimate-tier-comparison", permission: "estimation.tiers.read", scope: { kind: "project", module: "projects" }, operationClass: "read", superAdminBehavior: "global_read", availability: "baseline" },
+  { key: "POST /projects/:projectId/estimate-tier-comparison/pdf", permission: "estimation.tiers.read", scope: { kind: "project", module: "projects" }, operationClass: "read", superAdminBehavior: "global_read", availability: "baseline" },
+  { key: "POST /leads/:leadId/estimate/tier-comparison", permission: "estimation.estimate.read", scope: { kind: "non_project", namespace: "estimation_ownership" }, operationClass: "read", superAdminBehavior: "global_read", availability: "baseline" },
+  { key: "POST /leads/:leadId/estimate/tier-comparison/pdf", permission: "estimation.estimate.read", scope: { kind: "non_project", namespace: "estimation_ownership" }, operationClass: "read", superAdminBehavior: "global_read", availability: "baseline" },
+
   { key: "POST /estimates/:estimateId/enable-collaboration", permission: "estimation.estimate.save", scope: { kind: "non_project", namespace: "estimation_ownership" }, operationClass: "personal", superAdminBehavior: "deny_personal", availability: "baseline" },
   { key: "GET /projects/:projectId/client-invitation", permission: "projects.client_invitation.read", scope: { kind: "project", module: "projects" }, operationClass: "read", superAdminBehavior: "global_read", availability: "baseline" },
   { key: "POST /projects/:projectId/client-invitation", permission: "projects.client_invitation.manage", scope: { kind: "project", module: "projects" }, operationClass: "admin", superAdminBehavior: "admin_override", availability: "baseline" },

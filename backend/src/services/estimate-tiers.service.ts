@@ -1,3 +1,4 @@
+import { calculateEstimateTotal } from "../domain/estimate-total-rounding.js";
 import { ESTIMATE_COMPONENT_PRICING_BASIS, estimateComponentLineAmountIsValid } from "../domain/estimate-component-pricing.js";
 import { readProjectNumbers } from "./project-number-read.service.js";
 import { calculateEstimateComponentPricing, readCurrentEstimateComponentConfiguration, resolveEstimateComponentPricing, currentEstimateComponentPricingMatches } from "./estimate-component-pricing.service.js";
@@ -38,6 +39,11 @@ export const estimateTierSelectionSchema = z.object({
   selectedInHouseComponentIds: z.array(stableId).max(50).refine(ids => new Set(ids).size === ids.length).optional()
 }).strict();
 export type EstimateTierSelection = z.infer<typeof estimateTierSelectionSchema>;
+export const estimateTierBatchSelectionSchema = z.object({ expectedVersion: version,
+  lines: z.array(estimateTierSelectionSchema.omit({ expectedVersion: true }).extend({ lineItemId: stableId })).min(1).max(1000)
+    .refine(lines => new Set(lines.map(line => line.lineItemId)).size === lines.length, "Change each line once.")
+}).strict();
+export type EstimateTierBatchSelection = z.infer<typeof estimateTierBatchSelectionSchema>;
 export const estimateDimensionsUpdateSchema = z.object({
   expectedVersion: version, revisionId: stableId, itemVersion: version, revisionVersion: version, uomId: stableId,
   expectedDimensionRule: z.object({ formula: z.literal("length_width"), inputUnit: z.enum(ESTIMATE_DIMENSION_INPUT_UNITS),
@@ -80,7 +86,7 @@ export async function estimateTierScope(actor: PublicUser, projectId: string, se
     if (session) query.session(session);
     if (!await query.select({ _id: 1 }).lean()) return notFound();
   }
-  return { project, estimate, client, secondary: Boolean(secondary), canUpdate: client || sales || designer };
+  return { project, estimate, actor, client, secondary: Boolean(secondary), canUpdate: client || sales || designer };
 }
 
 function editing(context: Awaited<ReturnType<typeof estimateTierScope>>) {
@@ -164,6 +170,8 @@ export async function presentEstimateTiers(context: Awaited<ReturnType<typeof es
     line.clientVisible !== false && current.get(line.mainLineId)!.line.clientVisible !== false)) {
       const source = current.get(line.mainLineId);
       lines.push({ id: String(line.id), mainLineId: String(line.mainLineId), mainLineName: source?.line.name ?? line.mainLineName,
+        roomId: line.roomId, mainBasketId: line.mainBasketId, mainBasketName: source?.mainBasketName ?? line.mainBasketName,
+        subBasketId: line.subBasketId ?? null, subBasketName: source?.subBasketName ?? line.subBasketName ?? null,
         roomName: line.roomName, quantity: line.quantity, uomName: line.uomName ?? line.unit,
         dimensionsMandatory: source?.line.dimensionsMandatory === true,
         dimensionRule: source?.line.dimensionsMandatory ? source.line.dimensionRule ?? null : readEstimateDimensionRule(line.dimensionRule),
@@ -178,6 +186,7 @@ export async function presentEstimateTiers(context: Awaited<ReturnType<typeof es
   const totalPaise = estimate?.totalPaise ?? (typeof estimate?.total === "number" ? Math.round(estimate.total * 100) : null);
   return { projectId, projectNumber, estimateId: estimate ? String(estimate._id) : null,
     estimateVersion: estimate?.version ?? null, ...editing(context), totalPaise: validMoney(totalPaise) ? totalPaise : null,
+    ...(estimate?.roundOffPaise === undefined ? {} : { roundOffPaise: Number(estimate.roundOffPaise) }),
     isIncomplete: Boolean(estimate?.isIncomplete) || savedLines.some(line => {
       const source = current.get(line.mainLineId);
       return source ? dimensionsNeedReview(line, source) : false;
@@ -200,8 +209,8 @@ export async function fenceEstimateTierSource(line: Row, session: ClientSession)
 
 /** Narrow client commands derive commercial values on the server under the same estimate locks. */
 export function createEstimateTiersService({ audit }: { audit: AuditService }) {
-  async function changeLine(actor: PublicUser, projectId: string, lineItemId: string, change: LineChange) {
-    const input = change.input;
+  async function changeLines(actor: PublicUser, projectId: string, changes: Array<{ lineItemId: string; change: LineChange }>) {
+    const input = changes[0]!.change.input;
     const session = await mongoose.startSession();
     try {
       let result!: Awaited<ReturnType<typeof presentEstimateTiers>>;
@@ -217,7 +226,11 @@ export function createEstimateTiersService({ audit }: { audit: AuditService }) {
           ...(context.client ? { clientId: actor.id } : {}) }, { $inc: { estimationFenceEpoch: 1 } }, { session });
         if (locked.matchedCount !== 1) return notFound();
         await fenceCollaborativeEstimate(estimate, session);
-        const line: Row | undefined = estimate.lineItems.find((entry: Row) => entry.id === lineItemId && entry.source === "configuration" && entry.included);
+        let lineItems: Row[] = [...estimate.lineItems];
+        const auditEvents: Parameters<AuditService["appendInMongoTransaction"]>[0][] = [];
+        for (const { lineItemId, change } of changes) {
+        const input = change.input;
+        const line: Row | undefined = lineItems.find((entry: Row) => entry.id === lineItemId && entry.source === "configuration" && entry.included);
         if (!line || context.client && line.clientVisible === false) return notFound();
         await fenceEstimateTierSource(line, session);
         const current = await resolveEstimatorCatalogueLines([String(line.mainLineId)], session);
@@ -304,8 +317,15 @@ export function createEstimateTiersService({ audit }: { audit: AuditService }) {
         if (dimensions !== undefined) nextLine.dimensions = dimensions;
         delete nextLine.selectedInHouseComponentIds;
         if (selected !== undefined) nextLine.selectedInHouseComponentIds = selected;
-        const lineItems = estimate.lineItems.map((entry: Row) => entry.id === lineItemId ? nextLine : entry);
+        lineItems = lineItems.map((entry: Row) => entry.id === lineItemId ? nextLine : entry);
         await fenceEstimateInHouseComponentReferences([nextLine], current, session);
+        auditEvents.push({ actorId: actor.id,
+          action: change.kind === "tier" ? "estimate_tier_selected" : "estimate_dimensions_updated", entityType: "estimate", entityId: String(estimate._id),
+          occurredAt: new Date().toISOString(), oldValues: { lineItemId, modeTier: tierOf(line), estimateVersion: input.expectedVersion,
+            ...(change.kind === "dimensions" ? { dimensions: line.dimensions ?? null, quantity: line.quantity, dimensionRule: line.dimensionRule ?? null } : {}) },
+          newValues: { lineItemId, modeTier: selectedTier, estimateVersion: input.expectedVersion + 1, ratePaise, amountPaise,
+            selectedInHouseComponentIds: selected ?? [], ...(change.kind === "dimensions" ? { dimensions, quantity, dimensionRule: nextLine.dimensionRule } : {}) } });
+        }
         let subtotalPaise = 0;
         for (const entry of lineItems) {
           if (!entry.included) continue;
@@ -315,9 +335,10 @@ export function createEstimateTiersService({ audit }: { audit: AuditService }) {
           subtotalPaise += amount;
         }
         const gstPaise = Number((BigInt(subtotalPaise) * 18n + 50n) / 100n);
-        const totalPaise = subtotalPaise + gstPaise;
-        if (!validMoney(totalPaise)) return unavailable();
-        const values: Row = { lineItems, subtotalPaise, gstPaise, totalPaise,
+        const rounded = calculateEstimateTotal(subtotalPaise, gstPaise);
+        if (!rounded) return unavailable();
+        const { totalPaise, roundOffPaise } = rounded;
+        const values: Row = { lineItems, subtotalPaise, gstPaise, totalPaise, roundOffPaise,
           subtotal: subtotalPaise / 100, gst: gstPaise / 100, total: totalPaise / 100,
           isIncomplete: lineItems.some((entry: Row) => entry.included && entry.source === "configuration" &&
             ((!validMoney(entry.ratePaise) || !validMoney(entry.amountPaise)) && !estimateComponentLineAmountIsValid(entry) || !estimateLineDimensionsValid(entry))), status: "draft" };
@@ -329,12 +350,7 @@ export function createEstimateTiersService({ audit }: { audit: AuditService }) {
         const saved = await EstimateModel.findOneAndUpdate({ _id: estimate._id, version: input.expectedVersion },
           { $set: values, $inc: { version: 1 } }, { session, returnDocument: "after", runValidators: true }).lean() as Row | null;
         if (!saved) return changed();
-        await audit.appendInMongoTransaction({ actorId: actor.id,
-          action: change.kind === "tier" ? "estimate_tier_selected" : "estimate_dimensions_updated", entityType: "estimate", entityId: String(estimate._id),
-          occurredAt: new Date().toISOString(), oldValues: { lineItemId, modeTier: tierOf(line), estimateVersion: input.expectedVersion,
-            ...(change.kind === "dimensions" ? { dimensions: line.dimensions ?? null, quantity: line.quantity, dimensionRule: line.dimensionRule ?? null } : {}) },
-          newValues: { lineItemId, modeTier: selectedTier, estimateVersion: saved.version, ratePaise, amountPaise,
-            selectedInHouseComponentIds: selected ?? [], ...(change.kind === "dimensions" ? { dimensions, quantity, dimensionRule: nextLine.dimensionRule } : {}) } }, session);
+        for (const event of auditEvents) await audit.appendInMongoTransaction(event, session);
         result = await presentEstimateTiers({ ...context, estimate: saved }, session);
       });
       return result;
@@ -349,6 +365,16 @@ export function createEstimateTiersService({ audit }: { audit: AuditService }) {
       }
       return presentEstimateTiers(context);
     },
+    async selectBatch(actor: PublicUser, projectId: string, command: EstimateTierBatchSelection) {
+      const parsed = estimateTierBatchSelectionSchema.safeParse(command);
+      if (!parsed.success) throw new ApiError(400, "VALIDATION_ERROR", "Choose valid tiers and current configuration.");
+      const context = await estimateTierScope(actor, projectId);
+      if (context.estimate?.estimation?.workflowVersion === 3) {
+        throw new ApiError(400, "VALIDATION_ERROR", "Use quotation group operations for this estimate.");
+      }
+      return changeLines(actor, projectId, parsed.data.lines.map(({ lineItemId, ...line }) => ({ lineItemId,
+        change: { kind: "tier", input: { ...line, expectedVersion: parsed.data.expectedVersion } } })));
+    },
     async select(actor: PublicUser, projectId: string, lineItemId: string, command: EstimateTierSelection) {
       const parsed = estimateTierSelectionSchema.safeParse(command);
       if (!parsed.success) throw new ApiError(400, "VALIDATION_ERROR", "Choose a valid tier and current configuration.");
@@ -358,7 +384,7 @@ export function createEstimateTiersService({ audit }: { audit: AuditService }) {
         const { expectedVersion, modeTier, selectedInHouseComponentIds, ...source } = parsed.data;
         return createQuotationService({ audit }).save(actor, projectId, { expectedVersion, operations: [{ kind: "update", lineItemId, source, modeTier, selectedInHouseComponentIds }] });
       }
-      return changeLine(actor, projectId, lineItemId, { kind: "tier", input: parsed.data });
+      return changeLines(actor, projectId, [{ lineItemId, change: { kind: "tier", input: parsed.data } }]);
     },
     async updateDimensions(actor: PublicUser, projectId: string, lineItemId: string, command: EstimateDimensionsUpdate) {
       const parsed = estimateDimensionsUpdateSchema.safeParse(command);
@@ -369,7 +395,7 @@ export function createEstimateTiersService({ audit }: { audit: AuditService }) {
         const { expectedVersion, dimensions, expectedDimensionRule, ...source } = parsed.data;
         return createQuotationService({ audit }).save(actor, projectId, { expectedVersion, operations: [{ kind: "update", lineItemId, source, dimensions }] });
       }
-      return changeLine(actor, projectId, lineItemId, { kind: "dimensions", input: parsed.data });
+      return changeLines(actor, projectId, [{ lineItemId, change: { kind: "dimensions", input: parsed.data } }]);
     }
   };
 }

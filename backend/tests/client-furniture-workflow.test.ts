@@ -74,7 +74,7 @@ function setup(options: { locked?: boolean; primary?: boolean; designApproved?: 
     service.act(actors[actor], project.id, await input(action, data), evidence, action === "measurement_complete" ? [media] : []);
   const prerequisites = async () => {
     await act("designer", "internal_kickoff_complete", { meetingAt: AT, designHandoverAcknowledged: true }, proof);
-    await act("designer", "client_kickoff_not_required");
+    await act("client", "client_kickoff_complete", { reviewedDocumentEventId: (await state())!.history.find(event => event.action === "internal_kickoff_complete")!.id });
     await act("client", "keys_handed_over"); await act("designer", "keys_received");
     await act("secondary", "measurement_complete");
   };
@@ -86,6 +86,17 @@ function setup(options: { locked?: boolean; primary?: boolean; designApproved?: 
 }
 
 describe("Client-owned furniture in quotation workflow v3", () => {
+  it("blocks new parallel furniture writes for historical skipped kickoffs without changing the request", async () => {
+    const h = setup(); await h.request();
+    const old = (await h.state())!;
+    old.stages.client_kickoff = { completedAt: AT, notRequired: true };
+    await h.repository.saveDesignWorkflowState(h.project.id, old.version, old);
+    const before = await h.state();
+    const audits = await h.repository.listAuditEvents({});
+    await expect(h.act("client", "furniture_choice", { hasFurniture: false })).rejects.toMatchObject({ code: "DESIGN_WORKFLOW_BLOCKED" });
+    expect(await h.state()).toEqual(before);
+    expect(await h.repository.listAuditEvents({})).toEqual(audits);
+  });
   it("records Client No early but waits for preceding operational confirmations before completing", async () => {
     const h = setup(); await h.request(); await h.act("client", "furniture_choice", { hasFurniture: false });
     expect((await h.state())?.stages.existing_furniture_dimensions).toMatchObject({ noExistingFurniture: true, acceptedAt: AT,

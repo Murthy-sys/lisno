@@ -20,3 +20,30 @@
 .configured-estimate-line__component-rate { font-size: .75rem; color: var(--text-muted, #697160); }
 
 .client-commercial-line > .estimate-component-breakdown { grid-column: 1 / -1; }
+
+/* Estimate rows use the compact editor scale; reporting breakdowns retain theirs. */
+.configured-estimate-line .estimate-in-house-components { margin: 0; padding: 4px 0 0; border: 0; }
+.configured-estimate-line .estimate-in-house-components legend { font-size: 12px; font-weight: 600; line-height: 1.4; }
+.configured-estimate-line .estimate-in-house-components > label { align-items: center; gap: 6px; min-height: 28px; padding-block: 3px; font-size: 12px; line-height: 1.4; }
+.configured-estimate-line .estimate-in-house-components > label > span { flex: 0 1 auto; display: flex; flex-wrap: wrap; justify-content: flex-start; gap: 2px 10px; }
+.configured-estimate-line .estimate-in-house-components > label > input[type="checkbox"] { width: 16px; height: 16px; min-inline-size: 16px; min-block-size: 16px; margin: 0; accent-color: #25642d; }
+.configured-estimate-line .estimate-in-house-components small { margin: 0; font-size: 11px; line-height: 1.4; }
+.configured-estimate-line .estimate-in-house-components > p { margin: 3px 0 0; font-size: 11px; line-height: 1.5; }
+.configured-estimate-line .estimate-component-breakdown { padding-block: 4px; font-size: 12px; }
+.configured-estimate-line .estimate-component-breakdown summary { padding-block: 3px; font-weight: 600; }
+.configured-estimate-line .estimate-component-breakdown p { margin-block: 3px; font-size: 11px; }
+.configured-estimate-line .estimate-component-breakdown__row { padding-block: 5px; }
+.configured-estimate-line .estimate-component-breakdown dl { gap: 6px 16px; margin-top: 4px; }
+.configured-estimate-line .estimate-component-breakdown--status { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; padding: 0; border: 0; }
+.configured-estimate-line .estimate-component-breakdown--status p { margin: 0; }
+.configured-estimate-line .configured-estimate-line__component-rate { font-size: 11px; line-height: 1.5; }
+.configured-estimate-line .configured-estimate-line__options { display: grid; justify-items: start; gap: 5px; }
+.configured-estimate-line .configured-estimate-line__options > .estimate-in-house-components { width: 100%; }
+.ui-app-shell[data-role] .configured-estimate-line .button.estimate-component-action,
+.configured-estimate-line .button.estimate-component-action { min-height: 28px; min-block-size: 28px; max-width: 100%; margin: 0; padding: 4px 8px; border: 1px solid #c3d0bf; border-radius: 6px; background: transparent; color: #263858; font: inherit; font-size: 11px; font-weight: 500; line-height: 1.4; white-space: normal; overflow-wrap: anywhere; box-shadow: none; }
+@media (max-width: 767px), (pointer: coarse) {
+  .configured-estimate-line .estimate-in-house-components > label,
+  .ui-app-shell[data-role] .configured-estimate-line .button.estimate-component-action,
+  .configured-estimate-line .button.estimate-component-action { min-height: 44px; min-block-size: 44px; }
+  .configured-estimate-line .estimate-component-breakdown summary { min-height: 44px; padding-block: 10px; }
+}

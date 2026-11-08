@@ -1,3 +1,4 @@
+import { estimateTotalsReconcile } from "../domain/estimate-total-rounding.js";
 import { ESTIMATE_COMPONENT_PRICING_BASIS, estimateComponentLineAmountIsValid, readEstimateComponentPricing } from "../domain/estimate-component-pricing.js";
 import { estimateDimensionSnapshotValid } from "../domain/estimate-dimension-snapshot.js";
 import { readEstimateProposal } from "../domain/estimate-proposal.js";
@@ -173,6 +174,7 @@ const estimateClientReviewSnapshotSchema = new Schema(
     subtotalPaise: { type: Number, default: undefined, immutable: true, validate: safeIntegerValidator },
     gstPaise: { type: Number, default: undefined, immutable: true, validate: safeIntegerValidator },
     totalPaise: { type: Number, default: undefined, immutable: true, validate: safeIntegerValidator },
+    roundOffPaise: { type: Number, default: undefined, immutable: true, min: -50, max: 49, validate: safeIntegerValidator },
     selectedMainBasketIds: { type: [String], default: undefined, immutable: true },
     selectedMainBasketClassifications: {
       type: [selectedMainBasketClassificationSchema], default: undefined, immutable: true
@@ -197,12 +199,19 @@ estimateClientReviewSnapshotSchema.pre("validate", function validateFrozenTotals
     }
   }
   const lines = this.get("lineItems") as Array<{ source?: string }> | undefined;
-  if (!lines?.some((line) => line.source === "configuration")) return;
+  const roundOffPaise = this.get("roundOffPaise");
+  if (!lines?.some((line) => line.source === "configuration") && roundOffPaise === undefined) {
+    const totals = { subtotalPaise: this.get("subtotalPaise"), gstPaise: this.get("gstPaise"), totalPaise: this.get("totalPaise") };
+    if (Object.values(totals).some(value => value !== undefined) && !estimateTotalsReconcile(totals)) {
+      this.invalidate("totalPaise", "Published estimate totals must reconcile in paise.");
+    }
+    return;
+  }
   const subtotalPaise = this.get("subtotalPaise");
   const gstPaise = this.get("gstPaise");
   const totalPaise = this.get("totalPaise");
   if (!exactNonnegativePaise(subtotalPaise) || !exactNonnegativePaise(gstPaise) || !exactNonnegativePaise(totalPaise) ||
-    subtotalPaise + gstPaise !== totalPaise ||
+    !estimateTotalsReconcile({ subtotalPaise, gstPaise, totalPaise, roundOffPaise }) ||
     this.get("subtotal") !== subtotalPaise / 100 ||
     this.get("gst") !== gstPaise / 100 ||
     this.get("total") !== totalPaise / 100) {

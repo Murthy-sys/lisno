@@ -1,8 +1,11 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createClientQuotationProjectionService } from "../src/services/client-quotation-projection.service.js";
 import { presentClientEstimateWithVisibility } from "../src/services/estimate-client-presentation.js";
 import type { EstimateClientReviewSnapshot } from "../src/domain/estimate-client-review.js";
 import { createEstimateProposal } from "../src/domain/estimate-proposal.js";
+import * as quotationApproval from "../src/services/quotation-approval-state.service.js";
+
+afterEach(() => vi.restoreAllMocks());
 
 const line = (id: string, visible?: boolean) => ({
   id, source: "configuration" as const, catalogueId: id, mainLineId: id,
@@ -85,6 +88,11 @@ describe("client quotation current visibility", () => {
       .rejects.toMatchObject({ code: "QUOTATION_SOURCE_UNAVAILABLE" });
   });
   it("does not expose hidden IDs through current/pre-approved review differences", async () => {
+    // This unit exercises visibility; approval persistence has its own replica-set suite.
+    vi.spyOn(quotationApproval, "resolveCurrentQuotationApproval").mockResolvedValueOnce({
+      quotationApprovalState: "revision_pending_client", currentQuotationApproved: false,
+      requiresClientReapproval: true, quotationApprovalSource: null, currentQuotationApproval: null
+    });
     const actor = { id: "client", name: "Client", email: "client@example.test", role: "client" as const };
     const source = snapshot();
     const pre = { _id: "pre", estimateId: "estimate", leadId: "lead", projectId: "project", estimateVersion: 2,

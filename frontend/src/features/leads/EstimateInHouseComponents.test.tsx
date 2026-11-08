@@ -5,6 +5,29 @@ import { configuredInHouseSelectionIssue, configuredModeBaseRate, type Configure
 const component = { id: "component", basketId: "basket", basketName: "Ceilings", subBasketId: "sub", subBasketName: "Framework", baseRatePaise: null };
 const draft: ConfiguredLineDraft = { key: "line", roomId: "room", catalogueId: "main", mainBasketId: "basket", mainBasketName: "Ceilings", itemType: "main_line", subBasketId: "sub", subBasketName: "Framework", mainLineId: "main", revisionId: "revision", uomId: "sqft", uomDecimalScale: 2, quantity: 1, rateInput: "10", included: true, sourceMissing: false, pricingMode: "in_house", rateSource: "manual", mainLineName: "Ceiling", roomName: "Living", uomName: "sq ft", selectedInHouseComponentIds: [], inHouseComponents: [component] };
 describe("estimate component availability", () => {
+  it("keeps configured base prices out of the component picker", () => {
+    render(<EstimateInHouseComponents line={{ ...draft, inHouseComponents: [{ ...component, baseRatePaise: 12345 }] }} editable onChange={vi.fn()} />);
+    expect(screen.getByRole("checkbox", { name: "Ceilings / Framework" })).toBeEnabled();
+    expect(screen.queryByText(/Base reference|₹123/)).not.toBeInTheDocument();
+  });
+
+  it("retains a live status and links the warning when the last component is removed", () => {
+    const onChange = vi.fn();
+    const { rerender } = render(<EstimateInHouseComponents line={{ ...draft, selectedInHouseComponentIds: ["component"] }} editable onChange={onChange} />);
+    const status = screen.getByRole("status");
+    expect(status).toBeEmptyDOMElement();
+    fireEvent.click(screen.getByRole("checkbox", { name: /Ceilings \/ Framework/ }));
+    expect(onChange).toHaveBeenCalledExactlyOnceWith([]);
+    rerender(<EstimateInHouseComponents line={draft} editable onChange={onChange} />);
+    expect(screen.getByRole("status")).toBe(status);
+    expect(status).toHaveTextContent("Choose at least one In-house component.");
+    expect(screen.getByRole("group", { name: "In-house components for Ceiling in Living" }))
+      .toHaveAccessibleDescription("Choose at least one In-house component.");
+    rerender(<EstimateInHouseComponents line={{ ...draft, selectedInHouseComponentIds: ["component"] }} editable onChange={onChange} />);
+    expect(screen.getByRole("status")).toBe(status);
+    expect(status).toBeEmptyDOMElement();
+  });
+
   it("allows selecting an available component with blank costs for manual pricing", () => {
     const onChange = vi.fn(); render(<EstimateInHouseComponents line={draft} editable onChange={onChange} />);
     fireEvent.click(screen.getByRole("checkbox", { name: /Ceilings \/ Framework/ }));

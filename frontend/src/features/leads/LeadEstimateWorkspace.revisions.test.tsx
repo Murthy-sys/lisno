@@ -251,6 +251,6 @@ describe("Estimate workspace revisions", () => {
     await user.click(within(screen.getByRole("dialog", { name: "Client requests" })).getByRole("button", { name: "Close Client requests" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "Request history (1)" })).toHaveFocus());
     expect(screen.queryByRole("button", { name: "Client requests (0)" })).not.toBeInTheDocument();
-    await waitFor(() => expect(screen.getByRole("button", { name: "Submit pre-estimate" })).toBeEnabled());
+    await waitFor(() => expect(screen.getByRole("button", { name: "Submit" })).toBeEnabled());
   });
 });

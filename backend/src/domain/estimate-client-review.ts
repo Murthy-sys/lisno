@@ -121,6 +121,7 @@ export interface EstimateClientReviewSnapshot {
   subtotalPaise?: number;
   gstPaise?: number;
   totalPaise?: number;
+  roundOffPaise?: number;
   selectedMainBasketIds?: readonly string[];
   selectedMainBasketClassifications?: readonly SelectedMainBasketClassification[];
 }

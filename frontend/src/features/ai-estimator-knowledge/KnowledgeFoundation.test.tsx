@@ -114,7 +114,7 @@ describe("knowledge feature foundation", () => {
       within(tablist).getAllByRole("tab").map((tab) => tab.textContent)
     ).toEqual([
       "Overview",
-      "Signature mode",
+      "Mode",
       "Recommendation & Exclusions",
       "Quality Parameter",
       "Design",
@@ -134,7 +134,7 @@ describe("knowledge feature foundation", () => {
       within(selector).getAllByRole("option").map((option) => option.textContent)
     ).toEqual([
       "Overview",
-      "Signature mode",
+      "Mode",
       "Recommendation & Exclusions",
       "Quality Parameter",
       "Design",
@@ -145,14 +145,14 @@ describe("knowledge feature foundation", () => {
     overview.focus();
     await user.keyboard("{ArrowRight}");
 
-    const mode = screen.getByRole("tab", { name: "Signature mode" });
+    const mode = screen.getByRole("tab", { name: "Mode" });
     const panel = screen.getByRole("tabpanel");
     expect(mode).toHaveFocus();
     expect(mode).toHaveAttribute("aria-selected", "true");
     expect(mode).toHaveAttribute("aria-controls", panel.id);
     expect(panel).toHaveAttribute("aria-labelledby", mode.id);
-    expect(panel).toHaveAccessibleName("Signature mode");
-    expect(screen.getByRole("heading", { name: "Signature mode settings" })).toBeVisible();
+    expect(panel).toHaveAccessibleName("Mode");
+    expect(screen.getByRole("heading", { name: "Mode settings" })).toBeVisible();
     expect(panel).not.toHaveAttribute("aria-busy");
 
     await user.keyboard("{End}");
@@ -175,21 +175,23 @@ describe("knowledge feature foundation", () => {
     expect(panel).toHaveAccessibleName("Basket closure priority");
   });
 
-  it("orders selected tiers in desktop and mobile navigation while skipping hidden tiers", async () => {
+  it("keeps default Mode alongside optional tiers in desktop and mobile navigation", async () => {
     const user = userEvent.setup();
     const sections = knowledgeWorkspaceSectionsForTiers(["premium", "functional"]);
     render(<SectionHarness sections={sections} />);
-    expect(screen.queryByRole("tab", { name: "Signature mode" })).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Mode" })).toBeVisible();
     expect(within(screen.getByRole("tablist")).getAllByRole("tab").slice(0, 4).map(tab => tab.textContent))
-      .toEqual(["Overview", "Premium mode", "Functional mode", "Recommendation & Exclusions"]);
+      .toEqual(["Overview", "Mode", "Premium mode", "Functional mode"]);
     screen.getByRole("tab", { name: "Overview" }).focus();
+    await user.keyboard("{ArrowRight}");
+    expect(screen.getByRole("tab", { name: "Mode" })).toHaveFocus();
     await user.keyboard("{ArrowRight}");
     expect(screen.getByRole("tab", { name: "Premium mode" })).toHaveFocus();
     await user.keyboard("{ArrowRight}");
     expect(screen.getByRole("tabpanel", { name: "Functional mode" })).toBeVisible();
     await user.selectOptions(screen.getByRole("combobox", { name: "Configuration section" }), "premium-mode");
     expect(screen.getByRole("tabpanel", { name: "Premium mode" })).toBeVisible();
-    expect(knowledgeWorkspaceSectionsForTiers([])).toEqual(["overview", "recommendations", "quality", "design", "basket-closure-priority"]);
+    expect(knowledgeWorkspaceSectionsForTiers([])).toEqual(["overview", "mode", "recommendations", "quality", "design", "basket-closure-priority"]);
   });
 
   it("announces only the active panel as busy without changing tab ownership", () => {
@@ -207,9 +209,9 @@ describe("knowledge feature foundation", () => {
     render(<SectionHarness disabledSections={["mode"]} />);
 
     const overview = screen.getByRole("tab", { name: "Overview" });
-    const mode = screen.getByRole("tab", { name: "Signature mode" });
+    const mode = screen.getByRole("tab", { name: "Mode" });
     expect(mode).toBeDisabled();
-    expect(screen.getByRole("option", { name: "Signature mode" })).toBeDisabled();
+    expect(screen.getByRole("option", { name: "Mode" })).toBeDisabled();
 
     overview.focus();
     await user.keyboard("{ArrowRight}");

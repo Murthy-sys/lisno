@@ -15,10 +15,12 @@ type Action = "enable" | "withdraw" | "release" | "unlock";
 const money = (paise: number) => new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 2 }).format(paise / 100);
 const total = (value: { total: number; totalPaise?: number }) => money(value.totalPaise ?? Math.round(value.total * 100));
 
-function quotationStatusCopy(estimate: EstimateDraft) {
+function quotationStatusCopy(estimate: EstimateDraft, hasUnsavedQuotationChanges = false) {
   const state = currentQuotationApprovalState(estimate);
   if (state === "initial_current" && currentQuotationIsApproved(estimate)) {
-    return "Initial estimate approved. No quotation changes require Client review.";
+    return hasUnsavedQuotationChanges
+      ? "The saved estimate has initial approval. Submit your unsaved changes for Client review."
+      : "Initial estimate approved. No quotation changes require Client review.";
   }
   if (state === "revision_current" && currentQuotationIsApproved(estimate)) {
     return "The Client approved the revised quotation. Design work can continue.";
@@ -39,8 +41,8 @@ function quotationStatusHeading(estimate: EstimateDraft) {
   return "Quotation approval unavailable";
 }
 
-export function StaffEstimateCollaboration({ estimate, disabled = false, onVersionAdvance, compact = false }: {
-  estimate: EstimateDraft; disabled?: boolean; onVersionAdvance?: (before: number, after: number) => void; compact?: boolean;
+export function StaffEstimateCollaboration({ estimate, disabled = false, onVersionAdvance, compact = false, hasUnsavedQuotationChanges = false }: {
+  estimate: EstimateDraft; disabled?: boolean; onVersionAdvance?: (before: number, after: number) => void; compact?: boolean; hasUnsavedQuotationChanges?: boolean;
 }) {
   const queryClient = useQueryClient();
   const [dialog, setDialog] = useState<{ action: Action; estimate: EstimateDraft; idempotencyKey: string } | null>(null);
@@ -80,7 +82,7 @@ export function StaffEstimateCollaboration({ estimate, disabled = false, onVersi
     onSuccess: async (result, input) => {
       if (input.action !== "release" && "version" in result && typeof result.version === "number" && input.source.version !== undefined) onVersionAdvance?.(input.source.version, result.version);
       setDialog(null);
-      setMessage(input.action === "unlock" ? "Quotation reopened. Save and submit the revised quotation for client approval." : input.action === "withdraw" ? "Review withdrawn. The client cannot approve that submission; its history is preserved." : input.action === "release" ? "Saved estimate released for procurement preparation. Final approval and initial payment are still required before work orders." : "Quotation workflow enabled. The current Client approval remains effective until a saved quotation revision requires review.");
+      setMessage(input.action === "unlock" ? "Quotation reopened. Submit the revised quotation for client approval." : input.action === "withdraw" ? "Review withdrawn. The client cannot approve that submission; its history is preserved." : input.action === "release" ? "Saved estimate released for procurement preparation. Final approval and initial payment are still required before work orders." : "Quotation workflow enabled. The current Client approval remains effective until a saved quotation revision requires review.");
       await refreshEstimateCollaboration(queryClient);
       sectionRef.current?.focus();
     },
@@ -96,7 +98,7 @@ export function StaffEstimateCollaboration({ estimate, disabled = false, onVersi
   const quotationWorkflow = lifecycle?.workflowVersion === 3;
   const quotationReapprovalStage = quotationWorkflow && lifecycle?.phase === "post";
   const quotationState = quotationReapprovalStage ? currentQuotationApprovalState(estimate) : undefined;
-  const quotationCopy = quotationReapprovalStage ? quotationStatusCopy(estimate) : "";
+  const quotationCopy = quotationReapprovalStage ? quotationStatusCopy(estimate, hasUnsavedQuotationChanges) : "";
   const closed = Boolean(lifecycle?.editClosedAt || !quotationWorkflow && lifecycle?.finalApproval);
   const canUnlock = quotationWorkflow && closed && estimate.capabilities?.canUnlockQuotation === true && Boolean(lifecycle.finalApproval);
   const editable = !closed && ["draft", "designer_changes_requested", "client_changes_requested"].includes(lifecycle?.status ?? estimate.status);

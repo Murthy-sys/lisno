@@ -22,13 +22,31 @@ export function quotationSavedMode(estimate: Row, mainLineId: string): "pmc" | "
   return ["pmc", "sub_vendor", "in_house"].includes(existing?.pricingMode) ? existing.pricingMode : "sub_vendor";
 }
 
+export function quotationClassification(estimate: Row, mainLineId: string, basketId: string): "standard" | "special" {
+  const value = estimate.lineItems.find((line: Row) => line.mainLineId === mainLineId)?.classification ??
+    estimate.selectedMainBasketClassifications?.find((entry: Row) => entry.mainBasketId === basketId)?.classification;
+  return value === "special" ? "special" : "standard";
+}
+
+export async function quotationPricingModeChoices(line: Row, source: QuotationSource | undefined, session?: ClientSession) {
+  const modes = line.classification === "special" ? ["pmc", "sub_vendor", "in_house"] as const : ["sub_vendor"] as const;
+  const options = [];
+  for (const pricingMode of modes) options.push({ pricingMode,
+    choices: await estimateTierChoices({ ...line, pricingMode,
+      ...(pricingMode === line.pricingMode ? {} : { selectedInHouseComponentIds: undefined }) }, source, session) });
+  return options;
+}
+
 export async function quotationCandidateFor(estimate: Row, source: QuotationSource) {
   const prior = estimate.lineItems.find((line: Row) => line.mainLineId === source.line.mainLineId);
   const modeTier = prior?.modeTier ?? source.line.applicableTiers[0] ?? "signature";
   const pricingMode = quotationSavedMode(estimate, source.line.mainLineId);
-  const choices = await estimateTierChoices({ quantity: 1, uomId: source.line.uom.id, pricingMode, modeTier }, source);
+  const classification = quotationClassification(estimate, source.line.mainLineId, source.line.basketId);
+  const choiceLine = { quantity: 1, uomId: source.line.uom.id, pricingMode, modeTier, classification };
+  const pricingModeChoices = await quotationPricingModeChoices(choiceLine, source);
+  const choices = pricingModeChoices.find(option => option.pricingMode === pricingMode)?.choices ?? await estimateTierChoices(choiceLine, source);
   return { mainLineId: source.line.mainLineId, name: source.line.name, source: quotationSourceIdentity(source),
-    ...quotationSourceGrouping(source), pricingMode, modeTier, dimensionsMandatory: source.line.dimensionsMandatory,
+    ...quotationSourceGrouping(source), pricingMode, modeTier, classification, pricingModeChoices, dimensionsMandatory: source.line.dimensionsMandatory,
     dimensionRule: source.line.dimensionRule, uomName: source.line.uom.name, choices };
 }
 

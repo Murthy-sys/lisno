@@ -30,6 +30,7 @@ describe("inline estimate item picker", () => {
     const list = screen.getByRole("list", { name: "Available items" });
     expect(within(list).getAllByRole("listitem")).toHaveLength(20);
     expect(screen.getByRole("searchbox", { name: "Search available items" })).toHaveFocus();
+    expect(within(screen.getByRole("combobox", { name: "Main Basket" })).getByRole("option", { name: "All Main Baskets", selected: true })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Next" }));
     expect(screen.getByRole("button", { name: "Add Kitchen item 20" })).toBeVisible();
     await user.type(screen.getByRole("searchbox"), "999");

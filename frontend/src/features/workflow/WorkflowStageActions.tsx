@@ -10,8 +10,8 @@ import { DownloadButton } from "../../components/ui/DownloadButton";
 import { Checkbox, Field, FileInput, Input, Select, Textarea } from "../../components/ui/Field";
 import { ProgressBar } from "../../components/ui/ProgressBar";
 import {
-  downloadWorkflowActionMedia, downloadWorkflowActionProof, getFurnitureUoms, performDesignWorkflowAction, projectWorkflowKeys,
-  type DesignStageOperational, type DesignWorkflowAction, type DesignWorkflowActionId, type DesignWorkflowStage, type DesignWorkflowView
+  downloadWorkflowActionMedia, downloadWorkflowActionProof, getFurnitureUoms, isRetiredDesignWorkflowAction, performDesignWorkflowAction, projectWorkflowKeys,
+  type DesignStageOperational, type DesignWorkflowAction, type DesignWorkflowActionId, type DesignWorkflowHistoricalActionId, type DesignWorkflowStage, type DesignWorkflowView
 } from "./projectWorkflowApi";
 import "./workflowStageActions.css";
 import { WorkflowSubmittedDocument } from "./WorkflowSubmittedDocument";
@@ -25,18 +25,18 @@ import { ExistingFurnitureWorkflow } from "./ExistingFurnitureWorkflow";
 export { useRefreshDesignWorkflow } from "./useRefreshDesignWorkflow";
 
 const evidenceActions = new Set<DesignWorkflowActionId>(["internal_kickoff_complete", "furniture_upload"]);
-const noteActions = new Set<DesignWorkflowActionId>(["client_kickoff_not_required", "measurement_access_block", "furniture_scope_return", "furniture_dimensions_return"]);
+const noteActions = new Set<DesignWorkflowActionId>(["measurement_access_block", "furniture_scope_return", "furniture_dimensions_return"]);
 const dimensionReviewActions = new Set<DesignWorkflowActionId>(["furniture_dimensions_approve", "furniture_dimensions_return"]);
 const inlineClientFurnitureActions = new Set<DesignWorkflowActionId>(["furniture_accept", "furniture_scope_return", ...dimensionReviewActions]);
 const meetingActions = new Set<DesignWorkflowActionId>(["internal_kickoff_complete", "client_kickoff_request", "client_kickoff_schedule"]);
-const actionNames: Record<DesignWorkflowActionId, string> = {
+const actionNames: Record<DesignWorkflowHistoricalActionId, string> = {
   confirm_initial_payment: "Initial payment received",
   internal_kickoff_complete: "Internal Kick off completed",
   sales_calendar_accept: "Sales calendar accepted",
   client_kickoff_request: "Client Kick off requested",
   client_kickoff_schedule: "Client meeting time confirmed",
   client_kickoff_complete: "Client Kick off completed",
-  client_kickoff_not_required: "Client Kick off marked not necessary",
+  client_kickoff_not_required: "Historical Client Kick off exemption",
   keys_handed_over: "Keys handed over",
   keys_received: "Keys received",
   measurement_assign: "Measurement taker assigned",
@@ -68,9 +68,11 @@ export function WorkflowStageActions(props: WorkflowStageActionsProps) {
 
 function LegacyWorkflowStageActions({ workflow, stage, expandKickoff = false, presentation = "full", refreshError = false, refreshing = false }: WorkflowStageActionsProps) {
   const id = useId();
+  const availableActions = (stage.operational?.availableActions ?? []).filter((action) => !isRetiredDesignWorkflowAction(action.id) && action.id !== "furniture_proceed" && action.id !== "space_planning_complete");
   const automaticActionId = presentation === "client" && stage.type === "client_kickoff" ? "client_kickoff_complete" : expandKickoff ? "internal_kickoff_complete" : undefined;
   const [selected, setSelected] = useState<DesignWorkflowAction | null>(() => automaticActionId
-    ? stage.operational?.availableActions.find((action) => action.id === automaticActionId && !action.disabledReason) ?? null : null);
+    ? availableActions.find((action) => action.id === automaticActionId && !action.disabledReason) ?? null : null);
+  const selectedAction = selected && !isRetiredDesignWorkflowAction(selected.id) ? selected : null;
   const [collapsed, setCollapsed] = useState(false);
   const [focusRequested, setFocusRequested] = useState(false);
   const [success, setSuccess] = useState("");
@@ -88,21 +90,27 @@ function LegacyWorkflowStageActions({ workflow, stage, expandKickoff = false, pr
   const operational = stage.operational;
   const document = stage.type === "internal_kickoff" || stage.type === "client_kickoff" ? operational?.submittedDocument : undefined;
   const documentReady = Boolean(document && readyDocument === `${workflow.projectId}:${document.eventId}`);
-  const initialAction = automaticActionId ? operational?.availableActions.find((action) => action.id === automaticActionId && !action.disabledReason) : undefined;
+  const initialAction = automaticActionId ? availableActions.find((action) => action.id === automaticActionId && !action.disabledReason) : undefined;
   useEffect(() => {
     if (!selected && !collapsed && initialAction) setSelected(initialAction);
   }, [selected, collapsed, initialAction]);
+  useEffect(() => {
+    if (!selected || !isRetiredDesignWorkflowAction(selected.id)) return;
+    setSelected(null);
+    setCollapsed(true);
+    setFocusRequested(false);
+    window.requestAnimationFrame(() => container.current?.focus());
+  }, [selected, selected?.id]);
   if (!operational) return null;
-  const availableActions = operational.availableActions.filter((action) => action.id !== "furniture_proceed" && action.id !== "space_planning_complete");
   return <div className={`workflow-stage-actions${presentation !== "full" ? ` workflow-stage-actions--${presentation}` : ""}`} ref={container} tabIndex={-1}>
     {success ? <p role="status" className="workflow-stage-actions__success">{success}</p> : null}
     {stage.type === "space_planning_tentative_look_feel" ? <SpacePlanningCompletion workflow={workflow} stage={stage} refreshError={refreshError} refreshing={refreshing} reviewHref={presentation === "client" && operational.spacePlanning ? `/client?estimate=${encodeURIComponent(operational.spacePlanning.estimateId)}` : undefined} /> : null}
     {stage.type === "existing_furniture_dimensions" && (presentation === "client" || operational.rooms) ? <FurnitureRequirementsReview key={`${workflow.projectId}:${stage.id}:${operational.version}`} projectId={workflow.projectId} operational={operational} /> : null}
     {document ? <WorkflowSubmittedDocument projectId={workflow.projectId} document={document} onReady={(eventId, ready) => setReadyDocument(ready ? `${workflow.projectId}:${eventId}` : undefined)} /> : stage.type === "client_kickoff" && presentation !== "designer" ? <p>The Designer’s Internal Kick off document is not available yet.</p> : null}
-    {availableActions.length > 0 || selected ? <section aria-label={`${stage.name} available actions`}>
+    {availableActions.length > 0 || selectedAction ? <section aria-label={`${stage.name} available actions`}>
       {presentation === "full" ? <h5>{expandKickoff ? "Acknowledgement and completion" : "Available actions"}</h5> : null}
-      {selected ? <StageActionForm key={selected.id} action={selected} workflow={workflow} stage={stage} autoFocus={focusRequested} documentReady={documentReady} presentation={presentation}
-        onClose={closeAction} onSaved={(version, zeroValueResolution) => { setRecordedVersion(version); setSuccess(zeroValueResolution ? "Returned zero-value rooms resolved. The earlier submission and Client response remain in history." : selected.id === "furniture_scope" ? "Furniture requirements submitted. Awaiting Client approval." : selected.id === "furniture_upload" ? "Dimensions submitted. Awaiting Client approval." : selected.id === "furniture_dimensions_return" || selected.id === "furniture_scope_return" ? "Sent back for corrections." : selected.id === "furniture_dimensions_approve" ? "Selected furniture dimensions approved." : "Action recorded. The project workflow has been updated."); closeAction(); }} />
+      {selectedAction ? <StageActionForm key={selectedAction.id} action={selectedAction} workflow={workflow} stage={stage} autoFocus={focusRequested} documentReady={documentReady} presentation={presentation}
+        onClose={closeAction} onSaved={(version, zeroValueResolution) => { setRecordedVersion(version); setSuccess(zeroValueResolution ? "Returned zero-value rooms resolved. The earlier submission and Client response remain in history." : selectedAction.id === "furniture_scope" ? "Furniture requirements submitted. Awaiting Client approval." : selectedAction.id === "furniture_upload" ? "Dimensions submitted. Awaiting Client approval." : selectedAction.id === "furniture_dimensions_return" || selectedAction.id === "furniture_scope_return" ? "Sent back for corrections." : selectedAction.id === "furniture_dimensions_approve" ? "Selected furniture dimensions approved." : "Action recorded. The project workflow has been updated."); closeAction(); }} />
         : <div className="workflow-stage-actions__buttons">{availableActions.map((action) =>
           <div className="workflow-stage-actions__choice" key={action.id}>
             <Button ref={(element) => { if (element) buttons.current.set(action.id, element); else buttons.current.delete(action.id); }} variant="secondary" disabled={Boolean(action.disabledReason) || operational.version < recordedVersion} aria-describedby={action.disabledReason ? `${id}-${action.id}-reason` : undefined} onClick={() => { setSuccess(""); setFocusRequested(true); setSelected(action); }}>{actionLabel(action)}</Button>
@@ -113,7 +121,7 @@ function LegacyWorkflowStageActions({ workflow, stage, expandKickoff = false, pr
     {presentation !== "client" && operational.history.length > 0 ? <details className="workflow-stage-actions__history">
       <summary>Action history <span>{operational.history.length}</span></summary>
       <ol>{[...operational.history].reverse().map((event) => <li key={event.id}>
-        <strong>{actionNames[event.action as DesignWorkflowActionId] ?? event.action}</strong>
+        <strong>{actionNames[event.action as DesignWorkflowHistoricalActionId] ?? event.action}</strong>
         <p>{event.actorName} · {ROLE_LABELS[event.actorRole as keyof typeof ROLE_LABELS] ?? event.actorRole}{event.onBehalfOfClient ? " · On behalf of Client" : ""}</p>
         <time dateTime={event.at}>{new Date(event.at).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })}</time>
         {event.note ? <p className="workflow-stage-actions__note">{event.note}</p> : null}
@@ -237,7 +245,7 @@ function StageActionForm({ action, workflow, stage, onClose, onSaved, autoFocus 
   const unavailableItems = unavailableRoomIds.length > 0;
   const isMeasurement = action.id === "measurement_complete";
   const measurementAccessDenied = isMeasurement && mutation.error instanceof ApiError && [403, 404].includes(mutation.error.status);
-  const stale = measurementAccessDenied || stage.operational?.version !== version || documentChanged || dimensionsChanged || requirementsChanged || missingRequirementsReference || estimateItemsChanged || Boolean(blockedReason) || !stage.operational?.availableActions.some((candidate) => candidate.id === action.id);
+  const stale = isRetiredDesignWorkflowAction(action.id) || measurementAccessDenied || stage.operational?.version !== version || documentChanged || dimensionsChanged || requirementsChanged || missingRequirementsReference || estimateItemsChanged || Boolean(blockedReason) || !stage.operational?.availableActions.some((candidate) => candidate.id === action.id);
   const needsFile = !isMeasurement && (action.requiresProof || evidenceActions.has(action.id) || (isScope && dimensionsNeeded));
   const hasEvidence = Boolean(submissionFile || mediaFiles.length);
   const isInternalKickoff = action.id === "internal_kickoff_complete";

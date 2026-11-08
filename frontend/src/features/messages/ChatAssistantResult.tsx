@@ -25,7 +25,12 @@ function Price({ price }: { price: AssistantProjectPricing }) {
     <Source source={price.source} />
     <ul className="project-chat-assistant__lines">{price.lines.map(line => <li key={line.id}><div><strong>{line.label}</strong><span>{line.quantity === null ? "Quantity unavailable" : `${line.quantity}${line.unit ? ` ${line.unit}` : ""}`} · Rate: {amount(line.ratePaise)}</span></div><strong>{amount(line.amountPaise)}</strong></li>)}</ul>
     {price.hasMoreLines ? <p className="project-chat-assistant__note">Showing {price.lines.length} of {price.lineCount} lines. Open the estimate for all lines.</p> : null}
-    <dl className="project-chat-assistant__totals">{(["subtotalPaise", "gstPaise", "totalPaise"] as const).map((key, index) => <div key={key}><dt>{["Subtotal before GST", "GST", "Total"][index]}</dt><dd>{amount(price[key])}</dd></div>)}</dl>
+    <dl className="project-chat-assistant__totals">
+      <div><dt>Subtotal before GST</dt><dd>{amount(price.subtotalPaise)}</dd></div>
+      <div><dt>GST</dt><dd>{amount(price.gstPaise)}</dd></div>
+      {price.roundOffPaise !== undefined && price.roundOffPaise !== 0 ? <div><dt>Round off</dt><dd>{price.roundOffPaise < 0 ? "−" : "+"}{money(Math.abs(price.roundOffPaise))}</dd></div> : null}
+      <div><dt>Total</dt><dd>{amount(price.totalPaise)}</dd></div>
+    </dl>
   </section>;
 }
 

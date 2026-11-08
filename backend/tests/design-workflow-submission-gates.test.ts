@@ -58,7 +58,7 @@ function readyState(): DesignWorkflowState {
     initialPaymentAt: "2026-09-01T12:00:00.000Z",
     stages: {
       internal_kickoff: { completedAt: NOW },
-      client_kickoff: { completedAt: NOW, notRequired: true },
+      client_kickoff: { completedAt: NOW },
       key_collection: { handedOverAt: NOW, receivedAt: NOW, completedAt: NOW },
       site_measurement: { completedAt: NOW },
       existing_furniture_dimensions: {

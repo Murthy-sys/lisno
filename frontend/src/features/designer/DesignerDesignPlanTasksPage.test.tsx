@@ -278,10 +278,10 @@ describe("DesignerDesignPlanTasksPage", () => {
     expect(await screen.findByText("Initial estimate approved. No quotation changes require Client review.")).toBeVisible();
     expect(await screen.findByRole("heading", { name: "Upload design" })).toBeVisible();
     if (primary) {
-      expect(screen.getByRole("link", { name: "Review or update estimate" })).toHaveAttribute("href", "/estimator-sales/leads/lead-v3/estimate");
+      expect(screen.getByRole("link", { name: "Add / edit estimate items" })).toHaveAttribute("href", "/estimator-sales/leads/lead-v3/estimate");
       expect(screen.queryByRole("link", { name: "View saved estimation" })).not.toBeInTheDocument();
     } else {
-      expect(screen.queryByRole("link", { name: "Review or update estimate" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("link", { name: "Add / edit estimate items" })).not.toBeInTheDocument();
       expect(screen.getByRole("link", { name: "View saved estimation" })).toHaveAttribute("href", "/projects/project-1/quotation");
     }
   });
@@ -299,7 +299,7 @@ describe("DesignerDesignPlanTasksPage", () => {
     );
     const view = renderPage();
     expect(await screen.findByText("Client approval is required for the revised quotation before design work continues.")).toBeVisible();
-    expect(screen.getByRole("link", { name: "Review revised quotation" })).toHaveAttribute("href", "/estimator-sales/leads/lead-v3/estimate");
+    expect(screen.getByRole("link", { name: "Add / edit estimate items" })).toHaveAttribute("href", "/estimator-sales/leads/lead-v3/estimate");
     expect(screen.queryByRole("heading", { name: "Upload design" })).not.toBeInTheDocument();
     task.quotationApproved = true;
     task.quotationApprovalState = "revision_current";
@@ -310,6 +310,8 @@ describe("DesignerDesignPlanTasksPage", () => {
     await act(async () => view.queryClient.invalidateQueries());
     expect(await screen.findByText("The revised quotation is approved. Continue the design tasks below.")).toBeVisible();
     expect(await screen.findByRole("heading", { name: "Upload design" })).toBeVisible();
+    expect(screen.queryByRole("link", { name: "Add / edit estimate items" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "View estimate" })).toHaveAttribute("href", "/estimator-sales/leads/lead-v3/estimate");
   });
 
   it("fails closed when current quotation approval fields are missing", async () => {

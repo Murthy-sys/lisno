@@ -62,6 +62,7 @@ function RecordedTotals({ revision }: { revision: EstimateRevisionDetail }) {
   return <dl className="estimate-revision-totals" aria-label="Saved revision totals">
     <div><dt>Subtotal before GST</dt><dd>{revisionMoney(revision.subtotalPaise)}</dd></div>
     <div><dt>GST</dt><dd>{revisionMoney(snapshot.gstPaise, snapshot.gst)}</dd></div>
+    {snapshot.roundOffPaise !== undefined && snapshot.roundOffPaise !== 0 ? <div><dt>Round off</dt><dd>{snapshot.roundOffPaise < 0 ? "−" : "+"}{revisionMoney(Math.abs(snapshot.roundOffPaise))}</dd></div> : null}
     <div><dt>Total including GST</dt><dd>{revisionMoney(snapshot.totalPaise, snapshot.total)}</dd></div>
   </dl>;
 }

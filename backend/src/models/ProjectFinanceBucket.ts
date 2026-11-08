@@ -1,3 +1,4 @@
+import { estimateTotalsReconcile } from "../domain/estimate-total-rounding.js";
 import {
   MAX_FINANCE_AMOUNT_PAISE,
   PROJECT_FINANCE_BUCKET_STATUSES,
@@ -68,6 +69,7 @@ const projectFinanceBucketSchema = new Schema(
     approvedSubtotalPaise: moneyPath(true),
     approvedGstPaise: moneyPath(true),
     approvedContractTotalPaise: moneyPath(true),
+    approvedRoundOffPaise: { type: Number, min: -50, max: 49, immutable: true, validate: safeIntegerValidator },
     targetMarginBps: {
       type: Number,
       required: true,
@@ -137,7 +139,8 @@ projectFinanceBucketSchema.pre("validate", function validateBucketState() {
     typeof subtotal === "number" &&
     typeof gst === "number" &&
     typeof total === "number" &&
-    subtotal + gst !== total
+    !estimateTotalsReconcile({ subtotalPaise: subtotal, gstPaise: gst, totalPaise: total,
+      roundOffPaise: this.get("approvedRoundOffPaise") })
   ) {
     this.invalidate(
       "approvedContractTotalPaise",

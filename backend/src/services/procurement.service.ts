@@ -1,3 +1,4 @@
+import { effectiveFinanceBaselineExpression, financeRoundOffMatchesExpression, financeTotalsReconcileExpression } from "../domain/project-finance-rounding-expression.js";
 import { readProjectNumbers } from "./project-number-read.service.js";
 import { estimateDimensionSnapshotFields, estimateDimensionSnapshotValid, type EstimateDimensionMetadata } from "../domain/estimate-dimension-snapshot.js";
 import { isCollaborativeEstimate, type EstimationPreparationSource } from "../domain/estimation-lifecycle.js";
@@ -374,7 +375,8 @@ export async function readProcurementDashboardPortfolioReport(): Promise<Procure
             $cond: [
               { $gt: [{ $size: "$approvedRounds" }, 0] },
               { $arrayElemAt: ["$matchingRounds.estimateSnapshot", 0] },
-              { subtotal: "$subtotal", gst: "$gst", total: "$total", lineItems: "$lineItems" }
+              { subtotal: "$subtotal", gst: "$gst", total: "$total", subtotalPaise: "$subtotalPaise",
+                gstPaise: "$gstPaise", totalPaise: "$totalPaise", roundOffPaise: "$roundOffPaise", lineItems: "$lineItems" }
             ]
           },
           approvalRoundId: {
@@ -404,7 +406,7 @@ export async function readProcurementDashboardPortfolioReport(): Promise<Procure
               { $gte: ["$approvedSubtotalPaise", 0] }, { $gte: ["$approvedGstPaise", 0] },
               { $eq: ["$approvedSubtotalPaise", { $trunc: "$approvedSubtotalPaise" }] },
               { $eq: ["$approvedGstPaise", { $trunc: "$approvedGstPaise" }] },
-              { $eq: [{ $add: ["$approvedSubtotalPaise", "$approvedGstPaise"] }, "$approvedContractTotalPaise"] }
+              financeTotalsReconcileExpression("$approvedSubtotalPaise", "$approvedGstPaise", "$approvedContractTotalPaise", "$approvalSnapshot.roundOffPaise")
             ]
           }
         }
@@ -450,7 +452,7 @@ export async function readProcurementDashboardPortfolioReport(): Promise<Procure
             },
             { $lookup: { from: ProjectFinanceBucketModel.collection.name, localField: "projectId", foreignField: "projectId", as: "buckets" } },
             { $set: { bucket: { $arrayElemAt: ["$buckets", 0] } } },
-            { $set: { bucket: { $mergeObjects: ["$bucket", { $ifNull: ["$bucket.effectiveBaseline", {}] }] } } },
+            { $set: { bucket: effectiveFinanceBaselineExpression("$bucket", "$bucket.effectiveBaseline") } },
             {
               $set: {
                 bucketValid: {
@@ -465,7 +467,8 @@ export async function readProcurementDashboardPortfolioReport(): Promise<Procure
                           { $cond: [{ $eq: ["$bucket.status", "pending_design"] }, 0, { $ifNull: ["$estimation.designApproval.designPlanVersion", { $ifNull: ["$estimation.finalApproval.designPlanVersion", 0] }] }] }, "$designPlanVersion"] }] },
                         { $eq: ["$bucket.approvedSubtotalPaise", "$approvedSubtotalPaise"] },
                         { $eq: ["$bucket.approvedGstPaise", "$approvedGstPaise"] },
-                        { $eq: ["$bucket.approvedContractTotalPaise", "$approvedContractTotalPaise"] }
+                        { $eq: ["$bucket.approvedContractTotalPaise", "$approvedContractTotalPaise"] },
+                        financeRoundOffMatchesExpression("$bucket.approvedRoundOffPaise", "$approvalSnapshot.roundOffPaise")
                       ]
                     }
                   ]
@@ -731,6 +734,7 @@ export interface ApprovedProcurementSnapshot {
   subtotalPaise: number;
   gstPaise: number;
   totalPaise: number;
+  roundOffPaise?: number;
   lineItems: ApprovedProcurementLine[];
   allLineItems: ApprovedProcurementSourceLine[];
   mainBasketClassifications: Record<string, "standard" | "special">;
@@ -1560,6 +1564,7 @@ export function approvedProcurementSnapshotFromRows(
     subtotalPaise: approval.baseline.approvedSubtotalPaise,
     gstPaise: approval.baseline.approvedGstPaise,
     totalPaise: approval.baseline.approvedContractTotalPaise,
+    ...(approval.baseline.approvedRoundOffPaise === undefined ? {} : { roundOffPaise: approval.baseline.approvedRoundOffPaise }),
     lineItems,
     allLineItems,
     mainBasketClassifications
@@ -1730,7 +1735,8 @@ async function requireOpenMatchingBucket(
         approvedContractTotalRupees: resolved.snapshot.totalRupees,
         approvedSubtotalPaise: resolved.snapshot.subtotalPaise,
         approvedGstPaise: resolved.snapshot.gstPaise,
-        approvedContractTotalPaise: resolved.snapshot.totalPaise
+        approvedContractTotalPaise: resolved.snapshot.totalPaise,
+        approvedRoundOffPaise: resolved.snapshot.roundOffPaise
       }
     }, session);
   }
@@ -1785,7 +1791,8 @@ function requireMatchingBucketLineage(
       totalRupees: snapshot.totalRupees,
       subtotalPaise: snapshot.subtotalPaise,
       gstPaise: snapshot.gstPaise,
-      totalPaise: snapshot.totalPaise
+      totalPaise: snapshot.totalPaise,
+      roundOffPaise: snapshot.roundOffPaise
     });
   } catch {
     procurementLineageConflict();
@@ -1800,7 +1807,8 @@ function requireMatchingBucketLineage(
     Number(bucket.designPlanVersion) !== snapshot.designPlanVersion ||
     Number(bucket.approvedSubtotalPaise) !== baseline.approvedSubtotalPaise ||
     Number(bucket.approvedGstPaise) !== baseline.approvedGstPaise ||
-    Number(bucket.approvedContractTotalPaise) !== baseline.approvedContractTotalPaise
+    Number(bucket.approvedContractTotalPaise) !== baseline.approvedContractTotalPaise ||
+    bucket.approvedRoundOffPaise !== baseline.approvedRoundOffPaise
   ) procurementLineageConflict();
 }
 
@@ -2658,7 +2666,7 @@ function procurementEstimateEligible(estimate: Row): boolean {
 function collaborativeProcurementSnapshot(estimate: Row, frozen: Awaited<ReturnType<typeof resolveEstimationPreparationSource>>): ApprovedProcurementSnapshot {
   const snapshot = frozen.snapshot;
   const baseline = projectFinanceBaseline({ subtotalRupees: snapshot.subtotal, gstRupees: snapshot.gst, totalRupees: snapshot.total,
-    subtotalPaise: snapshot.subtotalPaise, gstPaise: snapshot.gstPaise, totalPaise: snapshot.totalPaise });
+    subtotalPaise: snapshot.subtotalPaise, gstPaise: snapshot.gstPaise, totalPaise: snapshot.totalPaise, roundOffPaise: snapshot.roundOffPaise });
   const allLineItems = approvedSnapshotLines(snapshot.lineItems, String(estimate._id), frozen.source.estimateVersion);
   const design = estimate.designPlanStatus === "approved" && Number.isSafeInteger(estimate.designPlanVersion) &&
     estimate.designPlanVersion > 0 && estimate.designPlanApprovedAt && estimate.designPlanApprovedById
@@ -2670,6 +2678,7 @@ function collaborativeProcurementSnapshot(estimate: Row, frozen: Awaited<ReturnT
     subtotalRupees: baseline.approvedSubtotalPaise / 100, gstRupees: baseline.approvedGstPaise / 100,
     totalRupees: baseline.approvedContractTotalPaise / 100, subtotalPaise: baseline.approvedSubtotalPaise,
     gstPaise: baseline.approvedGstPaise, totalPaise: baseline.approvedContractTotalPaise,
+    ...(baseline.approvedRoundOffPaise === undefined ? {} : { roundOffPaise: baseline.approvedRoundOffPaise }),
     allLineItems, lineItems: allLineItems.filter((line): line is ApprovedProcurementLine => line.included && line.amountPaise !== null),
     mainBasketClassifications: approvedMainBasketClassifications(snapshot) };
 }

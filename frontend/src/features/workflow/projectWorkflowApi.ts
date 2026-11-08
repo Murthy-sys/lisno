@@ -114,12 +114,16 @@ export interface DesignStageInstructions {
 export type DesignWorkflowActionId =
   | "confirm_initial_payment" | "internal_kickoff_complete" | "sales_calendar_accept"
   | "client_kickoff_request" | "client_kickoff_schedule" | "client_kickoff_complete"
-  | "client_kickoff_not_required" | "keys_handed_over" | "keys_received"
+  | "keys_handed_over" | "keys_received"
   | "measurement_assign" | "measurement_access_block" | "measurement_access_restore"
   | "measurement_complete" | "furniture_scope" | "furniture_accept"
   | "furniture_upload" | "furniture_proceed" | "furniture_scope_return"
   | "furniture_request" | "furniture_choice"
   | "furniture_dimensions_approve" | "furniture_dimensions_return" | "space_planning_complete";
+
+export type DesignWorkflowHistoricalActionId = DesignWorkflowActionId | "client_kickoff_not_required";
+
+export const isRetiredDesignWorkflowAction = (action: string) => action === "client_kickoff_not_required";
 
 interface FurnitureMeasurementItemBase {
   id: string;
@@ -344,6 +348,9 @@ export async function performDesignWorkflowAction(input: {
   file?: File | null;
   mediaFiles?: File[];
 }, onProgress?: (percent: number) => void): Promise<{ version: number }> {
+  if (isRetiredDesignWorkflowAction(input.action)) {
+    throw new Error("Client Kick off is mandatory. Refresh the workflow to see the available actions.");
+  }
   const { projectId, file, mediaFiles = [], ...payload } = input;
   const path = `/projects/${encodeURIComponent(projectId)}/design-workflow/actions`;
   if (!file && mediaFiles.length === 0) return apiClient.post<{ version: number }>(path, payload, { showGlobalLoader: false });

@@ -440,6 +440,35 @@ function reviewRound(input: {
 }
 
 describe("Super Admin dashboard Mongo pre-pagination filters", () => {
+  it("reports unequal approved rounded totals without changing pre-GST budgets", async () => {
+    for (const [id, subtotalPaise, gstPaise, totalPaise, roundOffPaise] of [
+      ["rounded-a", 12_125, 2_183, 14_300, -8], ["rounded-b", 7_003, 1_261, 8_300, 36]
+    ] as const) {
+      await approvedFinanceProject({ id, subtotalRupees: 1_000, directSpendPaise: 0 });
+      const roundId = `${id}:rounded-round`;
+      await EstimateClientReviewRoundModel.collection.insertOne({
+        ...reviewRound({ id: roundId, projectId: id, estimateVersion: 1, sendGeneration: 1, status: "approved", decision: "approve" }),
+        estimateSnapshot: { clientName: "Dashboard Client", projectName: id, location: "Pune", propertyType: "apartment", lineItems: [],
+          subtotal: subtotalPaise / 100, gst: gstPaise / 100, total: totalPaise / 100, subtotalPaise, gstPaise, totalPaise, roundOffPaise }
+      });
+      const targetProfitPaise = Math.round(subtotalPaise / 5);
+      await ProjectFinanceBucketModel.collection.updateOne({ projectId: id }, { $set: {
+        estimateReviewRoundId: roundId, approvedSubtotalPaise: subtotalPaise, approvedGstPaise: gstPaise,
+        approvedContractTotalPaise: totalPaise, approvedRoundOffPaise: roundOffPaise,
+        targetProfitPaise, costBudgetPaise: subtotalPaise - targetProfitPaise
+      } });
+    }
+    const overview = await mongoSuperAdminDashboardOverview({ observedAt: OBSERVED_AT, startAt: PERIOD_START_AT, endAt: PERIOD_END_AT, periodDays: 7 });
+    expect(overview.finance).toMatchObject({ projectCount: 2, approvedSubtotalPaise: 19_128,
+      approvedGstPaise: 3_444, approvedContractTotalPaise: 22_600, approvedRoundOffPaise: 28, targetProfitPaise: 3_826, costBudgetPaise: 15_302 });
+    const page = await mongoSuperAdminDashboardProjects(OBSERVED_AT, { module: "finance", sort: "name_asc", limit: 20, offset: 0 });
+    expect(page.total).toBe(2);
+    expect(page.items.map(row => row.finance?.approvedSubtotalPaise)).toEqual([12_125, 7_003]);
+    await ProjectFinanceBucketModel.collection.updateOne({ projectId: "rounded-a" }, { $set: { approvedRoundOffPaise: -7 } });
+    const corrupt = await mongoSuperAdminDashboardProjects(OBSERVED_AT, { module: "finance", sort: "name_asc", limit: 20, offset: 0 });
+    expect(corrupt.total).toBe(1);
+  }, 15_000);
+
   it("retains unequal v3 approved baselines and issued task scope after quotation unlock", async () => {
     for (const [id, amount] of [["quote-small", 1000], ["quote-large", 3000]] as const) {
       await approvedFinanceProject({ id, subtotalRupees: amount, directSpendPaise: 0 });

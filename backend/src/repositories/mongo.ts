@@ -271,6 +271,7 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
         subtotalPaise: 1,
         gstPaise: 1,
         totalPaise: 1,
+        roundOffPaise: 1,
         clientDecisionAt: 1,
         designPlanStatus: 1,
         designPlanVersion: 1,
@@ -434,6 +435,7 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
         ...(document.subtotalPaise == null ? {} : { subtotalPaise: document.subtotalPaise }),
         ...(document.gstPaise == null ? {} : { gstPaise: document.gstPaise }),
         ...(document.totalPaise == null ? {} : { totalPaise: document.totalPaise }),
+        ...(document.roundOffPaise === undefined ? {} : { roundOffPaise: document.roundOffPaise }),
         clientDecisionAt: nullableIso(document.clientDecisionAt),
         clientDecisionSource: currentRound?.clientDecisionSource ?? null,
         approvedBaseline: approvedAdminEstimateBaseline(
@@ -3969,6 +3971,7 @@ function approvedAdminEstimateBaseline(
       ...(approvedRound.estimateSnapshot?.subtotalPaise == null ? {} : { subtotalPaise: approvedRound.estimateSnapshot.subtotalPaise }),
       ...(approvedRound.estimateSnapshot?.gstPaise == null ? {} : { gstPaise: approvedRound.estimateSnapshot.gstPaise }),
       ...(approvedRound.estimateSnapshot?.totalPaise == null ? {} : { totalPaise: approvedRound.estimateSnapshot.totalPaise }),
+      ...(approvedRound.estimateSnapshot?.roundOffPaise === undefined ? {} : { roundOffPaise: approvedRound.estimateSnapshot.roundOffPaise }),
       decisionAt: nullableIso(approvedRound.decidedAt),
       decisionSource: approvedRound.decisionSource ?? null
     };
@@ -3984,6 +3987,7 @@ function approvedAdminEstimateBaseline(
     ...(estimate.subtotalPaise == null ? {} : { subtotalPaise: estimate.subtotalPaise }),
     ...(estimate.gstPaise == null ? {} : { gstPaise: estimate.gstPaise }),
     ...(estimate.totalPaise == null ? {} : { totalPaise: estimate.totalPaise }),
+    ...(estimate.roundOffPaise === undefined ? {} : { roundOffPaise: estimate.roundOffPaise }),
     decisionAt: nullableIso(estimate.clientDecisionAt),
     decisionSource: null
   };
@@ -3992,7 +3996,7 @@ function approvedAdminEstimateBaseline(
 }
 
 function assertApprovedBaselineMoney(
-  baseline: Pick<AdminProjectApprovedEstimateBaseline, "subtotal" | "gst" | "total" | "subtotalPaise" | "gstPaise" | "totalPaise">
+  baseline: Pick<AdminProjectApprovedEstimateBaseline, "subtotal" | "gst" | "total" | "subtotalPaise" | "gstPaise" | "totalPaise" | "roundOffPaise">
 ): void {
   try {
     projectFinanceBaseline({
@@ -4001,7 +4005,8 @@ function assertApprovedBaselineMoney(
       totalRupees: baseline.total,
       ...(baseline.subtotalPaise === undefined ? {} : { subtotalPaise: baseline.subtotalPaise }),
       ...(baseline.gstPaise === undefined ? {} : { gstPaise: baseline.gstPaise }),
-      ...(baseline.totalPaise === undefined ? {} : { totalPaise: baseline.totalPaise })
+      ...(baseline.totalPaise === undefined ? {} : { totalPaise: baseline.totalPaise }),
+      ...(baseline.roundOffPaise === undefined ? {} : { roundOffPaise: baseline.roundOffPaise })
     });
   } catch {
     throw new ApiError(

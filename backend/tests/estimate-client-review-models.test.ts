@@ -102,6 +102,24 @@ describe("estimate client review domain helpers", () => {
 });
 
 describe("EstimateClientReviewRound persistence model", () => {
+  it("validates explicit final rounding without silently modifying legacy snapshot totals", async () => {
+    const saved = { ...snapshot(), subtotal: 86.86, subtotalPaise: 8_686, gst: 15.64, gstPaise: 1_564,
+      total: 102, totalPaise: 10_200, roundOffPaise: -50 };
+    const document = round({ estimateSnapshot: saved });
+    await expect(document.validate()).resolves.toBeUndefined();
+    expect(document.toObject().estimateSnapshot).toMatchObject(saved);
+    expect(EstimateClientReviewRoundModel.schema.path("estimateSnapshot.roundOffPaise").options.immutable).toBe(true);
+    for (const invalid of [0, 50, -51, -49, null, 0.5]) {
+      await expect(round({ estimateSnapshot: { ...saved, roundOffPaise: invalid } }).validate()).rejects.toThrow();
+    }
+    await expect(round({ estimateSnapshot: { ...saved, total: 103, totalPaise: 10_300, roundOffPaise: 50 } }).validate()).rejects.toThrow();
+    await expect(round({ estimateSnapshot: { ...saved, roundOffPaise: undefined } }).validate()).rejects.toThrow();
+    const legacy = round({ estimateSnapshot: { ...saved, total: 102.50, totalPaise: 10_250, roundOffPaise: undefined } });
+    await expect(legacy.validate()).resolves.toBeUndefined();
+    expect(legacy.toObject().estimateSnapshot).not.toHaveProperty("roundOffPaise");
+    expect(legacy.toObject().estimateSnapshot.total).toBe(102.50);
+  });
+
   it("persists validated immutable proposal metadata and keeps old snapshots compatible", async () => {
     const proposal = createEstimateProposal({ issuedAt: NOW, estimateId: "estimate-1", projectNumber: "Lisno000076" });
     const document = round({ estimateSnapshot: { ...snapshot(), proposal } });

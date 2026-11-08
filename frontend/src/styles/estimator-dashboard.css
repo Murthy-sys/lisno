@@ -1084,33 +1084,10 @@
 .configured-estimate-sub-basket + .configured-estimate-sub-basket { border-top: 1px solid #d6d3cc; }
 .configured-estimate-sub-basket h3 { margin: .55rem 0 .75rem; font-size: .92rem; letter-spacing: .02em; color: var(--color-primary); }
 .configured-estimate-sub-basket > p { color: var(--color-text-muted); font-size: .85rem; }
-.configured-estimate-line { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: .35rem 1rem; padding: .75rem 0; border-top: 1px solid #e0ddd6; }
-.configured-estimate-line__choice { display: flex; align-items: center; gap: .65rem; min-width: 0; }
-.configured-estimate-line__choice input { flex: none; margin: 0; }
-.configured-estimate-line__choice > span { display: flex; flex-wrap: wrap; align-items: baseline; gap: .15rem .5rem; min-width: 0; }
-.configured-estimate-line__choice strong { color: var(--color-text-strong); line-height: 1.3; }
-.configured-estimate-line__choice small { color: var(--color-text-muted); }
-.configured-estimate-line__source { font-size: .72rem; font-weight: 600; }
-.configured-estimate-line__fields { display: grid; grid-template-columns: minmax(5rem, 6rem) minmax(8rem, 10rem) minmax(5.5rem, 7rem); align-items: end; gap: .6rem; min-width: 0; }
-.configured-estimate-line__fields label { display: grid; gap: .25rem; min-width: 0; color: var(--color-text-muted); font-size: .75rem; font-weight: 600; }
-.configured-estimate-line__fields input { width: 100%; padding: .4rem .55rem; border: 1px solid #c9c5bd; background: #fdfcf9; color: var(--color-text-strong); font-size: 1rem; }
-.configured-estimate-line__fields input[aria-invalid="true"] { border-color: #a83b32; }
-.configured-estimate-line__fields output { text-align: right; color: var(--color-text-strong); font-weight: 700; }
-.configured-estimate-line__message { grid-column: 1 / -1; margin: 0 0 0 1.65rem; color: #a83b32; font-size: .78rem; }
-.configured-estimate-line__review { display: grid; grid-column: 1 / -1; justify-items: start; gap: .45rem; margin-left: 1.65rem; padding: .65rem 0; }
-.configured-estimate-line__review p { margin: 0; color: var(--color-text-strong); font-size: .8rem; }
 .configured-estimate-saved-line { padding: .3rem 1.1rem; }
 .configured-estimate-saved-line > p { font-size: .76rem; color: var(--color-text-muted); }
 @media (max-width: 1023px) {
   .configured-estimate-builder__layout { grid-template-columns: 1fr; }
-}
-@media (max-width: 767px) {
-  .configured-estimate-line { grid-template-columns: minmax(0, 1fr); }
-  .configured-estimate-line__fields { grid-template-columns: minmax(4.5rem, 6rem) minmax(7rem, 10rem) minmax(5rem, 1fr); margin-left: 1.65rem; }
-}
-@media (max-width: 380px) {
-  .configured-estimate-line__fields { grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr); }
-  .configured-estimate-line__fields output { grid-column: 1 / -1; text-align: right; }
 }
 
 /* Reference-aligned configured estimate builder. Kept local to this workflow. */
@@ -1378,38 +1355,6 @@
   .configured-estimate-sub-basket__remove { margin-block: 4px; }
 }
 .configured-estimate-basket__empty { padding: 12px 15px; font-size: 12px; }
-.configured-estimate-line { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 354px); align-items: center; gap: 6px 10px; min-height: 66px; margin: 6px 8px; padding: 8px; border: 1px solid var(--est-line, #dce1e8); border-radius: 5px; }
-.configured-estimate-line--included { border-color: #c5d5bf; background: #fbfcf9; }
-.configured-estimate-line__choice { gap: 10px; cursor: pointer; }
-.configured-estimate-line__thumb { position: relative; flex: none; display: block; width: 50px; height: 50px; border-radius: 3px; overflow: hidden; background: #e1e3dc; }
-.configured-estimate-line__thumb img { width: 100%; height: 100%; object-fit: cover; }
-.configured-estimate-line__thumb input,
-.estimate-workspace.estimator-dashboard .configured-estimate-line__thumb input { position: absolute; top: 2px; left: 2px; width: var(--form-choice-size); height: var(--form-choice-size); min-height: var(--form-choice-size); margin: 0; accent-color: #1f5a2f; background: #fff; }
-.configured-estimate-line__copy { display: grid; gap: 3px; min-width: 0; }
-.configured-estimate-line__copy strong { color: #151d35; font-size: 11px; font-weight: 700; line-height: 1.28; overflow-wrap: anywhere; }
-.configured-estimate-line__copy small { color: #69748b; font-size: 10px; line-height: 1.25; }
-.configured-estimate-line__fields { display: grid; grid-template-columns: minmax(78px, 96px) minmax(86px, 112px) minmax(74px, 112px) 22px; align-items: end; gap: 6px; min-width: 0; }
-.configured-estimate-line__fields label,
-.configured-estimate-line__amount { display: grid; align-content: end; gap: 4px; min-width: 0; color: #586682; font-size: 10px; font-weight: 600; }
-.estimate-workspace.estimator-dashboard .configured-estimate-line__fields input { min-height: 34px; }
-.configured-estimate-line__fields .configured-estimate-line__rate input { height: 34px; padding: 5px 8px; border: 1px solid var(--est-line, #dce1e8); border-radius: 4px; background: #fff; color: #172344; font-size: 12px; }
-.configured-estimate-line__stepper { display: grid; grid-template-columns: 27px minmax(0, 1fr) 27px; height: 34px; border: 1px solid var(--est-line, #dce1e8); border-radius: 4px; background: #fff; }
-.configured-estimate-line__stepper button { min-height: 0 !important; padding: 0; border: 0; background: transparent; color: #13234b; font-size: 17px; font-weight: 600; }
-.configured-estimate-line__stepper button:disabled { color: #a5adbc; }
-.configured-estimate-line__stepper input,
-.estimate-workspace.estimator-dashboard .configured-estimate-line__stepper input { width: 100%; min-width: 0; min-height: 0; padding: 0; border: 0; background: transparent; color: #162247; font-size: 12px; text-align: center; appearance: textfield; }
-.configured-estimate-line__stepper input::-webkit-outer-spin-button,
-.configured-estimate-line__stepper input::-webkit-inner-spin-button { margin: 0; appearance: none; }
-.configured-estimate-line__amount output { display: grid; grid-template-columns: minmax(0, 1fr); place-items: center; min-width: 0; min-height: 34px; padding: 3px 5px; border-radius: 4px; background: #f0f4ec; color: #101820; font-size: 13px; font-weight: 700; line-height: 1.3; text-align: center; white-space: normal; overflow-wrap: anywhere; }
-.configured-estimate-line__more { position: relative; align-self: end; height: 34px; }
-.configured-estimate-line__more > button { display: grid; place-items: center; width: 22px; height: 34px; min-height: 0 !important; padding: 0; border: 0; background: transparent; color: #12214b; }
-.configured-estimate-line__more svg { width: 18px; height: 18px; }
-.configured-estimate-line__menu { position: absolute; right: 0; top: 34px; z-index: 4; display: grid; min-width: 165px; padding: 4px; border: 1px solid var(--est-line, #dce1e8); border-radius: 4px; background: #fff; }
-.configured-estimate-line__menu button { min-height: 31px; padding: 5px 8px; border: 0; background: transparent; color: #162247; font-size: 11px; text-align: left; }
-.configured-estimate-line__menu button:focus-visible { background: #eef4ec; }
-.configured-estimate-line__menu--floating { position: fixed; top: 0; right: auto; left: 0; z-index: 80; max-width: calc(100vw - 16px); font-family: var(--font-interface); }
-.configured-estimate-line__message,
-.configured-estimate-line__review { margin-left: 60px; font-size: 11px; }
 .estimate-classification {
   min-width: 0;
   margin: 0;
@@ -1423,23 +1368,6 @@
 .estimate-classification label:last-child { margin-right: 0; }
 .estimate-classification input[type="radio"] { width: var(--form-choice-size); height: var(--form-choice-size); min-height: var(--form-choice-size); margin: 0; accent-color: #255c35; }
 .estimate-classification input[type="radio"]:focus-visible { outline: 2px solid #255c35; outline-offset: 2px; }
-.configured-estimate-line__choice { grid-column: 1; grid-row: 1; }
-.configured-estimate-line__fields { grid-column: 2; grid-row: 1; }
-.configured-estimate-line__options { display: flex; flex-wrap: wrap; align-items: center; grid-column: 1 / -1; gap: 4px 18px; min-width: 0; margin-left: 60px; }
-.configured-estimate-line__options .estimate-classification { max-width: 100%; }
-.configured-estimate-line__options .estimate-classification legend { float: left; min-height: 28px; margin: 0 9px 0 0; line-height: 28px; }
-.configured-estimate-line__options .estimate-classification label { min-height: 28px; margin-right: 4px; padding: 3px 6px; border: 1px solid #dce3d6; border-radius: 4px; background: #fdfdf9; }
-.configured-estimate-line__options .estimate-classification label:has(input:checked) { border-color: #aac19b; background: #edf4e6; }
-.configured-estimate-line__options .estimate-classification label:last-child { margin-right: 0; }
-.configured-estimate-line__classification-readonly { margin: 0; color: #586682; font-size: 11px; }
-.configured-estimate-line__classification-readonly strong { color: #172344; }
-.configured-estimate-line__pricing { display: flex; flex: 1 1 360px; flex-wrap: wrap; align-items: center; gap: 4px 12px; min-width: 0; color: var(--est-muted, #586682); font-size: 11px; }
-.configured-estimate-line__pricing p { margin: 0; line-height: 1.5; overflow-wrap: anywhere; }
-.configured-estimate-line__pricing strong { color: var(--est-ink, #172344); }
-@media (pointer: coarse) {
-  .configured-estimate-line__options .estimate-classification label { min-height: 40px; }
-  .configured-estimate-line__options .estimate-classification legend { min-height: 40px; line-height: 40px; }
-}
 .configured-estimate-builder__empty { margin: 0; padding: 18px; border: 1px solid var(--est-line, #dce1e8); border-radius: 4px; background: #fff; color: var(--est-muted, #5b6883); font-size: 12px; }
 .ui-app-shell[data-role] .estimate-workspace--item-view .estimate-workspace__footer {
   border: 1px solid var(--est-line); border-radius: 4px; background: #f7f7f3; box-shadow: none;
@@ -1449,8 +1377,6 @@
 .ui-app-shell[data-role] .estimate-workspace--item-view .estimate-workspace__footer span { color: var(--est-muted); }
 .ui-app-shell[data-role] .estimate-workspace--item-view .estimate-workspace__footer .button { box-shadow: none; }
 @container (max-width: 650px) {
-  .configured-estimate-line { grid-template-columns: minmax(0, 1fr); }
-  .configured-estimate-line__fields { grid-column: 1; grid-row: auto; margin-left: 60px; }
   .estimator-recommendations { grid-template-columns: minmax(0, 1fr); }
   .estimator-recommendations__review { justify-self: start; }
 }
@@ -1475,8 +1401,6 @@
   .configured-estimate-builder__rail { display: block; }
   .configured-estimate-builder__rooms { border-top: 1px solid var(--est-line, #dce1e8); }
   .configured-estimate-builder__rooms button:first-child { border-left: 0; }
-  .configured-estimate-line { grid-template-columns: minmax(0, 1fr); padding-left: 12px; }
-  .configured-estimate-line__fields { grid-column: 1; grid-row: auto; margin-left: 60px; }
 }
 @media (max-width: 430px) {
   .estimator-recommendations__review { width: 100%; }
@@ -1493,13 +1417,6 @@
   .configured-estimate-basket__toggle small { display: none; }
   .configured-estimate-sub-basket__toggle { grid-template-columns: 18px minmax(0, 1fr) auto 12px; gap: 6px; padding-inline: 7px; }
   .configured-estimate-sub-basket__toggle small { display: none; }
-}
-@container (max-width: 480px) {
-  .configured-estimate-line__fields { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 22px; margin-left: 0; }
-  .configured-estimate-line__options { margin-left: 0; }
-  .configured-estimate-line__amount { grid-column: 1 / 3; grid-row: 2; }
-  .configured-estimate-line__more { grid-column: 3; grid-row: 1; }
-  .configured-estimate-line__amount output { justify-items: end; padding-right: 10px; text-align: right; }
 }
 
 /* Only the configured Builder reserves viewport space. Other estimate views keep page scrolling. */
@@ -1764,57 +1681,6 @@
 }
 .estimate-workspace--compact-builder .configured-estimate-sub-basket__heading { grid-template-columns: 18px minmax(0, 1fr) auto auto; }
 .estimate-workspace--compact-builder .configured-estimate-sub-basket__toggle span { overflow-wrap: anywhere; }
-.estimate-workspace--compact-builder .configured-estimate-line {
-  grid-template-columns: minmax(0, 1fr) minmax(0, var(--estimate-compact-fields));
-  min-height: 60px;
-  gap: 4px 8px;
-  margin: 4px 0;
-  padding: 6px;
-}
-.estimate-workspace--compact-builder .configured-estimate-line__choice { gap: 8px; min-height: 38px; }
-.estimate-workspace--compact-builder .configured-estimate-line__thumb { width: var(--estimate-compact-thumb); height: var(--estimate-compact-thumb); }
-.estimate-workspace--compact-builder .configured-estimate-line__copy { gap: 2px; }
-.estimate-workspace--compact-builder .configured-estimate-line__copy strong { font-size: 12px; }
-.estimate-workspace--compact-builder .configured-estimate-line__copy small { font-size: 11px; }
-.estimate-workspace--compact-builder .configured-estimate-line__fields {
-  --estimate-compact-control: var(--estimate-compact-price-control);
-  grid-template-columns: minmax(84px, 96px) minmax(84px, 96px) minmax(120px, 1fr) var(--estimate-compact-menu);
-  align-items: start;
-  gap: 6px;
-  margin-left: 0;
-}
-.estimate-workspace--compact-builder .configured-estimate-line__fields label,
-.estimate-workspace--compact-builder .configured-estimate-line__amount { gap: 2px; font-size: 11px; line-height: 1.2; }
-.estimate-workspace--compact-builder.estimator-dashboard .configured-estimate-line__fields input {
-  min-block-size: var(--estimate-compact-control);
-  min-height: var(--estimate-compact-control);
-  font-size: var(--estimate-compact-input-text);
-}
-.estimate-workspace--compact-builder .configured-estimate-line__fields .configured-estimate-line__rate input { height: var(--estimate-compact-control); padding: 4px 6px; }
-.estimate-workspace--compact-builder .configured-estimate-line__stepper {
-  grid-template-columns: var(--estimate-compact-step) minmax(0, 1fr) var(--estimate-compact-step);
-  height: var(--estimate-compact-control);
-}
-.estimate-workspace--compact-builder.estimator-dashboard .configured-estimate-line__stepper input {
-  min-block-size: 0;
-  min-height: 0;
-}
-.estimate-workspace--compact-builder.estimator-dashboard .configured-estimate-line__stepper button { min-block-size: 24px; }
-.estimate-workspace--compact-builder .configured-estimate-line__amount output { min-height: var(--estimate-compact-control); font-size: 12px; }
-.estimate-workspace--compact-builder .configured-estimate-line__fields .configured-estimate-line__quantity--calculated output {
-  display: grid;
-  align-items: center;
-  min-height: var(--estimate-compact-control);
-  padding: 3px 0;
-  font-size: var(--estimate-compact-input-text);
-  line-height: 1.3;
-}
-.estimate-workspace--compact-builder .configured-estimate-line__more,
-.estimate-workspace--compact-builder .configured-estimate-line__more > button { height: var(--estimate-compact-control); }
-.estimate-workspace--compact-builder .configured-estimate-line__more > button { width: var(--estimate-compact-menu); }
-.estimate-workspace--compact-builder .configured-estimate-line__options,
-.estimate-workspace--compact-builder .configured-estimate-line__message,
-.estimate-workspace--compact-builder .configured-estimate-line__review { margin-left: calc(var(--estimate-compact-thumb) + 8px); }
 .estimate-workspace--compact-builder .estimate-line-dimensions { grid-column: 1 / -1; margin-top: 4px; padding-top: 6px; font-size: 11px; }
 .estimate-workspace--compact-builder .estimate-line-dimensions__fields { gap: 6px; }
 .estimate-workspace--compact-builder.estimator-dashboard .estimate-line-dimensions__fields input { min-block-size: var(--estimate-compact-control); padding: 4px 6px; font-size: var(--estimate-compact-input-text); }
@@ -1843,10 +1709,6 @@
   .estimate-workspace--compact-builder .configured-estimate-builder__rail-tabs { padding: 3px; }
   .estimate-workspace--compact-builder .configured-estimate-builder__toolbar { grid-template-columns: minmax(0, 1fr) 145px 125px; gap: 6px; }
 }
-@container (max-width: 650px) {
-  .estimate-workspace--compact-builder .configured-estimate-line { grid-template-columns: minmax(0, 1fr); }
-  .estimate-workspace--compact-builder .configured-estimate-line__fields { margin-left: calc(var(--estimate-compact-thumb) + 8px); }
-}
 @container estimate-builder-area (max-width: 500px) {
   .estimate-workspace--compact-builder .estimate-workspace__builder-area .estimate-workspace__tabs { flex: 1 1 100%; grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .estimate-workspace--compact-builder .estimate-workspace__tabs button { gap: 3px; padding-inline: 4px; font-size: 11px; }
@@ -1854,17 +1716,9 @@
   .estimate-workspace--compact-builder .configured-estimate-builder__search { grid-column: 1 / -1; }
   .estimate-workspace--compact-builder .configured-estimate-builder__rooms button { min-height: 40px; }
 }
-@container (max-width: 480px) {
-  .estimate-workspace--compact-builder .configured-estimate-line__fields { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) var(--estimate-compact-menu); margin-left: 0; }
-  .estimate-workspace--compact-builder .configured-estimate-line__options,
-  .estimate-workspace--compact-builder .configured-estimate-line__message,
-  .estimate-workspace--compact-builder .configured-estimate-line__review { margin-left: 0; }
-}
 @media (max-width: 690px) {
   .estimate-workspace.estimator-dashboard.estimate-workspace--compact-builder { --estimate-compact-input-text: 16px; }
   .estimate-workspace--compact-builder .estimate-workspace__builder-area { min-height: 640px; }
-  .estimate-workspace--compact-builder .configured-estimate-line { grid-template-columns: minmax(0, 1fr); }
-  .estimate-workspace--compact-builder .configured-estimate-line__fields { grid-column: 1; grid-row: auto; margin-left: 0; }
   .estimate-workspace--compact-builder .estimate-workspace__heading-main { flex-wrap: wrap; gap: 3px 8px; }
   .ui-app-shell[data-role] .estimator-dashboard.estimate-workspace--compact-builder .estimate-workspace__back { max-width: 100%; }
   .estimate-workspace--compact-builder .estimate-workspace__title { flex-basis: 100%; }
@@ -1888,16 +1742,8 @@
   .estimate-workspace--compact-builder .staff-estimate-workspace-tools > summary { min-height: 40px; padding-block: 10px; }
   .estimate-workspace--compact-builder :is(.configured-estimate-builder__jump button, .configured-estimate-basket__toggle, .configured-estimate-sub-basket__toggle) { min-block-size: 40px; min-height: 40px; }
   .ui-app-shell[data-role] .estimator-dashboard.estimate-workspace--compact-builder .project-chat-navigation :is(a, button) { min-block-size: 40px; min-height: 40px; }
-  .estimate-workspace--compact-builder .configured-estimate-line__fields { grid-template-columns: minmax(120px, 1fr) minmax(100px, 1fr) minmax(114px, 1fr) var(--estimate-compact-menu); }
-  .estimate-workspace--compact-builder .configured-estimate-line__choice { min-height: 44px; }
-  body:has(.estimate-workspace--compact-builder) .configured-estimate-line__menu--floating button { min-block-size: 40px; min-height: 40px; font-size: 12px; }
 }
 @media (pointer: coarse) {
-  @container (max-width: 650px) {
-    .estimate-workspace--compact-builder .configured-estimate-line__fields { grid-template-columns: minmax(120px, 1fr) minmax(0, 1fr) var(--estimate-compact-menu); margin-left: 0; }
-    .estimate-workspace--compact-builder .configured-estimate-line__amount { grid-column: 1 / 3; grid-row: 2; }
-    .estimate-workspace--compact-builder .configured-estimate-line__more { grid-column: 3; grid-row: 1; }
-  }
 }
 
 /* Compact Configure step; the item-selection view has its own layout above. */
@@ -2564,6 +2410,44 @@
   .estimate-workspace--configure-view > .estimate-continue { justify-self: stretch; }
 }
 
+/* Sales keeps draft and submission actions together, including in Setup. */
+.ui-app-shell[data-role] .estimator-dashboard .estimate-workspace__footer--sales {
+  position: sticky;
+  bottom: 0;
+  z-index: var(--z-raised);
+  padding-block-end: max(10px, env(safe-area-inset-bottom));
+}
+.estimate-workspace__footer--sales > div { min-width: 0; }
+.estimate-workspace__footer--sales .estimate-submit-blocker {
+  flex-basis: 100%;
+  margin: 0;
+  max-width: 60ch;
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.estimate-workspace--configure-view:has(.estimate-workspace__footer--sales) .estimate-selection-footer {
+  position: static;
+}
+@media (max-width: 640px) {
+  .ui-app-shell[data-role] .estimator-dashboard .estimate-workspace__footer--sales .estimate-actions {
+    display: flex;
+    flex-wrap: wrap;
+    width: 100%;
+  }
+  .ui-app-shell[data-role] .estimator-dashboard .estimate-workspace__footer--sales .estimate-actions .button {
+    flex: 1 1 8rem;
+    min-height: 44px;
+    white-space: normal;
+  }
+}
+
+/* Keep submission feedback compact and visibly focused after an attempted action. */
+.estimate-workspace .estimate-submit-blocker { min-width: 0; overflow-wrap: anywhere; }
+.estimate-workspace .estimate-submit-blocker p { margin: 0; }
+.estimate-workspace .estimate-submit-blocker:focus { outline: 2px solid currentColor; outline-offset: 3px; }
+.estimate-workspace .estimate-submit-blocker .button { margin-top: 6px; }
+
 /* Current drafts and frozen publications share a single compact toolbar. */
 .estimate-workspace.estimator-dashboard.estimate-workspace--revision-workspace { gap: 6px; }
 .estimate-workspace--revision-workspace > .estimate-workspace__view-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-width: 0; }
@@ -2624,4 +2508,205 @@
     min-block-size: 44px;
     min-height: 44px;
   }
+}
+
+/* Main Line: one reading order across staff and Client estimate editors. */
+
+.configured-estimate-line--reference {
+  container: estimate-line / inline-size;
+  display: block;
+  min-width: 0;
+  margin: 8px;
+  padding: 10px 12px;
+  border: 1px solid #d7dfd5;
+  border-radius: 12px;
+  background: #fcfdfa;
+  color: #172344;
+  box-shadow: 0 3px 10px rgb(35 70 39 / 4%);
+}
+
+.configured-estimate-line--included { border-color: #b9d1b5; }
+
+.configured-estimate-line__primary { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 0; min-width: 0; }
+
+.configured-estimate-line__choice { display: grid; grid-template-columns: 20px 36px minmax(0, 1fr); align-items: center; flex: 1 1 180px; gap: 7px; min-width: 0; margin: 0; padding-right: 8px; cursor: pointer; }
+
+.configured-estimate-line__include { inline-size: 20px; block-size: 20px; min-inline-size: 20px; min-block-size: 20px; margin: 0; accent-color: #25642d; }
+
+.configured-estimate-line__thumb { display: block; width: 36px; height: 36px; border-radius: 4px; overflow: hidden; background: #e3e7df; }
+
+.configured-estimate-line__thumb img { width: 100%; height: 100%; object-fit: cover; }
+
+.configured-estimate-line__copy { display: grid; gap: 3px; min-width: 0; }
+
+.configured-estimate-line__copy strong { color: #101d3c; font-size: 14px; font-weight: 600; line-height: 1.3; overflow-wrap: anywhere; }
+
+.configured-estimate-line__copy small { color: #5b6b84; font-size: 11px; line-height: 1.35; }
+
+.configured-estimate-line__group { min-width: 0; padding-inline: 4px; border-left: 1px solid #d9e1d7; }
+
+.configured-estimate-line__tier-group { flex: 0 1 auto; }
+
+.configured-estimate-line__type-group { flex: 0 1 auto; }
+
+.configured-estimate-line__pricing-group { flex: 0 1 auto; }
+.configured-estimate-line__pricing-group:empty { display: none; }
+
+.configured-estimate-line--reference .estimate-classification { display: block; min-width: 0; margin: 0; padding: 0; border: 0; }
+
+.configured-estimate-line--reference .estimate-classification legend,
+.configured-estimate-line__readonly > span { display: block; float: none; margin: 0 0 4px; padding: 0; color: #263858; font-size: 11px; font-weight: 500; line-height: 16px; }
+
+.configured-estimate-line__choices { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; }
+
+.configured-estimate-line--reference .estimate-classification label { display: inline-flex; flex: none; align-items: center; gap: 3px; min-height: 28px; margin: 0; padding: 4px 2px; border: 1px solid #d7dee4; border-radius: 8px; color: #172344; background: #fdfefb; font-size: 11px; line-height: 1.3; white-space: nowrap; }
+
+.configured-estimate-line--reference .estimate-classification label:has(input:checked) { border-color: #a3c997; background: #e0f3da; }
+
+.configured-estimate-line--reference .estimate-classification label:has(input:disabled) { cursor: default; }
+
+.configured-estimate-line--reference .estimate-classification label:has(input:disabled):not(:has(input:checked)) { color: #697483; background: #f5f6f1; }
+
+.configured-estimate-line--reference .estimate-classification input[type="radio"] { inline-size: 14px; block-size: 14px; min-inline-size: 14px; min-block-size: 14px; margin: 0; accent-color: #25642d; }
+
+.configured-estimate-line__readonly strong { display: flex; align-items: center; min-height: 28px; color: #172344; font-size: 12px; font-weight: 500; }
+
+.configured-estimate-line__pricing { min-width: 0; }
+
+.configured-estimate-line__pmc-switch { display: inline-flex; align-items: center; gap: 4px; min-height: 28px; margin: 0 3px 0 0; padding: 0; border: 0; border-radius: 4px; color: #172344; background: transparent; font: inherit; font-size: 11px; cursor: pointer; }
+
+.configured-estimate-line__pmc-switch:disabled { cursor: default; }
+
+.configured-estimate-line__pmc-track { display: inline-flex; align-items: center; width: 32px; height: 18px; padding: 3px; border-radius: 20px; background: #aeb5ba; }
+
+.configured-estimate-line__pmc-track > span { width: 12px; height: 12px; border-radius: 50%; background: #fff; }
+
+.configured-estimate-line__pmc-switch[aria-checked="true"] .configured-estimate-line__pmc-track { justify-content: flex-end; background: #25642d; }
+
+.configured-estimate-line__fields { display: grid; grid-template-columns: minmax(78px, 1fr) minmax(90px, 1fr) minmax(90px, 1fr) 24px; align-items: end; flex: 1 1 304px; gap: 4px; min-width: 0; padding-left: 8px; border-left: 1px solid #d9e1d7; }
+
+.configured-estimate-line__fields label,
+.configured-estimate-line__fields .configured-estimate-line__rate,
+.configured-estimate-line__fields .configured-estimate-line__quantity--calculated,
+.configured-estimate-line__amount { display: grid; align-content: end; gap: 5px; min-width: 0; margin: 0; color: #263858; font-size: 11px; font-weight: 500; line-height: 16px; }
+
+.configured-estimate-line__fields .configured-estimate-line__rate input,
+.configured-estimate-line__fields .configured-estimate-line__rate > output { display: block; width: 100%; min-width: 0; height: 30px; min-height: 30px; min-block-size: 30px; padding: 4px 6px; border: 1px solid #d5dce5; border-radius: 6px; color: #172344; background: #fdfefc; font: inherit; font-size: 13px; line-height: 20px; }
+.configured-estimate-line__fields .configured-estimate-line__rate > output { height: auto; line-height: 20px; overflow-wrap: anywhere; }
+
+.configured-estimate-line__stepper { display: grid; grid-template-columns: 22px minmax(0, 1fr) 22px; height: 30px; border: 1px solid #d5dce5; border-radius: 6px; background: #fdfefc; }
+
+.configured-estimate-line__stepper button { min-height: 0 !important; min-block-size: 0; padding: 0; border: 0; border-radius: 4px; background: transparent; color: #172344; font-size: 18px; font-weight: 600; }
+
+.configured-estimate-line__stepper button:disabled { color: #8e99a8; }
+
+.configured-estimate-line__stepper input,
+.estimate-workspace.estimator-dashboard .configured-estimate-line__stepper input { width: 100%; min-width: 0; min-height: 0; min-block-size: 0; padding: 0; border: 0; border-radius: 0; background: transparent; color: #172344; font: inherit; font-size: 13px; text-align: center; appearance: textfield; }
+
+.configured-estimate-line__stepper input::-webkit-inner-spin-button,
+.configured-estimate-line__stepper input::-webkit-outer-spin-button { margin: 0; appearance: none; }
+
+.configured-estimate-line--reference .configured-estimate-line__fields .configured-estimate-line__quantity--calculated { display: grid; gap: 5px; }
+
+.configured-estimate-line--reference .configured-estimate-line__fields .configured-estimate-line__quantity--calculated output { min-height: 30px; padding: 5px 0; color: #172344; font-size: 13px; line-height: 20px; }
+
+.configured-estimate-line__amount output { display: grid; place-items: center; min-width: 0; min-height: 30px; padding: 4px 6px; border-radius: 6px; color: #123e22; background: #dff5d9; font-size: 14px; font-weight: 600; line-height: 1.35; text-align: center; overflow-wrap: anywhere; }
+
+.configured-estimate-line__more { position: relative; align-self: end; height: 30px; }
+
+.configured-estimate-line__more > button { display: grid; place-items: center; width: 24px; height: 30px; min-height: 0 !important; min-block-size: 0; padding: 0; border: 0; border-radius: 4px; background: transparent; color: #172344; }
+
+.configured-estimate-line__more svg { width: 19px; height: 19px; }
+
+.configured-estimate-line__details { display: grid; gap: 6px; min-width: 0; margin-top: 10px; }
+
+.configured-estimate-line__details:empty { display: none; }
+
+.configured-estimate-line__details:not(:has(> :not(.sr-only))) { margin-top: 0; gap: 0; }
+
+.configured-estimate-line__message,
+.configured-estimate-line__review,
+.configured-estimate-line__source,
+.configured-estimate-line__rate-note { margin: 0; color: #5b6b84; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+
+.configured-estimate-line__message.error { color: #a63028; }
+.configured-estimate-line__fields .configured-estimate-line__rate input[aria-invalid="true"],
+.configured-estimate-line__stepper:has(input[aria-invalid="true"]) { border-color: #b43d32; }
+
+.configured-estimate-line--reference :is(input, button):focus-visible { outline: 2px solid #255c35; outline-offset: 3px; }
+
+.configured-estimate-line__menu { display: grid; min-width: 180px; padding: 5px; border: 1px solid #d5dce5; border-radius: 6px; background: #fcfdfa; }
+
+.configured-estimate-line__menu button { min-height: 36px; padding: 6px 9px; border: 0; background: transparent; color: #172344; font: inherit; font-size: 13px; text-align: left; }
+
+.configured-estimate-line__menu button:focus-visible { outline: 2px solid #255c35; outline-offset: -2px; background: #eaf3e6; }
+
+.configured-estimate-line__menu--floating { position: fixed; top: 0; left: 0; z-index: 80; max-width: calc(100vw - 16px); font-family: var(--font-interface); }
+
+/* Intrinsic group widths keep Standard/read-only pricing from reserving empty space. */
+@media (pointer: fine) {
+  @container estimate-line (min-width: 1050px) {
+    .configured-estimate-line__primary:has(> .configured-estimate-line__tier-group):has(> .configured-estimate-line__type-group):has(> .configured-estimate-line__pricing-group) {
+      display: grid;
+      grid-template-columns: minmax(130px, 1fr) max-content max-content max-content clamp(304px, 26cqi, 360px);
+    }
+    .configured-estimate-line__primary:has(> .configured-estimate-line__tier-group):has(> .configured-estimate-line__type-group):has(> .configured-estimate-line__pricing-group:empty) {
+      grid-template-columns: minmax(130px, 1fr) max-content max-content clamp(304px, 26cqi, 360px);
+    }
+    .configured-estimate-line__choices { flex-wrap: nowrap; }
+  }
+}
+
+@container estimate-line (max-width: 700px) {
+  .configured-estimate-line__choice { flex-basis: 100%; padding: 0; }
+  .configured-estimate-line__group { padding-left: 0; border-left: 0; }
+  .configured-estimate-line__fields { flex-basis: 100%; padding-left: 0; border-left: 0; }
+}
+
+@container estimate-line (max-width: 480px) {
+  .configured-estimate-line__group { flex-basis: 100%; padding-right: 0; }
+  .configured-estimate-line__fields { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .configured-estimate-line__amount { grid-column: 1 / -1; grid-row: 2; padding-right: 54px; }
+  .configured-estimate-line__more { grid-column: 2; grid-row: 2; justify-self: end; }
+  .configured-estimate-line__copy strong { font-size: 16px; }
+  .configured-estimate-line__choices { gap: 5px; }
+  .configured-estimate-line--reference .estimate-classification label { padding-inline: 6px; }
+}
+
+@media (max-width: 767px), (pointer: coarse) {
+  .configured-estimate-line--reference { padding: 12px; }
+  .configured-estimate-line__copy strong { font-size: 16px; }
+  .configured-estimate-line__copy small,
+  .configured-estimate-line--reference .estimate-classification legend,
+  .configured-estimate-line__readonly > span,
+  .configured-estimate-line__fields label,
+  .configured-estimate-line__fields .configured-estimate-line__rate,
+  .configured-estimate-line__fields .configured-estimate-line__quantity--calculated,
+  .configured-estimate-line__amount { font-size: 12px; }
+  .configured-estimate-line--reference .estimate-classification label,
+  .configured-estimate-line__pmc-switch { min-height: 44px; font-size: 12px; }
+  .configured-estimate-line--reference .estimate-classification input[type="radio"] { inline-size: 16px; block-size: 16px; min-inline-size: 16px; min-block-size: 16px; }
+  .configured-estimate-line__stepper,
+  .configured-estimate-line__fields .configured-estimate-line__rate input,
+  .configured-estimate-line__fields .configured-estimate-line__rate > output,
+  .configured-estimate-line__more,
+  .configured-estimate-line__more > button { height: 44px; min-height: 44px; min-block-size: 44px; }
+  .configured-estimate-line__stepper { grid-template-columns: 44px minmax(0, 1fr) 44px; }
+  .estimate-workspace.estimator-dashboard .configured-estimate-line__stepper input,
+  .configured-estimate-line__fields .configured-estimate-line__rate input { font-size: 16px; }
+  .configured-estimate-line__fields { flex-basis: 400px; }
+  .configured-estimate-line__more > button { width: 44px; }
+  .configured-estimate-line__fields { grid-template-columns: minmax(120px, 130px) minmax(100px, 130px) minmax(100px, 128px) 44px; }
+  .configured-estimate-line__fields .configured-estimate-line__rate > output { height: auto; }
+  .configured-estimate-line__menu button { min-height: 44px; }
+  @container estimate-line (max-width: 480px) {
+    .configured-estimate-line__fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+}
+
+@container estimate-line (max-width: 260px) {
+  .configured-estimate-line__quantity,
+  .configured-estimate-line__rate { grid-column: 1 / -1; }
+  .configured-estimate-line__amount,
+  .configured-estimate-line__more { grid-row: 3; }
 }

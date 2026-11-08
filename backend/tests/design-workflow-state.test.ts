@@ -15,7 +15,7 @@ import { demoSeedData } from "../src/seed/data.js";
 import { createAuditService } from "../src/services/audit.service.js";
 import type { PublicUser } from "../src/services/auth.service.js";
 import { createProjectService } from "../src/services/project.service.js";
-import { createDesignWorkflowStateService, projectOperationalStage, hydrateDesignWorkflowState, reconcileWorkflowRoomScope, workflowRoomFingerprints } from "../src/services/design-workflow-state.service.js";
+import { createDesignWorkflowStateService, workflowActionSchema, projectOperationalStage, hydrateDesignWorkflowState, reconcileWorkflowRoomScope, workflowRoomFingerprints } from "../src/services/design-workflow-state.service.js";
 import type { SeedData } from "../src/repositories/types.js";
 import type { WorkflowActionInput } from "../src/services/design-workflow-state.service.js";
 
@@ -56,11 +56,12 @@ function setup(_withRooms = false, configure?: (seed: SeedData) => void) {
     return service.act(users[role]!, project.id, { expectedVersion: (await state())?.version ?? 0, idempotencyKey: `action-key-${++sequence}`, action, ...(action === "confirm_initial_payment" ? {} : { stageId: project.designWorkflowStages!.find((stage) => stage.type === stageType)!.id }), data, note }, file, action === "measurement_complete" ? [media] : []);
   };
   const finishInternal = () => act("designer", "internal_kickoff_complete", { designHandoverAcknowledged: true, meetingAt: new Date(now).toISOString() }, document);
-  const openKeys = async () => { await finishInternal(); await act("designer", "client_kickoff_not_required"); };
+  const finishClient = async () => act("client", "client_kickoff_complete", { reviewedDocumentEventId: (await state())!.history.find(event => event.action === "internal_kickoff_complete")!.id });
+  const openKeys = async () => { await finishInternal(); await finishClient(); };
   const openMeasurement = async () => { await openKeys(); await act("client", "keys_handed_over"); await act("designer", "keys_received"); };
   const openFurniture = async () => { await openMeasurement(); await act("designer", "measurement_assign", { designerId: users.designer!.id }); await act("designer", "measurement_complete", {}, null); };
   const legacyPause = async () => { const saved = (await state())!; saved.pauses.push({ startedAt: new Date(now).toISOString(), endedAt: null }); await repository.saveDesignWorkflowState(project.id, saved.version, saved); };
-  return { seed, repository, project, users, service, state, act, finishInternal, openKeys, openMeasurement, openFurniture, legacyPause, advance: (days: number) => { now = BASE + days * DAY; }, now: () => new Date(now) };
+  return { seed, repository, project, users, service, state, act, finishInternal, finishClient, openKeys, openMeasurement, openFurniture, legacyPause, advance: (days: number) => { now = BASE + days * DAY; }, now: () => new Date(now) };
 }
 
 describe("operational design workflow", () => {
@@ -372,14 +373,69 @@ describe("operational design workflow", () => {
     const { act, state, repository, project, users, now, finishInternal } = setup();
     await act("super_admin", "confirm_initial_payment"); await finishInternal();
     const designerView = await createProjectService(repository, createAuditService(repository), now).designWorkflow(users.designer!, project.id);
-    expect(designerView.projectStages![1]!.operational!.availableActions.map((action) => action.id)).toEqual(["client_kickoff_request", "client_kickoff_not_required"]);
+    expect(designerView.projectStages![1]!.operational!.availableActions.map((action) => action.id)).toEqual(["client_kickoff_request"]);
     const before = await state();
     await expect(act("designer", "client_kickoff_complete")).rejects.toMatchObject({ status: 403 });
     await expect(act("outsider", "client_kickoff_complete")).rejects.toMatchObject({ status: 404 });
     expect(await state()).toEqual(before);
-    await expect(act("designer", "client_kickoff_not_required", {}, null, "")).rejects.toMatchObject({ code: "WORKFLOW_NOTE_REQUIRED" });
-    await act("designer", "client_kickoff_not_required", {}, null, "Client already briefed during the initial visit");
-    expect((await state())!.stages.client_kickoff).toMatchObject({ notRequired: true, completedAt: now().toISOString() });
+
+  });
+
+  it("rejects the retired skip before stale-version and idempotent replay handling without writes", async () => {
+    const f = setup();
+    await f.act("super_admin", "confirm_initial_payment"); await f.finishInternal();
+    const input = { action: "client_kickoff_not_required", stageId: f.project.designWorkflowStages![1]!.id,
+      expectedVersion: 0, idempotencyKey: "historical-skip-key", data: {}, note: "Historical exemption" };
+    expect(workflowActionSchema.safeParse(input).success).toBe(false);
+    const old = (await f.state())!;
+    old.stages.client_kickoff = { completedAt: f.now().toISOString(), notRequired: true, timingBasis: "sequential" };
+    old.history.push({ id: "historical-skip", idempotencyKey: input.idempotencyKey,
+      requestHash: sha256Hex(Buffer.from(JSON.stringify({ action: input.action, stageId: input.stageId, data: input.data, note: input.note }))),
+      action: "client_kickoff_not_required", stageId: input.stageId, actorId: f.users.designer!.id,
+      actorName: f.users.designer!.name, actorRole: "designer", onBehalfOfClient: false, at: f.now().toISOString(), note: input.note, proof: null });
+    await f.repository.saveDesignWorkflowState(f.project.id, old.version, old);
+    const before = await f.state(); const audits = await f.repository.listAuditEvents({});
+    for (const role of ["designer", "client", "super_admin"]) {
+      await expect(f.service.act(f.users[role]!, f.project.id, input as WorkflowActionInput, null)).rejects.toMatchObject({ code: "WORKFLOW_ACTION_RETIRED" });
+    }
+    await expect(f.service.act(f.users.outsider!, f.project.id, input as WorkflowActionInput, null)).rejects.toMatchObject({ status: 404 });
+    expect(await f.state()).toEqual(before); expect(await f.repository.listAuditEvents({})).toEqual(audits);
+  });
+
+  it.each(["legacy", "sequential"])("recovers a %s skipped kickoff without rewriting history or established deadlines", async (basis) => {
+    const f = setup(); await f.act("super_admin", "confirm_initial_payment"); f.advance(2); await f.finishInternal();
+    f.advance(5);
+    const old = (await f.state())!;
+    old.stages.client_kickoff = { completedAt: f.now().toISOString(), notRequired: true, ...(basis === "sequential" ? { timingBasis: "sequential" as const } : {}) };
+    old.stages.key_collection = { completedAt: f.now().toISOString(), handedOverAt: f.now().toISOString(), receivedAt: f.now().toISOString() };
+    old.stages.site_measurement = { completedAt: new Date(BASE + 6 * DAY).toISOString(), timingBasis: "sequential" };
+    old.history.push({ ...old.history[1]!, id: "old-exemption", idempotencyKey: "old-exemption-key", action: "client_kickoff_not_required",
+      stageId: f.project.designWorkflowStages![1]!.id, at: f.now().toISOString(), note: "Historical reason", data: {}, proof: null });
+    await f.repository.saveDesignWorkflowState(f.project.id, old.version, old);
+    f.advance(12);
+    const projects = createProjectService(f.repository, createAuditService(f.repository), f.now);
+    const before = (await f.state())!;
+    const view = await projects.designWorkflow(f.users.client!, f.project.id);
+    const kickoff = view.projectStages![1]!.operational!;
+    expect(kickoff.status).toBe("in_progress");
+    expect(kickoff.availableActions.map(action => action.id)).toEqual(["client_kickoff_complete"]);
+    expect(kickoff.facts).not.toContainEqual(expect.objectContaining({ value: "Not necessary" }));
+    expect(view.notices).toContainEqual(expect.objectContaining({ id: `${f.project.id}:kickoff-pending` }));
+    expect(view.notices).not.toContainEqual(expect.objectContaining({ id: `${f.project.id}:kickoff-complete` }));
+    expect(view.projectStages![3]!.operational!.status).toBe("completed");
+    expect(workflowSubmissionBlockers(before)).toContain("Complete Client Kick off.");
+    await expect(f.act("designer", "furniture_scope", { rooms: [] })).rejects.toMatchObject({ code: "DESIGN_WORKFLOW_BLOCKED" });
+    expect(await f.state()).toEqual(before);
+    await f.finishClient();
+    const after = (await f.state())!;
+    const recovered = await projects.designWorkflow(f.users.client!, f.project.id);
+    expect(after.stages.client_kickoff!.notRequired).toBeUndefined();
+    expect(after.history.slice(0, before.history.length)).toEqual(before.history);
+    expect(after.history.at(-1)!.data).toMatchObject({ supersededClientKickoff: { completedAt: new Date(BASE + 5 * DAY).toISOString(), timingBasis: basis } });
+    expect(after.stages.site_measurement).toEqual(before.stages.site_measurement);
+    expect(recovered.projectStages![1]!.operational!.timing.originalTargetAt).toBe(kickoff.timing.originalTargetAt);
+    expect(recovered.projectStages![3]!.operational!.timing).toEqual(view.projectStages![3]!.operational!.timing);
+    expect(workflowSubmissionBlockers(after)).not.toContain("Complete Client Kick off.");
   });
 
   it("keeps Client completion atomic, versioned and idempotent", async () => {
@@ -923,12 +979,12 @@ describe("operational design workflow", () => {
     const waiting = (await view()).projectStages!.filter((stage) => ["client_kickoff", "site_measurement"].includes(stage.type));
     for (const stage of waiting) expect(stage.operational).toMatchObject({ status: "not_started", availableActions: [], timing: { state: "waiting", startsAt: null, targetAt: null, originalTargetAt: null, remainingMs: null, band: null, clockOwner: null } });
     expect((await projects.designWorkflow(users.client!, project.id)).notices).not.toContainEqual(expect.objectContaining({ id: `${project.id}:key-handover` }));
-    for (const [role, action] of [["designer", "client_kickoff_not_required"], ["client", "keys_handed_over"], ["designer", "keys_received"], ["designer", "measurement_assign"], ["client", "measurement_access_block"], ["designer", "furniture_scope"]] as const) await expect(act(role, action)).rejects.toMatchObject({ code: "DESIGN_WORKFLOW_BLOCKED" });
+    for (const [role, action] of [["client", "client_kickoff_complete"], ["client", "keys_handed_over"], ["designer", "keys_received"], ["designer", "measurement_assign"], ["client", "measurement_access_block"], ["designer", "furniture_scope"]] as const) await expect(act(role, action)).rejects.toMatchObject({ code: "DESIGN_WORKFLOW_BLOCKED" });
     await finishInternal();
     expect(await runningTypes()).toEqual(["client_kickoff"]);
     expect((await view()).projectStages![1]!.operational!.timing).toMatchObject({ startsAt: now().toISOString(), originalTargetAt: new Date(BASE + 24 * DAY).toISOString(), remainingMs: 4 * DAY });
     await act("estimator_sales", "sales_calendar_accept");
-    advance(25); await act("designer", "client_kickoff_not_required");
+    advance(25); await act("client", "client_kickoff_complete", { reviewedDocumentEventId: (await state())!.history.find(event => event.action === "internal_kickoff_complete")!.id });
     expect(await runningTypes()).toEqual([]);
     expect((await projects.designWorkflow(users.client!, project.id)).notices).toContainEqual(expect.objectContaining({ id: `${project.id}:key-handover` }));
     await act("designer", "keys_received");
@@ -1005,6 +1061,18 @@ describe("workflow HTTP evidence", () => {
     return { ...setupValue, app, saved, saves: () => saves };
   }
   const jpg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46]);
+  it("rejects retired skip JSON and multipart requests without retaining evidence", async () => {
+    const f = await httpSetup(false);
+    const before = await f.state(); const audits = await f.repository.listAuditEvents({});
+    const input = { expectedVersion: 0, action: "client_kickoff_not_required", stageId: f.project.designWorkflowStages![1]!.id,
+      idempotencyKey: "http-retired-skip", data: {}, note: "Historical reason" };
+    await request(f.app).post(`/projects/${f.project.id}/design-workflow/actions`).set("Authorization", `Bearer ${f.users.designer!.id}`).send(input).expect(400);
+    await request(f.app).post(`/projects/${f.project.id}/design-workflow/actions`).set("Authorization", `Bearer ${f.users.designer!.id}`)
+      .field("expectedVersion", "0").field("action", input.action).field("stageId", input.stageId).field("idempotencyKey", input.idempotencyKey)
+      .attach("file", jpg, { filename: "retired.jpg", contentType: "image/jpeg" }).expect(400);
+    expect(f.saved.size).toBe(0); expect(f.saves()).toBe(0);
+    expect(await f.state()).toEqual(before); expect(await f.repository.listAuditEvents({})).toEqual(audits);
+  });
   it("serves the exact submitted kickoff image privately to its Client and rejects changed bytes", async () => {
     const { app, users, project, saved, state, now, repository } = await httpSetup(false);
     await request(app).post(`/projects/${project.id}/design-workflow/actions`).set("Authorization", `Bearer ${users.designer!.id}`)
@@ -1863,7 +1931,7 @@ describe("collaborative design prerequisite and clock", () => {
     expect(saved).toMatchObject({ estimationWorkflowVersion: 2, initialPaymentAt: null, designStartedAt: new Date(BASE).toISOString() });
     expect(saved.stages.internal_kickoff?.completedAt).toBe(f.now().toISOString());
     expect(workflowSubmissionBlockers(saved)).not.toContain("Super Admin must confirm Initial payment received after estimate approval.");
-    await f.act("designer", "client_kickoff_not_required");
+    await f.finishClient();
     expect((await f.state())!.designStartedAt).toBe(new Date(BASE).toISOString());
   });
   it("blocks design before pre-approval and payment before final approval", async () => {

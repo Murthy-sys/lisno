@@ -283,6 +283,7 @@ export interface DashboardProcurementMetrics extends DashboardModuleCoverage {
 export interface DashboardFinanceMetrics {
   projectCount: number;
   approvedContractTotalPaise: number;
+  approvedRoundOffPaise?: number;
   approvedGstPaise: number;
   approvedSubtotalPaise: number;
   targetProfitPaise: number;

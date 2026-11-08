@@ -1,3 +1,9 @@
+import express from "express";
+import request from "supertest";
+import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
+import { createEstimateTiersRouter } from "../src/routes/estimate-tiers.js";
+import { errorHandler } from "../src/middleware/errors.js";
+import { compareProjectEstimateTiers, estimateTierComparisonSchema, renderEstimateTierComparisonPdf } from "../src/services/estimate-tier-comparison.service.js";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { startMongoReplicaSet } from "./helpers/mongo-replica-set.js";
 import { newEstimationLifecycle } from "../src/domain/estimation-lifecycle.js";
@@ -49,8 +55,8 @@ beforeEach(async () => {
       { _id: `overview-${id}` as never, mainLineId: id, revisionId: `revision-${id}`, sectionKey: "overview", applicability: "configured", version: 1,
         payload: { uomId: "tier-uom", clientVisible: id !== "hidden", applicableTiers: ["signature", "premium", "functional"] } },
       { _id: `advanced-${id}` as never, mainLineId: id, revisionId: `revision-${id}`, sectionKey: "advanced", applicability: "configured", version: 1,
-        payload: { modeCalculations: { sub_vendor: { baseRatePaise: 2000 } }, privateMargin: "never-expose-this",
-          tierConfigurations: { premium: { applicability: "configured", payload: { modeCalculations: { sub_vendor: { baseRatePaise: 5000 } } } } } } }
+        payload: { pmcMarginBps: 0, subVendorMarginBps: 0, modeCalculations: { sub_vendor: { baseRatePaise: 2000 } }, privateMargin: "never-expose-this",
+          tierConfigurations: { premium: { applicability: "configured", payload: { pmcMarginBps: 0, subVendorMarginBps: 0, modeCalculations: { sub_vendor: { baseRatePaise: 5000 } } } } } } }
     ]);
   }
   const line = (id: string, mainLineId: string, roomName: string, quantity: number, ratePaise: number) => ({ id, source: "configuration", itemType: "main_line",
@@ -66,6 +72,19 @@ beforeEach(async () => {
 });
 
 describe("client working estimate tier selection", () => {
+  it.each([[832, 8664, 1560, 10200, -24], [844, 8688, 1564, 10300, 48], [1521, 10042, 1808, 11800, -50]])(
+    "rounds only the grand total when selecting a tier priced at %i paise", async (ratePaise, subtotalPaise, gstPaise, totalPaise, roundOffPaise) => {
+      await Section.collection.updateOne({ _id: "advanced-visible" as never }, { $set: {
+        "payload.tierConfigurations.premium.payload.modeCalculations.sub_vendor.baseRatePaise": ratePaise
+      } });
+      expect(await service.detail(client, "tier-project")).not.toHaveProperty("roundOffPaise");
+      const result = await service.select(client, "tier-project", "line-one", command);
+      expect(result).toMatchObject({ totalPaise, roundOffPaise });
+      expect(result.lines[0]).toMatchObject({ quantity: 2, ratePaise, amountPaise: ratePaise * 2 });
+      expect(await EstimateModel.findById("tier-estimate").lean()).toMatchObject({ subtotalPaise, gstPaise, totalPaise, roundOffPaise });
+      expect(await service.detail(client, "tier-project")).toMatchObject({ totalPaise, roundOffPaise });
+    });
+
   it("carries the Lead-owned Project ID through reads, edits, and the empty estimate state", async () => {
     await LeadModel.collection.updateOne({ _id: "tier-lead" as never }, { $set: { projectNumber: "Lisno000012" } });
     expect(await service.detail(client, "tier-project")).toMatchObject({ projectId: "tier-project", projectNumber: "Lisno000012" });
@@ -87,10 +106,25 @@ describe("client working estimate tier selection", () => {
     expect(JSON.stringify(view)).not.toMatch(/privateMargin|never-expose|modeCalculations|tierConfigurations|hidden painting/u);
   });
 
+  it("uses the chosen tier's maximum profit for both displayed choices and saved totals", async () => {
+    await Section.collection.updateOne({ _id: "advanced-visible" as never }, { $set: {
+      "payload.subVendorMarginBps": 1000, "payload.tierConfigurations.premium.payload.subVendorMarginBps": 2500
+    } });
+    const view = await service.detail(client, "tier-project");
+    expect(view.lines[0]!.choices.map(choice => [choice.modeTier, choice.ratePaise])).toEqual([
+      ["signature", 2200], ["premium", 6250], ["functional", null]
+    ]);
+    expect(JSON.stringify(view)).not.toMatch(/subVendorMarginBps|privateMargin|modeCalculations/u);
+    const result = await service.select(client, "tier-project", "line-one", command);
+    expect(result.lines[0]).toMatchObject({ modeTier: "premium", ratePaise: 6250, amountPaise: 12500 });
+    expect(result.lines[1]).toMatchObject({ ratePaise: 2000, amountPaise: 6000 });
+    expect(result).toMatchObject({ totalPaise: 23000, roundOffPaise: -10 });
+  });
+
   it("prices just the selected room line, saves tier provenance, and includes hidden costs in full totals", async () => {
     const result = await service.select(client, "tier-project", "line-one", command);
     expect(result.estimateVersion).toBe(2);
-    expect(result.totalPaise).toBe(20060);
+    expect(result).toMatchObject({ totalPaise: 20100, roundOffPaise: 40 });
     expect(result.lines[0]).toMatchObject({ modeTier: "premium", ratePaise: 5000, amountPaise: 10000 });
     expect(result.lines[1]).toMatchObject({ modeTier: "signature", ratePaise: 2000, amountPaise: 6000 });
     const saved = await EstimateModel.findById("tier-estimate").lean();
@@ -187,7 +221,7 @@ describe("client required measurements", () => {
       dimensions: { length: "12.5", width: "2", height: "9" }, dimensionsNeedReview: false });
     expect(result.lines[1]).toMatchObject({ quantity: 3, amountPaise: 6000, dimensionsNeedReview: true });
     expect(result.isIncomplete).toBe(true);
-    expect(result.totalPaise).toBe(67260);
+    expect(result).toMatchObject({ totalPaise: 67300, roundOffPaise: 40 });
     expect(await AuditEventModel.countDocuments({ action: "estimate_dimensions_updated" })).toBe(1);
     expect((await service.detail(client, "tier-project")).lines[0]).toMatchObject(result.lines[0]!);
   });
@@ -282,5 +316,136 @@ describe("client required measurements", () => {
       "lineItems.0.pricingMode": "in_house", "lineItems.0.selectedInHouseComponentIds": ["removed-component"] } });
     await expect(service.updateDimensions(client, "tier-project", "line-one", measurementCommand)).rejects.toMatchObject({ code: "ESTIMATE_COMPONENT_SELECTION_INVALID" });
     expect((await EstimateModel.findById("tier-estimate").lean())!.version).toBe(1);
+  });
+});
+
+describe("sub-basket comparisons and atomic legacy tier batches", () => {
+  const comparison = (overrides: Record<string, unknown> = {}) => ({ expectedVersion: 1, mainBasketId: "tier-basket", subBasketId: "tier-sub", roomId: "Room1",
+    lines: [{ mainLineId: "visible", lineItemId: "line-one", revisionId: "revision-visible", itemVersion: 1, revisionVersion: 1,
+      uomId: "tier-uom", quantity: 3, pricingMode: "sub_vendor", modeTier: "signature", ...overrides }] });
+
+  it("compares current manual prices with configured tier prices without writes or margin leakage", async () => {
+    await EstimateModel.updateOne({ _id: "tier-estimate" }, { $set: { "lineItems.0.rateSource": "manual", "lineItems.0.ratePaise": 1234 } });
+    await Section.updateOne({ _id: "advanced-visible" }, { $set: { "payload.subVendorMarginBps": 2500 } });
+    const before = await EstimateModel.findById("tier-estimate").lean();
+    const sources = await Section.find().lean();
+    const result = await compareProjectEstimateTiers(client, "tier-project", comparison({ rateSource: "manual" }));
+    expect(result).toMatchObject({ mainBasketId: "tier-basket", subBasketId: "tier-sub", roomId: "Room1", roomName: "Room1", estimateVersion: 1 });
+    expect(result.tiers.map(tier => [tier.modeTier, tier.available, tier.subtotalPaise])).toEqual([
+      ["current", true, 3702], ["signature", true, 7500], ["premium", true, 15000], ["functional", false, null]
+    ]);
+    expect(result.tiers[0]!.lines[0]).toMatchObject({ quantity: 3, ratePaise: 1234, amountPaise: 3702 });
+    expect(JSON.stringify(result)).not.toMatch(/hidden painting|privateMargin|subVendorMarginBps|modeCalculations/);
+    const pdf = await renderEstimateTierComparisonPdf(result);
+    const document = await getDocument({ data: new Uint8Array(pdf), useSystemFonts: true }).promise;
+    const text = (await (await document.getPage(4)).getTextContent()).items.map(item => "str" in item ? item.str : "").join(" ");
+    expect(text).toMatch(/Mode.*Signature.*Premium.*Functional/);
+    expect(text).toContain("37.02"); expect(text).toContain("150"); expect(text).toContain("Sub-basket subtotal");
+    expect(text).not.toMatch(/hidden painting|margin|profit/i);
+    await document.destroy();
+    expect(await EstimateModel.findById("tier-estimate").lean()).toEqual(before);
+    expect(await Section.find().lean()).toEqual(sources);
+    expect(await AuditEventModel.countDocuments()).toBe(0);
+  });
+
+  it("marks unsaved manual edits incomplete while retaining authoritative alternative prices", async () => {
+    await EstimateModel.updateOne({ _id: "tier-estimate" }, { $set: { "lineItems.0.rateSource": "manual" } });
+    const result = await compareProjectEstimateTiers(client, "tier-project", comparison({ rateSource: "manual", manualRateChanged: true }));
+    expect(result.tiers[0]).toMatchObject({ available: false, subtotalPaise: null,
+      lines: [{ ratePaise: null, amountPaise: null, unavailableReason: expect.stringContaining("Save the manual price") }] });
+    expect(result.tiers[2]).toMatchObject({ available: true, subtotalPaise: 15000 });
+  });
+
+  it("rejects outsiders, hidden rows, stale sources, foreign row IDs and stale estimates", async () => {
+    await expect(compareProjectEstimateTiers(other, "tier-project", comparison())).rejects.toMatchObject({ status: 404 });
+    await expect(compareProjectEstimateTiers(client, "tier-project", { ...comparison(), expectedVersion: 2 })).rejects.toMatchObject({ status: 409 });
+    await expect(compareProjectEstimateTiers(client, "tier-project", comparison({ revisionVersion: 2 }))).rejects.toMatchObject({ status: 409 });
+    await expect(compareProjectEstimateTiers(client, "tier-project", comparison({ lineItemId: "line-two" }))).rejects.toMatchObject({ status: 404 });
+    await expect(compareProjectEstimateTiers(client, "tier-project", comparison({ mainLineId: "hidden", lineItemId: "line-hidden", revisionId: "revision-hidden" }))).rejects.toMatchObject({ status: 404 });
+    await EstimateModel.updateOne({ _id: "tier-estimate" }, { $set: { "lineItems.0.clientVisible": false } });
+    await expect(compareProjectEstimateTiers(client, "tier-project", comparison())).rejects.toMatchObject({ status: 404 });
+    expect((await compareProjectEstimateTiers(sales, "tier-project", comparison())).tiers[0]!.subtotalPaise).toBe(6000);
+    expect((await EstimateModel.findById("tier-estimate").lean())!.version).toBe(1);
+  });
+
+  it("does not treat null sub-basket as a wildcard or make invalid quantities look like zero", async () => {
+    await expect(compareProjectEstimateTiers(client, "tier-project", { ...comparison(), subBasketId: null })).rejects.toMatchObject({ status: 404 });
+    const result = await compareProjectEstimateTiers(client, "tier-project", comparison({ quantity: 1.001 }));
+    expect(result.tiers.every(tier => tier.available === false && tier.subtotalPaise === null)).toBe(true);
+    expect(estimateTierComparisonSchema.safeParse({ ...comparison(), totalPaise: 1 }).success).toBe(false);
+    expect(estimateTierComparisonSchema.safeParse(comparison({ ratePaise: 1 })).success).toBe(false);
+  });
+
+  it("uses dimension-derived quantities only after matching the current dimension rule", async () => {
+    await requireDimensions();
+    const incomplete = await compareProjectEstimateTiers(client, "tier-project", comparison());
+    expect(incomplete.tiers.every(tier => tier.subtotalPaise === null)).toBe(true);
+    const priced = await compareProjectEstimateTiers(client, "tier-project", comparison({ quantity: 999,
+      dimensions: measurementCommand.dimensions, expectedDimensionRule: measurementCommand.expectedDimensionRule }));
+    expect(priced.tiers[0]).toMatchObject({ subtotalPaise: 50000, lines: [{ quantity: 25, amountPaise: 50000 }] });
+  });
+
+  it("never borrows current component IDs to price another In-house tier", async () => {
+    const settings = (baseRatePaise: number) => ({ baseRatePaise, lowQuantityLimit: "10", impactBps: 1000, minimumMarkupBps: 1500, startingMarkupBps: 2000 });
+    const component = (rate: number) => ({ id: "same-local-id", basketId: "tier-basket", subBasketId: "tier-sub", inclusions: [], exclusions: [], labor: settings(rate), material: settings(rate) });
+    await Section.updateOne({ _id: "advanced-visible" }, { $set: { "payload.inHouseComponents": [component(1000)],
+      "payload.tierConfigurations.premium.payload.inHouseComponents": [component(3000)] } });
+    await EstimateModel.updateOne({ _id: "tier-estimate" }, { $set: { "lineItems.0.pricingMode": "in_house" } });
+    const result = await compareProjectEstimateTiers(client, "tier-project", comparison({ pricingMode: "in_house", quantity: 2, selectedInHouseComponentIds: ["same-local-id"] }));
+    expect(result.tiers[0]).toMatchObject({ available: true, subtotalPaise: 5500 });
+    expect(result.tiers[2]).toMatchObject({ available: false, subtotalPaise: null,
+      lines: [{ amountPaise: null, unavailableReason: expect.stringContaining("Choose the components") }] });
+  });
+
+  it("saves multiple legacy tier changes in one version and rolls everything back on an invalid member", async () => {
+    const { expectedVersion: _version, ...line } = command;
+    const body = { expectedVersion: 1, lines: [{ lineItemId: "line-one", ...line }, { lineItemId: "line-two", ...line }] };
+    const before = await EstimateModel.findById("tier-estimate").lean();
+    await expect(service.selectBatch(client, "tier-project", { ...body, lines: [body.lines[0]!, { ...body.lines[1]!, revisionVersion: 2 }] }))
+      .rejects.toMatchObject({ code: "ESTIMATE_CONFIGURATION_CHANGED" });
+    expect(await EstimateModel.findById("tier-estimate").lean()).toEqual(before);
+    expect(await AuditEventModel.countDocuments()).toBe(0);
+    const result = await service.selectBatch(client, "tier-project", body);
+    expect(result).toMatchObject({ estimateVersion: 2, totalPaise: 30700, roundOffPaise: 20 });
+    expect(result.lines.map(line => [line.id, line.modeTier, line.amountPaise])).toEqual([["line-one", "premium", 10000], ["line-two", "premium", 15000]]);
+    expect((await EstimateModel.findById("tier-estimate").lean())!.lineItems[2]).toEqual(before!.lineItems[2]);
+    await expect(service.selectBatch(client, "tier-project", body)).rejects.toMatchObject({ code: "ESTIMATE_VERSION_CONFLICT" });
+  });
+
+
+  it("keeps unequal projects independent and enforces stage-specific pricing mode access", async () => {
+    const original = (await EstimateModel.findById("tier-estimate").lean())!;
+    await ProjectModel.collection.insertOne({ _id: "comparison-project" as never, name: "Other comparison", clientId: other.id,
+      assignedEstimatorId: sales.id, estimationWorkflowVersion: 2 });
+    await LeadModel.collection.insertOne({ _id: "comparison-lead" as never, projectId: "comparison-project", ownerId: sales.id });
+    await EstimateModel.create({ ...original, _id: "comparison-estimate", projectId: "comparison-project", leadId: "comparison-lead",
+      lineItems: original.lineItems.map((line, index) => index ? line : { ...line, rateSource: "manual", ratePaise: 9999 }) });
+    expect((await compareProjectEstimateTiers(client, "tier-project", comparison())).tiers[0]!.subtotalPaise).toBe(6000);
+    expect((await compareProjectEstimateTiers(other, "comparison-project", comparison())).tiers[0]!.subtotalPaise).toBe(29997);
+    await expect(compareProjectEstimateTiers(client, "comparison-project", comparison())).rejects.toMatchObject({ status: 404 });
+    await expect(compareProjectEstimateTiers(client, "tier-project", comparison({ pricingMode: "pmc" }))).rejects.toMatchObject({ code: "ESTIMATE_PRICING_MODE_FORBIDDEN" });
+    const designer: PublicUser = { id: "comparison-designer", name: "Designer", email: "designer@comparison.invalid", role: "designer" };
+    await UserModel.create({ _id: designer.id, ...designer, active: true, emailNormalized: designer.email, passwordHash: "synthetic" });
+    await ProjectModel.updateOne({ _id: "tier-project" }, { $set: { estimationWorkflowVersion: 3, primaryDesignerId: designer.id } });
+    await EstimateModel.updateOne({ _id: "tier-estimate" }, { $set: { designPlanDesignerId: designer.id, "estimation.workflowVersion": 3,
+      "estimation.phase": "post", "estimation.preApproval": { reviewRoundId: "comparison-approved", estimateVersion: 1, approvedAt: new Date().toISOString() } } });
+    expect((await compareProjectEstimateTiers(designer, "tier-project", comparison())).tiers[0]!.subtotalPaise).toBe(6000);
+    await expect(compareProjectEstimateTiers(sales, "tier-project", comparison({ pricingMode: "pmc" }))).rejects.toMatchObject({ code: "ESTIMATE_PRICING_MODE_FORBIDDEN" });
+  });
+
+  it("exposes authenticated read-only JSON/PDF and rejects submitted prices", async () => {
+    const auth = { authenticate: async (token: string) => token === "client" ? client : other } as never;
+    const app = express(); app.use(express.json()); app.use("/api/v1", createEstimateTiersRouter(auth, createAuditService(createMongoRepository()))); app.use(errorHandler);
+    const path = "/api/v1/projects/tier-project/estimate-tier-comparison";
+    const result = await request(app).post(path).set("Authorization", "Bearer client").send(comparison()).expect(200);
+    expect(result.headers["cache-control"]).toBe("private, no-store");
+    expect(result.body.data.tiers[0].subtotalPaise).toBe(6000);
+    const pdf = await request(app).post(`${path}/pdf`).set("Authorization", "Bearer client").send(comparison()).expect(200);
+    expect(pdf.headers["content-type"]).toContain("application/pdf");
+    expect(pdf.headers["content-disposition"]).toContain("attachment");
+    await request(app).post(path).set("Authorization", "Bearer client").send(comparison({ ratePaise: 1 })).expect(400);
+    await request(app).post(path).set("Authorization", "Bearer other").send(comparison()).expect(404);
+    expect((await EstimateModel.findById("tier-estimate").lean())!.version).toBe(1);
+    expect(await AuditEventModel.countDocuments()).toBe(0);
   });
 });

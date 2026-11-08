@@ -25,6 +25,15 @@ function mount(children: React.ReactNode) {
 beforeEach(() => { vi.clearAllMocks(); identity.role = "client"; access.scope = "session-a"; access.userId = "client-a"; access.denied.clear(); vi.spyOn(projectChatApi, "assistantResult").mockResolvedValue(result()); });
 
 describe("authenticated Lisno AI answers", () => {
+  it("shows the published rounding adjustment without recalculating GST or line prices", async () => {
+    vi.mocked(projectChatApi.assistantResult).mockResolvedValue(result({ projectPricing:
+      publishedPriceFixture({ subtotalPaise: 10000, gstPaise: 250, totalPaise: 10200, roundOffPaise: -50 }) }));
+    mount(<ChatAssistantResult projectId="project-a" resultId="result-a" />);
+    expect(await screen.findByText("₹102.00")).toBeVisible();
+    expect(screen.getByText("Round off").nextElementSibling).toHaveTextContent("−₹0.50");
+    expect(screen.getByText("GST").nextElementSibling).toHaveTextContent("₹2.50");
+    expect(screen.getByText("100 sq-ft · Rate: ₹82.50")).toBeVisible();
+  });
   it("hides prices on window blur and applies revoked access before restoring an answer", async () => {
     mount(<ChatAssistantResult projectId="project-a" resultId="result-a" />);
     await screen.findByText("₹9,735.00");

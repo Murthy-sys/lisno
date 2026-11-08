@@ -9,10 +9,12 @@ export interface SalesEstimateCatalogueRow {
 }
 
 /** Display-only rows for one room; callers materialize a draft only after an explicit edit. */
-export function buildSalesEstimateCatalogue({ catalogue, room, selectedMainBasketIds, lines }: {
+export function buildSalesEstimateCatalogue({ catalogue, room, selectedMainBasketIds, browseMainBasketIds = selectedMainBasketIds, lines }: {
   catalogue: EstimationCatalogue;
   room: ConfiguredEstimateRoom;
   selectedMainBasketIds: ReadonlySet<string>;
+  /** Selected baskets absent from this set display only their included room items. */
+  browseMainBasketIds?: ReadonlySet<string>;
   lines: readonly ConfiguredLineDraft[];
 }): SalesEstimateCatalogueRow[] {
   const basketCounts = new Map<string, number>();
@@ -57,8 +59,10 @@ export function buildSalesEstimateCatalogue({ catalogue, room, selectedMainBaske
       const line = existing[0]!;
       if (existing.length !== 1 || line.sourceMissing || line.mainBasketId !== target.basketId ||
         line.subBasketId !== target.subBasketId || line.itemType !== itemType) return [];
+      if (!line.included && !browseMainBasketIds.has(target.basketId)) return [];
       return [{ line, target, isPreview: false }];
     }
+    if (!browseMainBasketIds.has(target.basketId)) return [];
     const line = createConfiguredLine(catalogue, room, target);
     return line ? [{ line, target, isPreview: true }] : [];
   });

@@ -445,6 +445,20 @@ describe("estimate client review scoped queries", () => {
     }
   });
 
+  it("returns the frozen adjustment in review details and rejects altered rounding", async () => {
+    const original = detailRow();
+    const snapshot = { ...original.estimateSnapshot, subtotal: 100.24, subtotalPaise: 10_024,
+      gst: 18.04, gstPaise: 1_804, total: 118, totalPaise: 11_800, roundOffPaise: -28 };
+    const aggregate = vi.spyOn(EstimateClientReviewRoundModel, "aggregate").mockReturnValue(
+      aggregateResult([{ ...original, estimateSnapshot: snapshot }]) as never);
+    const service = createEstimateClientReviewService({ storage: storageDouble() });
+    expect((await service.detail(actors.admin, "round-1")).estimateSnapshot).toMatchObject(snapshot);
+    aggregate.mockReturnValue(aggregateResult([{ ...original, estimateSnapshot: { ...snapshot, roundOffPaise: -27 } }]) as never);
+    await expect(service.detail(actors.admin, "round-1")).rejects.toThrow("totals do not reconcile");
+    aggregate.mockReturnValue(aggregateResult([original]) as never);
+    expect((await service.detail(actors.admin, "round-1")).estimateSnapshot).not.toHaveProperty("roundOffPaise");
+  });
+
   it("authorizes a task PDF before reading bytes and returns only safe download fields", async () => {
     const storage = storageDouble();
     vi.spyOn(EstimateClientReviewRoundModel, "aggregate").mockReturnValue(

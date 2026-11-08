@@ -2,8 +2,9 @@ import type { Role } from "../contracts/domain.js";
 import type { DesignStageType } from "./design-workflow.js";
 import type { StoredEstimateClientResponseProof } from "./estimate-client-review.js";
 
-export const DESIGN_WORKFLOW_ACTIONS = ["confirm_initial_payment", "internal_kickoff_complete", "sales_calendar_accept", "client_kickoff_request", "client_kickoff_schedule", "client_kickoff_complete", "client_kickoff_not_required", "keys_handed_over", "keys_received", "measurement_assign", "measurement_access_block", "measurement_access_restore", "measurement_complete", "furniture_request", "furniture_choice", "furniture_scope", "furniture_accept", "furniture_scope_return", "furniture_upload", "furniture_dimensions_approve", "furniture_dimensions_return", "furniture_proceed", "space_planning_complete"] as const;
+export const DESIGN_WORKFLOW_ACTIONS = ["confirm_initial_payment", "internal_kickoff_complete", "sales_calendar_accept", "client_kickoff_request", "client_kickoff_schedule", "client_kickoff_complete", "keys_handed_over", "keys_received", "measurement_assign", "measurement_access_block", "measurement_access_restore", "measurement_complete", "furniture_request", "furniture_choice", "furniture_scope", "furniture_accept", "furniture_scope_return", "furniture_upload", "furniture_dimensions_approve", "furniture_dimensions_return", "furniture_proceed", "space_planning_complete"] as const;
 export type DesignWorkflowAction = (typeof DESIGN_WORKFLOW_ACTIONS)[number];
+export type DesignWorkflowHistoricalAction = DesignWorkflowAction | "client_kickoff_not_required";
 interface FurnitureItemSnapshot { id: string; estimateItemId?: string; name: string; unit: string; uomId?: string; uomName?: string }
 export type FurnitureDimensionItem = FurnitureItemSnapshot & (
   | { measurementType?: "dimensions"; length: number; width: number; height?: number; quantity?: never }
@@ -76,7 +77,7 @@ export interface DesignWorkflowHistoryEvent {
   id: string;
   idempotencyKey: string;
   requestHash: string;
-  action: DesignWorkflowAction;
+  action: DesignWorkflowHistoricalAction;
   stageId: string | null;
   actorId: string;
   actorName: string;
@@ -137,8 +138,18 @@ const precedingStages: Partial<Record<DesignStageType, DesignStageType[]>> = {
   space_planning_tentative_look_feel: ["internal_kickoff", "client_kickoff", "key_collection", "site_measurement", "existing_furniture_dimensions"]
 };
 
-/** Derive activation from immutable confirmations; never invent a start after a legacy completion. */
+export function workflowClientKickoffCompleted(state: DesignWorkflowState): boolean {
+  const kickoff = state.stages.client_kickoff;
+  return Boolean(kickoff?.completedAt && kickoff.notRequired !== true);
+}
+
+/** Current eligibility never accepts a historical exemption as mandatory completion. */
 export function workflowStageStartAt(state: DesignWorkflowState, type: DesignStageType, at: number): string | null {
+  if (precedingStages[type]?.includes("client_kickoff") && !workflowClientKickoffCompleted(state)) return null;
+  return rawStageStartAt(state, type, at);
+}
+
+function rawStageStartAt(state: DesignWorkflowState, type: DesignStageType, at: number): string | null {
   const predecessors = precedingStages[type];
   const startedAt = workflowDesignStartAt(state);
   if (!startedAt || !predecessors) return null;
@@ -157,6 +168,42 @@ export function workflowStageStartAt(state: DesignWorkflowState, type: DesignSta
   return start <= at ? new Date(start).toISOString() : null;
 }
 
+interface SupersededClientKickoff { completedAt: string; timingBasis: "legacy" | "sequential"; recoveredAt: string }
+/** Recovery metadata is server-owned and bound to the current immutable completion event. */
+function supersededClientKickoff(state: DesignWorkflowState): SupersededClientKickoff | null {
+  const kickoff = state.stages.client_kickoff;
+  if (!kickoff?.completedAt || !Number.isFinite(Date.parse(kickoff.completedAt)) || kickoff.notRequired === true) return null;
+  const matches = state.history.filter(event => event.action === "client_kickoff_complete" && event.at === kickoff.completedAt && event.data?.completedAt === kickoff.completedAt);
+  if (matches.length !== 1) return null;
+  const previous = matches[0]!.data?.supersededClientKickoff;
+  if (!previous || typeof previous !== "object" || Array.isArray(previous)) return null;
+  const value = previous as Record<string, unknown>;
+  if (typeof value.completedAt !== "string" || !Number.isFinite(Date.parse(value.completedAt)) ||
+    Date.parse(value.completedAt) > Date.parse(kickoff.completedAt) || (value.timingBasis !== "legacy" && value.timingBasis !== "sequential")) return null;
+  return { completedAt: value.completedAt, timingBasis: value.timingBasis, recoveredAt: kickoff.completedAt };
+}
+
+/** Read-only clock evidence. This function must never authorize a new workflow action. */
+export function workflowStageTimingStartAt(state: DesignWorkflowState, type: DesignStageType, at: number): string | null {
+  const previous = supersededClientKickoff(state);
+  if (previous && precedingStages[type]?.includes("client_kickoff")) {
+    const historical = { ...state, stages: { ...state.stages, client_kickoff: { ...state.stages.client_kickoff, completedAt: previous.completedAt } } };
+    const establishedStart = rawStageStartAt(historical, type, Math.min(at, Date.parse(previous.recoveredAt)));
+    if (establishedStart) return establishedStart;
+  }
+  return rawStageStartAt(state, type, at);
+}
+
+/** Validate already-recorded downstream completion without undoing valid historical work. */
+export function workflowStageHistoricalPrerequisiteBlockers(state: DesignWorkflowState, type: DesignStageType, completedAt: string): string[] {
+  const kickoff = state.stages.client_kickoff;
+  const previous = kickoff?.notRequired === true ? kickoff : supersededClientKickoff(state);
+  if (previous?.completedAt && Number.isFinite(Date.parse(previous.completedAt)) && Date.parse(previous.completedAt) <= Date.parse(completedAt)) {
+    return workflowStagePrerequisiteBlockers({ ...state, stages: { ...state.stages, client_kickoff: { ...kickoff, completedAt: previous.completedAt, notRequired: false } } }, type);
+  }
+  return workflowStagePrerequisiteBlockers(state, type);
+}
+
 export function workflowStageElapsedMs(state: DesignWorkflowState, startsAt: string | null, at: number): number {
   if (!startsAt) return 0;
   const start = Date.parse(startsAt);
@@ -167,7 +214,7 @@ export function workflowStagePrerequisiteBlockers(state: DesignWorkflowState, ty
   const blockers: string[] = [];
   for (const predecessor of precedingStages[type] ?? []) {
     if (predecessor === "internal_kickoff" && !state.stages.internal_kickoff?.completedAt) blockers.push("Complete Internal Kick off before starting this stage.");
-    if (predecessor === "client_kickoff" && !state.stages.client_kickoff?.completedAt) blockers.push("Complete Client Kick off or mark it not necessary before starting this stage.");
+    if (predecessor === "client_kickoff" && !workflowClientKickoffCompleted(state)) blockers.push("Complete Client Kick off before starting this stage.");
     if (predecessor === "key_collection" && (!state.stages.key_collection?.completedAt || !state.stages.key_collection.handedOverAt || !state.stages.key_collection.receivedAt)) blockers.push("The Client and Designer must both confirm key handover before starting this stage.");
     if (predecessor === "site_measurement" && !state.stages.site_measurement?.completedAt) blockers.push("Complete On Site Actual Measurement before starting this stage.");
     if (predecessor === "existing_furniture_dimensions" && !state.stages.existing_furniture_dimensions?.completedAt) blockers.push("Complete Collection of existing furniture dimensions before starting this stage.");
@@ -180,7 +227,7 @@ export function workflowSubmissionBlockers(state: DesignWorkflowState, roomIds?:
   else if (!workflowDesignStartAt(state)) blockers.push(state.estimationWorkflowVersion === 2 ? "The Client must approve the pre-estimate before design starts." : "Super Admin must confirm Initial payment received after estimate approval.");
   if (workflowIsPaused(state)) blockers.push("The Client has blocked site access. Restore access to resume the workflow.");
   if (!state.stages.internal_kickoff?.completedAt) blockers.push("Complete Internal Kick off with its signed checklist.");
-  if (!state.stages.client_kickoff?.completedAt) blockers.push("Complete Client Kick off or mark it not necessary.");
+  if (!workflowClientKickoffCompleted(state)) blockers.push("Complete Client Kick off.");
   if (!state.stages.key_collection?.handedOverAt || !state.stages.key_collection?.receivedAt) blockers.push("The Client and Designer must both confirm key handover.");
   if (!state.stages.site_measurement?.completedAt) blockers.push("Complete site measurement with uploaded photos or videos.");
   if (phase === "upload") return blockers;

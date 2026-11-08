@@ -1,3 +1,4 @@
+import { estimateTotalsReconcile } from "../../domain/estimate-total-rounding.js";
 import type { EstimatePdfInput, EstimatePdfLine } from "../estimate-pdf.service.js";
 import { estimateComponentLineAmountIsValid } from "../../domain/estimate-component-pricing.js";
 import { estimateDimensionSnapshotValid } from "../../domain/estimate-dimension-snapshot.js";
@@ -24,8 +25,10 @@ export function dateLabel(value: string, dateOnly = false) {
 }
 export function proposalTotals(input: EstimatePdfInput) {
   const subtotal = recordedPaise(input.subtotalPaise, input.subtotal), gst = recordedPaise(input.gstPaise, input.gst), total = recordedPaise(input.totalPaise, input.total);
-  if (BigInt(subtotal) + BigInt(gst) !== BigInt(total)) throw new TypeError("The proposal totals do not reconcile.");
-  return { subtotal, gst, total };
+  if (!estimateTotalsReconcile({ subtotalPaise: subtotal, gstPaise: gst, totalPaise: total, roundOffPaise: input.roundOffPaise })) {
+    throw new TypeError("The proposal totals do not reconcile.");
+  }
+  return { subtotal, gst, total, roundOff: input.roundOffPaise ?? 0 };
 }
 function row(line: EstimatePdfLine, ungrouped: boolean): ProposalLine {
   if (!Number.isFinite(line.quantity) || line.quantity < 0 || !estimateDimensionSnapshotValid(line) || line.modeTier !== undefined && !isKnowledgeModeTier(line.modeTier)) throw new TypeError("The proposal has invalid saved item details.");

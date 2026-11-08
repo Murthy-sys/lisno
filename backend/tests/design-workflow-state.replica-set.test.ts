@@ -117,6 +117,41 @@ describe("Mongo operational workflow state", () => {
     expect(await DesignWorkflowStateModel.countDocuments()).toBe(1);
   });
 
+  it("rejects retired replay and atomically recovers a skipped kickoff while preserving history", async () => {
+    const h = await setup();
+    await createDesignWorkflowStateService(h.repository, h.audit, () => BASE).act(h.finance, PROJECT_ID, h.payment, null);
+    const service = createDesignWorkflowStateService(h.repository, h.audit, () => DAY_TWO);
+    await service.act(h.designer, PROJECT_ID, h.kickoff, PROOF);
+    const skipped = (await h.repository.findDesignWorkflowState(PROJECT_ID))!;
+    const input = { action: "client_kickoff_not_required", stageId: h.stages[1]!.id, expectedVersion: 0,
+      idempotencyKey: "retired-replay", data: {}, note: "Historical exemption" };
+    skipped.stages.client_kickoff = { completedAt: DAY_TWO.toISOString(), notRequired: true, timingBasis: "sequential" };
+    skipped.history.push({ id: "old-skip", action: "client_kickoff_not_required", stageId: input.stageId,
+      actorId: h.designer.id, actorName: h.designer.name, actorRole: "designer", onBehalfOfClient: false,
+      at: DAY_TWO.toISOString(), note: input.note, proof: null, idempotencyKey: input.idempotencyKey,
+      requestHash: sha256Hex(Buffer.from(JSON.stringify({ action: input.action, stageId: input.stageId, data: input.data, note: input.note }))) });
+    await h.repository.saveDesignWorkflowState(PROJECT_ID, skipped.version, skipped);
+    const before = (await h.repository.findDesignWorkflowState(PROJECT_ID))!;
+    const auditCount = await AuditEventModel.countDocuments();
+    await expect(service.act(h.designer, PROJECT_ID, input as WorkflowActionInput, null)).rejects.toMatchObject({ code: "WORKFLOW_ACTION_RETIRED" });
+    expect(await h.repository.findDesignWorkflowState(PROJECT_ID)).toEqual(before);
+    expect(await AuditEventModel.countDocuments()).toBe(auditCount);
+    const completion: WorkflowActionInput = { ...input, action: "client_kickoff_complete", expectedVersion: before.version,
+      idempotencyKey: "proper-completion", data: { reviewedDocumentEventId: before.history.find(event => event.action === "internal_kickoff_complete")!.id } };
+    const failing = createDesignWorkflowStateService(h.repository, { ...h.audit, append: async () => { throw new Error("Audit unavailable"); } }, () => new Date("2026-09-20T10:00:00.000Z"));
+    await expect(failing.act(h.client, PROJECT_ID, completion, null)).rejects.toThrow("Audit unavailable");
+    expect(await h.repository.findDesignWorkflowState(PROJECT_ID)).toEqual(before);
+    const recovery = createDesignWorkflowStateService(h.repository, h.audit, () => new Date("2026-09-20T10:00:00.000Z"));
+    const result = await recovery.act(h.client, PROJECT_ID, completion, null);
+    await expect(recovery.act(h.client, PROJECT_ID, completion, null)).resolves.toEqual({ ...result, replayed: true });
+    const after = (await h.repository.findDesignWorkflowState(PROJECT_ID))!;
+    expect(after.stages.client_kickoff).toMatchObject({ completedAt: "2026-09-20T10:00:00.000Z" });
+    expect(after.stages.client_kickoff!.notRequired).toBeUndefined();
+    expect(after.history.slice(0, before.history.length)).toEqual(before.history);
+    expect(after.history.at(-1)!.data).toMatchObject({ supersededClientKickoff: { completedAt: DAY_TWO.toISOString(), timingBasis: "sequential" } });
+    expect(await AuditEventModel.countDocuments()).toBe(auditCount + 1);
+  });
+
   it("rolls back initial state creation when its audit cannot be persisted", async () => {
     const { repository, audit, finance, payment } = await setup();
     const service = createDesignWorkflowStateService(repository, { ...audit, append: async () => { throw new Error("Audit unavailable"); } }, () => BASE);
@@ -247,7 +282,7 @@ describe("Mongo approved room source", () => {
     const projectView = () => createProjectService(repository, audit, () => DAY_TWO).designWorkflow(designer, PROJECT_ID);
     expect((await projectView()).projectStages![1]!.operational!.timing).toMatchObject({ state: "running", startsAt: DAY_TWO.toISOString(), remainingMs: 4 * 86_400_000 });
     const transition = async (actor: PublicUser, action: WorkflowActionInput["action"], type: string, data: Record<string, unknown> = {}, proof: typeof PROOF | null = null) => service.act(actor, PROJECT_ID, { action, expectedVersion: (await repository.findDesignWorkflowState(PROJECT_ID))!.version, idempotencyKey: `canonical-${action}`, note: "Recorded confirmation", stageId: stages.find((stage) => stage.type === type)!.id, data }, proof, action === "measurement_complete" ? [MEDIA] : []);
-    await transition(designer, "client_kickoff_not_required", "client_kickoff");
+    await transition(client, "client_kickoff_complete", "client_kickoff", { reviewedDocumentEventId: (await repository.findDesignWorkflowState(PROJECT_ID))!.history.find(event => event.action === "internal_kickoff_complete")!.id });
     await transition(client, "keys_handed_over", "key_collection");
     expect((await projectView()).projectStages![3]!.operational!.timing).toMatchObject({ state: "waiting", startsAt: null, remainingMs: null });
     await transition(designer, "keys_received", "key_collection");

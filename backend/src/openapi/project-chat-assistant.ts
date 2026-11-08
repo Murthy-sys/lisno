@@ -5,6 +5,8 @@ const money = {...integer, nullable: true, description: "Exact integer paise fro
 const boolean = {type: "boolean"};
 const ref = (name: string) => ({$ref: `#/components/schemas/${name}`});
 const object = (properties: Record<string, unknown>, required = Object.keys(properties)) => ({type: "object", additionalProperties: false, properties, required});
+const withRoundOff = (schema: ReturnType<typeof object>) => ({ ...schema, properties: { ...schema.properties,
+  roundOffPaise: { type: "integer", minimum: -50, maximum: 49, description: "Saved final estimate adjustment in paise; absent for historical exact totals." } } });
 const list = (items: unknown) => ({type: "array", items});
 const mode = {type: "string", enum: ["pmc", "sub_vendor", "in_house"]};
 const state = {type: "string", enum: ["complete", "partial", "clarification_required"]};
@@ -32,11 +34,11 @@ export const CHAT_ASSISTANT_SCHEMAS = {
   AssistantCommercialSnapshot: object({currency: {type: "string", enum: ["INR"]}, policy: {type: "string", enum: ["configuration-selling-v1"]}, state,
     lines: list(ref("AssistantPriceLine")), subtotalPaise: money, gstRateBps: integer, gstPaise: money, totalPaise: money, optionalSubtotalPaise: money,
     approvedBaselinePaise: money, hypotheticalTotalPaise: money, assumptions: list(text), missingInputs: list(text)}),
-  AssistantProjectPricing: object({policy: {type: "string", enum: ["published-project-estimate-v1"]}, currency: {type: "string", enum: ["INR"]},
+  AssistantProjectPricing: withRoundOff(object({policy: {type: "string", enum: ["published-project-estimate-v1"]}, currency: {type: "string", enum: ["INR"]},
     state: {type: "string", enum: ["published", "approved"]}, estimateId: text, estimateVersion: {...integer, minimum: 1}, reviewRoundId: text, reviewVersion: {...integer, minimum: 1},
     publishedAt: {...text, format: "date-time"}, source: object({id: text, label: text, href: nullableText}),
     lines: {type: "array", maxItems: 100, items: object({id: text, label: text, quantity: nullableText, unit: nullableText, ratePaise: money, amountPaise: money})},
-    lineCount: integer, hasMoreLines: boolean, subtotalPaise: money, gstPaise: money, totalPaise: money}),
+    lineCount: integer, hasMoreLines: boolean, subtotalPaise: money, gstPaise: money, totalPaise: money})),
   ChatAssistantResult: object({id: text, projectId: text, messageId: text, kind: {type: "string", enum: ["status", "catalogue", "price", "clarification", "handoff", "no_answer"]},
     disclosurePolicy: {type: "string", enum: ["project-publication-v1"]}, projectPricing: {allOf: [ref("AssistantProjectPricing")], nullable: true},
     narrative: ref("AssistantNarrative"), facts: list(ref("AssistantFact")), candidates: list(ref("AssistantCatalogueCandidate")), missingInputs: list(text),

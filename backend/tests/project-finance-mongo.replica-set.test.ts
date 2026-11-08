@@ -1,3 +1,4 @@
+import { effectiveFinanceBaselineExpression, financeTotalsReconcileExpression } from "../src/domain/project-finance-rounding-expression.js";
 import mongoose from "mongoose";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -53,6 +54,70 @@ afterAll(async () => {
 });
 
 describe("project finance lifecycle and ledger", () => {
+  it("preserves final total round-off through frozen approval, persisted buckets and portfolio totals", async () => {
+    const cases = [
+      { id: "rounded-total-a", subtotalPaise: 12_125, gstPaise: 2_183, totalPaise: 14_300, roundOffPaise: -8 },
+      { id: "rounded-total-b", subtotalPaise: 7_003, gstPaise: 1_261, totalPaise: 8_300, roundOffPaise: 36 }
+    ];
+    for (const { id, subtotalPaise, gstPaise, totalPaise, roundOffPaise } of cases) {
+      await createProject(id, id);
+      await EstimateClientReviewRoundModel.collection.insertOne({ _id: `round-${id}`, estimateId: `estimate-${id}`,
+        dedupeKey: `finance-${id}`, sendGeneration: 1, projectId: id, estimateVersion: 3,
+        status: "approved", decision: "approve", decisionSource: "client_portal", decidedById: "client-rounding", decidedAt: NOW,
+        estimateSnapshot: { subtotal: subtotalPaise / 100, gst: gstPaise / 100, total: totalPaise / 100,
+          subtotalPaise, gstPaise, totalPaise, roundOffPaise, lineItems: [] }
+      } as never);
+    }
+    const service = createProjectFinanceService({ now: () => NOW });
+    const before = await service.listProjects(superAdminActor(), { limit: 10, offset: 0 });
+    expect(before.summary).toMatchObject({ projectCount: 2, approvedContractTotalPaise: 22_600,
+      approvedSubtotalPaise: 19_128, approvedGstPaise: 3_444, approvedRoundOffPaise: 28,
+      targetProfitPaise: 3_826, costBudgetPaise: 15_302 });
+    for (const { id, subtotalPaise, gstPaise, totalPaise, roundOffPaise } of cases) {
+      await mongoose.connection.transaction(session => ensurePendingProjectFinanceBucket({ ...approvedBudgetInput(id),
+        estimateReviewRoundId: `round-${id}`, approvedSubtotalRupees: subtotalPaise / 100,
+        approvedGstRupees: gstPaise / 100, approvedContractTotalRupees: totalPaise / 100,
+        approvedSubtotalPaise: subtotalPaise, approvedGstPaise: gstPaise, approvedContractTotalPaise: totalPaise,
+        approvedRoundOffPaise: roundOffPaise }, session));
+      expect(await service.getBucket(superAdminActor(), id)).toMatchObject({ approvedContractTotalPaise: totalPaise,
+        approvedSubtotalPaise: subtotalPaise, approvedGstPaise: gstPaise, approvedRoundOffPaise: roundOffPaise });
+      expect(await ProjectFinanceBucketModel.findOne({ projectId: id }).lean()).toMatchObject({ approvedRoundOffPaise: roundOffPaise });
+    }
+    expect((await service.listProjects(superAdminActor(), { limit: 10, offset: 0 })).summary).toEqual(before.summary);
+    for (const invalid of [-7, "-8", null]) {
+      await ProjectFinanceBucketModel.collection.updateOne({ projectId: cases[0]!.id }, { $set: { approvedRoundOffPaise: invalid } } as never);
+      await expect(service.getBucket(superAdminActor(), cases[0]!.id)).rejects.toMatchObject({ status: 409 });
+    }
+    await createProject("legacy-total", "Legacy total");
+    await mongoose.connection.transaction(session => ensurePendingProjectFinanceBucket(approvedBudgetInput("legacy-total"), session));
+    await ProjectFinanceBucketModel.collection.updateOne({ projectId: "legacy-total" }, { $set: { approvedRoundOffPaise: null } } as never);
+    await expect(service.getBucket(superAdminActor(), "legacy-total")).rejects.toMatchObject({ status: 409 });
+  });
+
+  it("uses strict legacy and signed-round-off reconciliation in Mongo reporting", async () => {
+    const collection = mongoose.connection.db!.collection("finance_rounding_checks");
+    const cases = [
+      { subtotal: 12_125, gst: 2_183, total: 14_308, valid: true },
+      { subtotal: 12_125, gst: 2_183, total: 14_300, roundOff: -8, valid: true },
+      { subtotal: 7_003, gst: 1_261, total: 8_300, roundOff: 36, valid: true },
+      { subtotal: 12_500, gst: 2_250, total: 14_700, roundOff: -50, valid: true },
+      { subtotal: 10_000, gst: 1_800, total: 11_800, roundOff: 0, valid: true },
+      { subtotal: 12_125, gst: 2_183, total: 14_300, valid: false },
+      ...[null, "-8", -7, -8.5, -51, 50].map(roundOff => ({ subtotal: 12_125, gst: 2_183, total: 14_300, roundOff, valid: false })),
+      { subtotal: 12_500, gst: 2_250, total: 14_800, roundOff: 50, valid: false },
+      { subtotal: 12_125, gst: 2_183, total: 14_308, roundOff: 0, valid: false }
+    ];
+    await collection.insertMany(cases);
+    const checked = await collection.aggregate([{ $project: { valid: 1,
+      actual: financeTotalsReconcileExpression("$subtotal", "$gst", "$total", "$roundOff") } }]).toArray();
+    for (const row of checked) expect(row.actual).toBe(row.valid);
+    const projected = await collection.aggregate([{ $limit: 1 }, { $replaceRoot: { newRoot: {
+      $literal: { approvedRoundOffPaise: -8, effectiveBaseline: { approvedContractTotalPaise: 8_264 } }
+    } } }, { $replaceRoot: { newRoot: effectiveFinanceBaselineExpression("$$ROOT", "$effectiveBaseline") } }]).toArray();
+    expect(projected[0]).not.toHaveProperty("approvedRoundOffPaise");
+    expect(projected[0]).toHaveProperty("approvedContractTotalPaise", 8_264);
+  });
+
   it("keeps Project IDs aligned across unequal same-name budgets, details, and filter options", async () => {
     await createProject("numbered-alpha", "Same name", { financeLink: "lead" });
     await createProject("numbered-beta", "Same name", { financeLink: "lead", approvedMoney: {

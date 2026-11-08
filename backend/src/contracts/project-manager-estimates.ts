@@ -48,7 +48,7 @@ export interface PMEstimateView {
   approvedAt: string | null;
   lines: PMEstimateLine[];
   mainLines: PMMainLineScope[];
-  totals: { subtotalPaise: number | null; gstPaise: number | null; totalPaise: number | null };
+  totals: { subtotalPaise: number | null; gstPaise: number | null; totalPaise: number | null; roundOffPaise?: number };
   writeAvailability: PMWriteAvailability;
 }
 export interface PMVendorCandidate {

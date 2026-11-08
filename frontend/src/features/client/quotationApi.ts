@@ -1,7 +1,7 @@
 import type { EstimateDimensions } from "../../../../shared/estimation/estimateDimensions";
 import type { KnowledgeModeTier } from "../../../../shared/knowledge/knowledgeModeTiers";
 import { apiClient } from "../../api/client";
-import type { EstimateDraft, EstimateStatus } from "../leads/leadsApi";
+import type { EstimateDraft, EstimatePricingMode, EstimateStatus } from "../leads/leadsApi";
 import type { CurrentQuotationApprovalStatus } from "../../api/types";
 import type { EstimateTierChoice, EstimateTierLine, EstimateTierSource, EstimateTiersDetail } from "./estimateTiersApi";
 
@@ -25,6 +25,8 @@ export interface QuotationBasket {
   subBaskets: Array<{ id: string; name: string }>;
 }
 export interface QuotationLine extends EstimateTierLine, QuotationGrouping {
+  classification?: "standard" | "special";
+  pricingModeChoices?: QuotationPricingModeChoice[];
   roomId: string;
   included: boolean;
   source: EstimateTierSource | null;
@@ -75,6 +77,8 @@ export interface QuotationConfigureOperation {
 }
 export interface QuotationDetail extends Omit<EstimateTiersDetail, "lines">, CurrentQuotationApprovalStatus {
   readonly projectNumber?: string | null;
+  /** Absence on older responses must not enable pricing-mode edits. */
+  canChangePricingMode?: boolean;
 
   workflowVersion: 3;
   phase: "pre" | "post";
@@ -89,7 +93,13 @@ export interface QuotationDetail extends Omit<EstimateTiersDetail, "lines">, Cur
   /** Absent on older servers. Never infer editable setup from the visible line list. */
   setup?: QuotationSetup;
 }
+export interface QuotationPricingModeChoice {
+  pricingMode: EstimatePricingMode;
+  choices: EstimateTierChoice[];
+}
 export interface QuotationCandidate extends QuotationGrouping {
+  classification?: "standard" | "special";
+  pricingModeChoices?: QuotationPricingModeChoice[];
   mainLineId: string;
   name: string;
   source: EstimateTierSource;
@@ -103,11 +113,13 @@ export interface QuotationCandidate extends QuotationGrouping {
 export type QuotationLineOperation = {
   kind: "add"; mainLineId: string; roomId: string; source: EstimateTierSource;
   quantity: number; modeTier: KnowledgeModeTier; dimensions?: EstimateDimensions;
+  pricingMode?: EstimatePricingMode;
   selectedInHouseComponentIds?: string[];
   recommendationSourceMainLineIds?: string[];
 } | {
   kind: "update"; lineItemId: string; source: EstimateTierSource;
   quantity?: number; modeTier?: KnowledgeModeTier; dimensions?: EstimateDimensions;
+  pricingMode?: EstimatePricingMode;
   selectedInHouseComponentIds?: string[]; included?: boolean;
   recommendationSourceMainLineIds?: string[];
 } | {
@@ -117,7 +129,16 @@ export type QuotationLineOperation = {
   roomId: string | null;
   sourceToken: string;
 };
-export type QuotationOperation = QuotationLineOperation | QuotationConfigureOperation;
+export interface QuotationTierGroupOperation {
+  kind: "set_group_tier";
+  mainBasketId: string;
+  subBasketId: string | null;
+  roomId: string;
+  sourceToken: string;
+  modeTier: KnowledgeModeTier;
+  componentSelections?: Array<{ lineItemId: string; selectedInHouseComponentIds: string[] }>;
+}
+export type QuotationOperation = QuotationLineOperation | QuotationConfigureOperation | QuotationTierGroupOperation;
 export interface QuotationRevision {
   estimateId: string;
   estimateVersion: number;

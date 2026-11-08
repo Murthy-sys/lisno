@@ -34,6 +34,7 @@ import {
 import { KnowledgeLifecycleDialog, type KnowledgeLifecycleAction } from "./KnowledgeLifecycleDialogs";
 import { KnowledgeMasterEditorDialog } from "./KnowledgeMasterEditorDialog";
 import { KnowledgeMainLineNameDialog } from "./KnowledgeMainLineNameDialog";
+import { KnowledgeMainLineClientPreview } from "./KnowledgeMainLineClientPreview";
 import { KnowledgeSurfaceEditorDialog } from "./KnowledgeSurfaceEditorDialog";
 import { KnowledgeBasketQualityPanel, type KnowledgeBasketQualityPanelHandle, type KnowledgeQualitySaveCommandState } from "./KnowledgeBasketQualityPanel";
 import { KnowledgeModePanel, type KnowledgeModePanelHandle } from "./KnowledgeModePanel";
@@ -155,8 +156,12 @@ export function KnowledgeItemWorkspacePage() {
   const [commandReason, setCommandReason] = useState("");
   const [duplicateName, setDuplicateName] = useState("");
   const [mainLineEditorOpen, setMainLineEditorOpen] = useState(false);
+  const [clientPreviewLineId, setClientPreviewLineId] = useState<string | null>(null);
+  const clientPreviewTriggerRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => { setClientPreviewLineId(null); }, [mainLineId]);
 
   const canRead = hasFrontendPermission(auth.authorization, "ai_estimator_knowledge.configuration.read");
+  const canPreviewClient = canRead && hasFrontendPermission(auth.authorization, "estimation.catalogue.read");
   const canCreate = hasFrontendPermission(auth.authorization, "ai_estimator_knowledge.configuration.create");
   const canUpdate = hasFrontendPermission(auth.authorization, "ai_estimator_knowledge.configuration.update");
   const canCreateQualityOptions = hasFrontendPermission(auth.authorization, "ai_estimator_knowledge.quality_control_options.create");
@@ -197,7 +202,7 @@ export function KnowledgeItemWorkspacePage() {
   const visibleSections = KNOWLEDGE_WORKSPACE_TAB_KEYS.filter(section => selectedSections.includes(section)
     || (section === activeSection && isModeSection && (modeDirty || modeSaving)));
   useEffect(() => {
-    if (savedOverviewQuery.data && activeModeTier && !applicableKnowledgeTiers(savedOverviewQuery.data.payload).includes(activeModeTier)
+    if (savedOverviewQuery.data && activeModeTier && activeModeTier !== "signature" && !applicableKnowledgeTiers(savedOverviewQuery.data.payload).includes(activeModeTier)
       && !modeDirty && !modeSaving) setActiveSection("overview");
   }, [savedOverviewQuery.data, activeModeTier, modeDirty, modeSaving]);
   const historyQuery = useQuery({
@@ -580,7 +585,7 @@ export function KnowledgeItemWorkspacePage() {
       onRetry={() => void historyQuery.refetch()}
     />}
     <KnowledgeSavedConfigurationSummary item={item} revisionId={revision?.id} masters={masters}
-      dataSource={modeDataSource} modeLabel={`${KNOWLEDGE_MODE_TIER_LABELS[activeModeTier ?? "signature"]} mode`}
+      dataSource={modeDataSource} modeLabel={(activeModeTier ?? "signature") === "signature" ? "Mode" : `${KNOWLEDGE_MODE_TIER_LABELS[activeModeTier ?? "signature"]} mode`}
       baskets={relationshipBasketsQuery.data?.items ?? []} items={relationshipItemsQuery.data?.allItems ?? []}
       referenceStates={{
         masters: Object.fromEntries(MASTER_TYPES.map((type, index) => [type, {
@@ -603,9 +608,11 @@ export function KnowledgeItemWorkspacePage() {
               onClick={() => guard.requestNavigation(() => setMainLineEditorOpen(true))} />
           : null}
         metadata={<div className="knowledge-header-metadata">{item.itemType === "temporary" && <span className="knowledge-temporary-badge">Temporary item · Must be completed</span>}<StatusBadge label={KNOWLEDGE_ITEM_STATUS_LABELS[item.status]} tone={item.status === "active" ? "success" : item.status === "draft" ? "warning" : item.status === "archived" ? "danger" : "neutral"} /><span>Updated {formatKnowledgeDateTime(item.updatedAt)}</span></div>}
-        actions={<WorkspaceActions item={item} canCreate={canCreate} canLifecycle={canLifecycle}
+        actions={<>{canPreviewClient ? <Button ref={clientPreviewTriggerRef} variant="secondary" size="compact"
+          aria-haspopup="dialog" onClick={() => setClientPreviewLineId(mainLineId)}>Client view</Button> : null}
+          <WorkspaceActions item={item} canCreate={canCreate} canLifecycle={canLifecycle}
           onCommand={(next) => guard.requestNavigation(() => setCommand(next))}
-          onLifecycle={(next) => guard.requestNavigation(() => setLifecycleAction(next))} />}
+          onLifecycle={(next) => guard.requestNavigation(() => setLifecycleAction(next))} /></>}
       />
       <KnowledgeSafetyNotice />
       {itemQuery.isError && !terminalItemError ? (
@@ -739,6 +746,10 @@ export function KnowledgeItemWorkspacePage() {
       </div>
 
       <KnowledgeBasketDeletionReturn fallbackFocusRef={workspaceRef} />
+      {canPreviewClient && clientPreviewLineId === mainLineId ? <KnowledgeMainLineClientPreview
+        key={mainLineId} open mainLineId={mainLineId} mainLineName={item.mainLineName}
+        hasUnsavedChanges={dirty || modeDirty || designDirty || qualityDirty || designUnknownOutcome || activeSaving}
+        onClose={() => setClientPreviewLineId(null)} returnFocusRef={clientPreviewTriggerRef} /> : null}
       {guard.dialogOpen ? <KnowledgeUnsavedChangesDialog onSave={() => void guard.saveAndContinue()} onDiscard={designUnknownOutcome && isMetadataSection ? guard.stayHere : guard.discardAndContinue} onStay={guard.stayHere} busy={guard.busy || (isMetadataSection && activeSaving)} error={guard.error} blockingReason={designUnknownOutcome && isMetadataSection ? "A Design save is unconfirmed. Stay here and load the current saved values before leaving." : undefined} /> : null}
       {conflict ? <KnowledgeVersionConflictDialog sectionLabel={backendSection ? KNOWLEDGE_SECTION_LABELS[backendSection] : undefined} localVersion={conflict.localVersion} serverVersion={conflict.server.version} onKeepEditing={() => setConflict(null)} onReviewServerVersion={() => { setServerReview(conflict); setConflict(null); }} onDiscardLocalChanges={() => { setPayload(conflict.server.payload); setDirty(false); setOverviewDirtyFields(new Set()); setConflict(null); setServerReview(null); }} /> : null}
       {quickAdd ? quickAdd.type === "surfaces" ? (

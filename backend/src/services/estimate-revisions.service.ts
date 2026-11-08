@@ -1,3 +1,4 @@
+import { estimateTotalsReconcile } from "../domain/estimate-total-rounding.js";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { estimateProposalSchema } from "../domain/estimate-proposal.js";
@@ -61,8 +62,21 @@ const snapshotSchema = z.object({
   bedroomCount: paise.nullable().optional(), scopes: z.array(text).optional(),
   lineItems: z.array(lineSchema), subtotal: money, gst: money, total: money,
   subtotalPaise: paise.optional(), gstPaise: paise.optional(), totalPaise: paise.optional(),
+  roundOffPaise: z.number().int().min(-50).max(49).optional(),
   selectedMainBasketIds: z.array(id).optional(),
   selectedMainBasketClassifications: z.array(z.object({ mainBasketId: id, classification: z.enum(["standard", "special"]) })).optional()
+}).superRefine((snapshot, ctx) => {
+  if (snapshot.roundOffPaise === undefined) {
+    if ([snapshot.subtotalPaise, snapshot.gstPaise, snapshot.totalPaise].some(value => value !== undefined) &&
+      !estimateTotalsReconcile(snapshot)) {
+      ctx.addIssue({ code: "custom", message: "Saved estimate totals must reconcile in paise." });
+    }
+    return;
+  }
+  if (!estimateTotalsReconcile(snapshot) || snapshot.subtotal !== snapshot.subtotalPaise! / 100 ||
+    snapshot.gst !== snapshot.gstPaise! / 100 || snapshot.total !== snapshot.totalPaise! / 100) {
+    ctx.addIssue({ code: "custom", message: "Saved estimate totals must reconcile in paise." });
+  }
 });
 const querySchema = z.object({
   limit: z.union([z.number(), z.string().regex(/^[1-9]\d*$/u).transform(Number)]).pipe(z.number().int().min(1).max(50)).optional().default(20),

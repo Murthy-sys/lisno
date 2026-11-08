@@ -54,10 +54,9 @@ describe("Client Sales-style quotation setup", () => {
     expect(latest().selectedMainBasketIds).toEqual(["woodwork", "painting"]);
     expect(latest().rooms.map((room) => room.id)).toEqual(["kitchen-saved", "bedroom-saved"]);
     expect(props.onSave).not.toHaveBeenCalled();
-    await user.click(screen.getByRole("button", { name: "Continue to item selection" }));
+    await user.click(screen.getByRole("button", { name: /^(Continue to items|Save and continue to items)$/ }));
     expect(props.onSave).toHaveBeenCalledWith(true);
-    await user.click(screen.getByRole("button", { name: "Save changes" }));
-    expect(props.onSave).toHaveBeenCalledWith(false);
+    expect(props.onSave).toHaveBeenCalledTimes(1);
   });
 
   it("retains existing room identity, labels and dimensions when property choices change", async () => {
@@ -94,16 +93,16 @@ describe("Client Sales-style quotation setup", () => {
     await user.click(screen.getByRole("button", { name: "Property type: 2BHK" }));
     await user.click(screen.getByRole("option", { name: "Villa" }));
     const bedrooms = screen.getByRole("spinbutton", { name: "Number of bedrooms" });
-    expect(screen.getByRole("button", { name: "Continue to item selection" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /^(Continue to items|Save and continue to items)$/ })).toBeDisabled();
     fireEvent.change(bedrooms, { target: { value: "1.5" } });
     expect(bedrooms).toHaveValue(1.5);
     expect(bedrooms).toHaveAttribute("aria-invalid", "true");
     expect(latest().bedroomCount).toBeNull();
     fireEvent.change(bedrooms, { target: { value: "3" } });
     expect(latest().bedroomCount).toBe(3);
-    expect(screen.getByRole("button", { name: "Continue to item selection" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /^(Continue to items|Save and continue to items)$/ })).toBeEnabled();
     fireEvent.change(screen.getByRole("spinbutton", { name: "Kitchen length" }), { target: { value: "1000001" } });
-    expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /^Save (and continue to items|setup changes)$/ })).toBeDisabled();
     expect(screen.getByRole("alert")).toHaveTextContent("up to 1,000,000 ft");
   });
 
@@ -144,8 +143,8 @@ describe("Client Sales-style quotation setup", () => {
     expect(screen.getByRole("alertdialog")).toHaveTextContent("2 saved visible items are in this selection");
     await user.click(screen.getByRole("button", { name: "Remove from estimate" }));
     expect(latest().selectedMainBasketIds).toEqual([]);
-    expect(screen.getByRole("button", { name: "Continue to item selection" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Save changes" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: /^(Continue to items|Save and continue to items)$/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save setup changes" })).toBeEnabled();
     await user.click(screen.getByRole("button", { name: "Add Woodwork" }));
     expect(latest().selectedMainBasketIds).toEqual(["woodwork"]);
     expect(latest()).not.toHaveProperty("lines");
@@ -174,14 +173,14 @@ describe("Client Sales-style quotation setup", () => {
     fireEvent.change(screen.getByRole("spinbutton", { name: "Kitchen width" }), { target: { value: "15" } });
     refresh({ catalogueError: "Available items could not be refreshed. Try again." });
     expect(screen.getByRole("spinbutton", { name: "Kitchen width" })).toHaveValue(15);
-    expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /^Save (and continue to items|setup changes)$/ })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Add Painting" })).toBeDisabled();
     await user.click(screen.getByRole("button", { name: "Retry setup" }));
     expect(props.onRefresh).toHaveBeenCalledOnce();
     refresh({ catalogue: { ...props.catalogue!, setup: { ...props.catalogue!.setup, sourceToken: "new-source" } } });
     expect(screen.getByRole("alert")).toHaveTextContent("Your edits are kept");
     expect(latest().sourceToken).toBe("setup-source");
-    expect(screen.getByRole("button", { name: "Continue to item selection" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /^(Continue to items|Save and continue to items)$/ })).toBeDisabled();
   });
 
   it("does not display another estimate's catalogue or manufacture missing setup defaults", () => {
@@ -195,7 +194,7 @@ describe("Client Sales-style quotation setup", () => {
     expect(screen.getByRole("button", { name: "Add Painting" })).toBeDisabled();
   });
 
-  it("offers valid setup-only saving with no rooms or baskets and leaves continuation disabled", async () => {
+  it("offers a single setup-only save when no rooms or baskets permit continuation", async () => {
     const data = fixture();
     data.detail.setup!.rooms = [];
     data.detail.setup!.selectedMainBasketIds = [];
@@ -204,9 +203,9 @@ describe("Client Sales-style quotation setup", () => {
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "Property type: 2BHK" }));
     await user.click(screen.getByRole("option", { name: "Studio" }));
-    expect(screen.getByRole("button", { name: "Save changes" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Continue to item selection" })).toBeDisabled();
-    await user.click(screen.getByRole("button", { name: "Save changes" }));
+    expect(screen.getByRole("button", { name: "Save setup changes" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: /^(Continue to items|Save and continue to items)$/ })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /^Save (and continue to items|setup changes)$/ }));
     expect(props.onSave).toHaveBeenCalledWith(false);
   });
 
@@ -229,7 +228,7 @@ describe("Client Sales-style quotation setup", () => {
     const data = fixture();
     refresh({ catalogue: { ...data.catalogue, baskets: [] }, loading: false });
     expect(screen.getByText("No Main Baskets are currently available for your estimate.")).toBeVisible();
-    expect(screen.getByRole("button", { name: "Continue to item selection" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /^(Continue to items|Save and continue to items)$/ })).toBeDisabled();
     fireEvent.change(screen.getByRole("spinbutton", { name: "Kitchen width" }), { target: { value: "20" } });
     await user.click(screen.getByRole("button", { name: "Discard setup changes and return" }));
     expect(props.onCancel).toHaveBeenCalledOnce();

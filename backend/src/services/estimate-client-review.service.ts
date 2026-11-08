@@ -1,3 +1,4 @@
+import { estimateTotalsReconcile } from "../domain/estimate-total-rounding.js";
 import { ESTIMATE_COMPONENT_PRICING_BASIS, readEstimateComponentPricing } from "../domain/estimate-component-pricing.js";
 import { estimateDimensionSnapshotFields, estimateDimensionSnapshotValid } from "../domain/estimate-dimension-snapshot.js";
 import { effectiveCommercialStatus } from "../domain/estimation-lifecycle.js";
@@ -983,6 +984,13 @@ function mapDetail(row: Row): EstimateClientReviewDetail {
 }
 
 function mapSnapshot(row: Row): EstimateClientReviewSnapshot {
+  if ([row.subtotalPaise, row.gstPaise, row.totalPaise, row.roundOffPaise].some(value => value !== undefined) &&
+    !estimateTotalsReconcile(row)) throw new Error("Published estimate totals do not reconcile.");
+  if (row.roundOffPaise !== undefined && (
+    row.subtotal !== Number(row.subtotalPaise) / 100 || row.gst !== Number(row.gstPaise) / 100 ||
+    row.total !== Number(row.totalPaise) / 100)) {
+    throw new Error("Published estimate totals do not reconcile.");
+  }
   return {
     ...(row.proposal === undefined ? {} : { proposal: estimateProposalSchema.parse(row.proposal) }),
     clientName: stringField(row, "clientName"),
@@ -1050,6 +1058,7 @@ function mapSnapshot(row: Row): EstimateClientReviewSnapshot {
     ...(row.subtotalPaise === undefined ? {} : { subtotalPaise: numberField(row, "subtotalPaise") }),
     ...(row.gstPaise === undefined ? {} : { gstPaise: numberField(row, "gstPaise") }),
     ...(row.totalPaise === undefined ? {} : { totalPaise: numberField(row, "totalPaise") }),
+    ...(row.roundOffPaise === undefined ? {} : { roundOffPaise: numberField(row, "roundOffPaise") }),
     ...(Array.isArray(row.selectedMainBasketIds) ? {
       selectedMainBasketIds: row.selectedMainBasketIds.map(String),
       selectedMainBasketClassifications: row.selectedMainBasketIds.map((id) => ({

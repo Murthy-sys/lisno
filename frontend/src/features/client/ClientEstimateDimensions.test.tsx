@@ -52,7 +52,7 @@ describe("client working estimate dimensions", () => {
     await userEvent.click(screen.getByRole("button", { name: "Save dimensions" }));
     await screen.findByText(/Your dimensions are saved/);
     expect(api.updateEstimateDimensions).toHaveBeenCalledExactlyOnceWith("project", "estimate-line", { expectedVersion: 7, ...source, expectedDimensionRule: fixture().lines[0]!.dimensionRule, dimensions: { length: "2.5", width: "3", height: "99" } });
-    expect(api.updateEstimateTier).not.toHaveBeenCalled(); expect(tier("Signature")).toBeChecked(); expect(tier("Premium")).toBeEnabled();
+    expect(api.updateEstimateTier).not.toHaveBeenCalled(); expect(tier("Mode")).toBeChecked(); expect(tier("Premium")).toBeEnabled();
     expect(screen.getByText("Living · 7.5 sq ft")).toBeVisible(); expect(screen.getByText("₹375")).toBeVisible();
   });
   it("allows required measurements before a configured price is available", async () => {

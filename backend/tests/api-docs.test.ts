@@ -850,6 +850,11 @@ describe("OpenAPI and Swagger UI", () => {
     expect(description).toContain("{resolveReturnedZeroValueRoomIds: [roomId]}");
     expect(schemas.FurnitureUomCreate!.description).toContain("eligible Designer furniture scope declaration/edit");
   });
+  it("documents mandatory kickoff actions without exposing the retired skip", () => {
+    const action = (componentSchemas().DesignWorkflowActionRequest!.properties as Record<string, OpenApiObject>).action!;
+    expect(action.enum).toEqual(expect.arrayContaining(["client_kickoff_request", "client_kickoff_schedule", "client_kickoff_complete"]));
+    expect(action.enum).not.toContain("client_kickoff_not_required");
+  });
   it("documents direct measurement media and authenticated individual downloads with an optional sketch", () => {
     const paths = openApiDocument.paths as Record<string, Record<string, OpenApiObject>>;
     expect(paths["/projects/{projectId}/design-workflow/actions"]!.post!.requestBody).toHaveProperty("content.multipart/form-data.schema.$ref", "#/components/schemas/DesignWorkflowActionRequest");
@@ -1290,7 +1295,7 @@ describe("OpenAPI and Swagger UI", () => {
     }
   });
 
-  it("contains all 522 routes without versioning paths twice", () => {
+  it("contains all 527 routes without versioning paths twice", () => {
     const methods = new Set(["get", "post", "put", "patch", "delete"]);
     const operationCount = Object.values(openApiDocument.paths).reduce(
       (total, pathItem) =>
@@ -1299,7 +1304,7 @@ describe("OpenAPI and Swagger UI", () => {
     );
 
     expect(operationCount).toBe(HUMAN_JWT_OPERATION_LIST.length + 21);
-    expect(operationCount).toBe(522);
+    expect(operationCount).toBe(527);
     expect(Object.keys(openApiDocument.paths).some((path) =>
       path.startsWith("/api/v1")
     )).toBe(false);

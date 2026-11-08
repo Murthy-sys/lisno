@@ -8,9 +8,13 @@ const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
 const object = (properties: Record<string, unknown>, required = Object.keys(properties)) => ({ type: "object", additionalProperties: false, properties, ...(required.length ? { required } : {}) });
 const source = object({ revisionId: id, itemVersion: version, revisionVersion: version, uomId: id });
 const tier = { type: "string", enum: ["signature", "premium", "functional"] };
+const pricingMode = { type: "string", enum: ["pmc", "sub_vendor", "in_house"] };
+const classification = { type: "string", enum: ["standard", "special"] };
+const pricingModeChoices = { type: "array", items: object({ pricingMode, choices: { type: "array", items: ref("EstimateTierChoice") } }),
+  description: "Safe current tier/component choices for each eligible mode. Standard items only permit Sub-Vendor. Never grants edit authority." };
 const origins = { type: "array", maxItems: 200, uniqueItems: true, items: id,
   description: "Current same-room non-negotiable source Main Line IDs, validated by the server. An empty array marks an independent selection; omitted values preserve existing provenance on ordinary edits." };
-const values = { source, quantity: { type: "number", minimum: 0, exclusiveMinimum: true }, modeTier: tier,
+const values = { source, quantity: { type: "number", minimum: 0, exclusiveMinimum: true }, modeTier: tier, pricingMode,
   dimensions: ref("EstimateDimensions"), selectedInHouseComponentIds: { type: "array", maxItems: 50, uniqueItems: true, items: id },
   recommendationSourceMainLineIds: origins };
 const request = (name: string) => ({ required: true, content: { "application/json": { schema: ref(name) } } });
@@ -49,15 +53,19 @@ export const QUOTATION_SCHEMAS = {
     object({ kind: { type: "string", enum: ["update"] }, lineItemId: id, ...values, included: { type: "boolean" } },
       ["kind", "lineItemId", "source"]),
     object({ kind: { type: "string", enum: ["exclude_group"] }, ...groupScope, sourceToken }),
+    object({ kind: { type: "string", enum: ["set_group_tier"] }, mainBasketId: id, subBasketId: { ...id, nullable: true }, roomId: id,
+      sourceToken, modeTier: tier, componentSelections: { type: "array", maxItems: 1000, items: object({ lineItemId: id,
+        selectedInHouseComponentIds: { type: "array", maxItems: 50, uniqueItems: true, items: id } }) } },
+      ["kind", "mainBasketId", "subBasketId", "roomId", "sourceToken", "modeTier"]),
     object({ kind: { type: "string", enum: ["configure"] }, sourceToken, ...setupFields })] } } }),
-    description: "Atomic stable-ID operations on the current quotation. Rates and totals are server-derived from current Configuration. Client writes cannot change hidden lines. configure is Client-only and must be the sole operation; its bounded safe selection is merged into full server-owned membership, protected or dependent removal is rejected, and no-op setup saves preserve versions. exclude_group removes eligible included visible members in one transaction, including groups larger than 100 rows; null subBasketId means the whole Main Basket and null roomId means all saved rooms. Overlapping operations are rejected. Saving supersedes an undecided review; it never approves the quotation." },
+    description: "Atomic stable-ID operations on the current quotation. Rates and totals are server-derived from current Configuration. Client writes cannot change hidden lines. add selects only the requested eligible item in an owned room and includes its required Main Basket atomically when not yet selected; sibling items remain unselected. configure is Client-only and must be the sole operation; its bounded safe selection is merged into full server-owned membership, protected or dependent removal is rejected, and no-op setup saves preserve versions. exclude_group removes eligible included visible members in one transaction, including groups larger than 100 rows; null subBasketId means the whole Main Basket and null roomId means all saved rooms. set_group_tier changes up to 1000 visible included members in one room, merging compatible staged line edits. For this operation only, null subBasketId means direct items, never the whole basket. Conflicting group/item tiers are rejected; hidden members and other rooms remain unchanged. Saving supersedes an undecided review; it never approves the quotation." },
   QuotationUnlock: object({ expectedVersion: version, reviewRoundId: id,
     reason: { type: "string", minLength: 1, maxLength: 1000 }, idempotencyKey: { type: "string", minLength: 8, maxLength: 128 } }),
   QuotationRevision: object({ estimateId: id, estimateVersion: version, pricedRevision: version,
     phase: { type: "string", enum: ["pre", "post"] }, status: text }),
   QuotationLine: { ...ESTIMATE_TIER_SCHEMAS.EstimateTierLine,
     properties: { ...ESTIMATE_TIER_SCHEMAS.EstimateTierLine.properties, ...grouping,
-      roomId: id, included: { type: "boolean" }, source: { ...source, nullable: true },
+      roomId: id, included: { type: "boolean" }, source: { ...source, nullable: true }, classification, pricingModeChoices,
       recommendationSourceMainLineIds: { ...origins, description: "Omitted when any stored origin is not Client-visible. Omission does not imply independent selection or authorize client-side dependent cleanup." } },
     required: [...ESTIMATE_TIER_SCHEMAS.EstimateTierLine.required, ...Object.keys(grouping), "roomId", "included", "source"] },
   QuotationGroup: object({ ...groupScope, includedCount: { type: "integer", minimum: 1 }, sourceToken }),
@@ -76,16 +84,18 @@ export const QUOTATION_SCHEMAS = {
       ...QUOTATION_APPROVAL_PROPERTIES,
       reviewState: { type: "string", enum: ["draft", "awaiting_staff_review", "ready_for_approval", "approved"] },
       rooms: { type: "array", items: object({ id, name: text }) }, editingAllowed: { type: "boolean" },
-      totalPaise: { type: "integer", minimum: 0, nullable: true }, lines: { type: "array", items: ref("QuotationLine") },
+      canChangePricingMode: { type: "boolean", description: "Actor-scoped mode authority: Client plus assigned Sales initially; Client plus assigned primary Designer after initial Client approval. Edit locks and Standard/Special eligibility still apply." },
+      totalPaise: { type: "integer", minimum: 0, nullable: true }, roundOffPaise: { type: "integer", minimum: -50, maximum: 49, description: "Signed final-total adjustment in paise, applied after GST. More than 50 paise rounds up; exactly 50 rounds down. Absent on historical unrounded estimates." }, lines: { type: "array", items: ref("QuotationLine") },
       excludedLines: { type: "array", items: ref("QuotationLine"), description: "Visible excluded saved rows retain stable IDs and user choices for re-addition. They do not contribute to totals." },
       baskets: { type: "array", items: ref("QuotationBasket"), description: "Complete safe hierarchy within project-selected baskets, independent of candidate pagination." },
       groups: { type: "array", items: ref("QuotationGroup") }, setup: ref("QuotationSetup") } },
   QuotationCandidate: object({ mainLineId: id, name: text, source, ...grouping,
-    pricingMode: { type: "string", enum: ["pmc", "sub_vendor", "in_house"] }, modeTier: tier, dimensionsMandatory: { type: "boolean" },
+    pricingMode, classification, pricingModeChoices, modeTier: tier, dimensionsMandatory: { type: "boolean" },
     dimensionRule: { ...ref("EstimateDimensionRule"), nullable: true }, uomName: text,
     choices: { type: "array", items: ref("EstimateTierChoice") } }),
-  QuotationCandidates: object({ items: { type: "array", items: ref("QuotationCandidate") }, total: { type: "integer", minimum: 0 },
+  QuotationCandidates: { ...object({ items: { type: "array", items: ref("QuotationCandidate") }, total: { type: "integer", minimum: 0 },
     limit: { type: "integer", minimum: 1, maximum: 50 }, offset: { type: "integer", minimum: 0 } }),
+    description: "Eligible Client-visible current Configuration items across all Main Baskets, including unselected baskets. Hidden items are omitted before search, filtering and pagination; browsing does not select scope." },
   QuotationRecommendationQuery: { ...object({ expectedVersion: version, roomId: id,
     sources: { type: "array", maxItems: 200, items: object({ mainLineId: id, source }) },
     limit: { type: "integer", minimum: 1, maximum: 20, default: 20 }, offset: { type: "integer", minimum: 0, maximum: 100_000, default: 0 } }, ["expectedVersion", "roomId", "sources"]),

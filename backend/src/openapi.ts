@@ -361,6 +361,8 @@ const responseSchemaByOperation: Readonly<Record<string, string>> = {
 };
 
 const pdfOperations = new Set<string>([
+  "POST /projects/:projectId/estimate-tier-comparison/pdf",
+  "POST /leads/:leadId/estimate/tier-comparison/pdf",
   "GET /estimates/:estimateId/revisions/:revisionId/pdf",
   "GET /estimates/:estimateId/pdf",
   "GET /client/estimates/:estimateId/pdf",
@@ -1898,6 +1900,7 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
       type: "object", additionalProperties: false,
       required: ["projectCount", "approvedContractTotalPaise", "approvedGstPaise", "approvedSubtotalPaise", "targetProfitPaise", "costBudgetPaise", "procurementCostPaise", "employeePaymentPaise", "otherExpensePaise", "directSpendPaise", "overheadPaise", "recordedCostPaise", "remainingBudgetPaise", "currentProfitPaise", "currentMarginBps", "overBudgetProjectCount", "overdueProjectCount", "lateCompletedProjectCount", "overdueTaskCount"],
       properties: {
+        approvedRoundOffPaise: { type: "integer", minimum: -Number.MAX_SAFE_INTEGER, maximum: Number.MAX_SAFE_INTEGER, description: "Sum of approved project final-total rounding adjustments; absent for historical unrounded baselines." },
         projectCount: { type: "integer", minimum: 0 }, approvedContractTotalPaise: { type: "integer", minimum: 0 }, approvedGstPaise: { type: "integer", minimum: 0 }, approvedSubtotalPaise: { type: "integer", minimum: 0 }, targetProfitPaise: { type: "integer", minimum: 0 }, costBudgetPaise: { type: "integer", minimum: 0 }, procurementCostPaise: { type: "integer", minimum: 0 }, employeePaymentPaise: { type: "integer", minimum: 0 }, otherExpensePaise: { type: "integer", minimum: 0 }, directSpendPaise: { type: "integer", minimum: 0 }, overheadPaise: { type: "integer", minimum: 0 }, recordedCostPaise: { type: "integer", minimum: 0 }, remainingBudgetPaise: { type: "integer" }, currentProfitPaise: { type: "integer" }, currentMarginBps: { type: "integer", nullable: true }, overBudgetProjectCount: { type: "integer", minimum: 0 }, overdueProjectCount: { type: "integer", minimum: 0 }, lateCompletedProjectCount: { type: "integer", minimum: 0 }, overdueTaskCount: { type: "integer", minimum: 0 }
       }
     },
@@ -2201,9 +2204,9 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
       pagination: { $ref: "#/components/schemas/Pagination" }
     } },
     NumberedEstimateRecord: { type: "object", additionalProperties: true, properties: { projectNumber, ...QUOTATION_APPROVAL_PROPERTIES },
-      description: "Existing authorized estimate response with its canonical Lead project number. Other estimate fields retain their existing contracts." },
+      description: "Existing authorized estimate response with its canonical Lead project number. V3 staff GET/save responses include actor-scoped capabilities: canChangePricingMode permits assigned Sales initially or the assigned primary Designer after initial Client approval, subject to edit locks and item eligibility; canPrepareQuotationSubmission permits the assigned primary Designer to begin saving and submitting an editable post-approval revision, including unsaved changes; canPublishQuotation applies only to publication of the already-saved quotation. Preparation never bypasses save or publication validation. Other estimate fields retain their existing contracts." },
     NullableNumberedEstimateRecord: { type: "object", nullable: true, additionalProperties: true, properties: { projectNumber, ...QUOTATION_APPROVAL_PROPERTIES },
-      description: "The existing estimate with its canonical Lead project number, or null before an estimate exists." },
+      description: "The existing estimate with its canonical Lead project number, or null before an estimate exists. V3 staff reads include actor-scoped capabilities.canChangePricingMode for assigned Sales initially or the primary Designer after initial Client approval, and capabilities.canPrepareQuotationSubmission for the assigned primary Designer's editable post-approval save-and-submit action; capabilities.canPublishQuotation remains the authority to publish the already-saved quotation. Capabilities are revalidated by their respective mutation paths." },
     NumberedEstimateList: { type: "array", items: { $ref: "#/components/schemas/NumberedEstimateRecord" } },
     AdminProjectStatusCounts: {
       type: "object",
@@ -2430,6 +2433,7 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
         } },
         subtotal: { type: "number", minimum: 0 }, gst: { type: "number", minimum: 0 }, total: { type: "number", minimum: 0 },
         subtotalPaise: { type: "integer", minimum: 0 }, gstPaise: { type: "integer", minimum: 0 },
+        roundOffPaise: { type: "integer", minimum: -50, maximum: 49, description: "Signed final-total adjustment in paise, applied after GST. More than 50 paise rounds up; exactly 50 rounds down. Absent on historical unrounded estimates." },
         totalPaise: { type: "integer", minimum: 0 }, selectedMainBasketIds: { type: "array", items: { type: "string" } },
         selectedMainBasketClassifications: { type: "array", items: { type: "object", additionalProperties: false,
           required: ["mainBasketId", "classification"], properties: {
@@ -2511,10 +2515,10 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
           properties: { modeBaseRatesPaise: tierBaseRates, inHouseComponents: tierComponents }
         }])), description: "Pricing and component selection belong to this tier only. Missing entries cannot fall back to Signature. Root pricing fields retain legacy Signature values." },
         inHouseBaseRatePaise: { type: "integer", minimum: 0, nullable: true,
-          description: "Combined Labor and Material in-house base rate for the selected source revision, in paise; null when unavailable." },
+          description: "Legacy field name: In-house selling unit rate including configured maximum profit for the selected source revision, in paise; null when unavailable or priced through components." },
         modeBaseRatesPaise: {
           type: "object", additionalProperties: false, required: ["pmc", "sub_vendor", "in_house"],
-          description: "Base unit rates from the latest saved draft revision, otherwise active. No margin, impact, or GST is applied. Missing or invalid values are null; In-house combines labor and material with same-revision legacy support.",
+          description: "Selling unit rates from the latest saved draft revision, otherwise active, in integer paise. Legacy field name: each rate adds the selected mode and tier's configured maximum profit to its base, rounded to the nearest paise. Split legacy In-house adds the independently priced labor and material amounts; component-based In-house uses its separate calculation. Margin percentages and calculation details are not exposed. Missing or invalid base rates or maxima are null. Quantity impacts and GST are not included in these unit rates.",
           properties: {
             pmc: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER, nullable: true },
             sub_vendor: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER, nullable: true },
@@ -2926,7 +2930,7 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
     ...DESIGN_REQUIREMENTS_SCHEMAS,
     DesignWorkflowActionRequest: {
       type: "object", additionalProperties: false, required: ["expectedVersion", "action", "idempotencyKey"],
-      description: "For estimation workflow version 3, On Site Actual Measurement is one shared task owned by the current active, non-deleted Secondary Designers. Any eligible secondary may perform measurement_complete once its existing prerequisites permit it; the Primary Designer and administrative roles gain no completion override. New measurement_assign writes are rejected for version 3. Earlier workflows retain their separate measurement-assignee behavior. Team changes affect pending ownership, never historical completion actors or evidence. space_planning_complete requires the actual project Client (no representatives), exact data {estimateId, designPlanVersion, reviewRoundId}, expectedVersion and an idempotency key. Every current image must match the immutable approved review round and its approval evidence, with no open feedback and completed prerequisites. This separately records stage completion; existing per-image Design finalization, finance and task generation are unchanged. operational.spacePlanning exposes estimateId, designPlanVersion, nullable reviewRoundId, totalImages, approvedImages, readyForCompletion and nullable completedAt. For internal_kickoff_complete, data must contain designHandoverAcknowledged: true and meetingAt. The assigned Designer acknowledges receiving the design flow after initial-payment confirmation. A signed checklist is required. The server records the acknowledging Designer and receipt time; manager handover and supplied acknowledgement identities are not accepted. After Internal Kick off is completed, its submitted document is available to the linked Client through the authenticated workflow proof endpoint. For client_kickoff_complete, data must contain reviewedDocumentEventId matching Client Kick off operational.submittedDocument.eventId to acknowledge reviewing that document, close Client Kick off and open Key Collection. Missing or mismatched document acknowledgements are rejected. An authorized Sales Manager or Super Admin acting on behalf of the Client must also attach representation proof. The existing Client Kick off countdown starts at Internal Kick off completion.",
+      description: "For estimation workflow version 3, On Site Actual Measurement is one shared task owned by the current active, non-deleted Secondary Designers. Any eligible secondary may perform measurement_complete once its existing prerequisites permit it; the Primary Designer and administrative roles gain no completion override. New measurement_assign writes are rejected for version 3. Earlier workflows retain their separate measurement-assignee behavior. Team changes affect pending ownership, never historical completion actors or evidence. space_planning_complete requires the actual project Client (no representatives), exact data {estimateId, designPlanVersion, reviewRoundId}, expectedVersion and an idempotency key. Every current image must match the immutable approved review round and its approval evidence, with no open feedback and completed prerequisites. This separately records stage completion; existing per-image Design finalization, finance and task generation are unchanged. operational.spacePlanning exposes estimateId, designPlanVersion, nullable reviewRoundId, totalImages, approvedImages, readyForCompletion and nullable completedAt. For internal_kickoff_complete, data must contain designHandoverAcknowledged: true and meetingAt. The assigned Designer acknowledges receiving the design flow after initial-payment confirmation. A signed checklist is required. The server records the acknowledging Designer and receipt time; manager handover and supplied acknowledgement identities are not accepted. After Internal Kick off is completed, its submitted document is available to the linked Client through the authenticated workflow proof endpoint. Client Kick off is mandatory. client_kickoff_not_required is retired and rejected for new requests, including retries of historical exemptions. Historical exemption records remain readable; normal document-bound completion clears the active exemption without resetting established deadlines. For client_kickoff_complete, data must contain reviewedDocumentEventId matching Client Kick off operational.submittedDocument.eventId to acknowledge reviewing that document, close Client Kick off and open Key Collection. Missing or mismatched document acknowledgements are rejected. An authorized Sales Manager or Super Admin acting on behalf of the Client must also attach representation proof. The existing Client Kick off countdown starts at Internal Kick off completion.",
       properties: { expectedVersion: { type: "integer", minimum: 0 }, action: { type: "string", enum: DESIGN_WORKFLOW_ACTIONS }, stageId: id, idempotencyKey: { type: "string", minLength: 8, maxLength: 120 }, note: { type: "string", maxLength: 2000 }, data: { description: "furniture_scope accepts rooms: [{id, required}], optional notApplicable, and dimensions: [{roomId, items: [{estimateItemId, length, width, uomId}]}]. For both furniture_scope and furniture_upload, an approved estimate item with measurementType count instead requires {estimateItemId, measurementType: count, quantity, uomId}: quantity is a positive safe integer, without length/width/height. Dimensional rows may include measurementType: dimensions. The server derives the required mode solely from the frozen estimate unit (pt/pts/point/points after normalization), not the selected Configuration UOM or item name. Mixed-mode fields are rejected. Legacy pending points with dimensions must be sent back and corrected before approval; completed history remains unchanged. Combined scope submissions require every required room and its selected items plus a supporting proof; they create pending dimensions without approval. Their safe projection exposes requirementsSubmissionEventId. Combined furniture_accept and furniture_scope_return require {submissionEventId} matching that current token; Client approval atomically accepts scope and approves all its dimensions, while return retains values with a mandatory reason. Scope edits replace the token and preserve history; combined required-room submissions cannot be replaced by scope-only input. Legacy scope-only flows remain supported. furniture_upload requires rooms: [{roomId, items: [{estimateItemId, length, width, uomId}]}] and a proof file; positive finite dimensions require an active Configuration UOM ID. A Designer may instead resolve accepted, returned, zero-value-only legacy rooms with {resolveReturnedZeroValueRoomIds: [roomId]} and no file; the server validates the pinned approved source and original returned submission, retains its evidence, marks only those rooms optional, and audits the change. Its code/name are snapshotted in the submission; quantity decimalScale does not round measurements. Existing submitted unit snapshots remain valid after catalog changes. Every positive-value approved-estimate item in each submitted room is required; exact zero-value items are excluded from new submissions, while historical pending reviews retain their original item set. Names and saved IDs are canonicalized by the server. Upload creates pending revisions, never approval. Pending legacy rows without estimateItemId must be returned and resubmitted before approval. furniture_dimensions_approve and furniture_dimensions_return require submissions: [{roomId, submissionEventId}] matching current pending revisions. Legacy scope-only furniture_accept and furniture_scope_return take empty data. Both return actions require a note. Assigned Designers and Clients may upload; only Client-capable actors may review, with proof for representatives. furniture_proceed is retired and rejected. Draft design preparation is unchanged; final submissions require approved current dimensions, except valid already-completed legacy stages.", oneOf: [{ type: "object", additionalProperties: true }, { type: "string", description: "JSON encoded action fields for multipart requests." }] }, file: { type: "string", format: "binary", description: "Required checklist, dimensions evidence or Client representation proof, depending on the action. The measurement sketch is optional." }, mediaFiles: { type: "array", items: { type: "string", format: "binary" }, description: "Repeated multipart parts; one or more site photos/videos required for measurement_complete, with no application media count or size cap. The optional sketch retains the configured document upload limit (25 MiB by default). New measurement data is an empty object; folder URLs are not accepted." } }
     },
     FurnitureUomOption: { type: "object", additionalProperties: false, required: ["id", "code", "name", "decimalScale"], properties: { id, code: { type: "string", minLength: 1, maxLength: 64 }, name: { type: "string", minLength: 1, maxLength: 240 }, decimalScale: { type: "integer", minimum: 0, maximum: 3, description: "Estimate quantity precision; does not round furniture measurements." } } },
@@ -3774,8 +3778,9 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
           type: "integer",
           minimum: 0,
           title: "Net approved revenue (excluding GST)",
-          description: "Client-approved contract total minus approved GST. This is the base for target and current margin calculations."
+          description: "Exact approved pre-GST subtotal, excluding any final-total rounding adjustment. This is the base for target and current margin calculations."
         },
+        approvedRoundOffPaise: { type: "integer", minimum: -50, maximum: 49, description: "Signed final-total adjustment in paise, applied after GST. More than 50 paise rounds up; exactly 50 rounds down. Absent on historical unrounded estimates." },
         approvedGstPaise: {
           type: "integer",
           minimum: 0,
@@ -3786,7 +3791,7 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
           type: "integer",
           minimum: 0,
           title: "Client-approved amount (including GST)",
-          description: "approvedSubtotalPaise + approvedGstPaise. This is the amount shown as Client Approved in the Projects list."
+          description: "approvedSubtotalPaise + approvedGstPaise + (approvedRoundOffPaise or 0). This is the amount shown as Client Approved in the Projects list."
         },
         targetMarginBps: {
           type: "integer",
@@ -3939,6 +3944,7 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
           title: "Accumulated Client-approved amount",
           description: "Sum of approved project contract totals including GST."
         },
+        approvedRoundOffPaise: { type: "integer", minimum: -Number.MAX_SAFE_INTEGER, maximum: Number.MAX_SAFE_INTEGER, description: "Sum of the signed final-total adjustments across matching approved projects; absent when all source baselines are historical unrounded estimates." },
         approvedGstPaise: {
           type: "integer",
           minimum: 0,
@@ -3949,7 +3955,7 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
           type: "integer",
           minimum: 0,
           title: "Net approved revenue (excluding GST)",
-          description: "approvedContractTotalPaise - approvedGstPaise."
+          description: "approvedContractTotalPaise - approvedGstPaise - (approvedRoundOffPaise or 0)."
         },
         targetProfitPaise: {
           type: "integer",

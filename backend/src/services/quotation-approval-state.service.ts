@@ -1,3 +1,4 @@
+import { estimateTotalsReconcile } from "../domain/estimate-total-rounding.js";
 import type mongoose from "mongoose";
 import { isDeepStrictEqual } from "node:util";
 
@@ -101,7 +102,7 @@ function approvalComparableContent(value: Row): Row | null {
   const gstPaise = value.gstPaise;
   const totalPaise = value.totalPaise;
   if (![subtotalPaise, gstPaise, totalPaise].every(amount => Number.isSafeInteger(amount) && amount >= 0) ||
-      subtotalPaise + gstPaise !== totalPaise || value.subtotal !== subtotalPaise / 100 ||
+      !estimateTotalsReconcile(value) || value.subtotal !== subtotalPaise / 100 ||
       value.gst !== gstPaise / 100 || value.total !== totalPaise / 100) return null;
   return { propertyType: value.propertyType, bedroomCount: value.bedroomCount ?? null,
     rooms: value.rooms ?? [], scopes: value.scopes ?? [], selectedMainBasketIds: value.selectedMainBasketIds ?? [],
@@ -109,7 +110,8 @@ function approvalComparableContent(value: Row): Row | null {
       classification: value.selectedMainBasketClassifications?.find((entry: Row) => entry.mainBasketId === mainBasketId)?.classification === "special"
         ? "special" : "standard" })),
     lineItems: (value.lineItems ?? []).map((line: Row) => comparableLine(line)),
-    subtotalPaise, gstPaise, totalPaise };
+    subtotalPaise, gstPaise, totalPaise,
+    ...(value.roundOffPaise === undefined ? {} : { roundOffPaise: value.roundOffPaise }) };
 }
 
 function roundMatchesCurrentContent(round: Row, estimate: Row): boolean {

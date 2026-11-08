@@ -348,16 +348,30 @@ function mockTierModeWorkspace(tiers = ["signature", "premium", "functional"]) {
     aggregateVersion++;
     return { ...mutationSection(key, input.payload, versions[key], aggregateVersion), ...(tier !== "signature" ? { modeTier: tier } : {}) };
   });
-  return { stored, overview: () => overview, changeAdvanced(tier: string, payload: KnowledgeJsonObject) {
+  return { stored, overview: () => overview, changeOverview(tiers: string[]) { overview = { ...overview, applicableTiers: tiers }; }, changeAdvanced(tier: string, payload: KnowledgeJsonObject) {
     stored.set(`${tier}:advanced`, payload); versions.advanced++; aggregateVersion++;
   } };
 }
 
 describe("Configuration Mode tiers", () => {
+  it("keeps the default Mode open when Overview disables every optional tier", async () => {
+    const user = userEvent.setup(); const storage = mockTierModeWorkspace();
+    const { queryClient } = renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
+    await user.click(await screen.findByRole("tab", { name: "Mode" }));
+    await screen.findByRole("spinbutton", { name: "Max. PMC Margin (%)" });
+    storage.changeOverview([]);
+    await queryClient.cancelQueries({ queryKey: knowledgeQueryKeys.section("line-1", "revision-1", "overview") });
+    await act(async () => { queryClient.setQueryData(knowledgeQueryKeys.section("line-1", "revision-1", "overview"), section("overview", { uomId: squareFoot.id, applicableTiers: [] }, 3)); });
+    await waitFor(() => expect(screen.queryByRole("tab", { name: "Premium mode" })).not.toBeInTheDocument());
+    expect(screen.getByRole("tab", { name: "Mode" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tabpanel", { name: "Mode" })).toBeVisible();
+    expect(knowledgeApi.updateKnowledgeSection).not.toHaveBeenCalled();
+  });
+
   it("saves Premium independently and restores it after hiding and re-enabling the tier", async () => {
     const user = userEvent.setup(); const storage = mockTierModeWorkspace();
     const view = renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
-    await user.click(await screen.findByRole("tab", { name: "Signature mode" }));
+    await user.click(await screen.findByRole("tab", { name: "Mode" }));
     expect(await screen.findByRole("spinbutton", { name: "Max. PMC Margin (%)" })).toHaveValue(18);
     await user.click(screen.getByRole("tab", { name: "Premium mode" }));
     const pmc = await screen.findByRole("checkbox", { name: "PMC" });
@@ -430,7 +444,7 @@ describe("Configuration Mode tiers", () => {
     await user.click(screen.getByRole("tab", { name: "Overview" }));
     await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Discard changes" }));
     await waitFor(() => expect(screen.queryByRole("tab", { name: "Premium mode" })).not.toBeInTheDocument());
-    expect(screen.queryByRole("tab", { name: "Signature mode" })).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Mode" })).toBeVisible();
     expect(knowledgeApi.updateKnowledgeSection).not.toHaveBeenCalled();
   });
 
@@ -511,7 +525,7 @@ describe("In-house component basket catalog integration", () => {
   }
 
   async function openPicker(user: ReturnType<typeof userEvent.setup>, tier = "Signature") {
-    await user.click(await screen.findByRole("tab", { name: `${tier} mode` }));
+    await user.click(await screen.findByRole("tab", { name: tier === "Signature" ? "Mode" : `${tier} mode` }));
     await user.click(await screen.findByRole("button", { name: "Add component" }));
     return screen.getByRole("dialog", { name: "Add In-house component" });
   }
@@ -610,7 +624,7 @@ describe("Mode sidebar compact default margins", () => {
     renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
     expect(await screen.findByRole("heading", { name: "Revision history" })).toBeVisible();
     expect(knowledgeApi.getKnowledgeSubBasketMargins).not.toHaveBeenCalled();
-    await user.click(screen.getByRole("tab", { name: "Signature mode" }));
+    await user.click(screen.getByRole("tab", { name: "Mode" }));
     const panel = await screen.findByRole("region", { name: "Sub-basket defaults" });
     expect(await within(panel).findByText("12% - 18%")).toBeVisible();
     expect(within(panel).getByText("25% - 35%")).toBeVisible();
@@ -632,12 +646,12 @@ describe("Mode sidebar compact default margins", () => {
     await user.clear(base);
     await user.type(base, "66");
     expect(panel).toHaveTextContent("12% - 18%");
-    await user.click(screen.getByRole("button", { name: "Save Signature mode" }));
+    await user.click(screen.getByRole("button", { name: "Save Mode" }));
     await waitFor(() => expect(knowledgeApi.updateKnowledgeSection).toHaveBeenCalledWith("line-1", "revision-1", "advanced", expect.objectContaining({
       expectedVersion: 2, expectedAggregateVersion: item.version,
       payload: expect.objectContaining({ modeCalculations: expect.objectContaining({ pmc: expect.objectContaining({ baseRatePaise: 6600 }) }) })
     })));
-    await waitFor(() => expect(screen.getByRole("button", { name: "Save Signature mode" })).toBeDisabled());
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save Mode" })).toBeDisabled());
     expect(knowledgeApi.applyKnowledgeSubBasketMargins).not.toHaveBeenCalled();
     await user.click(screen.getByRole("tab", { name: "Overview" }));
     expect(await screen.findByRole("heading", { name: "Revision history" })).toBeVisible();
@@ -667,7 +681,7 @@ describe("In-house component entry from an active revision", () => {
       vi.mocked(knowledgeApi.getKnowledgeItem).mockResolvedValue(updated);
       return updated;
     });
-    await user.click(await screen.findByRole("tab", { name: "Signature mode" }));
+    await user.click(await screen.findByRole("tab", { name: "Mode" }));
     const add = await screen.findByRole("button", { name: "Add component" });
     const inHouse = screen.getByRole("region", { name: "In-house" });
     expect(within(inHouse).getAllByRole("textbox", { name: "Base Rate (₹)" })[0]).toBeDisabled();
@@ -694,7 +708,7 @@ describe("In-house component entry from an active revision", () => {
     vi.mocked(authorization.hasFrontendPermission).mockImplementation((_authorization, permission) =>
       !(["create", "update"].includes(blocked) && permission === `ai_estimator_knowledge.configuration.${blocked}`));
     setup({ ...active, ...(blocked === "backend" ? { allowedActions: [] } : {}), ...(blocked === "archived" ? { status: "archived" } : {}) });
-    await user.click(await screen.findByRole("tab", { name: "Signature mode" }));
+    await user.click(await screen.findByRole("tab", { name: "Mode" }));
     await screen.findByRole("region", { name: "In-house" });
     expect(screen.queryByRole("button", { name: "Add component" })).not.toBeInTheDocument();
     expect(knowledgeApi.createKnowledgeRevision).not.toHaveBeenCalled();
@@ -1217,13 +1231,13 @@ describe("workspace hierarchy summary", () => {
     mockConfiguredModeSections();
     const user = userEvent.setup();
     renderRoute(<KnowledgeItemWorkspacePage />, route, pattern);
-    await user.click(await screen.findByRole("tab", { name: "Signature mode" }));
+    await user.click(await screen.findByRole("tab", { name: "Mode" }));
     const name = await findPricingSpecificationName();
     await user.click(screen.getByRole("checkbox", { name: "Execution" }));
     expectSummary();
     await user.clear(name); await user.type(name, "Moisture-resistant board");
     const card = expectSummary();
-    const modeSummary = within(card).getByRole("region", { name: "Signature mode saved summary" });
+    const modeSummary = within(card).getByRole("region", { name: "Mode saved summary" });
     expect(within(modeSummary).getAllByRole("term").map((term) => term.textContent)).toEqual(["PMC", "Sub-Vendor", "In-house"]);
     expect(within(modeSummary).getAllByRole("definition")).toHaveLength(3);
     expect(card).not.toHaveTextContent("Specifications");
@@ -1405,10 +1419,10 @@ describe("temporary item workspace", () => {
     await screen.findByRole("heading", { name: "Wall panelling" });
     expect(screen.getByText("Temporary item · Must be completed")).toBeVisible();
     expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
-      "Overview", "Signature mode", "Recommendation & Exclusions", "Quality Parameter", "Design", "Basket closure priority"
+      "Overview", "Mode", "Recommendation & Exclusions", "Quality Parameter", "Design", "Basket closure priority"
     ]);
     await doneFocusedEditing(user);
-    await user.click(screen.getByRole("tab", { name: "Signature mode" }));
+    await user.click(screen.getByRole("tab", { name: "Mode" }));
     expect(await screen.findByRole("checkbox", { name: "PMC" })).toBeVisible();
     await doneFocusedEditing(user);
     await user.keyboard("{ArrowRight}");
@@ -2076,6 +2090,7 @@ describe("AI estimator knowledge screens", () => {
     await screen.findByRole("heading", { name: "UOM" });
     const actions = screen.getByRole("group", { name: "Page actions" });
     expect(within(actions).getAllByRole("button")).toEqual([
+      within(actions).getByRole("button", { name: "Client view" }),
       within(actions).getByRole("button", { name: "Review activation" }),
       within(actions).getByRole("button", { name: "Create revision" }),
       within(actions).getByRole("button", { name: "Duplicate" }),
@@ -2679,14 +2694,14 @@ describe("AI estimator knowledge screens", () => {
     renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
 
     await user.selectOptions(await screen.findByRole("combobox", { name: "Unit of measure (UOM)" }), squareMetre.id);
-    await user.click(screen.getByRole("tab", { name: "Signature mode" }));
+    await user.click(screen.getByRole("tab", { name: "Mode" }));
     const guard = screen.getByRole("alertdialog", { name: "Save changes before leaving?" });
     await user.click(within(guard).getByRole("button", { name: "Stay here" }));
     expect(screen.getByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true");
 
-    await user.click(screen.getByRole("tab", { name: "Signature mode" }));
+    await user.click(screen.getByRole("tab", { name: "Mode" }));
     await user.click(within(screen.getByRole("alertdialog", { name: "Save changes before leaving?" })).getByRole("button", { name: "Discard changes" }));
-    expect(await screen.findByRole("tabpanel", { name: "Signature mode" })).toBeVisible();
+    expect(await screen.findByRole("tabpanel", { name: "Mode" })).toBeVisible();
   });
 
   it("shows only UOM and Surface configuration for an empty Overview", async () => {
@@ -2749,7 +2764,7 @@ describe("AI estimator knowledge screens", () => {
     } : {}));
     renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
 
-    await user.click(await screen.findByRole("tab", { name: "Signature mode" }));
+    await user.click(await screen.findByRole("tab", { name: "Mode" }));
     expect(await findPricingSpecificationName()).toHaveValue("Premium ply");
     expect(screen.queryByRole("combobox", { name: "Specification" })).not.toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Budgeting" })).not.toBeInTheDocument();
@@ -2827,16 +2842,16 @@ describe("AI estimator knowledge screens", () => {
     const { queryClient } = renderRoute(<KnowledgeItemWorkspacePage />,
       "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
     expect(await screen.findByRole("combobox", { name: "Unit of measure (UOM)" })).toHaveValue(squareFoot.id);
-    await user.click(screen.getByRole("tab", { name: "Signature mode" }));
+    await user.click(screen.getByRole("tab", { name: "Mode" }));
     expect(await screen.findByRole("checkbox", { name: "Execution" })).toBeChecked();
     const calculations = await screen.findByRole("region", { name: "Sub-Vendor calculations" });
     expect(await within(calculations).findByText("Square foot")).toBeVisible();
     const maximum = within(calculations).getByRole("spinbutton", { name: "Max. Lisno Margin (%)" });
     await user.clear(maximum);
     await user.type(maximum, "35");
-    await user.click(screen.getAllByRole("button", { name: "Save Signature mode" })[0]!);
+    await user.click(screen.getAllByRole("button", { name: "Save Mode" })[0]!);
     await waitFor(() => expect(knowledgeApi.updateKnowledgeSection).toHaveBeenCalledOnce());
-    await waitFor(() => expect(screen.getByRole("button", { name: "Save Signature mode" })).toBeDisabled());
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save Mode" })).toBeDisabled());
     await waitFor(() => expect(queryClient.isFetching({ queryKey: knowledgeQueryKeys.item("line-1") })).toBe(0));
     expect(advanced.payload).toMatchObject({ subVendorMinimumMarginBps: 1_000, subVendorMarginBps: 3_500 });
     const requestedSections = vi.mocked(knowledgeApi.getKnowledgeSection).mock.calls.map(([, , key]) => key);
@@ -2866,10 +2881,10 @@ describe("AI estimator knowledge screens", () => {
     });
     vi.mocked(knowledgeApi.updateKnowledgeSection).mockImplementation(async (_line, _revision, key, input) => mutationSection(key, input.payload, 3, 5));
     renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
-    await user.click(await screen.findByRole("tab", { name: "Signature mode" }));
+    await user.click(await screen.findByRole("tab", { name: "Mode" }));
     const name = await findPricingSpecificationName();
     await user.type(name, " updated");
-    await user.click(screen.getByRole("button", { name: "Save Signature mode" }));
+    await user.click(screen.getByRole("button", { name: "Save Mode" }));
     await waitFor(() => expect(knowledgeApi.updateKnowledgeSection).toHaveBeenCalledOnce());
     expect(vi.mocked(knowledgeApi.updateKnowledgeSection).mock.calls[0]?.[2]).toBe("pricing");
   });
@@ -2923,7 +2938,7 @@ describe("AI estimator knowledge screens", () => {
       "/admin/configuration/estimation/items/:itemId"
     );
 
-    await user.click(await screen.findByRole("tab", { name: "Signature mode" }));
+    await user.click(await screen.findByRole("tab", { name: "Mode" }));
 
     const selector = await screen.findByRole("group", { name: "Mode" });
     expect(within(selector).getByRole("checkbox", { name: "PMC" })).toBeChecked();
@@ -3057,7 +3072,7 @@ describe("AI estimator knowledge screens", () => {
     const tablist = await screen.findByRole("tablist", { name: "Configuration sections" });
     expect(within(tablist).getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
       "Overview",
-      "Signature mode",
+      "Mode",
       "Recommendation & Exclusions",
       "Quality Parameter",
       "Design",
@@ -3090,10 +3105,10 @@ describe("AI estimator knowledge screens", () => {
     expect(overview?.querySelectorAll("article.knowledge-overview-card")).toHaveLength(0);
     await user.selectOptions(screen.getByRole("combobox", { name: "Unit of measure (UOM)" }), squareMetre.id);
     await doneFocusedEditing(user);
-    await user.click(screen.getByRole("tab", { name: "Signature mode" }));
+    await user.click(screen.getByRole("tab", { name: "Mode" }));
     expect(screen.getByRole("alertdialog", { name: "Save changes before leaving?" })).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Discard changes" }));
-    const modePanel = await screen.findByRole("tabpanel", { name: "Signature mode" });
+    const modePanel = await screen.findByRole("tabpanel", { name: "Mode" });
     expect(document.querySelector(".knowledge-page--item-workspace")).not.toHaveAttribute("data-reference-section");
     expectModeRegionsInOrder(modePanel);
     expect(within(modePanel).getByRole("region", { name: "Specifications" })).toBeVisible();
@@ -3132,12 +3147,12 @@ describe("AI estimator knowledge screens", () => {
     });
     renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
 
-    await user.click(await screen.findByRole("tab", { name: "Signature mode" }));
+    await user.click(await screen.findByRole("tab", { name: "Mode" }));
     const specificationName = await findPricingSpecificationName();
     await user.clear(specificationName);
     await user.type(specificationName, "Updated specification");
     await editPmcMargin(user);
-    await user.click(screen.getAllByRole("button", { name: "Save Signature mode" })[0]);
+    await user.click(screen.getAllByRole("button", { name: "Save Mode" })[0]);
 
     await waitFor(() => expect(knowledgeApi.updateKnowledgeSection).toHaveBeenCalledTimes(2));
     expect(vi.mocked(knowledgeApi.updateKnowledgeSection).mock.calls.map((call) => call[2])).toEqual(["advanced", "pricing"]);
@@ -3160,21 +3175,21 @@ describe("AI estimator knowledge screens", () => {
     }));
     renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
 
-    await user.click(await screen.findByRole("tab", { name: "Signature mode" }));
-    expect(screen.getAllByRole("button", { name: "Save Signature mode" })).toHaveLength(1);
-    expect(screen.getByRole("button", { name: "Save Signature mode" })).toBeDisabled();
+    await user.click(await screen.findByRole("tab", { name: "Mode" }));
+    expect(screen.getAllByRole("button", { name: "Save Mode" })).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Save Mode" })).toBeDisabled();
     expect(screen.getByText("All changes saved")).toBeVisible();
 
     const specificationName = await findPricingSpecificationName();
     await user.clear(specificationName);
     await user.type(specificationName, "Updated specification");
-    expect(screen.getByRole("button", { name: "Save Signature mode" })).toBeEnabled();
-    await user.click(screen.getByRole("button", { name: "Save Signature mode" }));
+    expect(screen.getByRole("button", { name: "Save Mode" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Save Mode" }));
     expect(await screen.findByRole("button", { name: "Saving Mode…" })).toHaveAttribute("aria-busy", "true");
     expect(screen.getAllByRole("button", { name: "Saving Mode…" })).toHaveLength(1);
 
     resolveSave(mutationSection("pricing", configuredPricingPayload("Updated specification"), 3, 5));
-    await waitFor(() => expect(screen.getByRole("button", { name: "Save Signature mode" })).toBeDisabled());
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save Mode" })).toBeDisabled());
     expect(screen.getByText("All changes saved")).toBeVisible();
   });
 
@@ -3196,26 +3211,26 @@ describe("AI estimator knowledge screens", () => {
     });
     renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
 
-    await user.click(await screen.findByRole("tab", { name: "Signature mode" }));
+    await user.click(await screen.findByRole("tab", { name: "Mode" }));
     const specificationName = await findPricingSpecificationName();
     await user.clear(specificationName);
     await user.type(specificationName, "Unsaved specification");
     await editPmcMargin(user);
-    await user.click(screen.getAllByRole("button", { name: "Save Signature mode" })[0]);
+    await user.click(screen.getAllByRole("button", { name: "Save Mode" })[0]);
 
     const partialFailure = await screen.findByRole("alert");
     expect(partialFailure).toHaveTextContent("Specifications");
     expect(partialFailure).toHaveTextContent("Service unavailable.");
     expect(screen.getByText("Save failed. Review the message below and try again.")).toBeVisible();
-    expect(screen.getByRole("button", { name: "Save Signature mode" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Save Mode" })).toBeEnabled();
     expect(vi.mocked(knowledgeApi.updateKnowledgeSection).mock.calls.map((call) => call[2])).toEqual(["advanced", "pricing"]);
-    const summary = screen.getByRole("region", { name: "Signature mode saved summary" });
+    const summary = screen.getByRole("region", { name: "Mode saved summary" });
     expect(within(summary).getAllByRole("definition").map((definition) => definition.textContent))
       .toEqual(["Not configured", "Not configured", "Not configured"]);
     expect(summary).not.toHaveTextContent(serverPricingSpecification.name);
     expect(summary).not.toHaveTextContent("Unsaved specification");
 
-    await user.click(screen.getAllByRole("button", { name: "Save Signature mode" })[0]);
+    await user.click(screen.getAllByRole("button", { name: "Save Mode" })[0]);
     await waitFor(() => expect(knowledgeApi.updateKnowledgeSection).toHaveBeenCalledTimes(3));
     expect(vi.mocked(knowledgeApi.updateKnowledgeSection).mock.calls.map((call) => call[2])).toEqual([
       "advanced",
@@ -3223,7 +3238,7 @@ describe("AI estimator knowledge screens", () => {
       "pricing"
     ]);
     expect(vi.mocked(knowledgeApi.updateKnowledgeSection).mock.calls.map((call) => call[3].expectedAggregateVersion)).toEqual([4, 5, 5]);
-    await waitFor(() => expect(screen.getByRole("button", { name: "Save Signature mode" })).toBeDisabled());
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save Mode" })).toBeDisabled());
     expect(summary).not.toHaveTextContent("Unsaved specification");
   });
 
@@ -3254,12 +3269,12 @@ describe("AI estimator knowledge screens", () => {
     });
     renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
 
-    await user.click(await screen.findByRole("tab", { name: "Signature mode" }));
+    await user.click(await screen.findByRole("tab", { name: "Mode" }));
     const specificationName = await findPricingSpecificationName();
     await user.clear(specificationName);
     await user.type(specificationName, "My local specification");
     await editPmcMargin(user);
-    await user.click(screen.getAllByRole("button", { name: "Save Signature mode" })[0]);
+    await user.click(screen.getAllByRole("button", { name: "Save Mode" })[0]);
 
     const conflict = await screen.findByRole("alertdialog", { name: "This section changed elsewhere" });
     expect(conflict).toHaveTextContent("Specifications");
@@ -3274,7 +3289,7 @@ describe("AI estimator knowledge screens", () => {
     expect(await findPricingSpecificationName()).toHaveValue("Latest server specification");
     expect(screen.getByRole("spinbutton", { name: "Max. PMC Margin (%)" })).toHaveValue(15);
 
-    expect(screen.getByRole("button", { name: "Save Signature mode" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Save Mode" })).toBeDisabled();
     expect(knowledgeApi.updateKnowledgeSection).toHaveBeenCalledTimes(2);
     expect(vi.mocked(knowledgeApi.updateKnowledgeSection).mock.calls.map((call) => call[2])).toEqual([
       "advanced",
@@ -3317,11 +3332,11 @@ describe("AI estimator knowledge screens", () => {
     );
     renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
 
-    await user.click(await screen.findByRole("tab", { name: "Signature mode" }));
+    await user.click(await screen.findByRole("tab", { name: "Mode" }));
     const specificationName = await findPricingSpecificationName();
     await user.clear(specificationName);
     await user.type(specificationName, "My local specification");
-    await user.click(screen.getByRole("button", { name: "Save Signature mode" }));
+    await user.click(screen.getByRole("button", { name: "Save Mode" }));
     const dialog = await screen.findByRole("alertdialog", { name: "This section changed elsewhere" });
     await user.click(within(dialog).getByRole("button", { name: "Review server version" }));
 
@@ -3358,18 +3373,18 @@ describe("AI estimator knowledge screens", () => {
     );
     renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
 
-    await user.click(await screen.findByRole("tab", { name: "Signature mode" }));
+    await user.click(await screen.findByRole("tab", { name: "Mode" }));
     const specificationName = await findPricingSpecificationName();
     await user.clear(specificationName);
     await user.type(specificationName, "My unsaved specification");
-    await user.click(screen.getAllByRole("button", { name: "Save Signature mode" })[0]);
+    await user.click(screen.getAllByRole("button", { name: "Save Mode" })[0]);
 
     const error = await screen.findByRole("alert");
     expect(error).toHaveTextContent("Specifications");
     expect(error).toHaveTextContent(/latest server version could not be loaded/iu);
     expect(error).toHaveTextContent("Conflict refresh unavailable.");
     expect(specificationName).toHaveValue("My unsaved specification");
-    expect(screen.getByRole("button", { name: "Save Signature mode" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Save Mode" })).toBeEnabled();
     expect(screen.queryByRole("alertdialog", { name: "This section changed elsewhere" })).not.toBeInTheDocument();
   });
 
@@ -3378,7 +3393,7 @@ describe("AI estimator knowledge screens", () => {
     mockConfiguredModeSections();
     renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
 
-    await user.click(await screen.findByRole("tab", { name: "Signature mode" }));
+    await user.click(await screen.findByRole("tab", { name: "Mode" }));
     const specificationName = await findPricingSpecificationName();
     await user.clear(specificationName);
     await user.type(specificationName, "Local specification");
@@ -3388,7 +3403,7 @@ describe("AI estimator knowledge screens", () => {
     await user.click(within(guard).getByRole("button", { name: "Discard changes" }));
 
     expect(await screen.findByRole("tabpanel", { name: "Recommendation & Exclusions" })).toBeVisible();
-    await user.click(screen.getByRole("tab", { name: "Signature mode" }));
+    await user.click(screen.getByRole("tab", { name: "Mode" }));
     expect(await findPricingSpecificationName()).toHaveValue("Server specification");
     expect(screen.getByRole("spinbutton", { name: "Max. PMC Margin (%)" })).toHaveValue(null);
     expect(knowledgeApi.updateKnowledgeSection).not.toHaveBeenCalled();
@@ -3443,8 +3458,8 @@ describe("AI estimator knowledge screens", () => {
     expect(screen.queryByRole("button", { name: "Surfaces" })).not.toBeInTheDocument();
     expect(screen.queryByRole("listbox", { name: "Surface options" })).not.toBeInTheDocument();
 
-    await user.click(await screen.findByRole("tab", { name: "Signature mode" }));
-    const panel = await screen.findByRole("tabpanel", { name: "Signature mode" });
+    await user.click(await screen.findByRole("tab", { name: "Mode" }));
+    const panel = await screen.findByRole("tabpanel", { name: "Mode" });
     expectModeRegionsInOrder(panel);
     expect(screen.queryByRole("combobox", { name: "UOM" })).not.toBeInTheDocument();
     expect(await findPricingSpecificationName()).toBeDisabled();
@@ -3453,7 +3468,7 @@ describe("AI estimator knowledge screens", () => {
     expect(screen.queryByRole("button", { name: "Add component" })).not.toBeInTheDocument();
     expect(screen.getByRole("spinbutton", { name: "Max. PMC Margin (%)" })).toBeDisabled();
     expect(screen.queryByRole("button", { name: "Add UOM" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Save Signature mode" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Save Mode" })).not.toBeInTheDocument();
     await expectNoAutomatedAccessibilityViolations();
   });
 
@@ -3475,11 +3490,11 @@ describe("AI estimator knowledge screens", () => {
     expect(screen.getByRole("option", { name: "Wall" })).toHaveAttribute("aria-selected", "false");
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("button", { name: "Add Surface" })).not.toBeInTheDocument();
-    await user.click(screen.getByRole("tab", { name: "Signature mode" }));
+    await user.click(screen.getByRole("tab", { name: "Mode" }));
     expect(await findPricingSpecificationName()).toBeDisabled();
     expect(screen.queryByRole("combobox", { name: "Priority" })).not.toBeInTheDocument();
     expect(within(screen.getByRole("region", { name: "Specifications" })).queryByRole("textbox", { name: "Technical description" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Save Signature mode" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Save Mode" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Review and activate" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Delete" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Edit Main Line" })).not.toBeInTheDocument();
@@ -3619,7 +3634,7 @@ describe("AI estimator knowledge screens", () => {
       "Counter surface"
     );
 
-    await user.click(screen.getByRole("tab", { name: "Signature mode" }));
+    await user.click(screen.getByRole("tab", { name: "Mode" }));
     const unsaved = screen.getByRole("alertdialog", { name: "Save changes before leaving?" });
     await user.click(within(unsaved).getByRole("button", { name: "Discard changes" }));
     await user.click(await screen.findByRole("tab", { name: "Overview" }));
@@ -3638,7 +3653,7 @@ describe("AI estimator knowledge screens", () => {
     overview.focus();
 
     await user.keyboard("{ArrowRight}");
-    expect(screen.getByRole("tab", { name: "Signature mode" })).toHaveFocus();
+    expect(screen.getByRole("tab", { name: "Mode" })).toHaveFocus();
     await user.keyboard("{ArrowRight}");
     expect(screen.getByRole("tab", { name: "Recommendation & Exclusions" })).toHaveFocus();
     await user.keyboard("{End}");
@@ -3654,7 +3669,7 @@ describe("AI estimator knowledge screens", () => {
     mockConfiguredModeSections();
     renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
 
-    const mode = await screen.findByRole("tab", { name: "Signature mode" });
+    const mode = await screen.findByRole("tab", { name: "Mode" });
     await user.click(mode);
     const specificationName = await findPricingSpecificationName();
     await user.clear(specificationName);
@@ -3682,21 +3697,21 @@ describe("AI estimator knowledge screens", () => {
       const selector = screen.getByRole("combobox", { name: "Configuration section" });
       expect(within(selector).getAllByRole("option").map((option) => option.textContent)).toEqual([
         "Overview",
-        "Signature mode",
+        "Mode",
         "Recommendation & Exclusions",
         "Quality Parameter",
         "Design",
         "Basket closure priority"
       ]);
       await user.selectOptions(selector, "mode");
-      expect(await screen.findByRole("tabpanel", { name: "Signature mode" })).toBeVisible();
-      expectModeRegionsInOrder(screen.getByRole("tabpanel", { name: "Signature mode" }));
+      expect(await screen.findByRole("tabpanel", { name: "Mode" })).toBeVisible();
+      expectModeRegionsInOrder(screen.getByRole("tabpanel", { name: "Mode" }));
       expect(screen.queryByRole("combobox", { name: "UOM" })).not.toBeInTheDocument();
     } else {
       const overview = screen.getByRole("tab", { name: "Overview" });
       overview.focus();
       await user.keyboard("{ArrowRight}");
-      expect(screen.getByRole("tab", { name: "Signature mode" })).toHaveFocus();
+      expect(screen.getByRole("tab", { name: "Mode" })).toHaveFocus();
     }
     workspace.unmount();
 

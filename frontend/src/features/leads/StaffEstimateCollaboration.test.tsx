@@ -25,6 +25,16 @@ const detail: EstimateRequirementsDetail = { projectId: "project-one", requireme
   requirements: [{ id: "request-one", projectId: "project-one", phase: "post", mainBasketId: "joinery", roomId: "room-one", text: "Add tall storage.", authorId: "client-one", version: 2, status: "open", lineItemIds: [], reason: "", supersededById: null, createdAt: "2026-10-13T10:00:00Z", updatedAt: "2026-10-13T10:00:00Z", resolvedAt: null, canEdit: false }] };
 
 describe("Staff estimate collaboration", () => {
+  it.each([false, true])("distinguishes saved initial approval from unsaved quotation changes (%s)", dirty => {
+    renderWithQuery(<StaffEstimateCollaboration compact hasUnsavedQuotationChanges={dirty} estimate={{ ...estimate,
+      quotationApprovalState: "initial_current", currentQuotationApproved: true, requiresClientReapproval: false,
+      quotationApprovalSource: "initial_unchanged", currentQuotationApproval: { kind: "initial_unchanged", ...lifecycle.preApproval! },
+      estimation: { ...lifecycle, workflowVersion: 3, pricedRevision: 2 } }} />);
+    expect(screen.getByText(dirty
+      ? "The saved estimate has initial approval. Submit your unsaved changes for Client review."
+      : "Initial estimate approved. No quotation changes require Client review.")).toBeVisible();
+  });
+
   it("fails closed in compact mode when the current quotation approval is unavailable", () => {
     renderWithQuery(<StaffEstimateCollaboration compact estimate={{ ...estimate, estimation: { ...lifecycle, workflowVersion: 3, pricedRevision: 2 } }} />);
     expect(screen.getByRole("alert")).toHaveTextContent("The current quotation approval could not be verified");

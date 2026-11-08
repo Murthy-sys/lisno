@@ -161,6 +161,23 @@ describe("estimate PDF catalogue", () => {
 });
 
 describe("estimate PDF service", () => {
+  it.each([[1_024, -24, 11_000], [1_052, 48, 11_100], [1_050, -50, 11_000], [1_000, 0, 11_000]])(
+    "prints only the saved final rounding adjustment (%i paise GST)", async (gstPaise, roundOffPaise, totalPaise) => {
+      const service = createEstimatePdfService({ logoSvg: backendLogo });
+      const input = { ...fixture, subtotal: 100, subtotalPaise: 10_000, gst: gstPaise / 100, gstPaise,
+        total: totalPaise / 100, totalPaise, roundOffPaise };
+      const pdf = await readPdf((await service.generate(input)).bytes);
+      if (roundOffPaise) {
+        expect(pdf.text).toContain("Round off");
+        expect(pdf.text).toContain(`${roundOffPaise < 0 ? "-" : "+"}INR ${(Math.abs(roundOffPaise) / 100).toFixed(2)}`);
+        expect(pdf.text.indexOf("Round off")).toBeGreaterThan(pdf.text.indexOf("GST @ 18%"));
+        expect(pdf.text.indexOf("Round off")).toBeLessThan(pdf.text.indexOf("Final total"));
+      } else expect(pdf.text).not.toContain("Round off");
+      expect(pdf.text).toContain(`INR ${gstPaise / 100}`);
+      expect(pdf.text).toContain(`INR ${totalPaise / 100}`);
+      await expect(service.generate({ ...input, roundOffPaise: roundOffPaise + 1 })).rejects.toThrow("totals do not reconcile");
+    });
+
   it("keeps screen-hidden configured lines and their amounts in both quotation PDF profiles", async () => {
     const service = createEstimatePdfService({ logoSvg: backendLogo });
     const hiddenLine = {

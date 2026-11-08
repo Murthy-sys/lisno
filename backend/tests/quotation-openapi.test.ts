@@ -3,6 +3,21 @@ import { openApiDocument } from "../src/openapi.js";
 import { HUMAN_JWT_OPERATIONS } from "../src/domain/route-operations.js";
 
 describe("quotation recommendation public contract", () => {
+  it("documents optional mode requests and safe mode choices with separate actor authority", () => {
+    const schemas = openApiDocument.components.schemas as Record<string, any>;
+    const operations = schemas.QuotationPatch.properties.operations.items.oneOf;
+    for (const operation of operations.slice(0, 2)) {
+      expect(operation.properties.pricingMode.enum).toEqual(["pmc", "sub_vendor", "in_house"]);
+      expect(operation.required).not.toContain("pricingMode");
+      expect(operation.properties).not.toHaveProperty("classification");
+    }
+    expect(schemas.Quotation.properties.canChangePricingMode.type).toBe("boolean");
+    for (const name of ["QuotationLine", "QuotationCandidate"]) {
+      expect(schemas[name].properties.classification.enum).toEqual(["standard", "special"]);
+      expect(schemas[name].properties.pricingModeChoices.items.properties.choices.items).toEqual({ $ref: "#/components/schemas/EstimateTierChoice" });
+    }
+    expect(schemas.NumberedEstimateRecord.description).toContain("canChangePricingMode");
+  });
   it("registers the recommendation query as a project-scoped read without new catalogue privileges", () => {
     const key = "POST /projects/:projectId/quotation/recommendations/query";
     expect(HUMAN_JWT_OPERATIONS[key]).toMatchObject({ permission: "estimation.quotation.read",
@@ -50,6 +65,17 @@ describe("quotation recommendation public contract", () => {
           data: { $ref: "#/components/schemas/NumberedEstimateRecord" }
         } } } }
       });
+    }
+  });
+
+  it("documents optional staff submission preparation separately from saved publication without restricting shared records", () => {
+    const schemas = openApiDocument.components.schemas as Record<string, any>;
+    for (const name of ["NumberedEstimateRecord", "NullableNumberedEstimateRecord"]) {
+      expect(schemas[name].description).toContain("canPrepareQuotationSubmission");
+      expect(schemas[name].description).toContain("canPublishQuotation");
+      expect(schemas[name].description).toContain("already-saved quotation");
+      expect(schemas[name].additionalProperties).toBe(true);
+      expect(schemas[name].required ?? []).not.toContain("capabilities");
     }
   });
 });

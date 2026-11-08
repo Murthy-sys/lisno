@@ -1,3 +1,4 @@
+import { estimateTotalsReconcile } from "../domain/estimate-total-rounding.js";
 import { createClientQuotationProjectionService } from "./client-quotation-projection.service.js";
 import { estimateComponentLineAmountIsValid } from "../domain/estimate-component-pricing.js";
 import { estimateDimensionSnapshotValid } from "../domain/estimate-dimension-snapshot.js";
@@ -32,7 +33,9 @@ export function projectPricingFromPublication(input: { estimateId: string; proje
   const publishedAt = date(round.createdAt);
   const totals = [amount(snapshot.subtotalPaise, snapshot.subtotal), amount(snapshot.gstPaise, snapshot.gst), amount(snapshot.totalPaise, snapshot.total)];
   if (!publishedAt || !Number.isSafeInteger(round.estimateVersion) || round.estimateVersion < 1 || !Number.isSafeInteger(round.version) || round.version < 1 ||
-      totals.some(value => value === null) || totals[0]! + totals[1]! !== totals[2] || !Array.isArray(snapshot.lineItems)) return null;
+      totals.some(value => value === null) || !estimateTotalsReconcile({
+        subtotalPaise: totals[0], gstPaise: totals[1], totalPaise: totals[2], roundOffPaise: snapshot.roundOffPaise
+      }) || !Array.isArray(snapshot.lineItems)) return null;
   const included = snapshot.lineItems.filter((line: Row) => line.included === true);
   if (!included.length) return null;
   const lines: AssistantProjectPricing["lines"] = [];
@@ -61,7 +64,8 @@ export function projectPricingFromPublication(input: { estimateId: string; proje
   return { policy: "published-project-estimate-v1", currency: "INR", state: input.approved ? "approved" : "published",
     estimateId: input.estimateId, estimateVersion: round.estimateVersion, reviewRoundId: String(round._id), reviewVersion: round.version,
     publishedAt, source: { id: String(round._id), label: input.approved ? "Approved project estimate" : "Published project estimate", href: null },
-    lines, lineCount: visibleCount, hasMoreLines: visibleCount > lines.length, subtotalPaise: totals[0]!, gstPaise: totals[1]!, totalPaise: totals[2]! };
+    lines, lineCount: visibleCount, hasMoreLines: visibleCount > lines.length, subtotalPaise: totals[0]!, gstPaise: totals[1]!, totalPaise: totals[2]!,
+    ...(snapshot.roundOffPaise === undefined ? {} : { roundOffPaise: snapshot.roundOffPaise }) };
 }
 
 export async function readAssistantProjectEstimate(context: AssistantContext, input: { basis: Basis }, tx?: ChatTransaction): Promise<AssistantProjectEstimate> {
@@ -134,6 +138,6 @@ export async function readAssistantProjectEstimate(context: AssistantContext, in
   // Authorization and source validation above still use the Client presentation.
   // Reconcile all approved amounts before omitting screen-hidden row details.
   const report = projectPricingFromPublication({ estimateId: selected.id, projectId, round, snapshot: round.estimateSnapshot, approved, visibleMainLineIds });
-  if (report && baseline && (report.subtotalPaise !== baseline.approvedSubtotalPaise || report.gstPaise !== baseline.approvedGstPaise || report.totalPaise !== baseline.approvedContractTotalPaise)) return finish(null, "source_conflict", witness);
+  if (report && baseline && (report.subtotalPaise !== baseline.approvedSubtotalPaise || report.gstPaise !== baseline.approvedGstPaise || report.totalPaise !== baseline.approvedContractTotalPaise || report.roundOffPaise !== baseline.approvedRoundOffPaise)) return finish(null, "source_conflict", witness);
   return finish(report, report ? null : "incomplete", witness);
 }

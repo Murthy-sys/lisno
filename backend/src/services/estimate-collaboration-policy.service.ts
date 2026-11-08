@@ -1,6 +1,6 @@
 import type mongoose from "mongoose";
 import { isDeepStrictEqual } from "node:util";
-import { isCollaborativeEstimate, estimateWorkingCopyEditable, type EstimationLifecycle } from "../domain/estimation-lifecycle.js";
+import { isCollaborativeEstimate, estimateWorkingCopyEditable, clientQuotationEditable, type EstimationLifecycle } from "../domain/estimation-lifecycle.js";
 import { ApiError } from "../middleware/errors.js";
 import { ProjectModel } from "../models/Project.js";
 import { LeadModel } from "../models/Lead.js";
@@ -9,6 +9,37 @@ import { DesignPlanReviewRoundModel } from "../models/DesignPlanReviewRound.js";
 import type { PublicUser } from "./auth.service.js";
 
 type Row = Record<string, any>;
+
+/** Additional authority for mode selection; ordinary project access remains required. */
+export function canChangeEstimatePricingMode(actor: Pick<PublicUser, "id" | "role">, estimate: Row, project: Row | null): boolean {
+  const lifecycle = estimate.estimation;
+  if (lifecycle?.workflowVersion !== 3 || project?.estimationWorkflowVersion !== 3 ||
+    !["pre", "post"].includes(lifecycle.phase) || lifecycle.phase === "post" && !lifecycle.preApproval) return false;
+  if (actor.role === "client") return project.clientId === actor.id && clientQuotationEditable(estimate);
+  if (!estimateWorkingCopyEditable(estimate)) return false;
+  return lifecycle.phase === "pre"
+    ? actor.role === "estimator_sales" && estimate.ownerId === actor.id && project.assignedEstimatorId === actor.id
+    : actor.role === "designer" && estimate.designPlanDesignerId === actor.id && project.primaryDesignerId === actor.id;
+}
+
+/** Compare effective values, including replacement/re-add attempts and removed mode metadata. */
+export function assertEstimatePricingModeChanges(actor: Pick<PublicUser, "id" | "role">, estimate: Row,
+  project: Row | null, nextLines: readonly Row[]): void {
+  if (estimate.estimation?.workflowVersion !== 3 || canChangeEstimatePricingMode(actor, estimate, project)) return;
+  const previous: Row[] = (estimate.lineItems ?? []).filter((line: Row) => line.source === "configuration");
+  const next = nextLines.filter(line => line.source === "configuration");
+  const sameLine = (a: Row, b: Row) => a.id && b.id && a.id === b.id || a.roomId === b.roomId && a.mainLineId === b.mainLineId;
+  const changed = next.some(line => {
+    const prior = previous.find(saved => sameLine(saved, line));
+    const defaultMode = previous.find(saved => saved.mainLineId === line.mainLineId)?.pricingMode ?? "sub_vendor";
+    return line.pricingMode !== (prior ? prior.pricingMode : defaultMode);
+  });
+  // Exclusion keeps stable saved choices. Dropping non-default rows would allow a later add to reset them.
+  const droppedMode = previous.some(saved => saved.pricingMode && saved.pricingMode !== "sub_vendor" &&
+    !next.some(line => sameLine(saved, line)));
+  if (changed || droppedMode) throw new ApiError(403, "ESTIMATE_PRICING_MODE_FORBIDDEN",
+    "Pricing modes can be changed by Client and Sales initially, or Client and the primary Designer after initial approval.");
+}
 
 export function assertEstimateEditable(estimate: Row): void {
   if (!estimateWorkingCopyEditable(estimate)) throw new ApiError(409, "ESTIMATE_LOCKED",
@@ -108,5 +139,6 @@ export function estimateQuotationContent(value: Row): Record<string, unknown> {
   return { propertyType: value.propertyType, bedroomCount: value.bedroomCount ?? null,
     rooms: value.rooms ?? [], scopes: value.scopes ?? [], selectedMainBasketIds: value.selectedMainBasketIds ?? [],
     selectedMainBasketClassifications: value.selectedMainBasketClassifications ?? [], lineItems: value.lineItems ?? [],
-    subtotalPaise: value.subtotalPaise, gstPaise: value.gstPaise, totalPaise: value.totalPaise };
+    subtotalPaise: value.subtotalPaise, gstPaise: value.gstPaise, totalPaise: value.totalPaise,
+    ...(value.roundOffPaise === undefined ? {} : { roundOffPaise: value.roundOffPaise }) };
 }

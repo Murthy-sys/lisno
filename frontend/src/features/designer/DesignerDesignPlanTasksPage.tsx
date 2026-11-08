@@ -97,12 +97,13 @@ function stageAction(workflow: DesignWorkflowView, stage: DesignWorkflowStage | 
 }
 
 export function DesignerDesignPlanTasksPage() {
-  const { user } = useAuth();
+  const { user, reviewSession } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const [timelineContainer, setTimelineContainer] = useState<HTMLDivElement | null>(null);
   const tasks = useQuery({
-    queryKey: [...projectWorkflowKeys.designerPlans, user?.id ?? null, user?.role ?? null],
-    queryFn: getDesignerPlanTasks
+    queryKey: [...projectWorkflowKeys.designerPlans, user?.id ?? null, user?.role ?? null, reviewSession?.id],
+    queryFn: getDesignerPlanTasks,
+    refetchOnMount: "always"
   });
   const requestedEstimateId = searchParams.get("estimate");
   const task = tasks.data?.find((item) => item.estimateId === requestedEstimateId) ?? tasks.data?.[0];
@@ -253,7 +254,7 @@ export function DesignerDesignPlanTasksPage() {
                 <div><dt>Next action</dt><dd>{nextAction}</dd></div>
               </dl>
               {task.estimationWorkflowVersion === 2 && task.leadId ? <Link to={`/estimator-sales/leads/${encodeURIComponent(task.leadId)}/estimate`}>Review and edit post-estimate</Link> : null}
-              {task.estimationWorkflowVersion === 3 && task.canEditQuotation && task.leadId ? <Link to={`/estimator-sales/leads/${encodeURIComponent(task.leadId)}/estimate`}>{quotationApprovalState === "initial_current" || quotationApprovalState === "revision_current" ? "Review or update estimate" : "Review revised quotation"}</Link> : null}
+              {task.estimationWorkflowVersion === 3 && task.canEditQuotation && task.leadId && !tasks.isFetching && tasks.isFetchedAfterMount ? <Link className="ui-button ui-button--secondary" to={`/estimator-sales/leads/${encodeURIComponent(task.leadId)}/estimate`}>{["initial_current", "revision_draft", "revision_changes_requested"].includes(quotationApprovalState!) ? "Add / edit estimate items" : "View estimate"}</Link> : null}
               {task.estimationWorkflowVersion === 3 && !task.canEditQuotation ? <Link to={`/projects/${encodeURIComponent(task.projectId)}/quotation`}>View saved estimation</Link> : null}
               {task.estimationWorkflowVersion === 3 ? <QuotationApprovalNotice state={quotationApprovalState!} current={currentQuotationApproved} /> : null}
               {task.estimationWorkflowVersion === 2 ? <p className="designer-plan-workspace__notice">Design starts after pre-estimate approval. Initial payment is confirmed after design and final estimate approval.</p> : null}

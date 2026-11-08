@@ -259,7 +259,14 @@ describe("Procurement approved-item workspace and receipt ledger", () => {
     }
   });
 
-  it("uses the immutable fractional-paise baseline for existing and late-opened finance buckets", async () => {
+  it.each([
+    { label: "legacy exact paise", subtotalPaise: 16_249, gstPaise: 2_925, totalPaise: 19_174, roundOffPaise: undefined },
+    { label: "rounded up", subtotalPaise: 16_249, gstPaise: 2_925, totalPaise: 19_200, roundOffPaise: 26 },
+    { label: "rounded down", subtotalPaise: 16_200, gstPaise: 2_916, totalPaise: 19_100, roundOffPaise: -16 }
+  ])("uses the immutable $label baseline for existing and late-opened finance buckets", async ({ subtotalPaise, gstPaise, totalPaise, roundOffPaise }) => {
+    const targetProfitPaise = Math.round(subtotalPaise / 5);
+    const costBudgetPaise = subtotalPaise - targetProfitPaise;
+    const approvedAdjustment = roundOffPaise === undefined ? {} : { approvedRoundOffPaise: roundOffPaise };
     const configuredLine = {
       id: "configured-line", source: "configuration", itemType: "temporary", catalogueId: "line-lower",
       roomId: "living-room", roomName: "Living Room",
@@ -268,11 +275,12 @@ describe("Procurement approved-item workspace and receipt ledger", () => {
       mainLineId: "line-lower", mainLineName: "Approved console",
       revisionId: "revision-lower", uomId: "square-foot", uomName: "Square foot",
       specification: null, unit: "sqft", quantity: 1, included: true,
-      ratePaise: 16_249, amountPaise: 16_249, rate: 162.49, amount: 162.49
+      ratePaise: subtotalPaise, amountPaise: subtotalPaise, rate: subtotalPaise / 100, amount: subtotalPaise / 100
     };
     const approvedMoney = {
-      subtotal: 162.49, gst: 29.25, total: 191.74,
-      subtotalPaise: 16_249, gstPaise: 2_925, totalPaise: 19_174
+      subtotal: subtotalPaise / 100, gst: gstPaise / 100, total: totalPaise / 100,
+      subtotalPaise, gstPaise, totalPaise,
+      ...(roundOffPaise === undefined ? {} : { roundOffPaise })
     };
     await Promise.all([
       EstimateClientReviewRoundModel.collection.updateOne({ _id: ROUND_ID }, {
@@ -283,15 +291,15 @@ describe("Procurement approved-item workspace and receipt ledger", () => {
         $set: { lineItems: [{ ...configuredLine, mainBasketName: "Later renamed basket" }], ...approvedMoney }
       }),
       ProjectFinanceBucketModel.collection.updateOne({ projectId: PROJECT_ID }, {
-        $set: { approvedSubtotalPaise: 16_249, approvedGstPaise: 2_925,
-          approvedContractTotalPaise: 19_174, targetProfitPaise: 3_250, costBudgetPaise: 12_999 }
+        $set: { approvedSubtotalPaise: subtotalPaise, approvedGstPaise: gstPaise,
+          approvedContractTotalPaise: totalPaise, ...approvedAdjustment, targetProfitPaise, costBudgetPaise }
       })
     ]);
     const storage = new MemoryStorage();
     const service = procurementService(storage);
     const [project] = await service.listProjects(procurementActor());
     expect(project?.sections).toEqual([expect.objectContaining({
-      id: "basket-lower", label: "Approved basket", estimatedAmountPaise: 16_249,
+      id: "basket-lower", label: "Approved basket", estimatedAmountPaise: subtotalPaise,
       items: [expect.objectContaining({ key: "configured-line", itemType: "temporary",
         mainBasketName: "Approved basket", subBasketId: null, subBasketName: null,
         specification: "Approved basket · Approved console" })]
@@ -303,12 +311,12 @@ describe("Procurement approved-item workspace and receipt ledger", () => {
         idempotencyKey: "fractional-approved-expense" }), receiptUpload());
     expect(posted).toMatchObject({ replayed: false,
       entry: { sourceSectionId: "basket-lower", sourceLineItemKey: "configured-line", amountPaise: 1_000 },
-      bucket: { approvedSubtotalPaise: 16_249, approvedGstPaise: 2_925,
-        approvedContractTotalPaise: 19_174, costBudgetPaise: 12_999, directSpendPaise: 1_000 }
+      bucket: { approvedSubtotalPaise: subtotalPaise, approvedGstPaise: gstPaise,
+        approvedContractTotalPaise: totalPaise, ...approvedAdjustment, costBudgetPaise, directSpendPaise: 1_000 }
     });
     await expect(ProjectFinanceBucketModel.findOne({ projectId: PROJECT_ID }).lean())
-      .resolves.toMatchObject({ approvedSubtotalPaise: 16_249, approvedGstPaise: 2_925,
-        approvedContractTotalPaise: 19_174, costBudgetPaise: 12_999 });
+      .resolves.toMatchObject({ approvedSubtotalPaise: subtotalPaise, approvedGstPaise: gstPaise,
+        approvedContractTotalPaise: totalPaise, ...approvedAdjustment, costBudgetPaise });
   });
 
   it("groups only included immutable approved-snapshot items by section", async () => {

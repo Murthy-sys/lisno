@@ -143,7 +143,7 @@ export interface EstimationLifecycle {
 }
 export interface EstimateDraft extends Omit<EstimateDraftInput, "lineItems"> {
   readonly projectNumber?: string | null;
-  capabilities?: { canUnlockQuotation: boolean; canPublishQuotation?: boolean };
+  capabilities?: { canUnlockQuotation: boolean; canPublishQuotation?: boolean; canPrepareQuotationSubmission?: boolean; canChangePricingMode?: boolean };
   id: string;
   version?: number;
   lineItems: EstimateLine[];
@@ -153,6 +153,7 @@ export interface EstimateDraft extends Omit<EstimateDraftInput, "lineItems"> {
   subtotalPaise?: number;
   gstPaise?: number;
   totalPaise?: number;
+  roundOffPaise?: number;
   status: EstimateStatus;
   approvalRequired: boolean;
   assignedDesignerId?: string | null;
