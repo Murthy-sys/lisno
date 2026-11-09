@@ -1,4 +1,4 @@
-import { act, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -22,7 +22,7 @@ vi.mock("./estimateRevisionsApi", async importOriginal => ({
 
 import { renderWithQuery } from "../../test/render";
 import { LeadEstimateWorkspace } from "./LeadEstimateWorkspace";
-import type { EstimationRecommendationRule } from "./estimationCatalogueApi";
+import type { EstimationCatalogue, EstimationRecommendationRule } from "./estimationCatalogueApi";
 
 const response = (data: unknown) => Response.json({ data });
 const uom = { id: "uom-sqft", code: "SQFT", name: "sq ft", decimalScale: 2 };
@@ -49,7 +49,7 @@ const revisions: Record<string, { revisionId: string; revisionVersion: number; i
   "line-light": { revisionId: "rev-light", revisionVersion: 1, itemVersion: 1 }
 };
 
-function installReads(failFirstRecommendation = false, savedEstimate: unknown = null, recommendationGate?: Promise<void> | ((ids: readonly string[]) => Promise<void> | void), sharedTarget = false, saveGate?: Promise<void>, echoDraftSave = false, rulesForSource?: (sourceId: string) => EstimationRecommendationRule[]) {
+function installReads(failFirstRecommendation = false, savedEstimate: unknown = null, recommendationGate?: Promise<void> | ((ids: readonly string[]) => Promise<void> | void), sharedTarget = false, saveGate?: Promise<void>, echoDraftSave = false, rulesForSource?: (sourceId: string) => EstimationRecommendationRule[], readCatalogue: () => unknown = () => catalogue) {
   const calls: string[][] = [];
   const requests: Array<{ url: string; method: string }> = [];
   const savedInputs: Array<{ rooms: Array<{ id: string; label: string }>; selectedMainBasketIds: string[]; lineItems: Array<{
@@ -97,7 +97,7 @@ function installReads(failFirstRecommendation = false, savedEstimate: unknown = 
         selectedMainBasketIds: input.selectedMainBasketIds,
         lineItems: [{ ...draft.lineItems[0], roomId: input.rooms[0]?.id, roomName: input.rooms[0]?.label }] });
     }
-    if (url.includes("/estimation/catalogue?") && method === "GET") return response(catalogue);
+    if (url.includes("/estimation/catalogue?") && method === "GET") return response(readCatalogue());
     if (url.includes("/estimation/catalogue/recommendations?") && method === "GET") {
       recommendationReads += 1;
       const ids = new URL(url, "http://localhost").searchParams.get("mainLineIds")?.split(",") ?? [];
@@ -263,6 +263,50 @@ describe("estimator inline recommendations", () => {
 
 describe("Sales recommendation popup", () => {
   beforeEach(() => { authState.role = "estimator_sales"; });
+
+  it("keeps an unavailable unpriced must target in review and rejects its stale local Add callback", async () => {
+    const user = userEvent.setup();
+    const current: EstimationCatalogue = structuredClone(catalogue);
+    current.items[0]!.subBaskets[0]!.mainLines[0]!.hasConfiguredBasePrice = false;
+    current.items[1]!.subBaskets[0]!.mainLines[0]!.hasConfiguredBasePrice = false;
+    const { savedInputs, requests, calls } = installReads(false, { ...savedConfiguredEstimate("rev-pop"), status: "draft" },
+      undefined, false, undefined, false, undefined, () => current);
+    renderWorkspace();
+    expect(await screen.findByRole("region", { name: "Items without a positive base price" })).toBeVisible();
+    await user.click(await screen.findByRole("button", { name: /Recommendations \(0\).*Review needed/ }));
+    expect(await screen.findByText(/Some non-negotiable recommendations are unavailable/)).toBeVisible();
+    expect(screen.getByRole("dialog", { name: "Non-negotiable recommendations" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Add False ceiling painting" })).not.toBeInTheDocument();
+    let accepted: boolean | void;
+    act(() => { accepted = builderActions.select?.({ mainLineId: "line-paint", basketId: "basket-paint", subBasketId: "sub-paint" }); });
+    expect(accepted!).toBe(false);
+    expect(calls.some(ids => ids.includes("line-pop"))).toBe(true);
+    expect(selectedItem(/POP false ceiling/)).toBeChecked();
+    expect(savedInputs).toEqual([]);
+    expect(requests.every(request => request.method === "GET")).toBe(true);
+  });
+
+  it("keeps the popup open after the final priced group Add when unpriced required children still need review", async () => {
+    const user = userEvent.setup(), current: EstimationCatalogue = structuredClone(catalogue);
+    current.items[1]!.subBaskets[0]!.mainLines[0]!.hasConfiguredBasePrice = true;
+    current.items[1]!.subBaskets[0]!.mainLines[1]!.hasConfiguredBasePrice = false;
+    current.items[1]!.subBaskets[0]!.mainLines[2]!.hasConfiguredBasePrice = false;
+    const { savedInputs, requests } = installReads(false, { ...savedConfiguredEstimate("rev-pop"), status: "draft" },
+      undefined, false, undefined, false, sourceId => sourceId === "line-pop" ? [{ id: "required-finish", requirement: "must", reason: "Complete the finish.",
+        targetKind: "sub_basket", targetBasketId: "basket-paint", targetSubBasketId: "sub-paint", targetMainLineId: null,
+        targetRevisionId: null, targetRevisionVersion: null, targetItemVersion: null, available: true, completionRequired: false,
+        unavailableChildCount: 2, children: [{ mainLineId: "line-paint", available: true, completionRequired: false, revisionId: "rev-paint", revisionVersion: 1, itemVersion: 1 }] }] : [],
+      () => current);
+    renderWorkspace();
+    await user.click(await screen.findByRole("button", { name: "Add False ceiling painting" }));
+    expect(await screen.findByRole("button", { name: "Remove False ceiling painting" })).toBeVisible();
+    expect(screen.getByRole("dialog", { name: "Non-negotiable recommendations" })).toBeVisible();
+    expect(screen.getByText(/Some non-negotiable recommendations are unavailable/)).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Add Ceiling primer" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Available items changed. Refresh before adding.")).not.toBeInTheDocument();
+    expect(savedInputs).toEqual([]);
+    expect(requests.every(request => request.method === "GET")).toBe(true);
+  });
 
   it("waits for refreshed chained suggestions and closes only after the final Add", async () => {
     const user = userEvent.setup(); let release!: () => void;
@@ -447,14 +491,16 @@ describe("Sales recommendation popup", () => {
     const quantity = screen.getByRole("spinbutton", { name: /Quantity.*POP false ceiling/ });
     await user.clear(quantity); await user.type(quantity, "7");
     const price = screen.getByRole("textbox", { name: /Selling rate.*POP false ceiling/ });
-    await user.clear(price); await user.type(price, "123.");
+    expect(price).toBeDisabled();
+    const configuredPrice = (price as HTMLInputElement).value;
+    fireEvent.change(price, { target: { value: "123." } });
     await act(async () => release());
     const close = await screen.findByRole("button", { name: "Close recommendations" });
     await waitFor(() => expect(close).toHaveFocus());
-    expect(price).toHaveValue("123.");
+    expect(price).toHaveValue(configuredPrice);
     await user.click(close);
     await user.type(price, "45");
-    expect(price).toHaveValue("123.45");
+    expect(price).toHaveValue(configuredPrice);
     await user.click(screen.getByRole("button", { name: "Recommendations (1)" }));
     const popup = screen.getByRole("region", { name: "Non-negotiable recommendations for Living & Dining" });
     await user.click(within(popup).getByRole("button", { name: "Add False ceiling painting" }));
@@ -469,11 +515,11 @@ describe("Sales recommendation popup", () => {
     expect(screen.getByRole("button", { name: "Close recommendations" })).toHaveFocus();
     await user.keyboard("{Escape}");
     expect(trigger).toHaveFocus();
-    expect(quantity).toHaveValue(7); expect(price).toHaveValue("123.45");
+    expect(quantity).toHaveValue(7); expect(price).toHaveValue(configuredPrice);
     await user.click(screen.getByRole("button", { name: "Save draft" }));
     await screen.findByText("Estimate draft saved.");
     expect(savedInputs).toHaveLength(1);
-    expect(savedInputs[0]!.lineItems).toEqual([expect.objectContaining({ mainLineId: "line-pop", quantity: 7, ratePaise: 12345, included: true })]);
+    expect(savedInputs[0]!.lineItems).toEqual([expect.objectContaining({ mainLineId: "line-pop", quantity: 7, ratePaise: Number(configuredPrice) * 100, included: true })]);
     expect(screen.getByRole("button", { name: "Recommendations (1)" })).toHaveAttribute("aria-expanded", "false");
   });
 

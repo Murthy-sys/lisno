@@ -72,6 +72,51 @@ beforeEach(async () => {
 });
 
 describe("client working estimate tier selection", () => {
+  it("rejects zero unit prices through single and atomic batch selection even when another method is positive", async () => {
+    await Section.updateOne({ _id: "advanced-visible" }, { $set: {
+      "payload.tierConfigurations.premium.payload.modeCalculations.sub_vendor.baseRatePaise": 0,
+      "payload.tierConfigurations.premium.payload.modeCalculations.pmc.baseRatePaise": 9001
+    } });
+    const before = await EstimateModel.findById("tier-estimate").lean();
+    await expect(service.select(client, "tier-project", "line-one", command)).rejects.toMatchObject({ code: "ESTIMATE_TIER_UNAVAILABLE" });
+    const { expectedVersion, ...selection } = command;
+    await expect(service.selectBatch(sales, "tier-project", { expectedVersion, lines: [
+      { lineItemId: "line-two", ...selection, modeTier: "signature" }, { lineItemId: "line-one", ...selection }
+    ] })).rejects.toMatchObject({ code: "ESTIMATE_TIER_UNAVAILABLE" });
+    expect(await EstimateModel.findById("tier-estimate").lean()).toEqual(before);
+    expect(await AuditEventModel.countDocuments()).toBe(0);
+  });
+
+  it("rejects all-zero selected components without borrowing a positive unselected component", async () => {
+    const settings = (baseRatePaise: number) => ({ baseRatePaise, lowQuantityLimit: "10", impactBps: 1000, minimumMarkupBps: 1500, startingMarkupBps: 2000 });
+    const component = (id: string, rate: number) => ({ id, basketId: "tier-basket", subBasketId: "tier-sub", inclusions: [], exclusions: [],
+      labor: settings(rate), material: settings(rate) });
+    await Section.updateOne({ _id: "advanced-visible" }, { $set: {
+      "payload.tierConfigurations.premium.payload.inHouseComponents": [component("zero", 0), component("positive", 1001)]
+    } });
+    await EstimateModel.updateOne({ _id: "tier-estimate" }, { $set: { "lineItems.0.classification": "special", "lineItems.0.pricingMode": "in_house" } });
+    const before = await EstimateModel.findById("tier-estimate").lean();
+    const selection = { ...command, selectedInHouseComponentIds: ["zero"] };
+    await expect(service.select(client, "tier-project", "line-one", selection)).rejects.toMatchObject({ code: "ESTIMATE_TIER_UNAVAILABLE" });
+    const { expectedVersion, ...line } = selection;
+    await expect(service.selectBatch(client, "tier-project", { expectedVersion, lines: [{ lineItemId: "line-one", ...line }] }))
+      .rejects.toMatchObject({ code: "ESTIMATE_TIER_UNAVAILABLE" });
+    expect(await EstimateModel.findById("tier-estimate").lean()).toEqual(before);
+    expect(await AuditEventModel.countDocuments()).toBe(0);
+  });
+
+  it("accepts a positive price whose tiny quantity rounds to a zero amount and retains another saved zero row", async () => {
+    await Section.updateOne({ _id: "advanced-visible" }, { $set: {
+      "payload.tierConfigurations.premium.payload.modeCalculations.sub_vendor.baseRatePaise": 1
+    } });
+    await EstimateModel.updateOne({ _id: "tier-estimate" }, { $set: { "lineItems.0.quantity": .01,
+      "lineItems.1.ratePaise": 0, "lineItems.1.rate": 0, "lineItems.1.amountPaise": 0, "lineItems.1.amount": 0 } });
+    const savedZero = (await EstimateModel.findById("tier-estimate").lean())!.lineItems[1];
+    const selected = await service.select(client, "tier-project", "line-one", command);
+    expect(selected.lines[0]).toMatchObject({ ratePaise: 1, quantity: .01, amountPaise: 0 });
+    expect((await EstimateModel.findById("tier-estimate").lean())!.lineItems[1]).toEqual(savedZero);
+  });
+
   it.each([[832, 8664, 1560, 10200, -24], [844, 8688, 1564, 10300, 48], [1521, 10042, 1808, 11800, -50]])(
     "rounds only the grand total when selecting a tier priced at %i paise", async (ratePaise, subtotalPaise, gstPaise, totalPaise, roundOffPaise) => {
       await Section.collection.updateOne({ _id: "advanced-visible" as never }, { $set: {

@@ -1,4 +1,5 @@
-import type { ConfiguredLineDraft } from "./configuredEstimate";
+import { configuredTierUnavailableReason, type ConfiguredLineDraft } from "./configuredEstimate";
+import { isEstimationLinePriceVisible } from "./estimationCatalogueVisibility";
 import type {
   EstimationCatalogue,
   EstimationCatalogueMainLine,
@@ -217,6 +218,8 @@ export function buildRoomRecommendations({ catalogue, lines, roomId, recommendat
   ])));
   const isSelected = (mainLineId: string, basketId: string, subBasketId: string | null) =>
     selected.has(JSON.stringify([mainLineId, basketId, subBasketId]));
+  const canSelectTarget = (item: CatalogueLine) => isEstimationLinePriceVisible(item) &&
+    (["signature", "premium", "functional"] as const).some(tier => !configuredTierUnavailableReason(item, tier, "sub_vendor"));
   const activeSources = partition.current;
   const responseSources = new Map(recommendations.sources.map((source) => [source.mainLineId, source]));
   const decisions = new Map<string, RecommendationDecision>();
@@ -242,9 +245,11 @@ export function buildRoomRecommendations({ catalogue, lines, roomId, recommendat
         ? `line:${rule.targetMainLineId ?? ""}`
         : `sub-basket:${rule.targetBasketId}:${rule.targetSubBasketId ?? ""}`;
       const existing = decisions.get(key);
-      const target = rule.targetKind === "main_line" && rule.available
+      const targetLocation = rule.targetKind === "main_line" && rule.available
         ? matchingTarget(locations, rule.targetMainLineId, rule.targetBasketId, rule.targetSubBasketId)
         : null;
+      const target = targetLocation && (canSelectTarget(targetLocation.item) ||
+        isSelected(targetLocation.item.mainLineId, targetLocation.basketId, targetLocation.subBasketId)) ? targetLocation : null;
       const basket = catalogue.items.find((item) => item.id === rule.targetBasketId);
       const subBasket = rule.targetKind === "sub_basket" && rule.targetSubBasketId
         ? basket?.subBaskets.find((item) => item.id === rule.targetSubBasketId)
@@ -253,6 +258,7 @@ export function buildRoomRecommendations({ catalogue, lines, roomId, recommendat
         ? (rule.children ?? []).flatMap((child) => {
           const childLocation = matchingTarget(locations, child.mainLineId, rule.targetBasketId, rule.targetSubBasketId);
           if (!childLocation) return [];
+          if (!canSelectTarget(childLocation.item) && !isSelected(child.mainLineId, rule.targetBasketId, rule.targetSubBasketId)) return [];
           if (child.revisionId !== childLocation.item.revisionId ||
             child.revisionVersion !== childLocation.item.revisionVersion ||
             child.itemVersion !== childLocation.item.itemVersion) stale = true;
@@ -264,12 +270,14 @@ export function buildRoomRecommendations({ catalogue, lines, roomId, recommendat
           }];
         }) : [];
       const available = rule.targetKind === "main_line" ? Boolean(target) : Boolean(rule.available && subBasket);
-      if (rule.available && rule.targetKind === "main_line" && (!target || !targetVersionMatches(target.item, rule))) stale = true;
+      if (rule.available && rule.targetKind === "main_line" && (!targetLocation || !targetVersionMatches(targetLocation.item, rule))) stale = true;
       if (rule.available && rule.targetKind === "sub_basket") {
-        if (!subBasket || children.length !== (rule.children?.length ?? 0)) stale = true;
+        if (!subBasket || (rule.children ?? []).some(child => !matchingTarget(locations, child.mainLineId, rule.targetBasketId, rule.targetSubBasketId))) stale = true;
         else {
-          const catalogueChildIds = new Set([...subBasket.mainLines, ...(subBasket.temporaryItems ?? [])].map((child) => child.mainLineId));
-          const responseChildIds = new Set((rule.children ?? []).map((child) => child.mainLineId));
+          const catalogueChildIds = new Set([...subBasket.mainLines, ...(subBasket.temporaryItems ?? [])]
+            .filter(child => canSelectTarget(child) || isSelected(child.mainLineId, rule.targetBasketId, rule.targetSubBasketId))
+            .map(child => child.mainLineId));
+          const responseChildIds = new Set(children.map(child => child.target.mainLineId));
           if (catalogueChildIds.size !== responseChildIds.size ||
             [...catalogueChildIds].some((id) => !responseChildIds.has(id))) stale = true;
         }

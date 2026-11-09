@@ -34,6 +34,42 @@ const draft = (current: EstimationCatalogue, room = living) => createConfiguredL
   { mainLineId: "gypsum", basketId: "pop", subBasketId: "ceiling" })!;
 
 describe("Sales active-room catalogue presentation", () => {
+  it("hides authoritative zero-only choices across direct, normal and temporary paths", () => {
+    const current = catalogue();
+    for (const source of [current.items[0]!.directTemporaryItems![0]!, current.items[0]!.subBaskets[0]!.mainLines[0]!,
+      current.items[0]!.subBaskets[0]!.temporaryItems![0]!]) {
+      source.hasConfiguredBasePrice = false;
+      source.modeBaseRatesPaise = { pmc: 0, sub_vendor: 0, in_house: 0 };
+    }
+    const selectedLine = { ...draft(current), included: true, persistedId: "saved-line", quantity: 3, rateInput: "79" };
+    const before = structuredClone(selectedLine);
+    expect(project(current, [selectedLine]).map(row => row.target.mainLineId)).toEqual(["paint"]);
+    expect(project(current, [selectedLine], kitchen).map(row => row.target.mainLineId)).toEqual(["paint"]);
+    expect(selectedLine).toEqual(before);
+    expect(selectedLine.sourceMissing).not.toBe(true);
+    expect(configuredLineAmountPaise(selectedLine)).toBe(23700);
+    current.items[0]!.subBaskets[0]!.mainLines[0]!.hasConfiguredBasePrice = true;
+    current.items[0]!.subBaskets[0]!.mainLines[0]!.modeBaseRatesPaise!.sub_vendor = 1200;
+    expect(project(current, [selectedLine]).find(row => row.target.mainLineId === "gypsum")?.line).toBe(selectedLine);
+  });
+
+  it("keeps positive default or other-mode bases visible with missing or zero selling rates, and retains legacy visibility", () => {
+    const current = catalogue();
+    const defaultOnly = current.items[0]!.subBaskets[0]!.mainLines[0]!;
+    defaultOnly.hasConfiguredBasePrice = true;
+    defaultOnly.basePriceAvailability = { default: { pmc: false, sub_vendor: true, in_house: false }, signature: { pmc: false, sub_vendor: false, in_house: false }, premium: { pmc: false, sub_vendor: false, in_house: false }, functional: { pmc: false, sub_vendor: false, in_house: false } };
+    defaultOnly.modeBaseRatesPaise = { pmc: null, sub_vendor: null, in_house: null };
+    const positiveInAnotherMode = current.items[0]!.directTemporaryItems![0]!;
+    positiveInAnotherMode.hasConfiguredBasePrice = true;
+    positiveInAnotherMode.basePriceAvailability = structuredClone(defaultOnly.basePriceAvailability);
+    positiveInAnotherMode.modeBaseRatesPaise = { pmc: 0, sub_vendor: 0, in_house: 0 };
+    const rows = project(current);
+    expect(rows).toHaveLength(4);
+    expect(rows.find(row => row.target.mainLineId === "gypsum")?.line.rateInput).toBe("");
+    expect(rows.find(row => row.target.mainLineId === "direct")?.line.rateInput).toBe("0");
+    expect(rows.find(row => row.target.mainLineId === "paint")?.line.hasConfiguredBasePrice).toBeUndefined();
+  });
+
   it("shows unchecked current choices and supported temporary items without creating selected amounts or mutating inputs", () => {
     const current = catalogue();
     const previous = structuredClone(current);
@@ -142,6 +178,7 @@ describe("Sales active-room catalogue presentation", () => {
     source.revisionId = "latest-draft";
     source.uom = { id: "current-area", code: "M2", name: "sq m", decimalScale: 3 };
     source.modeBaseRatesPaise = { pmc: null, sub_vendor: null, in_house: null };
+    source.basePriceAvailability = { default: { pmc: false, sub_vendor: true, in_house: false }, signature: { pmc: false, sub_vendor: false, in_house: false }, premium: { pmc: false, sub_vendor: false, in_house: false }, functional: { pmc: false, sub_vendor: false, in_house: false } };
     const rows = project(current, [], living, new Set(["pop"]));
     expect(rows.every(row => row.target.basketId === "pop")).toBe(true);
     expect(rows.find(row => row.target.mainLineId === "gypsum")!.line).toMatchObject({

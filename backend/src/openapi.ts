@@ -5,7 +5,7 @@ import { PM_ESTIMATE_SCHEMAS, PM_ESTIMATE_REQUESTS, PM_ESTIMATE_RESPONSES, PM_ES
 import { ESTIMATE_DIMENSION_INPUT_UNITS, ESTIMATE_DIMENSION_QUANTITY_UNITS } from "./domain/estimate-dimensions.js";
 import { ESTIMATE_TIER_SCHEMAS, ESTIMATE_TIER_REQUESTS, ESTIMATE_TIER_RESPONSES } from "./openapi/estimate-tiers.js";
 import { ESTIMATE_COMPONENT_PRICING_SCHEMAS, ESTIMATE_COMPONENT_PRICING_REQUESTS, ESTIMATE_COMPONENT_PRICING_RESPONSES } from "./openapi/estimate-component-pricing.js";
-import { KNOWLEDGE_MODE_TIERS } from "./domain/ai-estimator-knowledge-mode-tiers.js";
+import { KNOWLEDGE_MODE_TIERS, KNOWLEDGE_MODE_CONFIGURATION_SCOPES } from "./domain/ai-estimator-knowledge-mode-tiers.js";
 import { DESIGN_REQUIREMENTS_SCHEMAS } from "./openapi/design-requirements.js";
 import { VENDOR_BASKET_REQUEST_NOTIFICATION_SCHEMAS, VENDOR_BASKET_REQUEST_NOTIFICATION_RESPONSES, VENDOR_BASKET_REQUEST_NOTIFICATION_QUERIES, VENDOR_BASKET_REQUEST_NOTIFICATION_BODIES } from "./openapi/vendor-basket-request-notifications.js";
 import { ESTIMATE_COLLABORATION_SCHEMAS, ESTIMATE_COLLABORATION_REQUESTS, ESTIMATE_COLLABORATION_RESPONSES } from "./openapi/estimate-collaboration.js";
@@ -2497,13 +2497,22 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
     },
     EstimatorCatalogueLine: {
       type: "object", additionalProperties: false,
-      required: ["id", "mainLineId", "basketId", "subBasketId", "itemType", "clientVisible", "name", "displayOrder", "revisionId", "itemStatus", "revisionStatus", "itemVersion", "revisionVersion", "inHouseBaseRatePaise", "modeBaseRatesPaise", "applicableTiers", "tierPricing", "dimensionsMandatory", "dimensionRule", "uom"],
+      required: ["id", "mainLineId", "basketId", "subBasketId", "itemType", "clientVisible", "hasConfiguredBasePrice", "basePriceAvailability", "name", "displayOrder", "revisionId", "itemStatus", "revisionStatus", "itemVersion", "revisionVersion", "inHouseBaseRatePaise", "modeBaseRatesPaise", "applicableTiers", "tierPricing", "dimensionsMandatory", "dimensionRule", "uom"],
       properties: {
         id: { type: "string" }, mainLineId: { type: "string" }, basketId: { type: "string" },
         subBasketId: { type: "string", nullable: true }, itemType: { type: "string", enum: ["main_line", "temporary"] },
         dimensionsMandatory: { type: "boolean", default: false, readOnly: true },
         dimensionRule: { allOf: [{ $ref: "#/components/schemas/EstimateDimensionRule" }], nullable: true, readOnly: true, description: "Derived from the configured supported area UOM. Null when not required or unsupported; never inferred from unrelated unit names." },
         clientVisible: { type: "boolean", default: true, readOnly: true, description: "Current saved Overview visibility for all client quotation screens and documents. Internal estimating and approved totals are unchanged." },
+        hasConfiguredBasePrice: { type: "boolean", readOnly: true, description: "At least one valid saved base price greater than zero in default, Signature, Premium, or Functional Configuration. Zero-only bases do not qualify; selected source records remain available when false. Discovery metadata only, without a tier or selling-rate fallback." },
+        basePriceAvailability: {
+          type: "object", additionalProperties: false, readOnly: true, required: [...KNOWLEDGE_MODE_CONFIGURATION_SCOPES],
+          properties: Object.fromEntries(KNOWLEDGE_MODE_CONFIGURATION_SCOPES.map(scope => [scope, {
+            type: "object", additionalProperties: false, required: ["pmc", "sub_vendor", "in_house"],
+            properties: { pmc: { type: "boolean" }, sub_vendor: { type: "boolean" }, in_house: { type: "boolean" } }
+          }])),
+          description: "Positive raw-base availability for each current Configuration scope and pricing method. Standard requires Sub-vendor; another method cannot establish its eligibility. Default may establish discovery but is not a financial estimation tier. No raw private costs or price fallback are exposed."
+        },
         name: { type: "string" },
         displayOrder: { type: "integer" }, revisionId: { type: "string" },
         itemStatus: { type: "string", enum: ["draft", "active", "inactive"] },
@@ -2530,7 +2539,7 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
           properties: { id: { type: "string" }, basketId: { type: "string" }, basketName: { type: "string" },
             subBasketId: { type: "string", nullable: true }, subBasketName: { type: "string", nullable: true },
             baseRatePaise: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER, nullable: true },
-            unavailableReason: { type: "string", nullable: true, description: "A non-null reason prevents selection, including manually priced lines. A null base rate alone can still be priced manually." } }
+            unavailableReason: { type: "string", nullable: true, description: "A non-null reason prevents selection. Estimation rates are Configuration-owned; unavailable components cannot be rescued by a manual price." } }
         } },
         uom: { $ref: "#/components/schemas/EstimatorCatalogueUom" }
       }
@@ -2629,7 +2638,7 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
       type: "object", additionalProperties: false,
       required: ["source", "catalogueId", "roomId", "roomName", "mainBasketId", "subBasketId", "mainLineId", "revisionId", "uomId", "quantity", "included", "ratePaise"],
       properties: {
-        pricingBasis: { type: "string", enum: ["in_house_components_v1"], description: "Explicit In-house component calculation basis. Other modes and manual pricing retain their unit-rate behavior." },
+        pricingBasis: { type: "string", enum: ["in_house_components_v1"], description: "Explicit Configuration-owned In-house component calculation basis. Other modes retain their configured unit-rate behavior; unchanged genuine saved manual snapshots remain readable." },
         componentPricingFingerprint: { type: "string", pattern: "^[a-f0-9]{64}$", description: "Expected server preview fingerprint. The server recomputes exact component amounts; client totals are never accepted." },
         dimensions: { $ref: "#/components/schemas/EstimateDimensions" },
         expectedDimensionRule: { allOf: [{ $ref: "#/components/schemas/EstimateDimensionRule" }], description: "Required with explicit measurements when dimensions are mandatory. Must exactly match the current server rule so stale unit or precision changes cannot reinterpret inputs. It is an expectation, not persisted authority." },
@@ -2639,15 +2648,15 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
         itemType: { type: "string", enum: ["main_line", "temporary"], default: "main_line", description: "Optional for older clients; Main Lines require a real Sub Basket. Only temporary items may have null Sub Basket." },
         classification: { type: "string", enum: ["standard", "special"], description: "Estimator-selected type. Omission preserves a saved value or defaults a new line to Standard." },
         pricingMode: { type: "string", enum: ["pmc", "sub_vendor", "in_house"], description: "Selected pricing mode. Standard with an explicit mode requires sub_vendor; Special permits all three. Omission preserves a saved mode and does not infer one for historical prices." },
-        modeTier: { ...modeTier, description: "Selected tier for this Main Line in this room. Omission preserves a saved tier or defaults a new line to Signature. Only applicable saved tiers are selectable. A changed tier requires an explicit new In-house component selection." },
-        selectedInHouseComponentIds: { type: "array", maxItems: 50, uniqueItems: true, items: { type: "string", minLength: 1, maxLength: 128 }, description: "Component IDs selected for this In-house estimate line. Included component-based In-house lines require a nonempty valid selection, including manually priced lines. Missing or empty does not select all components." },
-        rateSource: { type: "string", enum: ["configuration", "manual"], description: "Configuration requires a selected mode and a rate matching its current saved base and source versions. Stale values produce a refreshable conflict. Manual preserves an entered override. On omission, a changed entered rate becomes manual; otherwise saved metadata is preserved." },
+        modeTier: { ...modeTier, description: "Selected tier for this Main Line in this room. Omission preserves a saved tier or defaults a new line to Signature. New selections require this tier's usable positive Configuration price for the selected method. A changed tier requires an explicit new In-house component selection." },
+        selectedInHouseComponentIds: { type: "array", maxItems: 50, uniqueItems: true, items: { type: "string", minLength: 1, maxLength: 128 }, description: "Component IDs selected for this In-house estimate line. Included component-based lines require a nonempty valid selection; new selections need a positive selected base total. Missing or empty does not select all components, and a manual rate cannot replace the calculation." },
+        rateSource: { type: "string", enum: ["configuration", "manual"], description: "New or changed pricing must use the selected tier/method's current Configuration price and source versions. Estimation price entry is read-only; new or altered manual overrides produce 400 ESTIMATE_PRICE_READ_ONLY. Manual is accepted only for an unchanged genuine saved snapshot with matching identity and pricing basis. Stale Configuration values produce a refreshable conflict." },
         revisionId: { type: "string" }, uomId: { type: "string" },
         itemVersion: { type: "integer", minimum: 1, description: "Required with revisionVersion for explicit configuration-derived pricing and new Draft or Inactive items. Older callers preserving an unchanged configuration-derived rate may use its prior saved source version; stale versions conflict." },
         revisionVersion: { type: "integer", minimum: 1, description: "Required with itemVersion for explicit configuration-derived pricing and new Draft or Inactive items. Must identify the current saved Configuration revision for configuration-derived rates." },
         quantity: { type: "number", minimum: 0, description: "When dimensions are mandatory, the server calculates quantity from Length × Width and ignores this supplied quantity. Omitted measurements may reuse unchanged saved dimensions only when this value is unchanged." }, included: { type: "boolean" },
         ratePaise: { type: "integer", minimum: 0, nullable: true,
-          description: "Customer unit rate in integer paise. Existing configuration-derived unit rates must match their current base. Null is valid with a validated In-house component basis and exact server amount; otherwise an included line remains incomplete." }
+          description: "Configuration-owned customer unit rate in integer paise, not an editable override. New or changed prices must match the selected tier/method's current configured selling price. Null is used for a validated In-house component calculation; unchanged genuine saved snapshots are preserved under bounded compatibility checks." }
       }
     },
     EstimateLineInput: {

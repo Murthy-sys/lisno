@@ -76,6 +76,33 @@ function fixture(withDimensions = false) {
 }
 
 describe("Sales estimate tier persistence", () => {
+  it("lets a saved excluded zero-Signature row choose Premium before inclusion and saves its configured price", async () => {
+    const user = userEvent.setup(), data = fixture();
+    data.source.tierPricing!.signature!.modeBaseRatesPaise.sub_vendor = 0;
+    data.updateStored({ ...data.stored(), lineItems: data.stored().lineItems.map(line => ({ ...line, included: false })) });
+    data.mount();
+    const review = await screen.findByRole("region", { name: "Items without a positive base price" });
+    const include = screen.getByRole("checkbox", { name: /Include Ceiling in/ });
+    expect(include).not.toBeChecked();
+    expect(include).toBeDisabled();
+    expect(screen.getByRole("textbox", { name: /Selling rate/ })).toHaveValue("99");
+    expect(screen.getByRole("radio", { name: /Signature tier for/ })).toBeDisabled();
+    const premium = screen.getByRole("radio", { name: /Premium tier for/ });
+    await waitFor(() => expect(premium).toBeEnabled());
+    expect(review).toContainElement(premium);
+    expect(data.saves).toEqual([]);
+    await user.click(premium);
+    expect(screen.getByRole("checkbox", { name: /Include Ceiling in/ })).not.toBeChecked();
+    expect(screen.getByRole("textbox", { name: /Selling rate/ })).toHaveValue("25");
+    expect(screen.getByRole("checkbox", { name: /Include Ceiling in/ })).toBeEnabled();
+    await user.click(screen.getByRole("checkbox", { name: /Include Ceiling in/ }));
+    expect(screen.getByRole("checkbox", { name: /Include Ceiling in/ })).toBeChecked();
+    await user.click(screen.getByRole("button", { name: "Save draft" }));
+    await waitFor(() => expect(data.saves).toHaveLength(1));
+    expect(data.saves[0]!.lineItems[0]).toMatchObject({ id: "saved-line", included: true, modeTier: "premium", pricingMode: "sub_vendor",
+      rateSource: "configuration", ratePaise: 2500, quantity: 2 });
+  });
+
   it("keeps tier choices blocked after closing stale price information and editing quantity until a current read succeeds", async () => {
     const user = userEvent.setup(); const data = fixture(); data.failComparison(409); data.mount();
     await user.click(await screen.findByRole("button", { name: /^Tier price information for/ }));
@@ -131,7 +158,7 @@ describe("Sales estimate tier persistence", () => {
     expect(data.saves[1]!.lineItems[0]).toMatchObject({ modeTier: "signature", rateSource: "configuration", ratePaise: 2000 });
   });
 
-  it("requests comparison for current group quantities with source pins and flags unsaved manual prices without saving", async () => {
+  it("requests comparison for current group quantities with source pins and prevents unsaved manual prices", async () => {
     const user = userEvent.setup(); const data = fixture(); data.mount();
     await waitFor(() => expect(screen.getByRole("button", { name: /^Check tier comparison for/ })).toBeEnabled());
     await user.click(screen.getByRole("button", { name: /^Check tier comparison for/ }));
@@ -142,9 +169,11 @@ describe("Sales estimate tier persistence", () => {
         uomId: "unit", quantity: 2, pricingMode: "sub_vendor", modeTier: "signature", rateSource: "manual", manualRateChanged: false }] });
     await user.click(screen.getByRole("button", { name: "Close" }));
     const rate = screen.getByRole("textbox", { name: /Selling rate/ });
-    await user.clear(rate); await user.type(rate, "101.25");
+    expect(rate).toBeDisabled();
+    fireEvent.change(rate, { target: { value: "101.25" } });
+    expect(rate).toHaveValue("99");
     await user.click(screen.getByRole("button", { name: /^Check tier comparison for/ }));
-    await waitFor(() => expect(data.comparisons.at(-1)!.lines[0]).toMatchObject({ manualRateChanged: true }));
+    await waitFor(() => expect(data.comparisons.at(-1)!.lines[0]).toMatchObject({ manualRateChanged: false }));
     expect(data.saves).toEqual([]);
   });
 
@@ -227,7 +256,9 @@ describe("Sales estimate tier persistence", () => {
   });
 
   it("does not overwrite a later tier choice when an earlier save response arrives", async () => {
-    const user = userEvent.setup(); const data = fixture(); data.mount();
+    const user = userEvent.setup(); const data = fixture();
+    data.source.tierPricing!.functional!.modeBaseRatesPaise.sub_vendor = 1800;
+    data.mount();
     let finish!: () => void; data.pauseSave(new Promise(resolve => { finish = resolve; }));
     await screen.findByRole("radio", { name: /Premium tier for/ });
     await waitFor(() => expect(screen.getByRole("radio", { name: /Premium tier for/ })).toBeEnabled()); await user.click(screen.getByRole("radio", { name: /Premium tier for/ }));
@@ -236,10 +267,10 @@ describe("Sales estimate tier persistence", () => {
     await user.click(screen.getByRole("radio", { name: /Functional tier for/ }));
     await act(async () => { finish(); }); await screen.findByText("Estimate draft saved.");
     expect(screen.getByRole("radio", { name: /Functional tier for/ })).toBeChecked();
-    expect(screen.getByRole("textbox", { name: /Selling rate/ })).toHaveValue("0");
+    expect(screen.getByRole("textbox", { name: /Selling rate/ })).toHaveValue("18");
     await user.click(screen.getByRole("button", { name: "Save draft" }));
     await waitFor(() => expect(data.saves).toHaveLength(2));
-    expect(data.saves[1]).toMatchObject({ expectedVersion: 8, lineItems: [{ modeTier: "functional", ratePaise: 0 }] });
+    expect(data.saves[1]).toMatchObject({ expectedVersion: 8, lineItems: [{ modeTier: "functional", ratePaise: 1800 }] });
   });
 });
 

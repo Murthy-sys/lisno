@@ -95,7 +95,7 @@ export const QUOTATION_SCHEMAS = {
     choices: { type: "array", items: ref("EstimateTierChoice") } }),
   QuotationCandidates: { ...object({ items: { type: "array", items: ref("QuotationCandidate") }, total: { type: "integer", minimum: 0 },
     limit: { type: "integer", minimum: 1, maximum: 50 }, offset: { type: "integer", minimum: 0 } }),
-    description: "Eligible Client-visible current Configuration items across all Main Baskets, including unselected baskets. Hidden items are omitted before search, filtering and pagination; browsing does not select scope." },
+    description: "Eligible Client-visible current Configuration items across all Main Baskets, including unselected baskets. Hidden items and Main Lines without a configured base price greater than zero in any Configuration scope are omitted before search, filtering and pagination; browsing does not select scope." },
   QuotationRecommendationQuery: { ...object({ expectedVersion: version, roomId: id,
     sources: { type: "array", maxItems: 200, items: object({ mainLineId: id, source }) },
     limit: { type: "integer", minimum: 1, maximum: 20, default: 20 }, offset: { type: "integer", minimum: 0, maximum: 100_000, default: 0 } }, ["expectedVersion", "roomId", "sources"]),
@@ -103,7 +103,9 @@ export const QUOTATION_SCHEMAS = {
   QuotationRecommendations: object({ projectId: id, estimateId: id, estimateVersion: version, roomId: id,
     items: { type: "array", maxItems: 20, items: object({ candidate: ref("QuotationCandidate"),
       sourceMainLines: { type: "array", maxItems: 200, items: object({ mainLineId: id, name: text }) }, requiresSetup: { type: "boolean" } }) },
-    total: { type: "integer", minimum: 0 }, limit: { type: "integer", minimum: 1, maximum: 20 }, offset: { type: "integer", minimum: 0 } })
+    total: { type: "integer", minimum: 0 }, limit: { type: "integer", minimum: 1, maximum: 20 }, offset: { type: "integer", minimum: 0 },
+    reviewMessage: { type: "string", description: "Optional safe review message for a visible required item with no current configured base price greater than zero. It discloses no hidden identities or counts and does not mark the requirement complete." }
+  }, ["projectId", "estimateId", "estimateVersion", "roomId", "items", "total", "limit", "offset"])
 };
 export const QUOTATION_REQUESTS = {
   "POST /leads/:leadId/estimate/submit": request("QuotationPublish"),

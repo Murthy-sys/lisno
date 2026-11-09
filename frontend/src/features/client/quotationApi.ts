@@ -167,6 +167,8 @@ export interface QuotationRecommendations {
   estimateId: string;
   estimateVersion: number;
   roomId: string;
+  /** Current visible required targets can need review even when no new choice is offered. */
+  reviewMessage?: string;
   items: QuotationRecommendation[];
   total: number;
   limit: number;

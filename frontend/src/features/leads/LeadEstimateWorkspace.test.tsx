@@ -620,6 +620,7 @@ describe("LeadEstimateWorkspace", () => {
         items: [{ id: "basket-paint", name: "Painting", displayOrder: 1, subBaskets: [{ id: "sub-paint", basketId: "basket-paint", name: "Interior", displayOrder: 1,
           mainLines: [{ id: "line-paint", mainLineId: "line-paint", basketId: "basket-paint", subBasketId: "sub-paint", name: catalogueVersion === 1 ? "Old painting" : "Updated painting", displayOrder: 1,
             revisionId: catalogueVersion === 1 ? "revision-one" : "revision-two", inHouseBaseRatePaise: catalogueVersion === 1 ? 7500 : 9500,
+            modeBaseRatesPaise: { pmc: 7000, sub_vendor: catalogueVersion === 1 ? 7500 : 9500, in_house: 10000 },
             uom: { id: "uom-sqft", code: "SQFT", name: "sq ft", decimalScale: 2 } }] }] }],
         pagination: { limit: 100, offset: 0, total: 1, hasMore: false }, ineligibleLineCount: 0
       });
@@ -632,22 +633,23 @@ describe("LeadEstimateWorkspace", () => {
     const user = userEvent.setup();
     renderWorkspace(<RefetchSavedEstimate />);
     expect(await screen.findByRole("checkbox", { name: /Old painting/ })).toBeChecked();
-    await user.clear(screen.getByRole("textbox", { name: /Selling rate.*Old painting/ }));
-    await user.type(screen.getByRole("textbox", { name: /Selling rate.*Old painting/ }), "82");
+    expect(screen.getByRole("textbox", { name: /Selling rate.*Old painting/ })).toBeDisabled();
+    await user.clear(screen.getByRole("spinbutton", { name: /Quantity.*Old painting/ }));
+    await user.type(screen.getByRole("spinbutton", { name: /Quantity.*Old painting/ }), "2.5");
     catalogueVersion = 2;
     await user.click(screen.getByRole("button", { name: "Refetch saved estimate" }));
     await waitFor(() => expect(savedReads).toBe(2));
-    expect(screen.getByRole("textbox", { name: /Selling rate.*Old painting/ })).toHaveValue("82");
+    expect(screen.getByRole("textbox", { name: /Selling rate.*Old painting/ })).toHaveValue("80");
     await user.click(screen.getAllByRole("button", { name: "Refresh available items" })[0]!);
     expect(await screen.findByRole("checkbox", { name: /Updated painting/ })).toBeChecked();
-    expect(screen.getByRole("textbox", { name: /Selling rate.*Updated painting/ })).toHaveValue("82");
-    expect(screen.getByRole("spinbutton", { name: /Quantity.*Updated painting/ })).toHaveValue(2);
+    expect(screen.getByRole("textbox", { name: /Selling rate.*Updated painting/ })).toHaveValue("80");
+    expect(screen.getByRole("spinbutton", { name: /Quantity.*Updated painting/ })).toHaveValue(2.5);
     expect(screen.getByRole("radio", { name: /Special item type for Painting, Interior, Updated painting/ })).toBeChecked();
     await user.click(screen.getByRole("button", { name: "Save draft" }));
     await waitFor(() => expect(saves).toHaveLength(1));
     expect(saves[0]!.lineItems).toEqual(expect.arrayContaining([expect.objectContaining({
-      id: "saved-paint", mainLineId: "line-paint", revisionId: "revision-two", quantity: 2,
-      classification: "special", ratePaise: 8200
+      id: "saved-paint", mainLineId: "line-paint", revisionId: "revision-two", quantity: 2.5,
+      classification: "special", ratePaise: 8000
     })]));
     expect(saves[0]!.selectedMainBasketClassifications).toEqual([{ mainBasketId: "basket-paint", classification: "special" }]);
     await user.click(screen.getByRole("button", { name: /^(?:Save and edit|Edit|View) baskets$/ }));
@@ -655,11 +657,11 @@ describe("LeadEstimateWorkspace", () => {
     expect(screen.queryByText("Item type:")).not.toBeInTheDocument();
   });
 
-  it("builds a new estimate from configured baskets, keeps blank rates incomplete, and saves exact paise", async () => {
+  it("builds a new estimate from configured baskets with read-only prices and saves exact paise", async () => {
     const catalogue = {
       items: [{ id: "basket-joinery", name: "Joinery", displayOrder: 1, subBaskets: [{
         id: "sub-wardrobes", basketId: "basket-joinery", name: "Wardrobes", displayOrder: 1,
-        mainLines: [{ id: "line-carcass", mainLineId: "line-carcass", basketId: "basket-joinery", subBasketId: "sub-wardrobes", name: "Wardrobe carcass", displayOrder: 1, revisionId: "revision-3", uom: { id: "uom-sqft", code: "SQFT", name: "sq ft", decimalScale: 2 } }]
+        mainLines: [{ id: "line-carcass", mainLineId: "line-carcass", basketId: "basket-joinery", subBasketId: "sub-wardrobes", name: "Wardrobe carcass", displayOrder: 1, revisionId: "revision-3", modeBaseRatesPaise: { pmc: 9000, sub_vendor: 8005, in_house: 10000 }, uom: { id: "uom-sqft", code: "SQFT", name: "sq ft", decimalScale: 2 } }]
       }] }],
       pagination: { limit: 100, offset: 0, total: 1, hasMore: false }, ineligibleLineCount: 0
     };
@@ -741,23 +743,21 @@ describe("LeadEstimateWorkspace", () => {
     expect((await screen.findByRole("heading", { name: "Configure estimate" })).closest("header")).not.toContainElement(screen.getByRole("link", { name: "Back to Asha Shah" }));
     expect(screen.queryByRole("radio", { name: /item type for Main Basket/ })).not.toBeInTheDocument();
     expect(saves).toHaveLength(1);
-    expect(saves[0]!.lineItems).toEqual([expect.objectContaining({ mainLineId: "line-carcass", ratePaise: null, included: true })]);
+    expect(saves[0]!.lineItems).toEqual([expect.objectContaining({ mainLineId: "line-carcass", ratePaise: 8005, included: true })]);
     await user.click(screen.getByRole("button", { name: "Continue to item selection" }));
     expect(screen.getByRole("radio", { name: /Special item type for Joinery, Wardrobes, Wardrobe carcass in Living & Dining/ })).toBeChecked();
     await user.click(screen.getByRole("checkbox", { name: /Wardrobe carcass/ }));
     expect(screen.queryByRole("radio", { name: /Special item type for Joinery, Wardrobes, Wardrobe carcass in Living & Dining/ })).not.toBeInTheDocument();
     await addConfiguredItem(user, "Wardrobe carcass");
     expect(screen.getByRole("radio", { name: /Special item type for Joinery, Wardrobes, Wardrobe carcass in Living & Dining/ })).toBeChecked();
-    expect(screen.getByText("Rate required")).toBeVisible();
-    expect(screen.getByRole("button", { name: "Submit" })).toBeEnabled();
-    await user.click(screen.getByRole("button", { name: "Submit" }));
-    expect(screen.queryByRole("dialog", { name: "Before submitting your estimate" })).not.toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: /Selling rate.*Wardrobe carcass/ })).toBeDisabled();
+    expect(screen.getByRole("textbox", { name: /Selling rate.*Wardrobe carcass/ })).toHaveValue("80.05");
     await user.click(screen.getByRole("button", { name: "Save draft" }));
     await waitFor(() => expect(saves).toHaveLength(2));
     expect((saves[1]!.lineItems as Array<Record<string, unknown>>)[0]).toMatchObject({
       source: "configuration", catalogueId: "line-carcass", mainBasketId: "basket-joinery",
       subBasketId: "sub-wardrobes", mainLineId: "line-carcass", revisionId: "revision-3",
-      uomId: "uom-sqft", ratePaise: null, quantity: 1, included: true, classification: "special"
+      uomId: "uom-sqft", ratePaise: 8005, quantity: 1, included: true, classification: "special"
     });
     expect(saves[1]!.selectedMainBasketIds).toEqual(["basket-joinery"]);
     expect(saves[1]!.selectedMainBasketClassifications).toEqual([{ mainBasketId: "basket-joinery", classification: "standard" }]);
@@ -772,7 +772,8 @@ describe("LeadEstimateWorkspace", () => {
     await user.clear(quantity);
     await user.type(quantity, "1.25");
     const rate = screen.getByRole("textbox", { name: /Selling rate.*Wardrobe carcass/ });
-    await user.type(rate, "80.05");
+    expect(rate).toBeDisabled();
+    expect(rate).toHaveValue("80.05");
     expect(screen.getByRole("button", { name: "Submit" })).toBeEnabled();
     await user.click(screen.getByRole("button", { name: "Save draft" }));
     await waitFor(() => expect(saves).toHaveLength(3));
@@ -783,11 +784,11 @@ describe("LeadEstimateWorkspace", () => {
 
     await waitFor(() => expect(screen.getByRole("button", { name: "Save draft" })).toBeEnabled());
     conflictOnNextSave = true;
-    await user.clear(rate);
-    await user.type(rate, "90");
+    await user.clear(quantity);
+    await user.type(quantity, "2");
     await user.click(screen.getByRole("button", { name: "Save draft" }));
     expect(await screen.findByText("This estimate changed elsewhere. Reload the latest saved estimate before editing it again.")).toBeVisible();
-    expect(screen.getByRole("textbox", { name: /Selling rate.*Wardrobe carcass/ })).toHaveValue("90");
+    expect(screen.getByRole("textbox", { name: /Selling rate.*Wardrobe carcass/ })).toHaveValue("80.05");
     expect(screen.getByRole("button", { name: "Save draft" })).toBeDisabled();
     await user.click(screen.getByRole("button", { name: "Reload saved estimate (discard edits)" }));
     await waitFor(() => expect(screen.getByRole("textbox", { name: /Selling rate.*Wardrobe carcass/ })).toHaveValue("80.05"));
@@ -878,7 +879,7 @@ describe("LeadEstimateWorkspace", () => {
         const payload = JSON.parse(String(init?.body)) as Record<string, unknown>;
         saves.push(payload);
         savedEstimate = { ...payload, id: "estimate-preview", version: saves.length, status: "draft", approvalRequired: false,
-          subtotal: 297.19, gst: 53.49, total: 350.68,
+          subtotal: 225.5, gst: 40.59, total: 266.09,
           lineItems: (payload.lineItems as Array<Record<string, unknown>>).map((line) => {
             const source = catalogue.items[0]!.subBaskets[0]!.mainLines.find((entry) => entry.mainLineId === line.mainLineId)!;
             const amountPaise = line.included ? Math.round(Number(line.ratePaise) * Number(line.quantity)) : 0;
@@ -907,8 +908,9 @@ describe("LeadEstimateWorkspace", () => {
     await user.click(within(row()).getByRole("switch", { name: /PMC pricing mode/ }));
     const rate = within(row()).getByRole("textbox", { name: /Selling rate/ });
     expect(rate).toHaveValue("120");
-    await user.clear(rate);
-    await user.type(rate, "177.35");
+    expect(rate).toBeDisabled();
+    fireEvent.change(rate, { target: { value: "177.35" } });
+    expect(rate).toHaveValue("120");
     await user.clear(within(row()).getByRole("spinbutton", { name: /Quantity/ }));
     await user.type(within(row()).getByRole("spinbutton", { name: /Quantity/ }), "1.25");
     await user.click(within(row()).getByRole("checkbox"));
@@ -927,7 +929,7 @@ describe("LeadEstimateWorkspace", () => {
     await addConfiguredItem(user, "POP false ceiling");
     expect(within(row()).getByRole("radio", { name: /Special item type/ })).toBeChecked();
     expect(within(row()).getByRole("switch", { name: /PMC pricing mode/ })).toBeChecked();
-    expect(within(row()).getByRole("textbox", { name: /Selling rate/ })).toHaveValue("177.35");
+    expect(within(row()).getByRole("textbox", { name: /Selling rate/ })).toHaveValue("120");
     expect(screen.getByRole("checkbox", { name: /Cove in Gypsum/ })).not.toBeChecked();
     await user.click(within(row()).getByRole("checkbox"));
     await user.click(screen.getByRole("button", { name: /Bedroom 1.*₹0/ }));
@@ -938,12 +940,12 @@ describe("LeadEstimateWorkspace", () => {
     await user.click(screen.getByRole("button", { name: /Living & Dining.*₹0/ }));
     await addConfiguredItem(user, "POP false ceiling");
     await addConfiguredItem(user, "Cove in Gypsum");
-    expect(screen.getByText("₹297.19 total")).toBeVisible();
+    expect(screen.getByText("₹225.5 total")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Save draft" }));
     await screen.findByText("Estimate draft saved.");
     expect(saves[1]!.lineItems).toHaveLength(2);
     expect(saves[1]!.lineItems).toEqual(expect.arrayContaining([
-      expect.objectContaining({ mainLineId: "line-pop", classification: "special", pricingMode: "pmc", rateSource: "manual", ratePaise: 17735, quantity: 1.25, included: true }),
+      expect.objectContaining({ mainLineId: "line-pop", classification: "special", pricingMode: "pmc", rateSource: "configuration", ratePaise: 12000, quantity: 1.25, included: true }),
       expect.objectContaining({ mainLineId: "line-cove", classification: "standard", pricingMode: "sub_vendor", rateSource: "configuration", ratePaise: 7550, included: true })
     ]));
     view.unmount();
@@ -951,14 +953,14 @@ describe("LeadEstimateWorkspace", () => {
     await screen.findByText("POP false ceiling");
     await waitFor(() => expect(within(row()).getByRole("switch", { name: /PMC pricing mode/ })).toBeChecked());
     expect(within(row()).queryByRole("radio", { name: /pricing mode/ })).not.toBeInTheDocument();
-    expect(within(row()).getByRole("textbox", { name: /Selling rate/ })).toHaveValue("177.35");
+    expect(within(row()).getByRole("textbox", { name: /Selling rate/ })).toHaveValue("120");
     expect(saves).toHaveLength(2);
     await user.click(within(row()).getByRole("checkbox"));
     expect(screen.getByRole("checkbox", { name: /POP false ceiling/ })).not.toBeChecked();
     await user.click(screen.getByRole("button", { name: "Save draft" }));
     await screen.findByText("Estimate draft saved.");
     expect(saves[2]!.lineItems).toEqual(expect.arrayContaining([
-      expect.objectContaining({ mainLineId: "line-pop", classification: "special", pricingMode: "pmc", rateSource: "manual", ratePaise: 17735, included: false })
+      expect.objectContaining({ mainLineId: "line-pop", classification: "special", pricingMode: "pmc", rateSource: "configuration", ratePaise: 12000, included: false })
     ]));
   });
 
@@ -1188,10 +1190,10 @@ describe("LeadEstimateWorkspace", () => {
       items: [{ id: "basket-pop", name: "POP / Gypsum", displayOrder: 1, directTemporaryItems: [],
         subBaskets: [{ id: "sub-na", basketId: "basket-pop", name: "NA", displayOrder: 1,
           mainLines: [{ id: "line-pop", mainLineId: "line-pop", basketId: "basket-pop", subBasketId: "sub-na",
-            name: "POP false ceiling", displayOrder: 1, revisionId: "revision-pop", itemType: "main_line",
+            name: "POP false ceiling", displayOrder: 1, revisionId: "revision-pop", itemType: "main_line", modeBaseRatesPaise: { pmc: 1000, sub_vendor: 6000, in_house: 9000 },
             uom: { id: "uom-sq", code: "SQFT", name: "sq ft", decimalScale: 2 } }],
           temporaryItems: [{ id: "line-cove", mainLineId: "line-cove", basketId: "basket-pop", subBasketId: "sub-na",
-            name: "Cove in Gypsum", displayOrder: 2, revisionId: "revision-cove", itemType: "temporary",
+            name: "Cove in Gypsum", displayOrder: 2, revisionId: "revision-cove", itemType: "temporary", modeBaseRatesPaise: { pmc: 1500, sub_vendor: 2550, in_house: 3000 },
             uom: { id: "uom-rft", code: "RFT", name: "Rft", decimalScale: 1 } }]
         }] }]
     };
@@ -1231,13 +1233,14 @@ describe("LeadEstimateWorkspace", () => {
     let popRate = within(popRow).getByRole("textbox", { name: /Selling rate.*POP false ceiling/ });
     await user.clear(popQuantity);
     await user.type(popQuantity, "100");
-    await user.type(popRate, "60");
+    expect(popRate).toBeDisabled();
+    expect(popRate).toHaveValue("60");
     expect(within(popRow).getByRole("status", { name: /amount for/i })).toHaveTextContent("₹6,000");
     expect(screen.getByRole("button", { name: /Collapse POP \/ Gypsum, subtotal ₹6,000/ })).toBeVisible();
     expect(screen.getByText("₹6,000 total")).toBeVisible();
     expect(screen.getByRole("button", { name: "Save draft" })).toBeEnabled();
-    await user.clear(popRate);
-    await user.type(popRate, "1000000000000");
+    await user.clear(popQuantity);
+    await user.type(popQuantity, "10000000000000");
     expect(within(popRow).getByRole("status", { name: /amount for/i })).toHaveTextContent("Too large");
     expect(within(popRow).getByText("Amount too large for this quantity and price.")).toBeVisible();
     expect(screen.getByRole("button", { name: /Collapse POP \/ Gypsum, subtotal Incomplete/ })).toBeVisible();
@@ -1256,8 +1259,9 @@ describe("LeadEstimateWorkspace", () => {
     await user.click(screen.getByRole("button", { name: "Estimate Builder" }));
     popRow = screen.getByText("POP false ceiling").closest(".configured-estimate-line") as HTMLElement;
     popRate = within(popRow).getByRole("textbox", { name: /Selling rate.*POP false ceiling/ });
-    await user.clear(popRate);
-    await user.type(popRate, "60");
+    await user.clear(within(popRow).getByRole("spinbutton", { name: /Quantity/ }));
+    await user.type(within(popRow).getByRole("spinbutton", { name: /Quantity/ }), "100");
+    expect(popRate).toBeDisabled();
     expect(screen.getByRole("button", { name: "Save draft" })).toBeEnabled();
     await user.click(within(popRow).getByRole("checkbox", { name: /POP false ceiling/ }));
     expect(screen.getByRole("checkbox", { name: /POP false ceiling/ })).not.toBeChecked();
@@ -1270,7 +1274,8 @@ describe("LeadEstimateWorkspace", () => {
     const coveRate = within(coveRow).getByRole("textbox", { name: /Selling rate.*Cove in Gypsum/ });
     await user.clear(coveQuantity);
     await user.type(coveQuantity, "1.5");
-    await user.type(coveRate, "25.50");
+    expect(coveRate).toBeDisabled();
+    expect(coveRate).toHaveValue("25.5");
     expect(within(coveRow).getByRole("status", { name: /amount for/i })).toHaveTextContent("₹38.25");
 
     expect(screen.getByRole("button", { name: /Collapse POP \/ Gypsum, subtotal ₹38.25/ })).toBeVisible();
@@ -1298,10 +1303,10 @@ describe("LeadEstimateWorkspace", () => {
       items: [
         { id: "basket-empty", name: "General Items", displayOrder: 1, subBaskets: [{ id: "sub-empty", basketId: "basket-empty", name: "Miscellaneous", displayOrder: 1, mainLines: [], temporaryItems: [] }], directTemporaryItems: [] },
         { id: "basket-paint", name: "Painting", displayOrder: 2, directTemporaryItems: [
-          { id: "temporary-direct", mainLineId: "temporary-direct", itemType: "temporary", basketId: "basket-paint", subBasketId: null, name: "Site protection", displayOrder: 1, revisionId: "revision-direct", itemStatus: "draft", revisionStatus: "draft", itemVersion: 9, revisionVersion: 4, uom: { id: "uom-sqft", code: "SQFT", name: "sq ft", decimalScale: 2 } }
+          { id: "temporary-direct", mainLineId: "temporary-direct", itemType: "temporary", basketId: "basket-paint", subBasketId: null, name: "Site protection", displayOrder: 1, revisionId: "revision-direct", itemStatus: "draft", revisionStatus: "draft", itemVersion: 9, revisionVersion: 4, modeBaseRatesPaise: { pmc: null, sub_vendor: 8005, in_house: null }, uom: { id: "uom-sqft", code: "SQFT", name: "sq ft", decimalScale: 2 } }
         ], subBaskets: [{
           id: "sub-paint", basketId: "basket-paint", name: "Decorative paints", displayOrder: 1, mainLines: [], temporaryItems: [
-            { id: "temporary-grouped", mainLineId: "temporary-grouped", itemType: "temporary", basketId: "basket-paint", subBasketId: "sub-paint", name: "Finish sample", displayOrder: 1, revisionId: "revision-grouped", itemStatus: "inactive", revisionStatus: "active", itemVersion: 11, revisionVersion: 8, uom: { id: "uom-each", code: "NOS", name: "each", decimalScale: 0 } }
+            { id: "temporary-grouped", mainLineId: "temporary-grouped", itemType: "temporary", basketId: "basket-paint", subBasketId: "sub-paint", name: "Finish sample", displayOrder: 1, revisionId: "revision-grouped", itemStatus: "inactive", revisionStatus: "active", itemVersion: 11, revisionVersion: 8, modeBaseRatesPaise: { pmc: null, sub_vendor: 1100, in_house: null }, uom: { id: "uom-each", code: "NOS", name: "each", decimalScale: 0 } }
           ]
         }] }
       ], pagination: { limit: 100, offset: 0, total: 2, hasMore: false }, ineligibleLineCount: 0
@@ -1379,9 +1384,10 @@ describe("LeadEstimateWorkspace", () => {
     expect(screen.getByRole("radio", { name: /Standard item type for Painting, Decorative paints, Finish sample in Living & Dining/ })).toBeChecked();
     expect(screen.getByRole("button", { name: "Submit" })).toBeEnabled();
     await user.click(screen.getByRole("button", { name: "Submit" }));
-    expect(screen.queryByRole("dialog", { name: "Before submitting your estimate" })).not.toBeInTheDocument();
-    await user.type(screen.getByRole("textbox", { name: /Selling rate.*Site protection/ }), "80.05");
-    await user.type(screen.getByRole("textbox", { name: /Selling rate.*Finish sample/ }), "11");
+    expect(screen.getByRole("dialog", { name: "Before submitting your estimate" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.getByRole("textbox", { name: /Selling rate.*Site protection/ })).toBeDisabled();
+    expect(screen.getByRole("textbox", { name: /Selling rate.*Finish sample/ })).toBeDisabled();
     await user.clear(screen.getByRole("spinbutton", { name: /Quantity.*Site protection/ }));
     await user.type(screen.getByRole("spinbutton", { name: /Quantity.*Site protection/ }), "1.25");
     expect(screen.getByRole("button", { name: "Submit" })).toBeEnabled();
@@ -1429,7 +1435,10 @@ describe("LeadEstimateWorkspace", () => {
       expect.objectContaining({ id: "saved-0", itemType: "temporary", classification: "special", subBasketId: null, included: false, ratePaise: 8005 }),
       expect.objectContaining({ id: "saved-1", itemType: "temporary", classification: "standard", subBasketId: "sub-paint", included: false, ratePaise: 1100 })
     ]));
-    expect((saves[2]!.lineItems as Array<Record<string, unknown>>).every((line) => !("itemVersion" in line) && !("revisionVersion" in line))).toBe(true);
+    expect(saves[2]!.lineItems).toEqual(expect.arrayContaining([
+      expect.objectContaining({ mainLineId: "temporary-direct", itemVersion: 9, revisionVersion: 4 }),
+      expect.objectContaining({ mainLineId: "temporary-grouped", itemVersion: 11, revisionVersion: 8 })
+    ]));
 
     await user.click(screen.getByRole("button", { name: /^(?:Save and edit|Edit|View) baskets$/ }));
     await user.click(screen.getByRole("button", { name: /^(?:Add|Added) Painting$/ }));
@@ -1515,7 +1524,7 @@ describe("LeadEstimateWorkspace", () => {
         readyFlags.push(readyFlag);
         return readyFlag
           ? Response.json({ error: { code: "VALIDATION_ERROR", message: "Request validation failed.", fields: { includeReadyNonActive: "Unrecognized field" } } }, { status: 400 })
-          : response({ items: [{ id: "basket-active", name: "Active basket", displayOrder: 1, subBaskets: [{ id: "sub-active", basketId: "basket-active", name: "Painting", displayOrder: 1, mainLines: [{ id: "line-active", mainLineId: "line-active", basketId: "basket-active", subBasketId: "sub-active", name: "Wall paint", displayOrder: 1, revisionId: "revision-active", uom: { id: "uom-sqft", code: "SQFT", name: "Square foot", decimalScale: 2 } }] }] }], pagination: { limit: 100, offset: 0, total: 1, hasMore: false }, ineligibleLineCount: 0 });
+          : response({ items: [{ id: "basket-active", name: "Active basket", displayOrder: 1, subBaskets: [{ id: "sub-active", basketId: "basket-active", name: "Painting", displayOrder: 1, mainLines: [{ id: "line-active", mainLineId: "line-active", basketId: "basket-active", subBasketId: "sub-active", name: "Wall paint", displayOrder: 1, revisionId: "revision-active", modeBaseRatesPaise: { pmc: null, sub_vendor: 2000, in_house: null }, uom: { id: "uom-sqft", code: "SQFT", name: "Square foot", decimalScale: 2 } }] }] }], pagination: { limit: 100, offset: 0, total: 1, hasMore: false }, ineligibleLineCount: 0 });
       }
       if (url.endsWith("/leads/lead-1/estimate") && method === "PUT") {
         const payload = JSON.parse(String(init?.body)) as Record<string, unknown>;
@@ -1539,17 +1548,18 @@ describe("LeadEstimateWorkspace", () => {
     await user.click(screen.getByRole("button", { name: /^(?:Add|Added) Active basket$/ }));
     await user.click(screen.getByRole("button", { name: "Continue to item selection" }));
     await addConfiguredItem(user, "Wall paint");
-    await user.type(screen.getByRole("textbox", { name: /Selling rate.*Wall paint/ }), "20");
+    expect(screen.getByRole("textbox", { name: /Selling rate.*Wall paint/ })).toBeDisabled();
     await user.click(screen.getByRole("button", { name: "Save draft" }));
     expect(await screen.findByText("Estimate draft saved.")).toBeVisible();
     expect(saves).toHaveLength(1);
     expect((saves[0]!.lineItems as Array<Record<string, unknown>>)[0]).toMatchObject({ source: "configuration", mainBasketId: "basket-active", subBasketId: "sub-active", mainLineId: "line-active", ratePaise: 2000 });
     const rate = screen.getByRole("textbox", { name: /Selling rate.*Wall paint/ });
-    await user.clear(rate);
-    await user.type(rate, "25");
+    expect(rate).toBeDisabled();
+    await user.clear(screen.getByRole("spinbutton", { name: /Quantity.*Wall paint/ }));
+    await user.type(screen.getByRole("spinbutton", { name: /Quantity.*Wall paint/ }), "1.25");
     await user.click(screen.getByRole("button", { name: "Save draft" }));
     await waitFor(() => expect(saves).toHaveLength(2));
-    expect((saves[1]!.lineItems as Array<Record<string, unknown>>)[0]).toMatchObject({ id: "saved-active", ratePaise: 2500 });
+    expect((saves[1]!.lineItems as Array<Record<string, unknown>>)[0]).toMatchObject({ id: "saved-active", ratePaise: 2000, quantity: 1.25 });
     expect((saves[1]!.lineItems as Array<Record<string, unknown>>)[0]).not.toHaveProperty("itemType");
     expect((saves[1]!.lineItems as Array<Record<string, unknown>>)[0]).not.toHaveProperty("itemVersion");
     expect((saves[1]!.lineItems as Array<Record<string, unknown>>)[0]).not.toHaveProperty("revisionVersion");
@@ -1595,7 +1605,7 @@ describe("LeadEstimateWorkspace", () => {
       id: "basket-pop", name: "POP / Gypsum", displayOrder: 1, directTemporaryItems: [],
       subBaskets: [{ id: "sub-na", basketId: "basket-pop", name: "NA", displayOrder: 1, mainLines: [], temporaryItems: [{
         id: "temporary-cove", mainLineId: "temporary-cove", itemType: "temporary", basketId: "basket-pop", subBasketId: "sub-na", name: "Cove in Gypsum", displayOrder: 1,
-        revisionId: revisionVersion === 2 ? "revision-cove" : "revision-cove-next", itemStatus: "draft", revisionStatus: "draft", itemVersion: 5, revisionVersion,
+        revisionId: revisionVersion === 2 ? "revision-cove" : "revision-cove-next", itemStatus: "draft", revisionStatus: "draft", itemVersion: 5, revisionVersion, modeBaseRatesPaise: { pmc: null, sub_vendor: 2000, in_house: null },
         uom: revisionVersion === 2
           ? { id: "uom-rft", code: "RFT", name: "Running foot", decimalScale: 2 }
           : { id: "uom-sqft", code: "SQFT", name: "Square foot", decimalScale: 2 }
@@ -1630,7 +1640,7 @@ describe("LeadEstimateWorkspace", () => {
     await user.click(screen.getByRole("button", { name: /^(?:Add|Added) POP \/ Gypsum$/ }));
     await user.click(screen.getByRole("button", { name: "Continue to item selection" }));
     await addConfiguredItem(user, "Cove in Gypsum");
-    await user.type(screen.getByRole("textbox", { name: /Selling rate.*Cove in Gypsum/ }), "20");
+    expect(screen.getByRole("textbox", { name: /Selling rate.*Cove in Gypsum/ })).toBeDisabled();
     await user.click(screen.getByRole("button", { name: "Save draft" }));
     expect(await screen.findByText(/Configuration changed since you opened this estimate/)).toBeVisible();
     expect((saves[0]!.lineItems as Array<Record<string, unknown>>)[0]).toMatchObject({ itemVersion: 5, revisionVersion: 2 });
@@ -1652,7 +1662,7 @@ describe("LeadEstimateWorkspace", () => {
 
   it("separates a missing new selection from saved unavailable items and blocks its first save", async () => {
     const temporaryItem = { id: "temporary-cove", mainLineId: "temporary-cove", itemType: "temporary", basketId: "basket-pop", subBasketId: "sub-na", name: "Cove in Gypsum", displayOrder: 1,
-      revisionId: "revision-cove", itemStatus: "inactive", revisionStatus: "active", itemVersion: 5, revisionVersion: 2,
+      revisionId: "revision-cove", itemStatus: "inactive", revisionStatus: "active", itemVersion: 5, revisionVersion: 2, modeBaseRatesPaise: { pmc: null, sub_vendor: 2000, in_house: null },
       uom: { id: "uom-rft", code: "RFT", name: "Running foot", decimalScale: 2 } };
     let catalogueReads = 0;
     let saveRequests = 0;
@@ -1680,7 +1690,7 @@ describe("LeadEstimateWorkspace", () => {
     await user.click(screen.getByRole("button", { name: /^(?:Add|Added) POP \/ Gypsum$/ }));
     await user.click(screen.getByRole("button", { name: "Continue to item selection" }));
     await addConfiguredItem(user, "Cove in Gypsum");
-    await user.type(screen.getByRole("textbox", { name: /Selling rate.*Cove in Gypsum/ }), "20");
+    expect(screen.getByRole("textbox", { name: /Selling rate.*Cove in Gypsum/ })).toBeDisabled();
     await user.click(screen.getAllByRole("button", { name: "Refresh available items" })[0]!);
     const unavailable = await screen.findByRole("region", { name: "Unavailable new selections" });
     expect(within(unavailable).getByRole("checkbox", { name: /Cove in Gypsum/ })).toBeChecked();
@@ -1697,9 +1707,9 @@ describe("LeadEstimateWorkspace", () => {
       { id: "sub-na", basketId: "basket-pop", name: "NA", displayOrder: 1, mainLines: [], temporaryItems: [] }
     ] };
     const populatedBasket = { ...emptyBasket,
-      directTemporaryItems: [{ id: "direct-protection", mainLineId: "direct-protection", basketId: "basket-pop", subBasketId: null, itemType: "temporary", name: "Site protection", displayOrder: 1, revisionId: "revision-direct", uom: { id: "uom-each", code: "NOS", name: "each", decimalScale: 0 } }],
+      directTemporaryItems: [{ id: "direct-protection", mainLineId: "direct-protection", basketId: "basket-pop", subBasketId: null, itemType: "temporary", name: "Site protection", displayOrder: 1, revisionId: "revision-direct", modeBaseRatesPaise: { pmc: null, sub_vendor: 1100, in_house: null }, uom: { id: "uom-each", code: "NOS", name: "each", decimalScale: 0 } }],
       subBaskets: [{ ...emptyBasket.subBaskets[0]!, mainLines: [
-        { id: "line-gypsum", mainLineId: "line-gypsum", basketId: "basket-pop", subBasketId: "sub-na", itemType: "main_line", name: "Gypsum finishing", displayOrder: 1, revisionId: "revision-line", uom: { id: "uom-sqft", code: "SQFT", name: "sq ft", decimalScale: 2 } }
+        { id: "line-gypsum", mainLineId: "line-gypsum", basketId: "basket-pop", subBasketId: "sub-na", itemType: "main_line", name: "Gypsum finishing", displayOrder: 1, revisionId: "revision-line", modeBaseRatesPaise: { pmc: null, sub_vendor: 2000, in_house: null }, uom: { id: "uom-sqft", code: "SQFT", name: "sq ft", decimalScale: 2 } }
       ] }]
     };
     const pendingRefresh = deferred<Response>();
@@ -2373,7 +2383,7 @@ describe("property-aware estimate setup", () => {
   });
 });
 
-it("saves and restores only explicitly selected In-house component IDs", async () => {
+it.each([false, true])("saves and restores only explicitly selected In-house component IDs with refresh before Remove: %s", async refreshBeforeRemove => {
   const components = [
     { id: "base", basketId: "basket-pop", basketName: "Ceilings", subBasketId: "sub-na", subBasketName: "Framework", baseRatePaise: 1200 },
     { id: "paint", basketId: "basket-paint", basketName: "Painting", subBasketId: "sub-paint", subBasketName: "Finish", baseRatePaise: 800 }
@@ -2400,8 +2410,8 @@ it("saves and restores only explicitly selected In-house component IDs", async (
     if (url.endsWith("/leads/lead-1/estimate") && method === "PUT") {
       const payload = JSON.parse(String(init?.body)) as Record<string, unknown>;
       saves.push(payload);
-      savedEstimate = { ...payload, id: "estimate-components", version: saves.length, status: "draft", approvalRequired: false, subtotal: 15.01, gst: 2.70, total: 17.71,
-        lineItems: (payload.lineItems as Array<Record<string, unknown>>).map((line) => ({ ...line, id: "saved-pop", mainBasketName: "POP / Gypsum", subBasketName: "NA", mainLineName: "POP false ceiling", uomCode: "SQFT", uomName: "sq ft", uomDecimalScale: 2, unit: "sq ft", rate: null, ratePaise: null, amountPaise: 1501, amount: 15.01, sourceItemVersion: 1, sourceRevisionVersion: 1, componentPricing: pricingFor(line) })) };
+      savedEstimate = { ...payload, id: "estimate-components", version: saves.length, status: "draft", approvalRequired: false, subtotal: (payload.lineItems as Array<Record<string, unknown>>).some(line => line.included) ? 15.01 : 0, gst: (payload.lineItems as Array<Record<string, unknown>>).some(line => line.included) ? 2.70 : 0, total: (payload.lineItems as Array<Record<string, unknown>>).some(line => line.included) ? 17.71 : 0,
+        lineItems: (payload.lineItems as Array<Record<string, unknown>>).map((line) => ({ ...line, id: "saved-pop", mainBasketName: "POP / Gypsum", subBasketName: "NA", mainLineName: "POP false ceiling", uomCode: "SQFT", uomName: "sq ft", uomDecimalScale: 2, unit: "sq ft", rate: null, ratePaise: null, amountPaise: line.included ? 1501 : 0, amount: line.included ? 15.01 : 0, sourceItemVersion: 1, sourceRevisionVersion: 1, componentPricing: pricingFor(line) })) };
       return response(savedEstimate);
     }
     throw new Error(`Unexpected request: ${method} ${url}`);
@@ -2420,7 +2430,7 @@ it("saves and restores only explicitly selected In-house component IDs", async (
   expect(within(choices).getByRole("checkbox", { name: /Ceilings \/ Framework/ })).not.toBeChecked();
   expect(screen.getByRole("button", { name: "Save draft" })).toBeDisabled();
   await user.click(within(choices).getByRole("checkbox", { name: /Ceilings \/ Framework/ }));
-  expect(screen.getByRole("textbox", { name: /Selling rate.*POP false ceiling/ })).toHaveValue("");
+  expect(screen.getByRole("textbox", { name: /Selling rate.*POP false ceiling/ })).toBeDisabled();
   await waitFor(() => expect(screen.getByRole("button", { name: "Save draft" })).toBeEnabled());
   expect(screen.getByLabelText(/Amount for.*POP false ceiling/)).toHaveTextContent("₹15.01");
   await user.click(screen.getByRole("button", { name: "Save draft" }));
@@ -2433,4 +2443,55 @@ it("saves and restores only explicitly selected In-house component IDs", async (
   expect(within(restored).getByRole("checkbox", { name: /Ceilings \/ Framework/ })).toBeChecked();
   expect(within(restored).getByRole("checkbox", { name: /Painting \/ Finish/ })).not.toBeChecked();
   expect(within(restored).getByRole("checkbox", { name: /Painting \/ Added later/ })).not.toBeChecked();
+  if (refreshBeforeRemove) {
+    const source = catalogue.items[0]!.subBaskets[0]!.mainLines[0]!;
+    source.itemVersion = 2; source.revisionVersion = 2;
+    Object.assign(components[0]!, { unavailableReason: "Unavailable after Configuration refresh" });
+    await user.click(screen.getByRole("button", { name: "Refresh available items" }));
+    await screen.findByText("Review unavailable selected In-house components.");
+  }
+  await user.click(screen.getByRole("checkbox", { name: /Include POP false ceiling in/ }));
+  expect(screen.getByRole("checkbox", { name: /Include POP false ceiling in/ })).not.toBeChecked();
+  await user.click(screen.getByRole("button", { name: "Save draft" }));
+  await waitFor(() => expect(saves).toHaveLength(2));
+  expect((saves[1]!.lineItems as unknown[])[0]).toMatchObject({ id: "saved-pop", mainLineId: "line-pop", included: false,
+    selectedInHouseComponentIds: ["base"], pricingMode: "in_house", modeTier: "signature", ratePaise: null,
+    rateSource: "configuration", pricingBasis: "in_house_components_v1", componentPricingFingerprint: "a".repeat(64) });
+
+  if (refreshBeforeRemove) expect((saves[1]!.lineItems as unknown[])[0]).toMatchObject({ itemVersion: 2, revisionVersion: 2 });
+
+});
+
+
+it("saves the real legacy row ID through edits, save-response merge and reload without substituting its UI key", async () => {
+  const base = estimateFixture("draft");
+  let stored = { ...base, version: 4, lineItems: base.lineItems.map(line => ({ ...line, id: "legacy-real-saved-id" })) };
+  const saves: Array<Record<string, unknown>> = [];
+  vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = String(input), method = init?.method ?? "GET";
+    if (url.endsWith("/leads/lead-1")) return response(leadFixture);
+    if (url.endsWith("/leads/lead-1/estimate") && method === "GET") return response(stored);
+    if (url.endsWith("/leads/lead-1/estimate") && method === "PUT") {
+      const body = JSON.parse(String(init?.body));
+      saves.push(body);
+      stored = { ...stored, ...body, version: stored.version + 1 };
+      return response(stored);
+    }
+    throw new Error(`Unexpected request: ${method} ${url}`);
+  });
+  const user = userEvent.setup(), view = renderWorkspace();
+  const quantity = await screen.findByRole("spinbutton", { name: /quantity/i });
+  await user.clear(quantity); await user.type(quantity, "201");
+  await user.click(screen.getByRole("button", { name: "Save draft" }));
+  await screen.findByText("Estimate draft saved.");
+  expect(saves[0]!.lineItems).toEqual([expect.objectContaining({ source: "legacy", id: "legacy-real-saved-id", catalogueId: "FC01", quantity: 201, rate: 95 })]);
+  await waitFor(() => expect(screen.getByRole("button", { name: "Save draft" })).toBeEnabled());
+  await user.click(screen.getByRole("button", { name: "Save draft" }));
+  await waitFor(() => expect(saves).toHaveLength(2));
+  expect((saves[1]!.lineItems as Array<Record<string, unknown>>)[0]!.id).toBe("legacy-real-saved-id");
+  view.unmount(); renderWorkspace();
+  expect(await screen.findByRole("spinbutton", { name: /quantity/i })).toHaveValue(201);
+  await user.click(screen.getByRole("button", { name: "Save draft" }));
+  await waitFor(() => expect(saves).toHaveLength(3));
+  expect((saves[2]!.lineItems as Array<Record<string, unknown>>)[0]!.id).toBe("legacy-real-saved-id");
 });

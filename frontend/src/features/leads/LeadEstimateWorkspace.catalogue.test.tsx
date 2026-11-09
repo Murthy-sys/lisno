@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithQuery } from "../../test/render";
 import { LeadEstimateWorkspace } from "./LeadEstimateWorkspace";
 import { leadKeys, type ConfiguredEstimateLine, type EstimateDraft, type EstimateDraftInput } from "./leadsApi";
-import type { EstimationCatalogue } from "./estimationCatalogueApi";
+import { estimationCatalogueKeys, type EstimationCatalogue } from "./estimationCatalogueApi";
 
 const authState = vi.hoisted(() => ({ role: "estimator_sales" }));
 vi.mock("../../auth/AuthProvider", () => ({ useAuth: () => ({ user: { id: "staff", role: authState.role }, status: "authenticated" }) }));
@@ -47,12 +47,15 @@ function setup(status: EstimateDraft["status"] = "draft", withSavedLine = false,
     subtotal: withSavedLine ? 198 : 0, gst: withSavedLine ? 35.64 : 0, total: withSavedLine ? 233.64 : 0, status, approvalRequired: false, ...overrides };
   const saves: EstimateDraftInput[] = [];
   const requests: Array<{ method: string; url: string }> = [];
+  let catalogueUnavailable = false;
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input), method = init?.method ?? "GET";
     requests.push({ method, url });
     if (url.endsWith("/leads/lead")) return json({ id: "lead", clientName: "Client", projectName: "Home", location: "Pune", propertyType: "2BHK" });
     if (url.endsWith("/leads/lead/estimate") && method === "GET") return json(stored);
-    if (url.includes("/estimation/catalogue?")) return json({ ...catalogue, pagination: { total: 2, offset: 0, limit: 100, hasMore: false } });
+    if (url.includes("/estimation/catalogue?")) return catalogueUnavailable
+      ? Response.json({ error: { code: "UNAVAILABLE", message: "Catalogue unavailable" } }, { status: 503 })
+      : json({ ...catalogue, pagination: { total: 2, offset: 0, limit: 100, hasMore: false } });
     if (url.includes("/estimation/catalogue/recommendations?")) return json({ sources: [] });
     if (url.endsWith("/leads/lead/estimate") && method === "PUT") {
       const body = JSON.parse(String(init?.body)) as EstimateDraftInput;
@@ -71,7 +74,8 @@ function setup(status: EstimateDraft["status"] = "draft", withSavedLine = false,
     </Routes></MemoryRouter>);
     return { ...view, client: () => client };
   };
-  return { mount, saves, requests, newerSavedRevision: () => { stored = { ...stored, version: stored.version! + 1 }; } };
+  return { mount, saves, requests, catalogue, failCatalogue: () => { catalogueUnavailable = true; },
+    newerSavedRevision: () => { stored = { ...stored, version: stored.version! + 1 }; } };
 }
 
 async function openEmptyBuilder(user: ReturnType<typeof userEvent.setup>) {
@@ -81,6 +85,47 @@ async function openEmptyBuilder(user: ReturnType<typeof userEvent.setup>) {
 }
 
 describe("Sales direct catalogue browsing", () => {
+  it("uses first and last saved base metadata on refresh across rooms without saving hidden previews", async () => {
+    const fixture = setup();
+    const source = fixture.catalogue.items[0]!.subBaskets[0]!.mainLines[0]!;
+    source.hasConfiguredBasePrice = false;
+    fixture.catalogue.items[1]!.subBaskets[0]!.mainLines[0]!.hasConfiguredBasePrice = true;
+    const view = fixture.mount(), user = userEvent.setup();
+    await openEmptyBuilder(user);
+    expect(screen.queryByRole("checkbox", { name: /Gypsum ceiling/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: /Wall paint/ })).toBeVisible();
+    await user.type(screen.getByRole("searchbox", { name: "Search estimate items" }), "Gypsum ceiling");
+    expect(screen.getByText(/No available items match/)).toBeVisible();
+    source.hasConfiguredBasePrice = true;
+    await act(async () => { await view.client().refetchQueries({ queryKey: estimationCatalogueKeys.ready }); });
+    expect(await screen.findByRole("checkbox", { name: /Gypsum ceiling/ })).not.toBeChecked();
+    await user.click(within(screen.getByRole("navigation", { name: "Rooms" })).getByRole("button", { name: /Kitchen/ }));
+    expect(screen.getByRole("checkbox", { name: /Gypsum ceiling/ })).not.toBeChecked();
+    source.hasConfiguredBasePrice = false;
+    await act(async () => { await view.client().refetchQueries({ queryKey: estimationCatalogueKeys.ready }); });
+    await waitFor(() => expect(screen.queryByRole("checkbox", { name: /Gypsum ceiling/ })).not.toBeInTheDocument());
+    expect(fixture.saves).toEqual([]);
+    expect(fixture.requests.every(request => request.method === "GET")).toBe(true);
+  });
+
+  it("keeps a saved unpriced selection and amount reviewable after a failed current read without a write", async () => {
+    const fixture = setup("draft", true), source = fixture.catalogue.items[0]!.subBaskets[0]!.mainLines[0]!;
+    source.hasConfiguredBasePrice = false;
+    const view = fixture.mount();
+    const review = await screen.findByRole("region", { name: "Items without a positive base price" });
+    expect(within(review).getByRole("checkbox", { name: /Gypsum ceiling/ })).toBeChecked();
+    expect(within(review).getByRole("textbox", { name: /Selling rate.*Gypsum ceiling/ })).toHaveValue("99");
+    expect(within(review).getByRole("spinbutton", { name: /Quantity.*Gypsum ceiling/ })).toHaveValue(2);
+    expect(screen.getByLabelText("Estimate amount before GST: ₹198")).toBeVisible();
+    fixture.failCatalogue();
+    await act(async () => { await view.client().refetchQueries({ queryKey: estimationCatalogueKeys.ready }); });
+    expect(await screen.findByText("Available items could not be refreshed. The last loaded catalogue is shown. Try again.")).toBeVisible();
+    expect(within(screen.getByRole("region", { name: "Items without a positive base price" })).getByRole("checkbox", { name: /Gypsum ceiling/ })).toBeChecked();
+    expect(screen.getByLabelText("Estimate amount before GST: ₹198")).toBeVisible();
+    expect(fixture.saves).toEqual([]);
+    expect(fixture.requests.every(request => request.method === "GET")).toBe(true);
+  });
+
   it("shows both selected baskets immediately without changing dirty state or saving previews", async () => {
     const fixture = setup(); fixture.mount(); const user = userEvent.setup();
     await openEmptyBuilder(user);
@@ -105,6 +150,7 @@ describe("Sales direct catalogue browsing", () => {
     await openEmptyBuilder(user);
     fireEvent.change(screen.getByRole("spinbutton", { name: /Quantity.*Gypsum ceiling/ }), { target: { value: "7" } });
     fireEvent.change(screen.getByRole("textbox", { name: /Selling rate.*Gypsum ceiling/ }), { target: { value: "123.45" } });
+    expect(screen.getByRole("textbox", { name: /Selling rate.*Gypsum ceiling/ })).toBeDisabled();
     expect(screen.getByRole("checkbox", { name: /Gypsum ceiling/ })).not.toBeChecked();
     expect(screen.getByRole("button", { name: "Save and edit baskets" })).toBeVisible();
     await user.click(within(screen.getByRole("navigation", { name: "Rooms" })).getByRole("button", { name: /Kitchen/ }));
@@ -113,7 +159,7 @@ describe("Sales direct catalogue browsing", () => {
     const search = screen.getByRole("searchbox", { name: "Search estimate items" });
     await user.type(search, "paint"); await user.clear(search);
     expect(screen.getByRole("spinbutton", { name: /Quantity.*Gypsum ceiling/ })).toHaveValue(7);
-    expect(screen.getByRole("textbox", { name: /Selling rate.*Gypsum ceiling/ })).toHaveValue("123.45");
+    expect(screen.getByRole("textbox", { name: /Selling rate.*Gypsum ceiling/ })).toHaveValue("20");
     await user.click(screen.getByRole("checkbox", { name: /Gypsum ceiling/ }));
     expect(screen.getByRole("checkbox", { name: /Wall paint/ })).not.toBeChecked();
     await user.click(screen.getByRole("checkbox", { name: /Gypsum ceiling/ }));
@@ -122,10 +168,10 @@ describe("Sales direct catalogue browsing", () => {
     await user.click(screen.getByRole("button", { name: "Save draft" }));
     await screen.findByText("Estimate draft saved.");
     expect(fixture.saves).toHaveLength(1);
-    expect(fixture.saves[0]!.lineItems).toEqual([expect.objectContaining({ roomId: "living", mainLineId: "ceiling", quantity: 7, ratePaise: 12345, included: true, rateSource: "manual" })]);
+    expect(fixture.saves[0]!.lineItems).toEqual([expect.objectContaining({ roomId: "living", mainLineId: "ceiling", quantity: 7, ratePaise: 2000, included: true, rateSource: "configuration" })]);
     view.unmount(); fixture.mount();
     expect(await screen.findByRole("spinbutton", { name: /Quantity.*Gypsum ceiling/ })).toHaveValue(7);
-    expect(screen.getByRole("textbox", { name: /Selling rate.*Gypsum ceiling/ })).toHaveValue("123.45");
+    expect(screen.getByRole("textbox", { name: /Selling rate.*Gypsum ceiling/ })).toHaveValue("20");
     expect(screen.getByRole("checkbox", { name: /Wall paint/ })).not.toBeChecked();
   });
 

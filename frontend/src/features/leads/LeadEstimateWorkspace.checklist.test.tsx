@@ -461,13 +461,14 @@ describe("Estimator submission checklist integration", () => {
     await waitFor(() => expect(feedback).toHaveFocus());
   });
 
-  it("invalidates a raw configured price edit even when its numeric saved value is unchanged", async () => {
+  it("ignores a raw price-edit attempt without invalidating an unchanged checklist", async () => {
     const data = setup({ configured: true }); const user = userEvent.setup();
     await openChecklist(user); await completeChecklist(user);
     const rate = screen.getByRole("textbox", { name: /Selling rate.*Ceiling finish/, hidden: true });
     fireEvent.change(rate, { target: { value: "095.00" } });
-    await waitFor(() => expect(screen.queryByRole("dialog", { name: title })).not.toBeInTheDocument());
-    expect(rate).toHaveValue("095.00");
+    expect(rate).toBeDisabled();
+    expect(screen.getByRole("dialog", { name: title })).toBeInTheDocument();
+    expect(rate).toHaveValue("95");
     expect(data.writes).toEqual([]);
   });
 

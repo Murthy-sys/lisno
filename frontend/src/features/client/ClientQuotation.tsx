@@ -529,7 +529,8 @@ function ClientQuotationRecommendations({ projectId, detail, roomId, roomName, r
   return <EstimateRecommendations roomName={roomName} contextKey={contextKey} state={state} disabled={disabled}
     total={state === "ready" && responseMatches ? response!.total : 0} offset={currentOffset}
     onOffsetChange={value => { setPageContext(contextKey); setOffset(value); }}
-    message={sources.length > 200 ? "Recommendations support up to 200 selected source items in a room. Your estimate selections are preserved." : undefined}
+    message={sources.length > 200 ? "Recommendations support up to 200 selected source items in a room. Your estimate selections are preserved."
+      : state === "ready" && responseMatches ? response?.reviewMessage : undefined}
     onRetry={sources.length <= 200 ? () => void query.refetch() : undefined}
     items={recommendations.map(recommendation => {
       const saved = selected.get(recommendation.candidate.mainLineId);

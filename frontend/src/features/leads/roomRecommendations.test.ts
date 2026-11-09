@@ -8,14 +8,14 @@ import { buildRoomRecommendations, partitionRoomRecommendationSources, recommend
 const uom = { id: "uom-sqft", code: "SQFT", name: "sq ft", decimalScale: 2 };
 const catalogue: EstimationCatalogue = { ineligibleLineCount: 0, items: [
   { id: "basket-pop", name: "POP / Gypsum", displayOrder: 1, subBaskets: [{ id: "sub-ceiling", basketId: "basket-pop", name: "False Ceiling", displayOrder: 1, mainLines: [
-    { id: "line-pop", mainLineId: "line-pop", basketId: "basket-pop", subBasketId: "sub-ceiling", name: "POP false ceiling", displayOrder: 1, revisionId: "rev-pop", revisionVersion: 2, itemVersion: 3, uom },
-    { id: "line-functional", mainLineId: "line-functional", basketId: "basket-pop", subBasketId: "sub-ceiling", name: "Functional Lights", displayOrder: 2, revisionId: "rev-functional", revisionVersion: 1, itemVersion: 1, uom }
+    { id: "line-pop", mainLineId: "line-pop", basketId: "basket-pop", subBasketId: "sub-ceiling", name: "POP false ceiling", displayOrder: 1, revisionId: "rev-pop", revisionVersion: 2, itemVersion: 3, uom, modeBaseRatesPaise: { pmc: 900, sub_vendor: 1200, in_house: 1500 } },
+    { id: "line-functional", mainLineId: "line-functional", basketId: "basket-pop", subBasketId: "sub-ceiling", name: "Functional Lights", displayOrder: 2, revisionId: "rev-functional", revisionVersion: 1, itemVersion: 1, uom, modeBaseRatesPaise: { pmc: 900, sub_vendor: 1200, in_house: 1500 } }
   ] }] },
   { id: "basket-paint", name: "Painting", displayOrder: 2, subBaskets: [{ id: "sub-paint", basketId: "basket-paint", name: "Ceiling finish", displayOrder: 1, mainLines: [
-    { id: "line-paint", mainLineId: "line-paint", basketId: "basket-paint", subBasketId: "sub-paint", name: "False ceiling painting", displayOrder: 1, revisionId: "rev-paint", revisionVersion: 1, itemVersion: 1, uom }
-  ], temporaryItems: [{ id: "line-accent", mainLineId: "line-accent", itemType: "temporary", basketId: "basket-paint", subBasketId: "sub-paint", name: "Accent finish", displayOrder: 2, revisionId: "rev-accent", revisionVersion: 1, itemVersion: 1, uom }] }] },
+    { id: "line-paint", mainLineId: "line-paint", basketId: "basket-paint", subBasketId: "sub-paint", name: "False ceiling painting", displayOrder: 1, revisionId: "rev-paint", revisionVersion: 1, itemVersion: 1, uom, modeBaseRatesPaise: { pmc: 900, sub_vendor: 1200, in_house: 1500 } }
+  ], temporaryItems: [{ id: "line-accent", mainLineId: "line-accent", itemType: "temporary", basketId: "basket-paint", subBasketId: "sub-paint", name: "Accent finish", displayOrder: 2, revisionId: "rev-accent", revisionVersion: 1, itemVersion: 1, uom, modeBaseRatesPaise: { pmc: 900, sub_vendor: 1200, in_house: 1500 } }] }] },
   { id: "basket-duplicate", name: "Other finish", displayOrder: 3, subBaskets: [{ id: "sub-other", basketId: "basket-duplicate", name: "Other", displayOrder: 1, mainLines: [
-    { id: "line-same-name", mainLineId: "line-same-name", basketId: "basket-duplicate", subBasketId: "sub-other", name: "False ceiling painting", displayOrder: 1, revisionId: "rev-other", revisionVersion: 1, itemVersion: 1, uom }
+    { id: "line-same-name", mainLineId: "line-same-name", basketId: "basket-duplicate", subBasketId: "sub-other", name: "False ceiling painting", displayOrder: 1, revisionId: "rev-other", revisionVersion: 1, itemVersion: 1, uom, modeBaseRatesPaise: { pmc: 900, sub_vendor: 1200, in_house: 1500 } }
   ] }] }
 ] };
 const rooms = [{ id: "room-one", label: "Living room" }, { id: "room-two", label: "Bedroom" }];
@@ -40,6 +40,69 @@ const recommendations: EstimationCatalogueRecommendations = { sources: [
 ] };
 
 describe("room recommendations", () => {
+  it("retains unpriced selected source obligations but hides unpriced new direct targets without a stale mismatch", () => {
+    const current = structuredClone(catalogue);
+    current.items[0]!.subBaskets[0]!.mainLines[0]!.hasConfiguredBasePrice = false;
+    current.items[1]!.subBaskets[0]!.mainLines[0]!.hasConfiguredBasePrice = false;
+    const partition = partitionRoomRecommendationSources({ catalogue: current, lines: sourceLines, roomId: "room-one" });
+    expect(partition.current.map(line => line.mainLineId)).toContain("line-pop");
+    const result = buildRoomRecommendations({ catalogue: current, lines: sourceLines, roomId: "room-one", recommendations });
+    expect(result.stale).toBe(false);
+    expect(result.decisions).toHaveLength(1);
+    expect(result.decisions[0]).toMatchObject({ available: false, selected: false, target: null });
+    expect(result.decisions[0]!.reasons).toHaveLength(2);
+    expect(recommendationLines(result.decisions)).toEqual([]);
+  });
+
+  it("keeps selected unpriced targets removable in their room while hiding new choices in another room", () => {
+    const current = structuredClone(catalogue);
+    current.items[1]!.subBaskets[0]!.mainLines[0]!.hasConfiguredBasePrice = false;
+    const lines = sourceLines.map(line => line.roomId === "room-one" && line.mainLineId === "line-paint" ? { ...line, included: true } : line);
+    const response = { sources: [...recommendations.sources,
+      { mainLineId: "line-paint", available: true, revisionId: "rev-paint", revisionVersion: 1, itemVersion: 1, rules: [], guidance: [] }] };
+    const result = buildRoomRecommendations({ catalogue: current, lines, roomId: "room-one", recommendations: response });
+    expect(result.stale).toBe(false);
+    expect(recommendationLines(result.decisions)).toEqual([expect.objectContaining({ selected: true, name: "False ceiling painting" })]);
+    const noTarget = buildRoomRecommendations({ catalogue: current, lines: sourceLines, roomId: "room-one", recommendations });
+    expect(recommendationLines(noTarget.decisions)).toEqual([]);
+  });
+
+  it("accepts filtered mixed Sub Basket children and keeps required unavailable review, including defensive older responses", () => {
+    const current = structuredClone(catalogue);
+    current.items[1]!.subBaskets[0]!.temporaryItems![0]!.hasConfiguredBasePrice = false;
+    const groupRule = rule({ id: "mixed-group", targetKind: "sub_basket", targetMainLineId: null,
+      targetRevisionId: null, targetRevisionVersion: null, targetItemVersion: null, unavailableChildCount: 1,
+      children: [{ mainLineId: "line-paint", available: true, completionRequired: false, revisionId: "rev-paint", revisionVersion: 1, itemVersion: 1 }] });
+    const response = { sources: recommendations.sources.map(source => ({ ...source, rules: [groupRule] })) };
+    const result = buildRoomRecommendations({ catalogue: current, lines: sourceLines, roomId: "room-one", recommendations: response });
+    expect(result.stale).toBe(false);
+    expect(result.decisions[0]).toMatchObject({ available: true, selected: false, unavailableChildCount: 1 });
+    expect(recommendationLines(result.decisions).map(line => line.target.mainLineId)).toEqual(["line-paint"]);
+    const older: EstimationCatalogueRecommendations = { sources: response.sources.map(source => ({ ...source, rules: [{ ...groupRule, unavailableChildCount: 0,
+      children: [...groupRule.children!, { mainLineId: "line-accent", available: true, completionRequired: true,
+        revisionId: "rev-accent", revisionVersion: 1, itemVersion: 1 }] }] })) };
+    const defensive = buildRoomRecommendations({ catalogue: current, lines: sourceLines, roomId: "room-one", recommendations: older });
+    expect(defensive.stale).toBe(false);
+    expect(defensive.decisions[0]!.unavailableChildCount).toBe(1);
+    expect(recommendationLines(defensive.decisions).map(line => line.target.mainLineId)).toEqual(["line-paint"]);
+  });
+
+  it("retains selected unpriced Sub Basket children for Remove without omitting source obligations", () => {
+    const current = structuredClone(catalogue);
+    current.items[1]!.subBaskets[0]!.temporaryItems![0]!.hasConfiguredBasePrice = false;
+    const lines = sourceLines.map(line => line.roomId === "room-one" && line.mainLineId === "line-accent" ? { ...line, included: true } : line);
+    const groupRule = rule({ id: "retained-group", targetKind: "sub_basket", targetMainLineId: null,
+      targetRevisionId: null, targetRevisionVersion: null, targetItemVersion: null, unavailableChildCount: 0,
+      children: [{ mainLineId: "line-paint", available: true, completionRequired: false, revisionId: "rev-paint", revisionVersion: 1, itemVersion: 1 },
+        { mainLineId: "line-accent", available: true, completionRequired: true, revisionId: "rev-accent", revisionVersion: 1, itemVersion: 1 }] });
+    const response = { sources: [...recommendations.sources.map(source => ({ ...source, rules: [groupRule] })),
+      { mainLineId: "line-accent", available: true, revisionId: "rev-accent", revisionVersion: 1, itemVersion: 1, rules: [], guidance: [] }] };
+    const result = buildRoomRecommendations({ catalogue: current, lines, roomId: "room-one", recommendations: response });
+    expect(result.stale).toBe(false);
+    expect(result.decisions[0]!.unavailableChildCount).toBe(0);
+    expect(recommendationLines(result.decisions).find(line => line.target.mainLineId === "line-accent")).toMatchObject({ selected: true });
+  });
+
   it("omits probable rules even when their target is available", () => {
     const result = buildRoomRecommendations({ catalogue, lines: sourceLines, roomId: "room-one",
       recommendations: { sources: recommendations.sources.map(source => ({ ...source, rules: source.rules.map(rule => ({ ...rule, requirement: "can" as const })) })) } });

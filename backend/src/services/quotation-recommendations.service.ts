@@ -1,8 +1,7 @@
 import type { ClientSession } from "mongoose";
 import { ApiError } from "../middleware/errors.js";
-import { estimateTierChoices } from "./estimate-tiers.service.js";
 import { readEstimatorCatalogueRecommendations, resolveEstimatorCatalogueLines } from "./estimator-catalogue.service.js";
-import { visibleQuotationSources } from "./quotation-setup.service.js";
+import { quotationTierChoices, visibleQuotationSources } from "./quotation-setup.service.js";
 
 type Row = Record<string, any>;
 export type QuotationSource = NonNullable<ReturnType<Awaited<ReturnType<typeof resolveEstimatorCatalogueLines>>["get"]>>;
@@ -32,19 +31,20 @@ export async function quotationPricingModeChoices(line: Row, source: QuotationSo
   const modes = line.classification === "special" ? ["pmc", "sub_vendor", "in_house"] as const : ["sub_vendor"] as const;
   const options = [];
   for (const pricingMode of modes) options.push({ pricingMode,
-    choices: await estimateTierChoices({ ...line, pricingMode,
+    choices: await quotationTierChoices({ ...line, pricingMode,
       ...(pricingMode === line.pricingMode ? {} : { selectedInHouseComponentIds: undefined }) }, source, session) });
   return options;
 }
 
 export async function quotationCandidateFor(estimate: Row, source: QuotationSource) {
   const prior = estimate.lineItems.find((line: Row) => line.mainLineId === source.line.mainLineId);
-  const modeTier = prior?.modeTier ?? source.line.applicableTiers[0] ?? "signature";
+  let modeTier = prior?.modeTier ?? source.line.applicableTiers[0] ?? "signature";
   const pricingMode = quotationSavedMode(estimate, source.line.mainLineId);
   const classification = quotationClassification(estimate, source.line.mainLineId, source.line.basketId);
   const choiceLine = { quantity: 1, uomId: source.line.uom.id, pricingMode, modeTier, classification };
   const pricingModeChoices = await quotationPricingModeChoices(choiceLine, source);
-  const choices = pricingModeChoices.find(option => option.pricingMode === pricingMode)?.choices ?? await estimateTierChoices(choiceLine, source);
+  const choices = pricingModeChoices.find(option => option.pricingMode === pricingMode)?.choices ?? await quotationTierChoices(choiceLine, source);
+  if (!prior) modeTier = choices.find(choice => choice.available)?.modeTier ?? modeTier;
   return { mainLineId: source.line.mainLineId, name: source.line.name, source: quotationSourceIdentity(source),
     ...quotationSourceGrouping(source), pricingMode, modeTier, classification, pricingModeChoices, dimensionsMandatory: source.line.dimensionsMandatory,
     dimensionRule: source.line.dimensionRule, uomName: source.line.uom.name, choices };
@@ -66,7 +66,9 @@ export async function quotationMandatoryTargets(
   sourceIds: readonly string[], sources: ReadonlyMap<string, QuotationSource>, session?: ClientSession,
   relationships?: Awaited<ReturnType<typeof readEstimatorCatalogueRecommendations>>
 ) {
-  const response = relationships ?? await readEstimatorCatalogueRecommendations(sourceIds, true, session);
+  // Mutation callers already fence and validate their chosen identities and pricing. Preserve
+  // those relationships independently of the new-choice filter; reads supply filtered edges.
+  const response = relationships ?? await readEstimatorCatalogueRecommendations(sourceIds, true, session, [...sources.keys()], "any");
   const targets = new Map<string, Set<string>>();
   for (const relation of response.sources) {
     const source = sources.get(relation.mainLineId);
@@ -108,10 +110,14 @@ export async function readQuotationRecommendations(estimate: Row, input: Quotati
     throw new ApiError(404, "QUOTATION_NOT_FOUND", "Quotation unavailable.");
   }
   const sourceIds = input.sources.map(source => source.mainLineId);
-  const relationships = await readEstimatorCatalogueRecommendations(sourceIds, true);
+  const selectedIds = [...new Set([...sourceIds, ...estimate.lineItems.filter((line: Row) =>
+    line.roomId === input.roomId && line.included !== false).map((line: Row) => String(line.mainLineId))])];
+  const relationships = await readEstimatorCatalogueRecommendations(sourceIds, true, undefined, selectedIds, "any");
   const targetIds = relationships.sources.flatMap(source => source.rules.flatMap(rule => rule.requirement !== "must" || !rule.available ? [] :
     rule.targetKind === "main_line" ? rule.targetMainLineId ? [rule.targetMainLineId] : [] : (rule.children ?? []).map(child => child.mainLineId)));
-  const sources = await quotationVisibleRecommendationSources(estimate, undefined, [...new Set([...sourceIds, ...targetIds])]);
+  // Keep visible unpriced sources available for selected-item review and required-target messages.
+  const sources = await quotationVisibleRecommendationSources(estimate, undefined,
+    [...new Set([...sourceIds, ...targetIds, ...relationships.unpricedTargetMainLineIds])]);
   for (const selection of input.sources) {
     const source = sources.get(selection.mainLineId);
     if (!source || !(estimate.selectedMainBasketIds ?? []).includes(source.line.basketId)) {
@@ -124,6 +130,15 @@ export async function readQuotationRecommendations(estimate: Row, input: Quotati
       prior.uomId !== source.line.uom.id)) unavailable();
   }
   const edges = await quotationMandatoryTargets(sourceIds, sources, undefined, relationships);
+  const candidates = new Map<string, Awaited<ReturnType<typeof quotationCandidateFor>>>();
+  for (const target of sources.values()) candidates.set(target.line.mainLineId, await quotationCandidateFor(estimate, target));
+  const candidateAvailable = (id: string) => candidates.get(id)?.pricingModeChoices.some(option => option.choices.some(choice => choice.available)) === true;
+  const unpricedTargets = [...sources.values()].filter(target => !candidateAvailable(target.line.mainLineId));
+  const requiresPriceReview = relationships.sources.some(relation => relation.rules.some(rule => {
+    if (rule.requirement !== "must") return false;
+    return unpricedTargets.some(target => target.line.basketId === rule.targetBasketId && target.line.subBasketId === rule.targetSubBasketId &&
+      (rule.targetKind === "sub_basket" || target.line.mainLineId === rule.targetMainLineId));
+  }));
   const targetSources = new Map<string, Array<{ mainLineId: string; name: string }>>();
   for (const [sourceId, targets] of edges) {
     for (const targetId of targets) {
@@ -132,15 +147,16 @@ export async function readQuotationRecommendations(estimate: Row, input: Quotati
       targetSources.set(targetId, reasons);
     }
   }
-  const orderedTargetIds = [...targetSources.keys()].sort((left, right) =>
+  const orderedTargetIds = [...targetSources.keys()].filter(id => candidateAvailable(id) || selectedIds.includes(id)).sort((left, right) =>
     sources.get(left)!.line.name.localeCompare(sources.get(right)!.line.name) || left.localeCompare(right));
   const items = [];
   for (const id of orderedTargetIds.slice(input.offset, input.offset + input.limit)) {
     const source = sources.get(id)!;
-    items.push({ candidate: await quotationCandidateFor(estimate, source),
+    items.push({ candidate: candidates.get(id)!,
       sourceMainLines: targetSources.get(id)!.sort((left, right) => left.name.localeCompare(right.name) || left.mainLineId.localeCompare(right.mainLineId)),
       requiresSetup: !(estimate.selectedMainBasketIds ?? []).includes(source.line.basketId) });
   }
   return { projectId: String(estimate.projectId), estimateId: String(estimate._id), estimateVersion: Number(estimate.version),
-    roomId: input.roomId, items, total: orderedTargetIds.length, limit: input.limit, offset: input.offset };
+    roomId: input.roomId, items, total: orderedTargetIds.length, limit: input.limit, offset: input.offset,
+    ...(requiresPriceReview ? { reviewMessage: "Some required items have no base price greater than zero. Ask your team to review them." } : {}) };
 }

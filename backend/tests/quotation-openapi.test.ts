@@ -3,6 +3,22 @@ import { openApiDocument } from "../src/openapi.js";
 import { HUMAN_JWT_OPERATIONS } from "../src/domain/route-operations.js";
 
 describe("quotation recommendation public contract", () => {
+  it("documents authoritative base-presence metadata and optional safe required-item review", () => {
+    const schemas = openApiDocument.components.schemas as Record<string, any>;
+    expect(schemas.EstimatorCatalogueLine.required).toContain("hasConfiguredBasePrice");
+    expect(schemas.EstimatorCatalogueLine.properties.hasConfiguredBasePrice).toMatchObject({ type: "boolean", readOnly: true });
+    expect(schemas.EstimatorCatalogueLine.required).toContain("basePriceAvailability");
+    const availability = schemas.EstimatorCatalogueLine.properties.basePriceAvailability;
+    expect(availability).toMatchObject({ type: "object", readOnly: true, additionalProperties: false });
+    expect(availability.required).toEqual(["default", "signature", "premium", "functional"]);
+    for (const scope of availability.required) {
+      expect(availability.properties[scope].required).toEqual(["pmc", "sub_vendor", "in_house"]);
+      expect(Object.values(availability.properties[scope].properties)).toEqual([{ type: "boolean" }, { type: "boolean" }, { type: "boolean" }]);
+    }
+    expect(schemas.QuotationRecommendations.properties.reviewMessage.type).toBe("string");
+    expect(schemas.QuotationRecommendations.required).not.toContain("reviewMessage");
+    expect(schemas.QuotationCandidate.properties.modeTier.enum).toEqual(["signature", "premium", "functional"]);
+  });
   it("documents optional mode requests and safe mode choices with separate actor authority", () => {
     const schemas = openApiDocument.components.schemas as Record<string, any>;
     const operations = schemas.QuotationPatch.properties.operations.items.oneOf;

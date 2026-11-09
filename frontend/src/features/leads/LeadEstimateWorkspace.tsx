@@ -33,12 +33,13 @@ import { calculateEstimateTotals, resolveRate } from "./estimateEngine";
 import { estimateBuilderSections } from "./estimateBuilderCatalogue";
 import { EstimateBuilder, type BuilderLine, type BuilderRoom, type BuilderSection } from "./EstimateBuilder";
 import { ConfiguredEstimateBuilder } from "./ConfiguredEstimateBuilder";
+import { isEstimationLinePriceVisible } from "./estimationCatalogueVisibility";
 import { createConfiguredEstimateViewState } from "./useConfiguredEstimateViewState";
 import { emptyAutomaticBasketIds, inferEmptySavedBasketIds, inferRecommendationOnlyBasketIds, salesCatalogueBrowseBasketIds } from "./salesRecommendationScope";
 import { EstimateRevisionNavigation } from "./EstimateRevisionNavigation";
 import { EstimateRevisionView } from "./EstimateRevisionView";
 import { downloadEstimateRevisionPdf, estimateRevisionKeys, estimateRevisionLabel, getEstimateRevision, getEstimateRevisions } from "./estimateRevisionsApi";
-import { configuredTierUnavailableReason, type ConfiguredTierGroupScope, configuredUsesComponentPricing, configuredComponentPricing, configuredDimensionsIssue, configuredInHouseSelectionIssue, buildConfiguredLines, createConfiguredLine, configuredLineAmountPaise, configuredLinePreviewAmountPaise, configuredQuantityUnits, deselectConfiguredRecommendationSources, parseSellingRate, restoreConfiguredLine, updateConfiguredLinePricing, type ConfiguredLineDraft } from "./configuredEstimate";
+import { configuredLineCanInclude, configuredTierUnavailableReason, type ConfiguredTierGroupScope, configuredUsesComponentPricing, configuredComponentPricing, configuredDimensionsIssue, configuredInHouseSelectionIssue, buildConfiguredLines, createConfiguredLine, configuredLineAmountPaise, configuredLinePreviewAmountPaise, configuredQuantityUnits, deselectConfiguredRecommendationSources, parseSellingRate, restoreConfiguredLine, updateConfiguredLinePricing, type ConfiguredLineDraft } from "./configuredEstimate";
 import { estimationCatalogueKeys, getEstimationCatalogue, getEstimationCatalogueRecommendations } from "./estimationCatalogueApi";
 import { MainBasketSelectionCard } from "./MainBasketSelectionCard";
 import { buildRoomRecommendations, partitionRoomRecommendationSources, recommendationSourceIdentity, type RecommendedLineTarget } from "./roomRecommendations";
@@ -67,7 +68,7 @@ function TabIcon({ tab }: { tab: EstimateTab }) {
 type EstimateTab = "configure" | "builder" | "summary" | "proposal";
 type PublicationAction = "submit" | "send";
 type RoomDraft = { id: string; typeId: string; label: string; icon: string; sqft: number; length: number | null; width: number | null };
-type LineDraft = { id: string; catalogueId: string; sectionId: string; sectionLabel: string; roomName: string; specification: string; options: readonly string[]; unit: string; rate: number; quantity: number; included: boolean };
+type LineDraft = { id: string; persistedId?: string; catalogueId: string; sectionId: string; sectionLabel: string; roomName: string; specification: string; options: readonly string[]; unit: string; rate: number; quantity: number; included: boolean };
 type BuilderRow = {
   id: string;
   description: string;
@@ -321,7 +322,7 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
       );
       const row = catalogueRows.find((item) => item.id === line.catalogueId);
       return {
-        id: `${room?.id ?? `${line.roomName}-${index}`}:${line.catalogueId}`, catalogueId: line.catalogueId,
+        id: `${room?.id ?? `${line.roomName}-${index}`}:${line.catalogueId}`, persistedId: line.id, catalogueId: line.catalogueId,
         sectionId: section?.id ?? "", sectionLabel: section?.label ?? "",
         roomName: line.roomName, specification: line.specification,
         options: row?.specifications ?? [line.specification], unit: line.unit,
@@ -394,6 +395,25 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
   const legacyIncompatibleConfiguredLines = !supportsExpandedCatalogue
     ? configuredLines.filter((line) => (line.included || line.persistedId) && (line.itemType === "temporary" || line.subBasketId === null))
     : [];
+  const serializedComponentPricing = (line: ConfiguredLineDraft) => {
+    if (!line.included && line.persistedId) {
+      const matches = saved.data?.lineItems.filter((item): item is ConfiguredEstimateLine =>
+        item.source === "configuration" && item.id === line.persistedId);
+      const prior = matches?.length === 1 ? matches[0] : undefined;
+      if (prior && prior.ratePaise === null &&
+        (["catalogueId", "roomId", "roomName", "mainLineId", "mainBasketId", "subBasketId", "uomId", "quantity", "pricingMode", "rateSource", "pricingBasis"] as const)
+          .every(key => line[key] === prior[key]) &&
+        line.pricingBasis === ESTIMATE_COMPONENT_PRICING_BASIS &&
+        line.itemType === (prior.itemType ?? "main_line") &&
+        (line.classification ?? "standard") === (prior.classification ?? "standard") &&
+        (line.modeTier ?? "signature") === (prior.modeTier ?? "signature") &&
+        JSON.stringify(line.dimensions) === JSON.stringify(prior.dimensions) &&
+        JSON.stringify([...(line.selectedInHouseComponentIds ?? [])].sort()) === JSON.stringify([...(prior.selectedInHouseComponentIds ?? [])].sort())) {
+        return configuredComponentPricing(restoreConfiguredLine(prior));
+      }
+    }
+    return configuredComponentPricing(line);
+  };
   const draftInput = (): EstimateDraftInput => ({
     propertyType: effectivePropertyType,
     bedroomCount,
@@ -404,7 +424,8 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
     })),
     ...(typeof workingVersion.current === "number" ? { expectedVersion: workingVersion.current } : {}),
     lineItems: [
-      ...lines.map(({ catalogueId, roomName, specification, unit, rate, quantity, included }) => ({ source: "legacy" as const, catalogueId, roomName, specification, unit, rate, quantity, included })),
+      ...lines.map(({ persistedId, catalogueId, roomName, specification, unit, rate, quantity, included }) => ({ source: "legacy" as const,
+        ...(persistedId ? { id: persistedId } : {}), catalogueId, roomName, specification, unit, rate, quantity, included })),
       ...configuredLines.filter((line) => line.included || line.persistedId).map((line) => ({
         source: "configuration" as const,
         ...(supportsExpandedCatalogue ? { itemType: line.itemType } : {}),
@@ -423,7 +444,7 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
         ...(line.dimensions && (line.included || canonicalEstimateDimensions(line.dimensions)) ? { dimensions: canonicalEstimateDimensions(line.dimensions) ?? line.dimensions,
           ...(line.dimensionsMandatory && line.dimensionRule ? { expectedDimensionRule: line.dimensionRule } : {}) } : {}),
         uomId: line.uomId, quantity: line.quantity, included: line.included,
-        ...(line.included && configuredComponentPricing(line) ? { pricingBasis: ESTIMATE_COMPONENT_PRICING_BASIS, componentPricingFingerprint: configuredComponentPricing(line)!.inputFingerprint } : {}),
+        ...(serializedComponentPricing(line) ? { pricingBasis: ESTIMATE_COMPONENT_PRICING_BASIS, componentPricingFingerprint: serializedComponentPricing(line)!.inputFingerprint } : {}),
         ratePaise: configuredUsesComponentPricing(line) ? null : parseSellingRate(line.rateInput).paise
       }))
     ]
@@ -1003,12 +1024,15 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
   };
   const updateLine = (id: string, change: Partial<LineDraft>) => {
     if (!editable || submissionInFlight.current) return;
+    if (change.rate !== undefined) return;
     setLines((current) => current.map((line) => line.id === id ? { ...line, ...change } : line));
   };
   const updateConfiguredLine = (key: string, change: Partial<ConfiguredLineDraft>, availableLine?: ConfiguredLineDraft) => {
     if (!editable || submissionInFlight.current) return;
+    if (change.rateInput !== undefined || change.rateSource === "manual") return;
     const line = configuredLines.find((item) => item.key === key) ?? availableLine;
-    if (change.modeTier !== undefined && (!line?.included || line.sourceMissing || !catalogue.data ||
+    if (change.included === true && (!line || !configuredLineCanInclude(line))) return;
+    if (change.modeTier !== undefined && (!line || !line.included && !line.persistedId || line.sourceMissing || !catalogue.data ||
       catalogue.isError || catalogue.isFetching || saved.isFetching ||
       configuredTierUnavailableReason(line, change.modeTier, line.pricingMode ??
         ((line.classification ?? mainBasketClassifications.get(line.mainBasketId) ?? "standard") === "standard" ? "sub_vendor" : undefined)))) {
@@ -1065,6 +1089,7 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
     const fresh = createConfiguredLine(catalogue.data, room, target);
     if (!fresh) return;
     const existing = configuredLines.find(line => line.key === fresh.key);
+    if (!isEstimationLinePriceVisible(existing ?? fresh)) return;
     if (existing && (existing.sourceMissing || existing.mainBasketId !== target.basketId ||
       existing.subBasketId !== target.subBasketId || existing.itemType !== fresh.itemType)) return;
     updateConfiguredLine(fresh.key, change, fresh);
@@ -1082,7 +1107,7 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
       return false;
     }
     const refreshedTarget = buildConfiguredLines(catalogue.data, [room], new Set([target.basketId]), [savedTarget ?? fresh])[0];
-    if (!refreshedTarget || refreshedTarget.sourceMissing) return false;
+    if (!refreshedTarget || !configuredLineCanInclude(refreshedTarget)) return false;
     pendingAddedLineKeys.current.add(fresh.key);
     if (!selectedMainBasketIds.has(target.basketId)) itemAddedBasketIds.current.add(target.basketId);
     setSelectedMainBasketIds(current => current.has(target.basketId) ? current : new Set(current).add(target.basketId));
@@ -1093,7 +1118,7 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
       const existing = previous.find(line => line.key === fresh.key);
       if (existing?.included) return previous;
       const refreshed = buildConfiguredLines(catalogue.data!, [room], new Set([target.basketId]), [existing ?? fresh])[0];
-      if (!refreshed || refreshed.sourceMissing) return previous;
+      if (!refreshed || !configuredLineCanInclude(refreshed)) return previous;
       const selected = { ...refreshed, included: true, recommendationSourceMainLineIds: [],
         classification: refreshed.classification ?? mainBasketClassifications.get(target.basketId) ?? "standard" };
       return existing ? previous.map(line => line.key === fresh.key ? selected : line) : [...previous, selected];
@@ -1131,7 +1156,7 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
       return false;
     }
     const refreshedTarget = buildConfiguredLines(catalogue.data, [room], new Set([target.basketId]), [savedTarget ?? fresh])[0];
-    if (!refreshedTarget || refreshedTarget.sourceMissing) return false;
+    if (!refreshedTarget || !configuredLineCanInclude(refreshedTarget)) return false;
     pendingRecommendedLineKeys.current.add(fresh.key);
     setNotice("");
     if (!selectedMainBasketIds.has(target.basketId)) {
@@ -1145,7 +1170,7 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
       const existing = previous.find(line => line.key === fresh.key);
       if (existing?.included) return previous;
       const refreshed = buildConfiguredLines(catalogue.data!, [room], new Set([target.basketId]), [existing ?? fresh])[0];
-      if (!refreshed || refreshed.sourceMissing) return previous;
+      if (!refreshed || !configuredLineCanInclude(refreshed)) return previous;
       const selected = { ...refreshed, included: true, recommendationSourceMainLineIds: sourceIds,
         classification: refreshed.classification ?? mainBasketClassifications.get(target.basketId) ?? "standard" };
       return existing ? previous.map(line => line.key === fresh.key ? selected : line) : [...previous, selected];
@@ -1375,6 +1400,7 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
     {boundedBuilder ? <EstimateBuilderArea>
       {!catalogue.data ? <p className="estimate-notice" role="status">Current Configuration is unavailable. Saved lines are shown from this estimate's snapshot.</p> : null}
       <ConfiguredEstimateBuilder
+      filterUnpricedItems={draftEditable && !historical}
       itemPresentation={browseSalesCatalogue ? "catalogue" : "selected"}
       browseMainBasketIds={browseSalesCatalogue ? browseMainBasketIds : undefined}
       onBrowseRecommendationBasket={browseSalesCatalogue ? browseRecommendationBasket : undefined}
