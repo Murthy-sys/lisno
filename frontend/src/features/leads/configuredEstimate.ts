@@ -150,7 +150,7 @@ export function updateConfiguredLinePricing(
   const next = withSelectedTierPricing({ ...line, ...(explicitTypeOrMode ? { classification } : {}), ...change,
     ...(pricingInputsChanged ? { pricingBasis: undefined, componentPricing: undefined, componentPricingState: undefined, componentPricingIssue: undefined } : {}),
     ...(tierChanged ? { selectedInHouseComponentIds: [] } : {}) });
-  if (tierChanged) {
+  if (tierChanged || change.modeTier !== undefined && change.rateSource === "configuration") {
     const pricingMode = next.pricingMode ?? (classification === "standard" ? "sub_vendor" : undefined);
     return { ...next, pricingMode, rateSource: "configuration", rateInput: formatRateInput(pricingMode ? configuredModeBaseRate(next, pricingMode) : null) };
   }

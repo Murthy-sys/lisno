@@ -21,6 +21,13 @@ export interface EstimateRecommendationsPopup {
   footerRef: RefObject<HTMLElement | null>;
   fallbackFocusRef: RefObject<HTMLInputElement | null>;
 }
+export interface EstimateRecommendationCompletion {
+  contextKey: string;
+  selectedTargetIds: ReadonlySet<string>;
+  /** Outstanding targets across the complete authorized list, before pagination. */
+  remainingCount: number;
+  blocked: boolean;
+}
 export interface EstimateRecommendationsProps {
   roomName: string;
   contextKey: string;
@@ -37,24 +44,54 @@ export interface EstimateRecommendationsProps {
   popup?: EstimateRecommendationsPopup;
   /** Opt-in Sales feedback, scoped to a stable workspace/room rather than source-query changes. */
   selectionFeedback?: { contextKey: string };
+  /** Sales popup opt-in; only an accepted Add can complete this interaction. */
+  completion?: EstimateRecommendationCompletion;
 }
 
 /** Receives only authorized non-negotiable suggestions, never unrestricted catalogue data. */
 export function EstimateRecommendations({ roomName, contextKey, items, total, offset, onOffsetChange, state,
-  disabled = false, message, onRetry, onAdd, onRemove, popup, selectionFeedback }: EstimateRecommendationsProps) {
+  disabled = false, message, onRetry, onAdd, onRemove, popup, selectionFeedback, completion }: EstimateRecommendationsProps) {
   const id = useId();
   const [expandedContext, setExpandedContext] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
-  const [announcement, setAnnouncement] = useState<{ contextKey: string | undefined; text: string } | null>(null);
+  const [announcement, setAnnouncement] = useState<{ contextKey: string | undefined; completionContext?: string; text: string } | null>(null);
+  const [closedReceiptContext, setClosedReceiptContext] = useState<string | null>(null);
   const feedbackContext = selectionFeedback?.contextKey;
-  const announcementText = announcement?.contextKey === feedbackContext ? announcement?.text ?? "" : "";
-  useEffect(() => { setAnnouncement(null); }, [feedbackContext]);
+  const completionContext = completion?.contextKey;
+  const announcementText = announcement?.contextKey === feedbackContext && announcement?.completionContext === completionContext ? announcement?.text ?? "" : "";
+  useEffect(() => { setAnnouncement(null); setClosedReceiptContext(null); }, [feedbackContext, completionContext]);
   const sectionRef = useRef<HTMLElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const focusAfterChange = useRef<{ id: string; feedback?: { contextKey: string; anchor: HTMLElement; needsReveal: boolean } } | null>(null);
+  const pendingCompletion = useRef<{ contextKey: string; id: string } | null>(null);
   const visible = state !== "ready" || total > 0 || Boolean(message);
   const expanded = popup ? popup.open === true : open;
+  const closePopup = () => {
+    pendingCompletion.current = null;
+    focusAfterChange.current = null;
+    popup?.onOpenChange(false);
+  };
+  useLayoutEffect(() => {
+    pendingCompletion.current = null;
+    focusAfterChange.current = null;
+  }, [completionContext]);
+  useLayoutEffect(() => {
+    const pending = pendingCompletion.current;
+    if (!pending) return;
+    if (!completion || !popup || !expanded || pending.contextKey !== completion.contextKey) {
+      pendingCompletion.current = null;
+      focusAfterChange.current = null;
+      return;
+    }
+    // Selection acknowledgement prevents an unchanged ready result from completing an Add.
+    if (!completion.selectedTargetIds.has(pending.id) || state !== "ready" || completion.blocked || disabled || message) return;
+    pendingCompletion.current = null;
+    if (completion.remainingCount === 0) {
+      setClosedReceiptContext(completion.contextKey);
+      closePopup();
+    }
+  });
   useEffect(() => {
     if (popup) {
       if (popup.open === undefined && state === "ready" && total > 0) popup.onOpenChange(true);
@@ -126,7 +163,11 @@ export function EstimateRecommendations({ roomName, contextKey, items, total, of
       if (next === target) pending.feedback.needsReveal = false;
     }
   });
-  if (!visible) return null;
+  const receipt = selectionFeedback
+    ? <p role="status" aria-live="polite" aria-atomic="true" className="estimate-selection__receipt">{announcementText}</p>
+    : <span role="status" className="sr-only">{announcementText}</span>;
+  const closedReceipt = completion && closedReceiptContext === completion.contextKey && announcementText ? receipt : null;
+  if (!visible) return closedReceipt;
   const blocked = disabled || state !== "ready";
   const status = <>
     {state === "loading" ? <p role="status">Checking non-negotiable recommendations…</p> : null}
@@ -142,10 +183,16 @@ export function EstimateRecommendations({ roomName, contextKey, items, total, of
             className={popup ? `ui-button ui-button--${item.selected ? "secondary" : "primary"}` : undefined}
             aria-label={`${item.selected ? "Remove" : item.addLabel ?? "Add"} ${item.name}`}
             disabled={blocked || item.disabled} onClick={event => {
+              // Remove and rejected changes must not finish an earlier accepted Add.
+              pendingCompletion.current = null;
+              setClosedReceiptContext(null);
               if ((item.selected ? onRemove : onAdd)(item.id) === false) {
-                if (selectionFeedback) setAnnouncement({ contextKey: feedbackContext,
+                if (selectionFeedback) setAnnouncement({ contextKey: feedbackContext, completionContext,
                   text: `Could not ${item.selected ? "remove" : "add"} ${item.name} ${item.selected ? "from" : "to"} ${roomName}. Refresh available items and try again.` });
                 return;
+              }
+              if (!item.selected && popup && completion && (!item.addLabel || item.addLabel === "Add")) {
+                pendingCompletion.current = { contextKey: completion.contextKey, id: item.id };
               }
               focusAfterChange.current = selectionFeedback
                 ? document.activeElement === event.currentTarget
@@ -157,15 +204,12 @@ export function EstimateRecommendations({ roomName, contextKey, items, total, of
                 : selectionFeedback && !item.selected
                   ? `Added 1 item: ${item.name} to ${roomName}.`
                   : `${item.name} ${item.selected ? "removed from" : "added to"} ${roomName}.`;
-              setAnnouncement({ contextKey: feedbackContext, text });
+              setAnnouncement({ contextKey: feedbackContext, completionContext, text });
             }}>{item.selected ? "Remove" : item.addLabel ?? "Add"}</button>
         </li>)}
       </ul>
       <EstimateSelectionPagination total={total} offset={offset} disabled={blocked} onChange={onOffsetChange} label="Recommendation pages" />
   </>;
-  const receipt = selectionFeedback
-    ? <p role="status" aria-live="polite" aria-atomic="true" className="estimate-selection__receipt">{announcementText}</p>
-    : <span role="status" className="sr-only">{announcementText}</span>;
   if (!popup) return <section ref={sectionRef} className="estimate-selection estimate-selection--recommendations" aria-label={`Non-negotiable recommendations for ${roomName}`}>
     <div className="estimate-selection__heading">
       <button ref={triggerRef} type="button" className="estimate-selection__disclosure" aria-expanded={open} aria-controls={id}
@@ -175,10 +219,6 @@ export function EstimateRecommendations({ roomName, contextKey, items, total, of
     <div id={id} hidden={!open} className="estimate-selection__body">{body}</div>
     {receipt}
   </section>;
-  const closePopup = () => {
-    focusAfterChange.current = null;
-    popup.onOpenChange(false);
-  };
   const triggerStatus = state === "loading" ? "Checking…" : state === "error" ? "Could not load"
     : state === "stale" ? "Refresh needed" : state === "forbidden" ? "Unavailable" : message ? "Review needed" : null;
   return <>
@@ -187,6 +227,7 @@ export function EstimateRecommendations({ roomName, contextKey, items, total, of
         if (expanded) { closePopup(); return; }
         popup.onOpenChange(true);
       }}>Recommendations{state === "ready" ? ` (${total})` : ""}{triggerStatus ? <span>{triggerStatus}</span> : null}</button>
+    {!expanded ? closedReceipt : null}
     {expanded ? <Dialog title="Non-negotiable recommendations" eyebrow="Estimation" description={roomName}
       className="estimate-recommendations-dialog" onClose={closePopup} closeButtonRef={closeRef}
       closeButtonLabel="Close recommendations" initialFocusRef={closeRef} returnFocusRef={triggerRef} fallbackFocusRef={popup.fallbackFocusRef}>

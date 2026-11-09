@@ -5,6 +5,9 @@
 .estimate-sub-basket-modes label:has(input:disabled) { color: var(--color-text-muted, #667064); }
 .estimate-sub-basket-modes__help { font-size: 12px; color: var(--color-text-muted, #667064); }
 .estimate-sub-basket-modes > .button { margin-inline-start: auto; font-size: 12px; min-height: 32px; }
+.estimate-sub-basket-modes.estimate-sub-basket-modes--inline { display: inline-flex; gap: 6px 10px; min-width: 0; max-width: 100%; padding: 0; border: 0; background: transparent; }
+.estimate-sub-basket-modes--inline > .button { margin-inline-start: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+.estimate-sub-basket-modes--inline > .estimate-sub-basket-modes__help { min-width: 0; overflow-wrap: anywhere; font-weight: 400; }
 .ui-dialog.modal.estimate-tier-comparison { width: min(1100px, calc(100vw - 32px)); max-width: 1100px; border-radius: 0; }
 .estimate-tier-comparison__body { padding: 0 16px 16px; min-height: 0; overflow: auto; }
 .estimate-tier-comparison__body > p { font-size: 13px; }
@@ -21,4 +24,7 @@
   .estimate-sub-basket-modes label { font-size: 12px; }
   .estimate-sub-basket-modes__help { flex: 1 1 150px; }
   .ui-dialog.modal.estimate-tier-comparison { width: calc(100vw - 16px); }
+}
+@media (max-width: 640px), (pointer: coarse) {
+  .estimate-sub-basket-modes--inline > .button { min-height: 44px; }
 }

@@ -37,17 +37,28 @@ describe("sub-basket modes and comparison", () => {
     await user.click(screen.getByRole("radio", { name: "Mode for Walls" })); expect(changed).toHaveBeenLastCalledWith("mode");
   });
 
-  it("opens a read-only comparison with line prices, exact subtotals, incomplete cells and a PDF download", async () => {
+  it.each([[false, false], [true, false], [true, true]])("opens the unchanged comparison and PDF (comparisonOnly: %s, inline: %s)", async (comparisonOnly, inline) => {
     const user = userEvent.setup(); const changed = vi.fn(); vi.mocked(getEstimateTierComparison).mockResolvedValue(result);
     vi.mocked(downloadEstimateTierComparison).mockResolvedValue({ blob: new Blob(["pdf"], { type: "application/pdf" }), filename: "comparison.pdf" });
     const createUrl = vi.fn(() => "blob:comparison"); const revokeUrl = vi.fn();
     vi.stubGlobal("URL", Object.assign(URL, { createObjectURL: createUrl, revokeObjectURL: revokeUrl }));
     const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
-    render(<EstimateSubBasketModes label="Walls" value="mode" options={choices} readOnly onChange={changed} comparison={comparison} />);
-    screen.getAllByRole("radio").forEach(radio => expect(radio).toBeDisabled());
+    const control = <EstimateSubBasketModes label="Walls" value="mode" options={choices} readOnly onChange={changed} comparison={comparison} comparisonOnly={comparisonOnly} inline={inline} />;
+    const { container } = render(inline ? <h3>Walls {control}</h3> : control);
+    if (inline) {
+      expect(container.querySelector("h3 > span.estimate-sub-basket-modes--inline")).not.toBeNull();
+      expect(container.querySelector("h3 div, h3 fieldset")).toBeNull();
+    }
+    if (comparisonOnly) {
+      expect(screen.queryByRole("group", { name: "Modes for Walls" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("radio")).not.toBeInTheDocument();
+      expect(screen.queryByText("Mode keeps current line choices.")).not.toBeInTheDocument();
+    } else screen.getAllByRole("radio").forEach(radio => expect(radio).toBeDisabled());
     const trigger = screen.getByRole("button", { name: "Check tier comparison for Walls" }); await user.click(trigger);
     const dialog = screen.getByRole("dialog", { name: "Price comparison: Walls" });
     expect(await within(dialog).findByRole("rowheader", { name: /Wall finish/ })).toHaveTextContent("2 sqm");
+    expect(within(dialog).getByRole("columnheader", { name: "Mode" })).toBeVisible();
+    expect(getEstimateTierComparison).toHaveBeenCalledWith(comparison, expect.any(AbortSignal));
     expect(within(dialog).getByText("₹250 / sqm")).toBeVisible(); expect(within(dialog).getByText("Select components")).toBeVisible();
     expect(within(dialog).getByRole("rowheader", { name: "Sub-basket total" }).closest("tr")).toHaveTextContent("₹400₹500Incomplete");
     await user.click(within(dialog).getByRole("button", { name: "Download PDF" }));
@@ -57,14 +68,24 @@ describe("sub-basket modes and comparison", () => {
     await waitFor(() => expect(revokeUrl).toHaveBeenCalledWith("blob:comparison"));
   });
 
-  it("keeps a stale comparison unavailable until retry succeeds and never enables a PDF for failed data", async () => {
+  it.each([[false, false], [true, false], [true, true]])("keeps stale comparison unavailable until retry succeeds (comparisonOnly: %s, inline: %s)", async (comparisonOnly, inline) => {
     const user = userEvent.setup(); vi.mocked(getEstimateTierComparison).mockRejectedValueOnce(new ApiError(409, "ESTIMATE_VERSION_CONFLICT", "Refresh the changed estimate."))
       .mockResolvedValueOnce(result);
-    render(<EstimateSubBasketModes label="Walls" value="mode" options={choices} onChange={vi.fn()} comparison={comparison} />);
+    render(<EstimateSubBasketModes label="Walls" value="mode" options={choices} onChange={vi.fn()} comparison={comparison} comparisonOnly={comparisonOnly} inline={inline} />);
     await user.click(screen.getByRole("button", { name: "Check tier comparison for Walls" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Refresh the changed estimate.");
     expect(screen.getByRole("button", { name: "Download PDF" })).toBeDisabled();
     await user.click(screen.getByRole("button", { name: "Retry comparison" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "Download PDF" })).toBeEnabled());
+  });
+
+  it("keeps the unavailable reason accessible in the inline heading control", () => {
+    const reason = "Refresh the estimate and complete quantities to compare current tier prices.";
+    render(<h3>Walls <EstimateSubBasketModes label="Walls" value="mode" options={[]} onChange={vi.fn()}
+      comparisonOnly inline detailsDisabledReason={reason} /></h3>);
+    const trigger = screen.getByRole("button", { name: "Check tier comparison for Walls" });
+    expect(trigger).toBeDisabled();
+    expect(trigger).toHaveAccessibleDescription(reason);
+    expect(screen.queryByRole("radio")).not.toBeInTheDocument();
   });
 });

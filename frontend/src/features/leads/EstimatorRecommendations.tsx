@@ -17,11 +17,12 @@ interface EstimatorRecommendationsProps {
   onRemove: (target: RecommendedLineTarget) => boolean | void;
   popup?: EstimateRecommendationsPopup;
   selectionFeedback?: { contextKey: string };
+  completion?: { contextKey: string; selectedTargetIds: ReadonlySet<string> };
 }
 
 /** Staff adapter: shared presentation never owns draft scope or recommendation origins. */
 export function EstimatorRecommendations({ roomName, contextKey, sourceCount, state, view, editable,
-  onRetry, onRefresh, onSelect, onRemove, popup, selectionFeedback }: EstimatorRecommendationsProps) {
+  onRetry, onRefresh, onSelect, onRemove, popup, selectionFeedback, completion }: EstimatorRecommendationsProps) {
   const [offset, setOffset] = useState(0);
   const [pageTarget, setPageTarget] = useState<{ contextKey: string; id: string } | null>(null);
   const paginationContext = selectionFeedback?.contextKey ?? contextKey;
@@ -45,12 +46,14 @@ export function EstimatorRecommendations({ roomName, contextKey, sourceCount, st
   if (!sourceCount && !popup) return null;
   return <EstimateRecommendations roomName={roomName} contextKey={contextKey}
     popup={popup} selectionFeedback={selectionFeedback}
+    completion={popup && completion ? { ...completion, remainingCount: lines.filter(line => !line.selected).length,
+      blocked: state !== "ready" || sourceCount > 0 && !view || Boolean(view?.stale) || unavailable || Boolean(view?.historicalSources.length) } : undefined}
     items={(sourceCount ? lines : []).slice(pageOffset, pageOffset + 20).map(line => ({ id: line.key, name: line.name,
       ...(selectionFeedback ? { context: [line.basketName, line.subBasketName].filter(Boolean).join(" / ") } : {}),
       sourceNames: [...new Set(line.reasons.filter(reason => reason.requirement === "must").map(reason => reason.sourceName))],
       selected: line.selected }))}
     total={sourceCount ? lines.length : 0} offset={pageOffset}
-    onOffsetChange={next => { setPageTarget(null); setOffset(next); }} state={sourceCount ? state : "ready"} disabled={!editable}
+    onOffsetChange={next => { setPageTarget(null); setOffset(next); }} state={popup && completion ? state : sourceCount ? state : "ready"} disabled={!editable}
     message={sourceCount ? message : undefined} onRetry={state === "stale" || state === "ready" && Boolean(message) ? onRefresh : onRetry}
     onAdd={id => changeSelection(id, onSelect)} onRemove={id => changeSelection(id, onRemove)} />;
 }

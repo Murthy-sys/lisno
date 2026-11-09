@@ -401,6 +401,15 @@ describe("configured estimate tiers", () => {
     expect(configuredModeBaseRate({ ...line, applicableTiers: [] }, "sub_vendor")).toBeNull();
     expect(configuredModeBaseRate({ ...line, tierPricing: {}, modeBaseRatesPaise: { pmc: 1, sub_vendor: 2, in_house: 3 } }, "sub_vendor")).toBeNull();
   });
+  it("adopts configured Signature pricing for a historical manual Standard line without a recorded mode", () => {
+    const { line } = fixture();
+    const historical = { ...line, modeTier: undefined, pricingMode: undefined, rateSource: "manual" as const, rateInput: "99" };
+    const selected = updateConfiguredLinePricing(historical, { modeTier: "signature", rateSource: "configuration" });
+    expect(selected).toMatchObject({ modeTier: "signature", pricingMode: "sub_vendor", rateSource: "configuration", rateInput: "20" });
+    expect(historical).toMatchObject({ rateSource: "manual", rateInput: "99" });
+    const special = updateConfiguredLinePricing({ ...historical, classification: "special" }, { modeTier: "signature", rateSource: "configuration" });
+    expect(special).toMatchObject({ pricingMode: undefined, rateInput: "" });
+  });
   it("resets component identities on tier change and requires explicit destination selection", () => {
     const { line } = fixture();
     const premium = updateConfiguredLinePricing({ ...line, pricingMode: "in_house", selectedInHouseComponentIds: ["old-component"] }, { modeTier: "premium" });

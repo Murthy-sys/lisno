@@ -22,6 +22,7 @@ export interface EstimateShellSubBasket {
   subtotalLabel: string;
   lines: readonly { id: string }[];
   removal?: EstimateShellRemoval;
+  headingActions?: ReactNode;
   headerActions?: ReactNode;
   afterLines?: ReactNode;
   emptyMessage?: string;
@@ -36,6 +37,7 @@ export interface EstimateShellBasket {
   directLines: readonly { id: string }[];
   directSubtotalLabel?: string;
   directCountLabel?: string;
+  directHeadingActions?: ReactNode;
   directHeaderActions?: ReactNode;
   afterDirectLines?: ReactNode;
   beforeLines?: ReactNode;
@@ -178,7 +180,7 @@ export function EstimateBuilderShell({ rooms, activeRoomId, onSelectRoom, select
               <div id={`configured-basket-${encodeURIComponent(basket.id)}`} hidden={collapsedBasketIds.has(basket.id)}>
                 {basket.beforeLines}
                 {basket.directLines.length ? <section className="configured-estimate-sub-basket" aria-label={`Direct items in ${basket.name}`}>
-                  <div className="configured-estimate-sub-basket__heading"><EstimateBuilderGlyph name="section" /><h3>Direct items</h3><small>{basket.directCountLabel ?? itemCount(basket.directLines.length)}</small>{basket.directSubtotalLabel ? <strong>{basket.directSubtotalLabel}</strong> : null}</div>
+                  <div className="configured-estimate-sub-basket__heading"><EstimateBuilderGlyph name="section" /><h3>Direct items</h3>{basket.directHeadingActions}<small>{basket.directCountLabel ?? itemCount(basket.directLines.length)}</small>{basket.directSubtotalLabel ? <strong>{basket.directSubtotalLabel}</strong> : null}</div>
                   {basket.directHeaderActions}
                   {basket.directLines.map(line => <Fragment key={line.id}>{renderLine(line.id)}</Fragment>)}
                   {basket.afterDirectLines}
@@ -186,9 +188,17 @@ export function EstimateBuilderShell({ rooms, activeRoomId, onSelectRoom, select
                 {basket.subBaskets.map(subBasket => {
                   const subId = `${basket.id}:${subBasket.id}`;
                   return <section className="configured-estimate-sub-basket" key={subBasket.id} aria-label={subBasket.name}>
-                    <div className="configured-estimate-sub-basket__header"><h3><button type="button" className="configured-estimate-sub-basket__toggle" aria-expanded={!collapsedSubBasketIds.has(subId)} aria-controls={`configured-sub-basket-${encodeURIComponent(subId)}`} onClick={() => toggleSubBasket(subId)}>
+                    <div className={`configured-estimate-sub-basket__header${subBasket.headingActions ? " configured-estimate-sub-basket__header--with-heading-actions" : ""}`}>
+                    {subBasket.headingActions ? <>
+                      <h3 className="configured-estimate-sub-basket__title-actions"><button type="button" className="configured-estimate-sub-basket__toggle"
+                        aria-label={`${subBasket.name}, ${subBasket.countLabel ?? itemCount(subBasket.count)}, subtotal ${subBasket.subtotalLabel}`}
+                        aria-expanded={!collapsedSubBasketIds.has(subId)} aria-controls={`configured-sub-basket-${encodeURIComponent(subId)}`} onClick={() => toggleSubBasket(subId)}>
+                        <EstimateBuilderGlyph name="section" /><span>{subBasket.name}</span>
+                      </button>{subBasket.headingActions}</h3>
+                      <small>{subBasket.countLabel ?? itemCount(subBasket.count)}</small><strong>{subBasket.subtotalLabel}</strong><EstimateBuilderGlyph name="chevron" />
+                    </> : <h3><button type="button" className="configured-estimate-sub-basket__toggle" aria-expanded={!collapsedSubBasketIds.has(subId)} aria-controls={`configured-sub-basket-${encodeURIComponent(subId)}`} onClick={() => toggleSubBasket(subId)}>
                       <EstimateBuilderGlyph name="section" /><span>{subBasket.name}</span><small>{subBasket.countLabel ?? itemCount(subBasket.count)}</small><strong>{subBasket.subtotalLabel}</strong><EstimateBuilderGlyph name="chevron" />
-                    </button></h3>{subBasket.removal ? <button type="button" className="button button--secondary configured-estimate-sub-basket__remove" aria-label={subBasket.removal.label} disabled={subBasket.removal.disabled} onClick={subBasket.removal.onRemove}>Remove Sub Basket</button> : null}</div>
+                    </button></h3>}{subBasket.removal ? <button type="button" className="button button--secondary configured-estimate-sub-basket__remove" aria-label={subBasket.removal.label} disabled={subBasket.removal.disabled} onClick={subBasket.removal.onRemove}>Remove Sub Basket</button> : null}</div>
                     {subBasket.headerActions}
                     <div id={`configured-sub-basket-${encodeURIComponent(subId)}`} hidden={collapsedSubBasketIds.has(subId)}>{subBasket.lines.length ? subBasket.lines.map(line => <Fragment key={line.id}>{renderLine(line.id)}</Fragment>) : <p className="configured-estimate-sub-basket__empty">{subBasket.emptyMessage ?? "No available items in this Sub Basket."}</p>}{subBasket.afterLines}</div>
                   </section>;

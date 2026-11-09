@@ -5,6 +5,30 @@ import axe from "axe-core";
 import { EstimateLineActions, EstimateLineChoice, EstimateLineLayout, EstimateLineTierNotes, EstimateLineTierOptions } from "./EstimateLineRow";
 
 describe("Shared estimate line presentation", () => {
+  it("retains an implicit manual baseline until a tier is deliberately selected", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    const props = { label: "Storage in Kitchen", groupName: "kitchen-storage",
+      options: [{ value: "signature" as const, label: "Signature" },
+        { value: "premium" as const, label: "Premium" },
+        { value: "functional" as const, label: "Functional" }], onChange };
+    const { rerender } = render(<EstimateLineTierOptions {...props} value={null} />);
+    expect(screen.getAllByRole("radio")).toHaveLength(3);
+    screen.getAllByRole("radio").forEach(option => expect(option).not.toBeChecked());
+    expect(screen.queryByRole("radio", { name: /^Mode/ })).not.toBeInTheDocument();
+    expect(onChange).not.toHaveBeenCalled();
+
+    const signature = screen.getByRole("radio", { name: "Signature tier for Storage in Kitchen" });
+    signature.focus(); await user.keyboard(" ");
+    expect(onChange).toHaveBeenCalledExactlyOnceWith("signature");
+    rerender(<EstimateLineTierOptions {...props} value="signature" />);
+    expect(signature).toBeChecked();
+
+    rerender(<EstimateLineTierOptions {...props} value={null} />);
+    await user.click(screen.getByRole("radio", { name: "Premium tier for Storage in Kitchen" }));
+    expect(onChange).toHaveBeenLastCalledWith("premium");
+  });
+
   it("uses only supplied tier choices and disables unavailable or locked choices", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();

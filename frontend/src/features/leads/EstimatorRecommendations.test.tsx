@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { EstimatorRecommendations } from "./EstimatorRecommendations";
-import { type RoomRecommendationView } from "./roomRecommendations";
+import { recommendationTargetIdentity, type RoomRecommendationView } from "./roomRecommendations";
 
 const groupView: RoomRecommendationView = {
   stale: false,
@@ -222,5 +222,72 @@ describe("inline staff recommendations", () => {
     await user.click(screen.getByRole("button", { name: "Refresh recommendations" }));
     expect(onRefresh).toHaveBeenCalledOnce();
     expect(onRetry).not.toHaveBeenCalled();
+  });
+
+  it("counts outstanding Sales suggestions across all pages and closes only after the last target is added", async () => {
+    const user = userEvent.setup(); const onOpenChange = vi.fn();
+    const children = Array.from({ length: 45 }, (_, index) => ({ ...groupView.decisions[0]!.children[0]!,
+      name: `Finish ${index}`, selected: index !== 0 && index !== 44,
+      target: { ...groupView.decisions[0]!.children[0]!.target, mainLineId: `finish-${index}` } }));
+    const view = { ...groupView, decisions: [{ ...groupView.decisions[0]!, unavailableChildCount: 0, children }] };
+    const selectedIds = (items: typeof children) => new Set(items.filter(child => child.selected).map(child => recommendationTargetIdentity(child.target)));
+    const props = { ...defaults, selectionFeedback: { contextKey: "workspace:living" },
+      popup: { open: true, onOpenChange, toolbarRef: { current: null }, footerRef: { current: null }, fallbackFocusRef: { current: null } } };
+    const { rerender } = render(<EstimatorRecommendations {...props} view={view}
+      completion={{ contextKey: "actor:estimate:living", selectedTargetIds: selectedIds(children) }} />);
+    await user.click(screen.getByRole("button", { name: "Add Finish 0" }));
+    const afterFirst = children.map(child => ({ ...child, selected: child.target.mainLineId !== "finish-44" }));
+    rerender(<EstimatorRecommendations {...props} view={{ ...view, decisions: [{ ...view.decisions[0]!, children: afterFirst }] }}
+      completion={{ contextKey: "actor:estimate:living", selectedTargetIds: selectedIds(afterFirst) }} />);
+    expect(onOpenChange).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Next" }));
+    await user.click(screen.getByRole("button", { name: "Next" }));
+    await user.click(screen.getByRole("button", { name: "Add Finish 44" }));
+    const afterLast = children.map(child => ({ ...child, selected: true }));
+    rerender(<EstimatorRecommendations {...props} view={{ ...view, decisions: [{ ...view.decisions[0]!, children: afterLast }] }}
+      completion={{ contextKey: "actor:estimate:living", selectedTargetIds: selectedIds(afterLast) }} />);
+    expect(onOpenChange).toHaveBeenCalledExactlyOnceWith(false);
+  });
+
+  it("keeps newly introduced Sales recommendations open after the selected target is acknowledged", async () => {
+    const user = userEvent.setup(); const onOpenChange = vi.fn();
+    const first = groupView.decisions[0]!.children[0]!;
+    const view = { ...groupView, decisions: [{ ...groupView.decisions[0]!, unavailableChildCount: 0, children: [first] }] };
+    const props = { ...defaults, selectionFeedback: { contextKey: "workspace:living" },
+      popup: { open: true, onOpenChange, toolbarRef: { current: null }, footerRef: { current: null }, fallbackFocusRef: { current: null } } };
+    const { rerender } = render(<EstimatorRecommendations {...props} view={view}
+      completion={{ contextKey: "actor:estimate:living", selectedTargetIds: new Set() }} />);
+    await user.click(screen.getByRole("button", { name: "Add False ceiling painting" }));
+    rerender(<EstimatorRecommendations {...props} state="loading" sourceCount={0} view={null}
+      completion={{ contextKey: "actor:estimate:living", selectedTargetIds: new Set([recommendationTargetIdentity(first.target)]) }} />);
+    expect(screen.getByRole("dialog")).toBeVisible();
+    expect(screen.getByText("Checking non-negotiable recommendations…")).toBeVisible();
+    rerender(<EstimatorRecommendations {...props} view={{ ...view, decisions: [{ ...view.decisions[0]!,
+      children: [{ ...first, selected: true }, groupView.decisions[0]!.children[1]!] }] }}
+      completion={{ contextKey: "actor:estimate:living", selectedTargetIds: new Set([recommendationTargetIdentity(first.target)]) }} />);
+    expect(screen.getByRole("button", { name: "Add Cove finish" })).toBeVisible();
+    expect(onOpenChange).not.toHaveBeenCalled();
+  });
+
+  it.each(["unavailable", "historical", "stale"] as const)("keeps Sales completion pending while current results need %s review", async issue => {
+    const user = userEvent.setup(); const onOpenChange = vi.fn();
+    const first = groupView.decisions[0]!.children[0]!;
+    const view = { ...groupView, decisions: [{ ...groupView.decisions[0]!, unavailableChildCount: 0, children: [first] }] };
+    const props = { ...defaults, selectionFeedback: { contextKey: "workspace:living" },
+      popup: { open: true, onOpenChange, toolbarRef: { current: null }, footerRef: { current: null }, fallbackFocusRef: { current: null } } };
+    const { rerender } = render(<EstimatorRecommendations {...props} view={view}
+      completion={{ contextKey: "actor:estimate:living", selectedTargetIds: new Set() }} />);
+    await user.click(screen.getByRole("button", { name: "Add False ceiling painting" }));
+    const selected = { ...view, decisions: [{ ...view.decisions[0]!, children: [{ ...first, selected: true }] }] };
+    const completion = { contextKey: "actor:estimate:living", selectedTargetIds: new Set([recommendationTargetIdentity(first.target)]) };
+    const unresolved = { ...selected,
+      stale: issue === "stale",
+      historicalSources: issue === "historical" ? [{ mainLineId: "old-ceiling", name: "Earlier ceiling" }] : [],
+      decisions: selected.decisions.map(decision => ({ ...decision, unavailableChildCount: issue === "unavailable" ? 1 : 0 })) };
+    rerender(<EstimatorRecommendations {...props} view={unresolved} completion={completion} />);
+    expect(screen.getByRole("dialog")).toBeVisible();
+    expect(onOpenChange).not.toHaveBeenCalled();
+    rerender(<EstimatorRecommendations {...props} view={selected} completion={completion} />);
+    expect(onOpenChange).toHaveBeenCalledExactlyOnceWith(false);
   });
 });

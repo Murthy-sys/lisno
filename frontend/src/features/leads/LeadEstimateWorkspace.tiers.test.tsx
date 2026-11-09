@@ -7,6 +7,8 @@ import { LeadEstimateWorkspace } from "./LeadEstimateWorkspace";
 import { leadKeys, type ConfiguredEstimateLine, type EstimateDraft, type EstimateDraftInput } from "./leadsApi";
 import { estimationCatalogueKeys } from "./estimationCatalogueApi";
 import type { EstimationCatalogueMainLine } from "./estimationCatalogueApi";
+import type { EstimateTierComparisonInput } from "../estimates/estimateTierComparisonApi";
+import { KNOWLEDGE_MODE_TIERS, KNOWLEDGE_MODE_TIER_LABELS } from "../../../../shared/knowledge/knowledgeModeTiers";
 vi.mock("../../auth/AuthProvider", () => ({ useAuth: () => ({ user: { id: "test-estimator", role: "estimator_sales" }, reviewSession: { id: "test-session" }, status: "authenticated" }) }));
 vi.mock("./estimateRevisionsApi", async importOriginal => ({
   ...await importOriginal<typeof import("./estimateRevisionsApi")>(),
@@ -32,7 +34,8 @@ function fixture(withDimensions = false) {
   let stored: EstimateDraft = { id: "estimate", version: 7, propertyType: "Villa", bedroomCount: 2, rooms: [{ id: "living", typeId: "living", label: "Living & Dining", sqft: 100, length: 10, width: 10 }],
     scopes: [], selectedMainBasketIds: ["basket"], lineItems: [line], subtotal: 198, gst: 35.64, total: 233.64, status: "draft", approvalRequired: false };
   const saves: EstimateDraftInput[] = [];
-  const comparisons: Record<string, any>[] = [];
+  const comparisons: EstimateTierComparisonInput[] = [];
+  let comparisonFailure: number | null = null;
   let gate: Promise<void> | null = null;
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input); const method = init?.method ?? "GET";
@@ -41,10 +44,21 @@ function fixture(withDimensions = false) {
     if (url.includes("/estimation/catalogue?")) return Response.json({ data: { items: [{ id: "basket", name: "Gypsum", displayOrder: 1, subBaskets: [{ id: "sub", basketId: "basket", name: "Ceilings", displayOrder: 1, mainLines: [source] }] }], pagination: { total: 1, hasMore: false, offset: 0, limit: 100 }, ineligibleLineCount: 0 } });
     if (url.includes("/estimation/catalogue/recommendations?")) return Response.json({ data: { sources: [] } });
     if (url.endsWith("/leads/lead/estimate/tier-comparison") && method === "POST") {
-      comparisons.push(JSON.parse(String(init?.body)));
+      const request = JSON.parse(String(init?.body)) as EstimateTierComparisonInput;
+      comparisons.push(request);
+      if (comparisonFailure !== null) return Response.json({ error: { code: "ESTIMATE_CONFIGURATION_CHANGED", message: "Configuration changed." } }, { status: comparisonFailure });
       return Response.json({ data: { roomId: "living", roomName: "Living & Dining", mainBasketId: "basket", mainBasketName: "Gypsum", subBasketId: "sub", subBasketName: "Ceilings", estimateVersion: stored.version,
-        tiers: [{ modeTier: "current", label: "Mode", available: true, subtotalPaise: 19800,
-          lines: [{ mainLineId: "main-line", name: "Ceiling", quantity: 2, uomName: "sq ft", ratePaise: 9900, amountPaise: 19800, unavailableReason: null }] }] } });
+        tiers: (["current", ...KNOWLEDGE_MODE_TIERS] as const).map(modeTier => {
+          const lines = request.lines.map(value => {
+            const ratePaise = modeTier === "current" && value.rateSource === "manual" ? 9900
+              : source.tierPricing?.[modeTier === "current" ? value.modeTier : modeTier]?.modeBaseRatesPaise[value.pricingMode] ?? null;
+            return { mainLineId: value.mainLineId, name: "Ceiling", quantity: value.quantity, uomName: "sq ft", ratePaise,
+              amountPaise: ratePaise === null ? null : Math.round(ratePaise * value.quantity), unavailableReason: ratePaise === null ? "Price not configured" : null };
+          });
+          return { modeTier, label: modeTier === "current" ? "Mode" : KNOWLEDGE_MODE_TIER_LABELS[modeTier],
+            available: lines.every(line => line.amountPaise !== null),
+            subtotalPaise: lines.every(line => line.amountPaise !== null) ? lines.reduce((total, line) => total + line.amountPaise!, 0) : null, lines };
+        }) } });
     }
     if (url.endsWith("/leads/lead/estimate") && method === "PUT") {
       const body = JSON.parse(String(init?.body)) as EstimateDraftInput; saves.push(body); await gate;
@@ -58,23 +72,63 @@ function fixture(withDimensions = false) {
     const rendered = render(<QueryClientProvider client={client}><MemoryRouter initialEntries={["/estimator-sales/leads/lead/estimate"]}><Routes><Route path="/estimator-sales/leads/:leadId/estimate" element={<LeadEstimateWorkspace />} /></Routes></MemoryRouter></QueryClientProvider>);
     return { ...rendered, client };
   };
-  return { mount, saves, comparisons, source, stored: () => stored, updateStored(next: EstimateDraft) { stored = next; }, pauseSave(promise: Promise<void>) { gate = promise; } };
+  return { mount, saves, comparisons, source, stored: () => stored, updateStored(next: EstimateDraft) { stored = next; }, pauseSave(promise: Promise<void>) { gate = promise; }, failComparison(status: number | null) { comparisonFailure = status; } };
 }
 
 describe("Sales estimate tier persistence", () => {
-  it("starts with Mode, restores the original manual price after a group tier change, and saves it without a mode sentinel", async () => {
-    const user = userEvent.setup(); const data = fixture(); data.mount();
-    const mode = await screen.findByRole("radio", { name: /^Mode for/ });
-    expect(mode).toBeChecked();
-    await waitFor(() => expect(screen.getByRole("radio", { name: /Premium tier for/ })).toBeEnabled());
-    await user.click(screen.getByRole("radio", { name: /Premium tier for/ }));
-    expect(screen.getByRole("textbox", { name: /Selling rate/ })).toHaveValue("25");
-    await user.click(mode);
-    expect(mode).toBeChecked();
+  it("keeps tier choices blocked after closing stale price information and editing quantity until a current read succeeds", async () => {
+    const user = userEvent.setup(); const data = fixture(); data.failComparison(409); data.mount();
+    await user.click(await screen.findByRole("button", { name: /^Tier price information for/ }));
+    await screen.findByRole("button", { name: /^Retry tier prices/ });
+    await user.click(screen.getByRole("button", { name: "Close" }));
+    screen.getAllByRole("radio", { name: /tier for/ }).forEach(option => expect(option).toBeDisabled());
+    const quantity = screen.getByRole("spinbutton", { name: /^Quantity/ });
+    await user.clear(quantity);
+    screen.getAllByRole("radio", { name: /tier for/ }).forEach(option => expect(option).toBeDisabled());
+    await user.type(quantity, "3");
+    screen.getAllByRole("radio", { name: /tier for/ }).forEach(option => expect(option).toBeDisabled());
     expect(screen.getByRole("textbox", { name: /Selling rate/ })).toHaveValue("99");
+    expect(data.saves).toEqual([]);
+    data.failComparison(null);
+    await user.click(screen.getByRole("button", { name: /^Tier price information for/ }));
+    await waitFor(() => expect(screen.getByRole("group", { name: /^Tier price suggestions/ })).toHaveTextContent(/If you choose Premium:.*₹25.*₹75/));
+    await user.click(screen.getByRole("button", { name: "Close" }));
+    await waitFor(() => expect(screen.getByRole("radio", { name: /Premium tier for/ })).toBeEnabled());
+    expect(screen.getByRole("textbox", { name: /Selling rate/ })).toHaveValue("99");
+    expect(data.saves).toEqual([]);
+  });
+  it("retains the implicit manual baseline without a Mode control until an explicit same-tier choice", async () => {
+    const user = userEvent.setup(); const data = fixture(); data.mount();
+    await waitFor(() => expect(screen.getByRole("radio", { name: /Premium tier for/ })).toBeEnabled());
+    expect(screen.queryByRole("radio", { name: /^Mode for/ })).not.toBeInTheDocument();
+    expect(screen.queryByText("Mode keeps current line choices.")).not.toBeInTheDocument();
+    screen.getAllByRole("radio", { name: /tier for/ }).forEach(option => expect(option).not.toBeChecked());
+    expect(screen.getByRole("textbox", { name: /Selling rate/ })).toHaveValue("99");
+    expect(screen.queryByRole("group", { name: /^Tier price suggestions/ })).not.toBeInTheDocument();
+    expect(data.comparisons).toEqual([]);
+    const info = screen.getByRole("button", { name: /^Tier price information for/ });
+    await user.click(info);
+    const suggestions = screen.getByRole("group", { name: /^Tier price suggestions/ });
+    await waitFor(() => expect(suggestions).toHaveTextContent(/If you choose Premium:.*₹25.*₹50/));
+    expect(suggestions).toHaveTextContent(/If you choose Functional:.*₹0/);
+    expect(data.saves).toEqual([]);
+    await user.keyboard("{Escape}");
+    expect(info).toHaveFocus();
     await user.click(screen.getByRole("button", { name: "Save draft" }));
     await waitFor(() => expect(data.saves).toHaveLength(1));
     expect(data.saves[0]!.lineItems[0]).toMatchObject({ modeTier: "signature", rateSource: "manual", ratePaise: 9900 });
+    await screen.findByText("Estimate draft saved.");
+    await waitFor(() => expect(screen.getByRole("radio", { name: /Signature tier for/ })).toBeEnabled());
+    await user.click(screen.getByRole("radio", { name: /Signature tier for/ }));
+    expect(screen.getByRole("textbox", { name: /Selling rate/ })).toHaveValue("20");
+    await user.click(screen.getByRole("button", { name: /^Tier price information for/ }));
+    await waitFor(() => expect(screen.getByRole("group", { name: /^Tier price suggestions/ })).toHaveTextContent(/If you choose Signature:.*₹20.*₹40/));
+    expect(data.comparisons.at(-1)!.lines[0]).toMatchObject({ modeTier: "signature", rateSource: "configuration", quantity: 2 });
+    expect(data.saves).toHaveLength(1);
+    await user.click(screen.getByRole("button", { name: "Close" }));
+    await user.click(screen.getByRole("button", { name: "Save draft" }));
+    await waitFor(() => expect(data.saves).toHaveLength(2));
+    expect(data.saves[1]!.lineItems[0]).toMatchObject({ modeTier: "signature", rateSource: "configuration", ratePaise: 2000 });
   });
 
   it("requests comparison for current group quantities with source pins and flags unsaved manual prices without saving", async () => {
@@ -82,7 +136,7 @@ describe("Sales estimate tier persistence", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: /^Check tier comparison for/ })).toBeEnabled());
     await user.click(screen.getByRole("button", { name: /^Check tier comparison for/ }));
     await screen.findByRole("dialog", { name: /^Price comparison:/ });
-    await waitFor(() => expect(data.comparisons).toHaveLength(1));
+    await waitFor(() => expect(data.comparisons.length).toBeGreaterThanOrEqual(1));
     expect(data.comparisons[0]).toMatchObject({ expectedVersion: 7, roomId: "living", mainBasketId: "basket", subBasketId: "sub",
       lines: [{ mainLineId: "main-line", lineItemId: "saved-line", revisionId: "revision", itemVersion: 4, revisionVersion: 2,
         uomId: "unit", quantity: 2, pricingMode: "sub_vendor", modeTier: "signature", rateSource: "manual", manualRateChanged: false }] });
@@ -90,8 +144,7 @@ describe("Sales estimate tier persistence", () => {
     const rate = screen.getByRole("textbox", { name: /Selling rate/ });
     await user.clear(rate); await user.type(rate, "101.25");
     await user.click(screen.getByRole("button", { name: /^Check tier comparison for/ }));
-    await waitFor(() => expect(data.comparisons).toHaveLength(2));
-    expect(data.comparisons[1]!.lines[0]).toMatchObject({ manualRateChanged: true });
+    await waitFor(() => expect(data.comparisons.at(-1)!.lines[0]).toMatchObject({ manualRateChanged: true }));
     expect(data.saves).toEqual([]);
   });
 
@@ -115,7 +168,7 @@ describe("Sales estimate tier persistence", () => {
     await user.click(screen.getByRole("switch", { name: /PMC pricing mode/ }));
     expect(screen.getByRole("switch", { name: /PMC pricing mode/ })).not.toBeChecked();
     expect(screen.getByRole("radio", { name: /Sub-Vendor pricing mode/ })).toBeChecked();
-    expect(screen.getByRole("radio", { name: /^Mode for/ })).toBeChecked();
+    expect(screen.getByRole("radio", { name: /Premium tier for/ })).toBeChecked();
     expect(screen.getByRole("textbox", { name: /Selling rate/ })).toHaveValue("25");
     expect(screen.getByLabelText(/^Amount for/)).toHaveTextContent("₹50");
     await user.click(screen.getByRole("button", { name: "Save draft" }));
@@ -154,7 +207,7 @@ describe("Sales estimate tier persistence", () => {
     expect(screen.getByRole("textbox", { name: /Selling rate/ })).toHaveValue("99");
     data.updateStored({ ...data.stored(), version: 8, lineItems: data.stored().lineItems.map(line => ({ ...line, modeTier: "premium" as const, rateSource: "configuration" as const, ratePaise: 2500, rate: 25 })) });
     await act(async () => { await view.client.refetchQueries({ queryKey: leadKeys.estimate("lead") }); });
-    await waitFor(() => expect(screen.getByRole("radio", { name: /^Mode for/ })).toBeChecked());
+    await waitFor(() => expect(screen.getByRole("radio", { name: /Premium tier for/ })).toBeChecked());
     expect(screen.getByRole("textbox", { name: /Selling rate/ })).toHaveValue("25");
     expect(screen.queryByText(/Your local edits are preserved/)).not.toBeInTheDocument();
   });
@@ -169,7 +222,7 @@ describe("Sales estimate tier persistence", () => {
     await waitFor(() => expect(data.saves).toHaveLength(1));
     expect(data.saves[0]).toMatchObject({ expectedVersion: 7, lineItems: [{ id: "saved-line", mainLineId: "main-line", modeTier: "premium", rateSource: "configuration", ratePaise: 2500, quantity: 2, itemVersion: 4, revisionVersion: 2 }] });
     await screen.findByText("Estimate draft saved."); view.unmount(); data.mount();
-    expect(await screen.findByRole("radio", { name: /^Mode for/ })).toBeChecked();
+    expect(await screen.findByRole("radio", { name: /Premium tier for/ })).toBeChecked();
     expect(screen.getByRole("textbox", { name: /Selling rate/ })).toHaveValue("25");
   });
 

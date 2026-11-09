@@ -1,9 +1,9 @@
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { ConfiguredEstimateBuilder } from "./ConfiguredEstimateBuilder";
-import { applyConfiguredGroupTier, configuredTierGroupKey, type ConfiguredLineDraft, type ConfiguredTierGroupChoice, buildConfiguredLines, configuredLineAmountPaise, createConfiguredLine, updateConfiguredLinePricing } from "./configuredEstimate";
+import { buildConfiguredLines, configuredLineAmountPaise, createConfiguredLine, updateConfiguredLinePricing } from "./configuredEstimate";
 import type { EstimationCatalogue } from "./estimationCatalogueApi";
 
 const room = { id: "living", typeId: "living", label: "Living room", sqft: 100 };
@@ -30,8 +30,6 @@ const catalogue: EstimationCatalogue = { ineligibleLineCount: 0, items: [{
 }] };
 
 function SellingPriceBuilder() {
-  const baselines = useRef(new Map<string, ConfiguredLineDraft>());
-  const [groupChoices, setGroupChoices] = useState<Record<string, ConfiguredTierGroupChoice>>({});
   const [lines, setLines] = useState(() => ["paint", "primer"].map((mainLineId, index) => ({
     ...createConfiguredLine(catalogue, room, { mainLineId, basketId: "finishes", subBasketId: "walls" })!,
     included: true, quantity: index + 2
@@ -40,12 +38,6 @@ function SellingPriceBuilder() {
     selectedMainBasketIds={baskets} lines={lines} editable roomIcons={{}}
     moneyPaise={amount => `₹${amount / 100}`}
     roomTotal={() => lines.reduce((total, line) => total + (configuredLineAmountPaise(line) ?? 0), 0)}
-    groupTierChoices={groupChoices} onUpdateGroupTier={(scope, choice) => {
-      const next = applyConfiguredGroupTier(lines, scope, choice, baselines.current);
-      if (!next) return;
-      baselines.current = next.baselines; setLines(next.lines);
-      setGroupChoices(current => ({ ...current, [configuredTierGroupKey(scope)]: choice }));
-    }}
     onUpdateLine={(key, change) => setLines(current => current.map(line => line.key === key ? updateConfiguredLinePricing(line, change) : line))}
     onRefreshAvailableItems={() => setLines(current => buildConfiguredLines(catalogue, [room], baskets, current))}
     refreshingAvailableItems={false} />;
@@ -61,11 +53,12 @@ describe("configured estimate selling prices", () => {
     render(<SellingPriceBuilder />);
     const paint = paintRow();
     await user.click(paint.getByRole("radio", { name: /Special item type/ }));
-    expect(paint.queryByRole("radio", { name: /tier for/ })).not.toBeInTheDocument();
-    expect(screen.getByRole("radio", { name: /Functional tier/ })).toBeDisabled();
+    expect(paint.getByRole("radio", { name: /Signature tier for/ })).toBeChecked();
+    expect(paint.getByRole("radio", { name: /Functional tier/ })).toBeDisabled();
     const inclusion = paint.getByRole("checkbox", { name: "Include Wall painting in Living room" });
     inclusion.focus();
     const controls = [
+      paint.getByRole("radio", { name: /Signature tier for/ }),
       paint.getByRole("radio", { name: /Special item type/ }),
       paint.getByRole("switch", { name: /PMC pricing mode/ }),
       paint.getByRole("radio", { name: /Sub-Vendor pricing mode/ }),
@@ -120,7 +113,7 @@ describe("configured estimate selling prices", () => {
     expect(paint.queryByRole("radio", { name: /Sub-Vendor pricing mode/ })).not.toBeInTheDocument();
     expect(rate).toHaveValue("180");
     expect(paint.getByRole("status", { name: /Amount for/ })).toHaveTextContent("₹540");
-    await user.click(screen.getByRole("radio", { name: /Premium tier/ }));
+    await user.click(paint.getByRole("radio", { name: /Premium tier/ }));
     expect(rate).toHaveValue("240");
     await user.click(pmc);
     expect(paint.getByRole("radio", { name: /Sub-Vendor pricing mode/ })).toBeChecked();

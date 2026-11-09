@@ -1,8 +1,10 @@
 import { EstimateSubBasketModes } from "../estimates/EstimateSubBasketModes";
+import { EstimateSubBasketTierInfo, EstimateTierInfoButton } from "./EstimateSubBasketTierInfo";
+import { useEstimateTierSuggestions, type EstimateTierSuggestionGroup, type EstimateTierSuggestionState } from "./useEstimateTierSuggestions";
 import type { EstimateTierComparisonInput } from "../estimates/estimateTierComparisonApi";
 import { EstimateComponentPricingStatus, EstimateSubBasketAmounts } from "./EstimateComponentBreakdown";
 import { EstimateDimensionsFields } from "./EstimateDimensionsFields";
-import { KNOWLEDGE_MODE_TIERS } from "../../../../shared/knowledge/knowledgeModeTiers";
+import { KNOWLEDGE_MODE_TIERS, KNOWLEDGE_MODE_TIER_LABELS } from "../../../../shared/knowledge/knowledgeModeTiers";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type Dispatch, type SetStateAction } from "react";
 import { useConfiguredEstimateViewState, type ConfiguredEstimateViewState } from "./useConfiguredEstimateViewState";
 import type { LucideIcon } from "lucide-react";
@@ -12,12 +14,12 @@ import { EstimateItemPicker, EstimateSelectionPagination } from "../estimates/Es
 import type { EstimateRecommendationsPopup } from "../estimates/EstimateRecommendations";
 import type { EstimationCatalogue } from "./estimationCatalogueApi";
 import type { EstimateClassification, EstimatePricingMode } from "./leadsApi";
-import { configuredTierGroupKey, configuredLineInTierGroup, type ConfiguredTierGroupScope, type ConfiguredTierGroupChoice, configuredAttributedAmountPaise, configuredUsesComponentPricing, configuredDimensionsIssue, configuredInHouseSelectionIssue, configuredLineAmountPaise, configuredLinePreviewAmountPaise, configuredTierUnavailableReason, configuredQuantityUnits, parseSellingRate, type ConfiguredLineDraft } from "./configuredEstimate";
+import { configuredTierGroupKey, configuredLineInTierGroup, type ConfiguredTierGroupScope, configuredAttributedAmountPaise, configuredUsesComponentPricing, configuredDimensionsIssue, configuredInHouseSelectionIssue, configuredLineAmountPaise, configuredLinePreviewAmountPaise, configuredTierUnavailableReason, configuredQuantityUnits, parseSellingRate, type ConfiguredLineDraft } from "./configuredEstimate";
 import { EstimateInHouseComponents } from "./EstimateInHouseComponents";
 import { EstimatorRecommendations, type RecommendationReadState } from "./EstimatorRecommendations";
 import { recommendationTargetIdentity, type RoomRecommendationView, type RecommendedLineTarget } from "./roomRecommendations";
 import { EstimateBuilderShell, type EstimateShellBasket } from "../estimates/EstimateBuilderShell";
-import { EstimateLineActions, EstimateLineChoice, EstimateLineLayout } from "../estimates/EstimateLineRow";
+import { EstimateLineActions, EstimateLineChoice, EstimateLineLayout, EstimateLineTierNotes, EstimateLineTierOptions } from "../estimates/EstimateLineRow";
 import { buildSalesEstimateCatalogue } from "./salesEstimateCatalogue";
 
 interface Room {
@@ -31,7 +33,7 @@ const itemCount = (count: number) => `${count} ${count === 1 ? "item" : "items"}
 
 export function ConfiguredEstimateBuilder({
   rooms, activeRoomId, onSelectRoom, catalogue, selectedMainBasketIds, mainBasketClassifications, lines,
-  onUpdateLine, onUpdateGroupTier, groupTierChoices, getTierComparison, onRefreshAvailableItems, refreshingAvailableItems, availableItemsState = "ready", roomTotal, moneyPaise, editable, pricingModeEditable = editable,
+  onUpdateLine, getTierComparison, tierSuggestionContext, onRefreshAvailableItems, refreshingAvailableItems, availableItemsState = "ready", roomTotal, moneyPaise, editable, pricingModeEditable = editable,
   recommendationSourceCount = 0, recommendationState = "ready", recommendationView = null,
   onRetryRecommendations = () => {}, onSelectRecommendedLine = () => false, onRemoveRecommendedLine = () => false, onAddLine, recommendationContextKey,
   navigation, viewState, onViewStateChange, onRemoveSubBasket, excludedReviewKeys, reviewContextKey = "current",
@@ -46,8 +48,7 @@ export function ConfiguredEstimateBuilder({
   lines: readonly ConfiguredLineDraft[];
   onRemoveSubBasket?: (scope: { roomId: string; mainBasketId: string; subBasketId: string }) => void;
   onUpdateLine: (key: string, change: Partial<ConfiguredLineDraft>) => void;
-  onUpdateGroupTier?: (scope: ConfiguredTierGroupScope, choice: ConfiguredTierGroupChoice) => void;
-  groupTierChoices?: Readonly<Record<string, ConfiguredTierGroupChoice>>;
+  tierSuggestionContext?: string;
   getTierComparison?: (scope: ConfiguredTierGroupScope, lines: readonly ConfiguredLineDraft[]) => {
     target: { kind: "lead" | "project"; id: string }; input: EstimateTierComparisonInput;
   } | undefined;
@@ -83,6 +84,8 @@ export function ConfiguredEstimateBuilder({
   const recommendationFallbackFocusRef = useRef<HTMLInputElement>(null);
   const toolbarRef = useRef<HTMLDivElement>(null);
   const pickerTriggerRef = useRef<HTMLButtonElement>(null);
+  const tierInfoTriggerRef = useRef<HTMLButtonElement>(null);
+  const [tierInfo, setTierInfo] = useState<{ context: string; scope: ConfiguredTierGroupScope } | null>(null);
   const nonPmcModes = useRef<{ context: string; modes: Map<string, "sub_vendor" | "in_house"> }>({
     context: reviewContextKey, modes: new Map()
   });
@@ -102,6 +105,12 @@ export function ConfiguredEstimateBuilder({
   const selectedCount = lines.filter(line => line.included).length;
   const activeRoom = rooms.find(room => room.id === activeRoomId) ?? rooms[0];
   const roomLines = lines.filter(line => line.roomId === activeRoom?.id && line.included);
+  const infoBasket = tierInfo ? catalogue.items.find(basket => basket.id === tierInfo.scope.mainBasketId && selectedMainBasketIds.has(basket.id)) : undefined;
+  const infoSubBasket = infoBasket?.subBaskets.find(subBasket => subBasket.id === tierInfo?.scope.subBasketId);
+  const infoLines = tierInfo ? lines.filter(line => configuredLineInTierGroup(line, tierInfo.scope)) : [];
+  const infoOpen = Boolean(tierInfo && tierSuggestionContext && tierInfo.context === tierSuggestionContext &&
+    tierInfo.scope.roomId === activeRoom?.id && infoBasket && (tierInfo.scope.subBasketId === null || infoSubBasket) && infoLines.length);
+  useEffect(() => { if (tierInfo && !infoOpen) setTierInfo(null); }, [tierInfo, infoOpen]);
   const browseCatalogue = itemPresentation === "catalogue";
   const browsableBaskets = browseMainBasketIds ?? selectedMainBasketIds;
   const visibleBaskets = catalogue.items.filter(basket => selectedMainBasketIds.has(basket.id) &&
@@ -217,25 +226,30 @@ export function ConfiguredEstimateBuilder({
         onChange={value => setGroupOffsets(current => ({ ...current, [key]: value }))} disabled={false} label={`${label} item pages`} /> : undefined
     };
   };
-  const groupTierControl = (mainBasketId: string, subBasketId: string | null, name: string) => {
+  const groupComparisonControl = (mainBasketId: string, subBasketId: string | null, name: string, inline = false) => {
     if (!activeRoom) return undefined;
     const scope = { roomId: activeRoom.id, mainBasketId, subBasketId };
     // Use the full included group, independent of search, collapsed state, or pagination.
     const included = lines.filter(line => configuredLineInTierGroup(line, scope));
     if (!included.length) return undefined;
-    const selected = groupTierChoices?.[configuredTierGroupKey(scope)] ?? "mode";
-    const value = selected === "mode" || included.every(line => (line.modeTier ?? "signature") === selected) ? selected : "mode";
-    const options = KNOWLEDGE_MODE_TIERS.map(tier => {
-      const unavailable = included.find(line => line.sourceMissing || configuredTierUnavailableReason(line, tier,
-        line.pricingMode ?? ((line.classification ?? mainBasketClassifications?.get(line.mainBasketId) ?? "standard") === "standard" ? "sub_vendor" : undefined)));
-      return { tier, available: !unavailable, reason: unavailable ? `${unavailable.mainLineName}: ${unavailable.sourceMissing ? "Current Configuration unavailable" : configuredTierUnavailableReason(unavailable, tier,
-        unavailable.pricingMode ?? ((unavailable.classification ?? mainBasketClassifications?.get(unavailable.mainBasketId) ?? "standard") === "standard" ? "sub_vendor" : undefined))}` : null };
-    });
     const comparison = getTierComparison?.(scope, included);
-    return <EstimateSubBasketModes label={`${name} in ${activeRoom.label}`} value={value} options={options}
-      disabled={refreshingAvailableItems || availableItemsState !== "ready" || !onUpdateGroupTier} readOnly={!editable}
-      onChange={choice => onUpdateGroupTier?.(scope, choice)} comparison={comparison}
+    return <EstimateSubBasketModes comparisonOnly inline={inline} label={`${name} in ${activeRoom.label}`} value="mode" options={[]}
+      onChange={() => {}} comparison={comparison}
       detailsDisabledReason={!comparison ? "Refresh the estimate and complete quantities to compare current tier prices." : undefined} />;
+  };
+  const groupInfoControl = (mainBasketId: string, subBasketId: string | null, name: string) => {
+    if (!activeRoom || !tierSuggestionContext || !getTierComparison) return undefined;
+    const scope = { roomId: activeRoom.id, mainBasketId, subBasketId };
+    if (!lines.some(line => configuredLineInTierGroup(line, scope))) return undefined;
+    return <EstimateTierInfoButton label={`${name} in ${activeRoom.label}`} onClick={event => {
+      tierInfoTriggerRef.current = event.currentTarget;
+      setTierInfo({ context: tierSuggestionContext, scope });
+    }} />;
+  };
+  const subBasketHeadingActions = (mainBasketId: string, subBasketId: string, name: string) => {
+    const info = groupInfoControl(mainBasketId, subBasketId, name);
+    const comparison = groupComparisonControl(mainBasketId, subBasketId, name, true);
+    return info || comparison ? <>{info}{comparison}</> : undefined;
   };
   const catalogueGroups: EstimateShellBasket[] = (activeRoom ? visibleBaskets : [])
     .filter(basket => browseCatalogue || roomLines.some(line => line.mainBasketId === basket.id && !line.sourceMissing))
@@ -268,7 +282,8 @@ export function ConfiguredEstimateBuilder({
         </div> : undefined,
         subtotalLabel: attributedSubtotalLabel(basket.id),
         directSubtotalLabel: attributedSubtotalLabel(basket.id, null),
-        directHeaderActions: groupTierControl(basket.id, null, `Direct items in ${basket.name}`),
+        directHeaderActions: groupComparisonControl(basket.id, null, `Direct items in ${basket.name}`),
+        directHeadingActions: groupInfoControl(basket.id, null, `Direct items in ${basket.name}`),
         directCountLabel: compact ? `${directLines.length} selected` : browseCatalogue ? browseCountLabel(directLines) : undefined,
         directLines: directPage.lines,
         afterDirectLines: directPage.afterLines,
@@ -278,7 +293,7 @@ export function ConfiguredEstimateBuilder({
             emptyMessage: browseCatalogue && reviewLines.some(line => line.roomId === activeRoom?.id && line.mainBasketId === basket.id && line.subBasketId === subBasket.id)
               ? "Excluded items in this Sub Basket are shown above for review." : undefined,
             subtotalLabel: attributedSubtotalLabel(basket.id, subBasket.id),
-            headerActions: groupTierControl(basket.id, subBasket.id, `${basket.name}, ${subBasket.name}`),
+            headingActions: subBasketHeadingActions(basket.id, subBasket.id, `${basket.name}, ${subBasket.name}`),
             ...pageGroup(subBasket.lines, `${basket.id}:${subBasket.id}`, `${basket.name}, ${subBasket.name}`),
             ...(onRemoveSubBasket && activeRoom ? { removal: {
               label: `Remove ${subBasket.name} Sub Basket from ${activeRoom.label}`,
@@ -304,6 +319,16 @@ export function ConfiguredEstimateBuilder({
   };
   const byId = new Map(lines.map(line => [line.key, line]));
   for (const row of catalogueRows) byId.set(row.line.key, row.line);
+  const suggestionGroups: EstimateTierSuggestionGroup[] = [];
+  const eligibleInfoLines = infoOpen ? infoLines.filter(line => !line.sourceMissing && !line.uomNeedsQuantityReview &&
+    !configuredDimensionsIssue(line) && configuredQuantityUnits(line.quantity, line.uomDecimalScale, true) !== null &&
+    Number.isSafeInteger(line.itemVersion ?? line.sourceItemVersion) && Number.isSafeInteger(line.revisionVersion ?? line.sourceRevisionVersion)) : [];
+  if (infoOpen && tierInfo && getTierComparison && !refreshingAvailableItems && availableItemsState === "ready") {
+    const request = eligibleInfoLines.length ? getTierComparison(tierInfo.scope, eligibleInfoLines) : undefined;
+    if (request) suggestionGroups.push({ key: configuredTierGroupKey(tierInfo.scope), request,
+      scopeMainLineIds: infoLines.map(line => line.mainLineId) });
+  }
+  const requestedInfoKeys = new Set(suggestionGroups.length ? eligibleInfoLines.map(line => line.key) : []);
   const previewById = new Map(catalogueRows.filter(row => row.isPreview).map(row => [row.line.key, row]));
   const updateVisibleLine = (key: string, change: Partial<ConfiguredLineDraft>) => {
     const preview = previewById.get(key);
@@ -318,12 +343,15 @@ export function ConfiguredEstimateBuilder({
       if (!focused.isConnected && document.activeElement === document.body) (pickerTriggerRef.current ?? recommendationFallbackFocusRef.current)?.focus();
     });
   };
-  const renderLine = (id: string) => {
+  const renderLine = (id: string, suggestions: ReadonlyMap<string, EstimateTierSuggestionState>) => {
     const line = byId.get(id);
     if (!line) return null;
     const rowEditable = editable && (!previewById.has(id) || Boolean(onUpdateAvailableLine)) &&
       (!browseCatalogue || line.included || !refreshingAvailableItems && availableItemsState === "ready");
-    const row = <ConfiguredLineRow pricingModeEditable={pricingModeEditable} getPmcToggleMode={getPmcToggleMode} line={line} inheritedClassification={mainBasketClassifications?.get(line.mainBasketId)} editable={Boolean(rowEditable)} onUpdateLine={updateVisibleLine} moneyPaise={moneyPaise} />;
+    const selectionBlocked = suggestions.get(configuredTierGroupKey(line))?.selectionBlocked;
+    const row = <ConfiguredLineRow pricingModeEditable={pricingModeEditable} getPmcToggleMode={getPmcToggleMode} line={line} inheritedClassification={mainBasketClassifications?.get(line.mainBasketId)} editable={Boolean(rowEditable)}
+      tierEditable={Boolean(rowEditable) && !refreshingAvailableItems && availableItemsState === "ready" && !selectionBlocked}
+      onUpdateLine={updateVisibleLine} moneyPaise={moneyPaise} />;
     return browseCatalogue ? <div onFocusCapture={() => setFocusedInlineLine({ context: inlineEditContext, key: id })}
       onBlurCapture={event => {
         if (!event.currentTarget.contains(event.relatedTarget)) setFocusedInlineLine(current => current?.key === id ? null : current);
@@ -334,17 +362,20 @@ export function ConfiguredEstimateBuilder({
     state={recommendationState} view={recommendationView} editable={editable}
     contextKey={recommendationContextKey ?? activeRoom.id}
     selectionFeedback={browseCatalogue ? { contextKey: activeRoom.id } : undefined}
+    completion={browseCatalogue && recommendationPopup ? {
+      contextKey: JSON.stringify([tierSuggestionContext ?? reviewContextKey, activeRoom.id]), selectedTargetIds: includedTargets
+    } : undefined}
     popup={recommendationPopup ? { ...recommendationPopup, toolbarRef, fallbackFocusRef: recommendationFallbackFocusRef } : undefined}
     onRemove={onRemoveRecommendedLine}
     onRetry={onRetryRecommendations} onRefresh={onRefreshAvailableItems} onSelect={selectRecommendedLine}
   /> : null;
-  return <EstimateBuilderShell selectedItemsOnly
+  const renderBuilder = (suggestions: ReadonlyMap<string, EstimateTierSuggestionState>) => <><EstimateBuilderShell selectedItemsOnly
     rooms={rooms.map(room => ({ id: room.id, label: room.label, detail: `${room.sqft} sqft · ${roomAmountLabel(room.id)}`,
       hasSelectedItems: lines.some(line => line.roomId === room.id && line.included) }))}
     activeRoomId={activeRoomId} onSelectRoom={onSelectRoom} selectedCount={selectedCount}
     baskets={visibleBaskets.map(basket => ({ id: basket.id, name: basket.name,
       detail: `${browseCatalogue ? `${roomLines.filter(line => line.mainBasketId === basket.id && !line.sourceMissing).length} selected` : itemCount(roomLines.filter(line => line.mainBasketId === basket.id && !line.sourceMissing).length)} · ${attributedSubtotalLabel(basket.id)}` }))}
-    groups={catalogueGroups} renderLine={renderLine}
+    groups={catalogueGroups} renderLine={id => renderLine(id, suggestions)}
     viewState={state} onViewStateChange={setState}
     onRefresh={onRefreshAvailableItems} refreshing={refreshingAvailableItems}
     navigation={navigation} searchInputRef={recommendationFallbackFocusRef}
@@ -433,7 +464,27 @@ export function ConfiguredEstimateBuilder({
         : query ? `No ${browseCatalogue ? "available" : "selected"} items match “${search.trim()}”.`
         : browseCatalogue ? "No available items in the selected Main Baskets. Refresh available items to check again." : "No items selected in this room. Use Add items to choose what is needed."
       : undefined}
-  />;
+  />
+    {infoOpen && tierInfo ? <EstimateSubBasketTierInfo
+      title={`Tier prices: ${infoBasket!.name}, ${infoSubBasket?.name ?? "Direct items"} in ${activeRoom!.label}`}
+      lines={infoLines.map(line => ({ key: line.key, label: line.mainLineName, mainLineId: line.mainLineId,
+        state: requestedInfoKeys.has(line.key) ? suggestions.get(configuredTierGroupKey(tierInfo.scope)) ?? { status: "loading" } : {
+          status: "unavailable", message: configuredDimensionsIssue(line) ?? (line.uomNeedsQuantityReview
+            ? "Review the current unit and quantity to compare prices." : "Current prices are unavailable. Refresh available items and complete the quantity.")
+        } }))}
+      moneyPaise={moneyPaise} onClose={() => setTierInfo(null)} returnFocusRef={tierInfoTriggerRef} fallbackFocusRef={recommendationFallbackFocusRef} /> : null}
+  </>;
+  return tierSuggestionContext ? <ConfiguredTierSuggestionLoader context={tierSuggestionContext} groups={suggestionGroups}>
+    {renderBuilder}
+  </ConfiguredTierSuggestionLoader> : renderBuilder(new Map());
+}
+
+function ConfiguredTierSuggestionLoader({ context, groups, children }: {
+  context: string;
+  groups: readonly EstimateTierSuggestionGroup[];
+  children: (suggestions: ReadonlyMap<string, EstimateTierSuggestionState>) => ReactNode;
+}) {
+  return children(useEstimateTierSuggestions(context, groups));
 }
 
 /** Keep only blocking excluded rows discoverable until a complete correction is entered. */
@@ -466,12 +517,13 @@ function ExcludedEstimateReview({ lines, requiredCount, contextKey, editable, pr
   </section>;
 }
 
-function ConfiguredLineRow({ line, inheritedClassification = "standard", editable, pricingModeEditable, onUpdateLine, moneyPaise, getPmcToggleMode }: {
+function ConfiguredLineRow({ line, inheritedClassification = "standard", editable, tierEditable = false, pricingModeEditable, onUpdateLine, moneyPaise, getPmcToggleMode }: {
   pricingModeEditable: boolean;
   getPmcToggleMode: (line: ConfiguredLineDraft) => EstimatePricingMode;
   line: ConfiguredLineDraft;
   inheritedClassification?: EstimateClassification;
   editable: boolean;
+  tierEditable?: boolean;
   onUpdateLine: (key: string, change: Partial<ConfiguredLineDraft>) => void;
   moneyPaise: (value: number) => string;
 }) {
@@ -489,6 +541,10 @@ function ConfiguredLineRow({ line, inheritedClassification = "standard", editabl
   const classification = line.classification ?? inheritedClassification;
   const canEditMode = editable && pricingModeEditable && !line.sourceMissing;
   const referenceMode = line.pricingMode ?? (classification !== "special" ? "sub_vendor" : undefined);
+  const tierOptions = KNOWLEDGE_MODE_TIERS.map(value => ({ value, label: KNOWLEDGE_MODE_TIER_LABELS[value],
+    disabledReason: line.sourceMissing ? "Current Configuration unavailable" : configuredTierUnavailableReason(line, value, referenceMode) ??
+      (!pricingModeEditable && referenceMode !== line.pricingMode ? "Pricing mode cannot be changed at this estimate stage." : null) }));
+  const tierAvailabilityId = `${inputId}-tier-availability`;
   const step = 10 ** -line.uomDecimalScale;
   const changeQuantity = (direction: -1 | 1) => {
     const units = Math.round((Number.isFinite(line.quantity) ? line.quantity : 0) / step);
@@ -499,6 +555,10 @@ function ConfiguredLineRow({ line, inheritedClassification = "standard", editabl
     choice={<EstimateLineChoice name={line.mainLineName} unit={line.uomName} included={line.included} disabled={!editable}
       accessibleLabel={`Include ${line.mainLineName} in ${line.roomName}`}
       onToggle={included => onUpdateLine(line.key, { included })} />}
+    tier={line.included ? <EstimateLineTierOptions label={label} groupName={`line-tier-${line.key}`}
+      value={line.rateSource === "configuration" ? line.modeTier ?? "signature" : null}
+      options={tierOptions} disabled={!editable || !tierEditable || line.sourceMissing} availabilityId={tierAvailabilityId}
+      onChange={modeTier => onUpdateLine(line.key, { modeTier, rateSource: "configuration" })} /> : null}
     type={line.included ? editable ? <fieldset className="estimate-classification configured-estimate-line__classification" aria-label={`Item type for ${label}`}>
       <legend>Type</legend>
       <div className="configured-estimate-line__choices">
@@ -517,6 +577,7 @@ function ConfiguredLineRow({ line, inheritedClassification = "standard", editabl
         onToggle={() => onUpdateLine(line.key, { included: !line.included })}
         onResetQuantity={line.dimensionsMandatory ? undefined : () => onUpdateLine(line.key, { quantity: 1 })} />
     </>}>
+    {line.included ? <EstimateLineTierNotes options={tierOptions} id={tierAvailabilityId} /> : null}
     {line.estimateNotes?.map((note, index) => <small key={index}>{note}</small>)}
     {sourceStatus === "draft" || sourceStatus === "inactive" ? <small className="configured-estimate-line__source">{sourceStatus === "draft" ? "Draft" : "Inactive"} source</small> : null}
     {componentCalculated ? <small className="configured-estimate-line__component-rate">Calculated rate · Enter a rate to override.</small> : line.rateSource === "manual" ? <small className="configured-estimate-line__component-rate">Manual price</small> : null}

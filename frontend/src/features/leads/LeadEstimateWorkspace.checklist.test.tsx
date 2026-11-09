@@ -57,7 +57,7 @@ function setup(options: { status?: EstimateStatus; workflow3?: boolean; configur
     estimate.selectedMainBasketIds = ["basket"]; estimate.scopes = []; estimate.lineItems = [line];
   }
   options.amendEstimate?.(estimate);
-  const state = { estimate, failure: null as "save" | "saveUnknown" | "submit" | "send" | null, gate: undefined as Promise<void> | undefined,
+  const state = { estimate, failure: null as "save" | "saveUnknown" | "submit" | "send" | null, refreshFailure: null as "estimate" | "revision" | null, gate: undefined as Promise<void> | undefined,
     getGate: undefined as Promise<void> | undefined, revisionGate: options.revisionGate };
   const writes: Array<{ method: string; path: string; body: Record<string, unknown> }> = [];
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
@@ -65,7 +65,11 @@ function setup(options: { status?: EstimateStatus; workflow3?: boolean; configur
     const path = new URL(String(input), "http://localhost").pathname.replace(/^\/api\/v1/, "");
     const method = init?.method ?? "GET";
     if (method !== "GET") writes.push({ method, path, body: JSON.parse(String(init?.body ?? "{}")) });
-    if (path === "/leads/lead-one/estimate" && method === "GET") { await state.getGate; return response(state.estimate); }
+    if (path === "/leads/lead-one/estimate" && method === "GET") {
+      await state.getGate;
+      if (state.refreshFailure === "estimate") return Response.json({ error: { code: "UNAVAILABLE", message: "Estimate unavailable." } }, { status: 503 });
+      return response(state.estimate);
+    }
     if (path === "/leads/lead-one") return response({ id: "lead-one", projectId: "project-one", projectName: "Sample home", clientName: "Sample client", location: "Sample city", propertyType: "2BHK", ...(options.workflow3 ? { estimationWorkflowVersion: 3 } : {}) });
     if (path === "/leads/lead-one/estimate" && method === "PUT") {
       await state.gate;
@@ -83,7 +87,11 @@ function setup(options: { status?: EstimateStatus; workflow3?: boolean; configur
       state.estimate = { ...state.estimate, status: "sent_to_client", ...(state.estimate.estimation ? { estimation: { ...state.estimate.estimation, status: "sent_to_client" } } : {}) };
       return response(state.estimate);
     }
-    if (path === "/projects/project-one/quotation/revision") { await state.revisionGate; return response({ estimateId: state.estimate.id, estimateVersion: state.estimate.version, pricedRevision: 3, phase: state.estimate.estimation?.phase ?? "pre", status: state.estimate.status }); }
+    if (path === "/projects/project-one/quotation/revision") {
+      await state.revisionGate;
+      if (state.refreshFailure === "revision") return Response.json({ error: { code: "UNAVAILABLE", message: "Quotation updates unavailable." } }, { status: 503 });
+      return response({ estimateId: state.estimate.id, estimateVersion: state.estimate.version, pricedRevision: 3, phase: state.estimate.estimation?.phase ?? "pre", status: state.estimate.status });
+    }
     if (path === "/projects/project-one/estimate-requirements") return response({ projectId: "project-one", requirementsVersion: 1, estimateVersion: state.estimate.version, phase: "pre", editingAllowed: true, editingBlockReason: null,
       canResolve: true, requirements: options.openRequest ? [{ id: "request-one", status: "open", requestKind: "item", roomId: "living", mainBasketId: "basket", message: "Review ceiling" }] : [], mainBaskets: [], rooms: [], indicativeTotalPaise: 2242000, pricingComplete: true });
     if (path === "/estimation/catalogue") return response({ items: [{ id: "basket", name: "Finishes", displayOrder: 1, subBaskets: [{ id: "sub", basketId: "basket", name: "Ceilings", displayOrder: 1,
@@ -198,6 +206,78 @@ describe("Estimator submission checklist integration", () => {
     fireEvent.click(submit); expect(data.writes).toEqual([]);
     await act(async () => { gate.resolve(); });
     await waitFor(() => expect(submit).not.toHaveAttribute("aria-describedby"));
+  });
+
+  it.each(["estimate", "revision"] as const)("omits the Sales refresh footer after %s failure and submits preserved edits after recovery", async failure => {
+    const data = setup({ workflow3: true, configured: true }); const user = userEvent.setup();
+    const quantity = () => screen.getByRole("spinbutton", { name: /Quantity.*Ceiling finish.*Living Room/i });
+    await waitFor(() => expect(quantity()).toBeEnabled());
+    const submit = screen.getByRole("button", { name: "Submit" });
+    await waitFor(() => expect(submit).not.toHaveAttribute("aria-describedby"));
+    await user.clear(quantity()); await user.type(quantity(), "245");
+    data.state.refreshFailure = failure;
+    const queryKey = failure === "estimate" ? leadKeys.estimate("lead-one") : quotationKeys.revision("project-one");
+    await act(async () => { await data.queryClient.refetchQueries({ queryKey, exact: true }); });
+    const errorNotice = await screen.findByText(failure === "estimate"
+      ? "The saved estimate could not be refreshed. Your local edits are preserved; refresh before continuing."
+      : /Quotation updates could not be checked\. Your edits are preserved\./);
+    expect(errorNotice).toBeVisible();
+    const expectNoRefreshFooter = () => {
+      expect(screen.queryByText("Refresh the estimate updates before submitting. Your local edits are preserved.")).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Refresh estimate access" })).not.toBeInTheDocument();
+      expect(submit).not.toHaveAttribute("aria-describedby");
+      expect(quantity()).toHaveValue(245);
+      expect(data.writes).toEqual([]);
+    };
+    expectNoRefreshFooter();
+    submit.focus(); await user.keyboard("{Enter}");
+    expectNoRefreshFooter();
+    expect(submit).toHaveFocus();
+    expect(errorNotice).toBeVisible();
+    expect(screen.queryByRole("dialog", { name: title })).not.toBeInTheDocument();
+
+    data.state.refreshFailure = null;
+    if (failure === "revision") await user.click(screen.getByRole("button", { name: "Retry updates" }));
+    else await act(async () => { await data.queryClient.refetchQueries({ queryKey, exact: true }); });
+    await waitFor(() => expect(quantity()).toBeEnabled());
+    expect(quantity()).toHaveValue(245);
+    await openChecklist(user);
+    await user.click(await completeChecklist(user));
+    await waitFor(() => expect(data.writes).toHaveLength(2));
+    expect(data.writes[0]).toMatchObject({ method: "PUT", body: { expectedVersion: 7,
+      lineItems: [{ id: "saved-ceiling", quantity: 245, included: true }] } });
+    expect(data.writes[1]).toEqual({ method: "POST", path: "/leads/lead-one/estimate/submit", body: { expectedVersion: 8, approveSales: true } });
+  });
+
+  it("preserves explicit feedback when a refresh failure closes the Sales checklist", async () => {
+    const data = setup({ workflow3: true }); const user = userEvent.setup();
+    await openChecklist(user); const confirm = await completeChecklist(user);
+    data.state.refreshFailure = "revision";
+    await act(async () => { await data.queryClient.refetchQueries({ queryKey: quotationKeys.revision("project-one"), exact: true }); });
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: title })).not.toBeInTheDocument());
+    const submit = screen.getByRole("button", { name: "Submit" });
+    const feedback = screen.getByText("The estimate or your access changed. Review the latest details and submit again.").closest('[role="alert"]');
+    expect(feedback).toBeVisible();
+    expect(submit).toHaveAccessibleDescription(/The estimate or your access changed\. Review the latest details and submit again\./);
+    await waitFor(() => expect([submit, feedback]).toContain(document.activeElement));
+    fireEvent.click(confirm);
+    expect(data.writes).toEqual([]);
+  });
+
+  it("retains the Designer refresh warning and access action", async () => {
+    session.current = { ...session.current, user: { id: "designer-one", role: "designer" }, authorization: authorizationFor("designer", permissions) };
+    const data = setup(); const user = userEvent.setup();
+    const submit = await screen.findByRole("button", { name: "Submit" });
+    await waitFor(() => expect(submit).not.toHaveAttribute("aria-describedby"));
+    data.state.refreshFailure = "estimate";
+    await act(async () => { await data.queryClient.refetchQueries({ queryKey: leadKeys.estimate("lead-one"), exact: true }); });
+    await waitFor(() => expect(submit).toHaveAccessibleDescription("Refresh the estimate updates before submitting. Your local edits are preserved."));
+    await user.click(submit);
+    expect(document.getElementById(submit.getAttribute("aria-describedby")!)).toHaveFocus();
+    data.state.refreshFailure = null;
+    await user.click(screen.getByRole("button", { name: "Refresh estimate access" }));
+    await waitFor(() => expect(submit).not.toHaveAttribute("aria-describedby"));
+    expect(data.writes).toEqual([]);
   });
 
   it("keeps checked confirmation stable while the verified revision token is polled", async () => {
