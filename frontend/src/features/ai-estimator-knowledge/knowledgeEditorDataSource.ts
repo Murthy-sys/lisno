@@ -1,5 +1,5 @@
 import type { QueryClient } from "@tanstack/react-query";
-import type { KnowledgeModeTier } from "../../../../shared/knowledge/knowledgeModeTiers";
+import type { KnowledgeModeConfigurationScope } from "../../../../shared/knowledge/knowledgeModeTiers";
 import {
   getKnowledgeItem, getKnowledgeSection, updateKnowledgeSection,
   getKnowledgeBasketQuality, updateKnowledgeBasketQuality,
@@ -19,7 +19,7 @@ export interface KnowledgeSpecificationItemNameLookup {
 export interface KnowledgeEditorDataSource {
   readonly scopeKey: string;
   readonly specificationItemNames?: KnowledgeSpecificationItemNameLookup;
-  readonly modeTier?: KnowledgeModeTier;
+  readonly modeTier?: KnowledgeModeConfigurationScope;
   readonly supportsLiveConfigurationRequests?: boolean;
   readonly supportsLegacyQuality: boolean;
   readonly itemKey: (mainLineId: string) => readonly unknown[];

@@ -5282,6 +5282,90 @@ async function persistentStateCounts(): Promise<Record<string, number>> {
 }
 
 describe("Mode tier scoped persistence", { timeout: 30_000 }, () => {
+  it("protects references and item names saved only in default Configuration", async () => {
+    const services = createServices();
+    const source = await createConfiguredDraft(services.item, "Default-only references");
+    const advanced = await services.item.getSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "advanced", "default");
+    const saved = await services.item.updateSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "advanced", {
+      modeTier: "default", expectedVersion: advanced.version, expectedAggregateVersion: source.aggregateVersion,
+      payload: { modeOverrides: [{ id: "default-ref", modeId: PMC_MODE_ID, description: "Only default", active: true }] }
+    });
+    await expect(services.reference.archiveMaster(SUPER_ADMIN, "modes", PMC_MODE_ID, { expectedVersion: 1 }))
+      .rejects.toMatchObject({ code: "ACTIVE_REFERENCE_CONFLICT" });
+    expect((await AiEstimatorKnowledgeModeModel.findById(PMC_MODE_ID).lean())?.status).toBe("active");
+    const pricing = await services.item.getSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "pricing", "default");
+    await services.item.updateSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "pricing", {
+      modeTier: "default", expectedVersion: pricing.version, expectedAggregateVersion: saved.aggregateVersion,
+      payload: { specifications: [{ id: "default-name", name: "Default-only specification" }], brands: [] }
+    });
+    const names = await services.specificationItemNames.list(SUPER_ADMIN, { search: "Default-only" });
+    expect(names.items.map(entry => entry.name)).toEqual(["Default-only specification"]);
+    expect((await services.item.getSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "pricing")).payload.specifications).toBeUndefined();
+  });
+
+  it("saves all four unequal Configuration scopes on normal and temporary Main Lines without crossing ownership", async () => {
+    const { item } = createServices();
+    const sources = await Promise.all([
+      item.createMainLine(SUPER_ADMIN, BASKET_ID, { name: "Four-scope normal" }),
+      item.createMainLine(SUPER_ADMIN, BASKET_ID, { name: "Four-scope temporary", itemType: "temporary" })
+    ]);
+    const scopes = ["signature", "default", "premium", "functional"] as const;
+    for (const [lineIndex, source] of sources.entries()) {
+      const revisionId = source.draftRevisionId!;
+      for (const sectionKey of ["advanced", "pricing"] as const) {
+        const initialDefault = await item.getSection(SUPER_ADMIN, source.mainLineId, revisionId, sectionKey, "default");
+        expect(initialDefault).toMatchObject({ modeTier: "default", applicability: "not_configured", payload: {} });
+        for (const scope of scopes) {
+          const section = await item.getSection(SUPER_ADMIN, source.mainLineId, revisionId, sectionKey, scope);
+          const detail = await item.getItem(SUPER_ADMIN, source.mainLineId);
+          const marker = `${lineIndex}:${scope}:${sectionKey}`;
+          const payload = sectionKey === "advanced" ? { modeDescription: marker }
+            : { specifications: [{ id: `spec-${scope}`, name: marker }], brands: [] };
+          const saved = await item.updateSection(SUPER_ADMIN, source.mainLineId, revisionId, sectionKey, {
+            modeTier: scope, expectedVersion: section.version, expectedAggregateVersion: detail.version, payload
+          });
+          expect(saved.payload).toEqual({ ...payload, ...(scope === "signature" && sectionKey === "pricing" ? { priceEntries: [] } : {}) });
+          expect(saved.aggregateVersion).toBe(detail.version + 1);
+        }
+      }
+    }
+    for (const [lineIndex, source] of sources.entries()) for (const scope of scopes) {
+      for (const sectionKey of ["advanced", "pricing"] as const) {
+        const section = await item.getSection(SUPER_ADMIN, source.mainLineId, source.draftRevisionId!, sectionKey, scope);
+        expect(section.payload).toEqual(sectionKey === "advanced" ? { modeDescription: `${lineIndex}:${scope}:advanced` }
+          : { specifications: [{ id: `spec-${scope}`, name: `${lineIndex}:${scope}:pricing` }], brands: [], ...(scope === "signature" ? { priceEntries: [] } : {}) });
+      }
+      const legacy = await item.getSection(SUPER_ADMIN, source.mainLineId, source.draftRevisionId!, "advanced");
+      expect(legacy.payload).toEqual({ modeDescription: `${lineIndex}:signature:advanced` });
+      expect(legacy.modeTier).toBeUndefined();
+    }
+    const source = sources[0]!;
+    const initial = await item.getSection(SUPER_ADMIN, source.mainLineId, source.draftRevisionId!, "advanced", "default");
+    const detail = await item.getItem(SUPER_ADMIN, source.mainLineId);
+    const saved = await item.updateSection(SUPER_ADMIN, source.mainLineId, source.draftRevisionId!, "advanced", {
+      modeTier: "default", expectedVersion: initial.version, expectedAggregateVersion: detail.version,
+      payload: { modeDescription: "Default edited again" }
+    });
+    expect(await AuditEventModel.exists({ entityId: initial.id, "newValues.modeTier": "default" })).toBeTruthy();
+    for (const scope of ["signature", "premium", "functional"] as const) {
+      expect((await item.getSection(SUPER_ADMIN, source.mainLineId, source.draftRevisionId!, "advanced", scope)).payload)
+        .toEqual({ modeDescription: `0:${scope}:advanced` });
+    }
+    expect((await item.getSection(SUPER_ADMIN, sources[1]!.mainLineId, sources[1]!.draftRevisionId!, "advanced", "default")).payload)
+      .toEqual({ modeDescription: "1:default:advanced" });
+    await expect(item.updateSection(SUPER_ADMIN, source.mainLineId, source.draftRevisionId!, "advanced", {
+      modeTier: "default", expectedVersion: initial.version, expectedAggregateVersion: detail.version,
+      payload: { modeDescription: "Stale write" }
+    })).rejects.toMatchObject({ code: "VERSION_CONFLICT" });
+    expect((await item.getSection(SUPER_ADMIN, source.mainLineId, source.draftRevisionId!, "advanced", "default")).payload).toEqual(saved.payload);
+    await seedActor(ADMIN);
+    await expect(item.updateSection(ADMIN, source.mainLineId, source.draftRevisionId!, "advanced", {
+      modeTier: "default", expectedVersion: saved.version, expectedAggregateVersion: saved.aggregateVersion,
+      payload: { modeDescription: "Unauthorized default write" }
+    })).rejects.toMatchObject({ status: 403 });
+    expect((await item.getSection(SUPER_ADMIN, source.mainLineId, source.draftRevisionId!, "advanced", "default")).payload).toEqual(saved.payload);
+  });
+
   it("preserves unequal historical off-step Signature margins while saving a valid Premium tier", async () => {
     const { item } = createServices();
     const source = await createConfiguredDraft(item, "Historical tier margins");
@@ -5313,11 +5397,10 @@ describe("Mode tier scoped persistence", { timeout: 30_000 }, () => {
     expect(await AuditEventModel.exists({ entityId: root.id, "newValues.modeTier": "premium" })).toBeTruthy();
   });
 
-  it("rejects concurrent cross-tier lost updates and preserves both after explicit refresh", async () => {
+  it.each([["premium", "functional"], ["default", "signature"]] as const)("rejects concurrent %s/%s lost updates and preserves both after explicit refresh", async (...tiers) => {
     const { item } = createServices();
     const source = await createConfiguredDraft(item, "Concurrent tiers");
     const section = await item.getSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "advanced");
-    const tiers = ["premium", "functional"] as const;
     const results = await Promise.allSettled(tiers.map(modeTier => item.updateSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "advanced", { modeTier, expectedVersion: section.version, expectedAggregateVersion: source.aggregateVersion, payload: { modeDescription: modeTier } })));
     expect(results.filter(result => result.status === "fulfilled")).toHaveLength(1);
     const losingIndex = results.findIndex(result => result.status === "rejected");
@@ -5326,46 +5409,52 @@ describe("Mode tier scoped persistence", { timeout: 30_000 }, () => {
     const detail = await item.getItem(SUPER_ADMIN, source.mainLineId);
     await item.updateSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "advanced", { modeTier: tiers[losingIndex], expectedVersion: refreshed.version, expectedAggregateVersion: detail.version, payload: { modeDescription: tiers[losingIndex] } });
     for (const tier of tiers) expect((await item.getSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "advanced", tier)).payload).toEqual({ modeDescription: tier });
-    expect((await item.getSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "advanced")).payload).toEqual(section.payload);
+    if (!tiers.some(tier => tier === "signature")) expect((await item.getSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "advanced")).payload).toEqual(section.payload);
   });
 
-  it("isolates specifications and brands without changing Signature budgets or global slab references", async () => {
+  it.each(["default", "premium"] as const)("isolates %s specifications without changing Signature budgets or global slab references", async (modeTier) => {
     const { item } = createServices();
     let source = await createConfiguredDraft(item, "Tier specifications", { withPrice: true });
     source = await updateDraftSection(item, source, "quantity-margin", { slabRates: [slabRate("root-slab", UOM_ID)] });
     const original = await item.getSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "pricing");
     const prices = await AiEstimatorKnowledgePriceVersionModel.find({ mainLineId: source.mainLineId }).lean();
-    const premium = await item.updateSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "pricing", { modeTier: "premium", expectedVersion: original.version, expectedAggregateVersion: source.aggregateVersion, payload: { specifications: [{ id: "premium-spec", name: "Premium specification" }], brands: [] } });
+    const premium = await item.updateSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "pricing", { modeTier, expectedVersion: original.version, expectedAggregateVersion: source.aggregateVersion, payload: { specifications: [{ id: "premium-spec", name: "Premium specification" }], brands: [] } });
     expect(premium.payload.specifications).toEqual([{ id: "premium-spec", name: "Premium specification" }]);
     expect((await item.getSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "pricing")).payload).toEqual(original.payload);
     expect(await AiEstimatorKnowledgePriceVersionModel.find({ mainLineId: source.mainLineId }).lean()).toEqual(prices);
-    await expect(item.updateSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "pricing", { modeTier: "premium", expectedVersion: premium.version, expectedAggregateVersion: premium.aggregateVersion, payload: { priceEntries: [priceCommand("not-a-tier-price", "2026-08-28T00:00:00.000Z")] } })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    await expect(item.updateSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "pricing", { modeTier, expectedVersion: premium.version, expectedAggregateVersion: premium.aggregateVersion, payload: { priceEntries: [priceCommand("not-a-tier-price", "2026-08-28T00:00:00.000Z")] } })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
   });
 
-  it("retains deselected tiers through activation and cloning without configuring Signature", async () => {
+  it.each(["default", "premium"] as const)("retains %s through activation and cloning without configuring Signature", async (modeTier) => {
     const { item } = createServices();
     let source = await createConfiguredDraft(item, "Retained tiers");
     const advanced = await item.getSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "advanced");
-    const saved = await item.updateSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "advanced", { modeTier: "premium", expectedVersion: advanced.version, expectedAggregateVersion: source.aggregateVersion, payload: { modeDescription: "Retain even while hidden" } });
+    const saved = await item.updateSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "advanced", { modeTier, expectedVersion: advanced.version, expectedAggregateVersion: source.aggregateVersion, payload: { modeDescription: "Retain even while hidden" } });
     source = { ...source, aggregateVersion: saved.aggregateVersion };
     source = await updateDraftSection(item, source, "overview", { ...overviewPayload("Retained tiers"), applicableTiers: [] });
     const raw = await AiEstimatorKnowledgeSectionModel.findById(advanced.id).lean();
     expect(raw?.applicability).toBe("not_configured");
     const active = await item.activate(SUPER_ADMIN, source.mainLineId, source.revisionId, { expectedVersion: source.aggregateVersion });
     const draft = await item.createRevision(SUPER_ADMIN, source.mainLineId, { expectedVersion: active.version });
-    expect((await item.getSection(SUPER_ADMIN, source.mainLineId, draft.draftRevisionId!, "advanced", "premium")).payload).toEqual(saved.payload);
+    expect((await item.getSection(SUPER_ADMIN, source.mainLineId, draft.draftRevisionId!, "advanced", modeTier)).payload).toEqual(saved.payload);
     expect((await item.getSection(SUPER_ADMIN, source.mainLineId, draft.draftRevisionId!, "overview")).payload.applicableTiers).toEqual([]);
-    expect((await item.getSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "advanced", "premium")).payload).toEqual(saved.payload);
+    expect((await item.getSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "advanced", modeTier)).payload).toEqual(saved.payload);
+    await expect(item.updateSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "advanced", {
+      modeTier, expectedVersion: saved.version, expectedAggregateVersion: draft.version,
+      payload: { modeDescription: "Rewrite immutable history" }
+    })).rejects.toMatchObject({ code: "KNOWLEDGE_REVISION_IMMUTABLE" });
+    const duplicate = await item.duplicate(SUPER_ADMIN, source.mainLineId, { expectedVersion: draft.version, name: `Copied ${modeTier}` });
+    expect((await item.getSection(SUPER_ADMIN, duplicate.mainLineId, duplicate.draftRevisionId!, "advanced", modeTier)).payload).toEqual(saved.payload);
   });
 
-  it("enforces component identity inside each tier and validates retained references on activation", async () => {
+  it.each(["default", "premium"] as const)("enforces %s component identity and validates retained references on activation", async (modeTier) => {
     const { item } = createServices();
     const source = await createConfiguredDraft(item, "Tier component references");
     const advanced = await item.getSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "advanced");
     const component = { id: "legacy-in-house", basketId: BASKET_ID, subBasketId: null, inclusions: [], exclusions: [], labor: null, material: null };
-    const premium = await item.updateSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "advanced", { modeTier: "premium", expectedVersion: advanced.version, expectedAggregateVersion: source.aggregateVersion, payload: { inHouseComponents: [component] } });
-    await expect(item.updateSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "advanced", { modeTier: "premium", expectedVersion: premium.version, expectedAggregateVersion: premium.aggregateVersion, payload: { inHouseComponents: [{ ...component, basketId: "missing-basket" }] } })).rejects.toMatchObject({ code: "IN_HOUSE_COMPONENT_IDENTITY_IMMUTABLE" });
-    await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: advanced.id }, { $set: { "payload.tierConfigurations.premium.payload.inHouseComponents.0.basketId": "missing-basket" } });
+    const premium = await item.updateSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "advanced", { modeTier, expectedVersion: advanced.version, expectedAggregateVersion: source.aggregateVersion, payload: { inHouseComponents: [component] } });
+    await expect(item.updateSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "advanced", { modeTier, expectedVersion: premium.version, expectedAggregateVersion: premium.aggregateVersion, payload: { inHouseComponents: [{ ...component, basketId: "missing-basket" }] } })).rejects.toMatchObject({ code: "IN_HOUSE_COMPONENT_IDENTITY_IMMUTABLE" });
+    await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: advanced.id }, { $set: { [`payload.tierConfigurations.${modeTier}.payload.inHouseComponents.0.basketId`]: "missing-basket" } });
     await expect(item.activate(SUPER_ADMIN, source.mainLineId, source.revisionId, { expectedVersion: premium.aggregateVersion })).rejects.toMatchObject({ code: "KNOWLEDGE_REFERENCE_INVALID" });
     expect((await AiEstimatorKnowledgeRevisionModel.findById(source.revisionId).lean())?.status).toBe("draft");
   });
@@ -5377,8 +5466,19 @@ describe("Mode tier scoped persistence", { timeout: 30_000 }, () => {
     const path = `/api/v1/admin/ai-estimator-knowledge/main-lines/${source.mainLineId}/revisions/${source.revisionId}/sections`;
     const get = (suffix: string) => request(app).get(`${path}/${suffix}`).set("Authorization", "Bearer token");
     expect((await get("advanced?modeTier=premium")).body.data).toMatchObject({ modeTier: "premium", payload: {} });
-    for (const suffix of ["advanced?modeTier=unknown", "advanced?modeTier=premium&modeTier=functional", "overview?modeTier=premium"]) expect((await get(suffix)).status).toBe(400);
+    expect((await get("advanced?modeTier=default")).body.data).toMatchObject({ modeTier: "default", payload: {}, applicability: "not_configured" });
+    for (const suffix of ["advanced?modeTier=unknown", "advanced?modeTier=premium&modeTier=functional", "overview?modeTier=premium", "overview?modeTier=default"]) expect((await get(suffix)).status).toBe(400);
     const advanced = await services.item.getSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "advanced");
+    const savedDefault = await request(app).put(`${path}/advanced`).set("Authorization", "Bearer token").send({
+      modeTier: "default", expectedVersion: advanced.version, expectedAggregateVersion: source.aggregateVersion,
+      payload: { modeDescription: "Saved default via HTTP" }
+    }).expect(200);
+    expect(savedDefault.body.data).toMatchObject({ modeTier: "default", applicability: "configured", payload: { modeDescription: "Saved default via HTTP" } });
+    expect((await get("advanced")).body.data.payload).toEqual(advanced.payload);
+    const sub = await services.reference.createSubBasket(SUPER_ADMIN, BASKET_ID, { name: "Default margin scope" });
+    const margins = await request(app).get(`/api/v1/admin/ai-estimator-knowledge/baskets/${BASKET_ID}/sub-baskets/${sub.id}/margins?modeTier=default`)
+      .set("Authorization", "Bearer token").expect(200);
+    expect(margins.body.data).toMatchObject({ source: null, sourceConfiguration: null });
     const response = await request(app).put(`${path}/advanced`).set("Authorization", "Bearer token").send({ expectedVersion: advanced.version, expectedAggregateVersion: source.aggregateVersion, payload: { tierConfigurations: { premium: { applicability: "configured", payload: { modeDescription: "forged" } } } } });
     expect(response.status).toBe(400);
     expect((await services.item.getSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "advanced", "premium")).payload).toEqual({});

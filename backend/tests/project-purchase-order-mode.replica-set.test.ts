@@ -1221,6 +1221,44 @@ describe("transactional procurement mode decisions", () => {
 });
 
 describe("approved In-house component scope", { timeout: 30000 }, () => {
+  it("prices each approved estimation tier independently of retained default Configuration", async () => {
+    const scoped = (rate: number) => ({ ...advanced, modeCalculations: {
+      ...advanced.modeCalculations, pmc: { ...settings, baseRatePaise: rate }
+    } });
+    await saveCurrentDraft({ ...scoped(11000), tierConfigurations: {
+      default: { applicability: "configured", payload: scoped(990000) },
+      premium: { applicability: "configured", payload: scoped(23000) },
+      functional: { applicability: "configured", payload: scoped(37000) }
+    } });
+    await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: "revision-b-overview" }, { $set: {
+      "payload.applicableTiers": ["signature", "premium", "functional"]
+    } });
+    const estimatesBefore = await EstimateModel.find().lean();
+    const roundsBefore = await EstimateClientReviewRoundModel.find().lean();
+    const proposals = new Map([["approved-line", { mode: "pmc" as const, quantity: "2", discountBps: 0,
+      markupBasis: "starting" as const, exceptionReason: null }]]);
+    const previews = new Map<string, unknown>();
+    for (const [modeTier, rate] of [["signature", 11000], ["premium", 23000], ["functional", 37000]] as const) {
+      const approved = { ...source, allLineItems: source.allLineItems.map(line => ({ ...line, modeTier })) };
+      const resolved = await mongoose.connection.transaction(session => resolvePurchaseOrderModes("mode-project", approved, session, { at, proposals }));
+      expect(resolved.get("approved-line")).toMatchObject({ state: "ready", preview: {
+        baseCostPaise: rate * 2, settings: { scopes: [{ baseRatePaise: rate }] }
+      } });
+      previews.set(modeTier, resolved.get("approved-line")!.preview);
+    }
+    await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: "revision-b-advanced" }, { $set: {
+      "payload.tierConfigurations.default.payload.modeCalculations.pmc.baseRatePaise": 880000
+    } });
+    for (const modeTier of ["signature", "premium", "functional"] as const) {
+      const approved = { ...source, allLineItems: source.allLineItems.map(line => ({ ...line, modeTier })) };
+      const resolved = await mongoose.connection.transaction(session => resolvePurchaseOrderModes("mode-project", approved, session, { at, proposals }));
+      expect(resolved.get("approved-line")!.preview).toEqual(previews.get(modeTier));
+    }
+    expect(await EstimateModel.find().lean()).toEqual(estimatesBefore);
+    expect(await EstimateClientReviewRoundModel.find().lean()).toEqual(roundsBefore);
+    expect(await ProjectPurchaseOrderModeDecisionModel.countDocuments()).toBe(0);
+  });
+
   it("projects current foreign component targets from approved selections without changing source ownership or another project", async () => {
     const { AiEstimatorKnowledgeBasketModel } = await import("../src/models/AiEstimatorKnowledgeBasket.js");
     const { AiEstimatorKnowledgeSubBasketModel } = await import("../src/models/AiEstimatorKnowledgeSubBasket.js");
@@ -1286,6 +1324,7 @@ describe("approved In-house component scope", { timeout: 30000 }, () => {
       inclusions: [{ id: "included", name: "Tier scope", selected: true }], exclusions: [],
       labor: { ...settings, baseRatePaise: labor }, material: { ...settings, baseRatePaise: material } });
     await saveCurrentDraft({ ...advanced, inHouseComponents: [component(9900, 8800)], tierConfigurations: {
+      default: { applicability: "configured", payload: { ...advanced, inHouseComponents: [component(99000, 88000)] } },
       premium: { applicability: "configured", payload: { ...advanced, inHouseComponents: [component(4500, 9500)] } }
     } });
     await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: "revision-b-overview" }, { $set: { "payload.applicableTiers": ["signature", "premium"] } });

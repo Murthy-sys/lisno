@@ -106,6 +106,28 @@ describe("client working estimate tier selection", () => {
     expect(JSON.stringify(view)).not.toMatch(/privateMargin|never-expose|modeCalculations|tierConfigurations|hidden painting/u);
   });
 
+  it("keeps default Configuration separate from client tier choices and selection", async () => {
+    await Section.collection.updateOne({ _id: "advanced-visible" as never }, { $set: {
+      "payload.tierConfigurations.functional": { applicability: "configured", payload: { pmcMarginBps: 0, subVendorMarginBps: 0,
+        modeCalculations: { sub_vendor: { baseRatePaise: 7300 } } } },
+      "payload.tierConfigurations.default": { applicability: "configured", payload: { pmcMarginBps: 0, subVendorMarginBps: 0,
+        modeCalculations: { sub_vendor: { baseRatePaise: 999900 } } } }
+    } });
+    const view = await service.detail(client, "tier-project");
+    expect(view.lines[0]!.choices.map(choice => [choice.modeTier, choice.ratePaise])).toEqual([
+      ["signature", 2000], ["premium", 5000], ["functional", 7300]
+    ]);
+    expect(view.totalPaise).toBe(12980);
+    expect(JSON.stringify(view)).not.toMatch(/999900|tierConfigurations|modeCalculations/u);
+    const before = await EstimateModel.findById("tier-estimate").lean();
+    await expect(service.select(client, "tier-project", "line-one", { ...command, modeTier: "default" } as never))
+      .rejects.toMatchObject({ status: 400 });
+    expect(await EstimateModel.findById("tier-estimate").lean()).toEqual(before);
+    const selected = await service.select(client, "tier-project", "line-one", { ...command, modeTier: "functional" });
+    expect(selected.lines[0]).toMatchObject({ modeTier: "functional", ratePaise: 7300, amountPaise: 14600 });
+    expect(selected.lines[1]).toMatchObject({ modeTier: "signature", ratePaise: 2000, amountPaise: 6000 });
+  });
+
   it("uses the chosen tier's maximum profit for both displayed choices and saved totals", async () => {
     await Section.collection.updateOne({ _id: "advanced-visible" as never }, { $set: {
       "payload.subVendorMarginBps": 1000, "payload.tierConfigurations.premium.payload.subVendorMarginBps": 2500
@@ -327,6 +349,10 @@ describe("sub-basket comparisons and atomic legacy tier batches", () => {
   it("compares current manual prices with configured tier prices without writes or margin leakage", async () => {
     await EstimateModel.updateOne({ _id: "tier-estimate" }, { $set: { "lineItems.0.rateSource": "manual", "lineItems.0.ratePaise": 1234 } });
     await Section.updateOne({ _id: "advanced-visible" }, { $set: { "payload.subVendorMarginBps": 2500 } });
+    await Section.collection.updateOne({ _id: "advanced-visible" as never }, { $set: {
+      "payload.tierConfigurations.default": { applicability: "configured", payload: { subVendorMarginBps: 0,
+        modeCalculations: { sub_vendor: { baseRatePaise: 999900 } } } }
+    } });
     const before = await EstimateModel.findById("tier-estimate").lean();
     const sources = await Section.find().lean();
     const result = await compareProjectEstimateTiers(client, "tier-project", comparison({ rateSource: "manual" }));
@@ -336,6 +362,7 @@ describe("sub-basket comparisons and atomic legacy tier batches", () => {
     ]);
     expect(result.tiers[0]!.lines[0]).toMatchObject({ quantity: 3, ratePaise: 1234, amountPaise: 3702 });
     expect(JSON.stringify(result)).not.toMatch(/hidden painting|privateMargin|subVendorMarginBps|modeCalculations/);
+    expect(estimateTierComparisonSchema.safeParse(comparison({ modeTier: "default" })).success).toBe(false);
     const pdf = await renderEstimateTierComparisonPdf(result);
     const document = await getDocument({ data: new Uint8Array(pdf), useSystemFonts: true }).promise;
     const text = (await (await document.getPage(4)).getTextContent()).items.map(item => "str" in item ? item.str : "").join(" ");

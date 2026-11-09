@@ -1,4 +1,4 @@
-import { KNOWLEDGE_MODE_TIERS } from "../domain/ai-estimator-knowledge-mode-tiers.js";
+import { KNOWLEDGE_MODE_CONFIGURATION_SCOPES } from "../domain/ai-estimator-knowledge-mode-tiers.js";
 import { Router, type RequestHandler } from "express";
 import { z } from "zod";
 
@@ -235,11 +235,11 @@ const revisionCreateSchema = z
   })
   .strict();
 
-const modeTierQuerySchema = z.object({ modeTier: z.enum(KNOWLEDGE_MODE_TIERS).optional() }).strict();
+const modeTierQuerySchema = z.object({ modeTier: z.enum(KNOWLEDGE_MODE_CONFIGURATION_SCOPES).optional() }).strict();
 
 function parseModeTierQuery(query: unknown) {
   const parsed = modeTierQuerySchema.safeParse(query);
-  if (!parsed.success) throw new ApiError(400, "VALIDATION_ERROR", "Select a valid Mode tier.", { modeTier: "Expected Signature, Premium or Functional." });
+  if (!parsed.success) throw new ApiError(400, "VALIDATION_ERROR", "Select a valid Mode tier.", { modeTier: "Expected default Mode, Signature, Premium or Functional." });
   return parsed.data.modeTier;
 }
 
@@ -248,7 +248,7 @@ const sectionUpdateSchema = z
     expectedVersion: expectedVersionSchema,
     expectedAggregateVersion: expectedVersionSchema.optional(),
     applicability: z.enum(AI_ESTIMATOR_KNOWLEDGE_SECTION_APPLICABILITY).optional(),
-    modeTier: z.enum(KNOWLEDGE_MODE_TIERS).optional(),
+    modeTier: z.enum(KNOWLEDGE_MODE_CONFIGURATION_SCOPES).optional(),
     payload: z.record(z.string(), z.unknown())
   })
   .strict();

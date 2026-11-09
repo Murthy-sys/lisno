@@ -113,6 +113,7 @@ export interface KnowledgeModePanelHandle {
 }
 
 export interface KnowledgeModePanelProps {
+  readonly modeLabel?: string;
   readonly proposedUoms?: readonly KnowledgeProposedMasterChoice[];
   readonly dataSource?: KnowledgeEditorDataSource;
   readonly item: KnowledgeItemDetail;
@@ -142,6 +143,7 @@ export const KnowledgeModePanel = forwardRef<
   KnowledgeModePanelProps
 >(function KnowledgeModePanel(
   {
+    modeLabel = "Mode",
     item,
     dataSource = liveKnowledgeEditorDataSource,
     revisionId,
@@ -574,7 +576,7 @@ export const KnowledgeModePanel = forwardRef<
         }
       }
 
-      onAnnouncement("Mode saved.");
+      onAnnouncement(`${modeLabel} saved.`);
       return true;
     } finally {
       if (committedAnySection) {
@@ -585,7 +587,7 @@ export const KnowledgeModePanel = forwardRef<
       setSavingSection(null);
       setSaving(false);
     }
-  }, [dataSource, componentsValid, descriptionPending, drafts, editable, locked, mainLineId, onAnnouncement, queryClient, revisionId, saving, sourceKey]);
+  }, [dataSource, componentsValid, descriptionPending, drafts, editable, locked, mainLineId, modeLabel, onAnnouncement, queryClient, revisionId, saving, sourceKey]);
 
   useImperativeHandle(ref, () => ({ save, discard }), [discard, save]);
 

@@ -1,5 +1,5 @@
 import { resolveEstimateDimensionRule } from "../domain/estimate-dimensions.js";
-import { isKnowledgeModeTier, isKnowledgeModeSection, knowledgeModeTierPayload, knowledgeModeTierPayloads, projectKnowledgeModeTierSection, mergeKnowledgeModeTierPayload, expandKnowledgeModeTierRows, type KnowledgeModeTier } from "../domain/ai-estimator-knowledge-mode-tiers.js";
+import { isKnowledgeModeTier, isKnowledgeModeConfigurationScope, isKnowledgeModeSection, knowledgeModeTierPayload, knowledgeModeConfigurationPayloads, projectKnowledgeModeTierSection, mergeKnowledgeModeTierPayload, expandKnowledgeModeTierRows, type KnowledgeModeConfigurationScope } from "../domain/ai-estimator-knowledge-mode-tiers.js";
 import { readInHouseComponents } from "../domain/ai-estimator-knowledge-in-house-components.js";
 import type { KnowledgeApplySubBasketMarginsInput, KnowledgeApplySubBasketMarginsResult, KnowledgeSubBasketMarginSummary } from "../contracts/ai-estimator-knowledge-sub-basket-margins.js";
 import { SUB_BASKET_MARGIN_MODES, subBasketMarginPatchUnavailableReason, withSubBasketMarginDefaults } from "../domain/ai-estimator-knowledge-sub-basket-margins.js";
@@ -143,7 +143,7 @@ export interface KnowledgeMainLineDeleteInput extends KnowledgeExpectedVersionIn
 }
 
 export interface KnowledgeSectionUpdateInput {
-  readonly modeTier?: KnowledgeModeTier;
+  readonly modeTier?: KnowledgeModeConfigurationScope;
   readonly expectedVersion: number;
   readonly expectedAggregateVersion?: number;
   readonly applicability?: KnowledgeSectionApplicability;
@@ -176,7 +176,7 @@ export interface AiEstimatorKnowledgeMainLineDeletionResult {
 }
 
 export interface AiEstimatorKnowledgeItemService {
-  getSubBasketMargins(actor: PublicUser, basketId: string, subBasketId: string, modeTier?: KnowledgeModeTier): Promise<KnowledgeSubBasketMarginSummary>;
+  getSubBasketMargins(actor: PublicUser, basketId: string, subBasketId: string, modeTier?: KnowledgeModeConfigurationScope): Promise<KnowledgeSubBasketMarginSummary>;
   applySubBasketMargins(actor: PublicUser, basketId: string, subBasketId: string, input: KnowledgeApplySubBasketMarginsInput): Promise<KnowledgeApplySubBasketMarginsResult>;
 
   listMainLines(
@@ -221,7 +221,7 @@ export interface AiEstimatorKnowledgeItemService {
     mainLineId: string,
     revisionId: string,
     sectionKey: KnowledgeSectionKey,
-    modeTier?: KnowledgeModeTier
+    modeTier?: KnowledgeModeConfigurationScope
   ): Promise<KnowledgeSectionEnvelope<Row>>;
   updateSection(
     actor: PublicUser,
@@ -537,7 +537,7 @@ export function createAiEstimatorKnowledgeItemService(
 
   return {
     async getSubBasketMargins(actor, basketId, subBasketId, modeTier = "signature") {
-      if (!isKnowledgeModeTier(modeTier)) invalid("modeTier", "Select a valid Mode tier.");
+      if (!isKnowledgeModeConfigurationScope(modeTier)) invalid("modeTier", "Select a valid Mode tier.");
       return mongoose.connection.transaction(async (session) => {
         await actorGuard.requireReadActor(actor, session);
         return (await readSubBasketMarginSnapshot(basketId, subBasketId, session, modeTier)).summary;
@@ -1933,20 +1933,20 @@ async function assertResolvableRetainedPriceWindows(input: {
 
 /** Preserve the existing historical Lisno exception only for an untouched namespace.
  * The edited tier and every tier during activation still use strict validation. */
-function validatePreservedModeNamespaces(sectionKey: KnowledgeSectionKey, payload: Row, previous: Row, editedTier: KnowledgeModeTier): void {
+function validatePreservedModeNamespaces(sectionKey: KnowledgeSectionKey, payload: Row, previous: Row, editedTier: KnowledgeModeConfigurationScope): void {
   if (sectionKey !== "advanced") return validateSectionPayloadOrThrow(sectionKey, payload);
   const issues = validateKnowledgeSectionPayload(sectionKey, payload).filter(issue => {
     if (issue.code !== "INVALID_LISNO_MARGIN_INCREMENT") return true;
-    const match = /^payload\.tierConfigurations\.(premium|functional)\.payload(?:\.|$)/u.exec(issue.path);
-    const issueTier = (match?.[1] ?? "signature") as KnowledgeModeTier;
+    const match = /^payload\.tierConfigurations\.(default|premium|functional)\.payload(?:\.|$)/u.exec(issue.path);
+    const issueTier = (match?.[1] ?? "signature") as KnowledgeModeConfigurationScope;
     return issueTier === editedTier || !isDeepStrictEqual(knowledgeModeTierPayload(previous, issueTier), knowledgeModeTierPayload(payload, issueTier));
   });
   if (issues.length) throw new ApiError(400, "VALIDATION_ERROR", "Request validation failed.", Object.fromEntries(issues.map(issue => [issue.path, issue.message])));
 }
 
-function validateModeTierRequest(sectionKey: KnowledgeSectionKey, value?: KnowledgeModeTier, payload?: Row): KnowledgeModeTier {
+function validateModeTierRequest(sectionKey: KnowledgeSectionKey, value?: KnowledgeModeConfigurationScope, payload?: Row): KnowledgeModeConfigurationScope {
   const modeTier = value ?? "signature";
-  if (!isKnowledgeModeTier(modeTier) || (modeTier !== "signature" && !isKnowledgeModeSection(sectionKey))) invalid("modeTier", "Mode tiers are available only for advanced and pricing sections.");
+  if (!isKnowledgeModeConfigurationScope(modeTier) || (modeTier !== "signature" && !isKnowledgeModeSection(sectionKey))) invalid("modeTier", "Mode tiers are available only for advanced and pricing sections.");
   if (payload && Object.hasOwn(payload, "tierConfigurations")) invalid("payload.tierConfigurations", "Save one selected Mode tier at a time.");
   if (modeTier !== "signature" && Array.isArray(payload?.priceEntries) && payload.priceEntries.length) invalid("payload.priceEntries", "Legacy budget entries are available only in Signature.");
   return modeTier;
@@ -2615,7 +2615,7 @@ function completenessInputs(rows: Row[]): KnowledgeCompletenessSectionInput[] {
   return rows.map((row) => {
     const sectionKey = requiredString(row.sectionKey) as KnowledgeSectionKey;
     const payload = payloadFor(row);
-    const validationFindings = knowledgeModeTierPayloads(payload).flatMap(({ modeTier, payload: tierPayload }) =>
+    const validationFindings = knowledgeModeConfigurationPayloads(payload).flatMap(({ modeTier, payload: tierPayload }) =>
       activationCompletenessFindings(sectionKey, tierPayload).map(finding => ({ ...finding,
         ...(modeTier === "signature" ? {} : { message: `${modeTier}: ${finding.message}` }) })));
     if (sectionKey === "advanced") {
@@ -2699,7 +2699,7 @@ interface KnowledgeItemEdge {
 
 interface RevisionRelationshipValidationContext {
   readonly updatedSectionKey: KnowledgeSectionKey;
-  readonly updatedModeTier?: KnowledgeModeTier;
+  readonly updatedModeTier?: KnowledgeModeConfigurationScope;
   readonly previousPayload: Row;
 }
 
@@ -3078,7 +3078,7 @@ async function removeMissingCopiedRelationships(rows: Row[], session: ClientSess
   const subBasketIds = new Set<string>();
   const fields = ["exclusions", "dependencies", "recommendations", "budgetAlterations"] as const;
   for (const payload of rows.flatMap(row => [payloadFor(row), ...(isKnowledgeModeSection(row.sectionKey)
-    ? knowledgeModeTierPayloads(row.payload).slice(1).map(tier => tier.payload) : [])])) {
+    ? knowledgeModeConfigurationPayloads(row.payload).slice(1).map(tier => tier.payload) : [])])) {
     for (const field of fields) {
       for (const relation of structuredRows(payload[field])) {
         addOptionalId(basketIds, relation.targetBasketId);
@@ -3112,7 +3112,7 @@ async function removeMissingCopiedRelationships(rows: Row[], session: ClientSess
   if (!missingBasketIds.size && !missingMainLineIds.size && !missingSubBasketIds.size) return;
 
   for (const payload of rows.flatMap(row => [payloadFor(row), ...(isKnowledgeModeSection(row.sectionKey)
-    ? knowledgeModeTierPayloads(row.payload).slice(1).map(tier => tier.payload) : [])])) {
+    ? knowledgeModeConfigurationPayloads(row.payload).slice(1).map(tier => tier.payload) : [])])) {
     for (const field of fields) {
       if (!Array.isArray(payload[field])) continue;
       payload[field] = payload[field].filter((candidate: unknown) => {
@@ -3247,7 +3247,7 @@ function legacyModeConfigurationIds(
 ): Set<string> {
   if (sectionKey !== "advanced") return new Set();
   return new Set(
-    knowledgeModeTierPayloads(payload).flatMap(({ payload: tierPayload }) => [...structuredRows(tierPayload.modeConfigurations), ...activeStructuredRows(tierPayload.modeOverrides)])
+    knowledgeModeConfigurationPayloads(payload).flatMap(({ payload: tierPayload }) => [...structuredRows(tierPayload.modeConfigurations), ...activeStructuredRows(tierPayload.modeOverrides)])
       .map((entry) => optionalString(entry.modeId))
       .filter((modeId): modeId is string => Boolean(modeId))
   );
@@ -3355,7 +3355,7 @@ async function validateRevisionMasterReferences(
   const overview = payloadFor(rows.find((row) => row.sectionKey === "overview"));
   const scope = payloadFor(rows.find((row) => row.sectionKey === "scope"));
   const recommendations = payloadFor(rows.find((row) => row.sectionKey === "recommendations"));
-  const advancedPayloads = knowledgeModeTierPayloads(payloadFor(rows.find((row) => row.sectionKey === "advanced")));
+  const advancedPayloads = knowledgeModeConfigurationPayloads(payloadFor(rows.find((row) => row.sectionKey === "advanced")));
   const execution = payloadFor(rows.find((row) => row.sectionKey === "execution"));
 
   const uomIds = new Set<string>();

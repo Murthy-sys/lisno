@@ -1,5 +1,5 @@
 import mongoose, { type ClientSession, type Model } from "mongoose";
-import { knowledgeModeTierPayloads } from "../domain/ai-estimator-knowledge-mode-tiers.js";
+import { knowledgeModeConfigurationPayloads } from "../domain/ai-estimator-knowledge-mode-tiers.js";
 
 import { PROPOSAL_LIMITS, type ProposalFinding, type ProposalPublicationSnapshot, type ProposalPublishedMapping, type ProposalResource } from "../contracts/vendor-basket-proposal.js";
 import { AI_ESTIMATOR_KNOWLEDGE_FIXED_GST_POLICY } from "../domain/ai-estimator-knowledge-fixed-gst.js";
@@ -246,7 +246,7 @@ async function validateRelationships(snapshot: ProposalPublicationSnapshot, byLi
     for (const relation of itemRelationsForRows(mainLineId, sections)) if (relation.dependency) edges.push({ fromId: mainLineId, toId: relation.targetMainLineId });
     if (targetSection && targetSection.mainLineId !== mainLineId) continue;
     const editedSections = targetSection ? sections.filter((section) => section.sectionKey === targetSection.sectionKey) : sections;
-    for (const component of knowledgeModeTierPayloads(sectionPayload(editedSections, "advanced"))
+    for (const component of knowledgeModeConfigurationPayloads(sectionPayload(editedSections, "advanced"))
       .flatMap(entry => rows(entry.payload.inHouseComponents))) {
       if (!await basketExists(component.basketId)) unavailable();
       if (component.subBasketId === null) {

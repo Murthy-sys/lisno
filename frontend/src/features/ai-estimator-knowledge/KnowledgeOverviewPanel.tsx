@@ -108,7 +108,7 @@ export function KnowledgeOverviewPanel({
       : `Yes requires Length, Width and Height in ${dimensionRule.inputUnit} from Sales or the client. Quantity = Length × Width in ${dimensionUom!.name}. Height is recorded separately.`
     : "Select a supported area UOM, such as sq-ft or sq-m, to require dimensions. Quantity is calculated as Length × Width.";
   const visibilityCaveat = "No keeps this main line internal on the client estimate screen. It remains included in the total and PDF/quotation.";
-  const tierHelp = "Save Overview to update the Mode tabs. Hiding a tier keeps its saved configuration.";
+  const tierHelp = "Default Mode is always available. Save Overview to update the tier Mode tabs. Hiding a tier keeps its saved configuration.";
 
   function changeOverviewValue(value: string) {
     onOverviewDirty("uomId");

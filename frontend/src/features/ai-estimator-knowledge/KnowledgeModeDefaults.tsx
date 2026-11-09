@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 
 import type { KnowledgeSubBasketMarginRange, KnowledgeSubBasketMarginSummary } from "../../../../shared/knowledge/knowledgeSubBasketMarginTypes";
-import type { KnowledgeModeTier } from "../../../../shared/knowledge/knowledgeModeTiers";
+import type { KnowledgeModeConfigurationScope } from "../../../../shared/knowledge/knowledgeModeTiers";
 import { Surface } from "../../components/ui/Surface";
 import { getKnowledgeSubBasketMargins } from "./knowledgeApi";
 import { knowledgeQueryKeys } from "./knowledgeQueryKeys";
@@ -18,7 +18,7 @@ const equalRange = (left: KnowledgeSubBasketMarginRange, right: KnowledgeSubBask
 
 export interface KnowledgeModeDefaultsProps {
   readonly item: KnowledgeItemDetail;
-  readonly modeTier?: KnowledgeModeTier;
+  readonly modeTier?: KnowledgeModeConfigurationScope;
 }
 
 export function KnowledgeModeDefaults({ item, modeTier = "signature" }: KnowledgeModeDefaultsProps) {

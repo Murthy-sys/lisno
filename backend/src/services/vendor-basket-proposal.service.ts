@@ -10,7 +10,7 @@ import { PROPOSAL_LIMITS } from "../contracts/vendor-basket-proposal.js";
 import { AI_ESTIMATOR_KNOWLEDGE_SECTION_KEYS, createKnowledgeContentDigest, normalizeKnowledgeIdentity, type KnowledgeSectionKey } from "../domain/ai-estimator-knowledge.js";
 import { deriveKnowledgeCompleteness } from "../domain/ai-estimator-knowledge-completeness.js";
 import { validateKnowledgeSectionPayload } from "../domain/ai-estimator-knowledge-validation.js";
-import { knowledgeModeTierPayloads } from "../domain/ai-estimator-knowledge-mode-tiers.js";
+import { knowledgeModeConfigurationPayloads } from "../domain/ai-estimator-knowledge-mode-tiers.js";
 import { ApiError } from "../middleware/errors.js";
 import { VendorBasketProposalModel } from "../models/VendorBasketProposal.js";
 import { VendorBasketProposalResourceModel } from "../models/VendorBasketProposalResource.js";
@@ -809,7 +809,7 @@ function proposalIdentityFields(resource: ProposalResource): Array<{ row: Row; k
   };
   const reference = references[section.sectionKey];
   const payloads = section.sectionKey === "advanced" || section.sectionKey === "pricing"
-    ? knowledgeModeTierPayloads(section.payload).map(entry => entry.payload) : [section.payload];
+    ? knowledgeModeConfigurationPayloads(section.payload).map(entry => entry.payload) : [section.payload];
   const result: Array<{ row: Row; key: string }> = [];
   for (const payload of payloads) {
     const rows = reference && payload[reference.rows];

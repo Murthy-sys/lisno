@@ -70,18 +70,18 @@ describe("current-main-line default Mode configuration", { timeout: 30_000 }, ()
     return uom;
   }
 
-  it("reads the selected tier from the same first main line without changing Signature defaults", async () => {
+  it.each(["default", "premium"] as const)("reads selected %s settings from the first main line without changing Signature defaults", async (modeTier) => {
     const { basket, sub, source, target } = await fixture();
     const premium = { ...payload(), pmcMinimumMarginBps: 1500, pmcMarginBps: 2000,
       subVendorMinimumMarginBps: 3000, subVendorMarginBps: 4500,
       modeCalculations: { ...payload().modeCalculations, in_house_labor: settings(46000, 1500, 4500) } };
     await AiEstimatorKnowledgeSectionModel.updateOne({ mainLineId: source.mainLineId, sectionKey: "advanced" },
-      { $set: { "payload.tierConfigurations.premium": { applicability: "configured", payload: premium } } });
+      { $set: { [`payload.tierConfigurations.${modeTier}`]: { applicability: "configured", payload: premium } } });
     await AiEstimatorKnowledgeSectionModel.updateOne({ mainLineId: target.mainLineId, sectionKey: "advanced" },
-      { $set: { "payload.tierConfigurations.premium": { applicability: "configured", payload: payload(true) } } });
+      { $set: { [`payload.tierConfigurations.${modeTier}`]: { applicability: "configured", payload: payload(true) } } });
     const before = await snapshot();
     const signature = await base.item.getSubBasketMargins(actor, basket.id, sub.id);
-    const selected = await base.item.getSubBasketMargins(actor, basket.id, sub.id, "premium");
+    const selected = await base.item.getSubBasketMargins(actor, basket.id, sub.id, modeTier);
     expect(selected.source).toEqual(signature.source);
     expect(selected.source?.mainLineId).toBe(source.mainLineId);
     expect(selected.modes.pmc.ranges).toEqual([{ key: "margin", minimumBps: 1500, maximumBps: 2000 }]);
@@ -95,7 +95,7 @@ describe("current-main-line default Mode configuration", { timeout: 30_000 }, ()
     expect(await snapshot()).toEqual(before);
   });
 
-  it.each(["premium", "functional"] as const)("keeps an empty first-line %s tier empty instead of falling back to Signature or the next line", async (modeTier) => {
+  it.each(["default", "premium", "functional"] as const)("keeps an empty first-line %s tier empty instead of falling back to Signature or the next line", async (modeTier) => {
     const { basket, sub, source, target } = await fixture();
     await AiEstimatorKnowledgeSectionModel.updateOne({ mainLineId: target.mainLineId, sectionKey: "advanced" },
       { $set: { [`payload.tierConfigurations.${modeTier}`]: { applicability: "configured", payload: payload() } } });

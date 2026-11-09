@@ -9,6 +9,20 @@ export const KNOWLEDGE_MODE_TIER_LABELS: Readonly<Record<KnowledgeModeTier, stri
   functional: "Functional"
 };
 
+/** Configuration has a separate default editor; estimation still uses only the three tiers. */
+export const KNOWLEDGE_MODE_CONFIGURATION_SCOPES = ["default", ...KNOWLEDGE_MODE_TIERS] as const;
+export type KnowledgeModeConfigurationScope = (typeof KNOWLEDGE_MODE_CONFIGURATION_SCOPES)[number];
+export const KNOWLEDGE_MODE_CONFIGURATION_LABELS: Readonly<Record<KnowledgeModeConfigurationScope, string>> = {
+  default: "Mode",
+  signature: "Signature Mode",
+  premium: "Premium Mode",
+  functional: "Functional Mode"
+};
+
+export function isKnowledgeModeConfigurationScope(value: unknown): value is KnowledgeModeConfigurationScope {
+  return typeof value === "string" && KNOWLEDGE_MODE_CONFIGURATION_SCOPES.some(scope => scope === value);
+}
+
 export function isKnowledgeModeTier(value: unknown): value is KnowledgeModeTier {
   return typeof value === "string" && KNOWLEDGE_MODE_TIERS.some(tier => tier === value);
 }

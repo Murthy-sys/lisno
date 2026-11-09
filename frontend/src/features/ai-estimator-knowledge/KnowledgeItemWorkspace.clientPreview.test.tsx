@@ -73,9 +73,10 @@ beforeEach(() => {
   vi.mocked(authorization.hasFrontendPermission).mockReturnValue(true);
   vi.mocked(api.getKnowledgeItem).mockResolvedValue(item);
   vi.mocked(api.getKnowledgeHistory).mockResolvedValue({ items: [revision], pagination });
-  vi.mocked(api.getKnowledgeSection).mockImplementation(async (mainLineId, revisionId, sectionKey): Promise<KnowledgeSectionEnvelope> => ({
+  vi.mocked(api.getKnowledgeSection).mockImplementation(async (mainLineId, revisionId, sectionKey, options): Promise<KnowledgeSectionEnvelope> => ({
     ...metadata, id: `${revisionId}-${sectionKey}`, mainLineId, revisionId, sectionKey,
-    applicability: "configured", version: 4, payload: sectionKey === "overview" ? { applicableTiers: ["signature", "premium"] } : {}
+    applicability: "configured", version: 4, payload: sectionKey === "overview" ? { applicableTiers: ["signature", "premium"] } : {},
+    ...(options?.modeTier ? { modeTier: options.modeTier } : {})
   }));
   for (const read of [api.listKnowledgeItems, api.listKnowledgeBaskets, api.listKnowledgeMasters, api.listKnowledgeSubBaskets]) {
     vi.mocked(read).mockResolvedValue({ items: [], pagination });

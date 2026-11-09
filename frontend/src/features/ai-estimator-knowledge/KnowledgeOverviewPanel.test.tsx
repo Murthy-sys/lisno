@@ -76,7 +76,7 @@ describe("KnowledgeOverviewPanel", () => {
     expect(props.onOverviewDirty).toHaveBeenLastCalledWith("dimensionsMandatory");
 
     const tiers = screen.getByRole("group", { name: "Applicable tiers" });
-    expect(tiers).toHaveAccessibleDescription("Save Overview to update the Mode tabs. Hiding a tier keeps its saved configuration.");
+    expect(tiers).toHaveAccessibleDescription("Default Mode is always available. Save Overview to update the tier Mode tabs. Hiding a tier keeps its saved configuration.");
     within(tiers).getAllByRole("checkbox").forEach(checkbox => expect(checkbox).not.toBeChecked());
     within(tiers).getByRole("checkbox", { name: "Functional" }).focus();
     await user.keyboard(" ");

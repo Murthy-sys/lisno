@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { hasPermission } from "../domain/authorization.js";
-import { ADDITIONAL_KNOWLEDGE_MODE_TIERS } from "../domain/ai-estimator-knowledge-mode-tiers.js";
+import { ADDITIONAL_KNOWLEDGE_MODE_CONFIGURATION_SCOPES } from "../domain/ai-estimator-knowledge-mode-tiers.js";
 import mongoose, { type ClientSession, type Model } from "mongoose";
 
 import type { ProcurementVendorProfileInput, ProcurementVendorSummary, ProcurementVendorDetailFields, ProcurementVendorDirectoryOverview } from "../contracts/procurement-vendor.js";
@@ -1911,7 +1911,7 @@ async function requireNoMasterReferences(masterType: AiEstimatorKnowledgeMasterT
       "payload.modeConfigurations.modeId"
     ]
   };
-  const paths = sectionPaths[masterType].flatMap(path => [path, ...ADDITIONAL_KNOWLEDGE_MODE_TIERS
+  const paths = sectionPaths[masterType].flatMap(path => [path, ...ADDITIONAL_KNOWLEDGE_MODE_CONFIGURATION_SCOPES
     .map(tier => path.replace(/^payload\./u, `payload.tierConfigurations.${tier}.payload.`))]);
   if (revisionIds.length > 0 && await AiEstimatorKnowledgeSectionModel.exists({ revisionId: { $in: revisionIds }, $or: paths.map((path) => ({ [path]: id })) }).session(session)) {
     referenceConflict("Knowledge master has an active or Draft section reference.");
@@ -2108,7 +2108,7 @@ function canonicalTaxPolicyImmutable(): never { throw new ApiError(409, "CANONIC
 async function requireNoInHouseComponentReferences(target: { basketId: string; subBasketId?: string }, excludedMainLineIds: readonly string[], session: ClientSession): Promise<void> {
   const referenced = await AiEstimatorKnowledgeSectionModel.exists({
     sectionKey: "advanced", mainLineId: { $nin: excludedMainLineIds },
-    $or: ["payload.inHouseComponents", ...ADDITIONAL_KNOWLEDGE_MODE_TIERS
+    $or: ["payload.inHouseComponents", ...ADDITIONAL_KNOWLEDGE_MODE_CONFIGURATION_SCOPES
       .map(tier => `payload.tierConfigurations.${tier}.payload.inHouseComponents`)]
       .map(path => ({ [path]: { $elemMatch: target } }))
   }).session(session);

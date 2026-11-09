@@ -1,4 +1,4 @@
-import { ADDITIONAL_KNOWLEDGE_MODE_TIERS, isKnowledgeModeSection, isKnowledgeModeTier, knowledgeModeTierPayload } from "./ai-estimator-knowledge-mode-tiers.js";
+import { ADDITIONAL_KNOWLEDGE_MODE_CONFIGURATION_SCOPES, isKnowledgeModeSection, isKnowledgeModeTier, knowledgeModeTierPayload } from "./ai-estimator-knowledge-mode-tiers.js";
 import { validateDesignRules } from "./main-line-design-rules.js";
 import type {
   KnowledgeQualityPerformer,
@@ -483,8 +483,8 @@ export function validateKnowledgeSectionPayload(
       issues.push({ path: "payload.tierConfigurations", code: "INVALID_PAYLOAD", message: "Tier configurations must be an object." });
     } else for (const [tier, value] of Object.entries(tiers as Record<string, unknown>)) {
       const path = `payload.tierConfigurations.${tier}`;
-      if (!ADDITIONAL_KNOWLEDGE_MODE_TIERS.some(known => known === tier)) {
-        issues.push({ path, code: "UNKNOWN_FIELD", message: "Only Premium and Functional have separate stored configurations." });
+      if (!ADDITIONAL_KNOWLEDGE_MODE_CONFIGURATION_SCOPES.some(known => known === tier)) {
+        issues.push({ path, code: "UNKNOWN_FIELD", message: "Only default, Premium and Functional have separate stored configurations." });
         continue;
       }
       if (!value || typeof value !== "object" || Array.isArray(value)) {

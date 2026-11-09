@@ -2036,6 +2036,41 @@ describe("estimate per-line Mode tiers", { timeout: 30_000 }, () => {
   }
   const line = (overrides: Record<string, unknown> = {}) => configuredLine({ pricingMode: "sub_vendor", rateSource: "configuration", itemVersion: 1, revisionVersion: 1, modeTier: "premium", ratePaise: 2102, ...overrides });
 
+  it("keeps default Configuration values out of three-tier catalogue pricing and saved estimates across unequal Main Lines", async () => {
+    await configure();
+    await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: "overview-b" }, { $set: { "payload.applicableTiers": ["signature", "premium", "functional"] } });
+    await AiEstimatorKnowledgeSectionModel.collection.insertOne({ _id: "tier-mode-b", mainLineId: "line-b", revisionId: "revision-b", sectionKey: "advanced", applicability: "configured", payload: {
+      ...mode(8008), tierConfigurations: { premium: { applicability: "configured", payload: mode(9009) }, functional: { applicability: "configured", payload: mode(10010) } }
+    } } as never);
+    const before = await resolveEstimatorCatalogueLines(["line-a", "line-b"]);
+    for (const [sectionId, defaultRate] of [["tier-mode", 700701], ["tier-mode-b", 900901]] as const) {
+      await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: sectionId }, { $set: {
+        "payload.tierConfigurations.default": { applicability: "configured", payload: mode(defaultRate) }
+      } });
+    }
+    const after = await resolveEstimatorCatalogueLines(["line-a", "line-b"]);
+    for (const id of ["line-a", "line-b"]) {
+      expect(after.get(id)!.line).toEqual(before.get(id)!.line);
+      expect(Object.keys(after.get(id)!.line.tierPricing)).toEqual(["signature", "premium", "functional"]);
+    }
+    expect(after.get("line-a")!.line.modeBaseRatesPaise.sub_vendor).toBe(1101);
+    expect(after.get("line-b")!.line.tierPricing.functional?.modeBaseRatesPaise.sub_vendor).toBe(10010);
+
+    const { server } = app(); const path = "/api/v1/leads/default-mode-isolation/estimate";
+    const first = line({ modeTier: "signature", ratePaise: 1101, quantity: 2 });
+    const second = line({ catalogueId: "line-b", mainLineId: "line-b", mainBasketId: "basket-b", subBasketId: "sub-b",
+      revisionId: "revision-b", uomId: "uom-ea", modeTier: "functional", ratePaise: 10010, quantity: 3 });
+    const saved = await request(server).put(path).set(bearer("estimator")).send(estimateInput([first, second], ["basket-a", "basket-b"])).expect(200);
+    expect(saved.body.data).toMatchObject({ subtotalPaise: 32232, lineItems: [
+      { mainLineId: "line-a", modeTier: "signature", ratePaise: 1101, amountPaise: 2202 },
+      { mainLineId: "line-b", modeTier: "functional", ratePaise: 10010, amountPaise: 30030 }
+    ] });
+    const persisted = await EstimateModel.findById(saved.body.data.id).lean();
+    await request(server).put(path).set(bearer("estimator"))
+      .send(estimateInput([{ ...first, modeTier: "default", ratePaise: 700701 }, second], ["basket-a", "basket-b"], saved.body.data.version)).expect(400);
+    expect(await EstimateModel.findById(saved.body.data.id).lean()).toEqual(persisted);
+  });
+
   it("projects asymmetric configured prices without falling back to Signature for a missing or deselected tier", async () => {
     await configure();
     const source = (await resolveEstimatorCatalogueLines(["line-a"])).get("line-a")!.line;

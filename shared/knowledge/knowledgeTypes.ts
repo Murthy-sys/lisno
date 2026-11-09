@@ -1,4 +1,4 @@
-import type { KnowledgeModeTier } from "./knowledgeModeTiers";
+import type { KnowledgeModeConfigurationScope } from "./knowledgeModeTiers";
 import type { VendorKpiDirectorySummary } from "./vendorKpi";
 import type { VendorActivation } from "./vendorInduction";
 
@@ -367,7 +367,7 @@ export interface KnowledgeSectionEnvelope<
   readonly sectionKey: KnowledgeSectionKey;
   readonly applicability: KnowledgeSectionApplicability;
   readonly payload: TPayload;
-  readonly modeTier?: KnowledgeModeTier;
+  readonly modeTier?: KnowledgeModeConfigurationScope;
   readonly referenceState?: {
     readonly specificationIds: readonly string[];
   };
