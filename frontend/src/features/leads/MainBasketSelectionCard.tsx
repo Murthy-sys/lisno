@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { EstimationCatalogueBasket } from "./estimationCatalogueApi";
 import { resolveMainBasketImage } from "./mainBasketImages";
+import { isEstimationLinePriceVisible } from "./estimationCatalogueVisibility";
 
 function basketCount(count: number, singular: string, plural: string) {
   return `${count} ${count === 1 ? singular : plural}`;
@@ -23,8 +24,10 @@ export function MainBasketSelectionCard({ basket, summary, selected, disabled, o
   const presentation = summary ?? {
     id: basket.id,
     name: basket.name,
-    subBaskets: basket.subBaskets.map((item) => ({ id: item.id, name: item.name, mainLineCount: item.mainLines.length, temporaryItemCount: (item.temporaryItems ?? []).length })),
-    directTemporaryItemCount: (basket.directTemporaryItems ?? []).length
+    subBaskets: basket.subBaskets.map((item) => ({ id: item.id, name: item.name,
+      mainLineCount: item.mainLines.filter(line => isEstimationLinePriceVisible(line)).length,
+      temporaryItemCount: (item.temporaryItems ?? []).filter(line => isEstimationLinePriceVisible(line)).length })),
+    directTemporaryItemCount: (basket.directTemporaryItems ?? []).filter(line => isEstimationLinePriceVisible(line)).length
   };
   const [expanded, setExpanded] = useState(false);
   const [failedImage, setFailedImage] = useState<string | null>(null);

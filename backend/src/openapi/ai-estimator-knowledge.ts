@@ -1,4 +1,4 @@
-import { KNOWLEDGE_MODE_TIERS } from "../domain/ai-estimator-knowledge-mode-tiers.js";
+import { KNOWLEDGE_MODE_TIERS, KNOWLEDGE_MODE_CONFIGURATION_SCOPES } from "../domain/ai-estimator-knowledge-mode-tiers.js";
 import { DESIGN_RULE_KEYS } from "../domain/main-line-design-rules.js";
 import {
 } from "../contracts/ai-estimator-knowledge.js";
@@ -210,8 +210,8 @@ const masterStatusParameter = {
 export const AI_ESTIMATOR_KNOWLEDGE_QUERY_PARAMETERS: Readonly<
   Record<string, readonly OpenApiObject[]>
 > = {
-  [`GET ${admin}/main-lines/:mainLineId/revisions/:revisionId/sections/:sectionKey`]: [{ name: "modeTier", in: "query", required: false, schema: { type: "string", enum: [...KNOWLEDGE_MODE_TIERS], default: "signature" }, description: "Tier scope for advanced and pricing. Other sections support Signature only." }],
-  [`GET ${admin}/baskets/:basketId/sub-baskets/:subBasketId/margins`]: [{ name: "modeTier", in: "query", required: false, schema: { type: "string", enum: [...KNOWLEDGE_MODE_TIERS], default: "signature" } }],
+  [`GET ${admin}/main-lines/:mainLineId/revisions/:revisionId/sections/:sectionKey`]: [{ name: "modeTier", in: "query", required: false, schema: { type: "string", enum: [...KNOWLEDGE_MODE_CONFIGURATION_SCOPES], default: "signature" }, description: "Configuration scope for advanced and pricing. Explicit default has separate settings; omitted scope remains Signature. Other sections support Signature only." }],
+  [`GET ${admin}/baskets/:basketId/sub-baskets/:subBasketId/margins`]: [{ name: "modeTier", in: "query", required: false, schema: { type: "string", enum: [...KNOWLEDGE_MODE_CONFIGURATION_SCOPES], default: "signature" } }],
   [`GET ${admin}/quality-control-options`]: [{
     name: "kind",
     in: "query",
@@ -662,7 +662,7 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
     {
       expectedVersion: version,
       expectedAggregateVersion: version,
-      modeTier: { type: "string", enum: [...KNOWLEDGE_MODE_TIERS], default: "signature", description: "Save only this tier. The server retains all other tiers. Premium and Functional start empty." },
+      modeTier: { type: "string", enum: [...KNOWLEDGE_MODE_CONFIGURATION_SCOPES], default: "signature", description: "Save only this Configuration scope. The server retains all other scopes. Default, Premium and Functional start empty." },
       applicability: sectionApplicability,
       payload: ref("KnowledgeSectionPayload")
     }
@@ -1617,7 +1617,7 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
       revisionId: id,
       sectionKey: { type: "string", enum: [...AI_ESTIMATOR_KNOWLEDGE_SECTION_KEYS] },
       applicability: sectionApplicability,
-      modeTier: { type: "string", enum: [...KNOWLEDGE_MODE_TIERS] },
+      modeTier: { type: "string", enum: [...KNOWLEDGE_MODE_CONFIGURATION_SCOPES] },
       payload: ref("KnowledgeSectionPayload"),
       referenceState: ref("KnowledgeSectionReferenceState"),
       version,
@@ -1632,7 +1632,7 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
       revisionId: id,
       sectionKey: { type: "string", enum: [...AI_ESTIMATOR_KNOWLEDGE_SECTION_KEYS] },
       applicability: sectionApplicability,
-      modeTier: { type: "string", enum: [...KNOWLEDGE_MODE_TIERS] },
+      modeTier: { type: "string", enum: [...KNOWLEDGE_MODE_CONFIGURATION_SCOPES] },
       payload: ref("KnowledgeSectionPayload"),
       referenceState: ref("KnowledgeSectionReferenceState"),
       version,

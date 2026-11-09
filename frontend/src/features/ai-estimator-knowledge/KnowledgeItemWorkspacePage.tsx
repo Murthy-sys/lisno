@@ -2,7 +2,7 @@ import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/rea
 import { ArrowLeft, Copy, Pencil, Plus, ShieldCheck, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { applicableKnowledgeTiers, KNOWLEDGE_MODE_TIER_LABELS } from "../../../../shared/knowledge/knowledgeModeTiers";
+import { applicableKnowledgeTiers, KNOWLEDGE_MODE_CONFIGURATION_LABELS } from "../../../../shared/knowledge/knowledgeModeTiers";
 import { knowledgeModeTierDataSource } from "./knowledgeModeTierDataSource";
 
 import { ApiError } from "../../api/client";
@@ -202,7 +202,7 @@ export function KnowledgeItemWorkspacePage() {
   const visibleSections = KNOWLEDGE_WORKSPACE_TAB_KEYS.filter(section => selectedSections.includes(section)
     || (section === activeSection && isModeSection && (modeDirty || modeSaving)));
   useEffect(() => {
-    if (savedOverviewQuery.data && activeModeTier && activeModeTier !== "signature" && !applicableKnowledgeTiers(savedOverviewQuery.data.payload).includes(activeModeTier)
+    if (savedOverviewQuery.data && activeModeTier && activeModeTier !== "default" && !applicableKnowledgeTiers(savedOverviewQuery.data.payload).includes(activeModeTier)
       && !modeDirty && !modeSaving) setActiveSection("overview");
   }, [savedOverviewQuery.data, activeModeTier, modeDirty, modeSaving]);
   const historyQuery = useQuery({
@@ -585,7 +585,7 @@ export function KnowledgeItemWorkspacePage() {
       onRetry={() => void historyQuery.refetch()}
     />}
     <KnowledgeSavedConfigurationSummary item={item} revisionId={revision?.id} masters={masters}
-      dataSource={modeDataSource} modeLabel={(activeModeTier ?? "signature") === "signature" ? "Mode" : `${KNOWLEDGE_MODE_TIER_LABELS[activeModeTier ?? "signature"]} mode`}
+      dataSource={modeDataSource} modeLabel={KNOWLEDGE_MODE_CONFIGURATION_LABELS[activeModeTier ?? "signature"]}
       baskets={relationshipBasketsQuery.data?.items ?? []} items={relationshipItemsQuery.data?.allItems ?? []}
       referenceStates={{
         masters: Object.fromEntries(MASTER_TYPES.map((type, index) => [type, {
@@ -657,6 +657,7 @@ export function KnowledgeItemWorkspacePage() {
             ) : isModeSection ? (
               <KnowledgeModePanel
                 key={pendingSession.sourceKey}
+                modeLabel={KNOWLEDGE_MODE_CONFIGURATION_LABELS[activeModeTier ?? "default"]}
                 ref={modePanelRef}
                 item={item}
                 revisionId={revision.id}

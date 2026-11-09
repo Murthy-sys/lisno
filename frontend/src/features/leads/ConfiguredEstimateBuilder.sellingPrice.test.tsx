@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { ConfiguredEstimateBuilder } from "./ConfiguredEstimateBuilder";
@@ -65,7 +65,6 @@ describe("configured estimate selling prices", () => {
       paint.getByRole("button", { name: /Decrease quantity/ }),
       paint.getByRole("spinbutton", { name: /Quantity/ }),
       paint.getByRole("button", { name: /Increase quantity/ }),
-      paint.getByRole("textbox", { name: /Selling rate/ }),
       paint.getByRole("button", { name: "More options for Wall painting" })
     ];
     for (const control of controls) {
@@ -93,18 +92,19 @@ describe("configured estimate selling prices", () => {
     expect(container).not.toHaveTextContent(/margin|profit|25%|base price|configured price|200 \+/i);
   });
 
-  it("preserves manual selling prices and adopts the final price on mode and tier changes", async () => {
+  it("blocks manual selling prices and adopts the final price on mode and tier changes", async () => {
     const user = userEvent.setup();
     render(<SellingPriceBuilder />);
     const paint = paintRow();
     const rate = paint.getByRole("textbox", { name: /Selling rate/ });
-    await user.clear(rate);
+    expect(rate).toBeDisabled();
+    fireEvent.change(rate, { target: { value: "225" } });
     await user.type(rate, "225");
     await user.click(paint.getByRole("button", { name: /Increase quantity/ }));
-    expect(rate).toHaveValue("225");
-    expect(paint.getByRole("status", { name: /Amount for/ })).toHaveTextContent("₹675");
+    expect(rate).toHaveValue("250");
+    expect(paint.getByRole("status", { name: /Amount for/ })).toHaveTextContent("₹750");
     await user.click(screen.getByRole("button", { name: /Refresh available items/ }));
-    expect(rate).toHaveValue("225");
+    expect(rate).toHaveValue("250");
     await user.click(paint.getByRole("radio", { name: /Special item type/ }));
     const pmc = paint.getByRole("switch", { name: /PMC pricing mode/ });
     pmc.focus();

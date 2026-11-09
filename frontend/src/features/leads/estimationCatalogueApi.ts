@@ -5,6 +5,7 @@ import type { EstimatePricingMode } from "./leadsApi";
 
 /** Legacy name: final unit rates include configured maximum profit; components are priced separately. */
 export type EstimationModeBaseRatesPaise = Record<EstimatePricingMode, number | null>;
+export type EstimationBasePriceAvailability = Record<"default" | KnowledgeModeTier, Record<EstimatePricingMode, boolean>>;
 
 export interface EstimationCatalogueUom {
   id: string;
@@ -35,6 +36,10 @@ export interface EstimationCatalogueMainLine {
   subBasketId: string;
   itemType?: "main_line";
   name: string;
+  /** Current server always supplies this; absent legacy metadata retains prior discovery behavior. */
+  hasConfiguredBasePrice?: boolean;
+  /** Positive raw-base availability for each saved Configuration scope and pricing method. */
+  basePriceAvailability?: EstimationBasePriceAvailability;
   estimateNotes?: string[];
   clientVisible?: boolean;
   dimensionsMandatory?: boolean;

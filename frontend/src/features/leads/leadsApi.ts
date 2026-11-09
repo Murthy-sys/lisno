@@ -30,6 +30,7 @@ export const updateLead = (id: string, input: Partial<Omit<Lead, "projectNumber"
 export const getLeadActivities = (id: string) => apiClient.get<PaginatedData<LeadActivity>>(`/leads/${encodeURIComponent(id)}/activities?limit=50&offset=0`);
 export const addLeadActivity = (id: string, input: { type: LeadActivityType; note: string; occurredAt: string }) => apiClient.post<LeadActivity>(`/leads/${encodeURIComponent(id)}/activities`, input);
 export interface LegacyEstimateLineInput {
+  id?: string;
   source?: "legacy";
   catalogueId: string;
   roomName: string;

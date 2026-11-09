@@ -14,13 +14,14 @@ import { EstimateItemPicker, EstimateSelectionPagination } from "../estimates/Es
 import type { EstimateRecommendationsPopup } from "../estimates/EstimateRecommendations";
 import type { EstimationCatalogue } from "./estimationCatalogueApi";
 import type { EstimateClassification, EstimatePricingMode } from "./leadsApi";
-import { configuredTierGroupKey, configuredLineInTierGroup, type ConfiguredTierGroupScope, configuredAttributedAmountPaise, configuredUsesComponentPricing, configuredDimensionsIssue, configuredInHouseSelectionIssue, configuredLineAmountPaise, configuredLinePreviewAmountPaise, configuredTierUnavailableReason, configuredQuantityUnits, parseSellingRate, type ConfiguredLineDraft } from "./configuredEstimate";
+import { createConfiguredLine, configuredLineCanInclude, configuredModeBaseRate, formatRateInput, configuredTierGroupKey, configuredLineInTierGroup, type ConfiguredTierGroupScope, configuredAttributedAmountPaise, configuredUsesComponentPricing, configuredDimensionsIssue, configuredInHouseSelectionIssue, configuredLineAmountPaise, configuredLinePreviewAmountPaise, configuredTierUnavailableReason, configuredQuantityUnits, parseSellingRate, type ConfiguredLineDraft } from "./configuredEstimate";
 import { EstimateInHouseComponents } from "./EstimateInHouseComponents";
 import { EstimatorRecommendations, type RecommendationReadState } from "./EstimatorRecommendations";
 import { recommendationTargetIdentity, type RoomRecommendationView, type RecommendedLineTarget } from "./roomRecommendations";
 import { EstimateBuilderShell, type EstimateShellBasket } from "../estimates/EstimateBuilderShell";
 import { EstimateLineActions, EstimateLineChoice, EstimateLineLayout, EstimateLineTierNotes, EstimateLineTierOptions } from "../estimates/EstimateLineRow";
 import { buildSalesEstimateCatalogue } from "./salesEstimateCatalogue";
+import { estimationLinePricingMode, isEstimationLinePriceVisible } from "./estimationCatalogueVisibility";
 
 interface Room {
   id: string;
@@ -37,7 +38,7 @@ export function ConfiguredEstimateBuilder({
   recommendationSourceCount = 0, recommendationState = "ready", recommendationView = null,
   onRetryRecommendations = () => {}, onSelectRecommendedLine = () => false, onRemoveRecommendedLine = () => false, onAddLine, recommendationContextKey,
   navigation, viewState, onViewStateChange, onRemoveSubBasket, excludedReviewKeys, reviewContextKey = "current",
-  itemPresentation = "selected", onUpdateAvailableLine, recommendationPopup, browseMainBasketIds, onBrowseRecommendationBasket
+  itemPresentation = "selected", onUpdateAvailableLine, recommendationPopup, browseMainBasketIds, onBrowseRecommendationBasket, filterUnpricedItems = editable
 }: {
   rooms: readonly Room[];
   activeRoomId: string;
@@ -74,6 +75,8 @@ export function ConfiguredEstimateBuilder({
   excludedReviewKeys?: ReadonlySet<string>;
   reviewContextKey?: string;
   itemPresentation?: "selected" | "catalogue";
+  /** Draft discovery remains filtered during temporary edit locks; saved historical views opt out. */
+  filterUnpricedItems?: boolean;
   browseMainBasketIds?: ReadonlySet<string>;
   onBrowseRecommendationBasket?: (basketId: string) => boolean | void;
   recommendationPopup?: Pick<EstimateRecommendationsPopup, "open" | "onOpenChange" | "footerRef">;
@@ -112,9 +115,20 @@ export function ConfiguredEstimateBuilder({
     tierInfo.scope.roomId === activeRoom?.id && infoBasket && (tierInfo.scope.subBasketId === null || infoSubBasket) && infoLines.length);
   useEffect(() => { if (tierInfo && !infoOpen) setTierInfo(null); }, [tierInfo, infoOpen]);
   const browseCatalogue = itemPresentation === "catalogue";
+  const currentTargets = useMemo(() => new Map(catalogue.items.flatMap(basket => [
+    ...(basket.directTemporaryItems ?? []),
+    ...basket.subBaskets.flatMap(subBasket => [...subBasket.mainLines, ...(subBasket.temporaryItems ?? [])])
+  ].map(item => [recommendationTargetIdentity(item), item]))), [catalogue]);
+  const hasVisiblePrice = (line: ConfiguredLineDraft) => {
+    const source = currentTargets.get(recommendationTargetIdentity({ mainLineId: line.mainLineId,
+      basketId: line.mainBasketId, subBasketId: line.subBasketId })) ?? line;
+    const mode = estimationLinePricingMode(line);
+    return isEstimationLinePriceVisible(source, mode) && !configuredTierUnavailableReason(source, line.modeTier ?? "signature", mode);
+  };
+  const ordinaryRoomLines = filterUnpricedItems ? roomLines.filter(hasVisiblePrice) : roomLines;
   const browsableBaskets = browseMainBasketIds ?? selectedMainBasketIds;
   const visibleBaskets = catalogue.items.filter(basket => selectedMainBasketIds.has(basket.id) &&
-    (browseCatalogue && browsableBaskets.has(basket.id) || roomLines.some(line =>
+    (browseCatalogue && browsableBaskets.has(basket.id) || ordinaryRoomLines.some(line =>
       line.mainBasketId === basket.id && !line.sourceMissing)));
   const catalogueRows = useMemo(() => browseCatalogue && activeRoom
     ? buildSalesEstimateCatalogue({ catalogue, room: activeRoom, selectedMainBasketIds, browseMainBasketIds: browsableBaskets, lines }) : [],
@@ -129,7 +143,10 @@ export function ConfiguredEstimateBuilder({
   const reviewKeys = new Set([...(retainedReview.context === reviewContextKey ? retainedReview.keys : []), ...requiredReviewKeys]);
   const reviewLines = lines.filter(line => line.persistedId && !line.included && reviewKeys.has(line.key) && line.key !== inlineReviewKey);
   const displayedReviewKeys = new Set(reviewLines.map(line => line.key));
-  const availableRoomLines = browseCatalogue ? catalogueRows.filter(row => !displayedReviewKeys.has(row.line.key)).map(row => row.line) : roomLines;
+  const unpricedSelections = filterUnpricedItems ? lines.filter(line => line.roomId === activeRoom?.id &&
+    (line.included || line.persistedId && !displayedReviewKeys.has(line.key)) && !line.sourceMissing &&
+    !hasVisiblePrice(line) && selectedMainBasketIds.has(line.mainBasketId)) : [];
+  const availableRoomLines = browseCatalogue ? catalogueRows.filter(row => !displayedReviewKeys.has(row.line.key)).map(row => row.line) : ordinaryRoomLines;
   const [groupOffsets, setGroupOffsets] = useState<Record<string, number>>({});
   const recommendationToReveal = useRef<{ roomId: string; target: RecommendedLineTarget } | null>(null);
   const browseFocus = useRef<{ roomId: string; basketId: string; trigger: HTMLButtonElement; fallback: HTMLButtonElement | null } | null>(null);
@@ -180,10 +197,12 @@ export function ConfiguredEstimateBuilder({
   const availableTargets = useMemo(() => pickerBaskets.flatMap(basket => [
     ...(basket.directTemporaryItems ?? []).map(item => ({ item, basket, subBasket: null })),
     ...basket.subBaskets.flatMap(subBasket => [...subBasket.mainLines, ...(subBasket.temporaryItems ?? [])].map(item => ({ item, basket, subBasket })))
-  ].map(({ item, basket, subBasket }) => {
+  ].filter(({ item }) => isEstimationLinePriceVisible(item)).map(({ item, basket, subBasket }) => {
     const target = { mainLineId: item.mainLineId, basketId: basket.id, subBasketId: subBasket?.id ?? null };
-    return { id: recommendationTargetIdentity(target), name: item.name, context: [basket.name, subBasket?.name].filter(Boolean).join(" / "), target };
-  })), [pickerBaskets]);
+    const preview = activeRoom ? createConfiguredLine(catalogue, activeRoom, target) : null;
+    return { id: recommendationTargetIdentity(target), name: item.name, context: [basket.name, subBasket?.name].filter(Boolean).join(" / "), target,
+      canAdd: Boolean(preview && configuredLineCanInclude(preview)) };
+  })), [catalogue, pickerBaskets, activeRoom]);
   const pickerQuery = pickerSearch.trim().toLocaleLowerCase();
   const pickerResults = availableTargets.filter(item =>
     (pickerBasket === "all" || item.target.basketId === pickerBasket) &&
@@ -194,7 +213,7 @@ export function ConfiguredEstimateBuilder({
   const addItem = (id: string) => {
     if (!editable || refreshingAvailableItems || availableItemsState !== "ready" || !activeRoom) return false;
     const item = availableTargets.find(item => item.id === id);
-    if (!item || includedTargets.has(id)) return false;
+    if (!item || !item.canAdd || includedTargets.has(id)) return false;
     const accepted = onAddLine ? onAddLine(item.target) : (() => {
       const existing = lines.find(line => line.roomId === activeRoom.id && line.mainLineId === item.target.mainLineId && !line.sourceMissing);
       if (!existing) return false;
@@ -252,7 +271,7 @@ export function ConfiguredEstimateBuilder({
     return info || comparison ? <>{info}{comparison}</> : undefined;
   };
   const catalogueGroups: EstimateShellBasket[] = (activeRoom ? visibleBaskets : [])
-    .filter(basket => browseCatalogue || roomLines.some(line => line.mainBasketId === basket.id && !line.sourceMissing))
+    .filter(basket => browseCatalogue || ordinaryRoomLines.some(line => line.mainBasketId === basket.id && !line.sourceMissing))
     .filter(basket => visibleBasketFilter === "all" || visibleBasketFilter === basket.id)
     .map(basket => {
       const compact = browseCatalogue && !browsableBaskets.has(basket.id);
@@ -307,6 +326,8 @@ export function ConfiguredEstimateBuilder({
   const unavailableSaved = roomLines.filter(line => line.persistedId && line.sourceMissing && selectedMainBasketIds.has(line.mainBasketId));
   const unavailableNew = roomLines.filter(line => !line.persistedId && line.sourceMissing && selectedMainBasketIds.has(line.mainBasketId));
   const selectRecommendedLine = (target: RecommendedLineTarget) => {
+    const source = currentTargets.get(recommendationTargetIdentity(target));
+    if (!source || !isEstimationLinePriceVisible(source)) return false;
     const accepted = onSelectRecommendedLine(target);
     if (accepted === false) return false;
     if (activeRoom) recommendationToReveal.current = { roomId: activeRoom.id, target };
@@ -331,12 +352,18 @@ export function ConfiguredEstimateBuilder({
   const requestedInfoKeys = new Set(suggestionGroups.length ? eligibleInfoLines.map(line => line.key) : []);
   const previewById = new Map(catalogueRows.filter(row => row.isPreview).map(row => [row.line.key, row]));
   const updateVisibleLine = (key: string, change: Partial<ConfiguredLineDraft>) => {
+    if (change.rateInput !== undefined || change.rateSource === "manual") return;
     const preview = previewById.get(key);
     if (preview) {
       if (editable && !refreshingAvailableItems && availableItemsState === "ready") onUpdateAvailableLine?.(preview.line.roomId, preview.target, change);
       return;
     }
-    if (browseCatalogue && change.included === true && (refreshingAvailableItems || availableItemsState !== "ready")) return;
+    const currentLine = byId.get(key);
+    if (change.included === true && (!currentLine || !hasVisiblePrice(currentLine) || !configuredLineCanInclude(currentLine) || browseCatalogue && (refreshingAvailableItems || availableItemsState !== "ready"))) return;
+    if (currentLine?.persistedId && !currentLine.included && change.modeTier !== undefined) {
+      setRetainedReview(current => ({ context: reviewContextKey,
+        keys: new Set([...(current.context === reviewContextKey ? current.keys : []), key]) }));
+    }
     const focused = document.activeElement;
     onUpdateLine(key, change);
     if ((!browseCatalogue || !browsableBaskets.has(byId.get(key)?.mainBasketId ?? "")) && change.included === false && focused instanceof HTMLElement) window.requestAnimationFrame(() => {
@@ -382,12 +409,16 @@ export function ConfiguredEstimateBuilder({
     toolbarRef={toolbarRef} toolbarActions={recommendationPopup ? recommendations : undefined}
     extraJumpTargets={[
       ...(unselected.length ? [{ id: "unselected-items", label: "Unselected saved items" }] : []),
+      ...(unpricedSelections.length ? [{ id: "unpriced-selections", label: "Items without a positive base price" }] : []),
       ...(unavailableSaved.length ? [{ id: "saved-items", label: "Saved items" }] : []),
       ...(unavailableNew.length ? [{ id: "unavailable-selections", label: "Unavailable selections" }] : [])
     ]}
     beforeGroups={<>
       <ExcludedEstimateReview pricingModeEditable={pricingModeEditable} getPmcToggleMode={getPmcToggleMode} lines={reviewLines} requiredCount={reviewLines.filter(line => excludedReviewKeys?.has(line.key)).length} contextKey={reviewContextKey}
+        canIncludeLine={hasVisiblePrice}
         editable={editable && (!browseCatalogue || !refreshingAvailableItems && availableItemsState === "ready")} onUpdateLine={(key, change) => {
+          const line = byId.get(key);
+          if (change.included === true && line && !hasVisiblePrice(line)) return;
           setRetainedReview(current => {
             const keys = new Set(current.context === reviewContextKey ? current.keys : []);
             if (change.included === true) keys.delete(key); else keys.add(key);
@@ -404,8 +435,8 @@ export function ConfiguredEstimateBuilder({
         items={pickerResults.slice(pageOffset, pageOffset + 20).map(item => {
           const saved = lines.find(line => line.roomId === activeRoom.id && line.mainLineId === item.target.mainLineId);
           const incompatible = Boolean(saved && (saved.mainBasketId !== item.target.basketId || saved.subBasketId !== item.target.subBasketId));
-          return { ...item, selected: includedTargets.has(item.id), disabled: incompatible,
-            message: incompatible ? "This saved item's Configuration grouping changed. Review it before adding it again." : undefined };
+          return { ...item, selected: includedTargets.has(item.id), disabled: incompatible || !item.canAdd,
+            message: !item.canAdd ? "No usable financial tier is configured for this item." : incompatible ? "This saved item's Configuration grouping changed. Review it before adding it again." : undefined };
         })}
         total={pickerResults.length} offset={pageOffset} onOffsetChange={setPickerOffset}
         search={pickerSearch} onSearchChange={value => { setPickerSearch(value); setPickerOffset(0); }}
@@ -424,6 +455,14 @@ export function ConfiguredEstimateBuilder({
       <button type="button" className="button button--secondary" disabled={refreshingAvailableItems} onClick={onRefreshAvailableItems}>Refresh available items</button>
     </div>}
     afterGroups={<>
+        {unpricedSelections.length ? <section className="configured-estimate-basket"
+          aria-label="Items without a positive base price" data-estimate-jump-target="unpriced-selections">
+          <header><h2>Items without a positive base price</h2><span>The current tier or pricing method has no usable configured price. Your selections and saved prices are preserved for review.</span></header>
+          {unpricedSelections.map(line => <div className="configured-estimate-saved-line" key={line.key}>
+            <p>{line.subBasketName ? `${line.mainBasketName} / ${line.subBasketName}` : line.mainBasketName}</p>
+            <ConfiguredLineRow pricingModeEditable={pricingModeEditable} getPmcToggleMode={getPmcToggleMode} line={line} editable={editable} tierEditable={editable && !refreshingAvailableItems && availableItemsState === "ready"} selectionEditable={line.included} onUpdateLine={updateVisibleLine} moneyPaise={moneyPaise} />
+          </div>)}
+        </section> : null}
         {unselected.length ? <section
           className="configured-estimate-basket"
           aria-label="Saved items from unselected Main Baskets"
@@ -458,7 +497,7 @@ export function ConfiguredEstimateBuilder({
           </div>)}
         </section> : null}
     </>}
-    emptyMessage={!catalogueGroups.length && !unselected.length && !unavailableSaved.length && !unavailableNew.length
+    emptyMessage={!catalogueGroups.length && !unselected.length && !unpricedSelections.length && !unavailableSaved.length && !unavailableNew.length
       ? !selectedMainBasketIds.size ? "Select a Main Basket to choose items."
         : !activeRoom ? "Select a room to see its available items."
         : query ? `No ${browseCatalogue ? "available" : "selected"} items match “${search.trim()}”.`
@@ -488,13 +527,14 @@ function ConfiguredTierSuggestionLoader({ context, groups, children }: {
 }
 
 /** Keep only blocking excluded rows discoverable until a complete correction is entered. */
-function ExcludedEstimateReview({ lines, requiredCount, contextKey, editable, pricingModeEditable, onUpdateLine, moneyPaise, onFinish, getPmcToggleMode }: {
+function ExcludedEstimateReview({ lines, requiredCount, contextKey, editable, pricingModeEditable, onUpdateLine, moneyPaise, onFinish, getPmcToggleMode, canIncludeLine }: {
   pricingModeEditable: boolean;
   getPmcToggleMode: (line: ConfiguredLineDraft) => EstimatePricingMode;
   lines: readonly ConfiguredLineDraft[];
   requiredCount: number;
   contextKey: string;
   editable: boolean;
+  canIncludeLine: (line: ConfiguredLineDraft) => boolean;
   onUpdateLine: (key: string, change: Partial<ConfiguredLineDraft>) => void;
   moneyPaise: (value: number) => string;
   onFinish: () => void;
@@ -509,7 +549,8 @@ function ExcludedEstimateReview({ lines, requiredCount, contextKey, editable, pr
     {lines.slice(pageOffset, pageOffset + 20).map(line => <div key={line.key} className="configured-estimate-saved-line">
       <p>{line.roomName} · {line.mainBasketName}{line.subBasketName ? ` / ${line.subBasketName}` : ""}</p>
       {line.sourceMissing ? <p role="status">This saved item is unavailable in current Configuration. Refresh available items or review its saved basket.</p> : null}
-      <ConfiguredLineRow pricingModeEditable={pricingModeEditable} getPmcToggleMode={getPmcToggleMode} line={line} editable={editable} onUpdateLine={onUpdateLine} moneyPaise={moneyPaise} />
+      {!canIncludeLine(line) && !line.sourceMissing ? <p role="status">No usable price is configured for this tier and pricing method. Choose an available tier or update Configuration before adding this item again.</p> : null}
+      <ConfiguredLineRow pricingModeEditable={pricingModeEditable} getPmcToggleMode={getPmcToggleMode} line={line} editable={editable} tierEditable={editable} selectionEditable={canIncludeLine(line)} onUpdateLine={onUpdateLine} moneyPaise={moneyPaise} />
     </div>)}
     <EstimateSelectionPagination total={lines.length} offset={pageOffset} onChange={setOffset}
       disabled={false} label="Excluded review pages" />
@@ -517,12 +558,13 @@ function ExcludedEstimateReview({ lines, requiredCount, contextKey, editable, pr
   </section>;
 }
 
-function ConfiguredLineRow({ line, inheritedClassification = "standard", editable, tierEditable = false, pricingModeEditable, onUpdateLine, moneyPaise, getPmcToggleMode }: {
+function ConfiguredLineRow({ line, inheritedClassification = "standard", editable, selectionEditable = editable, tierEditable = false, pricingModeEditable, onUpdateLine, moneyPaise, getPmcToggleMode }: {
   pricingModeEditable: boolean;
   getPmcToggleMode: (line: ConfiguredLineDraft) => EstimatePricingMode;
   line: ConfiguredLineDraft;
   inheritedClassification?: EstimateClassification;
   editable: boolean;
+  selectionEditable?: boolean;
   tierEditable?: boolean;
   onUpdateLine: (key: string, change: Partial<ConfiguredLineDraft>) => void;
   moneyPaise: (value: number) => string;
@@ -542,9 +584,10 @@ function ConfiguredLineRow({ line, inheritedClassification = "standard", editabl
   const canEditMode = editable && pricingModeEditable && !line.sourceMissing;
   const referenceMode = line.pricingMode ?? (classification !== "special" ? "sub_vendor" : undefined);
   const tierOptions = KNOWLEDGE_MODE_TIERS.map(value => ({ value, label: KNOWLEDGE_MODE_TIER_LABELS[value],
-    disabledReason: line.sourceMissing ? "Current Configuration unavailable" : configuredTierUnavailableReason(line, value, referenceMode) ??
+    disabledReason: line.sourceMissing ? "Current Configuration unavailable" : !referenceMode ? "Choose a pricing method first" : configuredTierUnavailableReason(line, value, referenceMode) ??
       (!pricingModeEditable && referenceMode !== line.pricingMode ? "Pricing mode cannot be changed at this estimate stage." : null) }));
   const tierAvailabilityId = `${inputId}-tier-availability`;
+  const showTierControl = line.included || editable && tierEditable && Boolean(line.persistedId);
   const step = 10 ** -line.uomDecimalScale;
   const changeQuantity = (direction: -1 | 1) => {
     const units = Math.round((Number.isFinite(line.quantity) ? line.quantity : 0) / step);
@@ -552,13 +595,13 @@ function ConfiguredLineRow({ line, inheritedClassification = "standard", editabl
     onUpdateLine(line.key, { quantity: Math.max(minimum, units + direction * 10 ** line.uomDecimalScale) * step });
   };
   return <EstimateLineLayout included={line.included}
-    choice={<EstimateLineChoice name={line.mainLineName} unit={line.uomName} included={line.included} disabled={!editable}
+    choice={<EstimateLineChoice name={line.mainLineName} unit={line.uomName} included={line.included} disabled={!editable || !selectionEditable || !line.included && !configuredLineCanInclude(line)}
       accessibleLabel={`Include ${line.mainLineName} in ${line.roomName}`}
       onToggle={included => onUpdateLine(line.key, { included })} />}
-    tier={line.included ? <EstimateLineTierOptions label={label} groupName={`line-tier-${line.key}`}
+    tier={showTierControl ? <EstimateLineTierOptions label={label} groupName={`line-tier-${line.key}`}
       value={line.rateSource === "configuration" ? line.modeTier ?? "signature" : null}
       options={tierOptions} disabled={!editable || !tierEditable || line.sourceMissing} availabilityId={tierAvailabilityId}
-      onChange={modeTier => onUpdateLine(line.key, { modeTier, rateSource: "configuration" })} /> : null}
+      onChange={modeTier => { if (editable && tierEditable && !configuredTierUnavailableReason(line, modeTier, referenceMode)) onUpdateLine(line.key, { modeTier, rateSource: "configuration" }); }} /> : null}
     type={line.included ? editable ? <fieldset className="estimate-classification configured-estimate-line__classification" aria-label={`Item type for ${label}`}>
       <legend>Type</legend>
       <div className="configured-estimate-line__choices">
@@ -571,26 +614,25 @@ function ConfiguredLineRow({ line, inheritedClassification = "standard", editabl
       onChange={pricingMode => onUpdateLine(line.key, { pricingMode })} /> : null}
     fields={<>
       {line.dimensionsMandatory ? <div className="configured-estimate-line__quantity configured-estimate-line__quantity--calculated"><span>Qty ({line.uomName})</span><output aria-label={`Quantity (${line.uomName}) for ${label}`}>{Number.isFinite(line.quantity) && !configuredDimensionsIssue(line) ? line.quantity : "Pending"}</output></div> : <label className="configured-estimate-line__quantity"><span>Qty ({line.uomName})</span><span className="configured-estimate-line__stepper"><button type="button" aria-label={`Decrease quantity for ${label}`} disabled={!editable || !Number.isFinite(line.quantity) || line.quantity <= (line.included ? step : 0)} onClick={() => changeQuantity(-1)}>−</button><input type="number" min={line.included ? step : 0} step={step} value={Number.isFinite(line.quantity) ? line.quantity : ""} disabled={!editable} aria-label={`Quantity (${line.uomName}) for ${label}`} aria-invalid={quantityInvalid || amountTooLarge} aria-describedby={amountTooLarge ? `${inputId}-amount-overflow` : undefined} onChange={(event) => onUpdateLine(line.key, { quantity: event.target.value === "" ? Number.NaN : Number(event.target.value) })} /><button type="button" aria-label={`Increase quantity for ${label}`} disabled={!editable} onClick={() => changeQuantity(1)}>+</button></span></label>}
-      <label className="configured-estimate-line__rate" htmlFor={inputId}><span aria-hidden="true">Rate (₹/{line.uomName})</span><span className="sr-only">Selling rate (₹/{line.uomName}) for {label}</span><input id={inputId} type="text" inputMode="decimal" value={componentCalculated ? "" : line.rateInput} placeholder={componentCalculated ? "Override" : undefined} disabled={!editable} aria-label={`Selling rate (₹/${line.uomName}) for ${label}`} aria-invalid={rateInvalid || rateRequired || amountTooLarge} aria-describedby={amountTooLarge ? `${inputId}-amount-overflow` : rateInvalid || rateRequired ? `${inputId}-message` : undefined} onChange={(event) => onUpdateLine(line.key, { rateInput: event.target.value })} /></label>
+      <label className="configured-estimate-line__rate" htmlFor={inputId}><span aria-hidden="true">Rate (₹/{line.uomName})</span><span className="sr-only">Selling rate (₹/{line.uomName}) for {label}</span><input id={inputId} type="text" inputMode="decimal" value={componentCalculated ? formatRateInput(configuredModeBaseRate(line, "in_house")) : line.rateInput} disabled aria-label={`Selling rate (₹/${line.uomName}) for ${label}`} aria-invalid={rateInvalid || rateRequired || amountTooLarge} aria-describedby={amountTooLarge ? `${inputId}-amount-overflow` : rateInvalid || rateRequired ? `${inputId}-message` : undefined} /></label>
       <div className="configured-estimate-line__amount"><span className={line.included ? "sr-only" : undefined}>Amount{line.included ? "" : " · Not included"}</span><output aria-label={line.included ? `Amount for ${label}` : `Preview amount for ${label}, not included in totals`} aria-describedby={amountTooLarge ? `${inputId}-amount-overflow` : undefined}>{amountTooLarge ? "Too large" : amount === null ? "Pending" : moneyPaise(amount)}</output></div>
-      <EstimateLineActions name={line.mainLineName} disabled={!editable} included={line.included}
+      <EstimateLineActions name={line.mainLineName} disabled={!editable || !selectionEditable || !line.included && !configuredLineCanInclude(line)} included={line.included}
         onToggle={() => onUpdateLine(line.key, { included: !line.included })}
         onResetQuantity={line.dimensionsMandatory ? undefined : () => onUpdateLine(line.key, { quantity: 1 })} />
     </>}>
-    {line.included ? <EstimateLineTierNotes options={tierOptions} id={tierAvailabilityId} /> : null}
+    {showTierControl ? <EstimateLineTierNotes options={tierOptions} id={tierAvailabilityId} /> : null}
     {line.estimateNotes?.map((note, index) => <small key={index}>{note}</small>)}
     {sourceStatus === "draft" || sourceStatus === "inactive" ? <small className="configured-estimate-line__source">{sourceStatus === "draft" ? "Draft" : "Inactive"} source</small> : null}
-    {componentCalculated ? <small className="configured-estimate-line__component-rate">Calculated rate · Enter a rate to override.</small> : line.rateSource === "manual" ? <small className="configured-estimate-line__component-rate">Manual price</small> : null}
+    {componentCalculated ? <small className="configured-estimate-line__component-rate">Calculated from configured components.</small> : line.rateSource === "manual" ? <small className="configured-estimate-line__component-rate">Saved price</small> : null}
     {line.dimensionsMandatory ? <EstimateDimensionsFields compact label={label} dimensions={line.dimensions} rule={line.dimensionRule} quantityUnit={line.uomName} disabled={!editable}
       needsReview={line.dimensionsNeedReview} onChange={dimensions => onUpdateLine(line.key, { dimensions })}
       onConfirm={() => onUpdateLine(line.key, { dimensionsNeedReview: false, uomNeedsQuantityReview: false, previousUomName: undefined })} /> : null}
     {line.included && line.pricingMode === "in_house" && line.inHouseComponents !== undefined ? <div className="configured-estimate-line__options">
-      {editable && line.rateSource === "manual" ? <button type="button" className="button button--secondary estimate-component-action" aria-label={`Use component calculation for ${line.mainLineName}`} onClick={() => onUpdateLine(line.key, { rateSource: "configuration" })}>Use calculated rate</button> : null}
       <EstimateInHouseComponents line={line} editable={editable} onChange={(selectedInHouseComponentIds) => onUpdateLine(line.key, { selectedInHouseComponentIds })} />
     </div> : null}
     <EstimateComponentPricingStatus line={line} editable={editable}
       displayedIssue={editable ? configuredInHouseSelectionIssue(line) : undefined} />
-    {rateRequired || rateInvalid ? <p id={`${inputId}-message`} className="configured-estimate-line__message error">{rateRequired ? "Rate required" : "Enter a non-negative rate with up to two decimal places."}</p> : null}
+    {rateRequired || rateInvalid ? <p id={`${inputId}-message`} className="configured-estimate-line__message error">{rateRequired ? "Configured price unavailable" : "Saved price is invalid. Choose an available configured tier."}</p> : null}
     {quantityInvalid && !line.dimensionsMandatory ? <p className="configured-estimate-line__message error">Quantity must match {line.uomName} precision.</p> : null}
     {amountTooLarge ? <p id={`${inputId}-amount-overflow`} className="configured-estimate-line__message error">Amount too large for this quantity and price.</p> : null}
     {line.uomNeedsQuantityReview && !line.sourceMissing && !line.dimensionsMandatory ? <p className="configured-estimate-line__message" role="alert">Unit changed{line.previousUomName ? ` from ${line.previousUomName}` : ""} to {line.uomName}. Re-enter the quantity for this unit.</p> : null}

@@ -1,7 +1,8 @@
 import { configuredLineFixtures } from "./configuredEstimate.test-fixture";
 import { describe, expect, it } from "vitest";
 
-import { configuredInHouseSelectionIssue, configuredModeBaseRate, configuredTierUnavailableReason, buildConfiguredLines, configuredLineAmountPaise, configuredLineKey, configuredLinePreviewAmountPaise, configuredQuantityUnits, deselectConfiguredRecommendationSources, parseSellingRate, restoreConfiguredLine, updateConfiguredLinePricing } from "./configuredEstimate";
+import { configuredInHouseSelectionIssue, configuredModeBaseRate, configuredTierUnavailableReason, buildConfiguredLines, configuredLineAmountPaise, configuredLineKey, configuredLinePreviewAmountPaise, configuredQuantityUnits, createConfiguredLine, deselectConfiguredRecommendationSources, parseSellingRate, restoreConfiguredLine, updateConfiguredLinePricing } from "./configuredEstimate";
+import { isEstimationLinePriceVisible } from "./estimationCatalogueVisibility";
 import type { EstimationCatalogue } from "./estimationCatalogueApi";
 
 const catalogue: EstimationCatalogue = {
@@ -13,6 +14,55 @@ const catalogue: EstimationCatalogue = {
 };
 
 describe("configured estimate line state", () => {
+  it("preserves a saved configured price when its source or selected basket disappears", () => {
+    const rooms = [{ id: "room-a", label: "Bedroom" }];
+    const line = { ...configuredLineFixtures(catalogue, rooms, new Set(["basket-a"]))[0]!,
+      persistedId: "saved-configured", included: false, rateSource: "configuration" as const, rateInput: "80.05" };
+    const cases: Array<[EstimationCatalogue, ReadonlySet<string>]> = [
+      [{ items: [], ineligibleLineCount: 0 }, new Set(["basket-a"])], [catalogue, new Set<string>()]
+    ];
+    for (const [current, baskets] of cases) {
+      expect(buildConfiguredLines(current, rooms, baskets, [line])[0]).toMatchObject({ persistedId: "saved-configured",
+        included: false, sourceMissing: true, rateInput: "80.05", rateSource: "configuration", tierPricing: {} });
+    }
+  });
+
+  it.each([true, false, undefined])("carries authoritative base-price visibility %s without making a real source missing", flag => {
+    const current = structuredClone(catalogue);
+    current.items[0]!.subBaskets[0]!.mainLines[0]!.hasConfiguredBasePrice = flag;
+    const line = createConfiguredLine(current, { id: "room-a", label: "Bedroom" }, {
+      mainLineId: "line-a", basketId: "basket-a", subBasketId: "sub-a"
+    })!;
+    expect(line).toMatchObject({ mainLineId: "line-a", sourceMissing: false });
+    expect(line.hasConfiguredBasePrice).toBe(flag);
+    expect(isEstimationLinePriceVisible(line)).toBe(false);
+    expect(line.rateInput).toBe("");
+  });
+
+  it("preserves selected manual and historical values when current base-price visibility changes", () => {
+    const current = structuredClone(catalogue);
+    const source = current.items[0]!.subBaskets[0]!.mainLines[0]!;
+    source.hasConfiguredBasePrice = false;
+    const rooms = [{ id: "room-a", label: "Bedroom" }, { id: "room-b", label: "Living" }];
+    const selected = new Set(["basket-a"]);
+    const existing = configuredLineFixtures(current, rooms, selected).map((line, index) => ({
+      ...line, persistedId: `saved-${index}`, hasConfiguredBasePrice: true, included: true,
+      quantity: index + 2, rateInput: index ? "11.25" : "90", rateSource: "manual" as const
+    }));
+    for (const preservePersisted of [false, true]) {
+      const refreshed = buildConfiguredLines(current, rooms, selected, existing, preservePersisted);
+      expect(refreshed.map(line => ({ id: line.persistedId, included: line.included, quantity: line.quantity,
+        rate: line.rateInput, amount: configuredLineAmountPaise(line), missing: line.sourceMissing, flag: line.hasConfiguredBasePrice })))
+        .toEqual([
+          { id: "saved-0", included: true, quantity: 2, rate: "90", amount: 18000, missing: false, flag: false },
+          { id: "saved-1", included: true, quantity: 3, rate: "11.25", amount: 3375, missing: false, flag: false }
+        ]);
+      source.hasConfiguredBasePrice = true;
+      expect(buildConfiguredLines(current, rooms, selected, refreshed, preservePersisted).map(line => line.hasConfiguredBasePrice)).toEqual([true, true]);
+      source.hasConfiguredBasePrice = false;
+    }
+  });
+
   it("refreshes customer notes in editable scope while retaining submitted notes", () => {
     const current = structuredClone(catalogue);
     current.items[0]!.subBaskets[0]!.mainLines[0]!.estimateNotes = ["Maintain removable access"];
@@ -108,7 +158,7 @@ describe("configured estimate line state", () => {
     }] }] };
     const refreshed = buildConfiguredLines(changed, rooms, selected, [{ ...first, included: true }])[0]!;
     expect(refreshed).toMatchObject({ rateInput: "1200", inHouseBaseRatePaise: 135_000 });
-    const edited = buildConfiguredLines(changed, rooms, selected, [updateConfiguredLinePricing(first, { rateInput: "1100" })])[0]!;
+    const edited = buildConfiguredLines(changed, rooms, selected, [{ ...first, rateInput: "1100", rateSource: "manual" }])[0]!;
     expect(edited.rateInput).toBe("1100");
     expect(edited.inHouseBaseRatePaise).toBe(135_000);
 
@@ -146,7 +196,7 @@ describe("configured estimate line state", () => {
     expect(special).toMatchObject({ pricingMode: "sub_vendor", rateInput: "105", rateSource: "configuration" });
     const pmc = updateConfiguredLinePricing(special, { pricingMode: "pmc", quantity: 1.25 });
     expect(configuredLineAmountPaise(pmc)).toBe(10006);
-    const manual = updateConfiguredLinePricing(pmc, { rateInput: "91.17" });
+    const manual = { ...pmc, rateInput: "91.17", rateSource: "manual" as const };
     expect(updateConfiguredLinePricing(manual, { pricingMode: "pmc" })).toMatchObject({ rateInput: "91.17", rateSource: "manual" });
     const rebuilt = buildConfiguredLines(priced, rooms, selected, [manual, { ...first[1]!, included: true, quantity: 3 }]);
     expect(rebuilt[0]).toMatchObject({ pricingMode: "pmc", rateSource: "manual", rateInput: "91.17" });
@@ -177,7 +227,7 @@ describe("configured estimate line state", () => {
     expect(quantityOnly.classification).toBeUndefined();
     const pmc = updateConfiguredLinePricing(quantityOnly, { pricingMode: "pmc" }, "special");
     expect(pmc).toMatchObject({ included: false, classification: "special", pricingMode: "pmc", rateInput: "80.05", rateSource: "configuration" });
-    const manual = updateConfiguredLinePricing(pmc, { rateInput: "91.17" }, "standard");
+    const manual = { ...pmc, rateInput: "91.17", rateSource: "manual" as const };
     expect(updateConfiguredLinePricing(manual, { included: true }, "standard"))
       .toMatchObject({ classification: "special", pricingMode: "pmc", rateSource: "manual", rateInput: "91.17", included: true });
     const inheritedManual = updateConfiguredLinePricing(line, { rateInput: "177.35" }, "special");
@@ -196,10 +246,10 @@ describe("configured estimate line state", () => {
         modeBaseRatesPaise: { pmc: 10101, sub_vendor: null, in_house: 0 } }]
     }] }] };
     expect(buildConfiguredLines(next, rooms, selected, [saved])[0]).toMatchObject({ rateInput: "101.01", pricingMode: "pmc", rateSource: "configuration" });
-    const manual = updateConfiguredLinePricing(saved, { rateInput: "107" });
+    const manual = { ...saved, rateInput: "107", rateSource: "manual" as const };
     expect(buildConfiguredLines(next, rooms, selected, [manual])[0]).toMatchObject({ rateInput: "107", modeBaseRatesPaise: { pmc: 10101 } });
     expect(buildConfiguredLines(next, rooms, selected, [saved], true)[0]).toMatchObject({ rateInput: "90", modeBaseRatesPaise: { pmc: 10101 } });
-    expect(buildConfiguredLines(catalogue, rooms, selected, [saved])[0]?.rateInput).toBe("");
+    expect(buildConfiguredLines(catalogue, rooms, selected, [saved])[0]?.rateInput).toBe("90");
     const refreshed = buildConfiguredLines(next, rooms, selected, [saved])[0]!;
     expect(updateConfiguredLinePricing(refreshed, { pricingMode: "sub_vendor" })).toMatchObject({ rateInput: "", pricingMode: "sub_vendor" });
     expect(updateConfiguredLinePricing(refreshed, { pricingMode: "in_house" })).toMatchObject({ rateInput: "0", pricingMode: "in_house" });
@@ -363,7 +413,7 @@ describe("In-house estimate component selection", () => {
     expect(configuredInHouseSelectionIssue({ ...manual, selectedInHouseComponentIds: [] })).toMatch(/Choose/);
     expect(configuredInHouseSelectionIssue({ ...manual, selectedInHouseComponentIds: ["removed"] })).toMatch(/unavailable/);
     expect(configuredInHouseSelectionIssue({ ...manual, selectedInHouseComponentIds: ["labor", "labor"] })).toMatch(/unavailable/);
-    expect(updateConfiguredLinePricing(manual, { selectedInHouseComponentIds: [] }).rateInput).toBe("75");
+    expect(updateConfiguredLinePricing(manual, { selectedInHouseComponentIds: [] })).toMatchObject({ rateInput: "", rateSource: "configuration" });
   });
 });
 
@@ -386,7 +436,7 @@ describe("configured estimate tiers", () => {
   it("defaults legacy lines to Signature and adopts only the deliberately selected tier's configured price", () => {
     const { line } = fixture();
     expect(line.modeTier).toBe("signature"); expect(line.rateInput).toBe("20");
-    const manual = updateConfiguredLinePricing(line, { rateInput: "99" });
+    const manual = { ...line, rateInput: "99", rateSource: "manual" as const };
     expect(updateConfiguredLinePricing(manual, { modeTier: "signature" }).rateInput).toBe("99");
     const premium = updateConfiguredLinePricing(manual, { modeTier: "premium" });
     expect(premium).toMatchObject({ modeTier: "premium", rateSource: "configuration", rateInput: "25", quantity: 1 });
@@ -396,7 +446,7 @@ describe("configured estimate tiers", () => {
   it("never falls back to Signature for missing or deselected tiers", () => {
     const { line } = fixture();
     const functional = updateConfiguredLinePricing(line, { modeTier: "functional" });
-    expect(functional.rateInput).toBe(""); expect(configuredModeBaseRate(functional, "sub_vendor")).toBeNull();
+    expect(functional).toBe(line); expect(configuredModeBaseRate({ ...line, modeTier: "functional" }, "sub_vendor")).toBeNull();
     expect(configuredTierUnavailableReason(line, "functional", "sub_vendor")).toBe("Not configured");
     expect(configuredModeBaseRate({ ...line, applicableTiers: [] }, "sub_vendor")).toBeNull();
     expect(configuredModeBaseRate({ ...line, tierPricing: {}, modeBaseRatesPaise: { pmc: 1, sub_vendor: 2, in_house: 3 } }, "sub_vendor")).toBeNull();
@@ -408,7 +458,7 @@ describe("configured estimate tiers", () => {
     expect(selected).toMatchObject({ modeTier: "signature", pricingMode: "sub_vendor", rateSource: "configuration", rateInput: "20" });
     expect(historical).toMatchObject({ rateSource: "manual", rateInput: "99" });
     const special = updateConfiguredLinePricing({ ...historical, classification: "special" }, { modeTier: "signature", rateSource: "configuration" });
-    expect(special).toMatchObject({ pricingMode: undefined, rateInput: "" });
+    expect(special).toMatchObject({ pricingMode: undefined, rateInput: "99", rateSource: "manual" });
   });
   it("resets component identities on tier change and requires explicit destination selection", () => {
     const { line } = fixture();
@@ -429,12 +479,14 @@ describe("configured estimate tiers", () => {
     expect(restored.modeTier).toBe("premium");
     expect(buildConfiguredLines(current, rooms, selected, [restored])[0]).toMatchObject({ modeTier: "premium", rateInput: "35" });
   });
-  it("accepts zero target rates and retains selection when the target tier later becomes unavailable", () => {
+  it("rejects zero tiers and preserves a saved selected price when its tier becomes unavailable", () => {
     const { current, rooms, selected, line } = fixture();
     current.items[0]!.subBaskets[0]!.mainLines[0]!.tierPricing!.premium!.modeBaseRatesPaise.sub_vendor = 0;
-    const premium = updateConfiguredLinePricing(buildConfiguredLines(current, rooms, selected, [line])[0]!, { modeTier: "premium" });
-    expect(premium.rateInput).toBe("0"); expect(configuredTierUnavailableReason(premium, "premium", "sub_vendor")).toBeNull();
+    const currentLine = buildConfiguredLines(current, rooms, selected, [line])[0]!;
+    expect(updateConfiguredLinePricing(currentLine, { modeTier: "premium" })).toBe(currentLine);
+    expect(configuredTierUnavailableReason(currentLine, "premium", "sub_vendor")).toBe("Price not configured");
+    const premium = { ...line, modeTier: "premium" as const, rateInput: "25" };
     current.items[0]!.subBaskets[0]!.mainLines[0]!.applicableTiers = ["signature"];
-    expect(buildConfiguredLines(current, rooms, selected, [{ ...premium, persistedId: "saved" }])[0]).toMatchObject({ modeTier: "premium", rateInput: "" });
+    expect(buildConfiguredLines(current, rooms, selected, [{ ...premium, persistedId: "saved" }])[0]).toMatchObject({ modeTier: "premium", rateInput: "25" });
   });
 });

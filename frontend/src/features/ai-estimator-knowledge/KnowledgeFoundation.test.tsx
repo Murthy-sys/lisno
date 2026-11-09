@@ -86,7 +86,7 @@ describe("knowledge feature foundation", () => {
     );
   });
 
-  it("renders the six web workspace sections with associated roving tabs and a labelled mobile selector", async () => {
+  it("renders default and selected Signature modes with associated roving tabs and a labelled mobile selector", async () => {
     const user = userEvent.setup();
     render(<SectionHarness />);
 
@@ -97,7 +97,7 @@ describe("knowledge feature foundation", () => {
       "quality"
     ]);
     expect(KNOWLEDGE_WORKSPACE_TAB_KEYS).toEqual([
-      "overview", "mode", "premium-mode", "functional-mode", "recommendations", "quality", "design", "basket-closure-priority"
+      "overview", "mode", "signature-mode", "premium-mode", "functional-mode", "recommendations", "quality", "design", "basket-closure-priority"
     ]);
     expect(Object.keys(KNOWLEDGE_WORKSPACE_BACKEND_SECTIONS)).toEqual([
       "overview",
@@ -115,6 +115,7 @@ describe("knowledge feature foundation", () => {
     ).toEqual([
       "Overview",
       "Mode",
+      "Signature Mode",
       "Recommendation & Exclusions",
       "Quality Parameter",
       "Design",
@@ -135,6 +136,7 @@ describe("knowledge feature foundation", () => {
     ).toEqual([
       "Overview",
       "Mode",
+      "Signature Mode",
       "Recommendation & Exclusions",
       "Quality Parameter",
       "Design",
@@ -177,20 +179,22 @@ describe("knowledge feature foundation", () => {
 
   it("keeps default Mode alongside optional tiers in desktop and mobile navigation", async () => {
     const user = userEvent.setup();
-    const sections = knowledgeWorkspaceSectionsForTiers(["premium", "functional"]);
+    const sections = knowledgeWorkspaceSectionsForTiers(["signature", "premium", "functional"]);
     render(<SectionHarness sections={sections} />);
     expect(screen.getByRole("tab", { name: "Mode" })).toBeVisible();
-    expect(within(screen.getByRole("tablist")).getAllByRole("tab").slice(0, 4).map(tab => tab.textContent))
-      .toEqual(["Overview", "Mode", "Premium mode", "Functional mode"]);
+    expect(within(screen.getByRole("tablist")).getAllByRole("tab").slice(0, 5).map(tab => tab.textContent))
+      .toEqual(["Overview", "Mode", "Signature Mode", "Premium Mode", "Functional Mode"]);
     screen.getByRole("tab", { name: "Overview" }).focus();
     await user.keyboard("{ArrowRight}");
     expect(screen.getByRole("tab", { name: "Mode" })).toHaveFocus();
     await user.keyboard("{ArrowRight}");
-    expect(screen.getByRole("tab", { name: "Premium mode" })).toHaveFocus();
+    expect(screen.getByRole("tab", { name: "Signature Mode" })).toHaveFocus();
     await user.keyboard("{ArrowRight}");
-    expect(screen.getByRole("tabpanel", { name: "Functional mode" })).toBeVisible();
+    expect(screen.getByRole("tab", { name: "Premium Mode" })).toHaveFocus();
+    await user.keyboard("{ArrowRight}");
+    expect(screen.getByRole("tabpanel", { name: "Functional Mode" })).toBeVisible();
     await user.selectOptions(screen.getByRole("combobox", { name: "Configuration section" }), "premium-mode");
-    expect(screen.getByRole("tabpanel", { name: "Premium mode" })).toBeVisible();
+    expect(screen.getByRole("tabpanel", { name: "Premium Mode" })).toBeVisible();
     expect(knowledgeWorkspaceSectionsForTiers([])).toEqual(["overview", "mode", "recommendations", "quality", "design", "basket-closure-priority"]);
   });
 
@@ -215,7 +219,7 @@ describe("knowledge feature foundation", () => {
 
     overview.focus();
     await user.keyboard("{ArrowRight}");
-    expect(screen.getByRole("tab", { name: "Recommendation & Exclusions" })).toHaveFocus();
+    expect(screen.getByRole("tab", { name: "Signature Mode" })).toHaveFocus();
   });
 
   it("adds, reorders, and removes repeater rows with predictable focus", async () => {

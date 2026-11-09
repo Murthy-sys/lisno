@@ -4,6 +4,7 @@ import { createHash, randomUUID } from "node:crypto";
 import mongoose, { type ClientSession } from "mongoose";
 import { z } from "zod";
 import { KNOWLEDGE_MODE_TIERS, type KnowledgeModeTier } from "../domain/ai-estimator-knowledge-mode-tiers.js";
+import { selectedInHouseBaseRate } from "../domain/ai-estimator-knowledge-in-house-components.js";
 import { canonicalEstimateDimensions, calculateDimensionQuantity, estimateLineDimensionsValid } from "../domain/estimate-dimensions.js";
 import { ESTIMATE_COMPONENT_PRICING_BASIS, estimateComponentLineAmountIsValid } from "../domain/estimate-component-pricing.js";
 import { clientQuotationEditable, effectiveCommercialStatus } from "../domain/estimation-lifecycle.js";
@@ -176,6 +177,7 @@ async function present(context: Awaited<ReturnType<typeof contextFor>>, session?
     const pricingModeChoices = saved ? await quotationPricingModeChoices({ ...saved, classification }, source, session) : [];
     presented.push({ ...line, roomId: saved?.roomId ?? null, included: saved?.included === true,
       classification, pricingModeChoices,
+      choices: pricingModeChoices.find(option => option.pricingMode === line.pricingMode)?.choices ?? line.choices,
       ...(safeOrigins === undefined ? {} : { recommendationSourceMainLineIds: safeOrigins }),
       source: source && saved && sameParent(saved, source) ? sourceIdentity(source) : null,
       ...(source ? grouping(source) : { mainBasketId: saved?.mainBasketId ?? null, mainBasketName: saved?.mainBasketName ?? null,
@@ -225,6 +227,10 @@ async function pricedLine(prior: Row, source: Source, operation: LineOperation, 
   if (!ESTIMATE_PRICING_MODES.includes(next.pricingMode)) return unavailable();
   const pricing = estimatorCatalogueTierPricing(source.line, tier);
   if (!pricing) return unavailable();
+  const selectingPrice = operation.kind === "add" || prior.included === false ||
+    tier !== (prior.modeTier ?? "signature") || next.pricingMode !== prior.pricingMode ||
+    operation.selectedInHouseComponentIds !== undefined && !isDeepStrictEqual(operation.selectedInHouseComponentIds, prior.selectedInHouseComponentIds);
+  if (selectingPrice && source.line.basePriceAvailability[tier as KnowledgeModeTier][next.pricingMode as "pmc" | "sub_vendor" | "in_house"] !== true) return unavailable();
   if (source.line.dimensionsMandatory && next.included) {
     if (!source.line.dimensionRule || !next.dimensions) throw new ApiError(400, "ESTIMATE_DIMENSIONS_REQUIRED", "Enter the item dimensions.");
     const calculated = calculateDimensionQuantity(source.line.dimensionRule, next.dimensions);
@@ -237,6 +243,7 @@ async function pricedLine(prior: Row, source: Source, operation: LineOperation, 
   if (next.pricingMode === "in_house" && pricing.inHouseComponents !== undefined) {
     next.selectedInHouseComponentIds = operation.selectedInHouseComponentIds ?? next.selectedInHouseComponentIds;
     const calculation = await resolveEstimateComponentPricing(source, tier as KnowledgeModeTier, next.quantity, next.selectedInHouseComponentIds, session);
+    if (selectingPrice && (selectedInHouseBaseRate(pricing.inHouseComponents, next.selectedInHouseComponentIds) ?? 0) <= 0) return unavailable();
     next.pricingBasis = ESTIMATE_COMPONENT_PRICING_BASIS;
     next.componentPricing = calculation;
     next.ratePaise = null;
@@ -245,7 +252,7 @@ async function pricedLine(prior: Row, source: Source, operation: LineOperation, 
     if (operation.selectedInHouseComponentIds?.length) return unavailable();
     delete next.selectedInHouseComponentIds;
     next.ratePaise = pricing.modeBaseRatesPaise[next.pricingMode as keyof typeof pricing.modeBaseRatesPaise];
-    if (!money(next.ratePaise)) return unavailable();
+    if (!money(next.ratePaise) || selectingPrice && next.ratePaise <= 0) return unavailable();
     const amount = estimateAmountFor(next.ratePaise, next.quantity, source.line.uom.decimalScale);
     if (amount === null) throw new ApiError(400, "ESTIMATE_QUANTITY_INVALID", "Enter a positive quantity using the configured unit precision.");
     next.amountPaise = next.included ? amount : 0;
@@ -340,6 +347,7 @@ export function createQuotationService({ audit }: { audit: AuditService }) {
       const sources = await visibleQuotationSources(estimate, undefined, true);
       const candidates = [];
       for (const source of sources.values()) {
+        if (!source.line.hasConfiguredBasePrice) continue;
         if (input.mainBasketId && source.line.basketId !== input.mainBasketId ||
           input.subBasketId && source.line.subBasketId !== input.subBasketId) continue;
         if (input.search && ![source.line.name, source.mainBasketName, source.subBasketName ?? ""].join(" ")

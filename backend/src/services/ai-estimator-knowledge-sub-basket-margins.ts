@@ -3,7 +3,7 @@ import type { ClientSession } from "mongoose";
 import type { KnowledgeSubBasketMarginMode, KnowledgeSubBasketMarginState, KnowledgeSubBasketMarginSummary, KnowledgeSubBasketSourceConfiguration } from "../contracts/ai-estimator-knowledge-sub-basket-margins.js";
 import { createKnowledgeContentDigest } from "../domain/ai-estimator-knowledge.js";
 import { selectCurrentMainLineRevision } from "../domain/ai-estimator-knowledge-current-revision.js";
-import { knowledgeModeTierPayload, projectKnowledgeModeTierSection, type KnowledgeModeTier } from "../domain/ai-estimator-knowledge-mode-tiers.js";
+import { knowledgeModeTierPayload, projectKnowledgeModeTierSection, type KnowledgeModeConfigurationScope } from "../domain/ai-estimator-knowledge-mode-tiers.js";
 import { SUB_BASKET_MARGIN_MODES, comparableInHouseMarginRanges, configuredInHouseMarginRanges, subBasketMarginRanges, subBasketDefaultModeCalculations, subBasketMarginPatchUnavailableReason, validSubBasketMarginRanges, withSubBasketMarginDefaults } from "../domain/ai-estimator-knowledge-sub-basket-margins.js";
 import { validateKnowledgeSectionPayload } from "../domain/ai-estimator-knowledge-validation.js";
 import { ApiError } from "../middleware/errors.js";
@@ -27,7 +27,7 @@ function unavailable(line: SubBasketMarginLine): string | null {
 }
 
 /** Load a consistent full Sub-Basket, including lines outside the visible index page. */
-export async function readSubBasketMarginSnapshot(basketId: string, subBasketId: string, session: ClientSession, modeTier: KnowledgeModeTier = "signature"): Promise<{
+export async function readSubBasketMarginSnapshot(basketId: string, subBasketId: string, session: ClientSession, modeTier: KnowledgeModeConfigurationScope = "signature"): Promise<{
   summary: KnowledgeSubBasketMarginSummary; lines: SubBasketMarginLine[]; sourceUom: Row | null;
 }> {
   const basket = await AiEstimatorKnowledgeBasketModel.findOne({ _id: basketId, status: { $ne: "archived" } }).session(session).lean().exec() as Row | null;

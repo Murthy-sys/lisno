@@ -63,6 +63,22 @@ export async function visibleQuotationSources(estimate: Row, session?: ClientSes
   return visible;
 }
 
+/** Client choices require their own positive base and usable price; historical money rules stay shared. */
+export async function quotationTierChoices(line: Row, source?: Source, session?: ClientSession) {
+  const choices = await estimateTierChoices(line, source, session);
+  const mode = line.pricingMode as "pmc" | "sub_vendor" | "in_house";
+  const positive = (value: unknown) => typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+  return choices.map(choice => {
+    const components = choice.inHouseComponents?.map(component => ({ ...component,
+      available: component.available && positive(component.ratePaise) }));
+    const available = choice.available && source?.line.basePriceAvailability[choice.modeTier][mode] === true &&
+      (components === undefined ? positive(choice.ratePaise) : components.some(component => component.available));
+    return { ...choice, available,
+      unavailableReason: available ? null : choice.unavailableReason ?? "A positive price is not configured for this tier and pricing method.",
+      ...(components === undefined ? {} : { inHouseComponents: components }) };
+  });
+}
+
 function editableLine(line: Row, sources: ReadonlyMap<string, Source>, estimate: Row) {
   const source = sources.get(line.mainLineId);
   return line.source === "configuration" && (line.clientVisible === undefined || line.clientVisible === true) && source &&
@@ -146,7 +162,7 @@ export async function readQuotationSetup(estimate: Row, canConfigure: boolean, s
     if (saved.some((line: Row) => line.clientVisible !== undefined && line.clientVisible !== true)) continue;
     const prior = saved[0];
     const pricingMode = ["pmc", "sub_vendor", "in_house"].includes(prior?.pricingMode) ? prior.pricingMode : "sub_vendor";
-    const choices = await estimateTierChoices({ quantity: 1, uomId: source.line.uom.id, pricingMode,
+    const choices = await quotationTierChoices({ quantity: 1, uomId: source.line.uom.id, pricingMode,
       modeTier: prior?.modeTier ?? source.line.applicableTiers[0] ?? "signature" }, source, session);
     const available = choices.some(choice => choice.available);
     if (!available && !selected.has(source.line.basketId)) continue;
@@ -156,8 +172,10 @@ export async function readQuotationSetup(estimate: Row, canConfigure: boolean, s
     if (source.line.subBasketId && source.subBasketName) {
       let sub = basket.subBaskets.find(entry => entry.id === source.line.subBasketId);
       if (!sub) { sub = { id: source.line.subBasketId, name: source.subBasketName, mainLineCount: 0, temporaryItemCount: 0 }; basket.subBaskets.push(sub); }
-      if (source.line.itemType === "temporary") sub.temporaryItemCount += 1; else sub.mainLineCount += 1;
-    } else if (source.line.itemType === "temporary") basket.directTemporaryItemCount += 1;
+      if (available) {
+        if (source.line.itemType === "temporary") sub.temporaryItemCount += 1; else sub.mainLineCount += 1;
+      }
+    } else if (source.line.itemType === "temporary" && available) basket.directTemporaryItemCount += 1;
     baskets.set(basket.id, basket);
   }
   for (const basket of baskets.values()) {

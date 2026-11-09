@@ -75,6 +75,20 @@ function setup(initial = fixture(), readOnly = false) {
 }
 
 describe("Client inline non-negotiable recommendations", () => {
+  it("keeps required unpriced work reviewable without offering an Add or changing saved selections", async () => {
+    const { saves } = setup();
+    const reviewMessage = "Some required items have no base price greater than zero. Ask your team to review them.";
+    server.use(http.post("/api/v1/projects/project-one/quotation/recommendations/query", () => HttpResponse.json({ data: {
+      projectId: "project-one", estimateId: "estimate-one", estimateVersion: 7, roomId: "kitchen",
+      items: [], total: 0, limit: 20, offset: 0, reviewMessage
+    } })));
+    expect(await screen.findByText(reviewMessage)).toBeVisible();
+    expect(screen.getByRole("button", { name: "Non-negotiable recommendations (0)" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Add Desk" })).not.toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Include Storage in Kitchen" })).toBeChecked();
+    expect(saves).toEqual([]);
+  });
+
   it("saves a restored excluded target as excluded when its source is removed before saving", async () => {
     const initial = fixture();
     initial.excludedLines = [{ ...quotationCandidateRows([candidate], room, [])[0]!, id: "saved-desk", included: false,
@@ -136,8 +150,10 @@ describe("Client inline non-negotiable recommendations", () => {
   it("rejects a response for another room instead of rendering its suggested items", async () => {
     setup();
     server.use(http.post("/api/v1/projects/project-one/quotation/recommendations/query", () => HttpResponse.json({ data: {
-      projectId: "project-one", estimateId: "estimate-one", estimateVersion: 7, roomId: "bedroom", items: [{ candidate, sourceMainLines: [{ mainLineId: "storage", name: "Storage" }], requiresSetup: false }], total: 1, limit: 20, offset: 0 } })));
+      projectId: "project-one", estimateId: "estimate-one", estimateVersion: 7, roomId: "bedroom", items: [{ candidate, sourceMainLines: [{ mainLineId: "storage", name: "Storage" }], requiresSetup: false }], total: 1, limit: 20, offset: 0,
+      reviewMessage: "Review message from another room" } })));
     expect(await screen.findByText("Configuration changed. Refresh recommendations.")).toBeVisible();
+    expect(screen.queryByText("Review message from another room")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Add Desk" })).not.toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: "Include Storage in Kitchen" })).toBeChecked();
   });

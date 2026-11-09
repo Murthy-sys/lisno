@@ -75,6 +75,10 @@ async function seedLine(id: string, basketId: string, subBasketId: string | null
     _id: `overview-${id}`, mainLineId: id, revisionId,
     sectionKey: "overview", payload: { uomId: options.uomId ?? "uom-ea" }
   } as never);
+  await AiEstimatorKnowledgeSectionModel.collection.insertOne({
+    _id: `advanced-${id}`, mainLineId: id, revisionId, sectionKey: "advanced", applicability: "configured",
+    payload: { modeCalculations: { sub_vendor: { baseRatePaise: 1000 } } }
+  } as never);
   return revisionId;
 }
 
@@ -116,6 +120,62 @@ async function seedConfiguration() {
 }
 
 describe("estimator catalogue recommendations", { timeout: 30_000 }, () => {
+  it("does not offer PMC-only targets to new Standard rows while preserving selected source obligations", async () => {
+    await AiEstimatorKnowledgeSectionModel.updateMany({ mainLineId: { $in: ["source-ceiling", "target-paint", "target-temp"] }, sectionKey: "advanced" },
+      { $set: { payload: { pmcMarginBps: 2000, modeCalculations: { pmc: { baseRatePaise: 1000 } } } } });
+    await recommendations("source-ceiling", [rule("paint", "target-paint", "basket-paint", "sub-paint"),
+      rule("temp", "target-temp", "basket-pop", null, { targetType: "temporary" })]);
+    const result = await request(app()).get(endpoint).query({ mainLineIds: "source-ceiling" }).set(bearer("estimator")).expect(200);
+    expect(result.body.data.sources[0]).toMatchObject({ available: true, rules: [
+      { id: "paint", available: false }, { id: "temp", available: false }
+    ] });
+    const selected = await request(app()).get(endpoint).query({ mainLineIds: "source-ceiling,target-paint,target-temp" }).set(bearer("estimator")).expect(200);
+    expect(selected.body.data.sources[0].rules).toMatchObject([{ available: true }, { available: true, completionRequired: true }]);
+  });
+
+  it("uses any matching Sub-vendor scope for group children without a PMC fallback", async () => {
+    await AiEstimatorKnowledgeSectionModel.updateOne({ _id: "advanced-target-paint" }, { $set: { payload: {
+      modeCalculations: { pmc: { baseRatePaise: 5000 } }
+    } } });
+    await AiEstimatorKnowledgeSectionModel.updateOne({ _id: "advanced-target-temp-group" }, { $set: { payload: {
+      modeCalculations: { sub_vendor: { baseRatePaise: 0 } },
+      tierConfigurations: { premium: { applicability: "configured", payload: { modeCalculations: { sub_vendor: { baseRatePaise: 1 } } } } }
+    } } });
+    await recommendations("source-ceiling", [rule("group", "target-paint", "basket-paint", "sub-paint", {
+      targetKind: "sub_basket", targetType: null, targetMainLineId: null
+    })]);
+    const result = await request(app()).get(endpoint).query({ mainLineIds: "source-ceiling" }).set(bearer("estimator")).expect(200);
+    expect(result.body.data.sources[0].rules[0]).toMatchObject({ completionRequired: true, unavailableChildCount: 3,
+      children: [{ mainLineId: "target-temp-group" }] });
+  });
+
+  it("hides new zero-only targets while retaining selected targets and zero-only source obligations", async () => {
+    await AiEstimatorKnowledgeSectionModel.updateMany({ mainLineId: { $in: ["source-ceiling", "target-paint", "target-temp"] }, sectionKey: "advanced" },
+      { $set: { payload: { subVendorMarginBps: 2000, modeCalculations: { sub_vendor: { baseRatePaise: 0 } } } } });
+    await recommendations("source-ceiling", [rule("paint", "target-paint", "basket-paint", "sub-paint"),
+      rule("temp", "target-temp", "basket-pop", null, { targetType: "temporary" })]);
+    const result = await request(app()).get(endpoint).query({ mainLineIds: "source-ceiling" }).set(bearer("estimator")).expect(200);
+    expect(result.body.data.sources[0]).toMatchObject({ available: true, rules: [
+      { id: "paint", available: false }, { id: "temp", available: false }
+    ] });
+    const selected = await request(app()).get(endpoint).query({ mainLineIds: "source-ceiling,target-paint,target-temp" }).set(bearer("estimator")).expect(200);
+    expect(selected.body.data.sources[0].rules).toMatchObject([{ available: true }, { available: true, completionRequired: true }]);
+  });
+
+  it("counts zero-only group children as unavailable and retains selected children for review", async () => {
+    await AiEstimatorKnowledgeSectionModel.updateOne({ _id: "advanced-target-paint" }, { $set: { "payload.modeCalculations.sub_vendor.baseRatePaise": 0 } });
+    await recommendations("source-ceiling", [rule("group", "target-paint", "basket-paint", "sub-paint", {
+      targetKind: "sub_basket", targetType: null, targetMainLineId: null
+    })]);
+    const first = await request(app()).get(endpoint).query({ mainLineIds: "source-ceiling" }).set(bearer("estimator")).expect(200);
+    const group = first.body.data.sources[0].rules[0];
+    expect(group.children.map((child: { mainLineId: string }) => child.mainLineId)).not.toContain("target-paint");
+    expect(group).toMatchObject({ completionRequired: true, unavailableChildCount: 3 });
+    const selected = await request(app()).get(endpoint).query({ mainLineIds: "source-ceiling,target-paint" }).set(bearer("estimator")).expect(200);
+    expect(selected.body.data.sources[0].rules[0].children).toContainEqual(expect.objectContaining({ mainLineId: "target-paint" }));
+    expect(selected.body.data.sources[0].rules[0].unavailableChildCount).toBe(2);
+  });
+
   it("projects only active added/add relationships from the chosen source revision by stable identity", async () => {
     await recommendations("source-ceiling", [
       rule("paint", "target-paint", "basket-paint", "sub-paint", { reason: "The new gypsum surface needs finishing." }),
@@ -263,6 +323,8 @@ describe("estimator catalogue recommendations", { timeout: 30_000 }, () => {
     } as never);
     await AiEstimatorKnowledgeMainLineModel.collection.updateOne({ _id: "target-paint" },
       { $set: { activeRevisionId: "revision-target-paint-next" }, $inc: { version: 1 } });
+    await AiEstimatorKnowledgeSectionModel.collection.insertOne({ _id: "advanced-target-paint-next" as never, mainLineId: "target-paint",
+      revisionId: "revision-target-paint-next", sectionKey: "advanced", applicability: "configured", payload: { modeCalculations: { sub_vendor: { baseRatePaise: 1000 } } } });
     const current = await request(server).get(`${endpoint}?mainLineIds=source-ceiling`)
       .set(bearer("estimator")).expect(200);
     expect(current.body.data.sources[0].rules[0]).toMatchObject({ available: true,

@@ -1,14 +1,54 @@
 import { describe, expect, it } from "vitest";
-import { knowledgeModeTierPayload, projectKnowledgeModeTierSection, mergeKnowledgeModeTierPayload } from "../src/domain/ai-estimator-knowledge-mode-tiers.js";
+import { KNOWLEDGE_MODE_CONFIGURATION_SCOPES, knowledgeModeTierPayload, knowledgeModeTierPayloads, knowledgeModeConfigurationPayloads, isKnowledgeModeTier, isKnowledgeModeConfigurationScope, projectKnowledgeModeTierSection, mergeKnowledgeModeTierPayload } from "../src/domain/ai-estimator-knowledge-mode-tiers.js";
 import { validateKnowledgeSectionPayload } from "../src/domain/ai-estimator-knowledge-validation.js";
 import { completenessForRows, hasKnowledgeSectionContent, normalizeKnowledgeProposalSectionPayload } from "../src/services/ai-estimator-knowledge-item.service.js";
 import { estimateModeBaseRatesPaise } from "../src/domain/estimate-mode-pricing.js";
-import { applicableKnowledgeTiers } from "../../shared/knowledge/knowledgeModeTiers.js";
+import { KNOWLEDGE_MODE_CONFIGURATION_SCOPES as SHARED_CONFIGURATION_SCOPES, isKnowledgeModeConfigurationScope as isSharedConfigurationScope, applicableKnowledgeTiers } from "../../shared/knowledge/knowledgeModeTiers.js";
 
 const branch = (payload: Record<string, unknown>) => ({ applicability: "configured", payload });
 const cost = { baseRatePaise: 12345, lowQuantityLimit: "10", startingMarkupBps: 2500, minimumMarkupBps: 1500 };
 
 describe("independent Mode tier payloads", () => {
+  it("keeps default Configuration separate from financial tiers and existing Signature data", () => {
+    expect(KNOWLEDGE_MODE_CONFIGURATION_SCOPES).toEqual(SHARED_CONFIGURATION_SCOPES);
+    for (const value of ["default", "signature", "premium", "functional", "unknown", null]) {
+      expect(isKnowledgeModeConfigurationScope(value)).toBe(isSharedConfigurationScope(value));
+    }
+    const root = { modeDescription: "Signature", tierConfigurations: {
+      default: branch({ modeDescription: "Default" }), premium: branch({ modeDescription: "Premium" })
+    } };
+    expect(isKnowledgeModeConfigurationScope("default")).toBe(true);
+    expect(isKnowledgeModeTier("default")).toBe(false);
+    expect(knowledgeModeTierPayloads(root).map(entry => entry.modeTier)).toEqual(["signature", "premium"]);
+    expect(knowledgeModeConfigurationPayloads(root).map(entry => entry.modeTier)).toEqual(["signature", "default", "premium"]);
+    const section = { sectionKey: "advanced", version: 3, applicability: "configured", payload: root };
+    expect(projectKnowledgeModeTierSection(section, "default")).toMatchObject({
+      modeTier: "default", version: 3, applicability: "configured", payload: { modeDescription: "Default" }
+    });
+    expect(projectKnowledgeModeTierSection({ ...section, payload: { modeDescription: "Signature" } }, "default"))
+      .toMatchObject({ modeTier: "default", applicability: "not_configured", payload: {} });
+    const next = mergeKnowledgeModeTierPayload(root, "default", { modeDescription: "New default" }, "configured");
+    expect(knowledgeModeTierPayload(next)).toEqual({ modeDescription: "Signature" });
+    expect(knowledgeModeTierPayload(next, "premium")).toEqual({ modeDescription: "Premium" });
+    expect(knowledgeModeTierPayload(next, "default")).toEqual({ modeDescription: "New default" });
+    expect(mergeKnowledgeModeTierPayload(next, "signature", { modeDescription: "New Signature" }, "configured").tierConfigurations)
+      .toEqual(next.tierConfigurations);
+  });
+
+  it("validates default independently without making it an applicable estimation tier", () => {
+    expect(validateKnowledgeSectionPayload("advanced", { tierConfigurations: { default: branch({ modeDescription: "Default" }) } })).toEqual([]);
+    expect(validateKnowledgeSectionPayload("overview", { applicableTiers: ["default"] })).not.toEqual([]);
+    expect(validateKnowledgeSectionPayload("advanced", { tierConfigurations: { default: branch({ tierConfigurations: {} }) } }))
+      .toEqual(expect.arrayContaining([expect.objectContaining({ path: "payload.tierConfigurations.default.payload.tierConfigurations" })]));
+    expect(validateKnowledgeSectionPayload("pricing", { tierConfigurations: { default: branch({ priceEntries: [{ operation: "reference", priceVersionId: "legacy" }] }) } }))
+      .toEqual(expect.arrayContaining([expect.objectContaining({ code: "SIGNATURE_ONLY" })]));
+    const previous = { modeDescription: "Signature", tierConfigurations: { default: branch({ modeDescription: "Default" }) } };
+    expect(normalizeKnowledgeProposalSectionPayload("advanced", { modeDescription: "Proposal edit" }, previous).tierConfigurations)
+      .toEqual(previous.tierConfigurations);
+    expect(() => normalizeKnowledgeProposalSectionPayload("advanced", { tierConfigurations: { default: branch({ modeDescription: "Forged" }) } }, previous))
+      .toThrow("Request validation failed.");
+  });
+
   it("defaults legacy applicability to Signature, retaining explicit empty selection", () => {
     expect(applicableKnowledgeTiers({})).toEqual(["signature"]);
     expect(applicableKnowledgeTiers({ applicableTiers: [] })).toEqual([]);

@@ -254,7 +254,7 @@ export function createEstimateTiersService({ audit }: { audit: AuditService }) {
           if (dimensionsNeedReview(line, source)) {
             throw new ApiError(409, "ESTIMATE_DIMENSIONS_REQUIRED", "Enter or review Length, Width and Height before changing this line’s tier.");
           }
-          if (!pricing || !mode) return unavailable();
+          if (!pricing || !mode || source.line.basePriceAvailability[selectedTier][mode] !== true) return unavailable();
           if (mode === "in_house" && pricing.inHouseComponents !== undefined) {
             selected = change.input.selectedInHouseComponentIds;
             const components = selectedInHouseComponents(pricing.inHouseComponents, selected);
@@ -265,7 +265,7 @@ export function createEstimateTiersService({ audit }: { audit: AuditService }) {
             selected = undefined;
             ratePaise = pricing.modeBaseRatesPaise[mode];
           }
-          if (!validMoney(ratePaise)) return unavailable();
+          if (!validMoney(ratePaise) || ratePaise <= 0) return unavailable();
           rateSource = "configuration";
         } else {
           if (!pricing) return unavailable();

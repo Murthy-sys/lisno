@@ -4,8 +4,7 @@ import type {
 } from "../contracts/ai-estimator-knowledge.js";
 import { selectCurrentMainLineRevision } from "../domain/ai-estimator-knowledge-current-revision.js";
 import {
-  KNOWLEDGE_MODE_TIERS,
-  knowledgeModeTierPayloads,
+  knowledgeModeConfigurationPayloads,
   projectKnowledgeModeTierSection
 } from "../domain/ai-estimator-knowledge-mode-tiers.js";
 import {
@@ -56,6 +55,7 @@ export function createAiEstimatorKnowledgeSpecificationItemNameService(
         AiEstimatorKnowledgeSectionModel.find({ revisionId: { $in: revisionIds }, sectionKey: { $in: ["overview", "pricing"] } })
           .select({ mainLineId: 1, revisionId: 1, sectionKey: 1, applicability: 1,
             "payload.applicableTiers": 1, "payload.specifications.name": 1,
+            "payload.tierConfigurations.default.applicability": 1, "payload.tierConfigurations.default.payload.specifications.name": 1,
             "payload.tierConfigurations.premium.applicability": 1, "payload.tierConfigurations.premium.payload.specifications.name": 1,
             "payload.tierConfigurations.functional.applicability": 1, "payload.tierConfigurations.functional.payload.specifications.name": 1 })
           .lean().exec()
@@ -82,8 +82,8 @@ export function createAiEstimatorKnowledgeSpecificationItemNameService(
           : ["signature"];
         const pricing = rows.find(section => section.sectionKey === "pricing");
         if (!pricing) continue;
-        for (const { modeTier } of knowledgeModeTierPayloads(pricing.payload)) {
-          if (!KNOWLEDGE_MODE_TIERS.includes(modeTier) || !applicableTiers.includes(modeTier)) continue;
+        for (const { modeTier } of knowledgeModeConfigurationPayloads(pricing.payload)) {
+          if (modeTier !== "default" && !applicableTiers.includes(modeTier)) continue;
           const projected = projectKnowledgeModeTierSection(pricing, modeTier);
           if (projected.applicability !== "configured") continue;
           const specifications = record(projected.payload).specifications;

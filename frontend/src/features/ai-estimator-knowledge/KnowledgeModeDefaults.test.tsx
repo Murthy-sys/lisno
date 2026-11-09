@@ -3,6 +3,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import axe from "axe-core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { KnowledgeSubBasketMarginSummary } from "../../../../shared/knowledge/knowledgeSubBasketMarginTypes";
+import type { KnowledgeModeConfigurationScope } from "../../../../shared/knowledge/knowledgeModeTiers";
 import { KnowledgeModeDefaults } from "./KnowledgeModeDefaults";
 import * as api from "./knowledgeApi";
 import type { KnowledgeItemDetail } from "./knowledgeTypes";
@@ -62,7 +63,7 @@ describe("Compact default margins", () => {
     vi.mocked(api.getKnowledgeSubBasketMargins).mockImplementation((_basketId, _subBasketId, options) => options?.modeTier === "premium" ? premium
       : Promise.resolve(options?.modeTier === "functional" ? empty : fixture()));
     const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
-    const panel = (modeTier: "signature" | "premium" | "functional") => <QueryClientProvider client={client}><KnowledgeModeDefaults item={item} modeTier={modeTier} /></QueryClientProvider>;
+    const panel = (modeTier: KnowledgeModeConfigurationScope) => <QueryClientProvider client={client}><KnowledgeModeDefaults item={item} modeTier={modeTier} /></QueryClientProvider>;
     const view = render(panel("signature"));
     expect(await screen.findByText("12.5% - 18%")).toBeVisible();
     view.rerender(panel("premium"));
@@ -74,9 +75,14 @@ describe("Compact default margins", () => {
     view.rerender(panel("functional"));
     expect(await screen.findAllByText("Not configured")).toHaveLength(3);
     expect(api.getKnowledgeSubBasketMargins).toHaveBeenCalledWith("gypsum", "ceiling", { modeTier: "functional" });
+    vi.mocked(api.getKnowledgeSubBasketMargins).mockResolvedValue(empty);
+    view.rerender(panel("default"));
+    expect(screen.queryByText("12.5% - 18%")).not.toBeInTheDocument();
+    expect(await screen.findAllByText("Not configured")).toHaveLength(3);
+    expect(api.getKnowledgeSubBasketMargins).toHaveBeenCalledWith("gypsum", "ceiling", { modeTier: "default" });
     view.rerender(panel("signature"));
     expect(await screen.findByText("12.5% - 18%")).toBeVisible();
-    expect(api.getKnowledgeSubBasketMargins).toHaveBeenCalledTimes(3);
+    expect(api.getKnowledgeSubBasketMargins).toHaveBeenCalledTimes(4);
     expect(api.applyKnowledgeSubBasketMargins).not.toHaveBeenCalled();
   });
 

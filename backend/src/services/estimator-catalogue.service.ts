@@ -1,11 +1,12 @@
 import { resolveEstimateDimensionRule, type EstimateDimensionRule } from "../domain/estimate-dimensions.js";
-import { KNOWLEDGE_MODE_TIERS, isKnowledgeModeTier, knowledgeModeTierPayloads, projectKnowledgeModeTierSection, type KnowledgeModeTier } from "../domain/ai-estimator-knowledge-mode-tiers.js";
+import { KNOWLEDGE_MODE_TIERS, isKnowledgeModeTier, knowledgeModeConfigurationPayloads, projectKnowledgeModeTierSection, type KnowledgeModeTier } from "../domain/ai-estimator-knowledge-mode-tiers.js";
+import { configuredKnowledgeBasePriceAvailability, hasConfiguredBasePriceForMode, type EstimationBasePriceAvailability } from "../domain/estimation-base-price-visibility.js";
 import { lockInHouseComponentReferences } from "./ai-estimator-knowledge-in-house-components.service.js";
 import { readInHouseComponents, inHouseComponentBaseRate } from "../domain/ai-estimator-knowledge-in-house-components.js";
 import { normalizeDesignRules, validateDesignRules, designRulesDigest, designRuleEstimateNotes, type DesignRules } from "../domain/main-line-design-rules.js";
 import type mongoose from "mongoose";
 
-import { estimateModeSellingRatesPaise, type EstimateModeBaseRatesPaise } from "../domain/estimate-mode-pricing.js";
+import { estimateModeSellingRatesPaise, type EstimateModeBaseRatesPaise, type EstimatePricingMode } from "../domain/estimate-mode-pricing.js";
 
 import { selectCurrentMainLineRevision } from "../domain/ai-estimator-knowledge-current-revision.js";
 import { normalizeKnowledgeBudgetAlterationTarget } from "../domain/ai-estimator-knowledge-recommendation.js";
@@ -33,6 +34,10 @@ export interface EstimatorCatalogueLine {
   subBasketId: string | null;
   itemType: "main_line" | "temporary";
   clientVisible: boolean;
+  /** Current saved base presence across all four Configuration scopes; discovery only. */
+  hasConfiguredBasePrice: boolean;
+  /** Validated positive bases for each exact current Configuration scope and method. */
+  basePriceAvailability: EstimationBasePriceAvailability;
   dimensionsMandatory: boolean;
   dimensionRule: EstimateDimensionRule | null;
   name: string;
@@ -206,13 +211,17 @@ export async function listEstimatorCatalogueRecommendations(
   includeReadyNonActive = false
 ): Promise<{ sources: EstimatorCatalogueRecommendationSource[] }> {
   await assertCatalogueReadActor(actor);
-  return readEstimatorCatalogueRecommendations(mainLineIds, includeReadyNonActive);
+  const { sources } = await readEstimatorCatalogueRecommendations(mainLineIds, includeReadyNonActive);
+  return { sources };
 }
 
 /** Internal reader. Callers must establish their own scoped authority before invoking it. */
 export async function readEstimatorCatalogueRecommendations(
-  mainLineIds: readonly string[], includeReadyNonActive = false, session?: mongoose.ClientSession
-): Promise<{ sources: EstimatorCatalogueRecommendationSource[] }> {
+  mainLineIds: readonly string[], includeReadyNonActive = false, session?: mongoose.ClientSession,
+  selectedMainLineIds: readonly string[] = mainLineIds,
+  targetPricingMode: EstimatePricingMode | "any" = "sub_vendor"
+): Promise<{ sources: EstimatorCatalogueRecommendationSource[]; unpricedTargetMainLineIds: string[] }> {
+  const selectedIds = new Set(selectedMainLineIds);
   const sourceRaw = await AiEstimatorKnowledgeMainLineModel.find({
     _id: { $in: mainLineIds },
     status: includeReadyNonActive ? { $in: ["active", "draft", "inactive"] } : "active"
@@ -273,7 +282,10 @@ export async function readEstimatorCatalogueRecommendations(
     children.push(raw);
     rawChildrenByGroup.set(groupId, children);
   }
-  return { sources: mainLineIds.map((mainLineId) => {
+  const targetHasBase = (target: EstimatorCatalogueLine) => targetPricingMode === "any" ? target.hasConfiguredBasePrice
+    : hasConfiguredBasePriceForMode(target.basePriceAvailability, targetPricingMode);
+  return { unpricedTargetMainLineIds: [...eligibleTargets.values()].filter(target => !targetHasBase(target)).map(target => target.mainLineId),
+    sources: mainLineIds.map((mainLineId) => {
     const source = sources.get(mainLineId);
     if (!source) return { mainLineId, available: false, revisionId: null, revisionVersion: null,
       itemVersion: null, rules: [], guidance: [] };
@@ -283,7 +295,7 @@ export async function readEstimatorCatalogueRecommendations(
       rules: (rulesBySource.get(mainLineId) ?? []).map((rule): RecommendationRule => {
         if (rule.targetKind === "main_line") {
           const target = eligibleTargets.get(rule.targetMainLineId!);
-          const available = Boolean(target && target.basketId === rule.targetBasketId &&
+          const available = Boolean(target && (targetHasBase(target) || selectedIds.has(target.mainLineId)) && target.basketId === rule.targetBasketId &&
             target.subBasketId === rule.targetSubBasketId &&
             (target.itemType === "temporary" ? "temporary" : "catalog") === rule.targetType);
           return { ...withoutTargetType(rule), available,
@@ -302,7 +314,8 @@ export async function readEstimatorCatalogueRecommendations(
         const rawChildren = rawChildrenByGroup.get(groupId) ?? [];
         const children = rawChildren.flatMap((raw) => {
           const child = eligibleTargets.get(String(raw._id));
-          return child && child.basketId === rule.targetBasketId && child.subBasketId === groupId
+          return child && (targetHasBase(child) || selectedIds.has(child.mainLineId)) &&
+            child.basketId === rule.targetBasketId && child.subBasketId === groupId
             ? [{ mainLineId: child.mainLineId, available: true as const,
                 completionRequired: child.itemType === "temporary", revisionId: child.revisionId,
                 revisionVersion: child.revisionVersion, itemVersion: child.itemVersion }] : [];
@@ -520,7 +533,7 @@ async function projectLines(
   const advancedSections = await advancedQuery.lean().exec();
   const pricingSections = await pricingQuery.lean().exec();
   const designSections = await designQuery.lean().exec();
-  const componentRows = advancedSections.flatMap(section => knowledgeModeTierPayloads(section.payload).flatMap(tier => readInHouseComponents(tier.payload) ?? []));
+  const componentRows = advancedSections.flatMap(section => knowledgeModeConfigurationPayloads(section.payload).flatMap(scope => readInHouseComponents(scope.payload) ?? []));
   const componentBasketQuery = AiEstimatorKnowledgeBasketModel.find({ _id: { $in: [...new Set(componentRows.map((row) => row.basketId))] }, status: "active" }).select({ _id: 1, name: 1 });
   const componentSubBasketQuery = AiEstimatorKnowledgeSubBasketModel.find({ _id: { $in: [...new Set(componentRows.flatMap((row) => row.subBasketId ? [row.subBasketId] : []))] }, status: { $ne: "archived" } }).select({ _id: 1, basketId: 1, name: 1 });
   if (session) { componentBasketQuery.session(session); componentSubBasketQuery.session(session); }
@@ -577,6 +590,10 @@ async function projectLines(
     // Malformed current rules must fail closed, never silently remove obligations.
     if (design && (String(design.mainLineId) !== id || validateDesignRules(designPayload).length > 0)) continue;
     const designRules = normalizeDesignRules(designPayload);
+    const componentIsAvailable = (component: { id: string; basketId: string; subBasketId: string | null }) =>
+      componentBaskets.has(component.basketId) && (component.subBasketId === null
+        ? component.id === "legacy-in-house" && component.basketId === String(raw.basketId)
+        : String(componentSubBaskets.get(component.subBasketId)?.basketId) === component.basketId);
     const projectTier = (tier: KnowledgeModeTier): EstimatorCatalogueTierPricing => {
       const section = advanced && String(advanced.mainLineId) === id ? projectKnowledgeModeTierSection(advanced, tier) : undefined;
       const configured = section?.applicability === "configured";
@@ -586,9 +603,7 @@ async function projectLines(
         ...(components === undefined ? {} : { inHouseComponents: (components ?? []).map(component => {
           const basket = componentBaskets.get(component.basketId);
           const subBasket = component.subBasketId ? componentSubBaskets.get(component.subBasketId) : undefined;
-          const available = configured && !!basket && (component.subBasketId === null
-            ? component.id === "legacy-in-house" && component.basketId === String(raw.basketId)
-            : String(subBasket?.basketId) === component.basketId);
+          const available = configured && componentIsAvailable(component);
           return { id: component.id, basketId: component.basketId, subBasketId: component.subBasketId,
             basketName: basket ? String(basket.name) : "Unavailable Main Basket",
             subBasketName: component.subBasketId === null ? null : subBasket ? String(subBasket.name) : "Unavailable Sub Basket",
@@ -600,12 +615,15 @@ async function projectLines(
     const signaturePricing = projectTier("signature");
     const tierPricing = Object.fromEntries(applicableTiers.filter(tier => tier === "signature" ||
       sectionConfigured(advanced, tier) || sectionConfigured(pricing, tier)).map(tier => [tier, projectTier(tier)]));
+    const basePriceAvailability = configuredKnowledgeBasePriceAvailability(advanced && String(advanced.mainLineId) === id ? advanced : undefined, componentIsAvailable);
     projected.set(id, {
       designRules, designRulesDigest: designRulesDigest(designRules), estimateNotes: designRuleEstimateNotes(designRules),
       id, mainLineId: id, basketId: String(raw.basketId),
       subBasketId: raw.subBasketId ? String(raw.subBasketId) : null,
       itemType: raw.itemType === "temporary" ? "temporary" : "main_line",
       clientVisible: clientVisibilityByRevision.get(revisionId) ?? true,
+      basePriceAvailability,
+      hasConfiguredBasePrice: Object.values(basePriceAvailability).some(methods => Object.values(methods).some(Boolean)),
       name: String(raw.name), displayOrder: Number(raw.displayOrder), revisionId,
       itemStatus: raw.status as EstimatorCatalogueLine["itemStatus"],
       revisionStatus: source.status,

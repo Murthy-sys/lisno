@@ -7,6 +7,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import { startMongoReplicaSet } from "./helpers/mongo-replica-set.js";
 import { newQuotationLifecycle } from "../src/domain/estimation-lifecycle.js";
 import { createQuotationService } from "../src/services/quotation.service.js";
+import { quotationMandatoryTargets, quotationVisibleRecommendationSources } from "../src/services/quotation-recommendations.service.js";
 import { EstimateClientReviewRoundModel } from "../src/models/EstimateClientReviewRound.js";
 import { createAuditService } from "../src/services/audit.service.js";
 import { createMongoRepository } from "../src/repositories/mongo.js";
@@ -221,6 +222,40 @@ describe("quotation pricing-mode changes", () => {
     expect(line.componentPricing).toBeUndefined();
     expect(line.pricingBasis).toBeUndefined();
   });
+
+  it("checks selected positive component bases while allowing a rounded-zero amount", async () => {
+    await eligibleModes();
+    await SubBasket.collection.insertOne({ _id: "zero-component-sub" as never, basketId: "tier-basket", name: "Zero component", status: "active", displayOrder: 2, version: 1 });
+    const settings = (baseRatePaise: number) => ({ baseRatePaise, lowQuantityLimit: "10", impactBps: 0,
+      minimumMarkupBps: 0, startingMarkupBps: 0 });
+    const component = (id: string, baseRatePaise: number) => ({ id, basketId: "tier-basket", subBasketId: id === "zero" ? "zero-component-sub" : "tier-sub",
+      inclusions: [], exclusions: [], labor: settings(baseRatePaise), material: settings(0) });
+    await Section.updateOne({ _id: "advanced-visible" }, { $set: { "payload.inHouseComponents": [component("zero", 0), component("positive", 1)] } });
+    const before = await EstimateModel.findById("tier-estimate").lean();
+    await expect(service.save(client, "tier-project", { expectedVersion: 1, operations: [{ ...modeChange("in_house").operations[0]!,
+      selectedInHouseComponentIds: ["zero"] }] })).rejects.toMatchObject({ code: "QUOTATION_CONFIGURATION_CHANGED" });
+    expect(await EstimateModel.findById("tier-estimate").lean()).toEqual(before);
+    const result = await service.save(client, "tier-project", { expectedVersion: 1, operations: [{ ...modeChange("in_house").operations[0]!,
+      quantity: 0.01, selectedInHouseComponentIds: ["positive"] }] });
+    expect(result.lines[0]).toMatchObject({ pricingMode: "in_house", quantity: 0.01, ratePaise: null, amountPaise: 0,
+      componentPricing: { totalPaise: 0 }, choices: expect.arrayContaining([expect.objectContaining({ modeTier: "signature", available: true })]) });
+  });
+
+  it("preserves saved zero money while rejecting a new zero-priced selection", async () => {
+    await Section.updateOne({ _id: "advanced-visible" }, { $set: { "payload.modeCalculations.sub_vendor.baseRatePaise": 0 } });
+    await EstimateModel.updateOne({ _id: "tier-estimate" }, { $set: { "lineItems.0.ratePaise": 0, "lineItems.0.rate": 0,
+      "lineItems.0.amountPaise": 0, "lineItems.0.amount": 0 } });
+    const detail = await service.detail(client, "tier-project");
+    expect(detail.lines[0]).toMatchObject({ id: "line-one", ratePaise: 0, amountPaise: 0,
+      choices: expect.arrayContaining([expect.objectContaining({ modeTier: "signature", available: false })]) });
+    await expect(service.save(client, "tier-project", { expectedVersion: 1, operations: [{ kind: "add", mainLineId: "visible",
+      roomId: "Room1", source, modeTier: "signature" }] })).rejects.toMatchObject({ code: "QUOTATION_ITEM_EXISTS" });
+    await EstimateModel.updateOne({ _id: "tier-estimate" }, { $push: { rooms: { id: "Room3", label: "Room3" } } });
+    await expect(service.save(client, "tier-project", { expectedVersion: 1, operations: [{ kind: "add", mainLineId: "visible",
+      roomId: "Room3", source, modeTier: "signature" }] })).rejects.toMatchObject({ code: "QUOTATION_CONFIGURATION_CHANGED" });
+    expect((await service.save(client, "tier-project", quantityChange(1, 0.01))).lines[0])
+      .toMatchObject({ id: "line-one", ratePaise: 0, amountPaise: 0 });
+  });
 });
 
 async function recommendationLine(id: string, input: { visible?: boolean; basketId?: string; subBasketId?: string; priced?: boolean } = {}) {
@@ -257,6 +292,36 @@ const removeGroup = async (scope: { subBasketId: string | null; roomId: string |
 };
 
 describe("Client inline non-negotiable recommendations", () => {
+  it("filters Standard PMC-only and unusable tier targets before Client choices and setup counts", async () => {
+    for (const id of ["pmc-only", "default-only", "missing-margin", "premium-only"]) await recommendationLine(id, { priced: false });
+    await Section.updateOne({ _id: "advanced-pmc-only" }, { $set: { payload: {
+      pmcMarginBps: 0, modeCalculations: { pmc: { baseRatePaise: 3000 }, sub_vendor: { baseRatePaise: 0 } }
+    } } });
+    await Section.updateOne({ _id: "advanced-default-only" }, { $set: { payload: { tierConfigurations: {
+      default: { applicability: "configured", payload: { subVendorMarginBps: 0, modeCalculations: { sub_vendor: { baseRatePaise: 1000 } } } }
+    } } } });
+    await Section.updateOne({ _id: "advanced-missing-margin" }, { $set: { payload: { modeCalculations: { sub_vendor: { baseRatePaise: 1000 } } } } });
+    await Section.updateOne({ _id: "overview-premium-only" }, { $set: { "payload.applicableTiers": ["signature", "premium"] } });
+    await Section.updateOne({ _id: "advanced-premium-only" }, { $set: { payload: {
+      subVendorMarginBps: 0, modeCalculations: { sub_vendor: { baseRatePaise: 0 } }, tierConfigurations: {
+        premium: { applicability: "configured", payload: { subVendorMarginBps: 2000, modeCalculations: { sub_vendor: { baseRatePaise: 2000 } } } }
+      }
+    } } });
+    await recommendationRules("visible", ["pmc-only", "default-only", "missing-margin", "premium-only"].map(id => mustRule(id)));
+    const before = await EstimateModel.findById("tier-estimate").lean();
+    const items = await service.items(client, "tier-project", { search: "only", limit: 1 });
+    expect(items).toMatchObject({ total: 1, items: [{ mainLineId: "premium-only", modeTier: "premium", choices: [
+      { modeTier: "signature", available: false }, { modeTier: "premium", available: true, ratePaise: 2400 }, { modeTier: "functional", available: false }
+    ] }] });
+    expect(await service.recommendations(client, "tier-project", recommendationRead()))
+      .toMatchObject({ total: 1, reviewMessage: expect.any(String), items: [{ candidate: { mainLineId: "premium-only" } }] });
+    expect((await service.setup(client, "tier-project")).baskets.find(basket => basket.id === "tier-basket"))
+      .toMatchObject({ subBaskets: [{ mainLineCount: 2 }] });
+    await expect(service.save(client, "tier-project", { expectedVersion: 1, operations: [addRecommendation(["visible"], "premium-only")] }))
+      .rejects.toMatchObject({ code: "QUOTATION_CONFIGURATION_CHANGED" });
+    expect(await EstimateModel.findById("tier-estimate").lean()).toEqual(before);
+  });
+
   it("serves the bounded read as a private project-scoped HTTP operation", async () => {
     const auth = { authenticate: async (token: string) => token === "client" ? client : other } as unknown as Parameters<typeof createQuotationRouter>[0];
     const app = express();
@@ -332,16 +397,65 @@ describe("Client inline non-negotiable recommendations", () => {
     expect(JSON.stringify(result)).not.toContain("target-hidden");
   });
 
-  it("returns cross-basket setup requirements and unavailable current prices without fallbacks", async () => {
+  it("keeps default-only cross-basket targets in required review without offering an unavailable Client choice", async () => {
     await Basket.collection.insertOne({ _id: "extra-basket" as never, name: "Extra", status: "active", displayOrder: 2, version: 1 });
     await SubBasket.collection.insertOne({ _id: "extra-sub" as never, basketId: "extra-basket", name: "Extra items", displayOrder: 1, version: 1 });
     await recommendationLine("target", { basketId: "extra-basket", subBasketId: "extra-sub", priced: false });
+    await Section.updateOne({ _id: "advanced-target" }, { $set: { "payload.tierConfigurations.default": {
+      applicability: "configured", payload: { modeCalculations: { pmc: { baseRatePaise: 1234 } } }
+    } } });
     await recommendationRules("visible", [mustRule("target", { targetBasketId: "extra-basket", targetSubBasketId: "extra-sub" })]);
     const result = await service.recommendations(client, "tier-project", recommendationRead());
-    expect(result.items[0]!.requiresSetup).toBe(true);
-    expect(result.items[0]!.candidate.choices.every(choice => !choice.available)).toBe(true);
+    expect(result).toMatchObject({ items: [], total: 0, reviewMessage: expect.any(String) });
     expect((await service.items(client, "tier-project")).items.some(item => item.mainLineId === "target")).toBe(false);
     await expect(service.save(client, "tier-project", { expectedVersion: 1, operations: [addRecommendation()] })).rejects.toMatchObject({ code: "QUOTATION_CONFIGURATION_CHANGED" });
+  });
+
+  it("hides zero-only mandatory targets without losing the Client review message or leaking hidden targets", async () => {
+    await recommendationLine("unpriced", { priced: false });
+    await recommendationLine("hidden-unpriced", { priced: false, visible: false });
+    await Section.updateMany({ mainLineId: { $in: ["unpriced", "hidden-unpriced"] }, sectionKey: "advanced" },
+      { $set: { "payload.modeCalculations.sub_vendor.baseRatePaise": 0 } });
+    await recommendationRules("visible", [mustRule("unpriced"), mustRule("hidden-unpriced")]);
+    const before = await EstimateModel.findById("tier-estimate").lean();
+    const result = await service.recommendations(client, "tier-project", recommendationRead());
+    expect(result).toMatchObject({ items: [], total: 0, reviewMessage: "Some required items have no base price greater than zero. Ask your team to review them." });
+    expect(await service.items(client, "tier-project", { search: "unpriced" })).toMatchObject({ items: [], total: 0 });
+    expect(JSON.stringify(result)).not.toMatch(/unpriced|hidden-unpriced|Internal reason/);
+    await recommendationRules("hidden", [mustRule("unpriced")]);
+    await Section.updateOne({ _id: "recommendations-visible" }, { $set: { "payload.budgetAlterations": [mustRule("hidden-unpriced")] } });
+    expect(await service.recommendations(client, "tier-project", recommendationRead())).not.toHaveProperty("reviewMessage");
+    expect(await EstimateModel.findById("tier-estimate").lean()).toEqual(before);
+  });
+
+  it("keeps unpriced selected recommendations reviewable and removable without changing saved amounts", async () => {
+    await recommendationLine("target");
+    await recommendationRules("visible", [mustRule("target")]);
+    const added = await service.save(client, "tier-project", { expectedVersion: 1, operations: [addRecommendation()] });
+    const target = added.lines.find(line => line.mainLineId === "target")!;
+    await Section.updateOne({ _id: "advanced-target" }, { $set: { payload: {} } });
+    const before = await EstimateModel.findById("tier-estimate").lean();
+    const result = await service.recommendations(client, "tier-project", { ...recommendationRead(), expectedVersion: 2 });
+    expect(result).toMatchObject({ total: 1, reviewMessage: expect.any(String), items: [{ candidate: { mainLineId: "target" } }] });
+    const selectedSources = await quotationVisibleRecommendationSources(before!, undefined, ["visible", "target"]);
+    expect((await quotationMandatoryTargets(["visible"], selectedSources)).get("visible")?.has("target")).toBe(true);
+    expect((await service.items(client, "tier-project")).items.some(item => item.mainLineId === "target")).toBe(false);
+    const detail = await service.detail(client, "tier-project");
+    expect(detail.lines.find(line => line.id === target.id)).toMatchObject({ id: target.id, included: true, ratePaise: target.ratePaise, amountPaise: target.amountPaise });
+    expect(await EstimateModel.findById("tier-estimate").lean()).toEqual(before);
+    const removed = await service.save(client, "tier-project", { expectedVersion: 2, operations: [{ kind: "update", lineItemId: target.id,
+      source: targetSource(), included: false }] });
+    expect(removed.excludedLines).toContainEqual(expect.objectContaining({ id: target.id, included: false }));
+  });
+
+  it("filters unpriced group children before recommendation counts and retains required review", async () => {
+    await SubBasket.collection.insertOne({ _id: "targets-sub" as never, basketId: "tier-basket", name: "Targets", status: "active", displayOrder: 2 });
+    await recommendationLine("target-priced", { subBasketId: "targets-sub" });
+    await recommendationLine("target-unpriced", { subBasketId: "targets-sub", priced: false });
+    await recommendationRules("visible", [mustRule("group", { targetKind: "sub_basket", targetType: null,
+      targetMainLineId: null, targetSubBasketId: "targets-sub" })]);
+    const result = await service.recommendations(client, "tier-project", recommendationRead());
+    expect(result).toMatchObject({ total: 1, reviewMessage: expect.any(String), items: [{ candidate: { mainLineId: "target-priced" } }] });
   });
 
   it("uses the latest draft source rules and rejects stale current identities", async () => {
@@ -391,6 +505,9 @@ describe("Client inline non-negotiable recommendations", () => {
   it("paginates recommendations and searches/filter candidates before pagination", async () => {
     const ids = Array.from({ length: 25 }, (_, index) => `target-${String(index).padStart(2, "0")}`);
     for (const id of ids) await recommendationLine(id);
+    await recommendationLine("target-00-empty", { priced: false });
+    await recommendationLine("target-12-empty", { priced: false });
+    await MainLine.updateOne({ _id: "target-12-empty" }, { $set: { itemType: "temporary", subBasketId: null } });
     await recommendationRules("visible", ids.map(id => mustRule(id)));
     const first = await service.recommendations(client, "tier-project", recommendationRead());
     const second = await service.recommendations(client, "tier-project", { ...recommendationRead(), offset: 20 });
@@ -401,6 +518,10 @@ describe("Client inline non-negotiable recommendations", () => {
     expect(await service.items(client, "tier-project", { search: "target-24", mainBasketId: "tier-basket", subBasketId: "tier-sub" }))
       .toMatchObject({ total: 1, items: [{ mainLineId: "target-24" }] });
     expect((await service.items(client, "tier-project", { mainBasketId: "unrelated-basket", subBasketId: "tier-sub" })).total).toBe(0);
+    const candidates = await service.items(client, "tier-project", { search: "target-", limit: 20, offset: 20 });
+    expect(candidates).toMatchObject({ total: 25, items: ids.slice(20).map(mainLineId => ({ mainLineId })) });
+    expect((await service.setup(client, "tier-project")).baskets.find(basket => basket.id === "tier-basket"))
+      .toMatchObject({ directTemporaryItemCount: 0, subBaskets: [{ mainLineCount: 26 }] });
   });
 
   it("removes a recommended target, preserves its source, and restores it independently with its stable ID", async () => {
