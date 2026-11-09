@@ -117,6 +117,152 @@ function RefreshingSalesPopup({ ready = false, initiallySelected = false, overri
   }} />;
 }
 
+function CompletingSalesPopup({ ready = false, acknowledge = true, remainingCount = 0, completionBlocked = false,
+  completionContext = "actor:estimate:bedroom", overrides = {}, onOpenChange, onAdd = () => true }: {
+  ready?: boolean;
+  acknowledge?: boolean;
+  remainingCount?: number;
+  completionBlocked?: boolean;
+  completionContext?: string;
+  overrides?: Partial<EstimateRecommendationsProps>;
+  onOpenChange?: (open: boolean) => void;
+  onAdd?: () => boolean;
+}) {
+  const [selected, setSelected] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const loading = refreshing && !ready;
+  return <PopupHarness onOpenChange={onOpenChange} overrides={{
+    selectionFeedback: { contextKey: "workspace:bedroom" },
+    contextKey: selected ? "bedroom:painting,primer" : "bedroom:painting",
+    completion: { contextKey: completionContext, selectedTargetIds: new Set(selected && acknowledge ? [row.id] : []),
+      remainingCount: selected ? remainingCount : 1, blocked: completionBlocked },
+    state: loading ? "loading" : "ready", items: loading ? [] : [{ ...row, selected }], total: loading ? 0 : 1,
+    onAdd: () => {
+      if (!onAdd()) return false;
+      setSelected(true); setRefreshing(true); return true;
+    },
+    onRemove: () => { setSelected(false); setRefreshing(true); return true; },
+    ...overrides
+  }} />;
+}
+
+describe("Sales recommendation Add completion", () => {
+  it("closes a final accepted Add with current cached results, returns focus, and permits manual review/removal", async () => {
+    const user = userEvent.setup(); const changed = vi.fn(), add = vi.fn(() => true);
+    render(<CompletingSalesPopup ready onOpenChange={changed} onAdd={add} />);
+    await user.click(screen.getByRole("button", { name: "Add Wall primer" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    const trigger = screen.getByRole("button", { name: "Recommendations (1)" });
+    expect(trigger).toHaveFocus();
+    expect(changed.mock.calls.map(call => call[0])).toEqual([true, false]);
+    expect(add).toHaveBeenCalledOnce();
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+    expect(screen.getByRole("status")).toBeVisible();
+    expect(screen.getByRole("status")).toHaveTextContent("Added 1 item: Wall primer to Bedroom.");
+    await user.click(trigger);
+    expect(screen.getByRole("button", { name: "Remove Wall primer" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Remove Wall primer" }));
+    expect(screen.getByRole("dialog")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Add Wall primer" })).toBeVisible();
+    expect(add).toHaveBeenCalledOnce();
+  });
+
+  it("waits through an empty loading page and requires acknowledgement from the current draft", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(<CompletingSalesPopup />);
+    await user.click(screen.getByRole("button", { name: "Add Wall primer" }));
+    expect(screen.getByRole("dialog")).toBeVisible();
+    expect(within(popupRegion()).queryAllByRole("listitem")).toHaveLength(0);
+    rerender(<CompletingSalesPopup ready acknowledge={false} />);
+    expect(screen.getByRole("dialog")).toBeVisible();
+    rerender(<CompletingSalesPopup ready />);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("finishes a pending interaction without closing when current results contain further suggestions", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(<CompletingSalesPopup />);
+    await user.click(screen.getByRole("button", { name: "Add Wall primer" }));
+    rerender(<CompletingSalesPopup ready remainingCount={1} />);
+    expect(screen.getByRole("dialog")).toBeVisible();
+    // An ordinary later result cannot close a popup whose Add interaction already settled.
+    rerender(<CompletingSalesPopup ready remainingCount={0} />);
+    expect(screen.getByRole("dialog")).toBeVisible();
+  });
+
+  it.each(["error", "stale", "forbidden"] as const)("keeps the pending popup open through %s", async state => {
+    const user = userEvent.setup();
+    const { rerender } = render(<CompletingSalesPopup />);
+    await user.click(screen.getByRole("button", { name: "Add Wall primer" }));
+    rerender(<CompletingSalesPopup ready overrides={{ state }} />);
+    expect(screen.getByRole("dialog")).toBeVisible();
+    expect(screen.getByRole("alert")).toBeVisible();
+    rerender(<CompletingSalesPopup ready />);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("keeps unresolved review results open and does not arm rejected Adds or setup navigation", async () => {
+    const user = userEvent.setup(); const rejected = vi.fn(() => false);
+    const { rerender } = render(<CompletingSalesPopup ready onAdd={rejected} />);
+    await user.click(screen.getByRole("button", { name: "Add Wall primer" }));
+    expect(screen.getByRole("dialog")).toBeVisible();
+    expect(screen.getByRole("status")).toHaveTextContent("Could not add Wall primer");
+    rerender(<CompletingSalesPopup ready />);
+    await user.click(screen.getByRole("button", { name: "Add Wall primer" }));
+    // A normal ready Add closes, so reopen for an accepted setup action instead.
+    await user.click(screen.getByRole("button", { name: "Recommendations (1)" }));
+    rerender(<CompletingSalesPopup ready overrides={{ items: [{ ...row, addLabel: "Configure basket" }] }} />);
+    await user.click(screen.getByRole("button", { name: "Configure basket Wall primer" }));
+    expect(screen.getByRole("dialog")).toBeVisible();
+    expect(screen.getByRole("status")).toHaveTextContent("Configure basket: Wall primer");
+  });
+
+  it("waits for review issues to resolve before completing the final Add", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(<CompletingSalesPopup />);
+    await user.click(screen.getByRole("button", { name: "Add Wall primer" }));
+    rerender(<CompletingSalesPopup ready completionBlocked overrides={{ message: "Review current Configuration." }} />);
+    expect(screen.getByRole("dialog")).toBeVisible();
+    expect(screen.getByText("Review current Configuration.")).toBeVisible();
+    rerender(<CompletingSalesPopup ready />);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("cancels completion on manual dismissal so late results cannot close a manually reopened popup", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(<CompletingSalesPopup />);
+    await user.click(screen.getByRole("button", { name: "Add Wall primer" }));
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("button", { name: "Recommendations Checking…" }));
+    rerender(<CompletingSalesPopup ready />);
+    expect(screen.getByRole("dialog")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Close recommendations" })).toHaveFocus();
+  });
+
+  it("cancels completion across actor, estimate, or room identity changes even if an old result returns", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(<CompletingSalesPopup />);
+    await user.click(screen.getByRole("button", { name: "Add Wall primer" }));
+    rerender(<CompletingSalesPopup ready completionContext="other-actor:estimate:bedroom" />);
+    expect(screen.getByRole("dialog")).toBeVisible();
+    expect(screen.getByRole("status")).toBeEmptyDOMElement();
+    rerender(<CompletingSalesPopup ready />);
+    expect(screen.getByRole("dialog")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Close recommendations" })).toHaveFocus();
+  });
+
+  it("closes controlled popup state and retains the receipt when no recommendation row survives", async () => {
+    const user = userEvent.setup(); const changed = vi.fn();
+    const { rerender } = render(<CompletingSalesPopup onOpenChange={changed} />);
+    await user.click(screen.getByRole("button", { name: "Add Wall primer" }));
+    rerender(<CompletingSalesPopup ready onOpenChange={changed} overrides={{ items: [], total: 0 }} />);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(changed.mock.calls.map(call => call[0])).toEqual([true, false]);
+    expect(screen.getByRole("textbox", { name: "Quantity" })).toHaveFocus();
+    expect(screen.getByRole("status")).toHaveTextContent("Added 1 item: Wall primer to Bedroom.");
+  });
+});
+
 describe("opt-in recommendations popup", () => {
   it("opens ready suggestions in a standard modal and preserves the builder value", async () => {
     const user = userEvent.setup(); const changed = vi.fn();

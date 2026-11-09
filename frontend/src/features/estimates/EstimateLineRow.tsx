@@ -65,7 +65,7 @@ export function EstimateLineTierNotes({ options, id }: { options: readonly Estim
 export function EstimateLineTierOptions({ label, groupName, value, options, disabled = false, availabilityId, onChange }: {
   label: string;
   groupName: string;
-  value: KnowledgeModeTier;
+  value: KnowledgeModeTier | null;
   options: readonly EstimateLineTierOption[];
   disabled?: boolean;
   availabilityId?: string;

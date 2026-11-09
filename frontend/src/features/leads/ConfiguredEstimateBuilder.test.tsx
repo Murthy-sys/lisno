@@ -1,10 +1,10 @@
 import { configuredLineFixtures } from "./configuredEstimate.test-fixture";
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
-import { applyConfiguredGroupTier, configuredTierGroupKey, type ConfiguredTierGroupChoice, buildConfiguredLines, createConfiguredLine, configuredLineAmountPaise, configuredQuantityUnits, parseSellingRate, updateConfiguredLinePricing, type ConfiguredLineDraft } from "./configuredEstimate";
+import { buildConfiguredLines, createConfiguredLine, configuredLineAmountPaise, configuredQuantityUnits, parseSellingRate, updateConfiguredLinePricing, type ConfiguredLineDraft } from "./configuredEstimate";
 import { ConfiguredEstimateBuilder } from "./ConfiguredEstimateBuilder";
 import type { EstimationCatalogue } from "./estimationCatalogueApi";
 import type { RoomRecommendationView } from "./roomRecommendations";
@@ -33,8 +33,6 @@ function LiveBuilder({ initialLines = [], editable = true, pricingModeEditable =
   validateExcluded?: boolean; reviewContextKey?: string;
 }) {
   const [lines, setLines] = useState(initialLines);
-  const baselines = useRef(new Map<string, ConfiguredLineDraft>());
-  const [groupChoices, setGroupChoices] = useState<Record<string, ConfiguredTierGroupChoice>>({});
   const [roomId, setRoomId] = useState(roomList[0]!.id);
   const update = (next: ConfiguredLineDraft[]) => { setLines(next); onLinesChange?.(next); };
   return <ConfiguredEstimateBuilder rooms={roomList} activeRoomId={roomId} onSelectRoom={setRoomId} catalogue={availableCatalogue}
@@ -45,14 +43,6 @@ function LiveBuilder({ initialLines = [], editable = true, pricingModeEditable =
       const room = roomList.find(room => room.id === targetRoomId)!;
       const fresh = createConfiguredLine(availableCatalogue, room, target);
       if (fresh) update([...lines, updateConfiguredLinePricing(fresh, change)]);
-    }}
-    groupTierChoices={groupChoices}
-    onUpdateGroupTier={(scope, choice) => {
-      const next = applyConfiguredGroupTier(lines, scope, choice, baselines.current);
-      if (!next) return;
-      baselines.current = next.baselines;
-      setGroupChoices(current => ({ ...current, [configuredTierGroupKey(scope)]: choice }));
-      update(next.lines);
     }}
     onUpdateLine={(key, change) => update(lines.map(line => line.key === key ? updateConfiguredLinePricing(line, change) : line))}
     onAddLine={target => {
@@ -810,7 +800,8 @@ describe("selected item editing regressions", () => {
     const readOnlyCove = screen.getByText("Cove in Gypsum").closest(".configured-estimate-line") as HTMLElement;
     expect(within(readOnlyPop).getByText("Type").parentElement).toHaveTextContent("TypeStandard");
     expect(within(readOnlyCove).getByText("Type").parentElement).toHaveTextContent("TypeSpecial");
-    expect(within(readOnlyPop).queryByRole("radio")).not.toBeInTheDocument();
+    expect(within(readOnlyPop).queryByRole("radio", { name: /item type/ })).not.toBeInTheDocument();
+    within(readOnlyPop).getAllByRole("radio", { name: /tier for/ }).forEach(option => expect(option).toBeDisabled());
   });
 
   it("marks selected blank and malformed rates incomplete without losing their input errors", async () => {
@@ -848,7 +839,7 @@ describe("selected item editing regressions", () => {
 
 });
 
-it("changes every included Sub Basket line once, including lines outside search and pagination, without touching another room", async () => {
+it("changes only the selected Main Line, preserving siblings outside search and pagination and the same line in another room", async () => {
   const user = userEvent.setup(); const current = structuredClone(catalogue);
   const sub = current.items[0]!.subBaskets[0]!;
   const source = sub.mainLines[0]!;
@@ -864,17 +855,18 @@ it("changes every included Sub Basket line once, including lines outside search 
   const premium = screen.getByRole("radio", { name: /Premium tier for/ });
   expect(screen.getByRole("radio", { name: /Functional tier for/ })).toBeDisabled();
   expect(screen.getAllByRole("radio", { name: /Premium tier for/ })).toHaveLength(1);
-  expect(within(screen.getByText("Ceiling choice 0").closest(".configured-estimate-line") as HTMLElement).queryByRole("radio", { name: /tier for/ })).not.toBeInTheDocument();
+  expect(within(screen.getByText("Ceiling choice 0").closest(".configured-estimate-line") as HTMLElement).getByRole("radio", { name: /Premium tier for/ })).toBe(premium);
   await user.click(premium);
   expect(changed).toHaveBeenCalledTimes(1);
   const after = changed.mock.lastCall![0] as ConfiguredLineDraft[];
   expect(after.filter(line => line.roomId === rooms[0]!.id)).toHaveLength(23);
-  expect(after.filter(line => line.roomId === rooms[0]!.id).every(line => line.modeTier === "premium" && line.rateSource === "configuration")).toBe(true);
+  expect(after.find(line => line.roomId === rooms[0]!.id && line.mainLineId === "line-0")).toMatchObject({ modeTier: "premium", rateSource: "configuration" });
+  expect(after.filter(line => !(line.roomId === rooms[0]!.id && line.mainLineId === "line-0"))).toEqual(initial.filter(line => !(line.roomId === rooms[0]!.id && line.mainLineId === "line-0")));
   expect(after.filter(line => line.roomId === "second-room")).toEqual(initial.filter(line => line.roomId === "second-room"));
   expect(screen.getByRole("textbox", { name: /Selling rate.*Ceiling choice 0/ })).toHaveValue("125");
 });
 
-it("blocks a group tier if one included hidden-by-search line has no configured price", async () => {
+it("allows a line tier when a sibling hidden by search has no configured price", async () => {
   const user = userEvent.setup(); const current = structuredClone(catalogue);
   const source = current.items[0]!.subBaskets[0]!.mainLines[0]!;
   source.applicableTiers = ["signature", "premium"];
@@ -883,8 +875,30 @@ it("blocks a group tier if one included hidden-by-search line has no configured 
   const changed = vi.fn();
   render(<LiveBuilder initialLines={initial} availableCatalogue={current} onLinesChange={changed} />);
   await user.type(screen.getByRole("searchbox", { name: "Search estimate items" }), "POP false");
-  expect(screen.getByRole("radio", { name: /Premium tier for/ })).toBeDisabled();
-  expect(changed).not.toHaveBeenCalled();
+  const premium = screen.getByRole("radio", { name: /Premium tier for/ });
+  expect(premium).toBeEnabled();
+  await user.click(premium);
+  expect(changed).toHaveBeenCalledTimes(1);
+  expect((changed.mock.lastCall![0] as ConfiguredLineDraft[]).filter(line => line.mainLineId !== source.mainLineId)).toEqual(initial.filter(line => line.mainLineId !== source.mainLineId));
+});
+
+it("uses line identities for same-named rows and preserves excluded line prices", async () => {
+  const user = userEvent.setup(); const current = structuredClone(catalogue);
+  const sub = current.items[0]!.subBaskets[0]!; const source = sub.mainLines[0]!;
+  sub.temporaryItems = [];
+  sub.mainLines = ["first", "second", "excluded"].map((id, index) => ({ ...source, id, mainLineId: id, name: "Matching finish",
+    applicableTiers: ["signature", "premium"], tierPricing: { signature: { modeBaseRatesPaise: source.modeBaseRatesPaise! },
+      premium: { modeBaseRatesPaise: { pmc: 100, sub_vendor: 12_500 + index * 500, in_house: null } } } }));
+  const initial = configuredLineFixtures(current, rooms, new Set(["basket-pop"]), []).map(line => ({ ...line,
+    included: line.mainLineId !== "excluded", rateSource: "manual" as const, rateInput: "79" }));
+  const changed = vi.fn(); render(<LiveBuilder initialLines={initial} availableCatalogue={current} onLinesChange={changed} />);
+  const options = screen.getAllByRole("radio", { name: /Premium tier for/ });
+  expect(options).toHaveLength(2);
+  expect(options[0]!.getAttribute("name")).not.toBe(options[1]!.getAttribute("name"));
+  await user.click(options[1]!);
+  const after = changed.mock.lastCall![0] as ConfiguredLineDraft[];
+  expect(after.find(line => line.mainLineId === "second")).toMatchObject({ modeTier: "premium", rateInput: "130", rateSource: "configuration" });
+  expect(after.filter(line => line.mainLineId !== "second")).toEqual(initial.filter(line => line.mainLineId !== "second"));
 });
 
 

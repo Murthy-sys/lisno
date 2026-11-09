@@ -38,7 +38,7 @@ import { emptyAutomaticBasketIds, inferEmptySavedBasketIds, inferRecommendationO
 import { EstimateRevisionNavigation } from "./EstimateRevisionNavigation";
 import { EstimateRevisionView } from "./EstimateRevisionView";
 import { downloadEstimateRevisionPdf, estimateRevisionKeys, estimateRevisionLabel, getEstimateRevision, getEstimateRevisions } from "./estimateRevisionsApi";
-import { applyConfiguredGroupTier, configuredTierGroupKey, configuredLineInTierGroup, type ConfiguredTierGroupScope, type ConfiguredTierGroupChoice, configuredUsesComponentPricing, configuredComponentPricing, configuredDimensionsIssue, configuredInHouseSelectionIssue, buildConfiguredLines, createConfiguredLine, configuredLineAmountPaise, configuredLinePreviewAmountPaise, configuredQuantityUnits, deselectConfiguredRecommendationSources, parseSellingRate, restoreConfiguredLine, updateConfiguredLinePricing, type ConfiguredLineDraft } from "./configuredEstimate";
+import { configuredTierUnavailableReason, type ConfiguredTierGroupScope, configuredUsesComponentPricing, configuredComponentPricing, configuredDimensionsIssue, configuredInHouseSelectionIssue, buildConfiguredLines, createConfiguredLine, configuredLineAmountPaise, configuredLinePreviewAmountPaise, configuredQuantityUnits, deselectConfiguredRecommendationSources, parseSellingRate, restoreConfiguredLine, updateConfiguredLinePricing, type ConfiguredLineDraft } from "./configuredEstimate";
 import { estimationCatalogueKeys, getEstimationCatalogue, getEstimationCatalogueRecommendations } from "./estimationCatalogueApi";
 import { MainBasketSelectionCard } from "./MainBasketSelectionCard";
 import { buildRoomRecommendations, partitionRoomRecommendationSources, recommendationSourceIdentity, type RecommendedLineTarget } from "./roomRecommendations";
@@ -245,8 +245,6 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
   const [mainBasketClassifications, setMainBasketClassifications] = useState<Map<string, EstimateClassification>>(() => new Map());
   const [lines, setLines] = useState<LineDraft[]>([]);
   const [configuredDraftLines, setConfiguredLines] = useState<ConfiguredLineDraft[]>([]);
-  const groupTierBaselines = useRef(new Map<string, ConfiguredLineDraft>());
-  const [groupTierChoices, setGroupTierChoices] = useState<Record<string, ConfiguredTierGroupChoice>>({});
   useEffect(() => {
     pendingRecommendedLineKeys.current.clear();
     pendingAddedLineKeys.current.clear();
@@ -278,8 +276,6 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
     hasHydratedSavedEstimate.current = true;
     hydratedFingerprint.current = draft ? estimateDraftFingerprint(draft) : null;
     configuredEditBaselines.current.clear();
-    groupTierBaselines.current.clear();
-    setGroupTierChoices({});
     if (!draft) {
       setPropertyType("");
       setBedroomCountInput("");
@@ -811,12 +807,15 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
     : checklistRequired && !hasFrontendPermission(auth.authorization ?? null, "estimation.estimate.send_client")
       ? "Your current access does not allow sending this estimate to the Client."
     : "This estimate is not ready to send. Refresh the estimate to check its current state.");
-  const feedbackReason = publicationFeedback?.message ?? ((publicationFeedback?.action ?? (saved.data?.status === "ready_for_client" ? "send" : "submit")) === "send" ? sendBlockingReason : submitBlockingReason);
+  const hideSalesRefreshFeedback = checklistRequired && publicationFeedback?.message == null &&
+    !publicationBusy && !saveOutcomeUnknown && !estimateVersionConflict && !revisionMismatch &&
+    (saved.isError || revision.isError);
+  const feedbackReason = hideSalesRefreshFeedback ? null : publicationFeedback?.message ?? ((publicationFeedback?.action ?? (saved.data?.status === "ready_for_client" ? "send" : "submit")) === "send" ? sendBlockingReason : submitBlockingReason);
   const showPublicationFeedback = (action: PublicationAction, message?: string) => {
     setPublicationFeedback(current => ({ action, message, attempt: (current?.attempt ?? 0) + 1 }));
   };
   useLayoutEffect(() => {
-    if (publicationFeedback) publicationFeedbackRef.current?.focus();
+    if (publicationFeedback && feedbackReason) publicationFeedbackRef.current?.focus();
   }, [publicationFeedback]);
   const submissionEffect = pendingPublication?.action === "send"
     ? quotationWorkflow && lifecycle?.phase === "pre"
@@ -1009,6 +1008,13 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
   const updateConfiguredLine = (key: string, change: Partial<ConfiguredLineDraft>, availableLine?: ConfiguredLineDraft) => {
     if (!editable || submissionInFlight.current) return;
     const line = configuredLines.find((item) => item.key === key) ?? availableLine;
+    if (change.modeTier !== undefined && (!line?.included || line.sourceMissing || !catalogue.data ||
+      catalogue.isError || catalogue.isFetching || saved.isFetching ||
+      configuredTierUnavailableReason(line, change.modeTier, line.pricingMode ??
+        ((line.classification ?? mainBasketClassifications.get(line.mainBasketId) ?? "standard") === "standard" ? "sub_vendor" : undefined)))) {
+      setNotice("This tier is unavailable for this item. Refresh available items before changing its tier.");
+      return;
+    }
     if (line && (!pricingModeEditable || line.sourceMissing) && updateConfiguredLinePricing(line, change,
       mainBasketClassifications.get(line.mainBasketId) ?? "standard").pricingMode !== line.pricingMode) {
       setNotice("Pricing mode cannot be changed at this estimate stage. Refresh to check your access.");
@@ -1032,25 +1038,6 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
       } : item);
       return change.included === false ? deselectConfiguredRecommendationSources(updated, new Set([key])) : updated;
     });
-  };
-  const updateConfiguredGroupTier = (scope: ConfiguredTierGroupScope, choice: ConfiguredTierGroupChoice) => {
-    if (!editable || submissionInFlight.current || !catalogue.data || catalogue.isError || catalogue.isFetching || saved.isFetching) return;
-    const classification = mainBasketClassifications.get(scope.mainBasketId) ?? "standard";
-    const preview = applyConfiguredGroupTier(configuredLines, scope, choice, groupTierBaselines.current, classification);
-    if (!preview || !pricingModeEditable && preview.lines.some((line, index) => line.pricingMode !== configuredLines[index]?.pricingMode)) {
-      setNotice("This tier is unavailable for one or more selected items. Refresh Configuration before changing the Sub Basket mode.");
-      return;
-    }
-    for (const line of configuredLines.filter(line => configuredLineInTierGroup(line, scope))) {
-      if (!configuredEditBaselines.current.has(line.key)) configuredEditBaselines.current.set(line.key, configuredLineEditingFingerprint(line));
-    }
-    setConfiguredLines(current => {
-      const next = applyConfiguredGroupTier(current, scope, choice, groupTierBaselines.current, classification);
-      if (!next) return current;
-      groupTierBaselines.current = next.baselines;
-      return next.lines;
-    });
-    setGroupTierChoices(current => ({ ...current, [configuredTierGroupKey(scope)]: choice }));
   };
   const getTierComparison = (scope: ConfiguredTierGroupScope, group: readonly ConfiguredLineDraft[]) => {
     if (!group.length || catalogue.isError || catalogue.isFetching || saved.isFetching || group.some(line => line.sourceMissing ||
@@ -1407,9 +1394,8 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
       mainBasketClassifications={mainBasketClassifications}
       lines={configuredLines}
       onUpdateLine={updateConfiguredLine}
-      onUpdateGroupTier={updateConfiguredGroupTier}
-      groupTierChoices={groupTierChoices}
       getTierComparison={getTierComparison}
+      tierSuggestionContext={JSON.stringify([actorId, auth.reviewSession?.id, auth.user?.role, leadId])}
       onAddLine={addConfiguredLine}
       onRemoveSubBasket={requestSubBasketRemoval}
       onRefreshAvailableItems={() => void refreshAvailableItems()}

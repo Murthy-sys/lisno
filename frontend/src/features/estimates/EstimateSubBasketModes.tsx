@@ -16,6 +16,8 @@ export interface EstimateSubBasketModesProps {
   onChange: (value: EstimateSubBasketMode) => void;
   comparison?: EstimateTierComparisonRequest;
   detailsDisabledReason?: string;
+  comparisonOnly?: boolean;
+  inline?: boolean;
 }
 const money = (paise: number | null) => paise === null ? "Incomplete" : new Intl.NumberFormat("en-IN", {
   style: "currency", currency: "INR", minimumFractionDigits: 0, maximumFractionDigits: 2
@@ -24,14 +26,16 @@ const message = (error: unknown) => error instanceof ApiError ? error.message : 
 
 /** Mode is local retained-choice state, never a new persisted pricing tier. */
 export function EstimateSubBasketModes({ label, value, options, disabled = false, readOnly = false, onChange,
-  comparison, detailsDisabledReason }: EstimateSubBasketModesProps) {
+  comparison, detailsDisabledReason, comparisonOnly = false, inline = false }: EstimateSubBasketModesProps) {
   const id = useId();
   const trigger = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
   const requestKey = comparison ? JSON.stringify(comparison) : "";
   const stableComparison = useMemo(() => comparison, [requestKey]);
-  return <div className="estimate-sub-basket-modes">
-    <fieldset disabled={disabled || readOnly} aria-label={`Modes for ${label}`} aria-describedby={`${id}-help`}>
+  const inlineComparison = comparisonOnly && inline;
+  const Wrapper = inlineComparison ? "span" : "div";
+  return <Wrapper className={`estimate-sub-basket-modes${inlineComparison ? " estimate-sub-basket-modes--inline" : ""}`}>
+    {!comparisonOnly ? <><fieldset disabled={disabled || readOnly} aria-label={`Modes for ${label}`} aria-describedby={`${id}-help`}>
       <legend className="sr-only">Modes for {label}</legend>
       <label><input type="radio" name={id} value="mode" checked={value === "mode"} aria-label={`Mode for ${label}`} onChange={() => onChange("mode")} /><span>Mode</span></label>
       {options.map(option => <label key={option.tier} title={!option.available ? option.reason ?? "Unavailable for some included items." : undefined}>
@@ -41,12 +45,13 @@ export function EstimateSubBasketModes({ label, value, options, disabled = false
         {!option.available ? <span id={`${id}-${option.tier}`} className="sr-only">{option.reason ?? "Unavailable for some included items."}</span> : null}
       </label>)}
     </fieldset>
-    <span id={`${id}-help`} className="estimate-sub-basket-modes__help">Mode keeps current line choices.</span>
+    <span id={`${id}-help`} className="estimate-sub-basket-modes__help">Mode keeps current line choices.</span></> : null}
     <button type="button" ref={trigger} className="button button--secondary" disabled={!comparison || Boolean(detailsDisabledReason)}
-      title={detailsDisabledReason} aria-label={`Check tier comparison for ${label}`} onClick={() => setOpen(true)}>Check tier comparison</button>
-    {detailsDisabledReason ? <span className="estimate-sub-basket-modes__help">{detailsDisabledReason}</span> : null}
+      title={detailsDisabledReason} aria-describedby={detailsDisabledReason ? `${id}-comparison-help` : undefined}
+      aria-label={`Check tier comparison for ${label}`} onClick={() => setOpen(true)}>Check tier comparison</button>
+    {detailsDisabledReason ? <span id={`${id}-comparison-help`} className="estimate-sub-basket-modes__help">{detailsDisabledReason}</span> : null}
     {open && stableComparison ? <TierComparisonDialog key={requestKey} request={stableComparison} label={label} returnFocusRef={trigger} onClose={() => setOpen(false)} /> : null}
-  </div>;
+  </Wrapper>;
 }
 
 function TierComparisonDialog({ request, label, returnFocusRef, onClose }: {
