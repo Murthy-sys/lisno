@@ -453,3 +453,15 @@ AC1/AC5 are covered by catalogue/picker/search/page/count, Client candidate, rec
 Principal implementation areas are `backend/src/domain/estimation-base-price-visibility.ts`, catalogue/quotation discovery services and their OpenAPI descriptions, `frontend/src/features/leads/estimationCatalogueVisibility.ts`, catalogue/draft propagation, the shared configured builder and recommendation consumers, and matching Client review-message handling. No price formulas, financial tiers, saved mutation payloads, dependencies, or lockfiles changed.
 
 The frontend build reported the existing warning for minified chunks over 500 kB; bundle restructuring is outside this request. Full unrelated suites were not run under the approved focused plan; no lint script exists, and OCR is unaffected. Ignored build outputs remain at `backend/dist/`, `frontend/dist/`, `frontend/node_modules/.tmp/tsconfig.app.tsbuildinfo`, and `frontend/node_modules/.tmp/tsconfig.node.tsbuildinfo`. No migration, seed, production mutation, deployment, external-service action, staging, commit, or push was performed. Task-owned browser artifacts were removed; test logs remain under `/tmp/`.
+
+
+## 2026-11-11 disabled rate appearance follow-up (AC4)
+
+Continued the approved no-price-editing requirement after the user asked to make the rate field disabled. The current Sales input already has an unconditional native `disabled` attribute and no rate edit handler. Its shared input styling still looked editable. Added only a scoped `input:disabled` rule in `frontend/src/styles/estimator-dashboard.css`: muted text/background, a not-allowed cursor, and consistent opacity. No dimensions, placement, price calculations or permissions changed. Existing dirty work was inspected and preserved.
+
+Verification after the CSS edit:
+- `cd frontend && npm test -- src/features/leads/ConfiguredEstimateBuilder.sellingPrice.test.tsx`: 3/3 passed, including blocked manual edits and configured PMC/tier price updates. Independently checked by `rate_disabled_verification`.
+- `cd frontend && npm run build`: TypeScript and Vite passed; existing large-chunk warning remains. Generated output is ignored under `frontend/dist/`.
+- Playwright rendered the production builder with synthetic data using the current local Vite styles at 1280px and 390px. Rate stayed disabled, typing was blocked, and PMC still applied its configured price. Computed style showed the muted background and not-allowed cursor. Removing/reapplying the new rule left the position and size identical at both widths (rate widths 112px and 125px respectively). Inspected a synthetic rate screenshot.
+- `git diff --check`: passed. Full suites/backend checks were not rerun for this CSS-only delta. No estimate saves, Configuration data changes, dependencies, migrations or deployments.
+- Closed the isolated browser; removed its `.playwright-cli` logs/snapshot and `output/playwright/rate-disabled-1111.png`.

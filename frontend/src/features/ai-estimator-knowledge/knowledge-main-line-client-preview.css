@@ -20,7 +20,7 @@
 .knowledge-client-preview__scenario select { min-height: 32px; padding: 4px 24px 4px 8px; border: 1px solid var(--color-border); border-radius: 0; background: var(--color-surface); color: inherit; font: inherit; }
 .knowledge-client-preview__estimate.client-quotation { padding: 0; border: 0; background: transparent; }
 .knowledge-client-preview__estimate .configured-estimate-line--reference { margin: 0; box-shadow: none; }
-.knowledge-client-preview__estimate .configured-estimate-line__fields { grid-template-columns: minmax(78px, 1fr) minmax(90px, 1fr) minmax(90px, 1fr); }
+.knowledge-client-preview__estimate .configured-estimate-line__fields { grid-template-columns: 96px 112px 120px; }
 
 @media (max-width: 900px) {
   .ui-drawer--contextual.ui-drawer.knowledge-client-preview { inline-size: 100vw; }
@@ -28,6 +28,15 @@
 
 @media (max-width: 767px), (pointer: coarse) {
   .knowledge-client-preview__scenario select { min-height: 44px; font-size: 16px; }
-  .knowledge-client-preview__estimate .configured-estimate-line__fields { grid-template-columns: minmax(120px, 1fr) minmax(100px, 1fr); }
+  .knowledge-client-preview__estimate .configured-estimate-line__fields { width: min(100%, 260px); grid-template-columns: minmax(0, 130px) minmax(0, 120px); }
   .knowledge-client-preview__estimate .configured-estimate-line__amount { grid-column: 1 / -1; grid-row: 2; padding-right: 0; }
+}
+
+@container estimate-line (max-width: 480px) {
+  .knowledge-client-preview__estimate .configured-estimate-line__fields { width: min(100%, 260px); grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .knowledge-client-preview__estimate .configured-estimate-line__amount { padding-right: 0; }
+}
+
+@container estimate-line (max-width: 260px) {
+  .knowledge-client-preview__estimate .configured-estimate-line__amount { grid-row: 3; }
 }

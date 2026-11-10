@@ -593,8 +593,7 @@ describe("selected project items and inline picker", () => {
   });
   it("keeps Configuration prices read-only through quantity edits", async () => {
     const user = userEvent.setup();
-    render(<LiveBuilder initialLines={[chosen()[0]!]} />);
-    await user.click(screen.getByRole("radio", { name: /Special item type/ }));
+    render(<LiveBuilder initialLines={[{ ...chosen()[0]!, classification: "special" }]} />);
     await user.click(screen.getByRole("switch", { name: /PMC pricing mode/ }));
     const rate = screen.getByRole("textbox", { name: /Selling rate/ });
     expect(rate).toHaveValue("950");
@@ -699,11 +698,9 @@ describe("selected item editing regressions", () => {
       included: true, classification: "special" as const, pricingMode: "pmc" as const, rateInput: "42", rateSource: "manual" as const };
     const changed = vi.fn();
     render(<LiveBuilder initialLines={[line]} pricingModeEditable={false} onLinesChange={changed} />);
-    expect(screen.queryByRole("switch", { name: /PMC pricing mode/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: /PMC pricing mode/ })).toBeDisabled();
     expect(screen.getByText("PMC")).toBeVisible();
-    const standard = screen.getByRole("radio", { name: /Standard item type/ });
-    expect(standard).toBeDisabled();
-    await user.click(standard);
+    expect(screen.queryByRole("radio", { name: /item type/ })).not.toBeInTheDocument();
     expect(changed).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: /Increase quantity/ }));
     expect(changed).toHaveBeenLastCalledWith([expect.objectContaining({ pricingMode: "pmc", classification: "special", rateInput: "42", rateSource: "manual" })]);
@@ -714,107 +711,107 @@ describe("selected item editing regressions", () => {
       persistedId: "saved-pop", included: true, sourceMissing: true,
       classification: "special" as const, pricingMode: "pmc" as const };
     render(<LiveBuilder initialLines={[line]} />);
-    expect(screen.getByText("PMC")).toBeVisible();
-    expect(screen.queryByRole("switch")).not.toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: /PMC pricing mode/ })).toBeChecked();
+    expect(screen.getByRole("switch", { name: /PMC pricing mode/ })).toBeDisabled();
   });
 
-  it("allows a classification change that preserves Sub-Vendor when mode editing is unavailable", async () => {
+  it("preserves saved classification and Sub-Vendor when mode editing is unavailable", async () => {
     const user = userEvent.setup();
     const line = { ...configuredLineFixtures(catalogue, rooms, new Set(["basket-pop"]), [])[0]!,
       included: true, classification: "special" as const, pricingMode: "sub_vendor" as const };
-    render(<LiveBuilder initialLines={[line]} pricingModeEditable={false} />);
-    const standard = screen.getByRole("radio", { name: /Standard item type/ });
-    expect(standard).toBeEnabled();
-    await user.click(standard);
-    expect(standard).toBeChecked();
+    const changed = vi.fn();
+    render(<LiveBuilder initialLines={[line]} pricingModeEditable={false} onLinesChange={changed} />);
+    expect(screen.queryByRole("radio", { name: /item type/ })).not.toBeInTheDocument();
+    expect(changed).not.toHaveBeenCalled();
     expect(screen.queryByText("Vendor")).not.toBeInTheDocument();
-    expect(screen.queryByRole("switch")).not.toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: /PMC pricing mode/ })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: /Increase quantity/ }));
+    expect(changed).toHaveBeenLastCalledWith([expect.objectContaining({ classification: "special", pricingMode: "sub_vendor", quantity: 2 })]);
   });
 
-  it("switches PMC with the keyboard, restores non-PMC modes and keeps Standard pricing", async () => {
+  it("switches Standard to PMC with the keyboard and restores its type and configured price", async () => {
     const user = userEvent.setup();
-    const initialLines = configuredLineFixtures(catalogue, rooms, new Set(["basket-pop"]), [])
-      .map((line) => ({ ...line, included: true, classification: "standard" as const }));
-    render(<LiveBuilder initialLines={initialLines} />);
+    const initialLines = chosen().map(line => ({ ...line, classification: "standard" as const }));
+    const changed = vi.fn();
+    render(<LiveBuilder initialLines={initialLines} onLinesChange={changed} />);
     const pop = screen.getByText("POP false ceiling").closest(".configured-estimate-line") as HTMLElement;
     const cove = screen.getByText("Cove in Gypsum").closest(".configured-estimate-line") as HTMLElement;
     const rate = within(pop).getByRole("textbox", { name: /Selling rate/ });
+    const pmc = within(pop).getByRole("switch", { name: /PMC pricing mode/ });
+    expect(pmc).not.toBeChecked();
+    expect(within(pop).queryByRole("radio", { name: /pricing mode/ })).not.toBeInTheDocument();
+    expect(within(pop).queryByText(/^(Pricing|Type|Standard|Special)$/)).not.toBeInTheDocument();
     expect(rate).toHaveValue("1050");
-    expect(within(pop).queryByText(/Configured price|Base price/)).not.toBeInTheDocument();
-    expect(within(pop).queryByRole("group", { name: /Pricing mode/ })).not.toBeInTheDocument();
-    await user.click(within(pop).getByRole("radio", { name: /Special item type/ }));
-    const group = within(pop).getByRole("group", { name: /Pricing mode for POP \/ Gypsum, NA, POP false ceiling in Living & Dining/ });
-    expect(within(group).getAllByRole("radio").map((radio) => (radio as HTMLInputElement).value)).toEqual(["sub_vendor", "in_house"]);
-    expect(within(group).queryByRole("radio", { name: /PMC/ })).not.toBeInTheDocument();
-    const subVendor = within(group).getByRole("radio", { name: /Sub-Vendor pricing mode/ });
-    expect(subVendor).toBeChecked();
-    const pmc = within(group).getByRole("switch", { name: /PMC pricing mode/ });
-    pmc.focus();
-    await user.keyboard(" ");
-    expect(pmc).toBeChecked();
-    expect(pmc).toHaveFocus();
-    expect(within(group).queryByRole("radio")).not.toBeInTheDocument();
+    expect(changed).not.toHaveBeenCalled();
+    pmc.focus(); await user.keyboard(" ");
+    expect(pmc).toBeChecked(); expect(pmc).toHaveFocus();
     expect(rate).toHaveValue("950");
+    expect(rate).toBeDisabled();
     expect(within(pop).getByRole("status", { name: /Amount for/ })).toHaveTextContent("₹950");
-    expect(rate).toBeDisabled();
+    expect(changed.mock.lastCall?.[0][0]).toMatchObject({ classification: "special", pricingMode: "pmc", rateInput: "950" });
     fireEvent.change(rate, { target: { value: "999.25" } });
+    await user.keyboard("{Enter}");
+    expect(pmc).not.toBeChecked(); expect(pmc).toHaveFocus();
+    expect(rate).toHaveValue("1050");
+    expect(within(cove).getByRole("switch", { name: /PMC pricing mode/ })).toBeDisabled();
+    expect(changed).toHaveBeenLastCalledWith([
+      expect.objectContaining({ classification: "standard", pricingMode: "sub_vendor", rateInput: "1050" }),
+      expect.objectContaining({ classification: "standard", pricingMode: "sub_vendor", rateInput: "105" })
+    ]);
+  });
+
+  it.each([null, 0])("blocks PMC when its configured price is %s without changing the line", async pmcRate => {
+    const user = userEvent.setup(); const changed = vi.fn();
+    const line = { ...chosen()[1]!, classification: "standard" as const,
+      modeBaseRatesPaise: { pmc: pmcRate, sub_vendor: 10500, in_house: null } };
+    render(<LiveBuilder initialLines={[line]} onLinesChange={changed} />);
+    const pmc = screen.getByRole("switch", { name: /PMC pricing mode/ });
+    expect(pmc).toBeDisabled();
+    expect(pmc).toHaveAccessibleDescription("Price not configured");
     await user.click(pmc);
-    expect(rate).toHaveValue("1050");
-    expect(within(group).getByRole("radio", { name: /Sub-Vendor pricing mode/ })).toBeChecked();
-    within(group).getByRole("radio", { name: /Sub-Vendor pricing mode/ }).focus();
-    await user.keyboard("{ArrowRight}");
-    expect(within(group).getByRole("radio", { name: /In-house pricing mode/ })).toBeChecked();
-    expect(rate).toHaveValue("1150");
-    fireEvent.change(rate, { target: { value: "999.25" } });
-    await user.click(within(group).getByRole("radio", { name: /In-house pricing mode/ }));
-    expect(rate).toHaveValue("1150");
-    await user.click(pmc); await user.click(pmc);
-    expect(rate).toHaveValue("1150");
-    expect(within(group).getByRole("radio", { name: /In-house pricing mode/ })).toBeChecked();
-    expect(within(pop).getByRole("status", { name: /Amount for/ })).toHaveTextContent("₹1,150");
-    expect(within(cove).getByRole("textbox", { name: /Selling rate/ })).toHaveValue("105");
-    await user.click(within(pop).getByRole("radio", { name: /Standard item type/ }));
-    expect(rate).toHaveValue("1050");
-    expect(within(pop).queryByRole("group", { name: /Pricing mode/ })).not.toBeInTheDocument();
-  });
-
-  it("keeps missing and zero method prices read-only in review", async () => {
-    const user = userEvent.setup();
-    render(<LiveBuilder initialLines={[{ ...chosen()[1]!, classification: "special" }]} />);
-    await user.click(screen.getByRole("radio", { name: /In-house pricing mode/ }));
-    let rate = screen.getByRole("textbox", { name: /Selling rate/ });
-    expect(rate).toBeDisabled();
-    expect(rate).toHaveValue("");
-    expect(screen.getByText("Configured price unavailable")).toBeVisible();
+    const rate = screen.getByRole("textbox", { name: /Selling rate/ });
+    expect(rate).toBeDisabled(); expect(rate).toHaveValue("105");
     fireEvent.change(rate, { target: { value: "71.25" } });
-    expect(rate).toHaveValue("");
-    await user.click(screen.getByRole("switch", { name: /PMC pricing mode/ }));
-    rate = screen.getByRole("textbox", { name: /Selling rate/ });
-    expect(rate).toBeDisabled();
-    expect(rate).toHaveValue("0");
-    expect(screen.getByRole("region", { name: "Items without a positive base price" })).toBeVisible();
+    expect(rate).toHaveValue("105");
+    expect(changed).not.toHaveBeenCalled();
   });
 
-  it("prompts mode-less historical Special items without repricing them and displays saved modes read-only", async () => {
-    const user = userEvent.setup();
+  it("keeps missing historical prices read-only and blocks an unavailable PMC transition", async () => {
+    const changed = vi.fn(); const user = userEvent.setup();
+    const line = { ...chosen()[1]!, persistedId: "saved-cove", classification: "special" as const,
+      pricingMode: "in_house" as const, rateInput: "" };
+    render(<LiveBuilder initialLines={[line]} onLinesChange={changed} />);
+    expect(screen.getByRole("region", { name: "Items without a positive base price" })).toBeVisible();
+    expect(screen.getByText("Configured price unavailable")).toBeVisible();
+    const rate = screen.getByRole("textbox", { name: /Selling rate/ });
+    expect(rate).toBeDisabled(); expect(rate).toHaveValue("");
+    await user.click(screen.getByRole("switch", { name: /PMC pricing mode/ }));
+    expect(changed).not.toHaveBeenCalled();
+  });
+
+  it("preserves mode-less historical prices until a PMC choice and shows saved states read-only", async () => {
+    const user = userEvent.setup(); const changed = vi.fn();
     const initialLines = configuredLineFixtures(catalogue, rooms, new Set(["basket-pop"]), [])
-      .map((line) => ({ ...line, included: true, persistedId: `saved-${line.mainLineId}`, classification: "standard" as const,
+      .map(line => ({ ...line, included: true, persistedId: `saved-${line.mainLineId}`, classification: "special" as const,
         pricingMode: undefined, rateSource: "manual" as const, rateInput: "77.25" }));
-    const view = render(<LiveBuilder initialLines={initialLines} />);
+    const view = render(<LiveBuilder initialLines={initialLines} onLinesChange={changed} />);
     const pop = screen.getByText("POP false ceiling").closest(".configured-estimate-line") as HTMLElement;
-    await user.click(within(pop).getByRole("radio", { name: /Special item type/ }));
-    const group = within(pop).getByRole("group", { name: /Pricing mode/ });
-    expect(group).toBeVisible();
-    expect(within(group).getAllByRole("radio").every((radio) => !(radio as HTMLInputElement).checked)).toBe(true);
+    const pmc = within(pop).getByRole("switch", { name: /PMC pricing mode/ });
+    expect(pmc).not.toBeChecked();
     expect(within(pop).getByRole("textbox", { name: /Selling rate/ })).toHaveValue("77.25");
-    await user.click(within(group).getByRole("radio", { name: /Sub-Vendor pricing mode/ }));
+    expect(changed).not.toHaveBeenCalled();
+    await user.click(pmc);
+    expect(within(pop).getByRole("textbox", { name: /Selling rate/ })).toHaveValue("950");
+    await user.click(pmc);
     expect(within(pop).getByRole("textbox", { name: /Selling rate/ })).toHaveValue("1050");
-    view.rerender(<LiveBuilder key="readonly-mode" initialLines={initialLines.map((line, index) => index ? line : { ...line, pricingMode: "pmc", classification: "special" })} editable={false} />);
+    expect(changed.mock.lastCall?.[0][0]).toMatchObject({ classification: "standard", pricingMode: "sub_vendor" });
+    view.rerender(<LiveBuilder key="readonly-mode" initialLines={initialLines.map((line, index) => index ? line : { ...line, pricingMode: "pmc" })} editable={false} />);
     expect(screen.getAllByRole("radio").every(radio => radio.closest("fieldset")?.disabled)).toBe(true);
     expect(screen.queryByRole("radio", { name: /pricing mode/ })).not.toBeInTheDocument();
-    expect(screen.queryByRole("switch")).not.toBeInTheDocument();
-    expect(screen.getByText("PMC")).toBeVisible();
-    expect(screen.getByText("Not recorded")).toBeVisible();
+    const toggles = screen.getAllByRole("switch");
+    expect(toggles).toHaveLength(2);
+    expect(toggles[0]).toBeChecked(); expect(toggles[1]).not.toBeChecked();
+    for (const toggle of toggles) expect(toggle).toBeDisabled();
     expect(screen.getAllByRole("textbox", { name: /Selling rate/ })[0]).toHaveValue("77.25");
   });
 
@@ -830,9 +827,10 @@ describe("selected item editing regressions", () => {
     expect(onLinesChange).not.toHaveBeenCalled();
     pmc.focus(); await user.keyboard("{Enter}");
     expect(pmc).not.toBeChecked(); expect(pmc).toHaveFocus();
-    expect(screen.getByRole("radio", { name: /Sub-Vendor pricing mode/ })).toBeChecked();
+    expect(screen.getByRole("switch", { name: /PMC pricing mode/ })).not.toBeChecked();
     expect(screen.getByRole("textbox", { name: /Selling rate/ })).toHaveValue("1050");
     expect(onLinesChange).toHaveBeenCalledTimes(1);
+    expect(onLinesChange.mock.lastCall?.[0][0]).toMatchObject({ classification: "standard", pricingMode: "sub_vendor", rateSource: "configuration" });
   });
 
   it("keeps prior modes separate across rooms and survives filtering and collapsed rows", async () => {
@@ -847,7 +845,7 @@ describe("selected item editing regressions", () => {
     await user.click(within(screen.getByRole("navigation", { name: "Rooms" })).getByRole("button", { name: /Bedroom/ }));
     await user.click(screen.getByRole("switch", { name: /PMC pricing mode/ }));
     await user.click(screen.getByRole("switch", { name: /PMC pricing mode/ }));
-    expect(screen.getByRole("radio", { name: /Sub-Vendor pricing mode/ })).toBeChecked();
+    expect(screen.getByRole("switch", { name: /PMC pricing mode/ })).not.toBeChecked();
     await user.click(within(screen.getByRole("navigation", { name: "Rooms" })).getByRole("button", { name: /Living & Dining/ }));
     const search = screen.getByRole("searchbox", { name: /Search/ });
     await user.type(search, "not present");
@@ -858,7 +856,7 @@ describe("selected item editing regressions", () => {
     await user.click(screen.getByRole("button", { name: /Expand POP \/ Gypsum/ }));
     expect(screen.getByRole("switch", { name: /PMC pricing mode/ })).toBeChecked();
     await user.click(screen.getByRole("switch", { name: /PMC pricing mode/ }));
-    expect(screen.getByRole("radio", { name: /In-house pricing mode/ })).toBeChecked();
+    expect(screen.getByRole("switch", { name: /PMC pricing mode/ })).not.toBeChecked();
     expect(screen.getByRole("textbox", { name: /Selling rate/ })).toHaveValue("1150");
   });
 
@@ -873,7 +871,7 @@ describe("selected item editing regressions", () => {
     expect(screen.getByRole("textbox", { name: /Selling rate/ })).toHaveValue("950");
     expect(onLinesChange).toHaveBeenCalledTimes(1);
     await user.click(screen.getByRole("switch", { name: /PMC pricing mode/ }));
-    expect(screen.getByRole("radio", { name: /Sub-Vendor pricing mode/ })).toBeChecked();
+    expect(screen.getByRole("switch", { name: /PMC pricing mode/ })).not.toBeChecked();
     expect(screen.getByRole("textbox", { name: /Selling rate/ })).toHaveValue("1050");
   });
 
@@ -891,28 +889,35 @@ describe("selected item editing regressions", () => {
     expect(onLinesChange.mock.lastCall?.[0][0]).toMatchObject({ pricingMode: "in_house", rateSource: "configuration", rateInput: "12", selectedInHouseComponentIds: ["labor"] });
   });
 
-  it("provides separate keyboard radio groups for included Main Lines and temporary items, then displays read-only types", async () => {
+  it("omits Type in editable and read-only rows while preserving Main Line and temporary-item classifications", async () => {
     const user = userEvent.setup();
     const initialLines = configuredLineFixtures(catalogue, rooms, new Set(["basket-pop"]), [])
       .map((line) => ({ ...line, included: true, classification: line.itemType === "temporary" ? "special" as const : undefined }));
-    const view = render(<LiveBuilder initialLines={initialLines} />);
+    const changed = vi.fn();
+    const view = render(<LiveBuilder initialLines={initialLines} onLinesChange={changed} />);
     const pop = screen.getByText("POP false ceiling").closest(".configured-estimate-line") as HTMLElement;
     const cove = screen.getByText("Cove in Gypsum").closest(".configured-estimate-line") as HTMLElement;
-    const popStandard = within(pop).getByRole("radio", { name: /Standard item type for POP \/ Gypsum, NA, POP false ceiling in Living & Dining/ });
-    const coveSpecial = within(cove).getByRole("radio", { name: /Special item type for POP \/ Gypsum, NA, Cove in Gypsum in Living & Dining/ });
-    expect(popStandard).toBeChecked();
-    expect(coveSpecial).toBeChecked();
-    popStandard.focus();
-    await user.keyboard("{ArrowRight}");
-    expect(within(pop).getByRole("radio", { name: /Special item type for POP \/ Gypsum, NA, POP false ceiling in Living & Dining/ })).toBeChecked();
-    expect(coveSpecial).toBeChecked();
+    for (const row of [pop, cove]) {
+      expect(within(row).queryByText(/^(Type|Standard|Special)$/)).not.toBeInTheDocument();
+      expect(within(row).queryByRole("radio", { name: /item type/ })).not.toBeInTheDocument();
+      expect(row.querySelector(".configured-estimate-line__type-group")).not.toBeInTheDocument();
+      expect(within(row).getByRole("textbox", { name: /Selling rate/ })).toBeDisabled();
+    }
+    expect(changed).not.toHaveBeenCalled();
+    await user.click(within(pop).getByRole("button", { name: /Increase quantity/ }));
+    expect(changed).toHaveBeenLastCalledWith([
+      expect.objectContaining({ classification: undefined, pricingMode: "sub_vendor", quantity: 2, rateInput: "1050" }),
+      expect.objectContaining({ classification: "special", pricingMode: "sub_vendor", quantity: 1, rateInput: "105" })
+    ]);
 
     view.rerender(<LiveBuilder key="classification-read-only" initialLines={initialLines} editable={false} />);
     const readOnlyPop = screen.getByText("POP false ceiling").closest(".configured-estimate-line") as HTMLElement;
     const readOnlyCove = screen.getByText("Cove in Gypsum").closest(".configured-estimate-line") as HTMLElement;
-    expect(within(readOnlyPop).getByText("Type").parentElement).toHaveTextContent("TypeStandard");
-    expect(within(readOnlyCove).getByText("Type").parentElement).toHaveTextContent("TypeSpecial");
-    expect(within(readOnlyPop).queryByRole("radio", { name: /item type/ })).not.toBeInTheDocument();
+    for (const row of [readOnlyPop, readOnlyCove]) {
+      expect(within(row).queryByText(/^(Type|Standard|Special)$/)).not.toBeInTheDocument();
+      expect(within(row).queryByRole("radio", { name: /item type/ })).not.toBeInTheDocument();
+      expect(within(row).getByRole("spinbutton", { name: /Quantity/ })).toBeDisabled();
+    }
     within(readOnlyPop).getAllByRole("radio", { name: /tier for/ }).forEach(option => expect(option).toBeDisabled());
   });
 

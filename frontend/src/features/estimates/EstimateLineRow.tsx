@@ -6,31 +6,34 @@ import interiorImage from "../../assets/projects-living-room.webp";
 import { EstimateBuilderGlyph } from "./EstimateBuilderShell";
 
 /** Shared presentation only; each role supplies its permitted controls and values. */
-export function EstimateLineLayout({ included, choice, tier, type, pricing, fields, children, className = "", label }: {
+export function EstimateLineLayout({ included, choice, tier, type, pricing, pricingBeforeTier = false, fields, children, className = "", label }: {
   included: boolean;
   choice: ReactNode;
   tier?: ReactNode;
   type?: ReactNode;
   pricing?: ReactNode;
+  pricingBeforeTier?: boolean;
   fields: ReactNode;
   children?: ReactNode;
   className?: string;
   label?: string;
 }) {
+  const pricingGroup = pricing ? <div className="configured-estimate-line__group configured-estimate-line__pricing-group">{pricing}</div> : null;
   return <div className={`configured-estimate-line configured-estimate-line--reference${included ? " configured-estimate-line--included" : ""}${className ? ` ${className}` : ""}`}
     role={label ? "group" : undefined} aria-label={label}>
     <div className="configured-estimate-line__primary">
       {choice}
+      {pricingBeforeTier ? pricingGroup : null}
       {tier ? <div className="configured-estimate-line__group configured-estimate-line__tier-group">{tier}</div> : null}
       {type ? <div className="configured-estimate-line__group configured-estimate-line__type-group">{type}</div> : null}
-      {pricing ? <div className="configured-estimate-line__group configured-estimate-line__pricing-group">{pricing}</div> : null}
+      {!pricingBeforeTier ? pricingGroup : null}
       <div className="configured-estimate-line__fields">{fields}</div>
     </div>
     <div className="configured-estimate-line__details">{children}</div>
   </div>;
 }
 
-export function EstimateLineChoice({ name, unit, included, disabled, onToggle, accessibleLabel, children }: {
+export function EstimateLineChoice({ name, included, disabled, onToggle, accessibleLabel, children }: {
   name: string;
   unit: string;
   included: boolean;
@@ -45,7 +48,7 @@ export function EstimateLineChoice({ name, unit, included, disabled, onToggle, a
     <span className="configured-estimate-line__thumb">
       <img src={/ceiling|cove|gypsum/i.test(name) ? ceilingImage : interiorImage} alt="" loading="lazy" />
     </span>
-    <span className="configured-estimate-line__copy"><strong>{name}</strong><small>{unit}</small>{children}</span>
+    <span className="configured-estimate-line__copy"><strong>{name}</strong>{children}</span>
   </label>;
 }
 

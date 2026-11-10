@@ -3,7 +3,7 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { ConfiguredEstimateBuilder } from "./ConfiguredEstimateBuilder";
-import { buildConfiguredLines, configuredLineAmountPaise, createConfiguredLine, updateConfiguredLinePricing } from "./configuredEstimate";
+import { buildConfiguredLines, configuredLineAmountPaise, createConfiguredLine, updateConfiguredLinePricing, type ConfiguredLineDraft } from "./configuredEstimate";
 import type { EstimationCatalogue } from "./estimationCatalogueApi";
 
 const room = { id: "living", typeId: "living", label: "Living room", sqft: 100 };
@@ -29,10 +29,10 @@ const catalogue: EstimationCatalogue = { ineligibleLineCount: 0, items: [{
   }]
 }] };
 
-function SellingPriceBuilder() {
-  const [lines, setLines] = useState(() => ["paint", "primer"].map((mainLineId, index) => ({
+function SellingPriceBuilder({ paintClassification = "standard" }: { paintClassification?: "standard" | "special" }) {
+  const [lines, setLines] = useState<ConfiguredLineDraft[]>(() => ["paint", "primer"].map((mainLineId, index) => ({
     ...createConfiguredLine(catalogue, room, { mainLineId, basketId: "finishes", subBasketId: "walls" })!,
-    included: true, quantity: index + 2
+    included: true, quantity: index + 2, classification: mainLineId === "paint" ? paintClassification : "standard" as const
   })));
   return <ConfiguredEstimateBuilder rooms={[room]} activeRoomId={room.id} onSelectRoom={vi.fn()} catalogue={catalogue}
     selectedMainBasketIds={baskets} lines={lines} editable roomIcons={{}}
@@ -50,18 +50,16 @@ function paintRow() {
 describe("configured estimate selling prices", () => {
   it("keeps compact row controls in reading order and exposes unavailable-tier guidance", async () => {
     const user = userEvent.setup();
-    render(<SellingPriceBuilder />);
+    render(<SellingPriceBuilder paintClassification="special" />);
     const paint = paintRow();
-    await user.click(paint.getByRole("radio", { name: /Special item type/ }));
+    expect(paint.queryByRole("group", { name: /Item type/ })).not.toBeInTheDocument();
     expect(paint.getByRole("radio", { name: /Signature tier for/ })).toBeChecked();
     expect(paint.getByRole("radio", { name: /Functional tier/ })).toBeDisabled();
     const inclusion = paint.getByRole("checkbox", { name: "Include Wall painting in Living room" });
     inclusion.focus();
     const controls = [
-      paint.getByRole("radio", { name: /Signature tier for/ }),
-      paint.getByRole("radio", { name: /Special item type/ }),
       paint.getByRole("switch", { name: /PMC pricing mode/ }),
-      paint.getByRole("radio", { name: /Sub-Vendor pricing mode/ }),
+      paint.getByRole("radio", { name: /Signature tier for/ }),
       paint.getByRole("button", { name: /Decrease quantity/ }),
       paint.getByRole("spinbutton", { name: /Quantity/ }),
       paint.getByRole("button", { name: /Increase quantity/ }),
@@ -94,7 +92,7 @@ describe("configured estimate selling prices", () => {
 
   it("blocks manual selling prices and adopts the final price on mode and tier changes", async () => {
     const user = userEvent.setup();
-    render(<SellingPriceBuilder />);
+    render(<SellingPriceBuilder paintClassification="special" />);
     const paint = paintRow();
     const rate = paint.getByRole("textbox", { name: /Selling rate/ });
     expect(rate).toBeDisabled();
@@ -105,7 +103,6 @@ describe("configured estimate selling prices", () => {
     expect(paint.getByRole("status", { name: /Amount for/ })).toHaveTextContent("₹750");
     await user.click(screen.getByRole("button", { name: /Refresh available items/ }));
     expect(rate).toHaveValue("250");
-    await user.click(paint.getByRole("radio", { name: /Special item type/ }));
     const pmc = paint.getByRole("switch", { name: /PMC pricing mode/ });
     pmc.focus();
     await user.keyboard(" ");
@@ -116,13 +113,13 @@ describe("configured estimate selling prices", () => {
     await user.click(paint.getByRole("radio", { name: /Premium tier/ }));
     expect(rate).toHaveValue("240");
     await user.click(pmc);
-    expect(paint.getByRole("radio", { name: /Sub-Vendor pricing mode/ })).toBeChecked();
+    expect(pmc).not.toBeChecked();
     expect(rate).toHaveValue("300");
     expect(paint.getByRole("status", { name: /Amount for/ })).toHaveTextContent("₹900");
-    await user.click(paint.getByRole("radio", { name: /In-house pricing mode/ }));
-    expect(rate).toHaveValue("350");
+    await user.click(pmc);
+    expect(rate).toHaveValue("240");
     expect(paint.queryByText(/Configured price|Base price/)).not.toBeInTheDocument();
-    expect(paint.getByRole("status", { name: /Amount for/ })).toHaveTextContent("₹1050");
+    expect(paint.getByRole("status", { name: /Amount for/ })).toHaveTextContent("₹720");
     expect(paint.queryByText(/base price|margin|profit|%/i)).not.toBeInTheDocument();
   });
 });

@@ -2527,9 +2527,9 @@
 
 .configured-estimate-line--included { border-color: #b9d1b5; }
 
-.configured-estimate-line__primary { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 0; min-width: 0; }
+.configured-estimate-line__primary { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 8px; min-width: 0; }
 
-.configured-estimate-line__choice { display: grid; grid-template-columns: 20px 36px minmax(0, 1fr); align-items: center; flex: 1 1 180px; gap: 7px; min-width: 0; margin: 0; padding-right: 8px; cursor: pointer; }
+.configured-estimate-line__choice { display: grid; grid-template-columns: 20px 36px minmax(0, 1fr); align-items: center; flex: 0 1 280px; gap: 7px; min-width: 0; max-width: 100%; margin: 0; padding-right: 8px; cursor: pointer; }
 
 .configured-estimate-line__include { inline-size: 20px; block-size: 20px; min-inline-size: 20px; min-block-size: 20px; margin: 0; accent-color: #25642d; }
 
@@ -2545,11 +2545,9 @@
 
 .configured-estimate-line__group { min-width: 0; padding-inline: 4px; border-left: 1px solid #d9e1d7; }
 
-.configured-estimate-line__tier-group { flex: 0 1 auto; }
-
-.configured-estimate-line__type-group { flex: 0 1 auto; }
-
-.configured-estimate-line__pricing-group { flex: 0 1 auto; }
+.configured-estimate-line__tier-group,
+.configured-estimate-line__type-group,
+.configured-estimate-line__pricing-group { flex: 0 0 auto; max-width: 100%; }
 .configured-estimate-line__pricing-group:empty { display: none; }
 
 .configured-estimate-line--reference .estimate-classification { display: block; min-width: 0; margin: 0; padding: 0; border: 0; }
@@ -2583,7 +2581,7 @@
 
 .configured-estimate-line__pmc-switch[aria-checked="true"] .configured-estimate-line__pmc-track { justify-content: flex-end; background: #25642d; }
 
-.configured-estimate-line__fields { display: grid; grid-template-columns: minmax(78px, 1fr) minmax(90px, 1fr) minmax(90px, 1fr) 24px; align-items: end; flex: 1 1 304px; gap: 4px; min-width: 0; padding-left: 8px; border-left: 1px solid #d9e1d7; }
+.configured-estimate-line__fields { display: grid; grid-template-columns: 96px 112px 120px 24px; align-items: end; flex: 0 0 auto; gap: 4px; width: max-content; min-width: 0; max-width: 100%; margin-inline-start: auto; padding-left: 8px; border-left: 1px solid #d9e1d7; }
 
 .configured-estimate-line__fields label,
 .configured-estimate-line__fields .configured-estimate-line__rate,
@@ -2593,6 +2591,7 @@
 .configured-estimate-line__fields .configured-estimate-line__rate input,
 .configured-estimate-line__fields .configured-estimate-line__rate > output { display: block; width: 100%; min-width: 0; height: 30px; min-height: 30px; min-block-size: 30px; padding: 4px 6px; border: 1px solid #d5dce5; border-radius: 6px; color: #172344; background: #fdfefc; font: inherit; font-size: 13px; line-height: 20px; }
 .configured-estimate-line__fields .configured-estimate-line__rate > output { height: auto; line-height: 20px; overflow-wrap: anywhere; }
+.configured-estimate-line__fields .configured-estimate-line__rate input:disabled { color: #5b6b84; -webkit-text-fill-color: #5b6b84; background: #f0f2ed; cursor: not-allowed; opacity: 1; }
 
 .configured-estimate-line__stepper { display: grid; grid-template-columns: 22px minmax(0, 1fr) 22px; height: 30px; border: 1px solid #d5dce5; border-radius: 6px; background: #fdfefc; }
 
@@ -2676,29 +2675,17 @@
 
 .configured-estimate-line__menu--floating { position: fixed; top: 0; left: 0; z-index: 80; max-width: calc(100vw - 16px); font-family: var(--font-interface); }
 
-/* Intrinsic group widths keep Standard/read-only pricing from reserving empty space. */
-@media (pointer: fine) {
-  @container estimate-line (min-width: 1050px) {
-    .configured-estimate-line__primary:has(> .configured-estimate-line__tier-group):has(> .configured-estimate-line__type-group):has(> .configured-estimate-line__pricing-group) {
-      display: grid;
-      grid-template-columns: minmax(130px, 1fr) max-content max-content max-content clamp(304px, 26cqi, 360px);
-    }
-    .configured-estimate-line__primary:has(> .configured-estimate-line__tier-group):has(> .configured-estimate-line__type-group):has(> .configured-estimate-line__pricing-group:empty) {
-      grid-template-columns: minmax(130px, 1fr) max-content max-content clamp(304px, 26cqi, 360px);
-    }
-    .configured-estimate-line__choices { flex-wrap: nowrap; }
-  }
-}
+/* Keep intrinsic controls together; wrap whole groups before they collide. */
 
 @container estimate-line (max-width: 700px) {
   .configured-estimate-line__choice { flex-basis: 100%; padding: 0; }
   .configured-estimate-line__group { padding-left: 0; border-left: 0; }
-  .configured-estimate-line__fields { flex-basis: 100%; padding-left: 0; border-left: 0; }
+  .configured-estimate-line__fields { margin-inline-start: 0; padding-left: 0; border-left: 0; }
 }
 
 @container estimate-line (max-width: 480px) {
   .configured-estimate-line__group { flex-basis: 100%; padding-right: 0; }
-  .configured-estimate-line__fields { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .configured-estimate-line__fields { width: min(100%, 260px); grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
   .configured-estimate-line__amount { grid-column: 1 / -1; grid-row: 2; padding-right: 54px; }
   .configured-estimate-line__more { grid-column: 2; grid-row: 2; justify-self: end; }
   .configured-estimate-line__copy strong { font-size: 16px; }
@@ -2727,9 +2714,8 @@
   .configured-estimate-line__stepper { grid-template-columns: 44px minmax(0, 1fr) 44px; }
   .estimate-workspace.estimator-dashboard .configured-estimate-line__stepper input,
   .configured-estimate-line__fields .configured-estimate-line__rate input { font-size: 16px; }
-  .configured-estimate-line__fields { flex-basis: 400px; }
   .configured-estimate-line__more > button { width: 44px; }
-  .configured-estimate-line__fields { grid-template-columns: minmax(120px, 130px) minmax(100px, 130px) minmax(100px, 128px) 44px; }
+  .configured-estimate-line__fields { grid-template-columns: 130px 120px 128px 44px; }
   .configured-estimate-line__fields .configured-estimate-line__rate > output { height: auto; }
   .configured-estimate-line__menu button { min-height: 44px; }
   @container estimate-line (max-width: 480px) {

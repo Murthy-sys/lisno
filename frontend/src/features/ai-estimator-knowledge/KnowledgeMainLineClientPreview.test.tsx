@@ -61,6 +61,9 @@ describe("KnowledgeMainLineClientPreview", () => {
     expect(screen.getByRole("dialog", { name: "Client view" })).toHaveAttribute("aria-modal", "true");
     expect(screen.getByText("Preview uses saved configuration. Save your changes to update it.")).toBeVisible();
     expect(screen.getByText("POP / Gypsum / Ceilings")).toBeVisible();
+    expect(within(row()).queryByText("sq-ft", { exact: true })).not.toBeInTheDocument();
+    expect(within(row()).getByText("Qty (sq-ft)")).toBeVisible();
+    expect(within(row()).getByText("Rate (₹/sq-ft)")).toBeVisible();
     expect(within(row()).getByLabelText("Price for POP false ceiling")).toHaveTextContent("₹101.25");
     expect(within(row()).getByLabelText("Amount for POP false ceiling")).toHaveTextContent("After save");
     expect(screen.queryByText(/918\.27|91,827|Configured price|Base reference/)).not.toBeInTheDocument();
