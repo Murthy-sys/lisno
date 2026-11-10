@@ -69,7 +69,7 @@ describe("Mode pending publication lifecycle", () => {
     expect(panel.latest()?.groups.map(({ key, label }) => ({ key, label }))).toEqual([
       { key: "in_house:inclusions", label: "Execution · In-house · Inclusions" },
       { key: "in_house:exclusions", label: "Execution · In-house · Exclusions" },
-      { key: "mode:paragraph", label: "Mode · PMC · Description" }
+      { key: "mode:paragraph", label: "Mode · Description" }
     ]);
     expect(panel.latest()?.groups[0]?.entries.find(({ title }) => title === "Supplier")?.fields)
       .toContainEqual({ key: "selected", label: "State", value: "Selected" });

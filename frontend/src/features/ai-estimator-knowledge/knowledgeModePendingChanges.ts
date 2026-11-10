@@ -152,7 +152,7 @@ export function projectKnowledgeModePendingChanges(input: KnowledgeModePendingCh
       oldInHouse
     );
     const currentDescription = input.pendingDescription ?? description(after, input.mainLineName, pmc, inHouse);
-    if (expectedDescription.trim() !== currentDescription.trim()) add("mode:paragraph", "Mode · PMC · Description", [{ key: "mode:paragraph", title: "Description", kind: "updated", fields: [field("paragraph", "Description", currentDescription)], ...(!currentDescription.trim() ? { incomplete: true } : {}) }]);
+    if (expectedDescription.trim() !== currentDescription.trim()) add("mode:paragraph", "Mode · Description", [{ key: "mode:paragraph", title: "Description", kind: "updated", fields: [field("paragraph", "Description", currentDescription)], ...(!currentDescription.trim() ? { incomplete: true } : {}) }]);
     const oldComponents = parseInHouseComponents(before.inHouseComponents).components;
     const components = parseInHouseComponents(after.inHouseComponents).components;
     for (const component of [...oldComponents.filter((entry) => !components.some(({ id }) => id === entry.id)), ...components]) {

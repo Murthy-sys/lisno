@@ -259,6 +259,10 @@ describe("KnowledgeModeConfigurationBuilder", () => {
     else expect(screen.queryByText("Read-only revision")).not.toBeInTheDocument();
     const pmcSelection = screen.getByRole("checkbox", { name: "PMC" });
     const executionSelection = screen.getByRole("checkbox", { name: "Execution" });
+    const description = screen.getByRole("heading", { name: "Description" });
+    expect(description).toBeVisible();
+    expect(pmcSelection).toBeChecked();
+    expect(executionSelection).not.toBeChecked();
     await user.click(executionSelection);
     const pmcToggle = screen.getByRole("button", { name: "Collapse PMC" });
     const executionToggle = screen.getByRole("button", { name: "Collapse Execution" });
@@ -283,7 +287,9 @@ describe("KnowledgeModeConfigurationBuilder", () => {
     expect(executionBody).toHaveAttribute("hidden");
     expect(pmcSelection).toBeChecked();
     expect(executionSelection).toBeChecked();
-    expect(screen.queryByRole("heading", { name: "Description" })).not.toBeInTheDocument();
+    expect(description).toBeVisible();
+    expect(pmcBody).not.toContainElement(description);
+    expect(executionBody).not.toContainElement(description);
 
     await user.keyboard(" ");
     expect(executionToggle).toHaveAttribute("aria-expanded", "true");
@@ -293,9 +299,34 @@ describe("KnowledgeModeConfigurationBuilder", () => {
     await user.click(pmcSelection);
     expect(screen.getByRole("button", { name: "Collapse PMC" })).toHaveAttribute("aria-expanded", "true");
     expect(pmcBody).toBeVisible();
-    expect(within(pmcBody!).getByRole("heading", { name: "Description" })).toBeVisible();
+    expect(description).toBeVisible();
+    await user.click(pmcSelection);
+    expect(pmcSelection).not.toBeChecked();
+    expect(executionSelection).toBeChecked();
+    expect(description).toBeVisible();
+    await user.click(executionSelection);
+    expect(pmcSelection).not.toBeChecked();
+    expect(executionSelection).not.toBeChecked();
+    expect(screen.getAllByRole("heading", { name: "Description" })).toEqual([description]);
+    expect(description).toBeVisible();
     expect(onPayload).not.toHaveBeenCalled();
     expect(onDirty).not.toHaveBeenCalled();
+  });
+
+  it("focuses common Description validation without enabling PMC", async () => {
+    const user = userEvent.setup();
+    render(<Harness initialPayload={{ modeDescription: "Shared wording.", pmcMinimumMarginBps: 1000, pmcMarginBps: 1500 }}
+      serverIssues={[{ path: "modeDescription", message: "Review the shared description." }]} />);
+    const pmcSelection = screen.getByRole("checkbox", { name: "PMC" });
+    await user.click(pmcSelection);
+    expect(pmcSelection).not.toBeChecked();
+    await user.click(screen.getByRole("button", { name: "Review the shared description." }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Edit Description" })).toHaveFocus());
+    expect(pmcSelection).not.toBeChecked();
+    await user.click(screen.getByRole("button", { name: "Attempt save" }));
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Description" })).toHaveFocus());
+    expect(pmcSelection).not.toBeChecked();
+    expect(screen.getByRole("textbox", { name: "Description" })).toHaveAccessibleDescription(/Review the shared description/);
   });
 
   it.each([false, true])("keeps both Execution sources independently selectable and keyboard collapsible (read-only: %s)", async (readOnly) => {

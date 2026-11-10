@@ -40,6 +40,40 @@
   outline-offset: -4px;
 }
 
+.knowledge-mode-navigation { min-inline-size: 0; }
+.knowledge-section-select__return { margin-block-start: 8px; }
+.knowledge-mode-radio-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 20px;
+  min-inline-size: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.knowledge-mode-radio-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-block-size: 44px;
+  color: var(--role-ink, var(--color-text));
+  cursor: pointer;
+}
+.ui-app-shell[data-role] .knowledge-page .knowledge-mode-radio-option input {
+  appearance: auto;
+  inline-size: 18px;
+  block-size: 18px;
+  min-inline-size: 0;
+  min-block-size: 0;
+  margin: 0;
+  accent-color: var(--button-primary-bg);
+  box-shadow: none;
+}
+.knowledge-mode-radio-option input:focus-visible {
+  outline: 2px solid var(--button-primary-bg);
+  outline-offset: 3px;
+}
+
 /* All remaining rules require a requested tab, never Overview or Mode. */
 .knowledge-page--item-workspace[data-reference-section] .knowledge-workspace-layout {
   grid-template-columns: minmax(0, 1fr) minmax(14rem, 16rem);

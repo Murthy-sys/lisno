@@ -324,6 +324,15 @@ function mockConfiguredModeSections(
   });
 }
 
+async function selectWorkspaceMode(user: ReturnType<typeof userEvent.setup>, name: string) {
+  const parent = await screen.findByRole("tab", { name: "Mode" });
+  if (parent.getAttribute("aria-selected") !== "true") {
+    await user.click(parent);
+    if (screen.queryByRole("alertdialog", { name: "Save changes before leaving?" })) return;
+  }
+  await user.click(await within(screen.getByRole("radiogroup", { name: "Mode selection" })).findByRole("radio", { name }));
+}
+
 function mockTierModeWorkspace(tiers = ["signature", "premium", "functional"]) {
   let aggregateVersion = item.version;
   let overview: KnowledgeJsonObject = { uomId: squareFoot.id, applicableTiers: tiers };
@@ -362,7 +371,7 @@ describe("Configuration Mode tiers", () => {
     storage.changeOverview([]);
     await queryClient.cancelQueries({ queryKey: knowledgeQueryKeys.section("line-1", "revision-1", "overview") });
     await act(async () => { queryClient.setQueryData(knowledgeQueryKeys.section("line-1", "revision-1", "overview"), section("overview", { uomId: squareFoot.id, applicableTiers: [] }, 3)); });
-    await waitFor(() => expect(screen.queryByRole("tab", { name: "Premium Mode" })).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole("radio", { name: "Premium Mode" })).not.toBeInTheDocument());
     expect(screen.getByRole("tab", { name: "Mode" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("tabpanel", { name: "Mode" })).toBeVisible();
     expect(knowledgeApi.updateKnowledgeSection).not.toHaveBeenCalled();
@@ -371,9 +380,9 @@ describe("Configuration Mode tiers", () => {
   it("saves Premium independently and restores it after hiding and re-enabling the tier", async () => {
     const user = userEvent.setup(); const storage = mockTierModeWorkspace();
     const view = renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
-    await user.click(await screen.findByRole("tab", { name: "Signature Mode" }));
+    await selectWorkspaceMode(user, "Signature Mode");
     expect(await screen.findByRole("spinbutton", { name: "Max. PMC Margin (%)" })).toHaveValue(18);
-    await user.click(screen.getByRole("tab", { name: "Premium Mode" }));
+    await selectWorkspaceMode(user, "Premium Mode");
     const pmc = await screen.findByRole("checkbox", { name: "PMC" });
     if (!(pmc as HTMLInputElement).checked) await user.click(pmc);
     expect(screen.getByRole("spinbutton", { name: "Max. PMC Margin (%)" })).toHaveValue(null);
@@ -394,15 +403,15 @@ describe("Configuration Mode tiers", () => {
     await user.click(screen.getByRole("tab", { name: "Overview" }));
     await user.click(screen.getByRole("checkbox", { name: "Premium" }));
     await user.click(screen.getByRole("button", { name: "Save Overview" }));
-    await waitFor(() => expect(screen.queryByRole("tab", { name: "Premium Mode" })).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole("radio", { name: "Premium Mode" })).not.toBeInTheDocument());
     expect(storage.stored.get("premium:advanced")).toMatchObject({ pmcMarginBps: 1600 });
     view.unmount();
     renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
     await screen.findByRole("checkbox", { name: "Premium" });
-    expect(screen.queryByRole("tab", { name: "Premium Mode" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("radio", { name: "Premium Mode" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("checkbox", { name: "Premium" }));
     await user.click(screen.getByRole("button", { name: "Save Overview" }));
-    await user.click(await screen.findByRole("tab", { name: "Premium Mode" }));
+    await selectWorkspaceMode(user, "Premium Mode");
     expect(await screen.findByRole("spinbutton", { name: "Max. PMC Margin (%)" })).toHaveValue(16);
     expect(storage.overview().applicableTiers).toEqual(["signature", "premium", "functional"]);
   });
@@ -414,36 +423,36 @@ describe("Configuration Mode tiers", () => {
     const gate = new Promise<void>(resolve => { finishSave = resolve; });
     vi.mocked(knowledgeApi.updateKnowledgeSection).mockImplementation(async (...args) => { await gate; return save(...args); });
     renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
-    await user.click(await screen.findByRole("tab", { name: "Premium Mode" }));
+    await selectWorkspaceMode(user, "Premium Mode");
     const pmc = await screen.findByRole("checkbox", { name: "PMC" });
     if (!(pmc as HTMLInputElement).checked) await user.click(pmc);
     fireEvent.change(screen.getByRole("spinbutton", { name: "Min. PMC Margin (%)" }), { target: { value: "10" } });
     fireEvent.change(screen.getByRole("spinbutton", { name: "Max. PMC Margin (%)" }), { target: { value: "16" } });
     await user.click(screen.getByRole("button", { name: "Save Premium Mode" }));
     await screen.findByRole("button", { name: "Saving Premium Mode…" });
-    await user.click(screen.getByRole("tab", { name: "Functional Mode" }));
-    expect(screen.getByRole("tab", { name: "Premium Mode" })).toHaveAttribute("aria-selected", "true");
+    await selectWorkspaceMode(user, "Functional Mode");
+    expect(screen.getByRole("radio", { name: "Premium Mode" })).toBeChecked();
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
     await act(async () => { finishSave(); });
     await waitFor(() => expect(storage.stored.get("premium:advanced")).toMatchObject({ pmcMarginBps: 1600 }));
-    await user.click(screen.getByRole("tab", { name: "Functional Mode" }));
-    expect(await screen.findByRole("tabpanel", { name: "Functional Mode" })).toBeVisible();
+    await selectWorkspaceMode(user, "Functional Mode");
+    expect(await screen.findByRole("region", { name: "Functional Mode" })).toBeVisible();
     expect(storage.stored.get("functional:advanced")).toBeUndefined();
   });
 
   it("keeps a dirty tier open when a remote Overview update hides it", async () => {
     const user = userEvent.setup(); mockTierModeWorkspace();
     const { queryClient } = renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
-    await user.click(await screen.findByRole("tab", { name: "Premium Mode" }));
+    await selectWorkspaceMode(user, "Premium Mode");
     const pmc = await screen.findByRole("checkbox", { name: "PMC" });
     if (!(pmc as HTMLInputElement).checked) await user.click(pmc);
     fireEvent.change(screen.getByRole("spinbutton", { name: "Max. PMC Margin (%)" }), { target: { value: "16" } });
     await act(async () => { queryClient.setQueryData(knowledgeQueryKeys.section("line-1", "revision-1", "overview"), section("overview", { uomId: squareFoot.id, applicableTiers: [] }, 3)); });
-    expect(screen.getByRole("tab", { name: "Premium Mode" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("radio", { name: "Premium Mode" })).toBeChecked();
     expect(screen.getByRole("spinbutton", { name: "Max. PMC Margin (%)" })).toHaveValue(16);
     await user.click(screen.getByRole("tab", { name: "Overview" }));
     await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Discard changes" }));
-    await waitFor(() => expect(screen.queryByRole("tab", { name: "Premium Mode" })).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByRole("radio", { name: "Premium Mode" })).not.toBeInTheDocument());
     expect(screen.getByRole("tab", { name: "Mode" })).toBeVisible();
     expect(knowledgeApi.updateKnowledgeSection).not.toHaveBeenCalled();
   });
@@ -451,7 +460,7 @@ describe("Configuration Mode tiers", () => {
   it("recovers a shared-version conflict using only the selected tier", async () => {
     const user = userEvent.setup(); const storage = mockTierModeWorkspace();
     renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
-    await user.click(await screen.findByRole("tab", { name: "Premium Mode" }));
+    await selectWorkspaceMode(user, "Premium Mode");
     const pmc = await screen.findByRole("checkbox", { name: "PMC" });
     if (!(pmc as HTMLInputElement).checked) await user.click(pmc);
     fireEvent.change(screen.getByRole("spinbutton", { name: "Min. PMC Margin (%)" }), { target: { value: "10" } });
@@ -470,18 +479,18 @@ describe("Configuration Mode tiers", () => {
   it("guards pending Premium edits before switching to another tier", async () => {
     const user = userEvent.setup(); const storage = mockTierModeWorkspace();
     renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
-    await user.click(await screen.findByRole("tab", { name: "Premium Mode" }));
+    await selectWorkspaceMode(user, "Premium Mode");
     const pmc = await screen.findByRole("checkbox", { name: "PMC" });
     if (!(pmc as HTMLInputElement).checked) await user.click(pmc);
     fireEvent.change(screen.getByRole("spinbutton", { name: "Max. PMC Margin (%)" }), { target: { value: "16" } });
-    await user.click(screen.getByRole("tab", { name: "Functional Mode" }));
+    await selectWorkspaceMode(user, "Functional Mode");
     const guard = screen.getByRole("alertdialog", { name: "Save changes before leaving?" });
-    expect(screen.getByRole("tab", { name: "Premium Mode" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("radio", { name: "Premium Mode" })).toBeChecked();
     await user.click(within(guard).getByRole("button", { name: "Stay here" }));
     expect(screen.getByRole("spinbutton", { name: "Max. PMC Margin (%)" })).toHaveValue(16);
-    await user.click(screen.getByRole("tab", { name: "Functional Mode" }));
+    await selectWorkspaceMode(user, "Functional Mode");
     await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Discard changes" }));
-    expect(await screen.findByRole("tabpanel", { name: "Functional Mode" })).toBeVisible();
+    expect(await screen.findByRole("region", { name: "Functional Mode" })).toBeVisible();
     expect(storage.stored.get("premium:advanced")).toBeUndefined();
     expect(storage.stored.get("functional:advanced")).toBeUndefined();
     expect(knowledgeApi.updateKnowledgeSection).not.toHaveBeenCalled();
@@ -525,7 +534,7 @@ describe("In-house component basket catalog integration", () => {
   }
 
   async function openPicker(user: ReturnType<typeof userEvent.setup>, tier = "Signature") {
-    await user.click(await screen.findByRole("tab", { name: `${tier} Mode` }));
+    await selectWorkspaceMode(user, `${tier} Mode`);
     await user.click(await screen.findByRole("button", { name: "Add component" }));
     return screen.getByRole("dialog", { name: "Add In-house component" });
   }
@@ -624,7 +633,7 @@ describe("Mode sidebar compact default margins", () => {
     renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
     expect(await screen.findByRole("heading", { name: "Revision history" })).toBeVisible();
     expect(knowledgeApi.getKnowledgeSubBasketMargins).not.toHaveBeenCalled();
-    await user.click(screen.getByRole("tab", { name: "Signature Mode" }));
+    await selectWorkspaceMode(user, "Signature Mode");
     const panel = await screen.findByRole("region", { name: "Sub-basket defaults" });
     expect(await within(panel).findByText("12% - 18%")).toBeVisible();
     expect(within(panel).getByText("25% - 35%")).toBeVisible();
@@ -681,7 +690,7 @@ describe("In-house component entry from an active revision", () => {
       vi.mocked(knowledgeApi.getKnowledgeItem).mockResolvedValue(updated);
       return updated;
     });
-    await user.click(await screen.findByRole("tab", { name: "Signature Mode" }));
+    await selectWorkspaceMode(user, "Signature Mode");
     const add = await screen.findByRole("button", { name: "Add component" });
     const inHouse = screen.getByRole("region", { name: "In-house" });
     expect(within(inHouse).getAllByRole("textbox", { name: "Base Rate (₹)" })[0]).toBeDisabled();
@@ -708,7 +717,7 @@ describe("In-house component entry from an active revision", () => {
     vi.mocked(authorization.hasFrontendPermission).mockImplementation((_authorization, permission) =>
       !(["create", "update"].includes(blocked) && permission === `ai_estimator_knowledge.configuration.${blocked}`));
     setup({ ...active, ...(blocked === "backend" ? { allowedActions: [] } : {}), ...(blocked === "archived" ? { status: "archived" } : {}) });
-    await user.click(await screen.findByRole("tab", { name: "Signature Mode" }));
+    await selectWorkspaceMode(user, "Signature Mode");
     await screen.findByRole("region", { name: "In-house" });
     expect(screen.queryByRole("button", { name: "Add component" })).not.toBeInTheDocument();
     expect(knowledgeApi.createKnowledgeRevision).not.toHaveBeenCalled();
@@ -1231,7 +1240,7 @@ describe("workspace hierarchy summary", () => {
     mockConfiguredModeSections();
     const user = userEvent.setup();
     renderRoute(<KnowledgeItemWorkspacePage />, route, pattern);
-    await user.click(await screen.findByRole("tab", { name: "Signature Mode" }));
+    await selectWorkspaceMode(user, "Signature Mode");
     const name = await findPricingSpecificationName();
     await user.click(screen.getByRole("checkbox", { name: "Execution" }));
     expectSummary();
@@ -1419,12 +1428,13 @@ describe("temporary item workspace", () => {
     await screen.findByRole("heading", { name: "Wall panelling" });
     expect(screen.getByText("Temporary item · Must be completed")).toBeVisible();
     expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
-      "Overview", "Mode", "Signature Mode", "Recommendation & Exclusions", "Quality Parameter", "Design", "Basket closure priority"
+      "Overview", "Mode", "Recommendation & Exclusions", "Quality Parameter", "Design", "Basket closure priority"
     ]);
     await doneFocusedEditing(user);
-    await user.click(screen.getByRole("tab", { name: "Signature Mode" }));
+    await selectWorkspaceMode(user, "Signature Mode");
     expect(await screen.findByRole("checkbox", { name: "PMC" })).toBeVisible();
     await doneFocusedEditing(user);
+    screen.getByRole("tab", { name: "Mode" }).focus();
     await user.keyboard("{ArrowRight}");
     const recommendations = screen.getByRole("tab", { name: "Recommendation & Exclusions" });
     expect(recommendations).toHaveFocus();
@@ -2694,14 +2704,14 @@ describe("AI estimator knowledge screens", () => {
     renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
 
     await user.selectOptions(await screen.findByRole("combobox", { name: "Unit of measure (UOM)" }), squareMetre.id);
-    await user.click(screen.getByRole("tab", { name: "Signature Mode" }));
+    await selectWorkspaceMode(user, "Signature Mode");
     const guard = screen.getByRole("alertdialog", { name: "Save changes before leaving?" });
     await user.click(within(guard).getByRole("button", { name: "Stay here" }));
     expect(screen.getByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true");
 
-    await user.click(screen.getByRole("tab", { name: "Signature Mode" }));
+    await selectWorkspaceMode(user, "Signature Mode");
     await user.click(within(screen.getByRole("alertdialog", { name: "Save changes before leaving?" })).getByRole("button", { name: "Discard changes" }));
-    expect(await screen.findByRole("tabpanel", { name: "Signature Mode" })).toBeVisible();
+    expect(await screen.findByRole("tabpanel", { name: "Mode" })).toBeVisible();
   });
 
   it("shows only UOM and Surface configuration for an empty Overview", async () => {
@@ -2764,7 +2774,7 @@ describe("AI estimator knowledge screens", () => {
     } : {}));
     renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
 
-    await user.click(await screen.findByRole("tab", { name: "Signature Mode" }));
+    await selectWorkspaceMode(user, "Signature Mode");
     expect(await findPricingSpecificationName()).toHaveValue("Premium ply");
     expect(screen.queryByRole("combobox", { name: "Specification" })).not.toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Budgeting" })).not.toBeInTheDocument();
@@ -2842,7 +2852,7 @@ describe("AI estimator knowledge screens", () => {
     const { queryClient } = renderRoute(<KnowledgeItemWorkspacePage />,
       "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
     expect(await screen.findByRole("combobox", { name: "Unit of measure (UOM)" })).toHaveValue(squareFoot.id);
-    await user.click(screen.getByRole("tab", { name: "Signature Mode" }));
+    await selectWorkspaceMode(user, "Signature Mode");
     expect(await screen.findByRole("checkbox", { name: "Execution" })).toBeChecked();
     const calculations = await screen.findByRole("region", { name: "Sub-Vendor calculations" });
     expect(await within(calculations).findByText("Square foot")).toBeVisible();
@@ -2881,7 +2891,7 @@ describe("AI estimator knowledge screens", () => {
     });
     vi.mocked(knowledgeApi.updateKnowledgeSection).mockImplementation(async (_line, _revision, key, input) => mutationSection(key, input.payload, 3, 5));
     renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
-    await user.click(await screen.findByRole("tab", { name: "Signature Mode" }));
+    await selectWorkspaceMode(user, "Signature Mode");
     const name = await findPricingSpecificationName();
     await user.type(name, " updated");
     await user.click(screen.getByRole("button", { name: "Save Signature Mode" }));
@@ -2938,7 +2948,7 @@ describe("AI estimator knowledge screens", () => {
       "/admin/configuration/estimation/items/:itemId"
     );
 
-    await user.click(await screen.findByRole("tab", { name: "Signature Mode" }));
+    await selectWorkspaceMode(user, "Signature Mode");
 
     const selector = await screen.findByRole("group", { name: "Mode" });
     expect(within(selector).getByRole("checkbox", { name: "PMC" })).toBeChecked();
@@ -3073,7 +3083,6 @@ describe("AI estimator knowledge screens", () => {
     expect(within(tablist).getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
       "Overview",
       "Mode",
-      "Signature Mode",
       "Recommendation & Exclusions",
       "Quality Parameter",
       "Design",
@@ -3106,10 +3115,11 @@ describe("AI estimator knowledge screens", () => {
     expect(overview?.querySelectorAll("article.knowledge-overview-card")).toHaveLength(0);
     await user.selectOptions(screen.getByRole("combobox", { name: "Unit of measure (UOM)" }), squareMetre.id);
     await doneFocusedEditing(user);
-    await user.click(screen.getByRole("tab", { name: "Signature Mode" }));
+    await selectWorkspaceMode(user, "Signature Mode");
     expect(screen.getByRole("alertdialog", { name: "Save changes before leaving?" })).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Discard changes" }));
-    const modePanel = await screen.findByRole("tabpanel", { name: "Signature Mode" });
+    await selectWorkspaceMode(user, "Signature Mode");
+    const modePanel = await screen.findByRole("region", { name: "Signature Mode" });
     expect(document.querySelector(".knowledge-page--item-workspace")).not.toHaveAttribute("data-reference-section");
     expectModeRegionsInOrder(modePanel);
     expect(within(modePanel).getByRole("region", { name: "Specifications" })).toBeVisible();
@@ -3148,7 +3158,7 @@ describe("AI estimator knowledge screens", () => {
     });
     renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
 
-    await user.click(await screen.findByRole("tab", { name: "Signature Mode" }));
+    await selectWorkspaceMode(user, "Signature Mode");
     const specificationName = await findPricingSpecificationName();
     await user.clear(specificationName);
     await user.type(specificationName, "Updated specification");
@@ -3176,7 +3186,7 @@ describe("AI estimator knowledge screens", () => {
     }));
     renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
 
-    await user.click(await screen.findByRole("tab", { name: "Signature Mode" }));
+    await selectWorkspaceMode(user, "Signature Mode");
     expect(screen.getAllByRole("button", { name: "Save Signature Mode" })).toHaveLength(1);
     expect(screen.getByRole("button", { name: "Save Signature Mode" })).toBeDisabled();
     expect(screen.getByText("All changes saved")).toBeVisible();
@@ -3212,7 +3222,7 @@ describe("AI estimator knowledge screens", () => {
     });
     renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
 
-    await user.click(await screen.findByRole("tab", { name: "Signature Mode" }));
+    await selectWorkspaceMode(user, "Signature Mode");
     const specificationName = await findPricingSpecificationName();
     await user.clear(specificationName);
     await user.type(specificationName, "Unsaved specification");
@@ -3270,7 +3280,7 @@ describe("AI estimator knowledge screens", () => {
     });
     renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
 
-    await user.click(await screen.findByRole("tab", { name: "Signature Mode" }));
+    await selectWorkspaceMode(user, "Signature Mode");
     const specificationName = await findPricingSpecificationName();
     await user.clear(specificationName);
     await user.type(specificationName, "My local specification");
@@ -3333,7 +3343,7 @@ describe("AI estimator knowledge screens", () => {
     );
     renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
 
-    await user.click(await screen.findByRole("tab", { name: "Signature Mode" }));
+    await selectWorkspaceMode(user, "Signature Mode");
     const specificationName = await findPricingSpecificationName();
     await user.clear(specificationName);
     await user.type(specificationName, "My local specification");
@@ -3374,7 +3384,7 @@ describe("AI estimator knowledge screens", () => {
     );
     renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
 
-    await user.click(await screen.findByRole("tab", { name: "Signature Mode" }));
+    await selectWorkspaceMode(user, "Signature Mode");
     const specificationName = await findPricingSpecificationName();
     await user.clear(specificationName);
     await user.type(specificationName, "My unsaved specification");
@@ -3394,7 +3404,7 @@ describe("AI estimator knowledge screens", () => {
     mockConfiguredModeSections();
     renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
 
-    await user.click(await screen.findByRole("tab", { name: "Signature Mode" }));
+    await selectWorkspaceMode(user, "Signature Mode");
     const specificationName = await findPricingSpecificationName();
     await user.clear(specificationName);
     await user.type(specificationName, "Local specification");
@@ -3404,7 +3414,7 @@ describe("AI estimator knowledge screens", () => {
     await user.click(within(guard).getByRole("button", { name: "Discard changes" }));
 
     expect(await screen.findByRole("tabpanel", { name: "Recommendation & Exclusions" })).toBeVisible();
-    await user.click(screen.getByRole("tab", { name: "Signature Mode" }));
+    await selectWorkspaceMode(user, "Signature Mode");
     expect(await findPricingSpecificationName()).toHaveValue("Server specification");
     expect(screen.getByRole("spinbutton", { name: "Max. PMC Margin (%)" })).toHaveValue(null);
     expect(knowledgeApi.updateKnowledgeSection).not.toHaveBeenCalled();
@@ -3459,8 +3469,8 @@ describe("AI estimator knowledge screens", () => {
     expect(screen.queryByRole("button", { name: "Surfaces" })).not.toBeInTheDocument();
     expect(screen.queryByRole("listbox", { name: "Surface options" })).not.toBeInTheDocument();
 
-    await user.click(await screen.findByRole("tab", { name: "Signature Mode" }));
-    const panel = await screen.findByRole("tabpanel", { name: "Signature Mode" });
+    await selectWorkspaceMode(user, "Signature Mode");
+    const panel = await screen.findByRole("region", { name: "Signature Mode" });
     expectModeRegionsInOrder(panel);
     expect(screen.queryByRole("combobox", { name: "UOM" })).not.toBeInTheDocument();
     expect(await findPricingSpecificationName()).toBeDisabled();
@@ -3491,7 +3501,7 @@ describe("AI estimator knowledge screens", () => {
     expect(screen.getByRole("option", { name: "Wall" })).toHaveAttribute("aria-selected", "false");
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("button", { name: "Add Surface" })).not.toBeInTheDocument();
-    await user.click(screen.getByRole("tab", { name: "Signature Mode" }));
+    await selectWorkspaceMode(user, "Signature Mode");
     expect(await findPricingSpecificationName()).toBeDisabled();
     expect(screen.queryByRole("combobox", { name: "Priority" })).not.toBeInTheDocument();
     expect(within(screen.getByRole("region", { name: "Specifications" })).queryByRole("textbox", { name: "Technical description" })).not.toBeInTheDocument();
@@ -3635,7 +3645,7 @@ describe("AI estimator knowledge screens", () => {
       "Counter surface"
     );
 
-    await user.click(screen.getByRole("tab", { name: "Signature Mode" }));
+    await selectWorkspaceMode(user, "Signature Mode");
     const unsaved = screen.getByRole("alertdialog", { name: "Save changes before leaving?" });
     await user.click(within(unsaved).getByRole("button", { name: "Discard changes" }));
     await user.click(await screen.findByRole("tab", { name: "Overview" }));
@@ -3645,7 +3655,7 @@ describe("AI estimator knowledge screens", () => {
     expect(screen.getByRole("option", { name: "Counter surface" })).toBeVisible();
   });
 
-  it("preserves arrow, Home, End, and wraparound order across default and selected Signature workspace tabs", async () => {
+  it("preserves arrow, Home, End, and wraparound order across top-level workspace tabs", async () => {
     const user = userEvent.setup();
     setViewportWidth(1024);
     renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
@@ -3655,8 +3665,6 @@ describe("AI estimator knowledge screens", () => {
 
     await user.keyboard("{ArrowRight}");
     expect(screen.getByRole("tab", { name: "Mode" })).toHaveFocus();
-    await user.keyboard("{ArrowRight}");
-    expect(screen.getByRole("tab", { name: "Signature Mode" })).toHaveFocus();
     await user.keyboard("{ArrowRight}");
     expect(screen.getByRole("tab", { name: "Recommendation & Exclusions" })).toHaveFocus();
     await user.keyboard("{End}");
@@ -3672,8 +3680,8 @@ describe("AI estimator knowledge screens", () => {
     mockConfiguredModeSections();
     renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
 
-    const mode = await screen.findByRole("tab", { name: "Signature Mode" });
-    await user.click(mode);
+    await selectWorkspaceMode(user, "Signature Mode");
+    const mode = screen.getByRole("tab", { name: "Mode" });
     const specificationName = await findPricingSpecificationName();
     await user.clear(specificationName);
     await user.type(specificationName, "Unsaved specification");
@@ -3701,22 +3709,33 @@ describe("AI estimator knowledge screens", () => {
       expect(within(selector).getAllByRole("option").map((option) => option.textContent)).toEqual([
         "Overview",
         "Mode",
-        "Signature Mode",
         "Recommendation & Exclusions",
         "Quality Parameter",
         "Design",
         "Basket closure priority"
       ]);
-      await user.selectOptions(selector, "signature-mode");
-      expect(await screen.findByRole("tabpanel", { name: "Signature Mode" })).toBeVisible();
-      expectModeRegionsInOrder(screen.getByRole("tabpanel", { name: "Signature Mode" }));
+      await user.selectOptions(selector, "mode");
+      const tiers = screen.getByRole("radiogroup", { name: "Mode selection" });
+      expect(within(tiers).queryByRole("radio", { checked: true })).not.toBeInTheDocument();
+      expect(screen.queryByRole("combobox", { name: "Configuration mode" })).not.toBeInTheDocument();
+      expect(within(tiers).queryByRole("radio", { name: "Default Mode" })).not.toBeInTheDocument();
+      await user.click(within(tiers).getByRole("radio", { name: "Signature Mode" }));
+      expect(await screen.findByRole("region", { name: "Signature Mode" })).toBeVisible();
+      expectModeRegionsInOrder(screen.getByRole("region", { name: "Signature Mode" }));
       expect(screen.queryByRole("combobox", { name: "UOM" })).not.toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "Return to Mode" }));
+      expect(screen.getByRole("tabpanel", { name: "Mode" })).toBeVisible();
+      expect(within(tiers).queryByRole("radio", { checked: true })).not.toBeInTheDocument();
+      expect(screen.queryByRole("region", { name: "Signature Mode" })).not.toBeInTheDocument();
     } else {
       const overview = screen.getByRole("tab", { name: "Overview" });
       overview.focus();
       await user.keyboard("{ArrowRight}");
       expect(screen.getByRole("tab", { name: "Mode" })).toHaveFocus();
     }
+    expect(screen.getByRole("radiogroup", { name: "Mode selection" })).toBeVisible();
+    expect(screen.queryByRole("tablist", { name: "Mode selection" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Configuration mode" })).not.toBeInTheDocument();
     workspace.unmount();
 
     renderRoute(<KnowledgeReusableValuesPage />, "/admin/configuration/estimation/reusable-values", "/admin/configuration/estimation/reusable-values");

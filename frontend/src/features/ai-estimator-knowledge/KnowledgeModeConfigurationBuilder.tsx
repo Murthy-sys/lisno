@@ -172,7 +172,6 @@ export function KnowledgeModeConfigurationBuilder({
     }
     if (validationAttempt <= lastValidationAttempt.current || (!issues.length && !paragraphPending && !inHouseScopePending && calculationValid)) return;
     lastValidationAttempt.current = validationAttempt;
-    if (paragraphPending || issues[0]?.path === "modeDescription") showMode("pmc");
     const firstIssue = paragraphPending ? { path: "modeDescription", message: "Save or cancel the description." }
       : inHouseScopePending ? { path: "inHouseComponents", message: "Add or cancel the pending Inclusion or Exclusion before adding a component." }
       : invalidCalculationScope ? { path: `modeCalculations.${invalidCalculationScope}`, message: "Review the calculation inputs." } : issues[0] ?? { path: "inHouseComponents", message: "Review the In-house component fields." };
@@ -377,7 +376,6 @@ export function KnowledgeModeConfigurationBuilder({
                   type="button"
                   onClick={() => {
                     if (issue.path === "pmcMarginBps" || issue.path === "pmcMinimumMarginBps") showMode("pmc");
-                    if (issue.path === "modeDescription") showMode("pmc");
                     selectConfigurationForIssue(
                       issue,
                       parsed.configurations,
@@ -426,36 +424,37 @@ export function KnowledgeModeConfigurationBuilder({
 
       </div>
 
+      <div className="knowledge-mode-configuration__shared"
+        ref={(node) => {
+          if (node) fieldRefs.current.set("modeDescription", node);
+          else fieldRefs.current.delete("modeDescription");
+        }}
+      >
+        <h3 className="knowledge-mode-configuration__shared-title">Description</h3>
+        <KnowledgeModeDescriptionEditor
+          key={descriptionResetKey}
+          description={description}
+          pmc={partitioned.primary.pmc}
+          inHouse={inHouseConfiguration}
+          readOnly={readOnly}
+          validationAttempt={validationAttempt}
+          error={issueFor("modeDescription")}
+          onPendingChange={handlePendingDescriptionChange}
+          onPendingTextChange={onPendingDescriptionTextChange}
+          onSave={(text) => {
+            const modeDescription = text === generatedDescription ? null : text;
+            if (modeDescription === (payload.modeDescription ?? null)) return;
+            onDirty();
+            onChange({ ...payload, modeDescription });
+          }}
+        />
+      </div>
+
       <div className="knowledge-mode-configuration__sections">
         <section id="knowledge-mode-section-pmc" aria-labelledby="knowledge-mode-pmc-title"
           className="knowledge-mode-configuration__section knowledge-mode-configuration__section--pmc" hidden={!visibleModes.pmc}>
           {visibleModes.pmc ? sectionHeader("pmc") : null}
           <div id="knowledge-mode-body-pmc" className="knowledge-mode-configuration__section-body" hidden={!expandedModes.pmc}>
-            <div className="knowledge-mode-configuration__shared"
-              ref={(node) => {
-                if (node) fieldRefs.current.set("modeDescription", node);
-                else fieldRefs.current.delete("modeDescription");
-              }}
-            >
-              <h3 className="knowledge-mode-configuration__shared-title">Description</h3>
-              <KnowledgeModeDescriptionEditor
-                key={descriptionResetKey}
-                description={description}
-                pmc={partitioned.primary.pmc}
-                inHouse={inHouseConfiguration}
-                readOnly={readOnly}
-                validationAttempt={validationAttempt}
-                error={issueFor("modeDescription")}
-                onPendingChange={handlePendingDescriptionChange}
-                onPendingTextChange={onPendingDescriptionTextChange}
-                onSave={(text) => {
-                  const modeDescription = text === generatedDescription ? null : text;
-                  if (modeDescription === (payload.modeDescription ?? null)) return;
-                  onDirty();
-                  onChange({ ...payload, modeDescription });
-                }}
-              />
-            </div>
             {!calculation ? pmcMarginControl : calculationSlot("pmc")}
           </div>
         </section>

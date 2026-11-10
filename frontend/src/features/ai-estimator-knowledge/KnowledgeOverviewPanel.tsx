@@ -1,5 +1,5 @@
 import { Box, Plus } from "lucide-react";
-import { useId, useMemo, type RefObject } from "react";
+import { useId, useMemo, useRef, type RefObject } from "react";
 import { applicableKnowledgeTiers, KNOWLEDGE_MODE_TIERS, KNOWLEDGE_MODE_TIER_LABELS } from "../../../../shared/knowledge/knowledgeModeTiers";
 import { resolveEstimateDimensionRule } from "../../../../shared/estimation/estimateDimensions";
 
@@ -83,11 +83,13 @@ export function KnowledgeOverviewPanel({
   surfacesDirty = false
 }: KnowledgeOverviewPanelProps) {
   const visibilityId = useId();
+  const tierSwitchRef = useRef<HTMLButtonElement>(null);
   const configuration = presentation === "configuration";
   const settingClassName = `ui-fieldset knowledge-overview__client-visibility${configuration ? " knowledge-overview__setting" : ""}`;
   const choicesClassName = `ui-radio-group${configuration ? " knowledge-overview__choices" : ""}`;
   const clientVisible = overviewPayload.clientVisible !== false;
   const applicableTiers = applicableKnowledgeTiers(overviewPayload);
+  const tiersEnabled = applicableTiers.length > 0;
   const surfaceIds = Array.isArray(overviewPayload.surfaceIds)
     ? overviewPayload.surfaceIds.filter((id): id is string => typeof id === "string")
     : [];
@@ -108,7 +110,9 @@ export function KnowledgeOverviewPanel({
       : `Yes requires Length, Width and Height in ${dimensionRule.inputUnit} from Sales or the client. Quantity = Length × Width in ${dimensionUom!.name}. Height is recorded separately.`
     : "Select a supported area UOM, such as sq-ft or sq-m, to require dimensions. Quantity is calculated as Length × Width.";
   const visibilityCaveat = "No keeps this main line internal on the client estimate screen. It remains included in the total and PDF/quotation.";
-  const tierHelp = "Default Mode is always available. Save Overview to update the tier Mode tabs. Hiding a tier keeps its saved configuration.";
+  const tierHelp = configuration
+    ? "Mode is always available. Save Overview to update the tier choices. Turning tiers off keeps their saved configuration."
+    : "Default Mode is always available. Save Overview to update the tier Mode tabs. Hiding a tier keeps its saved configuration.";
 
   function changeOverviewValue(value: string) {
     onOverviewDirty("uomId");
@@ -207,21 +211,31 @@ export function KnowledgeOverviewPanel({
           </p>
           {dimensionsMandatory && !dimensionRule ? <p className="knowledge-overview__source-state" role="alert">The saved dimensions setting needs a supported area UOM before it can be used.</p> : null}
         </fieldset> : null}
-        {showApplicableTiers ? <fieldset className={settingClassName} disabled={!editable || saving} aria-describedby={`${visibilityId}-tiers-help`}>
-          <legend>Applicable tiers</legend>
+        {showApplicableTiers ? <fieldset className={settingClassName} disabled={!editable || saving} aria-labelledby={`${visibilityId}-tiers-label`} aria-describedby={`${visibilityId}-tiers-help`}>
+          <legend className={configuration ? "knowledge-overview__tiers-heading" : undefined}>
+            <span id={`${visibilityId}-tiers-label`}>Applicable tiers</span>
+            {configuration ? <button ref={tierSwitchRef} type="button" role="switch" className="knowledge-overview__tiers-switch"
+              aria-label="Applicable tiers" aria-checked={tiersEnabled} aria-describedby={`${visibilityId}-tiers-help`}
+              disabled={!editable || saving} onClick={() => {
+                if (!editable || saving) return;
+                onOverviewDirty("applicableTiers");
+                onOverviewPayloadChange({ ...overviewPayload, applicableTiers: tiersEnabled ? [] : [...KNOWLEDGE_MODE_TIERS] });
+              }}><span className="knowledge-overview__tiers-track" aria-hidden="true"><span /></span></button> : null}
+          </legend>
           {configuration ? <p id={`${visibilityId}-tiers-help`} className="knowledge-overview__description">{tierHelp}</p> : null}
-          <div className={`${choicesClassName}${configuration ? " knowledge-overview__choices--tiers" : ""}`}>
+          {!configuration || tiersEnabled ? <div className={`${choicesClassName}${configuration ? " knowledge-overview__choices--tiers" : ""}`}>
             {KNOWLEDGE_MODE_TIERS.map(tier => <label className="knowledge-overview__visibility-option" key={tier}>
               <input type="checkbox" checked={applicableTiers.includes(tier)} onChange={event => {
                 if (!editable || saving) return;
                 const selected = new Set(applicableTiers);
                 if (event.target.checked) selected.add(tier); else selected.delete(tier);
+                if (configuration && selected.size === 0) tierSwitchRef.current?.focus();
                 onOverviewDirty("applicableTiers");
                 onOverviewPayloadChange({ ...overviewPayload, applicableTiers: KNOWLEDGE_MODE_TIERS.filter(value => selected.has(value)) });
               }} />
               {KNOWLEDGE_MODE_TIER_LABELS[tier]}
             </label>)}
-          </div>
+          </div> : null}
           {!configuration ? <p id={`${visibilityId}-tiers-help`} className="knowledge-overview__source-state">{tierHelp}</p> : null}
         </fieldset> : null}
       </Surface>

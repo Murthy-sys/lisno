@@ -100,6 +100,8 @@ import "./knowledge-reference-workspace.css";
 import "./knowledge-mode-sidebar.css";
 
 const MASTER_TYPES = ["uoms", "vendors", "taxes", "priorities", "surfaces", "modes"] as const satisfies readonly KnowledgeMasterType[];
+const PRIMARY_SECTIONS = KNOWLEDGE_WORKSPACE_TAB_KEYS.filter(section =>
+  knowledgeWorkspaceModeTier(section) === null || section === "mode");
 
 interface ConflictState {
   readonly localVersion: number;
@@ -129,6 +131,7 @@ export function KnowledgeItemWorkspacePage() {
   const [designSaving, setDesignSaving] = useState(false);
   const [designUnknownOutcome, setDesignUnknownOutcome] = useState(false);
   const workspaceRef = useRef<HTMLDivElement>(null);
+  const restoreModeFocus = useRef(false);
   const [qualityDirty, setQualityDirty] = useState(false);
   const [qualitySaving, setQualitySaving] = useState(false);
   const [qualitySaveCommand, setQualitySaveCommand] = useState<KnowledgeQualitySaveCommandState | null>(null);
@@ -199,12 +202,28 @@ export function KnowledgeItemWorkspacePage() {
   });
   const applicableTiers = applicableKnowledgeTiers(savedOverviewQuery.data?.payload ?? {});
   const selectedSections = knowledgeWorkspaceSectionsForTiers(applicableTiers);
-  const visibleSections = KNOWLEDGE_WORKSPACE_TAB_KEYS.filter(section => selectedSections.includes(section)
-    || (section === activeSection && isModeSection && (modeDirty || modeSaving)));
+  const selectableSectionsRef = useRef(selectedSections);
+  selectableSectionsRef.current = selectedSections;
+  // Retain the active scope until its editor can safely leave, including the
+  // render immediately before a clean unavailable tier returns to default.
+  const visibleModeSections = KNOWLEDGE_WORKSPACE_TAB_KEYS.filter(section => section !== "mode" && knowledgeWorkspaceModeTier(section) !== null
+    && (selectedSections.includes(section) || section === activeSection));
   useEffect(() => {
     if (savedOverviewQuery.data && activeModeTier && activeModeTier !== "default" && !applicableKnowledgeTiers(savedOverviewQuery.data.payload).includes(activeModeTier)
-      && !modeDirty && !modeSaving) setActiveSection("overview");
+      && !modeDirty && !modeSaving) {
+      restoreModeFocus.current = Boolean(workspaceRef.current?.querySelector(".knowledge-mode-navigation")?.contains(document.activeElement));
+      setActiveSection("mode");
+    }
   }, [savedOverviewQuery.data, activeModeTier, modeDirty, modeSaving]);
+  useEffect(() => {
+    if (!restoreModeFocus.current || activeSection !== "mode") return;
+    restoreModeFocus.current = false;
+    const navigation = workspaceRef.current?.querySelector(".knowledge-section-navigation");
+    const candidates = navigation?.querySelectorAll<HTMLElement>("[role=tab][aria-selected=true], select");
+    const target = Array.from(candidates ?? []).find(element => element.getClientRects().length > 0)
+      ?? candidates?.[0];
+    target?.focus();
+  }, [activeSection]);
   const historyQuery = useQuery({
     queryKey: knowledgeQueryKeys.history(mainLineId, { limit: 100, offset: 0 }),
     queryFn: () => getKnowledgeHistory(mainLineId, { limit: 100, offset: 0 }),
@@ -525,9 +544,13 @@ export function KnowledgeItemWorkspacePage() {
   });
 
   function selectWorkspaceSection(next: KnowledgeWorkspaceTabKey) {
-    if (isModeSection && modeSaving) return;
+    if (next === activeSection || isModeSection && modeSaving) return;
+    if (knowledgeWorkspaceModeTier(next) !== null && !selectedSections.includes(next)) return;
     guard.requestNavigation(() => {
-      setActiveSection(next);
+      // Applicability can change while Save/Discard confirmation is pending.
+      const target = knowledgeWorkspaceModeTier(next) !== null && !selectableSectionsRef.current.includes(next) ? "mode" : next;
+      if (target === "mode" && isModeSection) restoreModeFocus.current = true;
+      setActiveSection(target);
       setDirty(false);
       setOverviewDirtyFields(new Set());
       setModeDirty(false);
@@ -596,6 +619,31 @@ export function KnowledgeItemWorkspacePage() {
       }} />
   </>;
 
+  const modeEditor = revision ? <KnowledgeModePanel
+    key={pendingSession.sourceKey}
+    modeLabel={activeSectionLabel}
+    ref={modePanelRef}
+    item={item}
+    revisionId={revision.id}
+    dataSource={modeDataSource}
+    pendingChangesSourceKey={pendingSession.sourceKey}
+    masters={masters}
+    relationshipBaskets={relationshipBasketsQuery.data?.items ?? []}
+    basketCatalogState={basketCatalogState}
+    relationshipItems={relationshipItemsQuery.data?.items ?? []}
+    editable={editable}
+    onRequestDraft={canCreate && canUpdate && revision.status === "active" && item.status !== "archived"
+      && item.allowedActions.includes("create_revision") && !itemQuery.isError
+      ? () => guard.requestNavigation(() => setCommand("revision")) : undefined}
+    legacyModeCatalogState={legacyModeCatalogState}
+    uomCatalogState={uomCatalogState}
+    onDirtyChange={setModeDirty}
+    onSavingChange={setModeSaving}
+    onBusyChange={setModeBusy}
+    onSaveErrorChange={setModeSaveError}
+    onAnnouncement={setAnnouncement}
+  /> : null;
+
   return (
     <div ref={workspaceRef} className="knowledge-page knowledge-page--item-workspace" data-reference-section={referenceSection} data-workspace-section={activeSection}>
       <PageHeader
@@ -638,7 +686,10 @@ export function KnowledgeItemWorkspacePage() {
 
       <div className="knowledge-workspace-layout">
         <div className="knowledge-workspace-main">
-          <KnowledgeSectionNavigation activeSection={activeSection} sections={visibleSections} onSectionChange={selectWorkspaceSection} panelBusy={isModeSection ? modeBusy : Boolean(backendSection && sectionQuery.isFetching)}>
+          <KnowledgeSectionNavigation activeSection={isModeSection ? "mode" : activeSection} sections={PRIMARY_SECTIONS}
+            onSectionChange={selectWorkspaceSection}
+            onActiveSectionActivate={isModeSection && activeSection !== "mode" ? () => selectWorkspaceSection("mode") : undefined}
+            panelBusy={isModeSection ? modeBusy : Boolean(backendSection && sectionQuery.isFetching)}>
             {isMetadataSection ? (
               revision ? <KnowledgeDesignRulesPanel key={`${mainLineId}:${revision.id}`} ref={designRulesRef} item={item} revisionId={revision.id} editable={editable && !itemQuery.isError} vendors={masters.vendors} vendorState={vendorCatalogState} onDirtyChange={setDesignDirty} onSavingChange={setDesignSaving} onUnknownOutcomeChange={setDesignUnknownOutcome} /> : <PageState state="empty" message="Create a draft revision to configure Design rules." />
             ) : isPlaceholderSection ? (
@@ -655,30 +706,15 @@ export function KnowledgeItemWorkspacePage() {
             ) : !revision ? (
               <PageState state="empty" message="This item has no revision to display." />
             ) : isModeSection ? (
-              <KnowledgeModePanel
-                key={pendingSession.sourceKey}
-                modeLabel={KNOWLEDGE_MODE_CONFIGURATION_LABELS[activeModeTier ?? "default"]}
-                ref={modePanelRef}
-                item={item}
-                revisionId={revision.id}
-                dataSource={modeDataSource}
-                pendingChangesSourceKey={pendingSession.sourceKey}
-                masters={masters}
-                relationshipBaskets={relationshipBasketsQuery.data?.items ?? []}
-                basketCatalogState={basketCatalogState}
-                relationshipItems={relationshipItemsQuery.data?.items ?? []}
-                editable={editable}
-                onRequestDraft={canCreate && canUpdate && revision.status === "active" && item.status !== "archived"
-                  && item.allowedActions.includes("create_revision") && !itemQuery.isError
-                  ? () => guard.requestNavigation(() => setCommand("revision")) : undefined}
-                legacyModeCatalogState={legacyModeCatalogState}
-                uomCatalogState={uomCatalogState}
-                onDirtyChange={setModeDirty}
-                onSavingChange={setModeSaving}
-                onBusyChange={setModeBusy}
-                onSaveErrorChange={setModeSaveError}
-                onAnnouncement={setAnnouncement}
-              />
+              <KnowledgeSectionNavigation
+                className="knowledge-mode-navigation" navigationLabel="Mode selection" selectLabel="Configuration mode"
+                variant="radios"
+                onClearSelection={() => selectWorkspaceSection("mode")}
+                showNavigation={visibleModeSections.length > 0}
+                activeSection={activeSection} sections={visibleModeSections}
+                onSectionChange={selectWorkspaceSection} panelBusy={modeBusy}>
+                {modeEditor}
+              </KnowledgeSectionNavigation>
             ) : sectionQuery.isPending ? <PageState state="loading" message={`Loading ${activeSectionLabel}…`} /> : sectionQuery.isError ? <PageState state="error" message={sectionQuery.error.message} action={{ label: "Try again", onAction: () => void sectionQuery.refetch() }} /> : sectionQuery.data && backendSection ? (
               <Surface as="section" className={`knowledge-workspace-section${backendSection === "overview" ? " knowledge-workspace-section--overview" : ""}`}>
                 {serverReview ? (

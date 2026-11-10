@@ -141,7 +141,9 @@ describe("Mode pending change projection", () => {
   it("projects the pending paragraph rather than saved text and cancels back to enclosing edits", () => {
     const before = { modeDescription: "Saved wording." };
     const after = { modeDescription: "Applied wording." };
-    expect(project(before, after, { pendingDescription: "Live wording." })[0]?.entries[0]?.fields[0]?.value).toBe("Live wording.");
+    const pending = project(before, after, { pendingDescription: "Live wording." });
+    expect(pending[0]).toMatchObject({ key: "mode:paragraph", label: "Mode · Description" });
+    expect(pending[0]?.entries[0]?.fields[0]?.value).toBe("Live wording.");
     expect(project(before, after, { pendingDescription: null })[0]?.entries[0]?.fields[0]?.value).toBe("Applied wording.");
     expect(project(before, before, { pendingDescription: null })).toEqual([]);
   });

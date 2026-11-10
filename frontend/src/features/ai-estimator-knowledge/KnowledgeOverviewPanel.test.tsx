@@ -76,11 +76,14 @@ describe("KnowledgeOverviewPanel", () => {
     expect(props.onOverviewDirty).toHaveBeenLastCalledWith("dimensionsMandatory");
 
     const tiers = screen.getByRole("group", { name: "Applicable tiers" });
-    expect(tiers).toHaveAccessibleDescription("Default Mode is always available. Save Overview to update the tier Mode tabs. Hiding a tier keeps its saved configuration.");
-    within(tiers).getAllByRole("checkbox").forEach(checkbox => expect(checkbox).not.toBeChecked());
-    within(tiers).getByRole("checkbox", { name: "Functional" }).focus();
+    expect(tiers).toHaveAccessibleDescription("Mode is always available. Save Overview to update the tier choices. Turning tiers off keeps their saved configuration.");
+    expect(within(tiers).queryByRole("checkbox")).not.toBeInTheDocument();
+    const tierSwitch = within(tiers).getByRole("switch", { name: "Applicable tiers" });
+    expect(tierSwitch).not.toBeChecked();
+    expect(tierSwitch).toHaveAccessibleDescription("Mode is always available. Save Overview to update the tier choices. Turning tiers off keeps their saved configuration.");
+    tierSwitch.focus();
     await user.keyboard(" ");
-    expect(props.onOverviewPayloadChange).toHaveBeenLastCalledWith({ ...metricPayload, applicableTiers: ["functional"] });
+    expect(props.onOverviewPayloadChange).toHaveBeenLastCalledWith({ ...metricPayload, applicableTiers: ["signature", "premium", "functional"] });
     expect(props.onOverviewDirty).toHaveBeenLastCalledWith("applicableTiers");
 
     const result = await axe.run(document.body, { rules: { "color-contrast": { enabled: false } } });
@@ -93,6 +96,7 @@ describe("KnowledgeOverviewPanel", () => {
     expect(screen.getByRole("combobox", { name: "Unit of measure (UOM)" })).toBeDisabled();
     screen.getAllByRole("radio").forEach(radio => expect(radio).toBeDisabled());
     screen.getAllByRole("checkbox").forEach(checkbox => expect(checkbox).toBeDisabled());
+    expect(screen.getByRole("switch", { name: "Applicable tiers" })).toBeDisabled();
     expect(screen.getByRole("radiogroup", { name: "Dimensions mandatory?" })).toHaveAccessibleDescription(/Length, Width and Height in ft/u);
   });
 
@@ -152,6 +156,71 @@ describe("KnowledgeOverviewPanel", () => {
     expect(props.onOverviewPayloadChange).toHaveBeenLastCalledWith({ ...overviewPayload, applicableTiers: ["premium"] });
   });
 
+  it("initializes the Configuration switch from legacy and refreshed applicability without changing saved fields", () => {
+    const props = renderPanel({ presentation: "configuration", showApplicableTiers: true });
+    const tierSwitch = screen.getByRole("switch", { name: "Applicable tiers" });
+    expect(tierSwitch).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Signature" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Premium" })).not.toBeChecked();
+    props.rerender(<main><KnowledgeOverviewPanel {...props} overviewPayload={{ ...overviewPayload, applicableTiers: ["premium"] }} /></main>);
+    expect(tierSwitch).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Signature" })).not.toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Premium" })).toBeChecked();
+    props.rerender(<main><KnowledgeOverviewPanel {...props} overviewPayload={{ ...overviewPayload, applicableTiers: [] }} /></main>);
+    expect(tierSwitch).not.toBeChecked();
+    expect(screen.queryByRole("checkbox", { name: "Signature" })).not.toBeInTheDocument();
+    expect(props.onOverviewDirty).not.toHaveBeenCalled();
+    expect(props.onOverviewPayloadChange).not.toHaveBeenCalled();
+  });
+
+  it("toggles all Configuration tiers and permits a subset while preserving unrelated Overview fields", async () => {
+    const user = userEvent.setup();
+    const props = renderPanel({ presentation: "configuration", showApplicableTiers: true,
+      overviewPayload: { ...overviewPayload, applicableTiers: ["premium"] } });
+    const tierSwitch = screen.getByRole("switch", { name: "Applicable tiers" });
+    await user.click(tierSwitch);
+    expect(props.onOverviewDirty).toHaveBeenCalledExactlyOnceWith("applicableTiers");
+    expect(props.onOverviewPayloadChange).toHaveBeenCalledExactlyOnceWith({ ...overviewPayload, applicableTiers: [] });
+    props.rerender(<main><KnowledgeOverviewPanel {...props} overviewPayload={{ ...overviewPayload, applicableTiers: [] }} /></main>);
+    expect(tierSwitch).not.toBeChecked();
+    expect(within(screen.getByRole("group", { name: "Applicable tiers" })).queryByRole("checkbox")).not.toBeInTheDocument();
+    await user.click(tierSwitch);
+    expect(props.onOverviewPayloadChange).toHaveBeenLastCalledWith({ ...overviewPayload, applicableTiers: ["signature", "premium", "functional"] });
+    props.rerender(<main><KnowledgeOverviewPanel {...props} overviewPayload={{ ...overviewPayload, applicableTiers: ["signature", "premium", "functional"] }} /></main>);
+    within(screen.getByRole("group", { name: "Applicable tiers" })).getAllByRole("checkbox").forEach(checkbox => expect(checkbox).toBeChecked());
+    await user.click(screen.getByRole("checkbox", { name: "Signature" }));
+    expect(props.onOverviewPayloadChange).toHaveBeenLastCalledWith({ ...overviewPayload, applicableTiers: ["premium", "functional"] });
+    props.rerender(<main><KnowledgeOverviewPanel {...props} overviewPayload={{ ...overviewPayload, applicableTiers: ["premium", "functional"] }} /></main>);
+    expect(tierSwitch).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Signature" })).not.toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Premium" })).toBeChecked();
+  });
+
+  it("returns focus to the Configuration switch when the last selected tier is unchecked", async () => {
+    const user = userEvent.setup();
+    const props = renderPanel({ presentation: "configuration", showApplicableTiers: true,
+      overviewPayload: { ...overviewPayload, applicableTiers: ["functional"] } });
+    screen.getByRole("checkbox", { name: "Functional" }).focus();
+    await user.keyboard(" ");
+    expect(props.onOverviewPayloadChange).toHaveBeenLastCalledWith({ ...overviewPayload, applicableTiers: [] });
+    props.rerender(<main><KnowledgeOverviewPanel {...props} overviewPayload={{ ...overviewPayload, applicableTiers: [] }} /></main>);
+    const tierSwitch = screen.getByRole("switch", { name: "Applicable tiers" });
+    expect(tierSwitch).not.toBeChecked();
+    expect(tierSwitch).toHaveFocus();
+    expect(screen.queryByRole("checkbox", { name: "Functional" })).not.toBeInTheDocument();
+  });
+
+  it.each([{ editable: false }, { saving: true }])("prevents Configuration toggle changes while locked (%j)", async state => {
+    const user = userEvent.setup();
+    const props = renderPanel({ presentation: "configuration", showApplicableTiers: true,
+      overviewPayload: { ...overviewPayload, applicableTiers: [] }, ...state });
+    const tierSwitch = screen.getByRole("switch", { name: "Applicable tiers" });
+    expect(tierSwitch).toBeDisabled();
+    await user.click(tierSwitch);
+    expect(props.onOverviewDirty).not.toHaveBeenCalled();
+    expect(props.onOverviewPayloadChange).not.toHaveBeenCalled();
+  });
+
   it.each([{ editable: false }, { saving: true }])("locks applicable tier choices when Overview is not editable (%j)", async state => {
     const user = userEvent.setup(); const props = renderPanel({ showApplicableTiers: true, ...state });
     const tiers = screen.getByRole("group", { name: "Applicable tiers" });
@@ -163,6 +232,7 @@ describe("KnowledgeOverviewPanel", () => {
   it("keeps tier choices out of generic and proposal Overview panels", () => {
     renderPanel({ proposalActions: true, presentation: "procurement-basket" });
     expect(screen.queryByRole("group", { name: "Applicable tiers" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("switch", { name: "Applicable tiers" })).not.toBeInTheDocument();
   });
   it("defaults client visibility to Yes without changing legacy Overview payloads", () => {
     const props = renderPanel();
