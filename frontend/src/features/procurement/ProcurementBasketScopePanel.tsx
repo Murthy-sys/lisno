@@ -81,6 +81,7 @@ export function ProcurementBasketScopePanel({ projectId, projectName, basket, fr
                 </small>
                 {line.estimateMode?.issues.map((modeIssue) => <small className="procurement-basket__scope-issue" key={modeIssue.code}>{modeIssue.message}</small>)}
                 {issue ? <small className="procurement-basket__scope-issue">{issue}</small> : null}
+                {line.mode?.inHouseComponentVisibilityIssue ? <small className="procurement-basket__scope-issue" role="status">{line.mode.inHouseComponentVisibilityIssue.message}</small> : null}
                 {!automaticSubVendor && line.mode ? <ProcurementBasketModeEditor projectId={projectId} basketId={basket.id} source={basket.estimateSource} line={line} classification={basket.classification} frozen={frozen} compact /> : null}
               </th>
               <td><span className="procurement-basket__scope-uom">{line.mode?.uom?.name || line.approvedUnit}</span></td>

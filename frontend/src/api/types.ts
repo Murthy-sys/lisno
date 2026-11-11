@@ -1,6 +1,7 @@
 import type { ProjectInitiationMetadata } from "../../../shared/projects/projectInitiation";
 import type { EstimateProposalMetadata } from "../../../shared/estimation/estimateProposal";
 import type { EstimateComponentPricing, ESTIMATE_COMPONENT_PRICING_BASIS } from "../../../shared/estimation/estimateComponentPricing";
+import type { EstimateAggregatePricing } from "../../../shared/estimation/estimateAggregatePricing";
 import type { EstimateDimensions, EstimateDimensionRule } from "../../../shared/estimation/estimateDimensions";
 import type { KnowledgeModeTier } from "../../../shared/knowledge/knowledgeModeTiers";
 import type {
@@ -315,6 +316,9 @@ export interface EstimateClientReviewSnapshot {
     rateSource?: "configuration" | "manual";
     pricingBasis?: typeof ESTIMATE_COMPONENT_PRICING_BASIS;
     componentPricing?: EstimateComponentPricing;
+    aggregatePricing?: EstimateAggregatePricing;
+    inHouseUsage?: "estimator" | "execution" | null;
+    inHousePricingState?: "ready" | "incomplete" | "invalid";
     subBasketId?: string | null;
     mainLineId?: string;
     revisionId?: string;

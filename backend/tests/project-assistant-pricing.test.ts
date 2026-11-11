@@ -46,6 +46,21 @@ describe("assistant exact Configuration selling prices", () => {
     item.candidate.inHouseComponents = ["selected", "unselected"].map((id) => ({ id, basketId: "external", subBasketId: `scope-${id}`, basketName: "External", subBasketName: "Scope", available: id === "selected" }));
     expect(assistantSellingAmount(item, "in_house", "11", ["selected"])).toBe(96250);
   });
+  it("uses the governed preset without exposing it and refuses assistant supplied overrides", async () => {
+    const item = source();
+    item.advanced!.inHouseComponents = ["selected", "unselected"].map((id, index) => ({ id, basketId: "external", subBasketId: `scope-${id}`, inclusions: [], exclusions: [], labor: settings(index ? 10000 : 2300), material: settings(4700) }));
+    item.advanced!.inHouseUsage = "estimator";
+    item.advanced!.inHousePresetComponentIds = ["selected"];
+    item.componentMetadata = ["selected", "unselected"].map(id => ({ id, basketId: "external", subBasketId: `scope-${id}`, basketName: "Private target", subBasketName: "Private scope", available: true }));
+    expect(assistantSellingAmount(item, "in_house", "11")).toBe(96250);
+    expect(() => assistantSellingAmount(item, "in_house", "11", ["unselected"])).toThrow();
+    const result = await calculateAssistantAddition({ lines: [line("ceiling", { pricingMode: "in_house" })] }, approved(), reads([item]));
+    expect(result.lines[0]?.amountPaise).toBe(96250);
+    expect(JSON.stringify(result)).not.toMatch(/selectedInHouseComponentIds|Private target|Private scope|unselected/);
+    const refused = await calculateAssistantAddition({ lines: [line("ceiling", { pricingMode: "in_house", selectedInHouseComponentIds: ["unselected"] })] }, approved(), reads([item]));
+    expect(refused.lines[0]?.amountPaise).toBeNull();
+    expect(JSON.stringify(refused)).not.toContain("unselected");
+  });
   it("uses separate saved PMC/Sub-Vendor margins, refuses absent values, and never supplies discounts", () => {
     const item = source(); (item.advanced!.modeCalculations as any).pmc.startingMarkupBps = 9000;
     expect(assistantSellingAmount(item, "pmc", "11")).toBe(97059);

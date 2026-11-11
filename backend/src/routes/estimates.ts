@@ -1,9 +1,11 @@
+import { presentEstimateInHouseResponse } from "../services/estimate-in-house-presentation.js";
+import { toEstimateAggregatePricing } from "../domain/estimate-aggregate-pricing.js";
 import { compareLeadEstimateTiers, estimateTierComparisonSchema, renderEstimateTierComparisonPdf } from "../services/estimate-tier-comparison.service.js";
 import { calculateEstimateTotal } from "../domain/estimate-total-rounding.js";
 import { unchangedSavedEstimatePrice } from "../domain/estimate-price-ownership.js";
 import { selectedInHouseBaseRate } from "../domain/ai-estimator-knowledge-in-house-components.js";
 import { ESTIMATE_COMPONENT_PRICING_BASIS, estimateComponentLineAmountIsValid, type EstimateComponentPricing, type EstimateComponentPricingLine, type EstimateInHousePreviewResult } from "../domain/estimate-component-pricing.js";
-import { estimateInHousePreviewSchema, resolveEstimateComponentPricing, currentEstimateComponentPricingMatches } from "../services/estimate-component-pricing.service.js";
+import { estimateInHousePreviewSchema, resolveEstimateComponentPricing, resolveEstimateInHouseSelection, currentEstimateComponentPricingMatches } from "../services/estimate-component-pricing.service.js";
 import { ESTIMATE_DIMENSION_INPUT_UNITS, ESTIMATE_DIMENSION_QUANTITY_UNITS, calculateDimensionQuantity, canonicalEstimateDimensions, estimateDimensionRulesEqual, estimateLineDimensionsValid, readEstimateDimensionRule } from "../domain/estimate-dimensions.js";
 import { KNOWLEDGE_MODE_TIERS, isKnowledgeModeTier, type KnowledgeModeTier } from "../domain/ai-estimator-knowledge-mode-tiers.js";
 import { fenceEstimateInHouseComponentReferences } from "../services/estimator-catalogue.service.js";
@@ -383,9 +385,9 @@ export function createEstimatesRouter(
       lifecycle.phase === "post" && !!lifecycle.preApproval && estimateWorkingCopyEditable(estimate) &&
       actor.role === "designer" && project.primaryDesignerId === actor.id && estimate.designPlanDesignerId === actor.id;
     const canChangePricingMode = canChangeEstimatePricingMode(actor, estimate, project);
-    return { ...estimate, ...(lifecycle?.workflowVersion === 3 ? { ...quotationApprovalPublicFields(quotationApproval!), capabilities: { canUnlockQuotation, canPublishQuotation, canPrepareQuotationSubmission, canChangePricingMode } } : {}), ...(clientReview ? { clientReview } : {}), ...(clientFeedback ? { clientFeedback } : {}),
+    return presentEstimateInHouseResponse({ ...estimate, ...(lifecycle?.workflowVersion === 3 ? { ...quotationApprovalPublicFields(quotationApproval!), capabilities: { canUnlockQuotation, canPublishQuotation, canPrepareQuotationSubmission, canChangePricingMode } } : {}), ...(clientReview ? { clientReview } : {}), ...(clientFeedback ? { clientFeedback } : {}),
       ...(isCollaborativeEstimate(estimate) ? { preApprovedReview, changesFromPre: preApprovedReview
-        ? comparePublishedEstimateSnapshots(preApprovedReview.snapshot, estimate) : null } : {}) };
+        ? comparePublishedEstimateSnapshots(preApprovedReview.snapshot, estimate) : null } : {}) });
   };
   router.get("/leads/:leadId/estimate", protectedRoute, requireOperation("GET /leads/:leadId/estimate"), async (req, res, next) => { try { const lead = await leads.get(req.authenticatedUser!, req.params.leadId as string); const estimate = await EstimateModel.findOne({ leadId: lead.id, ...estimateStaffReadFilter(req.authenticatedUser!) }).lean(); res.json({ data: await estimatorEstimate(req.authenticatedUser!, estimate, lead) }); } catch (error) { next(error); } });
   router.get("/estimates", protectedRoute, requireOperation("GET /estimates"), async (req, res, next) => { try {
@@ -439,7 +441,9 @@ export function createEstimatesRouter(
           const measurements = configuredLineMeasurements({ ...line, included: true }, prior as Record<string, unknown> | undefined, source.line);
           scaledQuantity(measurements.quantity, source.line.uom.decimalScale, true);
           const componentPricing = await resolveEstimateComponentPricing(source, line.modeTier, measurements.quantity, line.selectedInHouseComponentIds);
-          results.push({ key: line.key, state: "ready", componentPricing, issues: [] });
+          results.push(estimatorCatalogueTierPricing(source.line, line.modeTier)?.inHousePolicy
+            ? { key: line.key, state: "ready", componentPricing: null, aggregatePricing: toEstimateAggregatePricing(componentPricing), issues: [] }
+            : { key: line.key, state: "ready", componentPricing, issues: [] });
         } catch (error) {
           if (!(error instanceof ApiError)) throw error;
           const conflict = ["ESTIMATE_CONFIGURATION_CHANGED", "ESTIMATE_DIMENSIONS_CONFIGURATION_CHANGED"].includes(error.code);
@@ -578,15 +582,18 @@ export function createEstimatesRouter(
           ? "manual" : prior?.rateSource as EstimateRateSource | undefined);
         const modeTier = line.modeTier ?? prior?.modeTier ?? "signature";
         const tierChanged = modeTier !== (prior?.modeTier ?? "signature");
+        const tierPricing = estimatorCatalogueTierPricing(snapshot.line, modeTier);
+        const preserveExcludedSelection = !line.included && prior?.pricingBasis === ESTIMATE_COMPONENT_PRICING_BASIS && unchangedSavedEstimatePrice(line, prior, snapshot.line);
+        if (line.included && pricingMode === "in_house" && tierPricing?.inHousePolicy && rateSource !== "configuration") throw estimatePriceReadOnly();
+        const suppliedIds = tierPricing?.inHousePolicy ? line.selectedInHouseComponentIds : line.selectedInHouseComponentIds ?? (tierChanged ? undefined : prior?.selectedInHouseComponentIds);
         const selectedInHouseComponentIds = pricingMode === "in_house"
-          ? line.selectedInHouseComponentIds ?? (tierChanged ? undefined : prior?.selectedInHouseComponentIds as string[] | undefined) : undefined;
+          ? preserveExcludedSelection ? prior!.selectedInHouseComponentIds as string[] : resolveEstimateInHouseSelection(snapshot, modeTier as KnowledgeModeTier, suppliedIds) as string[] | undefined : undefined;
         const pricing = { classification, pricingMode, modeTier, rateSource, ratePaise: line.ratePaise, selectedInHouseComponentIds };
         if (!estimatePricingMetadataIsValid(pricing)) {
           throw new ApiError(400, "ESTIMATE_PRICING_MODE_INVALID", "Select a valid pricing mode for this item type.");
         }
         const savedIdMatches = line.id !== undefined && previousLines.filter(saved => saved.id === line.id).length === 1;
         const unchangedSavedPrice = savedIdMatches && unchangedSavedEstimatePrice({ ...line, ...pricing }, prior, snapshot.line);
-        const tierPricing = estimatorCatalogueTierPricing(snapshot.line, modeTier);
         const positiveCurrentPrice = pricingMode !== undefined && snapshot.line.basePriceAvailability[modeTier as KnowledgeModeTier][pricingMode] &&
           (pricingMode === "in_house" && tierPricing?.inHouseComponents !== undefined || (tierPricing?.modeBaseRatesPaise[pricingMode] ?? 0) > 0);
         const preserveSavedPrice = unchangedSavedPrice && (!line.included || rateSource !== "configuration" || prior?.ratePaise === 0 || !positiveCurrentPrice);
@@ -790,7 +797,7 @@ export function createEstimatesRouter(
       issuedAt: new Date(), projectNumber: lead.projectNumber, estimateId: estimate._id,
       preparedBy: req.authenticatedUser!.name
     });
-    const pdf = await estimatePdf.generate(toEstimatePdfInput(estimate, lead, proposal));
+    const pdf = await estimatePdf.generate(await presentEstimateInHouseResponse(toEstimatePdfInput(estimate, lead, proposal)));
     res.set("Content-Type", "application/pdf").set("Content-Disposition", `attachment; filename="${pdf.filename}"`).send(pdf.bytes);
   } catch (error) { next(error); } });
 
@@ -805,7 +812,7 @@ export function createEstimatesRouter(
     const leadIds = estimates.map((estimate) => estimate.leadId);
     const leadItems = await LeadModel.find({ _id: { $in: leadIds } }).lean();
     const byId = new Map(leadItems.map((lead) => [lead._id, lead]));
-    res.json({ data: estimates.map((estimate) => ({ ...mapEstimate(estimate), lead: byId.get(estimate.leadId) ?? null })) });
+    res.json({ data: await presentEstimateInHouseResponse(estimates.map((estimate) => ({ ...mapEstimate(estimate), lead: byId.get(estimate.leadId) ?? null }))) });
   } catch (error) { next(error); } });
 
   router.get("/estimates/designers", protectedRoute, requireOperation("GET /estimates/designers"), async (req, res, next) => { try {
@@ -853,7 +860,7 @@ export function createEstimatesRouter(
       responseEstimate = estimate.toObject();
     });
     if (!responseEstimate) throw new Error("Estimate assignment transaction did not complete.");
-    res.json({ data: mapEstimate(responseEstimate) });
+    res.json({ data: await presentEstimateInHouseResponse(mapEstimate(responseEstimate)) });
   } catch (error) { next(error); } });
 
   router.post("/estimates/:estimateId/designer-decision", protectedRoute, requireOperation("POST /estimates/:estimateId/designer-decision"), validateBody(decisionSchema), async (req, res, next) => { try {
@@ -866,7 +873,7 @@ export function createEstimatesRouter(
       await estimate.save({ session });
       return estimate.toObject();
     });
-    res.json({ data: mapEstimate(savedEstimate) });
+    res.json({ data: await presentEstimateInHouseResponse(mapEstimate(savedEstimate)) });
   } catch (error) { next(error); } });
 
   router.post("/estimates/:estimateId/send-client", protectedRoute, requireOperation("POST /estimates/:estimateId/send-client"), async (req, res, next) => { try {
@@ -930,7 +937,7 @@ export function createEstimatesRouter(
     });
     const [published] = await reviews.listClientEstimates(actor, estimateId);
     if (!published) throw estimateNotFound();
-    res.json({ data: published });
+    res.json({ data: await presentEstimateInHouseResponse(published) });
   } catch (error) { next(error); } });
   return router;
 }

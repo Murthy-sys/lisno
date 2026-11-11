@@ -1,3 +1,4 @@
+import type { EstimateAggregatePricing } from "../../../../shared/estimation/estimateAggregatePricing";
 import type { EstimateDimensions, EstimateDimensionRule } from "../../../../shared/estimation/estimateDimensions";
 import type { EstimateComponentPricing, ESTIMATE_COMPONENT_PRICING_BASIS } from "../../../../shared/estimation/estimateComponentPricing";
 export type LeadStage = "new_lead" | "contacted" | "site_visit" | "design_meeting" | "estimate_in_progress" | "estimate_sent" | "negotiation" | "won" | "lost";
@@ -54,6 +55,10 @@ export type EstimateLineInput = LegacyEstimateLineInput | ConfiguredEstimateLine
 
 export interface ConfiguredEstimateLine extends Omit<ConfiguredEstimateLineInput, "itemType"> {
   componentPricing?: EstimateComponentPricing | undefined;
+  aggregatePricing?: EstimateAggregatePricing | undefined;
+  inHouseUsage?: "estimator" | "execution" | null | undefined;
+  inHousePricingState?: "ready" | "incomplete" | "invalid" | undefined;
+  configurationPricingChanged?: boolean | undefined;
   estimateNotes?: string[] | undefined;
   itemType?: "main_line" | "temporary" | undefined;
   id: string;

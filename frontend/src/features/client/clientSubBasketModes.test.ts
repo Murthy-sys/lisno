@@ -10,6 +10,20 @@ const line = (id: string): QuotationLine => ({ id, mainLineId: id, mainLineName:
 const group = { mainBasketId: "basket", subBasketId: "sub", roomId: "room", includedCount: 101, sourceToken: "scope" };
 
 describe("Client sub-basket modes", () => {
+  it("omits cached component IDs for governed comparisons and save operations", () => {
+    const saved = line("governed");
+    saved.pricingMode = "in_house";
+    saved.selectedInHouseComponentIds = ["obsolete"];
+    saved.choices = saved.choices.map(choice => ({ ...choice, inHouseUsage: "execution", inHousePricingState: "ready",
+      inHouseComponents: [{ id: "obsolete", label: "Obsolete detail", ratePaise: 123, available: true }] }));
+    const item = draftQuotationItem(saved);
+    const comparison = quotationGroupComparison([item], 7, { mainBasketId: "basket", subBasketId: "sub", roomId: "room" });
+    expect(comparison?.lines[0]).not.toHaveProperty("selectedInHouseComponentIds");
+    const draft = { version: 7, groups: [], items: { governed: item } };
+    expect(quotationDraftOperations(draft)[0]).not.toHaveProperty("selectedInHouseComponentIds");
+    expect(quotationModeOperations({ scope: { value: "signature", originals: {}, group } }, draft)[0]).not.toHaveProperty("componentSelections");
+  });
+
   it("compresses more than 100 tier changes into one atomic scope command while retaining a quantity edit", () => {
     const lines = Array.from({ length: 101 }, (_, index) => line(`line-${index}`));
     const before = { version: 7, groups: [], items: { "line-0": { ...draftQuotationItem(lines[0]!), quantity: "3" } } };

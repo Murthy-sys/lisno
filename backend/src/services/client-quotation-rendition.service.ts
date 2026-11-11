@@ -1,3 +1,4 @@
+import { presentEstimateInHouseResponse } from "./estimate-in-house-presentation.js";
 import { sha256Hex, type EstimateClientReviewSnapshot, type StoredDownload } from "../domain/estimate-client-review.js";
 import { ApiError } from "../middleware/errors.js";
 import { ClientQuotationRenditionModel } from "../models/ClientQuotationRendition.js";
@@ -29,7 +30,14 @@ export function createClientQuotationRenditionService(input: {
     async readForRound(round) {
       const reviewRoundId = round._id ?? round.id;
       if (!reviewRoundId || !round.estimateId || !Number.isSafeInteger(round.estimateVersion) || round.estimateVersion < 1) unavailable();
-      const projected = await input.projection.project(round.estimateSnapshot);
+      const projectForRecipient = async () => {
+        const visible = await input.projection.project(round.estimateSnapshot);
+        const snapshot = await presentEstimateInHouseResponse(visible.snapshot);
+        const visibilityDigest = JSON.stringify(snapshot) === JSON.stringify(visible.snapshot) ? visible.visibilityDigest
+          : sha256Hex(JSON.stringify({ visibilityDigest: visible.visibilityDigest, snapshot }));
+        return { ...visible, snapshot, visibilityDigest };
+      };
+      const projected = await projectForRecipient();
       const sourceDigest = sha256Hex(JSON.stringify(round.estimateSnapshot));
       const approvedTotalPaise = projected.snapshot.totalPaise ?? Math.round(projected.snapshot.total * 100);
       if (!Number.isSafeInteger(approvedTotalPaise) || approvedTotalPaise < 0) unavailable();
@@ -67,7 +75,7 @@ export function createClientQuotationRenditionService(input: {
       catch { unavailable(); }
       if (bytes.byteLength !== row.byteSize || sha256Hex(bytes) !== row.sha256) unavailable();
       // A cached artifact never outlives the Configuration visibility from which it was rendered.
-      const current = await input.projection.project(round.estimateSnapshot);
+      const current = await projectForRecipient();
       if (current.visibilityDigest !== projected.visibilityDigest) {
         throw new ApiError(409, "QUOTATION_VISIBILITY_CHANGED", "Quotation visibility changed. Refresh before downloading or sending it.");
       }

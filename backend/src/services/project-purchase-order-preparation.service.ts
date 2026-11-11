@@ -10,6 +10,7 @@ import type {
   PurchaseOrderPreparationEstimateLine, PurchaseOrderPreparationItem, PurchaseOrderPreparationSection
 } from "../domain/project-purchase-order-preparation.js";
 import type { PurchaseOrderModeResolution, PurchaseOrderModeStandardSuggestion } from "../domain/project-purchase-order-mode.js";
+import { projectProcurementPreparation } from "../domain/procurement-in-house-visibility.js";
 import { MAX_FINANCE_AMOUNT_PAISE } from "../domain/project-finance.js";
 import { projectWorkflowSectionLabel } from "../domain/project-workflow.js";
 import { ApiError } from "../middleware/errors.js";
@@ -41,7 +42,7 @@ export function createProjectPurchaseOrderPreparationService(): ProjectPurchaseO
     get(actor, projectId) {
       return mongoose.connection.transaction(async (session) => {
         await assertProcurementProjectAccess(actor, projectId, session);
-        return buildProjectPurchaseOrderPreparation(projectId, session);
+        return projectProcurementPreparation(await buildProjectPurchaseOrderPreparation(projectId, session));
       }, { readConcern: { level: "snapshot" }, readPreference: "primary" });
     }
   };

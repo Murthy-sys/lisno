@@ -27,6 +27,21 @@ const revision: EstimateRevisionDetail = {
 const props = { revision, view: "builder" as const, activeRoomId: null, onSelectRoom: vi.fn(), navigation: <nav aria-label="Test revisions">Current estimate</nav> };
 
 describe("EstimateRevisionView", () => {
+  it.each([true, false])("shows the frozen combined price and exact total without component details (included=%s)", included => {
+    const aggregate = structuredClone(revision);
+    aggregate.snapshot.lineItems = [{ ...aggregate.snapshot.lineItems[0]!, mainLineId: "main-a", quantity: 3,
+      included, rate: null, ratePaise: null, amount: included ? 783.34 : 0, amountPaise: included ? 78334 : 0, pricingMode: "in_house", pricingBasis: "in_house_components_v1",
+      inHouseUsage: "estimator", inHousePricingState: "ready",
+      aggregatePricing: { visibility: "aggregate", formulaVersion: "in_house_components_v1", mainLineId: "main-a", revisionId: "old-config",
+        sourceItemVersion: 1, sourceRevisionVersion: 1, modeTier: "premium", quantity: "3",
+        uom: { id: "unit", code: "SQFT", name: "sq-ft", decimalScale: 2 }, totalPaise: 78334, inputFingerprint: "a".repeat(64) } }];
+    render(<EstimateRevisionView {...props} revision={aggregate} />);
+    const line = screen.getByRole("article", { name: "Archived ceiling" });
+    expect(line).toHaveTextContent("Price including margin (₹/sq-ft)₹261.11");
+    expect(line).toHaveTextContent(included ? "Amount₹783.34" : "Amount₹0.00");
+    expect(line).not.toHaveTextContent("Not recorded");
+    expect(screen.queryByText(/Saved component amounts/)).not.toBeInTheDocument();
+  });
   it.each(["summary", "proposal"] as const)("shows the recorded rounding adjustment in %s without changing GST", view => {
     const rounded = structuredClone(revision);
     Object.assign(rounded.snapshot, { total: 324, totalPaise: 32400, roundOffPaise: -50 });

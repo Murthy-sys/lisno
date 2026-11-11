@@ -169,6 +169,8 @@ export interface PurchaseOrderModePriceReference {
   issues: Array<{ code: string; message: string }>;
 }
 export interface PurchaseOrderModeResolution {
+  inHouseComponentVisibility?: "hidden" | "visible";
+  inHouseComponentVisibilityIssue?: { code: string; message: string };
   state: "ready" | "selection_required" | "unavailable" | "exception";
   options: Array<{ key: PurchaseOrderModeKey; label: string }>;
   availability?: Array<{ key: PurchaseOrderModeKey; label: string; available: boolean; issues: Array<{ code: string; message: string }> }>;
@@ -210,6 +212,8 @@ export interface PreviewPurchaseOrderModeInput {
   expectedObservedDigest?: string;
 }
 export interface PurchaseOrderModeDraftPreview {
+  inHouseComponentVisibility?: "hidden" | "visible";
+  inHouseComponentVisibilityIssue?: { code: string; message: string };
   projectId: string;
   estimateSource: PreviewPurchaseOrderModeInput["estimateSource"];
   sourceLineItemKey: string;
@@ -310,6 +314,7 @@ export interface PurchaseOrderRequestLine extends PurchaseOrderLine {
   uomCode: string;
 }
 export interface PurchaseOrderRequestModeSnapshot {
+  modeTier?: KnowledgeModeTier;
   sourceLineItemKey: string;
   source: "configuration" | "legacy";
   roomId: string | null;

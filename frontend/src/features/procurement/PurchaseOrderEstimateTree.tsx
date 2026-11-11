@@ -263,6 +263,7 @@ function LineDetail({ line, items, canManage, frozen, canManageItems, itemsBusy,
     {!items.length && !linkedItemsNeedingReview ? <p className="purchase-orders__estimate-note">No vendor purchase item added yet. Add one separately when this line needs a supplier order.</p> : null}
     {linkedItemsNeedingReview > 0 ? <p className="purchase-orders__estimate-note">{linkedItemsNeedingReview} linked purchase item{linkedItemsNeedingReview === 1 ? "" : "s"} need{linkedItemsNeedingReview === 1 ? "s" : ""} assignment review below.</p> : null}
     {actionable && visibleModeIssues.length ? <ul className="purchase-orders__estimate-issues">{visibleModeIssues.map((issue, index) => <li key={`${issue.code}-${index}`}>{issue.message}</li>)}</ul> : null}
+    {mode.inHouseComponentVisibilityIssue ? <p className="purchase-orders__estimate-issues" role="status">{mode.inHouseComponentVisibilityIssue.message}</p> : null}
     {actionable ? <div className="purchase-orders__mode-workspace">
       <div className="purchase-orders__mode-heading"><strong>Configured mode</strong><span>{stateLabel}</span></div>
       <p>Confirm the calculation quantity for this main line. It does not set any supplier order quantity or rate.</p>

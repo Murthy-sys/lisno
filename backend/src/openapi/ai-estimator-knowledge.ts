@@ -1790,7 +1790,7 @@ function sectionPayloadKeys(sectionKey: string): readonly string[] {
     recommendations: ["recommendations", "exclusions", "budgetAlterations"],
     quality: ["parameters"],
     execution: ["steps", "productivity"],
-    advanced: ["dependencies", "modeOverrides", "revisionLineage", "modeConfigurations", "modeDescription", "modeCalculation", "modeCalculations", "inHouseComponents", "pmcMarginBps", "pmcMinimumMarginBps", "subVendorMarginBps", "subVendorMinimumMarginBps"]
+    advanced: ["dependencies", "modeOverrides", "revisionLineage", "modeConfigurations", "modeDescription", "modeCalculation", "modeCalculations", "inHouseComponents", "inHouseUsage", "inHousePresetComponentIds", "pmcMarginBps", "pmcMinimumMarginBps", "subVendorMarginBps", "subVendorMinimumMarginBps"]
   };
   return keys[sectionKey] ?? [];
 }
@@ -1855,8 +1855,10 @@ function sectionPayloadProperties(sectionKey: string): Readonly<Record<string, u
       description: "Legacy shared settings, retained for compatibility. New edits use modeCalculations." };
     properties.modeCalculations = { anyOf: [ref("KnowledgeModeCalculations"), ref("KnowledgeModeCalculationsWithComponents")],
       description: "When inHouseComponents is present, old In-house fields are preserved but are no longer used or validated as current costs." };
+    properties.inHouseUsage = { type: "string", enum: ["estimator", "execution"], description: "Optional scoped In-house policy. Both choices use the Super Admin preset; Execution permits authorized Procurement component detail." };
+    properties.inHousePresetComponentIds = { type: "array", maxItems: 50, uniqueItems: true, items: { type: "string", minLength: 1, maxLength: 128 }, description: "Required with inHouseUsage. IDs must belong to this scope. An empty preset is incomplete and cannot be priced." };
     properties.inHouseComponents = { type: "array", maxItems: 50, items: ref("KnowledgeInHouseComponent"),
-      description: "Independent component scopes with stable IDs and unique Main Basket/Sub Basket references. Absent retains legacy pricing. Present requires an explicit estimate selection; empty never restores legacy costs." };
+      description: "Independent component scopes with stable IDs and unique Main Basket/Sub Basket references. Absent retains legacy pricing. Present requires an explicit estimate selection unless inHouseUsage supplies the authoritative preset; empty never restores legacy costs." };
     properties.pmcMarginBps = {
       type: "integer", minimum: 1_000, maximum: 2_000, nullable: true,
       description: "Maximum PMC margin in integer basis points, from 10% to 20% inclusive. When pmcMinimumMarginBps is absent, legacy data reads as an equal Min./Max. pair without a write. An explicit minimum requires a complete ordered pair or both values empty."

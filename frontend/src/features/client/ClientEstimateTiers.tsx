@@ -1,4 +1,5 @@
 import { EstimateSubBasketModes } from "../estimates/EstimateSubBasketModes";
+import { hasGovernedInHousePrice, lineAggregatePrice } from "../estimates/estimateAggregatePresentation";
 import type { EstimateTierComparisonInput } from "../estimates/estimateTierComparisonApi";
 import { ESTIMATE_COMPONENT_PRICING_BASIS, readEstimateComponentPricing } from "../../../../shared/estimation/estimateComponentPricing";
 import { EstimateComponentBreakdown } from "../leads/EstimateComponentBreakdown";
@@ -52,7 +53,7 @@ const sameSource = (left: EstimateTierSource, right: EstimateTierSource | null |
   && left.revisionId === right.revisionId && left.itemVersion === right.itemVersion
   && left.revisionVersion === right.revisionVersion && left.uomId === right.uomId);
 const componentAmount = (line: EstimateTierLine, value: EstimateTierLine | EstimateTierChoice) => {
-  if (line.pricingMode !== "in_house" || value.pricingBasis !== ESTIMATE_COMPONENT_PRICING_BASIS) return null;
+  if (hasGovernedInHousePrice(value) || hasGovernedInHousePrice(line.choices.find(choice => choice.modeTier === value.modeTier)) || line.pricingMode !== "in_house" || value.pricingBasis !== ESTIMATE_COMPONENT_PRICING_BASIS) return null;
   const pricing = readEstimateComponentPricing(value.componentPricing);
   return pricing && pricing.mainLineId === line.mainLineId && Number(pricing.quantity) === line.quantity &&
     pricing.modeTier === value.modeTier && pricing.totalPaise === value.amountPaise ? pricing : null;
@@ -161,7 +162,7 @@ export function ClientEstimateTiers({ projectId }: { projectId: string }) {
   const save = () => {
     if (!draft || !mayEdit || needsReview || !validDraft) return;
     const lines = draftEntries.map(entry => ({ lineItemId: entry.id, modeTier: entry.selection.modeTier, ...entry.selection.source,
-      ...(entry.line?.pricingMode === "in_house" && entry.choice?.inHouseComponents !== undefined ? { selectedInHouseComponentIds: entry.selection.selectedInHouseComponentIds } : {}) }));
+      ...(entry.line?.pricingMode === "in_house" && !hasGovernedInHousePrice(entry.choice) && entry.choice?.inHouseComponents !== undefined ? { selectedInHouseComponentIds: entry.selection.selectedInHouseComponentIds } : {}) }));
     submitting.current = true;
     if (lines.length === 1) {
       const { lineItemId, ...selection } = lines[0]!;
@@ -219,7 +220,7 @@ export function ClientEstimateTiers({ projectId }: { projectId: string }) {
         const source = selected?.source ?? measurementSource(line);
         return source && line.pricingMode ? { mainLineId: line.mainLineId, lineItemId: line.id, ...source, quantity: line.quantity,
           pricingMode: line.pricingMode, modeTier: selected?.modeTier ?? line.modeTier, ...(selected ? { rateSource: "configuration" as const } : {}),
-          selectedInHouseComponentIds: selected?.selectedInHouseComponentIds ?? line.selectedInHouseComponentIds ?? [],
+          ...(hasGovernedInHousePrice(line.choices.find(choice => choice.modeTier === (selected?.modeTier ?? line.modeTier))) ? {} : { selectedInHouseComponentIds: selected?.selectedInHouseComponentIds ?? line.selectedInHouseComponentIds ?? [] }),
           ...(line.dimensionsMandatory && line.dimensions ? { dimensions: line.dimensions, ...(line.dimensionRule ? { expectedDimensionRule: line.dimensionRule } : {}) } : {}) } : null;
       });
       const comparison: EstimateTierComparisonInput | undefined = first.mainBasketId && first.roomId && descriptors.every(value => value !== null)
@@ -253,13 +254,14 @@ export function ClientEstimateTiers({ projectId }: { projectId: string }) {
           {!line.dimensionRule ? <p>A matching area unit must be configured before dimensions can be entered.</p> : null}
         </div> : null}
         {dimensionsRequired && !dimensionsDraft ? <p>Save required dimensions before choosing a tier.</p> : null}
-        {line.pricingMode === "in_house" && choice?.inHouseComponents !== undefined ? <fieldset className="client-estimate-tiers__components" disabled={disabled} aria-label={`In-house components for ${label}`}><legend>Included components</legend>
+        {line.pricingMode === "in_house" && !hasGovernedInHousePrice(choice) && choice?.inHouseComponents !== undefined ? <fieldset className="client-estimate-tiers__components" disabled={disabled} aria-label={`In-house components for ${label}`}><legend>Included components</legend>
           {choice.inHouseComponents.map(component => <label key={component.id}><input type="checkbox" checked={selected.includes(component.id)} disabled={!component.available && !selected.includes(component.id)}
             onChange={event => select(line, choice, event.target.checked ? [...selected, component.id] : selected.filter(id => id !== component.id))} /><span>{component.label} <small>{component.available ? component.amountPaise !== undefined ? `${money(component.amountPaise)} for this quantity` : `${money(component.ratePaise)} base reference` : "Unavailable"}</small></span></label>)}
           {selected.filter(id => !choice.inHouseComponents!.some(component => component.id === id)).map((id, index) => <label key={id}><input type="checkbox" checked onChange={() => select(line, choice, selected.filter(value => value !== id))} /><span>Unavailable selected component {index + 1}</span></label>)}
           {editing && !validComponents(line, choice, selected) ? <p>Choose at least one available component with configured pricing.</p> : null}
         </fieldset> : null}
         {componentAmount(line, line) ? <EstimateComponentBreakdown pricing={componentAmount(line, line)!} label={label} /> : null}
+        {hasGovernedInHousePrice(line) ? <p>Price including margin: {money(lineAggregatePrice(line, line)?.totalPaise ?? null)}</p> : null}
         {editing ? <p>{line.pricingMode === "in_house" && choice?.inHouseComponents !== undefined ? "The server will calculate the amount for your selected components when saved." : `Selected amount: ${money(choice?.amountPaise ?? null)}`}</p> : null}
       </div>;
     })}</section>;
@@ -277,6 +279,6 @@ export function ClientEstimateTiers({ projectId }: { projectId: string }) {
 }
 
 function validComponents(line: EstimateTierLine | undefined, choice: EstimateTierChoice, selected: readonly string[]) {
-  if (!line || line.pricingMode !== "in_house" || choice.inHouseComponents === undefined) return Boolean(line);
+  if (!line || line.pricingMode !== "in_house" || hasGovernedInHousePrice(choice) || choice.inHouseComponents === undefined) return Boolean(line);
   return selected.length > 0 && new Set(selected).size === selected.length && selected.every(id => choice.inHouseComponents!.some(component => component.id === id && component.available && (component.amountPaise !== undefined ? component.amountPaise !== null : component.ratePaise !== null)));
 }

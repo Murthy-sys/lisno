@@ -1,3 +1,4 @@
+import { estimateAggregateLineAmountIsValid, type EstimateAggregatePricing } from "../domain/estimate-aggregate-pricing.js";
 import { estimateTotalsReconcile } from "../domain/estimate-total-rounding.js";
 import { estimateComponentLineAmountIsValid, type EstimateComponentPricing, type ESTIMATE_COMPONENT_PRICING_BASIS } from "../domain/estimate-component-pricing.js";
 import { estimateDimensionSnapshotValid, type EstimateDimensionMetadata } from "../domain/estimate-dimension-snapshot.js";
@@ -20,6 +21,7 @@ export interface EstimatePdfLine extends EstimateDimensionMetadata {
   rateSource?: "configuration" | "manual";
   pricingBasis?: typeof ESTIMATE_COMPONENT_PRICING_BASIS;
   componentPricing?: EstimateComponentPricing;
+  aggregatePricing?: EstimateAggregatePricing;
   selectedInHouseComponentIds?: string[];
   sourceItemVersion?: number;
   sourceRevisionVersion?: number;
@@ -275,7 +277,7 @@ function lineCellText(line: EstimatePdfLine) {
     quantity: `${new Intl.NumberFormat("en-IN", {
       maximumFractionDigits: line.source === "configuration" ? 6 : 2
     }).format(line.quantity)} ${line.unit}`,
-    rate: estimateComponentLineAmountIsValid(line) ? "From components" : formatInr(line.ratePaise == null ? requiredPdfMoney(line.rate) : line.ratePaise / 100),
+    rate: estimateAggregateLineAmountIsValid(line) ? "Price including margin" : estimateComponentLineAmountIsValid(line) ? "From components" : formatInr(line.ratePaise == null ? requiredPdfMoney(line.rate) : line.ratePaise / 100),
     total: formatInr(line.amountPaise == null ? requiredPdfMoney(line.amount) : line.amountPaise / 100)
   };
 }
@@ -577,11 +579,11 @@ function groupedIncludedLines(input: EstimatePdfInput) {
   const groups = new Map<string, { label: string; lines: EstimatePdfLine[] }>();
 
   for (const line of input.lineItems.filter((item) => item.included)) {
-    if (line.pricingBasis !== undefined && !estimateComponentLineAmountIsValid(line)) {
+    if (line.pricingBasis !== undefined && !estimateComponentLineAmountIsValid(line) && !estimateAggregateLineAmountIsValid(line)) {
       throw new TypeError("An included component-priced estimate line needs valid saved component amounts before PDF generation.");
     }
     if (line.source === "configuration" &&
-      (!Number.isSafeInteger(line.ratePaise) || !Number.isSafeInteger(line.amountPaise)) && !estimateComponentLineAmountIsValid(line)) {
+      (!Number.isSafeInteger(line.ratePaise) || !Number.isSafeInteger(line.amountPaise)) && !estimateComponentLineAmountIsValid(line) && !estimateAggregateLineAmountIsValid(line)) {
       throw new TypeError("An included configured estimate line needs an entered rate before PDF generation.");
     }
     const entry = line.source === "configuration" ? undefined : estimatePdfCatalogue.get(line.catalogueId);

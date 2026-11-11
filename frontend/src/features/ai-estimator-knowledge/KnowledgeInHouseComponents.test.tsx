@@ -34,6 +34,43 @@ function setup(payload: KnowledgeJsonObject = {}, overrides: Partial<EditorProps
 }
 
 describe("In-house component editor", () => {
+  it("selects a proper subset and confirms included removal without silently including remaining components", async () => {
+    const user = userEvent.setup();
+    const view = setup({ inHouseUsage: "estimator", inHousePresetComponentIds: [], inHouseComponents: [component("one", "s1"), component("two", "s2"), { ...component("three", "s1"), basketId: "b2" }] });
+    const first = await screen.findByRole("checkbox", { name: "Include in price: Ceilings / Ceiling s1" });
+    expect(first).not.toBeChecked();
+    expect(screen.getByText(/No components selected/)).toBeVisible();
+    await user.click(first);
+    await user.click(screen.getByRole("checkbox", { name: "Include in price: Painting / Paint s1" }));
+    expect(view.change.mock.lastCall?.[0].inHousePresetComponentIds).toEqual(["one", "three"]);
+    expect(screen.getByText("2 of 3 components included in price.")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Remove component Ceilings / Ceiling s1" }));
+    expect(screen.getByRole("dialog", { name: "Remove included component?" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(view.change.mock.lastCall?.[0].inHouseComponents).toHaveLength(3);
+    await user.click(screen.getByRole("button", { name: "Remove component Ceilings / Ceiling s1" }));
+    await user.click(screen.getByRole("button", { name: "Remove component and selection" }));
+    expect(view.change.mock.lastCall?.[0].inHousePresetComponentIds).toEqual(["three"]);
+    expect(view.change.mock.lastCall?.[0].inHouseComponents).toHaveLength(2);
+    expect(screen.getByRole("checkbox", { name: "Include in price: Ceilings / Ceiling s2" })).not.toBeChecked();
+    view.setProps({ readOnly: true });
+    expect(screen.getByRole("checkbox", { name: "Include in price: Painting / Paint s1" })).toBeDisabled();
+  });
+
+  it("keeps destination membership unchanged when an included legacy configuration is moved", async () => {
+    const user = userEvent.setup();
+    const view = setup({ inHouseUsage: "execution", inHousePresetComponentIds: ["legacy-in-house"], inHouseComponents: [component("legacy-in-house", "s1"), component("two", "s2")] });
+    await screen.findByRole("checkbox", { name: "Include in price: Ceilings / Ceiling s2" });
+    await user.click(screen.getByRole("button", { name: "Drag existing configuration" }));
+    await user.click(screen.getByRole("button", { name: "Replace Ceilings / Ceiling s2" }));
+    expect(screen.getAllByRole("dialog")).toHaveLength(1);
+    expect(view.change).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Move and remove selection" }));
+    expect(view.change.mock.lastCall?.[0].inHousePresetComponentIds).toEqual([]);
+    expect(view.change.mock.lastCall?.[0].inHouseComponents).toEqual([component("two", "s2")]);
+    expect(screen.getByRole("checkbox", { name: "Include in price: Ceilings / Ceiling s2" })).not.toBeChecked();
+  });
+
   it("lists inactive Configuration Main baskets alongside unrelated active baskets", async () => {
     const user = userEvent.setup();
     const onSaveComponent = vi.fn(async () => true);

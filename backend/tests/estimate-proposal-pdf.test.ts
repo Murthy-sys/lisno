@@ -1,3 +1,4 @@
+import { toEstimateAggregatePricing } from "../src/domain/estimate-aggregate-pricing.js";
 import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
 import { describe, expect, it } from "vitest";
 import { createEstimatePdfService } from "../src/services/estimate-pdf.service.js";
@@ -121,6 +122,12 @@ describe("reference proposal booklet", () => {
     const pdf = await readPdf(await renderEstimateProposalPdf(fixture));
     expect(pdf.text).toContain("labour ₹ 23.45"); expect(pdf.text).toContain("material ₹ 100"); expect(pdf.text).toContain("total ₹ 123.45");
     expect(pdf.text).toContain("L 1.2345 × W 1 × H 9 ft"); expect(pdf.text).toContain("1.235");
+    const { componentPricing, selectedInHouseComponentIds: _selected, ...aggregateLine } = component;
+    fixture.lineItems = [{ ...aggregateLine, aggregatePricing: toEstimateAggregatePricing(componentPricing) }];
+    const aggregatePdf = await readPdf(await renderEstimateProposalPdf(fixture));
+    expect(aggregatePdf.text).toContain("Price including margin");
+    expect(aggregatePdf.text).not.toMatch(/Saved carpentry|labour ₹ 23.45|material ₹ 100|part-one/);
+    expect(fixture.lineItems[0].amountPaise).toBe(12345);
     fixture.lineItems = [{ ...component, amountPaise: 12346 }];
     await expect(renderEstimateProposalPdf(fixture)).rejects.toThrow("component amounts");
     fixture.lineItems = [{ ...component, quantity: 11.111 }];

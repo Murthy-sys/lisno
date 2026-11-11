@@ -9,6 +9,10 @@ const ref = (name: string) => ({ $ref: `#/components/schemas/${name}` });
 const object = (properties: Record<string, unknown>, required = Object.keys(properties)) => ({ type: "object", additionalProperties: false, properties, required });
 
 export const ESTIMATE_COMPONENT_PRICING_SCHEMAS = {
+  EstimateAggregatePricing: { ...object({ visibility: { type: "string", enum: ["aggregate"] }, formulaVersion: basis, mainLineId: id, revisionId: id,
+    sourceItemVersion: version, sourceRevisionVersion: version, modeTier: tier, quantity: { type: "string" },
+    uom: object({ id, code: id, name: id, decimalScale: { type: "integer", minimum: 0, maximum: 3 } }), totalPaise: paise, inputFingerprint: fingerprint }),
+    description: "Combined selling amount including margin for a Configuration-owned In-house selection. No component identity, targets, costs or individual amounts." },
   EstimateComponentPricing: { ...object({ formulaVersion: basis, mainLineId: id, revisionId: id,
     sourceItemVersion: version, sourceRevisionVersion: version, modeTier: tier,
     quantity: { type: "string", pattern: "^(0|[1-9][0-9]*)(\\.[0-9]{1,3})?$" },
@@ -24,11 +28,12 @@ export const ESTIMATE_COMPONENT_PRICING_SCHEMAS = {
       rateSource: { type: "string", enum: ["configuration"] }, modeTier: tier, selectedInHouseComponentIds: { ...ids, minItems: 0 },
       quantity: { type: "number", minimum: 0 }, revisionId: id, itemVersion: version, revisionVersion: version, uomId: id,
       dimensions: ref("EstimateDimensions"), expectedDimensionRule: ref("EstimateDimensionRule") },
-    ["key", "mainLineId", "roomId", "pricingMode", "rateSource", "modeTier", "selectedInHouseComponentIds", "quantity", "revisionId", "itemVersion", "revisionVersion", "uomId"]) } }),
+    ["key", "mainLineId", "roomId", "pricingMode", "rateSource", "modeTier", "quantity", "revisionId", "itemVersion", "revisionVersion", "uomId"]) } }),
   EstimateInHousePreviewResponse: { ...object({ lines: { type: "array", maxItems: 100, items: object({ key: id,
     state: { type: "string", enum: ["ready", "incomplete", "conflict"] },
     componentPricing: { ...ref("EstimateComponentPricing"), nullable: true },
-    issues: { type: "array", items: object({ code: id, message: { type: "string" } }) } }) } }),
+    aggregatePricing: ref("EstimateAggregatePricing"),
+    issues: { type: "array", items: object({ code: id, message: { type: "string" } }) } }, ["key", "state", "componentPricing", "issues"]) } }),
     description: "Read-only estimate-authoring preview. Save recomputes against current Configuration and rejects stale fingerprints. Other estimate pricing modes do not use this endpoint." }
 };
 export const ESTIMATE_COMPONENT_PRICING_REQUESTS = {

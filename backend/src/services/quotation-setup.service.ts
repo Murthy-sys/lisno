@@ -1,3 +1,4 @@
+import { readEstimateAggregatePricing } from "../domain/estimate-aggregate-pricing.js";
 import { createHash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import type { ClientSession } from "mongoose";
@@ -71,8 +72,9 @@ export async function quotationTierChoices(line: Row, source?: Source, session?:
   return choices.map(choice => {
     const components = choice.inHouseComponents?.map(component => ({ ...component,
       available: component.available && positive(component.ratePaise) }));
+    const aggregate = mode === "in_house" && "aggregatePricing" in choice ? readEstimateAggregatePricing(choice.aggregatePricing) : null;
     const available = choice.available && source?.line.basePriceAvailability[choice.modeTier][mode] === true &&
-      (components === undefined ? positive(choice.ratePaise) : components.some(component => component.available));
+      (components === undefined ? aggregate ? aggregate.totalPaise === choice.amountPaise : positive(choice.ratePaise) : components.some(component => component.available));
     return { ...choice, available,
       unavailableReason: available ? null : choice.unavailableReason ?? "A positive price is not configured for this tier and pricing method.",
       ...(components === undefined ? {} : { inHouseComponents: components }) };

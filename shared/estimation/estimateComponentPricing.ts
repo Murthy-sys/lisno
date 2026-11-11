@@ -31,7 +31,7 @@ export interface EstimateInHousePreviewLine {
   pricingMode: "in_house";
   rateSource: "configuration";
   modeTier: "signature" | "premium" | "functional";
-  selectedInHouseComponentIds: string[];
+  selectedInHouseComponentIds?: string[];
   quantity: number;
   revisionId: string;
   itemVersion: number;
@@ -45,6 +45,7 @@ export interface EstimateInHousePreviewResult {
   key: string;
   state: "ready" | "incomplete" | "conflict";
   componentPricing: EstimateComponentPricing | null;
+  aggregatePricing?: (Omit<EstimateComponentPricing, "selectedComponentIds" | "components"> & { visibility: "aggregate" }) | null;
   issues: Array<{ code: string; message: string }>;
 }
 export interface EstimateComponentPricingLine {

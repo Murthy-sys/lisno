@@ -1,3 +1,4 @@
+import { readInHouseUsagePolicy } from "../domain/in-house-usage-policy.js";
 import type { ClientSession } from "mongoose";
 import type { AssistantCatalogueCandidate, AssistantRecommendation, AssistantSourceVersion } from "../contracts/project-chat-assistant.js";
 import { selectCurrentMainLineRevision } from "../domain/ai-estimator-knowledge-current-revision.js";
@@ -64,7 +65,9 @@ export async function readAssistantLines(ids: readonly string[], session?: Clien
         id, basketId, subBasketId, basketName, subBasketName, available: baseRatePaise !== null
       })) })
     };
-    lines.set(id, { candidate, advanced: advanced ? object(advanced.payload) : null, temporary: value.line.itemType === "temporary", dimensionsMandatory: value.line.dimensionsMandatory === true });
+    const componentMetadata = candidate.inHouseComponents;
+    if (readInHouseUsagePolicy(advanced?.payload).state !== "legacy") delete candidate.inHouseComponents;
+    lines.set(id, { candidate, componentMetadata, advanced: advanced ? object(advanced.payload) : null, temporary: value.line.itemType === "temporary", dimensionsMandatory: value.line.dimensionsMandatory === true });
   }
   return { lines, freshness };
 }

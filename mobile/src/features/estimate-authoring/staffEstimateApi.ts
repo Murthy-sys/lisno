@@ -1,3 +1,4 @@
+import { readEstimateAggregatePricing, type EstimateAggregatePricing } from "../../../../shared/estimation/estimateAggregatePricing";
 import { canonicalEstimateDimensions, readEstimateDimensionRule, type EstimateDimensions, type EstimateDimensionRule } from "../../../../shared/estimation/estimateDimensions";
 import { ESTIMATE_COMPONENT_PRICING_BASIS, readEstimateComponentPricing, type EstimateComponentPricing, type EstimateComponentPricingLine } from "../../../../shared/estimation/estimateComponentPricing";
 import { z } from "zod";
@@ -31,6 +32,10 @@ const configuredMetadata = {
   selectedInHouseComponentIds: selectedComponentIds.optional(),
   pricingBasis: z.literal(ESTIMATE_COMPONENT_PRICING_BASIS).optional(),
   componentPricing: z.custom<EstimateComponentPricing>(value => readEstimateComponentPricing(value) !== null).optional(),
+  aggregatePricing: z.custom<EstimateAggregatePricing>(value => readEstimateAggregatePricing(value) !== null).optional(),
+  inHouseUsage: z.enum(["estimator", "execution"]).nullable().optional(),
+  inHousePricingState: z.enum(["ready", "incomplete", "invalid"]).optional(),
+  configurationPricingChanged: z.boolean().optional(),
   itemType: z.enum(["main_line", "temporary"]).optional(), classification: z.enum(["standard", "special"]).optional(), pricingMode: z.enum(["pmc", "sub_vendor", "in_house"]).optional(), rateSource: z.enum(["manual", "configuration"]).optional(),
   itemVersion: z.number().int().positive().optional(), revisionVersion: z.number().int().positive().optional(), recommendationSourceMainLineIds: z.array(id).optional(), estimateNotes: z.array(z.string()).optional(),
   configurationUomChanged: z.boolean().optional(), configurationSourceUnavailable: z.boolean().optional(), previousUomName: z.string().optional()
@@ -38,7 +43,15 @@ const configuredMetadata = {
 const commonLine = { catalogueId: id, roomName: id, quantity: money, included: z.boolean() };
 // Editable responses may overlay current source versions. Retain the stored amount for review;
 // the authoring model separately blocks it until its source evidence is current again.
-function validStoredComponentAmount(line: EstimateComponentPricingLine): boolean {
+function validStoredComponentAmount(line: EstimateComponentPricingLine & { aggregatePricing?: unknown; included?: boolean }): boolean {
+  if (line.aggregatePricing !== undefined) {
+    const pricing = readEstimateAggregatePricing(line.aggregatePricing);
+    return !!pricing && line.componentPricing === undefined && line.selectedInHouseComponentIds === undefined &&
+      line.pricingBasis === ESTIMATE_COMPONENT_PRICING_BASIS && line.source === "configuration" && line.pricingMode === "in_house" && line.rateSource === "configuration" &&
+      line.mainLineId === pricing.mainLineId && (line.modeTier ?? "signature") === pricing.modeTier && line.quantity === Number(pricing.quantity) &&
+      line.ratePaise === null && line.rate === null && line.amountPaise === (line.included === false ? 0 : pricing.totalPaise) &&
+      line.amount === (line.included === false ? 0 : pricing.totalPaise / 100);
+  }
   const pricing = readEstimateComponentPricing(line.componentPricing);
   const ids = line.selectedInHouseComponentIds;
   return !!pricing && line.pricingBasis === ESTIMATE_COMPONENT_PRICING_BASIS && line.source === "configuration" && line.pricingMode === "in_house" && line.rateSource === "configuration" &&
@@ -51,7 +64,7 @@ const lineSchema = z.union([
     mainBasketName: z.string(), subBasketName: z.string().nullable(), mainLineName: z.string(), uomName: z.string(), uomCode: z.string(), uomDecimalScale: z.number().int().min(0).max(6),
     ratePaise: paise.nullable(), rate: money.nullable(), amount: money.nullable(), amountPaise: paise.nullable(), unit: z.string(), specification: z.null()
   }).passthrough().refine((line) => line.catalogueId === line.mainLineId &&
-    (line.pricingBasis === undefined && line.componentPricing === undefined || validStoredComponentAmount(line))),
+    (line.pricingBasis === undefined && line.componentPricing === undefined && line.aggregatePricing === undefined || validStoredComponentAmount(line))),
   z.object({ ...commonLine, source: z.literal("legacy").optional(), id: id.optional(), specification: z.string(), unit: z.string(), rate: money, amount: money.optional() }).passthrough()
 ]);
 const estimateSchema = z.object({ id, leadId: id.optional(), version: z.number().int().positive(), propertyType: z.string(), bedroomCount: z.number().int().min(1).max(50).nullish(),

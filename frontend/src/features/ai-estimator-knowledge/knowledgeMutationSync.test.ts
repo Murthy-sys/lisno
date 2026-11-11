@@ -35,6 +35,22 @@ const completeness: KnowledgeCompleteness = {
   warnings: []
 };
 
+it("invalidates aggregate pricing and operational detail after saved In-house policy changes", async () => {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const keys = [["estimate-in-house-pricing", "lead-a"], ["leads", "lead-a", "estimate"], ["estimate-tiers", "project-a"],
+    ["estimates", "revisions", "actor-a", "estimate-a", "detail", "revision-a"],
+    ["quotation", "project-a", "detail"], ["procurement", "purchase-order-preparation", "project-a"],
+    ["procurement", "purchase-order-requests", "project-b"]];
+  const artifactKey = ["issued-artifact", "immutable-round"];
+  for (const key of [...keys, artifactKey]) client.setQueryData(key, { version: 1 });
+  await syncKnowledgeSectionMutation(client, { id: "section-a", mainLineId: "line-a", revisionId: "revision-a", sectionKey: "advanced",
+    applicability: "configured", version: 2, aggregateVersion: 3, payload: { inHouseUsage: "estimator", inHousePresetComponentIds: [] },
+    createdById: "admin", updatedById: "admin", createdAt: "2026-11-11T00:00:00Z", updatedAt: "2026-11-11T00:00:00Z" });
+  for (const key of keys) expect(client.getQueryState(key)?.isInvalidated).toBe(true);
+  expect(client.getQueryState(artifactKey)?.isInvalidated).toBe(false);
+  client.clear();
+});
+
 const actor = {
   createdById: "super-admin-1",
   updatedById: "super-admin-1",

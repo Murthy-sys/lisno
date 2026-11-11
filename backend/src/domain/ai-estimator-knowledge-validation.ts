@@ -34,6 +34,7 @@ import {
 } from "./ai-estimator-knowledge.js";
 import { parseScaledDecimal } from "./ai-estimator-knowledge-calculation.js";
 import { normalizeKnowledgeBudgetAlterationTarget } from "./ai-estimator-knowledge-recommendation.js";
+import { readInHouseUsagePolicy } from "./in-house-usage-policy.js";
 
 export type { KnowledgeCompletenessSectionInput } from "./ai-estimator-knowledge-completeness.js";
 
@@ -400,7 +401,7 @@ const ALLOWED_SECTION_KEYS: Record<KnowledgeSectionKey, ReadonlySet<string>> = {
   recommendations: new Set(["recommendations", "exclusions", "budgetAlterations"]),
   quality: new Set(["parameters"]),
   execution: new Set(["steps", "productivity"]),
-  advanced: new Set(["tierConfigurations", "dependencies", "modeOverrides", "revisionLineage", "modeConfigurations", "modeDescription", "modeCalculation", "modeCalculations", "inHouseComponents", "pmcMarginBps", "pmcMinimumMarginBps", "subVendorMarginBps", "subVendorMinimumMarginBps"])
+  advanced: new Set(["tierConfigurations", "dependencies", "modeOverrides", "revisionLineage", "modeConfigurations", "modeDescription", "modeCalculation", "modeCalculations", "inHouseComponents", "inHouseUsage", "inHousePresetComponentIds", "pmcMarginBps", "pmcMinimumMarginBps", "subVendorMarginBps", "subVendorMinimumMarginBps"])
 };
 
 function inspectBoundedValue(
@@ -1680,7 +1681,9 @@ function validateModeCalculationSettings(
 function validateAdvancedPayload(
   record: Record<string, unknown>
 ): KnowledgeValidationIssue[] {
-  const issues: KnowledgeValidationIssue[] = [];
+  const issues: KnowledgeValidationIssue[] = readInHouseUsagePolicy(record).issues.map(issue => ({
+    path: `payload.${issue.path}`, code: "INVALID_IN_HOUSE_POLICY", message: issue.message
+  }));
   if (Object.hasOwn(record, "inHouseComponents")) {
     const path = "payload.inHouseComponents";
     const rows = validateObjectArray(record.inHouseComponents, path, issues);

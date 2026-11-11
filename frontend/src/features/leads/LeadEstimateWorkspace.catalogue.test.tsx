@@ -7,6 +7,8 @@ import { renderWithQuery } from "../../test/render";
 import { LeadEstimateWorkspace } from "./LeadEstimateWorkspace";
 import { leadKeys, type ConfiguredEstimateLine, type EstimateDraft, type EstimateDraftInput } from "./leadsApi";
 import { estimationCatalogueKeys, type EstimationCatalogue } from "./estimationCatalogueApi";
+import { toEstimateAggregatePricing, type EstimateAggregatePricing } from "../../../../shared/estimation/estimateAggregatePricing";
+import { componentPricingFixture } from "./estimateComponentPricing.testFixtures";
 
 const authState = vi.hoisted(() => ({ role: "estimator_sales" }));
 vi.mock("../../auth/AuthProvider", () => ({ useAuth: () => ({ user: { id: "staff", role: authState.role }, status: "authenticated" }) }));
@@ -48,6 +50,8 @@ function setup(status: EstimateDraft["status"] = "draft", withSavedLine = false,
   const saves: EstimateDraftInput[] = [];
   const requests: Array<{ method: string; url: string }> = [];
   let catalogueUnavailable = false;
+  let aggregatePreview: EstimateAggregatePricing | null = null;
+  const previews: unknown[] = [];
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
     const url = String(input), method = init?.method ?? "GET";
     requests.push({ method, url });
@@ -57,11 +61,19 @@ function setup(status: EstimateDraft["status"] = "draft", withSavedLine = false,
       ? Response.json({ error: { code: "UNAVAILABLE", message: "Catalogue unavailable" } }, { status: 503 })
       : json({ ...catalogue, pagination: { total: 2, offset: 0, limit: 100, hasMore: false } });
     if (url.includes("/estimation/catalogue/recommendations?")) return json({ sources: [] });
+    if (url.endsWith("/leads/lead/estimate/in-house-preview") && method === "POST" && aggregatePreview) {
+      const body = JSON.parse(String(init?.body)) as { lines: Array<{ key: string }> };
+      previews.push(body);
+      return json({ lines: body.lines.map(line => ({ key: line.key, state: "ready", componentPricing: null, aggregatePricing: aggregatePreview, issues: [] })) });
+    }
     if (url.endsWith("/leads/lead/estimate") && method === "PUT") {
       const body = JSON.parse(String(init?.body)) as EstimateDraftInput;
       saves.push(body);
       stored = { ...stored, ...body, version: stored.version! + 1,
-        lineItems: body.lineItems.map(line => line.source === "configuration" ? { ...savedLine, ...line, id: line.id ?? `saved-${line.mainLineId}` } : line) };
+        lineItems: body.lineItems.map(line => line.source === "configuration" ? { ...savedLine, ...line, id: line.id ?? `saved-${line.mainLineId}`,
+          ...(aggregatePreview && line.pricingMode === "in_house" ? { aggregatePricing: aggregatePreview, inHouseUsage: "estimator" as const,
+            inHousePricingState: "ready" as const, configurationPricingChanged: false, sourceItemVersion: aggregatePreview.sourceItemVersion,
+            sourceRevisionVersion: aggregatePreview.sourceRevisionVersion, amountPaise: aggregatePreview.totalPaise, amount: aggregatePreview.totalPaise / 100 } : {}) } : line) };
       return json(stored);
     }
     throw new Error(`Unexpected request ${method} ${url}`);
@@ -74,7 +86,7 @@ function setup(status: EstimateDraft["status"] = "draft", withSavedLine = false,
     </Routes></MemoryRouter>);
     return { ...view, client: () => client };
   };
-  return { mount, saves, requests, catalogue, failCatalogue: () => { catalogueUnavailable = true; },
+  return { mount, saves, requests, previews, catalogue, setAggregatePreview: (pricing: EstimateAggregatePricing) => { aggregatePreview = pricing; }, failCatalogue: () => { catalogueUnavailable = true; },
     newerSavedRevision: () => { stored = { ...stored, version: stored.version! + 1 }; } };
 }
 
@@ -85,6 +97,59 @@ async function openEmptyBuilder(user: ReturnType<typeof userEvent.setup>) {
 }
 
 describe("Sales direct catalogue browsing", () => {
+  it.each(["changed", "missing", "unavailable"])("keeps approved aggregate prices visible when current Configuration is %s", async state => {
+    const aggregate = { ...toEstimateAggregatePricing(componentPricingFixture("ceiling")), revisionId: "ceiling-revision", uom: { id: "unit", name: "sq ft", code: "SQFT", decimalScale: 2 } };
+    const line: ConfiguredEstimateLine = { source: "configuration", id: "saved-ceiling", catalogueId: "ceiling", roomId: "living", roomName: "Living & Dining",
+      mainBasketId: "pop", mainBasketName: "POP / Gypsum", subBasketId: "ceilings", subBasketName: "Ceilings", mainLineId: "ceiling", mainLineName: "Gypsum ceiling",
+      revisionId: "ceiling-revision", uomId: "unit", uomName: "sq ft", uomCode: "SQFT", uomDecimalScale: 2, unit: "sq ft", quantity: 2,
+      included: true, classification: "special", pricingMode: "in_house", rateSource: "configuration", modeTier: "signature", pricingBasis: "in_house_components_v1",
+      aggregatePricing: aggregate, inHouseUsage: "estimator", inHousePricingState: "ready", configurationPricingChanged: true,
+      sourceItemVersion: 2, sourceRevisionVersion: 3, rate: null, ratePaise: null, amountPaise: aggregate.totalPaise, amount: aggregate.totalPaise / 100, specification: null };
+    const fixture = setup("client_approved", true, { lineItems: [line] });
+    Object.assign(fixture.catalogue.items[0]!.subBaskets[0]!.mainLines[0]!, { itemVersion: 2, revisionVersion: 4, inHouseUsage: "estimator", inHousePricingState: "ready" });
+    if (state === "missing") fixture.catalogue.items[0]!.subBaskets[0]!.mainLines = [];
+    if (state === "unavailable") fixture.failCatalogue();
+    fixture.mount();
+    const amount = await screen.findByLabelText(/Amount for POP \/ Gypsum, Ceilings, Gypsum ceiling/);
+    await waitFor(() => expect(amount).toHaveTextContent("783.33"));
+    expect(screen.queryByRole("button", { name: "Refresh price for Gypsum ceiling" })).not.toBeInTheDocument();
+    expect(fixture.previews).toHaveLength(0);
+    expect(fixture.saves).toHaveLength(0);
+  });
+  it("requires explicit refresh for a changed governed price and saves its fingerprint without component IDs", async () => {
+    const aggregate = { ...toEstimateAggregatePricing(componentPricingFixture("ceiling")), revisionId: "ceiling-revision", uom: { id: "unit", name: "sq ft", code: "SQFT", decimalScale: 2 } };
+    const line: ConfiguredEstimateLine = { source: "configuration", id: "saved-ceiling", catalogueId: "ceiling", roomId: "living", roomName: "Living & Dining",
+      mainBasketId: "pop", mainBasketName: "POP / Gypsum", subBasketId: "ceilings", subBasketName: "Ceilings", mainLineId: "ceiling", mainLineName: "Gypsum ceiling",
+      revisionId: "ceiling-revision", uomId: "unit", uomName: "sq ft", uomCode: "SQFT", uomDecimalScale: 2, unit: "sq ft", quantity: 2,
+      included: true, classification: "special", pricingMode: "in_house", rateSource: "configuration", modeTier: "signature", pricingBasis: "in_house_components_v1",
+      aggregatePricing: aggregate, inHouseUsage: "estimator", inHousePricingState: "ready", configurationPricingChanged: true,
+      sourceItemVersion: 2, sourceRevisionVersion: 3, rate: null, ratePaise: null, amountPaise: aggregate.totalPaise, amount: aggregate.totalPaise / 100, specification: null };
+    const fixture = setup("draft", true, { lineItems: [line] });
+    const source = fixture.catalogue.items[0]!.subBaskets[0]!.mainLines[0]!;
+    fixture.catalogue.readyNonActiveSupported = true;
+    Object.assign(source, { itemVersion: 2, revisionVersion: 4, inHouseUsage: "estimator", inHousePricingState: "ready", hasConfiguredBasePrice: true });
+    fixture.setAggregatePreview({ ...aggregate, sourceRevisionVersion: 4, totalPaise: 90234, inputFingerprint: "b".repeat(64) });
+    const view = fixture.mount(); const user = userEvent.setup();
+    await screen.findByRole("checkbox", { name: /Wall paint/ });
+    await screen.findByRole("button", { name: "Refresh price for Gypsum ceiling" });
+    expect(fixture.previews).toHaveLength(0);
+    expect(screen.getByRole("button", { name: "Save draft" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Refresh price for Gypsum ceiling" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save draft" })).toBeEnabled());
+    expect(screen.getByLabelText("Price including margin for Gypsum ceiling in Living & Dining")).toHaveTextContent("₹902.34");
+    await act(async () => { await view.client().refetchQueries({ queryKey: estimationCatalogueKeys.ready }); });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save draft" })).toBeEnabled());
+    expect(screen.queryByRole("button", { name: "Refresh price for Gypsum ceiling" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Save draft" }));
+    await screen.findByText("Estimate draft saved.");
+    expect(fixture.saves[0]?.lineItems[0]).toMatchObject({ pricingBasis: "in_house_components_v1", componentPricingFingerprint: "b".repeat(64), ratePaise: null });
+    expect(fixture.saves[0]?.lineItems[0]).not.toHaveProperty("selectedInHouseComponentIds");
+    expect(fixture.previews[0]).toEqual({ lines: [expect.not.objectContaining({ selectedInHouseComponentIds: expect.anything() })] });
+    source.revisionVersion = 5;
+    await act(async () => { await view.client().refetchQueries({ queryKey: estimationCatalogueKeys.ready }); });
+    expect(await screen.findByRole("button", { name: "Refresh price for Gypsum ceiling" })).toBeVisible();
+  });
+
   it("uses first and last saved base metadata on refresh across rooms without saving hidden previews", async () => {
     const fixture = setup();
     const source = fixture.catalogue.items[0]!.subBaskets[0]!.mainLines[0]!;

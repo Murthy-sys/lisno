@@ -8,6 +8,7 @@ import { ApiError } from "../../api/client";
 import { ClientEstimateTiers } from "./ClientEstimateTiers";
 import * as api from "./estimateTiersApi";
 import { componentPricingFixture } from "../leads/estimateComponentPricing.testFixtures";
+import { toEstimateAggregatePricing } from "../../../../shared/estimation/estimateAggregatePricing";
 
 vi.mock("./estimateTiersApi", async original => ({ ...await original<typeof import("./estimateTiersApi")>(), getEstimateTiers: vi.fn(), updateEstimateTier: vi.fn(), updateEstimateTierGroup: vi.fn() }));
 const source = { revisionId: "revision-1", itemVersion: 4, revisionVersion: 2, uomId: "sq-ft" };
@@ -38,6 +39,31 @@ const tier = (name: string) => screen.getByRole("radio", { name: new RegExp(`^${
 beforeEach(() => vi.clearAllMocks());
 
 describe("client working estimate tiers", () => {
+  it("renders governed combined prices and omits component IDs from comparison and tier-save requests", async () => {
+    const detail = fixture(); const line = detail.lines[0]!;
+    const evidence = componentPricingFixture("main-line");
+    Object.assign(line, { roomId: "room", mainBasketId: "basket", subBasketId: "sub", subBasketName: "Ceilings", pricingMode: "in_house",
+      ratePaise: null, amountPaise: evidence.totalPaise, inHouseUsage: "execution", aggregatePricing: toEstimateAggregatePricing(evidence), pricingBasis: evidence.formulaVersion });
+    line.choices = line.choices.map(choice => ({ ...choice, inHouseUsage: "execution", inHousePricingState: "ready", ratePaise: null,
+      amountPaise: evidence.totalPaise, aggregatePricing: { ...toEstimateAggregatePricing(evidence), modeTier: choice.modeTier }, pricingBasis: evidence.formulaVersion }));
+    const inputs: Array<{ lines: Array<{ selectedInHouseComponentIds?: string[] }> }> = [];
+    server.use(http.post("/api/v1/projects/project/estimate-tier-comparison", async ({ request }) => {
+      inputs.push(await request.json() as typeof inputs[number]);
+      return HttpResponse.json({ data: { mainBasketId: "basket", subBasketId: "sub", roomId: "room", roomName: "Living", mainBasketName: "Finishes", subBasketName: "Ceilings", estimateVersion: 7, tiers: [] } });
+    }));
+    const user = userEvent.setup(); setup(detail); await screen.findByText("Ceiling");
+    expect(screen.getByText("Price including margin: ₹783.33")).toBeVisible();
+    expect(screen.queryByRole("group", { name: /In-house components/ })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Check tier comparison for Ceilings in Living" }));
+    await waitFor(() => expect(inputs).toHaveLength(1));
+    expect(inputs[0]!.lines[0]).not.toHaveProperty("selectedInHouseComponentIds");
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Close" }));
+    await user.click(tier("Premium"));
+    await user.click(screen.getByRole("button", { name: "Save tier selection" }));
+    await waitFor(() => expect(api.updateEstimateTier).toHaveBeenCalled());
+    expect(vi.mocked(api.updateEstimateTier).mock.calls[0]![2]).not.toHaveProperty("selectedInHouseComponentIds");
+  });
+
   it.each([undefined, -50])("keeps the server total and its optional rounding adjustment (%s)", async roundOffPaise => {
     setup({ ...fixture(), totalPaise: roundOffPaise === undefined ? 10250 : 10200,
       ...(roundOffPaise === undefined ? {} : { roundOffPaise }) });

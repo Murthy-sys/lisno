@@ -1,4 +1,5 @@
 import { parseInHouseComponents } from "../../../../shared/knowledge/knowledgeInHouseComponents";
+import { readInHouseUsagePolicy } from "../../../../shared/knowledge/knowledgeInHouseUsage";
 import { modeCalculationDraft, modeCalculationsForPayload, parseModeQuantity, MODE_CALCULATION_SCOPES, type ModeCalculationScope } from "./knowledgeModeCalculation";
 import { generateModeDescription, syncModeDescription } from "./knowledgeModeDescription";
 import { knowledgeModeFieldTypeLabel, parseKnowledgeModeConfigurations, partitionKnowledgeModeConfigurations, type KnowledgeModeConfiguration } from "./knowledgeModeConfiguration";
@@ -81,6 +82,13 @@ export function projectKnowledgeModePendingChanges(input: KnowledgeModePendingCh
   const before = input.advancedBaseline;
   const after = input.advancedDraft;
   if (before) {
+    const oldUsage = readInHouseUsagePolicy(before);
+    const usage = readInHouseUsagePolicy(after);
+    const usageFields: KnowledgePendingChangeField[] = [];
+    if (before.inHouseUsage !== after.inHouseUsage) usageFields.push(field("usage", "In-house use", usage.usage === "estimator" ? "Estimator" : usage.usage === "execution" ? "Execution" : "Not selected"));
+    if (!pendingValuesEqual(before.inHousePresetComponentIds, after.inHousePresetComponentIds)) usageFields.push(field("preset", "Components included in price", usage.componentIds.length));
+    if (usageFields.length) add("in-house:usage", "Execution · In-house", [{ key: "in-house:usage", title: "In-house price and visibility", kind: "updated", fields: usageFields,
+      ...(usage.state === "invalid" || usage.state === "incomplete" ? { incomplete: true } : {}) }]);
     const oldConfigs = parseKnowledgeModeConfigurations(before.modeConfigurations, input.modes).configurations;
     const configs = parseKnowledgeModeConfigurations(after.modeConfigurations, input.modes).configurations;
     const oldPrimary = partitionKnowledgeModeConfigurations(oldConfigs).primary;
@@ -162,6 +170,8 @@ export function projectKnowledgeModePendingChanges(input: KnowledgeModePendingCh
       if (!current) { add(`in-house-component:${component.id}`, `In-house · ${title}`, [{ key: component.id, title: "Component", kind: "removed", fields: [] }]); continue; }
       const entries: KnowledgePendingChangeEntry[] = [];
       if (!old) entries.push({ key: `${component.id}:added`, title: "Component", kind: "added", fields: [] });
+      if (oldUsage.componentIds.includes(component.id) !== usage.componentIds.includes(component.id)) entries.push({ key: `${component.id}:price-selection`, title: "Price selection", kind: "updated",
+        fields: [field("included", "Include in price", usage.componentIds.includes(component.id) ? "Included" : "Not included")] });
       for (const list of PMC_SCOPE_LISTS) entries.push(...rows((old?.[list] ?? []).map((row) => ({ ...row })), current[list].map((row) => ({ ...row })), `${component.id}:${list}`, "name", list === "inclusions" ? "Inclusion" : "Exclusion", { name: "Name", selected: "State" }, { format: (name, value) => name === "selected" ? value ? "Selected" : "Not selected" : value }));
       for (const cost of ["labor", "material"] as const) {
         const pending = input.componentPending?.[`${component.id}:${cost}`];

@@ -124,7 +124,8 @@ export function projectProcurementBasketModeGroups(baskets: readonly Procurement
     const inHouseComponentBreakdown = mode === "in_house" ? combineInHouseComponentBreakdowns(baskets.flatMap(basket =>
       basket.inHouseComponentBreakdown ? [basket.inHouseComponentBreakdown] : [])) : undefined;
     return { mode, baskets: subsets, basketCount: subsets.length, includedLineCount, boqReadyLineCount,
-      ...(inHouseComponentBreakdown ? { inHouseComponentBreakdown } : {}),
+      ...(inHouseComponentBreakdown && !(inHouseComponentBreakdown.visibleComponentsOnly && inHouseComponentBreakdown.complete &&
+        inHouseComponentBreakdown.subBaskets.length === 0) ? { inHouseComponentBreakdown } : {}),
       readinessPercent: includedLineCount ? Math.round(boqReadyLineCount * 100 / includedLineCount) : null,
       approvedEstimatePaise: sumPaise(subsets.map(subset => subset.approvedEstimatePaise)),
       currentCostPaise: unpricedLineCount ? null : pricedTotal, currentCostComplete: unpricedLineCount === 0,

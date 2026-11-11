@@ -1,3 +1,4 @@
+import { readInHouseUsagePolicy } from "./in-house-usage-policy.js";
 import { KNOWLEDGE_MODE_CONFIGURATION_SCOPES, projectKnowledgeModeTierSection, type KnowledgeModeConfigurationScope } from "./ai-estimator-knowledge-mode-tiers.js";
 import { inHouseComponentBaseRate, readInHouseComponents, type KnowledgeInHouseComponent } from "./ai-estimator-knowledge-in-house-components.js";
 import { estimateModeBaseRatesPaise, type EstimatePricingMode } from "./estimate-mode-pricing.js";
@@ -14,10 +15,15 @@ export function configuredKnowledgeBasePriceAvailability(
     const section = advanced?.sectionKey === "advanced" ? projectKnowledgeModeTierSection(advanced, scope) : undefined;
     const configured = section?.applicability === "configured";
     const bases = estimateModeBaseRatesPaise(configured ? section.payload : null);
+    const policy = readInHouseUsagePolicy(section?.payload);
+    const components = section ? readInHouseComponents(section.payload) : undefined;
+    const selected = components?.filter(component => policy.componentIds.includes(component.id));
     availability[scope] = {
       pmc: (bases.pmc ?? 0) > 0,
       sub_vendor: (bases.sub_vendor ?? 0) > 0,
-      in_house: (bases.in_house ?? 0) > 0 || configured && readInHouseComponents(section.payload)?.some(component =>
+      in_house: policy.state !== "legacy" ? configured && policy.state === "ready" && !!selected?.length && selected.length === policy.componentIds.length && selected.every(component =>
+        componentIsAvailable(component) && component.labor !== null && component.material !== null && (inHouseComponentBaseRate(component) ?? 0) > 0)
+        : (bases.in_house ?? 0) > 0 || configured && readInHouseComponents(section.payload)?.some(component =>
         componentIsAvailable(component) && (inHouseComponentBaseRate(component) ?? 0) > 0) === true
     };
   }

@@ -4,11 +4,12 @@ import {
   copyInHouseComponentConfiguration, LEGACY_IN_HOUSE_COMPONENT_ID, legacyInHouseComponent, MAX_IN_HOUSE_COMPONENTS, parseInHouseComponents,
   withInHouseComponents, type KnowledgeInHouseComponent
 } from "../../../../shared/knowledge/knowledgeInHouseComponents";
+import { readInHouseUsagePolicy } from "../../../../shared/knowledge/knowledgeInHouseUsage";
 import { useAuth } from "../../auth/AuthProvider";
 import { hasFrontendPermission } from "../../auth/authorization";
 import { Button } from "../../components/ui/Button";
 import { ContextPanel } from "../../components/ui/ContextPanel";
-import { Field, Select } from "../../components/ui/Field";
+import { Checkbox, Field, Select } from "../../components/ui/Field";
 import { InlineMessage } from "../../components/ui/InlineMessage";
 import { KnowledgeModeCalculationEditor, type KnowledgeModeCalculationUom } from "./KnowledgeModeCalculationEditor";
 import { KnowledgeInHouseTotal } from "./KnowledgeInHouseTotal";
@@ -56,6 +57,7 @@ export function KnowledgeInHouseComponents({ payload, item, baskets, basketCatal
   const explicit = Object.hasOwn(payload, "inHouseComponents");
   const parsed = useMemo(() => parseInHouseComponents(payload.inHouseComponents), [payload.inHouseComponents]);
   const components = parsed.components;
+  const usagePolicy = readInHouseUsagePolicy(payload);
   const [adding, setAdding] = useState(false);
   const [expanded, setExpanded] = useState<string[]>([LEGACY_IN_HOUSE_COMPONENT_ID]);
   const [validity, setValidity] = useState<Record<string, boolean>>({});
@@ -64,6 +66,8 @@ export function KnowledgeInHouseComponents({ payload, item, baskets, basketCatal
   const [scopePending, setScopePending] = useState<Record<string, boolean>>({});
   const [editorEpochs, setEditorEpochs] = useState<Record<string, number>>({});
   const [copyPicker, setCopyPicker] = useState<InHouseCopySource | null>(null);
+  const [removal, setRemoval] = useState<{ sourceId: string; payloadStamp: string; targetId?: string; targetLabel?: string; snapshot?: InHouseCopySource } | null>(null);
+  const removalReturnFocus = useRef<HTMLElement | null>(null);
   const copyReturnFocus = useRef<HTMLElement | null>(null);
   const [dragging, setDragging] = useState(false);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
@@ -94,7 +98,7 @@ export function KnowledgeInHouseComponents({ payload, item, baskets, basketCatal
     queryKey: dataSource.subBasketCatalogKey(basketId), queryFn: () => dataSource.getSubBasketCatalog(basketId)
   })) });
   const activeKeys = components.flatMap(({ id }) => [inHouseCalculationKey(id, "labor"), inHouseCalculationKey(id, "material")]);
-  const valid = !explicit || (!parsed.issues.length && activeKeys.every((key) => validity[key] !== false));
+  const valid = !usagePolicy.issues.length && (!explicit || (!parsed.issues.length && activeKeys.every((key) => validity[key] !== false)));
   useEffect(() => { onValidationChange(valid); }, [onValidationChange, valid]);
   useEffect(() => { onPendingChange(pending); }, [onPendingChange, pending]);
   useEffect(() => () => onPendingChange({}), [onPendingChange]);
@@ -142,13 +146,20 @@ export function KnowledgeInHouseComponents({ payload, item, baskets, basketCatal
       && snapshot.scope === current.scope && snapshot.payloadStamp === current.payloadStamp && snapshot.sourceStamp === JSON.stringify(candidate));
   }
 
-  function copyTo(sourceId: string, targetId: string, targetLabel: string, snapshot?: InHouseCopySource) {
+  function copyTo(sourceId: string, targetId: string, targetLabel: string, snapshot?: InHouseCopySource, removalConfirmed = false) {
     const current = currentCopy.current;
     const origin = current.components.find(({ id }) => id === sourceId);
     if (current.readOnly || current.adding || !origin || !hasCopyableConfiguration(origin) || targetId === sourceId || targetId === LEGACY_IN_HOUSE_COMPONENT_ID) return;
     const reason = current.sourceBlockReasons[sourceId];
     if (reason) { setNotice(reason); return; }
     if (snapshot && !validCopySource(snapshot)) { setNotice("The source configuration changed. Choose the component again before copying."); return; }
+    if (sourceId === LEGACY_IN_HOUSE_COMPONENT_ID && readInHouseUsagePolicy(current.payload).componentIds.includes(sourceId) && !removalConfirmed) {
+      removalReturnFocus.current = rowRefs.current.get(sourceId) ?? null;
+      setCopyPicker(null);
+      setRemoval({ sourceId, targetId, targetLabel, snapshot, payloadStamp: current.payloadStamp });
+      clearDrag();
+      return;
+    }
     const copied = copyInHouseComponentConfiguration(current.payload, sourceId, targetId);
     if (!copied) { setNotice("This component could not be replaced. Review its configuration and try again."); return; }
     const movingExisting = sourceId === LEGACY_IN_HOUSE_COMPONENT_ID;
@@ -156,7 +167,8 @@ export function KnowledgeInHouseComponents({ payload, item, baskets, basketCatal
     const next = movingExisting
       ? withInHouseComponents(copied, parseInHouseComponents(copied.inHouseComponents).components.filter(({ id }) => id !== sourceId))
       : copied;
-    current.onChange(next);
+    current.onChange(movingExisting && Object.hasOwn(next, "inHousePresetComponentIds")
+      ? { ...next, inHousePresetComponentIds: readInHouseUsagePolicy(current.payload).componentIds.filter(id => id !== sourceId) } : next);
     const resetIds = movingExisting ? [sourceId, targetId] : [targetId];
     const targetKeys = new Set(resetIds.flatMap((id) => [inHouseCalculationKey(id, "labor"), inHouseCalculationKey(id, "material")]));
     setPending((value) => Object.fromEntries(Object.entries(value).filter(([key]) => !targetKeys.has(key))));
@@ -254,6 +266,21 @@ export function KnowledgeInHouseComponents({ payload, item, baskets, basketCatal
     return saved;
   }
 
+  function removeComponent(id: string) {
+    if (readOnly) return;
+    const next = withInHouseComponents(payload, components.filter(component => component.id !== id));
+    onChange(Object.hasOwn(payload, "inHousePresetComponentIds")
+      ? { ...next, inHousePresetComponentIds: usagePolicy.componentIds.filter(componentId => componentId !== id) } : next);
+    setPending(current => Object.fromEntries(Object.entries(current).filter(([key]) => !key.startsWith(`${id}:`))));
+    setValidity(current => Object.fromEntries(Object.entries(current).filter(([key]) => !key.startsWith(`${id}:`))));
+    setScopePending(current => Object.fromEntries(Object.entries(current).filter(([key]) => !key.startsWith(`${id}:`))));
+    setExpanded(current => current.filter(componentId => componentId !== id));
+    setRemoval(null);
+    clearDrag();
+    if (id === LEGACY_IN_HOUSE_COMPONENT_ID) setNotice("Existing In-house configuration removed. Component values are unchanged. Save Mode to keep this change.");
+    addRef.current?.focus();
+  }
+
   const validationPublishers = useMemo(() => Object.fromEntries(activeKeys.map((key) => [key, (value: boolean) => setValidity((current) => current[key] === value ? current : { ...current, [key]: value })])), [activeKeys.join("|")]);
   const pendingPublishers = useMemo(() => Object.fromEntries(activeKeys.map((key) => [key, (value: KnowledgePendingCalculation | null) => setPending((current) => JSON.stringify(current[key] ?? null) === JSON.stringify(value) ? current : { ...current, [key]: value })])), [activeKeys.join("|")]);
   const scopeKeys = components.flatMap(({ id }) => [scopePendingKey(id, "inclusions"), scopePendingKey(id, "exclusions")]);
@@ -271,6 +298,10 @@ export function KnowledgeInHouseComponents({ payload, item, baskets, basketCatal
         else setAdding(true);
       }}>Add component</Button> : null}
     </div>
+    {usagePolicy.usage ? <div className="knowledge-in-house-components__preset-summary">
+      <p>{usagePolicy.componentIds.length} of {components.length} components included in price.</p>
+      {usagePolicy.state === "incomplete" ? <p role="status">No components selected. The In-house price will be unavailable until a component is included.</p> : null}
+    </div> : <p className="knowledge-in-house-components__copy-instructions">Choose Estimator or Execution to select the components included in price.</p>}
     {!readOnly && components.length > 0 ? <p id={copyInstructionId} className="knowledge-in-house-components__copy-instructions">Use or drag the existing configuration to move it into a component. Copy configuration duplicates other components. Scope, Labour and Material are replaced together.</p> : null}
     <p className={notice ? "knowledge-in-house-components__notice" : "sr-only"} role="status" aria-live="polite">{notice}</p>
     {explicit && !components.length ? <p>No In-house components configured.</p> : null}
@@ -302,6 +333,16 @@ export function KnowledgeInHouseComponents({ payload, item, baskets, basketCatal
             onClick={() => setExpanded((current) => open ? current.filter((id) => id !== component.id) : [...current, component.id])}>
             <span className={preserved ? "knowledge-in-house-components__source-name" : undefined}>{preserved ? <><strong>Existing In-house configuration</strong><small>{label}</small></> : label}</span><span className="knowledge-in-house-components__disclosure" aria-hidden="true">{open ? "−" : "+"}</span>
           </button></h5>
+          {usagePolicy.usage ? <label className="knowledge-in-house-components__include">
+            <Checkbox disabled={readOnly || adding} checked={usagePolicy.componentIds.includes(component.id)}
+              aria-label={`Include in price: ${editorLabel}`}
+              onChange={(event) => {
+                if (readOnly || adding) return;
+                onChange({ ...payload, inHousePresetComponentIds: event.target.checked
+                  ? [...usagePolicy.componentIds, component.id] : usagePolicy.componentIds.filter(id => id !== component.id) });
+              }} />
+            <span>Include in price</span>
+          </label> : null}
           {!readOnly ? <div className="knowledge-in-house-components__actions">
             {preserved || configured ? <Button variant="secondary" size="compact" className="knowledge-in-house-components__drag" disabled={!canDrag}
               data-in-house-drag-handle draggable={canDrag} aria-describedby={copyInstructionId} aria-haspopup="dialog"
@@ -309,14 +350,11 @@ export function KnowledgeInHouseComponents({ payload, item, baskets, basketCatal
             {!preserved && source ? <Button variant="secondary" size="compact" disabled={!canUseExisting} aria-describedby={copyInstructionId}
                 onClick={() => copyTo(source.id, component.id, label)}>Use existing configuration</Button> : null}
             <Button variant="quiet" size="compact" aria-label={preserved ? "Remove existing configuration" : `Remove component ${label}`} onClick={() => {
-              onChange(withInHouseComponents(payload, components.filter(({ id }) => id !== component.id)));
-              setPending((current) => Object.fromEntries(Object.entries(current).filter(([key]) => !key.startsWith(`${component.id}:`))));
-              setValidity((current) => Object.fromEntries(Object.entries(current).filter(([key]) => !key.startsWith(`${component.id}:`))));
-              setScopePending((current) => Object.fromEntries(Object.entries(current).filter(([key]) => !key.startsWith(`${component.id}:`))));
-              setExpanded((current) => current.filter((id) => id !== component.id));
-              clearDrag();
-              if (preserved) setNotice("Existing In-house configuration removed. Component values are unchanged. Save Mode to keep this change.");
-              addRef.current?.focus();
+              if (usagePolicy.componentIds.includes(component.id)) {
+                removalReturnFocus.current = rowRefs.current.get(component.id) ?? null;
+                setRemoval({ sourceId: component.id, payloadStamp });
+              }
+              else removeComponent(component.id);
             }}>{preserved ? "Remove existing configuration" : "Remove"}</Button>
           </div> : null}
         </div>
@@ -350,6 +388,22 @@ export function KnowledgeInHouseComponents({ payload, item, baskets, basketCatal
         </div>
       </section>;
     })}
+    {removal ? <ContextPanel title={removal.targetId ? "Move included configuration?" : "Remove included component?"}
+      description="This component is included in the price. Removing it also removes its price selection. Save Mode to keep the change."
+      onClose={() => setRemoval(null)} returnFocusRef={removalReturnFocus} width="medium" className="knowledge-context-panel"
+      footer={({ requestClose }) => <div className="knowledge-dialog-actions">
+        <Button variant="secondary" onClick={requestClose}>Cancel</Button>
+        <Button disabled={readOnly || removal.payloadStamp !== payloadStamp} onClick={() => {
+          if (readOnly || removal.payloadStamp !== payloadStamp) return;
+          if (removal.targetId && removal.targetLabel) {
+            copyTo(removal.sourceId, removal.targetId, removal.targetLabel, removal.snapshot, true);
+            setRemoval(null);
+          } else removeComponent(removal.sourceId);
+        }}>{removal.targetId ? "Move and remove selection" : "Remove component and selection"}</Button>
+      </div>}>
+      {removal.targetId ? <p>The destination keeps its current Include in price choice. It is not selected automatically.</p> : null}
+      {removal.payloadStamp !== payloadStamp ? <p>The configuration changed. Close this confirmation and review the component again.</p> : null}
+    </ContextPanel> : null}
     {copyPicker && pickerOrigin ? <ContextPanel title={copyPicker.sourceId === LEGACY_IN_HOUSE_COMPONENT_ID ? "Move In-house configuration" : "Copy In-house configuration"}
       eyebrow={copyPicker.sourceId === LEGACY_IN_HOUSE_COMPONENT_ID ? "Existing In-house configuration" : componentLabel(pickerOrigin)}
       description={copyPicker.sourceId === LEGACY_IN_HOUSE_COMPONENT_ID

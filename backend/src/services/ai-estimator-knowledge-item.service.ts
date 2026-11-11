@@ -2110,6 +2110,10 @@ function preserveModeConfigurationCompatibility(
   previousPayload: Row,
   nextPayload: Row
 ): Row {
+  if ((Object.hasOwn(previousPayload, "inHouseUsage") || Object.hasOwn(previousPayload, "inHousePresetComponentIds")) &&
+      (!Object.hasOwn(nextPayload, "inHouseUsage") || !Object.hasOwn(nextPayload, "inHousePresetComponentIds"))) {
+    throw new ApiError(409, "IN_HOUSE_POLICY_REQUIRED", "Refresh Configuration before saving. Keep the saved In-house use and included components explicit.");
+  }
   const previousComponents = readInHouseComponents(previousPayload);
   const nextComponents = readInHouseComponents(nextPayload);
   if (previousComponents !== undefined && nextComponents === undefined) {

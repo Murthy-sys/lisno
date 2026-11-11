@@ -16,6 +16,7 @@ function Harness({ initial = {}, readOnly = false, onChange = vi.fn(), onValidat
 }) {
   const [payload, setPayload] = useState(initial);
   return <main><KnowledgeModeConfigurationBuilder mainLineName="TV Unit" payload={payload} modes={[]}
+    basketContext={{ basketId: "basket-carpentry", basketName: "Carpentry" }}
     readOnly={readOnly} validationAttempt={0} onDirty={vi.fn()} onValidationChange={onValidationChange}
     onChange={(next) => { setPayload(next); onChange(next); }} /></main>;
 }

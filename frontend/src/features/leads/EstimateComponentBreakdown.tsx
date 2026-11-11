@@ -1,5 +1,5 @@
 import type { EstimateComponentPricing } from "../../../../shared/estimation/estimateComponentPricing";
-import { configuredComponentPricing, configuredDimensionsIssue, configuredInHouseSelectionIssue, configuredUsesComponentPricing, type ConfiguredLineDraft } from "./configuredEstimate";
+import { configuredAggregatePricing, configuredInHouseGoverned, configuredComponentPricing, configuredDimensionsIssue, configuredInHouseSelectionIssue, configuredUsesComponentPricing, type ConfiguredLineDraft } from "./configuredEstimate";
 import "./estimate-in-house-components.css";
 
 const money = (paise: number) => `₹${(paise / 100).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -20,15 +20,23 @@ export function EstimateComponentPricingStatus({ line, editable, displayedIssue 
   displayedIssue?: string | null;
 }) {
   if (!configuredUsesComponentPricing(line) || !line.included) return null;
-  const pricing = configuredComponentPricing(line);
+  const aggregate = configuredAggregatePricing(line);
+  if (aggregate) return <p className="estimate-component-breakdown" aria-label={`Price including margin for ${line.mainLineName} in ${line.roomName}`}>
+    Price including margin: <strong>{money(aggregate.totalPaise)}</strong> · {aggregate.quantity} {aggregate.uom.name}
+  </p>;
+  const governed = configuredInHouseGoverned(line);
+  const pricing = governed ? null : configuredComponentPricing(line);
   if (pricing) return <EstimateComponentBreakdown pricing={pricing} label={`${line.mainLineName} in ${line.roomName}`} />;
   const inputIssue = configuredInHouseSelectionIssue(line) ?? configuredDimensionsIssue(line);
   const issue = line.componentPricingIssue ?? inputIssue ?? "Component amounts are incomplete.";
   const showIssue = issue !== displayedIssue;
-  const canRetry = editable && line.componentPricingRetry && line.componentPricingState !== "loading" && !inputIssue;
-  if (!showIssue && !canRetry) return null;
+  const canRefresh = editable && line.configurationPricingChanged && line.componentPricingRefresh;
+  const canRetry = editable && !line.configurationPricingChanged && line.componentPricingRetry && line.componentPricingState !== "loading" && !inputIssue;
+  if (!showIssue && !canRetry && !canRefresh) return null;
   return <div className="estimate-component-breakdown estimate-component-breakdown--status" role="status">
     {showIssue ? <p>{issue}</p> : null}
+    {canRefresh ? <button type="button" className="button button--secondary estimate-component-action"
+      aria-label={`Refresh price for ${line.mainLineName}`} onClick={line.componentPricingRefresh}>Refresh price</button> : null}
     {canRetry ? <button type="button" className="button button--secondary estimate-component-action"
       aria-label={`Retry component calculation for ${line.mainLineName}`} onClick={line.componentPricingRetry}>Retry calculation</button> : null}
   </div>;
@@ -36,7 +44,7 @@ export function EstimateComponentPricingStatus({ line, editable, displayedIssue 
 
 /** Reporting attribution only. Catalogue source rows and their identities stay in place. */
 export function EstimateSubBasketAmounts({ lines }: { lines: readonly ConfiguredLineDraft[] }) {
-  if (!lines.some(line => line.included && configuredUsesComponentPricing(line))) return null;
+  if (!lines.some(line => line.included && configuredUsesComponentPricing(line) && !configuredInHouseGoverned(line))) return null;
   const groups = new Map<string, { label: string; amounts: number[]; sources: Array<{ key: string; label: string; amount: number | null }> }>();
   const add = (basketId: string, subBasketId: string | null, label: string, sourceKey: string, sourceLabel: string, amount: number | null) => {
     const key = JSON.stringify([basketId, subBasketId]);
@@ -46,6 +54,7 @@ export function EstimateSubBasketAmounts({ lines }: { lines: readonly Configured
   };
   let incomplete = false;
   for (const line of lines.filter(row => row.included)) {
+    if (configuredInHouseGoverned(line)) continue;
     const pricing = configuredComponentPricing(line);
     if (!configuredUsesComponentPricing(line)) continue;
     if (!pricing) { incomplete = true; continue; }
@@ -55,6 +64,7 @@ export function EstimateSubBasketAmounts({ lines }: { lines: readonly Configured
   }
   return <section className="estimate-component-breakdown" aria-label="In-house amounts by component Sub-Basket">
     <h3>In-house amounts by Sub-Basket</h3><p>Each Main Line contributes its selected components. These amounts are already included in the estimate total. Group amounts follow the component targets; items remain in their catalogue groups.</p>
+    {lines.some(line => line.included && configuredInHouseGoverned(line)) ? <p>These subtotals show visible components only. Combined-price lines remain included in the full estimate total.</p> : null}
     {incomplete ? <p role="status">Some component amounts are incomplete. Sub-Basket amounts below show calculated contributions only.</p> : null}
     {[...groups].map(([key, group]) => {
       const total = group.amounts.reduce((sum, value) => sum + BigInt(value), 0n);

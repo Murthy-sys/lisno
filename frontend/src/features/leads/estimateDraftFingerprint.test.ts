@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { estimateDraftFingerprint } from "./estimateDraftFingerprint";
+import { configuredLineEditingFingerprint, estimateDraftFingerprint } from "./estimateDraftFingerprint";
+import { componentDraftFixture } from "./estimateComponentPricing.testFixtures";
 import type { ConfiguredEstimateLineInput, EstimateDraftInput } from "./leadsApi";
 
 const line: ConfiguredEstimateLineInput = {
@@ -13,6 +14,11 @@ const draft: EstimateDraftInput = {
 };
 
 describe("estimate draft semantic comparison", () => {
+  it("tracks explicit price refresh separately from background preview evidence", () => {
+    const saved = { ...componentDraftFixture(), configurationPricingChanged: true };
+    expect(configuredLineEditingFingerprint({ ...saved, configurationPricingChanged: false })).not.toBe(configuredLineEditingFingerprint(saved));
+    expect(configuredLineEditingFingerprint({ ...saved, componentPricing: undefined })).toBe(configuredLineEditingFingerprint(saved));
+  });
   it("ignores catalogue row order, room ordering, object key order and explicit hydration defaults", () => {
     const hydrated: EstimateDraftInput = {
       ...draft, selectedMainBasketIds: ["basket"], selectedMainBasketClassifications: [{ mainBasketId: "basket", classification: "standard" }],

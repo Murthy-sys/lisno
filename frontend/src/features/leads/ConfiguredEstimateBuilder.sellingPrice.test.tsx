@@ -5,6 +5,8 @@ import { describe, expect, it, vi } from "vitest";
 import { ConfiguredEstimateBuilder } from "./ConfiguredEstimateBuilder";
 import { buildConfiguredLines, configuredLineAmountPaise, createConfiguredLine, updateConfiguredLinePricing, type ConfiguredLineDraft } from "./configuredEstimate";
 import type { EstimationCatalogue } from "./estimationCatalogueApi";
+import { toEstimateAggregatePricing } from "../../../../shared/estimation/estimateAggregatePricing";
+import { componentPricingFixture } from "./estimateComponentPricing.testFixtures";
 
 const room = { id: "living", typeId: "living", label: "Living room", sqft: 100 };
 const baskets = new Set(["finishes"]);
@@ -48,6 +50,24 @@ function paintRow() {
 }
 
 describe("configured estimate selling prices", () => {
+  it("shows a combined margin-inclusive rate and exact aggregate amount without a component selector", () => {
+    const current = structuredClone(catalogue);
+    const source = current.items[0]!.subBaskets[0]!.mainLines[0]!;
+    source.itemVersion = 2; source.revisionVersion = 3;
+    source.tierPricing!.signature = { modeBaseRatesPaise: { pmc: 18000, sub_vendor: 25000, in_house: null }, inHouseUsage: "estimator", inHousePricingState: "ready" };
+    const evidence = { ...componentPricingFixture("paint", 3, 78334), revisionId: "paint-current", uom: source.uom };
+    const line: ConfiguredLineDraft = { ...createConfiguredLine(current, room, { mainLineId: "paint", basketId: "finishes", subBasketId: "walls" })!,
+      included: true, classification: "special", pricingMode: "in_house", quantity: 3, pricingBasis: "in_house_components_v1",
+      inHouseUsage: "estimator", inHousePricingState: "ready", aggregatePricing: toEstimateAggregatePricing(evidence) };
+    render(<ConfiguredEstimateBuilder rooms={[room]} activeRoomId={room.id} onSelectRoom={vi.fn()} catalogue={current}
+      selectedMainBasketIds={baskets} lines={[line]} editable roomIcons={{}} moneyPaise={amount => `₹${amount / 100}`}
+      roomTotal={() => 78334} onUpdateLine={vi.fn()} onRefreshAvailableItems={vi.fn()} refreshingAvailableItems={false} />);
+    expect(screen.getByRole("textbox", { name: /Price including margin/ })).toHaveValue("261.11");
+    expect(screen.getByLabelText(/Amount for Finishes, Walls, Wall painting/)).toHaveTextContent("₹783.34");
+    expect(screen.queryByText("Calculated from configured components.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Ceiling")).not.toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: /In-house components/ })).not.toBeInTheDocument();
+  });
   it("keeps compact row controls in reading order and exposes unavailable-tier guidance", async () => {
     const user = userEvent.setup();
     render(<SellingPriceBuilder paintClassification="special" />);

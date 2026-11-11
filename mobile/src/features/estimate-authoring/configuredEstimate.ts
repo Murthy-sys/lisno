@@ -1,7 +1,8 @@
+import { estimateAggregatePricingMatchesLine, toEstimateAggregatePricing, type EstimateAggregatePricing } from "../../../../shared/estimation/estimateAggregatePricing";
 import { estimateDimensionRulesEqual, estimateLineDimensionsValid, type EstimateDimensions, type EstimateDimensionRule } from "../../../../shared/estimation/estimateDimensions";
 import { estimateComponentPricingMatchesLine, type EstimateComponentPricing, type ESTIMATE_COMPONENT_PRICING_BASIS } from "../../../../shared/estimation/estimateComponentPricing";
 // Native counterpart of the web configured estimate model; retain integer-paise pricing and source identities.
-import type { EstimationCatalogue, EstimationCatalogueBasket, EstimationCatalogueMainLine, EstimationCatalogueSubBasket, EstimationCatalogueTemporaryItem, EstimationInHouseComponent, EstimationModeBaseRatesPaise } from "./catalogueTypes";
+import type { EstimationCatalogue, EstimationCatalogueBasket, EstimationCatalogueMainLine, EstimationCatalogueSubBasket, EstimationCatalogueTemporaryItem, EstimationInHouseComponent, EstimationInHousePolicy, EstimationModeBaseRatesPaise } from "./catalogueTypes";
 import type { ConfiguredEstimateLine, EstimateClassification, EstimateModeTier, EstimatePricingMode, EstimateRateSource } from "./types";
 
 export interface ConfiguredEstimateRoom {
@@ -52,6 +53,9 @@ export interface ConfiguredLineDraft {
   selectedInHouseComponentIds?: string[] | undefined;
   pricingBasis?: typeof ESTIMATE_COMPONENT_PRICING_BASIS | undefined;
   componentPricing?: EstimateComponentPricing | undefined;
+  aggregatePricing?: EstimateAggregatePricing | undefined;
+  inHouseUsage?: "estimator" | "execution" | null | undefined;
+  inHousePricingState?: "ready" | "incomplete" | "invalid" | undefined;
   inHouseComponentsNeedReview?: boolean | undefined;
   quantity: number;
   rateInput: string;
@@ -83,7 +87,7 @@ export function hasNativeReadOnlyTierPricing(line: ConfiguredLineDraft): boolean
 }
 
 export function hasNativeReadOnlyInHousePricing(line: ConfiguredLineDraft): boolean {
-  return line.pricingMode === "in_house" && (line.inHouseComponents !== undefined || line.selectedInHouseComponentIds !== undefined);
+  return line.pricingMode === "in_house" && (line.inHouseUsage !== undefined || line.inHousePricingState !== undefined || line.aggregatePricing !== undefined || line.inHouseComponents !== undefined || line.selectedInHouseComponentIds !== undefined);
 }
 
 /** Only deliberate mode/type changes adopt a configured rate. Historical prices stay manual. */
@@ -92,7 +96,7 @@ export function updateConfiguredLinePricing(
   change: Partial<ConfiguredLineDraft>,
   inheritedClassification: EstimateClassification = "standard"
 ): ConfiguredLineDraft {
-  if (hasNativeReadOnlyDimensionQuantity(line) || hasNativeReadOnlyTierPricing(line) || hasNativeReadOnlyInHousePricing(line) || change.modeTier !== undefined && change.modeTier !== (line.modeTier ?? "signature") || change.pricingMode === "in_house" && line.inHouseComponents !== undefined) return line;
+  if (hasNativeReadOnlyDimensionQuantity(line) || hasNativeReadOnlyTierPricing(line) || hasNativeReadOnlyInHousePricing(line) || change.modeTier !== undefined && change.modeTier !== (line.modeTier ?? "signature") || change.pricingMode === "in_house" && (line.inHouseComponents !== undefined || line.inHouseUsage !== undefined || line.inHousePricingState !== undefined)) return line;
   const classification = line.classification ?? inheritedClassification;
   const explicitTypeOrMode = change.classification !== undefined || change.pricingMode !== undefined;
   const next = { ...line, ...(explicitTypeOrMode ? { classification } : {}), ...change };
@@ -157,6 +161,9 @@ export function configuredLineAmountPaise(line: ConfiguredLineDraft): number | n
 
 export function configuredLinePreviewAmountPaise(line: ConfiguredLineDraft): number | null {
   if (line.uomNeedsQuantityReview) return null;
+  if (line.aggregatePricing !== undefined) {
+    return estimateAggregatePricingMatchesLine({ ...line, source: "configuration" }) ? line.aggregatePricing.totalPaise : null;
+  }
   if (line.pricingBasis !== undefined || line.componentPricing !== undefined) {
     return estimateComponentPricingMatchesLine({ ...line, source: "configuration" }) ? line.componentPricing!.totalPaise : null;
   }
@@ -201,7 +208,10 @@ export function restoreConfiguredLine(line: ConfiguredEstimateLine): ConfiguredL
     selectedInHouseComponentIds: line.selectedInHouseComponentIds?.slice(),
     pricingBasis: line.pricingBasis,
     componentPricing: line.componentPricing,
-    inHouseComponentsNeedReview: line.pricingBasis !== undefined && !estimateComponentPricingMatchesLine(line),
+    aggregatePricing: line.aggregatePricing,
+    inHouseUsage: line.inHouseUsage,
+    inHousePricingState: line.inHousePricingState,
+    inHouseComponentsNeedReview: line.configurationPricingChanged === true || line.pricingBasis !== undefined && !(line.aggregatePricing ? estimateAggregatePricingMatchesLine(line) : estimateComponentPricingMatchesLine(line)),
     subBasketId: line.subBasketId,
     subBasketName: line.subBasketName,
     mainLineId: line.mainLineId,
@@ -227,11 +237,46 @@ export function restoreConfiguredLine(line: ConfiguredEstimateLine): ConfiguredL
   };
 }
 
+function currentInHousePolicy(mainLine: EstimationCatalogueMainLine | EstimationCatalogueTemporaryItem, tier: EstimateModeTier): EstimationInHousePolicy {
+  if (mainLine.applicableTiers !== undefined && !mainLine.applicableTiers.includes(tier)) return { inHousePricingState: "invalid" };
+  // Top-level metadata is the legacy Signature projection, never a fallback for another tier.
+  const value: unknown = mainLine.tierPricing === undefined && tier === "signature"
+    ? mainLine : mainLine.tierPricing?.[tier];
+  if (!value || typeof value !== "object" || Array.isArray(value)) return { inHousePricingState: "invalid" };
+  const policy = value as Record<string, unknown>;
+  const usage = policy.inHouseUsage;
+  const state = policy.inHousePricingState;
+  if (usage !== undefined && usage !== null && usage !== "estimator" && usage !== "execution" ||
+      state !== undefined && state !== "ready" && state !== "incomplete" && state !== "invalid") return { inHousePricingState: "invalid" };
+  return { inHouseUsage: usage as EstimationInHousePolicy["inHouseUsage"], inHousePricingState: state as EstimationInHousePolicy["inHousePricingState"] };
+}
+
+function applyCurrentInHouseVisibility(saved: ConfiguredLineDraft, fresh?: ConfiguredLineDraft): ConfiguredLineDraft {
+  if (saved.pricingMode !== "in_house" || fresh && fresh.inHouseUsage === undefined && fresh.inHousePricingState === undefined &&
+      saved.inHouseUsage === undefined && saved.inHousePricingState === undefined && saved.aggregatePricing === undefined) return saved;
+  const needsReview = Boolean(saved.inHouseComponentsNeedReview || !saved.aggregatePricing || !fresh ||
+    fresh.inHousePricingState === "invalid" || fresh.inHousePricingState === "incomplete" ||
+    saved.revisionId !== fresh.revisionId || saved.itemVersion !== fresh.itemVersion || saved.revisionVersion !== fresh.revisionVersion ||
+    saved.uomId !== fresh.uomId || saved.uomDecimalScale !== fresh.uomDecimalScale);
+  return {
+    ...saved,
+    inHouseUsage: fresh?.inHouseUsage !== undefined ? fresh.inHouseUsage : saved.inHouseUsage,
+    inHousePricingState: fresh ? fresh.inHousePricingState : "invalid",
+    inHouseComponents: undefined, selectedInHouseComponentIds: undefined, componentPricing: undefined,
+    aggregatePricing: saved.aggregatePricing ?? (saved.componentPricing ? toEstimateAggregatePricing(saved.componentPricing) : undefined),
+    inHouseComponentsNeedReview: needsReview,
+    nativeTierNeedsReview: saved.nativeTierNeedsReview ||
+      fresh?.applicableTiers !== undefined && !fresh.applicableTiers.includes(saved.modeTier ?? "signature") ||
+      (saved.modeTier ?? "signature") !== "signature" && needsReview
+  };
+}
+
 function newLine(
   room: ConfiguredEstimateRoom,
   basket: EstimationCatalogueBasket,
   subBasket: EstimationCatalogueSubBasket | null,
-  mainLine: EstimationCatalogueMainLine | EstimationCatalogueTemporaryItem
+  mainLine: EstimationCatalogueMainLine | EstimationCatalogueTemporaryItem,
+  modeTier: EstimateModeTier = "signature"
 ): ConfiguredLineDraft {
   const inHouseBaseRatePaise = typeof mainLine.inHouseBaseRatePaise === "number" &&
     Number.isSafeInteger(mainLine.inHouseBaseRatePaise) && mainLine.inHouseBaseRatePaise >= 0
@@ -265,6 +310,7 @@ function newLine(
     inHouseBaseRatePaise,
     modeBaseRatesPaise: mainLine.modeBaseRatesPaise,
     inHouseComponents: mainLine.inHouseComponents,
+    ...currentInHousePolicy(mainLine, modeTier),
     pricingMode: "sub_vendor",
     rateSource: "configuration",
     quantity: 1,
@@ -285,14 +331,16 @@ export function buildConfiguredLines(
   const next: ConfiguredLineDraft[] = rooms.flatMap((room) => catalogue.items
     .filter((basket) => selectedMainBasketIds.has(basket.id))
     .flatMap((basket) => [
-      ...(basket.directTemporaryItems ?? []).map((item) => newLine(room, basket, null, item)),
+      ...(basket.directTemporaryItems ?? []).map((item) => newLine(room, basket, null, item, prior.get(configuredLineKey(room.id, item.mainLineId))?.modeTier)),
       ...basket.subBaskets.flatMap((subBasket) => [
-        ...subBasket.mainLines.map((item) => newLine(room, basket, subBasket, item)),
-        ...(subBasket.temporaryItems ?? []).map((item) => newLine(room, basket, subBasket, item))
+        ...subBasket.mainLines.map((item) => newLine(room, basket, subBasket, item, prior.get(configuredLineKey(room.id, item.mainLineId))?.modeTier)),
+        ...(subBasket.temporaryItems ?? []).map((item) => newLine(room, basket, subBasket, item, prior.get(configuredLineKey(room.id, item.mainLineId))?.modeTier))
       ])
     ].map((fresh) => {
-      const saved = prior.get(fresh.key);
-      if (!saved) return fresh;
+      const previous = prior.get(fresh.key);
+      if (!previous) return fresh;
+      const scopeChanged = previous.mainBasketId !== fresh.mainBasketId || previous.subBasketId !== fresh.subBasketId || previous.itemType !== fresh.itemType;
+      const saved = applyCurrentInHouseVisibility(previous, scopeChanged ? undefined : fresh);
       // Dimension-owned quantities cannot be changed or rebased by this scalar-only native editor.
       if (saved.dimensionsMandatory === true || fresh.dimensionsMandatory === true) return {
         ...saved,
@@ -311,6 +359,10 @@ export function buildConfiguredLines(
           fresh.applicableTiers !== undefined && !fresh.applicableTiers.includes(saved.modeTier!) ||
           saved.revisionId !== fresh.revisionId || saved.itemVersion !== fresh.itemVersion || saved.revisionVersion !== fresh.revisionVersion ||
           saved.uomId !== fresh.uomId || saved.uomDecimalScale !== fresh.uomDecimalScale),
+        sourceMissing: saved.mainBasketId !== fresh.mainBasketId || saved.subBasketId !== fresh.subBasketId || saved.itemType !== fresh.itemType
+      };
+      if (saved.pricingMode === "in_house" && (saved.inHousePricingState !== undefined || saved.inHouseUsage !== undefined || saved.aggregatePricing)) return {
+        ...saved,
         sourceMissing: saved.mainBasketId !== fresh.mainBasketId || saved.subBasketId !== fresh.subBasketId || saved.itemType !== fresh.itemType
       };
       const componentPricing = saved.pricingMode === "in_house" && (fresh.inHouseComponents !== undefined || hasNativeReadOnlyInHousePricing(saved));
@@ -359,7 +411,7 @@ export function buildConfiguredLines(
   for (const line of previous) {
     if (!seen.has(line.key) && roomIds.has(line.roomId) && (line.persistedId || line.included ||
       line.classification !== undefined || line.rateSource === "manual" || line.quantity !== 1)) {
-      next.push({ ...line, sourceMissing: true, modeBaseRatesPaise: undefined,
+      next.push({ ...applyCurrentInHouseVisibility(line), sourceMissing: true, modeBaseRatesPaise: undefined,
         rateInput: !preservePersisted && !hasNativeReadOnlyDimensionQuantity(line) && !hasNativeReadOnlyTierPricing(line) && !hasNativeReadOnlyInHousePricing(line) && line.rateSource === "configuration" ? "" : line.rateInput });
     }
   }

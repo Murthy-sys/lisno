@@ -1,3 +1,4 @@
+import { readInHouseUsagePolicy } from "../domain/in-house-usage-policy.js";
 import { createHash } from "node:crypto";
 import type { ClientSession } from "mongoose";
 import { z } from "zod";
@@ -17,7 +18,7 @@ const id = z.string().trim().min(1).max(128);
 export const estimateInHousePreviewSchema = z.object({ lines: z.array(z.object({
   key: z.string().min(1).max(500), mainLineId: id, roomId: id,
   pricingMode: z.literal("in_house"), rateSource: z.literal("configuration"), modeTier: z.enum(KNOWLEDGE_MODE_TIERS),
-  selectedInHouseComponentIds: z.array(id).max(50).refine(ids => new Set(ids).size === ids.length),
+  selectedInHouseComponentIds: z.array(id).max(50).refine(ids => new Set(ids).size === ids.length).optional(),
   quantity: z.number().finite().nonnegative(), revisionId: id, itemVersion: z.number().int().positive().safe(),
   revisionVersion: z.number().int().positive().safe(), uomId: id,
   dimensions: z.object({ length: z.string().max(32), width: z.string().max(32), height: z.string().max(32) }).strict().optional(),
@@ -31,6 +32,7 @@ const unavailable = () => new ApiError(409, "ESTIMATE_COMPONENT_PRICING_UNAVAILA
 /** Private arithmetic boundary; only its selling evidence may leave the server. */
 export function calculateEstimateComponentPricing(source: Source, modeTier: KnowledgeModeTier, quantity: number,
   selectedIds: unknown, configuration: readonly KnowledgeInHouseComponent[]): EstimateComponentPricing {
+  selectedIds = resolveEstimateInHouseSelection(source, modeTier, selectedIds);
   const metadata = estimatorCatalogueTierPricing(source.line, modeTier)?.inHouseComponents;
   const selected = selectedInHouseComponents(configuration, selectedIds);
   const names = selectedInHouseComponents(metadata ?? null, selectedIds);
@@ -54,6 +56,7 @@ export function calculateEstimateComponentPricing(source: Source, modeTier: Know
       modeTier, quantity: canonicalQuantity, uom: source.line.uom,
       selectedComponentIds: selected.map(row => row.id), components, totalPaise: Number(sum) };
     const inputFingerprint = createHash("sha256").update(JSON.stringify({ ...evidence,
+      ...(estimatorCatalogueTierPricing(source.line, modeTier)?.inHousePolicy ? { policy: estimatorCatalogueTierPricing(source.line, modeTier)!.inHousePolicy } : {}),
       settings: selected.map(row => ({ id: row.id, labor: row.labor, material: row.material })) })).digest("hex");
     const snapshot = readEstimateComponentPricing({ ...evidence, inputFingerprint });
     if (!snapshot) throw unavailable();
@@ -78,6 +81,11 @@ export async function readCurrentEstimateComponentConfiguration(source: Source, 
   if (!raw) throw unavailable();
   const section = projectKnowledgeModeTierSection(raw, modeTier);
   if (section.applicability !== "configured") throw unavailable();
+  const policy = readInHouseUsagePolicy(section.payload);
+  const expectedPolicy = estimatorCatalogueTierPricing(source.line, modeTier)?.inHousePolicy;
+  if (policy.state === "legacy" ? expectedPolicy !== undefined : !expectedPolicy || JSON.stringify(policy) !== JSON.stringify(expectedPolicy)) {
+    throw new ApiError(409, "ESTIMATE_CONFIGURATION_CHANGED", "Configuration changed. Refresh price.");
+  }
   const components = readInHouseComponents(section.payload);
   if (!components) throw unavailable();
   return components;
@@ -91,4 +99,15 @@ export async function currentEstimateComponentPricingMatches(line: EstimateCompo
       Number(line.quantity), line.selectedInHouseComponentIds, session);
     return snapshot.inputFingerprint === readEstimateComponentPricing(line.componentPricing)!.inputFingerprint;
   } catch { return false; }
+}
+
+/** New governed selections are server owned; legacy lines retain explicit component selection. */
+export function resolveEstimateInHouseSelection(source: Source, modeTier: KnowledgeModeTier, supplied: unknown): unknown {
+  const policy = estimatorCatalogueTierPricing(source.line, modeTier)?.inHousePolicy;
+  if (!policy || policy.state === "legacy") return supplied;
+  if (policy.state !== "ready") throw new ApiError(409, "ESTIMATE_IN_HOUSE_PRESET_UNAVAILABLE", "Complete the In-house price selection in Configuration.");
+  if (supplied !== undefined && (!Array.isArray(supplied) || supplied.length !== policy.componentIds.length || new Set(supplied).size !== supplied.length || supplied.some(id => !policy.componentIds.includes(id)))) {
+    throw new ApiError(409, "ESTIMATE_IN_HOUSE_PRESET_READ_ONLY", "The In-house price selection is managed in Configuration. Refresh price.");
+  }
+  return [...policy.componentIds];
 }

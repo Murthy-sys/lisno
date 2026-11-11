@@ -47,6 +47,7 @@ export function EstimateItemEditor({ form, activeRoomId, onRoomChange, disabled,
     {lines.map((line) => {
       const classification = line.classification ?? form.classifications[line.mainBasketId] ?? "standard";
       const componentPricing = hasNativeReadOnlyInHousePricing(line);
+      const aggregatePricing = line.pricingMode === "in_house" && (line.aggregatePricing !== undefined || line.inHouseUsage !== undefined || line.inHousePricingState !== undefined);
       const tierPricing = hasNativeReadOnlyTierPricing(line);
       const dimensionQuantity = hasNativeReadOnlyDimensionQuantity(line);
       const lineDisabled = disabled || componentPricing || tierPricing || dimensionQuantity;
@@ -57,7 +58,10 @@ export function EstimateItemEditor({ form, activeRoomId, onRoomChange, disabled,
         {line.dimensions ? <EstimateText>Recorded dimensions: L {line.dimensions.length} × W {line.dimensions.width} × H {line.dimensions.height}{line.dimensionRule ? ` ${line.dimensionRule.inputUnit}` : ""}</EstimateText> : null}
         {tierPricing ? <><EstimateText>{line.modeTier === "premium" ? "Premium" : line.modeTier === "functional" ? "Functional" : "Signature"} tier pricing is read-only here. Change tiers and pricing in the web estimate workspace.</EstimateText>
           {line.nativeTierNeedsReview ? <EstimateText error>Configuration has changed or the tier is unavailable. Review this item on the web before saving.</EstimateText> : null}</> : null}
-        {componentPricing ? <><EstimateText>In-house component pricing is read-only here. Review components and pricing in the web estimate workspace.</EstimateText>
+        {aggregatePricing ? <><EstimateText>Price including margin: {estimatePaise(configuredLineAmountPaise(line))}</EstimateText>
+          <EstimateText>Review pricing in the web estimate workspace.</EstimateText>
+          {line.inHouseComponentsNeedReview ? <EstimateText error>Configuration changed. Refresh price in the web estimate workspace before saving.</EstimateText> : null}
+        </> : componentPricing ? <><EstimateText>In-house component pricing is read-only here. Review components and pricing in the web estimate workspace.</EstimateText>
           {line.selectedInHouseComponentIds?.map((id, index) => {
             const component = line.inHouseComponents?.find(row => row.id === id);
             return <EstimateText key={id}>{component ? `${component.basketName} / ${component.subBasketName ?? "Existing In-house settings"}` : `Selected component ${index + 1}`}</EstimateText>;
@@ -67,10 +71,10 @@ export function EstimateItemEditor({ form, activeRoomId, onRoomChange, disabled,
         {line.sourceMissing ? <EstimateText error>Current Configuration is unavailable or this item's basket changed. Remove it or refresh Configuration before saving.</EstimateText> : <EstimateChoice label={`Include ${line.mainLineName}`} multiple selected={line.included} disabled={lineDisabled} onPress={() => update(line, { included: !line.included })} />}
         {line.included && !line.sourceMissing ? <>
           <EstimateSelect label={`${line.mainLineName} type`} value={classification} allowEmpty={false} disabled={lineDisabled} options={[{ value: "standard", label: "Standard" }, { value: "special", label: "Special" }]} onChange={(value) => update(line, { classification: value as EstimateClassification })} />
-          {classification === "special" ? <EstimateSelect label={`${line.mainLineName} pricing mode`} value={line.pricingMode ?? ""} allowEmpty={false} disabled={lineDisabled} options={Object.entries(estimatePricingModeLabels).filter(([value]) => value !== "in_house" || line.inHouseComponents === undefined || componentPricing).map(([value, label]) => ({ value, label }))} onChange={(value) => update(line, { pricingMode: value as EstimatePricingMode })} /> : <EstimateText>Standard · Sub-Vendor pricing</EstimateText>}
+          {classification === "special" ? <EstimateSelect label={`${line.mainLineName} pricing mode`} value={line.pricingMode ?? ""} allowEmpty={false} disabled={lineDisabled} options={Object.entries(estimatePricingModeLabels).filter(([value]) => value !== "in_house" || (line.inHouseComponents === undefined && line.inHouseUsage === undefined && line.inHousePricingState === undefined) || componentPricing).map(([value, label]) => ({ value, label }))} onChange={(value) => update(line, { pricingMode: value as EstimatePricingMode })} /> : <EstimateText>Standard · Sub-Vendor pricing</EstimateText>}
           <NumberField label={`${line.mainLineName} quantity (${line.uomName})`} value={line.quantity} disabled={lineDisabled} onChange={(quantity) => update(line, { quantity })} />
           {line.uomNeedsQuantityReview ? <><EstimateText error>The unit changed from {line.previousUomName ?? "the previous unit"} to {line.uomName}. Review and confirm the quantity.</EstimateText><Button label={`Confirm ${line.mainLineName} quantity`} disabled={lineDisabled} onPress={() => update(line, { uomNeedsQuantityReview: false })} /></> : null}
-          {line.pricingBasis ? <EstimateText>Calculated from components. Manage this price in the web estimate workspace.</EstimateText> : <Field label={`${line.mainLineName} selling rate (₹)`} value={line.rateInput} keyboardType="decimal-pad" editable={!lineDisabled} onChangeText={(rateInput) => update(line, { rateInput })} />}
+          {aggregatePricing ? null : line.pricingBasis ? <EstimateText>Calculated from components. Manage this price in the web estimate workspace.</EstimateText> : <Field label={`${line.mainLineName} selling rate (₹)`} value={line.rateInput} keyboardType="decimal-pad" editable={!lineDisabled} onChangeText={(rateInput) => update(line, { rateInput })} />}
           <EstimateText>Rate source: {line.rateSource === "configuration" ? "Configuration" : "Manual"}. Amount: {estimatePaise(configuredLineAmountPaise(line))}</EstimateText>
           <Button label={`Use Configuration rate for ${line.mainLineName}`} variant="quiet" disabled={lineDisabled || !line.pricingMode} onPress={() => onChange({ ...form, lines: form.lines.map((item) => item.key === line.key ? { ...item, rateSource: "configuration", rateInput: formatRateInput(configuredModeBaseRate(item, item.pricingMode!)) } : item) })} />
           {line.estimateNotes?.map((note, index) => <EstimateText key={index}>{note}</EstimateText>)}

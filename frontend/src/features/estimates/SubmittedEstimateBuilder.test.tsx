@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { EstimateClientReviewSnapshot } from "../../api/types";
 import { componentPricingFixture } from "../leads/estimateComponentPricing.testFixtures";
+import { toEstimateAggregatePricing } from "../../../../shared/estimation/estimateAggregatePricing";
 import { SubmittedEstimateBuilder } from "./SubmittedEstimateBuilder";
 
 type Line = EstimateClientReviewSnapshot["lineItems"][number];
@@ -23,6 +24,17 @@ const setup = (lines: Line[], props: { workspace?: boolean; refreshing?: boolean
 };
 
 describe("SubmittedEstimateBuilder", () => {
+  it("shows a frozen combined price and hides obsolete component evidence", () => {
+    const evidence = componentPricingFixture("cabinet");
+    setup([line({ pricingMode: "in_house", rateSource: "configuration", modeTier: "signature", rate: null, ratePaise: null,
+      pricingBasis: evidence.formulaVersion, amountPaise: evidence.totalPaise, aggregatePricing: toEstimateAggregatePricing(evidence), componentPricing: evidence })]);
+    const item = within(screen.getByRole("article", { name: "Submitted oak cabinet in Kitchen" }));
+    expect(item.getByText("Price including margin")).toBeVisible();
+    expect(item.getAllByText("₹783.33")).toHaveLength(2);
+    expect(item.queryByText(/details are unavailable/)).not.toBeInTheDocument();
+    expect(item.queryByText(/Component selling amounts|Finishes|Labour/)).not.toBeInTheDocument();
+  });
+
   it("renders only frozen Client-visible included rows and saved paise without edit controls or current repricing", async () => {
     setup([line({ estimateNotes: ["Preserve the submitted finish"], dimensions: { length: "2", width: "1", height: "0" } }),
       line({ id: "bedroom", roomId: "bedroom", roomName: "Bedroom", mainLineName: "Submitted wardrobe", quantity: 7, amountPaise: 70875 }),

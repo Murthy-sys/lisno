@@ -72,6 +72,18 @@ async function openLine(user: ReturnType<typeof userEvent.setup>, roomName: stri
 }
 
 describe("purchase order estimate tree item actions", () => {
+  it("shows a component visibility issue without disabling unrelated purchase-item actions", async () => {
+    const source = line("source-hidden", "Kitchen", { mode: configuredMode({ inHouseComponentVisibility: "hidden",
+      inHouseComponentVisibilityIssue: { code: "IN_HOUSE_USAGE_INVALID", message: "The saved In-house use configuration needs review. Component details are unavailable." } }) });
+    const { onAddItem } = renderTree([source], []);
+    const user = userEvent.setup();
+    const detail = await openLine(user, "Kitchen");
+    expect(within(detail).getByRole("status")).toHaveTextContent("Component details are unavailable");
+    const add = within(detail).getByRole("button", { name: /Add purchase item under Kitchen/ });
+    expect(add).toBeEnabled();
+    await user.click(add);
+    expect(onAddItem).toHaveBeenCalledWith(source, add);
+  });
   it("adds beneath the exact eligible source key even when main-line names repeat across rooms", async () => {
     const first = line("source-kitchen", "Kitchen");
     const second = line("source-living", "Living & Dining");

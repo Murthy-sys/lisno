@@ -99,7 +99,7 @@ function TierComparisonDialog({ request, label, returnFocusRef, onClose }: {
               <thead><tr><th scope="col">Main line</th>{data.tiers.map(tier => <th scope="col" key={tier.modeTier}>{tier.label}</th>)}</tr></thead>
               <tbody>{lines.map(line => <tr key={line.mainLineId}><th scope="row">{line.name}<small>{line.quantity} {line.uomName}</small></th>
                 {data.tiers.map(tier => { const cell = tier.lines.find(entry => entry.mainLineId === line.mainLineId);
-                  return <td key={tier.modeTier}>{cell && cell.amountPaise !== null ? <><strong>{money(cell.amountPaise)}</strong><small>{cell.ratePaise === null ? "Calculated from components" : `${money(cell.ratePaise)} / ${cell.uomName}`}</small></>
+                  return <td key={tier.modeTier}>{cell && cell.amountPaise !== null ? <><strong>{money(cell.amountPaise)}</strong><small>{cell.ratePaise === null ? "Price including margin" : `${money(cell.ratePaise)} / ${cell.uomName}`}</small></>
                     : <span>{cell?.unavailableReason ?? "Price unavailable"}</span>}</td>;
                 })}</tr>)}</tbody>
               <tfoot><tr><th scope="row">Sub-basket total</th>{data.tiers.map(tier => <td key={tier.modeTier}><strong>{money(tier.subtotalPaise)}</strong></td>)}</tr></tfoot>

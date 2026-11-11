@@ -27,6 +27,8 @@ export interface EstimationInHouseComponent {
 export interface EstimationTierPricing {
   modeBaseRatesPaise: EstimationModeBaseRatesPaise;
   inHouseComponents?: EstimationInHouseComponent[];
+  inHouseUsage?: "estimator" | "execution" | null;
+  inHousePricingState?: "ready" | "incomplete" | "invalid";
 }
 
 export interface EstimationCatalogueMainLine {
@@ -54,6 +56,8 @@ export interface EstimationCatalogueMainLine {
   tierPricing?: Partial<Record<KnowledgeModeTier, EstimationTierPricing>>;
   inHouseBaseRatePaise?: number | null;
   inHouseComponents?: EstimationInHouseComponent[];
+  inHouseUsage?: "estimator" | "execution" | null;
+  inHousePricingState?: "ready" | "incomplete" | "invalid";
   modeBaseRatesPaise?: EstimationModeBaseRatesPaise;
   uom: EstimationCatalogueUom;
 }

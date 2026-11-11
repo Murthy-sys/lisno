@@ -15,6 +15,7 @@ export function configuredLineEditingFingerprint(line: ConfiguredLineDraft): str
     classification: line.classification ?? "standard", modeTier: line.modeTier ?? "signature",
     pricingMode: line.pricingMode ?? null, rateSource: line.rateSource ?? "manual",
     selectedInHouseComponentIds: [...(line.selectedInHouseComponentIds ?? [])].sort(),
+    configurationPricingChanged: Boolean(line.configurationPricingChanged),
     dimensions: line.dimensions ? canonicalEstimateDimensions(line.dimensions) ?? line.dimensions : null,
     dimensionsNeedReview: Boolean(line.dimensionsNeedReview)
   });

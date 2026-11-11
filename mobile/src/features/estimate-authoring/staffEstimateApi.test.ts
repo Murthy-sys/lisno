@@ -1,8 +1,23 @@
 import type { MobileRuntime } from "../../runtime/createRuntime";
+import { toEstimateAggregatePricing } from "../../../../shared/estimation/estimateAggregatePricing";
 import { getStaffCatalogue, getStaffEstimate, getStaffEstimateQueue, parseStaffEstimate, retryEstimateEmail, saveStaffEstimate, staffEstimateKey, submitStaffEstimate } from "./staffEstimateApi";
 import { catalogueFixture, componentCatalogueFixture, componentLineFixture, componentAmountLineFixture, estimateFixture, leadFixture } from "./__tests__/fixtures";
 import { restoreStaffForm, staffFormInput } from "./staffEstimateModel";
 function runtime(get = jest.fn(), post = jest.fn(), put = jest.fn()) { return { api: { authenticated: { get, post, put } } } as unknown as MobileRuntime; }
+it("accepts aggregate pricing without accepting component leakage or tampered amounts", () => {
+ const { componentPricing, selectedInHouseComponentIds: _ids, ...base } = componentAmountLineFixture;
+ const aggregate = { ...base, inHouseUsage: "estimator" as const, aggregatePricing: toEstimateAggregatePricing(componentPricing!) };
+ expect(parseStaffEstimate(estimateFixture({ lineItems: [aggregate] })).lineItems[0]).toEqual(aggregate);
+ const excluded = { ...aggregate, included: false, amountPaise: 0, amount: 0 };
+ const saved = parseStaffEstimate(estimateFixture({ lineItems: [excluded] }));
+ expect(saved.lineItems[0]).toEqual(excluded);
+ expect(staffFormInput(restoreStaffForm(saved, leadFixture)).lineItems[0]).toMatchObject({ included: false, ratePaise: null });
+ expect(() => parseStaffEstimate({ ...estimateFixture(), lineItems: [{ ...excluded, amountPaise: 1 }] })).toThrow("invalid response");
+ for (const change of [{ amountPaise: 1 }, { componentPricing }, { selectedInHouseComponentIds: ["component-one"] },
+  { aggregatePricing: { ...aggregate.aggregatePricing, components: componentPricing!.components } }]) {
+  expect(() => parseStaffEstimate({ ...estimateFixture(), lineItems: [{ ...aggregate, ...change }] })).toThrow("invalid response");
+ }
+});
 it("validates exact component snapshots without accepting stale or forged totals", () => {
  expect(parseStaffEstimate(estimateFixture({ lineItems: [componentAmountLineFixture] })).lineItems[0]).toEqual(componentAmountLineFixture);
  for (const change of [{ amountPaise: 78334 }, { quantity: 3 }, { pricingMode: "pmc" }, { rateSource: "manual" }, { componentPricing: { ...componentAmountLineFixture.componentPricing, totalPaise: 1 } }]) {

@@ -14,7 +14,7 @@ import { EstimateItemPicker, EstimateSelectionPagination } from "../estimates/Es
 import type { EstimateRecommendationsPopup } from "../estimates/EstimateRecommendations";
 import type { EstimationCatalogue } from "./estimationCatalogueApi";
 import type { EstimateClassification, EstimatePricingMode } from "./leadsApi";
-import { createConfiguredLine, configuredLineCanInclude, configuredModeBaseRate, formatRateInput, configuredTierGroupKey, configuredLineInTierGroup, type ConfiguredTierGroupScope, configuredAttributedAmountPaise, configuredUsesComponentPricing, configuredDimensionsIssue, configuredInHouseSelectionIssue, configuredLineAmountPaise, configuredLinePreviewAmountPaise, configuredTierUnavailableReason, configuredQuantityUnits, parseSellingRate, type ConfiguredLineDraft } from "./configuredEstimate";
+import { configuredInHouseGoverned, createConfiguredLine, configuredLineCanInclude, configuredModeBaseRate, formatRateInput, configuredTierGroupKey, configuredLineInTierGroup, type ConfiguredTierGroupScope, configuredAttributedAmountPaise, configuredUsesComponentPricing, configuredDimensionsIssue, configuredInHouseSelectionIssue, configuredLineAmountPaise, configuredLinePreviewAmountPaise, configuredTierUnavailableReason, configuredQuantityUnits, parseSellingRate, type ConfiguredLineDraft } from "./configuredEstimate";
 import { EstimateInHouseComponents } from "./EstimateInHouseComponents";
 import { EstimatorRecommendations, type RecommendationReadState } from "./EstimatorRecommendations";
 import { recommendationTargetIdentity, type RoomRecommendationView, type RecommendedLineTarget } from "./roomRecommendations";
@@ -574,6 +574,7 @@ function ConfiguredLineRow({ line, inheritedClassification = "standard", editabl
   moneyPaise: (value: number) => string;
 }) {
   const componentCalculated = configuredUsesComponentPricing(line);
+  const aggregateOnly = configuredInHouseGoverned(line);
   const rate = parseSellingRate(line.rateInput);
   const amount = configuredLinePreviewAmountPaise(line);
   const amountTooLarge = !componentCalculated && !line.uomNeedsQuantityReview && !configuredDimensionsIssue(line) && amount === null && rate.kind === "value"
@@ -618,7 +619,7 @@ function ConfiguredLineRow({ line, inheritedClassification = "standard", editabl
       onChange={() => {}} /> : null}
     fields={<>
       {line.dimensionsMandatory ? <div className="configured-estimate-line__quantity configured-estimate-line__quantity--calculated"><span>Qty ({line.uomName})</span><output aria-label={`Quantity (${line.uomName}) for ${label}`}>{Number.isFinite(line.quantity) && !configuredDimensionsIssue(line) ? line.quantity : "Pending"}</output></div> : <label className="configured-estimate-line__quantity"><span>Qty ({line.uomName})</span><span className="configured-estimate-line__stepper"><button type="button" aria-label={`Decrease quantity for ${label}`} disabled={!editable || !Number.isFinite(line.quantity) || line.quantity <= (line.included ? step : 0)} onClick={() => changeQuantity(-1)}>−</button><input type="number" min={line.included ? step : 0} step={step} value={Number.isFinite(line.quantity) ? line.quantity : ""} disabled={!editable} aria-label={`Quantity (${line.uomName}) for ${label}`} aria-invalid={quantityInvalid || amountTooLarge} aria-describedby={amountTooLarge ? `${inputId}-amount-overflow` : undefined} onChange={(event) => onUpdateLine(line.key, { quantity: event.target.value === "" ? Number.NaN : Number(event.target.value) })} /><button type="button" aria-label={`Increase quantity for ${label}`} disabled={!editable} onClick={() => changeQuantity(1)}>+</button></span></label>}
-      <label className="configured-estimate-line__rate" htmlFor={inputId}><span aria-hidden="true">Rate (₹/{line.uomName})</span><span className="sr-only">Selling rate (₹/{line.uomName}) for {label}</span><input id={inputId} type="text" inputMode="decimal" value={componentCalculated ? formatRateInput(configuredModeBaseRate(line, "in_house")) : line.rateInput} disabled aria-label={`Selling rate (₹/${line.uomName}) for ${label}`} aria-invalid={rateInvalid || rateRequired || amountTooLarge} aria-describedby={amountTooLarge ? `${inputId}-amount-overflow` : rateInvalid || rateRequired ? `${inputId}-message` : undefined} /></label>
+      <label className="configured-estimate-line__rate" htmlFor={inputId}><span aria-hidden="true">{aggregateOnly ? "Price including margin" : "Rate"} (₹/{line.uomName})</span><span className="sr-only">{aggregateOnly ? "Price including margin" : "Selling rate"} (₹/{line.uomName}) for {label}</span><input id={inputId} type="text" inputMode="decimal" value={aggregateOnly ? amount !== null && line.quantity > 0 ? (Math.round(amount / line.quantity) / 100).toFixed(2) : "" : componentCalculated ? formatRateInput(configuredModeBaseRate(line, "in_house")) : line.rateInput} disabled aria-label={`${aggregateOnly ? "Price including margin" : "Selling rate"} (₹/${line.uomName}) for ${label}`} aria-invalid={rateInvalid || rateRequired || amountTooLarge} aria-describedby={amountTooLarge ? `${inputId}-amount-overflow` : rateInvalid || rateRequired ? `${inputId}-message` : undefined} /></label>
       <div className="configured-estimate-line__amount"><span className={line.included ? "sr-only" : undefined}>Amount{line.included ? "" : " · Not included"}</span><output aria-label={line.included ? `Amount for ${label}` : `Preview amount for ${label}, not included in totals`} aria-describedby={amountTooLarge ? `${inputId}-amount-overflow` : undefined}>{amountTooLarge ? "Too large" : amount === null ? "Pending" : moneyPaise(amount)}</output></div>
       <EstimateLineActions name={line.mainLineName} disabled={!editable || !selectionEditable || !line.included && !configuredLineCanInclude(line)} included={line.included}
         onToggle={() => onUpdateLine(line.key, { included: !line.included })}
@@ -627,11 +628,11 @@ function ConfiguredLineRow({ line, inheritedClassification = "standard", editabl
     {showTierControl ? <EstimateLineTierNotes options={tierOptions} id={tierAvailabilityId} /> : null}
     {line.estimateNotes?.map((note, index) => <small key={index}>{note}</small>)}
     {sourceStatus === "draft" || sourceStatus === "inactive" ? <small className="configured-estimate-line__source">{sourceStatus === "draft" ? "Draft" : "Inactive"} source</small> : null}
-    {componentCalculated ? <small className="configured-estimate-line__component-rate">Calculated from configured components.</small> : line.rateSource === "manual" ? <small className="configured-estimate-line__component-rate">Saved price</small> : null}
+    {componentCalculated && !aggregateOnly ? <small className="configured-estimate-line__component-rate">Calculated from configured components.</small> : line.rateSource === "manual" ? <small className="configured-estimate-line__component-rate">Saved price</small> : null}
     {line.dimensionsMandatory ? <EstimateDimensionsFields compact label={label} dimensions={line.dimensions} rule={line.dimensionRule} quantityUnit={line.uomName} disabled={!editable}
       needsReview={line.dimensionsNeedReview} onChange={dimensions => onUpdateLine(line.key, { dimensions })}
       onConfirm={() => onUpdateLine(line.key, { dimensionsNeedReview: false, uomNeedsQuantityReview: false, previousUomName: undefined })} /> : null}
-    {line.included && line.pricingMode === "in_house" && line.inHouseComponents !== undefined ? <div className="configured-estimate-line__options">
+    {line.included && line.pricingMode === "in_house" && !aggregateOnly && line.inHouseComponents !== undefined ? <div className="configured-estimate-line__options">
       <EstimateInHouseComponents line={line} editable={editable} onChange={(selectedInHouseComponentIds) => onUpdateLine(line.key, { selectedInHouseComponentIds })} />
     </div> : null}
     <EstimateComponentPricingStatus line={line} editable={editable}

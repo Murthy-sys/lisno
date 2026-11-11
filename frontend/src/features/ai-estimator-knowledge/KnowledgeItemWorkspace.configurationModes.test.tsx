@@ -111,6 +111,37 @@ beforeEach(() => {
 });
 
 describe("independent Configuration modes", () => {
+  it("shows each Main Line's basket context in Sub-Vendor across the main and tier editors without saving", async () => {
+    const other = store.get("line-b")!;
+    other.item = { ...other.item, basketId: "basket-electrical", basketName: "Electrical", subBasketId: "sub-lighting", subBasketName: "Lighting" };
+    const original = structuredClone(store);
+    const user = userEvent.setup(); renderWorkspace();
+    for (const [lineId, basketName, subBasketName] of [
+      ["line-a", "Interiors", "Finishes"],
+      ["line-b", "Electrical", "Lighting"]
+    ] as const) {
+      if (lineId === "line-b") {
+        await user.click(screen.getByRole("link", { name: "Open other line" }));
+        await screen.findByRole("heading", { level: 1, name: "Wall B" });
+      }
+      for (const label of ["Mode", "Signature Mode", "Premium Mode", "Functional Mode"]) {
+        const panel = within(await openMode(user, label));
+        const execution = panel.getByRole("checkbox", { name: "Execution" }) as HTMLInputElement;
+        if (!execution.checked) await user.click(execution);
+        const source = panel.getByRole("checkbox", { name: "Sub-Vendor" }) as HTMLInputElement;
+        if (!source.checked) await user.click(source);
+        const context = within(panel.getByRole("region", { name: "Sub-Vendor" }));
+        expect(context.getByText("Main Basket")).toBeVisible();
+        expect(context.getByText(basketName)).toBeVisible();
+        expect(context.getByText("Sub Basket")).toBeVisible();
+        expect(context.getByText(subBasketName)).toBeVisible();
+        expect(context.queryByText(lineId === "line-a" ? "Electrical" : "Interiors")).not.toBeInTheDocument();
+      }
+    }
+    expect(api.updateKnowledgeSection).not.toHaveBeenCalled();
+    expect(store).toEqual(original);
+  });
+
   it("groups saved tiers as exclusive native radios under one Mode entry at every width", async () => {
     const user = userEvent.setup(); renderWorkspace();
     await screen.findByRole("switch", { name: "Applicable tiers" });

@@ -439,6 +439,15 @@ export async function invalidateKnowledgeSectionMutation(
   mainLineId: string
 ): Promise<void> {
   await Promise.allSettled([
+    queryClient.invalidateQueries({ queryKey: ["estimate-in-house-pricing"] }),
+    queryClient.invalidateQueries({ queryKey: ["leads"], predicate: query => query.queryKey[2] === "estimate" }),
+    queryClient.invalidateQueries({ queryKey: ["estimates", "review-queue"] }),
+    queryClient.invalidateQueries({ queryKey: ["estimates", "revisions"] }),
+    queryClient.invalidateQueries({ queryKey: ["estimate-tiers"] }),
+    queryClient.invalidateQueries({ queryKey: ["quotation"] }),
+    queryClient.invalidateQueries({ queryKey: ["procurement", "purchase-order-preparation"] }),
+    queryClient.invalidateQueries({ queryKey: ["procurement", "purchase-order-requests"] }),
+    queryClient.invalidateQueries({ queryKey: ["admin", "purchase-order-requests", "pending"] }),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.specificationItemNames() }),
     invalidateTemporaryMainLineDetails(queryClient),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.subBasketMarginSummaries() }),

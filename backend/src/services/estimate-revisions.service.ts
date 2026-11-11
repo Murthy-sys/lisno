@@ -1,3 +1,4 @@
+import { presentEstimateInHouseResponse } from "./estimate-in-house-presentation.js";
 import { estimateTotalsReconcile } from "../domain/estimate-total-rounding.js";
 import { createHash } from "node:crypto";
 import { z } from "zod";
@@ -138,7 +139,7 @@ export function createEstimateRevisionsService(input: {
         gstPaise: historicalPaise(parsed.data.gstPaise, parsed.data.gst),
         totalPaise: historicalPaise(parsed.data.totalPaise, parsed.data.total)
       };
-      return { ...summary(row), snapshot };
+      return { ...summary(row), snapshot: await presentEstimateInHouseResponse(snapshot) };
     },
     async readPdf(actor, estimateId, revisionId) {
       const row = await findRound(actor, estimateId, revisionId, "+pdfStorageReference pdfFilename pdfMimeType pdfByteSize pdfSha256 sendGeneration");

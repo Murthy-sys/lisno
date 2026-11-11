@@ -78,12 +78,14 @@ const basketLine = object({ sourceLineItemKey: id, roomId: { ...id, nullable: tr
 
 export const PROCUREMENT_BASKET_TENDER_SCHEMAS = {
   ProcurementInHouseComponentBreakdown: object({ complete: { type: "boolean" },
+    visibleComponentsOnly: { type: "boolean" },
     unavailableSourceLineItemKeys: { type: "array", items: id }, adjustedCostPaise: { ...paise, nullable: true }, sellingPaise: { ...paise, nullable: true },
     subBaskets: { type: "array", items: object({ basketId: id, basketName: { type: "string", nullable: true },
       subBasketId: { ...id, nullable: true }, subBasketName: { type: "string", nullable: true }, adjustedCostPaise: paise, sellingPaise: paise,
       contributions: { type: "array", items: object({ sourceLineItemKey: id, componentId: id, roomId: { ...id, nullable: true },
         quantity: { type: "string" }, unit: { type: "string" }, laborAdjustedCostPaise: paise, materialAdjustedCostPaise: paise,
-        laborSellingPaise: paise, materialSellingPaise: paise }) } }) } }),
+        laborSellingPaise: paise, materialSellingPaise: paise }) } }) } },
+    ["complete", "unavailableSourceLineItemKeys", "adjustedCostPaise", "sellingPaise", "subBaskets"]),
   ProcurementPreparationSource: preparationSource,
   ProcurementBasketReconcileSource: object({ expectedVersion: version, expectedSourceSnapshotId: id,
     reason: { type: "string", minLength: 3, maxLength: 2000 }, idempotencyKey: key }),

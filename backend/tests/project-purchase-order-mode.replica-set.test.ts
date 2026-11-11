@@ -1259,6 +1259,85 @@ describe("approved In-house component scope", { timeout: 30000 }, () => {
     expect(await ProjectPurchaseOrderModeDecisionModel.countDocuments()).toBe(0);
   });
 
+  it("enforces current In-house visibility across basket, preparation, previews and historical snapshots without replacing approved IDs", async () => {
+    const { AiEstimatorKnowledgeBasketModel } = await import("../src/models/AiEstimatorKnowledgeBasket.js");
+    const { AiEstimatorKnowledgeSubBasketModel } = await import("../src/models/AiEstimatorKnowledgeSubBasket.js");
+    const { createProjectPurchaseOrderPreparationService, buildProjectPurchaseOrderPreparation } = await import("../src/services/project-purchase-order-preparation.service.js");
+    const { projectCurrentProcurementSnapshots } = await import("../src/services/procurement-in-house-visibility.service.js");
+    await AiEstimatorKnowledgeBasketModel.collection.insertOne({ _id: "usage-components", name: "Component targets", status: "active", version: 1 } as never);
+    await AiEstimatorKnowledgeSubBasketModel.collection.insertMany([
+      { _id: "approved-target", basketId: "usage-components", name: "Approved target", status: "active" },
+      { _id: "new-target", basketId: "usage-components", name: "New target", status: "active" }
+    ] as never[]);
+    const component = (id: string, subBasketId: string, baseRatePaise: number) => ({ id, basketId: "usage-components", subBasketId,
+      inclusions: [], exclusions: [], labor: { ...settings, baseRatePaise }, material: { ...settings, baseRatePaise: baseRatePaise * 2 } });
+    const components = [component("approved-component", "approved-target", 1000), component("new-preset-component", "new-target", 9000)];
+    await saveCurrentDraft({ ...advanced, inHouseComponents: components, inHouseUsage: "estimator", inHousePresetComponentIds: ["new-preset-component"],
+      tierConfigurations: { default: { applicability: "configured", payload: { inHouseUsage: "execution", inHousePresetComponentIds: [] } } } });
+    await EstimateClientReviewRoundModel.collection.updateOne({ _id: "mode-round" }, { $set: {
+      "estimateSnapshot.lineItems.0.classification": "special", "estimateSnapshot.lineItems.0.pricingMode": "in_house",
+      "estimateSnapshot.lineItems.0.rateSource": "manual", "estimateSnapshot.lineItems.0.selectedInHouseComponentIds": ["approved-component"],
+      "estimateSnapshot.selectedMainBasketIds": ["basket-a"],
+      "estimateSnapshot.selectedMainBasketClassifications": [{ mainBasketId: "basket-a", classification: "special" }]
+    } });
+    await seedSecondApprovedProject();
+    const roundsBefore = await EstimateClientReviewRoundModel.find().lean();
+    const baskets = createProcurementBasketService();
+    for (const [projectId, estimateId, roundId, quantity] of [["mode-project", "mode-estimate", "mode-round", "2"],
+      ["mode-project-b", "mode-estimate-b", "mode-round-b", "3"]]) {
+      const initial = await baskets.get(buyer, projectId!, "basket-a");
+      await service.save(buyer, projectId!, { sourceLineItemKey: "approved-line", expectedVersion: 0,
+        expectedEstimateSource: { estimateId: estimateId!, estimateVersion: 1, estimateReviewRoundId: roundId! },
+        expectedRevisionDigest: initial.lines[0]!.mode!.revision!.contentDigest, idempotencyKey: `usage-${projectId}`,
+        mode: "in_house", quantity: quantity!, discountBps: 0, markupBasis: "starting", exceptionReason: null });
+    }
+    const estimatesBefore = await EstimateModel.find().lean();
+    const hidden = await baskets.get(buyer, "mode-project", "basket-a");
+    expect(hidden).toMatchObject({ adjustedCostPaise: 6600, workingTotalPaise: 8250, approvedEstimatePaise: 100000,
+      lines: [{ mode: { inHouseComponentVisibility: "hidden", preview: { components: [], settings: { scopes: [] } } } }] });
+    expect(hidden).not.toHaveProperty("inHouseComponentBreakdown");
+    expect(JSON.stringify(hidden)).not.toContain("approved-component");
+    expect((await baskets.list(buyer, "mode-project")).modeGroups[0]).not.toHaveProperty("inHouseComponentBreakdown");
+    const preparation = await createProjectPurchaseOrderPreparationService().get(buyer, "mode-project");
+    expect(preparation.estimateLines[0]).not.toHaveProperty("selectedInHouseComponentIds");
+    const draftPreview = await service.preview(buyer, "mode-project", { estimateSource: expectedEstimateSource, sourceLineItemKey: "approved-line",
+      expectedVersion: 1, mode: "in_house", quantity: "2", discountBps: 0, markupBasis: "starting" });
+    expect(draftPreview).toMatchObject({ scopes: [], preview: { adjustedCostPaise: 6600, components: [], settings: { scopes: [] } } });
+    const raw = await mongoose.connection.transaction(session => buildProjectPurchaseOrderPreparation("mode-project", session));
+    expect(raw.estimateLines[0]!.selectedInHouseComponentIds).toEqual(["approved-component"]);
+    const snapshot = { sourceLineItemKey: "approved-line", source: "configuration" as const, roomId: null, roomName: "Living",
+      mainBasketId: "basket-a", mainBasketName: "Owner", subBasketId: "sub-a", subBasketName: "Owner sub", mainLineId: "line-a", mainLineName: "POP",
+      approvedQuantity: "2", approvedUnit: "sq ft", approvedAmountPaise: 100000, referenceAsOf: at.toISOString(),
+      mode: raw.estimateLines[0]!.mode!, actualChildren: [], actualTotals: { netPaise: 100, gstPaise: 0, totalPaise: 100 }, actualNetMinusConfiguredCostPaise: -6500 };
+    const snapshotBefore = structuredClone(snapshot);
+    const hiddenHistorical = await mongoose.connection.transaction(session => projectCurrentProcurementSnapshots([snapshot], expectedEstimateSource, session));
+    expect(hiddenHistorical[0]!.mode.preview!.components).toEqual([]);
+    await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: "revision-b-advanced" }, { $set: {
+      "payload.inHouseUsage": "execution", "payload.tierConfigurations.default.payload.inHouseUsage": "estimator"
+    } });
+    const visible = await baskets.get(buyer, "mode-project", "basket-a");
+    expect(visible.inHouseComponentBreakdown).toMatchObject({ adjustedCostPaise: 6600,
+      subBaskets: [{ contributions: [{ componentId: "approved-component" }] }] });
+    expect(visible.workingTotalPaise).toBe(hidden.workingTotalPaise);
+    expect((await baskets.get(buyer, "mode-project-b", "basket-a")).adjustedCostPaise).toBe(9000);
+    const visibleHistorical = await mongoose.connection.transaction(session => projectCurrentProcurementSnapshots([snapshot], expectedEstimateSource, session));
+    expect(visibleHistorical[0]!.mode.preview!.components[0]!.componentId).toBe("approved-component");
+    const missingTier = await mongoose.connection.transaction(session => projectCurrentProcurementSnapshots([{ ...snapshot, modeTier: "premium" }], expectedEstimateSource, session));
+    expect(missingTier[0]!.mode).toMatchObject({ inHouseComponentVisibility: "hidden", preview: { components: [] } });
+    const missingLineage = await mongoose.connection.transaction(session => projectCurrentProcurementSnapshots([snapshot], { ...expectedEstimateSource, estimateReviewRoundId: null }, session));
+    expect(missingLineage[0]!.mode.preview!.components).toEqual([]);
+    const retainedTier = await mongoose.connection.transaction(session => projectCurrentProcurementSnapshots([{ ...snapshot, modeTier: "signature" }],
+      { ...expectedEstimateSource, estimateReviewRoundId: null }, session));
+    expect(retainedTier[0]!.mode.preview!.components[0]!.componentId).toBe("approved-component");
+    expect(snapshot).toEqual(snapshotBefore);
+    await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: "revision-b-advanced" }, { $set: { "payload.inHousePresetComponentIds": ["missing"] } });
+    const invalid = await baskets.get(buyer, "mode-project", "basket-a");
+    expect(invalid.lines[0]!.mode).toMatchObject({ inHouseComponentVisibility: "hidden", inHouseComponentVisibilityIssue: { code: "IN_HOUSE_USAGE_INVALID" } });
+    expect(invalid.lines[0]!.mode!.preview!.components).toEqual([]);
+    expect(await EstimateClientReviewRoundModel.find().lean()).toEqual(roundsBefore);
+    expect(await EstimateModel.find().lean()).toEqual(estimatesBefore);
+  });
+
   it("projects current foreign component targets from approved selections without changing source ownership or another project", async () => {
     const { AiEstimatorKnowledgeBasketModel } = await import("../src/models/AiEstimatorKnowledgeBasket.js");
     const { AiEstimatorKnowledgeSubBasketModel } = await import("../src/models/AiEstimatorKnowledgeSubBasket.js");
@@ -1323,9 +1402,9 @@ describe("approved In-house component scope", { timeout: 30000 }, () => {
     const component = (labor: number, material: number) => ({ id: "same-id", basketId: "tier-component-basket", subBasketId: "tier-component-sub",
       inclusions: [{ id: "included", name: "Tier scope", selected: true }], exclusions: [],
       labor: { ...settings, baseRatePaise: labor }, material: { ...settings, baseRatePaise: material } });
-    await saveCurrentDraft({ ...advanced, inHouseComponents: [component(9900, 8800)], tierConfigurations: {
+    await saveCurrentDraft({ ...advanced, inHouseComponents: [component(9900, 8800)], inHouseUsage: "estimator", inHousePresetComponentIds: ["same-id"], tierConfigurations: {
       default: { applicability: "configured", payload: { ...advanced, inHouseComponents: [component(99000, 88000)] } },
-      premium: { applicability: "configured", payload: { ...advanced, inHouseComponents: [component(4500, 9500)] } }
+      premium: { applicability: "configured", payload: { ...advanced, inHouseComponents: [component(4500, 9500)], inHouseUsage: "execution", inHousePresetComponentIds: [] } }
     } });
     await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: "revision-b-overview" }, { $set: { "payload.applicableTiers": ["signature", "premium"] } });
     await AiEstimatorKnowledgePriceVersionModel.collection.updateOne({ _id: "price-version" }, { $set: { revisionId: "revision-b" } });
@@ -1340,7 +1419,7 @@ describe("approved In-house component scope", { timeout: 30000 }, () => {
     const proposals = new Map([["approved-line", { mode: "in_house" as const, quantity: "2", discountBps: 0, markupBasis: "starting" as const, exceptionReason: null }]]);
     const children = [{ id: "child-a", sourceLineItemKey: "approved-line", vendorId: "vendor-a", uomId: "mode-uom" }];
     const resolved = await mongoose.connection.transaction(session => resolvePurchaseOrderModes("mode-project", approved, session, { at, proposals, children }));
-    expect(resolved.get("approved-line")).toMatchObject({ state: "ready", preview: { baseCostPaise: 28_000,
+    expect(resolved.get("approved-line")).toMatchObject({ state: "ready", inHouseComponentVisibility: "visible", preview: { baseCostPaise: 28_000,
       settings: { scopes: [{ componentId: "same-id", baseRatePaise: 4500 }, { componentId: "same-id", baseRatePaise: 9500 }] } } });
     expect(resolved.get("approved-line")?.priceReferences["child-a"]?.unitPricePaise).toBeNull();
     expect(resolved.get("approved-line")?.priceReferences["child-a"]?.issues.length).toBeGreaterThan(0);

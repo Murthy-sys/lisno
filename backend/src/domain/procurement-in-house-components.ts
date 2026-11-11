@@ -2,6 +2,8 @@ import { MAX_FINANCE_AMOUNT_PAISE } from "./project-finance.js";
 import type { PurchaseOrderPreparationEstimateLine } from "./project-purchase-order-preparation.js";
 
 export interface ProcurementInHouseComponentBreakdown {
+  /** Totals below cover only visible contributions when other source policies hide detail. */
+  visibleComponentsOnly?: boolean;
   complete: boolean;
   unavailableSourceLineItemKeys: string[];
   adjustedCostPaise: number | null;
@@ -45,11 +47,13 @@ export function projectInHouseComponentBreakdown(lines: readonly PurchaseOrderPr
   const contributions: SubBasket[] = [];
   const unavailable = new Set<string>();
   let applicable = false;
+  let hidden = false;
   for (const line of lines) {
     if (!isApprovedInHouseComponentSource(line)) continue;
     const mode = line.mode;
     // A later explicit Procurement mode keeps its existing behavior.
     if (mode?.decision?.mode && mode.decision.mode !== "in_house" || mode?.preview && mode.preview.mode !== "in_house") continue;
+    if (mode?.inHouseComponentVisibility === "hidden") { hidden = true; continue; }
     const hasComponentEvidence = mode?.preview?.components?.some(row => row.componentId !== undefined) ?? false;
     if (line.selectedInHouseComponentIds === undefined && !hasComponentEvidence) continue;
     applicable = true;
@@ -95,9 +99,9 @@ export function projectInHouseComponentBreakdown(lines: readonly PurchaseOrderPr
           materialSellingPaise: pair.material!.sellingPaise }] });
     }
   }
-  if (!applicable) return undefined;
+  if (!applicable && !hidden) return undefined;
   return combineInHouseComponentBreakdowns([{ complete: unavailable.size === 0, unavailableSourceLineItemKeys: [...unavailable],
-    adjustedCostPaise: null, sellingPaise: null, subBaskets: contributions }]);
+    adjustedCostPaise: null, sellingPaise: null, subBaskets: contributions, ...(hidden ? { visibleComponentsOnly: true } : {}) }]);
 }
 
 /** Merge the same target across source baskets without merging the source contributions themselves. */
@@ -127,7 +131,8 @@ export function combineInHouseComponentBreakdowns(values: readonly ProcurementIn
   const selling = sumPaise(subBaskets.map(group => group.sellingPaise));
   const complete = unavailable.size === 0 && values.every(value => value.complete);
   return { complete, unavailableSourceLineItemKeys: [...unavailable].sort(), adjustedCostPaise: complete ? cost : null,
-    sellingPaise: complete ? selling : null, subBaskets };
+    sellingPaise: complete ? selling : null, subBaskets,
+    ...(values.some(value => value.visibleComponentsOnly) ? { visibleComponentsOnly: true } : {}) };
 }
 
 function sumPaise(values: readonly number[]): number {

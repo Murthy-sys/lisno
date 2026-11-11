@@ -1,7 +1,9 @@
+import { toEstimateAggregatePricing } from "../domain/estimate-aggregate-pricing.js";
+import { projectEstimateInHouseResponse } from "./estimate-in-house-presentation.js";
 import { calculateEstimateTotal } from "../domain/estimate-total-rounding.js";
 import { ESTIMATE_COMPONENT_PRICING_BASIS, estimateComponentLineAmountIsValid } from "../domain/estimate-component-pricing.js";
 import { readProjectNumbers } from "./project-number-read.service.js";
-import { calculateEstimateComponentPricing, readCurrentEstimateComponentConfiguration, resolveEstimateComponentPricing, currentEstimateComponentPricingMatches } from "./estimate-component-pricing.service.js";
+import { calculateEstimateComponentPricing, readCurrentEstimateComponentConfiguration, resolveEstimateComponentPricing, resolveEstimateInHouseSelection, currentEstimateComponentPricingMatches } from "./estimate-component-pricing.service.js";
 import mongoose, { type ClientSession } from "mongoose";
 import { z } from "zod";
 import { canonicalEstimateDimensions, calculateDimensionQuantity, estimateDimensionRulesEqual, estimateLineDimensionsValid, readEstimateDimensionRule, ESTIMATE_DIMENSION_INPUT_UNITS, ESTIMATE_DIMENSION_QUANTITY_UNITS } from "../domain/estimate-dimensions.js";
@@ -129,7 +131,8 @@ export async function estimateTierChoices(line: Row, source?: Source, session?: 
       if (!source || !componentConfiguration) return null;
       try { return calculateEstimateComponentPricing(source, modeTier, line.quantity, selected, componentConfiguration); } catch { return null; }
     };
-    const componentChoices = components?.map(component => ({ id: component.id,
+    const governed = mode === "in_house" && pricing?.inHousePolicy !== undefined;
+    const componentChoices = governed ? undefined : components?.map(component => ({ id: component.id,
       label: [component.basketName, component.subBasketName].filter(Boolean).join(" / "),
       ratePaise: !component.unavailableReason && validMoney(component.baseRatePaise) ? component.baseRatePaise : null,
       available: !component.unavailableReason && componentAmount([component.id]) !== null,
@@ -137,14 +140,16 @@ export async function estimateTierChoices(line: Row, source?: Source, session?: 
     const ratePaise = components !== undefined
       ? tierOf(line) === modeTier ? selectedInHouseBaseRate(components, line.selectedInHouseComponentIds) : null
       : mode && pricing ? pricing.modeBaseRatesPaise[mode] : null;
-    const hasCost = components !== undefined ? componentChoices!.some(component => component.available) : validMoney(ratePaise);
+    const componentPricing = components !== undefined && (governed || tierOf(line) === modeTier)
+      ? componentAmount(governed ? undefined : line.selectedInHouseComponentIds) : null;
+    const hasCost = governed ? componentPricing !== null : components !== undefined ? componentChoices!.some(component => component.available) : validMoney(ratePaise);
     const available = Boolean(pricing && mode && matchingUom && hasCost);
     const unavailableReason = !source ? "Configuration is unavailable." : !matchingUom ? "Ask Sales to review the changed unit and quantity." :
       !pricing ? "This tier is not configured for this main line." : !mode ? "Ask Sales to choose a pricing mode." :
       !hasCost ? "Price is not configured for this tier." : null;
-    const componentPricing = components !== undefined && tierOf(line) === modeTier ? componentAmount(line.selectedInHouseComponentIds) : null;
     choices.push({ modeTier, available, unavailableReason,
-      ...(componentPricing ? { pricingBasis: ESTIMATE_COMPONENT_PRICING_BASIS, componentPricing } : {}),
+      ...(componentPricing ? { pricingBasis: ESTIMATE_COMPONENT_PRICING_BASIS, ...(governed ? { aggregatePricing: toEstimateAggregatePricing(componentPricing) } : { componentPricing }) } : {}),
+      ...(governed ? { inHouseUsage: pricing.inHouseUsage, inHousePricingState: pricing.inHousePricingState } : {}),
       ratePaise: components === undefined && available && validMoney(ratePaise) ? ratePaise : null,
       amountPaise: components !== undefined ? componentPricing?.totalPaise ?? null : available && validMoney(ratePaise) ? estimateAmountFor(ratePaise, line.quantity, source!.line.uom.decimalScale) : null,
       source: source ? { revisionId: source.line.revisionId, itemVersion: source.line.itemVersion,
@@ -184,13 +189,13 @@ export async function presentEstimateTiers(context: Awaited<ReturnType<typeof es
         choices: await estimateTierChoices(line, source, session) });
     }
   const totalPaise = estimate?.totalPaise ?? (typeof estimate?.total === "number" ? Math.round(estimate.total * 100) : null);
-  return { projectId, projectNumber, estimateId: estimate ? String(estimate._id) : null,
+  return projectEstimateInHouseResponse({ projectId, projectNumber, estimateId: estimate ? String(estimate._id) : null,
     estimateVersion: estimate?.version ?? null, ...editing(context), totalPaise: validMoney(totalPaise) ? totalPaise : null,
     ...(estimate?.roundOffPaise === undefined ? {} : { roundOffPaise: Number(estimate.roundOffPaise) }),
     isIncomplete: Boolean(estimate?.isIncomplete) || savedLines.some(line => {
       const source = current.get(line.mainLineId);
       return source ? dimensionsNeedReview(line, source) : false;
-    }), lines };
+    }), lines }, current);
 }
 
 export async function fenceEstimateTierSource(line: Row, session: ClientSession) {
@@ -256,7 +261,7 @@ export function createEstimateTiersService({ audit }: { audit: AuditService }) {
           }
           if (!pricing || !mode || source.line.basePriceAvailability[selectedTier][mode] !== true) return unavailable();
           if (mode === "in_house" && pricing.inHouseComponents !== undefined) {
-            selected = change.input.selectedInHouseComponentIds;
+            selected = resolveEstimateInHouseSelection(source, selectedTier, change.input.selectedInHouseComponentIds) as string[] | undefined;
             const components = selectedInHouseComponents(pricing.inHouseComponents, selected);
             if (!components || components.some(component => component.unavailableReason)) return unavailable();
             ratePaise = selectedInHouseBaseRate(pricing.inHouseComponents, selected);

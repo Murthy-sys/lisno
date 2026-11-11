@@ -1,3 +1,4 @@
+import { presentEstimateInHouseResponse } from "./estimate-in-house-presentation.js";
 import { estimateTotalsReconcile } from "../domain/estimate-total-rounding.js";
 import { quotationSnapshotDigest } from "./quotation-digest.js";
 import { createEstimateProposal, type EstimateProposalMetadata } from "../domain/estimate-proposal.js";
@@ -170,7 +171,7 @@ export function createEstimatePublicationService(input: {
       let retainedPdfBytes: Buffer | null = null;
       let stored: Awaited<ReturnType<EstimateClientReviewStorage["savePdfSnapshot"]>>;
       try {
-        const generated = await input.pdf.generate(pdfInput, {
+        const generated = await input.pdf.generate(await presentEstimateInHouseResponse(pdfInput), {
           profile: "compact_client_delivery"
         });
         retainedPdfBytes = generated.bytes;

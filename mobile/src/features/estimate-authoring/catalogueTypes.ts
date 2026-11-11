@@ -19,6 +19,11 @@ export interface EstimationCatalogueUom {
   decimalScale: number;
 }
 
+export interface EstimationInHousePolicy {
+  inHouseUsage?: "estimator" | "execution" | null | undefined;
+  inHousePricingState?: "ready" | "incomplete" | "invalid" | undefined;
+}
+
 export interface EstimationCatalogueMainLine {
   id: string;
   mainLineId: string;
@@ -30,6 +35,7 @@ export interface EstimationCatalogueMainLine {
   displayOrder: number;
   revisionId: string;
   applicableTiers?: EstimateModeTier[] | undefined;
+  tierPricing?: Partial<Record<EstimateModeTier, EstimationInHousePolicy>> | undefined;
   dimensionsMandatory?: boolean | undefined;
   dimensionRule?: EstimateDimensionRule | null | undefined;
   itemStatus?: "draft" | "active" | "inactive" | undefined;
@@ -39,6 +45,8 @@ export interface EstimationCatalogueMainLine {
   inHouseBaseRatePaise?: number | null | undefined;
   modeBaseRatesPaise?: EstimationModeBaseRatesPaise | undefined;
   inHouseComponents?: EstimationInHouseComponent[] | undefined;
+  inHouseUsage?: "estimator" | "execution" | null | undefined;
+  inHousePricingState?: "ready" | "incomplete" | "invalid" | undefined;
   uom: EstimationCatalogueUom;
 }
 
