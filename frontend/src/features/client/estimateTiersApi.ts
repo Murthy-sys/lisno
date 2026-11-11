@@ -1,4 +1,5 @@
 import type { EstimateComponentPricing, ESTIMATE_COMPONENT_PRICING_BASIS } from "../../../../shared/estimation/estimateComponentPricing";
+import type { EstimateAggregatePricing } from "../../../../shared/estimation/estimateAggregatePricing";
 import type { EstimateDimensions, EstimateDimensionRule } from "../../../../shared/estimation/estimateDimensions";
 import { apiClient } from "../../api/client";
 import type { KnowledgeModeTier } from "../../../../shared/knowledge/knowledgeModeTiers";
@@ -12,6 +13,9 @@ export interface EstimateTierSource {
 }
 
 export interface EstimateTierChoice {
+  aggregatePricing?: EstimateAggregatePricing;
+  inHouseUsage?: "estimator" | "execution" | null;
+  inHousePricingState?: "ready" | "incomplete" | "invalid";
   pricingBasis?: typeof ESTIMATE_COMPONENT_PRICING_BASIS;
   componentPricing?: EstimateComponentPricing;
   modeTier: KnowledgeModeTier;
@@ -24,6 +28,11 @@ export interface EstimateTierChoice {
 }
 
 export interface EstimateTierLine {
+  aggregatePricing?: EstimateAggregatePricing;
+  inHouseUsage?: "estimator" | "execution" | null;
+  inHousePricingState?: "ready" | "incomplete" | "invalid";
+  configurationPricingChanged?: boolean;
+  configurationPricingIssue?: string;
   pricingBasis?: typeof ESTIMATE_COMPONENT_PRICING_BASIS;
   componentPricing?: EstimateComponentPricing;
   id: string;

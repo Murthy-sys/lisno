@@ -22,7 +22,7 @@ export function createEnterpriseComponentAmounts() {
       const subtotal = (unit * quantityUnits + 50n) / 100n;
       return Number((subtotal * 10000n + BigInt(10000 - margin) / 2n) / BigInt(10000 - margin));
     };
-    const rows = components.filter(component => input.selectedInHouseComponentIds.includes(component.id)).map(component => {
+    const rows = components.filter(component => (input.selectedInHouseComponentIds ?? []).includes(component.id)).map(component => {
       const other = input.mainLineId === "line-b";
       const laborSellingPaise = component.id === "paint" ? scope(2000, 0) : scope(other ? 5000 : 10000, other ? 0 : 2000);
       const materialSellingPaise = component.id === "paint" ? scope(3000, 0) : scope(other ? 10000 : 20000, other ? 0 : 2500);
@@ -31,7 +31,7 @@ export function createEnterpriseComponentAmounts() {
     });
     return { formulaVersion: "in_house_components_v1", mainLineId: input.mainLineId, revisionId: `revision-${input.mainLineId}`,
       sourceItemVersion: 2, sourceRevisionVersion: 3, modeTier: "signature", quantity: String(input.quantity), uom,
-      selectedComponentIds: input.selectedInHouseComponentIds, components: rows, totalPaise: rows.reduce((sum, row) => sum + row.totalPaise, 0),
+      selectedComponentIds: input.selectedInHouseComponentIds ?? [], components: rows, totalPaise: rows.reduce((sum, row) => sum + row.totalPaise, 0),
       inputFingerprint: quantityUnits.toString(16).padStart(64, "0") };
   }
   function resolve(input: ConfiguredEstimateLineInput): ConfiguredEstimateLine {

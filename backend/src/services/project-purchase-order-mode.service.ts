@@ -1,4 +1,5 @@
 import { readInHouseComponents, selectedInHouseComponents } from "../domain/ai-estimator-knowledge-in-house-components.js";
+import { procurementInHouseVisibility, projectProcurementModePreview } from "../domain/procurement-in-house-visibility.js";
 import { isKnowledgeModeTier, knowledgeModeTierPayload, projectKnowledgeModeTierSection } from "../domain/ai-estimator-knowledge-mode-tiers.js";
 import { lockInHouseComponentReferences } from "./ai-estimator-knowledge-in-house-components.service.js";
 import { createHash, randomUUID } from "node:crypto";
@@ -82,8 +83,11 @@ export function createProjectPurchaseOrderModeDecisionService(input: { audit: Au
         return {
           projectId, estimateSource: fields.estimateSource, sourceLineItemKey: line.key,
           decisionVersion: existing?.version ?? 0, revision: resolution.revision, uom: resolution.uom,
-          preview: resolution.preview,
-          scopes: resolution.preview ? buildPurchaseOrderModeCalculationStages(resolution.preview) : [],
+          preview: projectProcurementModePreview(resolution.preview, resolution.inHouseComponentVisibility),
+          scopes: resolution.preview && !(resolution.preview.mode === "in_house" && resolution.inHouseComponentVisibility === "hidden")
+            ? buildPurchaseOrderModeCalculationStages(resolution.preview) : [],
+          ...(resolution.inHouseComponentVisibility ? { inHouseComponentVisibility: resolution.inHouseComponentVisibility } : {}),
+          ...(resolution.inHouseComponentVisibilityIssue ? { inHouseComponentVisibilityIssue: resolution.inHouseComponentVisibilityIssue } : {}),
           issues: resolution.issues,
           ...(resolution.integrity ? { integrity: resolution.integrity } : {})
         };
@@ -262,6 +266,7 @@ export async function resolvePurchaseOrderModes(
     const proposal = options.proposals?.get(line.key);
     const selected = proposal ?? decision;
     const unavailable = (code: string, message: string, revision: PurchaseOrderModeResolution["revision"] = null): PurchaseOrderModeResolution => ({
+      ...(line.selectedInHouseComponentIds === undefined ? {} : { inHouseComponentVisibility: "hidden" as const }),
       state: line.included && line.amountPaise !== null && line.amountPaise > 0 && decision?.exceptionReason ? "exception" : "unavailable",
       options: [], availability: unavailableModeAvailability(code, message), decision, preview: null,
       issues: [{ code, message }], revision, uom: null, priceReferences: {}
@@ -334,6 +339,7 @@ export async function resolvePurchaseOrderModes(
       continue;
     }
     const advanced = knowledgeModeTierPayload(sectionPayload(advancedSection), modeTier);
+    const componentVisibility = procurementInHouseVisibility(advanced);
     const quantityMargin = sectionPayload(sectionMap.get("quantity-margin"));
     const components = readInHouseComponents(advanced);
     const selectedComponents = components === undefined ? [] : selectedInHouseComponents(components, line.selectedInHouseComponentIds) ?? [];
@@ -380,7 +386,7 @@ export async function resolvePurchaseOrderModes(
         });
       }
       if (!integrity || !selectedGuardMatches || issues.length || !selected?.mode || !analysis.preview) {
-        result.set(line.key, { state: decision?.exceptionReason ? "exception" : "unavailable", options: [],
+        result.set(line.key, { ...componentVisibility, state: decision?.exceptionReason ? "exception" : "unavailable", options: [],
           availability: unavailableModeAvailability(mismatchIssue.code, mismatchIssue.message), decision,
           preview: null, issues: [mismatchIssue, ...issues], revision, uom, priceReferences: childRefs,
           ...(integrity ? { integrity } : {}) });
@@ -389,7 +395,7 @@ export async function resolvePurchaseOrderModes(
       // A proposal can be calculated for review, but only a saved basis makes the
       // project decision orderable. The save transaction creates that basis.
       const recoveredDecisionReady = !proposal && basisMatches;
-      result.set(line.key, { state: recoveredDecisionReady ? "ready" : "unavailable",
+      result.set(line.key, { ...componentVisibility, state: recoveredDecisionReady ? "ready" : "unavailable",
         options: recoveredDecisionReady ? analysis.options : [],
         availability: recoveredDecisionReady ? analysis.availability : unavailableModeAvailability(mismatchIssue.code, mismatchIssue.message),
         decision, preview: analysis.preview, issues: [],
@@ -402,7 +408,7 @@ export async function resolvePurchaseOrderModes(
     const state: PurchaseOrderModeResolution["state"] = decision?.exceptionReason && analysis.options.length === 0 ? "exception"
       : issues.length || analysis.options.length === 0 ? "unavailable"
         : selected?.mode && analysis.preview ? "ready" : "selection_required";
-    result.set(line.key, { state, options: analysis.options, availability: analysis.availability, decision,
+    result.set(line.key, { ...componentVisibility, state, options: analysis.options, availability: analysis.availability, decision,
       preview: issues.length ? null : analysis.preview, issues, revision, uom, priceReferences: childRefs });
   }
   return result;

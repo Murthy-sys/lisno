@@ -20,6 +20,7 @@ function Harness({ initial = savedLists, readOnly = false, onChange = vi.fn() }:
 }) {
   const [payload, setPayload] = useState(initial);
   return <main><KnowledgeModeConfigurationBuilder payload={payload} mainLineName="TV Unit" modes={[]}
+    basketContext={{ basketId: "basket-carpentry", basketName: "Carpentry" }}
     readOnly={readOnly} validationAttempt={0} onDirty={vi.fn()} onValidationChange={vi.fn()}
     onChange={(next) => { setPayload(next); onChange(next); }}
   /></main>;
@@ -45,11 +46,11 @@ describe("shared Mode paragraph", () => {
     expect(screen.getAllByText(expected)).toHaveLength(1);
     expect(screen.getAllByRole("button", { name: "Edit Description" })).toHaveLength(1);
     await user.click(screen.getByRole("checkbox", { name: "PMC" }));
-    expect(screen.getByText(expected)).not.toBeVisible();
+    expect(screen.getByText(expected)).toBeVisible();
     await user.click(screen.getByRole("checkbox", { name: "In-house" }));
-    expect(screen.getByText(expected)).not.toBeVisible();
+    expect(screen.getByText(expected)).toBeVisible();
     await user.click(screen.getByRole("checkbox", { name: "Execution" }));
-    expect(screen.getByText(expected)).not.toBeVisible();
+    expect(screen.getByText(expected)).toBeVisible();
   });
 
   it("cancels edits and keeps custom wording synchronized with checkbox selections after save and reload", async () => {
@@ -116,7 +117,7 @@ describe("shared Mode paragraph", () => {
     expect(screen.getAllByText(expected)).toHaveLength(1);
     await user.click(screen.getByRole("checkbox", { name: "PMC" }));
     expect(screen.getAllByText(expected)).toHaveLength(1);
-    expect(screen.getByText(expected)).not.toBeVisible();
+    expect(screen.getByText(expected)).toBeVisible();
   });
 
   it("validates the complete paragraph length after inserting selected items", async () => {

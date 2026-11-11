@@ -6,6 +6,7 @@ import { apiClient } from "../../api/client";
 import { configuredLineAmountPaise } from "./configuredEstimate";
 import { componentDraftFixture, componentPricingFixture } from "./estimateComponentPricing.testFixtures";
 import { useEstimateInHousePricing } from "./useEstimateInHousePricing";
+import { toEstimateAggregatePricing } from "../../../../shared/estimation/estimateAggregatePricing";
 
 const wrapper = () => {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
@@ -14,6 +15,47 @@ const wrapper = () => {
 afterEach(() => vi.restoreAllMocks());
 
 describe("quantity-aware component previews", () => {
+  it("requests a governed price without component IDs and accepts only aggregate evidence", async () => {
+    const draft = { ...componentDraftFixture(), inHouseUsage: "estimator" as const, inHousePricingState: "ready" as const };
+    const aggregatePricing = toEstimateAggregatePricing(componentPricingFixture());
+    const post = vi.spyOn(apiClient, "post").mockResolvedValue({ lines: [{ key: draft.key, state: "ready", aggregatePricing, componentPricing: componentPricingFixture(), issues: [] }] });
+    const { result } = renderHook(() => useEstimateInHousePricing("lead-a", [draft], true), { wrapper: wrapper() });
+    await waitFor(() => expect(configuredLineAmountPaise(result.current[0]!)).toBe(78333));
+    expect(post.mock.calls[0]?.[1]).toEqual({ lines: [expect.not.objectContaining({ selectedInHouseComponentIds: expect.anything() })] });
+    expect(result.current[0]?.componentPricing).toBeUndefined();
+    expect(result.current[0]?.inHouseComponents).toBeUndefined();
+    expect(result.current[0]?.selectedInHouseComponentIds).toBeUndefined();
+    expect(result.current[0]?.aggregatePricing).toEqual(aggregatePricing);
+  });
+
+  it("keeps a saved changed price blocked until an explicit refresh", () => {
+    const aggregatePricing = toEstimateAggregatePricing(componentPricingFixture());
+    const draft = { ...componentDraftFixture(), inHouseUsage: "execution" as const, inHousePricingState: "ready" as const,
+      aggregatePricing, configurationPricingChanged: true, persistedId: "saved-line" };
+    const post = vi.spyOn(apiClient, "post");
+    const refresh = vi.fn();
+    const { result } = renderHook(() => useEstimateInHousePricing("lead-a", [draft], true, refresh), { wrapper: wrapper() });
+    expect(post).not.toHaveBeenCalled();
+    expect(result.current[0]?.aggregatePricing).toEqual(aggregatePricing);
+    expect(configuredLineAmountPaise(result.current[0]!)).toBeNull();
+    act(() => result.current[0]?.componentPricingRefresh?.());
+    expect(refresh).toHaveBeenCalledWith(draft.key);
+    expect(result.current[0]?.configurationPricingChanged).toBe(true);
+  });
+
+  it("rejects a detailed response and outdated aggregate versions for governed lines", async () => {
+    const draft = { ...componentDraftFixture(), inHouseUsage: "execution" as const, inHousePricingState: "ready" as const };
+    const post = vi.spyOn(apiClient, "post").mockResolvedValue({ lines: [{ key: draft.key, state: "ready", componentPricing: componentPricingFixture(), issues: [] }] });
+    const { result, rerender } = renderHook(({ revisionVersion }) => useEstimateInHousePricing("lead-a", [{ ...draft, revisionVersion }], true),
+      { initialProps: { revisionVersion: 3 }, wrapper: wrapper() });
+    await waitFor(() => expect(result.current[0]?.componentPricingState).toBe("incomplete"));
+    expect(result.current[0]?.componentPricing).toBeUndefined();
+    post.mockResolvedValue({ lines: [{ key: draft.key, state: "ready", aggregatePricing: toEstimateAggregatePricing(componentPricingFixture()), componentPricing: null, issues: [] }] });
+    rerender({ revisionVersion: 4 });
+    await waitFor(() => expect(result.current[0]?.componentPricingState).toBe("incomplete"));
+    expect(configuredLineAmountPaise(result.current[0]!)).toBeNull();
+  });
+
   it("never uses a late response for an earlier quantity", async () => {
     let first!: (value: unknown) => void;
     const draft = componentDraftFixture();

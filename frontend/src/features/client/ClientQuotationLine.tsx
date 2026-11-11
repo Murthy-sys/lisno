@@ -4,6 +4,7 @@ import { EstimateDimensionsFields } from "../leads/EstimateDimensionsFields";
 import { EstimatePricingModeControl } from "../estimates/EstimatePricingModeControl";
 import { quotationItemChoices, type QuotationItemDraft } from "./clientQuotationDraft";
 import type { QuotationLine } from "./quotationApi";
+import { hasGovernedInHousePrice, lineAggregatePrice } from "../estimates/estimateAggregatePresentation";
 
 /** The shared Sales row, driven only by the scoped quotation response and commands. */
 export function ClientQuotationLine({ item, currentLine, selected, disabled, grouped, canChangePricingMode, onTogglePmc, onChange, money }: {
@@ -22,11 +23,14 @@ export function ClientQuotationLine({ item, currentLine, selected, disabled, gro
   const unavailable = !currentLine.source;
   const blocked = disabled || unavailable || grouped;
   const fieldsDisabled = blocked || !selected;
-  const choices = quotationItemChoices(item);
+  const choices = quotationItemChoices({ ...item, line: { ...item.line, pricingMode: currentLine.pricingMode, choices: currentLine.choices, pricingModeChoices: currentLine.pricingModeChoices } });
   const choice = choices.find(option => option.modeTier === item.modeTier);
+  const governed = hasGovernedInHousePrice(choice);
+  const aggregate = choice ? lineAggregatePrice({ ...currentLine, pricingMode: item.pricingMode }, choice) : null;
+  const components = governed ? undefined : choice?.inHouseComponents;
   const editableMode = canChangePricingMode && currentLine.classification === "special" &&
     Boolean(currentLine.pricingModeChoices?.length) && !unavailable;
-  const modePricingUnavailable = Boolean(line.pricingModeChoices?.length) && (!choice?.available || !choice.source);
+  const modePricingUnavailable = Boolean(currentLine.pricingModeChoices?.length) && (!choice?.available || !choice.source);
   const quantity = Number(item.quantity);
   const measured = line.dimensionsMandatory ? calculateDimensionQuantity(line.dimensionRule, item.dimensions) : null;
   const changeQuantity = (direction: -1 | 1) => {
@@ -52,7 +56,7 @@ export function ClientQuotationLine({ item, currentLine, selected, disabled, gro
           <input aria-label={`Quantity for ${label} ${line.uomName}`} type="number" inputMode="decimal" min="0" step="any" value={item.quantity} disabled={fieldsDisabled} onChange={event => onChange({ quantity: event.target.value })} />
           <button type="button" aria-label={`Increase quantity for ${label}`} disabled={fieldsDisabled} onClick={() => changeQuantity(1)}>+</button>
         </span></label>}
-      <div className="configured-estimate-line__rate client-quotation__price"><span>Rate (₹/{line.uomName})</span><output className={choice?.inHouseComponents ? "client-quotation__component-rate" : undefined} aria-label={`Configured price for ${label}`}>{choice?.inHouseComponents ? "From components" : money(choice?.ratePaise ?? null)}</output></div>
+      <div className="configured-estimate-line__rate client-quotation__price"><span>{governed ? "Price including margin" : `Rate (₹/${line.uomName})`}</span><output className={components ? "client-quotation__component-rate" : undefined} aria-label={`Configured price for ${label}`}>{governed ? money(aggregate?.totalPaise ?? null) : components ? "From components" : money(choice?.ratePaise ?? null)}</output></div>
       <div className="configured-estimate-line__amount"><span>{item.kind === "update" ? "Saved amount" : "Amount"}</span><output aria-label={`${item.kind === "update" ? "Saved amount" : "Amount"} for ${label}`}>{item.kind === "update" ? money(currentLine.amountPaise) : "After save"}</output></div>
       <EstimateLineActions name={label} disabled={blocked} included={selected} onToggle={() => onChange({ included: !selected })}
         {...(!line.dimensionsMandatory && selected ? { onResetQuantity: () => onChange({ quantity: "1" }) } : {})} />
@@ -63,7 +67,8 @@ export function ClientQuotationLine({ item, currentLine, selected, disabled, gro
       : <p className="configured-estimate-line__message" role="status">Dimensions are unavailable until your team reviews the configured unit.</p> : null}
     {selected ? <>
       {modePricingUnavailable ? <p className="configured-estimate-line__message" role="status">{choice?.unavailableReason ?? "Price is unavailable for the selected mode and tier. Review the available options before saving."}</p> : null}
-      {choice?.inHouseComponents ? <fieldset className="client-quotation__components" aria-label={`Components for ${label}`} disabled={fieldsDisabled}><legend>In-house components</legend>{choice.inHouseComponents.map(component => <label key={component.id}>
+      {governed && (quantity !== currentLine.quantity || item.modeTier !== currentLine.modeTier) ? <p className="configured-estimate-line__message">The combined price is calculated for the saved quantity. Save your changes to update the amount.</p> : null}
+      {components ? <fieldset className="client-quotation__components" aria-label={`Components for ${label}`} disabled={fieldsDisabled}><legend>In-house components</legend>{components.map(component => <label key={component.id}>
         <input type="checkbox" checked={item.components.includes(component.id)} disabled={fieldsDisabled || !component.available && !item.components.includes(component.id)} onChange={event => onChange({ components: event.target.checked ? [...item.components, component.id] : item.components.filter(id => id !== component.id) })} />
         <span className="client-quotation__component-copy"><span>{component.label}</span>{!component.available ? <span className="client-quotation__component-status">(unavailable)</span> : null}</span>
       </label>)}</fieldset> : null}

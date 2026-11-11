@@ -7,6 +7,7 @@ import { EstimateComponentBreakdown } from "../leads/EstimateComponentBreakdown"
 import { estimateBuilderSections } from "../leads/estimateBuilderCatalogue";
 import { createConfiguredEstimateViewState } from "../leads/useConfiguredEstimateViewState";
 import { EstimateBuilderShell, type EstimateShellBasket } from "./EstimateBuilderShell";
+import { hasGovernedInHousePrice, lineAggregatePrice } from "./estimateAggregatePresentation";
 import "./submittedEstimateBuilder.css";
 
 type SnapshotLine = EstimateClientReviewSnapshot["lineItems"][number];
@@ -89,22 +90,24 @@ export function SubmittedEstimateBuilder({ snapshot, workspace = false, onRefres
     const row = rows.find(candidate => candidate.id === id);
     if (!row) return null;
     const { line, name } = row;
+    const aggregate = lineAggregatePrice(line, line);
+    const governed = hasGovernedInHousePrice(line);
     const evidence = readEstimateComponentPricing(line.componentPricing);
-    const components = line.pricingBasis === ESTIMATE_COMPONENT_PRICING_BASIS && line.pricingMode === "in_house" &&
+    const components = !governed && line.pricingBasis === ESTIMATE_COMPONENT_PRICING_BASIS && line.pricingMode === "in_house" &&
       line.rateSource === "configuration" && evidence?.totalPaise === line.amountPaise ? evidence : null;
     return <article className="submitted-estimate-line" aria-label={`${name} in ${line.roomName}`}>
       <div className="submitted-estimate-line__heading"><h4>{name}</h4><strong>{money(paise(line.amountPaise, line.amount))}</strong></div>
       <p className="submitted-estimate-line__context">{line.roomName}{line.itemType === "temporary" ? " · Temporary item" : ""}</p>
       <dl className="submitted-estimate-line__values">
         <div><dt>Quantity</dt><dd>{line.quantity} {line.uomName ?? line.unit}</dd></div>
-        <div><dt>Rate</dt><dd>{components ? "Calculated from saved components" : money(paise(line.ratePaise, line.rate))}</dd></div>
+        <div><dt>{governed ? "Price including margin" : "Rate"}</dt><dd>{governed ? money(aggregate?.totalPaise ?? null) : components ? "Calculated from saved components" : money(paise(line.ratePaise, line.rate))}</dd></div>
         {line.modeTier ? <div><dt>Configured option</dt><dd>{KNOWLEDGE_MODE_TIER_LABELS[line.modeTier]}</dd></div> : null}
       </dl>
       {line.dimensions ? <p>Dimensions: {line.dimensions.length} × {line.dimensions.width} × {line.dimensions.height}{line.dimensionRule ? ` ${line.dimensionRule.inputUnit}` : ""} (L × W × H){line.dimensionsMandatory ? " · Quantity = L × W" : ""}</p> : null}
       {line.specification ? <p>{line.specification}</p> : null}
       {line.estimateNotes?.map((note, index) => <p key={index}>{note}</p>)}
       {components ? <EstimateComponentBreakdown pricing={components} label={name} /> : null}
-      {line.pricingBasis === ESTIMATE_COMPONENT_PRICING_BASIS && !components ? <p role="status">Saved component details are unavailable.</p> : null}
+      {line.pricingBasis === ESTIMATE_COMPONENT_PRICING_BASIS && !components && !aggregate ? <p role="status">{governed ? "Saved price including margin is unavailable." : "Saved component details are unavailable."}</p> : null}
     </article>;
   };
   if (!rows.length) return <div className="submitted-estimate-line">

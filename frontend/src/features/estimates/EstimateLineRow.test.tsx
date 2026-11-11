@@ -5,6 +5,24 @@ import axe from "axe-core";
 import { EstimateLineActions, EstimateLineChoice, EstimateLineLayout, EstimateLineTierNotes, EstimateLineTierOptions } from "./EstimateLineRow";
 
 describe("Shared estimate line presentation", () => {
+  it.each([false, true])("keeps DOM and keyboard order aligned with pricingBeforeTier=%s", async (pricingBeforeTier) => {
+    const user = userEvent.setup();
+    render(<EstimateLineLayout included pricingBeforeTier={pricingBeforeTier || undefined}
+      choice={<button type="button">Choose item</button>}
+      tier={<button type="button">Choose tier</button>}
+      type={<button type="button">Choose type</button>}
+      pricing={<button type="button">PMC</button>}
+      fields={<button type="button">Quantity</button>} />);
+    const expected = pricingBeforeTier
+      ? ["Choose item", "PMC", "Choose tier", "Choose type", "Quantity"]
+      : ["Choose item", "Choose tier", "Choose type", "PMC", "Quantity"];
+    expect(screen.getAllByRole("button").map(button => button.textContent)).toEqual(expected);
+    for (const name of expected) {
+      await user.tab();
+      expect(screen.getByRole("button", { name })).toHaveFocus();
+    }
+  });
+
   it("retains an implicit manual baseline until a tier is deliberately selected", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
@@ -77,6 +95,8 @@ describe("Shared estimate line presentation", () => {
       choice={<EstimateLineChoice name="Storage" unit="Unit" included disabled onToggle={onToggle} accessibleLabel="Include Storage in Kitchen" />}
       fields={<div><span>Saved amount</span><output aria-label="Saved amount for Storage in Kitchen">₹1,000.00</output></div>} />);
     const row = screen.getByRole("group", { name: "Storage Kitchen" });
+    expect(within(row).getByText("Storage")).toBeVisible();
+    expect(within(row).queryByText("Unit")).not.toBeInTheDocument();
     expect(within(row).getByRole("checkbox", { name: "Include Storage in Kitchen" })).toBeDisabled();
     expect(within(row).getByLabelText("Saved amount for Storage in Kitchen")).toHaveTextContent("₹1,000.00");
     expect((await axe.run(container, { rules: { "color-contrast": { enabled: false } } })).violations).toEqual([]);

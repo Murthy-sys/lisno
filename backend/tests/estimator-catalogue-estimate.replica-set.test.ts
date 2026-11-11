@@ -2094,6 +2094,146 @@ describe("estimate In-house component selections", { timeout: 30_000 }, () => {
   const line = (overrides: Record<string, unknown> = {}) => configuredLine({ classification: "special", pricingMode: "in_house", rateSource: "configuration", ratePaise: 3003,
     selectedInHouseComponentIds: ["component-electrical"], itemVersion: 1, revisionVersion: 1, ...overrides });
 
+  it("uses the saved subset for two unequal projects and returns only combined prices across preview, save, read and catalogue", async () => {
+    const cost = (baseRatePaise: number, startingMarkupBps: number) => ({ ...settings(baseRatePaise), lowQuantityLimit: "0", impactBps: 0, startingMarkupBps });
+    await configure([
+      { ...components()[0], labor: cost(10000, 2000), material: cost(20000, 2500) },
+      components()[1],
+      { ...components()[0], id: "component-third", basketId: "basket-c", subBasketId: "sub-c", labor: cost(7000, 2000), material: cost(3000, 2500) }
+    ]);
+    await AiEstimatorKnowledgeSectionModel.updateOne({ _id: "component-mode" }, { $set: {
+      "payload.inHouseUsage": "estimator", "payload.inHousePresetComponentIds": ["component-electrical", "component-third"]
+    } });
+    const { server } = app({ "govern-one": "project-one", "govern-two": "project-two" });
+    for (const [leadId, quantity, expected] of [["govern-one", 2, 103833], ["govern-two", 3, 155750]] as const) {
+      const input = line({ selectedInHouseComponentIds: undefined, ratePaise: null, quantity });
+      const preview = await request(server).post(`/api/v1/leads/${leadId}/estimate/in-house-preview`).set(bearer("estimator")).send(componentPreviewInput(input)).expect(200);
+      expect(preview.body.data.lines[0]).toMatchObject({ state: "ready", componentPricing: null, aggregatePricing: { visibility: "aggregate", totalPaise: expected } });
+      const priced = { ...input, pricingBasis: "in_house_components_v1", componentPricingFingerprint: preview.body.data.lines[0].aggregatePricing.inputFingerprint };
+      const saved = await request(server).put(`/api/v1/leads/${leadId}/estimate`).set(bearer("estimator")).send(estimateInput([priced])).expect(200);
+      expect(saved.body.data.lineItems[0]).toMatchObject({ amountPaise: expected, aggregatePricing: { totalPaise: expected }, inHouseUsage: "estimator" });
+      expect(JSON.stringify(saved.body.data)).not.toMatch(/component-electrical|component-third|selectedInHouseComponentIds|laborSellingPaise|materialSellingPaise/);
+      const persisted = await EstimateModel.findById(saved.body.data.id).lean();
+      expect(persisted!.lineItems[0]).toMatchObject({ selectedInHouseComponentIds: ["component-electrical", "component-third"], componentPricing: { totalPaise: expected } });
+      const read = await request(server).get(`/api/v1/leads/${leadId}/estimate`).set(bearer("estimator")).expect(200);
+      expect(read.body.data.lineItems[0].aggregatePricing.totalPaise).toBe(expected);
+      expect(JSON.stringify(read.body.data)).not.toMatch(/component-electrical|component-third|selectedInHouseComponentIds|laborSellingPaise/);
+      const rejected = await request(server).put(`/api/v1/leads/${leadId}/estimate`).set(bearer("estimator")).send(estimateInput([{ ...priced, selectedInHouseComponentIds: ["component-joinery"] }], ["basket-a"], saved.body.data.version)).expect(409);
+      expect(rejected.body.error.code).toBe("ESTIMATE_IN_HOUSE_PRESET_READ_ONLY");
+      expect(await EstimateModel.findById(saved.body.data.id).lean()).toEqual(persisted);
+    }
+    const catalogue = await request(server).get("/api/v1/estimation/catalogue?limit=100").set(bearer("estimator")).expect(200);
+    expect(JSON.stringify(catalogue.body.data)).not.toMatch(/component-electrical|component-third|component-joinery|inHousePolicy|inHousePresetComponentIds/);
+    const row = catalogue.body.data.items.flatMap((basket: any) => basket.subBaskets.flatMap((sub: any) => sub.mainLines)).find((row: any) => row.id === "line-a");
+    expect(row).toMatchObject({ inHouseUsage: "estimator", inHousePricingState: "ready" });
+    expect(row).not.toHaveProperty("inHouseComponents");
+    expect(row.tierPricing.signature).not.toHaveProperty("inHouseComponents");
+  });
+
+  it("keeps radio arithmetic unchanged, flags changed presets, and requires fresh pricing before saving", async () => {
+    await configure();
+    await AiEstimatorKnowledgeSectionModel.updateOne({ _id: "component-mode" }, { $set: { "payload.inHouseUsage": "estimator", "payload.inHousePresetComponentIds": ["component-electrical"] } });
+    const { server } = app();
+    const path = "/api/v1/leads/govern-refresh/estimate";
+    const input = line({ selectedInHouseComponentIds: undefined, ratePaise: null });
+    const preview = () => request(server).post(`${path}/in-house-preview`).set(bearer("estimator")).send(componentPreviewInput(input)).expect(200);
+    const before = (await preview()).body.data.lines[0].aggregatePricing;
+    const priced = { ...input, pricingBasis: "in_house_components_v1", componentPricingFingerprint: before.inputFingerprint };
+    const saved = await request(server).put(path).set(bearer("estimator")).send(estimateInput([priced])).expect(200);
+    const original = await EstimateModel.findById(saved.body.data.id).lean();
+    await AiEstimatorKnowledgeSectionModel.updateOne({ _id: "component-mode" }, { $set: { "payload.inHouseUsage": "execution" } });
+    const switched = (await preview()).body.data.lines[0].aggregatePricing;
+    expect(switched.totalPaise).toBe(before.totalPaise);
+    expect(switched.inputFingerprint).not.toBe(before.inputFingerprint);
+    await request(server).put(path).set(bearer("estimator")).send(estimateInput([priced], ["basket-a"], saved.body.data.version)).expect(409);
+    await AiEstimatorKnowledgeSectionModel.updateOne({ _id: "component-mode" }, { $set: { "payload.inHousePresetComponentIds": ["component-joinery"] } });
+    const read = await request(server).get(path).set(bearer("estimator")).expect(200);
+    expect(read.body.data.lineItems[0]).toMatchObject({ configurationPricingChanged: true, configurationPricingIssue: "Configuration changed. Refresh price.", aggregatePricing: { totalPaise: before.totalPaise } });
+    expect(await EstimateModel.findById(saved.body.data.id).lean()).toEqual(original);
+    const refreshed = (await preview()).body.data.lines[0].aggregatePricing;
+    expect(refreshed.totalPaise).not.toBe(before.totalPaise);
+    const updated = await request(server).put(path).set(bearer("estimator")).send(estimateInput([{ ...priced, componentPricingFingerprint: refreshed.inputFingerprint }], ["basket-a"], saved.body.data.version)).expect(200);
+    expect(updated.body.data.lineItems[0].aggregatePricing.totalPaise).toBe(refreshed.totalPaise);
+    expect((await EstimateModel.findById(saved.body.data.id).lean())!.lineItems[0].selectedInHouseComponentIds).toEqual(["component-joinery"]);
+  });
+
+  it.each(["estimator", "execution"])("keeps current and approved %s component evidence private after its Premium tier is removed", async usage => {
+    await configure();
+    await AiEstimatorKnowledgeSectionModel.updateOne({ _id: "overview-a" }, { $set: { "payload.applicableTiers": ["signature", "premium"] } });
+    await AiEstimatorKnowledgeSectionModel.updateOne({ _id: "component-mode" }, { $set: {
+      "payload.tierConfigurations.premium": { applicability: "configured", payload: {
+        inHouseUsage: usage, inHousePresetComponentIds: ["component-joinery"], inHouseComponents: components()
+      } }
+    } });
+    const { server } = app();
+    const path = `/api/v1/leads/govern-tier-removed-${usage}/estimate`;
+    const input = line({ modeTier: "premium", quantity: 2, selectedInHouseComponentIds: undefined, ratePaise: null });
+    const preview = await request(server).post(`${path}/in-house-preview`).set(bearer("estimator")).send(componentPreviewInput(input)).expect(200);
+    const aggregate = preview.body.data.lines[0].aggregatePricing;
+    const saved = await request(server).put(path).set(bearer("estimator")).send(estimateInput([
+      { ...input, pricingBasis: "in_house_components_v1", componentPricingFingerprint: aggregate.inputFingerprint }
+    ])).expect(200);
+    const persisted = (await EstimateModel.findById(saved.body.data.id).lean())!;
+    const frozen = toEstimateSnapshot(persisted as never, { clientName: "Fixture client", projectName: "Fixture project", location: "Fixture city" } as never);
+    const reviewId = `govern-tier-removed-round-${usage}`;
+    // A frozen approved fixture isolates recipient projection from the approval workflow.
+    await EstimateClientReviewRoundModel.collection.insertOne({ _id: reviewId, estimateId: persisted._id,
+      projectId: persisted.projectId ?? null, estimateVersion: persisted.version, status: "approved", decision: "approve",
+      estimateSnapshot: frozen } as never);
+    await EstimateModel.collection.updateOne({ _id: persisted._id }, { $set: { estimation: { workflowVersion: 2,
+      phase: "post", status: "draft", preApproval: { reviewRoundId: reviewId, estimateVersion: persisted.version } } } });
+    const before = await EstimateModel.findById(persisted._id).lean();
+    const reviewBefore = await EstimateClientReviewRoundModel.findById(reviewId).lean();
+    await AiEstimatorKnowledgeSectionModel.updateOne({ _id: "overview-a" }, { $set: { "payload.applicableTiers": ["signature"] } });
+    const current = (await resolveEstimatorCatalogueLines(["line-a"])).get("line-a")!.line;
+    expect(current.tierPricing.signature?.inHousePolicy).toBeUndefined();
+    expect(current.tierPricing.premium).toBeUndefined();
+    const read = await request(server).get(path).set(bearer("estimator")).expect(200);
+    for (const projected of [read.body.data.lineItems[0], read.body.data.preApprovedReview.snapshot.lineItems[0]]) {
+      expect(projected).toMatchObject({ modeTier: "premium", amountPaise: aggregate.totalPaise,
+        aggregatePricing: { modeTier: "premium", totalPaise: aggregate.totalPaise }, inHousePricingState: "invalid",
+        configurationPricingChanged: true, configurationPricingIssue: "Configuration changed. Refresh price." });
+      expect(projected).not.toHaveProperty("componentPricing");
+      expect(projected).not.toHaveProperty("selectedInHouseComponentIds");
+    }
+    expect(read.body.data.lineItems[0].configurationTierUnavailable).toBe(true);
+    expect(read.body.data.totalPaise).toBe(persisted.totalPaise);
+    expect(read.body.data.preApprovedReview.snapshot.totalPaise).toBe(frozen.totalPaise);
+    expect(JSON.stringify(read.body.data)).not.toMatch(/component-electrical|component-joinery|selectedComponentIds|selectedInHouseComponentIds|laborSellingPaise|materialSellingPaise/);
+    expect(await EstimateModel.findById(persisted._id).lean()).toEqual(before);
+    expect(await EstimateClientReviewRoundModel.findById(reviewId).lean()).toEqual(reviewBefore);
+  });
+
+  it("preserves exact excluded governed evidence after its preset becomes incomplete and rejects manual downgrade", async () => {
+    await configure();
+    await AiEstimatorKnowledgeSectionModel.updateOne({ _id: "component-mode" }, { $set: { "payload.inHouseUsage": "estimator", "payload.inHousePresetComponentIds": ["component-electrical"] } });
+    const { server } = app();
+    const path = "/api/v1/leads/govern-exclusion/estimate";
+    const input = line({ selectedInHouseComponentIds: undefined, ratePaise: null });
+    const preview = await request(server).post(`${path}/in-house-preview`).set(bearer("estimator")).send(componentPreviewInput(input)).expect(200);
+    const priced = { ...input, pricingBasis: "in_house_components_v1", componentPricingFingerprint: preview.body.data.lines[0].aggregatePricing.inputFingerprint };
+    const saved = await request(server).put(path).set(bearer("estimator")).send(estimateInput([priced])).expect(200);
+    const persisted = (await EstimateModel.findById(saved.body.data.id).lean())!;
+    await request(server).put(path).set(bearer("estimator")).send(estimateInput([{ ...priced, id: saved.body.data.lineItems[0].id, rateSource: "manual", pricingBasis: undefined, ratePaise: 1 }], ["basket-a"], saved.body.data.version)).expect(400);
+    expect(await EstimateModel.findById(saved.body.data.id).lean()).toEqual(persisted);
+    await AiEstimatorKnowledgeSectionModel.updateOne({ _id: "component-mode" }, { $set: { "payload.inHousePresetComponentIds": [] } });
+    await request(server).put(path).set(bearer("estimator")).send(estimateInput([{ ...priced, id: saved.body.data.lineItems[0].id, included: false }], ["basket-a"], saved.body.data.version)).expect(200);
+    const excluded = (await EstimateModel.findById(saved.body.data.id).lean())!;
+    expect(excluded.lineItems[0]).toMatchObject({ included: false, amountPaise: 0, selectedInHouseComponentIds: ["component-electrical"] });
+    expect(excluded.lineItems[0].componentPricing).toEqual(persisted.lineItems[0].componentPricing);
+  });
+
+  it.each([[], ["missing"], ["component-electrical", "component-electrical"]])("fails closed for an incomplete or invalid explicit preset %j", async ids => {
+    await configure();
+    await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: "component-mode" }, { $set: { "payload.inHouseUsage": "estimator", "payload.inHousePresetComponentIds": ids } });
+    const { server } = app();
+    const preview = await request(server).post("/api/v1/leads/govern-invalid/estimate/in-house-preview").set(bearer("estimator")).send(componentPreviewInput(line({ selectedInHouseComponentIds: undefined }))).expect(200);
+    expect(preview.body.data.lines[0]).toMatchObject({ state: "incomplete", componentPricing: null });
+    expect(preview.body.data.lines[0]).not.toHaveProperty("aggregatePricing");
+    const catalogue = await request(server).get("/api/v1/estimation/catalogue?limit=100").set(bearer("estimator")).expect(200);
+    expect(JSON.stringify(catalogue.body.data)).not.toMatch(/component-electrical|component-joinery|inHousePresetComponentIds/);
+  });
+
   it("requires a positive selected component base while preserving a rounded zero amount", async () => {
     await configure([{ ...components()[0], labor: settings(0), material: settings(0) },
       { ...components()[1], labor: settings(1), material: settings(0) }]);

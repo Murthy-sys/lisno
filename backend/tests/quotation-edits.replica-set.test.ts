@@ -206,6 +206,33 @@ describe("quotation pricing-mode changes", () => {
     expect(saved.lines.find(line => line.roomId === "Room1")!.pricingMode).toBe("sub_vendor");
   });
 
+  it.each(["estimator", "execution"])("serves available aggregate In-house quotation and candidate choices for %s usage", async usage => {
+    await eligibleModes();
+    const settings = { baseRatePaise: 1000, lowQuantityLimit: "0", impactBps: 0, minimumMarkupBps: 1000, startingMarkupBps: 2000 };
+    await Section.collection.updateOne({ _id: "advanced-visible" as never }, { $set: {
+      "payload.inHouseComponents": [{ id: "configured-private-component", basketId: "tier-basket", subBasketId: "tier-sub", inclusions: [], exclusions: [], labor: settings, material: settings }],
+      "payload.inHouseUsage": usage, "payload.inHousePresetComponentIds": ["configured-private-component"]
+    } });
+    const auth = { authenticate: async () => client } as unknown as Parameters<typeof createQuotationRouter>[0];
+    const app = express();
+    app.use(express.json());
+    app.use("/api/v1", createQuotationRouter(auth, createAuditService(createMongoRepository())));
+    app.use(errorHandler);
+    const detail = await request(app).get("/api/v1/projects/tier-project/quotation").set("Authorization", "Bearer client").expect(200);
+    const modes = detail.body.data.lines.find((line: any) => line.id === "line-one").pricingModeChoices;
+    expect(modes.find((option: any) => option.pricingMode === "in_house").choices.find((choice: any) => choice.modeTier === "signature"))
+      .toMatchObject({ available: true, ratePaise: null, amountPaise: 5000, aggregatePricing: { totalPaise: 5000 } });
+    for (const [mode, ratePaise, amountPaise] of [["pmc", 4100, 8200], ["sub_vendor", 2000, 4000]] as const) {
+      expect(modes.find((option: any) => option.pricingMode === mode).choices.find((choice: any) => choice.modeTier === "signature"))
+        .toMatchObject({ available: true, ratePaise, amountPaise });
+    }
+    const candidates = await request(app).get("/api/v1/projects/tier-project/quotation/items").set("Authorization", "Bearer client").expect(200);
+    const candidate = candidates.body.data.items.find((line: any) => line.mainLineId === "visible");
+    expect(candidate.pricingModeChoices.find((option: any) => option.pricingMode === "in_house").choices.find((choice: any) => choice.modeTier === "signature"))
+      .toMatchObject({ available: true, ratePaise: null, amountPaise: 2500, aggregatePricing: { totalPaise: 2500 } });
+    expect(JSON.stringify([detail.body, candidates.body])).not.toMatch(/configured-private-component|selectedInHouseComponentIds|laborSellingPaise|materialSellingPaise/);
+  });
+
   it("validates In-house components and clears their metadata when selecting PMC", async () => {
     await eligibleModes();
     const settings = { baseRatePaise: 1000, lowQuantityLimit: "10", impactBps: 1000, minimumMarkupBps: 1500, startingMarkupBps: 2000 };

@@ -87,6 +87,45 @@ describe("client working estimate tier selection", () => {
     expect(await AuditEventModel.countDocuments()).toBe(0);
   });
 
+  it("preserves PMC and Sub-Vendor choices and amounts when the same tier has an explicit In-house policy", async () => {
+    await Section.updateOne({ _id: "advanced-visible" }, { $set: { "payload.tierConfigurations.premium.payload.modeCalculations.pmc.baseRatePaise": 7000 } });
+    await EstimateModel.updateOne({ _id: "tier-estimate" }, { $set: { "lineItems.1.classification": "special", "lineItems.1.pricingMode": "pmc" } });
+    const before = await service.detail(sales, "tier-project");
+    const cost = { baseRatePaise: 3000, lowQuantityLimit: "0", impactBps: 0, minimumMarkupBps: 1000, startingMarkupBps: 2000 };
+    await Section.updateOne({ _id: "advanced-visible" }, { $set: {
+      "payload.tierConfigurations.premium.payload.inHouseComponents": [{ id: "chosen", basketId: "tier-basket", subBasketId: "tier-sub", inclusions: [], exclusions: [], labor: cost, material: cost }],
+      "payload.tierConfigurations.premium.payload.inHouseUsage": "execution", "payload.tierConfigurations.premium.payload.inHousePresetComponentIds": ["chosen"]
+    } });
+    const after = await service.detail(sales, "tier-project");
+    for (const [id, ratePaise, amountPaise] of [["line-one", 5000, 10000], ["line-two", 7000, 21000]] as const) {
+      const original = before.lines.find(line => line.id === id)!.choices.find(choice => choice.modeTier === "premium");
+      const current = after.lines.find(line => line.id === id)!.choices.find(choice => choice.modeTier === "premium");
+      expect(current).toEqual(original);
+      expect(current).toMatchObject({ available: true, ratePaise, amountPaise });
+    }
+  });
+
+  it("prices governed tiers from their own preset and hides all component choices for client and staff", async () => {
+    const cost = (baseRatePaise: number) => ({ baseRatePaise, lowQuantityLimit: "0", impactBps: 0, minimumMarkupBps: 1000, startingMarkupBps: 2000 });
+    const component = (id: string, rate: number) => ({ id, basketId: "tier-basket", subBasketId: id === "chosen" ? "tier-sub" : "tier-private-sub", inclusions: [], exclusions: [], labor: cost(rate), material: cost(rate) });
+    await SubBasket.collection.insertOne({ _id: "tier-private-sub" as never, basketId: "tier-basket", name: "Private target", status: "active", displayOrder: 2, version: 1 });
+    await Section.updateOne({ _id: "advanced-visible" }, { $set: {
+      "payload.tierConfigurations.premium.payload.inHouseComponents": [component("chosen", 3000), component("private-unselected", 9000)],
+      "payload.tierConfigurations.premium.payload.inHouseUsage": "execution",
+      "payload.tierConfigurations.premium.payload.inHousePresetComponentIds": ["chosen"]
+    } });
+    await EstimateModel.updateOne({ _id: "tier-estimate" }, { $set: { "lineItems.0.classification": "special", "lineItems.0.pricingMode": "in_house" } });
+    const before = await EstimateModel.findById("tier-estimate").lean();
+    await expect(service.select(client, "tier-project", "line-one", { ...command, selectedInHouseComponentIds: ["private-unselected"] })).rejects.toMatchObject({ code: "ESTIMATE_IN_HOUSE_PRESET_READ_ONLY" });
+    expect(await EstimateModel.findById("tier-estimate").lean()).toEqual(before);
+    const selected = await service.select(client, "tier-project", "line-one", command);
+    expect(selected.lines[0]).toMatchObject({ modeTier: "premium", aggregatePricing: { totalPaise: 15000 }, amountPaise: 15000 });
+    expect(JSON.stringify(selected)).not.toMatch(/private-unselected|selectedInHouseComponentIds|laborSellingPaise|inHouseComponents/);
+    const internal = await EstimateModel.findById("tier-estimate").lean();
+    expect(internal!.lineItems[0]).toMatchObject({ selectedInHouseComponentIds: ["chosen"], componentPricing: { totalPaise: 15000 } });
+    const staff = await service.detail(sales, "tier-project");
+    expect(JSON.stringify(staff)).not.toMatch(/private-unselected|selectedInHouseComponentIds|laborSellingPaise|inHouseComponents/);
+  });
   it("rejects all-zero selected components without borrowing a positive unselected component", async () => {
     const settings = (baseRatePaise: number) => ({ baseRatePaise, lowQuantityLimit: "10", impactBps: 1000, minimumMarkupBps: 1500, startingMarkupBps: 2000 });
     const component = (id: string, rate: number) => ({ id, basketId: "tier-basket", subBasketId: "tier-sub", inclusions: [], exclusions: [],

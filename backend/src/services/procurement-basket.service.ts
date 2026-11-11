@@ -1,5 +1,5 @@
 import mongoose, { type ClientSession } from "mongoose";
-import { projectProcurementBaskets, type ProcurementBasketDetailDto, type ProcurementBasketSummaryDto } from "../domain/procurement-basket-projection.js";
+import { projectProcurementBaskets, projectProcurementBasketDetail, type ProcurementBasketDetailDto, type ProcurementBasketSummaryDto } from "../domain/procurement-basket-projection.js";
 import { projectProcurementBasketModeGroups, type ProcurementBasketModeGroup } from "../domain/procurement-basket-mode-groups.js";
 import { isApprovedInHouseComponentSource, procurementComponentTargetKey } from "../domain/procurement-in-house-components.js";
 import { ApiError } from "../middleware/errors.js";
@@ -35,7 +35,7 @@ export function createProcurementBasketService(): ProcurementBasketService {
         await assertProcurementProjectAccess(actor, projectId, session);
         const basket = (await preparedBaskets(projectId, session)).find(row => row.id === basketId);
         if (!basket) throw new ApiError(404, "PROCUREMENT_BASKET_NOT_FOUND", "This approved main basket is unavailable.");
-        return basket;
+        return projectProcurementBasketDetail(basket);
       });
     }
   };

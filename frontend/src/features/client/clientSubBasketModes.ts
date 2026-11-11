@@ -1,6 +1,7 @@
 import { calculateDimensionQuantity } from "../../../../shared/estimation/estimateDimensions";
 import { KNOWLEDGE_MODE_TIERS, type KnowledgeModeTier } from "../../../../shared/knowledge/knowledgeModeTiers";
 import type { EstimateTierComparisonInput } from "../estimates/estimateTierComparisonApi";
+import { hasGovernedInHousePrice } from "../estimates/estimateAggregatePresentation";
 import { draftQuotationItem, quotationItemChoices, type QuotationDraft, type QuotationItemDraft } from "./clientQuotationDraft";
 import type { QuotationGroup, QuotationLine, QuotationTierGroupOperation } from "./quotationApi";
 
@@ -46,7 +47,7 @@ export function quotationModeOperations(selections: Readonly<Record<string, Quot
     const members = Object.values(draft.items).filter(item => item.kind === "update" && item.included &&
       item.line.roomId === group.roomId && item.line.mainBasketId === group.mainBasketId && item.line.subBasketId === group.subBasketId);
     if (!members.length || members.some(item => item.modeTier !== selection.value)) return [];
-    const componentSelections = members.filter(item => quotationItemChoices(item).find(choice => choice.modeTier === item.modeTier)?.inHouseComponents)
+    const componentSelections = members.filter(item => { const choice = quotationItemChoices(item).find(choice => choice.modeTier === item.modeTier); return !hasGovernedInHousePrice(choice) && choice?.inHouseComponents; })
       .map(item => ({ lineItemId: item.line.id, selectedInHouseComponentIds: item.components }));
     return [{ kind: "set_group_tier", mainBasketId: group.mainBasketId, subBasketId: group.subBasketId, roomId: group.roomId,
       sourceToken: group.sourceToken, modeTier: selection.value, ...(componentSelections.length ? { componentSelections } : {}) }];
@@ -60,6 +61,6 @@ export function quotationGroupComparison(items: readonly QuotationItemDraft[], e
     subBasketId: scope.subBasketId ?? null, roomId: scope.roomId,
     lines: items.map(item => ({ mainLineId: item.line.mainLineId, ...(item.kind === "update" ? { lineItemId: item.line.id } : {}),
       ...item.line.source!, quantity: item.line.dimensionsMandatory ? calculateDimensionQuantity(item.line.dimensionRule, item.dimensions)?.quantity ?? Number(item.quantity) : Number(item.quantity), pricingMode: item.pricingMode!, modeTier: item.modeTier,
-      selectedInHouseComponentIds: item.components, ...(configuredLineIds?.has(item.line.id) ? { rateSource: "configuration" as const } : {}),
+      ...(hasGovernedInHousePrice(quotationItemChoices(item).find(choice => choice.modeTier === item.modeTier)) ? {} : { selectedInHouseComponentIds: item.components }), ...(configuredLineIds?.has(item.line.id) ? { rateSource: "configuration" as const } : {}),
       ...(item.line.dimensionsMandatory ? { dimensions: item.dimensions, ...(item.line.dimensionRule ? { expectedDimensionRule: item.line.dimensionRule } : {}) } : {}) })) };
 }

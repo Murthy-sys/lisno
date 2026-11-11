@@ -72,6 +72,7 @@ export type PurchaseOrderRequestVendorTotal = { vendorId: string; code: string; 
 
 /** Internal project-request evidence. Never copy this into a vendor PO line or task. */
 export type PurchaseOrderRequestModeSnapshot = {
+  modeTier?: "signature" | "premium" | "functional";
   sourceLineItemKey: string;
   source: "configuration" | "legacy";
   roomId: string | null;

@@ -115,21 +115,24 @@ describe("Collaborative estimate workspace", () => {
     const { draft, catalogue } = configuredFixture();
     draft.estimation = { ...draft.estimation!, phase, ...(phase === "pre" ? { preApproval: null } : {}) };
     draft.capabilities = { ...draft.capabilities!, canChangePricingMode: undefined };
+    draft.lineItems = draft.lineItems.map(line => line.id === "visible-living"
+      ? { ...line, classification: "special" as const, rateSource: "manual" as const, rate: 97.25, ratePaise: 9725 }
+      : line);
     const data = setup(draft, { ...structuredClone(requirements), phase }, catalogue);
     const user = userEvent.setup();
     await screen.findByRole("spinbutton", { name: /Quantity.*Visible finish.*Living Room/ });
     await waitFor(() => expect(data.getClient().isFetching()).toBe(0));
     const row = () => screen.getByRole("spinbutton", { name: /Quantity.*Visible finish.*Living Room/ }).closest(".configured-estimate-line") as HTMLElement;
-    await user.click(within(row()).getByRole("radio", { name: /Special item type/ }));
+    expect(within(row()).queryByRole("radio", { name: /item type/ })).not.toBeInTheDocument();
     await user.clear(within(row()).getByRole("spinbutton"));
     await user.type(within(row()).getByRole("spinbutton"), "19");
-    await user.clear(within(row()).getByRole("textbox", { name: /Selling rate/ }));
-    await user.type(within(row()).getByRole("textbox", { name: /Selling rate/ }), "97.25");
-    expect(within(row()).queryByRole("switch")).not.toBeInTheDocument();
+    expect(within(row()).getByRole("textbox", { name: /Selling rate/ })).toBeDisabled();
+    expect(within(row()).getByRole("switch", { name: /PMC pricing mode/ })).toBeDisabled();
     data.state.estimate = { ...data.state.estimate, capabilities: { ...data.state.estimate.capabilities!, canChangePricingMode: true } };
     await user.click(screen.getByRole("button", { name: "Refresh available items" }));
-    await waitFor(() => expect(within(row()).getByRole("switch", { name: /PMC pricing mode/ })).toBeVisible());
-    expect(within(row()).getByRole("radio", { name: /Special item type/ })).toBeChecked();
+    await waitFor(() => expect(within(row()).getByRole("switch", { name: /PMC pricing mode/ })).toBeEnabled());
+    expect(within(row()).queryByText("Type", { exact: true })).not.toBeInTheDocument();
+    expect(within(row()).queryByRole("radio", { name: /item type/ })).not.toBeInTheDocument();
     expect(within(row()).getByRole("spinbutton")).toHaveValue(19);
     expect(within(row()).getByRole("textbox", { name: /Selling rate/ })).toHaveValue("97.25");
     expect(data.saves).toEqual([]);
@@ -146,7 +149,10 @@ describe("Collaborative estimate workspace", () => {
     data.state.estimate = { ...data.state.estimate, capabilities: { ...data.state.estimate.capabilities!, canChangePricingMode: false } };
     await user.click(screen.getByRole("button", { name: "Refresh available items" }));
     await waitFor(() => expect(data.getClient().getQueryData<EstimateDraft>(leadKeys.estimate("lead-one"))?.capabilities?.canChangePricingMode).toBe(false));
-    expect(screen.queryByRole("switch", { name: /PMC pricing mode/ })).not.toBeInTheDocument();
+    const toggle = screen.getByRole("switch", { name: /PMC pricing mode.*Visible finish.*Living Room/ });
+    expect(toggle).toBeDisabled();
+    await user.click(toggle);
+    expect(toggle).not.toBeChecked();
     expect(screen.getByRole("spinbutton", { name: /Quantity.*Visible finish.*Living Room/ })).toBeEnabled();
     expect(data.saves).toEqual([]);
   });
@@ -194,7 +200,10 @@ describe("Collaborative estimate workspace", () => {
       await user.click(toggle);
       expect(toggle).toBeChecked();
     } else {
-      expect(within(row).queryByRole("switch")).not.toBeInTheDocument();
+      const toggle = within(row).getByRole("switch", { name: /PMC pricing mode/ });
+      expect(toggle).toBeDisabled();
+      await user.click(toggle);
+      expect(toggle).not.toBeChecked();
       expect(within(row).queryByText("Vendor")).not.toBeInTheDocument();
     }
     expect(quantity).toBeEnabled();
@@ -215,8 +224,13 @@ describe("Collaborative estimate workspace", () => {
     const quantity = screen.getByRole("spinbutton", { name: /Quantity.*Visible finish.*Living Room/ });
     const row = quantity.closest(".configured-estimate-line") as HTMLElement;
     expect(within(row).getByText("PMC")).toBeVisible();
-    expect(within(row).queryByRole("switch")).not.toBeInTheDocument();
-    expect(within(row).getByRole("radio", { name: /Standard item type/ })).toBeDisabled();
+    const toggle = within(row).getByRole("switch", { name: /PMC pricing mode/ });
+    expect(toggle).toBeDisabled();
+    expect(toggle).toBeChecked();
+    await user.click(toggle);
+    expect(toggle).toBeChecked();
+    expect(within(row).queryByRole("radio", { name: /item type/ })).not.toBeInTheDocument();
+    expect(within(row).getByRole("textbox", { name: /Selling rate/ })).toBeDisabled();
     await user.clear(quantity);
     await user.type(quantity, "4");
     await user.click(screen.getByRole("button", { name: "Save draft" }));

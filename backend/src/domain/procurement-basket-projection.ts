@@ -4,6 +4,7 @@ import { MAX_FINANCE_AMOUNT_PAISE } from "./project-finance.js";
 import { DEFAULT_PROCUREMENT_BASKET_PROJECT_RATE, type ProcurementBasketProjectRate } from "./procurement-basket-base-rate.js";
 import type { ProcurementEstimateMode } from "./procurement-basket-mode-groups.js";
 import { projectInHouseComponentBreakdown, type ProcurementInHouseComponentBreakdown, type ProcurementComponentTargetNames } from "./procurement-in-house-components.js";
+import { projectProcurementModeResolution } from "./procurement-in-house-visibility.js";
 
 export interface ProcurementBasketLineDto {
   estimateMode?: ProcurementEstimateMode;
@@ -68,6 +69,18 @@ export interface ProcurementBasketDetailDto extends ProcurementBasketSummaryDto 
   preparationSource?: ProjectPurchaseOrderPreparationDto["preparationSource"];
   preparationDigest: string;
   lines: ProcurementBasketLineDto[];
+}
+
+/** Keep the unredacted projection available for BOQ/commercial calculations, redact only its response. */
+export function projectProcurementBasketDetail(basket: ProcurementBasketDetailDto): ProcurementBasketDetailDto {
+  const { inHouseComponentBreakdown, ...base } = basket;
+  const visibleBreakdown = inHouseComponentBreakdown && !(inHouseComponentBreakdown.visibleComponentsOnly &&
+    inHouseComponentBreakdown.complete && inHouseComponentBreakdown.subBaskets.length === 0) ? inHouseComponentBreakdown : undefined;
+  return { ...base, ...(visibleBreakdown ? { inHouseComponentBreakdown: visibleBreakdown } : {}), lines: basket.lines.map(line => {
+    if (line.mode?.inHouseComponentVisibility !== "hidden") return line;
+    return { ...line, mode: projectProcurementModeResolution(line.mode),
+      standardCost: line.standardCost?.mode === "in_house" ? { ...line.standardCost, baseRates: [] } : line.standardCost };
+  }) };
 }
 
 /** The approved preparation is the only estimate source. Modes are internal benchmarks, never vendor payable amounts. */

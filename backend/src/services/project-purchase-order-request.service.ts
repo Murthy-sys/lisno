@@ -27,6 +27,8 @@ import type { PublicUser } from "./auth.service.js";
 import { assertPurchaseOrderAllocations } from "./procurement-vendor-allocation.service.js";
 import { assertProcurementProjectAccess, procurementItemSourceSnapshot, procurementPreparationProjectFilter } from "./procurement.service.js";
 import { buildProjectPurchaseOrderPreparation } from "./project-purchase-order-preparation.service.js";
+import { projectCurrentProcurementSnapshots } from "./procurement-in-house-visibility.service.js";
+import { projectProcurementModeResolution } from "../domain/procurement-in-house-visibility.js";
 import { cutOverProjectAuthority, assertPreparedOrderIssueEligible, orderIssueReadiness, reconcilePurchaseOrderItems, type PurchaseOrderApprovalHook } from "./project-purchase-order.service.js";
 import { assertNoIssuedBasketSourceOverlap } from "./project-purchase-order-tender-overlap.js";
 import { vendorActivation } from "./vendor-readiness.service.js";
@@ -115,6 +117,13 @@ export function createProjectPurchaseOrderRequestService(input: { audit: AuditSe
       throw new ApiError(409, "PURCHASE_ORDER_REQUEST_REVISION_CONFLICT", "The submitted purchase-order request revision is missing.");
     }
     const dto = requestDto(request, revisions);
+    for (const revision of dto.revisions) {
+      const stored = revisions.find(row => String(row._id) === revision.id)!;
+      revision.modeSnapshots = await projectCurrentProcurementSnapshots(revision.modeSnapshots, {
+        estimateId: String(stored.estimateId), estimateVersion: Number(stored.estimateVersion),
+        estimateReviewRoundId: stored.estimateReviewRoundId == null ? null : String(stored.estimateReviewRoundId)
+      }, session);
+    }
     const readiness = await projectWorkOrderIssueReadiness(String(request.projectId), session);
     if (readiness.required) dto.issueReadiness = orderIssueReadiness(request, readiness);
     return dto;
@@ -218,7 +227,9 @@ export function createProjectPurchaseOrderRequestService(input: { audit: AuditSe
     quote(actor, projectId, value) {
       return tx(actor, "procurement", projectId, async session => {
         const fields = validate(purchaseOrderRequestQuoteSchema, value);
-        return buildRequestQuote(projectId, fields, session, now());
+        const quote = await buildRequestQuote(projectId, fields, session, now());
+        return { ...quote, modeSnapshots: quote.modeSnapshots.map(snapshot => ({ ...snapshot,
+          mode: projectProcurementModeResolution(snapshot.mode)! })) };
       });
     },
     list(actor, projectId, value) {
@@ -226,7 +237,9 @@ export function createProjectPurchaseOrderRequestService(input: { audit: AuditSe
         const { limit, offset } = validate(purchaseOrderRequestQuerySchema, value);
         const total = await ProjectPurchaseOrderRequestModel.countDocuments({ projectId }).session(session);
         const rows = await ProjectPurchaseOrderRequestModel.find({ projectId }).sort({ updatedAt: -1, _id: 1 }).skip(offset).limit(limit).session(session).lean() as Row[];
-        return { items: await Promise.all(rows.map(row => detail(row, session))), total, limit, offset };
+        const items: PurchaseOrderRequestDto[] = [];
+        for (const row of rows) items.push(await detail(row, session));
+        return { items, total, limit, offset };
       });
     },
     get(actor, projectId, requestId) {
@@ -242,7 +255,9 @@ export function createProjectPurchaseOrderRequestService(input: { audit: AuditSe
         const filter = { status: { $in: ["pending_approval", "ready_to_issue"] } };
         const total = await ProjectPurchaseOrderRequestModel.countDocuments(filter).session(session);
         const rows = await ProjectPurchaseOrderRequestModel.find(filter).sort({ updatedAt: 1, _id: 1 }).skip(offset).limit(limit).session(session).lean() as Row[];
-        return { items: await Promise.all(rows.map(row => detail(row, session))), total, limit, offset };
+        const items: PurchaseOrderRequestDto[] = [];
+        for (const row of rows) items.push(await detail(row, session));
+        return { items, total, limit, offset };
       });
     },
     async submit(actor, projectId, value) {
@@ -604,6 +619,7 @@ function buildModeSnapshots(preparation: ProjectPurchaseOrderPreparationDto,
       return reference ? [[child.procurementItemId, reference] as const] : [];
     }));
     snapshots.push({ sourceLineItemKey: sourceLine.key, source: sourceLine.source,
+      ...(sourceLine.modeTier ? { modeTier: sourceLine.modeTier } : {}),
       roomId: sourceLine.roomId, roomName: sourceLine.roomName,
       mainBasketId: sourceLine.mainBasketId, mainBasketName: sourceLine.mainBasketName,
       subBasketId: sourceLine.subBasketId, subBasketName: sourceLine.subBasketName,

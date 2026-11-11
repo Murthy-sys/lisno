@@ -33,6 +33,53 @@ async function save(line: Awaited<ReturnType<typeof fixture>>["line"], inHouseCo
   return item.updateSection(actor, line.mainLineId, line.draftRevisionId!, "advanced", { payload: { inHouseComponents }, expectedVersion, expectedAggregateVersion });
 }
 
+describe("saved In-house use and preset", { timeout: 30000 }, () => {
+  it("persists a preset atomically and rejects old clients that erase its policy", async () => {
+    const { line, own, ownSub } = await fixture();
+    const inHouseComponents = [component(own.id, ownSub.id)];
+    const payload = { inHouseComponents, inHouseUsage: "estimator", inHousePresetComponentIds: ["component-one"] };
+    await item.updateSection(actor, line.mainLineId, line.draftRevisionId!, "advanced", {
+      payload, expectedVersion: 1, expectedAggregateVersion: line.version
+    });
+    const current = await item.getItem(actor, line.mainLineId);
+    await expect(item.updateSection(actor, line.mainLineId, line.draftRevisionId!, "advanced", {
+      payload: { inHouseComponents }, expectedVersion: 2, expectedAggregateVersion: current.version
+    })).rejects.toMatchObject({ code: "IN_HOUSE_POLICY_REQUIRED" });
+    expect((await item.getSection(actor, line.mainLineId, line.draftRevisionId!, "advanced")).payload).toEqual(payload);
+    await expect(item.updateSection(actor, line.mainLineId, line.draftRevisionId!, "advanced", {
+      payload: { ...payload, inHouseUsage: "execution" }, expectedVersion: 1, expectedAggregateVersion: line.version
+    })).rejects.toMatchObject({ code: "VERSION_CONFLICT" });
+  });
+
+  it("keeps each saved scope isolated and permits an intentionally incomplete draft", async () => {
+    const { line, own, ownSub } = await fixture();
+    const other = await item.createMainLine(actor, own.id, { name: "Another Main Line", subBasketId: ownSub.id });
+    for (const [index, modeTier] of (["signature", "default", "premium", "functional"] as const).entries()) {
+      const current = await item.getItem(actor, line.mainLineId);
+      const section = await item.getSection(actor, line.mainLineId, line.draftRevisionId!, "advanced");
+      await item.updateSection(actor, line.mainLineId, line.draftRevisionId!, "advanced", {
+        modeTier, expectedVersion: section.version, expectedAggregateVersion: current.version,
+        payload: { inHouseComponents: [component(own.id, ownSub.id, `component-${index}`)],
+          inHouseUsage: index % 2 ? "execution" : "estimator", inHousePresetComponentIds: index ? [`component-${index}`] : [] }
+      });
+    }
+    for (const [index, modeTier] of (["signature", "default", "premium", "functional"] as const).entries()) {
+      const stored = (await item.getSection(actor, line.mainLineId, line.draftRevisionId!, "advanced", modeTier)).payload;
+      expect(stored).toMatchObject({ inHouseUsage: index % 2 ? "execution" : "estimator", inHousePresetComponentIds: index ? [`component-${index}`] : [] });
+    }
+    expect((await item.getSection(actor, other.mainLineId, other.draftRevisionId!, "advanced")).payload).not.toHaveProperty("inHouseUsage");
+  });
+
+  it("rejects foreign preset references without changing the saved section", async () => {
+    const { line, own, ownSub } = await fixture();
+    await expect(item.updateSection(actor, line.mainLineId, line.draftRevisionId!, "advanced", {
+      payload: { inHouseComponents: [component(own.id, ownSub.id)], inHouseUsage: "execution", inHousePresetComponentIds: ["another-scope"] },
+      expectedVersion: 1, expectedAggregateVersion: line.version
+    })).rejects.toBeDefined();
+    expect((await item.getSection(actor, line.mainLineId, line.draftRevisionId!, "advanced")).version).toBe(1);
+  });
+});
+
 describe("In-house component revision references", { timeout: 30000 }, () => {
   it("saves cross-catalogue references with parent race coordination and rejects stale edits", async () => {
     const { line, external, externalSub } = await fixture();

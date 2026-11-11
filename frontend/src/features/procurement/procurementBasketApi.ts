@@ -15,6 +15,7 @@ export type ProcurementEstimateMode = "in_house" | "sub_vendor" | "pmc";
 export type ProcurementEstimateModeGroupKey = ProcurementEstimateMode | "unrecorded";
 
 export interface ProcurementInHouseComponentBreakdown {
+  visibleComponentsOnly?: boolean;
   complete: boolean;
   unavailableSourceLineItemKeys: string[];
   adjustedCostPaise: number | null;

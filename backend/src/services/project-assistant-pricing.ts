@@ -1,3 +1,4 @@
+import { readInHouseUsagePolicy } from "../domain/in-house-usage-policy.js";
 import { hasInHouseComponents, readInHouseComponents, selectedInHouseComponents } from "../domain/ai-estimator-knowledge-in-house-components.js";
 import type { KnowledgeModeTier } from "../domain/ai-estimator-knowledge-mode-tiers.js";
 import { z } from "zod";
@@ -12,6 +13,8 @@ export interface AssistantPricingSource {
   candidate: AssistantCatalogueCandidate;
   /** Server-only, never spread into a tool result. */
   advanced: Record<string, unknown> | null;
+  /** Validated target metadata kept out of governed catalogue tool results. */
+  componentMetadata?: AssistantCatalogueCandidate["inHouseComponents"];
   temporary: boolean;
   dimensionsMandatory?: boolean;
 }
@@ -45,6 +48,11 @@ export function assistantSellingAmount(source: AssistantPricingSource, mode: Ass
   if (source.dimensionsMandatory) throw new Error("Enter dimensions in the estimate workspace.");
   if (!source.candidate.available || source.temporary || !source.advanced) throw new Error("Current calculation unavailable");
   const advanced = source.advanced;
+  const policy = readInHouseUsagePolicy(advanced);
+  if (mode === "in_house" && policy.state !== "legacy") {
+    if (policy.state !== "ready" || selectedInHouseComponentIds !== undefined && (selectedInHouseComponentIds.length !== policy.componentIds.length || new Set(selectedInHouseComponentIds).size !== selectedInHouseComponentIds.length || selectedInHouseComponentIds.some(id => !policy.componentIds.includes(id)))) throw new Error("Current In-house price selection unavailable");
+    selectedInHouseComponentIds = policy.componentIds;
+  }
   const modes = object(advanced.modeCalculations);
   if (!modes && !(mode === "in_house" && hasInHouseComponents(advanced))) throw new Error("Mode settings unavailable");
   const common = { quantity, quantityScale: source.candidate.uom.decimalScale };
@@ -52,7 +60,7 @@ export function assistantSellingAmount(source: AssistantPricingSource, mode: Ass
     if (hasInHouseComponents(advanced)) {
       const selected = selectedInHouseComponents(readInHouseComponents(advanced) ?? null, selectedInHouseComponentIds);
       if (!selected || selected.some((component) => !component.labor || !component.material)) throw new Error("Choose the In-house components to include.");
-      const metadata = selectedInHouseComponents(source.candidate.inHouseComponents ?? null, selectedInHouseComponentIds);
+      const metadata = selectedInHouseComponents(source.componentMetadata ?? source.candidate.inHouseComponents ?? null, selectedInHouseComponentIds);
       if (!metadata || metadata.some((component) => component.available !== true)) throw new Error("A selected In-house component is unavailable.");
       return sum(selected.map((component) => calculateKnowledgeInHousePrice({ labor: component.labor!, material: component.material!,
         ...common, markupBasis: "starting" }).totalPaise));
@@ -165,9 +173,10 @@ export async function calculateAssistantAddition(request: AssistantAdditionReque
     }
     const approvedSelections = new Map(included.filter((line) => line.pricingMode === "in_house" && line.selectedInHouseComponentIds !== undefined)
       .map((line) => [JSON.stringify([...line.selectedInHouseComponentIds!].sort()), line.selectedInHouseComponentIds!]));
+    const governed = source?.advanced ? readInHouseUsagePolicy(source.advanced).state !== "legacy" : false;
     const selectedInHouseComponentIds = mode === "in_house" ? input.selectedInHouseComponentIds ??
-      (approvedSelections.size === 1 ? [...approvedSelections.values()][0] : undefined) : undefined;
-    if (mode === "in_house" && source?.advanced && hasInHouseComponents(source.advanced) &&
+      (!governed && approvedSelections.size === 1 ? [...approvedSelections.values()][0] : undefined) : undefined;
+    if (!governed && mode === "in_house" && source?.advanced && hasInHouseComponents(source.advanced) &&
       !selectedInHouseComponents(readInHouseComponents(source.advanced) ?? null, selectedInHouseComponentIds)) {
       missing.push("Choose which In-house components to include; no components are selected automatically.");
     }
@@ -178,7 +187,7 @@ export async function calculateAssistantAddition(request: AssistantAdditionReque
     }
     output.push({ mainLineId: input.mainLineId, roomId: input.roomId, name: candidate?.name ?? "Unavailable Main Line",
       quantity, uom: candidate?.uom.code ?? "Unavailable", pricingMode: mode, optional: input.optional,
-      ...(selectedInHouseComponentIds === undefined ? {} : { selectedInHouseComponentIds }),
+      ...(governed || selectedInHouseComponentIds === undefined ? {} : { selectedInHouseComponentIds }),
       amountPaise, revisionId: candidate?.revisionId ?? "", missingInputs: missing });
   }
   for (const problem of requiredProblems) globalMissing.add(problem);

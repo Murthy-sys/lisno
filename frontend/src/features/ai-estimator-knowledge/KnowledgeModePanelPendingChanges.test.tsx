@@ -43,6 +43,23 @@ beforeEach(() => {
 });
 
 describe("Mode pending publication lifecycle", () => {
+  it("saves an explicit empty preset and retains the usage after a failed save for retry", async () => {
+    const user = userEvent.setup();
+    const panel = setup();
+    await screen.findByRole("button", { name: "Edit Specification 1" });
+    await user.click(screen.getByRole("checkbox", { name: "Execution" }));
+    await user.click(screen.getByRole("checkbox", { name: "In-house" }));
+    await user.click(screen.getByRole("radio", { name: "Estimator" }));
+    expect(panel.latest()?.groups.some(group => group.key === "in-house:usage")).toBe(true);
+    vi.mocked(api.updateKnowledgeSection).mockRejectedValueOnce(new ApiError(500, "SAVE_FAILED", "Try again."));
+    await act(async () => { expect(await panel.ref.current?.save()).toBe(false); });
+    expect(screen.getByRole("radio", { name: "Estimator" })).toBeChecked();
+    expect(panel.latest()?.groups.some(group => group.key === "in-house:usage")).toBe(true);
+    await act(async () => { expect(await panel.ref.current?.save()).toBe(true); });
+    expect(api.updateKnowledgeSection).toHaveBeenLastCalledWith(item.mainLineId, "revision-1", "advanced", expect.objectContaining({ payload: expect.objectContaining({ inHouseUsage: "estimator", inHousePresetComponentIds: [], inHouseComponents: [expect.objectContaining({ id: "legacy-in-house" })] }) }));
+    expect(panel.latest()?.groups).toEqual([]);
+  });
+
   it("does not publish saved/default content or viewing selections; local edit/revert is exact", async () => {
     const user = userEvent.setup();
     const panel = setup();
@@ -69,7 +86,7 @@ describe("Mode pending publication lifecycle", () => {
     expect(panel.latest()?.groups.map(({ key, label }) => ({ key, label }))).toEqual([
       { key: "in_house:inclusions", label: "Execution · In-house · Inclusions" },
       { key: "in_house:exclusions", label: "Execution · In-house · Exclusions" },
-      { key: "mode:paragraph", label: "Mode · PMC · Description" }
+      { key: "mode:paragraph", label: "Mode · Description" }
     ]);
     expect(panel.latest()?.groups[0]?.entries.find(({ title }) => title === "Supplier")?.fields)
       .toContainEqual({ key: "selected", label: "State", value: "Selected" });

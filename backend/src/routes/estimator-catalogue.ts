@@ -26,7 +26,7 @@ export function createEstimatorCatalogueRouter(auth: AuthService): Router {
     validateQuery(querySchema), async (request, response, next) => {
       try {
         const { limit, offset, includeReadyNonActive } = response.locals.validatedQuery as z.infer<typeof querySchema>;
-        response.json({ data: await listEstimatorCatalogue(request.authenticatedUser!, { limit, offset }, includeReadyNonActive) });
+        response.set("Cache-Control", "private, no-store").json({ data: await listEstimatorCatalogue(request.authenticatedUser!, { limit, offset }, includeReadyNonActive) });
       } catch (error) { next(error); }
     });
   router.get("/estimation/catalogue/recommendations", authenticate(auth),
@@ -35,7 +35,7 @@ export function createEstimatorCatalogueRouter(auth: AuthService): Router {
       try {
         const { mainLineIds, includeReadyNonActive } =
           response.locals.validatedQuery as z.infer<typeof recommendationQuerySchema>;
-        response.json({ data: await listEstimatorCatalogueRecommendations(
+        response.set("Cache-Control", "private, no-store").json({ data: await listEstimatorCatalogueRecommendations(
           request.authenticatedUser!, mainLineIds, includeReadyNonActive
         ) });
       } catch (error) { next(error); }

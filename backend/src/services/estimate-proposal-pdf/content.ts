@@ -1,3 +1,4 @@
+import { estimateAggregateLineAmountIsValid } from "../../domain/estimate-aggregate-pricing.js";
 import { estimateTotalsReconcile } from "../../domain/estimate-total-rounding.js";
 import type { EstimatePdfInput, EstimatePdfLine } from "../estimate-pdf.service.js";
 import { estimateComponentLineAmountIsValid } from "../../domain/estimate-component-pricing.js";
@@ -32,8 +33,9 @@ export function proposalTotals(input: EstimatePdfInput) {
 }
 function row(line: EstimatePdfLine, ungrouped: boolean): ProposalLine {
   if (!Number.isFinite(line.quantity) || line.quantity < 0 || !estimateDimensionSnapshotValid(line) || line.modeTier !== undefined && !isKnowledgeModeTier(line.modeTier)) throw new TypeError("The proposal has invalid saved item details.");
+  const aggregate = estimateAggregateLineAmountIsValid(line);
   const component = line.pricingBasis !== undefined;
-  if (component && !estimateComponentLineAmountIsValid(line)) throw new TypeError("The proposal has invalid saved component amounts.");
+  if (component && !aggregate && !estimateComponentLineAmountIsValid(line)) throw new TypeError("The proposal has invalid saved component amounts.");
   if (line.source === "configuration" && (!Number.isSafeInteger(line.amountPaise) || !component && !Number.isSafeInteger(line.ratePaise))) throw new TypeError("The proposal needs complete saved configured prices.");
   const title = line.source === "configuration" ? line.mainLineName || line.mainLineId || line.catalogueId : estimatePdfCatalogue.get(line.catalogueId)?.description || line.catalogueId;
   const details: string[] = [];
@@ -46,10 +48,10 @@ function row(line: EstimatePdfLine, ungrouped: boolean): ProposalLine {
   if (line.specification) details.push(line.specification);
   if (line.dimensions) details.push(`L ${line.dimensions.length} × W ${line.dimensions.width} × H ${line.dimensions.height}${line.dimensionRule ? ` ${line.dimensionRule.inputUnit}` : ""}`);
   details.push(...line.estimateNotes ?? []);
-  if (component) for (const part of line.componentPricing!.components) details.push(`${[part.basketName, part.subBasketName].filter(Boolean).join(" / ")}: labour ${money(part.laborSellingPaise)}, material ${money(part.materialSellingPaise)}, total ${money(part.totalPaise)}`);
+  if (component && !aggregate) for (const part of line.componentPricing!.components) details.push(`${[part.basketName, part.subBasketName].filter(Boolean).join(" / ")}: labour ${money(part.laborSellingPaise)}, material ${money(part.materialSellingPaise)}, total ${money(part.totalPaise)}`);
   return { title, description: details.join(" · "), unit: line.uomCode || line.unit,
     quantity: new Intl.NumberFormat("en-IN", { maximumFractionDigits: line.source === "configuration" ? 6 : 2 }).format(line.quantity),
-    rate: component ? "Components" : money(recordedPaise(line.ratePaise, line.rate), false), amountPaise: recordedPaise(line.amountPaise, line.amount) };
+    rate: aggregate ? "Price including margin" : component ? "Components" : money(recordedPaise(line.ratePaise, line.rate), false), amountPaise: recordedPaise(line.amountPaise, line.amount) };
 }
 export function proposalGroups(input: EstimatePdfInput): ProposalGroup[] {
   for (const identity of [input.lead.clientName, input.lead.projectName]) {

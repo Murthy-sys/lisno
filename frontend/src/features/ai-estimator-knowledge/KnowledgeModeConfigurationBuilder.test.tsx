@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   KnowledgeModeConfigurationBuilder,
   modeSelectionForPayload,
+  type KnowledgeModeConfigurationBuilderProps,
   type KnowledgeLegacyModeCatalogState
 } from "./KnowledgeModeConfigurationBuilder";
 import type { KnowledgeJsonObject, KnowledgeMaster } from "./knowledgeTypes";
@@ -40,6 +41,8 @@ const legacyExecution = master(
 
 function Harness({
   initialPayload = {},
+  mainLineName = "Wall panelling",
+  basketContext = { basketId: "basket-carpentry", basketName: "Carpentry", subBasketId: "sub-wall", subBasketName: "Wall finishes" },
   readOnly = false,
   modes = [],
   legacyModeCatalogState = { status: "ready" },
@@ -49,6 +52,8 @@ function Harness({
   onValidationChange = vi.fn()
 }: {
   readonly initialPayload?: KnowledgeJsonObject;
+  readonly mainLineName?: string;
+  readonly basketContext?: KnowledgeModeConfigurationBuilderProps["basketContext"];
   readonly readOnly?: boolean;
   readonly modes?: readonly KnowledgeMaster[];
   readonly legacyModeCatalogState?: KnowledgeLegacyModeCatalogState;
@@ -63,7 +68,8 @@ function Harness({
     <main>
       <KnowledgeModeConfigurationBuilder
         payload={payload}
-        mainLineName="Wall panelling"
+        mainLineName={mainLineName}
+        basketContext={basketContext}
         modes={modes}
         legacyModeCatalogState={legacyModeCatalogState}
         serverIssues={serverIssues}
@@ -114,6 +120,97 @@ const definitionPayload: KnowledgeJsonObject = {
 };
 
 describe("KnowledgeModeConfigurationBuilder", () => {
+  it("keeps the usage unset until explicitly selected, then preserves it through source visibility and keyboard changes", async () => {
+    const user = userEvent.setup();
+    const onPayload = vi.fn();
+    render(<Harness initialPayload={definitionPayload} onPayload={onPayload} />);
+    const group = within(screen.getByRole("group", { name: "In-house use" }));
+    expect(group.getByRole("radio", { name: "Estimator" })).not.toBeChecked();
+    expect(group.getByRole("radio", { name: "Execution" })).not.toBeChecked();
+    expect(onPayload).not.toHaveBeenCalled();
+    await user.click(group.getByRole("radio", { name: "Estimator" }));
+    expect(onPayload.mock.lastCall?.[0]).toMatchObject({ inHouseUsage: "estimator", inHousePresetComponentIds: [], inHouseComponents: [expect.objectContaining({ id: "legacy-in-house", basketId: "basket-carpentry", subBasketId: "sub-wall" })] });
+    await user.keyboard("{ArrowRight}");
+    expect(group.getByRole("radio", { name: "Execution" })).toBeChecked();
+    expect(group.getByRole("radio", { name: "Estimator" })).not.toBeChecked();
+    await user.click(screen.getByRole("checkbox", { name: "In-house" }));
+    expect(screen.queryByRole("group", { name: "In-house use" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("checkbox", { name: "In-house" }));
+    expect(screen.getByRole("radio", { name: "Execution" })).toBeChecked();
+    expect(onPayload.mock.lastCall?.[0].inHousePresetComponentIds).toEqual([]);
+  });
+
+  it("preserves the chosen component subset when switching use and disables both radios while read-only", async () => {
+    const user = userEvent.setup();
+    const initialPayload = { ...definitionPayload, inHouseUsage: "execution", inHousePresetComponentIds: ["chosen"], inHouseComponents: [{ id: "chosen", basketId: "basket-carpentry", subBasketId: "sub-wall", inclusions: [], exclusions: [], labor: null, material: null }] };
+    const onPayload = vi.fn();
+    const view = render(<Harness initialPayload={initialPayload} onPayload={onPayload} />);
+    await user.click(screen.getByRole("radio", { name: "Estimator" }));
+    expect(onPayload.mock.lastCall?.[0]).toMatchObject({ inHouseUsage: "estimator", inHousePresetComponentIds: ["chosen"] });
+    view.rerender(<Harness initialPayload={initialPayload} onPayload={onPayload} readOnly />);
+    expect(screen.getByRole("radio", { name: "Estimator" })).toBeDisabled();
+    expect(screen.getByRole("radio", { name: "Execution" })).toBeDisabled();
+  });
+
+  it("shows the current Main Line's basket context in the Sub-Vendor header and body without changing its data", async () => {
+    const user = userEvent.setup();
+    const onPayload = vi.fn();
+    const onDirty = vi.fn();
+    const view = render(<Harness initialPayload={definitionPayload} onPayload={onPayload} onDirty={onDirty} />);
+    const subVendor = within(screen.getByRole("region", { name: "Sub-Vendor" }));
+    expect(within(subVendor.getByRole("button", { name: "Collapse Sub-Vendor" }))
+      .getByText("Main Basket: Carpentry · Sub Basket: Wall finishes")).toBeVisible();
+    expect(subVendor.getByText("Main Basket")).toBeVisible();
+    expect(subVendor.getByText("Carpentry")).toBeVisible();
+    expect(subVendor.getByText("Sub Basket")).toBeVisible();
+    expect(subVendor.getByText("Wall finishes")).toBeVisible();
+    expect(within(screen.getByRole("region", { name: "In-house" })).queryByText("Main Basket")).not.toBeInTheDocument();
+
+    view.rerender(<Harness initialPayload={definitionPayload} mainLineName="Ceiling lighting" onPayload={onPayload} onDirty={onDirty}
+      basketContext={{ basketId: "basket-electrical", basketName: "Electrical", subBasketId: "sub-ceiling", subBasketName: "Ceiling fixtures" }} />);
+    expect(subVendor.getByText("Electrical")).toBeVisible();
+    expect(subVendor.getByText("Ceiling fixtures")).toBeVisible();
+    expect(within(subVendor.getByRole("button", { name: "Collapse Sub-Vendor" }))
+      .getByText("Main Basket: Electrical · Sub Basket: Ceiling fixtures")).toBeVisible();
+    expect(subVendor.queryByText("Main Basket: Carpentry · Sub Basket: Wall finishes")).not.toBeInTheDocument();
+    expect(subVendor.queryByText("Carpentry")).not.toBeInTheDocument();
+    expect(subVendor.queryByText("Wall finishes")).not.toBeInTheDocument();
+
+    await user.click(subVendor.getByRole("button", { name: "Collapse Sub-Vendor" }));
+    expect(subVendor.getByRole("button", { name: "Expand Sub-Vendor" })).toHaveAttribute("aria-expanded", "false");
+    expect(subVendor.getByRole("button", { name: "Expand Sub-Vendor" }))
+      .toHaveAccessibleDescription("Main Basket: Electrical · Sub Basket: Ceiling fixtures");
+    expect(within(subVendor.getByRole("button", { name: "Expand Sub-Vendor" }))
+      .getByText("Main Basket: Electrical · Sub Basket: Ceiling fixtures")).toBeVisible();
+    expect(subVendor.getByText("Electrical")).not.toBeVisible();
+    expect(subVendor.getByText("Ceiling fixtures")).not.toBeVisible();
+    expect(onPayload).not.toHaveBeenCalled();
+    expect(onDirty).not.toHaveBeenCalled();
+  });
+
+  it("distinguishes an unassigned Sub Basket from an assigned basket with unavailable names", () => {
+    const view = render(<Harness initialPayload={definitionPayload}
+      basketContext={{ basketId: "basket-carpentry", basketName: "Carpentry", subBasketId: null, subBasketName: "Old sub-basket name" }} />);
+    const subVendor = within(screen.getByRole("region", { name: "Sub-Vendor" }));
+    expect(within(subVendor.getByRole("button", { name: "Collapse Sub-Vendor" }))
+      .getByText("Main Basket: Carpentry · Sub Basket: Not assigned")).toBeVisible();
+    expect(subVendor.getByText("Not assigned")).toBeVisible();
+    expect(subVendor.queryByText("Old sub-basket name")).not.toBeInTheDocument();
+    view.rerender(<Harness initialPayload={definitionPayload}
+      basketContext={{ basketId: "basket-carpentry", basketName: "  ", subBasketId: "sub-unavailable", subBasketName: " " }} />);
+    expect(subVendor.getAllByText("Name unavailable")).toHaveLength(2);
+    expect(within(subVendor.getByRole("button", { name: "Collapse Sub-Vendor" }))
+      .getByText("Main Basket: Name unavailable · Sub Basket: Name unavailable")).toBeVisible();
+    expect(subVendor.queryByText("Not assigned")).not.toBeInTheDocument();
+    expect(subVendor.queryByText("Carpentry")).not.toBeInTheDocument();
+    view.rerender(<Harness initialPayload={definitionPayload}
+      basketContext={{ basketId: "basket-carpentry", basketName: "Carpentry", subBasketId: "sub-na", subBasketName: "na" }} />);
+    expect(subVendor.getByText("na")).toBeVisible();
+    expect(within(subVendor.getByRole("button", { name: "Collapse Sub-Vendor" }))
+      .getByText("Main Basket: Carpentry · Sub Basket: na")).toBeVisible();
+    expect(subVendor.queryByText("Name unavailable")).not.toBeInTheDocument();
+  });
+
   it("restores selections only from complete source-specific saved evidence", () => {
     const calculation = {
       baseRatePaise: 10_000,
@@ -259,6 +356,10 @@ describe("KnowledgeModeConfigurationBuilder", () => {
     else expect(screen.queryByText("Read-only revision")).not.toBeInTheDocument();
     const pmcSelection = screen.getByRole("checkbox", { name: "PMC" });
     const executionSelection = screen.getByRole("checkbox", { name: "Execution" });
+    const description = screen.getByRole("heading", { name: "Description" });
+    expect(description).toBeVisible();
+    expect(pmcSelection).toBeChecked();
+    expect(executionSelection).not.toBeChecked();
     await user.click(executionSelection);
     const pmcToggle = screen.getByRole("button", { name: "Collapse PMC" });
     const executionToggle = screen.getByRole("button", { name: "Collapse Execution" });
@@ -283,7 +384,9 @@ describe("KnowledgeModeConfigurationBuilder", () => {
     expect(executionBody).toHaveAttribute("hidden");
     expect(pmcSelection).toBeChecked();
     expect(executionSelection).toBeChecked();
-    expect(screen.queryByRole("heading", { name: "Description" })).not.toBeInTheDocument();
+    expect(description).toBeVisible();
+    expect(pmcBody).not.toContainElement(description);
+    expect(executionBody).not.toContainElement(description);
 
     await user.keyboard(" ");
     expect(executionToggle).toHaveAttribute("aria-expanded", "true");
@@ -293,9 +396,34 @@ describe("KnowledgeModeConfigurationBuilder", () => {
     await user.click(pmcSelection);
     expect(screen.getByRole("button", { name: "Collapse PMC" })).toHaveAttribute("aria-expanded", "true");
     expect(pmcBody).toBeVisible();
-    expect(within(pmcBody!).getByRole("heading", { name: "Description" })).toBeVisible();
+    expect(description).toBeVisible();
+    await user.click(pmcSelection);
+    expect(pmcSelection).not.toBeChecked();
+    expect(executionSelection).toBeChecked();
+    expect(description).toBeVisible();
+    await user.click(executionSelection);
+    expect(pmcSelection).not.toBeChecked();
+    expect(executionSelection).not.toBeChecked();
+    expect(screen.getAllByRole("heading", { name: "Description" })).toEqual([description]);
+    expect(description).toBeVisible();
     expect(onPayload).not.toHaveBeenCalled();
     expect(onDirty).not.toHaveBeenCalled();
+  });
+
+  it("focuses common Description validation without enabling PMC", async () => {
+    const user = userEvent.setup();
+    render(<Harness initialPayload={{ modeDescription: "Shared wording.", pmcMinimumMarginBps: 1000, pmcMarginBps: 1500 }}
+      serverIssues={[{ path: "modeDescription", message: "Review the shared description." }]} />);
+    const pmcSelection = screen.getByRole("checkbox", { name: "PMC" });
+    await user.click(pmcSelection);
+    expect(pmcSelection).not.toBeChecked();
+    await user.click(screen.getByRole("button", { name: "Review the shared description." }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Edit Description" })).toHaveFocus());
+    expect(pmcSelection).not.toBeChecked();
+    await user.click(screen.getByRole("button", { name: "Attempt save" }));
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Description" })).toHaveFocus());
+    expect(pmcSelection).not.toBeChecked();
+    expect(screen.getByRole("textbox", { name: "Description" })).toHaveAccessibleDescription(/Review the shared description/);
   });
 
   it.each([false, true])("keeps both Execution sources independently selectable and keyboard collapsible (read-only: %s)", async (readOnly) => {

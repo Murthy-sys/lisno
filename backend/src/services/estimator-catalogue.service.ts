@@ -1,3 +1,4 @@
+import { readInHouseUsagePolicy, type InHouseUsagePolicy } from "../domain/in-house-usage-policy.js";
 import { resolveEstimateDimensionRule, type EstimateDimensionRule } from "../domain/estimate-dimensions.js";
 import { KNOWLEDGE_MODE_TIERS, isKnowledgeModeTier, knowledgeModeConfigurationPayloads, projectKnowledgeModeTierSection, type KnowledgeModeTier } from "../domain/ai-estimator-knowledge-mode-tiers.js";
 import { configuredKnowledgeBasePriceAvailability, hasConfiguredBasePriceForMode, type EstimationBasePriceAvailability } from "../domain/estimation-base-price-visibility.js";
@@ -21,6 +22,10 @@ import { UserModel } from "../models/User.js";
 import type { PublicUser } from "./auth.service.js";
 
 export interface EstimatorCatalogueTierPricing {
+  /** Internal selection authority. Never serialize this member to an estimator. */
+  inHousePolicy?: InHouseUsagePolicy;
+  inHouseUsage?: "estimator" | "execution" | null;
+  inHousePricingState?: "ready" | "incomplete" | "invalid";
   /** Legacy wire name: unit-rate modes contain final selling rates, including their configured maximum. */
   modeBaseRatesPaise: EstimateModeBaseRatesPaise;
   inHouseComponents?: Array<{ id: string; basketId: string; subBasketId: string | null;
@@ -53,6 +58,9 @@ export interface EstimatorCatalogueLine {
   applicableTiers: KnowledgeModeTier[];
   tierPricing: Partial<Record<KnowledgeModeTier, EstimatorCatalogueTierPricing>>;
   inHouseComponents?: EstimatorCatalogueTierPricing["inHouseComponents"];
+  inHousePolicy?: InHouseUsagePolicy;
+  inHouseUsage?: "estimator" | "execution" | null;
+  inHousePricingState?: "ready" | "incomplete" | "invalid";
   /** Legacy wire name: combined/split In-house selling rate; component-priced lines remain null. */
   inHouseBaseRatePaise: number | null;
   modeBaseRatesPaise: EstimateModeBaseRatesPaise;
@@ -172,7 +180,8 @@ export async function listEstimatorCatalogue(
   for (const rawLine of rawLines) {
     const id = String(rawLine._id);
     const child = rawLine.subBasketId ? children.get(String(rawLine.subBasketId)) : undefined;
-    const line = projected.get(id);
+    const internalLine = projected.get(id);
+    const line = internalLine ? presentEstimatorCatalogueLine(internalLine) : undefined;
     if (!line || (line.subBasketId !== null && (!child || child.basketId !== line.basketId))) {
       ineligibleLineCount += 1;
       continue;
@@ -598,9 +607,14 @@ async function projectLines(
       const section = advanced && String(advanced.mainLineId) === id ? projectKnowledgeModeTierSection(advanced, tier) : undefined;
       const configured = section?.applicability === "configured";
       const components = section ? readInHouseComponents(section.payload) : undefined;
+      const policy = readInHouseUsagePolicy(section?.payload);
+      const selected = components?.filter(component => policy.componentIds.includes(component.id));
+      const inHousePricingState = policy.state === "legacy" ? undefined : policy.state !== "ready" ? policy.state
+        : !configured || !selected?.length || selected.length !== policy.componentIds.length || selected.some(component => !componentIsAvailable(component) || !component.labor || !component.material || (inHouseComponentBaseRate(component) ?? 0) <= 0) ? "incomplete" : "ready";
       return {
+        ...(policy.state === "legacy" ? {} : { inHousePolicy: policy, inHouseUsage: policy.usage, inHousePricingState }),
         modeBaseRatesPaise: estimateModeSellingRatesPaise(configured ? section!.payload : null),
-        ...(components === undefined ? {} : { inHouseComponents: (components ?? []).map(component => {
+        ...(components === undefined && policy.state === "legacy" ? {} : { inHouseComponents: (components ?? []).map(component => {
           const basket = componentBaskets.get(component.basketId);
           const subBasket = component.subBasketId ? componentSubBaskets.get(component.subBasketId) : undefined;
           const available = configured && componentIsAvailable(component);
@@ -662,4 +676,20 @@ export async function fenceEstimateInHouseComponentReferences(
   if ((await lockInHouseComponentReferences(selected, session)).size) {
     throw new ApiError(409, "ESTIMATE_COMPONENT_SELECTION_INVALID", "An In-house component's Main Basket or Sub Basket is unavailable. Refresh the catalogue before continuing.");
   }
+}
+
+/** Recipient DTO only. Internal callers must use the unprojected catalogue. */
+export function presentEstimatorCatalogueLine(line: EstimatorCatalogueLine): EstimatorCatalogueLine {
+  const project = (pricing: EstimatorCatalogueTierPricing): EstimatorCatalogueTierPricing => {
+    const { inHousePolicy, ...safe } = pricing;
+    if (inHousePolicy && inHousePolicy.state !== "legacy") {
+      delete safe.inHouseComponents;
+      safe.modeBaseRatesPaise = { ...safe.modeBaseRatesPaise, in_house: null };
+    }
+    return safe;
+  };
+  const safe = { ...line, ...project(line), tierPricing: Object.fromEntries(Object.entries(line.tierPricing).map(([tier, pricing]) => [tier, project(pricing)])) };
+  delete safe.inHousePolicy;
+  if (line.inHousePolicy && line.inHousePolicy.state !== "legacy") { delete safe.inHouseComponents; safe.inHouseBaseRatePaise = null; }
+  return safe;
 }

@@ -3,11 +3,12 @@ import { formatPaise } from "../finance/ProjectFinancePanel";
 import "./procurementComponentBreakdown.css";
 
 export function ProcurementComponentBreakdown({ breakdown, sources, onOpenSource }: { breakdown?: ProcurementInHouseComponentBreakdown; sources?: ReadonlyMap<string, string>; onOpenSource?: (sourceLineItemKey: string) => void }) {
-  if (!breakdown) return null;
+  if (!breakdown || breakdown.visibleComponentsOnly && breakdown.complete && breakdown.subBaskets.length === 0) return null;
   return <section className="procurement-component-breakdown" aria-label="Current In-house component costs by Sub-Basket">
     <h3>In-house component costs by Sub-Basket</h3>
     <p>Current component costs for items selected as In-house in the approved estimate. These costs are already included in the current totals.</p>
-    <p><strong>Current component cost: {breakdown.complete && breakdown.adjustedCostPaise !== null ? formatPaise(breakdown.adjustedCostPaise) : "Incomplete"}</strong></p>
+    <p><strong>{breakdown.visibleComponentsOnly ? "Visible-component subtotal" : "Current component cost"}: {breakdown.complete && breakdown.adjustedCostPaise !== null ? formatPaise(breakdown.adjustedCostPaise) : "Incomplete"}</strong></p>
+    {breakdown.visibleComponentsOnly ? <p>Some source lines hide component details. This subtotal includes only visible components; basket and project totals include every source line.</p> : null}
     {!breakdown.complete ? <p role="status">{breakdown.unavailableSourceLineItemKeys.length} source {breakdown.unavailableSourceLineItemKeys.length === 1 ? "line needs" : "lines need"} current component pricing. Calculated contributions are shown below.</p> : null}
     {breakdown.subBaskets.map(group => <details key={JSON.stringify([group.basketId, group.subBasketId])}>
       <summary>{group.basketName ?? "Unavailable Main Basket"} / {group.subBasketName ?? (group.subBasketId === null ? "Existing In-house settings" : "Unavailable Sub-Basket")} · {formatPaise(group.adjustedCostPaise)}</summary>

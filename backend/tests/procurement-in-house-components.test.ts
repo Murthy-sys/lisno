@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { MAX_FINANCE_AMOUNT_PAISE } from "../src/domain/project-finance.js";
 import { projectInHouseComponentBreakdown, procurementComponentTargetKey } from "../src/domain/procurement-in-house-components.js";
-import { projectProcurementBaskets } from "../src/domain/procurement-basket-projection.js";
+import { projectProcurementBaskets, projectProcurementBasketDetail } from "../src/domain/procurement-basket-projection.js";
+import { procurementInHouseVisibility, projectProcurementPreparation, projectProcurementModePreview } from "../src/domain/procurement-in-house-visibility.js";
 import { projectProcurementBasketModeGroups, resolveProcurementEstimateMode } from "../src/domain/procurement-basket-mode-groups.js";
 import type { PurchaseOrderModePreview } from "../src/domain/project-purchase-order-mode.js";
 import type { ProjectPurchaseOrderPreparationDto, PurchaseOrderPreparationEstimateLine } from "../src/domain/project-purchase-order-preparation.js";
@@ -36,6 +37,72 @@ function preparation(lines: PurchaseOrderPreparationEstimateLine[], projectId = 
 const targetNames = new Map([[procurementComponentTargetKey("target-basket", "target-sub"), { basketName: "Target", subBasketName: "Finish" }]]);
 
 describe("approved In-house component attribution", () => {
+  it("uses the saved disclosure choice without replacing an approved component selection", () => {
+    const approved = line("approved");
+    const policy = procurementInHouseVisibility({ inHouseUsage: "execution", inHousePresetComponentIds: ["new-preset"],
+      inHouseComponents: [{ id: "new-preset" }, { id: "shared-id" }] });
+    Object.assign(approved.mode!, policy);
+    expect(policy).toEqual({ inHouseComponentVisibility: "visible" });
+    expect(projectInHouseComponentBreakdown([approved])!.subBaskets[0]!.contributions[0]!.componentId).toBe("shared-id");
+    expect(procurementInHouseVisibility({})).toEqual({});
+    expect(procurementInHouseVisibility({ inHouseUsage: "execution", inHousePresetComponentIds: [] }))
+      .toEqual({ inHouseComponentVisibility: "visible" });
+    expect(procurementInHouseVisibility({ inHouseUsage: "execution", inHousePresetComponentIds: ["deleted"] }))
+      .toMatchObject({ inHouseComponentVisibility: "hidden", inHouseComponentVisibilityIssue: { code: "IN_HOUSE_USAGE_INVALID" } });
+    expect(procurementInHouseVisibility({ inHouseUsage: "estimator", inHousePresetComponentIds: [] }))
+      .toEqual({ inHouseComponentVisibility: "hidden" });
+  });
+  it("redacts all nested component evidence after calculating whole basket totals without mutating internal evidence", () => {
+    const source = line("hidden");
+    source.mode!.inHouseComponentVisibility = "hidden";
+    source.mode!.preview!.settings.scopes = [{ componentId: "shared-id", componentBasketId: "target-basket", componentSubBasketId: "target-sub",
+      scope: "in_house_labor", source: "scoped", baseRatePaise: 12345, lowQuantityLimit: "2", impactBps: 100,
+      minimumMarkupBps: 1000, startingMarkupBps: 2500 }];
+    const internal = preparation([source]);
+    const before = structuredClone(internal);
+    const rawBasket = projectProcurementBaskets(internal)[0]!;
+    const publicBasket = projectProcurementBasketDetail(rawBasket);
+    const publicPreparation = projectProcurementPreparation(internal);
+    expect(publicBasket).not.toHaveProperty("inHouseComponentBreakdown");
+    expect(publicBasket).toMatchObject({ approvedEstimatePaise: 78333, adjustedCostPaise: 60000, workingTotalPaise: 78333,
+      lines: [{ mode: { preview: { components: [], settings: { scopes: [] }, adjustedCostPaise: 60000 } } }] });
+    expect(publicPreparation.estimateLines[0]).not.toHaveProperty("selectedInHouseComponentIds");
+    expect(JSON.stringify(publicBasket)).not.toContain("shared-id");
+    expect(JSON.stringify(publicPreparation)).not.toContain("target-sub");
+    expect(projectProcurementBasketModeGroups([rawBasket])[0]).not.toHaveProperty("inHouseComponentBreakdown");
+    expect(internal).toEqual(before);
+    expect(rawBasket.lines[0]!.mode!.preview!.components).toHaveLength(2);
+    expect(projectProcurementModePreview(source.mode!.preview!, "hidden")?.sellingPaise).toBe(78333);
+  });
+  it("labels mixed-policy detail as a visible subtotal while retaining unequal project and whole-group totals", () => {
+    const hidden = line("hidden"); hidden.mode!.inHouseComponentVisibility = "hidden";
+    const visible = { ...line("visible", 45000, 45000, "3"), mainBasketId: "other-source" };
+    visible.mode!.inHouseComponentVisibility = "visible";
+    const baskets = projectProcurementBaskets(preparation([hidden, visible]), new Map(), targetNames);
+    const group = projectProcurementBasketModeGroups(baskets)[0]!;
+    expect(group).toMatchObject({ approvedEstimatePaise: 123333, currentCostPaise: 105000,
+      inHouseComponentBreakdown: { visibleComponentsOnly: true, complete: true, adjustedCostPaise: 45000, sellingPaise: 45000 } });
+    expect(group.inHouseComponentBreakdown!.subBaskets.flatMap(target => target.contributions).map(row => row.sourceLineItemKey)).toEqual(["visible"]);
+    const otherProject = projectProcurementBaskets(preparation([line("other", 3123, 4567, "7")], "project-b"));
+    expect(projectProcurementBasketModeGroups(otherProject)[0]).toMatchObject({ approvedEstimatePaise: 4567, currentCostPaise: 3123 });
+    expect(otherProject[0]!.inHouseComponentBreakdown).not.toHaveProperty("visibleComponentsOnly");
+  });
+  it("removes hidden Standard-basket component rates without changing its saved cost or BOQ eligibility", () => {
+    const source = line("standard-hidden");
+    source.mainBasketClassification = "standard";
+    source.mainBasketClassificationExplicit = false;
+    source.mode!.inHouseComponentVisibility = "hidden";
+    source.mode!.decision = { id: "decision", version: 1, sourceLineItemKey: source.key, mode: "in_house", quantity: "2", discountBps: 0,
+      markupBasis: "starting", exceptionReason: null, revisionId: "revision", revisionDigest: "a".repeat(64), updatedAt: "2026-11-11T00:00:00Z" };
+    source.mode!.preview!.settings.scopes = [{ componentId: "shared-id", componentBasketId: "target-basket", componentSubBasketId: "target-sub",
+      scope: "in_house_material", source: "scoped", baseRatePaise: 20000, lowQuantityLimit: "2", impactBps: 0,
+      minimumMarkupBps: 0, startingMarkupBps: 0 }];
+    const internal = projectProcurementBaskets(preparation([source]))[0]!;
+    const visible = projectProcurementBasketDetail(internal);
+    expect(visible).toMatchObject({ boqReady: true, standardCost: { totalPaise: 60000 },
+      lines: [{ standardCost: { baseRates: [], adjustedCostPaise: 60000 } }] });
+    expect(internal.lines[0]!.standardCost!.baseRates).toHaveLength(1);
+  });
   it("adds unequal source lines using their individual quantities, even with the same component ID", () => {
     const result = projectInHouseComponentBreakdown([line("a"), line("b", 45000, 45000, "3")], targetNames);
     expect(result).toMatchObject({ complete: true, adjustedCostPaise: 105000, sellingPaise: 123333,

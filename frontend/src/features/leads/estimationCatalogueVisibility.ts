@@ -10,6 +10,7 @@ interface PriceVisibilitySource {
   tierPricing?: Partial<Record<KnowledgeModeTier, EstimationTierPricing>>;
   modeBaseRatesPaise?: EstimationModeBaseRatesPaise;
   inHouseComponents?: EstimationInHouseComponent[];
+  inHousePricingState?: "ready" | "incomplete" | "invalid";
 }
 
 export const isPositiveConfiguredPrice = (value: unknown): value is number =>
@@ -24,6 +25,7 @@ export function isEstimationTierBaseAvailable(line: PriceVisibilitySource, tier:
   if (line.hasConfiguredBasePrice === false) return false;
   const pricing = line.tierPricing !== undefined ? line.tierPricing[tier] : tier === "signature" ? line : undefined;
   if (!pricing) return false;
+  if (mode === "in_house" && pricing.inHousePricingState !== undefined) return pricing.inHousePricingState === "ready";
   return mode === "in_house" && pricing.inHouseComponents !== undefined
     ? pricing.inHouseComponents.some(component => !component.unavailableReason && isPositiveConfiguredPrice(component.baseRatePaise))
     : isPositiveConfiguredPrice(pricing.modeBaseRatesPaise?.[mode]);

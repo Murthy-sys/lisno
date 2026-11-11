@@ -6,6 +6,7 @@ import { ClientPublishedEstimate } from "./ClientPublishedEstimate";
 import { ClientQuotationSubmittedView } from "../client/ClientQuotationSubmittedView";
 import type { EstimateQueueItem } from "./estimateWorkflowApi";
 import { componentPricingFixture } from "../leads/estimateComponentPricing.testFixtures";
+import { toEstimateAggregatePricing } from "../../../../shared/estimation/estimateAggregatePricing";
 
 function projectedEstimate(showLine: boolean): EstimateQueueItem {
   return {
@@ -28,6 +29,18 @@ function projectedEstimate(showLine: boolean): EstimateQueueItem {
 }
 
 describe("client screen visibility projection", () => {
+  it("displays the immutable aggregate price without stale component details or a missing-rate warning", () => {
+    const estimate = projectedEstimate(true);
+    const evidence = componentPricingFixture("paint");
+    Object.assign(estimate.publishedReview!.snapshot.lineItems[0]!, { mainLineId: "paint", pricingMode: "in_house", modeTier: "signature",
+      rateSource: "configuration", pricingBasis: evidence.formulaVersion, aggregatePricing: toEstimateAggregatePricing(evidence), componentPricing: evidence,
+      rate: null, ratePaise: null, quantity: 2, amount: 783.33, amountPaise: 78333 });
+    renderWithQuery(<ClientPublishedEstimate estimate={estimate} />);
+    expect(screen.getByText("Price including margin")).toBeVisible();
+    expect(screen.getByText("2 sq ft · ₹783.33")).toBeVisible();
+    expect(screen.queryByText(/Rate unavailable|Component selling amounts|Finishes/)).not.toBeInTheDocument();
+  });
+
   it("shows the submitted rounding adjustment alongside the saved GST without changing line amounts", () => {
     const estimate = projectedEstimate(true);
     Object.assign(estimate.publishedReview!.snapshot, { subtotal: 86.64, subtotalPaise: 8664, gst: 15.6, gstPaise: 1560,

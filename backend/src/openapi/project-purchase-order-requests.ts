@@ -104,6 +104,8 @@ export const PROJECT_PURCHASE_ORDER_REQUEST_SCHEMAS = {
     floorSellingPaise: { ...paise, nullable: true }, sellingPaise: paise
   }, ["scope", "baseRatePaise", "baseSubtotalPaise", "lowQuantityLimit", "configuredImpactBps", "thresholdMet", "appliedImpactBps", "adjustedUnitRatePaise", "adjustedCostPaise", "lowQuantityImpactPaise", "marginBps", "marginAmountPaise", "sellingBeforeDiscountPaise", "discountBasisPaise", "discountAmountPaise", "floorSellingPaise", "sellingPaise"]),
   ProjectPurchaseOrderModeDraftPreview: object({
+    inHouseComponentVisibility: { type: "string", enum: ["hidden", "visible"] },
+    inHouseComponentVisibilityIssue: ref("ProjectPurchaseOrderModeIssue"),
     projectId: id, estimateSource: source, sourceLineItemKey: id,
     decisionVersion: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER - 1 },
     revision: { type: "object", nullable: true, additionalProperties: true },
@@ -114,6 +116,8 @@ export const PROJECT_PURCHASE_ORDER_REQUEST_SCHEMAS = {
     integrity: ref("ProjectPurchaseOrderModeIntegrity")
   }, ["projectId", "estimateSource", "sourceLineItemKey", "decisionVersion", "revision", "uom", "preview", "scopes", "issues"]),
   ProjectPurchaseOrderModeResolution: object({
+    inHouseComponentVisibility: { type: "string", enum: ["hidden", "visible"] },
+    inHouseComponentVisibilityIssue: ref("ProjectPurchaseOrderModeIssue"),
     state: { type: "string", enum: ["ready", "selection_required", "unavailable", "exception"] },
     options: { type: "array", items: object({ key: { type: "string", enum: ["pmc", "sub_vendor", "in_house"] }, label: { type: "string" } }) },
     availability: { type: "array", items: object({ key: { type: "string", enum: ["pmc", "sub_vendor", "in_house"] },
@@ -183,6 +187,7 @@ export const PROJECT_PURCHASE_ORDER_REQUEST_SCHEMAS = {
     vendorTerms: { type: "array", minItems: 1, maxItems: 100, items: ref("ProjectPurchaseOrderRequestVendorTerms") }
   }),
   ProjectPurchaseOrderRequestModeSnapshot: object({
+    modeTier: { type: "string", enum: ["signature", "premium", "functional"] },
     sourceLineItemKey: id, source: { type: "string", enum: ["configuration", "legacy"] },
     roomId: { ...id, nullable: true }, roomName: { type: "string" },
     mainBasketId: { ...id, nullable: true }, mainBasketName: { type: "string", nullable: true },
@@ -198,7 +203,8 @@ export const PROJECT_PURCHASE_ORDER_REQUEST_SCHEMAS = {
     }) },
     actualTotals: ref("ProjectPurchaseOrderRequestTotals"),
     actualNetMinusConfiguredCostPaise: { type: "integer", nullable: true }
-  }),
+  }, ["sourceLineItemKey", "source", "roomId", "roomName", "mainBasketId", "mainBasketName", "subBasketId", "subBasketName", "mainLineId", "mainLineName",
+    "approvedQuantity", "approvedUnit", "approvedAmountPaise", "referenceAsOf", "mode", "actualChildren", "actualTotals", "actualNetMinusConfiguredCostPaise"]),
   ProjectPurchaseOrderRequestQuote: { type: "object", additionalProperties: true,
     required: ["projectId", "preparationDigest", "estimateSource", "approvedEstimatePaise", "committedPaise", "remainingPaise", "lines", "modeSnapshots", "sectionTotals", "vendorTotals", "totals"],
     properties: { projectId: id, preparationDigest: digest, estimateSource: source,

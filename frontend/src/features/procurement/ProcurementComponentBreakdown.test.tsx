@@ -10,6 +10,15 @@ const breakdown: ProcurementInHouseComponentBreakdown = { complete: true, unavai
       { sourceLineItemKey: "line-b", componentId: "same", roomId: "room-b", quantity: "3", unit: "sq ft", laborAdjustedCostPaise: 15000, materialAdjustedCostPaise: 30000, laborSellingPaise: 15000, materialSellingPaise: 30000 }] }] };
 
 describe("Procurement component cost disclosure", () => {
+  it("labels a mixed-policy subtotal and removes stale detail when the refreshed response hides everything", () => {
+    const view = render(<ProcurementComponentBreakdown breakdown={{ ...breakdown, visibleComponentsOnly: true }} />);
+    expect(screen.getByText(/Visible-component subtotal:/)).toHaveTextContent("1,050");
+    expect(screen.getByText(/basket and project totals include every source line/)).toBeInTheDocument();
+    expect(screen.queryByText(/Current component cost:/)).not.toBeInTheDocument();
+    view.rerender(<ProcurementComponentBreakdown />);
+    expect(screen.queryByText(/Finishes/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("region")).not.toBeInTheDocument();
+  });
   it("renders only the server-supplied breakdown and distinguishes cost from selling", async () => {
     const user = userEvent.setup(), open = vi.fn();
     const view = render(<ProcurementComponentBreakdown />);

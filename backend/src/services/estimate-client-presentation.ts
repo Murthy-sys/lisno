@@ -1,3 +1,4 @@
+import { presentEstimateInHouseResponse } from "./estimate-in-house-presentation.js";
 import { estimateTotalsReconcile } from "../domain/estimate-total-rounding.js";
 import { ESTIMATE_COMPONENT_PRICING_BASIS, estimateComponentLineAmountIsValid, readEstimateComponentPricing, type EstimateComponentPricing } from "../domain/estimate-component-pricing.js";
 import { estimateDimensionSnapshotValid } from "../domain/estimate-dimension-snapshot.js";
@@ -143,9 +144,9 @@ export async function presentClientEstimateWithVisibility(
   const pre = readable.preApprovedReview && preRound
     ? (await projection.project(preRound.estimateSnapshot, session)).snapshot : undefined;
   const presented = presentClientEstimate(actor, estimate, lead, round, project, preRound, { current, pre });
-  return presented && quotationApproval
+  return presentEstimateInHouseResponse(presented && quotationApproval
     ? { ...presented, ...quotationApprovalPublicFields(quotationApproval) }
-    : presented;
+    : presented, session);
 }
 
 /** Only the immutable published proposal supplies Client commercial fields. */

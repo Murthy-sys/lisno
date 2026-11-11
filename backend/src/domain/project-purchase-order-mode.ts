@@ -162,6 +162,8 @@ export interface PurchaseOrderModeCalculationStage {
 }
 
 export interface PurchaseOrderModeDraftPreview {
+  inHouseComponentVisibility?: "hidden" | "visible";
+  inHouseComponentVisibilityIssue?: PurchaseOrderModeIssue;
   projectId: string;
   estimateSource: PurchaseOrderModeDraftPreviewInput["estimateSource"];
   sourceLineItemKey: string;
@@ -189,6 +191,9 @@ export interface PurchaseOrderModePriceReference {
 }
 
 export interface PurchaseOrderModeResolution {
+  /** Read-time policy metadata, not calculation evidence or commercial authority. */
+  inHouseComponentVisibility?: "hidden" | "visible";
+  inHouseComponentVisibilityIssue?: PurchaseOrderModeIssue;
   state: "ready" | "selection_required" | "unavailable" | "exception";
   options: Array<{ key: PurchaseOrderModeKey; label: string }>;
   availability: Array<{ key: PurchaseOrderModeKey; label: string; available: boolean; issues: PurchaseOrderModeIssue[] }>;

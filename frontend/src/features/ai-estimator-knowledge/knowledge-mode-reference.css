@@ -282,17 +282,106 @@
   gap: 8px;
 }
 
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-configuration__source-settings {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: start;
+  justify-content: space-between;
+  gap: 16px 24px;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-configuration__in-house-use {
+  flex: 0 1 28rem;
+  min-inline-size: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.knowledge-mode-configuration__in-house-use legend { font-weight: 600; }
+.knowledge-mode-configuration__in-house-use p { margin: 6px 0 0; font-size: 12px; line-height: 1.5; }
+.knowledge-mode-configuration__usage-options { display: flex; flex-wrap: wrap; gap: 8px 20px; }
+.knowledge-mode-configuration__usage-choice { display: flex; align-items: center; min-height: 44px; gap: 8px; cursor: pointer; }
+.knowledge-mode-configuration__usage-choice input { width: 20px; height: 20px; accent-color: var(--button-primary-bg, #405334); }
+.knowledge-mode-configuration__usage-choice input:focus-visible { outline: 2px solid var(--button-primary-bg, #405334); outline-offset: 3px; }
+.knowledge-mode-configuration__in-house-use:disabled .knowledge-mode-configuration__usage-choice { cursor: default; }
+
 .ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-configuration__source-choice {
   --knowledge-mode-accent: var(--button-primary-bg, #405334);
+  position: relative;
+  gap: 10px;
   min-inline-size: 126px;
   min-block-size: 44px;
   padding: 8px 12px;
   border-radius: 6px;
-  font-size: 13px;
+  background: var(--role-deck, var(--color-surface));
+  color: var(--color-text);
+  font-size: 14px;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-configuration__source-choice[data-selected="true"] {
+  border-color: color-mix(in srgb, var(--knowledge-mode-accent) 55%, var(--color-border));
+  background: color-mix(in srgb, var(--knowledge-mode-accent) 6%, var(--color-surface));
+  color: var(--color-text);
 }
 
 .ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-configuration__source-choice .ui-checkbox {
-  accent-color: var(--button-primary-bg, #405334);
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  min-inline-size: 1px;
+  min-block-size: 1px;
+  margin: 0;
+  opacity: 0;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-configuration__source-check {
+  position: relative;
+  display: grid;
+  place-items: center;
+  flex: 0 0 24px;
+  inline-size: 24px;
+  block-size: 24px;
+  border: 1px solid var(--knowledge-mode-accent);
+  border-radius: 50%;
+  color: var(--color-surface);
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .ui-checkbox:checked + .knowledge-mode-configuration__source-check {
+  background: var(--knowledge-mode-accent);
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .ui-checkbox:checked + .knowledge-mode-configuration__source-check::after {
+  content: "";
+  inline-size: 5px;
+  block-size: 9px;
+  border-inline-end: 2px solid currentColor;
+  border-block-end: 2px solid currentColor;
+  transform: translateY(-1px) rotate(45deg);
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-configuration__basket-context {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 24px;
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-configuration__basket-context > div {
+  min-inline-size: 0;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-configuration__basket-context dt {
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-configuration__basket-context dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--color-text);
 }
 
 .ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-pmc-scope {
@@ -381,6 +470,10 @@
 }
 
 @container knowledge-mode-reference (max-width: 36rem) {
+  .ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-configuration__basket-context {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .ui-surface.knowledge-mode-block {
     padding: 10px;
   }

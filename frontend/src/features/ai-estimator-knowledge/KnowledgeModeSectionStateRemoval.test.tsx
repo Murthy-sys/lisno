@@ -455,7 +455,7 @@ describe("Knowledge Mode section-state removal", () => {
     expect(props.onDirtyChange).toHaveBeenLastCalledWith(false);
   });
 
-  it("groups the Description in PMC and keeps Execution controls separate", async () => {
+  it("places one common Description before the separate PMC and Execution controls", async () => {
     const user = userEvent.setup();
     const ref = createRef<KnowledgeModePanelHandle>();
     vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_line, _revision, key) =>
@@ -463,7 +463,7 @@ describe("Knowledge Mode section-state removal", () => {
         ? section("advanced", "configured", { modeDescription: "Shared delivery requirements.", pmcMarginBps: 1_500 })
         : key === "overview" ? section("overview", "configured", { uomId: uoms[0]!.id }) : section("pricing"));
     const { props } = renderPanel(ref);
-    await user.click(await screen.findByRole("checkbox", { name: "Execution" }));
+    await selectExecutionSource(user, "Sub-Vendor");
     const pmc = screen.getByRole("region", { name: "PMC" });
     const execution = screen.getByRole("region", { name: "Execution" });
     const paragraph = screen.getByText("Shared delivery requirements.");
@@ -481,8 +481,10 @@ describe("Knowledge Mode section-state removal", () => {
     );
     expect(within(execution).queryByRole("region", { name: "Sub-Vendor components" })).not.toBeInTheDocument();
     expect(within(execution).queryByRole("button", { name: "Add component" })).not.toBeInTheDocument();
-    expect(pmc).toContainElement(paragraph);
-    expect(pmc).toContainElement(paragraphEditor);
+    expect(pmc).not.toContainElement(paragraph);
+    expect(pmc).not.toContainElement(paragraphEditor);
+    expect(paragraph.compareDocumentPosition(pmc) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(paragraph.compareDocumentPosition(execution) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(execution).not.toContainElement(paragraph);
     expect(execution).not.toContainElement(paragraphEditor);
 
@@ -996,10 +998,16 @@ describe("Knowledge Mode section-state removal", () => {
     await user.type(screen.getByRole("textbox", { name: "Description" }), "Pending wording");
     expect(props.onDirtyChange).toHaveBeenLastCalledWith(true);
     await user.click(screen.getByRole("checkbox", { name: "PMC" }));
-    expect(screen.queryByRole("textbox", { name: "Description" })).not.toBeInTheDocument();
+    const pendingParagraph = screen.getByRole("textbox", { name: "Description" });
+    expect(pendingParagraph).toBeVisible();
+    expect(pendingParagraph).toHaveValue("Pending wording");
+    await user.click(screen.getByRole("checkbox", { name: "Execution" }));
+    expect(screen.getByRole("textbox", { name: "Description" })).toBe(pendingParagraph);
+    expect(pendingParagraph).toHaveValue("Pending wording");
+    await user.click(screen.getByRole("checkbox", { name: "Execution" }));
     await act(async () => { expect(await ref.current?.save()).toBe(false); });
     expect(knowledgeApi.updateKnowledgeSection).not.toHaveBeenCalled();
-    expect(screen.getByRole("checkbox", { name: "PMC" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "PMC" })).not.toBeChecked();
     await waitFor(() => expect(screen.getByRole("textbox", { name: "Description" })).toHaveFocus());
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     expect(props.onDirtyChange).toHaveBeenLastCalledWith(false);
@@ -1079,6 +1087,7 @@ describe("Knowledge Mode section-state removal", () => {
     await user.click(await screen.findByRole("button", { name: "Edit Description" }));
     await user.clear(screen.getByRole("textbox", { name: "Description" }));
     await user.type(screen.getByRole("textbox", { name: "Description" }), "Rejected wording");
+    await user.click(screen.getByRole("checkbox", { name: "PMC" }));
     await user.click(screen.getByRole("button", { name: "Save" }));
     vi.mocked(knowledgeApi.updateKnowledgeSection).mockRejectedValueOnce(new ApiError(400, "VALIDATION_ERROR", "Review the paragraph.", {
       "payload.modeDescription": "Please correct this paragraph."
@@ -1087,6 +1096,8 @@ describe("Knowledge Mode section-state removal", () => {
     const text = await screen.findByRole("textbox", { name: "Description" });
     expect(text).toHaveValue("Rejected wording");
     expect(text).toHaveAccessibleDescription(/Please correct this paragraph\./);
+    expect(screen.getByRole("checkbox", { name: "PMC" })).not.toBeChecked();
+    expect(text).toHaveFocus();
     await user.clear(text);
     await user.type(text, "Corrected wording");
     await user.click(screen.getByRole("button", { name: "Save" }));

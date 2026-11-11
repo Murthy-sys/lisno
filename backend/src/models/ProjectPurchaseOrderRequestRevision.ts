@@ -49,6 +49,7 @@ const actualChildSchema = new Schema({
   commercialExceptionReason: { type: String, default: null, maxlength: 2_000, immutable: true }
 }, { _id: false, strict: "throw" });
 const modeSnapshotSchema = new Schema({
+  modeTier: { type: String, enum: ["signature", "premium", "functional"], default: undefined, immutable: true },
   sourceLineItemKey: { type: String, required: true, immutable: true },
   source: { type: String, required: true, enum: ["configuration", "legacy"], immutable: true },
   roomId: { type: String, default: null, immutable: true },

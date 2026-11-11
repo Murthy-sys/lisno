@@ -17,7 +17,7 @@ import { createMongoRepository } from "../repositories/mongo.js";
 import { assertEstimateEditable, assertEstimatePricingModeChanges, canChangeEstimatePricingMode, estimatePhysicalScopeChanged, fenceCollaborativeEstimate } from "./estimate-collaboration-policy.service.js";
 import { estimateAmountFor, estimateTierScope, fenceEstimateTierSource, presentEstimateTiers } from "./estimate-tiers.service.js";
 import { estimatorCatalogueTierPricing, fenceEstimateInHouseComponentReferences, resolveEstimatorCatalogueLines } from "./estimator-catalogue.service.js";
-import { resolveEstimateComponentPricing } from "./estimate-component-pricing.service.js";
+import { resolveEstimateComponentPricing, resolveEstimateInHouseSelection } from "./estimate-component-pricing.service.js";
 import { configureQuotation, quotationConfigureSchema, quotationVisibleOverview, readQuotationSetup, visibleQuotationSources } from "./quotation-setup.service.js";
 import { quotationCandidateFor, quotationClassification, quotationPricingModeChoices, quotationMandatoryTargets, quotationSavedMode as savedMode,
   quotationSourceGrouping as grouping, quotationSourceIdentity as sourceIdentity,
@@ -241,7 +241,8 @@ async function pricedLine(prior: Row, source: Source, operation: LineOperation, 
   delete next.componentPricing;
   delete next.pricingBasis;
   if (next.pricingMode === "in_house" && pricing.inHouseComponents !== undefined) {
-    next.selectedInHouseComponentIds = operation.selectedInHouseComponentIds ?? next.selectedInHouseComponentIds;
+    next.selectedInHouseComponentIds = resolveEstimateInHouseSelection(source, tier as KnowledgeModeTier,
+      pricing.inHousePolicy ? operation.selectedInHouseComponentIds : operation.selectedInHouseComponentIds ?? next.selectedInHouseComponentIds);
     const calculation = await resolveEstimateComponentPricing(source, tier as KnowledgeModeTier, next.quantity, next.selectedInHouseComponentIds, session);
     if (selectingPrice && (selectedInHouseBaseRate(pricing.inHouseComponents, next.selectedInHouseComponentIds) ?? 0) <= 0) return unavailable();
     next.pricingBasis = ESTIMATE_COMPONENT_PRICING_BASIS;

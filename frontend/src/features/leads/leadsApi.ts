@@ -1,3 +1,4 @@
+import type { EstimateAggregatePricing } from "../../../../shared/estimation/estimateAggregatePricing";
 import type { EstimateDimensions, EstimateDimensionRule } from "../../../../shared/estimation/estimateDimensions";
 import type { EstimateComponentPricing, ESTIMATE_COMPONENT_PRICING_BASIS } from "../../../../shared/estimation/estimateComponentPricing";
 import type { KnowledgeModeTier } from "../../../../shared/knowledge/knowledgeModeTiers";
@@ -78,6 +79,11 @@ export type EstimateLineInput = LegacyEstimateLineInput | ConfiguredEstimateLine
 
 export interface ConfiguredEstimateLine extends Omit<ConfiguredEstimateLineInput, "itemType"> {
   componentPricing?: EstimateComponentPricing;
+  aggregatePricing?: EstimateAggregatePricing;
+  inHouseUsage?: "estimator" | "execution" | null;
+  inHousePricingState?: "ready" | "incomplete" | "invalid";
+  configurationPricingChanged?: boolean;
+  configurationPricingIssue?: string;
   dimensionsMandatory?: boolean;
   dimensionRule?: EstimateDimensionRule | null;
   dimensionsNeedReview?: boolean;

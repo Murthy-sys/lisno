@@ -3,6 +3,16 @@ import type { KnowledgeSectionEnvelope, KnowledgeSectionMutationEnvelope } from 
 
 const section = (version: number, payload: KnowledgeSectionEnvelope["payload"]) => ({ version, payload, applicability: "configured" } as KnowledgeSectionEnvelope);
 
+it("preserves saved In-house policy and subset during an unrelated native Mode edit", async () => {
+  const base = section(1, { inHouseUsage: "execution", inHousePresetComponentIds: ["chosen"], modeDescription: "Before" });
+  const updateKnowledgeSection = jest.fn().mockResolvedValue({ aggregateVersion: 3 });
+  await saveKnowledgeDrafts({ api: { updateKnowledgeSection }, mainLineId: "line-a", revisionId: "rev-a", aggregateVersion: 2,
+    drafts: { advanced: { base, payload: { ...base.payload, modeDescription: "After" } } }, onSaved: jest.fn() });
+  expect(updateKnowledgeSection).toHaveBeenCalledWith("line-a", "rev-a", "advanced", expect.objectContaining({
+    payload: { inHouseUsage: "execution", inHousePresetComponentIds: ["chosen"], modeDescription: "After" }
+  }));
+});
+
 it("saves Mode sections in order with each acknowledged aggregate version", async () => {
   const updateKnowledgeSection = jest.fn()
     .mockResolvedValueOnce({ aggregateVersion: 12 } as KnowledgeSectionMutationEnvelope)

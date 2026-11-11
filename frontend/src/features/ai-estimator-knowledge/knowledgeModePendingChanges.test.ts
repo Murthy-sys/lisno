@@ -24,6 +24,16 @@ function visiblePendingContent(groups: ReturnType<typeof projectKnowledgeModePen
 }
 
 describe("Mode pending change projection", () => {
+  it("reports the usage and exact changed component inclusion without exposing saved prices", () => {
+    const component = { id: "one", basketId: "b", subBasketId: "s", inclusions: [], exclusions: [], labor: null, material: null };
+    const before = { inHouseComponents: [component], inHouseUsage: "execution", inHousePresetComponentIds: [] };
+    const after = { ...before, inHouseUsage: "estimator", inHousePresetComponentIds: ["one"] };
+    const groups = project(before, after);
+    expect(groups[0]?.entries[0]?.fields).toEqual([{ key: "usage", label: "In-house use", value: "Estimator" }, { key: "preset", label: "Components included in price", value: "1" }]);
+    expect(groups[1]?.entries).toContainEqual(expect.objectContaining({ title: "Price selection", fields: [{ key: "included", label: "Include in price", value: "Included" }] }));
+    expect(project(after, after)).toEqual([]);
+  });
+
   it("omits clean payloads, hidden compatibility data, and unloaded blocks", () => {
     const saved = { modeConfigurations: [config], modeCalculation: calculation, modeDescription: "Saved paragraph." };
     expect(project(saved, saved)).toEqual([]);
@@ -141,7 +151,9 @@ describe("Mode pending change projection", () => {
   it("projects the pending paragraph rather than saved text and cancels back to enclosing edits", () => {
     const before = { modeDescription: "Saved wording." };
     const after = { modeDescription: "Applied wording." };
-    expect(project(before, after, { pendingDescription: "Live wording." })[0]?.entries[0]?.fields[0]?.value).toBe("Live wording.");
+    const pending = project(before, after, { pendingDescription: "Live wording." });
+    expect(pending[0]).toMatchObject({ key: "mode:paragraph", label: "Mode · Description" });
+    expect(pending[0]?.entries[0]?.fields[0]?.value).toBe("Live wording.");
     expect(project(before, after, { pendingDescription: null })[0]?.entries[0]?.fields[0]?.value).toBe("Applied wording.");
     expect(project(before, before, { pendingDescription: null })).toEqual([]);
   });

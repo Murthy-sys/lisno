@@ -25,6 +25,7 @@ import { AsyncState } from "../../components/ui/AsyncState";
 import { adminProjectKeys } from "../admin/adminProjectsApi";
 import { dashboardKeys } from "../admin/dashboard/superAdminDashboardApi";
 import { clientKeys } from "../client/clientApi";
+import { getQuotationRevision } from "../client/quotationApi";
 import { estimateRequirementsKeys, getEstimateRequirements } from "../client/estimateRequirementsApi";
 import { estimateWorkflowKeys } from "../estimates/estimateWorkflowApi";
 import { currentQuotationApprovalState, currentQuotationIsApproved } from "../estimates/quotationApproval";
@@ -39,7 +40,7 @@ import { emptyAutomaticBasketIds, inferEmptySavedBasketIds, inferRecommendationO
 import { EstimateRevisionNavigation } from "./EstimateRevisionNavigation";
 import { EstimateRevisionView } from "./EstimateRevisionView";
 import { downloadEstimateRevisionPdf, estimateRevisionKeys, estimateRevisionLabel, getEstimateRevision, getEstimateRevisions } from "./estimateRevisionsApi";
-import { configuredLineCanInclude, configuredTierUnavailableReason, type ConfiguredTierGroupScope, configuredUsesComponentPricing, configuredComponentPricing, configuredDimensionsIssue, configuredInHouseSelectionIssue, buildConfiguredLines, createConfiguredLine, configuredLineAmountPaise, configuredLinePreviewAmountPaise, configuredQuantityUnits, deselectConfiguredRecommendationSources, parseSellingRate, restoreConfiguredLine, updateConfiguredLinePricing, type ConfiguredLineDraft } from "./configuredEstimate";
+import { configuredLineCanInclude, configuredTierUnavailableReason, type ConfiguredTierGroupScope, configuredUsesComponentPricing, configuredComponentPricing, configuredAggregatePricing, configuredInHouseGoverned, configuredPricingSourceKey, configuredDimensionsIssue, configuredInHouseSelectionIssue, buildConfiguredLines, createConfiguredLine, configuredLineAmountPaise, configuredLinePreviewAmountPaise, configuredQuantityUnits, deselectConfiguredRecommendationSources, parseSellingRate, restoreConfiguredLine, updateConfiguredLinePricing, type ConfiguredLineDraft } from "./configuredEstimate";
 import { estimationCatalogueKeys, getEstimationCatalogue, getEstimationCatalogueRecommendations } from "./estimationCatalogueApi";
 import { MainBasketSelectionCard } from "./MainBasketSelectionCard";
 import { buildRoomRecommendations, partitionRoomRecommendationSources, recommendationSourceIdentity, type RecommendedLineTarget } from "./roomRecommendations";
@@ -54,6 +55,8 @@ import { configuredLineEditingFingerprint, estimateDraftFingerprint } from "./es
 import { useQuotationRevision } from "./useQuotationRevision";
 import { getLead, getLeadEstimate, leadKeys, retryEstimateClientEmail, saveLeadEstimate, sendEstimateToClient, submitLeadEstimate, type ConfiguredEstimateLine, type EstimateClassification, type EstimateDraft, type EstimateDraftInput } from "./leadsApi";
 import "../../styles/estimator-dashboard.css";
+
+const configuredSellingPricing = (line: ConfiguredLineDraft) => configuredInHouseGoverned(line) ? configuredAggregatePricing(line) : configuredComponentPricing(line);
 
 const scopeIcons: Record<string, typeof Sofa> = {
   FC: PanelTop, FL: Layers, CA: Hammer, PA: Paintbrush, EL: Zap, CV: Wrench, LF: Armchair
@@ -172,11 +175,28 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
   const canPrepareSubmission = designer && quotationWorkflow && lifecycle?.phase === "post" &&
     saved.data?.capabilities?.canPrepareQuotationSubmission === true;
   const collaborative = quotationWorkflow || lifecycle?.workflowVersion === 2 || lead.data?.estimationWorkflowVersion === 2;
-  const revision = useQuotationRevision(lead.data?.projectId, quotationWorkflow && Boolean(saved.data?.id), saved.data?.version);
+  const revisionRequired = quotationWorkflow && Boolean(saved.data?.id);
+  const revision = useQuotationRevision(lead.data?.projectId, revisionRequired, saved.data?.version);
+  const revisionError = revisionRequired && revision.isError;
+  const hasSubmitPermissions = hasFrontendPermission(auth.authorization ?? null, "estimation.estimate.save") &&
+    hasFrontendPermission(auth.authorization ?? null, "estimation.estimate.submit");
+  // A successful empty read permits preparation, never publication without the saved capability.
+  const canPrepareFirstSubmission = quotationWorkflow && saved.isSuccess && saved.data === null &&
+    auth.status === "authenticated" && auth.user?.role === "estimator_sales" &&
+    lead.isSuccess && lead.data.ownerId === actorId && Boolean(lead.data.projectId) && hasSubmitPermissions;
+  const submissionScope = JSON.stringify([actorId, auth.status, auth.reviewSession?.id, auth.user?.role,
+    leadId, lead.data?.ownerId, lead.data?.projectId, hasSubmitPermissions]);
+  const currentSubmissionScope = useRef(submissionScope);
+  currentSubmissionScope.current = submissionScope;
+  const workspaceMounted = useRef(true);
+  useEffect(() => {
+    workspaceMounted.current = true;
+    return () => { workspaceMounted.current = false; };
+  }, []);
   const requirements = useQuery({ queryKey: estimateRequirementsKeys.detail(lead.data?.projectId ?? ""),
     queryFn: () => getEstimateRequirements(lead.data!.projectId!), enabled: collaborative && Boolean(lead.data?.projectId) });
   const draftEditable = !lifecycle?.editClosedAt && (quotationWorkflow || !lifecycle?.finalApproval) && (!saved.data || ["draft", "designer_changes_requested", "client_changes_requested"].includes(lifecycle?.status ?? saved.data.status));
-  const editable = draftEditable && !historical && !submissionLocked && !navigationSaving && !saveOutcomeUnknown && !saved.isError && !revision.isError;
+  const editable = draftEditable && !historical && !submissionLocked && !navigationSaving && !saveOutcomeUnknown && !saved.isError && !revisionError;
   const pricingModeEditable = editable && (!quotationWorkflow || saved.data?.capabilities?.canChangePricingMode === true ||
     !saved.data && !saved.isPending && !saved.isError && auth.user?.role === "estimator_sales" && lead.data?.ownerId === actorId);
   const browseSalesCatalogue = auth.user?.role === "estimator_sales" && draftEditable && !historical;
@@ -260,7 +280,7 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
       .map(([roomId, ids]) => [roomId, new Set([...ids].filter(id => !emptyAddedBasketIds.has(id)))])));
     setMainBasketClassifications(current => new Map([...current].filter(([id]) => !emptyAddedBasketIds.has(id))));
   }, [configuredDraftLines]);
-  const configuredLines = useEstimateInHousePricing(leadId, configuredDraftLines, draftEditable && !saved.isError);
+  const configuredLines = useEstimateInHousePricing(leadId, configuredDraftLines, draftEditable && !saved.isError, key => { void refreshInHousePrice(key); });
   const [activeRoomId, setActiveRoomId] = useState("");
   const [notice, setNotice] = useState("");
   const [retryError, setRetryError] = useState("");
@@ -299,7 +319,13 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
     setEnabledSections(new Set(draft.scopes));
     const selectedIds = draft.selectedMainBasketIds ?? draft.lineItems.filter((line) => line.source === "configuration").map((line) => line.mainBasketId);
     const nextSelectedIds = new Set(selectedIds);
-    const restoredLines = draft.lineItems.filter((line) => line.source === "configuration").map(restoreConfiguredLine);
+    const preserveStoredPrices = Boolean(draft.estimation?.editClosedAt ||
+      draft.estimation?.finalApproval && draft.estimation.workflowVersion !== 3 ||
+      !["draft", "designer_changes_requested", "client_changes_requested"].includes(draft.estimation?.status ?? draft.status));
+    const restoredLines = draft.lineItems.filter((line) => line.source === "configuration").map(line => {
+      const restored = restoreConfiguredLine(line);
+      return preserveStoredPrices ? { ...restored, configurationPricingChanged: undefined, configurationPricingIssue: undefined } : restored;
+    });
     recommendationAddedBasketIds.current = new Set([...recommendationAddedBasketIds.current].filter(id => nextSelectedIds.has(id)));
     const inferredCompactIds = new Set([...inferRecommendationOnlyBasketIds(restoredLines, nextSelectedIds),
       ...inferEmptySavedBasketIds(restoredLines, nextSelectedIds)]);
@@ -409,10 +435,10 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
         (line.modeTier ?? "signature") === (prior.modeTier ?? "signature") &&
         JSON.stringify(line.dimensions) === JSON.stringify(prior.dimensions) &&
         JSON.stringify([...(line.selectedInHouseComponentIds ?? [])].sort()) === JSON.stringify([...(prior.selectedInHouseComponentIds ?? [])].sort())) {
-        return configuredComponentPricing(restoreConfiguredLine(prior));
+        return configuredSellingPricing(restoreConfiguredLine(prior));
       }
     }
-    return configuredComponentPricing(line);
+    return configuredSellingPricing(line);
   };
   const draftInput = (): EstimateDraftInput => ({
     propertyType: effectivePropertyType,
@@ -432,7 +458,7 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
         classification: line.classification ?? "standard",
         modeTier: line.modeTier ?? "signature",
         ...(line.pricingMode !== undefined ? { pricingMode: line.pricingMode } : {}),
-        ...(line.selectedInHouseComponentIds !== undefined ? { selectedInHouseComponentIds: line.selectedInHouseComponentIds } : {}),
+        ...(!configuredInHouseGoverned(line) && line.selectedInHouseComponentIds !== undefined ? { selectedInHouseComponentIds: line.selectedInHouseComponentIds } : {}),
         ...(line.rateSource !== undefined ? { rateSource: line.rateSource } : {}),
         id: line.persistedId, catalogueId: line.mainLineId,
         roomId: line.roomId, roomName: line.roomName, mainBasketId: line.mainBasketId,
@@ -464,7 +490,7 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
     total: saved.data.totalPaise === undefined ? saved.data.total : saved.data.totalPaise / 100
   } : { subtotal: subtotalPaise / 100, gst: gstPaise / 100, total: roundedTotal ? roundedTotal.totalPaise / 100 : null };
   const roundOffPaise = useSavedTotals ? saved.data?.roundOffPaise : roundedTotal?.roundOffPaise;
-  const canStartSubmission = canPublish || canPrepareSubmission && hasUnsavedChanges;
+  const canStartSubmission = canPublish || canPrepareFirstSubmission || canPrepareSubmission && hasUnsavedChanges;
   useEffect(() => {
     const draft = saved.data;
     if (draft && draft === skipSavedHydrationFor.current) {
@@ -559,7 +585,7 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
         snapshot.quantity === line.quantity && snapshot.dimensionsNeedReview === line.dimensionsNeedReview;
       const pricingUnchanged = submitted && submitted.classification === (line.classification ?? "standard") &&
         submitted.pricingMode === line.pricingMode && (submitted.modeTier ?? "signature") === (line.modeTier ?? "signature") && submitted.rateSource === line.rateSource &&
-        JSON.stringify(submitted.selectedInHouseComponentIds) === JSON.stringify(line.selectedInHouseComponentIds) &&
+        (configuredInHouseGoverned(line) || JSON.stringify(submitted.selectedInHouseComponentIds) === JSON.stringify(line.selectedInHouseComponentIds)) &&
         submitted.ratePaise === (configuredUsesComponentPricing(line) ? null : parseSellingRate(line.rateInput).paise);
       return stored ? {
         ...line,
@@ -588,12 +614,12 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
           included: stored.included,
           recommendationSourceMainLineIds: stored.recommendationSourceMainLineIds
         } : {}),
-        ...(sourceUnchanged && dimensionsUnchanged && pricingUnchanged && selectionUnchanged ? { pricingBasis: stored.pricingBasis, componentPricing: stored.componentPricing } : {}),
+        ...(sourceUnchanged && dimensionsUnchanged && pricingUnchanged && selectionUnchanged ? { pricingBasis: stored.pricingBasis, componentPricing: stored.componentPricing, aggregatePricing: stored.aggregatePricing, configurationPricingChanged: stored.configurationPricingChanged, configurationPricingIssue: stored.configurationPricingIssue, configurationPriceRefreshSource: undefined } : {}),
         ...(pricingUnchanged ? {
           classification: stored.classification ?? line.classification,
           pricingMode: stored.pricingMode ?? line.pricingMode,
           modeTier: stored.modeTier ?? "signature",
-          selectedInHouseComponentIds: stored.selectedInHouseComponentIds ?? line.selectedInHouseComponentIds,
+          selectedInHouseComponentIds: configuredInHouseGoverned(line) ? undefined : stored.selectedInHouseComponentIds ?? line.selectedInHouseComponentIds,
           rateSource: stored.rateSource ?? line.rateSource
         } : {})
       } : line;
@@ -603,7 +629,7 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
     mutationFn: async () => {
       const submittedLeadId = leadId;
       if (bedroomSetupRequired) throw new Error("Configure the number of bedrooms before saving.");
-      if (configuredLines.some(line => line.included && configuredUsesComponentPricing(line) && !configuredComponentPricing(line))) throw new Error("Complete the In-house component calculation before saving.");
+      if (configuredLines.some(line => line.included && configuredUsesComponentPricing(line) && !configuredSellingPricing(line))) throw new Error("Complete the In-house component calculation before saving.");
       const input = draftInput();
       const lineState = configuredLines;
       unconfirmedSave.current = input;
@@ -633,13 +659,25 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
       if (!canStartSubmission) throw new Error("Publication is unavailable for your current assignment and quotation phase.");
       const submittedEstimateId = saved.data?.id;
       const submittedProjectId = saved.data?.projectId ?? lead.data?.projectId;
+      const firstSubmission = canPrepareFirstSubmission;
+      const submittedScope = submissionScope;
+      const assertSubmissionScope = () => {
+        if (!workspaceMounted.current || currentSubmissionScope.current !== submittedScope)
+          throw new Error("Your estimate or access changed. Review the saved draft before submitting again.");
+      };
       if (bedroomSetupRequired) throw new Error("Configure the number of bedrooms before saving.");
-      if (configuredLines.some(line => line.included && configuredUsesComponentPricing(line) && !configuredComponentPricing(line))) throw new Error("Complete the In-house component calculation before saving.");
+      if (configuredLines.some(line => line.included && configuredUsesComponentPricing(line) && !configuredSellingPricing(line))) throw new Error("Complete the In-house component calculation before saving.");
       const input = draftInput();
       const lineState = configuredLines;
       unconfirmedSave.current = input;
       unconfirmedLines.current = lineState;
       const draft = await saveLeadEstimate(submittedLeadId, input);
+      if (firstSubmission && (!draft.id?.trim() || draft.projectId !== submittedProjectId ||
+        draft.estimation?.workflowVersion !== 3 || draft.estimation.phase !== "pre" ||
+        draft.status !== "draft" || draft.estimation.status !== "draft" || draft.estimation.editClosedAt ||
+        !Number.isSafeInteger(draft.version) || draft.version! < 1)) {
+        throw new Error("The saved draft could not be verified. Verify the saved estimate before submitting.");
+      }
       if (designer && quotationWorkflow && (draft.id !== submittedEstimateId || draft.projectId !== submittedProjectId ||
         draft.estimation?.workflowVersion !== 3 || draft.estimation.phase !== "post" ||
         !Number.isSafeInteger(draft.version) || draft.version! <= (input.expectedVersion ?? 0))) {
@@ -650,6 +688,16 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
       rememberDraftSave(draft, submittedLeadId, input, lineState);
       setSubmissionSaved(true);
       save.reset();
+      if (firstSubmission) {
+        assertSubmissionScope();
+        if (draft.capabilities?.canPublishQuotation !== true)
+          throw new Error("The draft was saved, but submission access could not be verified. Refresh the estimate to check your access.");
+        const savedRevision = await getQuotationRevision(submittedProjectId!);
+        assertSubmissionScope();
+        if (!savedRevision || savedRevision.estimateId !== draft.id || savedRevision.estimateVersion !== draft.version ||
+          savedRevision.phase !== draft.estimation!.phase || savedRevision.status !== draft.estimation!.status)
+          throw new Error("The saved revision changed before submission. Refresh the estimate and review the saved draft before submitting again.");
+      }
       if (designer && quotationWorkflow) {
         const savedApprovalState = currentQuotationApprovalState(draft);
         if (savedApprovalState === "initial_current" && currentQuotationIsApproved(draft)) {
@@ -680,7 +728,7 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
     onError: error => {
       if (!unconfirmedSave.current) {
         void saved.refetch();
-        if (quotationWorkflow) void revision.refetch();
+        if (quotationWorkflow && queryClient.getQueryData<EstimateDraft | null>(leadKeys.estimate(leadId))?.id) void revision.refetch();
       }
       if (unconfirmedSave.current && (!(error instanceof ApiError) || error.status >= 500 || error.status === 408)) {
         setSaveOutcomeUnknown(true);
@@ -732,6 +780,28 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
       setRetryError("The estimate email could not be retried. Refresh and try again.");
     }
   });
+  async function refreshInHousePrice(key: string) {
+    if (!editable || submissionInFlight.current) return;
+    const target = configuredDraftLines.find(line => line.key === key);
+    if (!target) return;
+    if (!configuredEditBaselines.current.has(key)) configuredEditBaselines.current.set(key, configuredLineEditingFingerprint(target));
+    const result = await catalogue.refetch();
+    if (!result.isSuccess || !result.data) {
+      setNotice("The current Configuration could not be loaded. Your saved price is preserved. Retry Refresh price.");
+      return;
+    }
+    setConfiguredLines(current => current.map(line => {
+      if (line.key !== key || line.mainLineId !== target.mainLineId || line.modeTier !== target.modeTier ||
+        line.quantity !== target.quantity || JSON.stringify(line.dimensions) !== JSON.stringify(target.dimensions)) return line;
+      const refreshed = buildConfiguredLines(result.data, rooms, selectedMainBasketIds, [line])[0];
+      if (!refreshed || refreshed.sourceMissing) return line;
+      return { ...refreshed, configurationPricingChanged: false, configurationPricingIssue: undefined, configurationPriceRefreshSource: configuredPricingSourceKey(refreshed),
+        aggregatePricing: undefined, componentPricing: undefined, componentPricingState: "loading", componentPricingIssue: undefined };
+    }));
+    void queryClient.invalidateQueries({ queryKey: ["estimate-in-house-pricing", leadId] });
+    setNotice("Price refreshed from Configuration. Review the amount and save the estimate to keep it.");
+  }
+
   const refreshAvailableItems = async () => {
     void queryClient.invalidateQueries({ queryKey: ["estimate-in-house-pricing", leadId] });
     // Refresh server-owned capabilities too; ordinary hydration preserves dirty local edits.
@@ -746,7 +816,7 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
   };
 
   const includedItemCount = selectedLines.length + selectedConfiguredLines.length;
-  const componentPricingPending = selectedConfiguredLines.some(line => configuredUsesComponentPricing(line) && configuredComponentPricing(line) === null);
+  const componentPricingPending = selectedConfiguredLines.some(line => configuredUsesComponentPricing(line) && configuredSellingPricing(line) === null);
   const hasInvalidInput = roundedTotal === null || invalidDimensionLines.length > 0 || invalidComponentLines.length > 0 || invalidConfiguredLines.length > 0 || changedUomConfiguredLines.length > 0;
   const hasMissingRate = incompleteConfiguredLines.length > 0;
   const totalLabel = (value: number | null) => value === null || !useSavedTotals && hasIncompleteConfiguredTotal ? "Incomplete" : money(value);
@@ -762,8 +832,8 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
   const revisionMismatch = quotationWorkflow && revision.data && saved.data &&
     (revision.data.estimateId !== saved.data.id || revision.data.estimateVersion !== saved.data.version);
   const checklistContextReady = auth.status === "authenticated" && lead.isSuccess && !lead.isFetching &&
-    saved.isSuccess && !saved.isFetching && !revision.isError && !revisionMismatch &&
-    (!quotationWorkflow || revision.isSuccess && Boolean(revision.data)) &&
+    saved.isSuccess && !saved.isFetching && !revisionError && !revisionMismatch &&
+    (!quotationWorkflow || canPrepareFirstSubmission || revisionRequired && revision.isSuccess && Boolean(revision.data)) &&
     !saveOutcomeUnknown && !estimateVersionConflict && !navigationSaving &&
     !save.isPending && !submit.isPending && !sendToClient.isPending &&
     (!configuredMode || catalogue.isSuccess && !catalogue.isFetching);
@@ -779,6 +849,13 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
     (!checklistRequired || checklistContextReady &&
       hasFrontendPermission(auth.authorization ?? null, "estimation.estimate.send_client"));
   const publicationBusy = save.isPending || submit.isPending || sendToClient.isPending || navigationSaving;
+  const publicationContextFetching = lead.isFetching || saved.isFetching ||
+    revisionRequired && revision.isFetching || configuredMode && catalogue.isFetching;
+  const contextBlockingReason = publicationContextFetching
+    ? "Checking the latest estimate, items and publication access…"
+    : !lead.data?.projectId && quotationWorkflow
+      ? "This lead needs a linked project before the quotation can be submitted."
+      : "Submission access could not be verified. Refresh the estimate to check your access. Your local edits are preserved.";
   const itemCorrection = (items: readonly ConfiguredLineDraft[]) => {
     const labels = [...new Set(items.map(line => `${line.mainLineName} (${line.roomName})`))];
     return labels.length ? ` Items: ${labels.slice(0, 3).join(", ")}${labels.length > 3 ? ` and ${labels.length - 3} more` : ""}.` : "";
@@ -790,7 +867,7 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
   const commonPublicationBlocker = publicationBusy ? "Wait for the current estimate action to finish."
     : saveOutcomeUnknown ? "Verify the saved estimate before submitting."
     : estimateVersionConflict || revisionMismatch ? "Reload the latest saved estimate before submitting. Your local edits are preserved."
-    : saved.isError || revision.isError ? "Refresh the estimate updates before submitting. Your local edits are preserved."
+    : saved.isError || revisionError ? "Refresh the estimate updates before submitting. Your local edits are preserved."
     : null;
   const submitBlockingReason = submitAllowed ? null : commonPublicationBlocker
     ?? (bedroomSetupRequired ? "Enter the number of bedrooms in Setup before submitting."
@@ -807,13 +884,14 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
     : configuredMode && catalogue.isError ? "Retry the catalogue before submitting."
     : collaborative && requirements.data?.requirements.some(request => request.status === "open")
       ? "Resolve the open client requests before submitting."
+    : !lead.data?.projectId && quotationWorkflow ? contextBlockingReason
     : publicationBlocked ? "Verify client requests and the current design approval before submitting."
-    : !checklistContextReady && (checklistRequired || designer) ? "Checking the latest estimate, items and publication access…"
     : designer && quotationWorkflow && quotationApprovalState === "initial_current" && currentQuotationIsApproved(saved.data) && !hasUnsavedChanges
       ? "Your initial approval is current. There are no quotation changes to submit for Client review."
     : (checklistRequired || designer) && (!hasFrontendPermission(auth.authorization ?? null, "estimation.estimate.save") ||
       !hasFrontendPermission(auth.authorization ?? null, "estimation.estimate.submit"))
       ? "Your current access does not allow estimate submission."
+    : !checklistContextReady && (checklistRequired || designer) ? contextBlockingReason
     : !canStartSubmission ? publicationAccessMissing
       ? "Submission access could not be verified. Refresh the estimate to check your access. Your local edits are preserved."
       : quotationWorkflow && lifecycle?.phase === "post" && !designer
@@ -824,13 +902,13 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
     ?? (collaborative && requirements.data?.requirements.some(request => request.status === "open")
       ? "Resolve the open client requests before submitting."
     : publicationBlocked ? "Verify client requests and the current design approval before submitting."
-    : checklistRequired && !checklistContextReady ? "Checking the latest estimate, items and publication access…"
+    : checklistRequired && !checklistContextReady ? contextBlockingReason
     : checklistRequired && !hasFrontendPermission(auth.authorization ?? null, "estimation.estimate.send_client")
       ? "Your current access does not allow sending this estimate to the Client."
     : "This estimate is not ready to send. Refresh the estimate to check its current state.");
   const hideSalesRefreshFeedback = checklistRequired && publicationFeedback?.message == null &&
     !publicationBusy && !saveOutcomeUnknown && !estimateVersionConflict && !revisionMismatch &&
-    (saved.isError || revision.isError);
+    (saved.isError || revisionError);
   const feedbackReason = hideSalesRefreshFeedback ? null : publicationFeedback?.message ?? ((publicationFeedback?.action ?? (saved.data?.status === "ready_for_client" ? "send" : "submit")) === "send" ? sendBlockingReason : submitBlockingReason);
   const showPublicationFeedback = (action: PublicationAction, message?: string) => {
     setPublicationFeedback(current => ({ action, message, attempt: (current?.attempt ?? 0) + 1 }));
@@ -843,7 +921,7 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
       ? "Confirming approves this quotation as Sales and sends it to the client for approval. Email delivery status is shown after submission."
       : "Confirming sends this quotation to the client for approval. Email delivery status is shown after submission."
     : quotationWorkflow
-      ? lifecycle?.phase === "pre"
+      ? lifecycle?.phase === "pre" || canPrepareFirstSubmission
         ? "Confirming saves your current draft, approves it as Sales, and sends the quotation to the client for approval. Email delivery status is shown after submission."
         : "Confirming saves your current draft and sends the revised quotation to the client for approval. Email delivery status is shown after submission."
       : totals.total !== null && totals.total > 1_500_000
@@ -1073,7 +1151,7 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
       lines: group.map(line => ({ mainLineId: line.mainLineId, ...(line.persistedId ? { lineItemId: line.persistedId } : {}),
         revisionId: line.revisionId, itemVersion: (line.itemVersion ?? line.sourceItemVersion)!, revisionVersion: (line.revisionVersion ?? line.sourceRevisionVersion)!,
         uomId: line.uomId, quantity: line.quantity, pricingMode: line.pricingMode ?? "sub_vendor", modeTier: line.modeTier ?? "signature",
-        selectedInHouseComponentIds: line.selectedInHouseComponentIds, rateSource: line.rateSource,
+        ...(!configuredInHouseGoverned(line) ? { selectedInHouseComponentIds: line.selectedInHouseComponentIds } : {}), rateSource: line.rateSource,
         ...(line.dimensions ? { dimensions: line.dimensions } : {}),
         ...(line.dimensionsMandatory && line.dimensionRule ? { expectedDimensionRule: line.dimensionRule } : {}),
         ...(line.rateSource === "manual" || line.rateSource === undefined ? { manualRateChanged: !line.persistedId ||
@@ -1365,7 +1443,7 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
       {projectNavigation}
     </> : <><h1 id="estimate-title" className="sr-only">Estimate workspace</h1>{viewControls}</>}
     {!historical && publicationBlocked ? <p className="estimate-notice" role="status">{quotationWorkflow ? "Resolve client requests before submitting this quotation." : "Submission is unavailable until client requests are resolved and the current design scope is approved for post-estimation."}</p> : null}
-    {!historical && revision.isError ? <p role="alert">Quotation updates could not be checked. Your edits are preserved. <button type="button" className="button button--secondary" onClick={() => void revision.refetch()}>Retry updates</button></p> : null}
+    {!historical && revisionError && lead.data?.projectId ? <p role="alert">Quotation updates could not be checked. Your edits are preserved. <button type="button" className="button button--secondary" onClick={() => void revision.refetch()}>Retry updates</button></p> : null}
     {!historical && saved.isRefetchError ? <p role="alert">The saved estimate could not be refreshed. Your local edits are preserved; refresh before continuing.</p> : null}
     {!historical && saved.data?.clientReview ? <EstimateDeliveryStatus review={saved.data.clientReview} retrying={retryEmail.isPending} onRetry={() => retryEmail.mutate()} /> : null}
     {!historical && saved.data?.clientFeedback ? <EstimateClientFeedback feedback={saved.data.clientFeedback} editable={editable} refreshing={saved.isFetching} refreshFailed={saved.isRefetchError} onRefresh={() => void saved.refetch()} /> : null}
@@ -1470,11 +1548,11 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
           className="estimate-submit-blocker" role={publicationFeedback ? "alert" : "status"}>
           <p>{feedbackReason}</p>
           {publicationFeedback && !publicationBusy && !saveOutcomeUnknown && !estimateVersionConflict && !revisionMismatch &&
-            (saved.isError || revision.isError || !canStartSubmission && !(quotationApprovalState === "initial_current" && !hasUnsavedChanges) || requirements.isError)
+            (saved.isError || revisionError || !canStartSubmission && !(quotationApprovalState === "initial_current" && !hasUnsavedChanges) || requirements.isError)
             ? <button type="button" className="button button--secondary" onClick={() => {
               void saved.refetch(); void lead.refetch();
-              if (quotationWorkflow) void revision.refetch();
-              if (collaborative) void requirements.refetch();
+              if (revisionRequired && lead.data?.projectId) void revision.refetch();
+              if (collaborative && lead.data?.projectId) void requirements.refetch();
             }}>Refresh estimate access</button> : null}
         </div> : null}
       </div>

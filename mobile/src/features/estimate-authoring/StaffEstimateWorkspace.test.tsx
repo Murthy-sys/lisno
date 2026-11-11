@@ -1,4 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { toEstimateAggregatePricing } from "../../../../shared/estimation/estimateAggregatePricing";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react-native";
 import { Alert } from "react-native";
 import type { ReactElement } from "react";
@@ -8,7 +9,7 @@ import { StaffEstimateWorkspace } from "./StaffEstimateWorkspace";
 import { StaffEstimateQueue } from "./StaffEstimateQueue";
 import { StaffEstimateLifecycle } from "./StaffEstimateLifecycle";
 import { staffEstimateKey } from "./staffEstimateApi";
-import { actor, catalogueFixture, componentCatalogueFixture, componentLineFixture, estimateFixture, leadFixture, lifecycleFixture, lineFixture } from "./__tests__/fixtures";
+import { actor, catalogueFixture, componentCatalogueFixture, componentLineFixture, componentAmountLineFixture, estimateFixture, leadFixture, lifecycleFixture, lineFixture } from "./__tests__/fixtures";
 import { requirementsFixture } from "./__tests__/requirementsFixtures";
 import type { EstimateDraft, EstimateDraftInput } from "./types";
 
@@ -39,6 +40,72 @@ async function mount(ui: ReactElement) { const client = new QueryClient({ defaul
 async function confirmAlert(label: string) { const buttons = jest.mocked(Alert.alert).mock.calls.at(-1)?.[2]; const action = buttons?.find((button) => button.text === label); expect(action).toBeTruthy(); await act(async () => action?.onPress?.()); }
 beforeEach(() => { jest.clearAllMocks(); jest.spyOn(Alert, "alert").mockImplementation(() => undefined); });
 afterEach(() => jest.restoreAllMocks());
+
+it("renders the aggregate price without component names or a separate selling rate", async () => {
+ const { componentPricing, selectedInHouseComponentIds: _ids, ...base } = componentAmountLineFixture;
+ const aggregate = { ...base, inHouseUsage: "estimator" as const, aggregatePricing: toEstimateAggregatePricing(componentPricing!) };
+ const api = setup(estimateFixture({ lineItems: [aggregate] }));
+ const original = api.get.getMockImplementation()!;
+ const catalogue = componentCatalogueFixture();
+ const source = catalogue.items[0]!.subBaskets[0]!.mainLines[0]!;
+ source.inHouseUsage = "estimator"; delete source.inHouseComponents;
+ api.get.mockImplementation(async (path: string) => path.startsWith("/estimation/catalogue?") ? { ...catalogue, pagination: { offset: 0, hasMore: false } } : original(path));
+ await mount(<StaffEstimateWorkspace leadId="lead-one" session={actor()} />);
+ await screen.findByRole("button", { name: "Save draft" });
+ await fireEvent.press(screen.getByRole("radio", { name: "3 Estimate items" }));
+ await screen.findByText("Price including margin: ₹783.33");
+ expect(screen.queryByText("Cabinetry / Storage")).toBeNull();
+ expect(screen.queryByLabelText("Old cabinet name selling rate (₹)")).toBeNull();
+ expect(screen.getByLabelText("Old cabinet name quantity (Square feet)")).toBeDisabled();
+});
+
+it("keeps Sub-Vendor editing free of the In-house aggregate review message", async () => {
+ const api = setup();
+ const original = api.get.getMockImplementation()!;
+ const catalogue = structuredClone(catalogueFixture);
+ Object.assign(catalogue.items[0]!.subBaskets[0]!.mainLines[0]!, { inHouseUsage: "estimator", inHousePricingState: "ready" });
+ api.get.mockImplementation(async (path: string) => path.startsWith("/estimation/catalogue?") ? { ...catalogue, pagination: { offset: 0, hasMore: false } } : original(path));
+ await mount(<StaffEstimateWorkspace leadId="lead-one" session={actor()} />);
+ await screen.findByRole("button", { name: "Save draft" });
+ await fireEvent.press(screen.getByRole("radio", { name: "3 Estimate items" }));
+ expect(await screen.findByLabelText("Oak cabinet selling rate (₹)")).toBeEnabled();
+ expect(screen.queryByText(/Price including margin:/)).toBeNull();
+ expect(screen.queryByText("Review pricing in the web estimate workspace.")).toBeNull();
+ expect(screen.getByLabelText("Oak cabinet quantity (Square feet)")).toBeEnabled();
+});
+
+it.each(["dimensioned", "premium"] as const)("hides %s legacy components after Refresh Configuration items and retains the saved total", async kind => {
+ const modeTier = kind === "premium" ? "premium" as const : "signature" as const;
+ const dimensionRule = { formula: "length_width" as const, inputUnit: "ft" as const, quantityUnit: "sq_ft" as const, uomId: "uom-one", decimalScale: 2 };
+ const dimensions = { length: "1", width: "2", height: "9" };
+ const saved = { ...componentAmountLineFixture, modeTier, componentPricing: { ...componentAmountLineFixture.componentPricing!, modeTier },
+  ...(kind === "dimensioned" ? { dimensionsMandatory: true, dimensions, dimensionRule } : {}) };
+ const api = setup(estimateFixture({ lineItems: [saved] }));
+ const original = api.get.getMockImplementation()!;
+ const catalogue = componentCatalogueFixture();
+ const source = catalogue.items[0]!.subBaskets[0]!.mainLines[0]!;
+ source.applicableTiers = ["signature", "premium"];
+ source.tierPricing = { signature: {}, premium: {} };
+ if (kind === "dimensioned") Object.assign(source, { dimensionsMandatory: true, dimensionRule });
+ api.get.mockImplementation(async (path: string) => path.startsWith("/estimation/catalogue?") ? structuredClone({ ...catalogue, pagination: { offset: 0, hasMore: false } }) : original(path));
+ await mount(<StaffEstimateWorkspace leadId="lead-one" session={actor()} />);
+ await screen.findByRole("button", { name: "Save draft" });
+ await fireEvent.press(screen.getByRole("radio", { name: "3 Estimate items" }));
+ await screen.findByText(/In-house component pricing is read-only here/);
+ expect(screen.getByText("Selected component 1")).toBeOnTheScreen();
+ source.tierPricing[modeTier] = { inHouseUsage: "execution", inHousePricingState: "ready" };
+ source.revisionVersion = 6;
+ await fireEvent.press(screen.getByRole("button", { name: "Refresh Configuration items" }));
+ await screen.findByText("Price including margin: ₹783.33");
+ expect(screen.queryByText("Selected component 1")).toBeNull();
+ expect(screen.queryByText("Cabinetry / Storage")).toBeNull();
+ expect(screen.queryByText(/In-house component pricing is read-only here/)).toBeNull();
+ expect(screen.getByLabelText("Old cabinet name quantity (Square feet)")).toBeDisabled();
+ expect(screen.getByText("Configuration changed. Refresh price in the web estimate workspace before saving.")).toBeOnTheScreen();
+ if (kind === "dimensioned") expect(screen.getByText(/Recorded dimensions: L 1 × W 2/)).toBeOnTheScreen();
+ await fireEvent.press(screen.getByRole("button", { name: "Save draft" }));
+ expect(api.put).not.toHaveBeenCalled();
+});
 
 it("keeps saved component pricing read-only and transports the selected identities unchanged", async () => {
  const api = setup(estimateFixture({ lineItems: [componentLineFixture] }));

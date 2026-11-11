@@ -1,3 +1,4 @@
+import { hasGovernedInHousePrice } from "../estimates/estimateAggregatePresentation";
 import { calculateDimensionQuantity, type EstimateDimensions } from "../../../../shared/estimation/estimateDimensions";
 import type { KnowledgeModeTier } from "../../../../shared/knowledge/knowledgeModeTiers";
 import { emptyEstimateDimensions } from "../leads/EstimateDimensionsFields";
@@ -81,7 +82,7 @@ export function quotationItemOperation(item: QuotationItemDraft): Exclude<Quotat
     quantity = measured.quantity;
   }
   if (item.included && (!item.quantity.trim() || !Number.isFinite(quantity) || quantity <= 0)) throw new Error(`Enter a positive quantity for ${item.line.mainLineName}.`);
-  if (item.included && choice?.inHouseComponents && (!item.components.length || item.components.some(id => !choice.inHouseComponents!.some(component => component.id === id && component.available)))) {
+  if (item.included && !hasGovernedInHousePrice(choice) && choice?.inHouseComponents && (!item.components.length || item.components.some(id => !choice.inHouseComponents!.some(component => component.id === id && component.available)))) {
     throw new Error(`Select available components for ${item.line.mainLineName}.`);
   }
   const source = choice?.source ?? item.line.source;
@@ -89,7 +90,7 @@ export function quotationItemOperation(item: QuotationItemDraft): Exclude<Quotat
   const selection = { source, quantity, modeTier: item.modeTier,
     ...(item.pricingMode !== null && item.pricingMode !== item.line.pricingMode ? { pricingMode: item.pricingMode } : {}),
     ...(item.line.dimensionsMandatory ? { dimensions: item.dimensions } : {}),
-    ...(choice?.inHouseComponents ? { selectedInHouseComponentIds: item.components } : {}),
+    ...(!hasGovernedInHousePrice(choice) && choice?.inHouseComponents ? { selectedInHouseComponentIds: item.components } : {}),
     ...(item.recommendationSourceMainLineIds !== undefined ? { recommendationSourceMainLineIds: item.recommendationSourceMainLineIds } : {}) };
   return item.kind === "add" ? { kind: "add", mainLineId: item.line.mainLineId, roomId: item.line.roomId, ...selection }
     : { kind: "update", lineItemId: item.line.id, included: item.included, ...selection };

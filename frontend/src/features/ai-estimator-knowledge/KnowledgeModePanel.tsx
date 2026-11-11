@@ -76,7 +76,7 @@ const MODE_SECTION_LABELS = {
 } as const satisfies Readonly<Record<ModeSectionKey, string>>;
 
 const PENDING_DESCRIPTION_MESSAGE = "Save or cancel the paragraph before saving Mode.";
-const ADVANCED_EDITABLE_FIELDS = ["inHouseComponents", "modeConfigurations", "modeDescription", "modeCalculation", "pmcMarginBps", "pmcMinimumMarginBps", "subVendorMarginBps", "subVendorMinimumMarginBps"] as const;
+const ADVANCED_EDITABLE_FIELDS = ["inHouseComponents", "inHouseUsage", "inHousePresetComponentIds", "modeConfigurations", "modeDescription", "modeCalculation", "pmcMarginBps", "pmcMinimumMarginBps", "subVendorMarginBps", "subVendorMinimumMarginBps"] as const;
 type AdvancedEditableField = (typeof ADVANCED_EDITABLE_FIELDS)[number];
 
 interface ModeDraft {
@@ -684,6 +684,7 @@ export const KnowledgeModePanel = forwardRef<
         <KnowledgeModeConfigurationBuilder
           payload={drafts.advanced.payload}
           mainLineName={item.mainLineName}
+          basketContext={item}
           descriptionResetKey={`${revisionId}-${descriptionResetVersion}-${Object.hasOwn(drafts.advanced.payload, "inHouseComponents") ? "components" : "legacy"}`}
           onPendingDescriptionChange={setDescriptionPending}
           onPendingDescriptionTextChange={publishDescription}
