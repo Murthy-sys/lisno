@@ -14,7 +14,7 @@ import { EstimateModel } from "../src/models/Estimate.js";
 import { ProjectModel } from "../src/models/Project.js";
 import { ProjectPurchaseOrderModeDecisionModel, ProjectPurchaseOrderModeDecisionReceiptModel } from "../src/models/ProjectPurchaseOrderModeDecision.js";
 import { ProcurementBasketBaseRateModel, ProcurementBasketBaseRateReceiptModel } from "../src/models/ProcurementBasketBaseRate.js";
-import { ProcurementBasketEnquiryModel } from "../src/models/ProcurementBasketTender.js";
+import { ProcurementBasketEnquiryModel, ProcurementBasketBoqRevisionModel } from "../src/models/ProcurementBasketTender.js";
 import { ProjectPurchaseOrderRequestModel } from "../src/models/ProjectPurchaseOrderRequest.js";
 import { UserModel } from "../src/models/User.js";
 import { createMemoryRepository } from "../src/repositories/memory.js";
@@ -101,6 +101,7 @@ async function seedConfiguration() {
 
 async function seedProject() {
   const line = { id: "approved-line", source: "configuration", itemType: "main_line", catalogueId: "line-a",
+    pricingMode: "pmc", classification: "special",
     roomId: "room-a", roomName: "Living", specification: null, unit: "SQFT", rate: 500, ratePaise: 50_000,
     quantity: 2, included: true, amount: 1_000, amountPaise: 100_000,
     mainBasketId: "basket-a", mainBasketName: "Ceiling", subBasketId: "sub-a", subBasketName: "False Ceiling",
@@ -127,7 +128,7 @@ async function seedProject() {
     decidedById: buyer.id, decidedAt: at, version: 2 });
 }
 
-async function seedSecondApprovedProject(): Promise<void> {
+async function seedSecondApprovedProject(saveExecution = false): Promise<void> {
   const firstRound = await EstimateClientReviewRoundModel.findById("mode-round").lean();
   const firstLine = firstRound?.estimateSnapshot.lineItems[0];
   if (!firstLine) throw new Error("The first approved line fixture is missing.");
@@ -154,10 +155,25 @@ async function seedSecondApprovedProject(): Promise<void> {
     deliveryAttemptGeneration: 1, deliveryAttemptCount: 1, deliveryAttemptedAt: at, deliveredAt: at,
     assignedAdminId: buyer.id, status: "approved", decision: "approve", decisionSource: "admin_proof",
     decisionNote: "Approved", decidedById: buyer.id, decidedAt: at, version: 2 });
+  if (saveExecution) await saveSubVendorDecision("mode-project-b");
+}
+
+async function createFrozenModeEnquiry(id: string, status: "award_pending" | "issued", session?: import("mongoose").ClientSession) {
+  const lines = [{ id: `${id}-line`, sourceLineItemKey: "approved-line", roomId: "room-a", roomName: "Living",
+    subBasketId: "sub-a", subBasketName: "False Ceiling", mainLineId: "line-a", mainLineName: "POP",
+    approvedQuantity: "2", approvedUnit: "SQFT", approvedQuoteAmountPaise: 100000,
+    description: "POP", quantityMilliUnits: 2000, uomId: "mode-uom", uomCode: "SQFT", uomDecimalScale: 2 }];
+  await ProcurementBasketBoqRevisionModel.create([{ _id: `${id}-boq`, enquiryId: id, projectId: "mode-project", mainBasketId: "basket-a",
+    revision: 1, basketName: "Ceiling", estimateSource: expectedEstimateSource, preparationDigest: approvedRevisionDigest,
+    digest: approvedRevisionDigest, lines, sentAt: at, sentById: buyer.id, dispatchKey: `${id}-dispatch`, dispatchRequestDigest: approvedRevisionDigest }], { session });
+  await ProcurementBasketEnquiryModel.create([{ _id: id, projectId: "mode-project", mainBasketId: "basket-a", version: 1, status,
+    estimateSource: expectedEstimateSource, preparationDigest: approvedRevisionDigest, draftLines: lines, currentBoqRevisionId: `${id}-boq`,
+    createdById: buyer.id, updatedById: buyer.id, createIdempotencyKey: `${id}-create`, createRequestDigest: approvedRevisionDigest }], { session });
 }
 
 const source = { estimateId: "mode-estimate", estimateVersion: 1, estimateReviewRoundId: "mode-round",
   allLineItems: [{ key: "approved-line", included: true, source: "configuration" as const, amountPaise: 100_000,
+    approvedPricingMode: "pmc" as const, mainBasketId: "basket-a", quantity: 2,
     mainLineId: "line-a", revisionId: "revision-a", sourceRevisionStatus: "active" as const,
     sourceRevisionVersion: 2, uomId: "mode-uom", uomCode: "SQFT", uomDecimalScale: 2 }] };
 
@@ -193,6 +209,20 @@ async function enableSavedSubVendorScope(): Promise<string> {
   return contentDigest;
 }
 
+async function useExecutionSource(): Promise<void> {
+  await EstimateClientReviewRoundModel.collection.updateOne({ _id: "mode-round" },
+    { $set: { "estimateSnapshot.lineItems.0.pricingMode": "sub_vendor" } });
+}
+
+async function saveSubVendorDecision(projectId = "mode-project"): Promise<void> {
+  const basket = await createProcurementBasketService().get(buyer, projectId, "basket-a");
+  const line = basket.lines[0]!;
+  await service.save(buyer, projectId, { sourceLineItemKey: line.sourceLineItemKey,
+    expectedVersion: line.mode?.decision?.version ?? 0, expectedEstimateSource: basket.estimateSource,
+    expectedRevisionDigest: line.mode!.revision!.contentDigest, idempotencyKey: `${projectId}-select-subvendor`,
+    mode: "sub_vendor", quantity: line.approvedQuantity, discountBps: 0, markupBasis: "starting", exceptionReason: null });
+}
+
 async function configureProjectRateFixture(): Promise<void> {
   await enableSavedSubVendorScope();
   await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: "revision-a-advanced" },
@@ -206,8 +236,10 @@ async function configureProjectRateFixture(): Promise<void> {
   await EstimateClientReviewRoundModel.collection.updateOne({ _id: "mode-round" }, { $set: {
     "estimateSnapshot.selectedMainBasketIds": ["basket-a"],
     "estimateSnapshot.selectedMainBasketClassifications": [{ mainBasketId: "basket-a", classification: "standard" }],
-    "estimateSnapshot.lineItems.0.quantity": 1
+    "estimateSnapshot.lineItems.0.quantity": 1,
+    "estimateSnapshot.lineItems.0.pricingMode": "sub_vendor"
   } });
+  await saveSubVendorDecision();
 }
 
 async function saveCurrentDraft(advancedPayload: Record<string, unknown>, name = "Updated POP"): Promise<void> {
@@ -243,7 +275,7 @@ function projectRateInput(basket: Awaited<ReturnType<ReturnType<typeof createPro
 describe("project-only Standard Main Basket Base amount", () => {
   it("saves, isolates, clears and recalculates a POP rate from pinned low-quantity settings", async () => {
     await configureProjectRateFixture();
-    await seedSecondApprovedProject();
+    await seedSecondApprovedProject(true);
     const baskets = createProcurementBasketService();
     const first = await baskets.get(buyer, "mode-project", "basket-a");
     const otherBefore = await baskets.get(buyer, "mode-project-b", "basket-a");
@@ -384,14 +416,14 @@ describe("current saved Configuration for Standard Main Baskets", () => {
 
   it("refreshes an active Main Line's saved draft in two projects while preserving a project override and BOQ activation gate", async () => {
     await configureProjectRateFixture();
-    await seedSecondApprovedProject();
+    await seedSecondApprovedProject(true);
     const baskets = createProcurementBasketService();
     const original = await baskets.get(buyer, "mode-project", "basket-a");
     await projectRates.save(buyer, "mode-project", "basket-a",
       projectRateInput(original, 8_000, 0, "draft-shared-override-001"));
     const overridden = await baskets.get(buyer, "mode-project", "basket-a");
     const approvedEstimate = await EstimateModel.findById("mode-estimate").lean();
-    await saveCurrentDraft({ ...advanced, modeCalculations: { ...advanced.modeCalculations,
+    await saveCurrentDraft({ ...advanced, subVendorMarginBps: 3_000, modeCalculations: { ...advanced.modeCalculations,
       sub_vendor: { ...settings, baseRatePaise: 12_000, lowQuantityLimit: "3", impactBps: 2_000 } } });
     const first = await baskets.get(buyer, "mode-project", "basket-a");
     const second = await baskets.get(buyer, "mode-project-b", "basket-a");
@@ -486,7 +518,7 @@ describe("current saved Configuration for Standard Main Baskets", () => {
     expect(() => buildBasketBoqLines(overridden, [{ sourceLineItemKey: "approved-line",
       description: "Painting", quantityMilliUnits: 1_000, scopeType: "execution",
       targetDate: "2026-12-01", deliveryLocation: "Site" }]))
-      .toThrowError(expect.objectContaining({ code: "PROCUREMENT_BASKET_SUB_VENDOR_COST_UNAVAILABLE" }));
+      .toThrowError(expect.objectContaining({ code: "PROCUREMENT_BASKET_MODE_REQUIRED" }));
     await projectRates.save(buyer, "mode-project", "basket-a",
       projectRateInput(overridden, null, 1, "painting-draft-rate-clear-001"));
     const cleared = await baskets.get(buyer, "mode-project", "basket-a");
@@ -499,7 +531,7 @@ describe("current saved Configuration for Standard Main Baskets", () => {
 
   it("uses a newer active revision, keeps a project-only override, and rejects stale BOQ preparation", async () => {
     await configureProjectRateFixture();
-    await seedSecondApprovedProject();
+    await seedSecondApprovedProject(true);
     const baskets = createProcurementBasketService();
     const original = await baskets.get(buyer, "mode-project", "basket-a");
     await projectRates.save(buyer, "mode-project", "basket-a",
@@ -508,7 +540,7 @@ describe("current saved Configuration for Standard Main Baskets", () => {
     const approvedEstimate = await EstimateModel.findById("mode-estimate").lean();
     const otherEstimate = await EstimateModel.findById("mode-estimate-b").lean();
     const newSections = sectionsFor("revision-b").map(row => row.sectionKey === "advanced"
-      ? { ...row, payload: { ...advanced, modeCalculations: { ...advanced.modeCalculations,
+      ? { ...row, payload: { ...advanced, subVendorMarginBps: 3_000, modeCalculations: { ...advanced.modeCalculations,
         sub_vendor: { ...settings, baseRatePaise: 12_000, impactBps: 2_000, lowQuantityLimit: "1" } } } }
       : row);
     const contentDigest = createKnowledgeRevisionDigest({ mainLineId: "line-a", revisionNumber: 2,
@@ -573,250 +605,179 @@ describe("current saved Configuration for Standard Main Baskets", () => {
 });
 
 describe("pinned mode resolution and price references", () => {
-  it("isolates provisional Standard costs and saved decisions across unequal projects with shared basket and line IDs", async () => {
-    const revisionDigest = await enableSavedSubVendorScope();
-    await EstimateClientReviewRoundModel.collection.updateOne({ _id: "mode-round" }, { $set: {
-      "estimateSnapshot.selectedMainBasketIds": ["basket-a"],
-      "estimateSnapshot.selectedMainBasketClassifications": [{ mainBasketId: "basket-a", classification: "standard" }]
-    } });
+  it.each(["pmc", "sub_vendor"] as const)("matches the activated digest for Mongoose-minimized empty sections in %s and detects later content changes", async mode => {
+    const contentDigest = mode === "sub_vendor" ? await enableSavedSubVendorScope() : approvedRevisionDigest;
+    if (mode === "sub_vendor") await useExecutionSource();
+    const emptyRows = sectionsFor("revision-a").filter(row => Object.keys(row.payload).length === 0);
+    expect(emptyRows.length).toBeGreaterThan(0);
+    await AiEstimatorKnowledgeSectionModel.deleteMany({ _id: { $in: emptyRows.map(row => row._id) } });
+    // Persist through Mongoose, as Configuration does, so empty payload objects are minimized away.
+    await AiEstimatorKnowledgeSectionModel.create(emptyRows);
+    const stored = await AiEstimatorKnowledgeSectionModel.collection.find({ revisionId: "revision-a" }).toArray();
+    for (const empty of emptyRows) expect(stored.find(row => row._id === empty._id)).not.toHaveProperty("payload");
+    const activated = await AiEstimatorKnowledgeRevisionModel.findById("revision-a").lean();
+    const approved = await EstimateClientReviewRoundModel.findById("mode-round").lean();
+    const previewInput = { estimateSource: expectedEstimateSource, sourceLineItemKey: "approved-line", expectedVersion: 0,
+      mode, quantity: "2", discountBps: 0, markupBasis: "starting" as const };
+    const preview = await service.preview(buyer, "mode-project", previewInput);
+    expect(preview).toMatchObject({ revision: { contentDigest }, issues: [],
+      preview: { mode, quantity: "2", adjustedCostPaise: 22_000 } });
+    expect(preview.integrity).toBeUndefined();
+    await service.save(buyer, "mode-project", { sourceLineItemKey: "approved-line", expectedVersion: 0,
+      expectedEstimateSource, expectedRevisionDigest: contentDigest, idempotencyKey: `minimized-empty-${mode}`,
+      mode, quantity: "2", discountBps: 0, markupBasis: "starting", exceptionReason: null });
+    const ready = await createProcurementBasketService().get(buyer, "mode-project", "basket-a");
+    expect(ready).toMatchObject({ boqReady: true, lines: [{ mode: { state: "ready", issues: [],
+      decision: { mode, quantity: "2" }, preview: { mode, adjustedCostPaise: 22_000 } } }] });
+    expect(await AiEstimatorKnowledgeSectionModel.collection.find({ revisionId: "revision-a" }).toArray()).toEqual(stored);
+    expect(await AiEstimatorKnowledgeRevisionModel.findById("revision-a").lean()).toEqual(activated);
+    expect(await EstimateClientReviewRoundModel.findById("mode-round").lean()).toEqual(approved);
+
+    await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: emptyRows[0]!._id },
+      { $set: { payload: { note: "Content added after activation" } } });
+    const changed = await createProcurementBasketService().get(buyer, "mode-project", "basket-a");
+    expect(changed).toMatchObject({ boqReady: false, lines: [{ mode: { state: "unavailable", preview: null,
+      issues: [expect.objectContaining({ code: "PINNED_DIGEST_MISMATCH" })] } }] });
+  });
+
+  it("keeps execution pending in two unequal projects until each source saves its own decision", async () => {
+    await enableSavedSubVendorScope();
+    await useExecutionSource();
     await seedSecondApprovedProject();
-    const basketService = createProcurementBasketService();
-    const estimateA = await EstimateModel.findById("mode-estimate").lean();
-    const estimateB = await EstimateModel.findById("mode-estimate-b").lean();
-    const beforeA = await basketService.get(buyer, "mode-project", "basket-a");
-    const beforeB = await basketService.get(buyer, "mode-project-b", "basket-a");
-    expect(beforeA).toMatchObject({ approvedEstimatePaise: 100_000, automaticSubVendor: true, boqReady: true, readyLineCount: 0,
-      workingTotalPaise: 0, workingTotalComplete: false,
-      standardCost: { totalPaise: 22_000, complete: true, provisional: true },
-      lines: [{ sourceLineItemKey: "approved-line", approvedQuantity: "2",
-        mode: { state: "selection_required", decision: null, preview: null } }] });
-    expect(beforeB).toMatchObject({ approvedEstimatePaise: 150_000, automaticSubVendor: true, boqReady: true, readyLineCount: 0,
-      workingTotalPaise: 0, workingTotalComplete: false,
-      standardCost: { totalPaise: 30_000, complete: true, provisional: true },
-      lines: [{ sourceLineItemKey: "approved-line", approvedQuantity: "3",
-        mode: { state: "selection_required", decision: null, preview: null } }] });
-    expect(beforeA.standardCost!.totalPaise).not.toBe(beforeB.standardCost!.totalPaise);
-
-    await service.save(buyer, "mode-project", { sourceLineItemKey: "approved-line", expectedVersion: 0,
-      expectedEstimateSource, expectedRevisionDigest: revisionDigest, idempotencyKey: "project-a-pmc-mode-001",
-      mode: "pmc", quantity: "4", discountBps: 0, markupBasis: "starting", exceptionReason: null });
-    const afterA = await basketService.get(buyer, "mode-project", "basket-a");
-    const afterB = await basketService.get(buyer, "mode-project-b", "basket-a");
-    expect(afterA).toMatchObject({ approvedEstimatePaise: 100_000, automaticSubVendor: true, boqReady: true, readyLineCount: 1,
-      workingTotalComplete: true, standardCost: { totalPaise: 22_000, complete: true, provisional: true },
-      lines: [{ standardCost: { state: "suggested", mode: "sub_vendor", calculationQuantity: "2" } }] });
-    expect(afterA.workingTotalPaise).toBeGreaterThan(afterA.standardCost!.totalPaise!);
-    expect(afterA.preparationDigest).toBe(beforeA.preparationDigest);
-    expect(afterB).toMatchObject({ approvedEstimatePaise: 150_000, readyLineCount: 0,
-      workingTotalPaise: 0, workingTotalComplete: false,
-      standardCost: { totalPaise: 30_000, complete: true, provisional: true },
-      lines: [{ standardCost: { state: "suggested", mode: "sub_vendor", calculationQuantity: "3" } }] });
-    expect(afterB.preparationDigest).toBe(beforeB.preparationDigest);
-    expect(await ProjectPurchaseOrderModeDecisionModel.countDocuments({ projectId: "mode-project-b" })).toBe(0);
-    expect(await EstimateModel.findById("mode-estimate").lean()).toMatchObject({
-      subtotal: estimateA!.subtotal, gst: estimateA!.gst, total: estimateA!.total,
-      lineItems: estimateA!.lineItems, procurementSourceEpoch: 1 });
-    expect(await EstimateModel.findById("mode-estimate-b").lean()).toEqual(estimateB);
+    const baskets = createProcurementBasketService();
+    const beforeA = await baskets.get(buyer, "mode-project", "basket-a");
+    const beforeB = await baskets.get(buyer, "mode-project-b", "basket-a");
+    for (const value of [beforeA, beforeB]) expect(value).toMatchObject({ automaticSubVendor: false,
+      boqReady: false, readyLineCount: 0, workingTotalComplete: false, adjustedCostPaise: 0,
+      standardCost: { totalPaise: null, complete: false },
+      lines: [{ mode: { state: "selection_required", decision: null, preview: null } }] });
+    expect(beforeA.approvedEstimatePaise).toBe(100000);
+    expect(beforeB.approvedEstimatePaise).toBe(150000);
+    const approvedA = (await EstimateClientReviewRoundModel.findById("mode-round").lean())!.estimateSnapshot;
+    await saveSubVendorDecision();
+    const afterA = await baskets.get(buyer, "mode-project", "basket-a");
+    expect(afterA).toMatchObject({ boqReady: true, adjustedCostPaise: 22000, workingTotalComplete: true,
+      standardCost: { totalPaise: 22000, complete: true, provisional: false } });
+    expect(afterA.preparationDigest).not.toBe(beforeA.preparationDigest);
+    expect(await baskets.get(buyer, "mode-project-b", "basket-a")).toEqual(beforeB);
+    await saveSubVendorDecision("mode-project-b");
+    expect(await baskets.get(buyer, "mode-project-b", "basket-a")).toMatchObject({ adjustedCostPaise: 30000, boqReady: true });
+    expect((await EstimateClientReviewRoundModel.findById("mode-round").lean())!.estimateSnapshot).toEqual(approvedA);
   });
-  it("keeps explicitly Standard on approved Sub-vendor cost despite an older saved PMC mode", async () => {
+
+  it("uses explicit PMC despite a legacy Standard classification and blocks later unreviewed Configuration drift", async () => {
     const revisionDigest = await enableSavedSubVendorScope();
     await EstimateClientReviewRoundModel.collection.updateOne({ _id: "mode-round" }, { $set: {
       "estimateSnapshot.selectedMainBasketIds": ["basket-a"],
       "estimateSnapshot.selectedMainBasketClassifications": [{ mainBasketId: "basket-a", classification: "standard" }]
     } });
-    const basketService = createProcurementBasketService();
-    const beforeRevision = await AiEstimatorKnowledgeRevisionModel.findById("revision-a").lean();
-    const beforeSections = await AiEstimatorKnowledgeSectionModel.find({ revisionId: "revision-a" }).sort({ sectionKey: 1 }).lean();
-    const first = await basketService.get(buyer, "mode-project", "basket-a");
-    expect(first).toMatchObject({ classification: "standard", automaticSubVendor: true, boqReady: true,
-      includedLineCount: 1, readyLineCount: 0,
-      workingTotalComplete: false, standardCost: { complete: true, provisional: true,
-        pricedLineCount: 1, totalPaise: 22_000 },
-      lines: [{ mode: { state: "selection_required", decision: null, preview: null },
-        standardCost: { state: "suggested", mode: "sub_vendor", calculationQuantity: "2",
-          baseRates: [{ scope: "sub_vendor", ratePaise: 10_000 }],
-          baseCostPaise: 20_000, adjustedCostPaise: 22_000 } }] });
-    expect(await ProjectPurchaseOrderModeDecisionModel.countDocuments()).toBe(0);
-    expect(await ProjectPurchaseOrderModeDecisionReceiptModel.countDocuments()).toBe(0);
-    expect(await AuditEventModel.countDocuments()).toBe(0);
-    expect(await AiEstimatorKnowledgeRevisionModel.findById("revision-a").lean()).toEqual(beforeRevision);
-    expect(await AiEstimatorKnowledgeSectionModel.find({ revisionId: "revision-a" }).sort({ sectionKey: 1 }).lean()).toEqual(beforeSections);
-
-    await service.save(buyer, "mode-project", { sourceLineItemKey: "approved-line", expectedVersion: 0,
-      expectedEstimateSource, expectedRevisionDigest: revisionDigest, idempotencyKey: "saved-pmc-override-001",
-      mode: "pmc", quantity: "3", discountBps: 0, markupBasis: "starting", exceptionReason: null });
-    const saved = await basketService.get(buyer, "mode-project", "basket-a");
-    expect(saved).toMatchObject({ classification: "standard", automaticSubVendor: true, boqReady: true, readyLineCount: 1,
-      standardCost: { complete: true, provisional: true, totalPaise: 22_000 },
-      lines: [{ approvedQuantity: "2", mode: { state: "ready", decision: { mode: "pmc", quantity: "3" } },
-        standardCost: { state: "suggested", mode: "sub_vendor", calculationQuantity: "2",
-          baseRates: [{ scope: "sub_vendor", ratePaise: 10_000 }],
-          baseCostPaise: 20_000, adjustedCostPaise: 22_000 } }] });
-    expect(saved.preparationDigest).toBe(first.preparationDigest);
-
-    await changeSavedPmcRateWithoutTimestamp(12_500);
-    const stale = await basketService.get(buyer, "mode-project", "basket-a");
-    expect(stale).toMatchObject({ automaticSubVendor: true, boqReady: true,
-      standardCost: { complete: true, provisional: true, totalPaise: 22_000, pricedLineCount: 1 },
-      lines: [{ standardCost: {
-        state: "observed_unverified", mode: "sub_vendor", baseCostPaise: 20_000, adjustedCostPaise: 22_000,
-        issues: [{ code: "PINNED_DIGEST_MISMATCH" }] } }] });
-    expect(stale.preparationDigest).not.toBe(saved.preparationDigest);
-  });
-
-  it("uses the observed pinned Sub-vendor cost through the BOQ gate after digest drift", async () => {
-    const activatedDigest = await enableSavedSubVendorScope();
-    await EstimateClientReviewRoundModel.collection.updateOne({ _id: "mode-round" }, { $set: {
-      "estimateSnapshot.selectedMainBasketIds": ["basket-a"],
-      "estimateSnapshot.selectedMainBasketClassifications": [{ mainBasketId: "basket-a", classification: "standard" }]
-    } });
-    const observedDigest = await changeSavedSubVendorRateWithoutTimestamp(12_500);
-    expect(observedDigest).not.toBe(activatedDigest);
-    const basket = await createProcurementBasketService().get(buyer, "mode-project", "basket-a");
-    expect(basket).toMatchObject({ classification: "standard", automaticSubVendor: true, boqReady: true, readyLineCount: 0,
-      workingTotalComplete: false, standardCost: { totalPaise: 27_500, complete: true,
-        provisional: true, pricedLineCount: 1 },
-      lines: [{ baseUnitRatePaise: 12_500,
-        mode: { state: "unavailable", decision: null, preview: null,
-        issues: [{ code: "PINNED_DIGEST_MISMATCH" }],
-        integrity: { status: "mismatch", activatedDigest, observedDigest } },
-      standardCost: { state: "observed_unverified", mode: "sub_vendor", calculationQuantity: "2",
-        baseRates: [{ scope: "sub_vendor", ratePaise: 12_500 }],
-        baseCostPaise: 25_000, adjustedCostPaise: 27_500,
-        issues: [{ code: "PINNED_DIGEST_MISMATCH" }] } }] });
-    expect(basket.lines[0]?.standardCost?.issues).toHaveLength(1);
-    const boqLines = buildBasketBoqLines(basket, [{ sourceLineItemKey: "approved-line", description: "POP",
-      quantityMilliUnits: 2_000, scopeType: "execution", targetDate: "2026-12-01",
-      deliveryLocation: "Site" }]);
-    expect(boqLines[0]).toMatchObject({ sourceLineItemKey: "approved-line", uomId: "mode-uom", uomCode: "SQFT" });
-    expect(boqLines[0]).not.toHaveProperty("baseCostPaise");
-    expect(boqLines[0]).not.toHaveProperty("adjustedCostPaise");
-    expect(await ProjectPurchaseOrderModeDecisionModel.countDocuments()).toBe(0);
-    expect(await ProjectPurchaseOrderModeDecisionReceiptModel.countDocuments()).toBe(0);
-    expect(await AuditEventModel.countDocuments()).toBe(0);
-  });
-
-  it("keeps Standard cost visible without any selling mode margin, including after observed Configuration drift", async () => {
-    await enableSavedSubVendorScope();
-    await EstimateClientReviewRoundModel.collection.updateOne({ _id: "mode-round" }, { $set: {
-      "estimateSnapshot.selectedMainBasketIds": ["basket-a"],
-      "estimateSnapshot.selectedMainBasketClassifications": [{ mainBasketId: "basket-a", classification: "standard" }]
-    } });
-    await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: "revision-a-advanced" }, {
-      $set: { "payload.modeCalculations.pmc": null }, $unset: { "payload.subVendorMarginBps": "" }
-    });
-    const sections = await AiEstimatorKnowledgeSectionModel.find({ revisionId: "revision-a" }).lean();
-    const activatedDigest = createKnowledgeRevisionDigest({ mainLineId: "line-a", revisionNumber: 1,
-      sections: sections.map((row) => ({ sectionKey: row.sectionKey,
-        applicability: row.applicability, payload: row.payload })) });
-    await AiEstimatorKnowledgeRevisionModel.collection.updateOne({ _id: "revision-a" },
-      { $set: { contentDigest: activatedDigest } });
     const baskets = createProcurementBasketService();
+    const before = await baskets.get(buyer, "mode-project", "basket-a");
+    expect(before).toMatchObject({ automaticSubVendor: false, boqReady: false,
+      lines: [{ mode: { executionPolicy: { intent: "pmc", allowedModes: ["pmc"] } } }] });
+    await service.save(buyer, "mode-project", { sourceLineItemKey: "approved-line", expectedVersion: 0,
+      expectedEstimateSource, expectedRevisionDigest: revisionDigest, idempotencyKey: "saved-pmc-choice-001",
+      mode: "pmc", quantity: "3", discountBps: 0, markupBasis: "starting", exceptionReason: null });
     const saved = await baskets.get(buyer, "mode-project", "basket-a");
-    expect(saved).toMatchObject({ readyLineCount: 0, workingTotalComplete: false,
-      standardCost: { totalPaise: 22_000, complete: true, provisional: true },
-      lines: [{ baseUnitRatePaise: 10_000,
-        mode: { state: "unavailable", decision: null, preview: null },
-        standardCost: { state: "suggested", baseCostPaise: 20_000, adjustedCostPaise: 22_000 } }] });
+    expect(saved).toMatchObject({ boqReady: true, standardCost: { totalPaise: 30000, provisional: false },
+      lines: [{ standardCost: { state: "saved", mode: "pmc", calculationQuantity: "3" } }] });
+    expect(saved.preparationDigest).not.toBe(before.preparationDigest);
+    await changeSavedPmcRateWithoutTimestamp(12500);
+    const stale = await baskets.get(buyer, "mode-project", "basket-a");
+    expect(stale).toMatchObject({ boqReady: false, standardCost: { totalPaise: null, complete: false },
+      lines: [{ mode: { state: "unavailable", issues: [{ code: "PINNED_DIGEST_MISMATCH" }] } }] });
+  });
 
-    const observedDigest = await changeSavedSubVendorRateWithoutTimestamp(12_500);
-    const observed = await baskets.get(buyer, "mode-project", "basket-a");
-    expect(observed).toMatchObject({ readyLineCount: 0, workingTotalComplete: false,
-      standardCost: { totalPaise: 27_500, complete: true, provisional: true },
-      lines: [{ baseUnitRatePaise: 12_500,
-        mode: { state: "unavailable", decision: null, preview: null,
-        integrity: { status: "mismatch", activatedDigest, observedDigest } },
-        standardCost: { state: "observed_unverified", baseCostPaise: 25_000,
-          adjustedCostPaise: 27_500, issues: [{ code: "PINNED_DIGEST_MISMATCH" }] } }] });
-    expect(observed.boqReady).toBe(true);
-    expect(() => buildBasketBoqLines(observed, [{ sourceLineItemKey: "approved-line", description: "POP",
-      quantityMilliUnits: 2_000, scopeType: "execution", targetDate: "2026-12-01",
-      deliveryLocation: "Site" }])).not.toThrow();
+  it("blocks observed Sub-vendor cost until its recovery basis is explicitly saved", async () => {
+    const activatedDigest = await enableSavedSubVendorScope();
+    await useExecutionSource();
+    const observedDigest = await changeSavedSubVendorRateWithoutTimestamp(12500);
+    const baskets = createProcurementBasketService();
+    const pending = await baskets.get(buyer, "mode-project", "basket-a");
+    expect(pending).toMatchObject({ boqReady: false, adjustedCostPaise: 0, standardCost: { totalPaise: null },
+      lines: [{ mode: { decision: null, integrity: { observedDigest } } }] });
+    expect(() => buildBasketBoqLines(pending, [{ sourceLineItemKey: "approved-line" }]))
+      .toThrowError(expect.objectContaining({ code: "PROCUREMENT_BASKET_MODE_REQUIRED" }));
+    await service.save(buyer, "mode-project", { sourceLineItemKey: "approved-line", expectedVersion: 0,
+      expectedEstimateSource, expectedRevisionDigest: activatedDigest,
+      recovery: { expectedObservedDigest: observedDigest, reason: "Reviewed current configured rates for this source.", acknowledge: true }, idempotencyKey: "subvendor-recovery-001",
+      mode: "sub_vendor", quantity: "2", discountBps: 0, markupBasis: "starting", exceptionReason: null });
+    const recovered = await baskets.get(buyer, "mode-project", "basket-a");
+    expect(recovered).toMatchObject({ boqReady: true, adjustedCostPaise: 27500,
+      lines: [{ standardCost: { state: "saved", mode: "sub_vendor", adjustedCostPaise: 27500 } }] });
+    expect(buildBasketBoqLines(recovered, [{ sourceLineItemKey: "approved-line" }])).toHaveLength(1);
+    await changeSavedSubVendorRateWithoutTimestamp(14000);
+    expect(await baskets.get(buyer, "mode-project", "basket-a")).toMatchObject({ boqReady: false, workingTotalComplete: false });
+  });
+
+  it("keeps incomplete Sub-vendor settings unavailable instead of borrowing a cost-only suggestion", async () => {
+    await enableSavedSubVendorScope();
+    await useExecutionSource();
+    await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: "revision-a-advanced" },
+      { $unset: { "payload.subVendorMarginBps": "" } });
+    const sections = await AiEstimatorKnowledgeSectionModel.find({ revisionId: "revision-a" }).lean();
+    const contentDigest = createKnowledgeRevisionDigest({ mainLineId: "line-a", revisionNumber: 1,
+      sections: sections.map(row => ({ sectionKey: row.sectionKey, applicability: row.applicability, payload: row.payload })) });
+    await AiEstimatorKnowledgeRevisionModel.collection.updateOne({ _id: "revision-a" }, { $set: { contentDigest } });
+    const basket = await createProcurementBasketService().get(buyer, "mode-project", "basket-a");
+    expect(basket).toMatchObject({ boqReady: false, standardCost: { totalPaise: null, complete: false },
+      lines: [{ mode: { decision: null, preview: null } }] });
+    await expect(saveSubVendorDecision()).rejects.toMatchObject({ status: 422 });
     expect(await ProjectPurchaseOrderModeDecisionModel.countDocuments()).toBe(0);
   });
 
-  it("does not invent a Standard cost when mismatched pinned Configuration has no Sub-Vendor settings", async () => {
-    await enableSavedSubVendorScope();
-    await EstimateClientReviewRoundModel.collection.updateOne({ _id: "mode-round" }, { $set: {
-      "estimateSnapshot.selectedMainBasketIds": ["basket-a"],
-      "estimateSnapshot.selectedMainBasketClassifications": [{ mainBasketId: "basket-a", classification: "standard" }]
-    } });
+  it("does not invent a saved cost when a selected Sub-vendor scope is removed", async () => {
+    await configureProjectRateFixture();
     await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: "revision-a-advanced" },
       { $set: { "payload.modeCalculations.sub_vendor": null } });
     const basket = await createProcurementBasketService().get(buyer, "mode-project", "basket-a");
-    expect(basket).toMatchObject({ readyLineCount: 0, standardCost: { totalPaise: null,
-      complete: false, provisional: false, pricedLineCount: 0 },
-      lines: [{ baseUnitRatePaise: null,
-        mode: { state: "unavailable", preview: null }, standardCost: {
-        state: "unavailable", baseCostPaise: null, adjustedCostPaise: null,
-        issues: [{ code: "CALCULATION_NOT_CONFIGURED" }, { code: "PINNED_DIGEST_MISMATCH" }] } }] });
-    expect(basket.boqReady).toBe(false);
-    expect(() => buildBasketBoqLines(basket, [{ sourceLineItemKey: "approved-line", description: "POP",
-      quantityMilliUnits: 2_000, scopeType: "execution", targetDate: "2026-12-01",
-      deliveryLocation: "Site" }])).toThrowError(expect.objectContaining({ code: "PROCUREMENT_BASKET_SUB_VENDOR_COST_UNAVAILABLE" }));
+    expect(basket).toMatchObject({ boqReady: false, readyLineCount: 0, standardCost: { totalPaise: null, complete: false },
+      lines: [{ mode: { state: "unavailable", decision: { mode: "sub_vendor" }, preview: null } }] });
+    expect(() => buildBasketBoqLines(basket, [{ sourceLineItemKey: "approved-line" }]))
+      .toThrowError(expect.objectContaining({ code: "PROCUREMENT_BASKET_MODE_REQUIRED" }));
   });
 
-  it("prices a one-unit POP line at ₹75 plus the saved 10% low-quantity impact without a mode decision", async () => {
-    await enableSavedSubVendorScope();
-    await EstimateClientReviewRoundModel.collection.updateOne({ _id: "mode-round" }, { $set: {
-      "estimateSnapshot.selectedMainBasketIds": ["basket-a"],
-      "estimateSnapshot.selectedMainBasketClassifications": [{ mainBasketId: "basket-a", classification: "standard" }],
-      "estimateSnapshot.lineItems.0.quantity": 1
-    } });
-    const before = await createProcurementBasketService().get(buyer, "mode-project", "basket-a");
-    const observedDigest = await changeSavedSubVendorRateWithoutTimestamp(7_500);
-    const after = await createProcurementBasketService().get(buyer, "mode-project", "basket-a");
-    expect(after).toMatchObject({ automaticSubVendor: true, boqReady: true,
-      standardCost: { totalPaise: 8_250, complete: true },
-      lines: [{ mainLineName: "POP", approvedQuantity: "1", baseUnitRatePaise: 7_500,
-        mode: { state: "unavailable", decision: null, integrity: { observedDigest } },
-        standardCost: { state: "observed_unverified", calculationQuantity: "1",
-          baseCostPaise: 7_500, adjustedCostPaise: 8_250 } }] });
-    expect(after.preparationDigest).not.toBe(before.preparationDigest);
-    expect(buildBasketBoqLines(after, [{ sourceLineItemKey: "approved-line", description: "POP",
-      quantityMilliUnits: 1_000, scopeType: "execution", targetDate: "2026-12-01",
-      deliveryLocation: "Site" }])).toHaveLength(1);
-    expect(await ProjectPurchaseOrderModeDecisionModel.countDocuments()).toBe(0);
-  });
-
-  it("keeps a valid zero Sub-vendor base rate orderable when the approved estimate amount is positive", async () => {
-    await enableSavedSubVendorScope();
-    await EstimateClientReviewRoundModel.collection.updateOne({ _id: "mode-round" }, { $set: {
-      "estimateSnapshot.selectedMainBasketIds": ["basket-a"],
-      "estimateSnapshot.selectedMainBasketClassifications": [{ mainBasketId: "basket-a", classification: "standard" }]
-    } });
-    await changeSavedSubVendorRateWithoutTimestamp(0);
+  it("prices a saved one-unit POP line at its configured rate plus low-quantity impact", async () => {
+    await configureProjectRateFixture();
     const basket = await createProcurementBasketService().get(buyer, "mode-project", "basket-a");
-    expect(basket).toMatchObject({ approvedEstimatePaise: 100_000, automaticSubVendor: true, boqReady: true,
-      standardCost: { totalPaise: 0, complete: true, pricedLineCount: 1 },
-      lines: [{ baseUnitRatePaise: 0, standardCost: { state: "observed_unverified",
-        mode: "sub_vendor", baseCostPaise: 0, adjustedCostPaise: 0 } }] });
-    expect(buildBasketBoqLines(basket, [{ sourceLineItemKey: "approved-line", description: "POP",
-      quantityMilliUnits: 2_000, scopeType: "execution", targetDate: "2026-12-01",
-      deliveryLocation: "Site" }])).toHaveLength(1);
+    expect(basket).toMatchObject({ boqReady: true, automaticSubVendor: false, adjustedCostPaise: 8250,
+      lines: [{ approvedQuantity: "1", baseUnitRatePaise: 7500,
+        mode: { decision: { mode: "sub_vendor", quantity: "1" } },
+        standardCost: { state: "saved", baseCostPaise: 7500, adjustedCostPaise: 8250 } }] });
+    expect(buildBasketBoqLines(basket, [{ sourceLineItemKey: "approved-line" }])).toHaveLength(1);
   });
 
-  it("keeps an unclassified historical basket on its manual BOQ mode gate", async () => {
+  it("keeps a valid saved zero Sub-vendor rate orderable with a positive approved customer amount", async () => {
+    await configureProjectRateFixture();
+    const baskets = createProcurementBasketService();
+    const first = await baskets.get(buyer, "mode-project", "basket-a");
+    await projectRates.save(buyer, "mode-project", "basket-a", projectRateInput(first, 0, 0, "saved-zero-rate-001"));
+    const zero = await baskets.get(buyer, "mode-project", "basket-a");
+    expect(zero).toMatchObject({ approvedEstimatePaise: 100000, boqReady: true,
+      adjustedCostPaise: 0, standardCost: { totalPaise: 0, complete: true },
+      lines: [{ baseUnitRatePaise: 0, standardCost: { state: "saved", baseCostPaise: 0, adjustedCostPaise: 0 } }] });
+    expect(buildBasketBoqLines(zero, [{ sourceLineItemKey: "approved-line" }])).toHaveLength(1);
+  });
+
+  it("does not infer a Procurement choice for a historical source without explicit pricing mode", async () => {
     await enableSavedSubVendorScope();
+    await EstimateClientReviewRoundModel.collection.updateOne({ _id: "mode-round" },
+      { $unset: { "estimateSnapshot.lineItems.0.pricingMode": "" } });
     const basket = await createProcurementBasketService().get(buyer, "mode-project", "basket-a");
-    expect(basket).toMatchObject({ classification: "standard", automaticSubVendor: false, boqReady: false,
-      standardCost: { complete: true }, lines: [{ mode: { state: "selection_required" } }] });
-    expect(() => buildBasketBoqLines(basket, [{ sourceLineItemKey: "approved-line", description: "POP",
-      quantityMilliUnits: 2_000, scopeType: "execution", targetDate: "2026-12-01",
-      deliveryLocation: "Site" }])).toThrowError(expect.objectContaining({ code: "PROCUREMENT_BASKET_MODE_REQUIRED" }));
+    expect(basket).toMatchObject({ automaticSubVendor: false, boqReady: false, standardCost: { complete: false },
+      lines: [{ mode: { state: "unavailable", executionPolicy: { intent: "unrecorded", allowedModes: [] } } }] });
   });
 
-  it("keeps a Special Main Basket on explicit selection even with valid Sub-Vendor settings", async () => {
+  it("keeps execution pending irrespective of legacy Special classification", async () => {
     await enableSavedSubVendorScope();
+    await useExecutionSource();
     await EstimateClientReviewRoundModel.collection.updateOne({ _id: "mode-round" }, { $set: {
       "estimateSnapshot.selectedMainBasketIds": ["basket-a"],
       "estimateSnapshot.selectedMainBasketClassifications": [{ mainBasketId: "basket-a", classification: "special" }]
     } });
     const basket = await createProcurementBasketService().get(buyer, "mode-project", "basket-a");
-    expect(basket).toMatchObject({ classification: "special", automaticSubVendor: false, boqReady: false,
-      standardCost: null,
-      lines: [{ mode: { state: "selection_required", decision: null, preview: null }, standardCost: null }] });
-    expect(await ProjectPurchaseOrderModeDecisionModel.countDocuments()).toBe(0);
+    expect(basket).toMatchObject({ classification: "special", automaticSubVendor: false, boqReady: false, standardCost: null,
+      lines: [{ mode: { state: "selection_required", decision: null, preview: null } }] });
   });
   it("recalculates a saved Special mode from an active item's new draft without changing its project choice", async () => {
     await EstimateClientReviewRoundModel.collection.updateOne({ _id: "mode-round" }, { $set: {
@@ -831,7 +792,7 @@ describe("pinned mode resolution and price references", () => {
     const baskets = createProcurementBasketService();
     const original = await baskets.get(buyer, "mode-project", "basket-a");
     expect(original.boqReady).toBe(true);
-    await saveCurrentDraft({ ...advanced, modeCalculations: { ...advanced.modeCalculations,
+    await saveCurrentDraft({ ...advanced, subVendorMarginBps: 3_000, modeCalculations: { ...advanced.modeCalculations,
       pmc: { ...settings, baseRatePaise: 15_000, lowQuantityLimit: "2", impactBps: 2_000 } } });
     const draft = await baskets.get(buyer, "mode-project", "basket-a");
     expect(draft).toMatchObject({ classification: "special", boqReady: false,
@@ -1357,7 +1318,8 @@ describe("approved In-house component scope", { timeout: 30000 }, () => {
     } });
     const baskets = createProcurementBasketService();
     const initial = await baskets.get(buyer, "mode-project", "basket-a");
-    expect(initial.inHouseComponentBreakdown).toMatchObject({ complete: false, unavailableSourceLineItemKeys: ["approved-line"] });
+    expect(initial).not.toHaveProperty("inHouseComponentBreakdown");
+    expect(initial.lines[0]?.mode).toMatchObject({ state: "selection_required", decision: null });
     const saved = await service.save(buyer, "mode-project", { sourceLineItemKey: "approved-line", expectedVersion: 0,
       expectedEstimateSource, expectedRevisionDigest: initial.lines[0]!.mode!.revision!.contentDigest,
       idempotencyKey: "component-breakdown-a", mode: "in_house", quantity: "2", discountBps: 0, markupBasis: "starting", exceptionReason: null });
@@ -1381,12 +1343,13 @@ describe("approved In-house component scope", { timeout: 30000 }, () => {
     const renamed = await baskets.get(buyer, "mode-project", "basket-a");
     expect(renamed.inHouseComponentBreakdown!.subBaskets[0]!.subBasketName).toBe("Renamed finish");
     expect(renamed.preparationDigest).toBe(detail.preparationDigest);
-    await service.save(buyer, "mode-project", { sourceLineItemKey: "approved-line", expectedVersion: saved.version,
+    await expect(service.save(buyer, "mode-project", { sourceLineItemKey: "approved-line", expectedVersion: saved.version,
       expectedEstimateSource, expectedRevisionDigest: renamed.lines[0]!.mode!.revision!.contentDigest,
-      idempotencyKey: "component-breakdown-pmc", mode: "pmc", quantity: "2", discountBps: 0, markupBasis: "starting", exceptionReason: null });
+      idempotencyKey: "component-breakdown-pmc", mode: "pmc", quantity: "2", discountBps: 0, markupBasis: "starting", exceptionReason: null }))
+      .rejects.toMatchObject({ status: 422, code: "PROCUREMENT_EXECUTION_MODE_CONFLICT" });
     const changed = await baskets.get(buyer, "mode-project", "basket-a");
-    expect(changed).not.toHaveProperty("inHouseComponentBreakdown");
-    expect(changed.lines[0]!.mode!.preview!.mode).toBe("pmc");
+    expect(changed.inHouseComponentBreakdown).toEqual(renamed.inHouseComponentBreakdown);
+    expect(changed.lines[0]!.mode!.preview!.mode).toBe("in_house");
     expect(changed.approvedEstimatePaise).toBe(100000);
     expect((await baskets.get(buyer, "mode-project-b", "basket-a")).inHouseComponentBreakdown?.adjustedCostPaise).toBe(9000);
     await AiEstimatorKnowledgeSubBasketModel.collection.updateOne({ _id: "foreign-component-sub" }, { $set: { basketId: "wrong-parent" } });
@@ -1472,4 +1435,135 @@ describe("approved In-house component scope", { timeout: 30000 }, () => {
     const inactive = await mongoose.connection.transaction((session) => resolvePurchaseOrderModes("mode-project", approved, session, { at, proposals: proposal }));
     expect(inactive.get("approved-line")?.preview).toBeNull();
   });
+});
+
+describe("approved execution policy", () => {
+  async function useExecution() {
+    await EstimateClientReviewRoundModel.collection.updateOne({ _id: "mode-round" }, { $set: {
+      "estimateSnapshot.lineItems.0.pricingMode": "sub_vendor", "estimateSnapshot.lineItems.0.classification": "standard"
+    } });
+    return { ...source, allLineItems: [{ ...source.allLineItems[0]!, approvedPricingMode: "sub_vendor" as const }] };
+  }
+  const previewInput = { estimateSource: expectedEstimateSource, sourceLineItemKey: "approved-line", expectedVersion: 0,
+    mode: "sub_vendor" as const, quantity: "2", discountBps: 0, markupBasis: "starting" as const };
+  const decisionInput = (revisionDigest: string, mode: "pmc" | "sub_vendor" | "in_house", key: string, version = 0) => ({
+    expectedEstimateSource, sourceLineItemKey: "approved-line", expectedVersion: version,
+    expectedRevisionDigest: revisionDigest, idempotencyKey: key, mode, quantity: "2", discountBps: 0,
+    markupBasis: "starting" as const, exceptionReason: null
+  });
+  async function resolution(current = source) {
+    return (await mongoose.connection.transaction(session => resolvePurchaseOrderModes("mode-project", current, session))).get("approved-line")!;
+  }
+  async function configureExecutionComponents() {
+    const { AiEstimatorKnowledgeBasketModel } = await import("../src/models/AiEstimatorKnowledgeBasket.js");
+    const { AiEstimatorKnowledgeSubBasketModel } = await import("../src/models/AiEstimatorKnowledgeSubBasket.js");
+    await AiEstimatorKnowledgeBasketModel.collection.insertOne({ _id: "execution-components", name: "Execution", status: "active", version: 1 } as never);
+    await AiEstimatorKnowledgeSubBasketModel.collection.insertOne({ _id: "execution-sub", basketId: "execution-components", name: "Labor and material", status: "active", version: 1 } as never);
+    await saveCurrentDraft({ ...advanced, subVendorMarginBps: 3000,
+      modeCalculations: { ...advanced.modeCalculations, sub_vendor: settings },
+      inHouseUsage: "execution", inHousePresetComponentIds: ["execution-component"],
+      inHouseComponents: [{ id: "execution-component", basketId: "execution-components", subBasketId: "execution-sub",
+        inclusions: [], exclusions: [], labor: { ...settings, baseRatePaise: 2000 }, material: { ...settings, baseRatePaise: 3000 } }]
+    });
+  }
+
+  it("keeps PMC fixed and never infers execution from an absent approved mode", async () => {
+    expect((await resolution()).executionPolicy).toEqual({ intent: "pmc", allowedModes: ["pmc"] });
+    await expect(service.preview(buyer, "mode-project", previewInput)).rejects.toMatchObject({ code: "PROCUREMENT_EXECUTION_MODE_CONFLICT" });
+    await expect(service.save(buyer, "mode-project", decisionInput(approvedRevisionDigest, "sub_vendor", "blocked-source-mode")))
+      .rejects.toMatchObject({ code: "PROCUREMENT_EXECUTION_MODE_CONFLICT" });
+    const missing = { ...source, allLineItems: [{ ...source.allLineItems[0]!, approvedPricingMode: undefined }] };
+    const result = (await mongoose.connection.transaction(session => resolvePurchaseOrderModes("mode-project", missing, session))).get("approved-line");
+    expect(result).toMatchObject({ state: "unavailable", executionPolicy: { intent: "unrecorded", allowedModes: [] }, preview: null });
+    expect(await ProjectPurchaseOrderModeDecisionModel.countDocuments()).toBe(0);
+  });
+
+  it("keeps execution unselected until a source-compatible decision is saved", async () => {
+    const current = await useExecution();
+    const digest = await enableSavedSubVendorScope();
+    const before = await EstimateClientReviewRoundModel.findById("mode-round").lean();
+    const pending = (await mongoose.connection.transaction(session => resolvePurchaseOrderModes("mode-project", current, session))).get("approved-line")!;
+    expect(pending).toMatchObject({ state: "selection_required", decision: null, preview: null,
+      executionPolicy: { intent: "execution", allowedModes: ["sub_vendor", "in_house"] } });
+    const preview = await service.preview(buyer, "mode-project", previewInput);
+    expect(preview.preview).toMatchObject({ mode: "sub_vendor", baseCostPaise: 20000, adjustedCostPaise: 22000 });
+    expect(await ProjectPurchaseOrderModeDecisionModel.countDocuments()).toBe(0);
+    await service.save(buyer, "mode-project", decisionInput(digest, "sub_vendor", "save-execution-choice"));
+    const saved = (await mongoose.connection.transaction(session => resolvePurchaseOrderModes("mode-project", current, session))).get("approved-line")!;
+    expect(saved).toMatchObject({ state: "ready", decision: { mode: "sub_vendor", version: 1 }, preview: { adjustedCostPaise: 22000 } });
+    expect(await EstimateClientReviewRoundModel.findById("mode-round").lean()).toEqual(before);
+    await expect(service.preview(buyer, "mode-project", { ...previewInput, expectedVersion: 1, mode: "pmc" }))
+      .rejects.toMatchObject({ code: "PROCUREMENT_EXECUTION_MODE_CONFLICT" });
+  });
+
+  it("saves Procurement In-house presets without an approved In-house selection and keeps replay private", async () => {
+    const current = await useExecution();
+    await configureExecutionComponents();
+    const pending = (await mongoose.connection.transaction(session => resolvePurchaseOrderModes("mode-project", current, session))).get("approved-line")!;
+    expect(pending.availability.find(option => option.key === "in_house")?.available).toBe(true);
+    const request = decisionInput(pending.revision!.contentDigest!, "in_house", "save-inhouse-execution");
+    const saved = await service.save(buyer, "mode-project", request);
+    expect(saved).not.toHaveProperty("selectedInHouseComponentIds");
+    expect(await service.save(buyer, "mode-project", request)).toEqual(saved);
+    expect(await ProjectPurchaseOrderModeDecisionModel.findById(saved.id).lean()).toMatchObject({ selectedInHouseComponentIds: ["execution-component"] });
+    const resolved = (await mongoose.connection.transaction(session => resolvePurchaseOrderModes("mode-project", current, session))).get("approved-line")!;
+    expect(resolved).toMatchObject({ state: "ready", decision: { selectedInHouseComponentIds: ["execution-component"] },
+      preview: { mode: "in_house", baseCostPaise: 10000, adjustedCostPaise: 11000 } });
+    expect((await EstimateClientReviewRoundModel.findById("mode-round").lean())?.estimateSnapshot.lineItems[0]).not.toHaveProperty("selectedInHouseComponentIds");
+    await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: "revision-b-advanced" }, { $set: { "payload.inHousePresetComponentIds": [] } });
+    const stale = (await mongoose.connection.transaction(session => resolvePurchaseOrderModes("mode-project", current, session))).get("approved-line")!;
+    expect(stale.state).toBe("unavailable");
+    expect(stale.preview).toBeNull();
+    expect(stale.issues.some(issue => issue.code === "IN_HOUSE_COMPONENT_BASIS_CHANGED")).toBe(true);
+  });
+
+  it("applies exact-source project overrides to Sub-vendor previews and saves only", async () => {
+    const current = await useExecution();
+    await configureExecutionComponents();
+    await ProcurementBasketBaseRateModel.create({ _id: "execution-rate", projectId: "mode-project", ...expectedEstimateSource,
+      mainBasketId: "basket-a", sourceLineItemKey: "approved-line", overridePaise: 7000, version: 1, createdById: buyer.id, updatedById: buyer.id });
+    const preview = await service.preview(buyer, "mode-project", previewInput);
+    expect(preview.preview).toMatchObject({ mode: "sub_vendor", baseCostPaise: 14000, adjustedCostPaise: 15400 });
+    const inHouse = await service.preview(buyer, "mode-project", { ...previewInput, mode: "in_house" });
+    expect(inHouse.preview).toMatchObject({ baseCostPaise: 10000, adjustedCostPaise: 11000 });
+    await service.save(buyer, "mode-project", decisionInput(preview.revision!.contentDigest!, "sub_vendor", "save-overridden-rate"));
+    const saved = (await mongoose.connection.transaction(session => resolvePurchaseOrderModes("mode-project", current, session))).get("approved-line")!;
+    expect(saved.preview).toEqual(preview.preview);
+    expect((await AiEstimatorKnowledgeSectionModel.findById("revision-b-advanced").lean())?.payload.modeCalculations.sub_vendor.baseRatePaise).toBe(10000);
+  });
+
+  it.each(["award_pending", "issued"])("rejects execution changes for a %s source while preview leaves project epochs untouched", async status => {
+    const before = await ProjectModel.findById("mode-project").lean();
+    await service.preview(buyer, "mode-project", { ...previewInput, mode: "pmc" });
+    expect(await ProjectModel.findById("mode-project").lean()).toEqual(before);
+    await createFrozenModeEnquiry("execution-lock", status as "award_pending" | "issued");
+    await expect(service.save(buyer, "mode-project", decisionInput(approvedRevisionDigest, "pmc", `blocked-${status}`)))
+      .rejects.toMatchObject({ code: "PROCUREMENT_EXECUTION_MODE_LOCKED" });
+    expect(await ProjectPurchaseOrderModeDecisionModel.countDocuments()).toBe(0);
+    expect(await ProjectModel.findById("mode-project").lean()).toEqual(before);
+  });
+  it("rechecks the award lock when a concurrent submission wins the Project fence", async () => {
+    let locked!: () => void;
+    let release!: () => void;
+    const entered = new Promise<void>(resolve => { locked = resolve; });
+    const resume = new Promise<void>(resolve => { release = resolve; });
+    const submission = mongoose.connection.transaction(async session => {
+      await ProjectModel.updateOne({ _id: "mode-project" }, { $inc: { purchaseOrderApprovalEpoch: 1 } }, { session });
+      locked();
+      await resume;
+      await createFrozenModeEnquiry("racing-award", "award_pending", session);
+    });
+    await entered;
+    const saving = service.save(buyer, "mode-project", decisionInput(approvedRevisionDigest, "pmc", "concurrent-execution-save"))
+      .then(value => ({ value }), error => ({ error }));
+    const early = await Promise.race([saving, new Promise<string>(resolve => setTimeout(() => resolve("pending"), 100))]);
+    release();
+    await submission;
+    const result = await saving;
+    expect(early).not.toHaveProperty("value");
+    expect(result).toMatchObject({ error: { status: 409, code: "PROCUREMENT_EXECUTION_MODE_LOCKED" } });
+    expect(await ProjectPurchaseOrderModeDecisionModel.countDocuments()).toBe(0);
+    expect(await ProjectPurchaseOrderModeDecisionReceiptModel.countDocuments()).toBe(0);
+  });
+
 });

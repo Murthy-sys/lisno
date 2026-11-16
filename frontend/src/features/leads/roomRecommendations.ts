@@ -42,6 +42,7 @@ export interface RecommendationDecision {
   selected: boolean;
   completionRequired: boolean;
   unavailableChildCount: number;
+  unavailableReason?: "price_not_configured" | "configuration_incomplete";
   target: RecommendedLineTarget | null;
   children: RecommendationChildView[];
   reasons: RecommendationReason[];
@@ -223,6 +224,7 @@ export function buildRoomRecommendations({ catalogue, lines, roomId, recommendat
   const activeSources = partition.current;
   const responseSources = new Map(recommendations.sources.map((source) => [source.mainLineId, source]));
   const decisions = new Map<string, RecommendationDecision>();
+  const decisionTargets = new Map<string, string>();
   const guidance: RecommendationGuidanceView[] = [];
   let stale = partition.outdatedDraft;
 
@@ -245,6 +247,9 @@ export function buildRoomRecommendations({ catalogue, lines, roomId, recommendat
         ? `line:${rule.targetMainLineId ?? ""}`
         : `sub-basket:${rule.targetBasketId}:${rule.targetSubBasketId ?? ""}`;
       const existing = decisions.get(key);
+      const targetIdentity = JSON.stringify([rule.targetKind, rule.targetBasketId, rule.targetSubBasketId, rule.targetMainLineId]);
+      const sameTarget = !existing || decisionTargets.get(key) === targetIdentity;
+      if (!existing) decisionTargets.set(key, targetIdentity);
       const targetLocation = rule.targetKind === "main_line" && rule.available
         ? matchingTarget(locations, rule.targetMainLineId, rule.targetBasketId, rule.targetSubBasketId)
         : null;
@@ -287,11 +292,15 @@ export function buildRoomRecommendations({ catalogue, lines, roomId, recommendat
         ? (rule.unavailableChildCount ?? 0) + (expectedChildren - children.length)
         : 0;
       const completionRequired = rule.completionRequired || (target?.item.itemType === "temporary") || children.some((child) => child.completionRequired);
+      const unavailableName = rule.targetKind === "main_line" ? "Related item unavailable" : "Related Sub Basket unavailable";
+      const name = (rule.targetKind === "main_line" ? targetLocation?.item.name : subBasket?.name)
+        ?? rule.targetDisplay?.name ?? unavailableName;
+      const unavailableReason = rule.targetDisplay?.unavailableReason;
       const next: RecommendationDecision = existing ?? {
         key,
         kind: rule.targetKind,
         requirement: rule.requirement,
-        name: rule.targetKind === "main_line" ? target?.item.name ?? "Related item unavailable" : subBasket?.name ?? "Related Sub Basket unavailable",
+        name,
         basketName: rule.targetKind === "main_line" ? target?.basketName ?? null : available ? basket?.name ?? null : null,
         subBasketName: rule.targetKind === "main_line" ? target?.subBasketName ?? null : null,
         available,
@@ -299,13 +308,15 @@ export function buildRoomRecommendations({ catalogue, lines, roomId, recommendat
           available && children.length > 0 && unavailableChildCount === 0 && children.every((child) => child.selected),
         completionRequired,
         unavailableChildCount,
+        ...(unavailableReason ? { unavailableReason } : {}),
         target: target ? { mainLineId: target.item.mainLineId, basketId: target.basketId, subBasketId: target.subBasketId } : null,
         children,
         reasons: []
       };
       if (existing) {
+        const matchingName = sameTarget && existing.name === name;
         next.requirement = existing.requirement === "must" || rule.requirement === "must" ? "must" : "can";
-        next.available = existing.available && available;
+        next.available = existing.available && available && sameTarget;
         next.completionRequired = existing.completionRequired || completionRequired;
         next.unavailableChildCount = Math.max(existing.unavailableChildCount, unavailableChildCount);
         if (rule.targetKind === "main_line" && existing.target && target &&
@@ -318,12 +329,13 @@ export function buildRoomRecommendations({ catalogue, lines, roomId, recommendat
           ? Boolean(next.target && isSelected(next.target.mainLineId, next.target.basketId, next.target.subBasketId))
           : next.unavailableChildCount === 0 && next.children.length > 0 && next.children.every((child) => child.selected));
         if (!next.available) {
-          next.name = rule.targetKind === "main_line" ? "Related item unavailable" : "Related Sub Basket unavailable";
+          next.name = matchingName ? name : unavailableName;
           next.basketName = null;
           next.subBasketName = null;
           next.target = null;
           next.children = [];
         }
+        if (!sameTarget || existing.unavailableReason !== unavailableReason) delete next.unavailableReason;
       }
       next.reasons.push(reasonFor(source.mainLineId, sourceName, rule));
       decisions.set(key, next);

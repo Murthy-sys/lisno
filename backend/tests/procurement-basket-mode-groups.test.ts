@@ -6,13 +6,17 @@ import type { ProjectPurchaseOrderPreparationDto, PurchaseOrderPreparationEstima
 
 function line(key: string, classification: unknown, pricingMode: unknown, amountPaise = 10_000,
   overrides: Partial<PurchaseOrderPreparationEstimateLine> = {}): PurchaseOrderPreparationEstimateLine {
+  const saved = pricingMode === "pmc" || pricingMode === "in_house" || pricingMode === "sub_vendor" ? pricingMode : null;
   return { key, source: "configuration", included: true, itemType: "main_line", roomId: "room-a", roomName: "Living",
     mainBasketId: "basket-a", mainBasketName: "Painting", subBasketId: "sub-a", subBasketName: "Walls",
     mainLineId: "same-main-line", mainLineName: "Wall finish", mainBasketClassification: "special",
     quantity: "2", unit: "sqft", amountPaise, itemIds: [],
     estimateMode: resolveProcurementEstimateMode(readApprovedEstimateSelection(classification, pricingMode)),
-    mode: { state: "ready", decision: { mode: "pmc" }, revision: { status: "active" },
-      uom: { id: "uom-a", code: "SQFT", decimalScale: 2 }, preview: { mode: "pmc", baseCostPaise: amountPaise / 2,
+    mode: { state: saved ? "ready" : "unavailable",
+      executionPolicy: saved === "pmc" ? { intent: "pmc", allowedModes: ["pmc"] } : saved
+        ? { intent: "execution", allowedModes: ["sub_vendor", "in_house"] } : { intent: "unrecorded", allowedModes: [] },
+      decision: saved ? { mode: saved, quantity: "2" } : null, revision: { status: "active" },
+      uom: { id: "uom-a", code: "SQFT", decimalScale: 2 }, preview: { mode: saved, quantity: "2", baseCostPaise: amountPaise / 2,
         adjustedCostPaise: amountPaise / 2, sellingPaise: amountPaise,
         settings: { scopes: [{ scope: "pmc", baseRatePaise: amountPaise / 4 }] } } } as PurchaseOrderPreparationEstimateLine["mode"],
     ...overrides };
@@ -28,30 +32,30 @@ const project = (lines: PurchaseOrderPreparationEstimateLine[], commitments = ne
 
 describe("approved estimate mode resolution", () => {
   it.each([
-    ["standard", undefined, "sub_vendor"], ["standard", "sub_vendor", "sub_vendor"],
+    ["standard", "pmc", "pmc"], ["standard", "in_house", "in_house"], ["standard", "sub_vendor", "sub_vendor"],
+    [undefined, "pmc", "pmc"],
     ["special", "pmc", "pmc"], ["special", "sub_vendor", "sub_vendor"], ["special", "in_house", "in_house"]
   ])("maps %s with %s using line provenance", (classification, pricingMode, mode) => {
     expect(resolveProcurementEstimateMode(readApprovedEstimateSelection(classification, pricingMode)))
-      .toMatchObject({ approvedClassification: classification, approvedPricingMode: pricingMode ?? null,
+      .toMatchObject({ approvedClassification: classification ?? null, approvedPricingMode: pricingMode ?? null,
         mode, provenance: "line", issues: [] });
   });
-  it.each([["special", undefined], [undefined, "pmc"], ["standard", "in_house"], ["standard", "pmc"],
-    ["wrong", "sub_vendor"], ["special", "wrong"], [{ unsafe: true }, undefined]])
+  it.each([["special", undefined], ["standard", undefined], ["special", "wrong"], [{ unsafe: true }, undefined]])
     ("keeps missing/conflicting %s/%s unrecorded without borrowing legacy defaults", (classification, pricingMode) => {
       const selection = readApprovedEstimateSelection(classification, pricingMode);
       expect(resolveProcurementEstimateMode(selection, true)).toMatchObject({ mode: null, provenance: "unrecorded" });
       expect(resolveProcurementEstimateMode(selection, true).issues.length).toBeGreaterThan(0);
     });
-  it("uses a historical Standard default only when neither line value is present", () => {
-    expect(resolveProcurementEstimateMode({}, true)).toEqual({ approvedClassification: null, approvedPricingMode: null,
-      mode: "sub_vendor", provenance: "legacy_basket", issues: [] });
+  it("never invents a historical pricing mode from Standard classification", () => {
+    expect(resolveProcurementEstimateMode({}, true)).toMatchObject({ approvedClassification: null, approvedPricingMode: null,
+      mode: null, provenance: "unrecorded", issues: [{ code: "ESTIMATE_MODE_NOT_RECORDED" }] });
     expect(resolveProcurementEstimateMode({})).toMatchObject({ mode: null, provenance: "unrecorded" });
   });
 });
 
 describe("procurement mode subsets", () => {
   it("partitions mixed baskets, distinct rooms and same names without duplicating money or changing commercial digests", () => {
-    const lines = [line("standard", "standard", undefined, 10_000),
+    const lines = [line("standard", "standard", "sub_vendor", 10_000),
       line("special-sub", "special", "sub_vendor", 20_000),
       line("in-house", "special", "in_house", 30_000, { roomId: "room-b", roomName: "Dining" }),
       line("pmc", "special", "pmc", 40_000, { itemType: "temporary", subBasketId: null, subBasketName: null }),
@@ -81,18 +85,31 @@ describe("procurement mode subsets", () => {
     const ready = line("ready", "special", "pmc");
     const draft = line("draft", "special", "pmc");
     draft.mode!.revision!.status = "draft";
-    const unavailable = line("unavailable", "special", "pmc", 20_000, { mainBasketId: "basket-b", mode: null });
+    const unavailable = line("unavailable", "special", "pmc", 20_000, { mainBasketId: "basket-b" });
+    unavailable.mode!.state = "unavailable"; unavailable.mode!.preview = null;
     expect(project([ready, draft, unavailable])[2]).toMatchObject({ includedLineCount: 3, boqReadyLineCount: 1,
       readinessPercent: 33, currentCostPaise: null, currentCostComplete: false, unpricedLineCount: 1 });
   });
-  it("takes automatic Standard cost from existing canonical suggestions, independent of estimate grouping", () => {
+  it("uses saved In-house cost despite a legacy Standard classification and Sub-vendor suggestion", () => {
     const value = line("standard", "special", "in_house", 10_000, { mainBasketClassification: "standard",
       mainBasketClassificationExplicit: true, standardSuggestion: { preview: { mode: "sub_vendor", quantity: "2",
         baseRates: [{ scope: "sub_vendor", ratePaise: 2_500 }], baseCostPaise: 5_000, adjustedCostPaise: 6_000 }, issues: [] } });
-    expect(project([value])[0]).toMatchObject({ currentCostPaise: 6_000, includedLineCount: 1 });
+    expect(project([value])[0]).toMatchObject({ currentCostPaise: 5_000, includedLineCount: 1 });
+  });
+  it("separates pending execution choices from missing source intent without inventing cost", () => {
+    const pending = line("pending", "standard", "sub_vendor", 24_000);
+    pending.mode!.decision = null; pending.mode!.preview = null; pending.mode!.state = "selection_required";
+    const missing = line("missing", "standard", undefined, 15_000);
+    const groups = project([pending, missing]);
+    expect(groups.map(group => group.mode)).toEqual(["in_house", "sub_vendor", "pmc", "execution_pending", "unrecorded"]);
+    expect(groups[3]).toMatchObject({ approvedEstimatePaise: 24_000, currentCostPaise: null, includedLineCount: 1,
+      boqReadyLineCount: 0, currentCostComplete: false, unpricedLineCount: 1 });
+    expect(groups[4]).toMatchObject({ approvedEstimatePaise: 15_000, currentCostPaise: null, modeIssueCount: 1 });
+    pending.mode!.decision = { mode: "in_house", quantity: "2" } as NonNullable<typeof pending.mode>["decision"];
+    expect(project([pending])[0]).toMatchObject({ mode: "in_house", currentCostPaise: null, currentCostComplete: false });
   });
   it("retains reference-only commitments without counts or cost, and omits uncommitted reference subsets", () => {
-    const lines = [line("selected", "standard", undefined, 10_000), line("zero", "special", "pmc", 0),
+    const lines = [line("selected", "standard", "sub_vendor", 10_000), line("zero", "special", "pmc", 0),
       line("excluded", "special", "in_house", 20_000, { included: false }),
       line("uncommitted", undefined, undefined, 0)];
     const groups = project(lines, new Map([["selected", 111], ["zero", 222], ["excluded", 333]]));

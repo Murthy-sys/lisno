@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { procurementModeMatchesPolicy } from "./procurement-execution-policy.js";
 import type { ProjectPurchaseOrderPreparationDto, PurchaseOrderPreparationEstimateLine } from "./project-purchase-order-preparation.js";
 import { MAX_FINANCE_AMOUNT_PAISE } from "./project-finance.js";
 import { DEFAULT_PROCUREMENT_BASKET_PROJECT_RATE, type ProcurementBasketProjectRate } from "./procurement-basket-base-rate.js";
@@ -93,7 +94,7 @@ export function projectProcurementBaskets(preparation: ProjectPurchaseOrderPrepa
   for (const line of preparation.estimateLines) {
     const id = line.mainBasketId ?? `legacy:${line.key}`;
     const classification = line.mainBasketClassification ?? "standard";
-    const automaticSubVendor = classification === "standard" && line.mainBasketClassificationExplicit === true;
+    const automaticSubVendor = false;
     const group = groups.get(id) ?? { name: line.mainBasketName?.trim() || "Unassigned basket",
       classification, automaticSubVendor, lines: [] };
     if (group.classification !== classification || group.automaticSubVendor !== automaticSubVendor)
@@ -115,7 +116,7 @@ export function projectProcurementBaskets(preparation: ProjectPurchaseOrderPrepa
       provisional: priced.some(cost => cost.state === "suggested" || cost.state === "observed_unverified"),
       pricedLineCount: priced.length
     } : null;
-    const ready = included.filter(line => line.mode?.state === "ready" && line.mode.preview !== null);
+    const ready = included.filter(line => procurementBasketModeCostReady(line.mode));
     const baseCostPaise = safeSum(ready.map(line => line.mode!.preview!.baseCostPaise));
     const adjustedCostPaise = safeSum(ready.map(line => line.mode!.preview!.adjustedCostPaise));
     const workingTotalPaise = safeSum(ready.map(line => line.mode!.preview!.sellingPaise));
@@ -150,29 +151,13 @@ export function projectProcurementBaskets(preparation: ProjectPurchaseOrderPrepa
         mainLineId: line.mainLineId, mainLineName: line.mainLineName,
         approvedQuantity: line.quantity, approvedUnit: line.unit,
         ...(line.specification === undefined ? {} : { specification: line.specification }), approvedAmountPaise: line.amountPaise,
-        ...(group.automaticSubVendor ? { standardPriceBasis: {
-          projectRate: line.projectRate ?? DEFAULT_PROCUREMENT_BASKET_PROJECT_RATE,
-          revisionId: line.mode?.revision?.id ?? null,
-          revisionStatus: line.mode?.revision?.status ?? null,
-          activatedDigest: line.mode?.revision?.contentDigest ?? null,
-          observedDigest: line.mode?.integrity?.observedDigest ?? null,
-          uom: line.mode?.uom ?? null,
-          cost: standardLineCosts.get(line.key) ? {
-            state: standardLineCosts.get(line.key)!.state,
-            calculationQuantity: standardLineCosts.get(line.key)!.calculationQuantity,
-            baseRates: standardLineCosts.get(line.key)!.baseRates,
-            baseCostPaise: standardLineCosts.get(line.key)!.baseCostPaise,
-            adjustedCostPaise: standardLineCosts.get(line.key)!.adjustedCostPaise
-          } : null
-        } } : { mode: line.mode ? { state: line.mode.state, decision: line.mode.decision ?? null,
-          revision: line.mode.revision ?? null, uom: line.mode.uom ?? null,
-          preview: line.mode.preview ?? null, integrity: line.mode.integrity ?? null } : null })
+        projectRate: line.projectRate ?? DEFAULT_PROCUREMENT_BASKET_PROJECT_RATE,
+        mode: line.mode ? { state: line.mode.state, executionPolicy: line.mode.executionPolicy ?? null,
+          decision: line.mode.decision ?? null, revision: line.mode.revision ?? null, uom: line.mode.uom ?? null,
+          preview: line.mode.preview ?? null, integrity: line.mode.integrity ?? null } : null
       })).sort((left, right) => left.sourceLineItemKey.localeCompare(right.sourceLineItemKey))
     })).digest("hex");
-    // Standard baskets use a saved mode only when automatic Sub-Vendor pricing is off.
-    // Keep attribution aligned with that canonical cost source, including unavailable saved decisions.
-    const componentCostLines = group.lines.filter(line => group.classification === "special" ||
-      !group.automaticSubVendor && line.mode?.decision?.mode === "in_house");
+    const componentCostLines = group.lines.filter(line => line.mode?.decision?.mode === "in_house");
     const inHouseComponentBreakdown = projectInHouseComponentBreakdown(componentCostLines, componentTargetNames);
     return {
       id, name: group.name, classification: group.classification, automaticSubVendor: group.automaticSubVendor,
@@ -192,38 +177,35 @@ function projectBaseUnitRate(line: PurchaseOrderPreparationEstimateLine,
   standardCost: ProcurementBasketLineStandardCostDto | null): number | null {
   if (!line.included || line.amountPaise === null || line.amountPaise <= 0) return null;
   const rates = standardCost !== null ? standardCost.baseRates.map(row => row.ratePaise)
-    : line.mode?.state === "ready" && line.mode.preview
+    : procurementBasketModeCostReady(line.mode) && line.mode?.preview
       ? line.mode.preview.settings.scopes.map(row => row.baseRatePaise) : [];
   return rates.length ? safeSum(rates) : null;
 }
 
+/** Compatibility cost fields follow the saved Procurement decision, never the estimate default. */
 function projectStandardLineCost(line: PurchaseOrderPreparationEstimateLine,
-  automaticSubVendor: boolean): ProcurementBasketLineStandardCostDto | null {
+  _automaticSubVendor: boolean): ProcurementBasketLineStandardCostDto | null {
   if (!line.included || line.amountPaise === null || line.amountPaise <= 0) return null;
   const mode = line.mode;
-  const savedPreview = !automaticSubVendor && mode?.state === "ready" && mode.decision ? mode.preview : null;
-  const suggestedPreview = automaticSubVendor || !mode?.decision ? line.standardSuggestion?.preview : null;
-  if (savedPreview) return {
-    state: "saved", mode: savedPreview.mode, calculationQuantity: savedPreview.quantity,
-    baseRates: savedPreview.settings.scopes.map(row => ({ scope: row.scope, ratePaise: row.baseRatePaise, ...(row.componentId === undefined ? {} : { componentId: row.componentId, componentBasketId: row.componentBasketId, componentSubBasketId: row.componentSubBasketId }) })),
-    baseCostPaise: savedPreview.baseCostPaise, adjustedCostPaise: savedPreview.adjustedCostPaise, issues: []
+  const preview = procurementBasketModeCostReady(mode) ? mode?.preview : null;
+  if (preview) return {
+    state: "saved", mode: preview.mode, calculationQuantity: preview.quantity,
+    baseRates: preview.settings.scopes.map(row => ({ scope: row.scope, ratePaise: row.baseRatePaise,
+      ...(row.componentId === undefined ? {} : { componentId: row.componentId,
+        componentBasketId: row.componentBasketId, componentSubBasketId: row.componentSubBasketId }) })),
+    baseCostPaise: preview.baseCostPaise, adjustedCostPaise: preview.adjustedCostPaise, issues: []
   };
-  if (suggestedPreview) return {
-    state: mode?.integrity?.status === "mismatch" ? "observed_unverified" : "suggested",
-    mode: suggestedPreview.mode, calculationQuantity: suggestedPreview.quantity,
-    baseRates: suggestedPreview.baseRates,
-    baseCostPaise: suggestedPreview.baseCostPaise, adjustedCostPaise: suggestedPreview.adjustedCostPaise,
-    issues: [...(line.standardSuggestion?.issues ?? [])]
-  };
-  return {
-    state: "unavailable", mode: automaticSubVendor ? "sub_vendor" : mode?.decision?.mode ?? null,
-    calculationQuantity: automaticSubVendor ? line.quantity : mode?.decision?.quantity ?? null, baseRates: [],
+  return { state: "unavailable", mode: mode?.decision?.mode ?? null,
+    calculationQuantity: mode?.decision?.quantity ?? null, baseRates: [],
     baseCostPaise: null, adjustedCostPaise: null,
-    issues: !automaticSubVendor && mode?.decision
-      ? nonemptyIssues(mode?.issues, "SAVED_MODE_UNAVAILABLE", "The saved mode cannot be priced from its pinned Configuration revision.")
-      : nonemptyIssues(line.standardSuggestion?.issues ?? mode?.issues,
-        "SUB_VENDOR_COST_UNAVAILABLE", "The saved Sub-Vendor settings cannot price this approved line.")
-  };
+    issues: nonemptyIssues(mode?.issues, "SAVED_MODE_REQUIRED", "Confirm a valid saved Procurement mode for this line.") };
+}
+
+/** Internal cost needs an allowed, saved decision and its exact current preview. */
+export function procurementBasketModeCostReady(mode: PurchaseOrderPreparationEstimateLine["mode"]): boolean {
+  return Boolean(mode?.state === "ready" && mode.decision && mode.preview &&
+    procurementModeMatchesPolicy(mode.executionPolicy, mode.decision.mode) &&
+    mode.preview.mode === mode.decision.mode && mode.preview.quantity === mode.decision.quantity);
 }
 
 function isActionableBasketLine(line: ProcurementBasketLineDto): boolean {
@@ -238,35 +220,25 @@ export function procurementBasketLineBoqReady(
   const mode = line.mode;
   if (!mode?.uom || !mode.uom.id || !mode.uom.code ||
     !Number.isSafeInteger(mode.uom.decimalScale) || mode.uom.decimalScale < 0 || mode.uom.decimalScale > 3) return false;
-  if (!basket.automaticSubVendor) return mode.state === "ready" && mode.preview !== null &&
-    (mode.revision?.status === "active" || mode.revision?.status === "superseded");
-  return procurementBasketLineStandardCostCalculable(basket, line) &&
+  return procurementBasketModeCostReady(mode) &&
     (mode.revision?.status === "active" || mode.revision?.status === "superseded");
 }
 
-/** A draft-only item can have a valid internal cost before its revision is orderable. */
+/** Project-only rates apply exclusively to a saved, allowed Sub-vendor calculation. */
 export function procurementBasketLineStandardCostCalculable(
-  basket: Pick<ProcurementBasketSummaryDto, "automaticSubVendor">,
+  _basket: Pick<ProcurementBasketSummaryDto, "automaticSubVendor">,
   line: ProcurementBasketLineDto): boolean {
-  if (!basket.automaticSubVendor || !isActionableBasketLine(line)) return false;
   const mode = line.mode;
-  if (!mode?.uom || !mode.uom.id || !mode.uom.code ||
+  if (!isActionableBasketLine(line) || line.source !== "configuration" || !procurementBasketModeCostReady(mode) ||
+    mode?.decision?.mode !== "sub_vendor" || !mode.preview || !mode.uom?.id || !mode.uom.code ||
     !Number.isSafeInteger(mode.uom.decimalScale) || mode.uom.decimalScale < 0 || mode.uom.decimalScale > 3) return false;
-  const cost = line.standardCost;
-  const rate = cost?.baseRates[0];
-  return line.source === "configuration" && Boolean(mode.revision?.id) &&
-    (mode.revision?.status === "draft" || mode.revision?.status === "active" || mode.revision?.status === "superseded") &&
-    typeof mode.revision?.contentDigest === "string" && /^[a-f0-9]{64}$/u.test(mode.revision.contentDigest) &&
-    (cost?.state === "suggested" || cost?.state === "observed_unverified") &&
-    cost.mode === "sub_vendor" && cost.calculationQuantity === line.approvedQuantity &&
-    cost.baseRates.length === 1 && rate?.scope === "sub_vendor" &&
-    Number.isSafeInteger(rate.ratePaise) && rate.ratePaise >= 0 &&
-    line.baseUnitRatePaise === rate.ratePaise &&
-    Number.isSafeInteger(cost.baseCostPaise) && cost.baseCostPaise! >= 0 &&
-    Number.isSafeInteger(cost.adjustedCostPaise) && cost.adjustedCostPaise! >= cost.baseCostPaise! &&
-    (cost.state !== "observed_unverified" || (mode.integrity?.status === "mismatch" &&
-      mode.integrity.activatedDigest === mode.revision.contentDigest &&
-      /^[a-f0-9]{64}$/u.test(mode.integrity.observedDigest)));
+  const preview = mode.preview;
+  const rate = preview.settings.scopes[0];
+  return Boolean(mode.revision?.id && typeof mode.revision.contentDigest === "string" &&
+    /^[a-f0-9]{64}$/u.test(mode.revision.contentDigest) && preview.settings.scopes.length === 1 &&
+    rate?.scope === "sub_vendor" && Number.isSafeInteger(rate.baseRatePaise) && rate.baseRatePaise >= 0 &&
+    line.baseUnitRatePaise === rate.baseRatePaise && Number.isSafeInteger(preview.baseCostPaise) && preview.baseCostPaise >= 0 &&
+    Number.isSafeInteger(preview.adjustedCostPaise) && preview.adjustedCostPaise >= preview.baseCostPaise);
 }
 
 function nonemptyIssues(issues: readonly { code: string; message: string }[] | undefined,

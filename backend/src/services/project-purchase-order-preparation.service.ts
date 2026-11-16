@@ -95,7 +95,7 @@ export async function buildProjectPurchaseOrderPreparation(projectId: string, se
   for (const row of projectRateRows) {
     const sourceLine = sourceLines.get(String(row.sourceLineItemKey));
     if (!sourceLine || sourceLine.mainBasketId !== row.mainBasketId ||
-      source.mainBasketClassifications[row.mainBasketId] !== "standard") continue;
+      (sourceLine.approvedPricingMode !== "sub_vendor" && sourceLine.approvedPricingMode !== "in_house")) continue;
     projectRates.set(String(row.sourceLineItemKey), { version: Number(row.version),
       overridePaise: row.overridePaise == null ? null : Number(row.overridePaise) });
   }
@@ -300,10 +300,12 @@ function preparationEstimateLine(line: ApprovedProcurementSourceLine, itemIds: s
   currentMainLineName: string | null,
   currentBasketName: string | null,
   currentSubBasketName: string | null, includeSpecification = false): PurchaseOrderPreparationEstimateLine {
+  const selectedInHouseComponentIds = (mode?.decision?.mode === "in_house" ? mode.decision.selectedInHouseComponentIds : undefined)
+    ?? line.selectedInHouseComponentIds;
   return {
     key: line.key, included: line.included, source: line.source === "configuration" ? "configuration" : "legacy",
     ...(line.modeTier === undefined ? {} : { modeTier: line.modeTier }),
-    ...(line.selectedInHouseComponentIds === undefined ? {} : { selectedInHouseComponentIds: [...line.selectedInHouseComponentIds] }),
+    ...(selectedInHouseComponentIds === undefined ? {} : { selectedInHouseComponentIds: [...selectedInHouseComponentIds] }),
     ...estimateDimensionSnapshotFields(line),
     estimateMode: resolveProcurementEstimateMode(line, line.source === "configuration" &&
       mainBasketClassificationExplicit && mainBasketClassification === "standard"),
@@ -326,6 +328,7 @@ function digestMode(mode: PurchaseOrderModeResolution | null, eligibleIds: Reado
   if (!mode) return null;
   return {
     state: mode.state, options: mode.options, issues: mode.issues,
+    ...(mode.executionPolicy ? { executionPolicy: mode.executionPolicy } : {}),
     decision: mode.decision,
     ...(mode.integrity ? { integrity: { status: mode.integrity.status,
       activatedDigest: mode.integrity.activatedDigest, observedDigest: mode.integrity.observedDigest } } : {}),

@@ -14,7 +14,7 @@ import { EstimateItemPicker, EstimateSelectionPagination } from "../estimates/Es
 import type { EstimateRecommendationsPopup } from "../estimates/EstimateRecommendations";
 import type { EstimationCatalogue } from "./estimationCatalogueApi";
 import type { EstimateClassification, EstimatePricingMode } from "./leadsApi";
-import { configuredInHouseGoverned, createConfiguredLine, configuredLineCanInclude, configuredModeBaseRate, formatRateInput, configuredTierGroupKey, configuredLineInTierGroup, type ConfiguredTierGroupScope, configuredAttributedAmountPaise, configuredUsesComponentPricing, configuredDimensionsIssue, configuredInHouseSelectionIssue, configuredLineAmountPaise, configuredLinePreviewAmountPaise, configuredTierUnavailableReason, configuredQuantityUnits, parseSellingRate, type ConfiguredLineDraft } from "./configuredEstimate";
+import { configuredInHouseGoverned, createConfiguredLine, configuredLineCanInclude, configuredModeBaseRate, formatRateInput, configuredTierGroupKey, configuredLineInTierGroup, type ConfiguredTierGroupScope, configuredAttributedAmountPaise, configuredUsesComponentPricing, configuredDimensionsIssue, configuredInHouseSelectionIssue, configuredLineAmountPaise, configuredLinePreviewAmountPaise, configuredTierUnavailableReason, configuredTierSelectionUnavailableReason, configuredQuantityUnits, parseSellingRate, type ConfiguredLineDraft } from "./configuredEstimate";
 import { EstimateInHouseComponents } from "./EstimateInHouseComponents";
 import { EstimatorRecommendations, type RecommendationReadState } from "./EstimatorRecommendations";
 import { recommendationTargetIdentity, type RoomRecommendationView, type RecommendedLineTarget } from "./roomRecommendations";
@@ -94,23 +94,9 @@ export function ConfiguredEstimateBuilder({
   const pickerTriggerRef = useRef<HTMLButtonElement>(null);
   const tierInfoTriggerRef = useRef<HTMLButtonElement>(null);
   const [tierInfo, setTierInfo] = useState<{ context: string; scope: ConfiguredTierGroupScope } | null>(null);
-  const nonPmcModes = useRef<{ context: string; modes: Map<string, PmcToggleTarget> }>({
-    context: reviewContextKey, modes: new Map()
-  });
-  useLayoutEffect(() => {
-    nonPmcModes.current = { context: reviewContextKey, modes: new Map() };
-  }, [reviewContextKey]);
-  const getPmcToggleTarget = (line: ConfiguredLineDraft, remember = false): PmcToggleTarget => {
-    const remembered = nonPmcModes.current.context === reviewContextKey ? nonPmcModes.current.modes : undefined;
-    if (line.pricingMode === "pmc") return remembered?.get(line.key) ?? { pricingMode: "sub_vendor", classification: "standard" };
-    if (remember) {
-      const classification = line.classification ?? mainBasketClassifications?.get(line.mainBasketId) ?? "standard";
-      const pricingMode = line.pricingMode ?? (classification === "standard" ? "sub_vendor" : undefined);
-      if (pricingMode === "sub_vendor" || pricingMode === "in_house") remembered?.set(line.key, { pricingMode, classification });
-      else remembered?.delete(line.key);
-    }
-    return { pricingMode: "pmc", classification: "special" };
-  };
+  const getPmcToggleTarget = (line: ConfiguredLineDraft): PmcToggleTarget => line.pricingMode === "pmc"
+    ? { pricingMode: "sub_vendor", classification: "standard" }
+    : { pricingMode: "pmc", classification: "special" };
   const modeChangesReady = pricingModeEditable && !refreshingAvailableItems && availableItemsState === "ready";
   const selectedCount = lines.filter(line => line.included).length;
   const activeRoom = rooms.find(room => room.id === activeRoomId) ?? rooms[0];
@@ -537,7 +523,7 @@ function ConfiguredTierSuggestionLoader({ context, groups, children }: {
 function ExcludedEstimateReview({ showInternalTierDetails, lines, requiredCount, contextKey, editable, pricingModeEditable, onUpdateLine, moneyPaise, onFinish, getPmcToggleTarget, canIncludeLine }: {
   showInternalTierDetails: boolean;
   pricingModeEditable: boolean;
-  getPmcToggleTarget: (line: ConfiguredLineDraft, remember?: boolean) => PmcToggleTarget;
+  getPmcToggleTarget: (line: ConfiguredLineDraft) => PmcToggleTarget;
   lines: readonly ConfiguredLineDraft[];
   requiredCount: number;
   contextKey: string;
@@ -569,7 +555,7 @@ function ExcludedEstimateReview({ showInternalTierDetails, lines, requiredCount,
 function ConfiguredLineRow({ showInternalTierDetails, line, inheritedClassification = "standard", editable, selectionEditable = editable, tierEditable = false, pricingModeEditable, onUpdateLine, moneyPaise, getPmcToggleTarget }: {
   showInternalTierDetails: boolean;
   pricingModeEditable: boolean;
-  getPmcToggleTarget: (line: ConfiguredLineDraft, remember?: boolean) => PmcToggleTarget;
+  getPmcToggleTarget: (line: ConfiguredLineDraft) => PmcToggleTarget;
   line: ConfiguredLineDraft;
   inheritedClassification?: EstimateClassification;
   editable: boolean;
@@ -600,7 +586,7 @@ function ConfiguredLineRow({ showInternalTierDetails, line, inheritedClassificat
       ?? (targetRate === null || targetRate <= 0 ? "Price not configured for this pricing method and tier." : null);
   const referenceMode = line.pricingMode ?? (classification !== "special" ? "sub_vendor" : undefined);
   const tierOptions = KNOWLEDGE_MODE_TIERS.map(value => ({ value, label: KNOWLEDGE_MODE_TIER_LABELS[value],
-    disabledReason: line.sourceMissing ? "Current Configuration unavailable" : !referenceMode ? "Choose a pricing method first" : configuredTierUnavailableReason(line, value, referenceMode) ??
+    disabledReason: configuredTierSelectionUnavailableReason(line, value) ?? (!referenceMode ? "Choose a pricing method first" : null) ??
       (!pricingModeEditable && referenceMode !== line.pricingMode ? "Pricing mode cannot be changed at this estimate stage." : null) }));
   const tierAvailabilityId = `${inputId}-tier-availability`;
   const showTierControl = line.included || editable && tierEditable && Boolean(line.persistedId);
@@ -618,10 +604,10 @@ function ConfiguredLineRow({ showInternalTierDetails, line, inheritedClassificat
     tier={showTierControl ? <EstimateLineTierOptions label={label} groupName={`line-tier-${line.key}`}
       value={line.rateSource === "configuration" ? line.modeTier ?? "signature" : null}
       options={tierOptions} disabled={!editable || !tierEditable || line.sourceMissing} availabilityId={tierAvailabilityId}
-      onChange={modeTier => { if (editable && tierEditable && !configuredTierUnavailableReason(line, modeTier, referenceMode)) onUpdateLine(line.key, { modeTier, rateSource: "configuration" }); }} /> : null}
+      onChange={modeTier => { if (editable && tierEditable && !tierOptions.find(option => option.value === modeTier)?.disabledReason) onUpdateLine(line.key, { modeTier, rateSource: "configuration" }); }} /> : null}
     pricing={line.included ? <EstimatePricingModeControl variant="pmc-only" mode={line.pricingMode ?? (editable ? referenceMode : undefined)} label={label}
       groupName={`line-pricing-mode-${line.key}`} editable={canEditMode} disabled={Boolean(pmcUnavailableReason)} disabledReason={pmcUnavailableReason ?? undefined}
-      onTogglePmc={() => { if (!pmcUnavailableReason) onUpdateLine(line.key, getPmcToggleTarget(line, true)); }}
+      onTogglePmc={() => { if (!pmcUnavailableReason) onUpdateLine(line.key, getPmcToggleTarget(line)); }}
       onChange={() => {}} /> : null}
     fields={<>
       {line.dimensionsMandatory ? <div className="configured-estimate-line__quantity configured-estimate-line__quantity--calculated"><span>Qty ({line.uomName})</span><output aria-label={`Quantity (${line.uomName}) for ${label}`}>{Number.isFinite(line.quantity) && !configuredDimensionsIssue(line) ? line.quantity : "Pending"}</output></div> : <label className="configured-estimate-line__quantity"><span>Qty ({line.uomName})</span><span className="configured-estimate-line__stepper"><button type="button" aria-label={`Decrease quantity for ${label}`} disabled={!editable || !Number.isFinite(line.quantity) || line.quantity <= (line.included ? step : 0)} onClick={() => changeQuantity(-1)}>−</button><input type="number" min={line.included ? step : 0} step={step} value={Number.isFinite(line.quantity) ? line.quantity : ""} disabled={!editable} aria-label={`Quantity (${line.uomName}) for ${label}`} aria-invalid={quantityInvalid || amountTooLarge} aria-describedby={amountTooLarge ? `${inputId}-amount-overflow` : undefined} onChange={(event) => onUpdateLine(line.key, { quantity: event.target.value === "" ? Number.NaN : Number(event.target.value) })} /><button type="button" aria-label={`Increase quantity for ${label}`} disabled={!editable} onClick={() => changeQuantity(1)}>+</button></span></label>}

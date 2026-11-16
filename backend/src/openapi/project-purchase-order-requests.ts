@@ -52,6 +52,8 @@ export const PROJECT_PURCHASE_ORDER_REQUEST_SCHEMAS = {
     }) }
   }),
   ProjectPurchaseOrderModeDecision: object({
+    selectedInHouseComponentIds: { type: "array", maxItems: 50, uniqueItems: true, items: id,
+      readOnly: true, description: "Server-validated Procurement component basis; omitted when component disclosure is hidden." },
     id, version, sourceLineItemKey: id,
     mode: { type: "string", enum: ["pmc", "sub_vendor", "in_house"], nullable: true },
     quantity: { type: "string", nullable: true },
@@ -116,6 +118,7 @@ export const PROJECT_PURCHASE_ORDER_REQUEST_SCHEMAS = {
     integrity: ref("ProjectPurchaseOrderModeIntegrity")
   }, ["projectId", "estimateSource", "sourceLineItemKey", "decisionVersion", "revision", "uom", "preview", "scopes", "issues"]),
   ProjectPurchaseOrderModeResolution: object({
+    executionPolicy: ref("ProcurementExecutionPolicy"),
     inHouseComponentVisibility: { type: "string", enum: ["hidden", "visible"] },
     inHouseComponentVisibilityIssue: ref("ProjectPurchaseOrderModeIssue"),
     state: { type: "string", enum: ["ready", "selection_required", "unavailable", "exception"] },
@@ -130,6 +133,11 @@ export const PROJECT_PURCHASE_ORDER_REQUEST_SCHEMAS = {
     priceReferences: { type: "object", additionalProperties: ref("ProjectPurchaseOrderModePriceReference") },
     integrity: ref("ProjectPurchaseOrderModeIntegrity")
   }, ["state", "options", "decision", "preview", "issues", "revision", "uom", "priceReferences"]),
+  ProcurementExecutionPolicy: object({
+    intent: { type: "string", enum: ["pmc", "execution", "unrecorded"] },
+    allowedModes: { type: "array", uniqueItems: true,
+      items: { type: "string", enum: ["pmc", "sub_vendor", "in_house"] } }
+  }),
   ProjectPurchaseOrderPreparationBlocker: blocker,
   ProjectPurchaseOrderPreparationItem: object({ id, version, sourceSectionId: { ...id, nullable: true },
     sourceLineItemKey: { ...id, nullable: true }, roomName: { type: "string", nullable: true },

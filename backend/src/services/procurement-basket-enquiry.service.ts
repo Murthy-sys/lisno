@@ -28,7 +28,7 @@ import type { ProcurementBasketBoqMailer } from "./procurement-basket-boq-mailer
 import { assertBasketVendorEligible, eligibleBasketVendors,
   type BasketVendorCandidate } from "./procurement-basket-vendor-eligibility.service.js";
 import { storedProcurementVendorProfile } from "./procurement-vendor-profile.js";
-import { assertBasketSourceUnreserved, basketReconciliationForRevision, buildBasketBoqLines,
+import { assertBasketActionReady, assertBasketSourceUnreserved, basketReconciliationForRevision, buildBasketBoqLines,
   currentBasket, currentBasketForVendorScope, getBasketEnquiry, getCurrentBoq,
   requireBasketBuyer, tenderConflict, tenderHash, tenderId, tenderIso, tenderLinkUnavailable, tenderTransaction,
   type TenderRow } from "./procurement-basket-tender-support.service.js";
@@ -61,7 +61,7 @@ export interface ProcurementBasketEnquiryDto {
   preparationSource?: EstimationPreparationSource;
   preparationDigest: string;
   vendorScopeCurrent: boolean | null;
-  sourceReconciliation?: { id: string; preparationSource: EstimationPreparationSource; unchangedLineKeys: string[] };
+  sourceReconciliation?: { id: string; preparationSource: EstimationPreparationSource; preparationDigest: string; unchangedLineKeys: string[] };
   boqRevisionId: string | null;
   boqRevision: number | null;
   boqDigest: string | null;
@@ -217,14 +217,13 @@ function assertSentBasketReady(basket: ProcurementBasketDetailDto): void {
     !procurementBasketLineBoqReady(basket, line));
   if (!basket.boqReady || unready) {
     const lineName = unready?.mainLineName?.trim() || unready?.sourceLineItemKey || "An included line";
-    tenderConflict(basket.automaticSubVendor ? "PROCUREMENT_BASKET_SUB_VENDOR_COST_UNAVAILABLE"
-      : "PROCUREMENT_BASKET_MODE_REQUIRED",
+    tenderConflict("PROCUREMENT_BASKET_MODE_REQUIRED",
     `${lineName} is not ready for vendor invitations. Complete its saved Configuration and start a new BOQ round if the approved scope changed.`);
   }
 }
 
 /** Configuration writers touch these rows, so a sent-batch read conflicts with concurrent changes. */
-async function fenceBasketConfiguration(projectId: string, basketId: string,
+export async function fenceBasketConfiguration(projectId: string, basketId: string,
   session: ClientSession): Promise<void> {
   const source = await procurementItemSourceSnapshot(projectId, session);
   const configuredLines = source.allLineItems.filter(line =>
@@ -520,7 +519,8 @@ export function createProcurementBasketEnquiryService({ audit, mailer,
       return tenderTransaction(async session => {
         await requireBasketBuyer(actor, projectId, session);
         const enquiry = await getBasketEnquiry(projectId, basketId, enquiryId, session);
-        const { revision, planned } = await planInvitationBatch(projectId, basketId, enquiry, input, session, now());
+        const { revision, basket, planned } = await planInvitationBatch(projectId, basketId, enquiry, input, session, now());
+        if (planned.some(item => item.action !== "already_invited")) await assertBasketActionReady(basket, revision, session);
         return { enquiryId, enquiryVersion: Number(enquiry.version), boqRevisionId: String(revision._id),
           boqDigest: String(revision.digest), selectedCount: planned.length,
           requiresReason: planned.some(item => item.action === "updated_bid_request"),
@@ -557,7 +557,7 @@ export function createProcurementBasketEnquiryService({ audit, mailer,
               timestamps: false }).lean();
           if (!projectFence) tenderConflict("PROCUREMENT_BASKET_PROJECT_INACTIVE", "This project is not active.");
           await fenceBasketConfiguration(projectId, basketId, session);
-          assertSentBasketReady(await currentBasketForVendorScope(projectId, basketId, revision, session));
+          await assertBasketActionReady(await currentBasketForVendorScope(projectId, basketId, revision, session), revision, session);
           await assertBasketSourceUnreserved(projectId,
             (revision.lines as ProcurementBasketBoqLine[]).map(line => line.sourceLineItemKey), session, enquiryId);
           for (const item of actionable) {
@@ -672,8 +672,12 @@ export function createProcurementBasketEnquiryService({ audit, mailer,
         await preflightInvitationDelivery(mailer);
         if (!["draft", "sent"].includes(enquiry.status) || enquiry.version !== input.expectedVersion)
           tenderConflict("PROCUREMENT_BASKET_VERSION_CONFLICT", "This enquiry changed. Reload before resending the invitation.");
+        const projectFence = await ProjectModel.findOneAndUpdate({ _id: projectId, ...procurementPreparationProjectFilter() },
+          { $inc: { purchaseOrderApprovalEpoch: 1 } }, { session, returnDocument: "after", runValidators: true, timestamps: false }).lean();
+        if (!projectFence) tenderConflict("PROCUREMENT_BASKET_PROJECT_INACTIVE", "This project is not active.");
+        await fenceBasketConfiguration(projectId, basketId, session);
         const basket = await currentBasketForVendorScope(projectId, basketId, revision, session);
-        assertSentBasketReady(basket);
+        await assertBasketActionReady(basket, revision, session);
         await assertBasketSourceUnreserved(projectId,
           (revision.lines as ProcurementBasketBoqLine[]).map(line => line.sourceLineItemKey), session, enquiryId);
         const candidate = await assertBasketVendorEligible(input.vendorId, projectId, basketId, session);
@@ -866,8 +870,12 @@ export function createProcurementBasketEnquiryService({ audit, mailer,
         await preflightInvitationDelivery(mailer);
         if (enquiry.status !== "sent" || enquiry.version !== input.expectedVersion)
           tenderConflict("PROCUREMENT_BASKET_VERSION_CONFLICT", "This enquiry changed. Reload before requesting a counteroffer.");
+        const projectFence = await ProjectModel.findOneAndUpdate({ _id: projectId, ...procurementPreparationProjectFilter() },
+          { $inc: { purchaseOrderApprovalEpoch: 1 } }, { session, returnDocument: "after", runValidators: true, timestamps: false }).lean();
+        if (!projectFence) tenderConflict("PROCUREMENT_BASKET_PROJECT_INACTIVE", "This project is not active.");
+        await fenceBasketConfiguration(projectId, basketId, session);
         const revision = await getCurrentBoq(enquiry, session);
-        assertSentBasketReady(await currentBasketForVendorScope(projectId, basketId, revision, session));
+        await assertBasketActionReady(await currentBasketForVendorScope(projectId, basketId, revision, session), revision, session);
         await assertBasketSourceUnreserved(projectId,
           (revision.lines as ProcurementBasketBoqLine[]).map(line => line.sourceLineItemKey), session, enquiryId);
         const candidate = await assertBasketVendorEligible(input.vendorId, projectId, basketId, session);
@@ -1058,7 +1066,7 @@ async function enquiryDto(row: TenderRow, session: ClientSession, at: Date,
     version: Number(row.version), status: row.status, estimateSource: row.estimateSource,
     ...(row.preparationSource ? { preparationSource: row.preparationSource } : {}),
     ...(reconciliation ? { sourceReconciliation: { id: String(reconciliation._id), preparationSource: reconciliation.preparationSource,
-      unchangedLineKeys: reconciliation.unchangedLineKeys } } : {}),
+      preparationDigest: String(reconciliation.preparationDigest), unchangedLineKeys: reconciliation.unchangedLineKeys } } : {}),
     preparationDigest: String(row.preparationDigest), vendorScopeCurrent,
     boqRevisionId: revision ? String(revision._id) : null,
     boqRevision: revision ? Number(revision.revision) : null, boqDigest: revision ? String(revision.digest) : null,

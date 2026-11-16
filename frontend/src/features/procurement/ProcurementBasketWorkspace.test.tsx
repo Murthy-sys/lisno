@@ -23,11 +23,20 @@ const source = { estimateId: "estimate-one", estimateVersion: 2, estimateReviewR
 const digest = "a".repeat(64);
 const basketDigest = "b".repeat(64);
 const mode = {
-  state: "ready", options: [{ key: "pmc", label: "PMC" }], decision: null, issues: [],
-  preview: { baseCostPaise: 14_000, adjustedCostPaise: 15_000, sellingPaise: 19_000, lowQuantityImpactPaise: 1_000 },
+  state: "ready", executionPolicy: { intent: "pmc", allowedModes: ["pmc"] },
+  options: [{ key: "pmc", label: "PMC" }],
+  decision: { id: "decision-one", version: 1, sourceLineItemKey: "room-one:paint-one", mode: "pmc", quantity: "2",
+    discountBps: 0, markupBasis: "starting", exceptionReason: null, revisionId: "config-revision", revisionDigest: digest,
+    updatedAt: "2026-10-05T00:00:00Z" }, issues: [],
+  preview: { mode: "pmc", quantity: "2", baseCostPaise: 14_000, adjustedCostPaise: 15_000, sellingPaise: 19_000, lowQuantityImpactPaise: 1_000 },
   revision: { id: "config-revision", version: 2, status: "active", contentDigest: digest },
   uom: { id: "uom-one", code: "sq-ft", decimalScale: 2 }
 } as unknown as PurchaseOrderModeResolution;
+const executionMode: PurchaseOrderModeResolution = { ...mode,
+  executionPolicy: { intent: "execution", allowedModes: ["sub_vendor", "in_house"] },
+  options: [{ key: "sub_vendor", label: "Sub-vendor" }, { key: "in_house", label: "In-house" }],
+  decision: { ...mode.decision!, mode: "sub_vendor" }, preview: { ...mode.preview!, mode: "sub_vendor" }
+};
 const basket = { id: "basket-painting", name: "Painting", includedLineCount: 1, readyLineCount: 1,
   classification: "special" as const, automaticSubVendor: false, boqReady: true, standardCost: null,
   approvedEstimatePaise: 30_000, baseCostPaise: 14_000, adjustedCostPaise: 15_000,
@@ -132,7 +141,7 @@ function renderWorkspace(onClient?: (client: QueryClient) => void) {
   return renderWithQuery(<MemoryRouter initialEntries={["/procurement/projects/project-one"]}><CaptureClient /><ProcurementBasketWorkspace projectId="project-one" projectName="Aurora Villa" projectSourceStale={false} currentEstimate={{ estimateId: "estimate-one", estimateVersion: 2 }} /></MemoryRouter>);
 }
 
-function installStandardRate(initialEnquiry: BasketEnquiry | null = null, lineName = "POP false ceiling") {
+function installExecutionRate(initialEnquiry: BasketEnquiry | null = null, lineName = "POP false ceiling") {
   install(initialEnquiry);
   let projectRate = { version: 0, overridePaise: null as number | null };
   let configurationBasePaise = 7_500;
@@ -140,11 +149,15 @@ function installStandardRate(initialEnquiry: BasketEnquiry | null = null, lineNa
   const writes: Array<Record<string, unknown>> = [];
   const basePaise = () => projectRate.overridePaise ?? configurationBasePaise;
   const totalPaise = () => Math.round(basePaise() * 1.1);
-  const currentBasket = () => ({ ...basket, classification: "standard" as const, automaticSubVendor: true,
+  const currentBasket = () => ({ ...basket, classification: "standard" as const, automaticSubVendor: false,
+    baseCostPaise: basePaise(), adjustedCostPaise: totalPaise(), workingTotalPaise: totalPaise(),
     boqReady: true, standardCost: { totalPaise: totalPaise(), complete: true, provisional: true, pricedLineCount: 1 } });
   const currentDetail = (): ProcurementBasketDetail => ({ ...detail, ...currentBasket(), preparationDigest: currentDigest,
     lines: [{ ...detail.lines[0]!, mainLineName: lineName, approvedQuantity: "1", baseUnitRatePaise: basePaise(),
-      projectRate, standardCost: { state: "suggested", mode: "sub_vendor", calculationQuantity: "1",
+      projectRate, mode: { ...executionMode, decision: { ...executionMode.decision!, quantity: "1" },
+        preview: { ...executionMode.preview!, quantity: "1", baseCostPaise: basePaise(), adjustedCostPaise: totalPaise(),
+          sellingPaise: totalPaise(), lowQuantityImpactPaise: totalPaise() - basePaise() } },
+      standardCost: { state: "suggested", mode: "sub_vendor", calculationQuantity: "1",
         baseRates: [{ scope: "sub_vendor", ratePaise: basePaise() }], baseCostPaise: basePaise(),
         adjustedCostPaise: totalPaise(), issues: [] } }] });
   server.use(
@@ -247,13 +260,13 @@ describe("Procurement basket workspace", () => {
     expect(within(row).queryByText("sq-ft")).not.toBeInTheDocument();
   });
   it("shows a newly saved Painting Configuration amount after local save and another session's change on focus", async () => {
-    const { setConfigurationRate } = installStandardRate(null, "False Ceiling Painting in Royal Emulsion");
+    const { setConfigurationRate } = installExecutionRate(null, "False Ceiling Painting in Royal Emulsion");
     let client!: QueryClient;
     const user = userEvent.setup();
     renderWorkspace((current) => { client = current; });
     await user.click(await screen.findByRole("button", { name: /Open Painting in /i }));
     const table = await screen.findByRole("table", { name: "Included approved source lines for Painting" });
-    const row = within(table).getByRole("rowheader", { name: /^False Ceiling Painting in Royal Emulsion(?: Estimate mode:.*)?$/ }).closest("tr")!;
+    const row = within(table).getByRole("rowheader", { name: /^False Ceiling Painting in Royal Emulsion Execution source: Sub-vendor/ }).closest("tr")!;
     expect(within(table).getAllByRole("columnheader").map((heading) => heading.textContent)).toEqual(["Item / description", "Unit", "Qty", "Base amount", "Total"]);
     expect(within(row).getByText("₹75.00")).toBeVisible();
     expect(within(row).getByText("₹82.50")).toBeVisible();
@@ -287,7 +300,7 @@ describe("Procurement basket workspace", () => {
   });
 
   it("reloads an opened Painting basket on return even while its cached amount is fresh", async () => {
-    const { setConfigurationRate } = installStandardRate(null, "False Ceiling Painting in Royal Emulsion");
+    const { setConfigurationRate } = installExecutionRate(null, "False Ceiling Painting in Royal Emulsion");
     const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: 60_000, refetchOnWindowFocus: false } } });
     function ProjectReturn() {
       const [open, setOpen] = useState(true);
@@ -314,17 +327,18 @@ describe("Procurement basket workspace", () => {
   });
 
   it("shows the server issue and an incomplete total for invalid Painting Configuration", async () => {
-    installStandardRate(null, "False Ceiling Painting in Royal Emulsion");
+    installExecutionRate(null, "False Ceiling Painting in Royal Emulsion");
     const issue = { code: "SUB_VENDOR_RATE_MISSING", message: "Sub-vendor Base amount is not configured for this item." };
     server.use(
       http.get("/api/v1/procurement/projects/project-one/baskets", () => HttpResponse.json({ data: groupedList([{ ...basket,
-        classification: "standard", automaticSubVendor: true, boqReady: false,
+        classification: "standard", automaticSubVendor: false, boqReady: false, workingTotalComplete: false,
         standardCost: { totalPaise: null, complete: false, provisional: false, pricedLineCount: 0 } }], [null], "sub_vendor") })),
       http.get("/api/v1/procurement/projects/project-one/baskets/basket-painting", () => HttpResponse.json({ data: { ...detail,
-        classification: "standard", automaticSubVendor: true, boqReady: false,
+        classification: "standard", automaticSubVendor: false, boqReady: false, workingTotalComplete: false,
         standardCost: { totalPaise: null, complete: false, provisional: false, pricedLineCount: 0 },
         lines: [{ ...detail.lines[0]!, mainLineName: "False Ceiling Painting in Royal Emulsion", approvedQuantity: "1",
-          baseUnitRatePaise: null, standardCost: { state: "unavailable", mode: "sub_vendor", calculationQuantity: null,
+          baseUnitRatePaise: null, mode: { ...executionMode, state: "unavailable", preview: null, issues: [issue] },
+          standardCost: { state: "unavailable", mode: "sub_vendor", calculationQuantity: null,
             baseRates: [], baseCostPaise: null, adjustedCostPaise: null, issues: [issue] } }] } }))
     );
     const user = userEvent.setup(); renderWorkspace();
@@ -333,11 +347,11 @@ describe("Procurement basket workspace", () => {
     expect(within(table).getByText(issue.message)).toBeVisible();
     expect(within(table).getAllByText("Unavailable")).toHaveLength(2);
     expect(screen.getByText("Incomplete", { selector: ".procurement-basket__scope-total strong" })).toBeVisible();
-    expect(screen.queryByRole("button", { name: /mode for False Ceiling Painting/u })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Review mode for False Ceiling Painting/u })).toBeDisabled();
   });
   it("saves, updates, and clears a project Base amount with server-refreshed totals", async () => {
     access.manageBaseRate = true;
-    const { writes } = installStandardRate();
+    const { writes } = installExecutionRate();
     let client!: QueryClient;
     const user = userEvent.setup();
     renderWorkspace((current) => { client = current; });
@@ -346,7 +360,7 @@ describe("Procurement basket workspace", () => {
     await user.click(card);
     const table = await screen.findByRole("table", { name: "Included approved source lines for Painting" });
     expect(within(table).getAllByRole("columnheader").map((heading) => heading.textContent)).toEqual(["Item / description", "Unit", "Qty", "Base amount", "Total"]);
-    const row = within(table).getByRole("rowheader", { name: /^POP false ceiling(?: Estimate mode:.*)?$/ }).closest("tr")!;
+    const row = within(table).getByRole("rowheader", { name: /^POP false ceiling Execution source: Sub-vendor/ }).closest("tr")!;
     expect(within(row).getByText("₹75.00")).toBeVisible();
     expect(within(row).getByText("₹82.50")).toBeVisible();
     const invalidate = vi.spyOn(client, "invalidateQueries");
@@ -386,7 +400,7 @@ describe("Procurement basket workspace", () => {
 
   it("validates nonnegative paise precision and permits a zero project amount", async () => {
     access.manageBaseRate = true;
-    const { writes } = installStandardRate();
+    const { writes } = installExecutionRate();
     const user = userEvent.setup(); renderWorkspace();
     await user.click(await screen.findByRole("button", { name: /Open Painting in /i }));
     const table = await screen.findByRole("table", { name: "Included approved source lines for Painting" });
@@ -409,7 +423,7 @@ describe("Procurement basket workspace", () => {
 
   it("keeps the saved amount on a conflict and restores focus on Cancel", async () => {
     access.manageBaseRate = true;
-    installStandardRate();
+    installExecutionRate();
     server.use(http.put("/api/v1/procurement/projects/project-one/baskets/basket-painting/base-rate", () =>
       HttpResponse.json({ error: { code: "PROJECT_RATE_VERSION_CONFLICT", message: "The project rate changed. Refresh the basket." } }, { status: 409 })));
     const user = userEvent.setup(); renderWorkspace();
@@ -429,7 +443,7 @@ describe("Procurement basket workspace", () => {
 
   it("hides project price editing without permission or after award approval starts", async () => {
     access.manageBaseRate = false;
-    installStandardRate();
+    installExecutionRate();
     const user = userEvent.setup(); renderWorkspace();
     await user.click(await screen.findByRole("button", { name: /Open Painting in /i }));
     expect(await screen.findByRole("table", { name: "Included approved source lines for Painting" })).toBeVisible();
@@ -438,7 +452,7 @@ describe("Procurement basket workspace", () => {
 
   it("locks project price editing while an award is pending", async () => {
     access.manageBaseRate = true;
-    installStandardRate({ ...draftEnquiry, status: "award_pending" });
+    installExecutionRate({ ...draftEnquiry, status: "award_pending" });
     const user = userEvent.setup(); renderWorkspace();
     await user.click(await screen.findByRole("button", { name: /Open Painting in /i }));
     expect(await screen.findByRole("table", { name: "Included approved source lines for Painting" })).toBeVisible();
@@ -447,7 +461,7 @@ describe("Procurement basket workspace", () => {
 
   it("keeps project price editing available for a sent BOQ revision", async () => {
     access.manageBaseRate = true;
-    installStandardRate({ ...draftEnquiry, status: "sent", boqRevisionId: "revision-one", boqRevision: 1, boqDigest: digest });
+    installExecutionRate({ ...draftEnquiry, status: "sent", boqRevisionId: "revision-one", boqRevision: 1, boqDigest: digest });
     const user = userEvent.setup(); renderWorkspace();
     await user.click(await screen.findByRole("button", { name: /Open Painting in /i }));
     expect(await screen.findByText("Revise sent BOQ", { selector: "summary" })).toBeVisible();
@@ -460,7 +474,7 @@ describe("Procurement basket workspace", () => {
       boqRevision: 1, boqDigest: digest, bidCount: 1,
       invitations: [{ id: "invitation-one", vendorId: "vendor-one", vendorName: "Sharma Interiors", vendorCode: "VEN-1",
         kind: "initial", status: "failed", sentAt: "2026-10-05T00:00:00Z", expiresAt: "2026-10-12T00:00:00Z", generation: 1 }] };
-    installStandardRate(sent);
+    installExecutionRate(sent);
     server.use(http.get("/api/v1/procurement/projects/project-one/baskets/basket-painting/enquiries/enquiry-one/comparison", () =>
       HttpResponse.json({ data: { enquiryId: "enquiry-one", boqRevisionId: "revision-one", boqDigest: digest,
         comparisonDigest: digest, averageBidNetPaise: 10_000, recommendedBidId: "bid-one", awardId: null,
@@ -483,7 +497,9 @@ describe("Procurement basket workspace", () => {
     await user.click(screen.getByRole("button", { name: /^Save$/u }));
     await user.click(await screen.findByText("Revise sent BOQ", { selector: "summary" }));
     expect(await screen.findByText(/Internal basket pricing changed. Existing vendor links remain valid/u)).toBeVisible();
-    expect(screen.getByRole("button", { name: "Resend invitation to Sharma Interiors" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Resend invitation to Sharma Interiors" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Resend invitation to Sharma Interiors" }))
+      .toHaveAccessibleDescription("The saved execution choice or pricing changed. Revise and resend the BOQ before sending further invitations.");
     expect(await screen.findByRole("heading", { name: "Compare bids" })).toBeVisible();
     expect(screen.getByText(/These responses belong to the previous frozen BOQ/u)).toBeVisible();
     expect(screen.getByRole("button", { name: "Counteroffer" })).toBeDisabled();
@@ -502,11 +518,15 @@ describe("Procurement basket workspace", () => {
     expect(screen.getByRole("button", { name: "Start BOQ revision" })).toBeEnabled();
     await user.click(screen.getByRole("button", { name: "Start BOQ revision" }));
     expect(screen.getByRole("button", { name: "Cancel revision" })).toBeVisible();
+    await user.click(await screen.findByRole("checkbox", { name: /Decor Masters/u }));
+    expect(screen.getByRole("button", { name: "Send bid invitations" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Resend invitation to Sharma Interiors" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /^Award$/u })).toBeDisabled();
   });
 
   it("does not let an older issued estimate lock the current approved source", async () => {
     access.manageBaseRate = true;
-    installStandardRate();
+    installExecutionRate();
     server.use(http.get("/api/v1/procurement/projects/project-one/baskets/basket-painting/enquiries", () =>
       HttpResponse.json({ data: [draftEnquiry, { ...draftEnquiry, id: "old-issued", status: "issued",
         estimateSource: { ...source, estimateVersion: 1 } }] })));
@@ -514,76 +534,135 @@ describe("Procurement basket workspace", () => {
     await user.click(await screen.findByRole("button", { name: /Open Painting in /i }));
     expect(await screen.findByRole("button", { name: "Edit base amount for POP false ceiling" })).toBeEnabled();
   });
-  it("shows an automatic Standard Sub-vendor cost in the card and scope without a mode action", async () => {
-    install();
+
+  it.each(["award_pending", "issued"] as const)("locks only carried source lines after final-source reconciliation of an older %s enquiry", async status => {
+    access.manageBaseRate = true;
+    const { writes } = installExecutionRate();
+    const finalSource = { workflowVersion: 2 as const, phase: "post" as const, kind: "approved_final" as const,
+      ...source, sourceSnapshotId: "final-snapshot", sourceDigest: "final-source-digest" };
+    const carried = { ...detail.lines[0]!, mainLineName: "POP false ceiling", mode: executionMode };
+    const added = { ...carried, sourceLineItemKey: "room-two:paint-one", roomId: "room-two", roomName: "Bedroom",
+      mainLineName: "New ceiling line", mode: { ...executionMode,
+        decision: { ...executionMode.decision!, id: "decision-two", sourceLineItemKey: "room-two:paint-one" } } };
+    const currentBasket = { ...basket, includedLineCount: 2, readyLineCount: 2, approvedEstimatePaise: 60_000,
+      baseCostPaise: 28_000, adjustedCostPaise: 30_000, workingTotalPaise: 38_000 };
+    const locked: BasketEnquiry = { ...draftEnquiry, id: "older-locked-enquiry", status,
+      estimateSource: { ...source, estimateVersion: 1, estimateReviewRoundId: "older-round" },
+      boqRevisionId: "older-boq", boqRevision: 1, boqDigest: digest,
+      sourceReconciliation: { id: "reconciliation-one", preparationSource: finalSource, preparationDigest: basketDigest,
+        unchangedLineKeys: [carried.sourceLineItemKey] } };
+    server.use(
+      http.get("/api/v1/procurement/projects/project-one/baskets", () => HttpResponse.json({ data: groupedList([currentBasket], [30_000], "sub_vendor") })),
+      http.get("/api/v1/procurement/projects/project-one/baskets/basket-painting", () => HttpResponse.json({ data: {
+        ...detail, ...currentBasket, preparationSource: finalSource, lines: [carried, added]
+      } })),
+      http.get("/api/v1/procurement/projects/project-one/baskets/basket-painting/enquiries", () =>
+        HttpResponse.json({ data: [draftEnquiry, locked] }))
+    );
+    const user = userEvent.setup(); renderWorkspace();
+    await user.click(await screen.findByRole("button", { name: "Open Painting in Sub-vendor" }));
+    const modeAction = await screen.findByRole("button", { name: "Review mode for POP false ceiling" });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Review mode for New ceiling line" })).toBeEnabled());
+    expect(modeAction).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Edit base amount for POP false ceiling" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Edit base amount for New ceiling line" })).toBeEnabled();
+    await user.click(modeAction);
+    expect(screen.queryByRole("radio", { name: "Sub-vendor" })).not.toBeInTheDocument();
+    expect(writes).toEqual([]);
+  });
+
+  it.each<{ label: string; resolution: PurchaseOrderModeResolution }>([
+    { label: "PMC without a saved decision", resolution: { ...mode, decision: null } },
+    { label: "PMC with an execution preview", resolution: { ...mode, preview: { ...mode.preview!, mode: "sub_vendor" } } },
+    { label: "PMC with a stale quantity", resolution: { ...mode, preview: { ...mode.preview!, quantity: "3" } } },
+    { label: "Sub-vendor with an In-house preview", resolution: { ...executionMode, preview: { ...executionMode.preview!, mode: "in_house" } } },
+    { label: "Sub-vendor with a stale quantity", resolution: { ...executionMode, preview: { ...executionMode.preview!, quantity: "3" } } }
+  ])("blocks $label despite a ready basket flag", async ({ resolution }) => {
+    const { creations, dispatches } = install();
+    server.use(http.get("/api/v1/procurement/projects/project-one/baskets/basket-painting", () => HttpResponse.json({ data: {
+      ...detail, lines: [{ ...detail.lines[0]!, mode: resolution }]
+    } })));
+    const user = userEvent.setup(); renderWorkspace();
+    await user.click((await screen.findAllByRole("button", { name: /Open Painting in /i }))[0]!);
+    const scope = await screen.findByRole("table", { name: "Included approved source lines for Painting" });
+    const row = within(scope).getByRole("rowheader", { name: /Primer coat/u }).closest("tr")!;
+    expect(within(row).getByText("Unavailable")).toBeVisible();
+    expect(within(row).queryByText("₹150.00")).not.toBeInTheDocument();
+    await user.click(await screen.findByRole("checkbox", { name: /Sharma Interiors/u }));
+    const send = screen.getByRole("button", { name: "Send bid invitations" });
+    expect(send).toBeDisabled();
+    expect(send).toHaveAccessibleDescription("Primer coat: Resolve this line’s saved Configuration mode and pricing before sending bid invitations.");
+    expect(creations).toHaveLength(0); expect(dispatches).toHaveLength(0);
+  });
+
+  it("requires a saved execution choice despite a legacy automatic Sub-vendor suggestion", async () => {
+    access.manageBaseRate = true;
+    const { creations, dispatches } = install();
     let modeWrites = 0;
-    const standardBasket = { ...basket, classification: "standard" as const, automaticSubVendor: true, boqReady: true,
+    const pendingBasket = { ...basket, classification: "standard" as const, automaticSubVendor: true, boqReady: true,
       standardCost: { totalPaise: 15_000, complete: true, provisional: true, pricedLineCount: 1 },
       readyLineCount: 0, workingTotalPaise: 0, workingTotalComplete: false, state: "partial" };
-    const suggestedMode = { ...mode, state: "selection_required", decision: null, preview: null,
-      options: [{ key: "sub_vendor", label: "Sub-vendor" }],
-      availability: [{ key: "sub_vendor", label: "Sub-vendor", available: true, issues: [] }] } as PurchaseOrderModeResolution;
-    const standardDetail: ProcurementBasketDetail = { ...detail, ...standardBasket,
-      lines: [{ ...detail.lines[0]!, mode: suggestedMode,
+    const pendingDetail: ProcurementBasketDetail = { ...detail, ...pendingBasket,
+      lines: [{ ...detail.lines[0]!, mode: { ...executionMode, state: "selection_required", decision: null, preview: null },
         standardCost: { state: "suggested", mode: "sub_vendor", calculationQuantity: "2",
           baseRates: [{ scope: "sub_vendor", ratePaise: 7_000 }], baseCostPaise: 14_000,
           adjustedCostPaise: 15_000, issues: [] } }] };
     server.use(
-      http.get("/api/v1/procurement/projects/project-one/baskets", () => HttpResponse.json({ data: groupedList([standardBasket], [15_000], "sub_vendor") })),
-      http.get("/api/v1/procurement/projects/project-one/baskets/basket-painting", () => HttpResponse.json({ data: standardDetail })),
+      http.get("/api/v1/procurement/projects/project-one/baskets", () => HttpResponse.json({ data: groupedList([pendingBasket], [null], "sub_vendor") })),
+      http.get("/api/v1/procurement/projects/project-one/baskets/basket-painting", () => HttpResponse.json({ data: pendingDetail })),
       http.post("/api/v1/procurement/projects/project-one/purchase-order-mode-decisions", () => { modeWrites += 1; return HttpResponse.json({ data: {} }); })
     );
     const user = userEvent.setup();
     const view = renderWorkspace();
     const card = await screen.findByRole("button", { name: /Open Painting in /i });
     expect(within(card).getByText("Current cost")).toBeVisible();
-    expect(within(card).getByText("₹150.00")).toBeVisible();
-    expect(within(card).queryByText("partial")).not.toBeInTheDocument();
+    expect(within(card).getByText("Incomplete")).toBeVisible();
     await user.click(card);
     const scope = await screen.findByRole("table", { name: "Included approved source lines for Painting" });
     expect(within(scope).getAllByRole("columnheader").map((heading) => heading.textContent)).toEqual(["Item / description", "Unit", "Qty", "Base amount", "Total"]);
-    expect(within(scope).getByText("₹70.00")).toBeVisible();
-    expect(within(scope).getByText("₹150.00")).toBeVisible();
-    expect(screen.queryByText("Low quantity impact")).not.toBeInTheDocument();
-    expect(screen.queryByText("₹140.00")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /(?:Confirm|Review|Choose) mode for Primer coat/u })).not.toBeInTheDocument();
-    expect(screen.queryByRole("radio", { name: "Sub-vendor" })).not.toBeInTheDocument();
-    expect(await screen.findByRole("checkbox", { name: /Sharma Interiors/u })).toBeEnabled();
-    expect(modeWrites).toBe(0);
+    expect(within(scope).getByText("Execution selection pending")).toBeVisible();
+    expect(within(scope).getByText("Unavailable")).toBeVisible();
+    expect(within(scope).queryByText("₹150.00")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Choose mode for Primer coat" }));
+    expect(screen.getByRole("radio", { name: "Sub-vendor" })).not.toBeChecked();
+    expect(screen.getByRole("radio", { name: "In-house" })).not.toBeChecked();
+    await user.click(await screen.findByRole("checkbox", { name: /Sharma Interiors/u }));
+    const send = screen.getByRole("button", { name: "Send bid invitations" });
+    expect(send).toBeDisabled();
+    expect(send).toHaveAccessibleDescription("Primer coat: Choose and save Sub-vendor or In-house before sending bid invitations.");
+    expect(modeWrites).toBe(0); expect(creations).toHaveLength(0); expect(dispatches).toHaveLength(0);
     expect((await axe.run(view.container, { rules: { "color-contrast": { enabled: false } } })).violations).toEqual([]);
   });
 
-  it("uses Sub-vendor and approved quantity for explicit Standard even when a PMC decision exists", async () => {
+  it("preserves PMC intent, saved quantity and cost despite a legacy Standard suggestion", async () => {
     install();
-    const savedBasket = { ...basket, classification: "standard" as const, automaticSubVendor: true, boqReady: true,
+    const savedBasket = { ...basket, classification: "standard" as const, automaticSubVendor: true,
+      adjustedCostPaise: 22_500,
       standardCost: { totalPaise: 15_000, complete: true, provisional: true, pricedLineCount: 1 } };
-    const savedMode = { ...mode, decision: { id: "decision-one", version: 4,
-      sourceLineItemKey: "room-one:paint-one", mode: "pmc", quantity: "3", discountBps: 0,
-      markupBasis: "starting", exceptionReason: null, revisionId: "config-revision", revisionDigest: digest,
-      updatedAt: "2026-10-05T00:00:00Z" } } as PurchaseOrderModeResolution;
     const savedDetail: ProcurementBasketDetail = { ...detail, ...savedBasket,
-      lines: [{ ...detail.lines[0]!, mode: savedMode, baseUnitRatePaise: 7_000,
+      lines: [{ ...detail.lines[0]!, mode: { ...mode, decision: { ...mode.decision!, quantity: "3" },
+        preview: { ...mode.preview!, quantity: "3", adjustedCostPaise: 22_500 } },
         standardCost: { state: "suggested", mode: "sub_vendor", calculationQuantity: "2",
           baseRates: [{ scope: "sub_vendor", ratePaise: 7_000 }], baseCostPaise: 14_000,
           adjustedCostPaise: 15_000, issues: [] } }] };
     server.use(
-      http.get("/api/v1/procurement/projects/project-one/baskets", () => HttpResponse.json({ data: groupedList([savedBasket], [15_000], "sub_vendor") })),
+      http.get("/api/v1/procurement/projects/project-one/baskets", () => HttpResponse.json({ data: groupedList([savedBasket], [22_500]) })),
       http.get("/api/v1/procurement/projects/project-one/baskets/basket-painting", () => HttpResponse.json({ data: savedDetail }))
     );
     const user = userEvent.setup(); renderWorkspace();
     const card = await screen.findByRole("button", { name: /Open Painting in /i });
-    expect(within(card).getByText("₹150.00")).toBeVisible();
+    expect(within(card).getByText("₹225.00")).toBeVisible();
     await user.click(card);
     const scope = await screen.findByRole("table", { name: "Included approved source lines for Painting" });
     const lineRow = within(scope).getByRole("rowheader", { name: /Primer coat/u }).closest("tr")!;
-    expect(within(lineRow).getByText("2")).toBeVisible();
-    expect(within(lineRow).getByText("₹70.00")).toBeVisible();
-    expect(within(lineRow).getByText("₹150.00")).toBeVisible();
-    expect(screen.queryByRole("button", { name: /mode for Primer coat/u })).not.toBeInTheDocument();
-    expect(screen.queryByText("Low quantity impact")).not.toBeInTheDocument();
+    expect(within(lineRow).getByText("PMC · Vendor handoff")).toBeVisible();
+    expect(within(lineRow).getByText("3")).toBeVisible();
+    expect(within(lineRow).getByText("₹225.00")).toBeVisible();
+    expect(within(lineRow).queryByText("₹150.00")).not.toBeInTheDocument();
+    expect(screen.queryByRole("radio", { name: "Sub-vendor" })).not.toBeInTheDocument();
   });
 
-  it("shows a Standard pricing blocker without a fabricated complete cost", async () => {
+  it("shows an execution pricing blocker without a fabricated complete cost", async () => {
     const { creations, dispatches } = install();
     const blockedBasket = { ...basket, classification: "standard" as const, automaticSubVendor: true, boqReady: false,
       standardCost: { totalPaise: null, complete: false, provisional: false, pricedLineCount: 0 },
@@ -591,7 +670,7 @@ describe("Procurement basket workspace", () => {
     server.use(
       http.get("/api/v1/procurement/projects/project-one/baskets", () => HttpResponse.json({ data: groupedList([blockedBasket], [null], "sub_vendor") })),
       http.get("/api/v1/procurement/projects/project-one/baskets/basket-painting", () => HttpResponse.json({ data: {
-        ...detail, ...blockedBasket, lines: [{ ...detail.lines[0]!, baseUnitRatePaise: null, mode: { ...mode, state: "unavailable", preview: null,
+        ...detail, ...blockedBasket, lines: [{ ...detail.lines[0]!, baseUnitRatePaise: null, mode: { ...executionMode, state: "unavailable", preview: null,
           revision: { ...mode.revision!, status: "draft" },
           issues: [{ code: "MISSING_SCOPE", message: "Pinned Sub-vendor scope is missing." }] },
           standardCost: { state: "unavailable", mode: null, calculationQuantity: null, baseRates: [],
@@ -608,7 +687,7 @@ describe("Procurement basket workspace", () => {
     expect(screen.getAllByText("Pinned Sub-vendor scope is missing.")).toHaveLength(1);
     expect(screen.getByText("Incomplete", { selector: ".procurement-basket__scope-summary dd" })).toBeVisible();
     expect(screen.getByText("Incomplete", { selector: ".procurement-basket__scope-total strong" })).toBeVisible();
-    expect(screen.queryByRole("button", { name: /mode for Primer coat/u })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Review mode for Primer coat" })).toBeDisabled();
     await user.click(await screen.findByRole("checkbox", { name: /Sharma Interiors/u }));
     await user.click(screen.getByRole("checkbox", { name: /Decor Masters/u }));
     const send = screen.getByRole("button", { name: "Send bid invitations" });
@@ -627,7 +706,7 @@ describe("Procurement basket workspace", () => {
       standardCost: { totalPaise: 15_000, complete: true, provisional: true, pricedLineCount: 1 },
       readyLineCount: 0, workingTotalComplete: false };
     const draftDetail: ProcurementBasketDetail = { ...detail, ...draftBasket,
-      lines: [{ ...detail.lines[0]!, mode: { ...mode, state: "unavailable", preview: null,
+      lines: [{ ...detail.lines[0]!, mode: { ...executionMode, state: "unavailable", preview: null,
         revision: { ...mode.revision!, status: "draft" } },
         standardCost: { state: "suggested", mode: "sub_vendor", calculationQuantity: "2",
           baseRates: [{ scope: "sub_vendor", ratePaise: 7_000 }], baseCostPaise: 14_000,
@@ -654,14 +733,14 @@ describe("Procurement basket workspace", () => {
     expect((await axe.run(view.container, { rules: { "color-contrast": { enabled: false } } })).violations).toEqual([]);
   });
 
-  it("lets an observed saved Standard price proceed to BOQ without a mode review", async () => {
+  it("blocks an observed unverified price until an execution choice is saved", async () => {
     const { creations, dispatches } = install();
     const mismatch = { code: "PINNED_DIGEST_MISMATCH", message: "The saved Configuration content does not match its activated digest." };
     const observedDigest = "c".repeat(64);
-    const observedBasket = { ...basket, classification: "standard" as const, automaticSubVendor: true, boqReady: true,
+    const observedBasket = { ...basket, classification: "standard" as const, automaticSubVendor: false, boqReady: false,
       standardCost: { totalPaise: 15_000, complete: true, provisional: true, pricedLineCount: 1 },
       readyLineCount: 0, workingTotalPaise: 0, workingTotalComplete: false, state: "partial" };
-    const observedMode = { ...mode, state: "unavailable", decision: null, preview: null,
+    const observedMode = { ...executionMode, state: "unavailable", decision: null, preview: null,
       options: [{ key: "sub_vendor", label: "Sub-vendor" }], issues: [mismatch],
       integrity: { status: "mismatch", activatedDigest: digest, observedDigest,
         candidateAvailability: [{ key: "sub_vendor", label: "Sub-vendor", available: true, issues: [] }] } } as PurchaseOrderModeResolution;
@@ -671,7 +750,7 @@ describe("Procurement basket workspace", () => {
           baseRates: [{ scope: "sub_vendor", ratePaise: 7_000 }], baseCostPaise: 14_000,
           adjustedCostPaise: 15_000, issues: [mismatch] } }] };
     server.use(
-      http.get("/api/v1/procurement/projects/project-one/baskets", () => HttpResponse.json({ data: groupedList([observedBasket], [15_000], "sub_vendor") })),
+      http.get("/api/v1/procurement/projects/project-one/baskets", () => HttpResponse.json({ data: groupedList([observedBasket], [null], "sub_vendor") })),
       http.get("/api/v1/procurement/projects/project-one/baskets/basket-painting", () => HttpResponse.json({ data: observedDetail }))
     );
     const user = userEvent.setup();
@@ -680,26 +759,30 @@ describe("Procurement basket workspace", () => {
     const scope = await screen.findByRole("table", { name: "Included approved source lines for Painting" });
     const row = within(scope).getByRole("rowheader", { name: /Primer coat/u }).closest("tr")!;
     expect(within(row).getByText("₹70.00")).toBeVisible();
-    expect(within(row).getByText("₹150.00")).toBeVisible();
-    expect(screen.queryByText(/Using saved Configuration amount/u)).not.toBeInTheDocument();
-    expect(screen.queryByText(mismatch.message)).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /(?:Review|Confirm|Choose) mode for Primer coat/u })).not.toBeInTheDocument();
+    expect(within(row).getByText("Unavailable")).toBeVisible();
+    expect(within(row).queryByText("₹150.00")).not.toBeInTheDocument();
+    expect(within(row).getByText(mismatch.message)).toBeVisible();
+    expect(screen.getByRole("button", { name: "Review mode for Primer coat" })).toBeDisabled();
     await user.click(await screen.findByRole("checkbox", { name: /Sharma Interiors/u }));
-    await user.click(screen.getByRole("button", { name: "Send bid invitations" }));
-    await waitFor(() => expect(creations).toHaveLength(1));
-    expect(screen.queryByRole("heading", { name: "Complete BOQ details" })).not.toBeInTheDocument();
-    expect(JSON.stringify(creations[0])).not.toMatch(/baseCostPaise|adjustedCostPaise|standardCost|workingTotalPaise/u);
-    await waitFor(() => expect(dispatches).toHaveLength(1));
+    const send = screen.getByRole("button", { name: "Send bid invitations" });
+    expect(send).toBeDisabled();
+    expect(send).toHaveAccessibleDescription("Primer coat: Choose and save Sub-vendor or In-house before sending bid invitations.");
+    expect(creations).toHaveLength(0); expect(dispatches).toHaveLength(0);
     expect((await axe.run(view.container, { rules: { "color-contrast": { enabled: false } } })).violations).toEqual([]);
   });
 
-  it("keeps historical unclassified Standard on the manual mode workflow", async () => {
+  it.each(["missing", "unrecorded"] as const)("distinguishes %s execution details while keeping historical prices read-only", async status => {
+    access.manageBaseRate = true;
     install();
     const historicalBasket = { ...basket, classification: "standard" as const, automaticSubVendor: false, boqReady: false,
       standardCost: { totalPaise: 15_000, complete: true, provisional: true, pricedLineCount: 1 },
       readyLineCount: 0, workingTotalComplete: false };
     const historicalDetail: ProcurementBasketDetail = { ...detail, ...historicalBasket,
-      lines: [{ ...detail.lines[0]!, mode: { ...mode, state: "selection_required", preview: null },
+      lines: [{ ...detail.lines[0]!,
+        ...(status === "missing" ? { estimateMode: { approvedClassification: "standard" as const, approvedPricingMode: "sub_vendor" as const,
+          mode: "sub_vendor" as const, provenance: "line" as const, issues: [] } } : {}),
+        mode: { ...mode, executionPolicy: status === "unrecorded" ? { intent: "unrecorded", allowedModes: [] } : undefined,
+          state: "unavailable", decision: null, preview: null },
         standardCost: { state: "suggested", mode: "sub_vendor", calculationQuantity: "2",
           baseRates: [{ scope: "sub_vendor", ratePaise: 7_000 }], baseCostPaise: 14_000,
           adjustedCostPaise: 15_000, issues: [] } }] };
@@ -709,12 +792,18 @@ describe("Procurement basket workspace", () => {
     );
     const user = userEvent.setup(); renderWorkspace();
     await user.click(await screen.findByRole("button", { name: /Open Painting in /i }));
-    expect(screen.getByRole("button", { name: "Confirm mode for Primer coat" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Choose mode for Primer coat" })).toBeDisabled();
+    expect(screen.getByText(status === "missing" ? "Execution details unavailable" : "Mode not recorded")).toBeVisible();
+    expect(screen.queryByText(status === "missing" ? "Mode not recorded" : "Execution details unavailable")).not.toBeInTheDocument();
+    expect(screen.getByText(status === "missing"
+      ? "Execution details are unavailable. Refresh this page before choosing a mode."
+      : "The approved estimate has no recorded execution choice. Review the approved estimate before choosing a mode.")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Edit base amount for Primer coat" })).not.toBeInTheDocument();
     expect(await screen.findByRole("button", { name: "Send bid invitations" })).toBeDisabled();
-    expect(screen.getByText("Primer coat: Confirm this line’s saved mode before sending bid invitations.")).toBeVisible();
+    expect(screen.getByText("Primer coat: The approved execution path is unavailable. Refresh the source before sending invitations.")).toBeVisible();
   });
 
-  it("keeps Special mode editing and respects backend BOQ readiness", async () => {
+  it("keeps PMC mode review and respects backend BOQ readiness", async () => {
     install();
     const blockedSpecial = { ...basket, boqReady: false };
     server.use(
@@ -723,9 +812,9 @@ describe("Procurement basket workspace", () => {
     );
     const user = userEvent.setup(); renderWorkspace();
     await user.click(await screen.findByRole("button", { name: /Open Painting in /i }));
-    expect(screen.getByRole("button", { name: "Choose mode for Primer coat" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Review mode for Primer coat" })).toBeVisible();
     expect(await screen.findByRole("button", { name: "Send bid invitations" })).toBeDisabled();
-    expect(screen.getByText("Primer coat: Review the current saved mode before sending bid invitations.")).toBeVisible();
+    expect(screen.getByText("Review the current basket readiness before sending bid invitations.")).toBeVisible();
     expect(screen.queryByRole("heading", { name: "Bill of quantities" })).not.toBeInTheDocument();
     expect(screen.queryByRole("combobox", { name: /Scope/u })).not.toBeInTheDocument();
   });
@@ -979,31 +1068,48 @@ describe("Procurement basket workspace", () => {
     expect(dispatches[0]).toMatchObject({ selection: { kind: "all_eligible", excludedVendorIds: ["vendor-51"] } });
   });
 
-  it("allows selection and same-revision invitations after internal-only pricing drift", async () => {
+  it("keeps vendor selection available but requires a new BOQ before invitations after internal pricing drift", async () => {
     const sent: BasketEnquiry = { ...draftEnquiry, status: "sent", version: 3, boqRevisionId: "revision-one",
       boqRevision: 1, boqDigest: digest, vendorScopeCurrent: true, bidCount: 0,
       invitations: [{ id: "invitation-one", vendorId: "vendor-one", vendorName: "Sharma Interiors", vendorCode: "VEN-1",
         kind: "initial", status: "sent", sentAt: "2026-10-05T00:00:00Z", expiresAt: "2099-01-01T00:00:00Z", generation: 1 }] };
-    install(sent);
+    const { updates, dispatches } = install(sent);
+    const previews: unknown[] = [];
     const changedDigest = "c".repeat(64);
     server.use(
       http.get("/api/v1/procurement/projects/project-one/baskets/basket-painting", () => HttpResponse.json({ data: {
         ...detail, preparationDigest: changedDigest
       } })),
-      http.post("/api/v1/procurement/projects/project-one/baskets/basket-painting/enquiries/enquiry-one/invitation-batches/preview", () =>
-        HttpResponse.json({ data: { enquiryId: sent.id, enquiryVersion: sent.version, boqRevisionId: sent.boqRevisionId,
+      http.post("/api/v1/procurement/projects/project-one/baskets/basket-painting/enquiries/enquiry-one/invitation-batches/preview", async ({ request }) => {
+        previews.push(await request.json());
+        return HttpResponse.json({ data: { enquiryId: sent.id, enquiryVersion: sent.version, boqRevisionId: sent.boqRevisionId,
           boqDigest: sent.boqDigest, selectedCount: 1, requiresReason: false,
           actions: [{ vendorId: "vendor-two", vendorName: "Decor Masters", action: "first_invitation",
-            invitationStatus: null, priorBidId: null }] } }))
+            invitationStatus: null, priorBidId: null }] } });
+      })
     );
     const user = userEvent.setup(); renderWorkspace();
     await user.click((await screen.findAllByRole("button", { name: /Open Painting in /i }))[0]!);
     const newVendor = await screen.findByRole("checkbox", { name: /Decor Masters/u });
     expect(newVendor).toBeEnabled();
     await user.click(newVendor);
-    expect(await screen.findByRole("region", { name: "Planned invitation actions" })).toHaveTextContent("First invitation");
-    expect(screen.getByRole("button", { name: "Send selected requests" })).toBeEnabled();
-    expect(screen.queryByText(/Load the current BOQ before sending invitations/u)).not.toBeInTheDocument();
+    expect(newVendor).toBeChecked();
+    expect(screen.queryByRole("region", { name: "Planned invitation actions" })).not.toBeInTheDocument();
+    const send = screen.getByRole("button", { name: "Send selected requests" });
+    expect(send).toBeDisabled();
+    expect(send).toHaveAccessibleDescription("The saved execution choice or pricing changed. Revise and resend the BOQ before sending further invitations.");
+    await user.click(send);
+    expect(previews).toEqual([]); expect(updates).toEqual([]); expect(dispatches).toEqual([]);
+    await user.click(screen.getByText("Revise sent BOQ", { selector: "summary" }));
+    await user.click(screen.getByRole("button", { name: "Start BOQ revision" }));
+    await user.click(await screen.findByRole("checkbox", { name: /Decor Masters/u }));
+    expect(screen.getByRole("button", { name: "Send bid invitations" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Send bid invitations" }));
+    await waitFor(() => expect(dispatches).toHaveLength(1));
+    expect(updates).toEqual([expect.objectContaining({ expectedVersion: 3, expectedPreparationDigest: changedDigest,
+      lines: [{ sourceLineItemKey: "room-one:paint-one" }] })]);
+    expect(dispatches[0]).toMatchObject({ expectedPreparationDigest: changedDigest, vendorIds: ["vendor-two"] });
+    expect(previews).toEqual([]);
   });
 
   it("shows authoritative mixed actions and per-vendor delivery outcomes for basket-wide selection", async () => {
@@ -1069,13 +1175,75 @@ describe("Procurement basket workspace", () => {
       ...source, sourceSnapshotId: "final-snapshot", sourceDigest: "final-digest" };
     install({ ...draftEnquiry, status: "sent", boqRevisionId: "revision-one", boqRevision: 1, boqDigest: digest,
       preparationDigest: "original-digest", vendorScopeCurrent: true, bidCount: 1,
-      sourceReconciliation: { id: "reconciliation-one", preparationSource: finalSource, unchangedLineKeys: ["room-one:paint-one"] } });
+      sourceReconciliation: { id: "reconciliation-one", preparationSource: finalSource, preparationDigest: basketDigest,
+        unchangedLineKeys: ["room-one:paint-one"] } });
     server.use(http.get("/api/v1/procurement/projects/project-one/baskets/basket-painting", () => HttpResponse.json({ data: { ...detail, preparationSource: finalSource } })));
     const user = userEvent.setup(); renderWorkspace();
     await user.click((await screen.findAllByRole("button", { name: /Open Painting in /i }))[0]!);
     expect(await screen.findByText("Enquiry reconciled with the final estimate")).toBeVisible();
     expect(screen.queryByText(/These responses belong to the previous frozen BOQ/)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Reconcile enquiry with final estimate" })).not.toBeInTheDocument();
+  });
+
+  it.each(["later-drift", "missing-reconciliation-digest"])("keeps reconciled bid history readable but blocks stale commercial actions: %s", async (scenario) => {
+    const finalSource = { workflowVersion: 2 as const, phase: "post" as const, kind: "approved_final" as const,
+      ...source, sourceSnapshotId: "final-snapshot", sourceDigest: "final-digest" };
+    const sent: BasketEnquiry = { ...draftEnquiry, status: "sent", version: 3, boqRevisionId: "revision-one",
+      boqRevision: 1, boqDigest: digest, preparationDigest: "original-digest", vendorScopeCurrent: true, bidCount: 1,
+      sourceReconciliation: { id: "reconciliation-one", preparationSource: finalSource,
+        ...(scenario === "later-drift" ? { preparationDigest: basketDigest } : {}), unchangedLineKeys: ["room-one:paint-one"] },
+      invitations: [{ id: "invitation-one", vendorId: "vendor-one", vendorName: "Sharma Interiors", vendorCode: "VEN-1",
+        kind: "initial", status: "failed", sentAt: null, expiresAt: "2099-01-01T00:00:00Z", generation: 1 }] };
+    const { updates, dispatches } = install(sent);
+    let currentDigest = basketDigest;
+    const attemptedWrites: string[] = [];
+    server.use(
+      http.get("/api/v1/procurement/projects/project-one/baskets/basket-painting", () => HttpResponse.json({ data: {
+        ...detail, preparationSource: finalSource, preparationDigest: currentDigest
+      } })),
+      http.get("/api/v1/procurement/projects/project-one/baskets/basket-painting/enquiries/enquiry-one/comparison", () =>
+        HttpResponse.json({ data: { enquiryId: "enquiry-one", boqRevisionId: "revision-one", boqDigest: digest,
+          comparisonDigest: digest, averageBidNetPaise: 10_000, recommendedBidId: "bid-one", awardId: null,
+          rows: [{ bidId: "bid-one", vendorId: "vendor-one", vendorName: "Sharma Interiors", officialKpiScoreBps: 8600,
+            quoteNetPaise: 10_000, quoteGstPaise: 1_800, quoteGrossPaise: 11_800, priceScoreBps: 10_000,
+            comparisonScoreBps: 9_300, eligible: true, blockers: [], recommended: true, priorityRank: 1, bidRevision: 1, lines: [] }],
+          bidHistory: [], bidHistoryHasMore: false, counteroffers: [], counteroffersHasMore: false } })),
+      ...["invitation-batches", "resend-invitation", "awards"].map(action =>
+        http.post(`/api/v1/procurement/projects/project-one/baskets/basket-painting/enquiries/enquiry-one/${action}`, () => {
+          attemptedWrites.push(action);
+          return HttpResponse.json({ error: { message: "Stale mutation must not be submitted." } }, { status: 409 });
+        }))
+    );
+    let client!: QueryClient;
+    const user = userEvent.setup(); renderWorkspace(value => { client = value; });
+    await user.click((await screen.findAllByRole("button", { name: /Open Painting in /i }))[0]!);
+    await user.click(await screen.findByText("Invitation status and WhatsApp", { selector: "summary" }));
+    const resend = await screen.findByRole("button", { name: "Resend invitation to Sharma Interiors" });
+    const award = await screen.findByRole("button", { name: /^Award$/u });
+    if (scenario === "later-drift") {
+      await waitFor(() => { expect(resend).toBeEnabled(); expect(award).toBeEnabled(); });
+      expect(screen.queryByText(/These responses belong to the previous frozen BOQ/)).not.toBeInTheDocument();
+      currentDigest = "c".repeat(64);
+      await act(async () => { await client.invalidateQueries({ queryKey: procurementBasketKeys.detail("project-one", basket.id) }); });
+    }
+    expect(await screen.findByText("Enquiry reconciled with the final estimate")).toBeVisible();
+    expect(screen.getByText(/These responses belong to the previous frozen BOQ/)).toBeVisible();
+    expect(resend).toBeDisabled();
+    expect(resend).toHaveAccessibleDescription("The saved execution choice or pricing changed. Revise and resend the BOQ before sending further invitations.");
+    expect(award).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Counteroffer" })).toBeDisabled();
+    const vendor = screen.getByRole("checkbox", { name: /Decor Masters/u });
+    expect(vendor).toBeEnabled();
+    await user.click(vendor);
+    expect(vendor).toBeChecked();
+    const send = screen.getByRole("button", { name: "Send selected requests" });
+    expect(send).toBeDisabled();
+    expect(send).toHaveAccessibleDescription("The saved execution choice or pricing changed. Revise and resend the BOQ before sending further invitations.");
+    expect(screen.queryByRole("region", { name: "Planned invitation actions" })).not.toBeInTheDocument();
+    expect(screen.getByRole("table", { name: "Vendor bid comparison" })).toHaveTextContent("Sharma Interiors");
+    expect(screen.getByText("Average bid price (before GST)").parentElement).toHaveTextContent("₹100.00");
+    await user.click(send); await user.click(resend); await user.click(award);
+    expect(attemptedWrites).toEqual([]); expect(updates).toEqual([]); expect(dispatches).toEqual([]);
   });
 
   it("pauses a stale BOQ send until the current revision is loaded", async () => {

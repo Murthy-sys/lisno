@@ -460,6 +460,11 @@ describe("OpenAPI and Swagger UI", () => {
     expect(recommendations.responses["2XX"].content["application/json"].schema.properties.data.$ref)
       .toBe("#/components/schemas/EstimatorCatalogueRecommendationRead");
     expect(schemas.EstimatorCatalogueRecommendationRule).not.toHaveProperty("properties.targetType");
+    expect(schemas.EstimatorCatalogueRecommendationRule!.required).not.toContain("targetDisplay");
+    expect(schemas.EstimatorCatalogueRecommendationRule).toHaveProperty("properties.targetDisplay.required", ["name"]);
+    expect(schemas.EstimatorCatalogueRecommendationRule).toHaveProperty(
+      "properties.targetDisplay.properties.unavailableReason.enum", ["price_not_configured", "configuration_incomplete"]
+    );
     expect(schemas.EstimatorCatalogueRecommendationSource).not.toHaveProperty("properties.name");
     expect(schemas.EstimatorCatalogueRecommendationRule!.required).toEqual(expect.arrayContaining([
       "targetRevisionId", "targetRevisionVersion", "targetItemVersion"
@@ -520,6 +525,12 @@ describe("OpenAPI and Swagger UI", () => {
     expect(schemas.ProjectPurchaseOrderModeDecision!.required).not.toContain("integrityBasis");
     expect(schemas.ProjectPurchaseOrderModeResolution).toHaveProperty("properties.integrity.$ref", "#/components/schemas/ProjectPurchaseOrderModeIntegrity");
     expect(schemas.ProjectPurchaseOrderModeResolution!.required).not.toContain("integrity");
+    expect(schemas.ProjectPurchaseOrderModeResolution).toHaveProperty("properties.executionPolicy.$ref", "#/components/schemas/ProcurementExecutionPolicy");
+    expect(schemas.ProjectPurchaseOrderModeResolution!.required).not.toContain("executionPolicy");
+    expect(schemas.ProcurementExecutionPolicy).toHaveProperty("properties.intent.enum", ["pmc", "execution", "unrecorded"]);
+    expect(schemas.ProjectPurchaseOrderModeDecision!.required).not.toContain("selectedInHouseComponentIds");
+    expect(schemas.ProjectPurchaseOrderModeDecisionSave!.properties).not.toHaveProperty("selectedInHouseComponentIds");
+    expect(schemas.ProcurementBasketModeGroup).toHaveProperty("properties.mode.enum", ["in_house", "sub_vendor", "pmc", "execution_pending", "unrecorded"]);
     expect(schemas.ProjectPurchaseOrderModeCalculationStage!.required).toEqual(expect.arrayContaining([
       "baseRatePaise", "baseSubtotalPaise", "lowQuantityLimit", "configuredImpactBps", "thresholdMet",
       "appliedImpactBps", "adjustedUnitRatePaise", "adjustedCostPaise", "marginBps",

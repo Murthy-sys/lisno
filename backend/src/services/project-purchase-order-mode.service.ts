@@ -1,5 +1,7 @@
 import { readInHouseComponents, selectedInHouseComponents } from "../domain/ai-estimator-knowledge-in-house-components.js";
-import { procurementInHouseVisibility, projectProcurementModePreview } from "../domain/procurement-in-house-visibility.js";
+import { procurementInHouseVisibility, projectProcurementModeDecision, projectProcurementModePreview } from "../domain/procurement-in-house-visibility.js";
+import { readInHouseUsagePolicy } from "../domain/in-house-usage-policy.js";
+import { procurementModeMatchesPolicy, resolveProcurementExecutionPolicy } from "../domain/procurement-execution-policy.js";
 import { isKnowledgeModeTier, knowledgeModeTierPayload, projectKnowledgeModeTierSection } from "../domain/ai-estimator-knowledge-mode-tiers.js";
 import { lockInHouseComponentReferences } from "./ai-estimator-knowledge-in-house-components.service.js";
 import { createHash, randomUUID } from "node:crypto";
@@ -23,13 +25,18 @@ import { AiEstimatorKnowledgeTaxVersionModel } from "../models/AiEstimatorKnowle
 import { AiEstimatorKnowledgeUomModel } from "../models/AiEstimatorKnowledgeUom.js";
 import { ProjectPurchaseOrderModeDecisionModel, ProjectPurchaseOrderModeDecisionReceiptModel } from "../models/ProjectPurchaseOrderModeDecision.js";
 import { ProjectPurchaseOrderRequestModel } from "../models/ProjectPurchaseOrderRequest.js";
+import { ProcurementBasketBaseRateModel } from "../models/ProcurementBasketBaseRate.js";
+import { procurementBasketExecutionLocked } from "./procurement-basket-execution-lock.service.js";
+import type { EstimationPreparationSource } from "../domain/estimation-lifecycle.js";
+import { ProjectModel } from "../models/Project.js";
 import type { ProcurementBasketProjectRate } from "../domain/procurement-basket-base-rate.js";
 import type { AuditService } from "./audit.service.js";
 import type { PublicUser } from "./auth.service.js";
-import { assertProcurementProjectAccess, procurementItemSourceSnapshot } from "./procurement.service.js";
+import { assertProcurementProjectAccess, procurementItemSourceSnapshot, procurementPreparationProjectFilter } from "./procurement.service.js";
 
 type Row = Record<string, any>;
 type ModeSource = { estimateId: string; estimateVersion: number; estimateReviewRoundId: string | null;
+  preparationSource?: EstimationPreparationSource;
   allLineItems: readonly PurchaseOrderModeSourceLine[];
   mainBasketClassifications?: Readonly<Record<string, "standard" | "special">> };
 export type PurchaseOrderModeChildReference = {
@@ -66,6 +73,8 @@ export function createProjectPurchaseOrderModeDecisionService(input: { audit: Au
         }
         const line = source.allLineItems.find((candidate) => candidate.key === fields.sourceLineItemKey);
         if (!line || !line.included || line.amountPaise === null || line.amountPaise <= 0) sourceConflict();
+        assertAllowedMode(line, fields.mode);
+        await assertExecutionDecisionUnlocked(projectId, source, line.key, session);
         const existing = await ProjectPurchaseOrderModeDecisionModel.findOne(decisionKey(projectId, source, line.key))
           .session(session).lean().exec() as Row | null;
         if (fields.expectedVersion !== (existing?.version ?? 0)) versionConflict();
@@ -105,7 +114,7 @@ export function createProjectPurchaseOrderModeDecisionService(input: { audit: Au
           .session(session).lean().exec() as Row | null;
         if (previousReceipt) {
           if (previousReceipt.requestDigest !== requestDigest) idempotencyConflict();
-          return previousReceipt.response as PurchaseOrderModeDecisionDto;
+          return projectDecisionResponse(previousReceipt.response as PurchaseOrderModeDecisionDto);
         }
         const source = await procurementItemSourceSnapshot(projectId, session, true);
         if (
@@ -117,6 +126,13 @@ export function createProjectPurchaseOrderModeDecisionService(input: { audit: Au
         if (!line || !line.included || line.amountPaise === null || line.amountPaise <= 0) {
           throw new ApiError(409, "PURCHASE_ORDER_MODE_SOURCE_CONFLICT", "Select a current included approved estimate line with a positive amount.");
         }
+        if (fields.mode) assertAllowedMode(line, fields.mode);
+        // Serialize changes against dispatch, award approval and work-order issue.
+        const project = await ProjectModel.findOneAndUpdate({ _id: projectId, ...procurementPreparationProjectFilter() },
+          { $inc: { purchaseOrderApprovalEpoch: 1 } },
+          { session, returnDocument: "after", runValidators: true, timestamps: false }).lean();
+        if (!project) throw new ApiError(409, "PROCUREMENT_BASKET_PROJECT_INACTIVE", "This project is not active.");
+        await assertExecutionDecisionUnlocked(projectId, source, line.key, session);
         const pending = await ProjectPurchaseOrderRequestModel.exists({ projectId, status: { $in: ["pending_approval", "ready_to_issue"] } }).session(session);
         if (pending) throw new ApiError(409, "PURCHASE_ORDER_MODE_REQUEST_PENDING", "A submitted purchase order request must be decided before editing mode choices.");
         const existing = await ProjectPurchaseOrderModeDecisionModel.findOne(decisionKey(projectId, source, line.key))
@@ -149,13 +165,18 @@ export function createProjectPurchaseOrderModeDecisionService(input: { audit: Au
           observedDigest: resolution.integrity.observedDigest, reason: fields.recovery.reason,
           actorId: actor.id, acknowledgedAt: at.toISOString()
         } : undefined;
+        const selectedInHouseComponentIds = fields.mode === "in_house" && resolution.preview?.components.some(component => component.componentId)
+          ? [...new Set(resolution.preview.components.flatMap(component => component.componentId ? [component.componentId] : []))] : undefined;
         const update = { revisionId, revisionDigest, mode: fields.mode, quantity: resolution.preview?.quantity ?? null,
           discountBps: fields.discountBps, markupBasis: fields.markupBasis, exceptionReason: fields.exceptionReason,
+          ...(selectedInHouseComponentIds ? { selectedInHouseComponentIds } : {}),
           ...(integrityBasis ? { integrityBasis } : {}), updatedById: actor.id, updatedAt: at };
+        const unset = { ...(integrityBasis ? {} : { integrityBasis: 1 }),
+          ...(selectedInHouseComponentIds ? {} : { selectedInHouseComponentIds: 1 }) };
         let stored: Row | null;
         if (existing) {
           stored = await ProjectPurchaseOrderModeDecisionModel.findOneAndUpdate({ _id: existing._id, version: fields.expectedVersion },
-            { $set: update, ...(integrityBasis ? {} : { $unset: { integrityBasis: 1 } }), $inc: { version: 1 } },
+            { $set: update, ...(Object.keys(unset).length ? { $unset: unset } : {}), $inc: { version: 1 } },
             { returnDocument: "after", runValidators: true, session }).lean().exec() as Row | null;
           if (!stored) versionConflict();
         } else {
@@ -173,7 +194,7 @@ export function createProjectPurchaseOrderModeDecisionService(input: { audit: Au
         await ProjectPurchaseOrderModeDecisionReceiptModel.create([{ _id: `pomr-${randomUUID()}`, projectId,
           idempotencyKey: fields.idempotencyKey, requestDigest, decisionId: response.id,
           response, createdById: actor.id, createdAt: at }], { session });
-        return response;
+        return projectDecisionResponse(response);
       }, { readConcern: { level: "snapshot" }, readPreference: "primary" }); }
       catch (error) {
         if (!isDuplicateKey(error)) throw error;
@@ -185,7 +206,7 @@ export function createProjectPurchaseOrderModeDecisionService(input: { audit: Au
             idempotencyKey: fields.idempotencyKey }).session(session).lean().exec() as Row | null;
           if (!receipt) versionConflict();
           if (receipt.requestDigest !== requestDigest) idempotencyConflict();
-          return receipt.response as PurchaseOrderModeDecisionDto;
+          return projectDecisionResponse(receipt.response as PurchaseOrderModeDecisionDto);
         }, { readConcern: { level: "snapshot" }, readPreference: "primary" });
       }
     }
@@ -204,6 +225,7 @@ export async function resolvePurchaseOrderModes(
 ): Promise<Map<string, PurchaseOrderModeResolution>> {
   if (!session.inTransaction()) throw new Error("Purchase order mode resolution requires an active transaction.");
   const at = options.at ?? new Date();
+  const projectRates = options.projectRates ?? await readProcurementProjectRates(projectId, source, session);
   const relevant = source.allLineItems.filter((line) => line.included && line.amountPaise !== null && line.amountPaise > 0);
   const currentMainLineIds = [...new Set(source.allLineItems.flatMap((line) =>
     line.source === "configuration" && line.mainLineId ? [line.mainLineId] : []))];
@@ -265,8 +287,11 @@ export async function resolvePurchaseOrderModes(
     const decision = decisionsByKey.has(line.key) ? decisionDto(decisionsByKey.get(line.key)!) : null;
     const proposal = options.proposals?.get(line.key);
     const selected = proposal ?? decision;
+    const executionPolicy = resolveProcurementExecutionPolicy(line);
     const unavailable = (code: string, message: string, revision: PurchaseOrderModeResolution["revision"] = null): PurchaseOrderModeResolution => ({
-      ...(line.selectedInHouseComponentIds === undefined ? {} : { inHouseComponentVisibility: "hidden" as const }),
+      executionPolicy,
+      ...(line.selectedInHouseComponentIds === undefined && decision?.selectedInHouseComponentIds === undefined
+        ? {} : { inHouseComponentVisibility: "hidden" as const }),
       state: line.included && line.amountPaise !== null && line.amountPaise > 0 && decision?.exceptionReason ? "exception" : "unavailable",
       options: [], availability: unavailableModeAvailability(code, message), decision, preview: null,
       issues: [{ code, message }], revision, uom: null, priceReferences: {}
@@ -275,12 +300,19 @@ export async function resolvePurchaseOrderModes(
       result.set(line.key, unavailable("LINE_NOT_ACTIONABLE", "This approved estimate line is reference-only and cannot be ordered."));
       continue;
     }
+    if (executionPolicy.intent === "unrecorded") {
+      result.set(line.key, unavailable("ESTIMATE_MODE_NOT_RECORDED", "The approved estimate has no reliable PMC setting. Review its source before choosing execution."));
+      continue;
+    }
+    if (selected?.mode && !procurementModeMatchesPolicy(executionPolicy, selected.mode)) {
+      result.set(line.key, unavailable("PROCUREMENT_EXECUTION_MODE_CONFLICT", "The saved execution choice conflicts with the approved PMC setting. Review this line."));
+      continue;
+    }
     if (line.source !== "configuration" || !line.mainLineId || !line.uomId ||
       !Number.isSafeInteger(line.uomDecimalScale) || line.uomDecimalScale! < 0 || line.uomDecimalScale! > 3) {
       result.set(line.key, unavailable("CONFIGURATION_LINEAGE_MISSING", "This historical estimate line has no complete saved Configuration lineage."));
       continue;
     }
-    const explicitStandard = isExplicitStandard(line, source);
     const mainLine = mainLinesById.get(line.mainLineId);
     const applicableRevision = applicableRevisions.get(line.mainLineId);
     if (!mainLine || !applicableRevision) {
@@ -311,7 +343,8 @@ export async function resolvePurchaseOrderModes(
     const computedDigest = createKnowledgeRevisionDigest({ mainLineId: line.mainLineId,
       revisionNumber: Number(revisionRow.revisionNumber), sections: sectionRows.map((row) => ({
         sectionKey: row.sectionKey as KnowledgeSectionKey, applicability: row.applicability as KnowledgeSectionApplicability,
-        payload: row.payload
+        // Match activation's payloadFor normalization when Mongoose omits empty objects.
+        payload: asRow(row.payload) ?? {}
       })) });
     const digestMismatch = revision.status !== "draft" && computedDigest !== revision.contentDigest;
     if (!digestMismatch && revision.status === "draft") revision.contentDigest = computedDigest;
@@ -342,20 +375,28 @@ export async function resolvePurchaseOrderModes(
     const componentVisibility = procurementInHouseVisibility(advanced);
     const quantityMargin = sectionPayload(sectionMap.get("quantity-margin"));
     const components = readInHouseComponents(advanced);
-    const selectedComponents = components === undefined ? [] : selectedInHouseComponents(components, line.selectedInHouseComponentIds) ?? [];
+    const usage = readInHouseUsagePolicy(advanced);
+    const approvedComponentIds = line.approvedPricingMode === "in_house" ? line.selectedInHouseComponentIds : undefined;
+    const configuredComponentIds = usage.state === "ready" && usage.usage === "execution" ? usage.componentIds : undefined;
+    const selectedInHouseComponentIds = approvedComponentIds?.length ? approvedComponentIds
+      : proposal?.mode === "in_house" ? configuredComponentIds
+        : decision?.mode === "in_house" ? decision.selectedInHouseComponentIds : configuredComponentIds;
+    const selectedComponents = components === undefined ? [] : selectedInHouseComponents(components, selectedInHouseComponentIds) ?? [];
     const unavailableComponentIds = await lockInHouseComponentReferences(selectedComponents, session);
-    const analysis = analyzePurchaseOrderModeSettings({ advanced, quantityMargin, selectedInHouseComponentIds: line.selectedInHouseComponentIds,
+    const analysis = analyzePurchaseOrderModeSettings({ advanced, quantityMargin, selectedInHouseComponentIds,
       inHouseComponentReferencesAvailable: unavailableComponentIds.size === 0,
+      subVendorBaseRateOverridePaise: executionPolicy.intent === "execution" ? projectRates.get(line.key)?.overridePaise : null,
       uom, mode: selected?.mode ?? null,
       quantity: selected?.quantity ?? null, discountBps: selected?.discountBps ?? 0,
       markupBasis: selected?.markupBasis ?? "starting" });
+    analysis.options = analysis.options.filter(option => procurementModeMatchesPolicy(executionPolicy, option.key));
+    analysis.availability = analysis.availability.filter(option => procurementModeMatchesPolicy(executionPolicy, option.key));
     const standardSuggestion: PurchaseOrderModeStandardSuggestion | null = options.standardSuggestionSink &&
-      line.mainBasketId && (explicitStandard || (!decision && !proposal &&
-        source.mainBasketClassifications?.[line.mainBasketId] !== "special"))
+      executionPolicy.intent === "execution" && !decision && !proposal
       ? typeof line.quantity === "number" && Number.isFinite(line.quantity)
         ? suggestStandardSubVendorCost({ advanced,
           uom, quantity: String(line.quantity),
-          baseRateOverridePaise: explicitStandard ? options.projectRates?.get(line.key)?.overridePaise : null })
+          baseRateOverridePaise: projectRates.get(line.key)?.overridePaise })
         : { preview: null, issues: [{ code: "APPROVED_QUANTITY_UNAVAILABLE",
           message: "The approved quantity cannot be used for the Sub-Vendor calculation." }] }
       : null;
@@ -365,6 +406,13 @@ export async function resolvePurchaseOrderModes(
       ? { status: "mismatch" as const, activatedDigest: revision.contentDigest,
         observedDigest: computedDigest, candidateAvailability: analysis.availability } : undefined;
     const issues: PurchaseOrderModeIssue[] = [...analysis.issues];
+    if (!proposal && decision?.mode === "in_house" && components !== undefined && !approvedComponentIds?.length &&
+      (!configuredComponentIds || !decision.selectedInHouseComponentIds ||
+        configuredComponentIds.length !== decision.selectedInHouseComponentIds.length ||
+        configuredComponentIds.some(id => !decision.selectedInHouseComponentIds!.includes(id)))) {
+      issues.push({ code: "IN_HOUSE_COMPONENT_BASIS_CHANGED",
+        message: "The configured In-house execution components changed. Preview and confirm the current calculation." });
+    }
     const childRefs: Record<string, PurchaseOrderModePriceReference> = {};
     for (const child of childrenByKey.get(line.key) ?? []) {
       childRefs[child.id] = resolvePriceReference(child, modeTier === "signature" ? pricesByRevision.get(selectedRevisionId) ?? [] : [], taxesById, at);
@@ -386,7 +434,7 @@ export async function resolvePurchaseOrderModes(
         });
       }
       if (!integrity || !selectedGuardMatches || issues.length || !selected?.mode || !analysis.preview) {
-        result.set(line.key, { ...componentVisibility, state: decision?.exceptionReason ? "exception" : "unavailable", options: [],
+        result.set(line.key, { executionPolicy, ...componentVisibility, state: decision?.exceptionReason ? "exception" : "unavailable", options: [],
           availability: unavailableModeAvailability(mismatchIssue.code, mismatchIssue.message), decision,
           preview: null, issues: [mismatchIssue, ...issues], revision, uom, priceReferences: childRefs,
           ...(integrity ? { integrity } : {}) });
@@ -395,7 +443,7 @@ export async function resolvePurchaseOrderModes(
       // A proposal can be calculated for review, but only a saved basis makes the
       // project decision orderable. The save transaction creates that basis.
       const recoveredDecisionReady = !proposal && basisMatches;
-      result.set(line.key, { ...componentVisibility, state: recoveredDecisionReady ? "ready" : "unavailable",
+      result.set(line.key, { executionPolicy, ...componentVisibility, state: recoveredDecisionReady ? "ready" : "unavailable",
         options: recoveredDecisionReady ? analysis.options : [],
         availability: recoveredDecisionReady ? analysis.availability : unavailableModeAvailability(mismatchIssue.code, mismatchIssue.message),
         decision, preview: analysis.preview, issues: [],
@@ -408,14 +456,40 @@ export async function resolvePurchaseOrderModes(
     const state: PurchaseOrderModeResolution["state"] = decision?.exceptionReason && analysis.options.length === 0 ? "exception"
       : issues.length || analysis.options.length === 0 ? "unavailable"
         : selected?.mode && analysis.preview ? "ready" : "selection_required";
-    result.set(line.key, { ...componentVisibility, state, options: analysis.options, availability: analysis.availability, decision,
+    result.set(line.key, { executionPolicy, ...componentVisibility, state, options: analysis.options, availability: analysis.availability, decision,
       preview: issues.length ? null : analysis.preview, issues, revision, uom, priceReferences: childRefs });
   }
   return result;
 }
 
-function isExplicitStandard(line: PurchaseOrderModeSourceLine, source: ModeSource): boolean {
-  return Boolean(line.mainBasketId && source.mainBasketClassifications?.[line.mainBasketId] === "standard");
+/** Project rates are scoped to the exact approved source, never the shared Main Line. */
+export async function readProcurementProjectRates(projectId: string, source: ModeSource,
+  session: ClientSession): Promise<Map<string, ProcurementBasketProjectRate>> {
+  const rows = await ProcurementBasketBaseRateModel.find({ projectId, estimateId: source.estimateId,
+    estimateVersion: source.estimateVersion, estimateReviewRoundId: source.estimateReviewRoundId })
+    .select({ mainBasketId: 1, sourceLineItemKey: 1, overridePaise: 1, version: 1 }).session(session).lean();
+  const lines = new Map(source.allLineItems.map(line => [line.key, line]));
+  return new Map(rows.flatMap(row => {
+    const line = lines.get(String(row.sourceLineItemKey));
+    if (!line || line.mainBasketId !== row.mainBasketId || resolveProcurementExecutionPolicy(line).intent !== "execution") return [];
+    return [[line.key, { version: Number(row.version), overridePaise: row.overridePaise == null ? null : Number(row.overridePaise) }] as const];
+  }));
+}
+
+function assertAllowedMode(line: PurchaseOrderModeSourceLine, mode: PurchaseOrderModeKey) {
+  if (!procurementModeMatchesPolicy(resolveProcurementExecutionPolicy(line), mode))
+    throw new ApiError(422, "PROCUREMENT_EXECUTION_MODE_CONFLICT", "Choose an execution source allowed by the approved PMC setting.");
+}
+
+async function assertExecutionDecisionUnlocked(projectId: string, source: ModeSource, sourceLineItemKey: string,
+  session: ClientSession): Promise<void> {
+  const locked = await procurementBasketExecutionLocked(projectId, source, sourceLineItemKey, session);
+  if (locked) throw new ApiError(409, "PROCUREMENT_EXECUTION_MODE_LOCKED", "Execution cannot change during award approval or after work-order issue.");
+}
+
+/** Component IDs are internal calculation evidence; preview projections provide permitted detail. */
+function projectDecisionResponse(decision: PurchaseOrderModeDecisionDto): PurchaseOrderModeDecisionDto {
+  return projectProcurementModeDecision(decision, "hidden")!;
 }
 
 function unavailableModeAvailability(code: string, message: string): PurchaseOrderModeResolution["availability"] {
@@ -490,6 +564,7 @@ function decisionDto(row: Row): PurchaseOrderModeDecisionDto {
     markupBasis: row.markupBasis, exceptionReason: row.exceptionReason ?? null,
     revisionId: row.revisionId ?? null, revisionDigest: row.revisionDigest ?? null,
     ...(integrityBasis ? { integrityBasis } : {}),
+    ...(Array.isArray(row.selectedInHouseComponentIds) ? { selectedInHouseComponentIds: [...row.selectedInHouseComponentIds] } : {}),
     updatedAt: (row.updatedAt instanceof Date ? row.updatedAt : new Date(row.updatedAt)).toISOString() };
 }
 function parseIntegrityBasis(value: unknown): PurchaseOrderModeIntegrityBasis | null {
@@ -509,6 +584,7 @@ function auditValues(row: PurchaseOrderModeDecisionDto) {
   return { version: row.version, sourceLineItemKey: row.sourceLineItemKey, mode: row.mode, quantity: row.quantity,
     discountBps: row.discountBps, markupBasis: row.markupBasis, exceptionReason: row.exceptionReason,
     revisionId: row.revisionId, revisionDigest: row.revisionDigest,
+    ...(row.selectedInHouseComponentIds ? { selectedInHouseComponentIds: [...row.selectedInHouseComponentIds] } : {}),
     ...(row.integrityBasis ? { integrityBasis: row.integrityBasis } : {}) };
 }
 function validateRecoveryGuard(resolution: PurchaseOrderModeResolution, expectedObservedDigest: string | undefined): void {

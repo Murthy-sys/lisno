@@ -1,5 +1,5 @@
 import { readInHouseUsagePolicy } from "./in-house-usage-policy.js";
-import type { PurchaseOrderModePreview, PurchaseOrderModeResolution } from "./project-purchase-order-mode.js";
+import type { PurchaseOrderModeDecisionDto, PurchaseOrderModePreview, PurchaseOrderModeResolution } from "./project-purchase-order-mode.js";
 import type { ProjectPurchaseOrderPreparationDto } from "./project-purchase-order-preparation.js";
 
 export type InHouseComponentVisibility = "hidden" | "visible";
@@ -28,7 +28,15 @@ export function projectProcurementModePreview(preview: PurchaseOrderModePreview 
 
 export function projectProcurementModeResolution(mode: PurchaseOrderModeResolution | null): PurchaseOrderModeResolution | null {
   if (!mode || mode.inHouseComponentVisibility !== "hidden") return mode;
-  return { ...mode, preview: projectProcurementModePreview(mode.preview, mode.inHouseComponentVisibility) };
+  return { ...mode, decision: projectProcurementModeDecision(mode.decision, mode.inHouseComponentVisibility),
+    preview: projectProcurementModePreview(mode.preview, mode.inHouseComponentVisibility) };
+}
+
+export function projectProcurementModeDecision(decision: PurchaseOrderModeDecisionDto | null,
+  visibility: InHouseComponentVisibility | undefined): PurchaseOrderModeDecisionDto | null {
+  if (!decision || visibility !== "hidden") return decision;
+  const { selectedInHouseComponentIds: _componentIds, ...visible } = decision;
+  return visible;
 }
 
 export function projectProcurementPreparation(preparation: ProjectPurchaseOrderPreparationDto): ProjectPurchaseOrderPreparationDto {

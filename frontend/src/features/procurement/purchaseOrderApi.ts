@@ -110,6 +110,7 @@ export interface PurchaseOrderModeIntegrity {
   candidateAvailability: Array<{ key: PurchaseOrderModeKey; label: string; available: boolean; issues: Array<{ code: string; message: string }> }>;
 }
 export interface PurchaseOrderModeDecision {
+  selectedInHouseComponentIds?: string[];
   id: string;
   version: number;
   sourceLineItemKey: string;
@@ -169,6 +170,7 @@ export interface PurchaseOrderModePriceReference {
   issues: Array<{ code: string; message: string }>;
 }
 export interface PurchaseOrderModeResolution {
+  executionPolicy?: { intent: "pmc" | "execution" | "unrecorded"; allowedModes: PurchaseOrderModeKey[] };
   inHouseComponentVisibility?: "hidden" | "visible";
   inHouseComponentVisibilityIssue?: { code: string; message: string };
   state: "ready" | "selection_required" | "unavailable" | "exception";

@@ -13,6 +13,35 @@ const advanced = { modeCalculations: { pmc, sub_vendor: subVendor, in_house_labo
   pmcMarginBps: 1_525, subVendorMarginBps: 3_000 };
 
 describe("procurement's read-only configured mode adapter", () => {
+  it("applies a project override only to the exact Sub-vendor calculation without mutating Configuration", () => {
+    const before = structuredClone(advanced);
+    const quantity = "2.75";
+    for (const override of [0, 8_123]) {
+      const result = analyzePurchaseOrderModeSettings({ advanced, uom, mode: "sub_vendor", quantity,
+        subVendorBaseRateOverridePaise: override });
+      const expected = calculateKnowledgeSubVendorPrice({ ...subVendor, baseRatePaise: override,
+        subVendorMarginBps: advanced.subVendorMarginBps, quantity, quantityScale: 2 });
+      expect(result.preview).toMatchObject({ baseCostPaise: expected.baseAmountPaise,
+        adjustedCostPaise: expected.revisedAmountPaise,
+        settings: { scopes: [{ scope: "sub_vendor", baseRatePaise: override }] } });
+      for (const mode of ["pmc", "in_house"] as const) {
+        expect(analyzePurchaseOrderModeSettings({ advanced, uom, mode, quantity,
+          subVendorBaseRateOverridePaise: override }).preview)
+          .toEqual(analyzePurchaseOrderModeSettings({ advanced, uom, mode, quantity }).preview);
+      }
+    }
+    expect(analyzePurchaseOrderModeSettings({ advanced: { ...advanced,
+      modeCalculations: { ...advanced.modeCalculations, sub_vendor: null } }, uom, mode: "sub_vendor", quantity,
+      subVendorBaseRateOverridePaise: 8_123 }).preview).toBeNull();
+    expect(analyzePurchaseOrderModeSettings({ advanced, uom, mode: "sub_vendor", quantity,
+      subVendorBaseRateOverridePaise: -1 }).availability.find(option => option.key === "sub_vendor"))
+      .toMatchObject({ available: false, issues: [expect.objectContaining({ code: "PROJECT_BASE_RATE_INVALID" })] });
+    const legacy = { modeCalculation: pmc, pmcMarginBps: 1_500, subVendorMarginBps: 3_000 };
+    expect(analyzePurchaseOrderModeSettings({ advanced: legacy, uom, mode: "pmc", quantity,
+      subVendorBaseRateOverridePaise: 8_123 }).preview)
+      .toEqual(analyzePurchaseOrderModeSettings({ advanced: legacy, uom, mode: "pmc", quantity }).preview);
+    expect(advanced).toEqual(before);
+  });
   it("prices a Standard Sub-Vendor suggestion from the pinned scope across the low-quantity boundary", () => {
     const configured = { ...advanced, modeCalculations: { ...advanced.modeCalculations,
       sub_vendor: { ...subVendor, baseRatePaise: 997, lowQuantityLimit: "2.75", impactBps: 1_250 } } };

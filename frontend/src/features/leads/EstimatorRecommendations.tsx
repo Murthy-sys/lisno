@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { EstimateRecommendations, type EstimateRecommendationsPopup } from "../estimates/EstimateRecommendations";
+import { EstimateRecommendations, type EstimateRecommendationItem, type EstimateRecommendationsPopup } from "../estimates/EstimateRecommendations";
 import { recommendationLines, type RoomRecommendationView, type RecommendedLineTarget } from "./roomRecommendations";
 
 export type RecommendationReadState = "loading" | "ready" | "error" | "forbidden" | "stale";
@@ -29,11 +29,27 @@ export function EstimatorRecommendations({ roomName, contextKey, sourceCount, st
   useEffect(() => { setOffset(0); setPageTarget(null); }, [paginationContext]);
   const decisions = view?.decisions.filter(decision => decision.requirement === "must") ?? [];
   const lines = recommendationLines(decisions);
+  const unavailableDecisions = decisions.filter(decision => !decision.available || decision.unavailableChildCount > 0 ||
+    decision.kind === "sub_basket" && !decision.children.length);
+  const items: EstimateRecommendationItem[] = [
+    ...lines.map(line => ({ id: line.key, name: line.name,
+      ...(selectionFeedback ? { context: [line.basketName, line.subBasketName].filter(Boolean).join(" / ") } : {}),
+      sourceNames: [...new Set(line.reasons.filter(reason => reason.requirement === "must").map(reason => reason.sourceName))],
+      selected: line.selected })),
+    ...unavailableDecisions.map(decision => ({ id: `unavailable:${decision.key}`, name: decision.name,
+      sourceNames: [...new Set(decision.reasons.filter(reason => reason.requirement === "must").map(reason => reason.sourceName))],
+      selected: false, disabled: true,
+      message: decision.unavailableReason === "price_not_configured"
+        ? "Configured price unavailable. Complete pricing before adding this recommendation."
+        : decision.unavailableChildCount > 0
+          ? `${decision.unavailableChildCount} required ${decision.unavailableChildCount === 1 ? "item needs" : "items need"} pricing or Configuration before adding.`
+          : "Current pricing or Configuration is unavailable. Review it before adding this recommendation." }))
+  ];
   const targetIndex = selectionFeedback && pageTarget?.contextKey === selectionFeedback.contextKey
-    ? lines.findIndex(line => line.key === pageTarget.id) : -1;
+    ? items.findIndex(item => item.id === pageTarget.id) : -1;
   const pageOffset = targetIndex >= 0 ? Math.floor(targetIndex / 20) * 20
-    : Math.min(offset, Math.max(0, Math.ceil(lines.length / 20) - 1) * 20);
-  const unavailable = decisions.some(decision => !decision.available || decision.unavailableChildCount > 0);
+    : Math.min(offset, Math.max(0, Math.ceil(items.length / 20) - 1) * 20);
+  const unavailable = unavailableDecisions.length > 0;
   const message = state === "ready" && unavailable ? "Some non-negotiable recommendations are unavailable in current Configuration. Refresh to check availability."
     : state === "ready" && view?.historicalSources.length ? "Saved recommendation sources need review against current Configuration." : undefined;
   const changeSelection = (id: string, apply: (target: RecommendedLineTarget) => boolean | void) => {
@@ -46,13 +62,10 @@ export function EstimatorRecommendations({ roomName, contextKey, sourceCount, st
   if (!sourceCount && !popup) return null;
   return <EstimateRecommendations roomName={roomName} contextKey={contextKey}
     popup={popup} selectionFeedback={selectionFeedback}
-    completion={popup && completion ? { ...completion, remainingCount: lines.filter(line => !line.selected).length,
+    completion={popup && completion ? { ...completion, remainingCount: items.filter(item => !item.selected).length,
       blocked: state !== "ready" || sourceCount > 0 && !view || Boolean(view?.stale) || unavailable || Boolean(view?.historicalSources.length) } : undefined}
-    items={(sourceCount ? lines : []).slice(pageOffset, pageOffset + 20).map(line => ({ id: line.key, name: line.name,
-      ...(selectionFeedback ? { context: [line.basketName, line.subBasketName].filter(Boolean).join(" / ") } : {}),
-      sourceNames: [...new Set(line.reasons.filter(reason => reason.requirement === "must").map(reason => reason.sourceName))],
-      selected: line.selected }))}
-    total={sourceCount ? lines.length : 0} offset={pageOffset}
+    items={(sourceCount ? items : []).slice(pageOffset, pageOffset + 20)}
+    total={sourceCount ? items.length : 0} offset={pageOffset}
     onOffsetChange={next => { setPageTarget(null); setOffset(next); }} state={popup && completion ? state : sourceCount ? state : "ready"} disabled={!editable}
     message={sourceCount ? message : undefined} onRetry={state === "stale" || state === "ready" && Boolean(message) ? onRefresh : onRetry}
     onAdd={id => changeSelection(id, onSelect)} onRemove={id => changeSelection(id, onRemove)} />;

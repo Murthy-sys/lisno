@@ -133,6 +133,11 @@ export interface EstimationRecommendationRule {
   completionRequired: boolean;
   children?: EstimationRecommendationChild[];
   unavailableChildCount?: number;
+  /** Verified display metadata only; availability and Add eligibility remain separate. */
+  targetDisplay?: {
+    name: string;
+    unavailableReason?: "price_not_configured" | "configuration_incomplete";
+  };
 }
 
 export interface EstimationRecommendationSource {

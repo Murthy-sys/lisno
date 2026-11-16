@@ -9,9 +9,10 @@ import type { ProjectPurchaseOrderPreparationDto, PurchaseOrderPreparationEstima
 function estimateLine(key: string, basketId: string, roomId: string, name: string, amountPaise: number | null,
   preview: { baseCostPaise: number; adjustedCostPaise: number; sellingPaise: number } | null,
   included = true): PurchaseOrderPreparationEstimateLine {
-  const mode = preview ? { state: "ready", preview: { ...preview,
+  const mode = preview ? { state: "ready", executionPolicy: { intent: "execution", allowedModes: ["sub_vendor", "in_house"] },
+    decision: { mode: "sub_vendor", quantity: "2" }, preview: { mode: "sub_vendor", quantity: "2", ...preview,
     settings: { scopes: [{ scope: "sub_vendor", baseRatePaise: preview.baseCostPaise / 2 }] } } }
-    : { state: "selection_required", preview: null };
+    : { state: "selection_required", executionPolicy: { intent: "execution", allowedModes: ["sub_vendor", "in_house"] }, decision: null, preview: null };
   return { key, included, source: "configuration", roomId, roomName: roomId,
     mainBasketId: basketId, mainBasketName: name, subBasketId: "sub-a", subBasketName: "Sub",
     mainLineId: `main-${key}`, mainLineName: key, quantity: "2", unit: "sq-ft", amountPaise, itemIds: [],
@@ -33,32 +34,36 @@ function boqLine(id: string, quantityMilliUnits: number): ProcurementBasketBoqLi
 }
 
 describe("procurement basket finance and identity domain", () => {
-  it("requires every actionable automatic Standard line to have pinned Sub-vendor cost and UOM", () => {
+  it("requires a saved execution decision and current UOM for every actionable line, even with an estimate suggestion", () => {
     const mode = { state: "selection_required", preview: null, decision: null,
+      executionPolicy: { intent: "execution", allowedModes: ["sub_vendor", "in_house"] },
       revision: { id: "revision-a", version: 2, status: "active", contentDigest: "a".repeat(64) },
       uom: { id: "uom-a", code: "SQFT", decimalScale: 2 }
     } as PurchaseOrderPreparationEstimateLine["mode"];
-    const priced = { ...estimateLine("priced", "basket-a", "room-a", "POP", 40_000, null),
+    const suggested = { ...estimateLine("priced", "basket-a", "room-a", "POP", 40_000, null),
       mainBasketClassification: "standard" as const, mainBasketClassificationExplicit: true, mode,
       standardSuggestion: { preview: { mode: "sub_vendor" as const, quantity: "2",
         baseRates: [{ scope: "sub_vendor" as const, ratePaise: 10_000 }],
         baseCostPaise: 20_000, adjustedCostPaise: 22_000 }, issues: [] } };
-    const missing = { ...estimateLine("missing", "basket-a", "room-b", "POP", 30_000, null),
-      mainBasketClassification: "standard" as const, mainBasketClassificationExplicit: true, mode,
-      standardSuggestion: { preview: null,
-        issues: [{ code: "CALCULATION_NOT_CONFIGURED", message: "Sub-vendor cost is unavailable." }] } };
-    const partial = projectProcurementBaskets(preparation([priced, missing]))[0]!;
-    expect(partial).toMatchObject({ automaticSubVendor: true, boqReady: false,
-      standardCost: { complete: false, pricedLineCount: 1 } });
-    const complete = projectProcurementBaskets(preparation([priced, {
-      ...missing, standardSuggestion: priced.standardSuggestion
-    }]))[0]!;
-    expect(complete).toMatchObject({ automaticSubVendor: true, boqReady: true,
-      standardCost: { complete: true, totalPaise: 44_000 } });
+    const second = { ...suggested, key: "second", amountPaise: 30_000 };
+    const pending = projectProcurementBaskets(preparation([suggested, second]))[0]!;
+    expect(pending).toMatchObject({ automaticSubVendor: false, boqReady: false, workingTotalComplete: false,
+      approvedEstimatePaise: 70_000, adjustedCostPaise: 0, standardCost: { complete: false, pricedLineCount: 0 } });
+    const saved = (line: typeof suggested) => ({ ...line, mode: { ...mode, state: "ready",
+      decision: { mode: "sub_vendor", quantity: "2" }, preview: { mode: "sub_vendor", quantity: "2",
+        baseCostPaise: 20_000, adjustedCostPaise: 22_000, sellingPaise: 25_000,
+        settings: { scopes: [{ scope: "sub_vendor", baseRatePaise: 10_000 }] } } } as PurchaseOrderPreparationEstimateLine["mode"] });
+    const partial = projectProcurementBaskets(preparation([saved(suggested), second]))[0]!;
+    expect(partial).toMatchObject({ boqReady: false, readyLineCount: 1, adjustedCostPaise: 22_000, workingTotalComplete: false });
+    const complete = projectProcurementBaskets(preparation([saved(suggested), saved(second)]))[0]!;
+    expect(complete).toMatchObject({ automaticSubVendor: false, boqReady: true, workingTotalComplete: true,
+      approvedEstimatePaise: 70_000, adjustedCostPaise: 44_000, standardCost: { complete: true, totalPaise: 44_000 } });
     expect(complete.preparationDigest).not.toBe(partial.preparationDigest);
+    const missingUnit = saved(second); missingUnit.mode!.uom = null;
+    expect(projectProcurementBaskets(preparation([saved(suggested), missingUnit]))[0]).toMatchObject({ boqReady: false });
   });
 
-  it("shows provisional adjusted cost by basket ID without changing saved-mode selling or tender digests", () => {
+  it("ignores estimate price suggestions while retaining saved execution costs and basket-specific tender digests", () => {
     const advanced = { modeCalculations: { sub_vendor: { baseRatePaise: 10_000,
       lowQuantityLimit: "2", impactBps: 1_000, minimumMarkupBps: 1_000, startingMarkupBps: 2_000 } },
       subVendorMarginBps: 3_000 };
@@ -74,21 +79,18 @@ describe("procurement basket finance and identity domain", () => {
         baseRates: [{ scope: "sub_vendor" as const, ratePaise: 10_000 }] }, issues: [] } };
     const second = { ...estimateLine("line-b", "basket-a", "room-b", "Painting", 60_000, null),
       mainBasketClassification: "standard" as const,
-      mode: { state: "ready", decision: { mode: "sub_vendor", quantity: "3" }, preview: savedPreview } as PurchaseOrderPreparationEstimateLine["mode"] };
+      mode: { ...first.mode!, state: "ready", decision: { mode: "sub_vendor", quantity: "3" }, preview: savedPreview } as PurchaseOrderPreparationEstimateLine["mode"] };
     const special = { ...estimateLine("line-c", "basket-b", "room-c", "Painting", 50_000, null),
       mainBasketClassification: "special" as const,
-      mode: { state: "ready", decision: { mode: "sub_vendor", quantity: "2" }, preview: suggestedPreview } as PurchaseOrderPreparationEstimateLine["mode"] };
+      mode: { ...first.mode!, state: "ready", decision: { mode: "sub_vendor", quantity: "2" }, preview: suggestedPreview } as PurchaseOrderPreparationEstimateLine["mode"] };
     const result = projectProcurementBaskets(preparation([first, second, special]));
     const standard = result.find(basket => basket.id === "basket-a")!;
     expect(standard).toMatchObject({ classification: "standard", includedLineCount: 2,
       readyLineCount: 1, workingTotalComplete: false, workingTotalPaise: savedPreview.sellingPaise,
-      standardCost: { complete: true, provisional: true, pricedLineCount: 2,
-        totalPaise: suggestedPreview.adjustedCostPaise + savedPreview.adjustedCostPaise } });
-    expect(standard.lines[0]?.standardCost).toMatchObject({ state: "suggested", mode: "sub_vendor",
-      calculationQuantity: "2", baseRates: [{ scope: "sub_vendor", ratePaise: 10_000 }],
-      baseCostPaise: suggestedPreview.baseCostPaise,
-      adjustedCostPaise: suggestedPreview.adjustedCostPaise });
-    expect(standard.lines[0]).toMatchObject({ approvedQuantity: "2", baseUnitRatePaise: 10_000 });
+      standardCost: { complete: false, provisional: false, pricedLineCount: 1, totalPaise: null } });
+    expect(standard.lines[0]?.standardCost).toMatchObject({ state: "unavailable", mode: null,
+      calculationQuantity: null, baseRates: [], baseCostPaise: null, adjustedCostPaise: null });
+    expect(standard.lines[0]).toMatchObject({ approvedQuantity: "2", baseUnitRatePaise: null });
     expect(standard.lines[1]?.standardCost).toMatchObject({ state: "saved", calculationQuantity: "3",
       baseCostPaise: savedPreview.baseCostPaise,
       adjustedCostPaise: savedPreview.adjustedCostPaise });
@@ -104,9 +106,22 @@ describe("procurement basket finance and identity domain", () => {
       totalPaise: null, complete: false, provisional: false, pricedLineCount: 1 });
   });
 
+  it.each(["missing-policy", "missing-decision", "wrong-mode", "wrong-quantity"])("rejects %s cost evidence without changing the approved amount", issue => {
+    const source = estimateLine("a", "basket-a", "room-a", "Painting", 50_000,
+      { baseCostPaise: 10_000, adjustedCostPaise: 12_000, sellingPaise: 15_000 });
+    if (issue === "missing-policy") delete source.mode!.executionPolicy;
+    if (issue === "missing-decision") source.mode!.decision = null;
+    if (issue === "wrong-mode") source.mode!.preview!.mode = "pmc";
+    if (issue === "wrong-quantity") source.mode!.preview!.quantity = "3";
+    expect(projectProcurementBaskets(preparation([source]))[0]).toMatchObject({
+      approvedEstimatePaise: 50_000, adjustedCostPaise: 0, readyLineCount: 0,
+      workingTotalComplete: false, boqReady: false, standardCost: { complete: false, totalPaise: null }
+    });
+  });
+
   it("keeps a Standard total incomplete for missing Sub-Vendor settings and ignores reference-only lines", () => {
     const unpriced = { ...estimateLine("line-a", "basket-a", "room-a", "Painting", 10_000, null),
-      standardSuggestion: { preview: null,
+      mode: { ...estimateLine("line-a", "basket-a", "room-a", "Painting", 10_000, null).mode!,
         issues: [{ code: "CALCULATION_NOT_CONFIGURED", message: "No saved Sub-Vendor scope." }] } };
     const excluded = estimateLine("excluded", "basket-a", "room-b", "Painting", null, null, false);
     const zero = estimateLine("zero", "basket-a", "room-c", "Painting", 0, null);
@@ -132,7 +147,7 @@ describe("procurement basket finance and identity domain", () => {
       mode: "in_house", quantity: "3" }).preview!;
     const line = { ...estimateLine("line-a", "basket-a", "room-a", "Ceiling", 50_000, null),
       quantity: "3", mainBasketClassification: "special" as const,
-      mode: { state: "ready", decision: { mode: "in_house", quantity: "3" }, preview } as PurchaseOrderPreparationEstimateLine["mode"] };
+      mode: { executionPolicy: { intent: "execution", allowedModes: ["sub_vendor", "in_house"] }, state: "ready", decision: { mode: "in_house", quantity: "3" }, preview } as PurchaseOrderPreparationEstimateLine["mode"] };
     const basket = projectProcurementBaskets(preparation([line]))[0]!;
     expect(basket.lines[0]).toMatchObject({ approvedQuantity: "3", standardCost: null,
       baseUnitRatePaise: 12_000,

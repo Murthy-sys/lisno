@@ -123,14 +123,78 @@ describe("estimator catalogue recommendations", { timeout: 30_000 }, () => {
   it("does not offer PMC-only targets to new Standard rows while preserving selected source obligations", async () => {
     await AiEstimatorKnowledgeSectionModel.updateMany({ mainLineId: { $in: ["source-ceiling", "target-paint", "target-temp"] }, sectionKey: "advanced" },
       { $set: { payload: { pmcMarginBps: 2000, modeCalculations: { pmc: { baseRatePaise: 1000 } } } } });
-    await recommendations("source-ceiling", [rule("paint", "target-paint", "basket-paint", "sub-paint"),
+    await recommendations("source-ceiling", [rule("paint", "target-paint", "basket-paint", "sub-paint", {
+      targetDisplay: { name: "Untrusted saved label" }
+    }),
       rule("temp", "target-temp", "basket-pop", null, { targetType: "temporary" })]);
     const result = await request(app()).get(endpoint).query({ mainLineIds: "source-ceiling" }).set(bearer("estimator")).expect(200);
     expect(result.body.data.sources[0]).toMatchObject({ available: true, rules: [
-      { id: "paint", available: false }, { id: "temp", available: false }
+      { id: "paint", available: false, targetDisplay: { name: "False Ceiling Painting", unavailableReason: "price_not_configured" } },
+      { id: "temp", available: false, targetDisplay: { name: "target-temp", unavailableReason: "price_not_configured" } }
     ] });
+    expect(result.body.data.sources[0].rules[0]).toMatchObject({
+      targetRevisionId: null, targetRevisionVersion: null, targetItemVersion: null
+    });
+    expect(JSON.stringify(result.body.data)).not.toContain("Untrusted saved label");
     const selected = await request(app()).get(endpoint).query({ mainLineIds: "source-ceiling,target-paint,target-temp" }).set(bearer("estimator")).expect(200);
     expect(selected.body.data.sources[0].rules).toMatchObject([{ available: true }, { available: true, completionRequired: true }]);
+    expect(selected.body.data.sources[0].rules[0]).not.toHaveProperty("targetDisplay");
+  });
+
+  it("names empty, unpriced and mixed groups without making their unavailable children selectable", async () => {
+    await AiEstimatorKnowledgeSubBasketModel.collection.insertMany([
+      { _id: "sub-empty", basketId: "basket-paint", name: "New paint group", displayOrder: 2 },
+      { _id: "sub-unpriced", basketId: "basket-paint", name: "Acoustic finishes", displayOrder: 3 },
+      { _id: "sub-mixed", basketId: "basket-paint", name: "Mixed finishes", displayOrder: 4 }
+    ] as never[]);
+    await seedLine("unpriced-finish", "basket-paint", "sub-unpriced");
+    await seedLine("mixed-priced", "basket-paint", "sub-mixed");
+    await seedLine("mixed-unpriced", "basket-paint", "sub-mixed");
+    await AiEstimatorKnowledgeSectionModel.updateMany({ mainLineId: { $in: ["unpriced-finish", "mixed-unpriced"] }, sectionKey: "advanced" },
+      { $set: { "payload.modeCalculations.sub_vendor.baseRatePaise": 0 } });
+    await recommendations("source-ceiling", ["empty", "unpriced", "mixed"].map(id => rule(id, "", "basket-paint", `sub-${id}`, {
+      targetKind: "sub_basket", targetType: null, targetMainLineId: null
+    })));
+    const result = await request(app()).get(endpoint).query({ mainLineIds: "source-ceiling" }).set(bearer("estimator")).expect(200);
+    expect(result.body.data.sources[0].rules).toMatchObject([
+      { id: "empty", available: false, completionRequired: true, children: [], unavailableChildCount: 0,
+        targetDisplay: { name: "New paint group", unavailableReason: "configuration_incomplete" } },
+      { id: "unpriced", available: false, completionRequired: true, children: [], unavailableChildCount: 1,
+        targetDisplay: { name: "Acoustic finishes", unavailableReason: "price_not_configured" } },
+      { id: "mixed", available: true, completionRequired: true, unavailableChildCount: 1,
+        children: [{ mainLineId: "mixed-priced", available: true, revisionId: "revision-mixed-priced", revisionVersion: 3, itemVersion: 2 }],
+        targetDisplay: { name: "Mixed finishes", unavailableReason: "price_not_configured" } }
+    ]);
+    const selected = await request(app()).get(endpoint).query({ mainLineIds: "source-ceiling,unpriced-finish,mixed-unpriced" })
+      .set(bearer("estimator")).expect(200);
+    const groups = selected.body.data.sources[0].rules;
+    expect(groups[1]).toMatchObject({ available: true, unavailableChildCount: 0, children: [{ mainLineId: "unpriced-finish" }] });
+    expect(groups[1]).not.toHaveProperty("targetDisplay");
+    expect(groups[2].children).toHaveLength(2);
+    expect(groups[2]).not.toHaveProperty("targetDisplay");
+  });
+
+  it("omits display names for missing, archived, inaccessible or mismatched target identities", async () => {
+    await AiEstimatorKnowledgeSubBasketModel.collection.updateOne({ _id: "sub-hidden" }, { $set: { name: "Secret hidden group" } });
+    await AiEstimatorKnowledgeBasketModel.collection.insertOne({ _id: "basket-archived", name: "Secret archived basket", status: "archived", displayOrder: 9 } as never);
+    await AiEstimatorKnowledgeSubBasketModel.collection.insertOne({ _id: "sub-archived", basketId: "basket-archived", name: "Secret archived group", displayOrder: 1 } as never);
+    await recommendations("source-ceiling", [
+      rule("missing", "missing-target", "basket-paint", "sub-paint"),
+      rule("archived", "target-archived", "basket-paint", "sub-paint"),
+      rule("hidden", "target-hidden", "basket-hidden", "sub-hidden"),
+      rule("wrong-parent", "target-same-name", "basket-paint", "sub-paint"),
+      rule("wrong-type", "target-paint", "basket-paint", "sub-paint", { targetType: "temporary" }),
+      ...[["missing-group", "basket-paint", "missing-group"], ["wrong-group", "basket-light", "sub-paint"],
+        ["hidden-group", "basket-hidden", "sub-hidden"], ["archived-group", "basket-archived", "sub-archived"]].map(([id, basket, group]) =>
+        rule(id!, "", basket!, group!, { targetKind: "sub_basket", targetType: null, targetMainLineId: null }))
+    ]);
+    const result = await request(app()).get(endpoint).query({ mainLineIds: "source-ceiling", includeReadyNonActive: true })
+      .set(bearer("estimator")).expect(200);
+    for (const entry of result.body.data.sources[0].rules) {
+      expect(entry.available).toBe(false);
+      expect(entry).not.toHaveProperty("targetDisplay");
+    }
+    expect(JSON.stringify(result.body.data)).not.toMatch(/Secret hidden|Secret archived/);
   });
 
   it("uses any matching Sub-vendor scope for group children without a PMC fallback", async () => {

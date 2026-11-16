@@ -12,7 +12,7 @@ const groupView: RoomRecommendationView = {
   decisions: [{
     key: "sub-basket:basket-paint:sub-finish", kind: "sub_basket", requirement: "must",
     name: "Ceiling finish", basketName: "Painting", subBasketName: null, available: true,
-    selected: false, completionRequired: true, unavailableChildCount: 1, target: null,
+    selected: false, completionRequired: true, unavailableChildCount: 0, target: null,
     reasons: [{ ruleId: "rule-group", sourceId: "line-pop", sourceName: "POP false ceiling",
       reason: "Finish the ceiling after gypsum work.", requirement: "must" }],
     children: [
@@ -38,6 +38,40 @@ const defaults: ComponentProps<typeof EstimatorRecommendations> = {
 };
 
 describe("inline staff recommendations", () => {
+  it("shows unavailable required items and empty groups without allowing Add", async () => {
+    const user = userEvent.setup();
+    const onSelect = vi.fn(), onRemove = vi.fn();
+    const direct = { ...directView.decisions[0]!, requirement: "must" as const, name: "Unpriced finish", target: null,
+      available: false, unavailableReason: "price_not_configured" as const,
+      reasons: directView.decisions[0]!.reasons.map(reason => ({ ...reason, requirement: "must" as const })) };
+    const group = { ...groupView.decisions[0]!, available: false, children: [], unavailableChildCount: 2 };
+    render(<EstimatorRecommendations {...defaults} onSelect={onSelect} onRemove={onRemove}
+      view={{ ...groupView, decisions: [direct, group] }} />);
+    const itemButton = await screen.findByRole("button", { name: "Add Unpriced finish" });
+    const groupButton = screen.getByRole("button", { name: "Add Ceiling finish" });
+    expect(itemButton).toBeDisabled(); expect(groupButton).toBeDisabled();
+    expect(screen.getByText("Configured price unavailable. Complete pricing before adding this recommendation.")).toBeVisible();
+    expect(screen.getByText(/2 required items need pricing or Configuration/)).toBeVisible();
+    expect(screen.getByRole("button", { name: "Non-negotiable recommendations (2)" })).toBeVisible();
+    await user.click(itemButton); await user.click(groupButton);
+    expect(onSelect).not.toHaveBeenCalled(); expect(onRemove).not.toHaveBeenCalled();
+  });
+
+  it("keeps valid children actionable alongside an incomplete group summary", async () => {
+    const user = userEvent.setup(), onSelect = vi.fn(() => true);
+    render(<EstimatorRecommendations {...defaults} onSelect={onSelect}
+      view={{ ...groupView, decisions: [{ ...groupView.decisions[0]!, unavailableChildCount: 1 }] }} />);
+    expect(await screen.findByRole("button", { name: "Add False ceiling painting" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Add Cove finish" })).toBeEnabled();
+    const summary = screen.getByRole("button", { name: "Add Ceiling finish" });
+    expect(summary).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Non-negotiable recommendations (3)" })).toBeVisible();
+    await user.click(summary);
+    expect(onSelect).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Add False ceiling painting" }));
+    expect(onSelect).toHaveBeenCalledExactlyOnceWith(groupView.decisions[0]!.children[0]!.target);
+  });
+
   it("shows only non-negotiable additions inline without moving focus or opening a dialog", async () => {
     const user = userEvent.setup();
     render(<><button>Existing control</button><EstimatorRecommendations {...defaults} view={{ ...groupView, decisions: [...groupView.decisions, ...directView.decisions] }} /></>);

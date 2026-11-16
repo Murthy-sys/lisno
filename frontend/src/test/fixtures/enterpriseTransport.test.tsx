@@ -648,7 +648,13 @@ describe("Procurement mode group browser scenario", () => {
     expect(detail.lines.map((line) => [line.estimateMode?.approvedClassification, line.estimateMode?.mode])).toEqual([
       ["standard", "sub_vendor"], ["special", "sub_vendor"], ["special", "in_house"], ["special", "pmc"]
     ]);
-    expect(detail.lines.every((line) => line.mode?.decision?.mode === "pmc")).toBe(true);
+    expect(detail.lines.map(line => [line.mode?.executionPolicy?.intent, line.mode?.decision?.mode,
+      line.mode?.preview?.mode, line.mode?.decision?.quantity, line.mode?.preview?.quantity])).toEqual([
+      ["execution", "sub_vendor", "sub_vendor", "1", "1"],
+      ["execution", "sub_vendor", "sub_vendor", "1", "1"],
+      ["execution", "in_house", "in_house", "1", "1"],
+      ["pmc", "pmc", "pmc", "1", "1"]
+    ]);
     expect(transport.requests.every((request) => request.method === "GET" && !request.unexpected)).toBe(true);
     transport.restore();
     transport = installEnterpriseTransport({ route: "/procurement/projects/project-one?qaStandardBasket=ready", role: "procurement", state: "populated" });

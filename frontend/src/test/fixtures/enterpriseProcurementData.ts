@@ -150,13 +150,14 @@ export const qaEmptyModeGroups = (): ProcurementBasketModeGroup[] =>
 
 const groupSource = { estimateId: "estimate-one", estimateVersion: 4, estimateReviewRoundId: "round-groups" };
 const groupDigest = "e".repeat(64);
-function savedCommercialMode(key: string, cost: number): PurchaseOrderModeResolution {
-  // Every commercial decision stays PMC, intentionally independent of display mode.
-  return { state: "ready", options: [{ key: "pmc", label: "PMC" }], issues: [],
-    decision: { id: `decision-${key}`, version: 1, sourceLineItemKey: key, mode: "pmc", quantity: "1",
+function savedCommercialMode(key: string, cost: number, mode: ProcurementEstimateMode): PurchaseOrderModeResolution {
+  return { state: "ready", options: [{ key: mode, label: mode === "pmc" ? "PMC" : mode === "in_house" ? "In-house" : "Sub-vendor" }], issues: [],
+    executionPolicy: mode === "pmc" ? { intent: "pmc", allowedModes: ["pmc"] }
+      : { intent: "execution", allowedModes: ["sub_vendor", "in_house"] },
+    decision: { id: `decision-${key}`, version: 1, sourceLineItemKey: key, mode, quantity: "1",
       discountBps: 0, markupBasis: "starting", exceptionReason: null, revisionId: "revision-groups",
       revisionDigest: groupDigest, updatedAt: "2026-10-08T00:00:00.000Z" },
-    preview: { baseCostPaise: cost, adjustedCostPaise: cost, sellingPaise: cost, lowQuantityImpactPaise: 0 },
+    preview: { mode, quantity: "1", baseCostPaise: cost, adjustedCostPaise: cost, sellingPaise: cost, lowQuantityImpactPaise: 0 },
     revision: { id: "revision-groups", version: 1, status: "active", contentDigest: groupDigest },
     uom: { id: "uom-groups", code: "sq-ft", name: "Square feet", decimalScale: 2 }
   } as unknown as PurchaseOrderModeResolution;
@@ -167,7 +168,7 @@ function groupLine(key: string, name: string, classification: "standard" | "spec
     subBasketId: "sub-ceiling", subBasketName: "Ceiling finishes", mainLineId: key.split(":")[1]!,
     mainLineName: name, approvedQuantity: "1", approvedUnit: "sq-ft", approvedAmountPaise: amount,
     included: true, source: "configuration", baseUnitRatePaise: cost, projectRate: { version: 0, overridePaise: null },
-    standardCost: null, mode: cost === null ? null : savedCommercialMode(key, cost),
+    standardCost: null, mode: cost === null || !selectedMode ? null : savedCommercialMode(key, cost, selectedMode),
     estimateMode: { approvedClassification: classification, approvedPricingMode: selectedMode, mode: selectedMode,
       provenance: selectedMode ? "line" : "unrecorded",
       issues: selectedMode ? [] : [{ code: "ESTIMATE_MODE_NOT_RECORDED", message: "The approved estimate does not record a pricing mode." }] } };

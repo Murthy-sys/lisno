@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import axe from "axe-core";
 import { http, HttpResponse } from "msw";
 import { useState } from "react";
+import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { describe, expect, it } from "vitest";
 
 import { renderWithQuery } from "../../test/render";
@@ -28,7 +29,7 @@ const line: ProcurementBasketLine = { sourceLineItemKey: "room-one:line-one", ro
   subBasketId: "sub-one", subBasketName: "False Ceiling", mainLineId: "line-one", mainLineName: "POP false ceiling",
   approvedQuantity: "2", approvedUnit: "sq-ft", approvedAmountPaise: 20000, included: true, source: "configuration",
   baseUnitRatePaise: null, projectRate: { version: 0, overridePaise: null }, standardCost: null,
-  mode: { state: "selection_required", options: [{ key: "pmc", label: "PMC" }, { key: "sub_vendor", label: "Sub-vendor" },
+  mode: { executionPolicy: { intent: "execution", allowedModes: ["sub_vendor", "in_house"] }, state: "selection_required", options: [{ key: "pmc", label: "PMC" }, { key: "sub_vendor", label: "Sub-vendor" },
     { key: "in_house", label: "In-house" }], decision: null, preview: null, issues: [],
     revision: { id: "revision-one", version: 2, status: "active", contentDigest: digest },
     uom: { id: "uom-one", code: "sq-ft", decimalScale: 2 } } };
@@ -37,6 +38,96 @@ const previewResponse: PurchaseOrderModeDraftPreview = { projectId: "project-one
   uom: line.mode!.uom, preview: configuredPreview, scopes: [], issues: [] };
 
 describe("basket configured mode editor", () => {
+  it("keeps PMC fixed to vendor handoff without offering an execution-source change", async () => {
+    const pmcLine: ProcurementBasketLine = { ...line, mode: { ...line.mode!, executionPolicy: { intent: "pmc", allowedModes: ["pmc"] } } };
+    const user = userEvent.setup();
+    renderWithQuery(<ProcurementBasketModeEditor projectId="project-one" basketId="basket-one" source={estimateSource}
+      line={pmcLine} classification="standard" frozen={false} />);
+    await user.click(screen.getByRole("button", { name: "Confirm PMC for POP false ceiling" }));
+    expect(screen.getByText(/Vendor handoff/)).toBeVisible();
+    expect(screen.queryByRole("radio")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Preview calculation" })).toBeEnabled();
+  });
+
+  it.each([undefined, { intent: "unrecorded" as const, allowedModes: [] }])("blocks edits when current execution policy is unavailable: %s", policy => {
+    renderWithQuery(<ProcurementBasketModeEditor projectId="project-one" basketId="basket-one" source={estimateSource}
+      line={{ ...line, mode: { ...line.mode!, executionPolicy: policy } }} classification="standard" frozen={false} />);
+    expect(screen.getByRole("button", { name: "Choose mode for POP false ceiling" })).toBeDisabled();
+    expect(screen.getByText(policy?.intent === "unrecorded"
+      ? "The approved estimate has no recorded execution choice. Review the approved estimate before choosing a mode."
+      : "Execution details are unavailable. Refresh this page before choosing a mode.")).toBeVisible();
+    expect(screen.queryByText(policy?.intent === "unrecorded"
+      ? "Execution details are unavailable. Refresh this page before choosing a mode."
+      : "The approved estimate has no recorded execution choice. Review the approved estimate before choosing a mode.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("radio")).not.toBeInTheDocument();
+  });
+
+  it("names unavailable execution pricing and keeps both sources unselected until an explicit choice", async () => {
+    const user = userEvent.setup();
+    renderWithQuery(<ProcurementBasketModeEditor projectId="project-one" basketId="basket-one" source={estimateSource}
+      line={{ ...line, mode: { ...line.mode!, availability: [
+        { key: "sub_vendor", label: "Sub-vendor", available: true, issues: [] },
+        { key: "in_house", label: "In-house", available: false, issues: [{ code: "MISSING_PRESET", message: "Configure In-house components before choosing this source." }] }
+      ] } }} classification="standard" frozen={false} />);
+    await user.click(screen.getByRole("button", { name: "Choose mode for POP false ceiling" }));
+    const vendor = screen.getByRole("radio", { name: "Sub-vendor" });
+    const inHouse = screen.getByRole("radio", { name: "In-house" });
+    expect(vendor).not.toBeChecked(); expect(inHouse).not.toBeChecked();
+    expect(inHouse).toBeDisabled(); expect(inHouse).toHaveAccessibleDescription("Configure In-house components before choosing this source.");
+    expect(screen.getByRole("button", { name: "Preview calculation" })).toBeDisabled();
+    vendor.focus(); await user.keyboard(" ");
+    expect(vendor).toBeChecked();
+    expect(screen.getByRole("button", { name: "Preview calculation" })).toBeEnabled();
+  });
+
+  it("refreshes every affected basket cache after saving without invalidating another project", async () => {
+    let client!: QueryClient;
+    function Capture() { client = useQueryClient(); return <ProcurementBasketModeEditor projectId="project-one" basketId="basket-one"
+      source={estimateSource} line={line} classification="special" frozen={false} />; }
+    server.use(http.post("/api/v1/procurement/projects/project-one/purchase-order-mode-previews", () => HttpResponse.json({ data: previewResponse })),
+      http.post("/api/v1/procurement/projects/project-one/purchase-order-mode-decisions", () => HttpResponse.json({ data: { id: "saved", version: 1 } })));
+    const user = userEvent.setup(); renderWithQuery(<Capture />);
+    const keys = ["basket-enquiries", "basket-enquiry", "basket-comparison", "basket-award", "basket-monitor", "basket-invitation-preview"].map(key => ["procurement", key, "project-one", "basket-one", "record"]);
+    const unrelated = ["procurement", "basket-comparison", "project-two", "basket-one", "record"];
+    for (const key of [...keys, unrelated]) client.setQueryData(key, { current: true });
+    await user.click(screen.getByRole("button", { name: "Choose mode for POP false ceiling" }));
+    await user.click(screen.getByRole("radio", { name: "In-house" }));
+    await user.click(screen.getByRole("button", { name: "Preview calculation" }));
+    await user.click(await screen.findByRole("button", { name: "Save mode" }));
+    await waitFor(() => { for (const key of keys) expect(client.getQueryState(key)?.isInvalidated).toBe(true); });
+    expect(client.getQueryState(unrelated)?.isInvalidated).toBe(false);
+  });
+
+  it("keeps the chooser read-only while the current source is frozen", () => {
+    renderWithQuery(<ProcurementBasketModeEditor projectId="project-one" basketId="basket-one" source={estimateSource}
+      line={line} classification="special" frozen />);
+    expect(screen.getByRole("button", { name: "Choose mode for POP false ceiling" })).toBeDisabled();
+  });
+
+  it("discards a delayed preview after the execution choice changes", async () => {
+    let release!: () => void;
+    const responseReady = new Promise<void>(resolve => { release = resolve; });
+    const previews: unknown[] = [];
+    server.use(http.post("/api/v1/procurement/projects/project-one/purchase-order-mode-previews", async ({ request }) => {
+      previews.push(await request.json());
+      await responseReady;
+      return HttpResponse.json({ data: { ...previewResponse, preview: { ...configuredPreview, mode: "sub_vendor" } } });
+    }));
+    const user = userEvent.setup();
+    renderWithQuery(<ProcurementBasketModeEditor projectId="project-one" basketId="basket-one" source={estimateSource}
+      line={line} classification="standard" frozen={false} />);
+    await user.click(screen.getByRole("button", { name: "Choose mode for POP false ceiling" }));
+    await user.click(screen.getByRole("radio", { name: "Sub-vendor" }));
+    await user.click(screen.getByRole("button", { name: "Preview calculation" }));
+    await waitFor(() => expect(previews).toHaveLength(1));
+    await user.click(screen.getByRole("radio", { name: "In-house" }));
+    release();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Preview calculation" })).toBeEnabled());
+    expect(screen.getByRole("radio", { name: "In-house" })).toBeChecked();
+    expect(screen.queryByRole("button", { name: "Save mode" })).not.toBeInTheDocument();
+    expect(screen.queryByText("₹125.00")).not.toBeInTheDocument();
+  });
+
   it("previews the selected execution source and saves its server calculation decision", async () => {
     const previews: unknown[] = []; const saves: unknown[] = [];
     server.use(
@@ -54,7 +145,6 @@ describe("basket configured mode editor", () => {
     const view = renderWithQuery(<ProcurementBasketModeEditor projectId="project-one" basketId="basket-one"
       source={estimateSource} line={line} classification="special" frozen={false} />);
     await user.click(screen.getByRole("button", { name: "Choose mode for POP false ceiling" }));
-    await user.click(screen.getByRole("radio", { name: "Execution" }));
     await user.click(screen.getByRole("radio", { name: "In-house" }));
     expect(screen.getByRole("button", { name: "Preview calculation" })).toBeEnabled();
     await user.click(screen.getByRole("button", { name: "Preview calculation" }));
@@ -72,9 +162,10 @@ describe("basket configured mode editor", () => {
     await waitFor(() => expect(saves).toHaveLength(1));
     expect(saves[0]).toMatchObject({ sourceLineItemKey: line.sourceLineItemKey, mode: "in_house", quantity: "2",
       expectedEstimateSource: estimateSource, expectedRevisionDigest: digest });
+    expect(saves[0]).not.toHaveProperty("selectedInHouseComponentIds");
   });
 
-  it("keeps historical unclassified Standard mode editing without a separate impact row", async () => {
+  it("keeps an estimate Sub-vendor suggestion unselected until Procurement chooses its source", async () => {
     const previews: unknown[] = []; const saves: unknown[] = [];
     const suggestedLine: ProcurementBasketLine = { ...line, standardCost: {
       state: "suggested", mode: "sub_vendor", calculationQuantity: "2",
@@ -97,9 +188,9 @@ describe("basket configured mode editor", () => {
     expect(screen.queryByText("₹50.00")).not.toBeInTheDocument();
     expect(screen.queryByText("Low quantity impact")).not.toBeInTheDocument();
     expect(saves).toHaveLength(0);
-    await user.click(screen.getByRole("button", { name: "Confirm mode for POP false ceiling" }));
-    expect(screen.getByRole("radio", { name: "Execution" })).toBeChecked();
-    expect(screen.getByRole("radio", { name: "Sub-vendor" })).toBeChecked();
+    await user.click(screen.getByRole("button", { name: "Choose mode for POP false ceiling" }));
+    expect(screen.getByRole("radio", { name: "Sub-vendor" })).not.toBeChecked();
+    await user.click(screen.getByRole("radio", { name: "Sub-vendor" }));
     expect(screen.getByRole("textbox", { name: "Calculation quantity for POP false ceiling" })).toHaveValue("2");
     await user.click(screen.getByRole("button", { name: "Preview calculation" }));
     await waitFor(() => expect(previews).toHaveLength(1));
@@ -123,7 +214,7 @@ describe("basket configured mode editor", () => {
     expect((await axe.run(view.container, { rules: { "color-contrast": { enabled: false } } })).violations).toEqual([]);
   });
 
-  it("requires Configuration recovery for historical unclassified Standard mode editing", async () => {
+  it("requires Configuration recovery after an explicit Procurement execution choice", async () => {
     const observedDigest = "b".repeat(64);
     const mismatch = { code: "PINNED_DIGEST_MISMATCH", message: "The saved Configuration content does not match its activated digest." };
     const observedLine: ProcurementBasketLine = { ...line,
@@ -147,8 +238,8 @@ describe("basket configured mode editor", () => {
     renderWithQuery(<ProcurementBasketModeEditor projectId="project-one" basketId="basket-one"
       source={estimateSource} line={observedLine} classification="standard" frozen={false} compact />);
     await user.click(screen.getByRole("button", { name: "Review mode for POP false ceiling" }));
-    expect(screen.getByRole("radio", { name: "Execution" })).toBeChecked();
-    expect(screen.getByRole("radio", { name: "Sub-vendor" })).toBeChecked();
+    expect(screen.getByRole("radio", { name: "Sub-vendor" })).not.toBeChecked();
+    await user.click(screen.getByRole("radio", { name: "Sub-vendor" }));
     expect(screen.getByRole("button", { name: "Preview calculation" })).toBeDisabled();
     await user.type(screen.getByRole("textbox", { name: "Reason" }), "Confirmed observed configuration cost");
     await user.click(screen.getByRole("checkbox", { name: /I reviewed the observed saved content/u }));
@@ -182,8 +273,9 @@ describe("basket configured mode editor", () => {
           source={estimateSource} line={currentLine} classification="standard" frozen={false} /></>;
     }
     const user = userEvent.setup(); renderWithQuery(<Harness />);
-    await user.click(screen.getByRole("button", { name: "Confirm mode for POP false ceiling" }));
-    expect(screen.getByRole("radio", { name: "Sub-vendor" })).toBeChecked();
+    await user.click(screen.getByRole("button", { name: "Choose mode for POP false ceiling" }));
+    expect(screen.getByRole("radio", { name: "Sub-vendor" })).not.toBeChecked();
+    await user.click(screen.getByRole("radio", { name: "Sub-vendor" }));
     await user.click(screen.getByRole("button", { name: "Receive saved decision" }));
     expect(screen.getByRole("radio", { name: "In-house" })).toBeChecked();
     expect(screen.getByRole("textbox", { name: "Calculation quantity for POP false ceiling" })).toHaveValue("3");
