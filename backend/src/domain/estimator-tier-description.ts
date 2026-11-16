@@ -1,7 +1,6 @@
 import type { KnowledgeModeTier } from "./ai-estimator-knowledge-mode-tiers.js";
 import { validateKnowledgeSectionPayload } from "./ai-estimator-knowledge-validation.js";
 import {
-  generateModeDescription,
   MAX_MODE_DESCRIPTION_LENGTH,
   syncModeDescription,
   type ModeDescriptionScope
@@ -31,18 +30,18 @@ function namedScope(payload: Record<string, unknown>, name: string): Description
 }
 
 /** Resolve display text independently of specifications, within one verified source section. */
-export function projectEstimatorTierDescription(section: unknown, tier: KnowledgeModeTier, mainLineName: string): string | null {
+export function projectEstimatorTierDescription(section: unknown, tier: KnowledgeModeTier, _mainLineName: string): string | null {
   if (!isRecord(section) || section.sectionKey !== "advanced" || !isRecord(section.payload)) return null;
   const selected = tier === "signature" ? readScope(section) : namedScope(section.payload, tier);
   if (selected === null) return null;
-  const description = selected ? projectScopeDescription(selected, mainLineName) : undefined;
+  const description = selected ? projectScopeDescription(selected) : undefined;
   if (description !== undefined) return description;
   const mode = namedScope(section.payload, "default");
-  return mode ? projectScopeDescription(mode, mainLineName) ?? null : null;
+  return mode ? projectScopeDescription(mode) ?? null : null;
 }
 
-/** Undefined is ordinary absence; null is invalid or disabled retained content. */
-function projectScopeDescription(scope: DescriptionScope, mainLineName: string): string | null | undefined {
+/** Undefined allows saved common wording; null means explicitly empty, invalid or disabled. */
+function projectScopeDescription(scope: DescriptionScope): string | null | undefined {
   const { payload } = scope;
   // Only validate consumed description inputs. Unrelated price fields cannot hide a paragraph.
   const inputs = Object.fromEntries(["modeDescription", "modeConfigurations"]
@@ -53,13 +52,13 @@ function projectScopeDescription(scope: DescriptionScope, mainLineName: string):
   // Configuration puts legacy or unscoped rows into recovery, never into a primary scope.
   if (rows.some(row => Object.hasOwn(row, "modeId") ||
     (row.modeKind === "execution" && row.executionSource !== "sub_vendor" && row.executionSource !== "in_house"))) return null;
-  if (!text && !rows.length) return undefined;
+  if (text === "") return null;
+  if (text === undefined && !rows.length) return undefined;
   if (scope.applicability !== "configured") return null;
+  // Mode settings alone never create client-facing wording.
+  if (text === undefined) return undefined;
   const pmc = rows.find(row => row.modeKind === "pmc") as ModeDescriptionScope | undefined;
   const inHouse = rows.find(row => row.modeKind === "execution" && row.executionSource === "in_house") as ModeDescriptionScope | undefined;
-  if (!text && (typeof mainLineName !== "string" || !mainLineName.trim())) return null;
-  const description = text !== undefined
-    ? syncModeDescription(text, pmc, undefined, inHouse)
-    : generateModeDescription(mainLineName, pmc, inHouse);
+  const description = syncModeDescription(text, pmc, undefined, inHouse);
   return description.trim() && description.length <= MAX_MODE_DESCRIPTION_LENGTH ? description : null;
 }

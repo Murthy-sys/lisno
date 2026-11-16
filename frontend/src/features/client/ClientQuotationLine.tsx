@@ -1,4 +1,5 @@
 import { calculateDimensionQuantity } from "../../../../shared/estimation/estimateDimensions";
+import { EstimateLineTierDetails } from "../estimates/EstimateLineTierDetails";
 import { EstimateLineActions, EstimateLineChoice, EstimateLineLayout } from "../estimates/EstimateLineRow";
 import { EstimateDimensionsFields } from "../leads/EstimateDimensionsFields";
 import { EstimatePricingModeControl } from "../estimates/EstimatePricingModeControl";
@@ -61,6 +62,8 @@ export function ClientQuotationLine({ item, currentLine, selected, disabled, gro
       <EstimateLineActions name={label} disabled={blocked} included={selected} onToggle={() => onChange({ included: !selected })}
         {...(!line.dimensionsMandatory && selected ? { onResetQuantity: () => onChange({ quantity: "1" }) } : {})} />
     </>}>
+    {selected ? <EstimateLineTierDetails rowKey={line.id} label={label} tier={item.modeTier}
+      description={unavailable ? null : choice?.description} details={undefined} /> : null}
     {unavailable ? <p className="configured-estimate-line__message" role="status">This saved item is unavailable in the current Configuration. Your team must review it before you can edit or remove it. Saved amounts are unchanged.</p> : null}
     {selected && line.dimensionsMandatory ? line.dimensionRule
       ? <EstimateDimensionsFields label={label} dimensions={item.dimensions} rule={line.dimensionRule} quantityUnit={line.uomName} disabled={fieldsDisabled} onChange={dimensions => onChange({ dimensions })} />

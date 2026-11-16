@@ -72,6 +72,29 @@ beforeEach(async () => {
 });
 
 describe("client working estimate tier selection", () => {
+  it("exposes saved descriptions without internal specification metadata and preserves project access", async () => {
+    await Section.updateOne({ _id: "advanced-visible" }, { $set: {
+      "payload.modeDescription": "Carefully prepared walls.\nReady for your chosen finish.",
+      "payload.tierConfigurations.premium.payload.modeDescription": "",
+      "payload.tierConfigurations.default": { applicability: "configured", payload: { modeDescription: "Common finish wording." } },
+      "payload.internalVendorNotes": "PRIVATE_INTERNAL_NOTE"
+    } });
+    await Section.collection.insertOne({ _id: "private-specifications" as never,
+      mainLineId: "visible", revisionId: "revision-visible", sectionKey: "pricing", applicability: "configured", version: 1,
+      payload: { specifications: [{ id: "private-spec", name: "PRIVATE_SPECIFICATION", brandIds: ["private-brand"] }],
+        brands: [{ id: "private-brand", name: "PRIVATE_BRAND" }] } });
+    const before = await EstimateModel.findById("tier-estimate").lean();
+    const detail = await service.detail(client, "tier-project");
+    expect(detail.lines.map(line => line.id)).toEqual(["line-one", "line-two"]);
+    expect(detail.lines[0]!.choices.map(choice => [choice.modeTier, choice.description])).toEqual([
+      ["signature", "Carefully prepared walls.\nReady for your chosen finish."],
+      ["premium", null], ["functional", "Common finish wording."]
+    ]);
+    expect(JSON.stringify(detail)).not.toMatch(/PRIVATE_|tierDetails|specifications|brands|privateMargin|modeConfigurations/);
+    await expect(service.detail(other, "tier-project")).rejects.toMatchObject({ status: 404 });
+    expect(await EstimateModel.findById("tier-estimate").lean()).toEqual(before);
+  });
+
   it("rejects zero unit prices through single and atomic batch selection even when another method is positive", async () => {
     await Section.updateOne({ _id: "advanced-visible" }, { $set: {
       "payload.tierConfigurations.premium.payload.modeCalculations.sub_vendor.baseRatePaise": 0,

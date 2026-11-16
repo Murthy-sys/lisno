@@ -67,7 +67,7 @@ function installSession(
   );
 }
 
-function installSuperAdminFinanceSession(additionalPermissions: PermissionCode[] = []) {
+function installSuperAdminFinanceSession(additionalPermissions: PermissionCode[] = [], includeFinancePermissions = true) {
   tokenStorage.set("super-admin-project-detail-token");
   server.use(
     http.get("/api/v1/auth/me", () =>
@@ -90,9 +90,7 @@ function installSuperAdminFinanceSession(additionalPermissions: PermissionCode[]
             "identity.authorization.read",
             "projects.read",
             "projects.list",
-            "finance.bucket.read",
-            "finance.entry.read",
-            "finance.entry.create",
+            ...(includeFinancePermissions ? ["finance.bucket.read", "finance.entry.read", "finance.entry.create"] : []),
             ...additionalPermissions
           ]
         }
@@ -671,7 +669,7 @@ describe("AdminProjectDetailPage", () => {
     expect(financeRequests).toBe(0);
   });
 
-  it("reuses the loaded project and loads section assignments once in the Super Admin detail sequence", async () => {
+  it("puts people first, separates responsibilities and reuses assignment queries across navigation", async () => {
     installSuperAdminFinanceSession(["execution.worker_assignment.override"]);
     let projectRequests = 0;
     let taskRequests = 0;
@@ -724,13 +722,22 @@ describe("AdminProjectDetailPage", () => {
     const identity = await screen.findByRole("region", { name: "Project details" });
     const finance = await screen.findByRole("heading", { name: "murthy-1 finance" });
     const workflow = await screen.findByRole("heading", { name: "Entire project workflow" });
-    const design = screen.getByRole("heading", { name: "Design plan assignment" });
-    const workers = await screen.findByRole("heading", { name: "Task assignment" });
+    const people = screen.getByRole("region", { name: "People & assignments" });
+    const user = userEvent.setup();
+    const navigation = within(people).getByRole("group", { name: "Assignment responsibility" });
+    expect(within(navigation).getByRole("button", { name: "Procurement" })).toHaveAttribute("aria-pressed", "true");
+    expect(within(people).queryByRole("heading", { name: "Design plan assignment" })).not.toBeInTheDocument();
+    expect(within(people).queryByRole("heading", { name: "Work sections" })).not.toBeInTheDocument();
+    await user.click(within(navigation).getByRole("button", { name: "Designer" }));
+    expect(within(people).getByRole("heading", { name: "Design plan assignment" })).toBeVisible();
+    await user.click(within(navigation).getByRole("button", { name: "Trade teams" }));
+    expect(await within(people).findByRole("heading", { name: "Work sections" })).toBeVisible();
+    await user.click(screen.getByRole("link", { name: "Manage people" }));
+    expect(within(navigation).getByRole("button", { name: "Procurement" })).toHaveAttribute("aria-pressed", "true");
     const follows = Node.DOCUMENT_POSITION_FOLLOWING;
     expect(identity.compareDocumentPosition(finance) & follows).toBeTruthy();
     expect(finance.compareDocumentPosition(workflow) & follows).toBeTruthy();
-    expect(workflow.compareDocumentPosition(design) & follows).toBeTruthy();
-    expect(design.compareDocumentPosition(workers) & follows).toBeTruthy();
+    expect(people.compareDocumentPosition(identity) & follows).toBeTruthy();
     expect(projectRequests).toBe(1);
     expect(taskRequests).toBe(1);
     expect(sectionAssignmentRequests).toBe(1);
@@ -793,4 +800,141 @@ it("does not load current finance from a stale historical approval during a quot
   renderApp(["/admin/projects/project-murthy"]);
   expect(await screen.findByText("The current approved financial baseline is unavailable until the latest quotation is approved.")).toBeVisible();
   expect(financeCalls).toBe(0);
+});
+
+
+it("keeps Procurement and Project Manager people separate and preserves a selection between responsibilities", async () => {
+  installSuperAdminFinanceSession(["execution.worker_assignment.override", "projects.procurement_identity.manage"]);
+  const procurement = { id: "procurement-1", name: "Priya Procurement", email: "priya@example.test", role: "procurement" };
+  const manager = { id: "manager-1", name: "Maya Project Manager", email: "maya@example.test", role: "site_manager" };
+  const approvedProject = { ...project, estimate: { ...approvedPendingProject.estimate,
+    id: "estimate-1", projectId: project.id, resolvedProjectId: project.id, designPlanStatus: "approved", designPlanVersion: 1 } };
+  server.use(
+    http.get("/api/v1/admin/projects/project-1", () => HttpResponse.json({ data: approvedProject })),
+    http.get("/api/v1/admin/projects/project-1/procurement-identity", () => HttpResponse.json({ data: {
+      projectId: project.id, city: { name: "Pune", key: "pune" }, programManagerId: manager.id, version: 1
+    } })),
+    http.get("/api/v1/admin/program-managers", () => HttpResponse.json({ data: { items: [manager], total: 1, limit: 50, offset: 0 } })),
+    http.get("/api/v1/admin/workers", () => HttpResponse.json({ data: [manager, procurement] })),
+    http.get("/api/v1/admin/projects/project-1/workflow-tasks", () => HttpResponse.json({ data: [{
+      id: "task-procurement", projectId: project.id, projectName: project.name, estimateId: "estimate-1",
+      kind: "procurement", title: "Coordinate procurement", assigneeRole: "procurement", assignedWorker: null,
+      description: "", sourceSectionId: null, roomName: null, status: "open", progress: 0, version: 1,
+      openedAt: "2026-08-26T08:00:00.000Z", updatedAt: "2026-08-26T08:00:00.000Z"
+    }] })),
+    http.get("/api/v1/admin/projects/project-1/section-assignments", () => HttpResponse.json({ data: [] }))
+  );
+  const user = userEvent.setup();
+  renderApp(["/admin/projects/project-1"]);
+  const people = await screen.findByRole("region", { name: "People & assignments" });
+  const procurementSelect = await within(people).findByRole("combobox", { name: "Assigned Procurement" });
+  expect(within(procurementSelect).getByRole("option", { name: /Priya Procurement/ })).toBeVisible();
+  expect(within(procurementSelect).queryByRole("option", { name: /Maya/ })).not.toBeInTheDocument();
+  expect(within(people).queryByRole("combobox", { name: "Project Manager" })).not.toBeInTheDocument();
+  await user.selectOptions(procurementSelect, procurement.id);
+  const navigation = within(people).getByRole("group", { name: "Assignment responsibility" });
+  await user.click(within(navigation).getByRole("button", { name: "Project Manager" }));
+  const managerSelect = await within(people).findByRole("combobox", { name: "Project Manager" });
+  expect(managerSelect).toHaveValue(manager.id);
+  expect(within(managerSelect).getByRole("option", { name: /Maya Project Manager/ })).toBeVisible();
+  expect(within(managerSelect).queryByRole("option", { name: /Priya/ })).not.toBeInTheDocument();
+  expect(within(people).queryByRole("combobox", { name: "Assigned Procurement" })).not.toBeInTheDocument();
+  await user.click(within(navigation).getByRole("button", { name: "Procurement" }));
+  expect(within(people).getByRole("combobox", { name: "Assigned Procurement" })).toHaveValue(procurement.id);
+  expect(within(people).getByRole("button", { name: "Assign Procurement" })).toBeEnabled();
+});
+
+
+const completionReady = {
+  projectId: "project-murthy", projectStatus: "active", completionAuthority: "vendor_client",
+  completionAuthorityVersion: 4, blockers: [], readyForCompletion: true, completedAt: null
+};
+
+it.each([false, true])("closes an active project from the header without a current finance baseline (finance permission: %s)", async (includeFinancePermissions) => {
+  installSuperAdminFinanceSession(["procurement.project_completion.decide"], includeFinancePermissions);
+  let completed = false;
+  let projectRequests = 0;
+  let readinessRequests = 0;
+  let financeRequests = 0;
+  const decisions: Array<Record<string, unknown>> = [];
+  server.use(
+    http.get("/api/v1/admin/projects/project-murthy", () => {
+      projectRequests += 1;
+      return HttpResponse.json({ data: {
+        ...approvedPendingProject, status: completed ? "completed" : "active", estimationWorkflowVersion: 3,
+        estimate: { ...approvedPendingProject.estimate, status: "draft", estimationPhase: "post", designPlanStatus: "approved",
+          initialEstimateApproval: { reviewRoundId: "initial-round", estimateVersion: 4, approvedAt: "2026-11-04T09:00:00.000Z" },
+          finalApproval: null }
+      } });
+    }),
+    http.get("/api/v1/finance/projects/project-murthy", () => { financeRequests += 1; return HttpResponse.json({ data: approvedPendingBucket }); }),
+    http.get("/api/v1/admin/projects/project-murthy/completion", () => {
+      readinessRequests += 1;
+      return HttpResponse.json({ data: { ...completionReady, projectStatus: completed ? "completed" : "active", readyForCompletion: !completed } });
+    }),
+    http.post("/api/v1/admin/projects/project-murthy/complete", async ({ request }) => {
+      decisions.push(await request.json() as Record<string, unknown>);
+      completed = true;
+      return HttpResponse.json({ data: { projectId: "project-murthy", completedAt: "2026-11-16T09:00:00.000Z", resultingAuthorityVersion: 5 } });
+    })
+  );
+  const user = userEvent.setup();
+  renderApp(["/admin/projects/project-murthy#project-people-assignments"]);
+  const trigger = await screen.findByRole("button", { name: "Close project" });
+  expect(readinessRequests).toBe(0);
+  expect(decisions).toHaveLength(0);
+  if (includeFinancePermissions) expect(screen.getByText("The current approved financial baseline is unavailable until the latest quotation is approved.")).toBeVisible();
+  await user.click(trigger);
+  const dialog = screen.getByRole("alertdialog", { name: "Close murthy-1?" });
+  const confirm = within(dialog).getByRole("button", { name: "Close project" });
+  await waitFor(() => expect(confirm).toBeEnabled());
+  expect(readinessRequests).toBe(1);
+  expect(decisions).toHaveLength(0);
+  await user.click(confirm);
+  await waitFor(() => {
+    expect(decisions).toEqual([{ expectedAuthorityVersion: 4, idempotencyKey: expect.any(String) }]);
+    expect(projectRequests).toBeGreaterThan(1);
+    expect(screen.queryByRole("button", { name: "Close project" })).not.toBeInTheDocument();
+  });
+  expect(financeRequests).toBe(0);
+});
+
+it.each([
+  { role: "admin", permitted: true, status: "active" },
+  { role: "super_admin", permitted: false, status: "active" },
+  { role: "super_admin", permitted: true, status: "planning" },
+  { role: "super_admin", permitted: true, status: "completed" }
+])("hides header closure for role=$role, permission=$permitted, project=$status", async ({ role, permitted, status }) => {
+  if (role === "admin") installSession(["identity.self.read", "identity.authorization.read", "projects.read", "projects.list", "procurement.project_completion.decide"]);
+  else installSuperAdminFinanceSession(permitted ? ["procurement.project_completion.decide"] : [], false);
+  let readinessRequests = 0;
+  server.use(
+    http.get("/api/v1/admin/projects/project-murthy", () => HttpResponse.json({ data: { ...approvedPendingProject, status } })),
+    http.get("/api/v1/admin/projects/project-murthy/completion", () => { readinessRequests += 1; return HttpResponse.json({ data: completionReady }); })
+  );
+  renderApp(["/admin/projects/project-murthy"]);
+  await screen.findByRole("heading", { name: "murthy-1" });
+  expect(screen.queryByRole("button", { name: "Close project" })).not.toBeInTheDocument();
+  expect(readinessRequests).toBe(0);
+});
+
+it("keeps header closure blocked until the completion service confirms readiness", async () => {
+  installSuperAdminFinanceSession(["procurement.project_completion.decide"], false);
+  let decisions = 0;
+  server.use(
+    http.get("/api/v1/admin/projects/project-murthy", () => HttpResponse.json({ data: { ...approvedPendingProject, status: "active" } })),
+    http.get("/api/v1/admin/projects/project-murthy/completion", () => HttpResponse.json({ data: {
+      ...completionReady, readyForCompletion: false,
+      blockers: [{ code: "SITE_COMPLETION_PENDING", message: "Client acceptance of project completion is pending." }]
+    } })),
+    http.post("/api/v1/admin/projects/project-murthy/complete", () => { decisions += 1; return HttpResponse.json({ data: {} }); })
+  );
+  const user = userEvent.setup();
+  renderApp(["/admin/projects/project-murthy"]);
+  await user.click(await screen.findByRole("button", { name: "Close project" }));
+  const dialog = screen.getByRole("alertdialog", { name: "Close murthy-1?" });
+  expect(await within(dialog).findByText("Client acceptance of project completion is pending.")).toBeVisible();
+  expect(within(dialog).getByRole("button", { name: "Close project" })).toBeDisabled();
+  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  expect(decisions).toBe(0);
 });

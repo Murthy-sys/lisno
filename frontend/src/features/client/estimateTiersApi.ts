@@ -21,6 +21,8 @@ export interface EstimateTierChoice {
   modeTier: KnowledgeModeTier;
   available: boolean;
   unavailableReason: string | null;
+  /** Client-facing current Configuration wording; absent on older servers. */
+  description?: string | null;
   ratePaise: number | null;
   amountPaise: number | null;
   source: EstimateTierSource | null;

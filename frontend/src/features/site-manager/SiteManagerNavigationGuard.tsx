@@ -19,8 +19,10 @@ function RouterGuard({ dirty, busy, allowedClose }: { dirty: boolean; busy: bool
   // navigation must preserve a pending schedule, verification or handoff draft.
   const blocker = useBlocker(({ currentLocation, nextLocation }) => {
     if (allowedClose.current) { allowedClose.current = false; return false; }
-    const assignmentChanged = new URLSearchParams(currentLocation.search).get("assignment") !== new URLSearchParams(nextLocation.search).get("assignment");
-    return (dirty || busy) && (currentLocation.pathname !== nextLocation.pathname || assignmentChanged);
+    const current = new URLSearchParams(currentLocation.search), next = new URLSearchParams(nextLocation.search);
+    const assignmentChanged = current.get("assignment") !== next.get("assignment");
+    const workspaceChanged = (current.get("tab") ?? "site") !== (next.get("tab") ?? "site") || (current.get("detail") === "1") !== (next.get("detail") === "1");
+    return (dirty || busy) && (currentLocation.pathname !== nextLocation.pathname || assignmentChanged || workspaceChanged || current.get("entity") !== next.get("entity"));
   });
   if (blocker.state !== "blocked") return null;
   return <Dialog title="Leave project with unsaved changes?" eyebrow="Unsaved changes" description="Your pending changes will be lost if you leave this project." role="alertdialog" busy={busy} onClose={() => blocker.reset()}><div className="modal__actions ui-dialog__actions"><Button variant="secondary" data-dialog-initial-focus disabled={busy} onClick={() => blocker.reset()}>Keep editing</Button><Button variant="destructive" disabled={busy} onClick={() => blocker.proceed()}>Discard and leave</Button></div></Dialog>;

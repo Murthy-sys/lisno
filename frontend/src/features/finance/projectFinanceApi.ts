@@ -43,7 +43,7 @@ export const projectFinanceKeys = {
 };
 
 export const getProjectBudgetPage = (filters: ProjectBudgetFilters = {}) => {
-  const params = new URLSearchParams({ limit: String(filters.limit ?? 10), offset: String(filters.offset ?? 0) });
+  const params = new URLSearchParams({ limit: String(filters.limit ?? 10), offset: String(filters.offset ?? 0), budgetBasis: "including_commitments" });
   for (const key of ["search", "projectId", "clientId", "budgetStatus", "financeStage", "projectStatus", "approvedFrom", "approvedTo"] as const) {
     const value = filters[key];
     if (value) params.set(key, value);

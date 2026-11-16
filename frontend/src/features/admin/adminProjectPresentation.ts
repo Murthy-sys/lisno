@@ -10,6 +10,12 @@ export function hasInitialEstimateApproval(project: AdminProjectSummary) {
     : project.estimate?.status === "client_approved";
 }
 
+export function canAssignProjectCoordination(project: AdminProjectSummary) {
+  return project.estimate?.designPlanStatus === "approved" ||
+    (project.estimationWorkflowVersion === 2 || project.estimationWorkflowVersion === 3) &&
+      Boolean(project.estimate?.initialEstimateApproval);
+}
+
 export function canAssignProjectDesigner(project: AdminProjectSummary) {
   const estimate = project.estimate;
   if (!estimate) return false;

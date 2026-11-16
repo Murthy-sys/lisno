@@ -3,6 +3,7 @@ import { model, models, Schema } from "./mongoose.js";
 /** Append-only command journal. The unique request key is also the transaction receipt. */
 const schema = new Schema({
   _id: { type: String, required: true, immutable: true }, assignmentId: { type: String, required: true, immutable: true }, projectId: { type: String, required: true, immutable: true }, vendorId: { type: String, required: true, immutable: true },
+  updateType: { type: String, enum: ["started", "progress", "hold", "completed"], default: undefined, immutable: true },
   actorId: { type: String, required: true, immutable: true }, action: { type: String, required: true, immutable: true }, occurredAt: { type: Date, required: true, immutable: true },
   localDate: { type: String, required: true, immutable: true }, timezone: { type: String, required: true, immutable: true }, executionRound: { type: Number, required: true, immutable: true },
   version: { type: Number, required: true, immutable: true }, idempotencyKey: { type: String, required: true, immutable: true }, requestDigest: { type: String, required: true, immutable: true },

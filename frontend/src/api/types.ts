@@ -643,7 +643,27 @@ export interface WorkerAssignmentOption {
   role: WorkflowAssignmentRole;
 }
 
+export type FinanceCommitmentReason = "unlinked_procurement_expense" | "invalid_order_source" | "invalid_expense_linkage";
+export interface FinanceCommitmentAmounts {
+  status: "ready" | "needs_reconciliation";
+  reasonCodes: FinanceCommitmentReason[];
+  approvedVendorNetPaise: number | null;
+  outstandingVendorCommitmentPaise: number | null;
+  budgetUsedPaise: number | null;
+  availableBudgetPaise: number | null;
+}
+export interface ProjectFinanceCommitmentBudget extends FinanceCommitmentAmounts {
+  utilizationBps: number | null;
+  budgetStatus: "over_budget" | "at_risk" | "within_budget" | "no_budget" | null;
+  overBudget: boolean | null;
+}
+export interface PortfolioFinanceCommitmentBudget extends FinanceCommitmentAmounts {
+  unresolvedProjectCount: number;
+  overBudgetProjectCount: number | null;
+}
+
 export interface ProjectFinanceBucket {
+  commitmentBudget?: ProjectFinanceCommitmentBudget;
   readonly projectNumber?: string | null;
 
   baselinePhase?: "pre" | "post";
@@ -665,6 +685,7 @@ export interface ProjectFinanceBucket {
   approvedSubtotalPaise: number;
   approvedGstPaise: number;
   approvedContractTotalPaise: number;
+  approvedRoundOffPaise?: number;
   targetMarginBps: 2000;
   targetProfitPaise: number;
   costBudgetPaise: number;
@@ -696,6 +717,7 @@ export interface ProjectFinanceBucket {
 }
 
 export interface ProjectFinancePortfolioSummary {
+  commitmentBudget?: PortfolioFinanceCommitmentBudget;
   projectCount: number;
   approvedContractTotalPaise: number;
   approvedGstPaise: number;

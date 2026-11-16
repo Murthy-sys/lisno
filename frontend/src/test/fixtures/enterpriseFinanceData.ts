@@ -15,6 +15,8 @@ export const baseBucket: ProjectFinanceBucket = {
   budgetApprovedAt: "2026-08-20T09:00:00.000Z",
   budgetStatus: "within_budget",
   budgetUtilizationBps: 5_000,
+  commitmentBudget: { status: "ready", reasonCodes: [], approvedVendorNetPaise: 0, outstandingVendorCommitmentPaise: 0,
+    budgetUsedPaise: 40_000_000, availableBudgetPaise: 40_000_000, utilizationBps: 5_000, budgetStatus: "within_budget", overBudget: false },
   estimateId: "estimate-one",
   estimateVersion: 4,
   estimateReviewRoundId: "estimate-round-one",
@@ -58,6 +60,8 @@ export const overBudgetBucket: ProjectFinanceBucket = {
   budgetApprovedAt: "2026-07-15T09:00:00.000Z",
   budgetStatus: "over_budget",
   budgetUtilizationBps: 11_250,
+  commitmentBudget: { status: "ready", reasonCodes: [], approvedVendorNetPaise: 0, outstandingVendorCommitmentPaise: 0,
+    budgetUsedPaise: 45_000_000, availableBudgetPaise: -5_000_000, utilizationBps: 11_250, budgetStatus: "over_budget", overBudget: true },
   estimateId: "estimate-two",
   estimateReviewRoundId: "estimate-round-two",
   designPlanVersion: 1,
@@ -108,6 +112,8 @@ export const lateCompletionBucket: ProjectFinanceBucket = {
 
 export const portfolioSummary: ProjectFinancePortfolioSummary = {
   projectCount: 4,
+  commitmentBudget: { status: "ready", reasonCodes: [], approvedVendorNetPaise: 0, outstandingVendorCommitmentPaise: 0,
+    budgetUsedPaise: 165_000_000, availableBudgetPaise: 115_000_000, unresolvedProjectCount: 0, overBudgetProjectCount: 1 },
   approvedContractTotalPaise: 413_000_000,
   approvedGstPaise: 63_000_000,
   approvedSubtotalPaise: 350_000_000,
@@ -146,7 +152,7 @@ export function projectBudgetFixturePage(params: URLSearchParams, large = false,
     (!params.get("projectId") || row.projectId === params.get("projectId")) &&
     (!params.get("clientId") || row.clientId === params.get("clientId")) &&
     (params.get("unlinkedClient") !== "true" || row.clientId === null) &&
-    (!params.get("budgetStatus") || row.budgetStatus === params.get("budgetStatus")) &&
+    (!params.get("budgetStatus") || (params.get("budgetBasis") === "including_commitments" ? row.commitmentBudget?.budgetStatus : row.budgetStatus) === params.get("budgetStatus")) &&
     (!params.get("financeStage") || row.status === params.get("financeStage")) &&
     (!params.get("projectStatus") || row.projectStatus === params.get("projectStatus")) &&
     (!params.get("approvedFrom") || row.budgetApprovedAt!.slice(0, 10) >= params.get("approvedFrom")!) &&
@@ -160,6 +166,10 @@ export function projectBudgetFixturePage(params: URLSearchParams, large = false,
   summary.overBudgetProjectCount = rows.filter((row) => row.overBudget).length;
   summary.overdueProjectCount = rows.filter((row) => row.deadlineStatus === "overdue").length;
   summary.lateCompletedProjectCount = rows.filter((row) => row.deadlineStatus === "completed_late").length;
+  summary.commitmentBudget = { status: "ready", reasonCodes: [],
+    approvedVendorNetPaise: 0, outstandingVendorCommitmentPaise: 0,
+    budgetUsedPaise: summary.recordedCostPaise, availableBudgetPaise: summary.remainingBudgetPaise,
+    unresolvedProjectCount: 0, overBudgetProjectCount: summary.overBudgetProjectCount };
   const limit = Number(params.get("limit") ?? 10), offset = Number(params.get("offset") ?? 0);
   return {
     items: rows.slice(offset, offset + limit), summary,

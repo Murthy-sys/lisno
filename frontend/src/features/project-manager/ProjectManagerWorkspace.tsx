@@ -6,6 +6,7 @@ import { hasFrontendPermission } from "../../auth/authorization";
 import { KpiPanel } from "../../components/kpi/KpiPanel";
 import { Button } from "../../components/ui/Button";
 import { ProjectExecutionPage } from "../execution/ExecutionWorkspace";
+import { SiteManagerProjectPage } from "../site-manager/SiteManagerProjectPage";
 import { useExecutionConnection } from "../execution/ExecutionLiveProvider";
 import { PMVendorSuggestions } from "./PMVendorSuggestions";
 import { PMRequestsPanel } from "./PMRequestsPanel";
@@ -13,9 +14,9 @@ import { PMOperationsPanel } from "./PMOperationsPanel";
 import { PMTargetRecord } from "./PMTargetRecord";
 import { PMDashboardIcon, type PMDashboardIconName } from "./PMDashboardIcon";
 import { PMDashboardProjects, type PMDashboardView } from "./PMDashboardProjects";
-import { PMBadge, PMEmpty, PMIssues, PMPanelHeader, PMProgressBar, PMProgressBasis, PMQueryState, pmDate, pmLabel, pmMoney } from "./PMShared";
-import { pmDenied, usePMOverview, usePMPanel, usePMPerformance, usePMPortfolio, usePMQuery, type PMFilters } from "./projectManagerApi";
-import { PM_TABS, type PMAlert, type PMHealth, type PMItem, type PMPortfolio, type PMProgress, type PMTab } from "./projectManagerTypes";
+import { PMBadge, PMEmpty, PMQueryState, pmDate, pmLabel, pmMoney } from "./PMShared";
+import { pmDenied, pmPath, usePMOverview, usePMPerformance, usePMPortfolio, usePMQuery, type PMFilters } from "./projectManagerApi";
+import { PM_TABS, type PMAlert, type PMHealth, type PMPanel, type PMPortfolio, type PMTab } from "./projectManagerTypes";
 import "./project-manager.css";
 import "./project-manager-dashboard.css";
 import "./project-manager-project-detail.css";
@@ -143,7 +144,7 @@ export function ProjectManagerProjectPage({ projectId: suppliedId }: { projectId
   const { projectId: routeId } = useParams(); const projectId = suppliedId ?? routeId ?? "";
   const [params, setParams] = useSearchParams();
   const rawTab = params.get("tab"); const tab: PMTab = PM_TABS.includes(rawTab as PMTab) ? rawTab as PMTab : "site";
-  const fullDetail = params.get("detail") === "1" || Boolean(params.get("assignment"));
+  const fullDetail = params.get("detail") === "1" || (tab !== "site" && Boolean(params.get("assignment")));
   const returnTo = projectManagerReturnPath(params.get("returnTo"));
   const query = usePMOverview(projectId);
   const hasOverview = Boolean(query.data);
@@ -186,58 +187,29 @@ export function ProjectManagerProjectPage({ projectId: suppliedId }: { projectId
       {fullDetail ? <div className="pm-full-detail"><ProjectExecutionPage projectId={projectId} embedded /></div> : <>
         <nav ref={navigation} className="pm-tabs pm-project-detail__nav" aria-label="Project sections">{PM_TABS.map(value => <Link key={value} to={tabHref(value)} aria-current={value === tab ? "page" : undefined}>{TAB_LABELS[value]}</Link>)}</nav>
         <div className="pm-tab-content pm-project-detail__content" key={`${projectId}:${tab}`}><PMTargetRecord projectId={projectId} tab={tab}>
-          {tab === "site" ? <SitePanel projectId={projectId} progress={data.project.progress} /> : ["procurement", "selections", "supply"].includes(tab) ? <PMRequestsPanel projectId={projectId} tab={tab as "procurement" | "selections" | "supply"} /> : <PMOperationsPanel projectId={projectId} tab={tab as "vendors" | "client" | "snagging" | "quality"} progress={data.project.progress} />}
+          {tab === "site" ? <SitePanel projectId={projectId} /> : ["procurement", "selections", "supply"].includes(tab) ? <PMRequestsPanel projectId={projectId} tab={tab as "procurement" | "selections" | "supply"} /> : <PMOperationsPanel projectId={projectId} tab={tab as "vendors" | "client" | "snagging" | "quality"} progress={data.project.progress} />}
         </PMTargetRecord>{tab === "procurement" ? <PMVendorSuggestions projectId={projectId} /> : null}</div>
       </>}
     </>}</PMQueryState>
   </section>;
 }
-function SitePanel({ projectId, progress }: { projectId: string; progress: PMProgress }) {
-  const query = usePMPanel(projectId, "site"); const [params] = useSearchParams(); const entity = params.get("entity");
-  useEffect(() => { if (query.data && entity) document.getElementById(`pm-item-${entity}`)?.scrollIntoView?.({ block: "center", behavior: "instant" }); }, [query.data, entity]);
-  return <section className="pm-project-detail__site" aria-label="Site execution">
-    <PMPanelHeader title="Site execution" description="Vendor reporting, Project Manager verification and client acceptance." />
-    <div className="pm-overall-progress pm-project-detail__progress">
-      <div className="pm-project-detail__progress-main"><PMProgressBar value={progress.actual} label="Overall reported progress" /></div>
-      <dl className="pm-project-detail__progress-facts">
-        <div><dt>Planned progress</dt><dd>{progress.planned === null ? "Unavailable" : `${progress.planned}%`}</dd></div>
-        <div><dt>Site verified</dt><dd>{progress.siteVerified}</dd></div>
-        <div><dt>Client accepted</dt><dd>{progress.clientAccepted}</dd></div>
-      </dl>
-      <PMProgressBasis progress={progress} />
-    </div>
-    <PMQueryState query={query}>{panel => <>
-      <PMIssues issues={panel.issues} collapsedByDefault />
-      {panel.items.length ? <div className="pm-records pm-rooms">{panel.items.map(room => <Room key={room.id} room={room} params={params} />)}</div> : <PMEmpty title="No issued execution work">Site details will appear when approved scope is issued and execution tracking is available.</PMEmpty>}
-    </>}</PMQueryState>
-  </section>;
-}
-function TradeNote({ description }: { description?: string | null }) {
-  if (!description) return null;
-  // Keep short operational reasons in the row; disclose long or unbroken source text in full.
-  if (description.length > 96 || /\S{40,}|[\r\n]/u.test(description)) return <details className="pm-disclosure pm-project-detail__trade-note"><summary>Work details</summary><p>{description}</p></details>;
-  return <small className="pm-trade-note">{description}</small>;
-}
-function Room({ room, params }: { room: PMItem; params: URLSearchParams }) {
-  const children = room.children ?? [];
-  function workHref(item: PMItem) { const query = new URLSearchParams(params); query.set("detail", "1"); query.set("tab", "site"); query.delete("entity"); query.set("assignment", item.assignmentId ?? item.id); return `?${query}`; }
-  return <article className="pm-room" aria-labelledby={`pm-room-${room.id}`}>
-    <div className="pm-project-detail__room-summary">
-      <div className="pm-room__heading"><h3 id={`pm-room-${room.id}`}>{room.title}</h3><span>{children.length} {children.length === 1 ? "trade" : "trades"}</span></div>
-      <PMProgressBar value={room.progress ?? null} label={`${room.title} reported progress`} />
-      {room.description ? <details className="pm-disclosure pm-project-detail__room-note"><summary>Room details to review</summary><p>{room.description}</p></details> : null}
-    </div>
-    {!children.length ? <p className="pm-quiet-state">No issued execution work for this room yet.</p> : <div className="pm-trade-table" role="region" aria-label={`${room.title} execution`} tabIndex={0}>
-      <table role="table" aria-label={`${room.title} trades`}>
-        <thead role="rowgroup"><tr role="row"><th scope="col" role="columnheader">Trade / scope</th><th scope="col" role="columnheader">Vendor</th><th scope="col" role="columnheader">Reported progress</th><th scope="col" role="columnheader">Verification</th><th scope="col" role="columnheader"><span className="sr-only">Open work</span></th></tr></thead>
-        <tbody role="rowgroup">{children.map(item => <tr role="row" key={item.id} id={`pm-item-${item.id}`}>
-          <th role="rowheader" scope="row"><strong>{item.title}</strong><TradeNote description={item.description} /></th>
-          <td role="cell" className="pm-project-detail__vendor"><span className="pm-project-detail__cell-label" aria-hidden="true">Vendor</span>{item.ownerName ?? "Unassigned"}</td>
-          <td role="cell" className="pm-project-detail__trade-progress"><span className="pm-project-detail__cell-label" aria-hidden="true">Reported progress</span><PMBadge value={item.status} severity={item.severity} /><PMProgressBar value={item.progress ?? null} label={`${item.title} reported`} /></td>
-          <td role="cell" className="pm-project-detail__verification"><span className="pm-project-detail__cell-label" aria-hidden="true">Verification</span><dl>{item.facts.filter(fact => fact.label !== "Vendor").map(fact => <div key={fact.label}><dt>{fact.label}</dt><dd>{fact.value}</dd></div>)}</dl></td>
-          <td role="cell" className="pm-project-detail__open"><Link to={workHref(item)} aria-label={`Open ${item.title} in ${room.title}`}>Open<PMDashboardIcon name="chevron" /></Link></td>
-        </tr>)}</tbody>
-      </table>
-    </div>}
-  </article>;
+function SitePanel({ projectId }: { projectId: string }) {
+  const [params, setParams] = useSearchParams();
+  const entity = params.get("entity");
+  const locating = Boolean(entity && !params.get("assignment"));
+  // Older notifications use the PM record ID. Resolve it to the issued work ID
+  // before opening the monitor; ordinary monitoring does not need this read.
+  const target = usePMQuery<PMPanel>(pmPath(projectId, "site"), locating);
+  const record = target.data?.items.flatMap(item => [item, ...(item.children ?? [])]).find(item => item.id === entity || item.assignmentId === entity);
+  const assignmentId = record?.assignmentId ?? (record?.kind === "execution" ? record.id : undefined);
+  useEffect(() => {
+    if (!locating || !target.isSuccess || !assignmentId) return;
+    setParams(previous => {
+      const next = new URLSearchParams(previous);
+      next.set("assignment", assignmentId); next.delete("entity"); next.delete("locate"); next.delete("tabOffset");
+      return next;
+    }, { replace: true });
+  }, [locating, target.isSuccess, assignmentId, setParams]);
+  if (locating) return <PMQueryState query={target}>{() => assignmentId ? <p role="status">Opening work…</p> : <div role="status"><p>This update is no longer in the current work list.</p><Button size="compact" onClick={() => setParams(previous => { const next = new URLSearchParams(previous); next.delete("entity"); next.delete("locate"); next.delete("tabOffset"); return next; }, { replace: true })}>View current work</Button></div>}</PMQueryState>;
+  return <SiteManagerProjectPage projectId={projectId} embedded preserveProjectTabs />;
 }

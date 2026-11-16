@@ -1,6 +1,7 @@
 import { quotationSnapshotDigest } from "../src/services/quotation-digest.js";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import express from "express";
+import mongoose from "mongoose";
 import request from "supertest";
 import { createEstimatesRouter } from "../src/routes/estimates.js";
 import { errorHandler } from "../src/middleware/errors.js";
@@ -13,6 +14,9 @@ import { EstimateModel } from "../src/models/Estimate.js";
 import { EstimateClientReviewRoundModel } from "../src/models/EstimateClientReviewRound.js";
 import { EstimatePreparationSnapshotModel } from "../src/models/EstimatePreparationSnapshot.js";
 import { DesignPlanReviewRoundModel } from "../src/models/DesignPlanReviewRound.js";
+import { DesignWorkflowStateModel } from "../src/models/DesignWorkflowState.js";
+import { ProjectFinanceBucketModel } from "../src/models/ProjectFinanceBucket.js";
+import { ensurePendingProjectFinanceBucket, openProjectFinanceBucket } from "../src/services/project-finance.service.js";
 import { LeadModel } from "../src/models/Lead.js";
 import { ProjectModel } from "../src/models/Project.js";
 import { UserModel } from "../src/models/User.js";
@@ -23,7 +27,7 @@ import { createEstimatePublicationService } from "../src/services/estimate-publi
 import { createEstimateDecisionService } from "../src/services/estimate-decision.service.js";
 import { createEstimateClientReviewService } from "../src/services/estimate-client-review.service.js";
 import { createEstimateCollaborationService, resolveEstimationPreparationSource } from "../src/services/estimate-collaboration.service.js";
-import { approvedProcurementSnapshotFromRows, readProcurementDashboardApprovalRounds, readProcurementDashboardPortfolioReport } from "../src/services/procurement.service.js";
+import { approvedProcurementSnapshotFromRows, createProcurementService, readProcurementDashboardApprovalRounds, readProcurementDashboardPortfolioReport } from "../src/services/procurement.service.js";
 import { createProjectWorkflowService } from "../src/services/project-workflow.service.js";
 import { assertDesignWorkflowSubmissionAllowed, createDesignWorkflowStateService } from "../src/services/design-workflow-state.service.js";
 import type { EstimateClientReviewStorage } from "../src/services/estimate-client-review-storage.js";
@@ -35,6 +39,7 @@ const designer = { id: "collab-designer", name: "Test Designer", email: "collab-
 const secondaryDesigner = { ...designer, id: "secondary-designer", email: "secondary-designer@example.test" };
 const unrelatedDesigner = { ...designer, id: "unrelated-designer", email: "unrelated-designer@example.test" };
 const superAdmin = { id: "collab-super", name: "Test Super Admin", email: "collab-super@example.test", role: "super_admin" } as const;
+const buyer = { id: "collab-procurement", name: "Test Procurement", email: "collab-procurement@example.test", role: "procurement" } as const;
 const now = new Date("2026-10-13T10:00:00Z");
 let replica: Awaited<ReturnType<typeof startMongoReplicaSet>>;
 const bytes = Buffer.from("%PDF-synthetic-test");
@@ -54,6 +59,11 @@ const publication = createEstimatePublicationService({ audit, storage,
 const decisions = createEstimateDecisionService({ audit, reviews,
   estimateDesigns: { approvalReadinessForDecision: vi.fn() }, now: () => now });
 const collaboration = createEstimateCollaborationService(audit);
+const unusedProcurementStorage = async (): Promise<never> => { throw new Error("Read-only procurement tests must not access storage"); };
+const procurement = createProcurementService({ audit, now: () => now, storage: {
+  save: unusedProcurementStorage, saveGenerated: unusedProcurementStorage, read: unusedProcurementStorage,
+  delete: unusedProcurementStorage, open: unusedProcurementStorage
+} });
 
 beforeAll(async () => {
   replica = await startMongoReplicaSet("quotation-approvals");
@@ -131,6 +141,32 @@ async function setHighValueQuotation() {
     subtotal: 2_000_000, gst: 360_000, total: 2_360_000,
     subtotalPaise: 200_000_000, gstPaise: 36_000_000, totalPaise: 236_000_000
   } });
+}
+
+async function createAdditionalApprovedProject(suffix: string, quantity: number) {
+  const projectId = `collab-project-${suffix}`;
+  const leadId = `collab-lead-${suffix}`;
+  const estimateId = `collab-estimate-${suffix}`;
+  const project = await ProjectModel.findById("collab-project").lean();
+  const lead = await LeadModel.findById("collab-lead").lean();
+  const estimate = await EstimateModel.findById("collab-estimate").lean();
+  const subtotal = 100 * quantity;
+  const gst = subtotal * 18 / 100;
+  await ProjectModel.create({ ...project, _id: projectId, name: `Synthetic project ${suffix}` });
+  await LeadModel.create({ ...lead, _id: leadId, projectId, projectName: `Synthetic project ${suffix}` });
+  await EstimateModel.create({ ...estimate, _id: estimateId, leadId, projectId,
+    lineItems: estimate!.lineItems.map(line => ({ ...line, id: `stable-line-${suffix}`, quantity, amount: subtotal, amountPaise: subtotal * 100 })),
+    subtotal, gst, total: subtotal + gst, subtotalPaise: subtotal * 100, gstPaise: gst * 100, totalPaise: (subtotal + gst) * 100 });
+  const published = await publication.publishEstimateToClient({ estimateId, leadId, actorId: sales.id,
+    expectedEstimateVersion: estimate!.version, expectedStatus: "draft", approveSales: true });
+  await decisions.decide({ estimateId, round: { id: published.clientReview.id, expectedVersion: published.clientReview.version },
+    decision: "approve", note: "", context: { actor: client, source: "client_portal", proof: null } });
+  return { projectId, estimateId, reviewRoundId: published.clientReview.id };
+}
+
+async function createProcurementReader() {
+  await UserModel.create({ _id: buyer.id, name: buyer.name, email: buyer.email, emailNormalized: buyer.email,
+    passwordHash: "synthetic", role: buyer.role, active: true, accountKind: "standard", version: 1 });
 }
 
 describe("version 3 two-phase quotation approvals", () => {
@@ -428,6 +464,136 @@ describe("version 3 two-phase quotation approvals", () => {
       .rejects.toMatchObject({ code: "PROCUREMENT_APPROVAL_SOURCE_CONFLICT" });
     await expect(readProcurementDashboardPortfolioReport())
       .rejects.toMatchObject({ code: "PROCUREMENT_APPROVAL_SOURCE_CONFLICT" });
+  });
+
+  it("keeps every current project visible while another quotation moves through normal reapproval states", async () => {
+    await createProcurementReader();
+    const first = await createAdditionalApprovedProject("first", 20);
+    const second = await createAdditionalApprovedProject("second", 30);
+    await preApprove();
+    await assignPrimary();
+    const expectedCurrent = [first.projectId, second.projectId].sort();
+    const otherRoundsBefore = await EstimateClientReviewRoundModel.find({ _id: { $in: [first.reviewRoundId, second.reviewRoundId] } }).sort({ _id: 1 }).lean();
+    expect((await procurement.listProjects(buyer)).map(project => project.projectId).sort())
+      .toEqual([...expectedCurrent, "collab-project"].sort());
+
+    const expectCurrentProjectsOnly = async () => {
+      const projects = await procurement.listProjects(buyer);
+      expect(projects.map(project => project.projectId).sort()).toEqual(expectedCurrent);
+      for (const [expected, quantity] of [[first, 20], [second, 30]] as const) {
+        expect(projects.find(project => project.projectId === expected.projectId)).toMatchObject({
+          estimateId: expected.estimateId,
+          preparationSource: { kind: "approved_pre", estimateReviewRoundId: expected.reviewRoundId },
+          sections: [expect.objectContaining({ items: [expect.objectContaining({ quantity, estimatedAmountPaise: quantity * 10_000 })] })]
+        });
+      }
+      await expect(procurement.preflightProject(buyer, "collab-project"))
+        .rejects.toMatchObject({ code: "ESTIMATE_SOURCE_CONFLICT" });
+    };
+
+    await saveDesignerQuantity(12);
+    await expectCurrentProjectsOnly();
+    const pending = await publishDesigner();
+    await expectCurrentProjectsOnly();
+    await decide(pending.clientReview, "request_changes");
+    await expectCurrentProjectsOnly();
+
+    await saveDesignerQuantity(14);
+    const revised = await publishDesigner();
+    await decide(revised.clientReview);
+    const approved = await procurement.listProjects(buyer);
+    expect(approved.map(project => project.projectId).sort()).toEqual([...expectedCurrent, "collab-project"].sort());
+    expect(approved.find(project => project.projectId === "collab-project")).toMatchObject({
+      preparationSource: { kind: "approved_final", estimateReviewRoundId: revised.clientReview.id },
+      sections: [expect.objectContaining({ items: [expect.objectContaining({ quantity: 14, estimatedAmountPaise: 140_000 })] })]
+    });
+    await expect(procurement.preflightProject(buyer, "collab-project")).resolves.toBeUndefined();
+    expect(await EstimateClientReviewRoundModel.find({ _id: { $in: [first.reviewRoundId, second.reviewRoundId] } }).sort({ _id: 1 }).lean()).toEqual(otherRoundsBefore);
+  }, 20_000);
+
+  it("keeps an unchanged initially approved quotation available after its bound design and payment open the finance bucket", async () => {
+    await createProcurementReader();
+    const initial = await preApprove();
+    const quotationBefore = await EstimateClientReviewRoundModel.findById(initial.clientReview.id).lean();
+    expect(await procurement.listProjects(buyer)).toHaveLength(1);
+    const estimate = await EstimateModel.findById("collab-estimate").lean();
+    const designRoundId = "collab-approved-design";
+    await EstimateModel.updateOne({ _id: "collab-estimate" }, { $set: {
+      designPlanStatus: "approved", designPlanVersion: 1, designPlanApprovedAt: now, designPlanApprovedById: client.id,
+      "estimation.approvedDesignScopeRevision": estimate!.estimation.designScopeRevision,
+      "estimation.designApproval": { reviewRoundId: designRoundId, designPlanVersion: 1,
+        designScopeRevision: estimate!.estimation.designScopeRevision, estimateReviewRoundId: initial.clientReview.id,
+        approvedAt: now.toISOString() }
+    } });
+    await DesignPlanReviewRoundModel.create({ _id: designRoundId, projectId: "collab-project", estimateId: "collab-estimate",
+      leadId: "collab-lead", designPlanVersion: 1, designScopeRevision: estimate!.estimation.designScopeRevision,
+      estimateReviewRoundId: initial.clientReview.id, recipientEmail: client.email, clientName: client.name,
+      projectName: "Synthetic project", submittedRevisionIds: ["synthetic-design-revision"],
+      attachments: [{ uploadId: "synthetic-design-upload", filename: "design.pdf", mimeType: "application/pdf",
+        byteSize: bytes.length, sha256: sha256Hex(bytes), storageReference: "synthetic/design.pdf" }],
+      submittedById: designer.id, submittedAt: now, assignedAdminId: superAdmin.id,
+      status: "approved", decision: "approve", decisionSource: "client_portal", decidedById: client.id,
+      decidedByName: client.name, decidedByRole: client.role, decidedAt: now });
+    await DesignWorkflowStateModel.updateOne({ _id: "collab-project" }, { $set: {
+      initialPaymentAt: now.toISOString(), initialPaymentEstimateId: "collab-estimate",
+      initialPaymentEstimateVersion: initial.clientReview.estimateVersion,
+      initialPaymentReviewRoundId: initial.clientReview.id, initialPaymentDesignReviewRoundId: designRoundId
+    }, $setOnInsert: { projectId: "collab-project", version: 1, estimationWorkflowVersion: 3, stages: {}, pauses: [], history: [] } },
+    { upsert: true, runValidators: true });
+    await ProjectModel.updateOne({ _id: "collab-project" }, { $set: { status: "active" } });
+    await mongoose.connection.transaction(session => openProjectFinanceBucket({ projectId: "collab-project",
+      designPlanVersion: 1, openedById: superAdmin.id, occurredAt: now }, session));
+    const bucketBefore = await ProjectFinanceBucketModel.findOne({ projectId: "collab-project" }).lean();
+    expect(bucketBefore).toMatchObject({ status: "open", designPlanVersion: 1,
+      estimateReviewRoundId: initial.clientReview.id, approvedSubtotalPaise: 100_000 });
+
+    expect(await procurement.listProjects(buyer)).toMatchObject([{
+      projectId: "collab-project", preparationSource: { kind: "approved_pre", workflowVersion: 3,
+        estimateReviewRoundId: initial.clientReview.id }, issueReadiness: { required: true, canIssue: true },
+      sections: [expect.objectContaining({ items: [expect.objectContaining({ quantity: 10, estimatedAmountPaise: 100_000 })] })]
+    }]);
+    await expect(procurement.preflightProject(buyer, "collab-project")).resolves.toBeUndefined();
+    expect(await ProjectFinanceBucketModel.findOne({ projectId: "collab-project" }).lean()).toEqual(bucketBefore);
+    expect(await EstimateClientReviewRoundModel.findById(initial.clientReview.id).lean()).toEqual(quotationBefore);
+
+    await ProjectFinanceBucketModel.updateOne({ projectId: "collab-project" }, { $set: { designPlanVersion: 2 } });
+    await expect(procurement.listProjects(buyer)).rejects.toMatchObject({ code: "PROCUREMENT_APPROVAL_SOURCE_CONFLICT" });
+  });
+
+  it.each(["approved_pre", "released_post"] as const)("keeps V2 %s preparation restricted to a pending-design finance bucket", async (kind) => {
+    await createProcurementReader();
+    await ProjectModel.updateOne({ _id: "collab-project" }, { $set: { estimationWorkflowVersion: 2 } });
+    await EstimateModel.updateOne({ _id: "collab-estimate" }, { $set: { estimation: newEstimationLifecycle() } });
+    const initial = await preApprove();
+    await mongoose.connection.transaction(session => ensurePendingProjectFinanceBucket({ workflowVersion: 2,
+      projectId: "collab-project", estimateId: "collab-estimate", estimateVersion: initial.clientReview.estimateVersion,
+      estimateReviewRoundId: initial.clientReview.id, approvedSubtotalRupees: 1000, approvedGstRupees: 180,
+      approvedContractTotalRupees: 1180, approvedSubtotalPaise: 100_000, approvedGstPaise: 18_000,
+      approvedContractTotalPaise: 118_000, createdById: client.id, occurredAt: now }, session));
+    if (kind === "released_post") {
+      const estimate = await EstimateModel.findById("collab-estimate").lean();
+      await collaboration.releasePreparation(sales, "collab-estimate", estimate!.version);
+    }
+    expect(await procurement.listProjects(buyer)).toMatchObject([{
+      projectId: "collab-project", preparationSource: { workflowVersion: 2, kind }
+    }]);
+    const changed = await ProjectFinanceBucketModel.updateOne({ projectId: "collab-project" },
+      { $set: { status: "open", designPlanVersion: 1, openedById: superAdmin.id, openedAt: now } });
+    expect(changed.modifiedCount).toBe(1);
+    await expect(procurement.listProjects(buyer)).rejects.toMatchObject({ code: "PROCUREMENT_APPROVAL_SOURCE_CONFLICT" });
+  });
+
+  it("fails the procurement list closed for a corrupted approval instead of silently skipping that project", async () => {
+    await createProcurementReader();
+    const valid = await createAdditionalApprovedProject("valid", 20);
+    const initial = await preApprove();
+    expect((await procurement.listProjects(buyer)).map(project => project.projectId).sort())
+      .toEqual([valid.projectId, "collab-project"].sort());
+    await EstimateClientReviewRoundModel.collection.updateOne({ _id: initial.clientReview.id as never },
+      { $set: { sourceDigest: "0".repeat(64) } });
+    await expect(procurement.listProjects(buyer)).rejects.toMatchObject({ code: "ESTIMATE_SOURCE_CONFLICT" });
+    await expect(procurement.preflightProject(buyer, "collab-project")).rejects.toMatchObject({ code: "ESTIMATE_SOURCE_CONFLICT" });
+    await expect(procurement.preflightProject(buyer, valid.projectId)).resolves.toBeUndefined();
   });
 
   it("denies a removed primary and unrelated Sales before any unlock write", async () => {

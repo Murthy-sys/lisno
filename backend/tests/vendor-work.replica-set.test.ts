@@ -107,7 +107,16 @@ async function report(assignmentId: string, progress: number, note: string) {
   return service.getMine(vendorA, assignmentId);
 }
 async function verify(assignmentId: string) {
-  if (!(await execution.detail(vendorA, assignmentId)).imageIds.length) await executionCommand(site, assignmentId, "exempt_evidence", { reason: "Physical inspection completed; client restricted photos" });
+  const current = await execution.detail(vendorA, assignmentId);
+  if (!current.imageIds.length) {
+    const assignment = (await VendorWorkAssignmentModel.findById(assignmentId).lean())!;
+    const imageId = `verification-photo:${assignmentId}:${current.executionRound}`;
+    const saved = await storage.save({ data: png, extension: ".png" });
+    await VendorWorkImageModel.create({ _id: imageId, assignmentId, projectId: assignment.projectId, vendorId: assignment.vendorId,
+      round: assignment.currentRound, executionRound: current.executionRound, uploadedAt: now, uploadedById: vendorA.id,
+      storageReference: saved.reference, originalFilename: "completion.png", mimeType: "image/png", byteSize: png.length,
+      sha256: createHash("sha256").update(png).digest("hex"), idempotencyKey: imageId, requestDigest: imageId });
+  }
   const submitted = await executionCommand(vendorA, assignmentId, "submit", { note: "Ready for Site Manager inspection" });
   await executionCommand(site, assignmentId, "verify", { submissionId: submitted.submission!.id });
 }
@@ -213,7 +222,9 @@ describe("vendor work and Client review", () => {
     await verify(cabinet);
     const second = await service.submit(vendorA, cabinet, { expectedVersion: revised.version, idempotencyKey: "submit-b", note: "Upper cabinet aligned" });
     expect(second.round).toBe(2);
-    expect(second.imageIds).toEqual([]);
+    expect(second.imageIds).toEqual((await execution.detail(vendorA, cabinet)).imageIds);
+    expect(second.imageIds).toHaveLength(1);
+    expect(second.imageIds).not.toContain(imageId);
     await service.clientDecision(clientA, "project-a", second.id, { expectedVersion: 1, idempotencyKey: "decision-c", decision: "approve", reason: null });
     const completion = await mongoose.connection.transaction(session => readVendorWorkCompletion("project-a", session));
     expect(completion).toMatchObject({ totalAssignments: 2, approvedAssignments: 1, pendingAssignments: 1, openReviews: 0 });

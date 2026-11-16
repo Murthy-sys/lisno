@@ -1,4 +1,5 @@
 import type { ProjectBudgetFilters, ProjectBudgetPage } from "./projectFinanceApi";
+import { readPortfolioCommitmentBudget, readProjectCommitmentBudget } from "./projectCommitmentBudget";
 
 export const budgetStatusLabels = {
   over_budget: "Over budget",
@@ -42,10 +43,12 @@ export function projectBudgetFiltersFromSearch(search: URLSearchParams): Project
 
 /** The export is explicitly a single fetched page, with server portfolio totals kept separate. */
 export function projectBudgetPageCsv(page: ProjectBudgetPage, filters: ProjectBudgetFilters): string {
-  const rupees = (paise: number) => (paise / 100).toFixed(2);
+  const rupees = (paise: number | null | undefined) => paise == null ? "Unavailable" : (paise / 100).toFixed(2);
+  const portfolio = readPortfolioCommitmentBudget(page.summary);
+  const budget = portfolio.ready ? portfolio.budget : null;
   const rows: Array<Array<string | number>> = [
     ["Project budgets: current-page export"],
-    ["Amounts", "INR, exact rupees; project budgets exclude GST; spending includes overheads"],
+    ["Amounts", "INR, exact rupees; project budgets exclude GST; budget usage includes recorded costs and outstanding vendor commitments"],
     ["Date scope", "Budget approval cohort; amounts are current lifetime totals"],
     ["Observed at", page.observedAt],
     ["Search", filters.search ?? "All projects"],
@@ -62,21 +65,30 @@ export function projectBudgetPageCsv(page: ProjectBudgetPage, filters: ProjectBu
     [],
     ["Matching portfolio summary", "INR"],
     ["Total project budget excluding GST", rupees(page.summary.approvedSubtotalPaise)],
-    ["Total spending including overheads", rupees(page.summary.recordedCostPaise)],
-    ["Total overheads (included in spending)", rupees(page.summary.overheadPaise)],
+    ["Budget used including outstanding vendor commitments", rupees(budget?.budgetUsedPaise)],
+    ["Recorded expenses including overheads", rupees(page.summary.recordedCostPaise)],
+    ["Outstanding vendor commitments", rupees(budget?.outstandingVendorCommitmentPaise)],
+    ["Approved vendor commitments", rupees(portfolio.budget?.approvedVendorNetPaise)],
+    ["Commitment reconciliation", portfolio.message ?? "Ready"],
+    ["Total overheads (included in recorded expenses)", rupees(page.summary.overheadPaise)],
     ["Reserved margin (20%)", rupees(page.summary.targetProfitPaise)],
     ["Total usable budget", rupees(page.summary.costBudgetPaise)],
-    ["Remaining usable budget", rupees(page.summary.remainingBudgetPaise)],
+    ["Remaining usable budget", rupees(budget?.availableBudgetPaise)],
     [],
     ["Current-page project rows only"],
-    ["Project ID", "Project", "Client ID", "Client", "Total budget excluding GST (INR)", "Spending including overheads (INR)", "Overheads (INR)", "Reserved margin (20%) (INR)", "Usable budget (INR)", "Remaining usable budget (INR)", "Usable budget utilization (%)", "Budget status", "Finance stage", "Budget approved at"]
+    ["Project ID", "Project", "Client ID", "Client", "Total budget excluding GST (INR)", "Budget used including outstanding commitments (INR)", "Overheads (INR)", "Reserved margin (20%) (INR)", "Usable budget (INR)", "Remaining usable budget (INR)", "Usable budget utilization (%)", "Budget status", "Finance stage", "Budget approved at", "Recorded expenses (INR)", "Outstanding vendor commitments (INR)", "Commitment reconciliation", "Approved vendor commitments (INR)"]
   ];
-  for (const bucket of page.items) rows.push([
+  for (const bucket of page.items) {
+    const commitment = readProjectCommitmentBudget(bucket);
+    const projection = commitment.ready ? commitment.budget : null;
+    rows.push([
     bucket.projectId, bucket.projectName, bucket.clientId ?? "", bucket.clientName ?? (bucket.clientId === null ? "Unlinked client" : "Name unavailable"),
-    rupees(bucket.approvedSubtotalPaise), rupees(bucket.recordedCostPaise), rupees(bucket.overheadPaise), rupees(bucket.targetProfitPaise),
-    rupees(bucket.costBudgetPaise), rupees(bucket.remainingBudgetPaise), bucket.budgetUtilizationBps == null ? "" : (bucket.budgetUtilizationBps / 100).toFixed(2),
-    bucket.budgetStatus ? budgetStatusLabels[bucket.budgetStatus] : "Not available", financeStageLabels[bucket.status], bucket.budgetApprovedAt ?? ""
-  ]);
+    rupees(bucket.approvedSubtotalPaise), rupees(projection?.budgetUsedPaise), rupees(bucket.overheadPaise), rupees(bucket.targetProfitPaise),
+    rupees(bucket.costBudgetPaise), rupees(projection?.availableBudgetPaise), projection?.utilizationBps == null ? "Unavailable" : (projection.utilizationBps / 100).toFixed(2),
+    projection?.budgetStatus ? budgetStatusLabels[projection.budgetStatus] : "Not available", financeStageLabels[bucket.status], bucket.budgetApprovedAt ?? "",
+    rupees(bucket.recordedCostPaise), rupees(projection?.outstandingVendorCommitmentPaise), commitment.message ?? "Ready", rupees(commitment.budget?.approvedVendorNetPaise)
+    ]);
+  }
   return rows.map((row) => row.map(csvCell).join(",")).join("\r\n");
 }
 

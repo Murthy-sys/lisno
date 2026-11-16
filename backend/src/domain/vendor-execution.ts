@@ -6,6 +6,7 @@ const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/u).refine(value => Number.isF
 const note = z.string().trim().min(1).max(2_000);
 export const executionCommandSchema = z.object({
   action: z.enum(["setup", "acknowledge", "propose_schedule", "confirm_schedule", "report", "submit", "verify", "request_changes", "hold", "resume", "exempt_evidence"]),
+  updateType: z.enum(["started", "progress", "hold", "completed"]).optional(),
   expectedVersion: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER), idempotencyKey: z.string().trim().min(8).max(128),
   note: note.optional(), reason: note.optional(), nextAction: note.optional(), progress: z.number().int().min(0).max(100).optional(),
   status: z.enum(["not_started", "in_progress", "blocked"]).optional(), startDate: date.optional(), finishDate: date.optional(), reviewDate: date.optional(), submissionId: z.string().min(1).max(500).optional(), imageIds: z.array(z.string().min(1).max(500)).max(20).optional()
@@ -13,7 +14,18 @@ export const executionCommandSchema = z.object({
   const require = (field: keyof typeof value) => { if (value[field] === undefined) ctx.addIssue({ code: z.ZodIssueCode.custom, path: [field], message: `${field} is required.` }); };
   if (["propose_schedule", "confirm_schedule"].includes(value.action)) { require("startDate"); require("finishDate"); }
   if (value.startDate && value.finishDate && value.finishDate < value.startDate) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["finishDate"], message: "Finish date cannot precede start date." });
-  if (value.action === "report") { require("note"); require("progress"); require("status"); if (value.status === "blocked") { require("reason"); require("nextAction"); } }
+  if (value.updateType && value.action !== "report") ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["updateType"], message: "Update type is available only for vendor reports." });
+  if (value.action === "report") {
+    require("note"); require("progress"); require("status");
+    if (value.status === "blocked") { require("reason"); if (value.updateType !== "hold") require("nextAction"); }
+    if (value.updateType) {
+      const expectedStatus = value.updateType === "hold" ? "blocked" : "in_progress";
+      if (value.status !== expectedStatus) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["status"], message: "Status must match the selected update type." });
+      if (value.updateType === "started" && value.progress !== 0 || value.updateType === "completed" && value.progress !== 100) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["progress"], message: "Started work must be at 0%; completed work must be at 100%." });
+      if (value.updateType === "progress" && !value.imageIds?.length) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["imageIds"], message: "Add at least one current progress photo." });
+      if (value.updateType === "hold") require("reason");
+    }
+  }
   if (value.action === "submit") require("note");
   if (["request_changes", "hold", "resume", "exempt_evidence"].includes(value.action)) require("reason");
   if (value.action === "hold") require("reviewDate");

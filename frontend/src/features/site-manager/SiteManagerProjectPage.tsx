@@ -11,21 +11,22 @@ import { ExecutionDetailPanel } from "../execution/ExecutionDetailPanel";
 import { useExecutionConnection } from "../execution/ExecutionLiveProvider";
 import { ExecutionConnection } from "../execution/ExecutionWorkspace";
 import { executionApi, executionKeys, type ExecutionAction, type ExecutionPage, type ExecutionQuery, type ExecutionWork } from "../execution/executionApi";
-import { executionDate, executionLabel, executionStatusLabels, executionTime } from "../execution/executionPresentation";
+import { executionDate, executionLabel, executionTime } from "../execution/executionPresentation";
+import { currentVendorReport } from "../vendor/vendorWorkflowPresentation";
 import { procurementError } from "../procurement/procurementPresentation";
 import { SiteManagerProjectActions } from "./SiteManagerProjectActions";
 import { SiteManagerNavigationGuard } from "./SiteManagerNavigationGuard";
-import { isSiteAccessError, SiteExecutionSummary, SitePagination, siteManagerReturnPath, siteOffset, sitePageSize, siteWorkAction } from "./siteManagerPresentation";
+import { isSiteAccessError, SiteExecutionSummary, SitePagination, siteManagerReturnPath, siteOffset, sitePageSize, siteWorkAction, siteWorkStatus, siteWorkStatusLabels } from "./siteManagerPresentation";
 import "../execution/execution.css";
 import "./site-manager.css";
 
-export function SiteManagerProjectPage({ projectId: suppliedProjectId, embedded = false, showProjectIdentity = !embedded }: { projectId?: string; embedded?: boolean; showProjectIdentity?: boolean }) {
+export function SiteManagerProjectPage({ projectId: suppliedProjectId, embedded = false, showProjectIdentity = !embedded, preserveProjectTabs = false }: { projectId?: string; embedded?: boolean; showProjectIdentity?: boolean; preserveProjectTabs?: boolean }) {
   const { projectId: routeProjectId } = useParams();
   const projectId = suppliedProjectId ?? routeProjectId;
-  return projectId ? <SelectedSiteProject key={projectId} projectId={projectId} embedded={embedded} showProjectIdentity={showProjectIdentity} /> : <PageState state="error" message="Choose a project to view its execution." />;
+  return projectId ? <SelectedSiteProject key={projectId} projectId={projectId} embedded={embedded} showProjectIdentity={showProjectIdentity} preserveProjectTabs={preserveProjectTabs} /> : <PageState state="error" message="Choose a project to view its execution." />;
 }
 
-function SelectedSiteProject({ projectId, embedded, showProjectIdentity }: { projectId: string; embedded: boolean; showProjectIdentity: boolean }) {
+function SelectedSiteProject({ projectId, embedded, showProjectIdentity, preserveProjectTabs }: { projectId: string; embedded: boolean; showProjectIdentity: boolean; preserveProjectTabs: boolean }) {
   const client = useQueryClient();
   const location = useLocation();
   const connection = useExecutionConnection();
@@ -38,7 +39,7 @@ function SelectedSiteProject({ projectId, embedded, showProjectIdentity }: { pro
   const [projectBusy, setProjectBusy] = useState(false);
   const [accessRemoved, setAccessRemoved] = useState(false);
   const allowedClose = useRef(false);
-  const view = params.get("view") === "updates" ? "updates" : "progress";
+  const [teamOpen, setTeamOpen] = useState(false);
   const filters: ExecutionQuery = { limit: sitePageSize, offset: siteOffset(params.get("offset")), q: params.get("q")?.slice(0, 200) || undefined, status: params.get("status") || undefined, flag: params.get("flag") || undefined };
   const query = useQuery({ queryKey: executionKeys.project(projectId, filters), queryFn: ({ signal }) => executionApi.project(projectId, filters, signal),
     enabled: !accessRemoved,
@@ -65,42 +66,60 @@ function SelectedSiteProject({ projectId, embedded, showProjectIdentity }: { pro
   const rows = !loadingRows && query.data?.project?.id === projectId ? query.data : undefined;
   const returnTo = siteManagerReturnPath((location.state as { siteManagerReturnTo?: unknown } | null)?.siteManagerReturnTo);
   function filter(key: string, value: string) {
-    setParams(old => { const next = new URLSearchParams(old); if (embedded) next.set("detail", "1"); value ? next.set(key, value) : next.delete(key); if (!["offset", "assignment"].includes(key)) next.delete("offset"); return next; }, { replace: true, state: location.state });
+    setParams(old => { const next = new URLSearchParams(old); if (embedded && !preserveProjectTabs) next.set("detail", "1"); value ? next.set(key, value) : next.delete(key); if (!["offset", "assignment"].includes(key)) next.delete("offset"); return next; }, { replace: true, state: location.state });
   }
   function open(work: ExecutionWork) { setInitialAction(siteWorkAction(work).action); filter("assignment", work.id); }
   return <div className="site-workspace">
     <SiteManagerNavigationGuard dirty={!denied && (detailDirty || projectDirty)} busy={!denied && (detailBusy || projectBusy)} allowedClose={allowedClose} />
     {!embedded ? <Link className="site-workspace__back" to={returnTo}>Back to assigned projects</Link> : null}
     {denied ? <PageState state="error" message="You no longer have access to this project." /> : <>
-      <PMCounterpartPanel projectId={projectId} />
-      <header className="site-workspace__heading"><div>{embedded ? <h2>{showProjectIdentity && project ? project.name : "Execution operations"}</h2> : <h1>{project?.name ?? "Project execution"}</h1>}{project && showProjectIdentity ? <ProjectId projectNumber={project.projectNumber} /> : null}{project ? <p className="site-workspace__muted">{executionLabel(project.status)}</p> : null}</div><div className="site-workspace__controls"><ExecutionConnection state={connection} /><Button size="compact" variant="secondary" busy={query.isFetching} onClick={() => void query.refetch()}>Refresh project</Button>{project ? <SiteManagerProjectActions disabled={query.isError} project={project} onDirty={setProjectDirty} onBusy={setProjectBusy} canManagePolicy={data?.canManagePolicy ?? false} /> : null}</div></header>
+      <header className="site-workspace__heading"><div>{embedded ? <h2>{showProjectIdentity && project ? project.name : "Work monitoring"}</h2> : <h1>{project?.name ?? "Work monitoring"}</h1>}{project && showProjectIdentity ? <ProjectId projectNumber={project.projectNumber} /> : null}{project ? <p className="site-workspace__muted">{executionLabel(project.status)}</p> : null}</div><div className="site-workspace__controls"><ExecutionConnection state={connection} /><Button size="compact" variant="secondary" busy={query.isFetching} onClick={() => void query.refetch()}>Refresh project</Button>{project ? <SiteManagerProjectActions disabled={query.isError} project={project} onDirty={setProjectDirty} onBusy={setProjectBusy} canManagePolicy={data?.canManagePolicy ?? false} /> : null}</div></header>
+      <details className="site-workspace__team" onToggle={event => setTeamOpen(event.currentTarget.open)}><summary>Project team</summary>{teamOpen ? <PMCounterpartPanel projectId={projectId} /> : null}</details>
       {query.isError && data ? <InlineMessage tone="warning">Refresh failed. Project information may be out of date. Retry before making a decision.</InlineMessage> : null}
-      {data?.projectCounts ? <SiteExecutionSummary counts={data.projectCounts} /> : query.isPending ? <p role="status">Loading project statistics…</p> : query.isError ? null : <InlineMessage tone="warning">Project statistics are unavailable. Refresh this project.</InlineMessage>}
+      {data?.projectCounts ? <SiteExecutionSummary counts={data.projectCounts} compact /> : query.isPending ? <p role="status">Loading project statistics…</p> : query.isError ? null : <InlineMessage tone="warning">Project statistics are unavailable. Refresh this project.</InlineMessage>}
       {query.isError && !data ? <PageState state="error" message={procurementError(query.error, "Project execution could not be loaded.")} action={{ label: "Try again", onAction: () => void query.refetch() }} /> : <section aria-labelledby="site-project-vendor-work" className="site-workspace__work">
         <h2 id="site-project-vendor-work" className="sr-only">Project vendor work</h2>
-        <div className="site-workspace__views" role="group" aria-label="Work view"><Button size="compact" variant={view === "progress" ? "primary" : "secondary"} aria-pressed={view === "progress"} onClick={() => filter("view", "")}>Vendor progress</Button><Button size="compact" variant={view === "updates" ? "primary" : "secondary"} aria-pressed={view === "updates"} onClick={() => filter("view", "updates")}>Vendor updates &amp; blockers</Button></div>
-        <div className="site-workspace__filters"><Field id="site-work-search" label="Search vendor or Main Line">{props => <Input {...props} type="search" maxLength={200} value={filters.q ?? ""} onChange={event => filter("q", event.target.value)} />}</Field><Field id="site-work-status" label="Work status">{props => <Select {...props} value={filters.status ?? ""} onChange={event => filter("status", event.target.value)}><option value="">All statuses</option>{Object.entries(executionStatusLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</Select>}</Field><Field id="site-work-attention" label="Needs attention">{props => <Select {...props} value={filters.flag ?? ""} onChange={event => filter("flag", event.target.value)}><option value="">All assignments</option><option value="blocked">Blocked</option><option value="missing_update">Missing update</option><option value="overdue">Overdue</option><option value="setup_required">Needs setup</option></Select>}</Field></div>
+        <div className="site-workspace__filters">
+          <Field id="site-work-search" label="Search vendor or Main Line">{props => <Input {...props} type="search" maxLength={200} value={filters.q ?? ""} onChange={event => filter("q", event.target.value)} />}</Field>
+          <Field id="site-work-status" label="Work status">{props => <Select {...props} value={filters.status ?? ""} onChange={event => filter("status", event.target.value)}><option value="">All statuses</option>{Object.entries(siteWorkStatusLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</Select>}</Field>
+          <details className="site-workspace__more-filters"><summary>More filters{filters.flag ? " (1 active)" : ""}</summary><Field id="site-work-attention" label="Needs attention">{props => <Select {...props} value={filters.flag ?? ""} onChange={event => filter("flag", event.target.value)}><option value="">All assignments</option><option value="blocked">On hold</option><option value="missing_update">Missing update</option><option value="overdue">Overdue</option><option value="setup_required">Needs setup</option></Select>}</Field></details>
+        </div>
         {loadingRows ? <PageState state="loading" message="Loading vendor work…" /> : query.isError && !rows ? <PageState state="error" message="Vendor work could not be refreshed." action={{ label: "Retry vendor work", onAction: () => void query.refetch() }} /> : rows ? <>
-          {rows.items.length ? <ul className="site-workspace__work-list" aria-label={view === "progress" ? "Vendor progress" : "Vendor updates and blockers"}>{rows.items.map(work => <li key={work.id}>{view === "progress" ? <ProgressRow work={work} onOpen={() => open(work)} disabled={query.isError} /> : <ReportRow work={work} onOpen={() => open(work)} disabled={query.isError} />}</li>)}</ul> : <PageState state="empty" message={filters.q || filters.flag || filters.status ? "No vendor work matches these filters." : "No issued vendor work for this project yet."} />}
+          {rows.items.length ? <ul className="site-workspace__work-list" aria-label="Vendor work">{rows.items.map(work => <li key={work.id}><WorkRow work={work} onOpen={() => open(work)} disabled={query.isError} /></li>)}</ul> : <PageState state="empty" message={filters.q || filters.flag || filters.status ? "No vendor work matches these filters." : "No issued vendor work for this project yet."} />}
           <SitePagination offset={rows.offset} count={rows.items.length} total={rows.total} busy={query.isFetching} onChange={offset => filter("offset", String(offset))} />
         </> : null}
       </section>}
-      {selected && project ? <ExecutionDetailPanel key={selected} assignmentId={selected} vendor={false} compact onDirty={setDetailDirty} onBusy={setDetailBusy} initialAction={initialAction} expectedProjectId={projectId} onClose={() => { allowedClose.current = true; setDetailDirty(false); filter("assignment", ""); setInitialAction(undefined); }} /> : null}
+      {selected && project ? <ExecutionDetailPanel key={selected} assignmentId={selected} vendor={false} compact managerMonitoring onDirty={setDetailDirty} onBusy={setDetailBusy} initialAction={initialAction} expectedProjectId={projectId} onClose={() => { allowedClose.current = true; setDetailDirty(false); filter("assignment", ""); setInitialAction(undefined); }} /> : null}
     </>}
   </div>;
 }
 
-function WorkIdentity({ work }: { work: ExecutionWork }) {
-  return <div className="site-workspace__identity"><h3>{work.itemName}</h3><p>{work.vendorName}</p><small>{[work.roomName, work.mainBasketName].filter(Boolean).join(" · ")}</small><small>{work.orderNumber} · Revision {work.orderRevision}</small></div>;
-}
-function WorkStatus({ work }: { work: ExecutionWork }) {
-  return <div className="site-workspace__work-status"><span className="execution__status" data-status={work.status}>{work.tracking === "legacy_review" && work.legacyStatus === "submitted_for_client" ? "With Client (existing review)" : executionStatusLabels[work.status]}</span><span><strong>{work.progress}%</strong> vendor reported</span>{work.verification ? <small>Site verified {executionDate(work.verification.verifiedAt)}</small> : null}{work.hold ? <small>On hold · Review {executionDate(work.hold.reviewDate)}</small> : null}{work.flags.length ? <small>{work.flags.map(executionLabel).join(" · ")}</small> : null}</div>;
-}
-function ProgressRow({ work, onOpen, disabled }: { work: ExecutionWork; onOpen: () => void; disabled: boolean }) {
+function WorkRow({ work, onOpen, disabled }: { work: ExecutionWork; onOpen: () => void; disabled: boolean }) {
   const action = siteWorkAction(work);
-  return <article className="site-workspace__progress-row" aria-label={`${work.itemName}, ${work.vendorName}, ${work.orderNumber}`}><WorkIdentity work={work} /><WorkStatus work={work} /><div className="site-workspace__dates">{work.proposedSchedule ? <p><strong>Schedule proposed</strong><span>{executionDate(work.proposedSchedule.startDate)} to {executionDate(work.proposedSchedule.finishDate)}</span></p> : work.schedule ? <p><strong>Confirmed schedule</strong><span>{executionDate(work.schedule.startDate)} to {executionDate(work.schedule.finishDate)}</span></p> : <p>Schedule not confirmed</p>}<small>Latest report: {executionTime(work.latestReportAt, work.timezone)}</small></div><div className="site-workspace__row-action"><small>Next: {executionLabel(work.nextOwner)}</small><Button size="compact" variant="secondary" disabled={disabled} onClick={onOpen} aria-label={`${action.label}: ${work.itemName}, ${work.vendorName}`}>{action.label}</Button></div></article>;
-}
-function ReportRow({ work, onOpen, disabled }: { work: ExecutionWork; onOpen: () => void; disabled: boolean }) {
-  const report = work.latestVendorReport;
-  return <article className="site-workspace__report-row" aria-label={`${work.itemName}, ${work.vendorName}, ${work.orderNumber}`}><WorkIdentity work={work} /><div className="site-workspace__report">{report ? <><p className="site-workspace__muted">Vendor report · {executionTime(report.reportedAt, work.timezone)} · {report.progress}% · {executionLabel(report.status)}</p><p>{report.note}</p>{report.reason ? <p><strong>{work.status === "blocked" && report.status === "blocked" ? "Blocker" : "Reported reason"}:</strong> {report.reason}</p> : null}{report.nextAction ? <p><strong>{work.status === "blocked" && report.status === "blocked" ? "Next action" : "Reported next action"}:</strong> {report.nextAction}</p> : null}</> : <p className="site-workspace__muted">No vendor update for the current round.</p>}</div><div className="site-workspace__row-action"><span className="execution__status" data-status={work.status}>Current: {executionStatusLabels[work.status]}</span><Button size="compact" variant="secondary" disabled={disabled} onClick={onOpen} aria-label={`Open update: ${work.itemName}, ${work.vendorName}`}>Open work</Button></div></article>;
+  const report = currentVendorReport(work);
+  const holdReason = work.hold?.reason ?? (work.status === "blocked" ? report?.reason : null);
+  const review = work.status === "awaiting_verification" ? "Awaiting your verification"
+    : work.status === "awaiting_client" ? "Awaiting Client acceptance"
+    : work.status === "changes_requested" ? "Fresh verification required" : null;
+  const photos = (work.submission?.imageIds ?? work.imageIds).length;
+  const missingUpdate = work.daily.state === "missing" || work.flags.includes("missing_update");
+  return <article className="site-workspace__monitoring-row" aria-label={`${work.itemName}, ${work.vendorName}, ${work.orderNumber}`}>
+    <div className="site-workspace__identity">
+      <h3>{work.itemName}</h3><p>{work.vendorName}{work.roomName ? ` · ${work.roomName}` : ""}</p>
+      <div className="site-workspace__work-status"><span className="execution__status" data-status={work.status}>{siteWorkStatus(work)}</span>{review ? <small>{review}</small> : null}</div>
+      {!work.sourceAvailable ? <small>Issued source unavailable. Contact the project team before making changes.</small> : null}
+      {work.tracking === "setup_required" ? <small>Tracking must be enabled before work updates can begin.</small> : null}
+    </div>
+    <div className="site-workspace__report">
+      {report ? <><time className="site-workspace__muted" dateTime={report.reportedAt}>Last update {executionTime(report.reportedAt, work.timezone)}</time><p>{holdReason === report.note ? <><strong>Hold reason:</strong> </> : null}{report.note}</p></> : <p className="site-workspace__muted">No vendor update for the current round.</p>}
+      {holdReason && holdReason !== report?.note ? <p><strong>Hold reason:</strong> {holdReason}</p> : null}
+      {missingUpdate ? <small className="site-workspace__attention">Vendor update missing</small> : null}
+      <small>{photos} {photos === 1 ? "photo" : "photos"}{work.hold ? ` · Hold review ${executionDate(work.hold.reviewDate)}` : ""}</small>
+    </div>
+    <div className="site-workspace__row-action">
+      <p className="site-workspace__finish">{work.schedule ? <>Finish <strong>{executionDate(work.schedule.finishDate)}</strong></> : "Finish date not confirmed"}{work.flags.includes("overdue") ? <span className="site-workspace__attention"> · Overdue</span> : null}</p>
+      {work.proposedSchedule ? <p className="site-workspace__proposal"><strong>Schedule proposed</strong><small>{executionDate(work.proposedSchedule.startDate)} to {executionDate(work.proposedSchedule.finishDate)}</small></p> : null}
+      <Button size="compact" variant="secondary" disabled={disabled} onClick={onOpen} aria-label={`${action.label}: ${work.itemName}, ${work.vendorName}`}>{action.label}</Button>
+    </div>
+  </article>;
 }

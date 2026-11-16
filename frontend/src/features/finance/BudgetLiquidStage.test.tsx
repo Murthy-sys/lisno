@@ -95,6 +95,20 @@ describe("BudgetLiquidStage", () => {
     expect(screen.queryByRole("button", { name: /motion/i })).not.toBeInTheDocument();
   });
 
+  it("preserves five vessels and known captions while marking unavailable expenses without a false zero", () => {
+    vi.stubGlobal("WebGL2RenderingContext", undefined);
+    const values = metrics.map(metric => metric.id === "expense"
+      ? { ...metric, amountPaise: null, ratio: null, fill: 0, excessPaise: 0 } : metric);
+    const { container } = render(<BudgetLiquidStage metrics={values} />);
+    const expense = screen.getByRole("listitem", { name: "Expenses" });
+    expect(expense).toHaveTextContent("UnavailablePercentage unavailable");
+    expect(expense).not.toHaveTextContent("₹0.00");
+    expect(expense).not.toHaveTextContent("0% of total budget");
+    expect(screen.getAllByRole("listitem")).toHaveLength(5);
+    expect(screen.getByRole("listitem", { name: "Total Budget" })).toHaveTextContent("₹25,00,000.00");
+    expect(container.innerHTML).not.toMatch(/NaN|Infinity/);
+  });
+
   it("keeps captions below text-free vessels through lazy readiness without showing a motion control", async () => {
     renderer.ready = false;
     const { container } = render(<BudgetLiquidStage metrics={metrics} />);

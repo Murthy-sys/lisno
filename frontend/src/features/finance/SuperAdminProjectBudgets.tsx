@@ -9,6 +9,7 @@ import { formatPaise } from "./financeFormat";
 import { projectBudgetDetailHref } from "./projectBudgetNavigation";
 import { budgetStatusLabels, financeStageLabels, projectBudgetFiltersFromSearch, projectBudgetPageCsv, projectStatusLabels } from "./projectBudgetList";
 import { getProjectBudgetPage, projectFinanceKeys, type ProjectBudgetFilters } from "./projectFinanceApi";
+import { readPortfolioCommitmentBudget, readProjectCommitmentBudget } from "./projectCommitmentBudget";
 import "./SuperAdminProjectBudgets.css";
 
 const compactNumber = new Intl.NumberFormat("en-IN", { maximumFractionDigits: 2 });
@@ -90,7 +91,7 @@ export function SuperAdminProjectBudgets() {
       <div className="project-budgets__heading">
         <p className="project-budgets__breadcrumb">Finance <span aria-hidden="true">/</span> Project Budgets</p>
         <h1 id="project-budgets-title">Project Budgets</h1>
-        <p>Approved budgets, 20% reserved margin, and current spending in one place.</p>
+        <p>Approved budgets, 20% reserved margin, and recorded and committed costs in one place.</p>
       </div>
       <div className="project-budgets__scope">
         <label>Project<select value={filters.projectId ?? ""} onChange={(event) => updateFilters({ projectId: event.target.value })}>
@@ -121,7 +122,7 @@ export function SuperAdminProjectBudgets() {
     {page ? <>
       <BudgetTotals summary={page.summary} />
       <div className="project-budgets__summary-context">
-        <p>{page.pagination.total} matching {page.pagination.total === 1 ? "project" : "projects"} · Budgets exclude GST · Spending includes overheads</p>
+        <p>{page.pagination.total} matching {page.pagination.total === 1 ? "project" : "projects"} · Budgets exclude GST · Budget usage includes outstanding vendor commitments and recorded overheads</p>
         {page.observedAt && Number.isFinite(new Date(page.observedAt).getTime()) ? <p>As of <time dateTime={page.observedAt}>{observedDate.format(new Date(page.observedAt))}</time></p> : null}
       </div>
     </> : null}
@@ -155,13 +156,13 @@ export function SuperAdminProjectBudgets() {
         {activeFilters ? <button className="project-budgets__clear" onClick={() => setSearchParams({})}>Clear filters</button> : null}
         <button className="project-budgets__export" onClick={exportPage} disabled={!page || displayingPrevious || query.isFetching || query.isError || page.items.length === 0}>Export current page</button>
       </div>
-      <p id="project-budgets-risk-note" className="project-budgets__risk-note">At risk: at least 90% of usable budget consumed on an unfinished project. Overheads are already included in spending.</p>
+      <p id="project-budgets-risk-note" className="project-budgets__risk-note">At risk: at least 90% of usable budget used or committed on an unfinished project. Recorded overheads are included once.</p>
       {page?.items.length ? <>
         <p id="project-budgets-scroll-note" className="project-budgets__scroll-note">Scroll horizontally to view all budget columns.</p>
         <div className="project-budgets__table-scroll" role="region" aria-label="Project budget details" aria-describedby="project-budgets-scroll-note" tabIndex={0} aria-busy={query.isFetching}>
           <table className="project-budgets__table">
-            <caption className="sr-only">Current page of matching project budgets. All amounts in Indian rupees; budget excludes GST, spending includes overheads.</caption>
-            <thead><tr><th scope="col">#</th><th scope="col">Project</th><th scope="col">Client</th><th scope="col">Total budget<small>Excluding GST</small></th><th scope="col">Spending<small>Including overheads</small></th><th scope="col">Overheads</th><th scope="col">Margin (20%)<small>Reserved</small></th><th scope="col">Usable budget</th><th scope="col">Remaining</th><th scope="col">Budget status</th><th scope="col">Details</th></tr></thead>
+            <caption className="sr-only">Current page of matching project budgets. All amounts in Indian rupees; budget excludes GST, usage includes recorded costs and outstanding vendor commitments.</caption>
+            <thead><tr><th scope="col">#</th><th scope="col">Project</th><th scope="col">Client</th><th scope="col">Total budget<small>Excluding GST</small></th><th scope="col">Budget used<small>Recorded + committed</small></th><th scope="col">Overheads</th><th scope="col">Margin (20%)<small>Reserved</small></th><th scope="col">Usable budget</th><th scope="col">Remaining</th><th scope="col">Budget status</th><th scope="col">Details</th></tr></thead>
             <tbody>{page.items.map((bucket, index) => <BudgetRow key={bucket.id} bucket={bucket} number={page.pagination.offset + index + 1} returnSearch={location.search} />)}</tbody>
           </table>
         </div>
@@ -180,32 +181,40 @@ export function SuperAdminProjectBudgets() {
 }
 
 function BudgetTotals({ summary }: { summary: ProjectFinancePortfolioSummary }) {
+  const commitment = readPortfolioCommitmentBudget(summary);
   const totals = [
     { label: "Total Project Budget", value: summary.approvedSubtotalPaise, note: "Approved amount excluding GST", icon: "budget" },
-    { label: "Total Spending", value: summary.recordedCostPaise, note: "Including all recorded overheads", icon: "spending" },
-    { label: "Total Overheads", value: summary.overheadPaise, note: "Included in total spending", icon: "overheads" },
+    { label: "Budget Used", value: commitment.ready ? commitment.budget!.budgetUsedPaise : null, note: "Recorded costs + outstanding commitments", icon: "spending" },
+    { label: "Total Overheads", value: summary.overheadPaise, note: "Included in recorded expenses", icon: "overheads" },
     { label: "Reserved Margin (20%)", value: summary.targetProfitPaise, note: "Reserved and not available to spend", icon: "margin" },
     { label: "Total Usable Budget", value: summary.costBudgetPaise, note: "After the 20% margin reserve", icon: "budget" }
   ];
-  return <dl className="project-budgets__totals" aria-label="Matching project budget totals">
+  return <>
+    {commitment.message ? <p className="project-budgets__notice" role="status">{commitment.message}</p> : null}
+    <dl className="project-budgets__totals" aria-label="Matching project budget totals">
     {totals.map((total) => <div className={`project-budgets__total project-budgets__total--${total.icon}`} key={total.label}>
       <dt><span className="project-budgets__total-icon" aria-hidden="true"><BudgetIcon variant={total.icon} /></span>{total.label}</dt>
-      <dd title={formatPaise(total.value)} aria-label={formatPaise(total.value)}>{compactPaise(total.value)}</dd>
+      <dd title={total.value === null ? "Unavailable" : formatPaise(total.value)} aria-label={total.value === null ? `${total.label}: unavailable` : formatPaise(total.value)}>{total.value === null ? "Unavailable" : compactPaise(total.value)}</dd>
       <dd className="project-budgets__total-note">{total.note}</dd>
+      {total.icon === "spending" ? <dd className="project-budgets__total-note">Recorded expenses: {formatPaise(summary.recordedCostPaise)} · Outstanding commitments: {commitment.ready ? formatPaise(commitment.budget!.outstandingVendorCommitmentPaise!) : "Unavailable"}{!commitment.ready && commitment.budget?.approvedVendorNetPaise != null ? ` · Approved vendor commitments: ${formatPaise(commitment.budget.approvedVendorNetPaise)}` : ""}</dd> : null}
     </div>)}
-  </dl>;
+  </dl></>;
 }
 
 function BudgetRow({ bucket, number, returnSearch }: { bucket: ProjectFinanceBucket; number: number; returnSearch: string }) {
   const href = projectBudgetDetailHref(bucket.projectId, returnSearch);
-  const utilization = bucket.budgetUtilizationBps;
+  const commitment = readProjectCommitmentBudget(bucket);
+  const budget = commitment.ready ? commitment.budget : null;
+  const utilization = budget?.utilizationBps;
+  const used = budget?.budgetUsedPaise ?? null;
+  const available = budget?.availableBudgetPaise ?? null;
   return <tr>
     <td>{number}</td>
-    <th scope="row"><Link to={href}>{bucket.projectName}</Link><small><ProjectId projectNumber={bucket.projectNumber} /></small><small>{utilization == null ? "Utilization unavailable" : `${compactNumber.format(utilization / 100)}% of usable budget spent`}</small><small>{financeStageLabels[bucket.status]}</small></th>
+    <th scope="row"><Link to={href}>{bucket.projectName}</Link><small><ProjectId projectNumber={bucket.projectNumber} /></small><small>{utilization == null ? "Utilization unavailable" : `${compactNumber.format(utilization / 100)}% of usable budget used or committed`}</small><small>{financeStageLabels[bucket.status]}</small>{commitment.message ? <small>{commitment.message}</small> : null}</th>
     <td>{bucket.clientName ?? (bucket.clientId === null ? "Unlinked client" : "Name unavailable")}</td>
-    <td>{tableMoney.format(bucket.approvedSubtotalPaise / 100)}</td><td>{tableMoney.format(bucket.recordedCostPaise / 100)}</td><td>{tableMoney.format(bucket.overheadPaise / 100)}</td><td>{tableMoney.format(bucket.targetProfitPaise / 100)}</td><td>{tableMoney.format(bucket.costBudgetPaise / 100)}</td>
-    <td className={bucket.remainingBudgetPaise < 0 ? "project-budgets__negative" : undefined}>{tableMoney.format(bucket.remainingBudgetPaise / 100)}</td>
-    <td>{bucket.budgetStatus ? <span className={`project-budgets__status project-budgets__status--${bucket.budgetStatus}`}>{budgetStatusLabels[bucket.budgetStatus]}</span> : <span>Not available</span>}</td>
+    <td>{tableMoney.format(bucket.approvedSubtotalPaise / 100)}</td><td>{used === null ? "Unavailable" : tableMoney.format(used / 100)}<small>Recorded: {tableMoney.format(bucket.recordedCostPaise / 100)}</small><small>Outstanding: {budget?.outstandingVendorCommitmentPaise == null ? "Unavailable" : tableMoney.format(budget.outstandingVendorCommitmentPaise / 100)}</small>{!commitment.ready && commitment.budget?.approvedVendorNetPaise != null ? <small>Approved commitments: {tableMoney.format(commitment.budget.approvedVendorNetPaise / 100)}</small> : null}</td><td>{tableMoney.format(bucket.overheadPaise / 100)}</td><td>{tableMoney.format(bucket.targetProfitPaise / 100)}</td><td>{tableMoney.format(bucket.costBudgetPaise / 100)}</td>
+    <td className={available !== null && available < 0 ? "project-budgets__negative" : undefined}>{available === null ? "Unavailable" : tableMoney.format(available / 100)}</td>
+    <td>{budget?.budgetStatus ? <span className={`project-budgets__status project-budgets__status--${budget.budgetStatus}`}>{budgetStatusLabels[budget.budgetStatus]}</span> : <span>Not available</span>}</td>
     <td><Link className="project-budgets__details-link" to={href} aria-label={`View details for ${bucket.projectName}`}>View details</Link></td>
   </tr>;
 }

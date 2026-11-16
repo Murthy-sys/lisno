@@ -2716,6 +2716,40 @@ describe("OpenAPI and Swagger UI", () => {
     });
   });
 
+  it("documents separate vendor commitment budgets without changing recorded finance meanings", () => {
+    const schemas = componentSchemas();
+    const project = schemas.ProjectFinanceCommitmentBudget;
+    const portfolio = schemas.ProjectFinanceCommitmentPortfolioSummary;
+    expect(project).toMatchObject({ type: "object", readOnly: true, additionalProperties: false });
+    expect(portfolio).toMatchObject({ type: "object", readOnly: true, additionalProperties: false });
+    const common = ["status", "reasonCodes", "approvedVendorNetPaise", "outstandingVendorCommitmentPaise", "budgetUsedPaise", "availableBudgetPaise"];
+    expect(project?.required).toEqual(expect.arrayContaining([...common, "utilizationBps", "budgetStatus", "overBudget"]));
+    expect(portfolio?.required).toEqual(expect.arrayContaining([...common, "unresolvedProjectCount", "overBudgetProjectCount"]));
+    const properties = project?.properties as Record<string, OpenApiObject>;
+    expect(properties.status?.enum).toEqual(["ready", "needs_reconciliation"]);
+    expect(properties.reasonCodes).toMatchObject({ type: "array", uniqueItems: true, items: {
+      type: "string", enum: ["unlinked_procurement_expense", "invalid_order_source", "invalid_expense_linkage"]
+    } });
+    for (const key of ["approvedVendorNetPaise", "outstandingVendorCommitmentPaise", "budgetUsedPaise"]) {
+      expect(properties[key]).toMatchObject({ type: "integer", nullable: true, minimum: 0, maximum: Number.MAX_SAFE_INTEGER });
+    }
+    expect(properties.availableBudgetPaise).toMatchObject({ type: "integer", nullable: true, minimum: -Number.MAX_SAFE_INTEGER });
+    expect(properties.budgetUsedPaise?.description).toContain("recordedCostPaise");
+    expect(properties.budgetUsedPaise?.description).toContain("outstandingVendorCommitmentPaise");
+    expect(properties.approvedVendorNetPaise?.description).toContain("excluding GST");
+    expect(portfolio?.description).toContain("unresolved");
+    expect(schemas.ProjectFinanceBucket?.required).toContain("commitmentBudget");
+    expect(schemas.ProjectFinanceBucket).toHaveProperty("properties.commitmentBudget.$ref", "#/components/schemas/ProjectFinanceCommitmentBudget");
+    expect(schemas.ProjectFinancePortfolioSummary?.required).toContain("commitmentBudget");
+    expect(schemas.ProjectFinancePortfolioSummary).toHaveProperty("properties.commitmentBudget.$ref", "#/components/schemas/ProjectFinanceCommitmentPortfolioSummary");
+    const parameters = openApiDocument.paths["/finance/projects"]?.get?.parameters as OpenApiObject[];
+    expect(parameters.find(parameter => parameter.name === "budgetBasis")).toMatchObject({
+      in: "query", required: false, schema: { type: "string", enum: ["recorded", "including_commitments"], default: "recorded" }
+    });
+    expect(schemas.ProjectFinanceBucket).toHaveProperty("properties.remainingBudgetPaise.description", expect.stringContaining("costBudgetPaise - recordedCostPaise"));
+    expect(schemas.ProjectFinanceBucket).toHaveProperty("properties.currentProfitPaise.description", expect.stringContaining("approvedSubtotalPaise - recordedCostPaise"));
+  });
+
   it("defines unambiguous Super Admin Finance labels and live calculations", () => {
     const schemas = componentSchemas();
     const bucket = schemas.ProjectFinanceBucket;

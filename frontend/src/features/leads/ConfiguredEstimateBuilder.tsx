@@ -41,7 +41,7 @@ export function ConfiguredEstimateBuilder({
   recommendationSourceCount = 0, recommendationState = "ready", recommendationView = null,
   onRetryRecommendations = () => {}, onSelectRecommendedLine = () => false, onRemoveRecommendedLine = () => false, onAddLine, recommendationContextKey,
   navigation, viewState, onViewStateChange, onRemoveSubBasket, excludedReviewKeys, reviewContextKey = "current",
-  itemPresentation = "selected", onUpdateAvailableLine, recommendationPopup, browseMainBasketIds, onBrowseRecommendationBasket, filterUnpricedItems = editable
+  itemPresentation = "selected", showInternalTierDetails = false, onUpdateAvailableLine, recommendationPopup, browseMainBasketIds, onBrowseRecommendationBasket, filterUnpricedItems = editable
 }: {
   rooms: readonly Room[];
   activeRoomId: string;
@@ -78,6 +78,8 @@ export function ConfiguredEstimateBuilder({
   excludedReviewKeys?: ReadonlySet<string>;
   reviewContextKey?: string;
   itemPresentation?: "selected" | "catalogue";
+  /** Set only by an authorized internal workspace; client views remain description-only. */
+  showInternalTierDetails?: boolean;
   /** Draft discovery remains filtered during temporary edit locks; saved historical views opt out. */
   filterUnpricedItems?: boolean;
   browseMainBasketIds?: ReadonlySet<string>;
@@ -381,7 +383,7 @@ export function ConfiguredEstimateBuilder({
     const rowEditable = editable && (!previewById.has(id) || Boolean(onUpdateAvailableLine)) &&
       (!browseCatalogue || line.included || !refreshingAvailableItems && availableItemsState === "ready");
     const selectionBlocked = suggestions.get(configuredTierGroupKey(line))?.selectionBlocked;
-    const row = <ConfiguredLineRow pricingModeEditable={modeChangesReady} getPmcToggleTarget={getPmcToggleTarget} line={line} inheritedClassification={mainBasketClassifications?.get(line.mainBasketId)} editable={Boolean(rowEditable)}
+    const row = <ConfiguredLineRow showInternalTierDetails={showInternalTierDetails} pricingModeEditable={modeChangesReady} getPmcToggleTarget={getPmcToggleTarget} line={line} inheritedClassification={mainBasketClassifications?.get(line.mainBasketId)} editable={Boolean(rowEditable)}
       tierEditable={Boolean(rowEditable) && !refreshingAvailableItems && availableItemsState === "ready" && !selectionBlocked}
       onUpdateLine={updateVisibleLine} moneyPaise={moneyPaise} />;
     return browseCatalogue ? <div onFocusCapture={() => setFocusedInlineLine({ context: inlineEditContext, key: id })}
@@ -419,7 +421,7 @@ export function ConfiguredEstimateBuilder({
       ...(unavailableNew.length ? [{ id: "unavailable-selections", label: "Unavailable selections" }] : [])
     ]}
     beforeGroups={<>
-      <ExcludedEstimateReview pricingModeEditable={modeChangesReady} getPmcToggleTarget={getPmcToggleTarget} lines={reviewLines} requiredCount={reviewLines.filter(line => excludedReviewKeys?.has(line.key)).length} contextKey={reviewContextKey}
+      <ExcludedEstimateReview showInternalTierDetails={showInternalTierDetails} pricingModeEditable={modeChangesReady} getPmcToggleTarget={getPmcToggleTarget} lines={reviewLines} requiredCount={reviewLines.filter(line => excludedReviewKeys?.has(line.key)).length} contextKey={reviewContextKey}
         canIncludeLine={hasVisiblePrice}
         editable={editable && (!browseCatalogue || !refreshingAvailableItems && availableItemsState === "ready")} onUpdateLine={(key, change) => {
           const line = byId.get(key);
@@ -465,7 +467,7 @@ export function ConfiguredEstimateBuilder({
           <header><h2>Items without a positive base price</h2><span>The current tier or pricing method has no usable configured price. Your selections and saved prices are preserved for review.</span></header>
           {unpricedSelections.map(line => <div className="configured-estimate-saved-line" key={line.key}>
             <p>{line.subBasketName ? `${line.mainBasketName} / ${line.subBasketName}` : line.mainBasketName}</p>
-            <ConfiguredLineRow pricingModeEditable={modeChangesReady} getPmcToggleTarget={getPmcToggleTarget} line={line} editable={editable} tierEditable={editable && !refreshingAvailableItems && availableItemsState === "ready"} selectionEditable={line.included} onUpdateLine={updateVisibleLine} moneyPaise={moneyPaise} />
+            <ConfiguredLineRow showInternalTierDetails={showInternalTierDetails} pricingModeEditable={modeChangesReady} getPmcToggleTarget={getPmcToggleTarget} line={line} editable={editable} tierEditable={editable && !refreshingAvailableItems && availableItemsState === "ready"} selectionEditable={line.included} onUpdateLine={updateVisibleLine} moneyPaise={moneyPaise} />
           </div>)}
         </section> : null}
         {unselected.length ? <section
@@ -476,7 +478,7 @@ export function ConfiguredEstimateBuilder({
           <header><h2>Unselected saved items</h2><span>Recheck the Main Basket to edit or include these items.</span></header>
           {unselected.map((line) => <div className="configured-estimate-saved-line" key={line.key}>
             <p>{line.subBasketName ? `${line.mainBasketName} / ${line.subBasketName}` : line.mainBasketName}</p>
-            <ConfiguredLineRow pricingModeEditable={modeChangesReady} getPmcToggleTarget={getPmcToggleTarget} line={line} editable={false} onUpdateLine={onUpdateLine} moneyPaise={moneyPaise} />
+            <ConfiguredLineRow showInternalTierDetails={showInternalTierDetails} pricingModeEditable={modeChangesReady} getPmcToggleTarget={getPmcToggleTarget} line={line} editable={false} onUpdateLine={onUpdateLine} moneyPaise={moneyPaise} />
           </div>)}
         </section> : null}
         {unavailableSaved.length ? <section
@@ -487,7 +489,7 @@ export function ConfiguredEstimateBuilder({
           <header><h2>Saved items</h2><span>Unavailable in current Configuration</span></header>
           {unavailableSaved.map((line) => <div className="configured-estimate-saved-line" key={line.key}>
             <p>{line.subBasketName ? `${line.mainBasketName} / ${line.subBasketName}` : line.mainBasketName}</p>
-            <ConfiguredLineRow pricingModeEditable={modeChangesReady} getPmcToggleTarget={getPmcToggleTarget} line={line} editable={editable} onUpdateLine={onUpdateLine} moneyPaise={moneyPaise} />
+            <ConfiguredLineRow showInternalTierDetails={showInternalTierDetails} pricingModeEditable={modeChangesReady} getPmcToggleTarget={getPmcToggleTarget} line={line} editable={editable} onUpdateLine={onUpdateLine} moneyPaise={moneyPaise} />
           </div>)}
         </section> : null}
         {unavailableNew.length ? <section
@@ -498,7 +500,7 @@ export function ConfiguredEstimateBuilder({
           <header><h2>Unavailable selections</h2><span>Refresh available items or uncheck these new lines before saving.</span></header>
           {unavailableNew.map((line) => <div className="configured-estimate-saved-line" key={line.key}>
             <p>{line.subBasketName ? `${line.mainBasketName} / ${line.subBasketName}` : line.mainBasketName}</p>
-            <ConfiguredLineRow pricingModeEditable={modeChangesReady} getPmcToggleTarget={getPmcToggleTarget} line={line} editable={editable} onUpdateLine={onUpdateLine} moneyPaise={moneyPaise} />
+            <ConfiguredLineRow showInternalTierDetails={showInternalTierDetails} pricingModeEditable={modeChangesReady} getPmcToggleTarget={getPmcToggleTarget} line={line} editable={editable} onUpdateLine={onUpdateLine} moneyPaise={moneyPaise} />
           </div>)}
         </section> : null}
     </>}
@@ -532,7 +534,8 @@ function ConfiguredTierSuggestionLoader({ context, groups, children }: {
 }
 
 /** Keep only blocking excluded rows discoverable until a complete correction is entered. */
-function ExcludedEstimateReview({ lines, requiredCount, contextKey, editable, pricingModeEditable, onUpdateLine, moneyPaise, onFinish, getPmcToggleTarget, canIncludeLine }: {
+function ExcludedEstimateReview({ showInternalTierDetails, lines, requiredCount, contextKey, editable, pricingModeEditable, onUpdateLine, moneyPaise, onFinish, getPmcToggleTarget, canIncludeLine }: {
+  showInternalTierDetails: boolean;
   pricingModeEditable: boolean;
   getPmcToggleTarget: (line: ConfiguredLineDraft, remember?: boolean) => PmcToggleTarget;
   lines: readonly ConfiguredLineDraft[];
@@ -555,7 +558,7 @@ function ExcludedEstimateReview({ lines, requiredCount, contextKey, editable, pr
       <p>{line.roomName} · {line.mainBasketName}{line.subBasketName ? ` / ${line.subBasketName}` : ""}</p>
       {line.sourceMissing ? <p role="status">This saved item is unavailable in current Configuration. Refresh available items or review its saved basket.</p> : null}
       {!canIncludeLine(line) && !line.sourceMissing ? <p role="status">No usable price is configured for this tier and pricing method. Choose an available tier or update Configuration before adding this item again.</p> : null}
-      <ConfiguredLineRow pricingModeEditable={pricingModeEditable} getPmcToggleTarget={getPmcToggleTarget} line={line} editable={editable} tierEditable={editable} selectionEditable={canIncludeLine(line)} onUpdateLine={onUpdateLine} moneyPaise={moneyPaise} />
+      <ConfiguredLineRow showInternalTierDetails={showInternalTierDetails} pricingModeEditable={pricingModeEditable} getPmcToggleTarget={getPmcToggleTarget} line={line} editable={editable} tierEditable={editable} selectionEditable={canIncludeLine(line)} onUpdateLine={onUpdateLine} moneyPaise={moneyPaise} />
     </div>)}
     <EstimateSelectionPagination total={lines.length} offset={pageOffset} onChange={setOffset}
       disabled={false} label="Excluded review pages" />
@@ -563,7 +566,8 @@ function ExcludedEstimateReview({ lines, requiredCount, contextKey, editable, pr
   </section>;
 }
 
-function ConfiguredLineRow({ line, inheritedClassification = "standard", editable, selectionEditable = editable, tierEditable = false, pricingModeEditable, onUpdateLine, moneyPaise, getPmcToggleTarget }: {
+function ConfiguredLineRow({ showInternalTierDetails, line, inheritedClassification = "standard", editable, selectionEditable = editable, tierEditable = false, pricingModeEditable, onUpdateLine, moneyPaise, getPmcToggleTarget }: {
+  showInternalTierDetails: boolean;
   pricingModeEditable: boolean;
   getPmcToggleTarget: (line: ConfiguredLineDraft, remember?: boolean) => PmcToggleTarget;
   line: ConfiguredLineDraft;
@@ -627,7 +631,7 @@ function ConfiguredLineRow({ line, inheritedClassification = "standard", editabl
         onToggle={() => onUpdateLine(line.key, { included: !line.included })}
         onResetQuantity={line.dimensionsMandatory ? undefined : () => onUpdateLine(line.key, { quantity: 1 })} />
     </>}>
-    {line.included && selectedTier ? <EstimateLineTierDetails rowKey={line.key} label={label} tier={selectedTier}
+    {line.included && selectedTier ? <EstimateLineTierDetails showInternalDetails={showInternalTierDetails} rowKey={line.key} label={label} tier={selectedTier}
       description={line.sourceMissing || !(line.applicableTiers ?? ["signature"]).includes(selectedTier) ? null : line.tierDescriptions?.[selectedTier]}
       details={line.sourceMissing || !(line.applicableTiers ?? ["signature"]).includes(selectedTier) ? null : line.tierDetails?.[selectedTier]} /> : null}
     {showTierControl ? <EstimateLineTierNotes options={tierOptions} id={tierAvailabilityId} /> : null}

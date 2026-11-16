@@ -1734,7 +1734,7 @@ function validateAdvancedPayload(
       }
     }
   }
-  if ("modeDescription" in record) {
+  if ("modeDescription" in record && record.modeDescription !== "") {
     validateNullableText(record.modeDescription, "payload.modeDescription", issues, AI_ESTIMATOR_KNOWLEDGE_MAX_TEXT);
   }
   if ("dependencies" in record) {

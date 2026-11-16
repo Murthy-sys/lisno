@@ -14,6 +14,13 @@ vi.mock("../../auth/AuthProvider", () => ({ useAuth: () => ({ status: "authentic
 const connection = vi.hoisted(() => ({ state: "live" }));
 vi.mock("../execution/ExecutionLiveProvider", () => ({ useExecutionConnection: () => connection.state }));
 vi.mock("../execution/ExecutionWorkspace", () => ({ ProjectExecutionPage: ({ projectId }: { projectId: string }) => <p>Full execution detail for {projectId}</p> }));
+vi.mock("../site-manager/SiteManagerProjectPage", async () => {
+  const { useState } = await import("react");
+  return { SiteManagerProjectPage: ({ projectId, embedded, preserveProjectTabs }: { projectId: string; embedded: boolean; preserveProjectTabs: boolean }) => {
+    const [draft, setDraft] = useState("");
+    return <section aria-label="Work monitoring" data-embedded={String(embedded)} data-preserve-tabs={String(preserveProjectTabs)}><h2>Work monitoring</h2><p>Monitoring {projectId}</p><label>Monitoring draft<input value={draft} onChange={event => setDraft(event.target.value)} /></label></section>;
+  } };
+});
 vi.mock("./PMRequestsPanel", () => ({ PMRequestsPanel: ({ tab }: { tab: string }) => <h2>{tab} request panel</h2> }));
 vi.mock("./PMOperationsPanel", () => ({ PMOperationsPanel: ({ tab }: { tab: string }) => <h2>{tab} operations panel</h2> }));
 
@@ -322,7 +329,7 @@ describe("Project Manager workspace", () => {
     await user.click(link);
     const back = await screen.findByRole("link", { name: "All projects" });
     expect(back).toHaveAttribute("href", "/execution?q=Cedar&status=all&health=at_risk&offset=20");
-    expect(await screen.findByRole("heading", { name: "Living room" })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Work monitoring" })).toBeVisible();
     await user.click(back);
     expect(await screen.findByRole("searchbox", { name: "Search projects" })).toHaveValue("Cedar");
     await user.selectOptions(screen.getByRole("combobox", { name: "Project health" }), "setup");
@@ -392,24 +399,25 @@ describe("Project Manager workspace", () => {
     expect(screen.getByRole("region", { name: "Priority alert items" }).scrollTop).toBe(0);
   });
 
-  it("opens the existing detail view with the stable assignment ID", async () => {
+  it("opens optional full detail from the default monitoring tab and returns to it", async () => {
     const user = userEvent.setup(); renderWorkspace("/projects/project-a/execution?tab=site&returnTo=%2Fexecution%3Fq%3DCedar");
-    await user.click(await screen.findByRole("link", { name: "Open Custom joinery in Living room" }));
+    expect(await screen.findByRole("heading", { name: "Work monitoring" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Open full detail" }));
     expect(await screen.findByText("Full execution detail for project-a")).toBeVisible();
-    expect(screen.getByLabelText("Current route")).toHaveTextContent("assignment=work-a");
     expect(screen.getByLabelText("Current route")).toHaveTextContent("detail=1");
     await user.click(screen.getByRole("link", { name: "Back to project tabs" }));
-    expect(await screen.findByRole("heading", { name: "Site execution" })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Work monitoring" })).toBeVisible();
   });
 
-  it("opens old assignment-only links in full detail and returns to the eight project tabs", async () => {
+  it("keeps assignment-only links in the monitoring tab and explicit detail links supported", async () => {
     renderWorkspace("/projects/project-a/execution?assignment=work-a");
-    expect(await screen.findByText("Full execution detail for project-a")).toBeVisible();
-    expect(screen.queryByRole("navigation", { name: "Project sections" })).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole("link", { name: "Back to project tabs" }));
-    expect(await screen.findByRole("heading", { name: "Site execution" })).toBeVisible();
+    expect(await screen.findByText("Monitoring project-a")).toBeVisible();
+    expect(screen.queryByText("Full execution detail for project-a")).not.toBeInTheDocument();
     expect(within(screen.getByRole("navigation", { name: "Project sections" })).getAllByRole("link")).toHaveLength(8);
-    expect(screen.getByLabelText("Current route")).not.toHaveTextContent("assignment=");
+    expect(screen.getByLabelText("Current route")).toHaveTextContent("assignment=work-a");
+    await userEvent.click(screen.getByRole("button", { name: "Open full detail" }));
+    expect(await screen.findByText("Full execution detail for project-a")).toBeVisible();
+    expect(screen.getByLabelText("Current route")).toHaveTextContent("assignment=work-a");
   });
 
   it("displays unavailable KPI policy without a fabricated score", async () => {
@@ -431,108 +439,58 @@ describe("Project Manager workspace", () => {
 });
 
 describe("Project Manager opened project", () => {
-  it("shows exact labelled metadata and unequal progress with distinct verification facts", async () => {
-    const first = site.items[0]!;
-    const work = first.children![0]!;
-    installProject({ ...project, progress: { ...progress, siteVerified: 3, clientAccepted: 1 } }, { ...site, items: [{ ...first, progress: 25, children: [
-      { ...work, progress: 0 },
-      { ...work, id: "work-b", assignmentId: "assignment-b", title: "Stone flooring", ownerName: null, progress: null }
-    ] }] });
+  it("makes monitoring primary without loading or duplicating the old percentage list", async () => {
+    let siteReads = 0;
+    server.use(http.get("/api/v1/projects/project-a/pm/site", () => { siteReads++; return HttpResponse.json({ data: site }); }));
     renderWorkspace("/projects/project-a/execution");
     expect(await screen.findByRole("heading", { name: "Cedar residence", level: 1 })).toBeVisible();
-    await screen.findByRole("table", { name: "Living room trades" });
     expectFact("Approved net value", "₹1,25,000");
     expectFact("Target handover", "30 Nov 2026");
-    expectFact("Planned progress", "60%");
-    expectFact("Client accepted", "1");
-    const siteRegion = screen.getByRole("region", { name: "Site execution" });
-    expect(within(siteRegion).getAllByText("Site verified", { selector: "dt" })[0]?.nextElementSibling).toHaveTextContent("3");
-    expect(screen.getByRole("progressbar", { name: "Overall reported progress" })).toHaveAttribute("aria-valuenow", "37.5");
-    expect(screen.getByRole("progressbar", { name: "Living room reported progress" })).toHaveAttribute("aria-valuenow", "25");
-    expect(screen.getByRole("progressbar", { name: "Custom joinery reported" })).toHaveAttribute("aria-valuenow", "0");
-    expect(screen.queryByRole("progressbar", { name: "Stone flooring reported" })).not.toBeInTheDocument();
-    const table = screen.getByRole("table", { name: "Living room trades" });
-    const unknown = within(table).getByRole("row", { name: /Stone flooring/ });
-    expect(within(unknown).getByText("Unavailable")).toBeVisible();
-    expect(within(unknown).getByText("Unassigned")).toBeVisible();
-    expect(within(table).getAllByRole("link")).toHaveLength(2);
-    expect(within(table).getAllByRole("progressbar")).toHaveLength(1);
-    expect(within(table).getAllByRole("columnheader")).toHaveLength(5);
-    expect(within(table).getAllByRole("rowheader")).toHaveLength(2);
-    const basis = screen.getByText("How progress is measured");
-    expect(basis.closest("details")).not.toHaveAttribute("open");
-    await userEvent.click(basis);
-    expect(screen.getByText(/weighted by approved quantities and approved value before GST/)).toBeVisible();
-    expect(screen.getByText(/Reporting 100% does not replace verification or client acceptance/)).toBeVisible();
+    const monitor = screen.getByRole("region", { name: "Work monitoring" });
+    expect(monitor).toHaveAttribute("data-embedded", "true");
+    expect(monitor).toHaveAttribute("data-preserve-tabs", "true");
+    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+    expect(screen.queryByRole("table")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Reported progress|Planned progress/)).not.toBeInTheDocument();
+    expect(siteReads).toBe(0);
   });
 
-  it("keeps unknown project metadata and progress distinct from zero", async () => {
-    installProject({ ...project, clientName: "", location: "", approvedNetPaise: null, plannedEndAt: null, health: "incomplete", progress: { ...progress, actual: null, planned: null } }, { ...site, items: [] });
+  it("keeps unknown project metadata distinct from zero", async () => {
+    installProject({ ...project, clientName: "", location: "", approvedNetPaise: null, plannedEndAt: null, health: "incomplete", progress: { ...progress, actual: null, planned: null } });
     renderWorkspace("/projects/project-a/execution");
     await screen.findByRole("heading", { name: "Cedar residence" });
     expectFact("Approved net value", "Unavailable");
     expectFact("Target handover", "Not scheduled");
-    expectFact("Planned progress", "Unavailable");
     expect(screen.getByText("Project details pending")).toBeVisible();
     expect(screen.getByText("Incomplete", { selector: ".pm-badge" })).toBeVisible();
-    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
     expect(screen.queryByText("0%")).not.toBeInTheDocument();
   });
 
-  it("keeps exact source notes collapsed until requested and preserves their open state through refresh", async () => {
-    const overviewNote = "Project source requirements need review before the next scheduled execution stage.";
-    const siteNote = "Current execution quantities need reconciliation with the approved estimate.";
-    const roomNote = "Execution scope is not established for item estimate-line-05eeddde-a748-4be8-a679-91533aafe79c.";
-    const tradeNote = "This execution record has a lengthy source explanation that must remain available in full without stretching the trade row before the manager chooses to review it.";
-    const first = site.items[0]!, work = first.children![0]!;
-    const sourceProject = { ...project, issues: [overviewNote] };
-    const sourcePanel = { ...site, issues: [siteNote], items: [{ ...first, description: roomNote, children: [
-      { ...work, description: tradeNote },
-      { ...work, id: "work-b", assignmentId: "work-b", title: "Painting", description: "missing update · overdue" }
-    ] }] };
-    installProject(sourceProject, sourcePanel);
+  it("preserves expanded project source notes and the monitoring instance across overview refresh", async () => {
+    const issue = "Project source requirements need review before the next scheduled execution stage.";
+    installProject({ ...project, issues: [issue] });
     renderWorkspace("/projects/project-a/execution", true);
-    await screen.findByRole("link", { name: "Open Painting in Living room" });
-    const summaries = ["Project details to review (1)", "Source note", "Room details to review", "Work details"];
-    const messages = [overviewNote, siteNote, roomNote, tradeNote];
-    for (let i = 0; i < summaries.length; i++) {
-      const summary = screen.getByText(summaries[i]!);
-      expect(summary.closest("details")).not.toHaveAttribute("open");
-      expect(screen.getByText(messages[i]!)).not.toBeVisible();
-      await userEvent.click(summary);
-      expect(screen.getByText(messages[i]!)).toBeVisible();
-    }
-    expect(screen.getByText("missing update · overdue")).toBeVisible();
-    installProject({ ...sourceProject, progress: { ...progress, actual: 42 } }, { ...sourcePanel, items: [{ ...sourcePanel.items[0]!, progress: 45 }] });
+    const summary = await screen.findByText("Project details to review (1)");
+    expect(summary.closest("details")).not.toHaveAttribute("open");
+    expect(screen.getByText(issue)).not.toBeVisible();
+    await userEvent.click(summary);
+    await userEvent.type(screen.getByLabelText("Monitoring draft"), "Retain pending review");
+    installProject({ ...project, issues: [issue], approvedNetPaise: 15000000 });
     await userEvent.click(screen.getByRole("button", { name: "Refresh project data" }));
-    await waitFor(() => expect(screen.getByRole("progressbar", { name: "Overall reported progress" })).toHaveAttribute("aria-valuenow", "42"));
-    expect(screen.getByRole("progressbar", { name: "Living room reported progress" })).toHaveAttribute("aria-valuenow", "45");
-    for (const message of messages) expect(screen.getByText(message)).toBeVisible();
-    for (const summary of summaries) expect(screen.getByText(summary).closest("details")).toHaveAttribute("open");
+    await waitFor(() => expectFact("Approved net value", "₹1,50,000"));
+    expect(screen.getByText(issue)).toBeVisible();
+    expect(screen.getByLabelText("Monitoring draft")).toHaveValue("Retain pending review");
   });
 
-  it("discloses an unbroken technical identifier even when its message is short", async () => {
-    const description = "estimate-line-05eeddde-a748-4be8-a679-91533aafe79c";
-    const first = site.items[0]!;
-    installProject(project, { ...site, items: [{ ...first, children: [{ ...first.children![0]!, description }] }] });
-    renderWorkspace("/projects/project-a/execution");
-    await screen.findByRole("link", { name: "Open Custom joinery in Living room" });
-    expect(screen.getByText(description)).not.toBeVisible();
-    await userEvent.click(screen.getByText("Work details"));
-    expect(screen.getByText(description)).toBeVisible();
-  });
-
-  it("preserves stable entity and assignment identities and all eight navigation links", async () => {
+  it("resolves a legacy site record to its exact assignment and preserves navigation context", async () => {
     const first = site.items[0]!, work = first.children![0]!;
     installProject(project, { ...site, items: [{ ...first, children: [{ ...work, id: "record:room/one", assignmentId: "assignment:trade/two" }] }] });
     const returnPath = "/execution?q=Cedar&status=all&health=critical&offset=20&view=grid";
     renderWorkspace(`/projects/project-a/execution?tab=site&entity=record%3Aroom%2Fone&locate=1&tabOffset=25&returnTo=${encodeURIComponent(returnPath)}`);
-    const open = await screen.findByRole("link", { name: "Open Custom joinery in Living room" });
-    expect(open.closest("tr")).toHaveAttribute("id", "pm-item-record:room/one");
-    const workUrl = new URL(open.getAttribute("href")!, "https://lisno.invalid");
-    expect(workUrl.searchParams.get("assignment")).toBe("assignment:trade/two");
-    expect(workUrl.searchParams.get("detail")).toBe("1");
-    expect(workUrl.searchParams.has("entity")).toBe(false);
+    expect(await screen.findByText("Monitoring project-a")).toBeVisible();
+    const current = new URL(screen.getByLabelText("Current route").textContent!, "https://lisno.invalid");
+    expect(current.searchParams.get("assignment")).toBe("assignment:trade/two");
+    for (const removed of ["detail", "entity", "locate", "tabOffset"]) expect(current.searchParams.has(removed)).toBe(false);
     expect(screen.getByRole("link", { name: "All projects" })).toHaveAttribute("href", returnPath);
     const links = within(screen.getByRole("navigation", { name: "Project sections" })).getAllByRole("link");
     expect(links.map(link => link.textContent)).toEqual(["Site", "Procurement", "Selections", "Critical Supply", "Vendors", "Client", "Snagging", "Quality"]);
@@ -541,60 +499,63 @@ describe("Project Manager opened project", () => {
       expect(url.searchParams.get("returnTo")).toBe(returnPath);
       for (const transient of ["detail", "entity", "locate", "tabOffset", "assignment"]) expect(url.searchParams.has(transient)).toBe(false);
     }
-    await userEvent.click(open);
-    expect(await screen.findByText("Full execution detail for project-a")).toBeVisible();
-    expect(screen.queryByRole("table")).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole("link", { name: "Back to project tabs" }));
-    for (const [label, heading] of [["Procurement", "procurement request panel"], ["Selections", "selections request panel"], ["Critical Supply", "supply request panel"], ["Vendors", "vendors operations panel"], ["Client", "client operations panel"], ["Snagging", "snagging operations panel"], ["Quality", "quality operations panel"], ["Site", "Site execution"]]) {
+    for (const [label, heading] of [["Procurement", "procurement request panel"], ["Selections", "selections request panel"], ["Critical Supply", "supply request panel"], ["Vendors", "vendors operations panel"], ["Client", "client operations panel"], ["Snagging", "snagging operations panel"], ["Quality", "quality operations panel"], ["Site", "Work monitoring"]]) {
       await userEvent.click(screen.getByRole("link", { name: label }));
       expect(await screen.findByRole("heading", { name: heading })).toBeVisible();
       expect(screen.getByRole("link", { name: label })).toHaveAttribute("aria-current", "page");
     }
   });
 
-  it("announces initial project loading before showing protected metadata or actions", async () => {
+  it("does not invent an assignment for a missing legacy entity", async () => {
+    renderWorkspace("/projects/project-a/execution?tab=site&entity=removed-record&locate=1");
+    expect(await screen.findByText("This update is no longer in the current work list.")).toBeVisible();
+    expect(screen.queryByText("Monitoring project-a")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Current route")).not.toHaveTextContent("assignment=");
+    await userEvent.click(screen.getByRole("button", { name: "View current work" }));
+    expect(await screen.findByText("Monitoring project-a")).toBeVisible();
+    expect(screen.getByLabelText("Current route")).not.toHaveTextContent("entity=");
+  });
+
+  it("does not resolve a protected legacy target after access denial", async () => {
+    server.use(http.get("/api/v1/projects/project-a/pm/site", () => HttpResponse.json({ error: { code: "FORBIDDEN", message: "Site access changed." } }, { status: 403 })));
+    renderWorkspace("/projects/project-a/execution?tab=site&entity=work-a");
+    expect(await screen.findByRole("heading", { name: "Project access unavailable" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Cedar residence" })).toBeVisible();
+    expect(screen.queryByText("Monitoring project-a")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Current route")).not.toHaveTextContent("assignment=");
+  });
+
+  it("announces initial loading before showing protected metadata or monitoring", async () => {
     server.use(http.get("/api/v1/projects/project-a/pm/overview", async () => { await delay(150); return HttpResponse.json({ data: { project, capabilities: [], calculatedAt: portfolio.calculatedAt } }); }));
     renderWorkspace("/projects/project-a/execution");
     expect(within(screen.getByRole("region", { name: "Project Manager project workspace" })).getByRole("status")).toHaveTextContent("Loading workspace");
     expect(screen.queryByRole("heading", { name: "Cedar residence" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "My KPI" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
-    expect(await screen.findByRole("heading", { name: "Cedar residence" })).toBeVisible();
+    expect(screen.queryByText("Monitoring project-a")).not.toBeInTheDocument();
+    expect(await screen.findByText("Monitoring project-a")).toBeVisible();
   });
 
-  it("shows an empty Site without inventing trade rows or removing the project summary", async () => {
-    installProject(project, { ...site, items: [], total: 0 });
-    renderWorkspace("/projects/project-a/execution");
-    expect(await screen.findByRole("heading", { name: "No issued execution work" })).toBeVisible();
-    expect(screen.getByRole("heading", { name: "Cedar residence" })).toBeVisible();
-    expect(screen.getByRole("progressbar", { name: "Overall reported progress" })).toHaveAttribute("aria-valuenow", "37.5");
-    expect(screen.queryByRole("table")).not.toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: /^Open / })).not.toBeInTheDocument();
-  });
-
-  it("offers retry for an initial project failure without showing fabricated content", async () => {
+  it("offers retry for an initial project failure without fabricated content", async () => {
     server.use(http.get("/api/v1/projects/project-a/pm/overview", () => HttpResponse.json({ error: { code: "UNAVAILABLE", message: "Project data temporarily unavailable." } }, { status: 503 })));
     renderWorkspace("/projects/project-a/execution");
     expect(await screen.findByRole("heading", { name: "Unable to load this view" }, { timeout: 4000 })).toBeVisible();
-    expect(screen.queryByRole("heading", { name: "Cedar residence" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+    expect(screen.queryByText("Monitoring project-a")).not.toBeInTheDocument();
     installProject();
     await userEvent.click(screen.getByRole("button", { name: "Try again" }));
-    expect(await screen.findByRole("link", { name: "Open Custom joinery in Living room" })).toBeVisible();
+    expect(await screen.findByText("Monitoring project-a")).toBeVisible();
   });
 
-  it("retains actual project and Site data with refresh warnings and recovers on retry", async () => {
+  it("retains monitoring during a failed overview refresh and recovers on retry", async () => {
     renderWorkspace("/projects/project-a/execution", true);
-    await screen.findByRole("link", { name: "Open Custom joinery in Living room" });
-    for (const endpoint of ["overview", "site"]) server.use(http.get(`/api/v1/projects/project-a/pm/${endpoint}`, () => HttpResponse.json({ error: { code: "UNAVAILABLE", message: "Temporary outage." } }, { status: 503 })));
+    await screen.findByText("Monitoring project-a");
+    await userEvent.type(screen.getByLabelText("Monitoring draft"), "Keep the review");
+    server.use(http.get("/api/v1/projects/project-a/pm/overview", () => HttpResponse.json({ error: { code: "UNAVAILABLE", message: "Temporary outage." } }, { status: 503 })));
     await userEvent.click(screen.getByRole("button", { name: "Refresh project data" }));
-    await waitFor(() => expect(screen.getAllByText(/Refresh failed. These details may be out of date/)).toHaveLength(2), { timeout: 4000 });
-    expect(screen.getByRole("heading", { name: "Cedar residence" })).toBeVisible();
-    expect(screen.getByRole("link", { name: "Open Custom joinery in Living room" })).toBeVisible();
-    expect(screen.getByRole("progressbar", { name: "Overall reported progress" })).toHaveAttribute("aria-valuenow", "37.5");
+    expect(await screen.findByText(/Refresh failed. These details may be out of date/, {}, { timeout: 4000 })).toBeVisible();
+    expect(screen.getByLabelText("Monitoring draft")).toHaveValue("Keep the review");
     installProject();
-    for (const retry of screen.getAllByRole("button", { name: "Retry" })) await userEvent.click(retry);
+    await userEvent.click(screen.getByRole("button", { name: "Retry" }));
     await waitFor(() => expect(screen.queryByText(/Refresh failed/)).not.toBeInTheDocument());
+    expect(screen.getByLabelText("Monitoring draft")).toHaveValue("Keep the review");
   });
 
   it.each([401, 403, 404])("removes cached project, KPI and full-detail content after a %s response", async status => {
@@ -616,18 +577,6 @@ describe("Project Manager opened project", () => {
     expect(screen.queryByText("Full execution detail for project-a")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "My KPI" })).not.toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Back to project tabs" })).not.toBeInTheDocument();
-  });
-
-  it("removes denied Site records while retaining separately authorized overview information", async () => {
-    renderWorkspace("/projects/project-a/execution", true);
-    await screen.findByRole("link", { name: "Open Custom joinery in Living room" });
-    server.use(http.get("/api/v1/projects/project-a/pm/site", () => HttpResponse.json({ error: { code: "FORBIDDEN", message: "Site access changed." } }, { status: 403 })));
-    await userEvent.click(screen.getByRole("button", { name: "Refresh project data" }));
-    expect(await screen.findByRole("heading", { name: "Project access unavailable" })).toBeVisible();
-    expect(screen.queryByRole("link", { name: "Open Custom joinery in Living room" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("table")).not.toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Cedar residence" })).toBeVisible();
-    expect(screen.getByRole("progressbar", { name: "Overall reported progress" })).toHaveAttribute("aria-valuenow", "37.5");
   });
 });
 

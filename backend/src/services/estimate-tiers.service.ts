@@ -148,6 +148,7 @@ export async function estimateTierChoices(line: Row, source?: Source, session?: 
       !pricing ? "This tier is not configured for this main line." : !mode ? "Ask Sales to choose a pricing mode." :
       !hasCost ? "Price is not configured for this tier." : null;
     choices.push({ modeTier, available, unavailableReason,
+      description: source?.line.applicableTiers.includes(modeTier) ? source.line.tierDescriptions?.[modeTier] ?? null : null,
       ...(componentPricing ? { pricingBasis: ESTIMATE_COMPONENT_PRICING_BASIS, ...(governed ? { aggregatePricing: toEstimateAggregatePricing(componentPricing) } : { componentPricing }) } : {}),
       ...(governed ? { inHouseUsage: pricing.inHouseUsage, inHousePricingState: pricing.inHousePricingState } : {}),
       ratePaise: components === undefined && available && validMoney(ratePaise) ? ratePaise : null,

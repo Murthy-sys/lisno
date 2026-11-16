@@ -876,6 +876,11 @@ export function createProcurementService(input: {
 
         const resolvedProjects: ResolvedProcurementProject[] = [];
         for (const estimate of estimates) {
+          // The stored status preserves initial approval while a V3 quotation is revised.
+          // Awaiting reapproval excludes that project, without blocking other approved projects.
+          // Source integrity errors still reach the strict resolver below.
+          if (estimate.estimation?.workflowVersion === 3 &&
+              (await resolveCurrentQuotationApproval(estimate, session)).requiresClientReapproval) continue;
           const resolved = await resolveProcurementProjectFromEstimate(
             estimate,
             taskByEstimateId.get(String(estimate._id)) ?? null,
@@ -1293,7 +1298,9 @@ async function procurementProjectDto(
     projectId: String(project._id)
   }).session(session).lean();
   if (bucket) {
-    if (snapshot.preparationSource && snapshot.preparationSource.kind !== "approved_final") {
+    // V3 unchanged initial approval can remain the current quotation after design/payment.
+    // Only V2 preparation sources must remain tied to an unopened finance bucket.
+    if (snapshot.preparationSource?.workflowVersion === 2 && snapshot.preparationSource.kind !== "approved_final") {
       if (String(bucket.estimateId) !== snapshot.estimateId || bucket.status !== "pending_design" ||
         Number(bucket.directSpendPaise) !== 0 || Number(bucket.overheadPaise) !== 0 || Number(bucket.designPlanVersion) !== 0)
         procurementLineageConflict();

@@ -36,7 +36,7 @@ function LiveBuilder({ initialLines = [], editable = true, pricingModeEditable =
   const [lines, setLines] = useState(initialLines);
   const [roomId, setRoomId] = useState(roomList[0]!.id);
   const update = (next: ConfiguredLineDraft[]) => { setLines(next); onLinesChange?.(next); };
-  return <ConfiguredEstimateBuilder rooms={roomList} activeRoomId={roomId} onSelectRoom={setRoomId} catalogue={availableCatalogue}
+  return <ConfiguredEstimateBuilder showInternalTierDetails rooms={roomList} activeRoomId={roomId} onSelectRoom={setRoomId} catalogue={availableCatalogue}
     pricingModeEditable={pricingModeEditable} selectedMainBasketIds={new Set(availableCatalogue.items.map(basket => basket.id))} lines={lines} itemPresentation={itemPresentation} reviewContextKey={reviewContextKey}
     excludedReviewKeys={validateExcluded ? new Set(lines.filter(line => line.persistedId && !line.included &&
       (configuredQuantityUnits(line.quantity, line.uomDecimalScale, false) === null || parseSellingRate(line.rateInput).kind === "invalid")).map(line => line.key)) : undefined}
@@ -61,6 +61,18 @@ function LiveBuilder({ initialLines = [], editable = true, pricingModeEditable =
 const chosen = () => configuredLineFixtures(catalogue, rooms, new Set(["basket-pop"]), []).map(line => ({ ...line, included: true }));
 
 describe("Sales direct catalogue browsing", () => {
+  it("defaults to description-only even when internal metadata is supplied", () => {
+    const line = { ...chosen()[0]!, tierDescriptions: { signature: "Client finish." }, tierDetails: {
+      signature: { specifications: [{ id: "internal-board", name: "Private specification", brands: [{ id: "brand", name: "Private brand" }] }] }
+    } };
+    render(<ConfiguredEstimateBuilder rooms={rooms} activeRoomId={rooms[0]!.id} onSelectRoom={vi.fn()} catalogue={catalogue}
+      lines={[line]} selectedMainBasketIds={new Set(["basket-pop"])} onUpdateLine={vi.fn()}
+      onRefreshAvailableItems={vi.fn()} refreshingAvailableItems={false}
+      roomTotal={() => 105000} roomIcons={{}} moneyPaise={moneyPaise} editable={false} />);
+    expect(screen.getByText("Client finish.")).toBeVisible();
+    expect(screen.queryByText(/Private specification|Private brand|Internal specifications/)).not.toBeInTheDocument();
+  });
+
   it("displays server-resolved Mode details for Signature and Functional while preserving Premium details and draft values", async () => {
     const user = userEvent.setup(), current = structuredClone(catalogue), onLinesChange = vi.fn();
     const writes = [vi.spyOn(apiClient, "post"), vi.spyOn(apiClient, "patch"), vi.spyOn(apiClient, "put"), vi.spyOn(apiClient, "delete")];
@@ -80,7 +92,7 @@ describe("Sales direct catalogue browsing", () => {
     source.tierDescriptions = { signature: "Signature ceiling finish.", premium: "Mode description with premium specifications.", functional: "Mode description with default specifications." };
     const line = createConfiguredLine(current, rooms[0]!, { mainLineId: source.mainLineId, basketId: source.basketId, subBasketId: source.subBasketId })!;
     render(<LiveBuilder availableCatalogue={current} initialLines={[{ ...line, included: true }]} onLinesChange={onLinesChange} />);
-    const trigger = screen.getByText("Show details of tier");
+    const trigger = screen.getByText("Internal specifications");
     const row = trigger.closest(".configured-estimate-line") as HTMLElement;
     const initialAmount = within(row).getByRole("status", { name: /Amount for/ }).textContent;
     const rate = within(row).getByRole("textbox", { name: /Selling rate/ });
@@ -89,7 +101,7 @@ describe("Sales direct catalogue browsing", () => {
     await user.click(trigger);
     const description = screen.getByText("Signature ceiling finish.");
     expect(description).toBeVisible();
-    expect(description.nextElementSibling?.tagName).toBe("UL");
+    expect(description.closest("details")).toBeNull();
     expect(within(trigger.closest("details")!).getAllByRole("listitem").map(item => item.textContent)).toEqual(["Mode board (Saint-Gobain)"]);
     expect(within(row).getByRole("checkbox")).toBeChecked();
     expect(within(row).getByRole("spinbutton")).toHaveValue(1);
@@ -128,9 +140,9 @@ describe("Sales direct catalogue browsing", () => {
     const props = { rooms, activeRoomId: rooms[0]!.id, onSelectRoom: vi.fn(), catalogue,
       lines: [line], selectedMainBasketIds: new Set(["basket-pop"]), onUpdateLine: vi.fn(),
       onRefreshAvailableItems: vi.fn(), refreshingAvailableItems: false,
-      roomTotal: () => 105000, roomIcons: {}, moneyPaise, editable: false };
+      roomTotal: () => 105000, roomIcons: {}, moneyPaise, editable: false, showInternalTierDetails: true };
     const { rerender } = render(<ConfiguredEstimateBuilder {...props} />);
-    await user.click(screen.getByText("Show details of tier"));
+    await user.click(screen.getByText("Internal specifications"));
     expect(screen.getByText("Saved ceiling finish.")).toBeVisible();
     expect(screen.getByText("Saved board (Knauf)")).toBeVisible();
     expect(screen.getByRole("checkbox", { name: /POP false ceiling/ })).toBeDisabled();
@@ -139,21 +151,21 @@ describe("Sales direct catalogue browsing", () => {
     expect(screen.getByText("Specifications unavailable for this tier.")).toBeVisible();
     expect(screen.queryByText("Saved board (Knauf)")).not.toBeInTheDocument();
     rerender(<ConfiguredEstimateBuilder {...props} lines={[{ ...line, tierDetails: undefined, tierDescriptions: undefined }]} />);
-    expect(screen.getByText("Details unavailable for this tier.")).toBeVisible();
+    expect(screen.getByText("Specifications unavailable for this tier.")).toBeVisible();
     expect(screen.queryByText("Saved ceiling finish.")).not.toBeInTheDocument();
     expect(screen.queryByText("Saved board (Knauf)")).not.toBeInTheDocument();
     rerender(<ConfiguredEstimateBuilder {...props} lines={[{ ...line, sourceMissing: true }]} />);
-    const trigger = screen.getByText("Show details of tier");
+    const trigger = screen.getByText("Internal specifications");
     if (!trigger.closest("details")?.hasAttribute("open")) await user.click(trigger);
-    expect(screen.getByText("Details unavailable for this tier.")).toBeVisible();
+    expect(screen.getByText("Specifications unavailable for this tier.")).toBeVisible();
     expect(screen.queryByText("Saved ceiling finish.")).not.toBeInTheDocument();
     expect(screen.queryByText("Saved board (Knauf)")).not.toBeInTheDocument();
     rerender(<ConfiguredEstimateBuilder {...props} lines={[{ ...line, applicableTiers: [] }]} />);
     expect(screen.queryByText("Saved ceiling finish.")).not.toBeInTheDocument();
     rerender(<ConfiguredEstimateBuilder {...props} lines={[{ ...line, rateSource: "manual" }]} />);
-    expect(screen.queryByText("Show details of tier")).not.toBeInTheDocument();
+    expect(screen.queryByText("Internal specifications")).not.toBeInTheDocument();
     rerender(<ConfiguredEstimateBuilder {...props} lines={[{ ...line, included: false }]} />);
-    expect(screen.queryByText("Show details of tier")).not.toBeInTheDocument();
+    expect(screen.queryByText("Internal specifications")).not.toBeInTheDocument();
     expect(props.onUpdateLine).not.toHaveBeenCalled();
   });
 
@@ -781,7 +793,7 @@ describe("selected item editing regressions", () => {
     expect(screen.queryByRole("group", { name: "Options for POP false ceiling" })).not.toBeInTheDocument();
     expect(trigger).toHaveFocus();
     await user.tab();
-    expect(screen.getByLabelText("Show details of tier: Signature for POP / Gypsum, NA, POP false ceiling in Living & Dining")).toHaveFocus();
+    expect(screen.getByLabelText("Show internal specifications: Signature for POP / Gypsum, NA, POP false ceiling in Living & Dining")).toHaveFocus();
     await user.tab();
     expect(screen.getByRole("checkbox", { name: "Include Cove in Gypsum in Living & Dining" })).toHaveFocus();
     await user.click(trigger);

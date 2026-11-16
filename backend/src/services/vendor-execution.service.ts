@@ -156,6 +156,7 @@ export function createVendorExecutionService(input: { audit: AuditService; now?:
       const parsed = executionCommandSchema.safeParse(value); if (!parsed.success) invalid(parsed.error.issues.map(issue => issue.message).join(" "));
       const fields = parsed.data; const assignment = await assignmentFor(actor, assignmentId, session, true);
       if (projectId && assignment.projectId !== projectId) executionNotFound();
+      if (fields.action === "exempt_evidence") throw new ApiError(409, "EXECUTION_EVIDENCE_EXEMPTION_DISABLED", "Photo exemptions are no longer available. Add current-round photos before submitting completion.");
       const requestDigest = executionDigest(fields);
       const receipt = await VendorExecutionEventModel.findOne({ assignmentId, actorId: actor.id, idempotencyKey: fields.idempotencyKey }).session(session).lean();
       if (receipt) { if (receipt.requestDigest !== requestDigest) conflict("This request key was already used for a different execution update."); return dto(actor, assignment, session); }
@@ -169,6 +170,14 @@ export function createVendorExecutionService(input: { audit: AuditService; now?:
       const next: Row = { ...state, updatedAt: at, version: fields.action === "setup" ? 1 : state.version + 1 };
       const imageIds = fields.imageIds ?? [];
       if (imageIds.length) { const available = await currentExecutionImages(assignment, state, session); if (imageIds.some(id => !available.includes(id))) throw new ApiError(409, "EXECUTION_EVIDENCE_INVALID", "Completion evidence must belong to this assignment and current execution round."); }
+      const submitForVerification = async () => {
+        const images = fields.imageIds ?? await currentExecutionImages(assignment, next, session);
+        if (!images.length) throw new ApiError(409, "EXECUTION_EVIDENCE_REQUIRED", "Add at least one current-round photo before submitting completion.");
+        const id = `execution-review:${assignmentId}:${next.executionRound}`;
+        await VendorExecutionReviewModel.create([{ _id: id, assignmentId, projectId: assignment.projectId, vendorId: assignment.vendorId, executionRound: next.executionRound, submissionVersion: next.version, submittedById: actor.id,
+          submittedAt: at, note: fields.note, imageIds: images, evidenceExemptionReason: null, evidenceExemptionGrantedById: null }], { session });
+        next.submissionId = id; next.status = "awaiting_verification"; next.latestNote = fields.note;
+      };
       switch (fields.action) {
         case "setup": break;
         case "acknowledge": next.acknowledgedAt = at; next.accessAvailableAt = state.accessAvailableAt ?? at; next.status = "awaiting_schedule"; break;
@@ -185,26 +194,24 @@ export function createVendorExecutionService(input: { audit: AuditService; now?:
           if (["assigned", "awaiting_schedule"].includes(state.status)) next.status = "not_started";
           break;
         case "report":
-          if (fields.progress! <= state.progress && !fields.reason) invalid("No progress or a downward correction needs a reason.");
+          if (fields.updateType === "started" && (state.status !== "not_started" || state.progress !== 0)) invalid("Started working is available only before work has begun.");
+          if (fields.updateType === "hold" && fields.progress !== state.progress) invalid("An on-hold update must preserve the current progress.");
+          if ((fields.progress! < state.progress || !fields.updateType && fields.progress === state.progress) && !fields.reason) invalid("No progress or a downward correction needs a reason.");
           if (fields.status === "not_started" && fields.progress !== 0) invalid("Not started work must have zero percent progress.");
           next.progress = fields.progress; next.latestNote = fields.note; next.latestReportAt = at; next.status = fields.status;
           await VendorWorkAssignmentModel.updateOne({ _id: assignmentId, version: assignment.version }, { $inc: { version: 1 }, $set: { progress: fields.progress, note: fields.note, lastUpdatedById: actor.id, updatedAt: at,
             ...(["awaiting_vendor_access", "ready", "in_progress", "changes_requested"].includes(assignment.status) ? { status: "in_progress" } : {}) } }, { session, timestamps: false });
+          if (fields.updateType === "completed") await submitForVerification();
           break;
         case "submit": {
-          const images = fields.imageIds ?? await currentExecutionImages(assignment, state, session);
-          if (!images.length && state.evidenceExemption?.executionRound !== state.executionRound) throw new ApiError(409, "EXECUTION_EVIDENCE_REQUIRED", "Add a current-round photo or request a Site Manager evidence exemption.");
-          const id = `execution-review:${assignmentId}:${state.executionRound}`;
-          await VendorExecutionReviewModel.create([{ _id: id, assignmentId, projectId: assignment.projectId, vendorId: assignment.vendorId, executionRound: state.executionRound, submissionVersion: next.version, submittedById: actor.id,
-            submittedAt: at, note: fields.note, imageIds: images, evidenceExemptionReason: state.evidenceExemption?.reason ?? null, evidenceExemptionGrantedById: state.evidenceExemption?.grantedById ?? null }], { session });
-          next.submissionId = id; next.status = "awaiting_verification"; next.latestNote = fields.note; break;
+          await submitForVerification(); break;
         }
         case "verify": case "request_changes": {
           if (fields.submissionId !== state.submissionId) conflict("Review the current completion submission before deciding.");
           if (fields.action === "verify") {
             const submitted = await VendorExecutionReviewModel.findById(fields.submissionId).session(session).lean() as Row | null;
             const available = await currentExecutionImages(assignment, state, session);
-            if (!submitted || submitted.imageIds.some((id: string) => !available.includes(id)) || !submitted.imageIds.length && !submitted.evidenceExemptionReason) throw new ApiError(409, "EXECUTION_EVIDENCE_INVALID", "The submitted completion evidence is no longer valid.");
+            if (!submitted || !submitted.imageIds.length || submitted.imageIds.some((id: string) => !available.includes(id))) throw new ApiError(409, "EXECUTION_EVIDENCE_INVALID", "The submitted completion evidence is no longer valid.");
           }
           const review = await VendorExecutionReviewModel.findOneAndUpdate({ _id: fields.submissionId, assignmentId, executionRound: state.executionRound, decision: null }, { $set: { decision: { outcome: fields.action === "verify" ? "verified" : "changes_requested", actorId: actor.id, decidedAt: at, reason: fields.reason ?? null, idempotencyKey: fields.idempotencyKey } } }, { session, returnDocument: "after", runValidators: true }).lean();
           if (!review) conflict();
@@ -216,7 +223,6 @@ export function createVendorExecutionService(input: { audit: AuditService; now?:
           if (fields.reviewDate! <= localDate) invalid("A hold needs a future review date.");
           next.hold = { reason: fields.reason, startedAt: at, reviewDate: fields.reviewDate, grantedById: actor.id }; break;
         case "resume": next.hold = null; next.reportingStartsOn = state.schedule ? [state.schedule.startDate, nextExecutionDate(localDate)].sort().at(-1) : null; break;
-        case "exempt_evidence": next.evidenceExemption = { reason: fields.reason, grantedById: actor.id, executionRound: state.executionRound }; break;
       }
       if (fields.action === "setup") await VendorExecutionStateModel.create([next], { session });
       else {
@@ -225,9 +231,10 @@ export function createVendorExecutionService(input: { audit: AuditService; now?:
       }
       await VendorExecutionEventModel.create([{ _id: `execution-event-${randomUUID()}`, assignmentId, projectId: assignment.projectId, vendorId: assignment.vendorId, actorId: actor.id, action: fields.action, occurredAt: at,
         localDate, timezone: policy.timezone, executionRound: next.executionRound, version: next.version, idempotencyKey: fields.idempotencyKey, requestDigest, note: fields.note ?? "", reason: fields.reason ?? null,
-        nextAction: fields.nextAction ?? null, progress: next.progress, status: next.status, imageIds, startDate: fields.startDate ?? null, finishDate: fields.finishDate ?? null, reviewDate: fields.reviewDate ?? null, submissionId: fields.submissionId ?? next.submissionId }], { session });
+        ...(fields.updateType ? { updateType: fields.updateType } : {}),
+        nextAction: fields.nextAction ?? null, progress: next.progress, status: fields.action === "report" ? fields.status : next.status, imageIds, startDate: fields.startDate ?? null, finishDate: fields.finishDate ?? null, reviewDate: fields.reviewDate ?? null, submissionId: fields.updateType === "completed" ? next.submissionId : fields.submissionId ?? next.submissionId }], { session });
       await input.audit.appendInMongoTransaction({ actorId: actor.id, action: ["verify", "request_changes"].includes(fields.action) ? "vendor_execution_decided" : "vendor_execution_updated", entityType: "vendor_work", entityId: assignmentId,
-        occurredAt: at.toISOString(), newValues: { projectId: assignment.projectId, action: fields.action, executionRound: next.executionRound, version: next.version, status: next.status }, reason: fields.reason ?? null }, session);
+        occurredAt: at.toISOString(), newValues: { projectId: assignment.projectId, action: fields.action, ...(fields.updateType ? { updateType: fields.updateType } : {}), executionRound: next.executionRound, version: next.version, status: next.status }, reason: fields.reason ?? null }, session);
       await change({ projectId: assignment.projectId, vendorId: assignment.vendorId, assignmentId, version: next.version, kind: fields.action, occurredAt: at }, session);
       return dto(actor, await VendorWorkAssignmentModel.findById(assignmentId).session(session).lean() as Row, session);
   }
@@ -254,7 +261,7 @@ export function createVendorExecutionService(input: { audit: AuditService; now?:
       const { limit, offset } = parsed.data;
       const rows = await VendorExecutionEventModel.find({ assignmentId }).sort({ occurredAt: -1, version: -1, _id: -1 }).skip(offset).limit(limit).session(session).lean() as Row[];
       return { items: rows.map(row => ({ id: String(row._id), assignmentId, action: row.action, actorId: row.actorId, occurredAt: iso(row.occurredAt)!, executionRound: row.executionRound, localDate: row.localDate,
-        note: row.note, reason: row.reason ?? null, nextAction: row.nextAction ?? null, startDate: row.startDate ?? null, finishDate: row.finishDate ?? null, reviewDate: row.reviewDate ?? null, progress: row.progress ?? null, status: row.status ?? null })), total: await VendorExecutionEventModel.countDocuments({ assignmentId }).session(session), limit, offset };
+        ...(row.updateType ? { updateType: row.updateType } : {}), note: row.note, reason: row.reason ?? null, nextAction: row.nextAction ?? null, startDate: row.startDate ?? null, finishDate: row.finishDate ?? null, reviewDate: row.reviewDate ?? null, progress: row.progress ?? null, status: row.status ?? null })), total: await VendorExecutionEventModel.countDocuments({ assignmentId }).session(session), limit, offset };
     }); },
     command(actor, assignmentId, value, projectId) { return transaction(session => commandInSession(actor, assignmentId, value, projectId, session)); },
     commandInSession

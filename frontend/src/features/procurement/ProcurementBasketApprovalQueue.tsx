@@ -5,6 +5,7 @@ import { Link } from "react-router-dom";
 import { PageHeader } from "../../components/ui/PageHeader";
 import { PageState } from "../../components/ui/PageState";
 import { formatPaise } from "../finance/ProjectFinancePanel";
+import { projectFinanceKeys } from "../finance/projectFinanceApi";
 import { vendorWorkProgressKey } from "../workflow/VendorWorkProgressPanel";
 import { purchaseOrderKeys } from "./purchaseOrderApi";
 import {
@@ -42,6 +43,7 @@ function ApprovalDetail({ item, onBack }: { item: BasketApprovalQueueItem; onBac
     queryClient.invalidateQueries({ queryKey: procurementBasketKeys.monitor(item.projectId, item.mainBasketId, item.awardId) }),
     queryClient.invalidateQueries({ queryKey: purchaseOrderKeys.project(item.projectId) }),
     queryClient.invalidateQueries({ queryKey: purchaseOrderKeys.commitments(item.projectId) }),
+    queryClient.invalidateQueries({ queryKey: projectFinanceKeys.all }),
     queryClient.invalidateQueries({ queryKey: vendorWorkProgressKey(item.projectId) })
   ]);
   const decision = useMutation({ mutationFn: (value: "approve" | "reject") => {

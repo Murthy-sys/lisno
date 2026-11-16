@@ -28,9 +28,9 @@ export function ClientQuotationSubmittedView({ estimate, workspace, projectNumbe
   const bounded = workspace && !narrow;
   const refresh = async () => { if (await onRefresh()) setPdfNeedsRefresh(false); };
   const builder = <SubmittedEstimateBuilder snapshot={review.snapshot} workspace={bounded} onRefresh={() => void refresh()} refreshing={refreshing} />;
-  return <section ref={section} tabIndex={-1} className={`client-quotation estimate-workspace estimator-dashboard estimate-workspace--item-view${workspace ? " client-quotation--workspace" : ""}`} aria-label="Submitted estimate">
-    <header className="client-quotation__header"><div className="client-quotation__identity"><h2>{review.phase === "post" ? "Post-design quotation review" : "Pre-design quotation review"}</h2>
-      {workspace ? <ProjectId projectNumber={projectNumber} /> : null}<p>Submitted version {review.estimateVersion} · Submission {review.sendGeneration} · Read-only</p></div>
+  return <section ref={section} tabIndex={-1} className={`client-quotation client-quotation--submitted estimate-workspace estimator-dashboard estimate-workspace--item-view${workspace ? " client-quotation--workspace" : ""}`} aria-label="Submitted estimate">
+    <header className="client-quotation__header"><div className="client-quotation__submitted-heading"><div className="client-quotation__identity"><h2>{review.phase === "post" ? "Post-design quotation review" : "Pre-design quotation review"}</h2>
+      {workspace ? <ProjectId projectNumber={projectNumber} /> : null}</div><p>Submitted version {review.estimateVersion} · Submission {review.sendGeneration} · Read-only</p></div>
       <dl><dt>Submitted total including GST</dt><dd>{clientEstimateMoney(review.snapshot.totalPaise === undefined ? review.snapshot.total : review.snapshot.totalPaise / 100)}</dd></dl></header>
     <div className="client-quotation__navigation"><Button variant="secondary" onClick={onEdit}>Back to estimate</Button>
       <ClientQuotationOptions context={`${review.id}:${review.version}`}><DownloadButton className="button button--secondary" label={`Download PDF · Version ${review.estimateVersion}`} loadingLabel="Preparing PDF…" errorMessage="The submitted PDF could not be verified. Refresh the estimate before trying again."

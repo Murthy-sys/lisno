@@ -10,6 +10,7 @@ import { PDFDocument, rgb } from "pdf-lib";
 
 import { sha256Hex } from "../src/domain/estimate-client-review.js";
 import { quotationSnapshotDigest } from "../src/services/quotation-digest.js";
+import { resolveCurrentQuotationApproval } from "../src/services/quotation-approval-state.service.js";
 import type { WorkerRole } from "../src/domain/roles.js";
 import { DesignPlanResponseProofModel } from "../src/models/DesignPlanResponseProof.js";
 import { DesignPlanReviewRoundModel } from "../src/models/DesignPlanReviewRound.js";
@@ -2440,6 +2441,131 @@ describe("approved Design plan operational queues", () => {
 });
 
 describe("section-level worker assignment", () => {
+  async function approvedQuotationFixture(revised = false) {
+    const f = await createSectionAssignmentFixture();
+    const clientId = "section-quotation-client";
+    const snapshot = (amount: number) => ({
+      propertyType: "villa", bedroomCount: 2, rooms: ["Living & Dining"], scopes: ["carpentry"],
+      selectedMainBasketIds: ["section-basket"],
+      selectedMainBasketClassifications: [{ mainBasketId: "section-basket", classification: "standard" }],
+      lineItems: [{ id: "section-quotation-line", source: "configuration", catalogueId: "section-main-line",
+        mainBasketId: "section-basket", mainBasketName: "Approved Joinery", mainLineId: "section-main-line",
+        roomName: "Living & Dining", specification: null, unit: "nos", rate: amount,
+        ratePaise: amount * 100, quantity: 1, included: true, amount, amountPaise: amount * 100 }],
+      subtotal: amount, gst: amount * .18, total: amount * 1.18,
+      subtotalPaise: amount * 100, gstPaise: amount * 18, totalPaise: amount * 118
+    });
+    const initial = snapshot(1000), current = revised ? snapshot(2000) : initial;
+    const preId = "section-quotation-pre", finalId = "section-quotation-final";
+    const salesApproval = { actorId: "section-sales", estimateVersion: 1, pricedRevision: 1,
+      sourceDigest: quotationSnapshotDigest(initial), approvedAt: NOW.toISOString() };
+    const round = (id: string, phase: "pre" | "post", content: ReturnType<typeof snapshot>, version: number) => ({
+      _id: id, dedupeKey: id, estimateId: f.estimateId, projectId: f.projectId,
+      estimateVersion: version, workflowVersion: 3, phase, requirementsVersion: 0,
+      pricedRevision: phase === "pre" ? 1 : 2, designScopeRevision: 1,
+      sourceDigest: quotationSnapshotDigest(content), estimateSnapshot: content,
+      submittedById: phase === "pre" ? "section-sales" : "section-designer",
+      salesApproval: phase === "pre" ? salesApproval : null, sendGeneration: phase === "pre" ? 1 : 2,
+      status: "approved", decision: "approve", decisionSource: "client_portal",
+      decidedById: clientId, decidedAt: NOW, version: 2
+    });
+    await EstimateClientReviewRoundModel.collection.insertOne(round(preId, "pre", initial, 1) as never);
+    if (revised) await EstimateClientReviewRoundModel.collection.insertOne(round(finalId, "post", current, 3) as never);
+    await ProjectModel.collection.updateOne({ _id: f.projectId }, { $set: {
+      estimationWorkflowVersion: 3, clientId, primaryDesignerId: "section-designer", status: "completed", actualEndAt: NOW
+    } });
+    await EstimateModel.collection.updateOne({ _id: f.estimateId }, { $set: {
+      ...current, version: revised ? 4 : 2, internalNotes: "PRIVATE ESTIMATE NOTE",
+      estimation: { ...newQuotationLifecycle(), phase: "post", status: revised ? "client_approved" : "draft",
+        preApproval: { reviewRoundId: preId, estimateVersion: 1, approvedAt: NOW.toISOString() },
+        salesApproval, pricedRevision: revised ? 2 : 1, editClosedAt: revised ? NOW.toISOString() : null,
+        finalApproval: revised ? { reviewRoundId: finalId, estimateVersion: 3, approvedAt: NOW.toISOString(),
+          requirementsVersion: 0, designScopeRevision: 1, designReviewRoundId: null, designPlanVersion: null } : null }
+    } });
+    await ProjectWorkflowTaskModel.deleteMany({ projectId: f.projectId, _id: { $ne: f.completedTaskId } });
+    await ProjectWorkflowTaskModel.collection.updateOne({ _id: f.completedTaskId }, { $set: {
+      sourceSectionId: "section-basket", sourceLineItemKey: "section-quotation-line"
+    } });
+    return { ...f, preId, finalId, currentRoundId: revised ? finalId : preId };
+  }
+
+  it("reads a completed project's section from its valid initial v3 quotation approval", async () => {
+    const f = await approvedQuotationFixture();
+    const estimate = (await EstimateModel.findById(f.estimateId).lean())!;
+    expect(await resolveCurrentQuotationApproval(estimate)).toMatchObject({
+      quotationApprovalState: "initial_current", currentQuotationApproved: true
+    });
+    const audit = vi.fn();
+    const workflow = sectionAssignmentWorkflow(audit);
+    const groups = await workflow.listProjectWorkflowSectionAssignments(sectionSuperAdmin(), f.projectId);
+    expect(groups).toEqual([expect.objectContaining({ projectId: f.projectId, estimateId: f.estimateId,
+      sourceSectionId: "section-basket", sectionLabel: "Approved Joinery", status: "completed", taskCount: 1 })]);
+    expect(Object.keys(groups[0]!).sort()).toEqual(["id", "projectId", "projectName", "estimateId", "designPlanVersion",
+      "sourceSectionId", "sectionLabel", "assigneeRole", "assignedWorker", "assignmentState", "status", "progress",
+      "taskCount", "unfinishedTaskCount", "revision", "updatedAt"].sort());
+    expect(JSON.stringify(groups)).not.toContain("PRIVATE ESTIMATE NOTE");
+    await expect(workflow.overrideSectionWorkerAssignment({ actor: sectionSuperAdmin(), projectId: f.projectId,
+      estimateId: f.estimateId, designPlanVersion: 3, sourceSectionId: "section-basket",
+      expectedRevision: groups[0]!.revision, workerId: null })).rejects.toMatchObject({ code: "WORKFLOW_SECTION_COMPLETED" });
+    expect(audit).not.toHaveBeenCalled();
+    expect(await EstimateModel.findById(f.estimateId).lean()).toEqual(estimate);
+    expect(await ProjectModel.findById(f.projectId).lean()).toMatchObject({ status: "completed", actualEndAt: NOW });
+  });
+
+  it("reads the approved v3 designer revision without mixing another project's tasks", async () => {
+    const f = await approvedQuotationFixture(true);
+    const estimate = (await EstimateModel.findById(f.estimateId).lean())!;
+    expect(await resolveCurrentQuotationApproval(estimate)).toMatchObject({
+      quotationApprovalState: "revision_current", currentQuotationApproved: true
+    });
+    await ProjectWorkflowTaskModel.create(sectionAssignmentTask({ id: "other-project-task", projectId: "other-project",
+      estimateId: "other-estimate", sourceSectionId: "EL", sourceLineItemKey: "other-line", assigneeRole: "worker_electrician" }));
+    const groups = await sectionAssignmentWorkflow(vi.fn()).listProjectWorkflowSectionAssignments(sectionSuperAdmin(), f.projectId);
+    expect(groups).toHaveLength(1);
+    expect(groups[0]).toMatchObject({ projectId: f.projectId, estimateId: f.estimateId, sourceSectionId: "section-basket" });
+    expect(await EstimateModel.findById(f.estimateId).lean()).toEqual(estimate);
+  });
+
+  it.each(["totals", "rooms", "missing approval", "foreign approval", "decision actor", "task design version", "ambiguous estimate"])(
+    "keeps genuine v3 section conflicts blocked: %s", async mismatch => {
+      const f = await approvedQuotationFixture();
+      if (mismatch === "totals") await EstimateModel.collection.updateOne({ _id: f.estimateId }, { $set: {
+        subtotal: 2000, gst: 360, total: 2360, subtotalPaise: 200000, gstPaise: 36000, totalPaise: 236000
+      } });
+      if (mismatch === "rooms") await EstimateModel.collection.updateOne({ _id: f.estimateId }, { $set: { rooms: ["Bedroom"] } });
+      if (mismatch === "missing approval") await EstimateClientReviewRoundModel.collection.deleteOne({ _id: f.preId });
+      if (mismatch === "foreign approval") await EstimateClientReviewRoundModel.collection.updateOne({ _id: f.preId }, { $set: { projectId: "other-project" } });
+      if (mismatch === "decision actor") await EstimateClientReviewRoundModel.collection.updateOne({ _id: f.preId }, { $set: { decidedById: "other-client" } });
+      if (mismatch === "task design version") await ProjectWorkflowTaskModel.collection.updateOne({ _id: f.completedTaskId }, { $set: { designPlanVersion: 4 } });
+      if (mismatch === "ambiguous estimate") {
+        const estimate = (await EstimateModel.findById(f.estimateId).lean())!;
+        await EstimateModel.collection.insertOne({ ...estimate, _id: "other-approved-estimate", leadId: "other-lead" });
+      }
+      const beforeTasks = await ProjectWorkflowTaskModel.find({ projectId: f.projectId }).lean();
+      const audit = vi.fn();
+      await expect(sectionAssignmentWorkflow(audit).listProjectWorkflowSectionAssignments(sectionSuperAdmin(), f.projectId))
+        .rejects.toMatchObject({ status: 409, code: "WORKFLOW_SECTION_ASSIGNMENT_CONFLICT" });
+      expect(await ProjectWorkflowTaskModel.find({ projectId: f.projectId }).lean()).toEqual(beforeTasks);
+      expect(audit).not.toHaveBeenCalled();
+    });
+
+  it("preserves workflow-v2 final approval and empty-source behavior", async () => {
+    const f = await approvedQuotationFixture(true);
+    await ProjectModel.collection.updateOne({ _id: f.projectId }, { $set: { estimationWorkflowVersion: 2 } });
+    await EstimateClientReviewRoundModel.collection.updateMany({ estimateId: f.estimateId }, { $set: { workflowVersion: 2 } });
+    await EstimateModel.collection.updateOne({ _id: f.estimateId }, { $set: {
+      estimation: { ...newEstimationLifecycle(), phase: "post", status: "client_approved", editClosedAt: NOW.toISOString(),
+        preApproval: { reviewRoundId: f.preId, estimateVersion: 1, approvedAt: NOW.toISOString() },
+        finalApproval: { reviewRoundId: f.finalId, estimateVersion: 3, approvedAt: NOW.toISOString(),
+          requirementsVersion: 0, designScopeRevision: 1, designReviewRoundId: null, designPlanVersion: null } }
+    } });
+    const workflow = sectionAssignmentWorkflow(vi.fn());
+    expect(await workflow.listProjectWorkflowSectionAssignments(sectionSuperAdmin(), f.projectId))
+      .toEqual([expect.objectContaining({ sourceSectionId: "section-basket", taskCount: 1 })]);
+    await EstimateModel.updateOne({ _id: f.estimateId }, { $set: { designPlanStatus: "in_progress" } });
+    expect(await workflow.listProjectWorkflowSectionAssignments(sectionSuperAdmin(), f.projectId)).toEqual([]);
+  });
+
   it("uses exact configured basket IDs and immutable approved labels after live estimate labels change", async () => {
     const fixture = await createSectionAssignmentFixture();
     const approvedLines = [

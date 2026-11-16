@@ -1,7 +1,7 @@
-import { screen, within } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { createMemoryRouter, MemoryRouter, Route, RouterProvider, Routes, useLocation } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
 import { renderWithQuery } from "../../test/render";
 import { server } from "../../test/server";
@@ -33,24 +33,65 @@ function install(completionAuthority: "vendor_client" | "legacy_staff" = "vendor
     http.get("/api/v1/workflow-tasks", () => HttpResponse.json({ data: [] }))
   );
 }
+function Location() { const location = useLocation(); return <output aria-label="Current route">{location.search}</output>; }
 function mount(path: string) {
-  return renderWithQuery(<MemoryRouter initialEntries={[path]}><Routes><Route path="/projects/:projectId/execution" element={<ProjectManagerProjectPage />} /></Routes></MemoryRouter>);
+  return renderWithQuery(<MemoryRouter initialEntries={[path]}><Routes><Route path="/projects/:projectId/execution" element={<ProjectManagerProjectPage />} /></Routes><Location /></MemoryRouter>);
 }
 
 describe("consolidated Project Manager operational access", () => {
-  it("opens the real verification dialog from a Site trade using its assignment ID", async () => {
+  it("opens the real verification dialog directly from the default monitor without changing view", async () => {
     install();
     mount("/projects/project-one/execution?tab=site&returnTo=%2Fexecution%3Fview%3Dgrid");
-    const open = await screen.findByRole("link", { name: "Open Oak wall panelling in Living room" });
-    expect(open).toHaveAttribute("href", expect.stringContaining("assignment=work-one"));
-    expect(open).not.toHaveAttribute("href", expect.stringContaining("assignment=site-record-one"));
+    const open = await screen.findByRole("button", { name: "Review completion: Oak wall panelling, Oak Works" });
+    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
     await userEvent.click(open);
     const verification = await screen.findByRole("dialog", { name: "Oak wall panelling" });
     expect(within(verification).getByRole("textbox", { name: "Verification note" })).toBeVisible();
+    expect(screen.getByLabelText("Current route")).toHaveTextContent("assignment=work-one");
+    expect(screen.getByLabelText("Current route")).not.toHaveTextContent("detail=1");
     await userEvent.keyboard("{Escape}");
-    await userEvent.click(screen.getByRole("link", { name: "Back to project tabs" }));
-    expect(await screen.findByRole("link", { name: "Open Oak wall panelling in Living room" })).toBeVisible();
+    expect(await screen.findByRole("button", { name: "Review completion: Oak wall panelling, Oak Works" })).toBeVisible();
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(screen.getByRole("navigation", { name: "Project sections" })).toBeVisible();
     expect(screen.getByRole("link", { name: "All projects" })).toHaveAttribute("href", "/execution?view=grid");
+  });
+
+  it("resolves a legacy record link to the real issued assignment before opening review", async () => {
+    install();
+    mount("/projects/project-one/execution?tab=site&entity=site-record-one&locate=1");
+    const verification = await screen.findByRole("dialog", { name: "Oak wall panelling" });
+    expect(within(verification).getByRole("textbox", { name: "Verification note" })).toBeVisible();
+    expect(screen.getByLabelText("Current route")).toHaveTextContent("assignment=work-one");
+    expect(screen.getByLabelText("Current route")).not.toHaveTextContent("entity=");
+    expect(screen.getByLabelText("Current route")).not.toHaveTextContent("detail=1");
+  });
+
+  it("preserves a real verification draft while the in-tab work filter changes", async () => {
+    install();
+    const router = createMemoryRouter([{ path: "/projects/:projectId/execution", element: <ProjectManagerProjectPage /> }], { initialEntries: ["/projects/project-one/execution?assignment=work-one"] });
+    renderWithQuery(<RouterProvider router={router} />);
+    const note = await screen.findByRole("textbox", { name: "Verification note" });
+    await userEvent.type(note, "Keep this exact inspection draft");
+    await act(async () => { await router.navigate("/projects/project-one/execution?assignment=work-one&q=Oak", { replace: true }); });
+    expect(screen.getByRole("textbox", { name: "Verification note" })).toBe(note);
+    expect(note).toHaveValue("Keep this exact inspection draft");
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(router.state.location.search).not.toContain("detail=1");
+  });
+
+  it.each(["?tab=procurement", "?detail=1", "?tab=site&entity=site-record-one&locate=1"])("guards a handoff draft before switching workspace %s", async next => {
+    install();
+    const router = createMemoryRouter([{ path: "/projects/:projectId/execution", element: <ProjectManagerProjectPage /> }], { initialEntries: ["/projects/project-one/execution"] });
+    renderWithQuery(<RouterProvider router={router} />);
+    await userEvent.click(await screen.findByText("Project actions"));
+    await userEvent.click(screen.getByRole("button", { name: "Completion & Client handoff" }));
+    const note = await screen.findByRole("textbox", { name: "Completion note" });
+    await userEvent.type(note, "Retain this project handoff draft");
+    await act(async () => { await router.navigate(`/projects/project-one/execution${next}`); });
+    expect(await screen.findByRole("alertdialog", { name: "Leave project with unsaved changes?" })).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Keep editing" }));
+    expect(note).toHaveValue("Retain this project handoff draft");
+    expect(router.state.location.search).toBe("");
   });
 
   it.each(["former-site-user", "migrated-program-user"])("preserves verification, ownership details, handoff and approvals for %s", async id => {
@@ -59,9 +100,10 @@ describe("consolidated Project Manager operational access", () => {
     mount("/projects/project-one/execution?assignment=work-one");
     const verification = await screen.findByRole("dialog", { name: "Oak wall panelling" });
     expect(within(verification).getByRole("textbox", { name: "Verification note" })).toBeVisible();
-    expect(screen.getByRole("region", { name: "Project details" })).toHaveTextContent("Client A");
     await userEvent.keyboard("{Escape}");
-    expect(await screen.findByRole("heading", { name: "Execution operations" })).toBeVisible();
+    expect(await screen.findByRole("heading", { name: "Work monitoring" })).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Open full detail" }));
+    expect(await screen.findByRole("region", { name: "Project details" })).toHaveTextContent("Client A");
     await userEvent.click(await screen.findByText("Project actions"));
     expect(screen.getByRole("link", { name: "Work order approvals" })).toHaveAttribute("href", "/work-order-approvals");
     expect(screen.queryByText("Project coordination")).not.toBeInTheDocument();
@@ -73,7 +115,7 @@ describe("consolidated Project Manager operational access", () => {
   it("keeps legacy coordination available within full detail", async () => {
     install("legacy_staff");
     mount("/projects/project-one/execution?detail=1");
-    await screen.findByRole("heading", { name: "Execution operations" });
+    await screen.findByRole("heading", { name: "Work monitoring" });
     await userEvent.click(await screen.findByText("Project actions"));
     await userEvent.click(screen.getByRole("button", { name: "Coordination progress" }));
     expect(await screen.findByRole("dialog", { name: "Coordination progress" })).toBeVisible();

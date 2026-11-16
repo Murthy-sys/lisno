@@ -96,6 +96,23 @@ async function openMainInfo(user: ReturnType<typeof userEvent.setup>) {
 beforeEach(() => { read.mockReset(); read.mockImplementation(async input => response(input)); });
 
 describe("Configured estimate Sub Basket information scope", () => {
+  it("maps each tier description independently without changing estimate quantities or prices", async () => {
+    const user = userEvent.setup();
+    const data = setup();
+    const tierDescriptions = { signature: "Signature hand finish", premium: "Premium acoustic finish", functional: "Functional plain finish" };
+    const line = { ...data.lines[0]!, tierDescriptions };
+    for (const modeTier of tiers) {
+      data.update({ lines: [{ ...line, modeTier }] });
+      const title = `${modeTier[0]!.toUpperCase()}${modeTier.slice(1)}`;
+      const details = screen.getByRole("region", { name: `${title} description for Interiors, Finishes, Finish 00 in Living Room` });
+      expect(within(details).getByText(tierDescriptions[modeTier])).toBeVisible();
+      for (const tier of tiers.filter(value => value !== modeTier)) expect(screen.queryByText(tierDescriptions[tier])).not.toBeInTheDocument();
+    }
+    expect(data.onUpdateLine).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("radio", { name: "Premium tier for Interiors, Finishes, Finish 00 in Living Room" }));
+    expect(data.onUpdateLine).toHaveBeenCalledWith(line.key, { modeTier: "premium", rateSource: "configuration" });
+  });
+
   it("places comparison after information in the removable Sub Basket header with independent controls", async () => {
     const user = userEvent.setup(); const data = setup();
     const onRemoveSubBasket = vi.fn(); data.update({ onRemoveSubBasket });

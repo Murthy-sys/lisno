@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { LeadModel } from "../src/models/Lead.js";
 import { ProjectModel } from "../src/models/Project.js";
 import { UserModel } from "../src/models/User.js";
+import { AuthorizationCoordinationModel } from "../src/models/AuthorizationCoordination.js";
 import { ProjectManagerEvidenceModel, ProjectManagerEvidenceCleanupModel } from "../src/models/ProjectManagerEvidence.js";
 import { ProjectManagerEventModel } from "../src/models/ProjectManagerEvent.js";
 import { ProjectPurchaseOrderModel } from "../src/models/ProjectPurchaseOrder.js";
@@ -55,6 +56,113 @@ describe("PM workspace scoping and truthful portfolio",()=>{
  it("keeps KPI and bonus unavailable without granting another user's records",async()=>{const service=createProjectManagerWorkspace({audit,now:()=>at,panels:{}});expect(await service.bonus(pm)).toMatchObject({availability:"not_configured",statements:[]});expect(await service.leaderboard(pm)).toMatchObject({availability:"not_configured",items:[]});expect(await service.performance(pm)).toMatchObject({availability:"not_configured",policy:null});await UserModel.updateOne({_id:pm.id},{$set:{active:false}});await expect(service.bonus(pm)).rejects.toMatchObject({status:404});});
  it("revalidates notification membership after PM reassignment",async()=>{await ProjectManagerEventModel.create({_id:"event-a",projectId:"a",entityId:"record-a",family:"snag",actorId:other.id,actorName:other.name,idempotencyKey:"notification-a",digest:"test",action:"created",version:1,occurredAt:at,result:{title:"Defect"},recipientIds:[pm.id]});const service=createProjectManagerWorkspace({audit,panels:{}});expect((await service.notifications(pm)).items).toHaveLength(1);await ProjectModel.updateOne({_id:"a"},{$set:{programManagerId:other.id}});expect((await service.notifications(pm)).items).toEqual([]);await expect(service.readNotification(pm,"event-a")).rejects.toMatchObject({status:404});});
 });
+describe("Super Admin project notification oversight", () => {
+ const superAdmin: PublicUser = { id: "super-admin", name: "Super Admin", role: "super_admin", email: "super-admin@example.test" };
+ async function createSuperAdmin() {
+  await UserModel.create({ ...superAdmin, _id: superAdmin.id, emailNormalized: superAdmin.email, passwordHash: "fixture-only", active: true });
+ }
+ async function event(id: string, projectId: string, recipientIds: string[], readBy: string[] = []) {
+  await ProjectManagerEventModel.create({ _id: id, projectId, entityId: `stored:${id}`, family: "snag", actorId: "event-author", actorName: "Event author",
+   idempotencyKey: id, digest: "fixture-digest", action: "created", version: 1, occurredAt: at,
+   result: { id: `visible:${id}`, title: `Update ${id}` }, recipientIds, readBy });
+ }
+ async function storedNotifications() {
+  return { events: await ProjectManagerEventModel.find().sort({ _id: 1 }).lean(),
+   projects: await ProjectModel.find().sort({ _id: 1 }).lean(), authorization: await AuthorizationCoordinationModel.find().lean() };
+ }
+
+ it("pages delivered notifications across existing projects without changing any read state", async () => {
+  await createSuperAdmin();
+  await event("event-a", "a", [pm.id]);
+  await event("event-b", "c", [other.id]);
+  await event("event-c", "b", [pm.id], [superAdmin.id]);
+  await event("event-0-orphan", "deleted-project", [pm.id]);
+  await event("event-0-undelivered", "a", []);
+  const service = createProjectManagerWorkspace({ audit, now: () => at, panels: {} });
+  const before = await storedNotifications();
+  const first = await service.notifications(superAdmin, { limit: 1, offset: 0 });
+  expect(first).toMatchObject({ total: 3, unreadTotal: 2, items: [{ id: "event-a", projectId: "a", entityId: "visible:event-a", read: false }] });
+  expect(first.items).toHaveLength(1);
+  expect(await service.notifications(superAdmin, { limit: 1, offset: 1 })).toMatchObject({ total: 3, unreadTotal: 2, items: [{ id: "event-b", projectId: "c", read: false }] });
+  expect(await service.notifications(superAdmin, { limit: 1, offset: 2 })).toMatchObject({ total: 3, unreadTotal: 2, items: [{ id: "event-c", projectId: "b", read: true }] });
+  expect(await service.notifications(superAdmin, { limit: 1, offset: 3 })).toEqual({ items: [], total: 3, unreadTotal: 2 });
+  expect((await service.notifications(pm)).items.map(row => row.id)).toEqual(["event-a", "event-c"]);
+  expect((await service.notifications(other)).items.map(row => row.id)).toEqual(["event-b"]);
+  expect(first.items[0]).not.toHaveProperty("recipientIds");
+  expect(first.items[0]).not.toHaveProperty("readBy");
+  expect(await storedNotifications()).toEqual(before);
+ });
+
+ it("marks only the Super Admin's own read state and keeps recipient read state independent", async () => {
+  await createSuperAdmin();
+  await event("event-a", "a", [pm.id]);
+  await event("event-b", "c", [other.id]);
+  const service = createProjectManagerWorkspace({ audit, now: () => at, panels: {} });
+  const before = (await ProjectManagerEventModel.findById("event-a").lean())!;
+  expect((await service.notifications(superAdmin)).unreadTotal).toBe(2);
+  expect((await service.notifications(pm)).unreadTotal).toBe(1);
+  expect(await service.readNotification(superAdmin, "event-a")).toEqual({ read: true });
+  expect(await service.readNotification(superAdmin, "event-a")).toEqual({ read: true });
+  expect(await ProjectManagerEventModel.findById("event-a").lean()).toEqual({ ...before, readBy: [superAdmin.id] });
+  expect((await service.notifications(superAdmin)).unreadTotal).toBe(1);
+  expect(await service.notifications(pm)).toMatchObject({ unreadTotal: 1, items: [{ id: "event-a", read: false }] });
+  expect((await service.notifications(other)).unreadTotal).toBe(1);
+  await service.readNotification(pm, "event-a");
+  expect((await ProjectManagerEventModel.findById("event-a").lean())?.readBy).toEqual([superAdmin.id, pm.id]);
+  expect((await service.notifications(pm)).unreadTotal).toBe(0);
+  expect((await service.notifications(superAdmin)).unreadTotal).toBe(1);
+ });
+
+ it("keeps ordinary users recipient-scoped even when they manage the notification's project", async () => {
+  await createSuperAdmin();
+  await event("event-a", "a", [pm.id]);
+  await event("event-other-recipient", "a", [other.id]);
+  const service = createProjectManagerWorkspace({ audit, panels: {} });
+  const before = await storedNotifications();
+  expect((await service.notifications(superAdmin)).total).toBe(2);
+  expect((await service.notifications(pm)).items.map(row => row.id)).toEqual(["event-a"]);
+  await expect(service.readNotification(pm, "event-other-recipient")).rejects.toMatchObject({ status: 404 });
+  expect(await storedNotifications()).toEqual(before);
+ });
+
+ it.each(["inactive", "mismatched role", "duplicate"] as const)("denies %s Super Admin identities even when the notification scope is empty", async invalidIdentity => {
+  await createSuperAdmin();
+  const duplicateId = "duplicate-super-admin";
+  if (invalidIdentity === "inactive") await UserModel.updateOne({ _id: superAdmin.id }, { $set: { active: false } });
+  if (invalidIdentity === "mismatched role") await UserModel.updateOne({ _id: superAdmin.id }, { $set: { role: "admin" } });
+  if (invalidIdentity === "duplicate") {
+   await UserModel.collection.dropIndex("one_super_admin");
+   await UserModel.create({ _id: duplicateId, name: "Duplicate", role: "super_admin", email: "duplicate@example.test", emailNormalized: "duplicate@example.test", passwordHash: "fixture-only", active: true });
+  }
+  try {
+   const service = createProjectManagerWorkspace({ audit, panels: {} });
+   expect(await ProjectManagerEventModel.countDocuments()).toBe(0);
+   await expect(service.notifications(superAdmin)).rejects.toMatchObject({ status: 404 });
+   await expect(service.readNotification(superAdmin, "missing-event")).rejects.toMatchObject({ status: 404 });
+   await event("event-a", "a", [pm.id]);
+   const before = await storedNotifications();
+   await expect(service.notifications(superAdmin)).rejects.toMatchObject({ status: 404 });
+   await expect(service.readNotification(superAdmin, "event-a")).rejects.toMatchObject({ status: 404 });
+   expect(await storedNotifications()).toEqual(before);
+  } finally {
+   if (invalidIdentity === "duplicate") { await UserModel.deleteOne({ _id: duplicateId }); await UserModel.syncIndexes(); }
+  }
+ });
+
+ it("does not disclose or mark orphaned, undelivered or missing events", async () => {
+  await createSuperAdmin();
+  await event("orphaned-event", "deleted-project", [pm.id]);
+  await event("undelivered-event", "a", []);
+  const service = createProjectManagerWorkspace({ audit, panels: {} });
+  const before = await storedNotifications();
+  expect(await service.notifications(superAdmin)).toEqual({ items: [], total: 0, unreadTotal: 0 });
+  for (const id of ["orphaned-event", "undelivered-event", "missing-event"]) {
+   await expect(service.readNotification(superAdmin, id)).rejects.toMatchObject({ status: 404, code: "PM_NOT_FOUND" });
+  }
+  expect(await storedNotifications()).toEqual(before);
+ });
+});
+
 describe("PM evidence storage compensation",()=>{
  const bytes=Buffer.from("synthetic-media");const sha256=createHash("sha256").update(bytes).digest("hex");
  const media={open:async()=>Readable.from(bytes),extension:".png" as const,originalFilename:"test.png",mimeType:"image/png",sizeBytes:bytes.length,sha256,kind:"image" as const};

@@ -1,0 +1,7 @@
+# Super Admin project closure access
+
+Evidence: read-only inspection of the reported local project shows active vendor-client workflow, project-level Client completion accepted, no completion blockers, and readyForCompletion=true with Super Admin as pending owner. Admin project detail exposes no header closure action. Its existing Close dialog lives inside the Finance panel, which depends on current approved financial baseline availability and finance read permission. Those finance presentation conditions can hide a valid project completion decision.
+
+Add a clearly labeled Close project header action for an active project when the current actor is Super Admin with procurement.project_completion.decide. Reuse the existing ProjectCompletionControl dialog/readiness query/mutation. Closure visibility must not depend on Finance data or finance.bucket.read. Maintain current backend summary identity, active status, authority version, no-blocker readiness, CAS/idempotency, permission handling, explicit confirmation and cache invalidation safeguards. Preserve existing Finance entry point and all project people UI.
+
+No backend changes, approval bypass, actual project closure, data migration, email or queue redesign. The user makes the final decision through the existing confirmation dialog. Accept when an authorized Super Admin can open the project-specific readiness dialog from the header even when Finance is unavailable, other roles/permissions/states remain gated, and blocked/stale completion remains disabled.

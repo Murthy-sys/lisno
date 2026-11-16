@@ -5,6 +5,7 @@ import {
   adminEstimateStages,
   adminProjectNextAction,
   canAssignProjectDesigner,
+  canAssignProjectCoordination,
   isDesignerAssignmentPending,
   hasInitialEstimateApproval,
   adminProjectStatusTone,
@@ -169,5 +170,25 @@ describe("workflow-v3 initial approval and working quotation", () => {
     project.estimate = { ...project.estimate!, designPlanStatus: "assigned", designPlanDesigner: { id: "designer-1", name: "Designer", email: "designer@example.test" } };
     expect(adminEstimateStages(project).at(-1)).toEqual({ label: "Designer quotation", value: "Approval status unavailable" });
     expect(adminProjectNextAction(project)).toBe("Resolve quotation approval status");
+  });
+});
+
+
+describe("canAssignProjectCoordination", () => {
+  it.each([2, 3] as const)("accepts validated initial approval during a v%s post-estimate draft", (estimationWorkflowVersion) => {
+    const project = withEstimate("draft", "pending_assignment");
+    project.estimationWorkflowVersion = estimationWorkflowVersion;
+    project.estimate!.initialEstimateApproval = { reviewRoundId: "initial-round", estimateVersion: 1, approvedAt: "2026-08-24T09:00:00.000Z" };
+    expect(canAssignProjectCoordination(project)).toBe(true);
+  });
+
+  it.each([2, 3] as const)("does not infer v%s initial approval from a status label", (estimationWorkflowVersion) => {
+    expect(canAssignProjectCoordination({ ...withEstimate("client_approved", "pending_assignment"), estimationWorkflowVersion })).toBe(false);
+  });
+
+  it("retains design-approved eligibility and keeps legacy preparation gated", () => {
+    expect(canAssignProjectCoordination(withEstimate("client_approved", "approved"))).toBe(true);
+    expect(canAssignProjectCoordination(withEstimate("client_approved", "pending_assignment"))).toBe(false);
+    expect(canAssignProjectCoordination(base)).toBe(false);
   });
 });

@@ -1,12 +1,14 @@
+import { useQuery } from "@tanstack/react-query";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import axe from "axe-core";
 import { http, HttpResponse } from "msw";
 import { MemoryRouter } from "react-router-dom";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { renderWithQuery } from "../../test/render";
 import { server } from "../../test/server";
+import { projectFinanceKeys } from "../finance/projectFinanceApi";
 import { ProcurementBasketApprovalQueue } from "./ProcurementBasketApprovalQueue";
 import type { BasketAward } from "./procurementBasketApi";
 
@@ -25,6 +27,13 @@ const award: BasketAward = {
     nonRecommendedReason: null, programManagerId: null, designerId: null, officialKpiAssessmentId: "kpi-one",
     officialKpiAssessmentRevision: 1 }
 };
+
+function FinanceCacheProbe({ read }: { read: () => Promise<number> }) {
+  const detail = useQuery({ queryKey: projectFinanceKeys.bucket("project-one"), queryFn: read, staleTime: Infinity });
+  const portfolio = useQuery({ queryKey: projectFinanceKeys.projects, queryFn: read, staleTime: Infinity });
+  const filtered = useQuery({ queryKey: projectFinanceKeys.budgetProjects({ budgetStatus: "within_budget" }), queryFn: read, staleTime: Infinity });
+  return <output aria-label="Cached finance budgets">{[detail.data, portfolio.data, filtered.data].join("|")}</output>;
+}
 
 describe("work order approval queue", () => {
   it.each([
@@ -72,6 +81,7 @@ describe("work order approval queue", () => {
   it("requires an explicit override reason and posts the frozen proposal revision", async () => {
     const decisions: unknown[] = [];
     let currentAward = award;
+    const readBudget = vi.fn(async () => currentAward.status === "issued" ? 5000 : 0);
     server.use(
       http.get("/api/v1/work-order-approvals", () => HttpResponse.json({ data: [{ awardId: "award-one", projectId: "project-one", enquiryId: "enquiry-one",
         mainBasketId: "basket-one", projectName: "Aurora Villa", basketName: "Painting", vendorName: "Sharma Interiors",
@@ -86,7 +96,8 @@ describe("work order approval queue", () => {
       })
     );
     const user = userEvent.setup();
-    const view = renderWithQuery(<MemoryRouter><ProcurementBasketApprovalQueue /></MemoryRouter>);
+    const view = renderWithQuery(<MemoryRouter><ProcurementBasketApprovalQueue /><FinanceCacheProbe read={readBudget} /></MemoryRouter>);
+    await waitFor(() => expect(screen.getByLabelText("Cached finance budgets")).toHaveTextContent("0|0|0"));
     await user.click(await screen.findByRole("button", { name: /Aurora Villa.*Painting.*Sharma Interiors/u }));
     expect(await screen.findByRole("heading", { name: "Sharma Interiors" })).toBeVisible();
     expect(screen.getByText("Primer coat")).toBeVisible();
@@ -102,6 +113,7 @@ describe("work order approval queue", () => {
       slot: "budget_override", decision: "approve", reason: "Verified approved budget exception." });
     expect(await screen.findByText("Your approval was recorded. The work order is issued and its payment schedule is locked.")).toBeVisible();
     expect(await screen.findByText("Approved")).toBeVisible();
+    await waitFor(() => expect(screen.getByLabelText("Cached finance budgets")).toHaveTextContent("5000|5000|5000"));
   });
 
   it("reuses a decision key when the first request fails", async () => {
@@ -110,6 +122,7 @@ describe("work order approval queue", () => {
       approvals: [{ slot: "budget_override", actorId: "admin-one", decision: "approve",
         reason: "Verified approved budget exception.", decidedAt: "2026-10-05T00:00:00Z" }] };
     let currentAward = award;
+    const readBudget = vi.fn(async () => currentAward.status === "issued" ? 5000 : 0);
     server.use(
       http.get("/api/v1/work-order-approvals", () => HttpResponse.json({ data: [{ awardId: "award-one", projectId: "project-one",
         enquiryId: "enquiry-one", mainBasketId: "basket-one", projectName: "Aurora Villa", basketName: "Painting",
@@ -123,16 +136,20 @@ describe("work order approval queue", () => {
       })
     );
     const user = userEvent.setup();
-    renderWithQuery(<MemoryRouter><ProcurementBasketApprovalQueue /></MemoryRouter>);
+    renderWithQuery(<MemoryRouter><ProcurementBasketApprovalQueue /><FinanceCacheProbe read={readBudget} /></MemoryRouter>);
+    await waitFor(() => expect(screen.getByLabelText("Cached finance budgets")).toHaveTextContent("0|0|0"));
     await user.click(await screen.findByRole("button", { name: /Aurora Villa.*Painting.*Sharma Interiors/u }));
     await user.type(screen.getByLabelText("Reason for budget override"), "Verified approved budget exception.");
     await user.click(screen.getByRole("button", { name: "Approve revision" }));
     await waitFor(() => expect(requests).toHaveLength(1));
     expect(await screen.findByText("Decision unavailable.")).toBeVisible();
+    expect(readBudget).toHaveBeenCalledTimes(3);
+    expect(screen.getByLabelText("Cached finance budgets")).toHaveTextContent("0|0|0");
     await user.click(screen.getByRole("button", { name: "Approve revision" }));
     await waitFor(() => expect(requests).toHaveLength(2));
     expect(requests[1]?.idempotencyKey).toBe(requests[0]?.idempotencyKey);
     expect(await screen.findByText("Your approval was recorded. The work order is issued and its payment schedule is locked.")).toBeVisible();
+    await waitFor(() => expect(screen.getByLabelText("Cached finance budgets")).toHaveTextContent("5000|5000|5000"));
   });
 
   it("refreshes a committed decision when its response is lost", async () => {
@@ -140,6 +157,7 @@ describe("work order approval queue", () => {
       approvals: [{ slot: "budget_override", actorId: "admin-one", decision: "approve",
         reason: "Verified approved budget exception.", decidedAt: "2026-10-05T00:00:00Z" }] };
     let currentAward = award;
+    const readBudget = vi.fn(async () => currentAward.status === "issued" ? 5000 : 0);
     server.use(
       http.get("/api/v1/work-order-approvals", () => HttpResponse.json({ data: [{ awardId: "award-one", projectId: "project-one",
         enquiryId: "enquiry-one", mainBasketId: "basket-one", projectName: "Aurora Villa", basketName: "Painting",
@@ -151,11 +169,13 @@ describe("work order approval queue", () => {
       })
     );
     const user = userEvent.setup();
-    renderWithQuery(<MemoryRouter><ProcurementBasketApprovalQueue /></MemoryRouter>);
+    renderWithQuery(<MemoryRouter><ProcurementBasketApprovalQueue /><FinanceCacheProbe read={readBudget} /></MemoryRouter>);
+    await waitFor(() => expect(screen.getByLabelText("Cached finance budgets")).toHaveTextContent("0|0|0"));
     await user.click(await screen.findByRole("button", { name: /Aurora Villa.*Painting.*Sharma Interiors/u }));
     await user.type(screen.getByLabelText("Reason for budget override"), "Verified approved budget exception.");
     await user.click(screen.getByRole("button", { name: "Approve revision" }));
     expect(await screen.findByText("Your approval was recorded. The work order is issued and its payment schedule is locked.")).toBeVisible();
     expect(screen.queryByRole("button", { name: "Approve revision" })).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByLabelText("Cached finance budgets")).toHaveTextContent("5000|5000|5000"));
   });
 });

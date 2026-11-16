@@ -61,6 +61,7 @@ export async function cacheLatestVendorReports(assignments: ExecutionRow[], stat
     const event = reportByIdentity.get(JSON.stringify([String(assignment._id), assignment.projectId, assignment.vendorId, state?.executionRound ?? null]));
     const report: ExecutionVendorReport | null = event ? {
       eventId: String(event._id), executionRound: event.executionRound, reportedAt: iso(event.occurredAt)!,
+      ...(event.updateType ? { updateType: event.updateType } : {}),
       note: event.note, reason: event.reason ?? null, nextAction: event.nextAction ?? null, progress: event.progress, status: event.status
     } : null;
     cache.set(reportCacheKey(assignment, state), Promise.resolve(report));
@@ -149,13 +150,12 @@ export async function executionWorkDto(assignment: ExecutionRow, state: Executio
       else { allowedActions.push("propose_schedule"); if (state.schedule) { allowedActions.push("report"); if (state.progress === 100 && state.latestReportAt && new Date(state.latestReportAt) >= new Date(state.roundStartedAt)) allowedActions.push("submit"); } }
     }
     if (manager && editableExecutionStates.includes(state.status)) {
-      if (state.acknowledgedAt) allowedActions.push("confirm_schedule");
+      if (state.acknowledgedAt && state.proposedSchedule) allowedActions.push("confirm_schedule");
       allowedActions.push(state.hold ? "resume" : "hold");
-      if (actor.role === "site_manager") allowedActions.push("exempt_evidence");
     }
     if (actor.role === "site_manager" && state.status === "awaiting_verification") allowedActions.push("verify", "request_changes");
   }
-  let nextOwner: ExecutionWork["nextOwner"] = accepted || !currentOrder ? "none" : !accessActive ? "super_admin" : !state ? legacyReview ? "client" : "site_manager" : !state.acknowledgedAt ? "vendor" : !state.schedule || state.status === "awaiting_verification" || state.hold ? "site_manager" : status === "site_verified" ? "client" : "vendor";
+  let nextOwner: ExecutionWork["nextOwner"] = accepted || !currentOrder ? "none" : !accessActive ? "super_admin" : !state ? legacyReview ? "client" : "site_manager" : !state.acknowledgedAt ? "vendor" : (editableExecutionStates.includes(state.status) && state.proposedSchedule) || state.status === "awaiting_verification" || state.hold ? "site_manager" : status === "site_verified" ? "client" : "vendor";
   if (!siteManager && nextOwner === "site_manager") nextOwner = "super_admin";
   return {
     id: String(assignment._id), projectId: assignment.projectId, projectName: project?.name ?? assignment.projectId, ...(includeProjectNumber ? { projectNumber } : {}), vendorId: assignment.vendorId, vendorName: vendor?.name ?? order?.vendorName ?? assignment.vendorId,
@@ -170,7 +170,7 @@ export async function executionWorkDto(assignment: ExecutionRow, state: Executio
     reportingStartsOn: state?.reportingStartsOn ?? null, hold: state?.hold ? { reason: state.hold.reason, startedAt: iso(state.hold.startedAt)!, reviewDate: state.hold.reviewDate } : null,
     submission: review ? { id: String(review._id), submittedAt: iso(review.submittedAt)!, note: review.note, imageIds: review.imageIds, version: review.submissionVersion } : null,
     verification: state?.verificationId && review?.decision?.outcome === "verified" ? { id: state.verificationId, verifiedAt: iso(review.decision.decidedAt)!, verifiedById: review.decision.actorId, executionRound: review.executionRound } : null,
-    evidenceExemption: state?.evidenceExemption ? { reason: state.evidenceExemption.reason, grantedById: state.evidenceExemption.grantedById } : null,
+    evidenceExemption: null,
     imageIds: state ? await currentExecutionImages(assignment, state, session) : legacyClientReview?.imageIds ?? [], daily, flags, nextOwner, allowedActions,
     canSubmitToClient: Boolean(actor.role === "vendor" && editable && state?.status === "site_verified" && ["in_progress", "changes_requested"].includes(assignment.status) && Number(site?.currentRound ?? 0) === 0)
   };
