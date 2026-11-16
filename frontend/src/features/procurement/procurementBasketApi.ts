@@ -12,7 +12,7 @@ export interface BasketEstimateSource {
 export type MainBasketClassification = "standard" | "special";
 
 export type ProcurementEstimateMode = "in_house" | "sub_vendor" | "pmc";
-export type ProcurementEstimateModeGroupKey = ProcurementEstimateMode | "unrecorded";
+export type ProcurementEstimateModeGroupKey = ProcurementEstimateMode | "execution_pending" | "unrecorded";
 
 export interface ProcurementInHouseComponentBreakdown {
   visibleComponentsOnly?: boolean;
@@ -180,14 +180,17 @@ function validModeMetrics(value: Record<string, unknown>): boolean {
 /** Reject incompatible overview metadata without affecting the canonical basket drill-down. */
 export function hasValidProcurementModeGroups(data: ProcurementBasketList): data is ProcurementBasketList & { modeGroups: ProcurementBasketModeGroup[] } {
   const groups: unknown = data.modeGroups;
-  if (!Array.isArray(groups) || (groups.length !== 3 && groups.length !== 4)) return false;
-  const order = ["in_house", "sub_vendor", "pmc", "unrecorded"];
+  if (!Array.isArray(groups) || groups.length < 3 || groups.length > 5) return false;
+  const order = ["in_house", "sub_vendor", "pmc",
+    ...(groups.some(group => record(group) && group.mode === "execution_pending") ? ["execution_pending"] : []),
+    ...(groups.some(group => record(group) && group.mode === "unrecorded") ? ["unrecorded"] : [])];
+  if (groups.length !== order.length) return false;
   const canonicalIds = new Set(data.baskets.map((basket) => basket.id));
   const sourceKeys = new Set<string>();
   return groups.every((group: unknown, index) => {
     if (!record(group) || group.mode !== order[index] || !Array.isArray(group.baskets) ||
       group.basketCount !== group.baskets.length || !validModeMetrics(group)) return false;
-    if (group.mode === "unrecorded" && group.baskets.length === 0) return false;
+    if ((group.mode === "unrecorded" || group.mode === "execution_pending") && group.baskets.length === 0) return false;
     const basketIds = new Set<string>();
     return group.baskets.every((basket: unknown) => {
       if (!record(basket) || typeof basket.id !== "string" || !canonicalIds.has(basket.id) || basketIds.has(basket.id) ||
@@ -254,7 +257,7 @@ export interface BasketBoqLine extends BasketBoqLineInput {
 export type BasketEnquiryStatus = "draft" | "sent" | "award_pending" | "issued" | "cancelled";
 export interface BasketEnquiry {
   preparationSource?: EstimationPreparationSource;
-  sourceReconciliation?: { id: string; preparationSource: EstimationPreparationSource; unchangedLineKeys: string[] };
+  sourceReconciliation?: { id: string; preparationSource: EstimationPreparationSource; preparationDigest?: string; unchangedLineKeys: string[] };
   id: string;
   projectId: string;
   mainBasketId: string;

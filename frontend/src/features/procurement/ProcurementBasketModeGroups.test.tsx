@@ -95,6 +95,23 @@ describe("Procurement approved estimate mode groups", () => {
     expect(installed.reads).toEqual(["list:project-one"]);
   });
 
+  it("shows unselected execution work separately and permits filtering it without choosing a mode", async () => {
+    const installed = install();
+    const data = structuredClone(installed.fixture.list);
+    data.modeGroups![3]!.mode = "execution_pending";
+    installed.setList(data);
+    const user = userEvent.setup(); renderWorkspace();
+    const pending = await screen.findByRole("region", { name: "Execution selection pending baskets" });
+    expect(within(pending).getByText("Choose Sub-vendor or In-house")).toBeVisible();
+    expect(within(pending).getAllByText("Incomplete")).toHaveLength(2);
+    expect(screen.queryByRole("region", { name: "Mode not recorded baskets" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Filter" }));
+    await user.selectOptions(screen.getByRole("combobox", { name: "Pricing mode" }), "execution_pending");
+    expect(screen.getByRole("region", { name: "Execution selection pending baskets" })).toBeVisible();
+    for (const label of ["In-house", "Sub-vendor", "PMC"]) expect(screen.queryByRole("region", { name: `${label} baskets` })).not.toBeInTheDocument();
+    expect(installed.creations).toEqual([]); expect(installed.dispatches).toEqual([]);
+  });
+
   it.each(["In-house", "Sub-vendor", "PMC"])("opens the full mixed basket from its %s subset without filtering source lines", async (label) => {
     const installed = install(); const user = userEvent.setup(); renderWorkspace();
     await user.click((await openPop(label))[0]!);

@@ -1,6 +1,7 @@
 import mongoose from "mongoose";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PurchaseOrderModeResolution } from "../src/domain/project-purchase-order-mode.js";
+import { projectProcurementModeResolution, projectProcurementPreparation } from "../src/domain/procurement-in-house-visibility.js";
 import { projectProcurementBaskets } from "../src/domain/procurement-basket-projection.js";
 import { AiEstimatorKnowledgeBasketModel } from "../src/models/AiEstimatorKnowledgeBasket.js";
 import { AiEstimatorKnowledgeSubBasketModel } from "../src/models/AiEstimatorKnowledgeSubBasket.js";
@@ -30,13 +31,13 @@ const reviewRoundId = "preparation-mode-round";
 let replica: Awaited<ReturnType<typeof startMongoReplicaSet>>;
 
 const approvedLines: ApprovedProcurementSourceLine[] = [
-  { key: "line-a", sectionId: "basket-a", sectionLabel: "Painting", source: "configuration", itemType: "main_line",
+  { key: "line-a", sectionId: "basket-a", sectionLabel: "Painting", source: "configuration", itemType: "main_line", approvedPricingMode: "pmc",
     catalogueId: "main-a", roomId: "room-a", roomName: "Living", mainBasketId: "basket-a", mainBasketName: "Painting",
     subBasketId: "sub-a", subBasketName: "False Ceiling", mainLineId: "main-a", mainLineName: "Cove painting",
     revisionId: "revision-a", sourceRevisionVersion: 2, sourceRevisionStatus: "active",
     uomId: "uom-sqft", uomCode: "SQFT", uomDecimalScale: 2,
     specification: "Paint installed cove", unit: "sqft", quantity: 10, included: true, amountPaise: 100_000 },
-  { key: "line-b", sectionId: "basket-b", sectionLabel: "Painting", source: "configuration", itemType: "main_line",
+  { key: "line-b", sectionId: "basket-b", sectionLabel: "Painting", source: "configuration", itemType: "main_line", approvedPricingMode: "pmc",
     catalogueId: "main-b", roomId: "room-b", roomName: "Dining", mainBasketId: "basket-b", mainBasketName: "Painting",
     subBasketId: "sub-b", subBasketName: "False Ceiling", mainLineId: "main-b", mainLineName: "Cove painting",
     revisionId: "revision-b", sourceRevisionVersion: 1, sourceRevisionStatus: "superseded",
@@ -45,7 +46,7 @@ const approvedLines: ApprovedProcurementSourceLine[] = [
   { key: "line-zero", sectionId: "CC", sectionLabel: "Zero scope", source: "legacy", catalogueId: "CC01",
     roomName: "Bedroom", specification: "Zero-price reference", unit: "sqft", quantity: 3,
     included: true, amountPaise: 0 },
-  { key: "line-excluded", sectionId: "basket-c", sectionLabel: "Painting", source: "configuration", itemType: "main_line",
+  { key: "line-excluded", sectionId: "basket-c", sectionLabel: "Painting", source: "configuration", itemType: "main_line", approvedPricingMode: "pmc",
     catalogueId: "main-c", roomId: "room-c", roomName: "Study", mainBasketId: "basket-c", mainBasketName: "Painting",
     subBasketId: null, subBasketName: null, mainLineId: "main-c", mainLineName: "Excluded ceiling",
     revisionId: "revision-c", sourceRevisionVersion: 1, sourceRevisionStatus: "active",
@@ -67,6 +68,7 @@ const source: ApprovedProcurementSnapshot = {
 
 function readyMode(version: number): PurchaseOrderModeResolution {
   return {
+    executionPolicy: { intent: "pmc", allowedModes: ["pmc"] },
     state: "ready", options: [{ key: "pmc", label: "PMC" }], issues: [],
     availability: [
       { key: "pmc", label: "PMC", available: true, issues: [] },
@@ -162,41 +164,67 @@ beforeEach(async () => {
 afterAll(async () => { await replica?.stop(); });
 
 describe("mode-aware purchase order preparation", () => {
-  it("preserves pre-grouping current, legacy and basket digest baselines", async () => {
+  it("preserves the immutable legacy digest while current policy fingerprints are deterministic", async () => {
     const current = await prepare();
+    const repeated = await prepare();
     const legacy = await mongoose.connection.transaction(session =>
       buildProjectPurchaseOrderPreparation(projectId, session, { digestVersion: "legacy" }));
-    expect(current.digest).toBe("1bdfa14baf69dffa4ac03bc7818bafa9456cbe470f6f482260379cbb83b666ce");
     expect(legacy.digest).toBe("bc06618b743bf4fe3c177c953c2c5e122fdfce5ef2891b14eb81cf543f7247ff");
-    expect(projectProcurementBaskets(current).map(basket => ({ id: basket.id, digest: basket.preparationDigest }))).toEqual([
-      { id: "DD", digest: "022123dddb1a3ac406fcedd30a6d509f97cb673fd0b23c3014d0175952f77796" },
-      { id: "basket-a", digest: "9c25f0d67e29f563e12bb513741a5307f5a1c5d050a5ca65c5dfb67f3f60e672" },
-      { id: "basket-b", digest: "286c302e16356bbe4d1249ba72da8ef5943a03fa4d1386ef29bfbdf94588eaf7" },
-      { id: "basket-c", digest: "34b6e31f11808ff70b96a1427c687546592212d2dc70ff624dedcbd4bf47f207" },
-      { id: "CC", digest: "4d800f9789bdb9de504ade03a1107094bc01519b5f8e7d9de89234fb07265961" }
-    ]);
+    expect(current.digest).toBe(repeated.digest);
+    expect(current.digest).not.toBe("1bdfa14baf69dffa4ac03bc7818bafa9456cbe470f6f482260379cbb83b666ce");
+    expect(projectProcurementBaskets(current).map(basket => basket.preparationDigest))
+      .toEqual(projectProcurementBaskets(repeated).map(basket => basket.preparationDigest));
   });
-  it("keeps all commercial output and current/legacy hashes when only estimate display metadata changes", async () => {
+
+  it("retains costs and fingerprints when only obsolete classification display metadata changes", async () => {
     const before = await prepare();
-    const legacyBefore = await mongoose.connection.transaction(session =>
-      buildProjectPurchaseOrderPreparation(projectId, session, { digestVersion: "legacy" }));
-    const withDisplay = source.allLineItems.map((line, index) => ({ ...line,
-      approvedClassification: "special" as const,
-      approvedPricingMode: index === 0 ? "in_house" as const : "sub_vendor" as const }));
+    const withDisplay = source.allLineItems.map(line => ({ ...line, approvedClassification: "special" as const }));
     vi.mocked(procurementItemSourceSnapshot).mockResolvedValue({ ...source, allLineItems: withDisplay,
       lineItems: withDisplay.filter(line => line.included && line.amountPaise !== null) as ApprovedProcurementSnapshot["lineItems"] });
     const after = await prepare();
-    const legacyAfter = await mongoose.connection.transaction(session =>
-      buildProjectPurchaseOrderPreparation(projectId, session, { digestVersion: "legacy" }));
     expect(after.digest).toBe(before.digest);
-    expect(legacyAfter.digest).toBe(legacyBefore.digest);
-    expect(after.estimateLines[0]?.estimateMode).toMatchObject({ mode: "in_house", provenance: "line" });
-    const withoutDisplay = (value: typeof before) => ({ ...value,
-      estimateLines: value.estimateLines.map(({ estimateMode: _display, ...line }) => line) });
-    expect(withoutDisplay(after)).toEqual(withoutDisplay(before));
+    expect(after.approvedEstimatePaise).toBe(before.approvedEstimatePaise);
+    expect(after.netPaise).toBe(before.netPaise);
+    expect(after.estimateLines[0]?.estimateMode).toMatchObject({ mode: "pmc", provenance: "line" });
     const basketCommerce = (value: typeof before) => projectProcurementBaskets(value).map(basket => ({ ...basket,
       lines: basket.lines.map(({ estimateMode: _display, ...line }) => line) }));
     expect(basketCommerce(after)).toEqual(basketCommerce(before));
+  });
+
+  it("fingerprints approved execution policy separately from unchanged prices and legacy history", async () => {
+    const pending: PurchaseOrderModeResolution = { ...unavailableMode(),
+      executionPolicy: { intent: "pmc", allowedModes: ["pmc"] } };
+    vi.mocked(resolvePurchaseOrderModes).mockResolvedValue(modes(pending));
+    const before = await prepare();
+    const legacyBefore = await mongoose.connection.transaction(session =>
+      buildProjectPurchaseOrderPreparation(projectId, session, { digestVersion: "legacy" }));
+    const changed = source.allLineItems.map((line, index) => index === 0 ? { ...line, approvedPricingMode: "sub_vendor" as const } : line);
+    vi.mocked(procurementItemSourceSnapshot).mockResolvedValue({ ...source, allLineItems: changed,
+      lineItems: changed.filter(line => line.included && line.amountPaise !== null) as ApprovedProcurementSnapshot["lineItems"] });
+    vi.mocked(resolvePurchaseOrderModes).mockResolvedValue(modes({ ...pending,
+      executionPolicy: { intent: "execution", allowedModes: ["sub_vendor", "in_house"] } }));
+    const after = await prepare();
+    const legacyAfter = await mongoose.connection.transaction(session =>
+      buildProjectPurchaseOrderPreparation(projectId, session, { digestVersion: "legacy" }));
+    expect(after.digest).not.toBe(before.digest);
+    expect(after.netPaise).toBe(before.netPaise);
+    expect(after.approvedEstimatePaise).toBe(before.approvedEstimatePaise);
+    expect(legacyAfter.digest).toBe(legacyBefore.digest);
+  });
+
+  it("carries saved Procurement component evidence without adding it to the approved source and redacts hidden decisions", async () => {
+    const inHouse = readyMode(1);
+    inHouse.executionPolicy = { intent: "execution", allowedModes: ["sub_vendor", "in_house"] };
+    inHouse.decision = { ...inHouse.decision!, mode: "in_house", selectedInHouseComponentIds: ["component-one"] };
+    inHouse.preview = { ...inHouse.preview!, mode: "in_house" };
+    inHouse.inHouseComponentVisibility = "hidden";
+    vi.mocked(resolvePurchaseOrderModes).mockResolvedValue(modes(inHouse));
+    const raw = await prepare();
+    expect(raw.estimateLines[0]?.selectedInHouseComponentIds).toEqual(["component-one"]);
+    expect(source.allLineItems[0]).not.toHaveProperty("selectedInHouseComponentIds");
+    expect(projectProcurementPreparation(raw).estimateLines[0]).not.toHaveProperty("selectedInHouseComponentIds");
+    expect(projectProcurementModeResolution(inHouse)?.decision).not.toHaveProperty("selectedInHouseComponentIds");
+    expect(inHouse.decision.selectedInHouseComponentIds).toEqual(["component-one"]);
   });
   it("refreshes current parent labels by stable IDs without rewriting approved or legacy labels", async () => {
     const before = await prepare();

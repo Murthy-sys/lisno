@@ -388,62 +388,28 @@ function EarlierEnquiry({ projectId, basketId, enquiry }: { projectId: string; b
 }
 
 function unreadyBasketReason(basket: ProcurementBasketDetail): string {
-  const lines = basket.lines.filter((line) => line.included && line.approvedAmountPaise !== null && line.approvedAmountPaise > 0);
+  const lines = basket.lines.filter(line => line.included && line.approvedAmountPaise !== null && line.approvedAmountPaise > 0);
   if (!lines.length) return "No priced approved lines are available for a vendor BOQ.";
-  const name = (line: typeof lines[number]) => line.mainLineName?.trim() || line.sourceLineItemKey;
-  const hasCurrentUnit = (line: typeof lines[number]) => {
-    const uom = line.mode?.uom;
-    return Boolean(uom?.id && uom.code && Number.isSafeInteger(uom.decimalScale) &&
-      uom.decimalScale >= 0 && uom.decimalScale <= 3);
-  };
-  if (!basket.automaticSubVendor) {
-    const unready = lines.find((line) => {
-      const mode = line.mode;
-      return !hasCurrentUnit(line) || mode?.state !== "ready" ||
-        !mode.preview || !["active", "superseded"].includes(mode.revision?.status ?? "");
-    });
-    if (unready) {
-      const issue = unready.mode?.issues.find((item) => item.message.trim())?.message;
-      if (issue) return `${name(unready)}: ${issue}`;
-      if (unready.mode?.revision?.status === "draft")
-        return `${name(unready)}: The current saved Configuration revision needs Super Admin activation before bid invitations can be sent.`;
-      if (!unready.mode || unready.mode.state === "selection_required")
-        return `${name(unready)}: Confirm this line’s saved mode before sending bid invitations.`;
-      if (!unready.mode.uom?.id || !unready.mode.uom.code)
-        return `${name(unready)}: The current Configuration unit is incomplete.`;
-      return `${name(unready)}: Resolve this line’s saved Configuration mode and pricing before sending bid invitations.`;
-    }
-    return `${name(lines[0]!)}: Review the current saved mode before sending bid invitations.`;
-  }
-  const hasCost = (line: typeof lines[number]) => {
+  for (const line of lines) {
+    const name = line.mainLineName?.trim() || line.sourceLineItemKey;
     const mode = line.mode;
-    const cost = line.standardCost;
-    const rate = cost?.baseRates[0];
-    return hasCurrentUnit(line) && line.source === "configuration" && Boolean(mode?.revision?.id) &&
-      ["draft", "active", "superseded"].includes(mode?.revision?.status ?? "") &&
-      typeof mode?.revision?.contentDigest === "string" && /^[a-f0-9]{64}$/u.test(mode.revision.contentDigest) &&
-      (cost?.state === "suggested" || cost?.state === "observed_unverified") &&
-      cost.mode === "sub_vendor" && cost.calculationQuantity === line.approvedQuantity &&
-      cost.baseRates.length === 1 && rate?.scope === "sub_vendor" &&
-      Number.isSafeInteger(rate.ratePaise) && rate.ratePaise >= 0 && line.baseUnitRatePaise === rate.ratePaise &&
-      Number.isSafeInteger(cost.baseCostPaise) && cost.baseCostPaise! >= 0 &&
-      Number.isSafeInteger(cost.adjustedCostPaise) && cost.adjustedCostPaise! >= cost.baseCostPaise! &&
-      (cost.state !== "observed_unverified" || (mode.integrity?.status === "mismatch" &&
-        mode.integrity.activatedDigest === mode.revision.contentDigest &&
-        /^[a-f0-9]{64}$/u.test(mode.integrity.observedDigest)));
-  };
-  const lineIssue = (line: typeof lines[number]) => [...(line.standardCost?.issues ?? []), ...(line.mode?.issues ?? [])]
-    .find((issue) => issue.code !== "PINNED_DIGEST_MISMATCH" && issue.message.trim())?.message;
-  const unready = lines.find((line) => !hasCost(line) || !["active", "superseded"].includes(line.mode?.revision?.status ?? ""));
-  if (unready) {
-    const issue = lineIssue(unready);
-    if (issue) return `${name(unready)}: ${issue}`;
-    if (!hasCurrentUnit(unready)) return `${name(unready)}: The current Configuration unit is incomplete.`;
-    if (!hasCost(unready)) return `${name(unready)}: The saved Sub-vendor Configuration cannot price this approved line.`;
-    if (unready.mode?.revision?.status === "draft")
-      return `${name(unready)}: The current saved Configuration revision needs Super Admin activation before bid invitations can be sent.`;
+    const policy = mode?.executionPolicy;
+    if (!policy || policy.intent === "unrecorded") return `${name}: The approved execution path is unavailable. Refresh the source before sending invitations.`;
+    if (policy.intent === "execution" && !mode?.decision?.mode) return `${name}: Choose and save Sub-vendor or In-house before sending bid invitations.`;
+    if (mode?.decision?.mode && !policy.allowedModes.includes(mode.decision.mode)) return `${name}: Review the saved mode against the approved execution path before sending invitations.`;
+    const issue = mode?.issues.find(item => item.message.trim())?.message;
+    if (issue) return `${name}: ${issue}`;
+    if (mode?.revision?.status === "draft") return `${name}: The current saved Configuration revision needs Super Admin activation before bid invitations can be sent.`;
+    if (mode?.state === "selection_required") return `${name}: Confirm this line’s saved mode before sending bid invitations.`;
+    const uom = mode?.uom;
+    if (!uom?.id || !uom.code || !Number.isSafeInteger(uom.decimalScale) || uom.decimalScale < 0 || uom.decimalScale > 3)
+      return `${name}: The current Configuration unit is incomplete.`;
+    if (mode?.state !== "ready" || !mode.preview || !mode.decision ||
+        mode.decision.mode !== mode.preview.mode || mode.decision.quantity !== mode.preview.quantity ||
+        !policy.allowedModes.includes(mode.preview.mode) || !["active", "superseded"].includes(mode.revision?.status ?? ""))
+      return `${name}: Resolve this line’s saved Configuration mode and pricing before sending bid invitations.`;
   }
-  return `${name(lines[0]!)}: Review the current Configuration revision and unit before sending bid invitations.`;
+  return "Review the current basket readiness before sending bid invitations.";
 }
 
 export function ProcurementBasketEnquiry({ projectId, projectName, basket, frozen, issueReadiness }: {
@@ -459,19 +425,28 @@ export function ProcurementBasketEnquiry({ projectId, projectName, basket, froze
   const [revisionRequested, setRevisionRequested] = useState(false);
   const sourceChanged = Boolean(preparation.data && (preparation.data.estimateSource.estimateId !== basket.estimateSource.estimateId || preparation.data.estimateSource.estimateVersion !== basket.estimateSource.estimateVersion));
   const reconciledSource = Boolean(enquiry?.sourceReconciliation && enquiry.sourceReconciliation.preparationSource.sourceSnapshotId === basket.preparationSource?.sourceSnapshotId && enquiry.vendorScopeCurrent === true);
-  const staleSentBoq = enquiry?.status === "sent" && enquiry.preparationDigest !== basket.preparationDigest && !reconciledSource;
+  const effectivePreparationDigest = reconciledSource ? enquiry?.sourceReconciliation?.preparationDigest : enquiry?.preparationDigest;
+  const staleSentBoq = Boolean(enquiry?.boqRevisionId && enquiry.status !== "issued" && effectivePreparationDigest !== basket.preparationDigest);
   const paused = frozen || preparation.isFetching || preparation.isError || sourceChanged || enquiries.isFetching;
   const stage = staleSentBoq ? 0 : enquiry?.status === "issued" ? 3 : enquiry?.status === "award_pending" || enquiry?.status === "sent" && enquiry.bidCount > 0 ? 2 : enquiry?.status === "sent" ? 1 : 0;
   const hasDelivery = Boolean(enquiry?.invitations.length);
   const hasComparison = Boolean(enquiry && enquiry.status !== "draft" && enquiry.status !== "issued");
   const stageAvailable = [true, hasDelivery || hasComparison, hasComparison, enquiry?.status === "issued"];
-  const readinessReason = basket.boqReady ? null : unreadyBasketReason(basket);
+  const policyReady = basket.lines.filter(line => line.included && line.approvedAmountPaise !== null && line.approvedAmountPaise > 0).every(line => {
+    const policy = line.mode?.executionPolicy;
+    const savedMode = line.mode?.decision?.mode;
+    const preview = line.mode?.preview;
+    return policy && policy.intent !== "unrecorded" && savedMode && policy.allowedModes.includes(savedMode) &&
+      line.mode?.state === "ready" && preview?.mode === savedMode && preview.quantity === line.mode.decision?.quantity;
+  });
+  const readinessReason = basket.boqReady && policyReady ? null : unreadyBasketReason(basket);
+  const staleActionReason = staleSentBoq ? "The saved execution choice or pricing changed. Revise and resend the BOQ before sending further invitations." : null;
   const vendorFrozenReason = sourceChanged ? "The approved estimate changed. Refresh the basket before sending invitations." :
     preparation.isError ? "The approved estimate could not be checked. Retry loading the basket before sending." :
     preparation.isFetching ? "Checking the current approved estimate before sending…" :
     enquiries.isFetching ? "Refreshing the enquiry before sending…" :
     frozen ? "This basket is temporarily unavailable for editing." :
-    readinessReason;
+    (!revisionRequested && staleActionReason) || readinessReason;
   function goToStage(index: number) {
     const targetId = index === 1 && !hasDelivery && hasComparison ? stageTargets[2] : stageTargets[index];
     const target = document.getElementById(targetId ?? "");
@@ -510,10 +485,10 @@ export function ProcurementBasketEnquiry({ projectId, projectName, basket, froze
           : revisionRequested ? "Sending this revised BOQ will supersede current vendor links and bids for the sent revision." : "Revising this BOQ supersedes current vendor links and bids for that revision."}</p><button type="button" disabled={paused} onClick={() => setRevisionRequested((current) => !current)}>{revisionRequested ? "Cancel revision" : "Start BOQ revision"}</button></section></details> : null}
         {preparation.isPending ? null : <BasketBoqEditor key={`${basket.id}:${enquiry?.id ?? "new"}:${revisionRequested ? "revise" : "view"}`} projectId={projectId} basket={basket} enquiry={enquiry} frozen={paused} reviseSent={revisionRequested} preparationDigest={basket.preparationDigest} vendorFrozenReason={vendorFrozenReason} afterChange={async () => { await refresh(); setRevisionRequested(false); }} />}
       </div>
-      {enquiry && hasDelivery ? <div id={stageTargets[1]} className="procurement-basket__stage-content" tabIndex={-1}><details className="procurement-basket__delivery"><summary>Invitation status and WhatsApp</summary><BasketInvitationDelivery projectId={projectId} basketId={basket.id} enquiry={enquiry} frozen={paused || enquiry.vendorScopeCurrent === false} readinessReason={readinessReason} afterResend={refresh} /></details></div> : null}
+      {enquiry && hasDelivery ? <div id={stageTargets[1]} className="procurement-basket__stage-content" tabIndex={-1}><details className="procurement-basket__delivery"><summary>Invitation status and WhatsApp</summary><BasketInvitationDelivery projectId={projectId} basketId={basket.id} enquiry={enquiry} frozen={paused || enquiry.vendorScopeCurrent === false} readinessReason={staleActionReason || readinessReason} afterResend={refresh} /></details></div> : null}
       {enquiry && hasComparison ? <div id={stageTargets[2]} className="procurement-basket__stage-content" tabIndex={-1}>
         {staleSentBoq ? <p role="status" className="procurement-basket__notice">These responses belong to the previous frozen BOQ. Revise and resend before awarding.</p> : null}
-        <ProcurementBasketComparison projectId={projectId} basketId={basket.id} enquiry={enquiry} frozen={paused || staleSentBoq} collaborative={Boolean(basket.preparationSource)} issueReadiness={issueReadiness} invitationBlocker={readinessReason} afterChange={refresh} />
+        <ProcurementBasketComparison projectId={projectId} basketId={basket.id} enquiry={enquiry} frozen={paused || staleSentBoq} collaborative={Boolean(basket.preparationSource)} issueReadiness={issueReadiness} invitationBlocker={staleActionReason || readinessReason} afterChange={refresh} />
       </div> : null}
       </div>
       {enquiry?.status === "issued" ? <div id={stageTargets[3]} className="procurement-basket__stage-content procurement-basket__issued-stage" tabIndex={-1}><ProcurementBasketMonitor projectId={projectId} basketId={basket.id} enquiry={enquiry} /></div> : null}

@@ -50,20 +50,23 @@ const basket: ProcurementBasketDetailDto = { id: "basket-a", name: "Painting", c
     subBasketId: "sub-a", subBasketName: "Walls", mainLineId: "main-a", mainLineName: "Two coats of interior paint",
     approvedQuantity: "10", approvedUnit: "sq-ft", approvedAmountPaise: 10_000_000,
     included: true, source: "configuration", baseUnitRatePaise: 50_000, standardCost: null,
-    mode: { state: "ready", revision: { id: "revision-a", version: 2, status: "active", contentDigest: digest },
-      preview: { baseCostPaise: 500_000,
+    mode: { state: "ready", issues: [], options: [], availability: [], priceReferences: {}, executionPolicy: { intent: "execution", allowedModes: ["sub_vendor", "in_house"] },
+      decision: { mode: "sub_vendor", quantity: "10" }, revision: { id: "revision-a", version: 2, status: "active", contentDigest: digest },
+      preview: { mode: "sub_vendor", quantity: "10", baseCostPaise: 500_000,
       adjustedCostPaise: 600_000, sellingPaise: 700_000 }, uom: { id: "uom-a", code: "SQFT", decimalScale: 2 } } as ProcurementBasketDetailDto["lines"][number]["mode"] }] };
 const manualMode = basket.lines[0]!.mode;
 const firstLine = basket.lines[0]!;
-function useObservedStandardCost(): void {
+function useRecoveredSubVendorCost(): void {
   basket.classification = "standard";
-  basket.automaticSubVendor = true;
+  basket.automaticSubVendor = false;
   basket.boqReady = true;
   basket.standardCost = { totalPaise: 600_000, complete: true, provisional: true, pricedLineCount: 1 };
-  firstLine.standardCost = { state: "observed_unverified", mode: "sub_vendor", calculationQuantity: "10",
+  firstLine.standardCost = { state: "saved", mode: "sub_vendor", calculationQuantity: "10",
     baseRates: [{ scope: "sub_vendor", ratePaise: 50_000 }], baseCostPaise: 500_000,
     adjustedCostPaise: 600_000, issues: [{ code: "PINNED_DIGEST_MISMATCH", message: "Saved Configuration changed." }] };
-  firstLine.mode = { state: "unavailable", preview: null, decision: null,
+  firstLine.mode = { ...manualMode, state: "ready", preview: manualMode!.preview, decision: { ...manualMode!.decision!,
+    integrityBasis: { kind: "observed_unverified", activatedDigest: digest, observedDigest: "b".repeat(64),
+      reason: "Reviewed saved rates", actorId: buyer.id, acknowledgedAt: at.toISOString() } },
     revision: { id: "revision-a", version: 2, status: "active", contentDigest: digest },
     uom: { id: "uom-a", code: "SQFT", decimalScale: 2 },
     integrity: { status: "mismatch", activatedDigest: digest, observedDigest: "b".repeat(64), candidateAvailability: [] }
@@ -276,6 +279,18 @@ describe("procurement basket tender transaction flow", () => {
     expect(revised.approvals).toEqual([]);
     expect(await ProcurementBasketAwardRevisionModel.findById(revised.proposalRevisionId).lean()).toMatchObject({
       preparationSource: { sourceSnapshotId: "final-source" }, sourceReconciliationId: reconciled.sourceReconciliation!.id });
+    // Reconciliation is scoped to its saved execution basis, not a permanent exemption from freshness.
+    basket.preparationDigest = "d".repeat(64);
+    expect((await awards.comparison(buyer, "project-a", "basket-a", enquiry.id)).rows).toHaveLength(1);
+    await expect(awards.preview(buyer, "project-a", "basket-a", enquiry.id,
+      { bidId: award.bidId, advanceBasisPoints: 2000 })).rejects.toMatchObject({ code: "PROCUREMENT_BASKET_SOURCE_CHANGED" });
+    const afterDrift = await enquiries.get(buyer, "project-a", "basket-a", enquiry.id);
+    await expect(enquiries.submitInvitationBatch(buyer, "project-a", "basket-a", enquiry.id,
+      { expectedVersion: afterDrift.version, boqRevisionId: afterDrift.boqRevisionId!, boqDigest: afterDrift.boqDigest!,
+        selection: { kind: "vendors", vendorIds: ["vendor-b"] }, idempotencyKey: "reconciled-drift-invite" }))
+      .rejects.toMatchObject({ code: "PROCUREMENT_BASKET_SOURCE_CHANGED" });
+    expect(await ProcurementBasketBoqRevisionModel.findById(enquiry.boqRevisionId).lean()).toEqual(originalBoq);
+    expect(await ProcurementBasketBidModel.find({ enquiryId: enquiry.id }).lean()).toEqual(originalBids);
   });
 
   it("serializes competing final reconciliations without duplicating source proof", async () => {
@@ -493,8 +508,8 @@ describe("procurement basket tender transaction flow", () => {
     const input = { expectedVersion: sentEnquiry.version, boqRevisionId: sentEnquiry.boqRevisionId!,
       boqDigest: sentEnquiry.boqDigest!, selection: { kind: "vendors" as const, vendorIds: ["vendor-b"] },
       idempotencyKey: "unready-line-batch" };
-    const preview = await enquiries.previewInvitationBatch(buyer, "project-a", "basket-a", draft.id, input);
-    expect(preview.actions).toMatchObject([{ vendorId: "vendor-b", action: "first_invitation" }]);
+    await expect(enquiries.previewInvitationBatch(buyer, "project-a", "basket-a", draft.id, input))
+      .rejects.toMatchObject({ code: "PROCUREMENT_BASKET_MODE_REQUIRED", message: expect.stringContaining("Cove in Gypsum") });
     await expect(enquiries.submitInvitationBatch(buyer, "project-a", "basket-a", draft.id, input))
       .rejects.toMatchObject({ code: "PROCUREMENT_BASKET_MODE_REQUIRED",
         message: expect.stringContaining("Cove in Gypsum") });
@@ -704,8 +719,8 @@ describe("procurement basket tender transaction flow", () => {
     expect(JSON.stringify(auditEvents)).not.toContain(whatsAppToken);
   });
 
-  it("creates, updates and sends an automatic Standard BOQ from observed saved Configuration", async () => {
-    useObservedStandardCost();
+  it("creates, updates and sends a BOQ with a saved recovered Sub-vendor decision", async () => {
+    useRecoveredSubVendorCost();
     const created = await enquiries.create(buyer, "project-a", "basket-a", boqInput);
     firstLine.mainLineName = "Updated POP scope";
     const updated = await enquiries.update(buyer, "project-a", "basket-a", created.id, {
@@ -853,11 +868,84 @@ describe("procurement basket tender transaction flow", () => {
     expect(await ProcurementBasketBoqRevisionModel.countDocuments({ enquiryId: created.id })).toBe(1);
     expect(sent).toHaveLength(1);
   });
+  it.each(["dispatch", "resend", "counteroffer", "award submission"] as const)
+    ("shares the Project execution-decision fence with %s", async action => {
+      let perform: () => Promise<unknown>;
+      if (action === "dispatch") {
+        const created = await enquiries.create(buyer, "project-a", "basket-a", boqInput);
+        perform = () => enquiries.dispatch(buyer, "project-a", "basket-a", created.id,
+          { expectedVersion: created.version, expectedPreparationDigest: digest,
+            idempotencyKey: "fence-execution-dispatch", vendorIds: ["vendor-a"] });
+      } else if (action === "award submission") {
+        const { enquiry, award } = await assignedAwardDraft();
+        perform = () => awards.submit(buyer, "project-a", "basket-a", enquiry.id, award.id,
+          { expectedVersion: award.version, idempotencyKey: "fence-execution-award" });
+      } else {
+        const enquiry = await sentEnquiry(["vendor-a"]);
+        if (action === "resend") {
+          await ProcurementBasketInvitationModel.updateOne({ enquiryId: enquiry.id }, { $set: { status: "failed", sentAt: null } });
+          perform = () => enquiries.resendInvitation(buyer, "project-a", "basket-a", enquiry.id,
+            { expectedVersion: enquiry.version, vendorId: "vendor-a", idempotencyKey: "fence-execution-resend" });
+        } else {
+          const token = sent[0]!.rawToken;
+          const boq = await enquiries.inspectVendorBoq(token);
+          await enquiries.submitVendorBid({ token, idempotencyKey: "fence-execution-bid",
+            lines: [{ boqLineId: boq.lines[0]!.id, unitPricePaise: 100000, gstBasisPoints: 0 }] });
+          const current = await enquiries.get(buyer, "project-a", "basket-a", enquiry.id);
+          perform = () => enquiries.requestCounteroffer(buyer, "project-a", "basket-a", enquiry.id,
+            { expectedVersion: current.version, vendorId: "vendor-a", idempotencyKey: "fence-execution-counteroffer",
+              reason: "Please update the current quotation." });
+        }
+      }
+      let entered!: () => void;
+      let release!: () => void;
+      const inside = new Promise<void>(resolve => { entered = resolve; });
+      const resume = new Promise<void>(resolve => { release = resolve; });
+      vi.mocked(preparedBaskets).mockImplementationOnce(async () => {
+        const snapshot = structuredClone(basket);
+        entered();
+        await resume;
+        return [snapshot];
+      });
+      const running = perform();
+      await inside;
+      // Mode save uses this exact Project write before checking award locks or persisting a choice.
+      const choiceWrite = mongoose.connection.transaction(async session => {
+        await ProjectModel.updateOne({ _id: "project-a" }, { $inc: { purchaseOrderApprovalEpoch: 1 } }, { session });
+      }).then(() => "committed", () => "conflicted");
+      const first = await Promise.race([choiceWrite, new Promise<string>(resolve => setTimeout(() => resolve("pending"), 100))]);
+      release();
+      await running;
+      const outcome = await choiceWrite;
+      expect(first).not.toBe("committed");
+      expect(["committed", "conflicted"]).toContain(outcome);
+    });
+
+  it("requires saved execution on every line of a mixed PMC and execution basket", async () => {
+    const pmc = { ...firstLine, mode: { ...manualMode!, executionPolicy: { intent: "pmc" as const, allowedModes: ["pmc" as const] },
+      decision: { ...manualMode!.decision!, mode: "pmc" as const }, preview: { ...manualMode!.preview!, mode: "pmc" as const } } };
+    const execution = { ...firstLine, sourceLineItemKey: "line-b", source: "legacy" as const,
+      mainLineName: "Execution item", mode: { ...manualMode!, decision: null } };
+    basket.lines = [pmc, execution];
+    basket.includedLineCount = 2;
+    const fields = { ...boqInput, lines: [{ sourceLineItemKey: "line-a" }, { sourceLineItemKey: "line-b" }] };
+    await expect(enquiries.create(buyer, "project-a", "basket-a", fields))
+      .rejects.toMatchObject({ code: "PROCUREMENT_BASKET_MODE_REQUIRED" });
+    execution.mode.decision = { ...manualMode!.decision!, mode: "in_house" } as never;
+    execution.mode.preview = { ...manualMode!.preview!, mode: "in_house" };
+    const created = await enquiries.create(buyer, "project-a", "basket-a", fields);
+    const sent = await enquiries.dispatch(buyer, "project-a", "basket-a", created.id,
+      { expectedVersion: created.version, expectedPreparationDigest: digest, idempotencyKey: "mixed-policy-dispatch", vendorIds: ["vendor-a"] });
+    expect(sent.lines.map(line => line.sourceLineItemKey)).toEqual(["line-a", "line-b"]);
+    expect(sent.status).toBe("sent");
+  });
+
   it("rejects a priced-line subset when another included Standard line cannot be priced", async () => {
-    useObservedStandardCost();
+    useRecoveredSubVendorCost();
     const addUnavailableLine = () => {
       basket.lines = [firstLine, { ...firstLine, sourceLineItemKey: "line-b", roomId: "room-b",
         approvedAmountPaise: 5_000_000, baseUnitRatePaise: null,
+        mode: { ...firstLine.mode!, state: "unavailable", preview: null },
         standardCost: { state: "unavailable", mode: "sub_vendor", calculationQuantity: "10",
           baseRates: [], baseCostPaise: null, adjustedCostPaise: null,
           issues: [{ code: "CALCULATION_NOT_CONFIGURED", message: "Sub-vendor cost is unavailable." }] } }];
@@ -867,7 +955,7 @@ describe("procurement basket tender transaction flow", () => {
     };
     addUnavailableLine();
     await expect(enquiries.create(buyer, "project-a", "basket-a", boqInput)).rejects.toMatchObject({
-      status: 409, code: "PROCUREMENT_BASKET_SUB_VENDOR_COST_UNAVAILABLE" });
+      status: 409, code: "PROCUREMENT_BASKET_MODE_REQUIRED" });
     expect(await ProcurementBasketEnquiryModel.countDocuments()).toBe(0);
 
     basket.lines = [firstLine];
@@ -879,7 +967,7 @@ describe("procurement basket tender transaction flow", () => {
     await expect(enquiries.dispatch(buyer, "project-a", "basket-a", draft.id, {
       expectedVersion: draft.version, expectedPreparationDigest: digest,
       idempotencyKey: "mixed-standard-dispatch", vendorIds: ["vendor-a"] })).rejects.toMatchObject({
-      status: 409, code: "PROCUREMENT_BASKET_SUB_VENDOR_COST_UNAVAILABLE" });
+      status: 409, code: "PROCUREMENT_BASKET_MODE_REQUIRED" });
     expect(await ProcurementBasketBoqRevisionModel.countDocuments()).toBe(0);
   });
   it("permits only one active enquiry for a project basket under concurrent creates", async () => {
@@ -1184,6 +1272,11 @@ describe("procurement basket tender transaction flow", () => {
     basket.preparationDigest = "b".repeat(64);
     expect((await enquiries.get(buyer, "project-a", "basket-a", first.id)).vendorScopeCurrent).toBe(true);
     const input = { expectedVersion: first.version, vendorId: "vendor-a", idempotencyKey: "resend-failed-key" };
+    await expect(enquiries.resendInvitation(buyer, "project-a", "basket-a", first.id, input))
+      .rejects.toMatchObject({ code: "PROCUREMENT_BASKET_SOURCE_CHANGED" });
+    expect(sent).toHaveLength(0);
+    expect(await ProcurementBasketInvitationModel.countDocuments({ enquiryId: first.id })).toBe(1);
+    basket.preparationDigest = digest;
     const resent = await enquiries.resendInvitation(buyer, "project-a", "basket-a", first.id, input);
     expect(resent.status).toBe("sent");
     expect(resent.boqRevisionId).toBe(first.boqRevisionId);

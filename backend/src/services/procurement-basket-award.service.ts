@@ -1,3 +1,4 @@
+import { fenceBasketConfiguration } from "./procurement-basket-enquiry.service.js";
 import { assertDesignRequirementsPoAllowed } from "./design-requirements.service.js";
 import { procurementPreparationProjectFilter, procurementPreparationProjectAllowed } from "./procurement.service.js";
 import type { ClientSession, PipelineStage } from "mongoose";
@@ -23,7 +24,7 @@ import { VENDOR_KPI_RUBRIC_VERSION } from "../domain/vendor-kpi.js";
 import type { AuditService } from "./audit.service.js";
 import type { PublicUser } from "./auth.service.js";
 import { assertBasketVendorEligible } from "./procurement-basket-vendor-eligibility.service.js";
-import { assertBasketSourceUnreserved, basketReconciliationForRevision, currentBasketForVendorScope, currentBasket, getBasketEnquiry, getCurrentBoq,
+import { assertBasketActionReady, assertBasketSourceUnreserved, basketReconciliationForRevision, currentBasketForVendorScope, currentBasket, getBasketEnquiry, getCurrentBoq,
   requireBasketBuyer, tenderConflict, tenderId, tenderIso, tenderTransaction, type TenderRow }
   from "./procurement-basket-tender-support.service.js";
 import { buildProjectPurchaseOrderPreparation } from "./project-purchase-order-preparation.service.js";
@@ -508,9 +509,7 @@ async function readComparison(enquiry: TenderRow, session: ClientSession,
   const revision = await getCurrentBoq(enquiry, session);
   if (requireCurrentSource) {
     const basket = await currentBasketForVendorScope(String(enquiry.projectId), String(enquiry.mainBasketId), revision, session);
-    const reconciliation = await basketReconciliationForRevision(basket, revision, session);
-    if (!reconciliation && basket.preparationDigest !== revision.preparationDigest)
-      tenderConflict("PROCUREMENT_BASKET_SOURCE_CHANGED", "The purchase preparation changed. Refresh this basket.");
+    await assertBasketActionReady(basket, revision, session);
   }
   const historyLimit = 100;
   const bidFilter = { enquiryId: enquiry._id, boqRevisionId: revision._id };
@@ -606,6 +605,7 @@ async function prepareAward(enquiry: TenderRow, bidId: string, advanceBasisPoint
     project: TenderRow; preparation: Awaited<ReturnType<typeof buildProjectPurchaseOrderPreparation>>;
     selectedDesignerId: string | null; kpiAssessment: TenderRow; sourceReconciliation: TenderRow | null; basketPreparationDigest: string }> {
   if (!["sent", "award_pending"].includes(enquiry.status)) tenderConflict("PROCUREMENT_BASKET_ENQUIRY_STATE", "This enquiry is not open for an award.");
+  if (fence) await fenceBasketConfiguration(String(enquiry.projectId), String(enquiry.mainBasketId), session);
   const comparison = await readComparison(enquiry, session);
   if (fence) await assertDesignRequirementsPoAllowed(String(enquiry.projectId),
     (comparison.revision.lines as ProcurementBasketBoqLine[]).map(line => line.sourceLineItemKey), session);
@@ -829,6 +829,7 @@ async function automaticIssueEnabled(award: TenderRow, proposal: TenderRow, sess
 }
 
 export async function assertProposalFresh(award: TenderRow, proposal: TenderRow, session: ClientSession): Promise<void> {
+  await fenceBasketConfiguration(String(award.projectId), String(award.mainBasketId), session);
   const enquiry = await getBasketEnquiry(String(award.projectId), String(award.mainBasketId), String(award.enquiryId), session);
   const current = await prepareAward(enquiry, String(proposal.bidId), Number(proposal.advanceBasisPoints),
     null, session);

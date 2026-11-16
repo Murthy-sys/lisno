@@ -20,6 +20,9 @@ const decisionSchema = new Schema({
   revisionId: { type: String, default: null },
   revisionDigest: { type: String, default: null, match: /^[a-f0-9]{64}$/u },
   mode: { type: String, enum: ["pmc", "sub_vendor", "in_house", null], default: null },
+  selectedInHouseComponentIds: { type: [String], default: undefined, validate: (ids: string[] | undefined) =>
+    ids === undefined || (ids.length > 0 && ids.length <= 50 && new Set(ids).size === ids.length &&
+      ids.every(id => typeof id === "string" && id.length > 0 && id.length <= 128 && id.trim() === id)) },
   quantity: { type: String, default: null, maxlength: 64 },
   discountBps: { type: Number, required: true, min: 0, max: 10_000, validate: Number.isSafeInteger },
   markupBasis: { type: String, enum: ["starting", "minimum"], required: true },

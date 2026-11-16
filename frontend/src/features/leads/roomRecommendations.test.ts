@@ -40,6 +40,52 @@ const recommendations: EstimationCatalogueRecommendations = { sources: [
 ] };
 
 describe("room recommendations", () => {
+  it("retains the same verified unavailable recommendations across every tier and PMC state", () => {
+    const current = structuredClone(catalogue);
+    const source = current.items[0]!.subBaskets[0]!.mainLines[0]!;
+    source.applicableTiers = ["signature", "premium", "functional"];
+    source.tierPricing = {
+      signature: { modeBaseRatesPaise: { pmc: 9000, sub_vendor: 10125, in_house: null } },
+      premium: { modeBaseRatesPaise: { pmc: 24000, sub_vendor: null, in_house: null } },
+      functional: { modeBaseRatesPaise: { pmc: 36000, sub_vendor: null, in_house: null } }
+    };
+    const unpriced = rule({ available: false, targetRevisionId: null, targetRevisionVersion: null, targetItemVersion: null,
+      targetDisplay: { name: "False ceiling painting", unavailableReason: "price_not_configured" } });
+    const unfinishedGroup = rule({ id: "required-lights", targetKind: "sub_basket", targetBasketId: "lights", targetSubBasketId: "functional-lights",
+      targetMainLineId: null, available: false, completionRequired: true, targetRevisionId: null, targetRevisionVersion: null, targetItemVersion: null,
+      children: [], unavailableChildCount: 2, targetDisplay: { name: "Functional lighting", unavailableReason: "configuration_incomplete" } });
+    const response = { sources: recommendations.sources.map((item, index) => ({ ...item, rules: index ? [unpriced] : [unpriced, unfinishedGroup] })) };
+    const expected = buildRoomRecommendations({ catalogue: current, lines: sourceLines, roomId: "room-one", recommendations: response });
+    expect(expected.stale).toBe(false);
+    expect(expected.decisions).toHaveLength(2);
+    expect(expected.decisions[0]).toMatchObject({ name: "False ceiling painting", available: false, target: null,
+      unavailableReason: "price_not_configured" });
+    expect(expected.decisions[0]!.reasons).toHaveLength(2);
+    expect(expected.decisions[1]).toMatchObject({ name: "Functional lighting", available: false, target: null,
+      children: [], unavailableChildCount: 2, unavailableReason: "configuration_incomplete" });
+    for (const modeTier of ["signature", "premium", "functional"] as const) {
+      for (const pricingMode of ["pmc", "sub_vendor"] as const) {
+        const lines = sourceLines.map(line => ({ ...line, modeTier, pricingMode }));
+        const view = buildRoomRecommendations({ catalogue: current, lines, roomId: "room-one", recommendations: response });
+        expect(view).toEqual(expected);
+        expect(recommendationLines(view.decisions)).toEqual([]);
+        expect(buildRoomRecommendations({ catalogue: current, lines, roomId: "room-two", recommendations: response }).decisions).toEqual([]);
+      }
+    }
+  });
+
+  it("does not trust a display label to make a target actionable or merge conflicting parents", () => {
+    const unavailable = rule({ available: false, targetRevisionId: null, targetRevisionVersion: null, targetItemVersion: null,
+      targetDisplay: { name: "False ceiling painting", unavailableReason: "price_not_configured" } });
+    const response = { sources: recommendations.sources.map((source, index) => ({ ...source,
+      rules: [{ ...unavailable, ...(index ? { targetBasketId: "basket-duplicate", targetSubBasketId: "sub-other" } : {}) }] })) };
+    const view = buildRoomRecommendations({ catalogue, lines: sourceLines, roomId: "room-one", recommendations: response });
+    expect(view.decisions).toHaveLength(1);
+    expect(view.decisions[0]).toMatchObject({ name: "Related item unavailable", available: false, target: null });
+    expect(view.decisions[0]!.unavailableReason).toBeUndefined();
+    expect(recommendationLines(view.decisions)).toEqual([]);
+  });
+
   it("retains unpriced selected source obligations but hides unpriced new direct targets without a stale mismatch", () => {
     const current = structuredClone(catalogue);
     current.items[0]!.subBaskets[0]!.mainLines[0]!.hasConfiguredBasePrice = false;

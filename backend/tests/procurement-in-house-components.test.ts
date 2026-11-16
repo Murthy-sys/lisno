@@ -24,7 +24,10 @@ function line(key: string, cost = 60000, selling = 78333, quantity = "2"): Purch
     mainLineName: `Main ${key}`, roomId: `room-${key}`, roomName: `Room ${key}`, quantity, unit: "sqft", amountPaise: selling,
     selectedInHouseComponentIds: ["shared-id"], itemIds: [],
     estimateMode: resolveProcurementEstimateMode({ approvedClassification: "special", approvedPricingMode: "in_house" }),
-    mode: { state: "ready", preview, decision: null, options: [], availability: [], issues: [], priceReferences: {},
+    mode: { state: "ready", preview, executionPolicy: { intent: "execution", allowedModes: ["sub_vendor", "in_house"] },
+      decision: { id: `decision-${key}`, version: 1, sourceLineItemKey: key, mode: "in_house", quantity, discountBps: 0,
+        markupBasis: "starting", exceptionReason: null, revisionId: "revision", revisionDigest: "a".repeat(64), updatedAt: "2026-11-16T00:00:00Z" },
+      options: [], availability: [], issues: [], priceReferences: {},
       revision: { id: "revision", version: 1, status: "active", contentDigest: "a".repeat(64) },
       uom: { id: "uom", code: "SQFT", name: "Square foot", decimalScale: 2 } } };
 }
@@ -55,6 +58,7 @@ describe("approved In-house component attribution", () => {
   it("redacts all nested component evidence after calculating whole basket totals without mutating internal evidence", () => {
     const source = line("hidden");
     source.mode!.inHouseComponentVisibility = "hidden";
+    source.mode!.decision!.selectedInHouseComponentIds = ["shared-id"];
     source.mode!.preview!.settings.scopes = [{ componentId: "shared-id", componentBasketId: "target-basket", componentSubBasketId: "target-sub",
       scope: "in_house_labor", source: "scoped", baseRatePaise: 12345, lowQuantityLimit: "2", impactBps: 100,
       minimumMarkupBps: 1000, startingMarkupBps: 2500 }];
@@ -121,14 +125,26 @@ describe("approved In-house component attribution", () => {
     expect(projectInHouseComponentBreakdown([line("a")])?.subBaskets[0])
       .toMatchObject({ basketName: null, subBasketName: null });
   });
-  it.each(["pmc", "sub_vendor"] as const)("does not activate for approved %s even when Procurement uses In-house", approvedPricingMode => {
+  it("attributes saved Procurement In-house components when the estimate was priced as Sub-vendor", () => {
     const source = line("a");
-    source.estimateMode = resolveProcurementEstimateMode({ approvedClassification: "special", approvedPricingMode });
+    source.estimateMode = resolveProcurementEstimateMode({ approvedClassification: "standard", approvedPricingMode: "sub_vendor" });
+    delete source.selectedInHouseComponentIds;
+    source.mode!.decision!.selectedInHouseComponentIds = ["shared-id"];
+    expect(projectInHouseComponentBreakdown([source])).toMatchObject({ complete: true, adjustedCostPaise: 60000 });
+    source.mode!.state = "unavailable"; source.mode!.preview = null;
+    expect(projectInHouseComponentBreakdown([source])).toMatchObject({ complete: false, adjustedCostPaise: null,
+      unavailableSourceLineItemKeys: ["a"] });
+  });
+  it("blocks In-house component attribution for the fixed PMC path", () => {
+    const source = line("a");
+    source.estimateMode = resolveProcurementEstimateMode({ approvedClassification: "special", approvedPricingMode: "pmc" });
+    source.mode!.executionPolicy = { intent: "pmc", allowedModes: ["pmc"] };
     expect(projectInHouseComponentBreakdown([source])).toBeUndefined();
   });
   it("leaves excluded, unrecorded and differently selected Procurement modes unchanged", () => {
     const excluded = { ...line("a"), included: false };
     const unrecorded = { ...line("b"), estimateMode: resolveProcurementEstimateMode({}) };
+    unrecorded.mode!.executionPolicy = { intent: "unrecorded", allowedModes: [] };
     const changed = line("c");
     changed.mode!.preview!.mode = "pmc";
     const decisionOnly = line("d");
@@ -170,23 +186,25 @@ describe("approved In-house component attribution", () => {
     expect(baskets[0]).toMatchObject({ includedLineCount: 2, approvedEstimatePaise: 55000, adjustedCostPaise: 45000 });
     expect(group).toMatchObject({ includedLineCount: 2, approvedEstimatePaise: 55000, currentCostPaise: 45000 });
   });
-  it.each([
-    ["explicit Standard automatic pricing", true, true],
-    ["implicit Standard without a saved decision", false, false]
-  ] as const)("does not attribute an In-house preview when %s uses the canonical Sub-Vendor suggestion", (_description, automatic, savedDecision) => {
+  it.each([true, false])("ignores legacy automatic pricing (%s) and follows the saved execution choice", savedDecision => {
     const source = line("standard");
     source.mainBasketClassification = "standard";
-    source.mainBasketClassificationExplicit = automatic;
+    source.mainBasketClassificationExplicit = true;
     source.standardSuggestion = { preview: { mode: "sub_vendor", quantity: "2", baseCostPaise: 5000, adjustedCostPaise: 6000,
       baseRates: [{ scope: "sub_vendor", ratePaise: 2500 }] }, issues: [] };
-    if (savedDecision) source.mode!.decision = { id: "decision", version: 1, sourceLineItemKey: source.key, mode: "in_house", quantity: "2", discountBps: 0,
-      markupBasis: "starting", exceptionReason: null, revisionId: "revision", revisionDigest: "a".repeat(64), updatedAt: "2026-10-26T00:00:00Z" };
+    if (!savedDecision) { source.mode!.decision = null; source.mode!.state = "selection_required"; source.mode!.preview = null; }
     const baskets = projectProcurementBaskets(preparation([source]));
-    expect(baskets[0]!.standardCost).toMatchObject({ totalPaise: 6000, complete: true });
-    expect(baskets[0]).not.toHaveProperty("inHouseComponentBreakdown");
-    const group = projectProcurementBasketModeGroups(baskets)[0]!;
-    expect(group.currentCostPaise).toBe(6000);
-    expect(group).not.toHaveProperty("inHouseComponentBreakdown");
+    expect(baskets[0]!.automaticSubVendor).toBe(false);
+    if (savedDecision) {
+      expect(baskets[0]!.standardCost).toMatchObject({ totalPaise: 60000, complete: true });
+      expect(baskets[0]!.inHouseComponentBreakdown).toMatchObject({ adjustedCostPaise: 60000 });
+      expect(projectProcurementBasketModeGroups(baskets)[0]).toMatchObject({ currentCostPaise: 60000 });
+    } else {
+      expect(baskets[0]!.standardCost).toMatchObject({ totalPaise: null, complete: false });
+      expect(baskets[0]).not.toHaveProperty("inHouseComponentBreakdown");
+      expect(projectProcurementBasketModeGroups(baskets).find(group => group.mode === "execution_pending"))
+        .toMatchObject({ currentCostPaise: null, currentCostComplete: false });
+    }
   });
   it("attributes nonautomatic Standard saved In-house costs and preserves incomplete saved decisions", () => {
     const source = line("standard-saved");

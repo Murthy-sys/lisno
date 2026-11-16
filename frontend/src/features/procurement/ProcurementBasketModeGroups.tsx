@@ -7,13 +7,14 @@ import type { ProcurementBasketModeGroup, ProcurementEstimateModeGroupKey, Procu
 import "./procurementBasketModeGroups.css";
 
 export const procurementEstimateModeLabels: Record<ProcurementEstimateModeGroupKey, string> = {
-  in_house: "In-house", sub_vendor: "Sub-vendor", pmc: "PMC", unrecorded: "Mode not recorded"
+  in_house: "In-house", sub_vendor: "Sub-vendor", pmc: "PMC", execution_pending: "Execution selection pending", unrecorded: "Mode not recorded"
 };
 
 const descriptions: Record<ProcurementEstimateModeGroupKey, string> = {
-  in_house: "Selected as In-house in the approved estimate",
-  sub_vendor: "Standard items and Special items selected as Sub-vendor",
-  pmc: "Selected as PMC in the approved estimate",
+  in_house: "In-house execution selected in Procurement",
+  sub_vendor: "Sub-vendor execution selected in Procurement",
+  pmc: "Vendor handoff selected in the approved estimate",
+  execution_pending: "Choose Sub-vendor or In-house",
   unrecorded: "Approved items without a reliable recorded estimate mode"
 };
 
@@ -95,7 +96,7 @@ export function ProcurementBasketModeGroups({ groups, preferences, onPreferences
 
   return <div className="procurement-mode">
     <div className="procurement-mode__toolbar">
-      <div className="procurement-mode__intro"><h2>Main baskets</h2><p>Grouped by each item's approved estimate selection.</p></div>
+      <div className="procurement-mode__intro"><h2>Main baskets</h2><p>Grouped by PMC handoff and saved Procurement execution choices.</p></div>
       <div className="procurement-mode__controls">
         <div className="procurement-mode__search"><Symbol kind="search" /><input ref={searchRef} aria-label="Search baskets" type="search" placeholder="Search baskets…" value={preferences.search} onChange={(event) => update({ search: event.target.value })} />
           {preferences.search ? <button type="button" aria-label="Clear search" onClick={() => { update({ search: "" }); searchRef.current?.focus(); }}>×</button> : null}

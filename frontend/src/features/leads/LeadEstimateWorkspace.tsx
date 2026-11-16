@@ -40,7 +40,7 @@ import { emptyAutomaticBasketIds, inferEmptySavedBasketIds, inferRecommendationO
 import { EstimateRevisionNavigation } from "./EstimateRevisionNavigation";
 import { EstimateRevisionView } from "./EstimateRevisionView";
 import { downloadEstimateRevisionPdf, estimateRevisionKeys, estimateRevisionLabel, getEstimateRevision, getEstimateRevisions } from "./estimateRevisionsApi";
-import { configuredLineCanInclude, configuredTierUnavailableReason, type ConfiguredTierGroupScope, configuredUsesComponentPricing, configuredComponentPricing, configuredAggregatePricing, configuredInHouseGoverned, configuredPricingSourceKey, configuredDimensionsIssue, configuredInHouseSelectionIssue, buildConfiguredLines, createConfiguredLine, configuredLineAmountPaise, configuredLinePreviewAmountPaise, configuredQuantityUnits, deselectConfiguredRecommendationSources, parseSellingRate, restoreConfiguredLine, updateConfiguredLinePricing, type ConfiguredLineDraft } from "./configuredEstimate";
+import { configuredLineCanInclude, configuredTierSelectionUnavailableReason, configuredTierUnavailableReason, type ConfiguredTierGroupScope, configuredUsesComponentPricing, configuredComponentPricing, configuredAggregatePricing, configuredInHouseGoverned, configuredPricingSourceKey, configuredDimensionsIssue, configuredInHouseSelectionIssue, buildConfiguredLines, createConfiguredLine, configuredLineAmountPaise, configuredLinePreviewAmountPaise, configuredQuantityUnits, deselectConfiguredRecommendationSources, parseSellingRate, restoreConfiguredLine, updateConfiguredLinePricing, type ConfiguredLineDraft } from "./configuredEstimate";
 import { estimationCatalogueKeys, getEstimationCatalogue, getEstimationCatalogueRecommendations } from "./estimationCatalogueApi";
 import { MainBasketSelectionCard } from "./MainBasketSelectionCard";
 import { buildRoomRecommendations, partitionRoomRecommendationSources, recommendationSourceIdentity, type RecommendedLineTarget } from "./roomRecommendations";
@@ -414,6 +414,7 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
       (rate.kind === "value" && quantityUnits > 0 && configuredLinePreviewAmountPaise(line) === null);
   });
   const incompleteConfiguredLines = selectedConfiguredLines.filter((line) => !configuredUsesComponentPricing(line) && parseSellingRate(line.rateInput).kind === "blank");
+  const unpricedConfiguredTierLines = incompleteConfiguredLines.filter(line => line.rateSource === "configuration");
   const unavailableConfiguredLines = configuredLines.filter((line) =>
     (line.included || line.persistedId) && selectedMainBasketIds.has(line.mainBasketId) && line.sourceMissing);
   const changedUomConfiguredLines = configuredLines.filter((line) => (line.included || line.persistedId) && line.uomNeedsQuantityReview);
@@ -629,6 +630,7 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
     mutationFn: async () => {
       const submittedLeadId = leadId;
       if (bedroomSetupRequired) throw new Error("Configure the number of bedrooms before saving.");
+      if (unpricedConfiguredTierLines.length) throw new Error("Configure a price for every selected tier and pricing method before saving.");
       if (configuredLines.some(line => line.included && configuredUsesComponentPricing(line) && !configuredSellingPricing(line))) throw new Error("Complete the In-house component calculation before saving.");
       const input = draftInput();
       const lineState = configuredLines;
@@ -824,7 +826,7 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
     error instanceof ApiError && ["ESTIMATE_VERSION_CONFLICT", "ESTIMATE_SOURCE_CONFLICT"].includes(error.code)
   );
   const saveDisabled = !editable || bedroomSetupRequired || save.isPending || submit.isPending || hasInvalidInput ||
-    componentPricingPending || unavailableConfiguredLines.length > 0 || legacyIncompatibleConfiguredLines.length > 0 || estimateVersionConflict;
+    componentPricingPending || unpricedConfiguredTierLines.length > 0 || unavailableConfiguredLines.length > 0 || legacyIncompatibleConfiguredLines.length > 0 || estimateVersionConflict;
   const publicationBlocked = collaborative && (requirements.isPending || requirements.isError || requirements.isFetching || !requirements.data || requirements.data.requirements.some((request) => request.status === "open") ||
     (lifecycle?.workflowVersion === 2 && lifecycle.phase === "post" && (saved.data?.designPlanStatus !== "approved" || lifecycle.approvedDesignScopeRevision !== lifecycle.designScopeRevision)));
 
@@ -1112,8 +1114,7 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
     if (change.included === true && (!line || !configuredLineCanInclude(line))) return;
     if (change.modeTier !== undefined && (!line || !line.included && !line.persistedId || line.sourceMissing || !catalogue.data ||
       catalogue.isError || catalogue.isFetching || saved.isFetching ||
-      configuredTierUnavailableReason(line, change.modeTier, line.pricingMode ??
-        ((line.classification ?? mainBasketClassifications.get(line.mainBasketId) ?? "standard") === "standard" ? "sub_vendor" : undefined)))) {
+      configuredTierSelectionUnavailableReason(line, change.modeTier))) {
       setNotice("This tier is unavailable for this item. Refresh available items before changing its tier.");
       return;
     }

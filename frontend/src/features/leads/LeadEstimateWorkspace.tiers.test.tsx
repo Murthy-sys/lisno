@@ -86,7 +86,7 @@ describe("Sales estimate tier persistence", () => {
     expect(include).not.toBeChecked();
     expect(include).toBeDisabled();
     expect(screen.getByRole("textbox", { name: /Selling rate/ })).toHaveValue("99");
-    expect(screen.getByRole("radio", { name: /Signature tier for/ })).toBeDisabled();
+    expect(screen.getByRole("radio", { name: /Signature tier for/ })).toBeEnabled();
     const premium = screen.getByRole("radio", { name: /Premium tier for/ });
     await waitFor(() => expect(premium).toBeEnabled());
     expect(review).toContainElement(premium);
@@ -101,6 +101,31 @@ describe("Sales estimate tier persistence", () => {
     await waitFor(() => expect(data.saves).toHaveLength(1));
     expect(data.saves[0]!.lineItems[0]).toMatchObject({ id: "saved-line", included: true, modeTier: "premium", pricingMode: "sub_vendor",
       rateSource: "configuration", ratePaise: 2500, quantity: 2 });
+  });
+
+  it.each([null, 0])("keeps an unpriced selected tier with rate %s pending, prevents save and restores a priced tier", async missingRate => {
+    const user = userEvent.setup(), data = fixture();
+    data.source.tierPricing!.premium!.modeBaseRatesPaise.sub_vendor = missingRate;
+    const view = data.mount();
+    await waitFor(() => expect(screen.getByRole("radio", { name: /Premium tier for/ })).toBeEnabled());
+    await user.click(screen.getByRole("radio", { name: /Premium tier for/ }));
+    expect(screen.getByRole("radio", { name: /Premium tier for/ })).toBeChecked();
+    expect(screen.getByRole("switch", { name: /PMC pricing mode/ })).not.toBeChecked();
+    expect(screen.getByRole("textbox", { name: /Selling rate/ })).toHaveValue("");
+    expect(screen.getByLabelText(/^Amount for/)).toHaveTextContent("Pending");
+    expect(screen.getByRole("button", { name: "Save draft" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Save draft" }));
+    await user.click(screen.getByRole("button", { name: "Submit" }));
+    expect(data.saves).toEqual([]);
+    expect(vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method && init.method !== "GET")).toEqual([]);
+    await act(async () => { await view.client.refetchQueries({ queryKey: estimationCatalogueKeys.ready }); });
+    expect(screen.getByRole("radio", { name: /Premium tier for/ })).toBeChecked();
+    expect(screen.getByRole("textbox", { name: /Selling rate/ })).toHaveValue("");
+    await user.click(screen.getByRole("radio", { name: /Signature tier for/ }));
+    expect(screen.getByRole("textbox", { name: /Selling rate/ })).toHaveValue("20");
+    await user.click(screen.getByRole("button", { name: "Save draft" }));
+    await waitFor(() => expect(data.saves).toHaveLength(1));
+    expect(data.saves[0]!.lineItems[0]).toMatchObject({ modeTier: "signature", pricingMode: "sub_vendor", rateSource: "configuration", ratePaise: 2000 });
   });
 
   it("keeps tier choices blocked after closing stale price information and editing quantity until a current read succeeds", async () => {
@@ -196,21 +221,21 @@ describe("Sales estimate tier persistence", () => {
 
     await user.click(screen.getByRole("switch", { name: /PMC pricing mode/ }));
     expect(screen.getByRole("switch", { name: /PMC pricing mode/ })).not.toBeChecked();
-    expect(screen.getByRole("radio", { name: /Sub-Vendor pricing mode/ })).toBeChecked();
+    expect(screen.queryByRole("radio", { name: /pricing mode/ })).not.toBeInTheDocument();
     expect(screen.getByRole("radio", { name: /Premium tier for/ })).toBeChecked();
     expect(screen.getByRole("textbox", { name: /Selling rate/ })).toHaveValue("25");
     expect(screen.getByLabelText(/^Amount for/)).toHaveTextContent("₹50");
     await user.click(screen.getByRole("button", { name: "Save draft" }));
     await waitFor(() => expect(data.saves).toHaveLength(1));
     expect(data.saves[0]).toMatchObject({ expectedVersion: 7, lineItems: [{ id: "saved-line", mainLineId: "main-line",
-      classification: "special", pricingMode: "sub_vendor", modeTier: "premium", rateSource: "configuration",
+      classification: "standard", pricingMode: "sub_vendor", modeTier: "premium", rateSource: "configuration",
       ratePaise: 2500, quantity: 2, itemVersion: 4, revisionVersion: 2 }] });
     await screen.findByText("Estimate draft saved."); view.unmount();
     const reloaded = data.mount();
     await screen.findByRole("switch", { name: /PMC pricing mode/ });
     await waitFor(() => expect(screen.getByRole("radio", { name: /Premium tier for/ })).toBeEnabled());
     expect(screen.getByRole("switch", { name: /PMC pricing mode/ })).not.toBeChecked();
-    expect(screen.getByRole("radio", { name: /Sub-Vendor pricing mode/ })).toBeChecked();
+    expect(screen.queryByRole("radio", { name: /pricing mode/ })).not.toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: /Selling rate/ })).toHaveValue("25");
     expect(data.saves).toHaveLength(1);
 

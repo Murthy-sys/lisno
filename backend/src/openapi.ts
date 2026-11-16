@@ -2662,7 +2662,15 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
         children: { type: "array", items: { $ref: "#/components/schemas/EstimatorCatalogueRecommendationChild" },
           description: "Eligible child identities for a whole Sub-Basket target only. No unavailable child identities or names are returned." },
         unavailableChildCount: { type: "integer", minimum: 0,
-          description: "Whole Sub-Basket children omitted by current catalogue eligibility, without their identities." }
+          description: "Whole Sub-Basket children omitted by current catalogue eligibility, without their identities." },
+        targetDisplay: {
+          type: "object", additionalProperties: false, required: ["name"],
+          description: "Optional verified target or Sub-Basket display information. It does not grant Add eligibility or disclose unavailable child identities.",
+          properties: {
+            name: { type: "string", minLength: 1 },
+            unavailableReason: { type: "string", enum: ["price_not_configured", "configuration_incomplete"] }
+          }
+        }
       }
     },
     EstimatorCatalogueRecommendationGuidance: {

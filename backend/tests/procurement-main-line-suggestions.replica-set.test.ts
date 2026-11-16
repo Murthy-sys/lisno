@@ -12,6 +12,7 @@ import { createPMVendorSuggestionCommandService } from "../src/services/project-
 import { createProcurementMainLineSuggestionService } from "../src/services/procurement-main-line-suggestions.service.js";
 import { createProcurementBasketService } from "../src/services/procurement-basket.service.js";
 import { createProcurementBasketEnquiryService } from "../src/services/procurement-basket-enquiry.service.js";
+import { createProjectPurchaseOrderModeDecisionService } from "../src/services/project-purchase-order-mode.service.js";
 import { readPMVendorSuggestionActivity } from "../src/services/project-manager/vendor-suggestion-activity.js";
 import { readBasketVendorCandidates } from "../src/services/procurement-basket-vendor-eligibility.service.js";
 import { createAuditService } from "../src/services/audit.service.js";
@@ -36,6 +37,19 @@ beforeAll(async () => {
 }, 120000);
 beforeEach(async () => { await replica.clear(); fixture = await seedPMEstimateHandoffFixture(); });
 afterAll(async () => replica?.stop());
+
+async function chooseBasketExecution() {
+  const basket = await createProcurementBasketService().get(fixture.buyer, fixture.projectId, "basket-a");
+  const decisions = createProjectPurchaseOrderModeDecisionService({ audit: createAuditService(createMemoryRepository()), now: () => handoffAt });
+  for (const line of basket.lines.filter(line => line.included && (line.approvedAmountPaise ?? 0) > 0)) {
+    await decisions.save(fixture.buyer, fixture.projectId, {
+      sourceLineItemKey: line.sourceLineItemKey, expectedVersion: 0,
+      expectedEstimateSource: basket.estimateSource, expectedRevisionDigest: line.mode!.revision!.contentDigest,
+      idempotencyKey: `choose-execution-${line.sourceLineItemKey}`, mode: "sub_vendor",
+      quantity: line.approvedQuantity, discountBps: 0, markupBasis: "starting", exceptionReason: null
+    });
+  }
+}
 
 async function suggest(line = "main-line-1", vendorId = fixture.vendorIds[0]) {
   const view = await reader.estimate(fixture.pm, fixture.projectId);
@@ -88,6 +102,7 @@ describe("Main Line recommendation handoff and actual activity", () => {
   });
 
   it("marks an unverifiable vendor link explicitly while preserving other Main Line recommendations", async () => {
+    await chooseBasketExecution();
     await suggest();
     await suggest("main-line-2");
     await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: "pricing-main-line-1" }, { $set: { payload: null } });
@@ -98,10 +113,12 @@ describe("Main Line recommendation handoff and actual activity", () => {
     expect(unavailable.bidEligible).toBe(false);
     expect(unavailable.readinessReasons).toEqual(expect.arrayContaining([expect.stringContaining("cannot be verified")]));
     expect(unavailable.readinessReasons).not.toContain("Vendor is no longer linked to this Main Line in Configuration.");
-    expect(valid.bidEligible).toBe(true);
+    expect(valid.bidEligible).toBe(false);
+    expect(valid.readinessReasons).toEqual(["Complete the current basket BOQ preparation before sending bid requests."]);
   });
 
   it("shows the same saved scoped record in the Procurement basket regardless of directory page", async () => {
+    await chooseBasketExecution();
     await suggest();
     await suggest("main-line-2");
     const pm = await reader.suggestions(fixture.pm, fixture.projectId, query);
@@ -127,6 +144,7 @@ describe("Main Line recommendation handoff and actual activity", () => {
       await replica.clear();
       fixture = await seedPMEstimateHandoffFixture({ temporaryMainLineIds: ["main-line-1"] });
     }
+    await chooseBasketExecution();
     await suggest();
     const recommended = await procurement.list(fixture.buyer, fixture.projectId, "basket-a", query);
     expect(recommended.items[0]?.bidEligible).toBe(true);

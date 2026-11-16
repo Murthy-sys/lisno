@@ -6,7 +6,7 @@ import { procurementBasketBaseRateSaveSchema, type ProcurementBasketBaseRateSave
 import { procurementBasketLineStandardCostCalculable } from "../domain/procurement-basket-projection.js";
 import { ApiError } from "../middleware/errors.js";
 import { ProcurementBasketBaseRateModel, ProcurementBasketBaseRateReceiptModel } from "../models/ProcurementBasketBaseRate.js";
-import { ProcurementBasketEnquiryModel } from "../models/ProcurementBasketTender.js";
+import { procurementBasketExecutionLocked } from "./procurement-basket-execution-lock.service.js";
 import { ProjectModel } from "../models/Project.js";
 import type { AuditService } from "./audit.service.js";
 import type { PublicUser } from "./auth.service.js";
@@ -53,18 +53,13 @@ export function createProcurementBasketBaseRateService(input: { audit: AuditServ
           const basket = await currentBasket(projectId, basketId, session, fields.expectedPreparationDigest);
           const line = basket.lines.find(row => row.sourceLineItemKey === fields.sourceLineItemKey);
           const approvedLine = source.allLineItems.find(row => row.key === fields.sourceLineItemKey);
-          if (!basket.automaticSubVendor || basket.classification !== "standard" ||
-            !approvedLine || !approvedLine.mainBasketId || approvedLine.mainBasketId !== basketId ||
-            source.mainBasketClassifications[basketId] !== "standard" ||
+          if (!approvedLine || !approvedLine.mainBasketId || approvedLine.mainBasketId !== basketId ||
             !line || !procurementBasketLineStandardCostCalculable(basket, line)) {
             throw new ApiError(409, "PROCUREMENT_BASKET_BASE_RATE_LINE_UNAVAILABLE",
-              "This approved Standard line cannot be priced from its saved Sub-vendor settings.");
+              "This approved line needs a valid saved Sub-vendor selection before its Base amount can be edited.");
           }
-          const activeAward = await ProcurementBasketEnquiryModel.exists({ projectId, mainBasketId: basketId,
-            "estimateSource.estimateId": estimateSource.estimateId,
-            "estimateSource.estimateVersion": estimateSource.estimateVersion,
-            "estimateSource.estimateReviewRoundId": estimateSource.estimateReviewRoundId,
-            status: { $in: ["award_pending", "issued"] } }).session(session);
+          const activeAward = await procurementBasketExecutionLocked(projectId, source, fields.sourceLineItemKey,
+            session, basketId);
           if (activeAward) throw new ApiError(409, "PROCUREMENT_BASKET_BASE_RATE_LOCKED",
             "The basket Base amount cannot change during award approval or after issue.");
           const key = { projectId, ...estimateSource, mainBasketId: basketId,

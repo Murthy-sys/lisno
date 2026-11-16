@@ -1,3 +1,5 @@
+import { procurementBasketModeCostReady } from "./procurement-basket-projection.js";
+import { procurementModeMatchesPolicy } from "./procurement-execution-policy.js";
 import { MAX_FINANCE_AMOUNT_PAISE } from "./project-finance.js";
 import type { PurchaseOrderPreparationEstimateLine } from "./project-purchase-order-preparation.js";
 
@@ -35,10 +37,8 @@ const money = (value: unknown): value is number => typeof value === "number" && 
 export const procurementComponentTargetKey = (basketId: string, subBasketId: string | null): string => JSON.stringify([basketId, subBasketId]);
 
 export function isApprovedInHouseComponentSource(line: PurchaseOrderPreparationEstimateLine): boolean {
-  const selection = line.estimateMode;
-  // Match the existing actionable population used by basket and mode-group totals.
-  return line.source === "configuration" && line.included && line.amountPaise !== null && line.amountPaise > 0 && selection?.provenance === "line" &&
-    selection.mode === "in_house" && selection.approvedPricingMode === "in_house" && selection.issues.length === 0;
+  return line.source === "configuration" && line.included && line.amountPaise !== null && line.amountPaise > 0 &&
+    line.mode?.decision?.mode === "in_house" && procurementModeMatchesPolicy(line.mode.executionPolicy, "in_house");
 }
 
 /** Component attribution is a read model, never a replacement for commercial source-line ownership. */
@@ -55,10 +55,10 @@ export function projectInHouseComponentBreakdown(lines: readonly PurchaseOrderPr
     if (mode?.decision?.mode && mode.decision.mode !== "in_house" || mode?.preview && mode.preview.mode !== "in_house") continue;
     if (mode?.inHouseComponentVisibility === "hidden") { hidden = true; continue; }
     const hasComponentEvidence = mode?.preview?.components?.some(row => row.componentId !== undefined) ?? false;
-    if (line.selectedInHouseComponentIds === undefined && !hasComponentEvidence) continue;
+    if (line.selectedInHouseComponentIds === undefined && mode?.decision?.selectedInHouseComponentIds === undefined && !hasComponentEvidence) continue;
     applicable = true;
-    const selectedIds = line.selectedInHouseComponentIds;
-    const preview = mode?.state === "ready" ? mode.preview : null;
+    const selectedIds = line.mode?.decision?.selectedInHouseComponentIds ?? line.selectedInHouseComponentIds;
+    const preview = procurementBasketModeCostReady(mode) ? mode?.preview : null;
     if (!money(line.amountPaise) || !selectedIds?.length || selectedIds.length > 50 || !selectedIds.every(id) || new Set(selectedIds).size !== selectedIds.length ||
       !preview || preview.mode !== "in_house" || !Array.isArray(preview.components) || !id(preview.quantity) ||
       !/^(?:0|[1-9]\d*)(?:\.\d+)?$/u.test(preview.quantity) || Number(preview.quantity) <= 0 ||

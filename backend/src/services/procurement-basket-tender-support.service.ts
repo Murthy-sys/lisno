@@ -112,13 +112,22 @@ export async function basketReconciliationForRevision(basket: ProcurementBasketD
   return reconciliation;
 }
 
+/** Freshness gates new commercial actions without invalidating immutable vendor reads. */
+export async function assertBasketActionReady(basket: ProcurementBasketDetailDto, revision: TenderRow,
+  session: ClientSession): Promise<void> {
+  const reconciliation = await basketReconciliationForRevision(basket, revision, session);
+  if (basket.preparationDigest !== (reconciliation?.preparationDigest ?? revision.preparationDigest))
+    tenderConflict("PROCUREMENT_BASKET_SOURCE_CHANGED", "The purchase preparation changed. Review and resend the BOQ before taking this action.");
+  const unready = basket.lines.find(line => line.included && !procurementBasketLineBoqReady(basket, line));
+  if (!basket.boqReady || unready)
+    tenderConflict("PROCUREMENT_BASKET_MODE_REQUIRED", `${unready?.mainLineName?.trim() || unready?.sourceLineItemKey || "An included line"}: ${unready?.mode?.issues[0]?.message ??
+      "Confirm a valid saved Procurement mode before taking this action."}`);
+}
+
 export function buildBasketBoqLines(basket: ProcurementBasketDetailDto, input: readonly ProcurementBasketBoqLineInput[],
   previous: readonly ProcurementBasketBoqLine[] = []): ProcurementBasketBoqLine[] {
   if (!basket.boqReady)
-    tenderConflict(basket.automaticSubVendor ? "PROCUREMENT_BASKET_SUB_VENDOR_COST_UNAVAILABLE" : "PROCUREMENT_BASKET_MODE_REQUIRED",
-      basket.automaticSubVendor
-        ? "The saved Sub-vendor Configuration cannot price every included line in this basket."
-        : "Confirm a valid saved mode for every included line in this basket.");
+    tenderConflict("PROCUREMENT_BASKET_MODE_REQUIRED", "Confirm a valid saved mode for every included line in this basket.");
   const includedKeys = new Set(basket.lines.filter(line => line.included).map(line => line.sourceLineItemKey));
   const requestedKeys = new Set(input.map(line => line.sourceLineItemKey));
   if (requestedKeys.size !== input.length || requestedKeys.size !== includedKeys.size ||
@@ -132,10 +141,7 @@ export function buildBasketBoqLines(basket: ProcurementBasketDetailDto, input: r
       tenderConflict("PROCUREMENT_BASKET_LINE_UNAVAILABLE", "Select an included line from this approved basket.");
     const mode = source.mode;
     if (!procurementBasketLineBoqReady(basket, source) || !mode?.uom)
-      tenderConflict(basket.automaticSubVendor ? "PROCUREMENT_BASKET_SUB_VENDOR_COST_UNAVAILABLE" : "PROCUREMENT_BASKET_MODE_REQUIRED",
-        basket.automaticSubVendor
-          ? source.standardCost?.issues[0]?.message ?? "The saved Sub-vendor Configuration cannot price this approved line."
-          : "Confirm a valid saved mode before preparing this BOQ line.");
+      tenderConflict("PROCUREMENT_BASKET_MODE_REQUIRED", source.mode?.issues[0]?.message ?? "Confirm a valid saved mode before preparing this BOQ line.");
     const description = source.mainLineName?.trim();
     if (!description || description.length > 2_000)
       tenderConflict("PROCUREMENT_BASKET_LINE_UNAVAILABLE", "An approved line has no valid description for the vendor BOQ.");

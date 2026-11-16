@@ -1078,7 +1078,7 @@ describe("LeadEstimateWorkspace", () => {
 
   it.each([
     { label: "Standard round trip", classification: "standard", mode: "sub_vendor", pmcRate: 12000 },
-    { label: "Special In-house round trip", classification: "special", mode: "in_house", pmcRate: 12000 },
+    { label: "historical In-house switched to Sub-vendor", classification: "special", mode: "in_house", pmcRate: 12000 },
     { label: "saved PMC fallback", classification: "special", mode: "pmc", pmcRate: 12000 },
     { label: "zero PMC price", classification: "standard", mode: "sub_vendor", pmcRate: 0 },
     { label: "missing PMC price", classification: "standard", mode: "sub_vendor", pmcRate: null }
@@ -1127,6 +1127,7 @@ describe("LeadEstimateWorkspace", () => {
     const toggle = screen.getByRole("switch", { name: /PMC pricing mode.*Ceiling finish/ });
     const rate = screen.getByRole("textbox", { name: /Selling rate.*Ceiling finish/ });
     expect(rate).toBeDisabled();
+    expect(rate).toHaveValue(String(initialRate / 100));
     expect(saves).toEqual([]);
     expect(screen.queryByRole("radio", { name: /item type|pricing mode/ })).not.toBeInTheDocument();
     const persist = async (expected: Record<string, unknown>) => {
@@ -1152,12 +1153,11 @@ describe("LeadEstimateWorkspace", () => {
     const startsPmc = mode === "pmc";
     expect(rate).toHaveValue(startsPmc ? "150" : "120");
     if (!startsPmc) {
-      // Restore remembered state before saving starts the next estimate-version context.
+      // Every explicit PMC-off edit adopts the configured Sub-vendor estimate basis.
       await user.click(toggle);
-      expect(rate).toHaveValue(String(initialRate / 100));
+      expect(rate).toHaveValue("150");
     }
-    await persist(startsPmc ? { classification: "standard", pricingMode: "sub_vendor", ratePaise: 15000 }
-      : { classification, pricingMode: mode, ratePaise: initialRate });
+    await persist({ classification: "standard", pricingMode: "sub_vendor", ratePaise: 15000 });
     await user.click(toggle);
     expect(rate).toHaveValue("120");
     await persist({ classification: "special", pricingMode: "pmc", ratePaise: 12000 });
@@ -2520,7 +2520,7 @@ describe("property-aware estimate setup", () => {
   });
 });
 
-it.each([false, true])("saves and restores only explicitly selected In-house component IDs with refresh before Remove: %s", async refreshBeforeRemove => {
+it.each([false, true])("preserves explicitly saved In-house components on reload and Remove despite unsaved PMC edits, with refresh: %s", async refreshBeforeRemove => {
   const components = [
     { id: "base", basketId: "basket-pop", basketName: "Ceilings", subBasketId: "sub-na", subBasketName: "Framework", baseRatePaise: 1200 },
     { id: "paint", basketId: "basket-paint", basketName: "Painting", subBasketId: "sub-paint", subBasketName: "Finish", baseRatePaise: 800 }
@@ -2574,16 +2574,20 @@ it.each([false, true])("saves and restores only explicitly selected In-house com
   expect(screen.getByRole("textbox", { name: /Selling rate.*POP false ceiling/ })).toBeDisabled();
   await waitFor(() => expect(screen.getByRole("button", { name: "Save draft" })).toBeEnabled());
   expect(screen.getByLabelText(/Amount for.*POP false ceiling/)).toHaveTextContent("₹15.01");
+  expect(screen.getByRole("checkbox", { name: /Ceilings \/ Framework/ })).toBeChecked();
+  expect(screen.getByRole("checkbox", { name: /Painting \/ Finish/ })).not.toBeChecked();
+  await user.click(screen.getByRole("button", { name: "Save draft" }));
+  await screen.findByText("Estimate draft saved.");
+  expect((saves[0]!.lineItems as unknown[])[0]).toMatchObject({ selectedInHouseComponentIds: ["base"], pricingMode: "in_house",
+    ratePaise: null, rateSource: "configuration", pricingBasis: "in_house_components_v1", componentPricingFingerprint: "a".repeat(64) });
+  await waitFor(() => expect(screen.getByRole("switch", { name: /PMC pricing mode/ })).toBeEnabled());
   await user.click(screen.getByRole("switch", { name: /PMC pricing mode/ }));
   expect(screen.getByRole("textbox", { name: /Selling rate.*POP false ceiling/ })).toHaveValue("50");
   await user.click(screen.getByRole("switch", { name: /PMC pricing mode/ }));
-  expect(screen.getByRole("group", { name: /In-house components for/ })).toBeVisible();
-  expect(screen.getByRole("checkbox", { name: /Ceilings \/ Framework/ })).toBeChecked();
-  expect(screen.getByRole("checkbox", { name: /Painting \/ Finish/ })).not.toBeChecked();
-  await waitFor(() => expect(screen.getByLabelText(/Amount for.*POP false ceiling/)).toHaveTextContent("₹15.01"));
-  await user.click(screen.getByRole("button", { name: "Save draft" }));
-  await screen.findByText("Estimate draft saved.");
-  expect((saves[0]!.lineItems as unknown[])[0]).toMatchObject({ selectedInHouseComponentIds: ["base"], ratePaise: null, rateSource: "configuration", pricingBasis: "in_house_components_v1", componentPricingFingerprint: "a".repeat(64) });
+  expect(screen.queryByRole("group", { name: /In-house components for/ })).not.toBeInTheDocument();
+  expect(screen.getByRole("textbox", { name: /Selling rate.*POP false ceiling/ })).toHaveValue("100");
+  expect(screen.getByLabelText(/Amount for.*POP false ceiling/)).toHaveTextContent(/^₹100$/u);
+  expect(saves).toHaveLength(1);
   view.unmount();
   components.push({ ...components[1]!, id: "new", subBasketName: "Added later" });
   renderWorkspace();

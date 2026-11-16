@@ -66,6 +66,8 @@ export function ProcurementBasketBaseRateEditor({ projectId, basketId, estimateS
       queryClient.invalidateQueries({ queryKey: procurementBasketKeys.enquiries(projectId, basketId) }),
       queryClient.invalidateQueries({ queryKey: ["procurement", "basket-comparison", projectId, basketId], refetchType: "none" }),
       queryClient.invalidateQueries({ queryKey: ["procurement", "basket-award", projectId, basketId], refetchType: "none" }),
+      queryClient.invalidateQueries({ queryKey: ["procurement", "basket-invitation-preview", projectId, basketId] }),
+      queryClient.invalidateQueries({ queryKey: ["procurement", "basket-enquiry", projectId, basketId] }),
       queryClient.invalidateQueries({ queryKey: purchaseOrderKeys.preparation(projectId) })
     ]);
   }

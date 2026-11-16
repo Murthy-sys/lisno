@@ -17,27 +17,21 @@ export function ProcurementBasketScopePanel({ projectId, projectName, basket, fr
   frozen: boolean;
 }) {
   const auth = useAuth();
-  const standard = basket.classification === "standard";
-  const automaticSubVendor = basket.automaticSubVendor;
-  const canManageBaseRate = standard && automaticSubVendor && auth.user?.role === "procurement" &&
+  const canManage = auth.user?.role === "procurement" &&
     hasFrontendPermission(auth.authorization, "procurement.purchase_orders.manage");
   const enquiries = useQuery({ queryKey: procurementBasketKeys.enquiries(projectId, basket.id),
-    queryFn: ({ signal }) => listBasketEnquiries(projectId, basket.id, signal), enabled: canManageBaseRate });
-  const rateEditLocked = enquiries.data?.some((enquiry) =>
+    queryFn: ({ signal }) => listBasketEnquiries(projectId, basket.id, signal), enabled: canManage });
+  const lockedEnquiries = enquiries.data?.filter(enquiry => enquiry.status === "award_pending" || enquiry.status === "issued") ?? [];
+  const rateEditLocked = lockedEnquiries.some((enquiry) =>
     enquiry.estimateSource.estimateId === basket.estimateSource.estimateId &&
     enquiry.estimateSource.estimateVersion === basket.estimateSource.estimateVersion &&
-    enquiry.estimateSource.estimateReviewRoundId === basket.estimateSource.estimateReviewRoundId &&
-    (enquiry.status === "award_pending" || enquiry.status === "issued")) ?? false;
-  const showRateEditor = canManageBaseRate && enquiries.isSuccess && !rateEditLocked;
-  const rateEditorFrozen = frozen || enquiries.isFetching;
+    enquiry.estimateSource.estimateReviewRoundId === basket.estimateSource.estimateReviewRoundId);
+  const showRateEditor = canManage && enquiries.isSuccess && !rateEditLocked;
+  const editorFrozen = frozen || !canManage || !enquiries.isSuccess || enquiries.isFetching || rateEditLocked;
   const includedLines = basket.lines.filter((line) => line.included && line.approvedAmountPaise !== null && line.approvedAmountPaise > 0);
-  const mixedEstimateModes = new Set(basket.lines.filter((line) => line.included).map((line) => line.estimateMode?.mode ?? "unrecorded")).size > 1;
-  const complete = standard
-    ? Boolean(basket.standardCost?.complete && basket.standardCost.totalPaise !== null)
-    : basket.workingTotalComplete;
-  const total = complete
-    ? formatPaise(standard ? basket.standardCost!.totalPaise! : basket.adjustedCostPaise)
-    : "Incomplete";
+  const mixedEstimateModes = new Set(basket.lines.filter((line) => line.included).map((line) =>
+    line.mode?.executionPolicy?.intent === "pmc" ? "pmc" : line.mode?.decision?.mode ?? line.mode?.executionPolicy?.intent ?? "unrecorded")).size > 1;
+  const total = basket.workingTotalComplete ? formatPaise(basket.adjustedCostPaise) : "Incomplete";
 
   return <section className="procurement-basket__scope-panel" aria-labelledby="procurement-basket-scope-title">
     <header className="procurement-basket__scope-header">
@@ -52,7 +46,7 @@ export function ProcurementBasketScopePanel({ projectId, projectName, basket, fr
       </dl>
     </header>
 
-    {mixedEstimateModes ? <p className="procurement-basket__estimate-scope"><strong>All approved lines.</strong> This basket contains different estimate modes. Existing enquiry actions apply to the whole basket.</p> : null}
+    {mixedEstimateModes ? <p className="procurement-basket__estimate-scope"><strong>All approved lines.</strong> This basket contains different execution paths. Existing enquiry actions apply to the whole basket.</p> : null}
 
     {includedLines.length ? <div className="procurement-basket__scope-table-wrap">
       <table className="procurement-basket__scope-table">
@@ -60,37 +54,41 @@ export function ProcurementBasketScopePanel({ projectId, projectName, basket, fr
         <colgroup><col className="procurement-basket__scope-description-column" /><col className="procurement-basket__scope-unit-column" /><col className="procurement-basket__scope-quantity-column" /><col className="procurement-basket__scope-amount-column" /><col className="procurement-basket__scope-amount-column" /></colgroup>
         <thead><tr><th scope="col">Item / description</th><th scope="col">Unit</th><th scope="col">Qty</th><th scope="col">Base amount</th><th scope="col">Total</th></tr></thead>
         {includedLines.map((line) => {
-          const modePreview = line.mode?.state === "ready" ? line.mode.preview : null;
-          const lineCost = line.standardCost;
+          const reconciledLineLocked = Boolean(basket.preparationSource && lockedEnquiries.some(enquiry =>
+            enquiry.sourceReconciliation?.preparationSource.sourceSnapshotId === basket.preparationSource!.sourceSnapshotId &&
+            enquiry.sourceReconciliation.preparationSource.sourceDigest === basket.preparationSource!.sourceDigest &&
+            enquiry.sourceReconciliation.unchangedLineKeys.includes(line.sourceLineItemKey)));
+          const policy = line.mode?.executionPolicy;
+          const savedMode = line.mode?.decision?.mode;
+          const validSavedMode = savedMode && policy?.allowedModes.includes(savedMode) ? savedMode : null;
+          const modePreview = line.mode?.state === "ready" && policy && line.mode.preview &&
+            validSavedMode === line.mode.preview.mode && line.mode.decision?.quantity === line.mode.preview.quantity
+            ? line.mode.preview : null;
           const baseAmount = line.baseUnitRatePaise;
-          const adjustedTotal = standard ? lineCost?.adjustedCostPaise : modePreview?.adjustedCostPaise;
-          const calculationQuantity = standard ? lineCost?.calculationQuantity : modePreview?.quantity;
-          const issue = automaticSubVendor
-            ? lineCost?.state === "observed_unverified"
-              ? null
-              : lineCost?.issues[0]?.message ?? (lineCost?.state === "unavailable" ? line.mode?.issues[0]?.message : null)
-            : lineCost?.state === "observed_unverified"
-              ? "Configuration price needs review before BOQ."
-              : standard ? lineCost?.issues[0]?.message ?? line.mode?.issues[0]?.message : line.mode?.issues[0]?.message;
+          const adjustedTotal = modePreview?.adjustedCostPaise;
+          const calculationQuantity = modePreview?.quantity;
+          const issue = line.mode?.issues[0]?.message;
+          const modeLabel = policy?.intent === "pmc" ? "PMC · Vendor handoff"
+            : policy?.intent === "execution" ? validSavedMode ? `Execution source: ${procurementEstimateModeLabels[validSavedMode]}` : "Execution selection pending"
+              : policy?.intent === "unrecorded" ? "Mode not recorded" : "Execution details unavailable";
           return <tbody key={line.sourceLineItemKey}>
             <tr className="procurement-basket__scope-source-row" id={`procurement-source-${encodeURIComponent(line.sourceLineItemKey)}`} tabIndex={-1}>
               <th scope="row"><strong>{line.mainLineName}</strong>
-                <small className="procurement-basket__estimate-mode">Estimate mode: {procurementEstimateModeLabels[line.estimateMode?.mode ?? "unrecorded"]}
-                  {line.estimateMode?.approvedClassification ? ` · ${line.estimateMode.approvedClassification === "standard" ? "Standard" : "Special"}` : ""}
+                <small className="procurement-basket__estimate-mode">{modeLabel}
                   {line.estimateMode?.provenance === "legacy_basket" ? " · Historical basket default" : ""}
                 </small>
                 {line.estimateMode?.issues.map((modeIssue) => <small className="procurement-basket__scope-issue" key={modeIssue.code}>{modeIssue.message}</small>)}
                 {issue ? <small className="procurement-basket__scope-issue">{issue}</small> : null}
                 {line.mode?.inHouseComponentVisibilityIssue ? <small className="procurement-basket__scope-issue" role="status">{line.mode.inHouseComponentVisibilityIssue.message}</small> : null}
-                {!automaticSubVendor && line.mode ? <ProcurementBasketModeEditor projectId={projectId} basketId={basket.id} source={basket.estimateSource} line={line} classification={basket.classification} frozen={frozen} compact /> : null}
+                {line.mode ? <ProcurementBasketModeEditor projectId={projectId} basketId={basket.id} source={basket.estimateSource} line={line} classification={basket.classification} frozen={editorFrozen || reconciledLineLocked} compact /> : null}
               </th>
               <td><span className="procurement-basket__scope-uom">{line.mode?.uom?.name || line.approvedUnit}</span></td>
               <td>{calculationQuantity ?? line.approvedQuantity}</td>
-              <td className="procurement-basket__scope-line-amount">{showRateEditor && line.source === "configuration" &&
-                line.standardCost?.mode === "sub_vendor" && line.standardCost.adjustedCostPaise !== null && baseAmount !== null
+              <td className="procurement-basket__scope-line-amount">{showRateEditor && !reconciledLineLocked && line.source === "configuration" &&
+                policy?.intent === "execution" && validSavedMode === "sub_vendor" && modePreview?.mode === "sub_vendor" && baseAmount !== null
                 ? <ProcurementBasketBaseRateEditor projectId={projectId} basketId={basket.id}
                   estimateSource={basket.estimateSource} preparationDigest={basket.preparationDigest}
-                  line={line} frozen={rateEditorFrozen} />
+                  line={line} frozen={editorFrozen} />
                 : baseAmount !== null && baseAmount !== undefined ? formatPaise(baseAmount) : "Unavailable"}</td>
               <td className="procurement-basket__scope-line-amount">{adjustedTotal !== null && adjustedTotal !== undefined ? formatPaise(adjustedTotal) : "Unavailable"}</td>
             </tr>

@@ -803,6 +803,41 @@ describe("selected item editing regressions", () => {
     expect(pane.scrollTop).toBe(300);
   });
 
+  it("keeps tiers selectable with PMC off and on, clearing unavailable prices without switching methods", async () => {
+    const user = userEvent.setup(), current = structuredClone(catalogue), changed = vi.fn();
+    const source = current.items[0]!.subBaskets[0]!.mainLines[0]!;
+    source.applicableTiers = ["signature", "premium", "functional"];
+    source.tierPricing = {
+      signature: { modeBaseRatesPaise: { pmc: 95000, sub_vendor: 105000, in_house: null } },
+      premium: { modeBaseRatesPaise: { pmc: 24000, sub_vendor: null, in_house: null } },
+      functional: { modeBaseRatesPaise: { pmc: null, sub_vendor: 36000, in_house: null } }
+    };
+    const initial = configuredLineFixtures(current, rooms, new Set(["basket-pop"]), [])[0]!;
+    render(<LiveBuilder availableCatalogue={current} initialLines={[{ ...initial, included: true }]} onLinesChange={changed} />);
+    const premium = screen.getByRole("radio", { name: /Premium tier for/ });
+    expect(premium).toBeEnabled();
+    await user.click(premium);
+    expect(premium).toBeChecked();
+    expect(screen.getByRole("switch", { name: /PMC pricing mode/ })).not.toBeChecked();
+    expect(screen.getByRole("textbox", { name: /Selling rate/ })).toHaveValue("");
+    expect(screen.getByRole("status", { name: /Amount for/ })).toHaveTextContent("Pending");
+    expect(changed.mock.lastCall?.[0][0]).toMatchObject({ modeTier: "premium", pricingMode: "sub_vendor", rateInput: "" });
+    await user.click(screen.getByRole("switch", { name: /PMC pricing mode/ }));
+    expect(screen.getByRole("switch", { name: /PMC pricing mode/ })).toBeChecked();
+    expect(screen.getByRole("textbox", { name: /Selling rate/ })).toHaveValue("240");
+    const functional = screen.getByRole("radio", { name: /Functional tier for/ });
+    expect(functional).toBeEnabled();
+    functional.focus(); await user.keyboard(" ");
+    expect(functional).toBeChecked();
+    expect(screen.getByRole("switch", { name: /PMC pricing mode/ })).toBeChecked();
+    expect(screen.getByRole("textbox", { name: /Selling rate/ })).toHaveValue("");
+    expect(screen.getByRole("status", { name: /Amount for/ })).toHaveTextContent("Pending");
+    await user.click(screen.getByRole("switch", { name: /PMC pricing mode/ }));
+    expect(screen.getByRole("textbox", { name: /Selling rate/ })).toHaveValue("360");
+    await user.click(screen.getByRole("radio", { name: /Signature tier for/ }));
+    expect(screen.getByRole("textbox", { name: /Selling rate/ })).toHaveValue("1050");
+  });
+
   it("keeps mode read-only without blocking quantity edits and prevents an indirect Standard reset", async () => {
     const user = userEvent.setup();
     const line = { ...configuredLineFixtures(catalogue, rooms, new Set(["basket-pop"]), [])[0]!,
@@ -944,7 +979,7 @@ describe("selected item editing regressions", () => {
     expect(onLinesChange.mock.lastCall?.[0][0]).toMatchObject({ classification: "standard", pricingMode: "sub_vendor", rateSource: "configuration" });
   });
 
-  it("keeps prior modes separate across rooms and survives filtering and collapsed rows", async () => {
+  it("keeps PMC choices separate across rooms and returns off to Sub-vendor after filtering", async () => {
     const user = userEvent.setup();
     const roomList = [...rooms, { ...rooms[0]!, id: "bedroom", label: "Bedroom" }];
     const initialLines = configuredLineFixtures(catalogue, roomList, new Set(["basket-pop"]), [])
@@ -968,10 +1003,10 @@ describe("selected item editing regressions", () => {
     expect(screen.getByRole("switch", { name: /PMC pricing mode/ })).toBeChecked();
     await user.click(screen.getByRole("switch", { name: /PMC pricing mode/ }));
     expect(screen.getByRole("switch", { name: /PMC pricing mode/ })).not.toBeChecked();
-    expect(screen.getByRole("textbox", { name: /Selling rate/ })).toHaveValue("1150");
+    expect(screen.getByRole("textbox", { name: /Selling rate/ })).toHaveValue("1050");
   });
 
-  it("clears remembered modes on context changes without changing saved values", async () => {
+  it("keeps the explicit PMC-off default across context changes without rewriting saved values", async () => {
     const user = userEvent.setup(); const onLinesChange = vi.fn();
     const line = { ...updateConfiguredLinePricing(chosen()[0]!, { pricingMode: "in_house" }), classification: "special" as const };
     const view = render(<LiveBuilder initialLines={[line]} reviewContextKey="estimate-a" onLinesChange={onLinesChange} />);
@@ -986,7 +1021,7 @@ describe("selected item editing regressions", () => {
     expect(screen.getByRole("textbox", { name: /Selling rate/ })).toHaveValue("1050");
   });
 
-  it("preserves selected In-house components through a PMC round trip", async () => {
+  it("returns an explicitly toggled historical In-house line to the Sub-vendor estimate basis", async () => {
     const user = userEvent.setup(); const onLinesChange = vi.fn();
     const line = { ...chosen()[0]!, classification: "special" as const, pricingMode: "in_house" as const,
       rateSource: "manual" as const, rateInput: "20", selectedInHouseComponentIds: ["labor"],
@@ -996,8 +1031,8 @@ describe("selected item editing regressions", () => {
     await user.click(screen.getByRole("switch", { name: /PMC pricing mode/ }));
     expect(screen.queryByRole("group", { name: /In-house components/ })).not.toBeInTheDocument();
     await user.click(screen.getByRole("switch", { name: /PMC pricing mode/ }));
-    expect(screen.getByRole("checkbox", { name: /Labor \/ Finish/ })).toBeChecked();
-    expect(onLinesChange.mock.lastCall?.[0][0]).toMatchObject({ pricingMode: "in_house", rateSource: "configuration", rateInput: "12", selectedInHouseComponentIds: ["labor"] });
+    expect(screen.queryByRole("checkbox", { name: /Labor \/ Finish/ })).not.toBeInTheDocument();
+    expect(onLinesChange.mock.lastCall?.[0][0]).toMatchObject({ pricingMode: "sub_vendor", classification: "standard", rateSource: "configuration", rateInput: "1050" });
   });
 
   it("omits Type in editable and read-only rows while preserving Main Line and temporary-item classifications", async () => {
@@ -1081,7 +1116,7 @@ it("changes only the selected Main Line, preserving siblings outside search and 
   render(<LiveBuilder initialLines={initial} availableCatalogue={current} roomList={roomList} itemPresentation="catalogue" onLinesChange={changed} />);
   await user.type(screen.getByRole("searchbox", { name: "Search estimate items" }), "Ceiling choice 0");
   const premium = screen.getByRole("radio", { name: /Premium tier for/ });
-  expect(screen.getByRole("radio", { name: /Functional tier for/ })).toBeDisabled();
+  expect(screen.getByRole("radio", { name: /Functional tier for/ })).toBeEnabled();
   expect(screen.getAllByRole("radio", { name: /Premium tier for/ })).toHaveLength(1);
   expect(within(screen.getByText("Ceiling choice 0").closest(".configured-estimate-line") as HTMLElement).getByRole("radio", { name: /Premium tier for/ })).toBe(premium);
   await user.click(premium);
@@ -1188,7 +1223,7 @@ describe("Configuration-owned estimation prices", () => {
     return { current, source };
   };
 
-  it("starts with Premium when Signature is zero, disables unavailable tiers and prevents mouse, keyboard and synthetic rate edits", async () => {
+  it("starts with a priced Premium tier, enables applicable tiers and prevents mouse, keyboard and synthetic rate edits", async () => {
     const user = userEvent.setup(), changed = vi.fn();
     const { current } = pricingFixture();
     render(<LiveBuilder availableCatalogue={current} itemPresentation="catalogue" onLinesChange={changed} />);
@@ -1200,9 +1235,8 @@ describe("Configuration-owned estimation prices", () => {
     expect(changed).not.toHaveBeenCalled();
     await user.click(screen.getByRole("checkbox", { name: /POP false ceiling/ }));
     expect(screen.getByRole("radio", { name: /Premium tier for/ })).toBeChecked();
-    expect(screen.getByRole("radio", { name: /Signature tier for/ })).toBeDisabled();
-    expect(screen.getByRole("radio", { name: /Functional tier for/ })).toBeDisabled();
-    expect(screen.getByText(/Signature: Price not configured/)).toBeVisible();
+    expect(screen.getByRole("radio", { name: /Signature tier for/ })).toBeEnabled();
+    expect(screen.getByRole("radio", { name: /Functional tier for/ })).toBeEnabled();
     expect(screen.getByRole("textbox", { name: /Selling rate/ })).toHaveValue("25");
     expect(changed.mock.lastCall?.[0][0]).toMatchObject({ modeTier: "premium", rateInput: "25", rateSource: "configuration" });
   });
@@ -1250,7 +1284,7 @@ describe("Configuration-owned estimation prices", () => {
     const review = screen.getByRole("region", { name: "Items without a positive base price" });
     expect(within(review).getByRole("textbox", { name: /Selling rate/ })).toHaveValue("79");
     expect(within(review).getByRole("status", { name: /Amount for/ })).toHaveTextContent("₹237");
-    expect(within(review).getByRole("radio", { name: /Signature tier for/ })).toBeDisabled();
+    expect(within(review).getByRole("radio", { name: /Signature tier for/ })).toBeEnabled();
     expect(changed).not.toHaveBeenCalled();
     await user.click(within(review).getByRole("radio", { name: /Premium tier for/ }));
     expect(screen.queryByRole("region", { name: "Items without a positive base price" })).not.toBeInTheDocument();

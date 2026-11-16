@@ -24,7 +24,8 @@ import { UserModel } from "../models/User.js";
 import type { AuditService } from "./audit.service.js";
 import type { PublicUser } from "./auth.service.js";
 import { assertProposalFresh, resolveProcurementBasketAwardLineTerms } from "./procurement-basket-award.service.js";
-import { currentBasketForVendorScope } from "./procurement-basket-tender-support.service.js";
+import { fenceBasketConfiguration } from "./procurement-basket-enquiry.service.js";
+import { assertBasketActionReady, currentBasketForVendorScope } from "./procurement-basket-tender-support.service.js";
 import { assertBasketVendorEligible } from "./procurement-basket-vendor-eligibility.service.js";
 import { assertPurchaseOrderAllocations, prepareProcurementAllocation } from "./procurement-vendor-allocation.service.js";
 import { assertProcurementProjectAccess, procurementItemSourceSnapshot } from "./procurement.service.js";
@@ -88,6 +89,7 @@ export function createProjectPurchaseOrderBasketIssueService(input: { audit: Aud
         if (!source.preparationSource && (source.estimateId !== boq.estimateSource.estimateId ||
           source.estimateVersion !== boq.estimateSource.estimateVersion || source.estimateReviewRoundId !== boq.estimateSource.estimateReviewRoundId))
           conflict("The approved estimate changed after the BOQ was sent.");
+        await fenceBasketConfiguration(projectId, basketId, session);
         const preparation = await buildProjectPurchaseOrderPreparation(projectId, session);
         const basket = await currentBasketForVendorScope(projectId, basketId, boq, session).catch(error => {
           if (!source.preparationSource && error instanceof ApiError && error.status === 409) conflict(error.message);
@@ -96,10 +98,7 @@ export function createProjectPurchaseOrderBasketIssueService(input: { audit: Aud
         if (basket.estimateSource.estimateId !== source.estimateId || basket.estimateSource.estimateVersion !== source.estimateVersion ||
           basket.estimateSource.estimateReviewRoundId !== source.estimateReviewRoundId)
           conflict("The basket does not match the current approved estimate source.");
-        if (!basket.boqReady)
-          conflict(basket.automaticSubVendor
-            ? "The saved Sub-vendor Configuration cannot price every included line. Refresh the basket."
-            : "Confirm a valid saved Configuration mode for every included line before issuing.");
+        await assertBasketActionReady(basket, boq, session);
         const basketLines = preparation.estimateLines.filter(line => line.mainBasketId === basketId && line.included && line.amountPaise !== null && line.amountPaise > 0);
         const bySourceKey = new Map(basketLines.map(line => [line.key, line]));
         if (!boq.lines.length || new Set(boq.lines.map((line: Row) => String(line.sourceLineItemKey))).size !== boq.lines.length ||
@@ -110,9 +109,7 @@ export function createProjectPurchaseOrderBasketIssueService(input: { audit: Aud
           const projected = projectedBySourceKey.get(String(line.sourceLineItemKey));
           return !projected || !procurementBasketLineBoqReady(basket, projected);
         }))
-          conflict(basket.automaticSubVendor
-            ? "The saved Sub-vendor Configuration cannot price every BOQ main line. Refresh the basket."
-            : "Confirm a valid saved Configuration mode for every BOQ main line before issuing.");
+          conflict("Confirm a valid saved Configuration mode for every BOQ main line before issuing.");
         const quoted = new Map((bid.lines as Row[]).map(line => [String(line.boqLineId), line]));
         if (quoted.size !== boq.lines.length) conflict("The selected quote does not cover every BOQ line.");
         const candidate = await assertBasketVendorEligible(String(award.vendorId), projectId, basketId, session);

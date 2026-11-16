@@ -273,10 +273,11 @@ describe("Sales recommendation popup", () => {
       undefined, false, undefined, false, undefined, () => current);
     renderWorkspace();
     expect(await screen.findByRole("region", { name: "Items without a positive base price" })).toBeVisible();
-    await user.click(await screen.findByRole("button", { name: /Recommendations \(0\).*Review needed/ }));
     expect(await screen.findByText(/Some non-negotiable recommendations are unavailable/)).toBeVisible();
     expect(screen.getByRole("dialog", { name: "Non-negotiable recommendations" })).toBeVisible();
-    expect(screen.queryByRole("button", { name: "Add False ceiling painting" })).not.toBeInTheDocument();
+    const unavailableAdd = screen.getByRole("button", { name: "Add False ceiling painting" });
+    expect(unavailableAdd).toBeDisabled();
+    await user.click(unavailableAdd);
     let accepted: boolean | void;
     act(() => { accepted = builderActions.select?.({ mainLineId: "line-paint", basketId: "basket-paint", subBasketId: "sub-paint" }); });
     expect(accepted!).toBe(false);

@@ -1,7 +1,7 @@
 import { configuredLineFixtures } from "./configuredEstimate.test-fixture";
 import { describe, expect, it } from "vitest";
 
-import { configuredInHouseSelectionIssue, configuredModeBaseRate, configuredTierUnavailableReason, buildConfiguredLines, configuredLineAmountPaise, configuredLineKey, configuredLinePreviewAmountPaise, configuredQuantityUnits, createConfiguredLine, deselectConfiguredRecommendationSources, parseSellingRate, restoreConfiguredLine, updateConfiguredLinePricing } from "./configuredEstimate";
+import { configuredInHouseSelectionIssue, configuredModeBaseRate, configuredTierUnavailableReason, configuredTierSelectionUnavailableReason, buildConfiguredLines, configuredLineAmountPaise, configuredLineKey, configuredLinePreviewAmountPaise, configuredQuantityUnits, createConfiguredLine, deselectConfiguredRecommendationSources, parseSellingRate, restoreConfiguredLine, updateConfiguredLinePricing } from "./configuredEstimate";
 import { isEstimationLinePriceVisible } from "./estimationCatalogueVisibility";
 import type { EstimationCatalogue } from "./estimationCatalogueApi";
 
@@ -502,10 +502,29 @@ describe("configured estimate tiers", () => {
   it("never falls back to Signature for missing or deselected tiers", () => {
     const { line } = fixture();
     const functional = updateConfiguredLinePricing(line, { modeTier: "functional" });
-    expect(functional).toBe(line); expect(configuredModeBaseRate({ ...line, modeTier: "functional" }, "sub_vendor")).toBeNull();
+    expect(functional).toMatchObject({ modeTier: "functional", pricingMode: "sub_vendor", rateInput: "", rateSource: "configuration" }); expect(configuredModeBaseRate({ ...line, modeTier: "functional" }, "sub_vendor")).toBeNull();
     expect(configuredTierUnavailableReason(line, "functional", "sub_vendor")).toBe("Not configured");
     expect(configuredModeBaseRate({ ...line, applicableTiers: [] }, "sub_vendor")).toBeNull();
     expect(configuredModeBaseRate({ ...line, tierPricing: {}, modeBaseRatesPaise: { pmc: 1, sub_vendor: 2, in_house: 3 } }, "sub_vendor")).toBeNull();
+  });
+  it.each(["pmc", "sub_vendor"] as const)("retains %s while an applicable tier is unpriced and restores its exact configured rate", pricingMode => {
+    const { current, rooms, selected, line } = fixture();
+    current.items[0]!.subBaskets[0]!.mainLines[0]!.tierPricing!.premium!.modeBaseRatesPaise[pricingMode] = null;
+    const original = { ...buildConfiguredLines(current, rooms, selected, [line])[0]!, included: true, pricingMode,
+      classification: pricingMode === "pmc" ? "special" as const : "standard" as const };
+    expect(configuredTierSelectionUnavailableReason(original, "premium")).toBeNull();
+    const premium = updateConfiguredLinePricing(original, { modeTier: "premium", rateSource: "configuration" });
+    expect(premium).toMatchObject({ modeTier: "premium", pricingMode, rateInput: "", rateSource: "configuration", quantity: original.quantity });
+    expect(configuredLineAmountPaise(premium)).toBeNull();
+    expect(buildConfiguredLines(current, rooms, selected, [premium])[0]).toMatchObject({ modeTier: "premium", pricingMode, rateInput: "" });
+    expect(updateConfiguredLinePricing(premium, { modeTier: "signature", rateSource: "configuration" })).toMatchObject({
+      modeTier: "signature", pricingMode, rateInput: pricingMode === "pmc" ? "10" : "20"
+    });
+    const missing = { ...original, sourceMissing: true };
+    expect(updateConfiguredLinePricing(missing, { modeTier: "premium" })).toBe(missing);
+    const inapplicable = { ...original, applicableTiers: ["signature" as const] };
+    expect(configuredTierSelectionUnavailableReason(inapplicable, "premium")).toBe("Not applicable");
+    expect(updateConfiguredLinePricing(inapplicable, { modeTier: "premium" })).toBe(inapplicable);
   });
   it("adopts configured Signature pricing for a historical manual Standard line without a recorded mode", () => {
     const { line } = fixture();
@@ -535,11 +554,11 @@ describe("configured estimate tiers", () => {
     expect(restored.modeTier).toBe("premium");
     expect(buildConfiguredLines(current, rooms, selected, [restored])[0]).toMatchObject({ modeTier: "premium", rateInput: "35" });
   });
-  it("rejects zero tiers and preserves a saved selected price when its tier becomes unavailable", () => {
+  it("selects zero-price tiers as incomplete and preserves historical prices when a tier becomes unavailable", () => {
     const { current, rooms, selected, line } = fixture();
     current.items[0]!.subBaskets[0]!.mainLines[0]!.tierPricing!.premium!.modeBaseRatesPaise.sub_vendor = 0;
     const currentLine = buildConfiguredLines(current, rooms, selected, [line])[0]!;
-    expect(updateConfiguredLinePricing(currentLine, { modeTier: "premium" })).toBe(currentLine);
+    expect(updateConfiguredLinePricing(currentLine, { modeTier: "premium" })).toMatchObject({ modeTier: "premium", pricingMode: "sub_vendor", rateInput: "" });
     expect(configuredTierUnavailableReason(currentLine, "premium", "sub_vendor")).toBe("Price not configured");
     const premium = { ...line, modeTier: "premium" as const, rateInput: "25" };
     current.items[0]!.subBaskets[0]!.mainLines[0]!.applicableTiers = ["signature"];

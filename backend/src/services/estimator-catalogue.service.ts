@@ -127,11 +127,12 @@ type RecommendationRule = {
   children?: { mainLineId: string; available: true; completionRequired: boolean;
     revisionId: string; revisionVersion: number; itemVersion: number }[];
   unavailableChildCount?: number;
+  targetDisplay?: { name: string; unavailableReason?: "price_not_configured" | "configuration_incomplete" };
 };
 
 type SavedRecommendationRule = Omit<RecommendationRule,
   "available" | "completionRequired" | "targetRevisionId" | "targetRevisionVersion" | "targetItemVersion" |
-  "children" | "unavailableChildCount"> & { targetType: "catalog" | "temporary" | null };
+  "children" | "unavailableChildCount" | "targetDisplay"> & { targetType: "catalog" | "temporary" | null };
 
 type RecommendationGuidance = { id: string; name: string; reason: string };
 
@@ -282,8 +283,13 @@ export async function readEstimatorCatalogueRecommendations(
   const groupSubBaskets = await (
     groupIds.length
       ? AiEstimatorKnowledgeSubBasketModel.find({ _id: { $in: groupIds } })
-          .select({ _id: 1, basketId: 1 }).session(session ?? null).lean().exec()
+          .select({ _id: 1, basketId: 1, name: 1 }).session(session ?? null).lean().exec()
       : Promise.resolve([]));
+  const displayBaskets = await (groupBasketIds.length
+    ? AiEstimatorKnowledgeBasketModel.find({ _id: { $in: groupBasketIds }, status: "active" })
+        .select({ _id: 1 }).session(session ?? null).lean().exec()
+    : Promise.resolve([]));
+  const displayBasketIds = new Set(displayBaskets.map(basket => String(basket._id)));
   const targetRaw = [...new Map([...directRaw, ...groupRaw].map((line) => [String(line._id), line])).values()];
   const eligibleTargets = await eligibleCatalogueLines(targetRaw.filter((line) =>
     line.status === "active" || (includeReadyNonActive && (line.status === "draft" || line.status === "inactive"))), session);
@@ -313,7 +319,13 @@ export async function readEstimatorCatalogueRecommendations(
           const available = Boolean(target && (targetHasBase(target) || selectedIds.has(target.mainLineId)) && target.basketId === rule.targetBasketId &&
             target.subBasketId === rule.targetSubBasketId &&
             (target.itemType === "temporary" ? "temporary" : "catalog") === rule.targetType);
+          const targetDisplay = !available && target && target.basketId === rule.targetBasketId &&
+            target.subBasketId === rule.targetSubBasketId &&
+            (target.itemType === "temporary" ? "temporary" : "catalog") === rule.targetType &&
+            typeof target.name === "string" && target.name.trim()
+            ? { name: target.name, unavailableReason: "price_not_configured" as const } : undefined;
           return { ...withoutTargetType(rule), available,
+            ...(targetDisplay ? { targetDisplay } : {}),
             completionRequired: available && target?.itemType === "temporary",
             targetRevisionId: available ? target!.revisionId : null,
             targetRevisionVersion: available ? target!.revisionVersion : null,
@@ -340,7 +352,18 @@ export async function readEstimatorCatalogueRecommendations(
           return order(first, second);
         });
         const unavailableChildCount = rawChildren.length - children.length;
+        const childIds = new Set(children.map(child => child.mainLineId));
+        const omittedChildren = rawChildren.filter(child => !childIds.has(String(child._id)));
+        const priceOnlyGap = omittedChildren.length > 0 && omittedChildren.every(raw => {
+          const child = eligibleTargets.get(String(raw._id));
+          return child && child.basketId === rule.targetBasketId && child.subBasketId === groupId && !targetHasBase(child);
+        });
+        const targetDisplay = (children.length === 0 || unavailableChildCount > 0) &&
+          displayBasketIds.has(rule.targetBasketId) && typeof group.name === "string" && group.name.trim()
+          ? { name: group.name, unavailableReason: priceOnlyGap ? "price_not_configured" as const : "configuration_incomplete" as const }
+          : undefined;
         return { ...withoutTargetType(rule), available: children.length > 0,
+          ...(targetDisplay ? { targetDisplay } : {}),
           completionRequired: children.length === 0 || unavailableChildCount > 0 ||
             children.some((child) => child.completionRequired),
           targetRevisionId: null, targetRevisionVersion: null, targetItemVersion: null,

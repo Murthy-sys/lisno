@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { ProcurementExecutionPolicy } from "./procurement-execution-policy.js";
 import type { KnowledgeModeTier } from "./ai-estimator-knowledge-mode-tiers.js";
 import type { KnowledgeConfigurationContext, KnowledgeModeCalculationSettings } from "../contracts/ai-estimator-knowledge.js";
 import { canonicalizeScaledDecimal, calculateProcurementQuantity, multiplyMoneyByQuantity, parseScaledDecimal } from "./ai-estimator-knowledge-calculation.js";
@@ -76,6 +77,8 @@ export const purchaseOrderModePreviewSchema = z.object({
 export type PurchaseOrderModeDraftPreviewInput = z.infer<typeof purchaseOrderModePreviewSchema>;
 
 export interface PurchaseOrderModeSourceLine {
+  approvedPricingMode?: PurchaseOrderModeKey;
+  approvedModeIssues?: Array<{ code: string; message: string }>;
   modeTier?: KnowledgeModeTier;
   key: string;
   included: boolean;
@@ -94,6 +97,8 @@ export interface PurchaseOrderModeSourceLine {
 }
 
 export interface PurchaseOrderModeDecisionDto {
+  /** Server-validated Procurement calculation basis; not an approved estimate edit. */
+  selectedInHouseComponentIds?: string[];
   id: string;
   version: number;
   sourceLineItemKey: string;
@@ -191,6 +196,8 @@ export interface PurchaseOrderModePriceReference {
 }
 
 export interface PurchaseOrderModeResolution {
+  /** Derived from approved intent on current reads; absent only in older snapshots. */
+  executionPolicy?: ProcurementExecutionPolicy;
   /** Read-time policy metadata, not calculation evidence or commercial authority. */
   inHouseComponentVisibility?: "hidden" | "visible";
   inHouseComponentVisibilityIssue?: PurchaseOrderModeIssue;
@@ -279,6 +286,7 @@ export function suggestStandardSubVendorCost(input: {
 
 /** Applies Configuration's existing mode formulas to one explicitly confirmed line quantity. */
 export function analyzePurchaseOrderModeSettings(input: {
+  subVendorBaseRateOverridePaise?: number | null;
   selectedInHouseComponentIds?: string[];
   inHouseComponentReferencesAvailable?: boolean;
   advanced: Record<string, unknown>;
@@ -297,9 +305,23 @@ export function analyzePurchaseOrderModeSettings(input: {
     { key: "sub_vendor", label: "Sub-Vendor", modeKind: "execution", executionSource: "sub_vendor" },
     { key: "in_house", label: "In-house", modeKind: "execution", executionSource: "in_house" }
   ] as const;
+  const contextFor = (selector: typeof selectors[number], quantity?: string) => {
+    const context = buildKnowledgeConfigurationContext({ advanced: input.advanced, uom: input.uom,
+      selectedInHouseComponentIds: input.selectedInHouseComponentIds,
+      modeKind: selector.modeKind, executionSource: selector.executionSource,
+      ...(quantity === undefined ? {} : { quantity }) });
+    const override = input.subVendorBaseRateOverridePaise;
+    if (selector.key !== "sub_vendor" || override == null) return context;
+    if (!Number.isSafeInteger(override) || override < 0 || override > MAX_FINANCE_AMOUNT_PAISE) {
+      return { ...context, state: "invalid" as const,
+        issues: [...context.issues, { code: "PROJECT_BASE_RATE_INVALID", scope: "sub_vendor" as const }] };
+    }
+    return { ...context, calculations: context.calculations.map(calculation =>
+      calculation.scope === "sub_vendor" && calculation.settings
+        ? { ...calculation, settings: { ...calculation.settings, baseRatePaise: override } } : calculation) };
+  };
   for (const selector of selectors) {
-    const context = buildKnowledgeConfigurationContext({ advanced: input.advanced, uom: input.uom, selectedInHouseComponentIds: input.selectedInHouseComponentIds,
-      modeKind: selector.modeKind, executionSource: selector.executionSource });
+    const context = contextFor(selector);
     contexts.set(selector.key, context);
     const validMargin = selector.key === "pmc" ? validPmcMargin(input.advanced.pmcMarginBps)
       : selector.key === "sub_vendor" ? validSubVendorMargin(input.advanced.subVendorMarginBps) : true;
@@ -320,8 +342,7 @@ export function analyzePurchaseOrderModeSettings(input: {
     return { options, availability, issues: [{ code: "MODE_NOT_CONFIGURED", message: "This mode is not valid in the saved Configuration revision." }], preview: null };
   }
   const selector = selectors.find((entry) => entry.key === input.mode)!;
-  const context = buildKnowledgeConfigurationContext({ advanced: input.advanced, uom: input.uom, selectedInHouseComponentIds: input.selectedInHouseComponentIds,
-    modeKind: selector.modeKind, executionSource: selector.executionSource, quantity: input.quantity });
+  const context = contextFor(selector, input.quantity);
   const issues = context.issues.map((issue) => ({ code: issue.code, message: modeIssueMessage(issue.code) }));
   if (issues.length) return { options, availability, issues, preview: null };
   let quantity: string;
@@ -529,7 +550,8 @@ function quantityRules(payload: Record<string, unknown>, quantity: string, scale
 }
 function modeIssueMessage(code: string): string {
   const messages: Record<string, string> = {
-    IN_HOUSE_COMPONENT_SELECTION_REQUIRED: "The approved estimate must explicitly select available In-house components.",
+    IN_HOUSE_COMPONENT_SELECTION_REQUIRED: "Configure a valid In-house component selection before calculating this mode.",
+    PROJECT_BASE_RATE_INVALID: "The project Sub-vendor base amount is invalid. Review the saved override.",
     INVALID_IN_HOUSE_COMPONENTS: "The saved In-house components need correction before pricing.",
     CALCULATION_NOT_CONFIGURED: "No calculation is configured for this mode in the approved revision.",
     CONFLICTING_SCOPE_SELECTION: "The saved mode scope contains conflicting selections.",

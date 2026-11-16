@@ -1,6 +1,6 @@
 import { MAX_FINANCE_AMOUNT_PAISE } from "./project-finance.js";
 import { combineInHouseComponentBreakdowns, type ProcurementInHouseComponentBreakdown } from "./procurement-in-house-components.js";
-import { procurementBasketLineBoqReady, type ProcurementBasketDetailDto,
+import { procurementBasketLineBoqReady, procurementBasketModeCostReady, type ProcurementBasketDetailDto,
   type ProcurementBasketLineDto } from "./procurement-basket-projection.js";
 
 export type ApprovedEstimatePricingMode = "pmc" | "sub_vendor" | "in_house";
@@ -16,7 +16,7 @@ export interface ProcurementEstimateMode {
   provenance: "line" | "legacy_basket" | "unrecorded";
   issues: Array<{ code: string; message: string }>;
 }
-export type ProcurementBasketDisplayMode = ApprovedEstimatePricingMode | "unrecorded";
+export type ProcurementBasketDisplayMode = ApprovedEstimatePricingMode | "execution_pending" | "unrecorded";
 export interface ProcurementBasketModeMetrics {
   includedLineCount: number;
   boqReadyLineCount: number;
@@ -55,27 +55,14 @@ export function readApprovedEstimateSelection(classification: unknown, pricingMo
 }
 
 export function resolveProcurementEstimateMode(selection: ApprovedEstimateSelection,
-  legacyStandard = false): ProcurementEstimateMode {
+  _legacyStandard = false): ProcurementEstimateMode {
   const approvedClassification = selection.approvedClassification ?? null;
   const approvedPricingMode = selection.approvedPricingMode ?? null;
   const result: ProcurementEstimateMode = { approvedClassification, approvedPricingMode,
     mode: null, provenance: "unrecorded", issues: [...(selection.approvedModeIssues ?? [])] };
-  if (result.issues.length) return result;
-  if (approvedClassification === "standard") {
-    if (approvedPricingMode !== null && approvedPricingMode !== "sub_vendor") {
-      result.issues.push({ code: "ESTIMATE_MODE_CONFLICT",
-        message: "The approved Standard item records a conflicting pricing mode. Review the approved estimate source." });
-      return result;
-    }
-    return { ...result, mode: "sub_vendor", provenance: "line" };
-  }
-  if (approvedClassification === "special" && approvedPricingMode !== null)
-    return { ...result, mode: approvedPricingMode, provenance: "line" };
-  if (approvedClassification === null && approvedPricingMode === null && legacyStandard)
-    return { ...result, mode: "sub_vendor", provenance: "legacy_basket" };
-  result.issues.push({ code: "ESTIMATE_MODE_NOT_RECORDED", message: approvedClassification === "special"
-    ? "This approved Special item has no recorded pricing mode."
-    : "The approved item type and pricing mode were not recorded together." });
+  if (result.issues.some(issue => issue.code === "ESTIMATE_PRICING_MODE_INVALID")) return result;
+  if (approvedPricingMode !== null) return { ...result, mode: approvedPricingMode, provenance: "line" };
+  result.issues.push({ code: "ESTIMATE_MODE_NOT_RECORDED", message: "The approved pricing mode was not recorded. Review the approved estimate source." });
   return result;
 }
 
@@ -83,23 +70,25 @@ export function resolveProcurementEstimateMode(selection: ApprovedEstimateSelect
 export function projectProcurementBasketModeGroups(baskets: readonly ProcurementBasketDetailDto[],
   committedBySourceLine: ReadonlyMap<string, number> = new Map()): ProcurementBasketModeGroup[] {
   const grouped = new Map<ProcurementBasketDisplayMode, ProcurementBasketModeSubset[]>(
-    ["in_house", "sub_vendor", "pmc", "unrecorded"].map(mode => [mode as ProcurementBasketDisplayMode, []]));
+    ["in_house", "sub_vendor", "pmc", "execution_pending", "unrecorded"].map(mode => [mode as ProcurementBasketDisplayMode, []]));
   const seen = new Set<string>();
   for (const basket of baskets) {
     const partitions = new Map<ProcurementBasketDisplayMode, ProcurementBasketLineDto[]>();
     for (const line of basket.lines) {
       if (seen.has(line.sourceLineItemKey)) throw new Error("An approved source line belongs to more than one basket.");
       seen.add(line.sourceLineItemKey);
-      const mode = line.estimateMode?.mode ?? "unrecorded";
+      const policy = line.mode?.executionPolicy;
+      const saved = line.mode?.decision?.mode;
+      const mode: ProcurementBasketDisplayMode = policy?.intent === "pmc" ? "pmc"
+        : policy?.intent === "execution" ? saved === "sub_vendor" || saved === "in_house" ? saved : "execution_pending"
+          : "unrecorded";
       const lines = partitions.get(mode) ?? [];
       lines.push(line);
       partitions.set(mode, lines);
     }
     for (const [mode, lines] of partitions) {
       const actionable = lines.filter(line => line.included && line.approvedAmountPaise !== null && line.approvedAmountPaise > 0);
-      const costs = actionable.map(line => basket.classification === "standard"
-        ? line.standardCost?.adjustedCostPaise ?? null
-        : line.mode?.state === "ready" ? line.mode.preview?.adjustedCostPaise ?? null : null);
+      const costs = actionable.map(line => procurementBasketModeCostReady(line.mode) ? line.mode?.preview?.adjustedCostPaise ?? null : null);
       const unpricedLineCount = costs.filter(cost => cost === null).length;
       const committedNetPaise = sumPaise(lines.map(line => committedBySourceLine.get(line.sourceLineItemKey) ?? 0));
       if (actionable.length === 0 && committedNetPaise === 0) continue;
@@ -116,7 +105,7 @@ export function projectProcurementBasketModeGroups(baskets: readonly Procurement
         modeIssueCount: lines.filter(line => !line.estimateMode || line.estimateMode.issues.length > 0).length });
     }
   }
-  return [...grouped].filter(([mode, subsets]) => mode !== "unrecorded" || subsets.length > 0).map(([mode, subsets]) => {
+  return [...grouped].filter(([mode, subsets]) => (mode !== "unrecorded" && mode !== "execution_pending") || subsets.length > 0).map(([mode, subsets]) => {
     const includedLineCount = sumCounts(subsets.map(subset => subset.includedLineCount));
     const boqReadyLineCount = sumCounts(subsets.map(subset => subset.boqReadyLineCount));
     const unpricedLineCount = sumCounts(subsets.map(subset => subset.unpricedLineCount));

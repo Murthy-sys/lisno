@@ -46,34 +46,47 @@ const basket: ProcurementBasketDetailDto = { id: "basket-a", name: "Painting", c
     subBasketId: "sub-a", subBasketName: "Walls", mainLineId: "main-a", mainLineName: "Paint",
     approvedQuantity: "10", approvedUnit: "sq-ft", approvedAmountPaise: 10_000_000,
     included: true, source: "configuration", baseUnitRatePaise: 50_000, standardCost: null,
-    mode: { state: "ready", preview: { baseCostPaise: 500_000,
+    mode: { state: "ready", executionPolicy: { intent: "pmc", allowedModes: ["pmc"] },
+      options: [{ key: "pmc", label: "PMC" }], issues: [],
+      decision: { id: "decision-a", version: 1, sourceLineItemKey: "line-a", mode: "pmc", quantity: "10",
+        discountBps: 0, markupBasis: "starting", exceptionReason: null, revisionId: "revision-a",
+        revisionDigest: digest, updatedAt: at.toISOString() },
+      preview: { mode: "pmc", quantity: "10", baseCostPaise: 500_000,
       adjustedCostPaise: 600_000, sellingPaise: 700_000 },
       revision: { id: "revision-a", version: 1, status: "active", contentDigest: digest },
       uom: { id: "uom-a", code: "SQFT", decimalScale: 2 } } as ProcurementBasketDetailDto["lines"][number]["mode"] }] };
 const manualMode = basket.lines[0]!.mode;
 const firstLine = basket.lines[0]!;
 
-function useObservedStandardCost(): void {
+function useRecoveredSubVendorCost(): void {
   basket.classification = "standard";
-  basket.automaticSubVendor = true;
+  basket.automaticSubVendor = false;
   basket.boqReady = true;
-  basket.readyLineCount = 0;
-  basket.workingTotalComplete = false;
+  basket.readyLineCount = 1;
+  basket.workingTotalComplete = true;
   basket.standardCost = { totalPaise: 600_000, complete: true, provisional: true, pricedLineCount: 1 };
   basket.lines[0]!.baseUnitRatePaise = 50_000;
   basket.lines[0]!.standardCost = { state: "observed_unverified", mode: "sub_vendor", calculationQuantity: "10",
     baseRates: [{ scope: "sub_vendor", ratePaise: 50_000 }], baseCostPaise: 500_000,
     adjustedCostPaise: 600_000, issues: [{ code: "PINNED_DIGEST_MISMATCH", message: "Saved Configuration changed." }] };
-  basket.lines[0]!.mode = { state: "unavailable", preview: null, decision: null,
+  basket.lines[0]!.mode = { ...manualMode!, state: "ready",
+    executionPolicy: { intent: "execution", allowedModes: ["sub_vendor", "in_house"] },
+    options: [{ key: "sub_vendor", label: "Sub-vendor" }],
+    preview: { ...manualMode!.preview!, mode: "sub_vendor" },
+    decision: { ...manualMode!.decision!, mode: "sub_vendor", integrityBasis: { kind: "observed_unverified",
+      activatedDigest: digest, observedDigest: "b".repeat(64), reason: "Buyer reviewed saved Sub-vendor settings",
+      actorId: buyer.id, acknowledgedAt: at.toISOString() } },
     revision: { id: "revision-a", version: 2, status: "active", contentDigest: digest },
-    uom: { id: "uom-a", code: "SQFT", decimalScale: 2 },
     integrity: { status: "mismatch", activatedDigest: digest, observedDigest: "b".repeat(64), candidateAvailability: [] }
-  } as ProcurementBasketDetailDto["lines"][number]["mode"];
+  };
+  currentSource = sourceSnapshot();
+  currentPreparation = preparation();
 }
 
 function sourceSnapshot(): ApprovedProcurementSnapshot {
   const line = { key: "line-a", sectionId: "basket-a", sectionLabel: "Painting", source: "configuration" as const,
-    itemType: "main_line" as const, catalogueId: "main-a", roomId: "room-a", roomName: "Living",
+    itemType: "main_line" as const, catalogueId: "main-a",
+    approvedPricingMode: basket.lines[0]!.mode?.executionPolicy?.intent === "execution" ? "sub_vendor" as const : "pmc" as const, roomId: "room-a", roomName: "Living",
     mainBasketId: "basket-a", mainBasketName: "Painting", subBasketId: "sub-a", subBasketName: "Walls",
     mainLineId: "main-a", mainLineName: "Paint", specification: "Paint", unit: "sq-ft", quantity: 10,
     included: true as const, amountPaise: 10_000_000 };
@@ -690,8 +703,8 @@ describe("approved basket award issuance", () => {
     expect(packageDetail.order.lines[0]).toMatchObject({ targetDate: null, deliveryLocation: null });
   });
 
-  it("issues an automatic Standard basket from observed saved Configuration without a mode decision or cost leak", async () => {
-    useObservedStandardCost();
+  it("issues a saved Sub-vendor decision with reviewed Configuration without leaking internal costs", async () => {
+    useRecoveredSubVendorCost();
     const ready = await approvedAward();
     expect(ready.publicBoq.lines[0]).toMatchObject({ description: "Paint", uomCode: "SQFT" });
     expect(ready.publicBoq.lines[0]).not.toHaveProperty("scopeType");
@@ -703,7 +716,7 @@ describe("approved basket award issuance", () => {
     expect(ready.publicBoq.lines[0]).not.toHaveProperty("baseCostPaise");
     expect(ready.publicBoq.lines[0]).not.toHaveProperty("adjustedCostPaise");
     const issued = await issue.issue(buyer, "project-a", "basket-a", ready.enquiryId, ready.awardId,
-      { expectedVersion: ready.awardVersion, idempotencyKey: "automatic-standard-issue" });
+      { expectedVersion: ready.awardVersion, idempotencyKey: "recovered-sub-vendor-issue" });
     expect(issued.status).toBe("issued");
     expect(await counts()).toEqual({ children: 1, orders: 1, revisions: 1, assignments: 1 });
     expect(await ProjectPurchaseOrderModel.findById(issued.purchaseOrderId).lean()).toMatchObject({
@@ -749,11 +762,13 @@ describe("approved basket award issuance", () => {
     expect(await counts()).toEqual({ children: 0, orders: 0, revisions: 0, assignments: 0 });
   });
 
-  it("blocks issue if another included Standard line loses its Sub-vendor cost after award approval", async () => {
-    useObservedStandardCost();
+  it("blocks issue if another included execution line loses its Sub-vendor cost after award approval", async () => {
+    useRecoveredSubVendorCost();
     const ready = await approvedAward();
     basket.lines.push({ ...basket.lines[0]!, sourceLineItemKey: "line-b", roomId: "room-b",
       approvedAmountPaise: 5_000_000, baseUnitRatePaise: null,
+      mode: { ...basket.lines[0]!.mode!, state: "unavailable", preview: null,
+        issues: [{ code: "CALCULATION_NOT_CONFIGURED", message: "Sub-vendor calculation is unavailable." }] },
       standardCost: { state: "unavailable", mode: "sub_vendor", calculationQuantity: "10",
         baseRates: [], baseCostPaise: null, adjustedCostPaise: null,
         issues: [{ code: "CALCULATION_NOT_CONFIGURED", message: "Sub-vendor calculation is unavailable." }] } });

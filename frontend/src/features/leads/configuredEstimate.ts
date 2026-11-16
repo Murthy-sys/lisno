@@ -86,6 +86,15 @@ export const estimatePricingModeLabels: Record<EstimatePricingMode, string> = {
 
 type TierPricingSource = Pick<ConfiguredLineDraft, "modeTier" | "applicableTiers" | "tierPricing" | "modeBaseRatesPaise" | "inHouseComponents" | "basePriceAvailability" | "hasConfiguredBasePrice" | "inHouseUsage" | "inHousePricingState">;
 
+/** Tier selection is independent of whether its current pricing method is ready. */
+export function configuredTierSelectionUnavailableReason(
+  line: Pick<ConfiguredLineDraft, "applicableTiers"> & Partial<Pick<ConfiguredLineDraft, "sourceMissing">>,
+  modeTier: KnowledgeModeTier
+): string | null {
+  if (line.sourceMissing) return "Current Configuration unavailable";
+  return (line.applicableTiers ?? ["signature"]).includes(modeTier) ? null : "Not applicable";
+}
+
 /** Only legacy Signature may read the pre-tier catalogue fields. */
 export function configuredTierPricing(line: TierPricingSource, modeTier: KnowledgeModeTier = line.modeTier ?? "signature"): EstimationTierPricing | undefined {
   if (!(line.applicableTiers ?? ["signature"]).includes(modeTier)) return undefined;
@@ -181,7 +190,7 @@ export function updateConfiguredLinePricing(
   const tierChanged = change.modeTier !== undefined && change.modeTier !== (line.modeTier ?? "signature");
   const nextMode = change.classification === "standard" ? "sub_vendor" : change.pricingMode ??
     (classification === "standard" ? "sub_vendor" : line.pricingMode);
-  if (change.modeTier !== undefined && (!nextMode || configuredTierUnavailableReason(line, change.modeTier, nextMode))) return line;
+  if (change.modeTier !== undefined && (!nextMode || configuredTierSelectionUnavailableReason(line, change.modeTier))) return line;
   const pricingInputsChanged = ["quantity", "dimensions", "dimensionsNeedReview", "modeTier", "pricingMode", "classification", "selectedInHouseComponentIds", "rateInput", "included"].some(key => Object.hasOwn(change, key));
   const excludesSavedLine = line.persistedId && change.included === false && Object.keys(change).every(key => key === "included");
   const next = withSelectedTierPricing({ ...line, ...(explicitTypeOrMode ? { classification } : {}), ...change,
@@ -189,7 +198,8 @@ export function updateConfiguredLinePricing(
     ...(tierChanged ? { selectedInHouseComponentIds: [] } : {}) });
   if (tierChanged || change.modeTier !== undefined && change.rateSource === "configuration") {
     const pricingMode = next.pricingMode ?? (classification === "standard" ? "sub_vendor" : undefined);
-    return { ...next, pricingMode, rateSource: "configuration", rateInput: formatRateInput(pricingMode ? configuredModeBaseRate(next, pricingMode) : null) };
+    const available = pricingMode && !configuredTierUnavailableReason(next, next.modeTier ?? "signature", pricingMode);
+    return { ...next, pricingMode, rateSource: "configuration", rateInput: formatRateInput(available ? configuredModeBaseRate(next, pricingMode) : null) };
   }
   const mode = change.classification === "standard" && classification === "special"
     ? "sub_vendor"

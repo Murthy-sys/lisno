@@ -177,6 +177,7 @@ async function configureFirstApprovedLine() {
     version: 1, createdById: buyer.id, updatedById: buyer.id, createdAt: now, updatedAt: now });
   await EstimateClientReviewRoundModel.collection.updateOne({ _id: "round-request-project-a" }, { $set: {
     "estimateSnapshot.lineItems.0.source": "configuration", "estimateSnapshot.lineItems.0.itemType": "main_line",
+    "estimateSnapshot.lineItems.0.pricingMode": "pmc",
     "estimateSnapshot.lineItems.0.catalogueId": mainLineId,
     "estimateSnapshot.lineItems.0.amountPaise": 1_000_000,
     "estimateSnapshot.lineItems.0.roomId": "request-room-a",
