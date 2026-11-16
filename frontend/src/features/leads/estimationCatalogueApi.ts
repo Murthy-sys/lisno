@@ -31,6 +31,14 @@ export interface EstimationTierPricing {
   inHousePricingState?: "ready" | "incomplete" | "invalid";
 }
 
+export interface EstimationTierDetails {
+  specifications: Array<{
+    id: string;
+    name: string;
+    brands: Array<{ id: string; name: string | null }>;
+  }>;
+}
+
 export interface EstimationCatalogueMainLine {
   id: string;
   mainLineId: string;
@@ -54,6 +62,10 @@ export interface EstimationCatalogueMainLine {
   revisionVersion?: number;
   applicableTiers?: KnowledgeModeTier[];
   tierPricing?: Partial<Record<KnowledgeModeTier, EstimationTierPricing>>;
+  /** Server-resolved tier specifications, using current Mode defaults only for absent/empty lists; null or absent means unavailable. */
+  tierDetails?: Partial<Record<KnowledgeModeTier, EstimationTierDetails | null>>;
+  /** Server-resolved display paragraphs; independent of specification fallback and never saved with estimates. */
+  tierDescriptions?: Partial<Record<KnowledgeModeTier, string | null>>;
   inHouseBaseRatePaise?: number | null;
   inHouseComponents?: EstimationInHouseComponent[];
   inHouseUsage?: "estimator" | "execution" | null;

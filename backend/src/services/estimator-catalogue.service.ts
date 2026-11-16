@@ -5,6 +5,8 @@ import { configuredKnowledgeBasePriceAvailability, hasConfiguredBasePriceForMode
 import { lockInHouseComponentReferences } from "./ai-estimator-knowledge-in-house-components.service.js";
 import { readInHouseComponents, inHouseComponentBaseRate } from "../domain/ai-estimator-knowledge-in-house-components.js";
 import { normalizeDesignRules, validateDesignRules, designRulesDigest, designRuleEstimateNotes, type DesignRules } from "../domain/main-line-design-rules.js";
+import { projectEstimatorTierDetails, type EstimatorCatalogueTierDetails } from "../domain/estimator-tier-details.js";
+import { projectEstimatorTierDescription } from "../domain/estimator-tier-description.js";
 import type mongoose from "mongoose";
 
 import { estimateModeSellingRatesPaise, type EstimateModeBaseRatesPaise, type EstimatePricingMode } from "../domain/estimate-mode-pricing.js";
@@ -57,6 +59,10 @@ export interface EstimatorCatalogueLine {
   revisionVersion: number;
   applicableTiers: KnowledgeModeTier[];
   tierPricing: Partial<Record<KnowledgeModeTier, EstimatorCatalogueTierPricing>>;
+  /** Current display metadata only; never part of an estimate's saved pricing snapshot. */
+  tierDetails?: Partial<Record<KnowledgeModeTier, EstimatorCatalogueTierDetails | null>>;
+  /** Resolved display paragraphs, independent of specification fallback and saved prices. */
+  tierDescriptions?: Partial<Record<KnowledgeModeTier, string | null>>;
   inHouseComponents?: EstimatorCatalogueTierPricing["inHouseComponents"];
   inHousePolicy?: InHouseUsagePolicy;
   inHouseUsage?: "estimator" | "execution" | null;
@@ -532,7 +538,8 @@ async function projectLines(
     revisionId: { $in: revisionIds }, sectionKey: "advanced"
   }).select({ revisionId: 1, mainLineId: 1, sectionKey: 1, applicability: 1, payload: 1 });
   const pricingQuery = AiEstimatorKnowledgeSectionModel.find({ revisionId: { $in: revisionIds }, sectionKey: "pricing" })
-    .select({ revisionId: 1, mainLineId: 1, sectionKey: 1, applicability: 1, "payload.tierConfigurations": 1 });
+    .select({ revisionId: 1, mainLineId: 1, sectionKey: 1, applicability: 1,
+      "payload.specifications": 1, "payload.brands": 1, "payload.tierConfigurations": 1 });
   const designQuery = AiEstimatorKnowledgeSectionModel.find({ revisionId: { $in: revisionIds }, sectionKey: "design" })
     .select({ revisionId: 1, mainLineId: 1, applicability: 1, payload: 1 });
   if (session) { revisionQuery.session(session); overviewQuery.session(session); advancedQuery.session(session); pricingQuery.session(session); designQuery.session(session); }
@@ -629,6 +636,12 @@ async function projectLines(
     const signaturePricing = projectTier("signature");
     const tierPricing = Object.fromEntries(applicableTiers.filter(tier => tier === "signature" ||
       sectionConfigured(advanced, tier) || sectionConfigured(pricing, tier)).map(tier => [tier, projectTier(tier)]));
+    const tierDetails = Object.fromEntries(applicableTiers.map(tier => [tier,
+      pricing && String(pricing.mainLineId) === id && String(pricing.revisionId) === revisionId
+        ? projectEstimatorTierDetails(pricing, tier) : null]));
+    const tierDescriptions = Object.fromEntries(applicableTiers.map(tier => [tier,
+      advanced && String(advanced.mainLineId) === id && String(advanced.revisionId) === revisionId
+        ? projectEstimatorTierDescription(advanced, tier, String(raw.name)) : null]));
     const basePriceAvailability = configuredKnowledgeBasePriceAvailability(advanced && String(advanced.mainLineId) === id ? advanced : undefined, componentIsAvailable);
     projected.set(id, {
       designRules, designRulesDigest: designRulesDigest(designRules), estimateNotes: designRuleEstimateNotes(designRules),
@@ -644,7 +657,7 @@ async function projectLines(
       itemVersion: Number(raw.version), revisionVersion: Number(revision.version),
       dimensionsMandatory: dimensionsMandatoryByRevision.get(revisionId) === true,
       dimensionRule: dimensionsMandatoryByRevision.get(revisionId) === true ? resolveEstimateDimensionRule({ ...uom, id: uomId }) : null,
-      applicableTiers, tierPricing,
+      applicableTiers, tierPricing, tierDetails, tierDescriptions,
       ...signaturePricing,
       inHouseBaseRatePaise: signaturePricing.modeBaseRatesPaise.in_house,
       uom: { id: uomId!, code: String(uom.code), name: String(uom.name), decimalScale: Number(uom.decimalScale) }

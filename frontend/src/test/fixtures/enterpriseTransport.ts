@@ -24,7 +24,7 @@ const extraPermissions: Partial<Record<Role, readonly PermissionCode[]>> = {
   admin: ["design.plan_assignment.manage", "design.plan_response_tasks.read", "estimation.client_response_tasks.read", "estimation.client_response_tasks.decide", "projects.design_workflow.read"],
   designer: ["projects.design_workflow.read"],
   procurement: ["procurement.purchase_orders.read", "procurement.purchase_orders.manage", "procurement.progress.read", "procurement.vendor_work.media.read"],
-  vendor: ["procurement.vendor_work.update", "procurement.vendor_work.media.read", "procurement.vendor_work.media.upload"],
+  vendor: ["procurement.vendor_work.update", "procurement.vendor_work.media.read", "procurement.vendor_work.media.upload", "execution.tracker.read"],
   client: ["procurement.client_work.read", "procurement.client_work.decide", "procurement.vendor_work.media.read"],
   site_manager: ["procurement.progress.read", "procurement.vendor_work.media.read"],
 };
@@ -341,11 +341,12 @@ export function installEnterpriseTransport(scenario: EnterpriseScenario) {
     if (path === "/auth/me") { log(method, path, 200); return Response.json({ data: { id: scenario.role === "designer" ? "user-designer-ananya" : `${scenario.role}-1`, name: "Synthetic workspace reviewer", email: "reviewer@lisno.example", role: scenario.role } }); }
     if (path === "/auth/authorization") {
       const base = authorizationFor(scenario.role);
-      const permissions = scenario.state === "denied" ? ["identity.self.read", "identity.authorization.read"] as const : [...new Set([...base.permissions, ...(extraPermissions[scenario.role] ?? []), ...((recommendationChatReady || messages) && scenario.role !== "program_manager" ? ["chat.read" as const] : [])])];
+      const executionScenario = scenario.role === "procurement" && /^(\/execution(?:\?|$)|\/projects\/[^/]+\/execution(?:\?|$))/.test(scenario.route);
+      const permissions = scenario.state === "denied" ? ["identity.self.read", "identity.authorization.read"] as const : [...new Set([...base.permissions, ...(extraPermissions[scenario.role] ?? []), ...(executionScenario ? ["execution.tracker.read" as const] : []), ...((recommendationChatReady || messages) && scenario.role !== "program_manager" ? ["chat.read" as const] : [])])];
       log(method, path, 200); return Response.json({ data: authorizationFor(scenario.role, permissions) });
     }
     if (recommendationChatReady && ["/projects/project-1/chat/events", "/notifications/events"].includes(path) ||
-      scenario.role === "site_manager" && ["/execution/events", "/notifications/events"].includes(path)) {
+      ["site_manager", "vendor", "procurement"].includes(scenario.role) && ["/execution/events", "/notifications/events"].includes(path)) {
       const signal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
       let cancel = () => {};
       const stream = new ReadableStream<Uint8Array>({
@@ -363,6 +364,7 @@ export function installEnterpriseTransport(scenario: EnterpriseScenario) {
           if (signal?.aborted) { stop(); return; }
           signal?.addEventListener("abort", stop, { once: true });
           controller.enqueue(new TextEncoder().encode('event: state\ndata: {"status":"live"}\n\n'));
+          if (path === "/execution/events") controller.enqueue(new TextEncoder().encode('event: execution\ndata: {"revision":"synthetic-execution-1"}\n\n'));
         },
         cancel() { cancel(); }
       });

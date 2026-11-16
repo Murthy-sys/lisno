@@ -14,6 +14,62 @@ const catalogue: EstimationCatalogue = {
 };
 
 describe("configured estimate line state", () => {
+  it("refreshes tier descriptions and specifications without changing selected values or another Main Line", () => {
+    const current = structuredClone(catalogue);
+    const first = current.items[0]!.subBaskets[0]!.mainLines[0]!;
+    first.tierDetails = {
+      signature: { specifications: [{ id: "same-spec", name: "Signature board", brands: [{ id: "same-brand", name: "Signature brand" }] }] },
+      premium: { specifications: [{ id: "same-spec", name: "Premium board", brands: [{ id: "same-brand", name: "Premium brand" }] }] },
+      functional: null
+    };
+    first.tierDescriptions = { signature: "Signature finish.", premium: "Premium finish.", functional: "Mode finish without specifications." };
+    current.items[0]!.subBaskets[0]!.mainLines.push({ ...first, id: "line-b", mainLineId: "line-b",
+      tierDescriptions: { signature: "Other Main Line finish." },
+      tierDetails: { signature: { specifications: [{ id: "same-spec", name: "Other line board", brands: [{ id: "same-brand", name: "Other line brand" }] }] } } });
+    const rooms = [{ id: "room-a", label: "Bedroom" }], baskets = new Set(["basket-a"]);
+    const initial = configuredLineFixtures(current, rooms, baskets);
+    expect(initial[0]!.tierDetails).toEqual(first.tierDetails);
+    expect(initial[0]!.tierDescriptions).toEqual(first.tierDescriptions);
+    expect(initial[1]!.tierDescriptions?.signature).toBe("Other Main Line finish.");
+    expect(initial[1]!.tierDetails!.signature!.specifications[0]!.name).toBe("Other line board");
+    const saved = { ...initial[0]!, persistedId: "saved-a", included: true, modeTier: "premium" as const,
+      quantity: 3, rateSource: "configuration" as const, rateInput: "80.05" };
+    first.tierDetails = { premium: { specifications: [{ id: "same-spec", name: "Renamed premium board", brands: [{ id: "same-brand", name: "Renamed brand" }] }] }, functional: { specifications: [] } };
+    first.tierDescriptions = { premium: "Updated premium finish.", functional: null };
+    for (const preservePersisted of [false, true]) {
+      const refreshed = buildConfiguredLines(current, rooms, baskets, [saved, initial[1]!], preservePersisted);
+      expect(refreshed[0]).toMatchObject({ tierDetails: first.tierDetails, tierDescriptions: first.tierDescriptions, modeTier: "premium", included: true,
+        quantity: 3, rateInput: "80.05", sourceMissing: false });
+      expect(refreshed[0]!.tierDetails).not.toHaveProperty("signature");
+      expect(refreshed[0]!.tierDescriptions).not.toHaveProperty("signature");
+      expect(refreshed[1]!.tierDetails!.signature!.specifications[0]!.name).toBe("Other line board");
+      expect(refreshed[1]!.tierDescriptions?.signature).toBe("Other Main Line finish.");
+    }
+  });
+
+  it.each([false, true])("clears tier details and descriptions when a current source is missing, incompatible, or uses an older API (preserve saved: %s)", preservePersisted => {
+    const current = structuredClone(catalogue);
+    const source = current.items[0]!.subBaskets[0]!.mainLines[0]!;
+    source.tierDetails = { signature: { specifications: [{ id: "spec", name: "Current board", brands: [] }] } };
+    source.tierDescriptions = { signature: "Current finish." };
+    const rooms = [{ id: "room-a", label: "Bedroom" }], baskets = new Set(["basket-a"]);
+    const saved = { ...configuredLineFixtures(current, rooms, baskets)[0]!, persistedId: "saved-a", included: true };
+    const missing = buildConfiguredLines({ items: [], ineligibleLineCount: 0 }, rooms, baskets, [saved], preservePersisted)[0]!;
+    expect(missing.sourceMissing).toBe(true);
+    expect(missing.tierDetails).toBeUndefined();
+    expect(missing.tierDescriptions).toBeUndefined();
+    const incompatible = buildConfiguredLines(current, rooms, baskets, [{ ...saved, itemType: "temporary" }], preservePersisted)[0]!;
+    expect(incompatible.sourceMissing).toBe(true);
+    expect(incompatible.tierDetails).toBeUndefined();
+    expect(incompatible.tierDescriptions).toBeUndefined();
+    delete source.tierDetails;
+    delete source.tierDescriptions;
+    const legacy = buildConfiguredLines(current, rooms, baskets, [saved], preservePersisted)[0]!;
+    expect(legacy.sourceMissing).toBe(false);
+    expect(legacy.tierDetails).toBeUndefined();
+    expect(legacy.tierDescriptions).toBeUndefined();
+  });
+
   it("preserves a saved configured price when its source or selected basket disappears", () => {
     const rooms = [{ id: "room-a", label: "Bedroom" }];
     const line = { ...configuredLineFixtures(catalogue, rooms, new Set(["basket-a"]))[0]!,

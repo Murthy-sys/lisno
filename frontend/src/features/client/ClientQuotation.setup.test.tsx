@@ -1,5 +1,5 @@
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
-import { act, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { describe, expect, it } from "vitest";
@@ -106,9 +106,54 @@ describe("Client Sales-style estimate setup integration", () => {
     expect(screen.getByRole("button", { name: "Added Furniture" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("button", { name: "Add Lighting" })).toHaveAttribute("aria-pressed", "false");
     expect(screen.getByRole("list", { name: "Selected rooms" })).toHaveTextContent("Kitchen");
-    expect(screen.getByText("108 sqft")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Select rooms" }));
+    expect(screen.getByRole("spinbutton", { name: "Kitchen length" })).toHaveValue(12);
+    expect(screen.getByRole("spinbutton", { name: "Kitchen width" })).toHaveValue(9);
+    expect(screen.queryByRole("region", { name: "Room dimensions" })).not.toBeInTheDocument();
     expect(saves).toEqual([]);
     expect((await axe.run(container, { rules: { "color-contrast": { enabled: false } } })).violations).toEqual([]);
+  });
+
+  it("persists independent inline dimensions for duplicate and retained Client rooms", async () => {
+    const initial = fixture();
+    initial.setup!.rooms.push(
+      { id: "room-pantry", typeId: "kitchen", label: "Pantry", length: 6, width: 4, sqft: 24, canRemove: true, removalBlockedReason: null },
+      { id: "room-guest", typeId: "bedroom2", label: "Guest bedroom", length: 14, width: 10, sqft: 140, canRemove: true, removalBlockedReason: null },
+      { id: "room-legacy", typeId: null, label: "Kitchen", length: null, width: null, sqft: 45, canRemove: true, removalBlockedReason: null }
+    );
+    initial.rooms = initial.setup!.rooms.map((room) => ({ id: room.id, name: room.label }));
+    const { saves } = setup(initial);
+    const user = userEvent.setup();
+    await openOptions(user);
+    await configure(user);
+    await user.click(screen.getByRole("button", { name: "Select rooms" }));
+    const kitchenLengths = screen.getAllByRole("spinbutton", { name: "Kitchen length" });
+    const savedKitchen = kitchenLengths.find((input) => (input as HTMLInputElement).value === "12")!;
+    const legacyKitchen = kitchenLengths.find((input) => (input as HTMLInputElement).value === "")!;
+    fireEvent.change(savedKitchen, { target: { value: "18" } });
+    fireEvent.change(legacyKitchen, { target: { value: "7" } });
+    fireEvent.change(screen.getByRole("spinbutton", { name: "Pantry width" }), { target: { value: "5" } });
+    expect(screen.getByRole("spinbutton", { name: "Guest bedroom length" })).toHaveValue(14);
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    expect(saves).toEqual([]);
+    await user.click(screen.getByRole("button", { name: "Save and continue to items" }));
+    await screen.findByRole("spinbutton", { name: "Quantity for Storage in Kitchen Unit" });
+    expect(saves).toHaveLength(1);
+    expect(saves[0]).toEqual({ expectedVersion: 7, operations: [{
+      kind: "configure", sourceToken: "scope-7", propertyType: "1BHK", bedroomCount: null, selectedMainBasketIds: [furniture.id], rooms: [
+        { id: "room-kitchen", typeId: "kitchen", label: "Kitchen", length: 18, width: 9 },
+        { id: "room-pantry", typeId: "kitchen", label: "Pantry", length: 6, width: 5 },
+        { id: "room-guest", typeId: "bedroom2", label: "Guest bedroom", length: 14, width: 10 },
+        { id: "room-legacy", typeId: null, label: "Kitchen", length: 7, width: null }
+      ]
+    }] });
+    await openOptions(user);
+    await configure(user);
+    await user.click(screen.getByRole("button", { name: "Select rooms" }));
+    expect(screen.getAllByRole("spinbutton", { name: "Kitchen length" }).map((input) => (input as HTMLInputElement).value)).toEqual(["18", "7"]);
+    expect(screen.getByRole("spinbutton", { name: "Pantry width" })).toHaveValue(5);
+    expect(screen.getByRole("spinbutton", { name: "Guest bedroom length" })).toHaveValue(14);
+    expect(saves).toHaveLength(1);
   });
 
   it("saves pending item changes before opening property, room and Main Basket setup", async () => {
@@ -173,7 +218,7 @@ describe("Client Sales-style estimate setup integration", () => {
     await configure(user);
     await property(user, "2BHK");
     await user.click(screen.getByRole("button", { name: "Select rooms" }));
-    await user.click(screen.getByRole("option", { name: "Bedroom 2" }));
+    await user.click(screen.getByRole("checkbox", { name: "Bedroom 2" }));
     await user.keyboard("{Escape}");
     await user.click(screen.getByRole("button", { name: "Add Lighting" }));
     expect(saves).toEqual([]);

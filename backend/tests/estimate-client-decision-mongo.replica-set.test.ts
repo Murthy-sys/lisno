@@ -1,4 +1,5 @@
 import { createProjectDesignWorkflow } from "../src/domain/design-workflow.js";
+import { defaultProjectManagerId, insertProjectInitiationDefault } from "./helpers/project-initiation-defaults.js";
 import express from "express";
 import request from "supertest";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -549,6 +550,7 @@ async function assertSingleDecision(
     );
     if (fixture.projectId === null) {
       expect(committedProjectId).toMatch(/^project-/);
+      expect(projects[0]!.programManagerId).toBe(defaultProjectManagerId);
       expect(projects[0]!.designWorkflowStages).toEqual(createProjectDesignWorkflow(committedProjectId));
       expect(lead).toMatchObject({
         _id: fixture.leadId,
@@ -645,6 +647,13 @@ async function assertSingleDecision(
       ? "estimate_client_approval_recorded_by_admin"
       : "estimate_client_changes_recorded_by_admin";
   const expectedAudits = [
+    ...(decision === "approve" && fixture.projectId === null ? [{
+      action: "project_created",
+      actorId: expectedActorId,
+      entityType: "project",
+      entityId: String(estimate!.projectId),
+      decisionSource: null
+    }] : []),
     {
       action: semanticAction,
       actorId: expectedActorId,
@@ -679,7 +688,7 @@ async function assertSingleDecision(
         (event.newValues as Record<string, unknown>).decisionSource ?? null
     }))
     .sort((left, right) => left.action.localeCompare(right.action));
-  expect(actualAudits).toHaveLength(source === "admin_proof" ? 3 : 2);
+  expect(actualAudits).toHaveLength((source === "admin_proof" ? 3 : 2) + (decision === "approve" && fixture.projectId === null ? 1 : 0));
   expect(actualAudits).toEqual(expectedAudits);
 }
 
@@ -715,6 +724,7 @@ async function assertWinningProofIsOnlyReadableObject(
 
 describe("Estimate decision races on a Mongo replica set", () => {
   it("retains an issued project number when approval creates the legacy Lead's Project", async () => {
+    await insertProjectInitiationDefault();
     const fixture = await seedDecisionFixture({ projectLink: "unlinked" });
     await LeadModel.collection.updateOne({ _id: fixture.leadId }, { $set: { projectNumber: "Lisno000001" } });
     await ProjectNumberSequenceModel.create({ _id: PROJECT_NUMBER_SEQUENCE_ID, lastNumber: 1 });
@@ -862,6 +872,7 @@ describe("Estimate decision races on a Mongo replica set", () => {
   );
 
   it("creates exactly one linked Project across two unlinked Super Admin approvals", async () => {
+    await insertProjectInitiationDefault();
     const fixture = await seedDecisionFixture({
       roundId: "task12-unlinked-round",
       projectLink: "unlinked"

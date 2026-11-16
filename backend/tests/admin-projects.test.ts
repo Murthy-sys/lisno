@@ -1,3 +1,4 @@
+import { withProjectInitiationDefault, defaultProjectManagerId } from "./helpers/project-initiation-defaults.js";
 import jwt from "jsonwebtoken";
 import request from "supertest";
 import { describe, expect, it } from "vitest";
@@ -25,7 +26,7 @@ function bearer(id: string, role: string): string {
 }
 
 function projectListSeed() {
-  const seed = structuredClone(demoSeedData);
+  const seed = withProjectInitiationDefault(demoSeedData);
   const admin = seed.users.find(({ id }) => id === "user-admin")!;
   seed.users.push(...["other", "empty"].map((suffix) => ({
     ...admin, id: `user-admin-${suffix}`, email: `${suffix}@projects.test`, emailNormalized: `${suffix}@projects.test`
@@ -144,7 +145,7 @@ describe("Admin project collection selection", () => {
 
 describe("Admin-initiated projects", () => {
   it("automatically exposes a new project only to its matching existing client", async () => {
-    const seed = structuredClone(demoSeedData);
+    const seed = withProjectInitiationDefault(demoSeedData);
     const template = seed.users.find(user => user.role === "client")!;
     const clients = [
       { ...template, id: "existing-project-client-a", email: "first@client-link.test", emailNormalized: "first@client-link.test", accountKind: "standard" as const },
@@ -173,7 +174,7 @@ describe("Admin-initiated projects", () => {
   });
 
   it("keeps fallback-assigned Client-response history safe while exposing the task only to its assignee or Super Admin", async () => {
-    const seed = structuredClone(demoSeedData);
+    const seed = withProjectInitiationDefault(demoSeedData);
     seed.projects = seed.projects.filter(({ id }) =>
       ["project-aurora-villa", "project-aurora-studio"].includes(id)
     );
@@ -401,7 +402,7 @@ describe("Admin-initiated projects", () => {
   });
 
   it("returns deterministic approved Estimate lineage for Lead-only and direct-only projects", async () => {
-    const seed = structuredClone(demoSeedData);
+    const seed = withProjectInitiationDefault(demoSeedData);
     seed.projects = seed.projects.filter(({ id }) =>
       ["project-aurora-villa", "project-aurora-studio"].includes(id)
     );
@@ -548,7 +549,7 @@ describe("Admin-initiated projects", () => {
   });
 
   it("rejects an Admin project whose approved Estimate and Lead resolve to different projects", async () => {
-    const seed = structuredClone(demoSeedData);
+    const seed = withProjectInitiationDefault(demoSeedData);
     seed.projects = seed.projects.filter(({ id }) =>
       ["project-aurora-villa", "project-aurora-studio"].includes(id)
     );
@@ -610,7 +611,7 @@ describe("Admin-initiated projects", () => {
   });
 
   it("atomically initiates and returns the Admin-scoped project handoff", async () => {
-    const seed = structuredClone(demoSeedData);
+    const seed = withProjectInitiationDefault(demoSeedData);
     seed.projects = [];
     seed.leads = [];
     seed.projectAccessGrants = [];
@@ -680,7 +681,8 @@ describe("Admin-initiated projects", () => {
     );
     expect(initiationAudits).toEqual(expect.arrayContaining([
         expect.objectContaining({ action: "project_created", newValues: {
-          status: "planning", assignedEstimatorId: "user-estimator-sales"
+          status: "planning", assignedEstimatorId: "user-estimator-sales",
+          programManagerId: defaultProjectManagerId, projectManagerDefaultVersion: 1
         }}),
         expect.objectContaining({ action: "project_access.granted", newValues: {
           projectId: projects[0]!.id,
@@ -703,7 +705,7 @@ describe("Admin-initiated projects", () => {
     [{ budgetMin: 0 }, 0, null],
     [{ budgetMax: 1200000 }, null, 1200000]
   ])("initiates without location and preserves optional budget bounds %j", async (budgets, budgetMin, budgetMax) => {
-    const repository = createMemoryRepository(structuredClone(demoSeedData));
+    const repository = createMemoryRepository(withProjectInitiationDefault(demoSeedData));
     const app = createApp({ repository, auth, clock });
     const response = await request(app).post("/api/v1/admin/projects")
       .set("Authorization", bearer("user-admin", "admin"))
@@ -724,7 +726,7 @@ describe("Admin-initiated projects", () => {
 
   it.each(["  Instagram  ", "Existing customer", `  ${"a".repeat(200)}  `])(
     "persists the trimmed project source %j without changing access provenance", async (source) => {
-      const repository = createMemoryRepository(structuredClone(demoSeedData));
+      const repository = createMemoryRepository(withProjectInitiationDefault(demoSeedData));
       const app = createApp({ repository, auth, clock });
       const response = await request(app).post("/api/v1/admin/projects")
         .set("Authorization", bearer("user-admin", "admin"))
@@ -753,7 +755,7 @@ describe("Admin-initiated projects", () => {
 
   it.each(["", " \t\n ", "a".repeat(201), null, 42, ["Instagram"], { channel: "Instagram" }])(
     "rejects invalid project source %j before creating any records", async (source) => {
-      const seed = structuredClone(demoSeedData);
+      const seed = withProjectInitiationDefault(demoSeedData);
       seed.projects = [];
       seed.leads = [];
       seed.projectAccessGrants = [];
@@ -780,7 +782,7 @@ describe("Admin-initiated projects", () => {
   );
 
   it("keeps location required for ordinary leads and the legacy project creation endpoint denied", async () => {
-    const app = createApp({ repository: createMemoryRepository(structuredClone(demoSeedData)), auth, clock });
+    const app = createApp({ repository: createMemoryRepository(withProjectInitiationDefault(demoSeedData)), auth, clock });
     const lead = {
       clientName: "Asha Shah", clientEmail: "asha@example.com", clientMobile: "9000000000",
       projectName: "Asha home", propertyType: "Apartment", source: "Referral",
@@ -803,7 +805,7 @@ describe("Admin-initiated projects", () => {
   });
 
   it("rejects unsafe initiation inputs and hides another Admin's project", async () => {
-    const seed = structuredClone(demoSeedData);
+    const seed = withProjectInitiationDefault(demoSeedData);
     const otherAdmin = {
       ...structuredClone(seed.users.find((user) => user.id === "user-admin")!),
       id: "user-admin-other",
@@ -830,7 +832,7 @@ describe("Admin-initiated projects", () => {
   });
 
   it("locks the staff directory to Super Admin, exposes estimator options, and lets Super Admin initiate", async () => {
-    const repository = createMemoryRepository(structuredClone(demoSeedData));
+    const repository = createMemoryRepository(withProjectInitiationDefault(demoSeedData));
     const app = createApp({ repository, auth, clock });
     await request(app).get("/api/v1/admin/users")
       .set("Authorization", bearer("user-admin", "admin")).expect(403);
@@ -862,7 +864,7 @@ describe("Admin-initiated projects", () => {
   });
 
   it("returns field-addressable errors for the strict initiation contract and safe estimator validation", async () => {
-    const seed = structuredClone(demoSeedData);
+    const seed = withProjectInitiationDefault(demoSeedData);
     const estimator = seed.users.find((user) => user.id === "user-estimator-sales")!;
     seed.users.push(
       { ...estimator, id: "inactive-estimator", email: "inactive@example.com", emailNormalized: "inactive@example.com", active: false },
@@ -911,7 +913,7 @@ describe("Admin-initiated projects", () => {
     ["appendAuditEvent", 2],
     ["appendAuditEvent", 3]
   ] as const)("rolls back every write when %s failure point %s throws", async (method, auditFailureAt) => {
-    const seed = structuredClone(demoSeedData);
+    const seed = withProjectInitiationDefault(demoSeedData);
     seed.projects = [];
     seed.leads = [];
     seed.projectAccessGrants = [];
@@ -971,7 +973,7 @@ describe("project initiation intake metadata", () => {
   const metadata = { nativePlace: "Kochi", tentativeBudget: "₹15–20 lakh", closureTentativeDate: "2028-02-29", category: "self_use", languagesKnown: ["english", "malayalam"], preferredLanguage: "tamil" };
 
   it("persists independent project metadata through authorized Lead and Admin reads without financial or audit effects", async () => {
-    const repository = createMemoryRepository(structuredClone(demoSeedData));
+    const repository = createMemoryRepository(withProjectInitiationDefault(demoSeedData));
     const app = createApp({ repository, auth, clock });
     const inputs = [metadata, { ...metadata, nativePlace: "Pune", tentativeBudget: "To be discussed", closureTentativeDate: "2027-12-31", category: "rental", languagesKnown: ["marathi"], preferredLanguage: "english" }];
     for (const [index, values] of inputs.entries()) {
@@ -1003,7 +1005,7 @@ describe("project initiation intake metadata", () => {
   });
 
   it("normalizes omitted and empty metadata, preserves explicit legacy actions and reads historical records", async () => {
-    const seed = structuredClone(demoSeedData);
+    const seed = withProjectInitiationDefault(demoSeedData);
     const repository = createMemoryRepository(seed);
     const app = createApp({ repository, auth, clock });
     const created = await request(app).post("/api/v1/admin/projects")
@@ -1027,7 +1029,7 @@ describe("project initiation intake metadata", () => {
     ["languagesKnown", ["english", "english"]], ["languagesKnown", ["unknown"]],
     ["languagesKnown", null], ["preferredLanguage", "unknown"], ["nextAction", " "]
   ])("rejects invalid %s intake before any writes", async (field, value) => {
-    const seed = structuredClone(demoSeedData);
+    const seed = withProjectInitiationDefault(demoSeedData);
     seed.projects = []; seed.leads = []; seed.auditEvents = []; seed.projectAccessGrants = [];
     const repository = createMemoryRepository(seed);
     const app = createApp({ repository, auth, clock });
@@ -1042,7 +1044,7 @@ describe("project initiation intake metadata", () => {
   });
 
   it("validates direct service intake and accepts exact text boundaries and leap days", async () => {
-    const repository = createMemoryRepository(structuredClone(demoSeedData));
+    const repository = createMemoryRepository(withProjectInitiationDefault(demoSeedData));
     const service = createAdminProjectService(repository, createAuditService(repository), clock);
     const admin = (await repository.findUserById("user-admin"))!;
     await expect(service.initiate(admin, { ...intakeInput, closureTentativeDate: "2100-02-29" }))

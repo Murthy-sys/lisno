@@ -1,3 +1,4 @@
+import { withProjectInitiationDefault } from "./helpers/project-initiation-defaults.js";
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { createMemoryRepository } from "../src/repositories/memory.js";
@@ -12,7 +13,7 @@ import type { UserRecord } from "../src/repositories/types.js";
 const password = "InvitationTestPassword!23";
 const context = { remoteAddress: "127.0.0.1" };
 function setup(options: { disabled?: boolean; failed?: boolean; existing?: boolean; clientOverrides?: Partial<UserRecord> } = {}) {
-  const seed = structuredClone(demoSeedData);
+  const seed = withProjectInitiationDefault(demoSeedData);
   seed.users.forEach(user => { user.accountKind = "standard"; });
   if (options.existing) {
     const client = seed.users.find(user => user.role === "client")!;

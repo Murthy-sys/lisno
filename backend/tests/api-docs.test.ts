@@ -26,6 +26,64 @@ function componentSchemas(): Record<string, OpenApiObject> {
 }
 
 describe("OpenAPI and Swagger UI", () => {
+  it("documents optional resolved tier descriptions as bounded read-only paragraphs", () => {
+    const schemas = componentSchemas();
+    expect(schemas.EstimatorCatalogueLine!.required).not.toContain("tierDescriptions");
+    const descriptions = (schemas.EstimatorCatalogueLine!.properties as OpenApiObject).tierDescriptions as OpenApiObject;
+    expect(descriptions).toMatchObject({ type: "object", readOnly: true, additionalProperties: false });
+    expect(Object.keys(descriptions.properties as OpenApiObject)).toEqual(["signature", "premium", "functional"]);
+    for (const tier of ["signature", "premium", "functional"]) expect(descriptions).toHaveProperty(
+      `properties.${tier}`, { type: "string", nullable: true, minLength: 1, maxLength: 4000 }
+    );
+    expect(descriptions.description).toContain("Independent of specification fallback");
+    expect(schemas.ConfiguredEstimateLineInput).not.toHaveProperty("properties.tierDescriptions");
+  });
+
+  it("documents optional resolved tier specification names and brands without private Configuration fields", () => {
+    const schemas = componentSchemas();
+    expect(schemas.EstimatorCatalogueLine!.required).not.toContain("tierDetails");
+    const details = (schemas.EstimatorCatalogueLine!.properties as OpenApiObject).tierDetails as OpenApiObject;
+    expect(details).toMatchObject({ type: "object", readOnly: true, additionalProperties: false });
+    expect(details.description).toContain("an absent or valid empty list can use configured Mode (default) specifications");
+    expect(Object.keys(details.properties as OpenApiObject)).toEqual(["signature", "premium", "functional"]);
+    for (const tier of ["signature", "premium", "functional"]) expect(details).toHaveProperty(
+      `properties.${tier}.$ref`, "#/components/schemas/EstimatorCatalogueTierDetails"
+    );
+    const tierDetails = schemas.EstimatorCatalogueTierDetails!;
+    expect(tierDetails).toMatchObject({ nullable: true, additionalProperties: false, required: ["specifications"] });
+    const specification = ((tierDetails.properties as OpenApiObject).specifications as OpenApiObject).items as OpenApiObject;
+    expect(specification.additionalProperties).toBe(false);
+    expect(Object.keys(specification.properties as OpenApiObject)).toEqual(["id", "name", "brands"]);
+    const brand = ((specification.properties as OpenApiObject).brands as OpenApiObject).items as OpenApiObject;
+    expect(brand.additionalProperties).toBe(false);
+    expect(Object.keys(brand.properties as OpenApiObject)).toEqual(["id", "name"]);
+    expect(brand).toHaveProperty("properties.name.nullable", true);
+  });
+
+  it("documents versioned Project Manager defaults without exposing unavailable account details", () => {
+    const schemas = componentSchemas();
+    expect(schemas.ProjectInitiationDefaultsUpdate).toMatchObject({
+      additionalProperties: false,
+      required: ["expectedVersion", "projectManagerId"],
+      properties: { expectedVersion: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER } }
+    });
+    const [ready, unavailable] = schemas.ProjectInitiationDefaults!.oneOf as OpenApiObject[];
+    expect(ready).toHaveProperty("properties.status.enum", ["ready"]);
+    expect(ready).toHaveProperty("properties.projectManager.additionalProperties", false);
+    expect(ready).toHaveProperty("properties.projectManager.required", ["id", "name"]);
+    expect(unavailable).toHaveProperty("properties.status.enum", ["unconfigured", "unavailable"]);
+    expect(unavailable).toHaveProperty("properties.projectManager.enum", [null]);
+    const paths = openApiDocument.paths as Record<string, Record<string, OpenApiObject>>;
+    for (const method of ["get", "put"]) {
+      expect(paths["/admin/project-initiation-defaults"]![method]).toHaveProperty(
+        "responses.2XX.content.application/json.schema.properties.data.$ref", "#/components/schemas/ProjectInitiationDefaults"
+      );
+    }
+    expect(paths["/admin/project-initiation-defaults"]!.put).toHaveProperty(
+      "requestBody.content.application/json.schema.$ref", "#/components/schemas/ProjectInitiationDefaultsUpdate"
+    );
+  });
+
   it("documents generated project identity only as read-only response metadata", () => {
     const schemas = componentSchemas();
     for (const name of ["NumberedProjectRead", "DashboardProjectRow", "ProjectStatusSummary", "DesignPlanTask", "ProcurementProject", "ProjectFinanceBucket", "PMProject", "ExecutionProjectMetadata", "ExecutionWork", "EstimateTierChoices", "Quotation"]) {
@@ -945,8 +1003,12 @@ describe("OpenAPI and Swagger UI", () => {
     });
     expect(initiation.properties).toMatchObject({
       estimatorId: { type: "string", description: expect.stringContaining("Required for Sales Manager") },
-      salesManagerId: { type: "string", description: expect.stringContaining("Required for Sales") }
+      salesManagerId: { type: "string", description: expect.stringContaining("Optional legacy Sales Manager oversight for Sales") },
+      projectManagerDefaultVersion: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER }
     });
+    expect(initiation.required).not.toContain("salesManagerId");
+    expect(initiation.required).not.toContain("projectManagerDefaultVersion");
+    expect(initiation.properties).not.toHaveProperty("projectManagerId");
     const paths = openApiDocument.paths as Record<string, Record<string, OpenApiObject>>;
     const options = paths["/admin/sales-managers"]!.get!;
     expect(options.parameters).toEqual(expect.arrayContaining([
@@ -1295,7 +1357,7 @@ describe("OpenAPI and Swagger UI", () => {
     }
   });
 
-  it("contains all 527 routes without versioning paths twice", () => {
+  it("contains all 529 routes without versioning paths twice", () => {
     const methods = new Set(["get", "post", "put", "patch", "delete"]);
     const operationCount = Object.values(openApiDocument.paths).reduce(
       (total, pathItem) =>
@@ -1304,7 +1366,7 @@ describe("OpenAPI and Swagger UI", () => {
     );
 
     expect(operationCount).toBe(HUMAN_JWT_OPERATION_LIST.length + 21);
-    expect(operationCount).toBe(527);
+    expect(operationCount).toBe(529);
     expect(Object.keys(openApiDocument.paths).some((path) =>
       path.startsWith("/api/v1")
     )).toBe(false);

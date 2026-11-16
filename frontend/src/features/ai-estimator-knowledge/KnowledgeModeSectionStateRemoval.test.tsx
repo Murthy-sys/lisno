@@ -1322,14 +1322,14 @@ describe("Knowledge Mode section-state removal", () => {
     expect(within(exclusions).getByRole("checkbox", { name: "Night unloading" })).toBeChecked();
   });
 
-  it("loads Mode, Specifications, and the saved Overview UOM with independent section metadata", async () => {
+  it("loads Mode, Specifications, and the saved Overview UOM without showing section metadata", async () => {
     const ref = createRef<KnowledgeModePanelHandle>();
     renderPanel(ref);
     expect(await screen.findByRole("button", { name: "Add Specification" })).toBeVisible();
     expect(screen.getByRole("region", { name: "Mode configuration" })).toBeVisible();
     expect(screen.getByRole("region", { name: "Specifications" })).toBeVisible();
-    expect(screen.getByText("Section version 11")).toBeVisible();
-    expect(screen.getByText("Section version 12")).toBeVisible();
+    expect(screen.queryByText(/^Section version\b/)).not.toBeInTheDocument();
+    expect(document.querySelector(".knowledge-mode-block__toolbar")).not.toBeInTheDocument();
     expect(vi.mocked(knowledgeApi.getKnowledgeSection).mock.calls.map((call) => call[2]))
       .toEqual(["advanced", "pricing", "overview"]);
     for (const name of ["Budgeting", "Vendors", "Surfaces", "Quantity & margin"]) {
@@ -1348,8 +1348,8 @@ describe("Knowledge Mode section-state removal", () => {
     const call = vi.mocked(knowledgeApi.updateKnowledgeSection).mock.calls[0]!;
     expect(call[2]).toBe("pricing");
     expect(call[3]).toMatchObject({ applicability: "not_applicable", expectedVersion: 12 });
-    expect(screen.getByText("Section version 11")).toBeVisible();
-    expect(screen.getByText("Section version 13")).toBeVisible();
+    expect(screen.queryByText(/^Section version\b/)).not.toBeInTheDocument();
+    expect(document.querySelector(".knowledge-mode-block__toolbar")).not.toBeInTheDocument();
     expect(screen.queryByText("Unsaved changes")).not.toBeInTheDocument();
   });
 

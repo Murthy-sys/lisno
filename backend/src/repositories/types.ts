@@ -1,4 +1,5 @@
 import type { ProjectInitiationMetadata } from "../contracts/project-initiation.js";
+import type { ProjectInitiationDefaultsRecord } from "../contracts/project-initiation-defaults.js";
 import type { UserResponsibilityQuery, UserResponsibilityRow } from "../contracts/user-responsibilities.js";
 import type { ProjectClientInvitationRecord, ProjectInitiationReceipt } from "../domain/project-client-invitations.js";
 import type { DesignRequirementsSource, DesignRequirementsState } from "../domain/design-requirements.js";
@@ -1003,6 +1004,7 @@ export interface SeedData {
   }>;
   projectClientInvitations?: ProjectClientInvitationRecord[];
   projectInitiationReceipts?: ProjectInitiationReceipt[];
+  projectInitiationDefaults?: ProjectInitiationDefaultsRecord;
   procurementVendorInvitationSources?: import("../domain/user-invitations.js").ProcurementVendorInvitationSource[];
   vendorWorkInvitationSources?: import("../domain/user-invitations.js").VendorWorkInvitationSource[];
   projectStatusEstimateEvidence?: ProjectStatusEstimateEvidence[];
@@ -1060,6 +1062,9 @@ export type NewDesignStage = DesignStageRecord;
 export type NewTask = TaskRecord;
 
 export interface AppRepository {
+  findProjectInitiationDefaults(): Promise<ProjectInitiationDefaultsRecord | null>;
+  saveProjectInitiationDefaults(record: ProjectInitiationDefaultsRecord, expectedVersion: number): Promise<ProjectInitiationDefaultsRecord>;
+  findSalesInitiatedProject(actor: UserRecord, projectId: string): Promise<AdminProjectSummary | null>;
   findDesignRequirementsSource(projectId: string, lock?: boolean): Promise<DesignRequirementsSource | null>;
   findDesignRequirementsState(projectId: string, lock?: boolean): Promise<DesignRequirementsState | null>;
   saveDesignRequirementsState(projectId: string, expectedVersion: number, state: DesignRequirementsState): Promise<DesignRequirementsState>;

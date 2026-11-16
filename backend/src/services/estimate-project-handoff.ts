@@ -1,3 +1,6 @@
+import { createMongoRepository } from "../repositories/mongo.js";
+import { resolveProjectManagerDefault } from "./project-initiation-default-resolution.js";
+import type { AuditService } from "./audit.service.js";
 import { createProjectDesignWorkflow } from "../domain/design-workflow.js";
 import { randomUUID } from "node:crypto";
 import type { ClientSession } from "mongoose";
@@ -22,6 +25,8 @@ export interface ResolveApprovalProjectInput {
   clientId: string | null;
   occurredAt: Date;
   session: ClientSession;
+  actorId: string;
+  audit: AuditService;
 }
 
 function projectLinkConflict(): ApiError {
@@ -45,6 +50,9 @@ export async function resolveApprovalProject(
 
   if (estimate.projectId === null) {
     if (lead.projectId !== null) throw projectLinkConflict();
+    const transaction = createMongoRepository(session);
+    await transaction.coordinateAuthorizationMutation();
+    const projectManagerDefault = await resolveProjectManagerDefault(transaction);
     const plannedEndAt = new Date(occurredAt);
     plannedEndAt.setUTCDate(plannedEndAt.getUTCDate() + 90);
     const projectId = `project-${randomUUID()}`;
@@ -62,7 +70,7 @@ export async function resolveApprovalProject(
       assignedEstimatorId: estimate.ownerId,
       assignedDesignerIds: [],
       managerId: null,
-      programManagerId: null,
+      programManagerId: projectManagerDefault.projectManagerId,
       status: "planning",
       location: lead.location,
       cityName: lead.cityName ?? null,
@@ -70,6 +78,16 @@ export async function resolveApprovalProject(
       plannedStartAt: occurredAt,
       plannedEndAt
     }], { session });
+    await input.audit.appendInMongoTransaction({
+      actorId: input.actorId,
+      action: "project_created",
+      entityType: "project",
+      entityId: projectId,
+      occurredAt: occurredAt.toISOString(),
+      newValues: { status: "planning", assignedEstimatorId: estimate.ownerId,
+        programManagerId: projectManagerDefault.projectManagerId,
+        projectManagerDefaultVersion: projectManagerDefault.version }
+    }, session);
     return projectId;
   }
 

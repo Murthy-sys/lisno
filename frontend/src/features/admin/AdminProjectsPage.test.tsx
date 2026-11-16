@@ -84,6 +84,8 @@ function installSuperAdminSession() {
             "projects.list",
             "projects.read",
             "projects.initiate",
+            "projects.initiation_defaults.manage",
+            "projects.initiation_defaults.read",
             "design.plan_assignment.manage"
           ]
         }
@@ -133,6 +135,7 @@ const VIEW_STORAGE_KEY = "lisno.adminProjects.view";
 
 describe("AdminProjectsPage", () => {
   beforeEach(() => {
+    server.use(http.get("/api/v1/admin/project-initiation-defaults", () => HttpResponse.json({ data: { version: 1, status: "ready", projectManager: { id: "pm-default", name: "Default Project Manager" } } })));
     window.localStorage.removeItem(VIEW_STORAGE_KEY);
   });
 
@@ -473,6 +476,28 @@ describe("AdminProjectsPage", () => {
     expect(await screen.findByText("Project 20")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Previous page" }));
     expect(await screen.findByText("Project 0")).toBeVisible();
+  });
+
+  it("offers Project defaults only to authorized Super Admin and opens the existing-style panel", async () => {
+    installSuperAdminSession();
+    server.use(
+      http.get("/api/v1/admin/projects", () => HttpResponse.json(page([]))),
+      http.get("/api/v1/admin/program-managers", () => HttpResponse.json({ data: { items: [], total: 0, limit: 50, offset: 0 } }))
+    );
+    const user = userEvent.setup();
+    renderApp(["/admin/projects"]);
+    await user.click(await screen.findByRole("button", { name: "Project defaults" }));
+    expect(screen.getByRole("dialog", { name: "Project defaults" })).toBeVisible();
+    expect(await screen.findByText("Current default: Default Project Manager")).toBeVisible();
+    expect(screen.getAllByRole("dialog")).toHaveLength(1);
+  });
+
+  it("does not offer global defaults to a Sales Manager", async () => {
+    installSession();
+    server.use(http.get("/api/v1/admin/projects", () => HttpResponse.json(page([]))));
+    renderApp(["/admin/projects"]);
+    await screen.findByRole("button", { name: "Initiate project" });
+    expect(screen.queryByRole("button", { name: "Project defaults" })).not.toBeInTheDocument();
   });
 
   it("opens initiation and navigates to the created detail on success", async () => {

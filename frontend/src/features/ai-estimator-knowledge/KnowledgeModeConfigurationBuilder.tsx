@@ -371,7 +371,6 @@ export function KnowledgeModeConfigurationBuilder({
       aria-labelledby="knowledge-mode-configuration-title"
     >
       <h2 id="knowledge-mode-configuration-title" className="sr-only">Mode configuration</h2>
-      {readOnly ? <span className="knowledge-readonly-label">Read-only revision</span> : null}
 
       {issues.length ? (
         <div
@@ -407,6 +406,32 @@ export function KnowledgeModeConfigurationBuilder({
         </div>
       ) : null}
 
+      <div className="knowledge-mode-configuration__shared"
+        ref={(node) => {
+          if (node) fieldRefs.current.set("modeDescription", node);
+          else fieldRefs.current.delete("modeDescription");
+        }}
+      >
+        <h3 className="knowledge-mode-configuration__shared-title">Description</h3>
+        <KnowledgeModeDescriptionEditor
+          key={descriptionResetKey}
+          description={description}
+          pmc={partitioned.primary.pmc}
+          inHouse={inHouseConfiguration}
+          readOnly={readOnly}
+          validationAttempt={validationAttempt}
+          error={issueFor("modeDescription")}
+          onPendingChange={handlePendingDescriptionChange}
+          onPendingTextChange={onPendingDescriptionTextChange}
+          onSave={(text) => {
+            const modeDescription = text === generatedDescription ? null : text;
+            if (modeDescription === (payload.modeDescription ?? null)) return;
+            onDirty();
+            onChange({ ...payload, modeDescription });
+          }}
+        />
+      </div>
+
       <div className="knowledge-mode-configuration__intro">
         <fieldset className="knowledge-mode-configuration__mode-selector">
           <legend>Mode</legend>
@@ -434,32 +459,6 @@ export function KnowledgeModeConfigurationBuilder({
           </div>
         </fieldset>
 
-      </div>
-
-      <div className="knowledge-mode-configuration__shared"
-        ref={(node) => {
-          if (node) fieldRefs.current.set("modeDescription", node);
-          else fieldRefs.current.delete("modeDescription");
-        }}
-      >
-        <h3 className="knowledge-mode-configuration__shared-title">Description</h3>
-        <KnowledgeModeDescriptionEditor
-          key={descriptionResetKey}
-          description={description}
-          pmc={partitioned.primary.pmc}
-          inHouse={inHouseConfiguration}
-          readOnly={readOnly}
-          validationAttempt={validationAttempt}
-          error={issueFor("modeDescription")}
-          onPendingChange={handlePendingDescriptionChange}
-          onPendingTextChange={onPendingDescriptionTextChange}
-          onSave={(text) => {
-            const modeDescription = text === generatedDescription ? null : text;
-            if (modeDescription === (payload.modeDescription ?? null)) return;
-            onDirty();
-            onChange({ ...payload, modeDescription });
-          }}
-        />
       </div>
 
       <div className="knowledge-mode-configuration__sections">

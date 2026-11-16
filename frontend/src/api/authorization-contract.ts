@@ -114,6 +114,8 @@ export const REQUESTABLE_MODULES_BY_ROLE = {
 } as const satisfies Record<Role, readonly RequestableProjectModule[]>;
 
 export const PERMISSION_CODES = [
+  "projects.initiation_defaults.read",
+  "projects.initiation_defaults.manage",
   "pm.estimates.read", "pm.vendor_suggestions.read", "pm.vendor_suggestions.manage",
   "pm.vendor_notices.respond",
   "pm.workspace.read", "pm.requests.create", "pm.requests.act", "pm.requests.receive", "pm.selections.act", "pm.supply.sign", "pm.vendors.manage", "pm.certifications.act", "pm.client.manage", "pm.snags.manage", "pm.quality.manage", "pm.performance.read", "pm.leaderboard.read", "pm.bonus.read", "pm.evidence.manage", "pm.evidence.read", "pm.notifications.read",
@@ -327,7 +329,7 @@ export const PERMISSION_CODES = [
 export type PermissionCode = (typeof PERMISSION_CODES)[number];
 
 export const AUTHORIZATION_POLICY_VERSION =
-  "2026-10-30.quotation-workflow.v3" as const;
+  "2026-11-15.project-initiation-defaults.v1" as const;
 
 export interface AuthorizationSnapshot {
   readonly role: Role;

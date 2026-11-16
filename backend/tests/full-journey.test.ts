@@ -1,3 +1,4 @@
+import { ProjectInitiationDefaultsModel } from "../src/models/ProjectInitiationDefaults.js";
 import { AuthorizationCoordinationModel } from "../src/models/AuthorizationCoordination.js";
 import { createProjectDesignWorkflow } from "../src/domain/design-workflow.js";
 import { Readable } from "node:stream";
@@ -24,6 +25,7 @@ import { demoSeedData } from "../src/seed/data.js";
 import { createAuditService } from "../src/services/audit.service.js";
 import { createProjectService } from "../src/services/project.service.js";
 import { developmentDemoAuthentication } from "./helpers/development-demo-authentication.js";
+import { withProjectInitiationDefault } from "./helpers/project-initiation-defaults.js";
 
 const createApp = (dependencies: Parameters<typeof createApplication>[0]) =>
   createApplication({
@@ -74,7 +76,9 @@ function modelQuery<T>(value: T) {
     sort: vi.fn(),
     select: vi.fn(),
     session: vi.fn(),
-    lean: vi.fn(async () => detachedLeanValue(value)),
+    lean: vi.fn(() => Object.assign(Promise.resolve(detachedLeanValue(value)), {
+      exec: vi.fn(async () => detachedLeanValue(value))
+    })),
     exec: vi.fn(async () => value)
   };
   result.sort.mockReturnValue(result);
@@ -408,6 +412,10 @@ function setupEstimateDrawingJourneyModels() {
       active: true
     }]
   ]);
+  team.set("journey-default-pm", { _id: "journey-default-pm", name: "Default Project Manager", email: "journey-pm@example.test",
+    role: "site_manager", active: true, createdAt: new Date("2026-11-15T00:00:00Z"), updatedAt: new Date("2026-11-15T00:00:00Z") } as never);
+  vi.spyOn(ProjectInitiationDefaultsModel, "findById").mockReturnValue(modelQuery({ _id: "organization", projectManagerId: "journey-default-pm", version: 1,
+    updatedById: "user-super-admin", updatedAt: new Date("2026-11-15T00:00:00Z") }) as never);
   vi.spyOn(UserModel, "findById").mockImplementation((id) =>
     modelQuery(team.get(String(id)) ?? null) as never
   );
@@ -1015,7 +1023,7 @@ describe("complete cross-role journey", () => {
       assignedEstimatorId: "user-estimator-sales",
       assignedDesignerIds: [],
       managerId: null,
-      programManagerId: null,
+      programManagerId: "journey-default-pm",
       status: "planning",
       location: "Pune",
       cityName: null,
@@ -1023,8 +1031,24 @@ describe("complete cross-role journey", () => {
       plannedStartAt: expect.any(Date),
       plannedEndAt: expect.any(Date)
     }]);
-    expect(AuditEventModel.create).toHaveBeenCalledTimes(2);
+    expect(AuditEventModel.create).toHaveBeenCalledTimes(3);
     expect(fixture.state.auditEvents).toEqual([
+      {
+        _id: expect.stringMatching(/^audit-/),
+        actorId: "user-client-aurora",
+        action: "project_created",
+        entityType: "project",
+        entityId: projectId,
+        occurredAt: decisionAt,
+        oldValues: {},
+        newValues: {
+          status: "planning",
+          assignedEstimatorId: "user-estimator-sales",
+          programManagerId: "journey-default-pm",
+          projectManagerDefaultVersion: 1
+        },
+        reason: null
+      },
       {
         _id: expect.stringMatching(/^audit-/),
         actorId: "user-client-aurora",
@@ -1158,7 +1182,7 @@ describe("complete cross-role journey", () => {
   });
 
   it("preserves established mixed-case client memberships through legacy upload, review, and revision history", async () => {
-    const seed = structuredClone(demoSeedData);
+    const seed = withProjectInitiationDefault(demoSeedData);
     seed.users.push({ ...seed.users.find(user => user.role === "client")!, id: "journey-established-client", email: "journey.client@example.com", emailNormalized: "journey.client@example.com", accountKind: "standard" });
     const repository = createMemoryRepository(seed);
     const storage = new JourneyStorage();

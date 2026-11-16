@@ -239,7 +239,7 @@ describe("authorization policy", () => {
       if (role === "program_manager") { expect(ROLE_PERMISSIONS[role]).toEqual([]); continue; }
       const historicalPermissions = ROLE_PERMISSIONS[role].filter(
         (permission) =>
-          !permission.startsWith("projects.client_invitation.") && !permission.startsWith("estimation.requirements.") && !permission.startsWith("estimation.tiers.") && !permission.startsWith("estimation.dimensions.") && !["identity.project_invitation.accept", "estimation.review.withdraw", "estimation.preparation.release"].includes(permission) &&
+          !permission.startsWith("projects.initiation_defaults.") && !permission.startsWith("projects.client_invitation.") && !permission.startsWith("estimation.requirements.") && !permission.startsWith("estimation.tiers.") && !permission.startsWith("estimation.dimensions.") && !["identity.project_invitation.accept", "estimation.review.withdraw", "estimation.preparation.release"].includes(permission) &&
           !(role === "designer" && ["estimation.lead.read", "estimation.estimate.read", "estimation.estimate.save", "estimation.estimate.submit", "estimation.estimate.send_client"].includes(permission)) &&
           permission !== "ask_lisno.request" && !permission.startsWith("chat.") && !permission.startsWith("execution.") && !permission.startsWith("procurement.vendor_access.") &&
           permission !== "projects.design_requirements.act" &&
@@ -283,8 +283,8 @@ describe("authorization policy", () => {
         [...permissionsForRows([...COMMON_ROWS, ...ADDITIONAL_ROWS[role]]), ...(role === "site_manager" ? ["projects.list", "projects.read"] : [])]
       );
     }
-    expect(PERMISSION_CODES).toHaveLength(226);
-    expect(new Set(PERMISSION_CODES).size).toBe(226);
+    expect(PERMISSION_CODES).toHaveLength(228);
+    expect(new Set(PERMISSION_CODES).size).toBe(228);
     expect(ROLE_PERMISSIONS.super_admin).toEqual(PERMISSION_CODES);
   });
 
@@ -370,6 +370,13 @@ describe("authorization policy", () => {
     expect(PERMISSION_CODES).toContain(permission);
     for (const role of ROLE_CODES) {
       expect(hasPermission(role, permission), role).toBe(role === "super_admin");
+    }
+  });
+
+  it("restricts default reads to current initiators and default writes to Super Admin", () => {
+    for (const role of ROLE_CODES) {
+      expect(hasPermission(role, "projects.initiation_defaults.read"), role).toBe(["admin", "super_admin", "estimator_sales"].includes(role));
+      expect(hasPermission(role, "projects.initiation_defaults.manage"), role).toBe(role === "super_admin");
     }
   });
 

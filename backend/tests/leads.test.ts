@@ -13,6 +13,7 @@ import { EstimateClientReviewRoundModel } from "../src/models/EstimateClientRevi
 import { EstimateModel } from "../src/models/Estimate.js";
 import { LeadModel } from "../src/models/Lead.js";
 import { ProjectModel } from "../src/models/Project.js";
+import { ProjectInitiationDefaultsModel } from "../src/models/ProjectInitiationDefaults.js";
 import { ProjectAccessGrantModel } from "../src/models/ProjectAccessGrant.js";
 import { UserModel } from "../src/models/User.js";
 import { AuditEventModel } from "../src/models/AuditEvent.js";
@@ -1582,6 +1583,32 @@ describe("linked estimate approval route Mongo transaction", () => {
 });
 
 describe("commercial estimate approval handoff", () => {
+  const defaultProjectManager = {
+    _id: "commercial-default-pm", name: "Default Project Manager", email: "commercial-pm@example.test",
+    role: "site_manager", active: true,
+    createdAt: new Date("2026-11-15T00:00:00.000Z"), updatedAt: new Date("2026-11-15T00:00:00.000Z")
+  };
+  function mockDefaultProjectManager(session: unknown) {
+    const defaults = query({ _id: "organization", projectManagerId: defaultProjectManager._id,
+      version: 1, updatedById: "fixture-super-admin", updatedAt: defaultProjectManager.updatedAt });
+    defaults.session.mockImplementation(actual => {
+      expect(actual).toBe(session);
+      return defaults;
+    });
+    vi.spyOn(ProjectInitiationDefaultsModel, "findById").mockReturnValue(defaults as never);
+  }
+  function defaultProjectManagerQuery(session: unknown) {
+    const result = query(defaultProjectManager);
+    result.session.mockImplementation(actual => {
+      expect(actual).toBe(session);
+      return result;
+    });
+    result.lean.mockImplementation(() => Object.assign(Promise.resolve(defaultProjectManager), {
+      exec: vi.fn(async () => defaultProjectManager)
+    }));
+    return result;
+  }
+
   it("approves without reading drawing state and opens pending design assignment", async () => {
     const estimate = {
       _id: "estimate-gated",
@@ -1621,6 +1648,7 @@ describe("commercial estimate approval handoff", () => {
     };
     vi.spyOn(mongoose, "startSession").mockResolvedValue(session as never);
     mockAuthorizationFence(session);
+    mockDefaultProjectManager(session);
     vi.spyOn(EstimateModel, "findOne").mockReturnValue(query(estimate) as never);
     vi.spyOn(EstimateModel, "findById").mockReturnValue(query(estimate) as never);
     vi.spyOn(LeadModel, "findById").mockReturnValue(query(lead) as never);
@@ -1631,7 +1659,7 @@ describe("commercial estimate approval handoff", () => {
       query(revisions.get(String(filter.drawingId)) ?? null) as never
     );
     vi.spyOn(UserModel, "findById").mockImplementation((id) =>
-      query(id === "designer-1"
+      id === defaultProjectManager._id ? defaultProjectManagerQuery(session) as never : query(id === "designer-1"
         ? { _id: "designer-1", email: "designer@example.com", role: "designer", managerId: "manager-1" }
         : { _id: "manager-1", email: "manager@example.com", role: "design_manager" }) as never
     );
@@ -1678,6 +1706,7 @@ describe("commercial estimate approval handoff", () => {
         assignedEstimatorId: "user-estimator-sales",
         assignedDesignerIds: [],
         managerId: null,
+        programManagerId: defaultProjectManager._id,
         status: "planning"
       })
     ]);
@@ -1736,13 +1765,14 @@ describe("commercial estimate approval handoff", () => {
     };
     vi.spyOn(mongoose, "startSession").mockResolvedValue(session as never);
     mockAuthorizationFence(session);
+    mockDefaultProjectManager(session);
     vi.spyOn(EstimateModel, "findOne").mockReturnValue(query(estimate) as never);
     vi.spyOn(EstimateModel, "findById").mockReturnValue(query(estimate) as never);
     vi.spyOn(LeadModel, "findById").mockReturnValue(query(lead) as never);
     vi.spyOn(LeadModel, "findOne").mockReturnValue(query(lead) as never);
     vi.spyOn(EstimateDesignDrawingModel, "find").mockReturnValue(query([]) as never);
     vi.spyOn(UserModel, "findById").mockImplementation((id) =>
-      query(id === "designer-1" ? designer : manager) as never
+      id === defaultProjectManager._id ? defaultProjectManagerQuery(session) as never : query(id === "designer-1" ? designer : manager) as never
     );
     const projectCreate = vi.spyOn(ProjectModel, "create").mockResolvedValue({} as never);
     vi.spyOn(LeadModel, "updateOne").mockResolvedValue({ matchedCount: 1, modifiedCount: 1 } as never);
@@ -1780,6 +1810,7 @@ describe("commercial estimate approval handoff", () => {
         assignedEstimatorId: "user-estimator-sales",
         assignedDesignerIds: [],
         managerId: null,
+        programManagerId: defaultProjectManager._id,
         status: "planning"
       })
     ]);
@@ -1794,7 +1825,7 @@ describe("commercial estimate approval handoff", () => {
       })],
       { session }
     );
-    const auditPayload = JSON.stringify(auditCreate.mock.calls[0]?.[0]);
+    const auditPayload = JSON.stringify(auditCreate.mock.calls.map(call => call[0]));
     expect(auditPayload).not.toContain("imageBase64");
     expect(auditPayload).not.toContain("storedFileReference");
     expect(auditPayload).not.toContain("croppedFileReference");

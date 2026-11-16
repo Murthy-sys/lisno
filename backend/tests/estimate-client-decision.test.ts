@@ -1,3 +1,4 @@
+import { ProjectInitiationDefaultsModel } from "../src/models/ProjectInitiationDefaults.js";
 import { AuthorizationCoordinationModel } from "../src/models/AuthorizationCoordination.js";
 import mongoose from "mongoose";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -51,17 +52,15 @@ function query<T>(value: T, expectedSession: unknown, failure?: unknown) {
     sort: vi.fn(),
     select: vi.fn(),
     session: vi.fn(),
-    lean: vi.fn(async () => {
-      expect(attachedSession).toBe(expectedSession);
-      if (failure !== undefined) throw failure;
-      return structuredClone(value);
-    }),
+    lean: vi.fn(),
+    then: (resolve: (value: T) => unknown, reject: (reason: unknown) => unknown) => result.exec().then(resolve, reject),
     exec: vi.fn(async () => {
       expect(attachedSession).toBe(expectedSession);
       if (failure !== undefined) throw failure;
       return structuredClone(value);
     })
   };
+  result.lean.mockReturnValue(result);
   result.sort.mockReturnValue(result);
   result.select.mockReturnValue(result);
   result.session.mockImplementation((actualSession) => {
@@ -115,6 +114,7 @@ function apiError(code: string, status = 409): ApiError {
 function setup(options: {
   round?: boolean;
   activeClient?: boolean;
+  defaultState?: "missing" | "inactive";
   readiness?: { ready: boolean; total: number; approved: number; awaitingReview: number; changesRequested: number };
   transactionErrorAfterCallback?: unknown;
   rollbackAfterCallback?: boolean;
@@ -198,6 +198,9 @@ function setup(options: {
     version: 4
   }];
   const users: RecordValue[] = [
+    { _id: "default-project-manager", name: "Default Project Manager", email: "default-pm@example.test",
+      emailNormalized: "default-pm@example.test", role: "site_manager", active: options.defaultState !== "inactive", accountKind: "standard",
+      createdAt: NOW, updatedAt: NOW },
     {
       _id: "designer-1",
       name: "Dev Designer",
@@ -341,6 +344,10 @@ function setup(options: {
     return { matchedCount: item ? 1 : 0, modifiedCount: item ? 1 : 0 } as never;
   });
 
+  vi.spyOn(ProjectInitiationDefaultsModel, "findById").mockImplementation(() => query(options.defaultState === "missing" ? null : {
+    _id: "organization", projectManagerId: "default-project-manager", version: 1,
+    updatedById: "default-super-admin", updatedAt: NOW
+  }, session) as never);
   vi.spyOn(UserModel, "findById").mockImplementation((id) =>
     query(users.find((item) => item._id === id) ?? null, session) as never
   );
@@ -657,6 +664,29 @@ describe("EstimateDecisionService Client compatibility", () => {
     }, state.session);
   });
 
+  it.each(["missing", "inactive"] as const)("rolls back approval when the Project Manager default is %s", async defaultState => {
+    const state = setup({ defaultState });
+    await expect(state.service.decide(portalInput({ decision: "approve" }))).rejects.toMatchObject({
+      code: defaultState === "missing" ? "PROJECT_INITIATION_DEFAULT_UNCONFIGURED" : "PROJECT_INITIATION_DEFAULT_UNAVAILABLE"
+    });
+    expect(state.projects).toEqual([]);
+    expect(state.audits).toEqual([]);
+    expect(state.proofs).toEqual([]);
+    expect(state.estimates[0]).toMatchObject({ status: "sent_to_client", projectId: null, version: 7 });
+    expect(state.rounds[0]).toMatchObject({ status: "pending", version: 4 });
+    expect(state.leads[0].projectId).toBeNull();
+  });
+
+  it("keeps a linked project's owner when the current default is missing", async () => {
+    const state = setup({ defaultState: "missing" });
+    linkExistingProject(state, "client-1");
+    state.projects[0].programManagerId = "original-project-manager";
+    await state.service.decide(portalInput({ decision: "approve" }));
+    expect(state.projects).toHaveLength(1);
+    expect(state.projects[0].programManagerId).toBe("original-project-manager");
+    expect(ProjectInitiationDefaultsModel.findById).not.toHaveBeenCalled();
+  });
+
   it("opens pending design assignment after Client commercial approval", async () => {
     const state = setup();
 
@@ -681,8 +711,12 @@ describe("EstimateDecisionService Client compatibility", () => {
       assignedEstimatorId: "estimator-1",
       assignedDesignerIds: [],
       managerId: null,
+      programManagerId: "default-project-manager",
       status: "planning"
     });
+    expect(state.audits[0]).toMatchObject({ actorId: CLIENT.id, action: "project_created", newValues: {
+      programManagerId: "default-project-manager", projectManagerDefaultVersion: 1
+    } });
     expect(state.leads[0]).toMatchObject({
       stage: "won",
       nextAction: "Assign Designer for design plan",
@@ -696,10 +730,11 @@ describe("EstimateDecisionService Client compatibility", () => {
     });
     expect(state.estimates[0].notifications).toEqual([]);
     expect(state.audits.map((event) => event.action)).toEqual([
+      "project_created",
       "estimate_design_final_approved",
       "estimate_client_response_recorded_through_portal"
     ]);
-    expect(state.audits[1]).toEqual({
+    expect(state.audits[2]).toEqual({
       actorId: "client-1",
       action: "estimate_client_response_recorded_through_portal",
       entityType: "estimate_client_review_round",
@@ -1066,6 +1101,7 @@ describe("EstimateDecisionService Admin proof decisions", () => {
       decidedById: "admin-1"
     });
     expect(state.audits.map((event) => event.action)).toEqual([
+      "project_created",
       "estimate_design_final_approved",
       "estimate_client_approval_recorded_by_admin",
       "estimate_client_proof_stored"
@@ -1193,7 +1229,7 @@ describe("EstimateDecisionService Admin proof decisions", () => {
     expect(EstimateClientReviewRoundModel.updateOne).toHaveBeenCalledOnce();
     expect(ProjectModel.create).toHaveBeenCalledOnce();
     expect(EstimateClientResponseProofModel.create).toHaveBeenCalledOnce();
-    expect(state.audit.appendInMongoTransaction).toHaveBeenCalledTimes(3);
+    expect(state.audit.appendInMongoTransaction).toHaveBeenCalledTimes(4);
     expect(state.estimates[0]).toMatchObject({
       status: "sent_to_client",
       projectId: null,

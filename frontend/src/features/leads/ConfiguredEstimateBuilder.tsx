@@ -20,6 +20,7 @@ import { EstimatorRecommendations, type RecommendationReadState } from "./Estima
 import { recommendationTargetIdentity, type RoomRecommendationView, type RecommendedLineTarget } from "./roomRecommendations";
 import { EstimateBuilderShell, type EstimateShellBasket } from "../estimates/EstimateBuilderShell";
 import { EstimateLineActions, EstimateLineChoice, EstimateLineLayout, EstimateLineTierNotes, EstimateLineTierOptions } from "../estimates/EstimateLineRow";
+import { EstimateLineTierDetails } from "../estimates/EstimateLineTierDetails";
 import { buildSalesEstimateCatalogue } from "./salesEstimateCatalogue";
 import { estimationLinePricingMode, isEstimationLinePriceVisible } from "./estimationCatalogueVisibility";
 
@@ -599,6 +600,7 @@ function ConfiguredLineRow({ line, inheritedClassification = "standard", editabl
       (!pricingModeEditable && referenceMode !== line.pricingMode ? "Pricing mode cannot be changed at this estimate stage." : null) }));
   const tierAvailabilityId = `${inputId}-tier-availability`;
   const showTierControl = line.included || editable && tierEditable && Boolean(line.persistedId);
+  const selectedTier = line.rateSource === "configuration" ? line.modeTier ?? "signature" : null;
   const step = 10 ** -line.uomDecimalScale;
   const changeQuantity = (direction: -1 | 1) => {
     const units = Math.round((Number.isFinite(line.quantity) ? line.quantity : 0) / step);
@@ -625,6 +627,9 @@ function ConfiguredLineRow({ line, inheritedClassification = "standard", editabl
         onToggle={() => onUpdateLine(line.key, { included: !line.included })}
         onResetQuantity={line.dimensionsMandatory ? undefined : () => onUpdateLine(line.key, { quantity: 1 })} />
     </>}>
+    {line.included && selectedTier ? <EstimateLineTierDetails rowKey={line.key} label={label} tier={selectedTier}
+      description={line.sourceMissing || !(line.applicableTiers ?? ["signature"]).includes(selectedTier) ? null : line.tierDescriptions?.[selectedTier]}
+      details={line.sourceMissing || !(line.applicableTiers ?? ["signature"]).includes(selectedTier) ? null : line.tierDetails?.[selectedTier]} /> : null}
     {showTierControl ? <EstimateLineTierNotes options={tierOptions} id={tierAvailabilityId} /> : null}
     {line.estimateNotes?.map((note, index) => <small key={index}>{note}</small>)}
     {sourceStatus === "draft" || sourceStatus === "inactive" ? <small className="configured-estimate-line__source">{sourceStatus === "draft" ? "Draft" : "Inactive"} source</small> : null}

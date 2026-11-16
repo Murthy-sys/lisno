@@ -34,6 +34,7 @@ import {
 } from "./adminProjectPresentation";
 import { adminProjectKeys, getAdminProjects } from "./adminProjectsApi";
 import { AdminProjectInitiationDialog } from "./AdminProjectInitiationDialog";
+import { ProjectInitiationDefaultsPanel } from "./ProjectInitiationDefaultsPanel";
 import { AdminProjectQuickView } from "./AdminProjectQuickView";
 import "./admin-project-grid.css";
 
@@ -298,6 +299,7 @@ export function AdminProjectsPage() {
   const auth = useAuth();
   const navigate = useNavigate();
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [defaultsOpen, setDefaultsOpen] = useState(false);
   const [quickViewId, setQuickViewId] = useState<string | null>(null);
   const [view, setView] = useState<AdminProjectsView>(readStoredView);
   const [input, setInput] = useState<AdminProjectListInput>({
@@ -316,6 +318,7 @@ export function AdminProjectsPage() {
   const statusCounts = stalePage || projectsQuery.isError ? undefined : page?.statusCounts;
   const hasFilters = !!input.status || !!input.search;
   const isSuperAdmin = auth.user?.role === "super_admin";
+  const canManageDefaults = isSuperAdmin && hasFrontendPermission(auth.authorization, "projects.initiation_defaults.manage");
   const projectCollectionLabel = isSuperAdmin ? "All Projects" : "My Projects";
   const canAssignDesigner = hasFrontendPermission(
     auth.authorization,
@@ -342,7 +345,10 @@ export function AdminProjectsPage() {
             ? "All projects across the organization."
             : "Projects you initiated and handed to Sales."}
           metadata={page && !page.statusCounts && !stalePage && !projectsQuery.isError ? <StatusBadge tone="info" label={`${page.pagination.total} project${page.pagination.total === 1 ? "" : "s"}`} /> : undefined}
-          actions={hasFrontendPermission(auth.authorization, "projects.initiate") ? <Button aria-label="Initiate project" onClick={() => setDialogOpen(true)}>Initiate project</Button> : undefined}
+          actions={<>
+            {canManageDefaults ? <Button variant="secondary" onClick={() => setDefaultsOpen(true)}>Project defaults</Button> : null}
+            {hasFrontendPermission(auth.authorization, "projects.initiate") ? <Button aria-label="Initiate project" onClick={() => setDialogOpen(true)}>Initiate project</Button> : null}
+          </>}
         />
       </div>
       <div className="admin-projects__toolbar">
@@ -447,12 +453,16 @@ export function AdminProjectsPage() {
         </>
       )}
       </div>
-      {dialogOpen ? (
+      {dialogOpen && auth.user ? (
         <AdminProjectInitiationDialog
+          key={auth.user.id}
+          actorId={auth.user.id}
+          canManageDefaults={canManageDefaults}
           onClose={() => setDialogOpen(false)}
           onCreated={(project) => navigate(`/admin/projects/${encodeURIComponent(project.id)}`)}
         />
       ) : null}
+      {defaultsOpen && canManageDefaults && auth.user ? <ProjectInitiationDefaultsPanel key={auth.user.id} actorId={auth.user.id} onClose={() => setDefaultsOpen(false)} /> : null}
       {quickViewId ? (
         <AdminProjectQuickView
           key={quickViewId}

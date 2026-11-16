@@ -1,3 +1,4 @@
+import { withProjectInitiationDefault, defaultProjectManagerId } from "./helpers/project-initiation-defaults.js";
 import jwt from "jsonwebtoken";
 import request from "supertest";
 import { describe, expect, it } from "vitest";
@@ -22,7 +23,7 @@ function bearer(id = "user-estimator-sales", role = "estimator_sales") {
 }
 
 function setup() {
-  const seed = structuredClone(demoSeedData);
+  const seed = withProjectInitiationDefault(demoSeedData);
   const manager = seed.users.find(({ id }) => id === "user-admin")!;
   seed.users.push(
     { ...manager, id: "selected-manager", name: "A Selected Manager", email: "selected@example.com", emailNormalized: "selected@example.com", title: "Sales Manager" },
@@ -51,7 +52,7 @@ describe("Sales-initiated projects", () => {
     const response = await request(app).post("/api/v1/admin/projects")
       .set("Authorization", bearer()).send(withoutHiddenFields).expect(201);
     await expect(repository.findProjectById(response.body.data.id)).resolves.toMatchObject({
-      location: "", clientAddress: "", assignedEstimatorId: "user-estimator-sales"
+      location: "", clientAddress: "", assignedEstimatorId: "user-estimator-sales", programManagerId: defaultProjectManagerId
     });
     await expect(repository.findLeadById(response.body.data.lead.id)).resolves.toMatchObject({
       location: "", budgetMin: null, budgetMax: null, ownerId: "user-estimator-sales"
@@ -145,7 +146,7 @@ describe("Sales-initiated projects", () => {
     }
   );
 
-  it.each([undefined, "missing-manager", "inactive-manager", "user-estimator-sales", "user-super-admin"])(
+  it.each(["missing-manager", "inactive-manager", "user-estimator-sales", "user-super-admin"])(
     "rejects missing, unavailable or wrong-role manager %s without writes", async (salesManagerId) => {
       const { repository, app } = setup();
       const response = await request(app).post("/api/v1/admin/projects")

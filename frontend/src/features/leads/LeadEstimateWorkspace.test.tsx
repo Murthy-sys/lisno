@@ -505,7 +505,7 @@ describe("LeadEstimateWorkspace", () => {
     expect(count).toHaveTextContent("2 selected");
     expect(continueButton).toBeDisabled();
     await user.click(screen.getByRole("button", { name: "Select rooms" }));
-    await user.click(screen.getByRole("option", { name: "Living & Dining" }));
+    await user.click(screen.getByRole("checkbox", { name: "Living & Dining" }));
     await user.click(screen.getByRole("button", { name: "Done" }));
     expect(continueButton).toBeEnabled();
 
@@ -711,7 +711,7 @@ describe("LeadEstimateWorkspace", () => {
     const configureHeader = screen.getByRole("heading", { name: "Configure estimate" }).closest("header")!;
     expect(configureHeader).not.toContainElement(screen.getByRole("link", { name: "Back to Asha Shah" }));
     await user.click(screen.getByRole("button", { name: "Select rooms" }));
-    await user.click(screen.getByRole("option", { name: "Living & Dining" }));
+    await user.click(screen.getByRole("checkbox", { name: "Living & Dining" }));
     await user.click(screen.getByRole("button", { name: "Done" }));
     await user.click(screen.getByRole("button", { name: /^(?:Add|Added) Joinery$/ }));
     expect(screen.queryByRole("radio", { name: /item type for Main Basket/ })).not.toBeInTheDocument();
@@ -836,7 +836,7 @@ describe("LeadEstimateWorkspace", () => {
     renderWorkspace();
     await screen.findByRole("heading", { name: "Main Baskets" });
     await user.click(screen.getByRole("button", { name: "Select rooms" }));
-    await user.click(screen.getByRole("option", { name: "Living & Dining" }));
+    await user.click(screen.getByRole("checkbox", { name: "Living & Dining" }));
     await user.click(screen.getByRole("button", { name: "Done" }));
     await user.click(screen.getByRole("button", { name: /^(?:Add|Added) POP \/ Gypsum$/ }));
     await user.click(screen.getByRole("button", { name: "Continue to item selection" }));
@@ -1317,8 +1317,8 @@ describe("LeadEstimateWorkspace", () => {
     renderWorkspace();
     await screen.findByRole("heading", { name: "Main Baskets" });
     await user.click(screen.getByRole("button", { name: "Select rooms" }));
-    await user.click(screen.getByRole("option", { name: "Living & Dining" }));
-    await user.click(screen.getByRole("option", { name: "Bedroom 1" }));
+    await user.click(screen.getByRole("checkbox", { name: "Living & Dining" }));
+    await user.click(screen.getByRole("checkbox", { name: "Bedroom 1" }));
     await user.click(screen.getByRole("button", { name: "Done" }));
     await user.click(screen.getByRole("button", { name: /^(?:Add|Added) POP \/ Gypsum$/ }));
     await user.click(screen.getByRole("button", { name: "Continue to item selection" }));
@@ -1444,9 +1444,10 @@ describe("LeadEstimateWorkspace", () => {
     expect(paintDetails).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByRole("button", { name: "Continue to item selection" })).toBeDisabled();
     await user.click(screen.getByRole("button", { name: "Select rooms" }));
-    await user.click(screen.getByRole("option", { name: "Living & Dining" }));
+    await user.click(screen.getByRole("checkbox", { name: "Living & Dining" }));
+    expect(screen.getByRole("spinbutton", { name: "Living & Dining length" })).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Done" }));
-    expect(screen.getByRole("region", { name: /Living & Dining dimensions/ })).toBeVisible();
+    expect(screen.queryByRole("region", { name: /Living & Dining dimensions/ })).not.toBeInTheDocument();
     screen.getByRole("button", { name: /^(?:Add|Added) General Items$/ }).focus();
     await user.keyboard(" ");
     expect(screen.getByRole("button", { name: /^(?:Add|Added) General Items$/ })).toHaveAttribute("aria-pressed", "true");
@@ -1637,7 +1638,7 @@ describe("LeadEstimateWorkspace", () => {
     expect(screen.getByText(/This catalogue currently shows Active items only/)).toBeVisible();
     expect(readyFlags).toEqual(["true", null]);
     await user.click(screen.getByRole("button", { name: "Select rooms" }));
-    await user.click(screen.getByRole("option", { name: "Living & Dining" }));
+    await user.click(screen.getByRole("checkbox", { name: "Living & Dining" }));
     await user.click(screen.getByRole("button", { name: "Done" }));
     await user.click(screen.getByRole("button", { name: /^(?:Add|Added) Active basket$/ }));
     await user.click(screen.getByRole("button", { name: "Continue to item selection" }));
@@ -1729,7 +1730,7 @@ describe("LeadEstimateWorkspace", () => {
     renderWorkspace();
     expect(await screen.findByRole("button", { name: /^(?:Add|Added) POP \/ Gypsum$/ })).toBeEnabled();
     await user.click(screen.getByRole("button", { name: "Select rooms" }));
-    await user.click(screen.getByRole("option", { name: "Living & Dining" }));
+    await user.click(screen.getByRole("checkbox", { name: "Living & Dining" }));
     await user.click(screen.getByRole("button", { name: "Done" }));
     await user.click(screen.getByRole("button", { name: /^(?:Add|Added) POP \/ Gypsum$/ }));
     await user.click(screen.getByRole("button", { name: "Continue to item selection" }));
@@ -1779,7 +1780,7 @@ describe("LeadEstimateWorkspace", () => {
     renderWorkspace();
     expect(await screen.findByRole("button", { name: /^(?:Add|Added) POP \/ Gypsum$/ })).toBeEnabled();
     await user.click(screen.getByRole("button", { name: "Select rooms" }));
-    await user.click(screen.getByRole("option", { name: "Living & Dining" }));
+    await user.click(screen.getByRole("checkbox", { name: "Living & Dining" }));
     await user.click(screen.getByRole("button", { name: "Done" }));
     await user.click(screen.getByRole("button", { name: /^(?:Add|Added) POP \/ Gypsum$/ }));
     await user.click(screen.getByRole("button", { name: "Continue to item selection" }));
@@ -1830,7 +1831,7 @@ describe("LeadEstimateWorkspace", () => {
     renderWorkspace();
     expect(await screen.findByRole("button", { name: /^(?:Add|Added) POP \/ Gypsum$/ })).toBeEnabled();
     await user.click(screen.getByRole("button", { name: "Select rooms" }));
-    await user.click(screen.getByRole("option", { name: "Living & Dining" }));
+    await user.click(screen.getByRole("checkbox", { name: "Living & Dining" }));
     await user.click(screen.getByRole("button", { name: "Done" }));
     await user.click(screen.getByRole("button", { name: /^(?:Add|Added) POP \/ Gypsum$/ }));
     await user.click(screen.getByRole("button", { name: "Refresh available items" }));
@@ -2302,6 +2303,45 @@ describe("property-aware estimate setup", () => {
     await user.click(screen.getByRole("option", { name: type }));
   }
 
+  it("saves inline dimensions by stable room ID and reloads unequal retained values", async () => {
+    const harness = installSetupHarness({ ...legacySetup(), propertyType: "1BHK", bedroomCount: null });
+    const user = userEvent.setup();
+    const view = renderWorkspace();
+    await screen.findByRole("heading", { name: "Estimate workspace" });
+    await user.click(screen.getByRole("button", { name: /^(?:Save and edit|Edit|View) baskets$/ }));
+    await user.click(screen.getByRole("button", { name: "Select rooms" }));
+    expect(screen.getByRole("spinbutton", { name: "Master Bedroom length" })).toHaveValue(12);
+    expect(screen.getByRole("spinbutton", { name: "Bedroom 3 length" })).toHaveValue(16);
+    fireEvent.change(screen.getByRole("spinbutton", { name: "Bedroom 3 width" }), { target: { value: "7" } });
+    await user.type(screen.getByRole("textbox", { name: "Search rooms" }), "Music");
+    expect(screen.queryByRole("spinbutton", { name: "Bedroom 3 width" })).not.toBeInTheDocument();
+    fireEvent.change(screen.getByRole("spinbutton", { name: "Music Room length" }), { target: { value: "9" } });
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    expect(harness.inputs).toEqual([]);
+    await user.click(screen.getByRole("button", { name: "Select rooms" }));
+    await user.clear(screen.getByRole("textbox", { name: "Search rooms" }));
+    expect(screen.getByRole("spinbutton", { name: "Bedroom 3 width" })).toHaveValue(7);
+    expect(screen.getByRole("checkbox", { name: "Bedroom 3" })).toBeChecked();
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    await user.click(screen.getByRole("button", { name: "Return to saved items" }));
+    await user.click(screen.getByRole("button", { name: "Save draft" }));
+    await screen.findByText("Estimate draft saved.");
+    expect(harness.inputs[0].rooms).toEqual([
+      setupRooms[0],
+      { ...setupRooms[1], width: 7, sqft: 112 },
+      { ...setupRooms[2], length: 9, sqft: 54 }
+    ]);
+    view.unmount();
+    renderWorkspace();
+    await screen.findByRole("heading", { name: "Estimate workspace" });
+    await user.click(screen.getByRole("button", { name: /^(?:Save and edit|Edit|View) baskets$/ }));
+    await user.click(screen.getByRole("button", { name: "Select rooms" }));
+    expect(screen.getByRole("spinbutton", { name: "Master Bedroom length" })).toHaveValue(12);
+    expect(screen.getByRole("spinbutton", { name: "Bedroom 3 width" })).toHaveValue(7);
+    expect(screen.getByRole("spinbutton", { name: "Music Room length" })).toHaveValue(9);
+    expect(harness.inputs).toHaveLength(1);
+  });
+
   it("validates variable counts, keeps counts between variable types, and resets them across fixed types", async () => {
     installSetupHarness();
     const user = userEvent.setup();
@@ -2311,7 +2351,7 @@ describe("property-aware estimate setup", () => {
     expect(count).toHaveAccessibleDescription(/Enter the number of bedrooms to continue/);
     await user.click(screen.getByRole("button", { name: "Select rooms" }));
     expect(screen.queryByRole("group", { name: "Bedrooms" })).not.toBeInTheDocument();
-    await user.click(screen.getByRole("option", { name: "Living & Dining" }));
+    await user.click(screen.getByRole("checkbox", { name: "Living & Dining" }));
     await user.click(screen.getByRole("button", { name: "Done" }));
     await user.click(screen.getByRole("button", { name: "Add Room finishes" }));
     const continueButton = screen.getByRole("button", { name: "Continue to item selection" });
@@ -2328,14 +2368,14 @@ describe("property-aware estimate setup", () => {
     await chooseProperty(user, "Penthouse");
     expect(count).toHaveValue(5);
     await user.click(screen.getByRole("button", { name: "Select rooms" }));
-    expect(screen.getByRole("option", { name: "Bedroom 5 Balcony" })).toBeVisible();
-    expect(screen.queryByRole("option", { name: "Bedroom 6" })).not.toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Bedroom 5 Balcony" })).toBeVisible();
+    expect(screen.queryByRole("checkbox", { name: "Bedroom 6" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Done" }));
     await chooseProperty(user, "4BHK");
     expect(screen.queryByRole("spinbutton", { name: "Number of bedrooms" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Select rooms" }));
-    expect(screen.getByRole("option", { name: "Bedroom 4" })).toBeVisible();
-    expect(screen.queryByRole("option", { name: "Bedroom 5" })).not.toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Bedroom 4" })).toBeVisible();
+    expect(screen.queryByRole("checkbox", { name: "Bedroom 5" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Done" }));
     await chooseProperty(user, "Villa");
     expect(screen.getByRole("spinbutton", { name: "Number of bedrooms" })).toHaveValue(null);
@@ -2348,10 +2388,10 @@ describe("property-aware estimate setup", () => {
     const view = renderWorkspace();
     fireEvent.change(await screen.findByRole("spinbutton", { name: "Number of bedrooms" }), { target: { value: "5" } });
     await user.click(screen.getByRole("button", { name: "Select rooms" }));
-    await user.click(screen.getByRole("option", { name: "Living & Dining" }));
-    await user.click(screen.getByRole("option", { name: "Bedroom 5 Balcony" }));
-    expect(screen.getByRole("option", { name: "Bedroom 5" })).toHaveAttribute("aria-selected", "false");
-    expect(screen.getByRole("option", { name: "Bedroom 5 Bathroom" })).toHaveAttribute("aria-selected", "false");
+    await user.click(screen.getByRole("checkbox", { name: "Living & Dining" }));
+    await user.click(screen.getByRole("checkbox", { name: "Bedroom 5 Balcony" }));
+    expect(screen.getByRole("checkbox", { name: "Bedroom 5" })).not.toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Bedroom 5 Bathroom" })).not.toBeChecked();
     await user.click(screen.getByRole("button", { name: "Done" }));
     await user.click(screen.getByRole("button", { name: "Add Room finishes" }));
     await user.click(screen.getByRole("button", { name: "Continue to item selection" }));
@@ -2392,13 +2432,13 @@ describe("property-aware estimate setup", () => {
     fireEvent.change(screen.getByRole("spinbutton", { name: "Number of bedrooms" }), { target: { value: "1" } });
     await chooseProperty(user, "1BHK");
     expect(screen.getByText(/Previously selected rooms are kept/)).toBeVisible();
-    expect(screen.getByRole("spinbutton", { name: "Bedroom 3 length" })).toHaveValue(16);
     await user.click(screen.getByRole("button", { name: "Select rooms" }));
-    expect(screen.getByRole("option", { name: "Master Bedroom" })).toHaveAttribute("aria-selected", "true");
-    expect(screen.queryByRole("option", { name: "Bedroom 1" })).not.toBeInTheDocument();
+    expect(screen.getByRole("spinbutton", { name: "Bedroom 3 length" })).toHaveValue(16);
+    expect(screen.getByRole("checkbox", { name: "Master Bedroom" })).toBeChecked();
+    expect(screen.queryByRole("checkbox", { name: "Bedroom 1" })).not.toBeInTheDocument();
     const retained = screen.getByRole("group", { name: "Previously selected" });
-    expect(within(retained).getByRole("option", { name: "Bedroom 3" })).toHaveAttribute("aria-selected", "true");
-    expect(within(retained).getByRole("option", { name: "Music Room" })).toHaveAttribute("aria-selected", "true");
+    expect(within(retained).getByRole("checkbox", { name: "Bedroom 3" })).toBeChecked();
+    expect(within(retained).getByRole("checkbox", { name: "Music Room" })).toBeChecked();
     await user.click(screen.getByRole("button", { name: "Done" }));
     await user.click(screen.getByRole("button", { name: "Return to saved items" }));
     await user.click(screen.getByRole("button", { name: "Save draft" }));
@@ -2409,7 +2449,8 @@ describe("property-aware estimate setup", () => {
       expect.objectContaining({ source: "configuration", roomId: "stable-3", roomName: "Bedroom 3", quantity: 2, ratePaise: 8000, included: true })
     ]));
     await user.click(screen.getByRole("button", { name: /^(?:Save and edit|Edit|View) baskets$/ }));
-    await user.click(screen.getByRole("button", { name: "Remove Bedroom 3 room" }));
+    await user.click(screen.getByRole("button", { name: "Select rooms" }));
+    await user.click(screen.getByRole("checkbox", { name: "Bedroom 3" }));
     expect(screen.queryByRole("spinbutton", { name: "Bedroom 3 length" })).not.toBeInTheDocument();
     expect(screen.getByRole("spinbutton", { name: "Master Bedroom length" })).toHaveValue(12);
     await user.click(screen.getByRole("button", { name: "Return to saved items" }));
@@ -2435,7 +2476,7 @@ describe("property-aware estimate setup", () => {
     expect(harness.inputs).toHaveLength(0);
     await user.click(screen.getByRole("button", { name: "Select rooms" }));
     expect(screen.queryByRole("group", { name: "Bedrooms" })).not.toBeInTheDocument();
-    expect(within(screen.getByRole("group", { name: "Previously selected" })).getAllByRole("option")).toHaveLength(3);
+    expect(within(screen.getByRole("group", { name: "Previously selected" })).getAllByRole("checkbox")).toHaveLength(3);
     await user.click(screen.getByRole("button", { name: "Done" }));
     fireEvent.change(count, { target: { value: "4" } });
     await user.click(screen.getByRole("button", { name: "Return to saved items" }));
@@ -2453,10 +2494,12 @@ describe("property-aware estimate setup", () => {
     expect(screen.getByRole("button", { name: "Property type: Penthouse" })).toBeDisabled();
     expect(screen.getByRole("spinbutton", { name: "Number of bedrooms" })).toBeDisabled();
     expect(screen.getByRole("spinbutton", { name: "Number of bedrooms" })).not.toHaveAttribute("aria-invalid");
-    expect(screen.getByRole("button", { name: "Select rooms" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Remove Master Bedroom room" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Select rooms" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Select rooms" }));
+    expect(screen.getByRole("checkbox", { name: "Master Bedroom" })).toBeDisabled();
     expect(screen.getByRole("spinbutton", { name: "Master Bedroom length" })).toBeDisabled();
-    await user.click(screen.getByRole("button", { name: /Master Bedroom dimensions/ }));
+    expect(screen.getByRole("spinbutton", { name: "Master Bedroom length" })).toHaveValue(12);
+    await user.click(screen.getByRole("button", { name: "Done" }));
     expect(screen.queryByRole("spinbutton", { name: "Master Bedroom length" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Return to saved items" }));
     expect(screen.getByRole("region", { name: "Earlier catalogue items" })).toBeVisible();
@@ -2469,11 +2512,11 @@ describe("property-aware estimate setup", () => {
     await user.click(await screen.findByRole("button", { name: "Select rooms" }));
     expect(screen.queryByRole("group", { name: "Bedrooms" })).not.toBeInTheDocument();
     expect(screen.queryByRole("spinbutton", { name: "Number of bedrooms" })).not.toBeInTheDocument();
-    await user.click(screen.getByRole("option", { name: "Living / Sleeping Area" }));
-    await user.click(screen.getByRole("option", { name: "Common Bathroom" }));
-    await user.click(screen.getByRole("button", { name: "Done" }));
+    await user.click(screen.getByRole("checkbox", { name: "Living / Sleeping Area" }));
+    await user.click(screen.getByRole("checkbox", { name: "Common Bathroom" }));
     expect(screen.getByRole("spinbutton", { name: "Living / Sleeping Area length" })).toBeVisible();
     expect(screen.getByRole("spinbutton", { name: "Common Bathroom length" })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Done" }));
   });
 });
 

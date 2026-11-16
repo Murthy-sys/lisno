@@ -20,6 +20,7 @@ import * as drawing from "./enterpriseDrawingData";
 import type { KnowledgeSectionKey } from "../../features/ai-estimator-knowledge/knowledgeTypes";
 import type { EstimationCatalogueBasket } from "../../features/leads/estimationCatalogueApi";
 import { executionFixture, executionPageFixture } from "../../features/execution/executionTestFixtures";
+import { enterpriseVendorHistory, enterpriseVendorOrder, enterpriseVendorReview, enterpriseVendorWorks } from "./enterpriseVendorData";
 
 const lead: Lead = { id: "lead-1", projectId: "project-1", ownerId: "estimator_sales-1", clientName: "Asha Shah", clientEmail: "asha@example.com", clientMobile: "+91 90000 00000", projectName: "Asha home — complete residence and terrace refurbishment", location: "Pune", propertyType: "3BHK", budgetMin: 800000, budgetMax: 1200000, source: "Referral", stage: "estimate_in_progress", nextAction: "Review updated living room measurements", nextActionAt: "2026-09-15T10:00:00.000Z", builder: null, areaSqft: 1400, targetHandoverAt: null, notes: "Synthetic project record for visual review.", latestActivityAt: null, createdAt: "2026-08-23T10:00:00.000Z", updatedAt: "2026-09-10T10:00:00.000Z" };
 const estimate = { id: "estimate-1", leadId: lead.id, projectId: lead.projectId, propertyType: "3BHK", rooms: [{ id: "living-room", label: "Living Room", type: "living", length: 16, width: 12, height: 10 }], scopes: ["FC"], lineItems: responses.pendingDetail.estimateSnapshot.lineItems, subtotal: 1200, gst: 216, total: 1416, status: "draft", approvalRequired: false, updatedAt: lead.updatedAt, lead };
@@ -460,17 +461,39 @@ export function enterpriseDataFor(path: string, params: URLSearchParams, scenari
     const limit = Number(params.get("limit") ?? 50), offset = Number(params.get("offset") ?? 0);
     return { items: projects.slice(offset, offset + limit), total: projects.length, limit, offset, deliveryHealth: null };
   }
-  if (path === "/vendor/work/execution" || /^\/projects\/[^/]+\/execution$/.test(path)) {
-    const projectId = path === "/vendor/work/execution" ? executionFixture.projectId : decodeURIComponent(path.split("/")[2]!);
+  if (path === "/vendor/work/execution") {
+    const query = params.get("q")?.toLowerCase();
+    const items = (empty ? [] : enterpriseVendorWorks(scenario.route)).filter(work =>
+      (!params.get("status") || work.status === params.get("status")) && (!params.get("flag") || work.flags.includes(params.get("flag")!)) &&
+      (!query || [work.itemName, work.projectName, work.roomName, work.orderNumber].join(" ").toLowerCase().includes(query)));
+    const limit = Number(params.get("limit") ?? 25), offset = Number(params.get("offset") ?? 0);
+    return { ...executionPageFixture(items.slice(offset, offset + limit)), project: null, projectCounts: null, policy: null, total: items.length, limit, offset,
+      counts: { total: items.length, open: items.filter(work => !["client_approved", "superseded"].includes(work.status)).length,
+        reported: items.filter(work => work.latestReportAt).length, verified: items.filter(work => work.verification).length,
+        clientAccepted: items.filter(work => work.status === "client_approved").length, missing: items.filter(work => work.daily.state === "missing").length,
+        blocked: items.filter(work => work.status === "blocked").length, overdue: items.filter(work => work.flags.includes("overdue")).length,
+        awaitingVerification: items.filter(work => work.status === "awaiting_verification").length, setupRequired: items.filter(work => work.tracking === "setup_required").length } };
+  }
+  if (/^\/projects\/[^/]+\/execution$/.test(path)) {
+    const projectId = decodeURIComponent(path.split("/")[2]!);
     const result = executionPageFixture(empty ? [] : [{ ...executionFixture, projectId }]);
-    return { ...result, project: path === "/vendor/work/execution" ? null : { ...result.project!, id: projectId }, projectCounts: path === "/vendor/work/execution" ? null : result.projectCounts, policy: result.policy ? { ...result.policy, projectId } : null,
+    return { ...result, project: { ...result.project!, id: projectId }, policy: result.policy ? { ...result.policy, projectId } : null,
       counts: empty ? Object.fromEntries(Object.keys(result.counts).map(key => [key, 0])) : result.counts };
+  }
+  const vendorWorks = enterpriseVendorWorks(scenario.route);
+  for (const work of vendorWorks) {
+    if (path === `/execution/work/${work.id}`) return work;
+    if (path === `/execution/work/${work.id}/history`) return enterpriseVendorHistory(work);
+    if (path === `/vendor/work/${work.id}`) return enterpriseVendorReview(work);
+    if (path === `/vendor/purchase-orders/${work.orderId}`) return enterpriseVendorOrder(work);
   }
   if (path === "/admin/purchase-order-requests/pending") return { items: empty ? [] : [qaPendingPurchaseRequest], total: empty ? 0 : 1, limit: 50, offset: 0 };
   if (path === "/admin/purchase-orders/pending") return { items: empty ? [] : [qaPendingIndividualOrder], total: empty ? 0 : 1, limit: 50, offset: 0 };
   if (path === "/admin/project-completion-tasks") return { items: [], total: 0, limit: 100, offset: 0 };
   if (path === "/admin/dashboard/projects") return { ...superAdminDashboardProjectsPageFixture, ...page(superAdminDashboardProjectsPageFixture.items) };
   if (path === "/admin/dashboard/workforce") return { ...superAdminDashboardWorkforcePageFixture, ...page(superAdminDashboardWorkforcePageFixture.items) };
+  if (path === "/admin/project-initiation-defaults") return { version: 1, status: "ready", projectManager: { id: "site_manager-1", name: "Synthetic Project Manager" } };
+  if (path === "/admin/program-managers") return { items: [{ id: "site_manager-1", name: "Synthetic Project Manager", email: "project-manager@example.test" }], total: 1, limit: 50, offset: 0 };
   if (path === "/admin/projects") return page([admin.project, { ...admin.approvedPendingProject, name: "North Residence — upper floor and garden apartment renovation" }]);
   if (/^\/admin\/projects\/[^/]+$/.test(path)) return path.endsWith("project-murthy") ? admin.approvedPendingProject : { ...admin.project, id: decodeURIComponent(path.split("/").at(-1)!) };
   if (path === "/admin/users") {

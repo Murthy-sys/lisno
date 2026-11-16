@@ -7,7 +7,7 @@ import { ConfigureSelectionFooter, EstimateSetupBaskets } from "./EstimateSetupB
 import { MainBasketSelectionCard, type MainBasketSelectionSummary } from "../leads/MainBasketSelectionCard";
 import { getRoomIcon } from "../leads/estimateRoomOptions";
 
-const kitchen = { id: "stable-kitchen", label: "Kitchen", icon: getRoomIcon("kitchen"), length: 12, width: 8 };
+const kitchen = { id: "stable-kitchen", selectionKey: "kitchen", label: "Kitchen", length: 12, width: 8 };
 function fields(overrides: Partial<EstimateSetupFieldsProps> = {}): EstimateSetupFieldsProps {
   return {
     propertyType: "1BHK", onPropertyTypeChange: vi.fn(), bedroomCountInput: "", onBedroomCountChange: vi.fn(),
@@ -27,12 +27,17 @@ describe("shared estimate setup", () => {
     await user.click(screen.getByRole("button", { name: "Property type: 1BHK" }));
     await user.click(screen.getByRole("option", { name: "2BHK" }));
     expect(props.onPropertyTypeChange).toHaveBeenCalledWith("2BHK");
+    expect(screen.queryByRole("region", { name: "Room dimensions" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("spinbutton", { name: "Kitchen length" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Select rooms" }));
     fireEvent.change(screen.getByRole("spinbutton", { name: "Kitchen length" }), { target: { value: "15" } });
     expect(props.onDimensionChange).toHaveBeenCalledWith("stable-kitchen", { length: 15 });
-    await user.click(screen.getByRole("button", { name: "Remove Kitchen room" }));
+    expect(props.onRemoveRoom).not.toHaveBeenCalled();
+    expect(props.onRoomsChange).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("checkbox", { name: "Kitchen" }));
     expect(props.onRemoveRoom).toHaveBeenCalledWith("stable-kitchen");
-    await user.click(screen.getByRole("button", { name: "Select rooms" }));
-    await user.click(screen.getByRole("option", { name: "Kitchen" }));
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    await user.click(screen.getByRole("button", { name: "Remove Kitchen from selected rooms" }));
     expect(props.onRoomsChange).toHaveBeenCalledWith([]);
   });
 
@@ -50,10 +55,12 @@ describe("shared estimate setup", () => {
     const user = userEvent.setup();
     render(<EstimateSetupFields {...fields({ disabled: true, editable: false })} />);
     expect(screen.getByRole("button", { name: "Property type: 1BHK" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Select rooms" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Select rooms" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Select rooms" }));
     expect(screen.getByRole("spinbutton", { name: "Kitchen length" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Remove Kitchen room" })).toBeDisabled();
-    await user.click(screen.getByRole("button", { name: /Kitchen dimensions/ }));
+    expect(screen.getByRole("spinbutton", { name: "Kitchen length" })).toHaveValue(12);
+    expect(screen.getByRole("checkbox", { name: "Kitchen" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Done" }));
     expect(screen.queryByRole("spinbutton", { name: "Kitchen length" })).not.toBeInTheDocument();
   });
 

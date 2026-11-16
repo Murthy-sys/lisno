@@ -790,14 +790,16 @@ export function KnowledgeBaseIndexPage() {
                       {auth.user?.role === "super_admin" && canLifecycle && basketsQuery.isSuccess && subBasketQuery?.isSuccess && basketRecord && basketRecord.status !== "archived" && subBasketRecord ? <Button
                         size="compact"
                         variant="destructive-outline"
-                        className="knowledge-sub-basket__delete"
+                        className="knowledge-icon-action knowledge-icon-action--danger knowledge-sub-basket__delete"
                         aria-label={`Delete Sub-Basket ${subBasketName} permanently`}
+                        title="Delete Sub-Basket"
+                        leadingIcon={<Trash2 />}
                         onClick={(event) => {
                           subBasketDeleteFocusRef.current = event.currentTarget;
                           subBasketDeletionCommittedRef.current = false;
                           setSubBasketDelete({ basket: basketRecord, subBasket: subBasketRecord });
                         }}
-                      >Delete</Button> : null}
+                      /> : null}
                     </>}
                   >
                     {subItems.length ? <div className="knowledge-item-grid">{subItems.map(renderItemCard)}</div>

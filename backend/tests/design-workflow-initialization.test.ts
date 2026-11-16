@@ -1,3 +1,4 @@
+import { withProjectInitiationDefault, defaultProjectManagerId } from "./helpers/project-initiation-defaults.js";
 import express from "express";
 import request from "supertest";
 import { describe, expect, it } from "vitest";
@@ -17,7 +18,7 @@ const NOW = new Date("2026-09-11T10:00:00.000Z");
 const names = ["Internal Kick off", "Client Kick off", "Key Collection", "On Site Actual Measurement", "Collection of existing furniture dimensions", "Designer Uploading Space planning with Tentative look and Feel"];
 const floorInput = { name: "Ground floor", number: "0", order: 0, plannedStartAt: NOW.toISOString(), plannedEndAt: "2026-10-11T10:00:00.000Z" };
 function setup() {
-  const seed = structuredClone(demoSeedData);
+  const seed = withProjectInitiationDefault(demoSeedData);
   const repository = createMemoryRepository(seed);
   const actor = (id: string): PublicUser => {
     const user = seed.users.find((user) => user.id === id)!;
@@ -39,6 +40,7 @@ describe("project-owned Excel design workflow", () => {
   it("persists the six exact stages at Designer project creation before floors exist", async () => {
     const { create, view, repository } = setup();
     const project = await create();
+    expect(project.programManagerId).toBe(defaultProjectManagerId);
     expect(project.designWorkflowStages?.map((stage) => stage.name)).toEqual(names);
     expect(project.designWorkflowStages?.map((stage) => stage.order)).toEqual([0, 1, 2, 3, 4, 5]);
     expect(project.designWorkflowStages).toEqual(createProjectDesignWorkflow(project.id));

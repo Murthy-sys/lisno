@@ -1,3 +1,5 @@
+import { insertProjectInitiationDefault } from "./helpers/project-initiation-defaults.js";
+import { createMongoRepository } from "../src/repositories/mongo.js";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { confirmedCity } from "../src/domain/procurement-city.js";
@@ -84,15 +86,16 @@ describe("Procurement city and Program Manager authority", () => {
   });
 
   it("carries an Estimator-confirmed Lead city into an estimate-created project without reading its address", async () => {
+    await insertProjectInitiationDefault(manager.id);
     const projectId = await mongoose.connection.transaction((session) => resolveApprovalProject({
       estimate: { projectId: null, ownerId: buyer.id },
       lead: { projectId: null, ownerId: buyer.id, projectName: "Estimator house", clientName: "Client",
         clientEmail: "new-client@example.test", clientMobile: "9000000000", location: "Long address without a city key",
         cityName: "Pune", cityKey: "pune" },
-      clientId: null, occurredAt: time, session
+      clientId: null, occurredAt: time, session, actorId: buyer.id, audit: createAuditService(createMongoRepository(session))
     }));
     expect(await ProjectModel.findById(projectId).lean()).toMatchObject({
-      location: "Long address without a city key", cityName: "Pune", cityKey: "pune", programManagerId: null
+      location: "Long address without a city key", cityName: "Pune", cityKey: "pune", programManagerId: manager.id
     });
   });
 

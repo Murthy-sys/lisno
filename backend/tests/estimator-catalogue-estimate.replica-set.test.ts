@@ -349,6 +349,310 @@ async function seedCurrentDraftDesignSection(section: Record<string, unknown>) {
   ] as never[]);
 }
 
+describe("estimator tier details", { timeout: 30_000 }, () => {
+  const detailPayload = (name: string, brand: string) => ({
+    specifications: [{ id: "shared-spec", name, brandId: "shared-brand", description: "PRIVATE_SPEC_DESCRIPTION", value: "PRIVATE_TYPED_VALUE" }],
+    brands: [{ id: "shared-brand", name: brand, description: "PRIVATE_BRAND_DESCRIPTION" }],
+    internalVendorNotes: "PRIVATE_NOTES", costPaise: 991122
+  });
+  const detailResult = (name: string, brand: string) => ({ specifications: [
+    { id: "shared-spec", name, brands: [{ id: "shared-brand", name: brand }] }
+  ] });
+
+  it("projects root and named tier details with local-ID isolation and preserves financial values", async () => {
+    await configureFixturePrices([configuredLine(), configuredLine({
+      mainLineId: "line-b", revisionId: "revision-b", ratePaise: 23100
+    })]);
+    await AiEstimatorKnowledgeSectionModel.updateOne({ _id: "overview-a" }, {
+      $set: { "payload.applicableTiers": ["signature", "premium", "functional"] }
+    });
+    const before = await resolveEstimatorCatalogueLines(["line-a", "line-b"]);
+    await AiEstimatorKnowledgeSectionModel.collection.insertMany([
+      { _id: "details-a", mainLineId: "line-a", revisionId: "revision-a", sectionKey: "pricing", applicability: "configured", payload: {
+        ...detailPayload("Signature board", "Brand S"), tierConfigurations: {
+          premium: { applicability: "configured", payload: detailPayload("Premium board", "Brand P") },
+          functional: { applicability: "configured", payload: detailPayload("Functional board", "Brand F") },
+          default: { applicability: "configured", payload: detailPayload("PRIVATE_DEFAULT", "PRIVATE_DEFAULT_BRAND") }
+        }
+      } },
+      { _id: "details-b", mainLineId: "line-b", revisionId: "revision-b", sectionKey: "pricing", applicability: "configured",
+        payload: detailPayload("Other line board", "Other line brand") }
+    ] as never[]);
+    const { server } = app();
+    const response = await request(server).get("/api/v1/estimation/catalogue").set(bearer("estimator")).expect(200);
+    const lines = response.body.data.items.flatMap((basket: any) => basket.subBaskets.flatMap((sub: any) => sub.mainLines));
+    const first = lines.find((line: any) => line.mainLineId === "line-a");
+    const other = lines.find((line: any) => line.mainLineId === "line-b");
+    expect(first.tierDetails).toEqual({ signature: detailResult("Signature board", "Brand S"),
+      premium: detailResult("Premium board", "Brand P"), functional: detailResult("Functional board", "Brand F") });
+    expect(other.tierDetails).toEqual({ signature: detailResult("Other line board", "Other line brand") });
+    for (const line of [first, other]) {
+      expect(line.modeBaseRatesPaise).toEqual(before.get(line.mainLineId)!.line.modeBaseRatesPaise);
+      expect(line.revisionId).toBe(before.get(line.mainLineId)!.line.revisionId);
+      expect(line.hasConfiguredBasePrice).toBe(before.get(line.mainLineId)!.line.hasConfiguredBasePrice);
+      expect(JSON.stringify(line)).not.toMatch(/PRIVATE_|991122/);
+    }
+  });
+
+  it("resolves empty tiers from Mode without changing prices or mixing Main Line brands", async () => {
+    await configureFixturePrices([configuredLine(), configuredLine({
+      mainLineId: "line-b", revisionId: "revision-b", ratePaise: 23100
+    })]);
+    await AiEstimatorKnowledgeSectionModel.updateOne({ _id: "overview-a" }, {
+      $set: { "payload.applicableTiers": ["signature", "premium", "functional"] }
+    });
+    const before = await resolveEstimatorCatalogueLines(["line-a", "line-b"]);
+    const firstMode = detailPayload("Mode board", "Mode brand");
+    await AiEstimatorKnowledgeSectionModel.collection.insertMany([
+      { _id: "fallback-a", mainLineId: "line-a", revisionId: "revision-a", sectionKey: "pricing", applicability: "configured", payload: {
+        specifications: [], brands: [{ id: "shared-brand", name: "Do not borrow root brand" }], tierConfigurations: {
+          default: { applicability: "configured", payload: {
+            ...firstMode,
+            specifications: [...firstMode.specifications, { id: "second-spec", name: "Mode finish", brandId: "second-brand" }],
+            brands: [...firstMode.brands, { id: "second-brand", name: "Mode finish brand" }]
+          } }, functional: { applicability: "configured", payload: { specifications: [] } }
+        }
+      } },
+      { _id: "fallback-b", mainLineId: "line-b", revisionId: "revision-b", sectionKey: "pricing", applicability: "not_configured", payload: {
+        tierConfigurations: { default: { applicability: "configured", payload: detailPayload("Other Mode board", "Other Mode brand") } }
+      } }
+    ] as never[]);
+    const { server } = app();
+    const response = await request(server).get("/api/v1/estimation/catalogue").set(bearer("estimator")).expect(200);
+    const lines = response.body.data.items.flatMap((basket: any) => basket.subBaskets.flatMap((sub: any) => sub.mainLines));
+    const first = lines.find((line: any) => line.mainLineId === "line-a");
+    const second = lines.find((line: any) => line.mainLineId === "line-b");
+    const expected = { specifications: [
+      ...detailResult("Mode board", "Mode brand").specifications,
+      { id: "second-spec", name: "Mode finish", brands: [{ id: "second-brand", name: "Mode finish brand" }] }
+    ] };
+    expect(first.tierDetails).toEqual({ signature: expected, premium: expected, functional: expected });
+    expect(second.tierDetails).toEqual({ signature: detailResult("Other Mode board", "Other Mode brand") });
+    for (const line of [first, second]) {
+      const original = before.get(line.mainLineId)!.line;
+      expect(line.modeBaseRatesPaise).toEqual(original.modeBaseRatesPaise);
+      expect(line.basePriceAvailability).toEqual(original.basePriceAvailability);
+      expect(line.hasConfiguredBasePrice).toBe(original.hasConfiguredBasePrice);
+      expect(line.revisionId).toBe(original.revisionId);
+      expect(JSON.stringify(line)).not.toMatch(/PRIVATE_|991122|Do not borrow/);
+    }
+  });
+
+  it("uses current draft tier and Mode details without borrowing an active payload", async () => {
+    await AiEstimatorKnowledgeSectionModel.collection.insertOne({ _id: "details-active" as never,
+      mainLineId: "line-a", revisionId: "revision-a", sectionKey: "pricing", applicability: "configured",
+      payload: { ...detailPayload("Old active board", "Old brand"), tierConfigurations: {
+        premium: { applicability: "configured", payload: detailPayload("Old premium", "Old premium brand") }
+      } } });
+    await AiEstimatorKnowledgeMainLineModel.updateOne({ _id: "line-a" }, { $set: { draftRevisionId: "details-draft", version: 2 } });
+    await AiEstimatorKnowledgeRevisionModel.collection.insertOne({ _id: "details-draft" as never,
+      mainLineId: "line-a", status: "draft", version: 2 });
+    await AiEstimatorKnowledgeSectionModel.collection.insertMany([
+      { _id: "details-draft-overview", mainLineId: "line-a", revisionId: "details-draft", sectionKey: "overview",
+        payload: { uomId: "uom-sq", applicableTiers: ["signature", "premium", "functional"] } },
+      { _id: "details-draft-pricing", mainLineId: "line-a", revisionId: "details-draft", sectionKey: "pricing", applicability: "configured",
+        payload: { ...detailPayload("Draft board", "Draft brand"), tierConfigurations: {
+          default: { applicability: "configured", payload: detailPayload("Default board", "Default brand") },
+          functional: { applicability: "configured", payload: { specifications: [] } }
+        } } }
+    ] as never[]);
+    const current = () => resolveEstimatorCatalogueLines(["line-a"]);
+    expect((await current()).get("line-a")!.line).toMatchObject({ revisionId: "details-draft", revisionStatus: "draft",
+      tierDetails: { signature: detailResult("Draft board", "Draft brand"),
+        premium: detailResult("Default board", "Default brand"), functional: detailResult("Default board", "Default brand") } });
+    await AiEstimatorKnowledgeSectionModel.deleteOne({ _id: "details-draft-pricing" });
+    expect((await current()).get("line-a")!.line).toMatchObject({ revisionId: "details-draft",
+      tierDetails: { signature: null, premium: null, functional: null } });
+  });
+
+  it("limits temporary-item Mode fallback to applicable tiers and does not hide invalid retained data", async () => {
+    await AiEstimatorKnowledgeSectionModel.updateOne({ _id: "overview-temp" }, {
+      $set: { "payload.applicableTiers": ["signature", "premium", "functional"] }
+    });
+    await AiEstimatorKnowledgeSectionModel.updateOne({ _id: "overview-temp-direct" }, {
+      $set: { "payload.applicableTiers": ["premium"] }
+    });
+    await AiEstimatorKnowledgeSectionModel.collection.insertMany([
+      { _id: "fallback-temp", mainLineId: "line-temp", revisionId: "revision-temp", sectionKey: "pricing", applicability: "configured", payload: {
+        specifications: [], tierConfigurations: {
+          default: { applicability: "configured", payload: detailPayload("Temporary Mode", "Temporary brand") },
+          premium: { applicability: "configured", payload: { specifications: [{ id: "broken", name: "Broken", brandId: "a", brandIds: ["a"] }] } },
+          functional: { applicability: "not_configured", payload: detailPayload("Retained tier", "Retained brand") }
+        }
+      } },
+      { _id: "fallback-temp-direct", mainLineId: "line-temp-direct", revisionId: "revision-temp-direct", sectionKey: "pricing", applicability: "configured", payload: {
+        specifications: [], tierConfigurations: {
+          default: { applicability: "configured", payload: detailPayload("Direct Mode", "Direct brand") }
+        }
+      } }
+    ] as never[]);
+    const resolved = await resolveEstimatorCatalogueLines(["line-temp", "line-temp-direct"]);
+    expect(resolved.get("line-temp")!.line).toMatchObject({ itemType: "temporary", tierDetails: {
+      signature: detailResult("Temporary Mode", "Temporary brand"), premium: null, functional: null
+    } });
+    expect(resolved.get("line-temp-direct")!.line.tierDetails).toEqual({ premium: detailResult("Direct Mode", "Direct brand") });
+  });
+
+  it("keeps temporary items, configured empty lists, and unresolved brands discoverable while isolating malformed tiers", async () => {
+    await AiEstimatorKnowledgeSectionModel.updateOne({ _id: "overview-temp" }, {
+      $set: { "payload.applicableTiers": ["signature", "premium", "functional"] }
+    });
+    await AiEstimatorKnowledgeSectionModel.collection.insertMany([
+      { _id: "details-temp", mainLineId: "line-temp", revisionId: "revision-temp", sectionKey: "pricing", applicability: "configured", payload: {
+        specifications: [{ id: "first", name: "Boards", brandIds: ["second-brand", "missing", "duplicate"] }, { id: "second", name: "Unbranded" }],
+        brands: [{ id: "second-brand", name: "Known brand" }, { id: "duplicate", name: "A" }, { id: "duplicate", name: "B" }],
+        tierConfigurations: {
+          premium: { applicability: "configured", payload: { specifications: [{ id: "a", name: "Broken", brandId: "one", brandIds: ["two"] }] } },
+          functional: { applicability: "not_configured", payload: detailPayload("Retained but unavailable", "Unused") }
+        }
+      } },
+      { _id: "details-temp-direct", mainLineId: "line-temp-direct", revisionId: "revision-temp-direct", sectionKey: "pricing", applicability: "configured", payload: { specifications: [] } }
+    ] as never[]);
+    const resolved = await resolveEstimatorCatalogueLines(["line-temp", "line-temp-direct"]);
+    expect(resolved.size).toBe(2);
+    expect(resolved.get("line-temp")!.line).toMatchObject({ itemType: "temporary", tierDetails: {
+      signature: { specifications: [
+        { id: "first", name: "Boards", brands: [{ id: "second-brand", name: "Known brand" }, { id: "missing", name: null }, { id: "duplicate", name: null }] },
+        { id: "second", name: "Unbranded", brands: [] }
+      ] }, premium: null, functional: null
+    } });
+    expect(resolved.get("line-temp-direct")!.line).toMatchObject({ itemType: "temporary", subBasketId: null,
+      tierDetails: { signature: { specifications: [] } } });
+  });
+
+  it("rejects a pricing section belonging to another Main Line and excludes deselected tiers", async () => {
+    await AiEstimatorKnowledgeSectionModel.updateOne({ _id: "overview-b" }, {
+      $set: { "payload.applicableTiers": ["premium"] }
+    });
+    await AiEstimatorKnowledgeSectionModel.collection.insertMany([
+      { _id: "details-wrong-line", mainLineId: "line-b", revisionId: "revision-a", sectionKey: "pricing", applicability: "configured", payload: detailPayload("Wrong line", "Wrong brand") },
+      { _id: "details-only-premium", mainLineId: "line-b", revisionId: "revision-b", sectionKey: "pricing", applicability: "configured", payload: {
+        ...detailPayload("Deselected Signature", "Hidden brand"), tierConfigurations: {
+          premium: { applicability: "configured", payload: detailPayload("Selected Premium", "Right brand") }
+        }
+      } }
+    ] as never[]);
+    const resolved = await resolveEstimatorCatalogueLines(["line-a", "line-b"]);
+    expect(resolved.get("line-a")!.line.tierDetails).toEqual({ signature: null });
+    expect(resolved.get("line-b")!.line.tierDetails).toEqual({ premium: detailResult("Selected Premium", "Right brand") });
+  });
+});
+
+describe("estimator tier description", { timeout: 30_000 }, () => {
+  const scope = (payload: Record<string, unknown>, applicability = "configured") => ({ applicability, payload });
+  const configuration = (name: string) => ({ id: "same-pmc", modeKind: "pmc", fields: [],
+    inclusions: [{ id: "same-item", name, selected: true }], exclusions: [] });
+
+  it("projects custom, generated and Mode paragraphs from their own scopes without changing prices or stored data", async () => {
+    await configureFixturePrices([configuredLine(), configuredLine({ mainLineId: "line-b", revisionId: "revision-b", ratePaise: 23100 })]);
+    await AiEstimatorKnowledgeSectionModel.updateOne({ _id: "overview-a" }, { $set: { "payload.applicableTiers": ["signature", "premium", "functional"] } });
+    const before = await resolveEstimatorCatalogueLines(["line-a", "line-b"]);
+    await AiEstimatorKnowledgeSectionModel.updateOne({ _id: "fixture-price-revision-a" }, { $set: {
+      "payload.modeDescription": "Signature wiring.\nInclusions: none.",
+      "payload.modeConfigurations": [configuration("Signature transport")],
+      "payload.tierConfigurations.premium": scope({ modeConfigurations: [configuration("Premium installation")] }),
+      "payload.tierConfigurations.default": scope({ modeDescription: "Mode wiring paragraph." }),
+      "payload.internalVendorNotes": "PRIVATE_DESCRIPTION_NOTE"
+    } });
+    await AiEstimatorKnowledgeSectionModel.updateOne({ _id: "fixture-price-revision-b" }, { $set: {
+      "payload.modeConfigurations": [configuration("Cabinet delivery")]
+    } });
+    const stored = JSON.stringify(await AiEstimatorKnowledgeSectionModel.find({ sectionKey: "advanced" }).sort({ _id: 1 }).lean());
+    const { server } = app();
+    const response = await request(server).get("/api/v1/estimation/catalogue").set(bearer("estimator")).expect(200);
+    const lines = response.body.data.items.flatMap((basket: any) => basket.subBaskets.flatMap((sub: any) => sub.mainLines));
+    const wiring = lines.find((line: any) => line.mainLineId === "line-a");
+    const cabinet = lines.find((line: any) => line.mainLineId === "line-b");
+    expect(wiring.tierDescriptions).toEqual({
+      signature: "Signature wiring.\nInclusions: Signature transport.",
+      premium: "Providing, Supplying, Fixing, testing and commissioning of Wiring, inclusions Premium installation and exclusions none.",
+      functional: "Mode wiring paragraph."
+    });
+    expect(cabinet.tierDescriptions).toEqual({ signature: "Providing, Supplying, Fixing, testing and commissioning of Cabinet, inclusions Cabinet delivery and exclusions none." });
+    for (const line of [wiring, cabinet]) {
+      const previous = before.get(line.mainLineId)!.line;
+      expect(line.modeBaseRatesPaise).toEqual(previous.modeBaseRatesPaise);
+      expect(line.basePriceAvailability).toEqual(previous.basePriceAvailability);
+      expect(line.tierDetails).toEqual(previous.tierDetails);
+      expect(JSON.stringify(line)).not.toMatch(/PRIVATE_DESCRIPTION_NOTE|modeConfigurations|same-pmc|same-item/);
+    }
+    expect(JSON.stringify(await AiEstimatorKnowledgeSectionModel.find({ sectionKey: "advanced" }).sort({ _id: 1 }).lean())).toBe(stored);
+  });
+
+  it("resolves description and specification fallback independently, including description-only results", async () => {
+    await AiEstimatorKnowledgeSectionModel.updateOne({ _id: "overview-a" }, { $set: { "payload.applicableTiers": ["signature", "premium", "functional"] } });
+    await AiEstimatorKnowledgeSectionModel.collection.insertMany([
+      { _id: "paragraphs", mainLineId: "line-a", revisionId: "revision-a", sectionKey: "advanced", ...scope({
+        modeDescription: "Signature paragraph", tierConfigurations: { default: scope({ modeDescription: "Mode paragraph" }) }
+      }) },
+      { _id: "paragraph-specs", mainLineId: "line-a", revisionId: "revision-a", sectionKey: "pricing", ...scope({
+        tierConfigurations: {
+          default: scope({ specifications: [{ id: "mode-spec", name: "Mode board" }] }),
+          premium: scope({ specifications: [{ id: "premium-spec", name: "Premium board" }] }),
+          functional: scope({ specifications: "invalid" })
+        }
+      }) }
+    ] as never[]);
+    const line = (await resolveEstimatorCatalogueLines(["line-a"])).get("line-a")!.line;
+    expect(line.tierDescriptions).toEqual({ signature: "Signature paragraph", premium: "Mode paragraph", functional: "Mode paragraph" });
+    expect(line.tierDetails).toEqual({ signature: { specifications: [{ id: "mode-spec", name: "Mode board", brands: [] }] },
+      premium: { specifications: [{ id: "premium-spec", name: "Premium board", brands: [] }] }, functional: null });
+    await AiEstimatorKnowledgeSectionModel.updateOne({ _id: "paragraphs" }, { $set: { "payload.modeDescription": false } });
+    const invalid = (await resolveEstimatorCatalogueLines(["line-a"])).get("line-a")!.line;
+    expect(invalid.tierDescriptions?.signature).toBeNull();
+    expect(invalid.tierDetails).toEqual(line.tierDetails);
+  });
+
+  it("uses current draft descriptions and never borrows the active revision when the draft loses them", async () => {
+    await AiEstimatorKnowledgeSectionModel.collection.insertOne({ _id: "old-paragraph" as never,
+      mainLineId: "line-a", revisionId: "revision-a", sectionKey: "advanced", ...scope({ modeDescription: "Old active paragraph" }) });
+    await AiEstimatorKnowledgeMainLineModel.updateOne({ _id: "line-a" }, { $set: { draftRevisionId: "paragraph-draft", version: 2 } });
+    await AiEstimatorKnowledgeRevisionModel.collection.insertOne({ _id: "paragraph-draft" as never,
+      mainLineId: "line-a", status: "draft", version: 2 });
+    await AiEstimatorKnowledgeSectionModel.collection.insertMany([
+      { _id: "paragraph-overview", mainLineId: "line-a", revisionId: "paragraph-draft", sectionKey: "overview", payload: {
+        uomId: "uom-sq", applicableTiers: ["signature", "premium", "functional"]
+      } },
+      { _id: "draft-paragraph", mainLineId: "line-a", revisionId: "paragraph-draft", sectionKey: "advanced", ...scope({
+        modeDescription: "Current draft paragraph", tierConfigurations: { default: scope({ modeDescription: "Current draft Mode" }) }
+      }) }
+    ] as never[]);
+    expect((await resolveEstimatorCatalogueLines(["line-a"])).get("line-a")!.line).toMatchObject({ revisionId: "paragraph-draft",
+      tierDescriptions: { signature: "Current draft paragraph", premium: "Current draft Mode", functional: "Current draft Mode" } });
+    await AiEstimatorKnowledgeSectionModel.deleteOne({ _id: "draft-paragraph" });
+    expect((await resolveEstimatorCatalogueLines(["line-a"])).get("line-a")!.line).toMatchObject({ revisionId: "paragraph-draft",
+      tierDescriptions: { signature: null, premium: null, functional: null } });
+  });
+
+  it("filters applicable temporary tiers and keeps invalid or disabled retained paragraphs unavailable", async () => {
+    await AiEstimatorKnowledgeSectionModel.updateOne({ _id: "overview-temp" }, { $set: { "payload.applicableTiers": ["signature", "premium", "functional"] } });
+    await AiEstimatorKnowledgeSectionModel.updateOne({ _id: "overview-temp-direct" }, { $set: { "payload.applicableTiers": ["premium"] } });
+    await AiEstimatorKnowledgeSectionModel.collection.insertMany([
+      { _id: "temp-paragraph", mainLineId: "line-temp", revisionId: "revision-temp", sectionKey: "advanced", ...scope({ tierConfigurations: {
+        default: scope({ modeDescription: "Temporary Mode paragraph" }),
+        premium: scope({ modeDescription: 12 }),
+        functional: scope({ modeDescription: "Retained paragraph" }, "not_configured")
+      } }) },
+      { _id: "temp-direct-paragraph", mainLineId: "line-temp-direct", revisionId: "revision-temp-direct", sectionKey: "advanced", ...scope({
+        modeDescription: "Deselected Signature paragraph", tierConfigurations: { premium: scope({ modeDescription: "Direct Premium paragraph" }) }
+      }) }
+    ] as never[]);
+    const rows = await resolveEstimatorCatalogueLines(["line-temp", "line-temp-direct"]);
+    expect(rows.get("line-temp")!.line).toMatchObject({ itemType: "temporary", tierDescriptions: {
+      signature: "Temporary Mode paragraph", premium: null, functional: null
+    } });
+    expect(rows.get("line-temp-direct")!.line.tierDescriptions).toEqual({ premium: "Direct Premium paragraph" });
+  });
+
+  it("rejects a description section belonging to another Main Line", async () => {
+    await AiEstimatorKnowledgeSectionModel.collection.insertOne({ _id: "wrong-paragraph" as never,
+      mainLineId: "line-b", revisionId: "revision-a", sectionKey: "advanced", ...scope({ modeDescription: "Wrong line paragraph" }) });
+    const line = (await resolveEstimatorCatalogueLines(["line-a"])).get("line-a")!.line;
+    expect(line.tierDescriptions).toEqual({ signature: null });
+    expect(line.mainLineId).toBe("line-a");
+  });
+});
+
 describe("estimator configured catalogue and estimate", { timeout: 30_000 }, () => {
 
   it("projects positive base presence from any saved Configuration scope and preserves every source row", async () => {

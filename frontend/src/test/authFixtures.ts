@@ -13,6 +13,8 @@ const BASE_SESSION_PERMISSIONS = [
 
 const DEFAULT_PERMISSIONS_BY_ROLE = {
   super_admin: [
+    "projects.initiation_defaults.read",
+    "projects.initiation_defaults.manage",
     ...BASE_SESSION_PERMISSIONS,
     "projects.list",
     "projects.read",
@@ -63,6 +65,7 @@ const DEFAULT_PERMISSIONS_BY_ROLE = {
     "procurement.vendor_allocation_baseline.correct"
   ],
   admin: [
+    "projects.initiation_defaults.read",
     ...BASE_SESSION_PERMISSIONS,
     "projects.list",
     "projects.read",
@@ -76,6 +79,7 @@ const DEFAULT_PERMISSIONS_BY_ROLE = {
     "procurement.vendors.read"
   ],
   estimator_sales: [
+    "projects.initiation_defaults.read",
     ...BASE_SESSION_PERMISSIONS,
     "projects.initiate",
     "estimation.lead.list",

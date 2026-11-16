@@ -498,6 +498,8 @@ async function approve(input: {
         accountKind: "standard"
       }).session(session).lean())?._id ?? null;
   const projectId = await resolveApprovalProject({
+    actorId: context.actor.id,
+    audit,
     estimate: {
       projectId: estimate.projectId == null ? null : String(estimate.projectId),
       ownerId: String(estimate.ownerId)

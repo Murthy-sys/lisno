@@ -352,12 +352,12 @@ describe("KnowledgeModeConfigurationBuilder", () => {
     const onDirty = vi.fn();
     render(<Harness readOnly={readOnly} onPayload={onPayload} onDirty={onDirty} />);
     expect(screen.getByRole("group", { name: "Mode configuration" })).toBeVisible();
-    if (readOnly) expect(screen.getByText("Read-only revision")).toBeVisible();
-    else expect(screen.queryByText("Read-only revision")).not.toBeInTheDocument();
+    expect(screen.queryByText("Read-only revision")).not.toBeInTheDocument();
     const pmcSelection = screen.getByRole("checkbox", { name: "PMC" });
     const executionSelection = screen.getByRole("checkbox", { name: "Execution" });
     const description = screen.getByRole("heading", { name: "Description" });
     expect(description).toBeVisible();
+    expect(description.compareDocumentPosition(screen.getByRole("group", { name: "Mode" })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(pmcSelection).toBeChecked();
     expect(executionSelection).not.toBeChecked();
     await user.click(executionSelection);

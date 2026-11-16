@@ -14,6 +14,18 @@ const draft: EstimateDraftInput = {
 };
 
 describe("estimate draft semantic comparison", () => {
+  it("does not mark description, specification or brand metadata refreshes as estimate edits", () => {
+    const saved = { ...componentDraftFixture(), tierDescriptions: { signature: "Original finish." }, tierDetails: { signature: { specifications: [
+      { id: "spec", name: "Original board", brands: [{ id: "brand", name: "Original brand" }] }
+    ] } } };
+    const changed = { ...saved, tierDescriptions: { premium: "Updated premium finish." }, tierDetails: { premium: { specifications: [
+      { id: "spec", name: "Updated board", brands: [{ id: "brand", name: "Updated brand" }] }
+    ] } } };
+    expect(configuredLineEditingFingerprint(changed)).toBe(configuredLineEditingFingerprint(saved));
+    expect(configuredLineEditingFingerprint({ ...saved, tierDetails: undefined, tierDescriptions: undefined })).toBe(configuredLineEditingFingerprint(saved));
+    expect(configuredLineEditingFingerprint({ ...saved, tierDescriptions: { signature: null } })).toBe(configuredLineEditingFingerprint(saved));
+  });
+
   it("tracks explicit price refresh separately from background preview evidence", () => {
     const saved = { ...componentDraftFixture(), configurationPricingChanged: true };
     expect(configuredLineEditingFingerprint({ ...saved, configurationPricingChanged: false })).not.toBe(configuredLineEditingFingerprint(saved));
