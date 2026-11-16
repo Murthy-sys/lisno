@@ -28,7 +28,7 @@ import {
 } from "./knowledgeModeConfiguration";
 import { KnowledgePmcScopeChecklist } from "./KnowledgePmcScopeChecklist";
 import { KnowledgeModeDescriptionEditor } from "./KnowledgeModeDescriptionEditor";
-import { generateModeDescription, modeDescriptionIssues, syncModeDescription } from "./knowledgeModeDescription";
+import { modeDescriptionIssues, syncModeDescription } from "./knowledgeModeDescription";
 import { calculationScopeForIssue, MODE_CALCULATION_SCOPES, modeCalculationIssues, modeCalculationsIssues, type ModeCalculationScope } from "./knowledgeModeCalculation";
 import { pmcMarginRange, pmcMarginRangeIssues, subVendorMarginRange, subVendorMarginRangeIssues, withPmcMargin, withSubVendorMargin } from "./knowledgePmcMargin";
 import { KnowledgePmcMarginRange, KnowledgeSubVendorMarginRange } from "./KnowledgePmcMarginInput";
@@ -49,6 +49,8 @@ export interface KnowledgeModeConfigurationBuilderProps {
   readonly inHouseTotal?: (active: boolean) => ReactNode;
   readonly calculationValidity?: Readonly<Record<ModeCalculationScope, boolean>>;
   readonly descriptionResetKey?: string;
+  readonly descriptionPresentation?: "standard" | "inline" | "hidden";
+  readonly onSaveDescription?: (text: string) => Promise<boolean>;
   readonly onPendingDescriptionChange?: (pending: boolean) => void;
   readonly onPendingDescriptionTextChange?: (text: string | null) => void;
   readonly modes: readonly KnowledgeMaster[];
@@ -78,6 +80,8 @@ export function KnowledgeModeConfigurationBuilder({
   inHouseComponentsValid = true,
   calculationValidity = { pmc: true, sub_vendor: true, in_house_labor: true, in_house_material: true },
   descriptionResetKey = "default",
+  descriptionPresentation = "standard",
+  onSaveDescription,
   onPendingDescriptionChange = ignorePendingDescription,
   onPendingDescriptionTextChange,
   modes,
@@ -104,9 +108,8 @@ export function KnowledgeModeConfigurationBuilder({
   const subBasketName = basketContext.subBasketId
     ? basketContext.subBasketName?.trim() || "Name unavailable"
     : "Not assigned";
-  const generatedDescription = generateModeDescription(mainLineName, partitioned.primary.pmc, inHouseConfiguration);
   const description = typeof payload.modeDescription === "string"
-    ? syncModeDescription(payload.modeDescription, partitioned.primary.pmc, undefined, inHouseConfiguration) : generatedDescription;
+    ? syncModeDescription(payload.modeDescription, partitioned.primary.pmc, undefined, inHouseConfiguration) : "";
   const issues = useMemo(
     () => [...currentModeConfigurationIssues(payload, modes), ...readInHouseUsagePolicy(payload).issues, ...modeDescriptionIssues(payload.modeDescription == null || typeof payload.modeDescription === "string" ? description : payload.modeDescription), ...modeCalculationsIssues(payload), ...pmcMarginRangeIssues(payload), ...subVendorMarginRangeIssues(payload), ...serverIssues],
     [modes, description, payload, serverIssues]
@@ -406,15 +409,16 @@ export function KnowledgeModeConfigurationBuilder({
         </div>
       ) : null}
 
-      <div className="knowledge-mode-configuration__shared"
+      {descriptionPresentation !== "hidden" ? <div className="knowledge-mode-configuration__shared"
         ref={(node) => {
           if (node) fieldRefs.current.set("modeDescription", node);
           else fieldRefs.current.delete("modeDescription");
         }}
       >
-        <h3 className="knowledge-mode-configuration__shared-title">Description</h3>
+        {descriptionPresentation === "standard" ? <h3 className="knowledge-mode-configuration__shared-title">Description</h3> : null}
         <KnowledgeModeDescriptionEditor
           key={descriptionResetKey}
+          presentation={descriptionPresentation}
           description={description}
           pmc={partitioned.primary.pmc}
           inHouse={inHouseConfiguration}
@@ -424,14 +428,16 @@ export function KnowledgeModeConfigurationBuilder({
           onPendingChange={handlePendingDescriptionChange}
           onPendingTextChange={onPendingDescriptionTextChange}
           onSave={(text) => {
-            const modeDescription = text === generatedDescription ? null : text;
+            if (descriptionPresentation === "inline" && onSaveDescription) return onSaveDescription(text);
+            const modeDescription = text;
             if (modeDescription === (payload.modeDescription ?? null)) return;
             onDirty();
             onChange({ ...payload, modeDescription });
           }}
         />
-      </div>
+      </div> : null}
 
+      <div className="knowledge-mode-configuration__settings">
       <div className="knowledge-mode-configuration__intro">
         <fieldset className="knowledge-mode-configuration__mode-selector">
           <legend>Mode</legend>
@@ -673,6 +679,7 @@ export function KnowledgeModeConfigurationBuilder({
           })}
         </section>
       ) : null}
+      </div>
     </div>
   );
 }

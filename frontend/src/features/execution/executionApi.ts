@@ -3,7 +3,9 @@ import { apiClient } from "../../api/client";
 /** Execution status is separate from the existing immutable Client review lifecycle. */
 export type ExecutionStatus = "assigned" | "awaiting_schedule" | "not_started" | "in_progress" | "blocked" | "awaiting_verification" | "site_verified" | "awaiting_client" | "changes_requested" | "client_approved" | "superseded";
 export type ExecutionAction = "setup" | "acknowledge" | "propose_schedule" | "confirm_schedule" | "report" | "submit" | "verify" | "request_changes" | "hold" | "resume" | "exempt_evidence";
+export type VendorUpdateType = "started" | "progress" | "hold" | "completed";
 export interface ExecutionCommand {
+  updateType?: VendorUpdateType;
   action: ExecutionAction;
   expectedVersion: number;
   idempotencyKey: string;
@@ -34,6 +36,7 @@ export interface ExecutionDailyStatus {
   reportedAt: string | null;
 }
 export interface ExecutionVendorReport {
+  updateType?: VendorUpdateType | null;
   eventId: string;
   executionRound: number;
   reportedAt: string;
@@ -103,6 +106,7 @@ export interface ExecutionWork {
   canSubmitToClient: boolean;
 }
 export interface ExecutionHistoryEvent {
+  updateType?: VendorUpdateType | null;
   id: string;
   assignmentId: string;
   action: string;

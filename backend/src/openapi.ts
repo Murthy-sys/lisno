@@ -679,6 +679,7 @@ const queryParametersByOperation: Readonly<
     { name: "projectId", in: "query", required: false, schema: { type: "string", minLength: 1, maxLength: 200 }, description: "Stable project ID within the authorized approved-project population." },
     { name: "clientId", in: "query", required: false, schema: { type: "string", minLength: 1, maxLength: 200 }, description: "Stable linked client ID; mutually exclusive with unlinkedClient." },
     { name: "unlinkedClient", in: "query", required: false, schema: { type: "string", enum: ["true"] }, description: "Select projects with no linked client ID; mutually exclusive with clientId." },
+    { name: "budgetBasis", in: "query", required: false, schema: { type: "string", enum: ["recorded", "including_commitments"], default: "recorded" }, description: "Select the basis of the budgetStatus filter. Omission uses recorded costs; including_commitments uses commitmentBudget.budgetStatus and excludes unresolved projections from known-status matches. Existing recorded-cost response fields retain their meanings." },
     { name: "budgetStatus", in: "query", required: false, schema: { type: "string", enum: ["over_budget", "at_risk", "within_budget", "no_budget"] }, description: "Authoritative budget risk using the existing 90% usable-budget threshold for unfinished projects." },
     { name: "financeStage", in: "query", required: false, schema: { type: "string", enum: [...PROJECT_FINANCE_BUCKET_STATUSES] } },
     { name: "projectStatus", in: "query", required: false, schema: { type: "string", enum: ["planning", "active", "on_hold", "completed"] } },
@@ -1675,6 +1676,15 @@ function dashboardPageSchema(itemSchema: string): OpenApiSchema {
 function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
   const id = { type: "string", minLength: 1 } as const;
   const dateTime = { type: "string", format: "date-time" } as const;
+  const commitmentBudgetRequired = ["status", "reasonCodes", "approvedVendorNetPaise", "outstandingVendorCommitmentPaise", "budgetUsedPaise", "availableBudgetPaise"];
+  const commitmentBudgetProperties: Record<string, OpenApiSchema> = {
+    status: { type: "string", enum: ["ready", "needs_reconciliation"], description: "Ready projections have complete combined amounts. Unresolved projections retain recorded finance separately and never substitute zero for unavailable combined amounts." },
+    reasonCodes: { type: "array", uniqueItems: true, items: { type: "string", enum: ["unlinked_procurement_expense", "invalid_order_source", "invalid_expense_linkage"] }, description: "Empty when ready; safe reason codes without vendor identity or private bid content." },
+    approvedVendorNetPaise: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER, nullable: true, description: "Approved uncancelled vendor order commitments excluding GST, counted once by order ID using each immutable approved revision. Null if an approved source is invalid; never a partial total." },
+    outstandingVendorCommitmentPaise: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER, nullable: true, description: "Sum of max(approved order net - posted procurement costs linked to that same project and order, 0). Null when reconciliation is required. Pending amendments retain the prior approved commitment; voided costs do not offset it." },
+    budgetUsedPaise: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER, nullable: true, description: "recordedCostPaise + outstandingVendorCommitmentPaise. Includes overheads once; a combined budget-use measure, not proof of payment. Null when reconciliation is required." },
+    availableBudgetPaise: { type: "integer", minimum: -Number.MAX_SAFE_INTEGER, maximum: Number.MAX_SAFE_INTEGER, nullable: true, description: "costBudgetPaise - budgetUsedPaise. Negative balances preserve overruns; null when reconciliation is required." }
+  };
   const modeTier = { type: "string", enum: [...KNOWLEDGE_MODE_TIERS], default: "signature" };
   const tierBaseRates = { type: "object", additionalProperties: false, required: ["pmc", "sub_vendor", "in_house"],
     properties: Object.fromEntries(["pmc", "sub_vendor", "in_house"].map(mode => [mode, { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER, nullable: true }])) };
@@ -3807,6 +3817,27 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
         }
       }
     },
+    ProjectFinanceCommitmentBudget: {
+      type: "object", readOnly: true, additionalProperties: false,
+      description: "Read-only project budget usage including approved vendor commitments, calculated in the same snapshot as recorded finance. This creates no expense or payment and leaves every existing recorded-cost field unchanged.",
+      required: [...commitmentBudgetRequired, "utilizationBps", "budgetStatus", "overBudget"],
+      properties: {
+        ...commitmentBudgetProperties,
+        utilizationBps: { type: "integer", minimum: 0, nullable: true, description: "Combined budget usage divided by usable cost budget, rounded to basis points. May exceed 10000; null when the denominator is zero or reconciliation is required." },
+        budgetStatus: { type: "string", nullable: true, enum: ["over_budget", "at_risk", "within_budget", "no_budget"], description: "Existing backend budget-risk policy applied to combined usage, including completed-project behavior; null when unresolved." },
+        overBudget: { type: "boolean", nullable: true, description: "Whether the commitment-aware available balance is negative; null when unresolved." }
+      }
+    },
+    ProjectFinanceCommitmentPortfolioSummary: {
+      type: "object", readOnly: true, additionalProperties: false,
+      description: "Commitment-aware totals for the same full authorized and filtered project set as the finance portfolio, independent of pagination. If any project is unresolved, combined outstanding commitments, usage, available balance and over-budget count are null rather than partial totals. The approved net commitment is null only when any project's corresponding source amount is unknown.",
+      required: [...commitmentBudgetRequired, "unresolvedProjectCount", "overBudgetProjectCount"],
+      properties: {
+        ...commitmentBudgetProperties,
+        unresolvedProjectCount: { type: "integer", minimum: 0, description: "Matching projects requiring commitment reconciliation; zero when ready." },
+        overBudgetProjectCount: { type: "integer", minimum: 0, nullable: true, description: "Matching projects with a negative commitment-aware available balance; null if any matching project is unresolved." }
+      }
+    },
     ProjectFinanceBucket: {
       type: "object",
       description: "Project-wise finance view sourced from the Client-approved Estimate. Before a durable bucket is opened, approved value remains visible while spending stays locked. Amounts are integer paise. Current profit is a live ledger position, not finalized actual profit until the project is closed and all costs are posted.",
@@ -3819,9 +3850,10 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
         "overheadPaise", "recordedCostPaise", "remainingBudgetPaise", "currentProfitPaise",
         "currentMarginBps", "overBudget", "deadlineAt", "overdueDays", "deadlineStatus",
         "overdueTaskCount", "status", "version", "openedAt", "closedAt",
-        "createdAt", "updatedAt"
+        "createdAt", "updatedAt", "commitmentBudget"
       ],
       properties: {
+        commitmentBudget: { $ref: "#/components/schemas/ProjectFinanceCommitmentBudget" },
         projectNumber,
         id,
         projectId: id,
@@ -3994,9 +4026,10 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
         "directSpendPaise", "overheadPaise", "recordedCostPaise",
         "remainingBudgetPaise", "currentProfitPaise", "currentMarginBps",
         "overBudgetProjectCount", "overdueProjectCount",
-        "lateCompletedProjectCount", "overdueTaskCount"
+        "lateCompletedProjectCount", "overdueTaskCount", "commitmentBudget"
       ],
       properties: {
+        commitmentBudget: { $ref: "#/components/schemas/ProjectFinanceCommitmentPortfolioSummary" },
         projectCount: {
           type: "integer",
           minimum: 0,

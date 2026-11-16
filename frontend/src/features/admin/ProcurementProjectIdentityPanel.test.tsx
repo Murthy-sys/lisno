@@ -31,11 +31,11 @@ describe("ProcurementProjectIdentityPanel", () => {
     );
     const user = userEvent.setup();
     renderWithQuery(<ProcurementProjectIdentityPanel projectId="project-a" />);
-    const section = screen.getByRole("region", { name: "Procurement project details" });
-    await user.click(within(section).getByRole("button", { name: /Procurement project details/ }));
+    const section = screen.getByRole("region", { name: "Project Manager & city" });
+    await user.click(within(section).getByRole("button", { name: /Project Manager & city/ }));
     await user.type(await within(section).findByLabelText("Project city"), "Pune");
     await user.selectOptions(await within(section).findByLabelText("Project Manager"), "pm-a");
-    await user.click(within(section).getByRole("button", { name: "Save procurement details" }));
+    await user.click(within(section).getByRole("button", { name: "Save Project Manager & city" }));
     expect(await within(section).findByRole("status")).toHaveTextContent("saved");
     expect(received).toEqual([{ expectedVersion: 1, cityName: "Pune", programManagerId: "pm-a" }]);
     for (const key of ["admin-projects", "project-workflow", "assigned-projects", "project-manager", "execution", "procurement", "project-chat"]) {
@@ -66,8 +66,8 @@ describe("ProcurementProjectIdentityPanel", () => {
     render(<QueryClientProvider client={queryClient}><FeedbackProvider>
       <ProcurementProjectIdentityPanel projectId="project-a" />
     </FeedbackProvider></QueryClientProvider>);
-    const section = screen.getByRole("region", { name: "Procurement project details" });
-    await user.click(within(section).getByRole("button", { name: /Procurement project details/ }));
+    const section = screen.getByRole("region", { name: "Project Manager & city" });
+    await user.click(within(section).getByRole("button", { name: /Project Manager & city/ }));
     const city = await within(section).findByLabelText("Project city");
     expect(city).toHaveValue("Pune");
     await user.clear(city);
@@ -76,7 +76,7 @@ describe("ProcurementProjectIdentityPanel", () => {
     await act(async () => { await queryClient.invalidateQueries({ queryKey: procurementProjectIdentityKeys.detail("project-a") }); });
     expect(await within(section).findByText(/changed while you were editing/)).toBeVisible();
     expect(city).toHaveValue("Unsaved city");
-    expect(within(section).getByRole("button", { name: "Save procurement details" })).toBeDisabled();
+    expect(within(section).getByRole("button", { name: "Save Project Manager & city" })).toBeDisabled();
     await user.click(within(section).getByRole("button", { name: "Load latest details" }));
     expect(city).toHaveValue("Mumbai");
     expect(within(section).getByLabelText("Project Manager")).toHaveValue("pm-b");

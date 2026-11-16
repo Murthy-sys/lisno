@@ -38,6 +38,7 @@ export const ESTIMATE_TIER_SCHEMAS = {
     ["expectedVersion", "modeTier", "revisionId", "itemVersion", "revisionVersion", "uomId"]),
     description: "Select a tier for one included working estimate line. Prices and totals are calculated on the server. In-house component selections are explicit and scoped to the selected tier. No manual prices, quantities or pricing modes are accepted. Stale versions, hidden client rows and pending/final reviews are rejected." },
   EstimateTierChoice: object({ modeTier: tier, available: boolean, unavailableReason: { ...string, nullable: true },
+    description: { ...string, maxLength: 4000, nullable: true, description: "Client-facing saved description for this tier. No internal specifications or pricing configuration." },
     pricingBasis: { type: "string", enum: ["in_house_components_v1"] }, componentPricing: ref("EstimateComponentPricing"),
     ratePaise: money, amountPaise: money, source: { ...source, nullable: true },
     inHouseComponents: { type: "array", items: object({ id, label: string, ratePaise: money, amountPaise: money, available: boolean }, ["id", "label", "ratePaise", "available"]) } },

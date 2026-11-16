@@ -379,15 +379,15 @@ describe("AI estimator knowledge validation", () => {
       .toContainEqual(expect.objectContaining({ path: "payload.modeCalculation", code: "UNKNOWN_FIELD" }));
   });
 
-  it("accepts a shared Mode paragraph, generated defaults, and older payloads", () => {
-    for (const modeDescription of [null, "Custom shared wording", "A".repeat(4000)]) {
+  it("accepts saved or explicitly empty Mode paragraphs and older payloads", () => {
+    for (const modeDescription of [null, "", "Custom shared wording", "A".repeat(4000)]) {
       expect(validateKnowledgeSectionPayload("advanced", { modeDescription })).toEqual([]);
     }
     expect(validateKnowledgeSectionPayload("advanced", {})).toEqual([]);
   });
 
   it("rejects invalid shared Mode paragraphs and paragraphs in other sections", () => {
-    for (const modeDescription of ["", "   ", 42, true, {}, [], "A".repeat(4001)]) {
+    for (const modeDescription of ["   ", 42, true, {}, [], "A".repeat(4001)]) {
       expect(validateKnowledgeSectionPayload("advanced", { modeDescription }))
         .toContainEqual(expect.objectContaining({ path: "payload.modeDescription" }));
     }

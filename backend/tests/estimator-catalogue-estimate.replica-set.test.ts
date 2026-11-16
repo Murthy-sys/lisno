@@ -543,7 +543,7 @@ describe("estimator tier description", { timeout: 30_000 }, () => {
   const configuration = (name: string) => ({ id: "same-pmc", modeKind: "pmc", fields: [],
     inclusions: [{ id: "same-item", name, selected: true }], exclusions: [] });
 
-  it("projects custom, generated and Mode paragraphs from their own scopes without changing prices or stored data", async () => {
+  it("projects only saved tier and common Mode paragraphs without changing prices or stored data", async () => {
     await configureFixturePrices([configuredLine(), configuredLine({ mainLineId: "line-b", revisionId: "revision-b", ratePaise: 23100 })]);
     await AiEstimatorKnowledgeSectionModel.updateOne({ _id: "overview-a" }, { $set: { "payload.applicableTiers": ["signature", "premium", "functional"] } });
     const before = await resolveEstimatorCatalogueLines(["line-a", "line-b"]);
@@ -565,10 +565,10 @@ describe("estimator tier description", { timeout: 30_000 }, () => {
     const cabinet = lines.find((line: any) => line.mainLineId === "line-b");
     expect(wiring.tierDescriptions).toEqual({
       signature: "Signature wiring.\nInclusions: Signature transport.",
-      premium: "Providing, Supplying, Fixing, testing and commissioning of Wiring, inclusions Premium installation and exclusions none.",
+      premium: "Mode wiring paragraph.",
       functional: "Mode wiring paragraph."
     });
-    expect(cabinet.tierDescriptions).toEqual({ signature: "Providing, Supplying, Fixing, testing and commissioning of Cabinet, inclusions Cabinet delivery and exclusions none." });
+    expect(cabinet.tierDescriptions).toEqual({ signature: null });
     for (const line of [wiring, cabinet]) {
       const previous = before.get(line.mainLineId)!.line;
       expect(line.modeBaseRatesPaise).toEqual(previous.modeBaseRatesPaise);

@@ -42,14 +42,10 @@ function IdentityEditor({ identity }: { identity: ProcurementProjectIdentity }) 
     }
   });
   const selectedManagerVisible = managers.data?.items.some(manager => manager.id === programManagerId) ?? false;
-  return <div className="admin-project-reference__detail-groups">
-    <p>Confirm the project city for vendor search and assign the Project Manager responsible for project coordination and site execution.</p>
-    {staleDraft ? <p role="alert">Procurement project details changed while you were editing. <button type="button" onClick={loadLatestIdentity}>Load latest details</button></p> : null}
+  return <div className="project-people-identity">
+    <p>Assign the Project Manager responsible for coordination and site execution. Procurement has a separate assignment under Procurement.</p>
+    {staleDraft ? <p role="alert">Project Manager details changed while you were editing. <button type="button" onClick={loadLatestIdentity}>Load latest details</button></p> : null}
     <form onSubmit={(event) => { event.preventDefault(); if (!staleDraft) update.mutate(); }}>
-      <Field id="procurement-project-city" label="Project city" hint="City groups vendor results; it does not change vendor eligibility or pricing.">
-        {(control) => <Input {...control} value={cityName} maxLength={120} disabled={update.isPending}
-          onChange={(event) => setCityName(event.target.value)} placeholder="Enter city" />}
-      </Field>
       <div className="admin-design-assignment__form">
         <Field id="program-manager-search" label="Search active Project Managers">
           {(control) => <Input {...control} value={managerSearch} maxLength={120}
@@ -65,21 +61,25 @@ function IdentityEditor({ identity }: { identity: ProcurementProjectIdentity }) 
           {managers.data?.items.map(manager => <option key={manager.id} value={manager.id}>{manager.name} · {manager.email}</option>)}
         </Select>}
       </Field>
+      <Field id="procurement-project-city" label="Project city" hint="City groups vendor results; it does not change vendor eligibility or pricing.">
+        {(control) => <Input {...control} value={cityName} maxLength={120} disabled={update.isPending}
+          onChange={(event) => setCityName(event.target.value)} placeholder="Enter city" />}
+      </Field>
       {managers.isError ? <p role="alert">Project Managers could not be loaded. Search again.</p> : null}
       {update.isError ? <p role="alert">{update.error instanceof ApiError ? update.error.message : "The project identity could not be saved."}</p> : null}
-      {update.isSuccess ? <p role="status">Procurement project details saved.</p> : null}
-      <Button type="submit" disabled={staleDraft} busy={update.isPending} busyLabel="Saving…">Save procurement details</Button>
+      {update.isSuccess ? <p role="status">Project Manager and city saved.</p> : null}
+      <Button type="submit" disabled={staleDraft} busy={update.isPending} busyLabel="Saving…">Save Project Manager & city</Button>
     </form>
   </div>;
 }
 
-export function ProcurementProjectIdentityPanel({ projectId }: { projectId: string }) {
+export function ProcurementProjectIdentityPanel({ projectId, defaultOpen = false }: { projectId: string; defaultOpen?: boolean }) {
   const identity = useQuery({ queryKey: procurementProjectIdentityKeys.detail(projectId),
     queryFn: ({ signal }) => getProcurementProjectIdentity(projectId, signal) });
   return <AdminDetailSection icon={<span aria-hidden="true">PM</span>} tone="cool"
-    title="Procurement project details" subtitle="Project city and Project Manager assignment">
-    {identity.isPending ? <p>Loading procurement details…</p> : identity.isError ?
-      <p role="alert">Procurement details could not be loaded. <button type="button" onClick={() => void identity.refetch()}>Retry</button></p> :
+    title="Project Manager & city" subtitle="Project coordination, site execution and vendor-search city" defaultOpen={defaultOpen}>
+    {identity.isPending ? <p>Loading Project Manager details…</p> : identity.isError ?
+      <p role="alert">Project Manager details could not be loaded. <button type="button" onClick={() => void identity.refetch()}>Retry</button></p> :
       <IdentityEditor identity={identity.data} />}
   </AdminDetailSection>;
 }

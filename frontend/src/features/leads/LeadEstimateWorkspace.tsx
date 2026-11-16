@@ -1478,6 +1478,7 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
     {boundedBuilder ? <EstimateBuilderArea>
       {!catalogue.data ? <p className="estimate-notice" role="status">Current Configuration is unavailable. Saved lines are shown from this estimate's snapshot.</p> : null}
       <ConfiguredEstimateBuilder
+      showInternalTierDetails={auth.status === "authenticated" && ["estimator_sales", "designer", "super_admin"].includes(auth.user?.role ?? "")}
       filterUnpricedItems={draftEditable && !historical}
       itemPresentation={browseSalesCatalogue ? "catalogue" : "selected"}
       browseMainBasketIds={browseSalesCatalogue ? browseMainBasketIds : undefined}

@@ -158,6 +158,13 @@ describe("Mode pending change projection", () => {
     expect(project(before, before, { pendingDescription: null })).toEqual([]);
   });
 
+  it("reports an intentionally cleared description without an incomplete warning", () => {
+    const cleared = project({ modeDescription: "Saved wording." }, { modeDescription: "" });
+    expect(cleared[0]?.entries[0]).toMatchObject({ fields: [{ value: "", cleared: true }] });
+    expect(cleared[0]?.entries[0]?.incomplete).toBeUndefined();
+    expect(project({ modeDescription: "" }, { modeDescription: "" })).toEqual([]);
+  });
+
   it("overrides the last parsed number with incomplete raw input only for its source", () => {
     const before = { modeCalculations: { pmc: calculation, sub_vendor: calculation, in_house_labor: calculation, in_house_material: calculation } };
     const groups = project(before, before, { pendingCalculations: { in_house_material: { draft: { ...modeCalculationDraft(calculation), baseRate: "12." }, invalidFields: ["baseRate"] } } });

@@ -26,22 +26,22 @@ describe("estimator tier description", () => {
     }
   });
 
-  it("generates from saved canonical scopes and synchronizes custom wording using those same scopes", () => {
+  it("uses only saved wording and synchronizes its own canonical scopes", () => {
     const configurations = [pmc(), { id: "house", modeKind: "execution", executionSource: "in_house", fields: [],
       inclusions: [{ id: "supplier", name: "Supplier", selected: true }], exclusions: [{ id: "labour", name: "Labour", selected: true }] }];
     const payload = { modeConfigurations: configurations, modeDescription: null };
     expect(projectEstimatorTierDescription(withDefault(payload), "signature", "Ceiling"))
-      .toBe("Providing, Supplying, Fixing, testing and commissioning of Ceiling, inclusions Transport and exclusions none. In-house inclusions: Supplier. In-house exclusions: Labour.");
+      .toBe("Default Mode paragraph.");
+    expect(projectEstimatorTierDescription(section(payload), "signature", "Ceiling")).toBeNull();
     expect(projectEstimatorTierDescription(section({ ...payload, modeDescription: "Custom finish. Inclusions: none. Exclusions: none." }), "signature", "Ceiling"))
       .toBe("Custom finish. Inclusions: Transport. Exclusions: none. In-house Inclusions: Supplier. In-house Exclusions: Labour.");
   });
 
-  it("recognizes saved Sub-vendor configuration but never emits its private fields", () => {
+  it("does not generate a description from saved Sub-vendor configuration", () => {
     const source = section({ modeConfigurations: [{ id: "vendor", modeKind: "execution", executionSource: "sub_vendor", fields: [
       { id: "private", type: "text", label: "Internal cost", options: [], value: "PRIVATE" }
     ] }] });
-    expect(projectEstimatorTierDescription(source, "signature", "Ceiling"))
-      .toBe("Providing, Supplying, Fixing, testing and commissioning of Ceiling, inclusions none and exclusions none.");
+    expect(projectEstimatorTierDescription(source, "signature", "Ceiling")).toBeNull();
   });
 
   it.each([{}, { modeDescription: null }, { modeConfigurations: [] }, { modeDescription: null, modeConfigurations: [] }])(
@@ -52,10 +52,19 @@ describe("estimator tier description", () => {
       }
     });
 
-  it("can generate the fallback Mode paragraph from its own configuration", () => {
+  it("keeps common Mode empty when no paragraph was saved", () => {
     const source = section({ tierConfigurations: { default: configured({ modeConfigurations: [pmc("Mode transport")] }) } });
-    expect(projectEstimatorTierDescription(source, "premium", "Ceiling"))
-      .toBe("Providing, Supplying, Fixing, testing and commissioning of Ceiling, inclusions Mode transport and exclusions none.");
+    expect(projectEstimatorTierDescription(source, "premium", "Ceiling")).toBeNull();
+  });
+
+  it("does not replace an explicitly cleared tier with common wording or selected scope lists", () => {
+    const source = section({ modeDescription: "", modeConfigurations: [pmc()], tierConfigurations: {
+      default: configured({ modeDescription: "Default Mode paragraph." }),
+      premium: configured({ modeDescription: "", modeConfigurations: [pmc()] })
+    } });
+    expect(projectEstimatorTierDescription(source, "signature", "Ceiling")).toBeNull();
+    expect(projectEstimatorTierDescription(source, "premium", "Ceiling")).toBeNull();
+    expect(projectEstimatorTierDescription(source, "functional", "Ceiling")).toBe("Default Mode paragraph.");
   });
 
   it.each(["not_configured", "not_applicable"])("does not expose retained %s text or fall back over it", applicability => {
@@ -80,9 +89,9 @@ describe("estimator tier description", () => {
     expect(projectEstimatorTierDescription(withDefault(payload), "signature", "Ceiling")).toBeNull();
   });
 
-  it("bounds the final synchronized/generated paragraph instead of truncating or using Mode", () => {
+  it("bounds the final synchronized paragraph instead of truncating or using Mode", () => {
     const longScopes = { ...pmc(), inclusions: Array.from({ length: 20 }, (_, i) => ({ id: `id-${i}`, name: `${i}-${"x".repeat(230)}`, selected: true })) };
-    expect(projectEstimatorTierDescription(withDefault({ modeConfigurations: [longScopes] }), "signature", "Ceiling")).toBeNull();
+    expect(projectEstimatorTierDescription(withDefault({ modeDescription: "Saved work.", modeConfigurations: [longScopes] }), "signature", "Ceiling")).toBeNull();
     expect(projectEstimatorTierDescription(withDefault({ modeDescription: "x".repeat(3990), modeConfigurations: [pmc()] }), "signature", "Ceiling")).toBeNull();
     expect(projectEstimatorTierDescription(section({ modeDescription: "x".repeat(4000) }), "signature", "Ceiling")).toHaveLength(4000);
   });

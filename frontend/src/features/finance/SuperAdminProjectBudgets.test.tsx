@@ -22,6 +22,8 @@ const bucket: ProjectFinanceBucket = {
   procurementCostPaise: 110_000_000, employeePaymentPaise: 40_000_000, otherExpensePaise: 10_000_000, directSpendPaise: 160_000_000,
   overheadPaise: 20_000_000, recordedCostPaise: 180_000_000, remainingBudgetPaise: 20_000_000,
   currentProfitPaise: 70_000_000, currentMarginBps: 2800, overBudget: false,
+  commitmentBudget: { status: "ready", reasonCodes: [], approvedVendorNetPaise: 0, outstandingVendorCommitmentPaise: 0,
+    budgetUsedPaise: 180_000_000, availableBudgetPaise: 20_000_000, utilizationBps: 9000, budgetStatus: "at_risk", overBudget: false },
   deadlineAt: "2026-12-01T00:00:00Z", overdueDays: 0, deadlineStatus: "on_track", overdueTaskCount: 0, status: "open", version: 1,
   openedAt: "2026-09-02T00:00:00Z", closedAt: null, createdAt: "2026-09-01T12:00:00Z", updatedAt: "2026-10-01T12:00:00Z"
 };
@@ -29,6 +31,8 @@ const unequalBucket: ProjectFinanceBucket = {
   ...bucket, id: "bucket-two", projectId: "project-two", projectName: "Cedar Court", clientId: "client-two", budgetStatus: "over_budget", budgetUtilizationBps: 12500,
   approvedSubtotalPaise: 10_003, approvedGstPaise: 1801, approvedContractTotalPaise: 11_804, targetProfitPaise: 2001, costBudgetPaise: 8002,
   procurementCostPaise: 5000, employeePaymentPaise: 0, otherExpensePaise: 0, directSpendPaise: 5000, overheadPaise: 5003,
+  commitmentBudget: { status: "ready", reasonCodes: [], approvedVendorNetPaise: 0, outstandingVendorCommitmentPaise: 0,
+    budgetUsedPaise: 10_003, availableBudgetPaise: -2001, utilizationBps: 12501, budgetStatus: "over_budget", overBudget: true },
   recordedCostPaise: 10_003, remainingBudgetPaise: -2001, currentProfitPaise: 0, currentMarginBps: 0, overBudget: true
 };
 
@@ -44,9 +48,40 @@ function response(items = [bucket], total = 2): ProjectBudgetPage {
       targetProfitPaise: 50_002_001, costBudgetPaise: 200_008_002, procurementCostPaise: 110_005_000, employeePaymentPaise: 40_000_000,
       otherExpensePaise: 10_000_000, directSpendPaise: 160_005_000, overheadPaise: 20_005_003, recordedCostPaise: 180_010_003,
       remainingBudgetPaise: 19_997_999, currentProfitPaise: 70_000_000, currentMarginBps: 2800, overBudgetProjectCount: 1,
-      overdueProjectCount: 0, lateCompletedProjectCount: 0, overdueTaskCount: 0
+      overdueProjectCount: 0, lateCompletedProjectCount: 0, overdueTaskCount: 0,
+      commitmentBudget: { status: "ready", reasonCodes: [], approvedVendorNetPaise: 0, outstandingVendorCommitmentPaise: 0,
+        budgetUsedPaise: 180_010_003, availableBudgetPaise: 19_997_999, unresolvedProjectCount: 0, overBudgetProjectCount: 1 }
     }
   };
+}
+
+function committedPage(): ProjectBudgetPage {
+  const first: ProjectFinanceBucket = { ...bucket,
+    approvedSubtotalPaise: 9_000, approvedGstPaise: 1_620, approvedContractTotalPaise: 10_620,
+    targetProfitPaise: 1_800, costBudgetPaise: 7_200, procurementCostPaise: 0, employeePaymentPaise: 0,
+    otherExpensePaise: 0, directSpendPaise: 0, overheadPaise: 0, recordedCostPaise: 0, remainingBudgetPaise: 7_200,
+    currentProfitPaise: 9_000, currentMarginBps: 10_000, budgetStatus: "within_budget", budgetUtilizationBps: 0,
+    commitmentBudget: { status: "ready", reasonCodes: [], approvedVendorNetPaise: 5_000,
+      outstandingVendorCommitmentPaise: 5_000, budgetUsedPaise: 5_000, availableBudgetPaise: 2_200,
+      utilizationBps: 6_944, budgetStatus: "within_budget", overBudget: false } };
+  const second: ProjectFinanceBucket = { ...unequalBucket,
+    approvedSubtotalPaise: 4_000, approvedGstPaise: 720, approvedContractTotalPaise: 4_720,
+    targetProfitPaise: 800, costBudgetPaise: 3_200, procurementCostPaise: 1_000, employeePaymentPaise: 0,
+    otherExpensePaise: 0, directSpendPaise: 1_000, overheadPaise: 0, recordedCostPaise: 1_000,
+    remainingBudgetPaise: 2_200, currentProfitPaise: 3_000, currentMarginBps: 7_500, overBudget: false,
+    budgetStatus: "within_budget", budgetUtilizationBps: 3_125,
+    commitmentBudget: { status: "ready", reasonCodes: [], approvedVendorNetPaise: 2_100,
+      outstandingVendorCommitmentPaise: 1_100, budgetUsedPaise: 2_100, availableBudgetPaise: 1_100,
+      utilizationBps: 6_563, budgetStatus: "within_budget", overBudget: false } };
+  const page = response([first, second]);
+  page.summary = { ...page.summary, approvedSubtotalPaise: 13_000, approvedGstPaise: 2_340, approvedContractTotalPaise: 15_340,
+    targetProfitPaise: 2_600, costBudgetPaise: 10_400, procurementCostPaise: 1_000, employeePaymentPaise: 0,
+    otherExpensePaise: 0, directSpendPaise: 1_000, overheadPaise: 0, recordedCostPaise: 1_000,
+    remainingBudgetPaise: 9_400, currentProfitPaise: 12_000, currentMarginBps: 9_231, overBudgetProjectCount: 0,
+    commitmentBudget: { status: "ready", reasonCodes: [], approvedVendorNetPaise: 7_100,
+      outstandingVendorCommitmentPaise: 6_100, budgetUsedPaise: 7_100, availableBudgetPaise: 3_300,
+      unresolvedProjectCount: 0, overBudgetProjectCount: 0 } };
+  return page;
 }
 
 function Location() {
@@ -62,6 +97,66 @@ function renderList(url = "/finance") {
 beforeEach(() => { vi.mocked(getProjectBudgetPage).mockReset().mockResolvedValue(response()); });
 
 describe("Super Admin project budgets", () => {
+  it("uses the same combined basis for unequal project rows, portfolio summary and CSV while labelling recorded costs", async () => {
+    const page = committedPage();
+    vi.mocked(getProjectBudgetPage).mockResolvedValue(page);
+    renderList();
+    const first = (await screen.findByRole("rowheader", { name: /Aurora Villa/ })).closest("tr")!;
+    const second = screen.getByRole("rowheader", { name: /Cedar Court/ }).closest("tr")!;
+    expect(within(first).getByText("₹50", { exact: true })).toBeInTheDocument();
+    expect(within(first).getByText("₹22", { exact: true })).toBeInTheDocument();
+    expect(first).toHaveTextContent("Recorded: ₹0Outstanding: ₹50");
+    expect(within(second).getByText("₹21", { exact: true })).toBeInTheDocument();
+    expect(within(second).getByText("₹11", { exact: true })).toBeInTheDocument();
+    expect(second).toHaveTextContent("Recorded: ₹10Outstanding: ₹11");
+    expect(screen.getByRole("definition", { name: "₹71.00" })).toBeInTheDocument();
+    const csv = projectBudgetPageCsv(page, {});
+    expect(csv).toContain('"Budget used including outstanding vendor commitments","71.00"');
+    expect(csv).toContain('"Recorded expenses including overheads","10.00"');
+    expect(csv).toContain('"Outstanding vendor commitments","61.00"');
+    expect(csv).toContain('"Remaining usable budget","33.00"');
+    expect(csv).toContain('"90.00","50.00","0.00","18.00","72.00","22.00","69.44"');
+    expect(csv).toContain('"40.00","21.00","0.00","8.00","32.00","11.00","65.63"');
+  });
+
+  it("withholds unresolved portfolio totals instead of adding only the ready projects", async () => {
+    const page = committedPage();
+    page.items[1] = { ...page.items[1], commitmentBudget: {
+      status: "needs_reconciliation", reasonCodes: ["unlinked_procurement_expense"], approvedVendorNetPaise: 2_100,
+      outstandingVendorCommitmentPaise: null, budgetUsedPaise: null, availableBudgetPaise: null,
+      utilizationBps: null, budgetStatus: null, overBudget: null } };
+    page.summary.commitmentBudget = { status: "needs_reconciliation", reasonCodes: ["unlinked_procurement_expense"],
+      approvedVendorNetPaise: 7_100, outstandingVendorCommitmentPaise: null, budgetUsedPaise: null,
+      availableBudgetPaise: null, unresolvedProjectCount: 1, overBudgetProjectCount: null };
+    vi.mocked(getProjectBudgetPage).mockResolvedValue(page);
+    renderList();
+    expect(await screen.findByRole("definition", { name: "Budget Used: unavailable" })).toHaveTextContent("Unavailable");
+    expect(screen.getByRole("definition", { name: "₹130.00" })).toBeInTheDocument();
+    const row = screen.getByRole("rowheader", { name: /Cedar Court/ }).closest("tr")!;
+    expect(row).toHaveTextContent("Recorded: ₹10Outstanding: UnavailableApproved commitments: ₹21");
+    expect(within(row).queryByText("Within budget")).not.toBeInTheDocument();
+    const csv = projectBudgetPageCsv(page, {});
+    expect(csv).toContain('"Budget used including outstanding vendor commitments","Unavailable"');
+    expect(csv).toContain('"Remaining usable budget","Unavailable"');
+    expect(csv).toContain('"Approved vendor commitments","71.00"');
+    expect(csv).toContain('"Recorded expenses including overheads","10.00"');
+  });
+
+  it.each(["missing", "malformed"])("shows unavailable summary and row values for %s projections", async kind => {
+    const page = committedPage();
+    page.summary.commitmentBudget = kind === "missing" ? undefined : { ...page.summary.commitmentBudget!, budgetUsedPaise: 1_000 };
+    page.items[0].commitmentBudget = kind === "missing" ? undefined : { ...page.items[0].commitmentBudget!, availableBudgetPaise: 7_200 };
+    vi.mocked(getProjectBudgetPage).mockResolvedValue(page);
+    renderList();
+    expect(await screen.findByRole("definition", { name: "Budget Used: unavailable" })).toBeInTheDocument();
+    const row = screen.getByRole("rowheader", { name: /Aurora Villa/ }).closest("tr")!;
+    expect(row).toHaveTextContent("Recorded: ₹0Outstanding: Unavailable");
+    expect(within(row).queryByText("₹50", { exact: true })).not.toBeInTheDocument();
+    expect(within(row).queryByText("₹72", { exact: true })).toBeInTheDocument();
+    expect(within(row).getByText("Not available")).toBeInTheDocument();
+    expect(projectBudgetPageCsv(page, {})).toContain('"Budget used including outstanding vendor commitments","Unavailable"');
+  });
+
   it("labels same-name projects with canonical IDs while selecting and routing by UUID", async () => {
     const first = { ...bucket, projectNumber: "Lisno000011" };
     const second = { ...unequalBucket, projectName: bucket.projectName, projectNumber: "Lisno000027" };
@@ -88,7 +183,7 @@ describe("Super Admin project budgets", () => {
     expect(screen.getByRole("definition", { name: formatPaise(200_008_002) })).toBeInTheDocument();
     expect(screen.getByText("Showing 1 to 1 of 2 projects")).toBeInTheDocument();
     const row = screen.getByRole("rowheader", { name: /Aurora Villa/ }).closest("tr")!;
-    expect(within(row).getByText("90% of usable budget spent")).toBeInTheDocument();
+    expect(within(row).getByText("90% of usable budget used or committed")).toBeInTheDocument();
     expect(within(row).getByText("₹18,00,000")).toBeInTheDocument();
     expect(within(row).getAllByText("₹2,00,000")).toHaveLength(2);
     expect(within(row).getByText("At risk")).toBeInTheDocument();
@@ -97,11 +192,11 @@ describe("Super Admin project budgets", () => {
   });
 
   it("retains signed overrun and does not infer missing utilization, status, or client identity", async () => {
-    vi.mocked(getProjectBudgetPage).mockResolvedValue(response([unequalBucket, { ...bucket, clientId: undefined, clientName: undefined, budgetStatus: undefined, budgetUtilizationBps: null }]));
+    vi.mocked(getProjectBudgetPage).mockResolvedValue(response([unequalBucket, { ...bucket, clientId: undefined, clientName: undefined, commitmentBudget: undefined, budgetStatus: undefined, budgetUtilizationBps: null }]));
     renderList();
     const row = (await screen.findByRole("rowheader", { name: /Cedar Court/ })).closest("tr")!;
     expect(within(row).getByText(formatPaise(-2001))).toBeInTheDocument();
-    expect(within(row).getByText("125% of usable budget spent")).toBeInTheDocument();
+    expect(within(row).getByText("125.01% of usable budget used or committed")).toBeInTheDocument();
     const unknown = screen.getByRole("rowheader", { name: /Aurora Villa/ }).closest("tr")!;
     expect(within(unknown).getByText("Utilization unavailable")).toBeInTheDocument();
     expect(within(unknown).getByText("Not available")).toBeInTheDocument();
@@ -199,7 +294,7 @@ describe("current-page budget CSV", () => {
     expect(csv).toContain('"Current page rows","1"');
     expect(csv).toContain('"Reserved margin (20%)","500020.01"');
     expect(csv).toContain('"Total usable budget","2000080.02"');
-    expect(csv).toContain('"100.03","100.03","50.03","20.01","80.02","-20.01","125.00"');
+    expect(csv).toContain('"100.03","100.03","50.03","20.01","80.02","-20.01","125.01"');
     expect(csv).toContain('"Budget approved from (UTC, inclusive)","2026-09-01"');
     expect(csv).toContain("current lifetime totals");
     expect(csv).not.toContain("Aurora Villa");

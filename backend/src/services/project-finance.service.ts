@@ -6,6 +6,14 @@ import mongoose, { type ClientSession } from "mongoose";
 import { approvedEstimateLineItemKey } from "../domain/estimate-line-item.js";
 import { configuredEstimateParentIsValid } from "../domain/estimate-client-review.js";
 import { currentEstimationApproval, isCollaborativeEstimate } from "../domain/estimation-lifecycle.js";
+import {
+  projectFinanceCommitmentBudget,
+  portfolioFinanceCommitmentBudget,
+  type ProjectFinanceCommitmentBudget,
+  type PortfolioFinanceCommitmentBudget
+} from "../domain/project-finance-commitments.js";
+import { ProjectPurchaseOrderModel } from "../models/ProjectPurchaseOrder.js";
+import { ProjectPurchaseOrderRevisionModel } from "../models/ProjectPurchaseOrderRevision.js";
 import { financeRiskFactors } from "../domain/super-admin-dashboard.js";
 import { ProjectFinanceBaselineRevisionModel } from "../models/ProjectFinanceBaselineRevision.js";
 import { assertProjectWorkOrderIssueEligible } from "./project-work-order-eligibility.service.js";
@@ -61,6 +69,7 @@ export interface ProjectFinanceListQuery extends ProjectFinancePagination {
   clientId?: string;
   unlinkedClient?: boolean;
   budgetStatus?: ProjectFinanceBudgetStatus;
+  budgetBasis?: "recorded" | "including_commitments";
   financeStage?: ProjectFinanceBucketStatus;
   projectStatus?: "planning" | "active" | "on_hold" | "completed";
   approvedFrom?: string;
@@ -74,6 +83,7 @@ export interface ProjectFinanceFilterOptions {
 }
 
 export interface ProjectFinanceBucketDto {
+  commitmentBudget: ProjectFinanceCommitmentBudget;
   readonly projectNumber: string | null;
   baselinePhase?: "pre" | "post";
   originalApprovedContractTotalPaise?: number;
@@ -160,7 +170,9 @@ function matchesFinanceListQuery(bucket: ProjectFinanceBucketDto, query: Project
   if (query.projectId && bucket.projectId !== query.projectId) return false;
   if (query.clientId && bucket.clientId !== query.clientId) return false;
   if (query.unlinkedClient && bucket.clientId !== null) return false;
-  if (query.budgetStatus && bucket.budgetStatus !== query.budgetStatus) return false;
+  const budgetStatus = query.budgetBasis === "including_commitments"
+    ? bucket.commitmentBudget.budgetStatus : bucket.budgetStatus;
+  if (query.budgetStatus && budgetStatus !== query.budgetStatus) return false;
   if (query.financeStage && bucket.status !== query.financeStage) return false;
   if (query.projectStatus && bucket.projectStatus !== query.projectStatus) return false;
   const approvedDay = bucket.budgetApprovedAt?.slice(0, 10);
@@ -220,6 +232,7 @@ export interface PostFinanceEntryResult {
 }
 
 export interface ProjectFinancePortfolioSummary {
+  commitmentBudget: PortfolioFinanceCommitmentBudget;
   projectCount: number;
   approvedContractTotalPaise: number;
   approvedRoundOffPaise?: number;
@@ -281,13 +294,13 @@ export interface ProjectFinanceService {
  */
 export async function readProjectFinancePortfolioReport(
   observedAt: Date
-): Promise<ProjectFinancePortfolioSummary> {
+): Promise<Omit<ProjectFinancePortfolioSummary, "commitmentBudget">> {
   return financeSnapshotRead(async (session) => {
     const approvedEstimates = await approvedFinanceEstimates(null, session);
     const approvedProjectIds = [
       ...new Set(approvedEstimates.map((estimate) => String(estimate.projectId)))
     ];
-    if (approvedProjectIds.length === 0) return emptyPortfolioSummary();
+    if (approvedProjectIds.length === 0) return recordedPortfolioSummary(emptyPortfolioSummary());
     const materializedBuckets = await ProjectFinanceBucketModel.find({
       projectId: { $in: approvedProjectIds }
     }).session(session).lean();
@@ -315,12 +328,12 @@ export async function readProjectFinancePortfolioReport(
       observedAt,
       session
     );
-    return portfolioSummary(
+    return recordedPortfolioSummary(portfolioSummary(
       financeSources,
       projectsById,
       enrichments,
       observedAt
-    );
+    ));
   });
 }
 
@@ -1894,6 +1907,7 @@ function normalizeEntryInput(input: PostFinanceEntryInput): NormalizedEntryInput
 }
 
 interface FinanceEnrichment {
+  commitmentSources: { orders: Row[]; revisions: Row[]; entries: Row[] };
   projectNumber: string | null;
   procurementCostPaise: number;
   employeePaymentPaise: number;
@@ -1971,6 +1985,13 @@ function bucketDto(
     employeePaymentPaise: resolvedEnrichment.employeePaymentPaise,
     otherExpensePaise,
     ...position,
+    commitmentBudget: projectFinanceCommitmentBudget({
+      ...resolvedEnrichment.commitmentSources,
+      projectId: String(bucket.projectId),
+      projectCompleted: project.status === "completed",
+      costBudgetPaise,
+      recordedCostPaise: position.recordedCostPaise
+    }),
     ...deadline,
     overdueTaskCount: resolvedEnrichment.overdueTaskCount,
     status: bucket.status,
@@ -2067,6 +2088,28 @@ async function loadFinanceEnrichments(
       overdueTaskQuery.exec() as Promise<Row[]>
     ]);
   }
+  // Keep these reads in this snapshot, and batch across only authorized projects.
+  const orderQuery = ProjectPurchaseOrderModel.find({ projectId: { $in: uniqueIds } }).select({
+    _id: 1, projectId: 1, vendorId: 1, status: 1, cancelledAt: 1, tenderAwardId: 1,
+    approvedRevisionId: 1, approvedRevision: 1, approvedNetPaise: 1, approvedGstPaise: 1, approvedTotalPaise: 1
+  }).lean();
+  if (session) orderQuery.session(session);
+  const orders = await orderQuery.exec();
+  const approvedRevisionIds = [...new Set(orders.flatMap(order => typeof order.approvedRevisionId === "string" ? [order.approvedRevisionId] : []))];
+  const revisionQuery = ProjectPurchaseOrderRevisionModel.find({ projectId: { $in: uniqueIds }, _id: { $in: approvedRevisionIds } }).select({
+    _id: 1, projectId: 1, orderId: 1, vendorId: 1, tenderAwardId: 1, revision: 1, estimateId: 1, estimateVersion: 1,
+    netPaise: 1, gstPaise: 1, totalPaise: 1, "lines.id": 1, "lines.netPaise": 1, "lines.gstPaise": 1, "lines.totalPaise": 1
+  }).lean();
+  if (session) revisionQuery.session(session);
+  const revisions = await revisionQuery.exec();
+  const entryQuery = FinanceLedgerEntryModel.find({ projectId: { $in: uniqueIds }, type: "direct_spend", expenseClass: "procurement", status: "posted" }).select({
+    _id: 1, projectId: 1, type: 1, expenseClass: 1, status: 1, amountPaise: 1, purchaseOrderId: 1, paymentMilestoneId: 1
+  }).lean();
+  if (session) entryQuery.session(session);
+  const commitmentEntries = await entryQuery.exec();
+  for (const order of orders) result.get(String(order.projectId))!.commitmentSources.orders.push(order);
+  for (const revision of revisions) result.get(String(revision.projectId))!.commitmentSources.revisions.push(revision);
+  for (const entry of commitmentEntries) result.get(String(entry.projectId))!.commitmentSources.entries.push(entry);
   for (const row of spendingRows) {
     const projectId = String(row._id);
     const current = result.get(projectId);
@@ -2133,6 +2176,7 @@ function portfolioSummary(
   observedAt: Date
 ): ProjectFinancePortfolioSummary {
   const summary = emptyPortfolioSummary();
+  const commitmentBudgets: ProjectFinanceCommitmentBudget[] = [];
   for (const bucket of buckets) {
     const projectId = String(bucket.projectId);
     const project = projectsById.get(projectId);
@@ -2143,6 +2187,7 @@ function portfolioSummary(
       enrichments.get(projectId),
       observedAt
     );
+    commitmentBudgets.push(item.commitmentBudget);
     summary.projectCount += 1;
     for (const key of [
       "approvedContractTotalPaise",
@@ -2179,6 +2224,7 @@ function portfolioSummary(
       "overdueTaskCount"
     );
   }
+  summary.commitmentBudget = portfolioFinanceCommitmentBudget(commitmentBudgets);
   summary.currentMarginBps = portfolioMarginBps(
     summary.currentProfitPaise,
     summary.approvedSubtotalPaise
@@ -2186,8 +2232,15 @@ function portfolioSummary(
   return summary;
 }
 
+// The organization dashboard remains a recorded-cost contract.
+function recordedPortfolioSummary(summary: ProjectFinancePortfolioSummary): Omit<ProjectFinancePortfolioSummary, "commitmentBudget"> {
+  const { commitmentBudget: _commitmentBudget, ...recorded } = summary;
+  return recorded;
+}
+
 function emptyPortfolioSummary(): ProjectFinancePortfolioSummary {
   return {
+    commitmentBudget: portfolioFinanceCommitmentBudget([]),
     projectCount: 0,
     approvedContractTotalPaise: 0,
     approvedGstPaise: 0,
@@ -2212,6 +2265,7 @@ function emptyPortfolioSummary(): ProjectFinancePortfolioSummary {
 
 function emptyEnrichment(): FinanceEnrichment {
   return {
+    commitmentSources: { orders: [], revisions: [], entries: [] },
     projectNumber: null,
     procurementCostPaise: 0,
     employeePaymentPaise: 0,

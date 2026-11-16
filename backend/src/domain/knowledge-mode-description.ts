@@ -32,6 +32,8 @@ export function syncModeDescription(
   inHouse?: ModeDescriptionScope,
   previousInHouse?: ModeDescriptionScope
 ): string {
+  // Clearing a description is intentional, even when scope checklists are selected.
+  if (!text.trim()) return text;
   const labels = [...text.matchAll(/\b(?:(In-house)\s+)?(inclusions|exclusions)\b/giu)];
   const seen = new Set<string>();
   let result = text.slice(0, labels[0]?.index ?? text.length);

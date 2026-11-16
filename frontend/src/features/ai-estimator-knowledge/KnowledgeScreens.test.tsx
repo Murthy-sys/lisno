@@ -367,7 +367,7 @@ describe("Configuration Mode tiers", () => {
     const user = userEvent.setup(); const storage = mockTierModeWorkspace();
     const { queryClient } = renderRoute(<KnowledgeItemWorkspacePage />, "/admin/configuration/estimation/items/line-1", "/admin/configuration/estimation/items/:itemId");
     await user.click(await screen.findByRole("tab", { name: "Mode" }));
-    await screen.findByRole("button", { name: "Edit Description" });
+    await screen.findByRole("checkbox", { name: "PMC" });
     storage.changeOverview([]);
     await queryClient.cancelQueries({ queryKey: knowledgeQueryKeys.section("line-1", "revision-1", "overview") });
     await act(async () => { queryClient.setQueryData(knowledgeQueryKeys.section("line-1", "revision-1", "overview"), section("overview", { uomId: squareFoot.id, applicableTiers: [] }, 3)); });

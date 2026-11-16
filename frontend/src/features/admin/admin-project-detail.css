@@ -54,6 +54,9 @@
   transform: none;
   transition: none;
 }
+.ui-app-shell .admin-project-detail.admin-project-reference .ui-page-header__actions .project-completion-control::before {
+  content: none;
+}
 .ui-app-shell .admin-project-detail.admin-project-reference .ui-page-header__breadcrumb a {
   display: inline-flex;
   min-block-size: var(--control-height-compact);
@@ -189,4 +192,59 @@
   .ui-app-shell .admin-project-detail.admin-project-reference .ui-page-header__breadcrumb a {
     min-block-size: 44px;
   }
+}
+
+/* Keep people controls near the project summary and out of long workflow sections. */
+.project-people-assignments { min-inline-size: 0; border: 1px solid var(--project-detail-line); background: var(--project-detail-paper); scroll-margin-block-start: 76px; }
+.project-people-assignments > header { padding: 16px; }
+.project-people-assignments > header h2 { margin: 0; font-size: 1rem; color: var(--project-detail-ink); }
+.project-people-assignments > header p { margin: 6px 0 0; color: var(--project-detail-muted); font-size: .8125rem; }
+.project-people-assignments__navigation { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 12px; border-block-end: 1px solid var(--project-detail-line); }
+.ui-app-shell .project-people-assignments__navigation .ui-button { border: 0; border-block-end: 3px solid transparent; border-radius: 0; background: transparent; padding: 10px 12px; min-height: 44px; box-shadow: none; transition: none; }
+.ui-app-shell .project-people-assignments__navigation .ui-button[aria-pressed="true"] { border-block-end-color: var(--project-detail-olive); color: var(--project-detail-olive); font-weight: 600; }
+.project-people-assignments > [id] { min-inline-size: 0; padding: 12px; }
+.project-people-assignments > [hidden] { display: none; }
+.project-people-assignments :is(.worker-assignment, .admin-project-detail__section) { border: 0; box-shadow: none; border-radius: 0; }
+.project-people-assignments .worker-assignment__disclosure-trigger { min-block-size: 56px; padding: 8px 0; gap: 12px; background: transparent; border-radius: 0; }
+.project-people-assignments .worker-assignment__disclosure-title { font-size: .9375rem; }
+.project-people-assignments .worker-assignment__body { padding-block-start: 12px; gap: 16px; }
+.project-people-assignments :is(.worker-assignment__coordination, .worker-assignment__sections) { padding: 0; border: 0; background: transparent; }
+.project-people-assignments .worker-assignment__coordination-grid { grid-template-columns: minmax(0, 1fr); gap: 0; }
+.project-people-assignments :is(.worker-assignment__row--coordination, .worker-assignment__coordination-card) { padding: 14px 0; border: 0; border-block-end: 1px solid var(--project-detail-line); border-radius: 0; background: transparent; }
+.project-people-assignments .worker-assignment__row--coordination { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+.project-people-assignments .worker-assignment__row--coordination > label { min-inline-size: 0; }
+.project-people-assignments select { min-inline-size: 0; max-inline-size: 100%; }
+.project-people-assignments .worker-assignment__coordination-card { grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px 16px; }
+.project-people-assignments .worker-assignment__coordination-card > div { grid-column: 1 / -1; }
+.project-people-assignments .worker-assignment__coordination-card > .ui-progress { grid-column: 1; }
+.project-people-identity { display: grid; gap: 12px; }
+.project-people-identity > p { margin: 0; font-size: .8125rem; color: var(--project-detail-muted); }
+.project-people-identity > form { display: grid; gap: 16px; min-inline-size: 0; }
+.project-people-identity > form > .ui-button { justify-self: start; }
+.project-people-assignments :is(.worker-assignment__section-trigger, .admin-project-detail__section-trigger) { scroll-margin-block-start: 76px; }
+@media (max-width: 640px) {
+  .project-people-assignments > header { padding: 12px; }
+  .project-people-assignments__navigation { padding-inline: 8px; }
+  .ui-app-shell .project-people-assignments__navigation .ui-button { flex: 1 1 auto; padding-inline: 8px; }
+  .project-people-assignments .worker-assignment__coordination-card { grid-template-columns: minmax(0, 1fr); }
+}
+
+.project-people-assignments .worker-assignment__current { display: grid; gap: 3px; font-size: .875rem; overflow-wrap: anywhere; }
+.project-people-assignments .worker-assignment__current > span,
+.project-people-assignments .worker-assignment__current > small { color: var(--project-detail-muted); }
+.project-people-assignments .worker-assignment__empty-people { margin: 0; font-size: .8125rem; line-height: 1.6; }
+.project-people-assignments .worker-assignment__row--coordination > .ui-button { justify-self: start; min-height: 44px; }
+
+.project-people-assignments .worker-assignment__title { margin: 0; font-size: 1rem; }
+
+.ui-app-shell .admin-project-detail .project-people-assignments .ui-surface { background: transparent; border: 0; box-shadow: none; border-radius: 0; }
+.ui-app-shell .admin-project-detail .project-people-assignments .ui-button { border-radius: 2px; box-shadow: none; transform: none; transition: none; }
+.ui-app-shell .admin-project-detail .project-people-assignments__navigation .ui-button { border-radius: 0; }
+.project-people-assignments .worker-assignment__body { border-block-start: 0; }
+.project-people-identity .admin-design-assignment__form { grid-template-columns: minmax(0, 1fr) auto; align-items: end; }
+.project-people-identity .admin-design-assignment__form .ui-field { max-inline-size: none; }
+@media (max-width: 640px) {
+  .project-people-assignments__navigation { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .project-people-assignments .worker-assignment__coordination > .section-heading { flex-direction: column; align-items: flex-start; gap: 12px; }
+  .project-people-assignments .worker-assignment__coordination > .section-heading .ui-button { min-block-size: 44px; }
 }

@@ -2292,12 +2292,12 @@ async function canonicalApprovedTradeSource(
   projectId: string,
   session: mongoose.ClientSession
 ): Promise<CanonicalApprovedTradeSource | null> {
+  // Quotation approval compares the complete estimate with its approved snapshot.
   const estimates = await EstimateModel.find({
     projectId,
     status: "client_approved",
     designPlanStatus: "approved"
   })
-    .select({ _id: 1, projectId: 1, version: 1, designPlanVersion: 1, lineItems: 1, estimation: 1 })
     .limit(2)
     .session(session)
     .lean();

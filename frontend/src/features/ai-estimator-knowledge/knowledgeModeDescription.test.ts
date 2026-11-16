@@ -12,9 +12,9 @@ function scope(inclusions: string[] = [], exclusions: string[] = []) {
 }
 
 describe("Mode paragraph checklist synchronization", () => {
-  it("adds missing labels independently, even after all custom wording is deleted", () => {
+  it("adds missing labels to written descriptions and preserves an intentional blank", () => {
     const pmc = scope(["Transport"], ["Transport", "Shifting"]);
-    expect(syncModeDescription("", pmc)).toBe("Inclusions: Transport. Exclusions: Transport, Shifting.");
+    expect(syncModeDescription("", pmc)).toBe("");
     expect(syncModeDescription("Custom work for TV Unit.", pmc))
       .toBe("Custom work for TV Unit. Inclusions: Transport. Exclusions: Transport, Shifting.");
     expect(syncModeDescription("Custom work", scope([], ["Shifting"])))

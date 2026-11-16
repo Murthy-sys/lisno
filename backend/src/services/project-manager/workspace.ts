@@ -15,6 +15,7 @@ import { readPMSources } from "./sources.js";
 export const pmPortfolioQuerySchema = z.object({ q: z.string().trim().max(160).optional(), status: z.enum(["current", "all", "planning", "active", "on_hold", "completed"]).default("current"), health: z.enum(["all", "critical", "at_risk", "incomplete", "setup", "on_track", "completed"]).default("all"), offset: z.coerce.number().int().min(0).default(0), limit: z.coerce.number().int().min(1).max(50).default(20) }).strict();
 type Query = z.input<typeof pmPortfolioQuerySchema>;
 type Reader = (actor: PublicUser, id: string, query?: { limit?: number; offset?: number }) => Promise<PMPanel>;
+const notificationRoles = ["site_manager", "designer", "procurement", "finance_head", "vendor", "client", "design_manager", "design_head", "super_admin"] as const;
 export function createProjectManagerWorkspace(deps: PMDependencies & { panels: Partial<Record<PMTab, Reader>> }) {
   const now = deps.now ?? (() => new Date());
   async function actorAccess(actor: PublicUser) { if (actor.role !== "site_manager" || !await UserModel.exists({ _id: actor.id, active: true, role: "site_manager" })) pmMissing(); }
@@ -110,22 +111,45 @@ export function createProjectManagerWorkspace(deps: PMDependencies & { panels: P
     async bonus(actor: PublicUser): Promise<PMBonus> { await actorAccess(actor); return { availability: "not_configured", policy: null, message: "Your bonus policy is not configured. No estimated earnings, penalties or payment statements have been generated.", statements: [] }; },
     async notifications(actor: PublicUser, query: { limit?: number; offset?: number } = {}) {
       const limit = Math.min(100, Math.max(1, query.limit ?? 50)); const offset = Math.max(0, query.offset ?? 0);
-      const projectIds = await ProjectManagerEventModel.distinct("projectId", { recipientIds: actor.id });
-      const authorized: string[] = [];
-      for (const projectId of projectIds) {
-        try { await requirePMProject(actor, String(projectId), undefined, false, ["site_manager","designer","procurement","finance_head","vendor","client","design_manager","design_head"]); }
-        catch(error) { if (error instanceof ApiError && error.status === 404) continue; throw error; }
-        if (actor.role === "vendor") { await requireExecutionActor(actor); if (!await ProjectPurchaseOrderModel.exists({ projectId, vendorId: actor.vendorId, approvedRevisionId: { $ne: null }, cancelledAt: null })) continue; }
-        authorized.push(String(projectId));
+      const oversight = actor.role === "super_admin";
+      if (oversight) await requireExecutionActor(actor);
+      const recipientFilter = oversight ? { "recipientIds.0": { $exists: true } } : { recipientIds: actor.id };
+      const projectIds = await ProjectManagerEventModel.distinct("projectId", recipientFilter);
+      const authorized: string[] = oversight
+        ? (await ProjectModel.distinct("_id", { _id: { $in: projectIds } })).map(String)
+        : [];
+      if (!oversight) {
+        for (const projectId of projectIds) {
+          try { await requirePMProject(actor, String(projectId), undefined, false, notificationRoles); }
+          catch(error) { if (error instanceof ApiError && error.status === 404) continue; throw error; }
+          if (actor.role === "vendor") { await requireExecutionActor(actor); if (!await ProjectPurchaseOrderModel.exists({ projectId, vendorId: actor.vendorId, approvedRevisionId: { $ne: null }, cancelledAt: null })) continue; }
+          authorized.push(String(projectId));
+        }
       }
-      const filter = { recipientIds: actor.id, projectId: { $in: authorized } };
+      const filter = { ...recipientFilter, projectId: { $in: authorized } };
       const [rows,total,unreadTotal] = await Promise.all([
         ProjectManagerEventModel.find(filter).sort({occurredAt:-1,_id:1}).skip(offset).limit(limit).lean(),
         ProjectManagerEventModel.countDocuments(filter), ProjectManagerEventModel.countDocuments({...filter,readBy:{$ne:actor.id}})
       ]);
       const items = rows.map(row=>({id:String(row._id),projectId:row.projectId,entityId:typeof row.result?.id === "string" ? row.result.id : row.entityId,family:row.family,action:row.action,description:["design_manager","design_head"].includes(actor.role)?row.reason??null:null,title:row.result?.title??row.action.replaceAll("_"," "),at:new Date(row.occurredAt).toISOString(),read:row.readBy.includes(actor.id)}));
+      if (oversight) await requireExecutionActor(actor);
       return { items,total,unreadTotal };
     },
-    async readNotification(actor: PublicUser,id:string) { return pmTransaction(async session => { const row = await ProjectManagerEventModel.findOne({ _id:id,recipientIds:actor.id }).session(session).lean(); if(!row)pmMissing(); await requirePMProject(actor,row.projectId,session,true,["site_manager","designer","procurement","finance_head","vendor","client","design_manager","design_head"]); if (actor.role === "vendor") { await requireExecutionActor(actor,session); if (!await ProjectPurchaseOrderModel.exists({projectId:row.projectId,vendorId:actor.vendorId,approvedRevisionId:{$ne:null},cancelledAt:null}).session(session)) pmMissing(); } await ProjectManagerEventModel.updateOne({_id:id},{$addToSet:{readBy:actor.id}},{session}); return {read:true}; }); }
+    async readNotification(actor: PublicUser, id: string) {
+      return pmTransaction(async session => {
+        const oversight = actor.role === "super_admin";
+        if (oversight) await requireExecutionActor(actor, session);
+        const recipientFilter = oversight ? { "recipientIds.0": { $exists: true } } : { recipientIds: actor.id };
+        const row = await ProjectManagerEventModel.findOne({ _id: id, ...recipientFilter }).session(session).lean();
+        if (!row) pmMissing();
+        await requirePMProject(actor, row.projectId, session, true, notificationRoles);
+        if (actor.role === "vendor") {
+          await requireExecutionActor(actor, session);
+          if (!await ProjectPurchaseOrderModel.exists({ projectId: row.projectId, vendorId: actor.vendorId, approvedRevisionId: { $ne: null }, cancelledAt: null }).session(session)) pmMissing();
+        }
+        await ProjectManagerEventModel.updateOne({ _id: id }, { $addToSet: { readBy: actor.id } }, { session });
+        return { read: true };
+      });
+    }
   };
 }

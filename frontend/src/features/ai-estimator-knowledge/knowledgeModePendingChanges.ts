@@ -1,7 +1,7 @@
 import { parseInHouseComponents } from "../../../../shared/knowledge/knowledgeInHouseComponents";
 import { readInHouseUsagePolicy } from "../../../../shared/knowledge/knowledgeInHouseUsage";
 import { modeCalculationDraft, modeCalculationsForPayload, parseModeQuantity, MODE_CALCULATION_SCOPES, type ModeCalculationScope } from "./knowledgeModeCalculation";
-import { generateModeDescription, syncModeDescription } from "./knowledgeModeDescription";
+import { syncModeDescription } from "./knowledgeModeDescription";
 import { knowledgeModeFieldTypeLabel, parseKnowledgeModeConfigurations, partitionKnowledgeModeConfigurations, type KnowledgeModeConfiguration } from "./knowledgeModeConfiguration";
 import { PMC_SCOPE_LISTS } from "./knowledgePmcScope";
 import { pmcMarginRange, pmcMarginRangeIssues, subVendorMarginRange, subVendorMarginRangeIssues } from "./knowledgePmcMargin";
@@ -69,10 +69,10 @@ function configLabel(configuration: KnowledgeModeConfiguration) {
     ? configuration.executionSource === "sub_vendor" ? "Execution · Sub-Vendor" : configuration.executionSource === "in_house" ? "Execution · In-house" : "Execution · Source not set"
     : "Mode configuration · Details unavailable";
 }
-function description(payload: KnowledgeJsonObject, name: string, pmc?: KnowledgeModeConfiguration, inHouse?: KnowledgeModeConfiguration) {
+function description(payload: KnowledgeJsonObject, pmc?: KnowledgeModeConfiguration, inHouse?: KnowledgeModeConfiguration) {
   return typeof payload.modeDescription === "string"
     ? syncModeDescription(payload.modeDescription, pmc, undefined, inHouse)
-    : generateModeDescription(name, pmc, inHouse);
+    : "";
 }
 
 /** Projects only editable display values. Saved payloads never reach the request card. */
@@ -153,14 +153,14 @@ export function projectKnowledgeModePendingChanges(input: KnowledgeModePendingCh
     // Generated/automatically synchronized paragraph clauses are derived from scope controls,
     // so only a user's paragraph wording change receives a separate entry.
     const expectedDescription = syncModeDescription(
-      description(before, input.mainLineName, oldPmc, oldInHouse),
+      description(before, oldPmc, oldInHouse),
       pmc,
       oldPmc,
       inHouse,
       oldInHouse
     );
-    const currentDescription = input.pendingDescription ?? description(after, input.mainLineName, pmc, inHouse);
-    if (expectedDescription.trim() !== currentDescription.trim()) add("mode:paragraph", "Mode · Description", [{ key: "mode:paragraph", title: "Description", kind: "updated", fields: [field("paragraph", "Description", currentDescription)], ...(!currentDescription.trim() ? { incomplete: true } : {}) }]);
+    const currentDescription = input.pendingDescription ?? description(after, pmc, inHouse);
+    if (expectedDescription.trim() !== currentDescription.trim()) add("mode:paragraph", "Mode · Description", [{ key: "mode:paragraph", title: "Description", kind: "updated", fields: [field("paragraph", "Description", currentDescription)] }]);
     const oldComponents = parseInHouseComponents(before.inHouseComponents).components;
     const components = parseInHouseComponents(after.inHouseComponents).components;
     for (const component of [...oldComponents.filter((entry) => !components.some(({ id }) => id === entry.id)), ...components]) {

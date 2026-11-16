@@ -42,6 +42,82 @@ beforeEach(() => {
   vi.mocked(api.updateKnowledgeSection).mockImplementation(async (_id, revision, key, input) => ({ ...section(key, input.payload, input.expectedVersion + 1, revision), aggregateVersion: 11 }));
 });
 
+describe("inline tier description persistence", () => {
+  it("persists only description while retaining a dirty margin and uses the acknowledged text in the later Mode save", async () => {
+    vi.mocked(api.getKnowledgeSection).mockImplementation(async (_id, revision, key) => section(key, key === "advanced"
+      ? { modeDescription: "Saved wording", pmcMarginBps: 1_200 } : key === "pricing" ? savedPricing : {}, 1, revision));
+    const user = userEvent.setup();
+    const panel = setup({ descriptionPresentation: "inline" });
+    const description = await screen.findByRole("textbox", { name: "Description" });
+    fireEvent.change(screen.getByRole("spinbutton", { name: "Max. PMC Margin (%)" }), { target: { value: "18" } });
+    fireEvent.change(description, { target: { value: "Saved independently" } });
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(api.updateKnowledgeSection).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(api.updateKnowledgeSection).mock.calls[0]![3]).toMatchObject({ expectedVersion: 1, expectedAggregateVersion: 10,
+      payload: { modeDescription: "Saved independently", pmcMarginBps: 1_200 } });
+    expect(screen.getByRole("spinbutton", { name: "Max. PMC Margin (%)" })).toHaveValue(18);
+    expect(panel.latest()?.groups.map(group => group.key)).toEqual(["pmc:margin"]);
+    await act(async () => { expect(await panel.ref.current?.save()).toBe(true); });
+    expect(vi.mocked(api.updateKnowledgeSection).mock.calls[1]![3]).toMatchObject({ expectedVersion: 2, expectedAggregateVersion: 11,
+      payload: { modeDescription: "Saved independently", pmcMarginBps: 1_800 } });
+    expect(panel.latest()?.groups).toEqual([]);
+  });
+
+  it("retains unfinished calculation input while saving description and configures a previously empty section", async () => {
+    vi.mocked(api.getKnowledgeSection).mockImplementation(async (_id, revision, key) => ({ ...section(key, key === "pricing" ? savedPricing : {}, 1, revision), applicability: "not_configured" }));
+    const user = userEvent.setup();
+    const panel = setup({ descriptionPresentation: "inline" });
+    const rate = await screen.findByRole("textbox", { name: "Base Rate (₹)" });
+    fireEvent.change(rate, { target: { value: "12x" } });
+    fireEvent.change(screen.getByRole("textbox", { name: "Description" }), { target: { value: "New tier wording" } });
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(api.updateKnowledgeSection).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(api.updateKnowledgeSection).mock.calls[0]![3]).toMatchObject({ applicability: "configured", payload: { modeDescription: "New tier wording" } });
+    expect(rate).toHaveValue("12x");
+    expect(panel.latest()?.groups.find(group => group.key === "calculation:pmc")?.entries[0]).toMatchObject({ incomplete: true, fields: [{ value: "12x" }] });
+  });
+
+  it("retains text on failure, prevents duplicate/global saves while pending, then explicitly clears acknowledged wording", async () => {
+    const user = userEvent.setup();
+    const onSavingChange = vi.fn();
+    const panel = setup({ descriptionPresentation: "inline", onSavingChange });
+    const description = await screen.findByRole("textbox", { name: "Description" });
+    fireEvent.change(description, { target: { value: "Retry this wording" } });
+    vi.mocked(api.updateKnowledgeSection).mockRejectedValueOnce(new Error("Connection unavailable"));
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByText(/Connection unavailable/)).toBeVisible();
+    expect(description).toHaveValue("Retry this wording");
+    let finish!: (response: Awaited<ReturnType<typeof api.updateKnowledgeSection>>) => void;
+    vi.mocked(api.updateKnowledgeSection).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(onSavingChange).toHaveBeenLastCalledWith(true);
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await act(async () => { expect(await panel.ref.current?.save()).toBe(false); });
+    expect(api.updateKnowledgeSection).toHaveBeenCalledTimes(2);
+    await act(async () => finish({ ...section("advanced", { modeDescription: "Retry this wording" }, 2), aggregateVersion: 11 }));
+    expect(onSavingChange).toHaveBeenLastCalledWith(false);
+    fireEvent.change(description, { target: { value: "" } });
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(vi.mocked(api.updateKnowledgeSection).mock.calls[2]![3]).toMatchObject({ expectedVersion: 2, expectedAggregateVersion: 11, payload: { modeDescription: "" } });
+  });
+
+  it("retains the description through version review and retries against the accepted server version", async () => {
+    const user = userEvent.setup();
+    setup({ descriptionPresentation: "inline" });
+    const description = await screen.findByRole("textbox", { name: "Description" });
+    fireEvent.change(description, { target: { value: "My tier wording" } });
+    vi.mocked(api.updateKnowledgeSection).mockRejectedValueOnce(new ApiError(409, "VERSION_CONFLICT", "Updated elsewhere."));
+    vi.mocked(api.getKnowledgeSection).mockImplementation(async (_id, revision, key) => section(key, key === "advanced" ? { modeDescription: "Remote wording", pmcMarginBps: 1_900 } : {}, 2, revision));
+    vi.mocked(api.getKnowledgeItem).mockResolvedValue({ ...item, version: 12 });
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await user.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Keep editing" }));
+    expect(description).toHaveValue("My tier wording");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(vi.mocked(api.updateKnowledgeSection).mock.calls[1]![3]).toMatchObject({ expectedVersion: 2, expectedAggregateVersion: 12,
+      payload: { modeDescription: "My tier wording", pmcMarginBps: 1_900 } });
+  });
+});
+
 describe("Mode pending publication lifecycle", () => {
   it("saves an explicit empty preset and retains the usage after a failed save for retry", async () => {
     const user = userEvent.setup();
@@ -85,8 +161,7 @@ describe("Mode pending publication lifecycle", () => {
     await user.click(screen.getByRole("checkbox", { name: "In-house Inclusion: Supplier" }));
     expect(panel.latest()?.groups.map(({ key, label }) => ({ key, label }))).toEqual([
       { key: "in_house:inclusions", label: "Execution · In-house · Inclusions" },
-      { key: "in_house:exclusions", label: "Execution · In-house · Exclusions" },
-      { key: "mode:paragraph", label: "Mode · Description" }
+      { key: "in_house:exclusions", label: "Execution · In-house · Exclusions" }
     ]);
     expect(panel.latest()?.groups[0]?.entries.find(({ title }) => title === "Supplier")?.fields)
       .toContainEqual({ key: "selected", label: "State", value: "Selected" });

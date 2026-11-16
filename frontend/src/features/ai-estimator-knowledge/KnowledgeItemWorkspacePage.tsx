@@ -622,6 +622,7 @@ export function KnowledgeItemWorkspacePage() {
   const modeEditor = revision ? <KnowledgeModePanel
     key={pendingSession.sourceKey}
     modeLabel={activeSectionLabel}
+    descriptionPresentation="inline"
     ref={modePanelRef}
     item={item}
     revisionId={revision.id}

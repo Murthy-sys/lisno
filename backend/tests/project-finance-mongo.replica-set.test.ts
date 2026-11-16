@@ -337,6 +337,8 @@ describe("project finance lifecycle and ledger", () => {
       })
     ]);
     expect(page.summary).toEqual({
+      commitmentBudget: { status: "ready", reasonCodes: [], approvedVendorNetPaise: 0, outstandingVendorCommitmentPaise: 0,
+        budgetUsedPaise: 0, availableBudgetPaise: 18_895_200, unresolvedProjectCount: 0, overBudgetProjectCount: 0 },
       projectCount: 1,
       approvedContractTotalPaise: 27_870_400,
       approvedGstPaise: 4_251_400,
@@ -771,6 +773,8 @@ describe("project finance lifecycle and ledger", () => {
     expect(page.items).toHaveLength(1);
     expect(page.total).toBe(2);
     expect(page.summary).toEqual({
+      commitmentBudget: { status: "ready", reasonCodes: [], approvedVendorNetPaise: 0, outstandingVendorCommitmentPaise: 0,
+        budgetUsedPaise: 59_000, availableBudgetPaise: 119_941_000, unresolvedProjectCount: 0, overBudgetProjectCount: 0 },
       projectCount: 2,
       approvedContractTotalPaise: 177_000_000,
       approvedGstPaise: 27_000_000,

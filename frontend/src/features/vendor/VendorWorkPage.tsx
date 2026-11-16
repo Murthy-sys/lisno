@@ -10,7 +10,7 @@ export function VendorWorkPage() {
   const auth = useAuth();
   const canRead = hasFrontendPermission(auth.authorization, "procurement.vendor_work.read");
   return <section className="vendor-work" aria-labelledby="vendor-work-title">
-    <PageHeader id="vendor-work-title" eyebrow="Vendor workspace" title="Assigned work" description="Acknowledge Main Line work, commit dates and report daily progress. Completed work is verified by the Project Manager before Client review." />
+    <PageHeader id="vendor-work-title" eyebrow="Vendor workspace" title="Assigned work" description="Start work, share progress photos, report a hold or mark your work completed. The Project Manager verifies completion before Client acceptance." />
     {canRead ? <><PMVendorCoordination /><VendorExecutionWorkspace /></> : <PageState state="error" message="You do not have permission to view vendor work." />}
   </section>;
 }

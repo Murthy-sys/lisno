@@ -2,25 +2,35 @@ import { KNOWLEDGE_MODE_TIER_LABELS, type KnowledgeModeTier } from "../../../../
 import type { EstimationTierDetails } from "../leads/estimationCatalogueApi";
 import "./estimate-line-tier-details.css";
 
-/** Display-only disclosure. The caller supplies the exact selected tier and current source. */
-export function EstimateLineTierDetails({ rowKey, label, tier, description, details }: {
+/** Client-safe by default. Internal callers must explicitly enable specifications. */
+export function EstimateLineTierDetails({ rowKey, label, tier, description, details, showInternalDetails = false }: {
   rowKey: string;
   label: string;
   tier: KnowledgeModeTier;
   description?: string | null;
-  details: EstimationTierDetails | null | undefined;
+  details?: EstimationTierDetails | null;
+  showInternalDetails?: boolean;
 }) {
   const tierName = KNOWLEDGE_MODE_TIER_LABELS[tier];
-  return <details key={rowKey} className="estimate-line-tier-details">
-    <summary tabIndex={0} aria-label={`Show details of tier: ${tierName} for ${label}`}>Show details of tier</summary>
-    <div className="estimate-line-tier-details__content" role="region" aria-label={`${tierName} details for ${label}`}>
-      {description ? <p className="estimate-line-tier-details__description">{description}</p> : null}
-      {!details ? <p>{description ? "Specifications unavailable for this tier." : "Details unavailable for this tier."}</p>
-        : !details.specifications.length ? <p>No specifications configured for this tier.</p>
-        : <ul>{details.specifications.map(specification => <li key={specification.id}>
-          {specification.name}{specification.brands.length
-            ? ` (${specification.brands.map(brand => brand.name ?? "Brand unavailable").join(", ")})` : ""}
-        </li>)}</ul>}
+  const hasDescription = typeof description === "string" && description.trim().length > 0;
+  return <section key={rowKey} className="estimate-line-tier-details" aria-label={`${tierName} description for ${label}`}>
+    <div className="estimate-line-tier-details__heading">
+      <span className="estimate-line-tier-details__label">Description</span>
+      <span className="estimate-line-tier-details__tier">{tierName}</span>
     </div>
-  </details>;
+    <p className={`estimate-line-tier-details__description${hasDescription ? "" : " estimate-line-tier-details__empty"}`}>
+      {hasDescription ? description : "Description not added."}
+    </p>
+    {showInternalDetails ? <details className="estimate-line-tier-details__internal">
+      <summary tabIndex={0} aria-label={`Show internal specifications: ${tierName} for ${label}`}>Internal specifications</summary>
+      <div className="estimate-line-tier-details__content" role="region" aria-label={`${tierName} internal specifications for ${label}`}>
+        {!details ? <p>Specifications unavailable for this tier.</p>
+          : !details.specifications.length ? <p>No specifications configured for this tier.</p>
+          : <ul>{details.specifications.map(specification => <li key={specification.id}>
+            {specification.name}{specification.brands.length
+              ? ` (${specification.brands.map(brand => brand.name ?? "Brand unavailable").join(", ")})` : ""}
+          </li>)}</ul>}
+      </div>
+    </details> : null}
+  </section>;
 }

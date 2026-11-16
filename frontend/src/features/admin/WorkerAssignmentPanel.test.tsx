@@ -295,6 +295,156 @@ afterEach(() => {
 });
 
 describe("WorkerAssignmentPanel", () => {
+  it("keeps the Procurement view limited to its assignee without querying trade sections", async () => {
+    installPanel();
+    const sectionRequests = vi.fn();
+    server.use(http.get("/api/v1/admin/projects/project-1/section-assignments", () => {
+      sectionRequests();
+      return HttpResponse.json({ data: sectionAssignments });
+    }));
+    renderWithQuery(<WorkerAssignmentPanel project={project} assignmentArea="procurement" />);
+    const select = await screen.findByRole("combobox", { name: "Assigned Procurement" });
+    expect(within(select).getByRole("option", { name: /Priya Procurement/ })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Procurement" })).toBeVisible();
+    expect(screen.queryByRole("combobox", { name: "Assigned Project Manager" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Site Management/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("article", { name: "Open approved project budget progress" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Work sections" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Task assignment" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+    expect(sectionRequests).not.toHaveBeenCalled();
+    await expectNoAxeViolations();
+  });
+
+  it("keeps the Project Manager view separate from Procurement and trade controls", async () => {
+    installPanel();
+    renderWithQuery(<WorkerAssignmentPanel project={project} assignmentArea="manager" />);
+    expect(await screen.findByRole("combobox", { name: "Assigned Project Manager" })).toBeVisible();
+    expect(screen.queryByRole("combobox", { name: "Assigned Procurement" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Carpentry/ })).not.toBeInTheDocument();
+  });
+
+  it("loads only trade sections and people in the Trade teams view", async () => {
+    installPanel();
+    const taskRequests = vi.fn();
+    server.use(http.get("/api/v1/admin/projects/project-1/workflow-tasks", () => {
+      taskRequests();
+      return HttpResponse.json({ data: allTasks });
+    }));
+    renderWithQuery(<WorkerAssignmentPanel project={project} assignmentArea="trades" />);
+    expect(await screen.findByRole("button", { name: /^Carpentry/ })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Trade teams" })).toBeVisible();
+    expect(screen.queryByRole("combobox", { name: "Assigned Procurement" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Assigned Project Manager" })).not.toBeInTheDocument();
+    expect(taskRequests).not.toHaveBeenCalled();
+    await expectNoAxeViolations();
+  });
+
+  it("keeps Trade teams locked before design approval even when initial approval allows coordination", () => {
+    const requests = vi.fn();
+    server.use(http.get("/api/v1/admin/workers", () => { requests(); return HttpResponse.json({ data: workers }); }));
+    renderWithQuery(<WorkerAssignmentPanel assignmentArea="trades" project={{ ...project, estimationWorkflowVersion: 3,
+      estimate: { ...project.estimate!, designPlanStatus: "assigned", initialEstimateApproval: { reviewRoundId: "initial-round", estimateVersion: 3, approvedAt: "2026-08-24T09:00:00.000Z" } } }} />);
+    expect(screen.getByText("Trade assignment opens after the Client approves the design plan.")).toBeVisible();
+    expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+    expect(requests).not.toHaveBeenCalled();
+  });
+
+  it.each([2, 3] as const)("opens v%s coordination after initial approval without fetching trade sections", async (estimationWorkflowVersion) => {
+    const sectionRequests = vi.fn();
+    installPanel({ tasks: [procurementTask, siteTask, financeTask] });
+    server.use(http.get("/api/v1/admin/projects/project-1/section-assignments", () => {
+      sectionRequests();
+      return HttpResponse.json({ data: sectionAssignments });
+    }));
+    renderWithQuery(<WorkerAssignmentPanel defaultExpanded project={{ ...project, estimationWorkflowVersion,
+      estimate: { ...project.estimate!, status: "draft", designPlanStatus: "pending_assignment", designPlanVersion: 0,
+        initialEstimateApproval: { reviewRoundId: "initial-round", estimateVersion: 3, approvedAt: "2026-08-24T09:00:00.000Z" } } }} />);
+
+    expect(await screen.findByRole("combobox", { name: "Assigned Procurement" })).toBeVisible();
+    expect(screen.getByRole("combobox", { name: "Assigned Project Manager" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Task assignment" })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText(/Trade assignment opens after the Client approves the design plan/)).toBeVisible();
+    expect(screen.queryByRole("button", { name: /^Carpentry/ })).not.toBeInTheDocument();
+    expect(sectionRequests).not.toHaveBeenCalled();
+  });
+
+  it("refreshes an empty Procurement list and sends the exact active assignment payload", async () => {
+    installPanel({ tasks: [procurementTask], sections: [] });
+    let peopleAvailable = false;
+    const received = vi.fn();
+    server.use(
+      http.get("/api/v1/admin/workers", () => HttpResponse.json({ data: peopleAvailable ? workers : [] })),
+      http.post("/api/v1/execution/worker-assignments/override", async ({ request }) => {
+        received(await request.json());
+        return HttpResponse.json({ data: { ...procurementTask, version: 2, assignedWorker: { ...workers.find(worker => worker.role === "procurement"), active: true } } });
+      })
+    );
+    const user = userEvent.setup();
+    renderWithQuery(<WorkerAssignmentPanel project={project} defaultExpanded />);
+    expect(await screen.findByText(/No active Procurement people are available/)).toBeVisible();
+    const select = screen.getByRole("combobox", { name: "Assigned Procurement" });
+    expect(within(select).getAllByRole("option")).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Assign Procurement" })).toBeDisabled();
+
+    peopleAvailable = true;
+    await user.click(screen.getByRole("button", { name: "Refresh people" }));
+    await within(select).findByRole("option", { name: /Priya Procurement/ });
+    expect(within(select).queryByRole("option", { name: /Sana Project Manager/ })).not.toBeInTheDocument();
+    await user.selectOptions(select, "procurement-1");
+    await user.click(screen.getByRole("button", { name: "Assign Procurement" }));
+    expect(await screen.findByText("Procurement assignment saved.")).toBeVisible();
+    expect(received).toHaveBeenCalledExactlyOnceWith({ projectId: project.id, taskId: procurementTask.id, expectedVersion: procurementTask.version, workerId: "procurement-1" });
+    const current = screen.getByLabelText("Current Procurement");
+    expect(current).toHaveTextContent("Priya Procurement");
+    expect(current).toHaveTextContent("priya@example.com");
+  });
+
+  it("keeps an unavailable current Procurement assignee visible and prevents reassigning that choice", async () => {
+    const assignedWorker = { id: "inactive-procurement", name: "Former Procurement", email: "former@example.com", role: "procurement" as const, active: false };
+    installPanel({ tasks: [{ ...procurementTask, assignedWorker }], sections: [], workers: [] });
+    renderWithQuery(<WorkerAssignmentPanel project={project} defaultExpanded />);
+    const select = await screen.findByRole("combobox", { name: "Assigned Procurement" });
+    expect(select).toHaveValue(assignedWorker.id);
+    expect(within(select).getByRole("option", { name: "Former Procurement · Unavailable" })).toBeDisabled();
+    const current = screen.getByLabelText("Current Procurement");
+    expect(current).toHaveTextContent(assignedWorker.name);
+    expect(current).toHaveTextContent(assignedWorker.email);
+    expect(current).toHaveTextContent("unavailable for a new assignment");
+    expect(screen.getByRole("button", { name: "Reassign Procurement" })).toBeDisabled();
+    expect(screen.getByText(/No active Procurement people are available/)).toBeVisible();
+  });
+
+  it("blocks saving a selected person who disappears when the people list is refreshed", async () => {
+    installPanel({ tasks: [procurementTask], sections: [] });
+    let available = true;
+    const received = vi.fn();
+    server.use(
+      http.get("/api/v1/admin/workers", () => HttpResponse.json({ data: available ? workers : [] })),
+      http.post("/api/v1/execution/worker-assignments/override", () => { received(); return HttpResponse.json({ data: procurementTask }); })
+    );
+    const user = userEvent.setup();
+    renderWithQuery(<WorkerAssignmentPanel project={project} defaultExpanded />);
+    await user.selectOptions(await screen.findByRole("combobox", { name: "Assigned Procurement" }), "procurement-1");
+    expect(screen.getByRole("button", { name: "Assign Procurement" })).toBeEnabled();
+    available = false;
+    await user.click(screen.getByRole("button", { name: "Refresh people" }));
+    expect(await screen.findByText(/No active Procurement people are available/)).toBeVisible();
+    const assign = screen.getByRole("button", { name: "Assign Procurement" });
+    expect(assign).toBeDisabled();
+    await user.click(assign);
+    expect(received).not.toHaveBeenCalled();
+  });
+
+  it("can omit the duplicate Project Manager control while retaining Procurement, Finance and trade sections", async () => {
+    installPanel();
+    renderWithQuery(<WorkerAssignmentPanel project={project} defaultExpanded showProjectManager={false} />);
+    expect(await screen.findByRole("combobox", { name: "Assigned Procurement" })).toBeVisible();
+    expect(screen.queryByRole("combobox", { name: "Assigned Project Manager" })).not.toBeInTheDocument();
+    expect(screen.getByRole("article", { name: "Open approved project budget progress" })).toBeVisible();
+    expect(screen.getByRole("button", { name: /^Carpentry/ })).toBeVisible();
+  });
+
   it("refreshes the matching identity and every scoped Project Manager reader after a site assignment", async () => {
     installPanel();
     const received = vi.fn();
@@ -356,7 +506,7 @@ describe("WorkerAssignmentPanel", () => {
     expect(within(siteSelect).getByRole("option", { name: /Sana Project Manager/ })).toBeVisible();
     expect(within(siteSelect).queryByRole("option", { name: /Priya Procurement/ })).not.toBeInTheDocument();
     const procurement = screen.getByRole("article", { name: "Coordinate approved procurement assignment" });
-    const procurementSelect = within(procurement).getByRole("combobox", { name: "Assigned procurement coordinator" });
+    const procurementSelect = within(procurement).getByRole("combobox", { name: "Assigned Procurement" });
     expect(within(procurementSelect).getByRole("option", { name: /Priya Procurement/ })).toBeVisible();
     expect(within(procurementSelect).queryByRole("option", { name: /Kiran Carpenter/ })).not.toBeInTheDocument();
 

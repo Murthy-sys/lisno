@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { apiClient } from "../../api/client";
 import { getEstimationCatalogue, type EstimationCatalogue, type EstimationCatalogueMainLine } from "../leads/estimationCatalogueApi";
 import { KnowledgeMainLineClientPreview } from "./KnowledgeMainLineClientPreview";
+import { invalidateKnowledgeSectionMutation } from "./knowledgeMutationSync";
 
 vi.mock("../leads/estimationCatalogueApi", async importOriginal => ({
   ...await importOriginal<typeof import("../leads/estimationCatalogueApi")>(), getEstimationCatalogue: vi.fn()
@@ -51,53 +52,37 @@ const row = () => screen.getByRole("group", { name: "Client preview of POP false
 describe("KnowledgeMainLineClientPreview", () => {
   beforeEach(() => { vi.mocked(getEstimationCatalogue).mockReset().mockResolvedValue(catalogue()); });
 
-  it("shows resolved Mode details for Signature and Functional and the tier-specific Premium list without changing preview values or writing", async () => {
+  it("shows only the selected description while keeping preview pricing and selection local", async () => {
     const user = userEvent.setup();
     const writes = [vi.spyOn(apiClient, "post"), vi.spyOn(apiClient, "patch"), vi.spyOn(apiClient, "put"), vi.spyOn(apiClient, "delete")];
-    const resolvedModeDetails = { specifications: [{ id: "mode-board", name: "Mode board", brands: [{ id: "mode-brand", name: "Saint-Gobain" }] }] };
     vi.mocked(getEstimationCatalogue).mockResolvedValue(catalogue({ ...fixtureLine,
       applicableTiers: ["signature", "premium", "functional"],
-      tierPricing: { ...fixtureLine.tierPricing, functional: { modeBaseRatesPaise: { pmc: 9000, sub_vendor: 8000, in_house: null } } },
-      tierDescriptions: { signature: "Signature ceiling finish.", premium: "Mode description with premium specifications.", functional: "Functional ceiling finish." },
+      tierPricing: { ...fixtureLine.tierPricing, functional: { modeBaseRatesPaise: { sub_vendor: 9000, pmc: 8000, in_house: null } } },
+      tierDescriptions: { signature: "Signature ceiling finish.", premium: "Premium ceiling finish.", functional: "Functional ceiling finish." },
       tierDetails: {
-        signature: resolvedModeDetails,
-        premium: { specifications: [{ id: "board", name: "Premium board", brands: [{ id: "brand", name: "Knauf" }] }] },
-        functional: resolvedModeDetails
+        signature: { specifications: [{ id: "private", name: "Internal board", brands: [{ id: "private-brand", name: "Private brand" }] }] },
+        premium: { specifications: [{ id: "premium-private", name: "Premium internal board", brands: [] }] }
       }
     }));
     mount({ initiallyOpen: true });
     await screen.findByRole("group", { name: "Client preview of POP false ceiling" });
-    const trigger = screen.getByText("Show details of tier");
-    const initialRate = screen.getByLabelText("Price for POP false ceiling").textContent;
-    expect(trigger.closest("label")).toBeNull();
-    expect(trigger.closest("details")).not.toHaveAttribute("open");
-    await user.click(trigger);
-    expect(screen.getByLabelText("Price for POP false ceiling")).toHaveTextContent(initialRate!);
-    for (const [tier, expected, description] of [["Signature", "Mode board (Saint-Gobain)", "Signature ceiling finish."], ["Premium", "Premium board (Knauf)", "Mode description with premium specifications."], ["Functional", "Mode board (Saint-Gobain)", "Functional ceiling finish."]]) {
+    for (const tier of ["Signature", "Premium", "Functional"]) {
       await user.click(screen.getByRole("radio", { name: `${tier} tier for POP false ceiling` }));
-      const content = screen.getByRole("region", { name: `${tier} details for POP false ceiling` });
-      expect(within(content).getByText(description!)).toBeVisible();
-      expect(within(content).getByText(description!).nextElementSibling?.tagName).toBe("UL");
-      expect(content.querySelectorAll(".estimate-line-tier-details__description")).toHaveLength(1);
-      expect(within(content).getAllByRole("listitem").map(item => item.textContent)).toEqual([expected]);
-      expect(trigger.closest("details")).toHaveAttribute("open");
-      const selectedRate = screen.getByLabelText("Price for POP false ceiling").textContent;
-      await user.click(trigger);
-      await user.click(trigger);
-      expect(screen.getByLabelText("Price for POP false ceiling")).toHaveTextContent(selectedRate!);
+      const content = screen.getByRole("region", { name: `${tier} description for POP false ceiling` });
+      expect(within(content).getByText(`${tier} ceiling finish.`)).toBeVisible();
+      expect(screen.queryByText("Internal specifications")).not.toBeInTheDocument();
+      expect(screen.queryByText(/Internal board|Private brand|Premium internal board/)).not.toBeInTheDocument();
       expect(screen.getByRole("checkbox", { name: "Include POP false ceiling in preview" })).toBeChecked();
       expect(screen.getByRole("spinbutton", { name: "Quantity for POP false ceiling sq-ft" })).toHaveValue(1);
       expect(screen.getByLabelText("Amount for POP false ceiling")).toHaveTextContent("After save");
     }
-    await user.selectOptions(screen.getByRole("combobox", { name: "Preview type" }), "special");
-    expect(screen.getByText("Mode board (Saint-Gobain)")).toBeVisible();
     await user.click(screen.getByRole("checkbox", { name: "Include POP false ceiling in preview" }));
-    expect(screen.queryByText("Show details of tier")).not.toBeInTheDocument();
+    expect(screen.queryByText("Functional ceiling finish.")).not.toBeInTheDocument();
     expect(getEstimationCatalogue).toHaveBeenCalledTimes(1);
     for (const write of writes) expect(write).not.toHaveBeenCalled();
   });
 
-  it("shows a description without specifications and does not borrow its paragraph for another tier", async () => {
+  it("does not borrow a paragraph or reveal specifications when a tier description is missing", async () => {
     const user = userEvent.setup();
     vi.mocked(getEstimationCatalogue).mockResolvedValue(catalogue({ ...fixtureLine,
       tierDescriptions: { signature: "Signature description only.", premium: null },
@@ -105,28 +90,48 @@ describe("KnowledgeMainLineClientPreview", () => {
     }));
     mount({ initiallyOpen: true });
     await screen.findByRole("group", { name: "Client preview of POP false ceiling" });
-    await user.click(screen.getByText("Show details of tier"));
     expect(screen.getByText("Signature description only.")).toBeVisible();
-    expect(screen.getByText("Specifications unavailable for this tier.")).toBeVisible();
-    await user.click(screen.getByRole("radio", { name: "Premium tier for POP false ceiling" }));
-    expect(screen.getByText("Premium board")).toBeVisible();
-    expect(screen.queryByText("Signature description only.")).not.toBeInTheDocument();
     expect(screen.queryByText("Specifications unavailable for this tier.")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("radio", { name: "Premium tier for POP false ceiling" }));
+    expect(screen.getByText("Description not added.")).toBeVisible();
+    expect(screen.queryByText("Premium board")).not.toBeInTheDocument();
+    expect(screen.queryByText("Signature description only.")).not.toBeInTheDocument();
   });
 
-  it.each(["legacy-response", "missing-premium"] as const)("keeps details unavailable for %s instead of resolving a frontend fallback", async response => {
+  it("refreshes each selected tier from the current saved revision after a description save", async () => {
     const user = userEvent.setup();
     vi.mocked(getEstimationCatalogue).mockResolvedValue(catalogue({ ...fixtureLine,
-      ...(response === "missing-premium" ? { tierDetails: { signature: { specifications: [{ id: "signature-only", name: "Signature-only board", brands: [] }] } } } : {})
+      tierDescriptions: { signature: "Previously saved finish." }
     }));
+    const { client } = mount({ initiallyOpen: true });
+    expect(await screen.findByText("Previously saved finish.")).toBeVisible();
+    const descriptions = { signature: "Signature hand finish", premium: "Premium acoustic finish", functional: "Functional plain finish" };
+    vi.mocked(getEstimationCatalogue).mockResolvedValue(catalogue({ ...fixtureLine,
+      revisionVersion: 5, itemVersion: 8, applicableTiers: ["signature", "premium", "functional"],
+      tierDescriptions: descriptions,
+      tierPricing: { ...fixtureLine.tierPricing, functional: { modeBaseRatesPaise: { sub_vendor: 8300, pmc: null, in_house: null } } }
+    }));
+    await act(async () => { await invalidateKnowledgeSectionMutation(client, fixtureLine.mainLineId); });
+    expect(await screen.findByText(descriptions.signature)).toBeVisible();
+    for (const tier of ["Signature", "Premium", "Functional"] as const) {
+      await user.click(screen.getByRole("radio", { name: `${tier} tier for POP false ceiling` }));
+      const selected = descriptions[tier.toLowerCase() as keyof typeof descriptions];
+      expect(screen.getByText(selected)).toBeVisible();
+      for (const other of Object.values(descriptions).filter(value => value !== selected)) expect(screen.queryByText(other)).not.toBeInTheDocument();
+    }
+    expect(screen.queryByText("Previously saved finish.")).not.toBeInTheDocument();
+    expect(getEstimationCatalogue).toHaveBeenCalledTimes(2);
+    expect(getEstimationCatalogue).toHaveBeenLastCalledWith({ includeReadyNonActive: true });
+  });
+
+  it("keeps legacy responses description-only without inventing a fallback", async () => {
+    const user = userEvent.setup();
     mount({ initiallyOpen: true });
     await screen.findByRole("group", { name: "Client preview of POP false ceiling" });
-    await user.click(screen.getByText("Show details of tier"));
-    if (response === "missing-premium") expect(screen.getByText("Signature-only board")).toBeVisible();
-    else expect(screen.getByText("Details unavailable for this tier.")).toBeVisible();
+    expect(screen.getByText("Description not added.")).toBeVisible();
     await user.click(screen.getByRole("radio", { name: "Premium tier for POP false ceiling" }));
-    expect(screen.getByText("Details unavailable for this tier.")).toBeVisible();
-    expect(screen.queryByText("Signature-only board")).not.toBeInTheDocument();
+    expect(screen.getByText("Description not added.")).toBeVisible();
+    expect(screen.queryByText("Internal specifications")).not.toBeInTheDocument();
   });
 
   it("fetches only on opening, displays current selling data and preserves the saved-only notice", async () => {
@@ -188,7 +193,6 @@ describe("KnowledgeMainLineClientPreview", () => {
     const trigger = screen.getByRole("button", { name: "Client view" });
     await user.click(trigger);
     await screen.findByRole("group", { name: "Client preview of POP false ceiling" });
-    await user.click(screen.getByText("Show details of tier"));
     expect(screen.getByText("Original finish.")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Increase quantity for POP false ceiling" }));
     await user.keyboard("{Escape}");
@@ -202,7 +206,6 @@ describe("KnowledgeMainLineClientPreview", () => {
     expect(getEstimationCatalogue).toHaveBeenCalledTimes(2);
     expect(screen.getByRole("spinbutton")).toHaveValue(1);
     expect(screen.getByLabelText("Price for POP false ceiling")).toHaveTextContent("₹230.00");
-    await user.click(screen.getByText("Show details of tier"));
     expect(screen.getByText("Updated saved finish.")).toBeVisible();
     expect(screen.queryByText("Original finish.")).not.toBeInTheDocument();
   });
@@ -290,8 +293,44 @@ describe("KnowledgeMainLineClientPreview", () => {
     await screen.findByRole("group", { name: "Client preview of POP false ceiling" });
     expect(screen.getByLabelText("Price for POP false ceiling")).toHaveTextContent("Pending");
     expect(screen.getByText(/Price is unavailable for the selected mode and tier/)).toBeVisible();
-    expect(screen.getByRole("radio", { name: "Signature tier for POP false ceiling" })).toBeDisabled();
+    for (const tier of ["Signature", "Premium", "Functional"]) {
+      expect(screen.getByRole("radio", { name: `${tier} tier for POP false ceiling` })).toBeEnabled();
+    }
     expect(screen.queryByText(/999\.99|₹0\.00/)).not.toBeInTheDocument();
+  });
+
+  it("allows unpriced and non-applicable tier descriptions to be previewed without borrowing rates or saving", async () => {
+    const user = userEvent.setup();
+    const writes = [vi.spyOn(apiClient, "post"), vi.spyOn(apiClient, "patch"), vi.spyOn(apiClient, "put"), vi.spyOn(apiClient, "delete")];
+    vi.mocked(getEstimationCatalogue).mockResolvedValue(catalogue({ ...fixtureLine,
+      applicableTiers: ["signature", "premium"],
+      tierDescriptions: { signature: "Priced signature finish", premium: "Unpriced premium finish", functional: "Functional draft finish" },
+      tierPricing: {
+        signature: fixtureLine.tierPricing!.signature!,
+        premium: { modeBaseRatesPaise: { sub_vendor: null, pmc: null, in_house: null } },
+        functional: { modeBaseRatesPaise: { sub_vendor: 54321, pmc: null, in_house: null } }
+      }
+    }));
+    mount({ initiallyOpen: true });
+    await screen.findByRole("group", { name: "Client preview of POP false ceiling" });
+    const signature = screen.getByRole("radio", { name: "Signature tier for POP false ceiling" });
+    signature.focus();
+    for (const [tier, description] of [["Premium", "Unpriced premium finish"], ["Functional", "Functional draft finish"]]) {
+      expect(screen.getByRole("radio", { name: `${tier} tier for POP false ceiling` })).toBeEnabled();
+      await user.keyboard("{ArrowRight}");
+      expect(screen.getByRole("radio", { name: `${tier} tier for POP false ceiling` })).toBeChecked();
+      expect(screen.getByText(description!)).toBeVisible();
+      expect(screen.queryByText("Priced signature finish")).not.toBeInTheDocument();
+      expect(screen.getByLabelText("Price for POP false ceiling")).toHaveTextContent("Pending");
+      expect(screen.getByText(/Price is unavailable for the selected mode and tier/)).toBeVisible();
+      expect(screen.queryByText(/₹101\.25|₹543\.21|₹0\.00/)).not.toBeInTheDocument();
+      expect(screen.getByLabelText("Amount for POP false ceiling")).toHaveTextContent("After save");
+    }
+    await user.click(signature);
+    expect(screen.getByText("Priced signature finish")).toBeVisible();
+    expect(screen.getByLabelText("Price for POP false ceiling")).toHaveTextContent("₹101.25");
+    expect(getEstimationCatalogue).toHaveBeenCalledTimes(1);
+    for (const write of writes) expect(write).not.toHaveBeenCalled();
   });
 
   it("keeps required dimensions unset and uses the shared quantity calculation", async () => {

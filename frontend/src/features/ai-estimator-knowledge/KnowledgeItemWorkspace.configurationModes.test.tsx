@@ -69,14 +69,22 @@ async function selectMode(user: ReturnType<typeof userEvent.setup>, label: strin
 }
 async function openMode(user: ReturnType<typeof userEvent.setup>, label: string) {
   const panel = await selectMode(user, label);
-  await within(panel).findByRole("button", { name: "Edit Description" });
+  await within(panel).findByRole("checkbox", { name: "PMC" });
   return panel;
 }
-async function setDescription(user: ReturnType<typeof userEvent.setup>, panel: HTMLElement, value: string) {
-  await user.click(within(panel).getByRole("button", { name: "Edit Description" }));
-  const input = within(panel).getByRole("textbox", { name: "Description" });
+async function setDescription(user: ReturnType<typeof userEvent.setup>, panel: HTMLElement, value: string, persist = true) {
+  const input = await within(panel).findByRole("textbox", { name: "Description" });
   await user.clear(input); await user.type(input, value);
-  await user.click(within(panel).getByRole("button", { name: "Save" }));
+  if (persist) await user.click(within(panel).getByRole("button", { name: "Save" }));
+}
+
+async function setDefaultMargin(user: ReturnType<typeof userEvent.setup>, panel: HTMLElement) {
+  const pmc = within(panel).getByRole("checkbox", { name: "PMC" }) as HTMLInputElement;
+  if (!pmc.checked) await user.click(pmc);
+  for (const [label, value] of [["Min.", "10"], ["Max.", "18"]] as const) {
+    const input = within(panel).getByRole("spinbutton", { name: `${label} PMC Margin (%)` });
+    await user.clear(input); await user.type(input, value);
+  }
 }
 
 beforeEach(() => {
@@ -111,6 +119,77 @@ beforeEach(() => {
 });
 
 describe("independent Configuration modes", () => {
+  it("shows one empty inline textarea in common Mode and named tiers without generating or saving wording", async () => {
+    const row = store.get("line-a")!;
+    for (const scope of KNOWLEDGE_MODE_CONFIGURATION_SCOPES) row.advanced[scope] = {};
+    const before = structuredClone(row.advanced);
+    const user = userEvent.setup();
+    renderWorkspace();
+    for (const label of ["Mode", "Signature Mode", "Premium Mode", "Functional Mode"]) {
+      const panel = await openMode(user, label);
+      const input = await within(panel).findByRole("textbox", { name: "Description" });
+      expect(input).toHaveValue("");
+      expect(within(panel).getAllByRole("textbox", { name: "Description" })).toHaveLength(1);
+      expect(within(panel).queryByRole("button", { name: "Edit Description" })).not.toBeInTheDocument();
+      expect(within(panel).queryByRole("region", { name: "Description preview" })).not.toBeInTheDocument();
+      expect(within(panel).queryByText(/Providing, Supplying/)).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: `Save ${label}` })).toBeDisabled();
+    }
+    expect(store.get("line-a")!.advanced).toEqual(before);
+    expect(api.updateKnowledgeSection).not.toHaveBeenCalled();
+  });
+
+  it("saves and reopens common Mode wording independently from tiers and other Main Lines", async () => {
+    const before = structuredClone(store);
+    const user = userEvent.setup(); let view = renderWorkspace();
+    const common = await openMode(user, "Mode");
+    const input = await within(common).findByRole("textbox", { name: "Description" });
+    expect(input).toHaveValue("");
+    expect(within(screen.getByRole("radiogroup", { name: "Mode selection" })).queryByRole("radio", { checked: true })).not.toBeInTheDocument();
+    expect(input.compareDocumentPosition(within(common).getByRole("checkbox", { name: "PMC" })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    await setDescription(user, common, "Shared execution description");
+    await waitFor(() => expect(store.get("line-a")!.advanced.default.modeDescription).toBe("Shared execution description"));
+    expect(vi.mocked(api.updateKnowledgeSection).mock.calls[0]).toEqual([
+      "line-a", "draft-line-a", "advanced", expect.objectContaining({ modeTier: "default", payload: { modeDescription: "Shared execution description" } })
+    ]);
+    const signature = await openMode(user, "Signature Mode");
+    expect(await within(signature).findByRole("textbox", { name: "Description" })).toHaveValue("signature saved line-a");
+    const returned = await openMode(user, "Mode");
+    expect(await within(returned).findByRole("textbox", { name: "Description" })).toHaveValue("Shared execution description");
+    view.unmount(); view.client.clear(); view = renderWorkspace();
+    const reopened = await openMode(user, "Mode");
+    expect(await within(reopened).findByRole("textbox", { name: "Description" })).toHaveValue("Shared execution description");
+    expect(within(reopened).getByRole("button", { name: "Save" })).toBeDisabled();
+    await user.click(screen.getByRole("link", { name: "Open other line" }));
+    await screen.findByRole("heading", { level: 1, name: "Wall B" });
+    const other = await openMode(user, "Mode");
+    expect(await within(other).findByRole("textbox", { name: "Description" })).toHaveValue("default saved line-b");
+    for (const scope of ["signature", "premium", "functional"] as const) {
+      expect(store.get("line-a")!.advanced[scope]).toEqual(before.get("line-a")!.advanced[scope]);
+    }
+    expect(store.get("line-b")).toEqual(before.get("line-b"));
+    expect(api.updateKnowledgeSection).toHaveBeenCalledTimes(1);
+  });
+
+  it("guards unapplied inline text and discards it before opening another tier", async () => {
+    const user = userEvent.setup(); renderWorkspace();
+    const signature = await openMode(user, "Signature Mode");
+    const input = await within(signature).findByRole("textbox", { name: "Description" });
+    await user.clear(input); await user.type(input, "Unapplied Signature wording");
+    await user.click(screen.getByRole("radio", { name: "Premium Mode" }));
+    await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Stay here" }));
+    expect(input).toHaveValue("Unapplied Signature wording");
+    expect(screen.getByRole("radio", { name: "Signature Mode" })).toBeChecked();
+    expect(store.get("line-a")!.advanced.signature.modeDescription).toBe("signature saved line-a");
+    await user.click(screen.getByRole("radio", { name: "Premium Mode" }));
+    await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Discard changes" }));
+    const premium = await within(screen.getByRole("region", { name: "Premium Mode" })).findByRole("textbox", { name: "Description" });
+    expect(premium).toHaveValue("premium saved line-a");
+    expect(store.get("line-a")!.advanced.premium.modeDescription).toBe("premium saved line-a");
+    expect(screen.queryByDisplayValue("Unapplied Signature wording")).not.toBeInTheDocument();
+    expect(api.updateKnowledgeSection).not.toHaveBeenCalled();
+  });
+
   it("shows each Main Line's basket context in Sub-Vendor across the main and tier editors without saving", async () => {
     const other = store.get("line-b")!;
     other.item = { ...other.item, basketId: "basket-electrical", basketName: "Electrical", subBasketId: "sub-lighting", subBasketName: "Lighting" };
@@ -168,11 +247,15 @@ describe("independent Configuration modes", () => {
     expect(screen.queryByRole("option", { name: "Default Mode" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Return to Mode" })).not.toBeInTheDocument();
     await user.click(within(inner).getByRole("radio", { name: "Signature Mode" }));
-    expect(await within(screen.getByRole("region", { name: "Signature Mode" })).findByText("signature saved line-a")).toBeVisible();
+    expect(await within(screen.getByRole("region", { name: "Signature Mode" })).findByRole("textbox", { name: "Description" })).toHaveValue("signature saved line-a");
     expect(within(inner).getAllByRole("radio", { checked: true })).toEqual([radios[0]]);
+    expect(screen.getByRole("button", { name: "Save Signature Mode" })).toBeDisabled();
+    expect(store.get("line-a")!.advanced.signature.modeDescription).toBe("signature saved line-a");
     await user.click(within(inner).getByRole("radio", { name: "Premium Mode" }));
-    expect(await within(screen.getByRole("region", { name: "Premium Mode" })).findByText("premium saved line-a")).toBeVisible();
+    expect(await within(screen.getByRole("region", { name: "Premium Mode" })).findByRole("textbox", { name: "Description" })).toHaveValue("premium saved line-a");
     expect(within(inner).getAllByRole("radio", { checked: true })).toEqual([radios[1]]);
+    expect(screen.getByRole("button", { name: "Save Premium Mode" })).toBeDisabled();
+    expect(store.get("line-a")!.advanced.premium.modeDescription).toBe("premium saved line-a");
     expect(screen.getByRole("tab", { name: "Mode" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getAllByRole("tabpanel")).toHaveLength(1);
     expect(selector).toHaveValue("mode");
@@ -204,7 +287,7 @@ describe("independent Configuration modes", () => {
     await user.click(screen.getByRole("button", { name: "Save Overview" }));
     await waitFor(() => expect(store.get("line-a")!.overview.applicableTiers).toEqual(["signature", "premium", "functional"]));
     const signature = await openMode(user, "Signature Mode");
-    expect(await within(signature).findByText("signature saved line-a")).toBeVisible();
+    expect(await within(signature).findByRole("textbox", { name: "Description" })).toHaveValue("signature saved line-a");
     expect(store.get("line-a")!.advanced).toEqual(originalModes);
   });
 
@@ -222,38 +305,70 @@ describe("independent Configuration modes", () => {
     expect(store.get("line-a")!.overview.applicableTiers).toEqual(["signature", "premium", "functional"]);
   });
 
-  it("saves unequal descriptions in each scope and reloads them without cross-mode or cross-line changes", async () => {
+  it("saves unequal tier descriptions without changing common wording or another Main Line", async () => {
     const user = userEvent.setup(); let view = renderWorkspace();
-    const labels = ["Mode", "Signature Mode", "Premium Mode", "Functional Mode"];
+    const scopes = ["signature", "premium", "functional"] as const;
+    const labels = ["Signature Mode", "Premium Mode", "Functional Mode"];
+    store.get("line-a")!.advanced.default = { modeDescription: "Saved common wording" };
+    const untouchedCommon = structuredClone(store.get("line-a")!.advanced.default);
     const untouchedOther = structuredClone(store.get("line-b")!);
     for (const [index, label] of labels.entries()) {
       const panel = await openMode(user, label);
-      if (label === "Mode") expect(within(panel).queryByText("signature saved line-a")).not.toBeInTheDocument();
       await setDescription(user, panel, `Distinct ${label} configuration ${index}`);
-      await user.click(screen.getByRole("button", { name: `Save ${label}` }));
+      expect(within(panel).getByRole("textbox", { name: "Description" })).toHaveValue(`Distinct ${label} configuration ${index}`);
       await waitFor(() => expect(screen.getByRole("button", { name: `Save ${label}` })).toBeDisabled());
-      expect(store.get("line-a")!.advanced[KNOWLEDGE_MODE_CONFIGURATION_SCOPES[index]!].modeDescription).toBe(`Distinct ${label} configuration ${index}`);
+      expect(store.get("line-a")!.advanced[scopes[index]!].modeDescription).toBe(`Distinct ${label} configuration ${index}`);
     }
+    expect(store.get("line-a")!.advanced.default).toEqual(untouchedCommon);
     expect(store.get("line-b")).toEqual(untouchedOther);
     expect(vi.mocked(api.updateKnowledgeSection).mock.calls.map(([, , key, input]) => [key, input.modeTier ?? "signature"]))
-      .toEqual(KNOWLEDGE_MODE_CONFIGURATION_SCOPES.map(scope => ["advanced", scope]));
+      .toEqual(scopes.map(scope => ["advanced", scope]));
     view.unmount(); view.client.clear(); view = renderWorkspace();
     for (const [index, label] of labels.entries()) {
       const panel = await openMode(user, label);
-      expect(await within(panel).findByText(`Distinct ${label} configuration ${index}`)).toBeVisible();
+      expect(await within(panel).findByRole("textbox", { name: "Description" })).toHaveValue(`Distinct ${label} configuration ${index}`);
+      expect(store.get("line-a")!.advanced[scopes[index]!].modeDescription).toBe(`Distinct ${label} configuration ${index}`);
+      expect(screen.getByRole("button", { name: `Save ${label}` })).toBeDisabled();
     }
+    const common = await openMode(user, "Mode");
+    expect(await within(common).findByRole("textbox", { name: "Description" })).toHaveValue("Saved common wording");
+    expect(store.get("line-a")!.advanced.default).toEqual(untouchedCommon);
     await user.click(screen.getByRole("link", { name: "Open other line" }));
     await screen.findByRole("heading", { level: 1, name: "Wall B" });
-    const otherPanel = await openMode(user, "Mode");
-    expect(await within(otherPanel).findByText("default saved line-b")).toBeVisible();
-    expect(within(otherPanel).queryByText(/Distinct/)).not.toBeInTheDocument();
+    for (const [index, label] of labels.entries()) {
+      const otherPanel = await openMode(user, label);
+      expect(await within(otherPanel).findByRole("textbox", { name: "Description" })).toHaveValue(`${scopes[index]} saved line-b`);
+      expect(within(otherPanel).queryByDisplayValue(/Distinct/)).not.toBeInTheDocument();
+    }
     expect(store.get("line-b")).toEqual(untouchedOther);
+    await user.click(screen.getByRole("link", { name: "Open first line" }));
+    await screen.findByRole("heading", { level: 1, name: "Ceiling A" });
+    const reopened = await openMode(user, "Signature Mode");
+    expect(await within(reopened).findByRole("textbox", { name: "Description" })).toHaveValue("Distinct Signature Mode configuration 0");
+    expect(api.updateKnowledgeSection).toHaveBeenCalledTimes(3);
+  });
+
+  it("retains an explicitly cleared tier description after switching and reopening", async () => {
+    const user = userEvent.setup(); let view = renderWorkspace();
+    store.get("line-a")!.advanced.default = { modeDescription: "Common wording stays separate" };
+    const signature = await openMode(user, "Signature Mode");
+    await user.clear(await within(signature).findByRole("textbox", { name: "Description" }));
+    await user.click(within(signature).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(store.get("line-a")!.advanced.signature.modeDescription).toBe(""));
+    const premium = await openMode(user, "Premium Mode");
+    expect(await within(premium).findByRole("textbox", { name: "Description" })).toHaveValue("premium saved line-a");
+    view.unmount(); view.client.clear(); view = renderWorkspace();
+    const reopened = await openMode(user, "Signature Mode");
+    expect(await within(reopened).findByRole("textbox", { name: "Description" })).toHaveValue("");
+    expect(within(reopened).getByRole("button", { name: "Save" })).toBeDisabled();
+    expect(store.get("line-a")!.advanced.default.modeDescription).toBe("Common wording stays separate");
+    expect(api.updateKnowledgeSection).toHaveBeenCalledTimes(1);
   });
 
   it("guards unsaved default edits and does not close a dirty Signature mode when applicability changes", async () => {
     const user = userEvent.setup(); const view = renderWorkspace();
     const panel = await openMode(user, "Mode");
-    await setDescription(user, panel, "Unsaved default description");
+    await setDefaultMargin(user, panel);
     await user.click(screen.getByRole("radio", { name: "Signature Mode" }));
     const dialog = screen.getByRole("alertdialog", { name: "Save changes before leaving?" });
     await user.click(within(dialog).getByRole("button", { name: "Stay here" }));
@@ -261,13 +376,13 @@ describe("independent Configuration modes", () => {
     await user.click(screen.getByRole("radio", { name: "Signature Mode" }));
     await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Discard changes" }));
     const signature = screen.getByRole("region", { name: "Signature Mode" });
-    await within(signature).findByText("signature saved line-a");
-    await setDescription(user, signature, "Unsaved Signature description");
+    await within(signature).findByRole("textbox", { name: "Description" });
+    await setDescription(user, signature, "Unsaved Signature description", false);
     await act(async () => { view.client.setQueryData(knowledgeQueryKeys.section("line-a", "draft-line-a", "overview"), {
       ...section("line-a", "draft-line-a", "overview"), payload: { uomId: "sqft", applicableTiers: [] }
     }); });
     expect(screen.getByRole("radio", { name: "Signature Mode" })).toBeChecked();
-    expect(screen.getByText("Unsaved Signature description")).toBeVisible();
+    expect(screen.getByDisplayValue("Unsaved Signature description")).toBeVisible();
     expect(api.updateKnowledgeSection).not.toHaveBeenCalled();
   });
 
@@ -282,7 +397,7 @@ describe("independent Configuration modes", () => {
     signature.focus();
     await user.keyboard(" ");
     expect(signature).toHaveFocus();
-    await within(screen.getByRole("region", { name: "Signature Mode" })).findByText("signature saved line-a");
+    await within(screen.getByRole("region", { name: "Signature Mode" })).findByRole("textbox", { name: "Description" });
     await act(async () => { view.client.setQueryData(knowledgeQueryKeys.section("line-a", "draft-line-a", "overview"), {
       ...section("line-a", "draft-line-a", "overview"), payload: { uomId: "sqft", applicableTiers: [] }
     }); });
@@ -297,27 +412,27 @@ describe("independent Configuration modes", () => {
   it("keeps the default draft on repeated parent activation and retains an inner scope on Overview refetch", async () => {
     const user = userEvent.setup(); const view = renderWorkspace();
     const panel = await openMode(user, "Mode");
-    await setDescription(user, panel, "Pending default description");
+    await setDefaultMargin(user, panel);
     await user.click(screen.getByRole("tab", { name: "Mode" }));
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
-    expect(screen.getByText("Pending default description")).toBeVisible();
+    expect(within(panel).getByRole("spinbutton", { name: "Max. PMC Margin (%)" })).toHaveValue(18);
     expect(screen.getByRole("button", { name: "Save Mode" })).toBeEnabled();
     expect(within(screen.getByRole("radiogroup", { name: "Mode selection" })).getAllByRole("radio").every(radio => !(radio as HTMLInputElement).checked)).toBe(true);
     await user.click(screen.getByRole("radio", { name: "Premium Mode" }));
     await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Discard changes" }));
     const premium = screen.getByRole("region", { name: "Premium Mode" });
-    await within(premium).findByText("premium saved line-a");
-    await setDescription(user, premium, "Pending Premium description");
+    await within(premium).findByRole("textbox", { name: "Description" });
+    await setDescription(user, premium, "Pending Premium description", false);
     await act(async () => { await view.client.invalidateQueries({ queryKey: knowledgeQueryKeys.section("line-a", "draft-line-a", "overview") }); });
     expect(screen.getByRole("radio", { name: "Premium Mode" })).toBeChecked();
-    expect(screen.getByText("Pending Premium description")).toBeVisible();
+    expect(screen.getByDisplayValue("Pending Premium description")).toBeVisible();
     expect(api.updateKnowledgeSection).not.toHaveBeenCalled();
   });
 
   it("preserves the selected radio and focus when a keyboard change is cancelled or blocked by a save", async () => {
     const user = userEvent.setup(); renderWorkspace();
     const panel = await openMode(user, "Premium Mode");
-    await setDescription(user, panel, "Premium radio guard draft");
+    await setDefaultMargin(user, panel);
     const group = screen.getByRole("radiogroup", { name: "Mode selection" });
     const premium = within(group).getByRole("radio", { name: "Premium Mode" });
     const functional = within(group).getByRole("radio", { name: "Functional Mode" });
@@ -326,7 +441,7 @@ describe("independent Configuration modes", () => {
     expect(functional).not.toBeChecked();
     await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Stay here" }));
     await waitFor(() => expect(premium).toHaveFocus());
-    expect(screen.getByText("Premium radio guard draft")).toBeVisible();
+    expect(screen.getByRole("spinbutton", { name: "Max. PMC Margin (%)" })).toHaveValue(18);
     expect(api.updateKnowledgeSection).not.toHaveBeenCalled();
     const save = vi.mocked(api.updateKnowledgeSection).getMockImplementation()!;
     let finishSave!: () => void;
@@ -343,8 +458,8 @@ describe("independent Configuration modes", () => {
     await user.keyboard("{ArrowDown}");
     expect(functional).toHaveFocus();
     expect(within(group).getAllByRole("radio", { checked: true })).toEqual([functional]);
-    expect(await within(screen.getByRole("region", { name: "Functional Mode" })).findByText("functional saved line-a")).toBeVisible();
-    expect(store.get("line-a")!.advanced.premium.modeDescription).toBe("Premium radio guard draft");
+    expect(await within(screen.getByRole("region", { name: "Functional Mode" })).findByRole("textbox", { name: "Description" })).toHaveValue("functional saved line-a");
+    expect(store.get("line-a")!.advanced.premium.pmcMarginBps).toBe(1800);
     expect(api.updateKnowledgeSection).toHaveBeenCalledTimes(1);
     expect(vi.mocked(api.updateKnowledgeSection).mock.calls[0]![3].modeTier).toBe("premium");
   });
@@ -366,7 +481,9 @@ describe("independent Configuration modes", () => {
     expect(within(screen.getByRole("radiogroup", { name: "Mode selection" })).queryByRole("radio", { checked: true })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Return to Mode" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Save Mode" })).toBeDisabled();
-    await waitFor(() => expect(within(screen.getByRole("tabpanel", { name: "Mode" })).getByText("Independent default settings")).toBeVisible());
+    await within(screen.getByRole("tabpanel", { name: "Mode" })).findByRole("checkbox", { name: "PMC" });
+    expect(within(screen.getByRole("tabpanel", { name: "Mode" })).getByRole("textbox", { name: "Description" })).toHaveValue("Independent default settings");
+    expect(store.get("line-a")!.advanced.default.modeDescription).toBe("Independent default settings");
     expect(screen.queryByText("premium saved line-a")).not.toBeInTheDocument();
     expect(api.updateKnowledgeSection).not.toHaveBeenCalled();
   });
@@ -374,14 +491,14 @@ describe("independent Configuration modes", () => {
   it.each(["parent tab", "mobile action", "selected radio"])("guards a dirty tier return through the %s and preserves edits on cancel", async action => {
     const user = userEvent.setup(); renderWorkspace();
     const panel = await openMode(user, "Premium Mode");
-    await setDescription(user, panel, "Pending tier return");
+    await setDescription(user, panel, "Pending tier return", false);
     const returnControl = action === "parent tab" ? screen.getByRole("tab", { name: "Mode" })
       : action === "mobile action" ? screen.getByRole("button", { name: "Return to Mode" })
       : screen.getByRole("radio", { name: "Premium Mode" });
     await user.click(returnControl);
     await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Stay here" }));
     expect(screen.getByRole("radio", { name: "Premium Mode" })).toBeChecked();
-    expect(screen.getByText("Pending tier return")).toBeVisible();
+    expect(screen.getByDisplayValue("Pending tier return")).toBeVisible();
     await waitFor(() => expect(returnControl).toHaveFocus());
     await user.click(returnControl);
     await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Discard changes" }));
@@ -395,18 +512,18 @@ describe("independent Configuration modes", () => {
   it.each(["mobile action", "selected radio"])("retains tier edits after a failed %s return save and applies only that scope on retry", async action => {
     const user = userEvent.setup(); renderWorkspace();
     const panel = await openMode(user, "Premium Mode");
-    await setDescription(user, panel, "Premium saved before returning to Mode");
+    await setDefaultMargin(user, panel);
     vi.mocked(api.updateKnowledgeSection).mockRejectedValueOnce(new Error("Mode unavailable"));
     await user.click(action === "mobile action" ? screen.getByRole("button", { name: "Return to Mode" })
       : screen.getByRole("radio", { name: "Premium Mode" }));
     await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Save changes" }));
     expect(screen.getByRole("radio", { name: "Premium Mode" })).toBeChecked();
-    expect(screen.getByText("Premium saved before returning to Mode")).toBeVisible();
+    expect(screen.getByRole("spinbutton", { name: "Max. PMC Margin (%)" })).toHaveValue(18);
     expect(store.get("line-a")!.advanced.premium.modeDescription).toBe("premium saved line-a");
     await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(screen.queryByRole("region", { name: "Premium Mode" })).not.toBeInTheDocument());
     expect(screen.getByRole("tabpanel", { name: "Mode" })).toBeVisible();
-    expect(store.get("line-a")!.advanced.premium.modeDescription).toBe("Premium saved before returning to Mode");
+    expect(store.get("line-a")!.advanced.premium.pmcMarginBps).toBe(1800);
     expect(store.get("line-a")!.advanced.default).toEqual({});
     expect(vi.mocked(api.updateKnowledgeSection).mock.calls.every(([, , key, input]) => key === "advanced" && input.modeTier === "premium")).toBe(true);
   });
@@ -414,12 +531,12 @@ describe("independent Configuration modes", () => {
   it("blocks parent, mobile, and selected radio Mode returns while a tier save is in flight", async () => {
     const user = userEvent.setup(); renderWorkspace();
     const panel = await openMode(user, "Premium Mode");
-    await setDescription(user, panel, "Premium save in flight");
+    await setDescription(user, panel, "Premium save in flight", false);
     const save = vi.mocked(api.updateKnowledgeSection).getMockImplementation()!;
     let finishSave!: () => void;
     const gate = new Promise<void>(resolve => { finishSave = resolve; });
     vi.mocked(api.updateKnowledgeSection).mockImplementation(async (...args) => { await gate; return save(...args); });
-    await user.click(screen.getByRole("button", { name: "Save Premium Mode" }));
+    await user.click(within(panel).getByRole("button", { name: "Save" }));
     await screen.findByRole("button", { name: "Saving Premium Mode…" });
     await user.click(screen.getByRole("tab", { name: "Mode" }));
     await user.click(screen.getByRole("button", { name: "Return to Mode" }));
@@ -439,16 +556,16 @@ describe("independent Configuration modes", () => {
   it("keeps dirty inner mode selected after a failed guard save, then saves that scope before leaving", async () => {
     const user = userEvent.setup(); renderWorkspace();
     const panel = await openMode(user, "Premium Mode");
-    await setDescription(user, panel, "Pending Premium description");
+    await setDefaultMargin(user, panel);
     vi.mocked(api.updateKnowledgeSection).mockRejectedValueOnce(new Error("Mode unavailable"));
     await user.click(screen.getByRole("radio", { name: "Functional Mode" }));
     await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Save changes" }));
     expect(screen.getByRole("radio", { name: "Premium Mode" })).toBeChecked();
-    expect(screen.getByText("Pending Premium description")).toBeVisible();
+    expect(screen.getByRole("spinbutton", { name: "Max. PMC Margin (%)" })).toHaveValue(18);
     expect(store.get("line-a")!.advanced.premium.modeDescription).toBe("premium saved line-a");
     await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(screen.getByRole("radio", { name: "Functional Mode" })).toBeChecked());
-    expect(store.get("line-a")!.advanced.premium.modeDescription).toBe("Pending Premium description");
+    expect(store.get("line-a")!.advanced.premium.pmcMarginBps).toBe(1800);
     expect(store.get("line-a")!.advanced.functional.modeDescription).toBe("functional saved line-a");
     expect(vi.mocked(api.updateKnowledgeSection).mock.calls.every(([, , key, input]) => key === "advanced" && input.modeTier === "premium")).toBe(true);
   });
@@ -456,17 +573,18 @@ describe("independent Configuration modes", () => {
   it("preserves a dirty Default editor when a remote Overview toggles tiers off and on", async () => {
     const user = userEvent.setup(); const view = renderWorkspace();
     const panel = await openMode(user, "Mode");
-    await setDescription(user, panel, "Default draft survives selector changes");
+    await setDefaultMargin(user, panel);
     for (const tiers of [[], ["signature", "premium", "functional"]]) {
       store.get("line-a")!.overview = { uomId: "sqft", applicableTiers: tiers };
       await act(async () => { view.client.setQueryData(knowledgeQueryKeys.section("line-a", "draft-line-a", "overview"), section("line-a", "draft-line-a", "overview")); });
-      expect(screen.getByText("Default draft survives selector changes")).toBeVisible();
+      expect(within(panel).getByRole("spinbutton", { name: "Max. PMC Margin (%)" })).toHaveValue(18);
       expect(screen.getByRole("button", { name: "Save Mode" })).toBeEnabled();
       await waitFor(() => expect(Boolean(screen.queryByRole("radiogroup", { name: "Mode selection" }))).toBe(tiers.length > 0));
       expect(api.updateKnowledgeSection).not.toHaveBeenCalled();
     }
     await user.click(screen.getByRole("button", { name: "Save Mode" }));
-    await waitFor(() => expect(store.get("line-a")!.advanced.default.modeDescription).toBe("Default draft survives selector changes"));
+    await waitFor(() => expect(store.get("line-a")!.advanced.default.pmcMarginBps).toBe(1800));
+    expect(store.get("line-a")!.advanced.default.modeDescription).toBeUndefined();
     expect(store.get("line-a")!.advanced.signature.modeDescription).toBe("signature saved line-a");
     expect(vi.mocked(api.updateKnowledgeSection).mock.calls[0]![3].modeTier).toBe("default");
   });
@@ -474,17 +592,17 @@ describe("independent Configuration modes", () => {
   it("retains a saving tier through remote applicability changes and returns to default only after completion", async () => {
     const user = userEvent.setup(); const view = renderWorkspace();
     const panel = await openMode(user, "Premium Mode");
-    await setDescription(user, panel, "Saved Premium while hidden");
+    await setDescription(user, panel, "Saved Premium while hidden", false);
     const save = vi.mocked(api.updateKnowledgeSection).getMockImplementation()!;
     let finishSave!: () => void;
     const gate = new Promise<void>(resolve => { finishSave = resolve; });
     vi.mocked(api.updateKnowledgeSection).mockImplementation(async (...args) => { await gate; return save(...args); });
-    await user.click(screen.getByRole("button", { name: "Save Premium Mode" }));
+    await user.click(within(panel).getByRole("button", { name: "Save" }));
     await screen.findByRole("button", { name: "Saving Premium Mode…" });
     store.get("line-a")!.overview = { uomId: "sqft", applicableTiers: [] };
     await act(async () => { view.client.setQueryData(knowledgeQueryKeys.section("line-a", "draft-line-a", "overview"), section("line-a", "draft-line-a", "overview")); });
     expect(screen.getByRole("radio", { name: "Premium Mode" })).toBeChecked();
-    expect(screen.getByText("Saved Premium while hidden")).toBeVisible();
+    expect(screen.getByDisplayValue("Saved Premium while hidden")).toBeVisible();
     await user.click(screen.getByRole("tab", { name: "Mode" }));
     expect(screen.getByRole("radio", { name: "Premium Mode" })).toBeChecked();
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
@@ -499,7 +617,7 @@ describe("independent Configuration modes", () => {
   it("never opens a removed destination tier after an asynchronous guard save completes", async () => {
     const user = userEvent.setup(); const view = renderWorkspace();
     const premium = await openMode(user, "Premium Mode");
-    await setDescription(user, premium, "Premium saved before guarded transition");
+    await setDefaultMargin(user, premium);
     const save = vi.mocked(api.updateKnowledgeSection).getMockImplementation()!;
     let finishSave!: () => void;
     const gate = new Promise<void>(resolve => { finishSave = resolve; });
@@ -514,20 +632,26 @@ describe("independent Configuration modes", () => {
     await act(async () => finishSave());
     await waitFor(() => expect(screen.getByRole("tab", { name: "Mode" })).toHaveAttribute("aria-selected", "true"));
     expect(screen.getByRole("tabpanel", { name: "Mode" })).toBeVisible();
-    expect(store.get("line-a")!.advanced.premium.modeDescription).toBe("Premium saved before guarded transition");
+    expect(store.get("line-a")!.advanced.premium.pmcMarginBps).toBe(1800);
     expect(store.get("line-a")!.advanced.functional.modeDescription).toBe("functional saved line-a");
     expect(vi.mocked(api.updateKnowledgeSection).mock.calls[0]![3].modeTier).toBe("premium");
     expect(vi.mocked(api.getKnowledgeSection).mock.calls.some(([, , , options]) => options?.modeTier === "functional")).toBe(false);
   });
 
   it("preserves read-only permissions and does not render edits in any mode", async () => {
+    store.get("line-a")!.advanced.default = { modeDescription: "Read-only common description" };
     permissions.editable = false;
     const user = userEvent.setup(); renderWorkspace();
     await screen.findByRole("tab", { name: "Mode" });
     for (const label of ["Mode", "Signature Mode", "Premium Mode", "Functional Mode"]) {
       const panel = await selectMode(user, label);
-      await waitFor(() => expect(api.getKnowledgeSection).toHaveBeenCalled());
+      await within(panel).findByRole("checkbox", { name: "PMC" });
       expect(within(panel).queryByRole("button", { name: "Edit Description" })).not.toBeInTheDocument();
+      expect(within(panel).getByRole("textbox", { name: "Description" })).toHaveAttribute("readonly");
+      expect(within(panel).getByRole("textbox", { name: "Description" })).toHaveValue(label === "Mode"
+        ? "Read-only common description" : `${label.split(" ")[0]!.toLowerCase()} saved line-a`);
+      expect(within(panel).getByRole("button", { name: "Save" })).toBeDisabled();
+      expect(within(panel).getByRole("button", { name: "Cancel" })).toBeDisabled();
       expect(screen.queryByRole("button", { name: `Save ${label}` })).not.toBeInTheDocument();
     }
     expect(api.updateKnowledgeSection).not.toHaveBeenCalled();
@@ -551,10 +675,11 @@ describe("independent Configuration modes", () => {
     expect(within(panel).getByText("Mode configuration: Default read unavailable")).toBeVisible();
     expect(within(panel).queryByText("signature saved line-a")).not.toBeInTheDocument();
     unavailable = false; await user.click(retry);
-    await within(panel).findByRole("button", { name: "Edit Description" });
+    await within(panel).findByRole("checkbox", { name: "PMC" });
+    expect(within(panel).getByRole("textbox", { name: "Description" })).toHaveValue("");
     expect(within(panel).queryByText("signature saved line-a")).not.toBeInTheDocument();
     const signature = await openMode(user, "Signature Mode");
-    expect(await within(signature).findByText("signature saved line-a")).toBeVisible();
+    expect(await within(signature).findByRole("textbox", { name: "Description" })).toHaveValue("signature saved line-a");
     expect(api.updateKnowledgeSection).not.toHaveBeenCalled();
   });
 });

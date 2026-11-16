@@ -20,6 +20,7 @@ import { projectProcurementKeys } from "../procurement/projectProcurementApi";
 import { procurementBasketKeys } from "../procurement/procurementBasketApi";
 import { vendorSuggestionKeys } from "../procurement/vendorSuggestionsApi";
 import { estimateRequirementsKeys } from "../client/estimateRequirementsApi";
+import { estimateTiersKeys } from "../client/estimateTiersApi";
 import { estimationCatalogueKeys } from "../leads/estimationCatalogueApi";
 import type {
   KnowledgeCompleteness,
@@ -100,6 +101,39 @@ function itemDetail(overrides: Partial<KnowledgeItemDetail> = {}): KnowledgeItem
 }
 
 describe("knowledge mutation cache synchronization", () => {
+  it("refetches active estimator, Configuration preview and project tier descriptions after a saved section", async () => {
+    const client = queryClient();
+    const keys = [estimationCatalogueKeys.ready,
+      [...estimationCatalogueKeys.all, "client-preview", "line-1", "session-1"],
+      estimateTiersKeys.detail("project-one"), estimateTiersKeys.detail("project-two")];
+    const publishedKey = ["client", "estimates", "approved-round"];
+    const published = { version: 6, totalPaise: 123456 };
+    client.setQueryData(publishedKey, published);
+    let saved = { mainLineId: "line-1", revisionId: "draft-current", revisionVersion: 3,
+      tierDescriptions: { signature: "Original signature", premium: "Original premium", functional: "Original functional" } };
+    const queries = keys.map(queryKey => ({ queryKey, queryFn: vi.fn(async () => saved), staleTime: Infinity }));
+    await Promise.all(queries.map(options => client.fetchQuery(options)));
+    const unsubscribe = queries.map(options => new QueryObserver(client, options).subscribe(() => {}));
+    try {
+      saved = { ...saved, revisionVersion: 4, tierDescriptions: {
+        signature: "Hand-finished signature ceiling", premium: "Premium acoustic finish", functional: "Functional plain finish"
+      } };
+      await syncKnowledgeSectionMutation(client, {
+        ...actor, id: "advanced-1", mainLineId: "line-1", revisionId: "draft-current", sectionKey: "advanced",
+        applicability: "configured", version: 4, aggregateVersion: 5, payload: { description: saved.tierDescriptions.signature }
+      });
+      for (const options of queries) {
+        expect(options.queryFn).toHaveBeenCalledTimes(2);
+        expect(client.getQueryData(options.queryKey)).toEqual(saved);
+      }
+      expect(client.getQueryData(publishedKey)).toEqual(published);
+      expect(client.getQueryState(publishedKey)?.isInvalidated).toBe(false);
+    } finally {
+      unsubscribe.forEach(stop => stop());
+      client.clear();
+    }
+  });
+
   it.each(["section", "lifecycle", "main-line deletion", "basket deletion", "sub-basket catalog"])("invalidates saved item-name pages and candidate checks after %s changes", async (kind) => {
     const client = queryClient();
     const page = knowledgeQueryKeys.specificationItemNameList({ search: "ply", offset: 20 });

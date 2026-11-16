@@ -104,7 +104,7 @@ export function BudgetLiquidStage({ metrics }: { metrics: readonly BudgetLiquidM
 
   return <div className="budget-liquid-stage" data-render-state={!canRender ? "static" : ready ? "ready" : "loading"}>
     <div className="budget-liquid-stage__toolbar">
-      <p id={explanationId}>Liquid levels show each amount as a share of total budget.<small>Overheads are included in expenses. Reserved profit is the 20% margin.</small></p>
+      <p id={explanationId}>Liquid levels show each amount as a share of total budget.<small>Expenses include recorded costs and outstanding approved vendor commitments. Reserved profit is the 20% margin.</small></p>
       <div className="budget-liquid-stage__controls">
         {reducedMotion && canRender ? <small>Reduced motion is on.</small> : null}
         {failed && supportsWebGL ? <button className="budget-liquid-stage__retry" type="button" onClick={retry}>Retry 3D view</button> : null}
@@ -119,9 +119,9 @@ export function BudgetLiquidStage({ metrics }: { metrics: readonly BudgetLiquidM
           <div className="budget-liquid-stage__caption">
             <div className="budget-liquid-stage__footer">
               <span className="budget-liquid-stage__icon"><BudgetMetricIcon tone={metric.id} /></span>
-              <div><h4>{metric.label}</h4><strong className="budget-liquid-stage__amount">{formatPaise(metric.amountPaise)}</strong></div>
+              <div><h4>{metric.label}</h4><strong className="budget-liquid-stage__amount">{metric.amountPaise === null ? "Unavailable" : formatPaise(metric.amountPaise)}</strong></div>
             </div>
-            <p className="budget-liquid-stage__ratio">{metric.ratio === null ? "Percentage not defined for a zero total budget" : `${percent.format(metric.ratio * 100)}% of total budget`}</p>
+            <p className="budget-liquid-stage__ratio">{metric.amountPaise === null ? "Percentage unavailable" : metric.ratio === null ? "Percentage not defined for a zero total budget" : `${percent.format(metric.ratio * 100)}% of total budget`}</p>
             <p className="budget-liquid-stage__note">{metric.note}</p>
             {metric.excessPaise > 0 ? <p className="budget-liquid-stage__excess">{formatPaise(metric.excessPaise)} above total budget. {metric.ratio === null ? "No budget capacity is defined." : "Vessel shown at capacity."}</p> : null}
           </div>

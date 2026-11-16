@@ -2,6 +2,7 @@ import { ProjectId } from "../../components/projects/ProjectId";
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 
+import { estimateTotalsReconcile } from "../../../../shared/estimation/estimateTotalRounding";
 import { ApiError, apiClient } from "../../api/client";
 import type { FinanceLedgerEntry, ProjectFinanceBucket } from "../../api/types";
 import { useAuth } from "../../auth/AuthProvider";
@@ -21,6 +22,7 @@ import { projectStatusKeys } from "../project-status/projectStatusApi";
 import { formatBps, formatPaise, formatPercentage } from "./financeFormat";
 import { ProjectFinanceChart } from "./ProjectFinanceChart";
 import { ProjectBudgetCostBreakdown, ProjectBudgetOverview } from "./ProjectBudgetOverview";
+import { readProjectCommitmentBudget } from "./projectCommitmentBudget";
 import {
   getFinanceSupportingDocument,
   getProjectFinanceBucket,
@@ -88,6 +90,8 @@ export function ProjectFinancePanel({
   const trustedBucket = bucket.data && integrityError === null
     ? bucket.data
     : null;
+  const commitment = isBudgetPresentation && trustedBucket ? readProjectCommitmentBudget(trustedBucket) : null;
+  const overBudget = isBudgetPresentation ? commitment?.ready && commitment.budget?.overBudget === true : trustedBucket?.overBudget;
   const projectCompleted = Boolean(trustedBucket && (trustedBucket.projectStatus === "completed" || completedProjectId === projectId));
   const ledgerIntegrityError = trustedBucket && entries.data
     ? projectFinanceLedgerIntegrityError(
@@ -119,8 +123,8 @@ export function ProjectFinancePanel({
         </div>
         {trustedBucket ? (
           <StatusBadge
-            tone={projectCompleted ? "success" : trustedBucket.overBudget ? "danger" : trustedBucket.status === "open" ? "success" : "info"}
-            label={projectCompleted ? "Completed" : trustedBucket.overBudget ? "Over cost budget" : trustedBucket.status.replaceAll("_", " ")}
+            tone={projectCompleted ? "success" : overBudget ? "danger" : trustedBucket.status === "open" ? "success" : "info"}
+            label={projectCompleted ? "Completed" : overBudget ? "Over cost budget" : trustedBucket.status.replaceAll("_", " ")}
           />
         ) : null}
       </div>
@@ -160,7 +164,8 @@ export function ProjectFinancePanel({
             </nav>
             {budgetSection === "Overview" ? <ProjectBudgetOverview bucket={trustedBucket} /> : null}
             {budgetSection === "Cost Breakdown" ? <ProjectBudgetCostBreakdown bucket={trustedBucket} /> : null}
-            {overheadsOnly ? <p className="project-budget-overheads-note">Total overheads: <strong>{formatPaise(trustedBucket.overheadPaise)}</strong>, included in total spending. Entries below are filtered from the loaded ledger; summary totals include the full project history.</p> : null}
+            {commitment?.message && !showLedger ? <Button variant="secondary" disabled={bucket.isFetching} onClick={() => void Promise.all([bucket.refetch(), entries.refetch()])}>Refresh financial details</Button> : null}
+            {overheadsOnly ? <p className="project-budget-overheads-note">Total overheads: <strong>{formatPaise(trustedBucket.overheadPaise)}</strong>, included in recorded expenses. Entries below are filtered from the loaded ledger; summary totals include the full project history.</p> : null}
           </> : <ProjectFinanceChart bucket={trustedBucket} />}
           {isBudgetPresentation && !showLedger && ledgerIntegrityError ? <PageState state="error" message={ledgerIntegrityError} action={{ label: "Refresh ledger", onAction: () => void entries.refetch() }} /> : null}
           {isBudgetPresentation && !showLedger && entries.isError && !entries.data ? <PageState state="error" message="The spending and overhead ledger could not be loaded. The approved financial baseline remains available above." action={{ label: "Retry ledger", onAction: () => void entries.refetch() }} /> : null}
@@ -215,7 +220,7 @@ function FinanceBaselineDetails({ bucket, showUndefinedRatio = false }: { bucket
               <div><dt>GST included (18%)</dt><dd>{formatPaise(bucket.approvedGstPaise)}</dd></div>
               <div><dt>Net approved revenue (excl. GST)</dt><dd>{formatPaise(bucket.approvedSubtotalPaise)}</dd></div>
               <div><dt>Profit margin policy</dt><dd>{formatBps(bucket.targetMarginBps)}</dd></div>
-              <div><dt>Cost budget consumed</dt><dd>{showUndefinedRatio && bucket.costBudgetPaise <= 0 ? "Not defined (no usable budget)" : formatPercentage(bucket.recordedCostPaise, bucket.costBudgetPaise)}</dd></div>
+              <div><dt>Recorded cost budget consumed</dt><dd>{showUndefinedRatio && bucket.costBudgetPaise <= 0 ? "Not defined (no usable budget)" : formatPercentage(bucket.recordedCostPaise, bucket.costBudgetPaise)}</dd></div>
               <div><dt>Approved estimate baseline</dt><dd>{bucket.baselinePhase === "post" ? "Final estimate · " : bucket.baselinePhase === "pre" ? "Pre-estimate · " : ""}Version {bucket.estimateVersion}</dd></div>
               <div><dt>Design plan baseline</dt><dd>Version {bucket.designPlanVersion}</dd></div>
               <div><dt>Project deadline</dt><dd>{date.format(new Date(bucket.deadlineAt))}</dd></div>
@@ -276,8 +281,12 @@ function projectFinanceIntegrityError(
     bucket.targetMarginBps !== 2_000 ||
     expectedTargetProfitPaise === null ||
     bucket.targetProfitPaise !== expectedTargetProfitPaise ||
-    bucket.approvedSubtotalPaise + bucket.approvedGstPaise !==
-      bucket.approvedContractTotalPaise ||
+    !estimateTotalsReconcile({
+      subtotalPaise: bucket.approvedSubtotalPaise,
+      gstPaise: bucket.approvedGstPaise,
+      totalPaise: bucket.approvedContractTotalPaise,
+      roundOffPaise: bucket.approvedRoundOffPaise
+    }) ||
     bucket.targetProfitPaise + bucket.costBudgetPaise !==
       bucket.approvedSubtotalPaise ||
     bucket.procurementCostPaise + bucket.employeePaymentPaise +
@@ -324,8 +333,8 @@ interface CompletionDecision { projectId: string; completedAt: string; resulting
 interface CompletionRequest { expectedAuthorityVersion: number; idempotencyKey: string }
 const completionSummaryKey = (projectId: string) => ["admin", "project-completion", projectId] as const;
 
-function ProjectCompletionControl({ projectId, projectName, projectStatus, onCompleted }: {
-  projectId: string; projectName: string; projectStatus: string; onCompleted: () => void;
+export function ProjectCompletionControl({ projectId, projectName, projectStatus, onCompleted, triggerLabel = "Close" }: {
+  projectId: string; projectName: string; projectStatus: string; onCompleted: () => void; triggerLabel?: string;
 }) {
   const client = useQueryClient();
   const openerRef = useRef<HTMLButtonElement>(null);
@@ -389,7 +398,7 @@ function ProjectCompletionControl({ projectId, projectName, projectStatus, onCom
   }
 
   return <>
-    <Button ref={openerRef} onClick={() => { requestRef.current = null; completion.reset(); setOpen(true); }}>Close</Button>
+    <Button ref={openerRef} className="project-completion-control" onClick={() => { requestRef.current = null; completion.reset(); setOpen(true); }}>{triggerLabel}</Button>
     {open ? <Dialog tone="danger" title={`Close ${projectName}?`} eyebrow="Final project approval" role="alertdialog"
       description="This marks the project completed and records its completion date. No project cost will be added."
       busy={completion.isPending} onClose={close} returnFocusRef={openerRef}>

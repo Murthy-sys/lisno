@@ -19,6 +19,7 @@ import { ProgressBar } from "../../components/ui/ProgressBar";
 import { StatusBadge } from "../../components/ui/StatusBadge";
 import { Surface } from "../../components/ui/Surface";
 import { adminProjectKeys } from "./adminProjectsApi";
+import { canAssignProjectCoordination } from "./adminProjectPresentation";
 import { dashboardKeys } from "./dashboard/superAdminDashboardApi";
 import {
   getAdminProjectSectionAssignments,
@@ -31,60 +32,74 @@ import {
 
 const MIXED_ASSIGNMENT_VALUE = "__multiple_assignees__";
 
-export function WorkerAssignmentPanel({ project }: { project: AdminProjectSummary }) {
-  return <WorkerAssignmentPanelForProject key={project.id} project={project} />;
+type AssignmentArea = "all" | "procurement" | "manager" | "trades";
+
+export function WorkerAssignmentPanel({ project, defaultExpanded = false, showProjectManager = true, assignmentArea = "all" }: {
+  project: AdminProjectSummary; defaultExpanded?: boolean; showProjectManager?: boolean; assignmentArea?: AssignmentArea;
+}) {
+  return <WorkerAssignmentPanelForProject key={`${project.id}:${assignmentArea}`} project={project} defaultExpanded={defaultExpanded} showProjectManager={showProjectManager} assignmentArea={assignmentArea} />;
 }
 
-function WorkerAssignmentPanelForProject({ project }: { project: AdminProjectSummary }) {
+function WorkerAssignmentPanelForProject({ project, defaultExpanded, showProjectManager, assignmentArea }: {
+  project: AdminProjectSummary; defaultExpanded: boolean; showProjectManager: boolean; assignmentArea: AssignmentArea;
+}) {
   const approved = project.estimate?.designPlanStatus === "approved";
-  const [expanded, setExpanded] = useState(false);
+  const coordinationAvailable = canAssignProjectCoordination(project);
+  const showCoordination = assignmentArea !== "trades";
+  const showTradeSections = assignmentArea === "all" || assignmentArea === "trades";
+  const scoped = assignmentArea !== "all";
+  const panelTitle = assignmentArea === "procurement" ? "Procurement" : assignmentArea === "manager" ? "Project Manager" : assignmentArea === "trades" ? "Trade teams" : "Task assignment";
+  const peopleAvailable = showCoordination ? coordinationAvailable : approved;
+  const [expanded, setExpanded] = useState(defaultExpanded);
   const tasks = useQuery({
     queryKey: projectWorkflowKeys.projectTasks(project.id),
     queryFn: () => getAdminProjectWorkflowTasks(project.id),
-    enabled: approved
+    enabled: showCoordination && coordinationAvailable
   });
   const sections = useQuery({
     queryKey: projectWorkflowKeys.sectionAssignments(project.id),
     queryFn: () => getAdminProjectSectionAssignments(project.id),
-    enabled: approved
+    enabled: showTradeSections && approved
   });
   const workers = useQuery({
     queryKey: projectWorkflowKeys.workers,
     queryFn: getWorkerAssignmentOptions,
-    enabled: approved
+    enabled: peopleAvailable
   });
-  const taskIntegrityError = tasks.data?.some(
+  const taskIntegrityError = showCoordination && (tasks.data?.some(
     (task) => task.projectId !== project.id ||
       (project.estimate !== null && task.estimateId !== project.estimate.id)
-  ) ?? false;
-  const sectionIntegrityError = sections.data
+  ) ?? false);
+  const sectionIntegrityError = showTradeSections && approved && sections.data
     ? sectionAssignmentsIntegrityError(project, sections.data)
     : null;
-  const trustedTasks = taskIntegrityError ? [] : tasks.data ?? [];
-  const trustedSections = sectionIntegrityError ? [] : sections.data ?? [];
-  const procurementTasks = trustedTasks.filter((task) => task.kind === "procurement");
-  const siteTasks = trustedTasks.filter((task) => task.kind === "site_execution");
-  const coordinationTasks = trustedTasks.filter((task) => task.kind === "finance");
+  const trustedTasks = showCoordination && !taskIntegrityError ? tasks.data ?? [] : [];
+  const trustedSections = showTradeSections && approved && !sectionIntegrityError ? sections.data ?? [] : [];
+  const procurementTasks = assignmentArea !== "manager" ? trustedTasks.filter((task) => task.kind === "procurement") : [];
+  const siteTasks = showProjectManager && assignmentArea !== "procurement" ? trustedTasks.filter((task) => task.kind === "site_execution") : [];
+  const coordinationTasks = assignmentArea === "all" ? trustedTasks.filter((task) => task.kind === "finance") : [];
   const assignedSections = trustedSections.filter(
     (section) => section.assignmentState === "assigned"
   ).length;
-  const outerTriggerId = `task-assignment-${project.id}-trigger`;
-  const outerTitleId = `task-assignment-${project.id}-title`;
-  const outerPanelId = `task-assignment-${project.id}-panel`;
-  const summaryId = `task-assignment-${project.id}-summary`;
-  const queryPending = tasks.isPending || sections.isPending || workers.isPending;
-  const queryFailed = tasks.isError || sections.isError || workers.isError;
+  const outerTriggerId = `task-assignment-${project.id}-${assignmentArea}-trigger`;
+  const outerTitleId = `task-assignment-${project.id}-${assignmentArea}-title`;
+  const outerPanelId = `task-assignment-${project.id}-${assignmentArea}-panel`;
+  const summaryId = `task-assignment-${project.id}-${assignmentArea}-summary`;
+  const queryPending = workers.isPending || showCoordination && tasks.isPending || showTradeSections && approved && sections.isPending;
+  const queryFailed = workers.isError || showCoordination && tasks.isError || showTradeSections && approved && sections.isError;
 
-  if (!approved) {
+  if (!peopleAvailable) {
     return (
-      <Surface as="section" className="admin-project-detail__surface worker-assignment" aria-labelledby="worker-assignment-title">
+      <Surface as="section" className="admin-project-detail__surface worker-assignment" aria-labelledby={outerTitleId}>
         <div className="section-heading">
           <div>
             <p className="eyebrow">Approved design execution</p>
-            <h2 id="worker-assignment-title">Task assignment</h2>
+            <h2 id={outerTitleId}>{panelTitle}</h2>
           </div>
         </div>
-        <p>Worker assignment opens after the Client—or a Sales Manager acting with proof—approves the design plan.</p>
+        <p>{assignmentArea === "trades" ? "Trade assignment opens after the Client approves the design plan." : project.estimationWorkflowVersion === 2 || project.estimationWorkflowVersion === 3
+          ? "Project coordination opens after the Client approves the initial estimate. Trade assignment opens after design approval."
+          : "Worker assignment opens after the Client—or a Sales Manager acting with proof—approves the design plan."}</p>
       </Surface>
     );
   }
@@ -93,12 +108,13 @@ function WorkerAssignmentPanelForProject({ project }: { project: AdminProjectSum
     ? "Loading assignment summary"
     : queryFailed || taskIntegrityError || sectionIntegrityError
       ? "Assignment summary unavailable"
-      : `${assignedSections} of ${trustedSections.length} ${trustedSections.length === 1 ? "section" : "sections"} assigned`;
+      : approved ? `${assignedSections} of ${trustedSections.length} ${trustedSections.length === 1 ? "section" : "sections"} assigned`
+      : `${[...procurementTasks, ...siteTasks].filter(task => task.assignedWorker).length} of ${procurementTasks.length + siteTasks.length} coordination roles assigned`;
 
   return (
     <Surface as="section" className="admin-project-detail__surface worker-assignment" aria-labelledby={outerTitleId}>
-      <h2 id={outerTitleId} className="sr-only">Task assignment</h2>
-      <button
+      <h2 id={outerTitleId} className={scoped ? "worker-assignment__title" : "sr-only"}>{panelTitle}</h2>
+      {!scoped ? <button
         id={outerTriggerId}
         className="worker-assignment__disclosure-trigger"
         type="button"
@@ -109,14 +125,14 @@ function WorkerAssignmentPanelForProject({ project }: { project: AdminProjectSum
         onClick={() => setExpanded((current) => !current)}
       >
         <span className="worker-assignment__disclosure-identity" aria-hidden="true">
-          <span className="eyebrow">Approved design execution</span>
+          <span className="eyebrow">{approved ? "Approved design execution" : "Project preparation"}</span>
           <span className="worker-assignment__disclosure-title">Task assignment</span>
         </span>
         <span id={summaryId} className="worker-assignment__disclosure-summary">{summary}</span>
         <ChevronDown className="worker-assignment__chevron" aria-hidden="true" />
-      </button>
+      </button> : null}
 
-      {expanded ? (
+      {scoped || expanded ? (
         <div id={outerPanelId} className="worker-assignment__body">
           {queryPending ? (
             <PageState state="loading" message="Loading task assignments and active workers…" />
@@ -128,27 +144,32 @@ function WorkerAssignmentPanelForProject({ project }: { project: AdminProjectSum
                 : "Task assignments could not be loaded.")}
               action={{
                 label: "Try again",
-                onAction: () => void Promise.all([tasks.refetch(), sections.refetch(), workers.refetch()])
+                onAction: () => void Promise.all([workers.refetch(), ...(showCoordination ? [tasks.refetch()] : []), ...(showTradeSections && approved ? [sections.refetch()] : [])])
               }}
             />
           ) : (
             <>
-              <ProjectCoordination
+              {showCoordination ? <ProjectCoordination
                 projectId={project.id}
+                title={scoped ? panelTitle : undefined}
+                headingId={scoped ? outerTitleId : `${outerTitleId}-coordination`}
+                showTaskProgress={!scoped}
                 assignmentTasks={[...procurementTasks, ...siteTasks]}
                 progressTasks={coordinationTasks}
                 workers={workers.data ?? []}
+                refreshingPeople={workers.isFetching}
+                onRefreshPeople={() => void workers.refetch()}
                 onStale={() => void tasks.refetch()}
-              />
-              <section className="worker-assignment__sections" aria-labelledby={`task-assignment-${project.id}-sections-title`}>
+              /> : null}
+              {showTradeSections ? <section className="worker-assignment__sections" aria-labelledby={`${outerTitleId}-sections`}>
                 <div className="section-heading">
                   <div>
-                    <h3 id={`task-assignment-${project.id}-sections-title`}>Work sections</h3>
-                    <p>Assign one eligible person to every unfinished task in a selected Estimate section.</p>
+                    <h3 id={`${outerTitleId}-sections`} className={assignmentArea === "trades" ? "sr-only" : undefined}>Work sections</h3>
+                    <p>{approved ? "Assign one eligible person to every unfinished task in a selected Estimate section." : "Trade assignment opens after the Client approves the design plan. Procurement and Project Manager coordination can be assigned now."}</p>
                   </div>
-                  <span>{assignedSections} of {trustedSections.length} assigned</span>
+                  {approved ? <span>{assignedSections} of {trustedSections.length} assigned</span> : null}
                 </div>
-                {trustedSections.length === 0 ? (
+                {!approved ? null : trustedSections.length === 0 ? (
                   <p className="inline-empty">No trade work was selected in the approved Estimate.</p>
                 ) : (
                   <div className="worker-assignment__section-list">
@@ -157,7 +178,7 @@ function WorkerAssignmentPanelForProject({ project }: { project: AdminProjectSum
                     ))}
                   </div>
                 )}
-              </section>
+              </section> : null}
             </>
           )}
         </div>
@@ -168,31 +189,42 @@ function WorkerAssignmentPanelForProject({ project }: { project: AdminProjectSum
 
 function ProjectCoordination({
   projectId,
+  title,
+  headingId,
+  showTaskProgress = true,
   assignmentTasks,
   progressTasks,
   workers,
+  refreshingPeople,
+  onRefreshPeople,
   onStale
 }: {
   projectId: string;
+  title?: string;
+  headingId: string;
+  showTaskProgress?: boolean;
   assignmentTasks: ProjectWorkflowTask[];
   progressTasks: ProjectWorkflowTask[];
   workers: WorkerAssignmentOption[];
+  refreshingPeople: boolean;
+  onRefreshPeople: () => void;
   onStale: () => void;
 }) {
   return (
-    <section className="worker-assignment__coordination" aria-labelledby={`task-assignment-${projectId}-coordination-title`}>
+    <section className="worker-assignment__coordination" aria-labelledby={title ? undefined : headingId}>
       <div className="section-heading">
         <div>
-          <h3 id={`task-assignment-${projectId}-coordination-title`}>Project coordination</h3>
-          <p>Assign Procurement and Site Management, then follow their progress.</p>
+          {!title ? <h3 id={headingId}>Project coordination</h3> : null}
+          <p>{title ? title === "Procurement" ? "Assign the person responsible for purchasing and vendor coordination." : "Assign the Project Manager responsible for site coordination." : assignmentTasks.some(task => task.kind === "site_execution") ? "Assign Procurement and Project Manager, then follow their progress." : "Assign Procurement, then follow project coordination progress."}</p>
         </div>
+        <Button variant="secondary" busy={refreshingPeople} busyLabel="Refreshing people…" onClick={onRefreshPeople}>Refresh people</Button>
       </div>
       {assignmentTasks.length === 0 && progressTasks.length === 0 ? (
-        <p className="inline-empty">No project coordination tasks are available.</p>
+        <p className="inline-empty">{title ? `No ${title} assignment is available for this project yet.` : "No project coordination tasks are available."}</p>
       ) : (
         <div className="worker-assignment__coordination-grid">
           {assignmentTasks.map((task) => (
-            <WorkerAssignmentRow key={task.id} projectId={projectId} task={task} workers={workers} onStale={onStale} />
+            <WorkerAssignmentRow key={task.id} projectId={projectId} task={task} workers={workers} onStale={onStale} showTaskProgress={showTaskProgress} />
           ))}
           {progressTasks.map((task) => <CoordinationProgressCard key={task.id} task={task} />)}
         </div>
@@ -376,16 +408,17 @@ function SectionAssignmentDisclosure({ section, workers }: {
   );
 }
 
-function WorkerAssignmentRow({ projectId, task, workers, onStale }: {
+function WorkerAssignmentRow({ projectId, task, workers, onStale, showTaskProgress = true }: {
   projectId: string;
   task: ProjectWorkflowTask;
   workers: WorkerAssignmentOption[];
   onStale: () => void;
+  showTaskProgress?: boolean;
 }) {
   const client = useQueryClient();
   const [workerId, setWorkerId] = useState(task.assignedWorker?.id ?? "");
   useEffect(() => setWorkerId(task.assignedWorker?.id ?? ""), [task.assignedWorker?.id]);
-  const assigneeLabel = task.kind === "site_execution" ? "Project Manager" : "procurement coordinator";
+  const assigneeLabel = task.kind === "site_execution" ? "Project Manager" : "Procurement";
   const candidates = workers.filter((worker) => worker.role === task.assigneeRole);
   const assignment = useMutation({
     mutationFn: () => overrideWorkerAssignment({ projectId, taskId: task.id, expectedVersion: task.version, workerId: workerId || null }),
@@ -408,17 +441,24 @@ function WorkerAssignmentRow({ projectId, task, workers, onStale }: {
     }
   });
   const unchanged = workerId === (task.assignedWorker?.id ?? "");
+  const validSelection = workerId === "" || candidates.some(worker => worker.id === workerId);
+  const assignedUnavailable = Boolean(task.assignedWorker && !candidates.some(worker => worker.id === task.assignedWorker!.id));
 
   return (
-    <article className="worker-assignment__row worker-assignment__row--coordination" aria-label={`${task.title} assignment`}>
-      <div className="worker-assignment__task">
+    <article id={task.kind === "procurement" ? `procurement-assignment-${projectId}` : undefined} className="worker-assignment__row worker-assignment__row--coordination" aria-label={`${task.title} assignment`}>
+      {showTaskProgress ? <><div className="worker-assignment__task">
         <div><strong>{task.title}</strong><span>{ROLE_LABELS[task.assigneeRole]}</span></div>
         <StatusBadge tone={statusTone(task.status)} label={statusLabel(task.status)} />
       </div>
       <div className="worker-assignment__progress">
         <ProgressBar value={task.progress} label={`${task.title}: ${task.progress}% complete`} />
         <span>{task.progress}% complete</span>
+      </div></> : null}
+      <div className="worker-assignment__current" role="group" aria-label={`Current ${assigneeLabel}`}>
+        <small>Current assignee</small>
+        {task.assignedWorker ? <><strong>{task.assignedWorker.name}</strong><span>{task.assignedWorker.email}</span>{assignedUnavailable ? <small>Currently assigned; unavailable for a new assignment.</small> : null}</> : <span>Not assigned</span>}
       </div>
+      {!candidates.length ? <p role="status" className="worker-assignment__empty-people">No active {assigneeLabel} people are available. Refresh people after an eligible account is activated.</p> : null}
       <label>
         Assigned {assigneeLabel}
         <Select
@@ -430,11 +470,12 @@ function WorkerAssignmentRow({ projectId, task, workers, onStale }: {
           }}
         >
           <option value="">Unassigned</option>
+          {assignedUnavailable && task.assignedWorker ? <option value={task.assignedWorker.id} disabled>{task.assignedWorker.name} · Unavailable</option> : null}
           {candidates.map((worker) => <option value={worker.id} key={worker.id}>{worker.name} · {worker.email}</option>)}
         </Select>
       </label>
-      <Button type="button" busy={assignment.isPending} busyLabel="Saving…" disabled={task.status === "completed" || unchanged} onClick={() => assignment.mutate()}>
-        {!workerId ? `Unassign ${assigneeLabel}` : task.assignedWorker ? `Reassign ${assigneeLabel}` : `Assign ${assigneeLabel}`}
+      <Button type="button" busy={assignment.isPending} busyLabel="Saving…" disabled={task.status === "completed" || unchanged || !validSelection} onClick={() => { if (validSelection) assignment.mutate(); }}>
+        {!workerId && task.assignedWorker ? `Unassign ${assigneeLabel}` : task.assignedWorker ? `Reassign ${assigneeLabel}` : `Assign ${assigneeLabel}`}
       </Button>
       {assignment.isError ? <p role="alert">{assignment.error instanceof ApiError ? assignment.error.message : "The assignment could not be saved."}</p> : null}
       {assignment.isSuccess ? <p role="status">{ROLE_LABELS[task.assigneeRole]} assignment saved.</p> : null}

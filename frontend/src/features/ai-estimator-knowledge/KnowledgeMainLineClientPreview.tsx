@@ -4,7 +4,7 @@ import { calculateDimensionQuantity } from "../../../../shared/estimation/estima
 import { KNOWLEDGE_MODE_TIERS, KNOWLEDGE_MODE_TIER_LABELS, type KnowledgeModeTier } from "../../../../shared/knowledge/knowledgeModeTiers";
 import { Button } from "../../components/ui/Button";
 import { Drawer } from "../../components/ui/Drawer";
-import { EstimateLineChoice, EstimateLineLayout, EstimateLineTierNotes, EstimateLineTierOptions } from "../estimates/EstimateLineRow";
+import { EstimateLineChoice, EstimateLineLayout, EstimateLineTierOptions } from "../estimates/EstimateLineRow";
 import { EstimateLineTierDetails } from "../estimates/EstimateLineTierDetails";
 import { EstimatePricingModeControl } from "../estimates/EstimatePricingModeControl";
 import { configuredTierPricing, configuredTierUnavailableReason } from "../leads/configuredEstimate";
@@ -87,14 +87,12 @@ function ClientPreviewRow({ source: { line, basketName, subBasketName } }: { sou
   const [included, setIncluded] = useState(true);
   const [components, setComponents] = useState<string[]>([]);
   const [dimensions, setDimensions] = useState(emptyEstimateDimensions);
-  const tierAvailabilityId = useId();
   const quantityNumber = Number(quantity);
   const pricing = configuredTierPricing(line, tier);
   const inHouseComponents = mode === "in_house" ? pricing?.inHouseComponents : undefined;
   const unavailableReason = configuredTierUnavailableReason(line, tier, mode);
   const measured = line.dimensionsMandatory ? calculateDimensionQuantity(line.dimensionRule, dimensions) : null;
-  const tierOptions = KNOWLEDGE_MODE_TIERS.map(value => ({ value, label: KNOWLEDGE_MODE_TIER_LABELS[value],
-    disabledReason: configuredTierUnavailableReason(line, value, mode) ? "Unavailable" : null }));
+  const tierOptions = KNOWLEDGE_MODE_TIERS.map(value => ({ value, label: KNOWLEDGE_MODE_TIER_LABELS[value] }));
   const changeMode = (next: EstimatePricingMode) => {
     if (next !== "pmc") nonPmcMode.current = next;
     setMode(next);
@@ -120,7 +118,7 @@ function ClientPreviewRow({ source: { line, basketName, subBasketName } }: { sou
         choice={<EstimateLineChoice name={line.name} unit={line.uom.name} included={included} disabled={false}
           accessibleLabel={`Include ${line.name} in preview`} onToggle={setIncluded} />}
         tier={included ? <EstimateLineTierOptions label={line.name} groupName={`preview-tier-${line.mainLineId}`} value={tier}
-          options={tierOptions} availabilityId={tierAvailabilityId} onChange={next => { setTier(next); setComponents([]); }} /> : null}
+          options={tierOptions} onChange={next => { setTier(next); setComponents([]); }} /> : null}
         type={included ? <div className="configured-estimate-line__readonly"><span>Type</span><strong>{classification === "special" ? "Special" : "Standard"}</strong></div> : null}
         pricing={included ? <EstimatePricingModeControl mode={mode} label={line.name} groupName={`preview-mode-${line.mainLineId}`}
           editable={classification === "special"} onTogglePmc={() => changeMode(mode === "pmc" ? nonPmcMode.current : "pmc")} onChange={changeMode} /> : null}
@@ -135,9 +133,8 @@ function ClientPreviewRow({ source: { line, basketName, subBasketName } }: { sou
           <div className="configured-estimate-line__amount"><span>Amount</span><output aria-label={`Amount for ${line.name}`}>After save</output></div>
         </>}>
         {included ? <>
-          {(line.applicableTiers ?? ["signature"]).includes(tier) ? <EstimateLineTierDetails rowKey={line.mainLineId}
-            label={line.name} tier={tier} description={line.tierDescriptions?.[tier]} details={line.tierDetails?.[tier]} /> : null}
-          <EstimateLineTierNotes options={tierOptions} id={tierAvailabilityId} />
+          <EstimateLineTierDetails rowKey={line.mainLineId}
+            label={line.name} tier={tier} description={line.tierDescriptions?.[tier]} />
           {unavailableReason ? <p className="configured-estimate-line__message" role="status">Price is unavailable for the selected mode and tier. Review the available options.</p> : null}
           {line.dimensionsMandatory ? line.dimensionRule
             ? <EstimateDimensionsFields label={line.name} dimensions={dimensions} rule={line.dimensionRule} quantityUnit={line.uom.name} onChange={setDimensions} />

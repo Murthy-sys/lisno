@@ -5,9 +5,9 @@ import { MAX_MODE_DESCRIPTION_LENGTH } from "../../backend/src/domain/knowledge-
 export { MAX_MODE_DESCRIPTION_LENGTH, generateModeDescription, syncModeDescription } from "../../backend/src/domain/knowledge-mode-description";
 
 export function modeDescriptionIssues(value: KnowledgeJsonValue | undefined) {
-  if (value === undefined || value === null) return [];
+  if (value === undefined || value === null || value === "") return [];
   if (typeof value !== "string" || !value.trim() || value.length > MAX_MODE_DESCRIPTION_LENGTH) {
-    return [{ path: "modeDescription", message: `Enter a Mode paragraph of 1–${MAX_MODE_DESCRIPTION_LENGTH} characters.` }];
+    return [{ path: "modeDescription", message: `Enter a Mode paragraph up to ${MAX_MODE_DESCRIPTION_LENGTH} characters, or leave it empty.` }];
   }
   return [];
 }

@@ -114,6 +114,7 @@ export interface KnowledgeModePanelHandle {
 
 export interface KnowledgeModePanelProps {
   readonly modeLabel?: string;
+  readonly descriptionPresentation?: "standard" | "inline" | "hidden";
   readonly proposedUoms?: readonly KnowledgeProposedMasterChoice[];
   readonly dataSource?: KnowledgeEditorDataSource;
   readonly item: KnowledgeItemDetail;
@@ -144,6 +145,7 @@ export const KnowledgeModePanel = forwardRef<
 >(function KnowledgeModePanel(
   {
     modeLabel = "Mode",
+    descriptionPresentation = "standard",
     item,
     dataSource = liveKnowledgeEditorDataSource,
     revisionId,
@@ -202,6 +204,7 @@ export const KnowledgeModePanel = forwardRef<
       : current);
   }, [descriptionPending]);
   const [saving, setSaving] = useState(false);
+  const saveInFlight = useRef(false);
   const [savingSection, setSavingSection] = useState<ModeSectionKey | null>(null);
   const [conflict, setConflict] = useState<ModeConflict | null>(null);
   const pricingValidationSummaryRef = useRef<HTMLDivElement>(null);
@@ -423,7 +426,7 @@ export const KnowledgeModePanel = forwardRef<
   }, [advancedQuery.data, pricingQuery.data]);
 
   const save = useCallback(async (advancedPayload?: KnowledgeJsonObject): Promise<boolean> => {
-    if (!editable || saving || locked) return false;
+    if (!editable || saveInFlight.current || saving || locked) return false;
     if (descriptionPending) {
       setDrafts((current) => ({ ...current, advanced: {
         ...current.advanced,
@@ -470,6 +473,7 @@ export const KnowledgeModePanel = forwardRef<
 
     let expectedAggregateVersion = aggregateBaselineRef.current.version;
     let committedAnySection = false;
+    saveInFlight.current = true;
     setSaving(true);
     setConflict(null);
     setDrafts((current) =>
@@ -584,10 +588,86 @@ export const KnowledgeModePanel = forwardRef<
           () => undefined
         );
       }
+      saveInFlight.current = false;
       setSavingSection(null);
       setSaving(false);
     }
   }, [dataSource, componentsValid, descriptionPending, drafts, editable, locked, mainLineId, modeLabel, onAnnouncement, queryClient, revisionId, saving, sourceKey]);
+
+  const saveDescription = useCallback(async (text: string): Promise<boolean> => {
+    const savedSection = advancedQuery.data;
+    if (!editable || locked || saving || saveInFlight.current || conflict || !savedSection
+      || draftSourceKey !== sourceKey || drafts.advanced.envelopeVersion === null) return false;
+    saveInFlight.current = true;
+    setSaving(true);
+    setSavingSection("advanced");
+    setDrafts((current) => ({ ...current, advanced: { ...current.advanced, error: null, serverIssues: [] } }));
+    let committed = false;
+    try {
+      const saved = await dataSource.updateSection(mainLineId, revisionId, "advanced", {
+        expectedVersion: drafts.advanced.envelopeVersion,
+        expectedAggregateVersion: aggregateBaselineRef.current.version,
+        applicability: text.trim() ? "configured" : savedSection.applicability,
+        payload: knowledgeSectionPayloadForUpdate("advanced", { ...savedSection.payload, modeDescription: text })
+      });
+      dataSource.commitSection(queryClient, saved);
+      committed = true;
+      if (currentSource.current !== sourceKey) return false;
+      aggregateBaselineRef.current = { revisionId, version: saved.aggregateVersion };
+      setDrafts((current) => {
+        const draft = current.advanced;
+        const modeDescription = saved.payload.modeDescription ?? "";
+        return { ...current, advanced: {
+          ...draft,
+          payload: { ...draft.payload, modeDescription },
+          pendingBaseline: { ...(draft.pendingBaseline ?? saved.payload), modeDescription },
+          pendingPayload: { ...draft.pendingPayload, modeDescription },
+          editedAdvancedFields: draft.editedAdvancedFields.filter((field) => field !== "modeDescription"),
+          applicability: draft.dirty ? draft.applicability : saved.applicability,
+          envelopeVersion: saved.version,
+          error: null,
+          serverIssues: [],
+          serverReview: null
+        } };
+      });
+      setPendingDescription(null);
+      setDescriptionPending(false);
+      onAnnouncement(`${modeLabel} description saved.`);
+      return true;
+    } catch (failure) {
+      if (currentSource.current !== sourceKey) return false;
+      if (failure instanceof ApiError && failure.code === "VERSION_CONFLICT") {
+        try {
+          const [latestSection, latestItem] = await Promise.all([
+            dataSource.getSection<KnowledgeJsonObject>(mainLineId, revisionId, "advanced"),
+            dataSource.getItem(mainLineId)
+          ]);
+          queryClient.setQueryData(dataSource.sectionKey(mainLineId, revisionId, "advanced"), latestSection);
+          queryClient.setQueryData(dataSource.itemKey(mainLineId), latestItem);
+          if (currentSource.current !== sourceKey) return false;
+          aggregateBaselineRef.current = { revisionId, version: latestItem.version };
+          setConflict({ sectionKey: "advanced", localVersion: drafts.advanced.envelopeVersion, server: latestSection });
+        } catch (refreshFailure) {
+          if (currentSource.current !== sourceKey) return false;
+          setDrafts((current) => ({ ...current, advanced: { ...current.advanced,
+            error: `A version conflict occurred, but the latest server version could not be loaded. ${refreshFailure instanceof Error ? refreshFailure.message : "Try again."}`
+          } }));
+        }
+      } else {
+        setDrafts((current) => ({ ...current, advanced: { ...current.advanced,
+          error: failure instanceof Error ? failure.message : "Description could not be saved.",
+          serverIssues: failure instanceof ApiError ? sectionIssuesFromApiError(failure, ["modeDescription"]) : []
+        } }));
+      }
+      return false;
+    } finally {
+      if (committed) void dataSource.invalidateSection(queryClient, mainLineId).catch(() => undefined);
+      saveInFlight.current = false;
+      setSavingSection(null);
+      setSaving(false);
+    }
+  }, [advancedQuery.data, conflict, dataSource, draftSourceKey, drafts.advanced.envelopeVersion, editable, locked,
+    mainLineId, modeLabel, onAnnouncement, queryClient, revisionId, saving, sourceKey]);
 
   useImperativeHandle(ref, () => ({ save, discard }), [discard, save]);
 
@@ -631,7 +711,7 @@ export const KnowledgeModePanel = forwardRef<
         key={sectionKey}
         as="section"
         aria-label={sectionKey === "pricing" ? "Specifications configuration" : label}
-        className="knowledge-workspace-section knowledge-mode-block"
+        className={`knowledge-workspace-section knowledge-mode-block${sectionKey === "advanced" ? " knowledge-mode-block--advanced" : ""}`}
       >
         <ModeBlockToolbar
           draft={draft}
@@ -683,6 +763,8 @@ export const KnowledgeModePanel = forwardRef<
         advancedQuery,
         <KnowledgeModeConfigurationBuilder
           payload={drafts.advanced.payload}
+          descriptionPresentation={descriptionPresentation}
+          onSaveDescription={descriptionPresentation === "inline" ? saveDescription : undefined}
           mainLineName={item.mainLineName}
           basketContext={item}
           descriptionResetKey={`${revisionId}-${descriptionResetVersion}-${Object.hasOwn(drafts.advanced.payload, "inHouseComponents") ? "components" : "legacy"}`}

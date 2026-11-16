@@ -10,6 +10,7 @@ import { server } from "../../test/server";
 import { executionKeys, type ExecutionWork } from "../execution/executionApi";
 import { executionFixture, executionPageFixture } from "../execution/executionTestFixtures";
 import { SiteManagerProjectPage } from "./SiteManagerProjectPage";
+import { siteWorkStatus } from "./siteManagerPresentation";
 
 vi.mock("../../auth/AuthProvider", () => ({ useAuth: () => ({ status: "authenticated", user: { id: "site-one", role: "site_manager" }, authorization: { role: "site_manager", permissions: ["procurement.site_completion.manage"] } }) }));
 vi.mock("../execution/ExecutionLiveProvider", () => ({ useExecutionConnection: () => "live" }));
@@ -34,7 +35,8 @@ describe("selected Project Manager project", () => {
     const trigger = screen.getByRole("button", { name: "Confirm schedule: Oak wall panelling, Oak Works" });
     await user.click(trigger);
     const dialog = await screen.findByRole("dialog", { name: "Oak wall panelling" });
-    expect(within(dialog).getByRole("combobox", { name: "Action" })).toHaveValue("confirm_schedule");
+    expect(within(dialog).getByRole("form", { name: "Review work" })).toBeVisible();
+    expect(within(dialog).queryByRole("combobox", { name: "Action" })).not.toBeInTheDocument();
     expect(within(dialog).getByLabelText(/Start date/)).toHaveValue("2026-10-09");
     expect(screen.queryByText("Staff internal note")).not.toBeInTheDocument();
     expect(historyReads).toBe(0);
@@ -57,6 +59,8 @@ describe("selected Project Manager project", () => {
     const user = userEvent.setup(); mount();
     const summary = await screen.findByRole("region", { name: "Project execution statistics" });
     expect(within(summary).getByText("14")).toBeVisible();
+    expect(screen.getByLabelText("Needs attention")).not.toBeVisible();
+    await user.click(screen.getByText("More filters"));
     await user.selectOptions(screen.getByLabelText("Needs attention"), "blocked");
     expect(await screen.findByText("No vendor work matches these filters.")).toBeVisible();
     expect(reads.at(-1)?.searchParams.get("flag")).toBe("blocked");
@@ -68,12 +72,55 @@ describe("selected Project Manager project", () => {
     const work = { ...executionFixture, status: "site_verified" as const, progress: 100, allowedActions: [], latestNote: "Staff hold note is not a vendor report", latestVendorReport: { eventId: "vendor-report", executionRound: 1, reportedAt: "2026-10-09T09:00:00Z", note: "Entrance locked", progress: 40, status: "blocked" as const, reason: "No site key", nextAction: "Manager to provide access" } };
     setup([work, { ...proposal, id: "work-two", itemName: "Second line" }]); mount("/projects/project-one/execution?view=updates");
     expect(await screen.findByText("Entrance locked")).toBeVisible();
-    expect(screen.getByText("Current: Site verified")).toBeVisible();
-    expect(screen.getByText("Reported reason:").parentElement).toHaveTextContent("No site key");
-    expect(screen.getByText("Reported next action:").parentElement).toHaveTextContent("Manager to provide access");
-    expect(screen.queryByText("Blocker:")).not.toBeInTheDocument();
+    expect(screen.getByText("Verified by Project Manager", { selector: "span" })).toBeVisible();
+    expect(screen.queryByText("Hold reason:")).not.toBeInTheDocument();
+    expect(screen.queryByText("No site key")).not.toBeInTheDocument();
+    expect(screen.queryByText("Manager to provide access")).not.toBeInTheDocument();
+    expect(screen.queryByText(/\d+%/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Work view" })).not.toBeInTheDocument();
+    expect(screen.getByRole("list", { name: "Vendor work" })).toBeVisible();
     expect(screen.queryByText("Staff hold note is not a vendor report")).not.toBeInTheDocument();
     expect(screen.getByText("No vendor update for the current round.")).toBeVisible();
+  });
+
+  it("shows a single photo-update list with compact statistics and optional project context", async () => {
+    const work: ExecutionWork = { ...executionFixture, progress: 0, imageIds: ["photo-one", "photo-two"], allowedActions: [],
+      latestVendorReport: { ...executionFixture.latestVendorReport!, updateType: "progress", progress: 0, note: "Today's site photos" } };
+    setup([work, { ...work, id: "old-round", itemName: "Second line", executionRound: 2, latestVendorReport: { ...work.latestVendorReport!, note: "Old round update" } }]);
+    mount();
+    const list = await screen.findByRole("list", { name: "Vendor work" });
+    expect(within(list).getByText("Today's site photos")).toBeVisible();
+    expect(within(list).queryByText("Old round update")).not.toBeInTheDocument();
+    expect(within(list).getAllByText("2 photos")).toHaveLength(2);
+    expect(within(list).getByRole("button", { name: "View work: Oak wall panelling, Oak Works" })).toBeVisible();
+    expect(within(list).getByText("In progress")).toBeVisible();
+    expect(within(list).queryByText(/\d+%|Next:|Workflow owner/)).not.toBeInTheDocument();
+    const summary = screen.getByRole("region", { name: "Project execution statistics" });
+    expect(within(summary).getAllByRole("term").filter(term => !term.closest("details")).map(term => term.textContent)).toEqual(["Open", "On hold", "Awaiting verification", "Missing updates"]);
+    expect(within(summary).getByText("Overdue")).not.toBeVisible();
+    expect(screen.getByText("Project team").closest("details")).not.toHaveAttribute("open");
+  });
+
+  it("keeps a current hold reason distinct from completed work awaiting review", async () => {
+    const held: ExecutionWork = { ...executionFixture, status: "blocked", progress: 0, allowedActions: [], latestVendorReport: { ...executionFixture.latestVendorReport!, updateType: "hold", progress: 0, status: "blocked", note: "Waiting for access", reason: "Waiting for access" } };
+    const completed: ExecutionWork = { ...executionFixture, id: "completed", itemName: "Completed line", status: "awaiting_verification", progress: 100, allowedActions: ["verify"], imageIds: ["photo-one", "photo-two"], submission: { id: "submission-one", submittedAt: "2026-10-09T09:00:00Z", note: "Ready for inspection", imageIds: ["photo-one"], version: 1 } };
+    setup([held, completed]); mount();
+    const list = await screen.findByRole("list", { name: "Vendor work" });
+    expect(within(list).getByText("On hold")).toBeVisible();
+    expect(within(list).getByText("Hold reason:").parentElement).toHaveTextContent("Waiting for access");
+    expect(within(list).getByText("Completed by vendor")).toBeVisible();
+    expect(within(list).getByText("Awaiting your verification")).toBeVisible();
+    expect(within(list).getByText("1 photo")).toBeVisible();
+    expect(within(list).queryByText("2 photos")).not.toBeInTheDocument();
+    expect(within(list).getByRole("button", { name: "Review completion: Completed line, Oak Works" })).toBeVisible();
+  });
+
+  it.each(["daily", "flag"] as const)("shows missing-update attention from %s and the saved overdue flag", async source => {
+    setup([{ ...executionFixture, flags: ["overdue", ...(source === "flag" ? ["missing_update"] : [])], daily: { ...executionFixture.daily, state: source === "daily" ? "missing" : "due" } }]);
+    mount();
+    const list = await screen.findByRole("list", { name: "Vendor work" });
+    expect(within(list).getByText("Vendor update missing")).toBeVisible();
+    expect(within(list).getByText("· Overdue").closest("p")).toHaveTextContent("Finish 18 Oct 2026 · Overdue");
   });
 
   it("opens exact completion verification and preserves edited notes across a live version change", async () => {
@@ -145,11 +192,11 @@ describe("selected Project Manager project", () => {
   });
 
   it.each([false, true])("guards browser Back and reload while a schedule draft is unsaved (same project: %s)", async sameProject => {
-    setup(); const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    setup([{ ...proposal, schedule: executionFixture.schedule }]); const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const router = createMemoryRouter([{ path: "/home", element: <h1>Assigned project home</h1> }, { path: "/projects/:projectId/execution", element: <SiteManagerProjectPage /> }], { initialEntries: [sameProject ? "/projects/project-one/execution" : "/home", "/projects/project-one/execution?assignment=work-one"], initialIndex: 1 });
     render(<QueryClientProvider client={client}><FeedbackProvider><RouterProvider router={router} /></FeedbackProvider></QueryClientProvider>);
     const user = userEvent.setup();
-    await user.selectOptions(await screen.findByRole("combobox", { name: "Action" }), "confirm_schedule");
+    await screen.findByRole("form", { name: "Review work" });
     await user.type(screen.getByRole("textbox", { name: "Reason" }), "Pending agreed dates");
     const reload = new Event("beforeunload", { cancelable: true });
     window.dispatchEvent(reload);
@@ -164,5 +211,21 @@ describe("selected Project Manager project", () => {
       expect(await screen.findByRole("heading", { level: 1, name: "Oak residence" })).toBeVisible();
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     } else expect(await screen.findByRole("heading", { name: "Assigned project home" })).toBeVisible();
+  });
+});
+
+
+describe("Project Manager work status", () => {
+  it.each(["started", "progress"] as const)("uses the current-round %s update without a percentage", updateType => {
+    expect(siteWorkStatus({ ...executionFixture, progress: 0, latestVendorReport: { ...executionFixture.latestVendorReport!, updateType, progress: 0 } })).toBe(updateType === "started" ? "Started working" : "In progress");
+  });
+  it.each([
+    ["awaiting_verification", "Completed by vendor"], ["site_verified", "Verified by Project Manager"],
+    ["awaiting_client", "With Client"], ["client_approved", "Client accepted"]
+  ] as const)("keeps %s distinct as %s", (status, expected) => {
+    expect(siteWorkStatus({ ...executionFixture, status, progress: 100 })).toBe(expected);
+  });
+  it("does not reuse a prior-round update type", () => {
+    expect(siteWorkStatus({ ...executionFixture, executionRound: 2, progress: 0, latestVendorReport: { ...executionFixture.latestVendorReport!, updateType: "progress", progress: 0 } })).toBe("Started working");
   });
 });

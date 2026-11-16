@@ -3,6 +3,7 @@ import { ProjectChatNavigation } from "../messages";
 import { VendorWorkProgressPanel } from "../workflow/VendorWorkProgressPanel";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft, FileEdit, MessageSquare, User } from "lucide-react";
+import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import { ApiError } from "../../api/client";
@@ -15,6 +16,7 @@ import { StatusBadge } from "../../components/ui/StatusBadge";
 import { Surface } from "../../components/ui/Surface";
 import {
   adminEstimateStages,
+  canAssignProjectCoordination,
   canAssignProjectDesigner,
   hasInitialEstimateApproval,
   adminProjectNextAction,
@@ -24,10 +26,9 @@ import {
 } from "./adminProjectPresentation";
 import { adminProjectKeys, getAdminProject } from "./adminProjectsApi";
 import { AdminDetailSection } from "./AdminDetailSection";
-import { DesignAssignmentPanel } from "./DesignAssignmentPanel";
-import { ProcurementProjectIdentityPanel } from "./ProcurementProjectIdentityPanel";
-import { WorkerAssignmentPanel } from "./WorkerAssignmentPanel";
-import { ProjectFinancePanel } from "../finance/ProjectFinancePanel";
+import { ProjectPeopleAssignments, type ProjectAssignmentArea } from "./ProjectPeopleAssignments";
+import { getAdminProjectWorkflowTasks, projectWorkflowKeys } from "../workflow/projectWorkflowApi";
+import { ProjectCompletionControl, ProjectFinancePanel } from "../finance/ProjectFinancePanel";
 import { ProjectWorkflowSnapshot } from "../finance/FinanceProjectWorkflowControl";
 import { ProjectWorkflowPanel } from "../workflow/ProjectWorkflowPanel";
 import { currentQuotationIsApproved } from "../estimates/quotationApproval";
@@ -54,6 +55,9 @@ function errorMessage(error: unknown) {
 export function AdminProjectDetailPage() {
   const { projectId = "" } = useParams();
   const auth = useAuth();
+  const [assignmentSelection, setAssignmentSelection] = useState<{ projectId: string; area: ProjectAssignmentArea } | null>(null);
+  const assignmentArea = assignmentSelection?.projectId === projectId ? assignmentSelection.area : null;
+  const setAssignmentArea = (area: ProjectAssignmentArea) => setAssignmentSelection({ projectId, area });
   const projectQuery = useQuery({
     queryKey: adminProjectKeys.detail(projectId),
     queryFn: () => getAdminProject(projectId),
@@ -80,6 +84,14 @@ export function AdminProjectDetailPage() {
     auth.authorization,
     "projects.procurement_identity.manage"
   );
+  const canDecideCompletion = auth.user?.role === "super_admin" &&
+    hasFrontendPermission(auth.authorization, "procurement.project_completion.decide");
+
+  const coordination = useQuery({
+    queryKey: projectWorkflowKeys.projectTasks(projectId),
+    queryFn: () => getAdminProjectWorkflowTasks(projectId),
+    enabled: canAssignWorkers && Boolean(project && canAssignProjectCoordination(project))
+  });
 
   if (projectQuery.isPending) return <PageState state="loading" message="Loading project details…" />;
   if (projectQuery.isError) {
@@ -121,6 +133,13 @@ export function AdminProjectDetailPage() {
   const people = [
     ...(project.estimator ? [{ role: "Sales", name: project.estimator.name, email: project.estimator.email }] : []),
     ...(project.estimate?.designPlanDesigner ? [{ role: "Designer", name: project.estimate.designPlanDesigner.name, email: project.estimate.designPlanDesigner.email }] : []),
+    ...(canAssignWorkers && canAssignProjectCoordination(project) ? ([{ kind: "procurement", role: "Procurement" }, { kind: "site_execution", role: "Project Manager" }] as const).map(({ kind, role }) => {
+      const matches = coordination.data?.filter(task => task.projectId === project.id && task.estimateId === project.estimate?.id && task.kind === kind) ?? [];
+      const task = matches.length === 1 ? matches[0] : undefined;
+      return { role, name: !canAssignProjectCoordination(project) ? "Not available yet" : coordination.isPending ? "Loading assignment…"
+        : coordination.isError || matches.length > 1 ? "Assignment unavailable" : task?.assignedWorker?.name ?? "Unassigned",
+        email: canAssignProjectCoordination(project) && !coordination.isError ? task?.assignedWorker?.email ?? "" : "" };
+    }) : []),
     { role: "Client", name: project.client.name, email: project.client.email }
   ];
 
@@ -131,7 +150,7 @@ export function AdminProjectDetailPage() {
         id="admin-project-detail-title"
         eyebrow="Project administration"
         title={project.name}
-        description="Review the commercial handoff and assign approved design work."
+        description="Manage project people, review approvals and follow delivery progress."
         breadcrumb={<Link to="/admin/projects"><ArrowLeft aria-hidden="true" /> Back to {auth.user?.role === "super_admin" ? "All Projects" : "My Projects"}</Link>}
         metadata={<>
           <ProjectId className="admin-project-reference__identifier" projectNumber={project.projectNumber} />
@@ -139,11 +158,13 @@ export function AdminProjectDetailPage() {
           <span className="admin-project-reference__identifier">System ID: {project.id}</span>
           <span>Created <time dateTime={project.createdAt}>{createdLabel}</time></span>
         </>}
-        actions={assignmentPending && canAssignDesigner && canAssignProjectDesigner(project) ? (
-          <a className="button button--primary" href="#design-assignment-title">
-            Assign Designer
-          </a>
-        ) : undefined}
+        actions={<>
+          {canDecideCompletion && project.status === "active" ? <ProjectCompletionControl key={project.id}
+            projectId={project.id} projectName={project.name} projectStatus={project.status}
+            triggerLabel="Close project" onCompleted={() => void projectQuery.refetch()} /> : null}
+          <a className="button button--secondary" href="#project-people-assignments" onClick={() => setAssignmentArea(canAssignWorkers ? "procurement" : "designer")}>Manage people</a>
+          {assignmentPending && canAssignDesigner && canAssignProjectDesigner(project) ? <a className="button button--primary" href="#design-assignment-title" onClick={() => setAssignmentArea("designer")}>Assign Designer</a> : null}
+        </>}
       />
       </div>
       <ProjectChatNavigation projectId={projectId} overviewTo={`/admin/projects/${projectId}`} />
@@ -158,6 +179,8 @@ export function AdminProjectDetailPage() {
           <div><dt>{estimateLabel}</dt><dd>{estimateValue}{project.estimate && !estimateApproved && estimateStages.length === 0 ? <span className="admin-project-reference__estimate-status">{formatWorkflowLabel(project.estimate.status)}</span> : null}</dd></div>
         </dl>
       </section>
+      <ProjectPeopleAssignments key={project.id} project={project} canAssignDesigner={canAssignDesigner} canAssignWorkers={canAssignWorkers}
+        canManageProjectManager={canManageProcurementIdentity} area={assignmentArea} onAreaChange={setAssignmentArea} />
       <Surface as="section" className="admin-project-detail__surface" aria-label="Project details">
         <div className="admin-project-detail__sections">
           <AdminDetailSection
@@ -213,9 +236,6 @@ export function AdminProjectDetailPage() {
         />
       ) : null}
       {canAssignWorkers ? <ProjectWorkflowSnapshot project={project} /> : null}
-      <DesignAssignmentPanel key={project.id} project={project} canManage={canAssignDesigner} />
-      {canManageProcurementIdentity ? <ProcurementProjectIdentityPanel projectId={project.id} /> : null}
-      {canAssignWorkers ? <WorkerAssignmentPanel project={project} /> : null}
       {project.estimate?.clientReview ? (
         <AdminDetailSection
           icon={<MessageSquare aria-hidden="true" />}
@@ -268,7 +288,7 @@ export function AdminProjectDetailPage() {
           <ul className="admin-project-reference__people">
             {people.map(person => <li key={person.role}>
               <span className="admin-project-reference__person-mark" aria-hidden="true">{person.name.trim().slice(0, 1).toUpperCase()}</span>
-              <div><span className="admin-project-reference__person-role">{person.role}</span><strong>{person.name}</strong><span>{person.email}</span></div>
+              <div><span className="admin-project-reference__person-role">{person.role}</span><strong>{person.name}</strong>{person.email ? <span>{person.email}</span> : null}</div>
             </li>)}
           </ul>
         </section>

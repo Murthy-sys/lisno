@@ -33,7 +33,7 @@ function visibleSubtotal(lines: readonly SnapshotLine[]) {
   }
   return total > BigInt(Number.MAX_SAFE_INTEGER)
     ? "Submitted visible subtotal unavailable"
-    : `Submitted visible subtotal ${money(Number(total))}`;
+    : `Subtotal ${money(Number(total))}`;
 }
 
 function submittedRows(snapshot: EstimateClientReviewSnapshot) {
@@ -116,7 +116,7 @@ export function SubmittedEstimateBuilder({ snapshot, workspace = false, onRefres
   </div>;
   return <EstimateBuilderShell rooms={rooms.map(room => ({ ...room, hasSelectedItems: true,
     detail: visibleSubtotal(rows.filter(row => row.roomId === room.id).map(row => row.line)) }))}
-    activeRoomId={currentRoomId} onSelectRoom={setActiveRoomId} selectedCount={rows.length}
+    activeRoomId={currentRoomId} onSelectRoom={setActiveRoomId} selectedCount={rows.length} selectedItemsOnly
     baskets={baskets.map(basket => ({ ...basket, detail: visibleSubtotal(roomRows.filter(row => row.basketId === basket.id).map(row => row.line)) }))}
     groups={groups} renderLine={renderLine} viewState={viewState} onViewStateChange={setViewState}
     onRefresh={onRefresh} refreshing={refreshing} scrollMode={workspace ? "pane" : "document"}

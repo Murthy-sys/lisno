@@ -19,6 +19,7 @@ import { SiteCompletionStateModel } from "../src/models/SiteCompletionState.js";
 import { ProjectWorkflowTaskModel } from "../src/models/ProjectWorkflowTask.js";
 import { UserModel } from "../src/models/User.js";
 import { VendorWorkAssignmentModel } from "../src/models/VendorWorkAssignment.js";
+import { VendorWorkImageModel } from "../src/models/VendorWorkImage.js";
 import { VendorExecutionStateModel } from "../src/models/VendorExecutionState.js";
 import { VendorExecutionReviewModel } from "../src/models/VendorExecutionReview.js";
 import { createVendorExecutionService, initializeIssuedExecution } from "../src/services/vendor-execution.service.js";
@@ -109,7 +110,9 @@ async function verifyOrder(orderId: string, actor = vendorActor) {
   await command(actor, "propose_schedule", { startDate: "2026-10-02", finishDate: "2026-10-15" });
   await command(siteActor, "confirm_schedule", { startDate: "2026-10-02", finishDate: "2026-10-15" });
   await command(actor, "report", { status: "in_progress", progress: 100, note: "Assigned work complete" });
-  await command(siteActor, "exempt_evidence", { reason: "Photography prohibited by Client; Site Manager inspected work" });
+  const current = await executionService.detail(actor, String(assignment._id));
+  await VendorWorkImageModel.collection.insertOne({ _id: `verification-photo:${assignment._id}:${current.executionRound}`, assignmentId: assignment._id,
+    projectId: assignment.projectId, vendorId: assignment.vendorId, round: assignment.currentRound, executionRound: current.executionRound, uploadedAt: now } as any);
   const submitted = await command(actor, "submit", { note: "Ready for inspection" });
   return command(siteActor, "verify", { submissionId: submitted.submission!.id });
 }

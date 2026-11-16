@@ -24,6 +24,7 @@ const projectListSchema = paginationSchema.extend({
   clientId: z.string().trim().min(1).max(200).optional(),
   unlinkedClient: z.literal("true").transform(() => true).optional(),
   budgetStatus: z.enum(["over_budget", "at_risk", "within_budget", "no_budget"]).optional(),
+  budgetBasis: z.enum(["recorded", "including_commitments"]).optional(),
   financeStage: z.enum(["pending_design", "open", "closed"]).optional(),
   projectStatus: z.enum(["planning", "active", "on_hold", "completed"]).optional(),
   approvedFrom: calendarDateSchema.optional(),

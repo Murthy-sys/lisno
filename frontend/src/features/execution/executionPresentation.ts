@@ -8,7 +8,7 @@ export const executionStatusLabels: Record<ExecutionStatus, string> = {
 export const executionActionLabels: Record<ExecutionAction, string> = {
   setup: "Enable tracking", acknowledge: "Acknowledge work", propose_schedule: "Propose schedule",
   confirm_schedule: "Confirm schedule", report: "Daily update", submit: "Submit for site verification",
-  verify: "Verify completion", request_changes: "Request changes", hold: "Place on hold", resume: "Resume work", exempt_evidence: "Grant photo exemption"
+  verify: "Verify completion", request_changes: "Request changes", hold: "Place on hold", resume: "Resume work", exempt_evidence: "Photo exemption (historical)"
 };
 export function executionLabel(value: string) {
   if (value === "site_manager") return "Project Manager";

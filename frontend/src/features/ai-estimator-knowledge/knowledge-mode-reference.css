@@ -134,43 +134,100 @@
   min-inline-size: 0;
 }
 
-.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-description__value {
-  display: block;
-  min-inline-size: 0;
-  min-block-size: 44px;
-  padding: 11px 12px;
-  border: 1px solid var(--color-border);
-  border-radius: 6px;
-  color: var(--color-text-muted);
-  background: var(--role-deck, var(--color-surface));
-  font-size: 13px;
-  line-height: 20px;
-  white-space: nowrap;
-  overflow: auto;
-  scrollbar-width: thin;
+/* The client paragraph sits above the internal settings, outside their border. */
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .ui-surface.knowledge-mode-block--advanced {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
-.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-description__value:focus-visible {
-  outline: 2px solid var(--button-primary-bg, var(--color-primary));
-  outline-offset: 2px;
-}
-
-.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-description__display .ui-icon-button {
+.knowledge-mode-configuration__settings {
   display: grid;
-  place-items: center;
-  inline-size: 44px;
-  block-size: 44px;
-  min-inline-size: 44px;
-  min-block-size: 44px;
-  padding: 10px;
+  gap: 16px;
+  min-inline-size: 0;
+  padding: 16px;
   border: 1px solid var(--color-border);
-  border-radius: 6px;
-  background: var(--role-deck, var(--color-surface));
+  border-radius: 0;
 }
 
-.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-description__display .ui-icon-button svg {
-  inline-size: 18px;
-  block-size: 18px;
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-configuration__shared {
+  padding-block: 8px;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-description__value {
+  margin: 0;
+  min-inline-size: 0;
+  max-inline-size: 85ch;
+  padding-block: 8px;
+  color: var(--color-text);
+  font-size: 14px;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.knowledge-mode-description__value[data-empty="true"] {
+  color: var(--color-text-muted) !important;
+}
+
+.knowledge-mode-description__edit {
+  min-block-size: 44px;
+  align-self: start;
+  white-space: nowrap;
+}
+
+.knowledge-mode-description__preview {
+  padding-block: 12px;
+  border-block: 1px solid var(--color-border);
+}
+
+.knowledge-mode-description.knowledge-mode-description--inline {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 12px;
+  min-inline-size: 0;
+}
+
+.knowledge-mode-description--inline > .ui-field {
+  min-inline-size: 0;
+}
+
+.ui-app-shell[data-role] .knowledge-page .knowledge-mode-description--inline .ui-textarea {
+  box-sizing: border-box;
+  min-block-size: 44px;
+  max-block-size: none;
+  overflow: hidden;
+  resize: none;
+}
+
+.ui-app-shell[data-role] .knowledge-page .knowledge-mode-description--inline .knowledge-mode-description__actions {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 8px;
+  padding-block-start: 26px;
+}
+
+.ui-app-shell[data-role] .knowledge-page .knowledge-mode-description--inline .knowledge-mode-description__actions > .ui-button {
+  min-inline-size: 0;
+  inline-size: auto;
+  flex: 0 0 auto;
+}
+
+@media (max-width: 540px) {
+  .ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-description__display {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+  .knowledge-mode-description__edit { justify-self: start; }
+  .knowledge-mode-configuration__settings { padding: 12px; }
+  .knowledge-mode-description.knowledge-mode-description--inline { grid-template-columns: minmax(0, 1fr); }
+  .ui-app-shell[data-role] .knowledge-page .knowledge-mode-description--inline .knowledge-mode-description__actions {
+    justify-content: flex-end;
+    padding-block-start: 0;
+  }
 }
 
 .ui-app-shell[data-role] .knowledge-page.knowledge-page--item-workspace .knowledge-mode-panel .knowledge-mode-configuration__sections {

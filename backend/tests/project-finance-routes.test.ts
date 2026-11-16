@@ -17,6 +17,8 @@ const ACTORS = {
 } as const;
 
 const BUCKET: ProjectFinanceBucketDto = {
+  commitmentBudget: { status: "ready", reasonCodes: [], approvedVendorNetPaise: 0, outstandingVendorCommitmentPaise: 0,
+    budgetUsedPaise: 1_500_000, availableBudgetPaise: 6_500_000, utilizationBps: 1_875, budgetStatus: "within_budget", overBudget: false },
   id: "finance-bucket-project-1",
   projectId: "project-1",
   projectName: "Aurora Residence",
@@ -97,6 +99,8 @@ function setup() {
       filterOptions: { projects: [{ id: BUCKET.projectId, name: BUCKET.projectName }], clients: [], hasUnlinkedClients: true },
       observedAt: "2026-10-24T09:00:00.000Z",
       summary: {
+        commitmentBudget: { status: "ready", reasonCodes: [], approvedVendorNetPaise: 0, outstandingVendorCommitmentPaise: 0,
+          budgetUsedPaise: 1_500_000, availableBudgetPaise: 6_500_000, unresolvedProjectCount: 0, overBudgetProjectCount: 0 },
         projectCount: 1,
         approvedContractTotalPaise: BUCKET.approvedContractTotalPaise,
         approvedGstPaise: BUCKET.approvedGstPaise,
@@ -172,7 +176,7 @@ describe("project finance routes", () => {
 
   it("validates combined budget filters without leaking them into pagination", async () => {
     const { app, service } = setup();
-    const query = { search: "Aurora", projectId: "project-1", clientId: "client-1", budgetStatus: "at_risk",
+    const query = { search: "Aurora", projectId: "project-1", clientId: "client-1", budgetStatus: "at_risk", budgetBasis: "including_commitments",
       financeStage: "open", projectStatus: "active", approvedFrom: "2024-02-29", approvedTo: "2026-10-24", limit: "10", offset: "0" };
     const response = await request(app).get("/api/v1/finance/projects").query(query)
       .set("Authorization", bearer("superAdmin")).expect(200);
@@ -188,7 +192,7 @@ describe("project finance routes", () => {
     { approvedFrom: "2026-1-01" }, { approvedFrom: "invalid" },
     { approvedFrom: "2026-10-25", approvedTo: "2026-10-24" },
     { clientId: "client-1", unlinkedClient: "true" }, { unlinkedClient: "false" },
-    { budgetStatus: "red" }, { financeStage: "active" }, { projectStatus: "open" },
+    { budgetBasis: "actual" }, { budgetBasis: ["recorded", "including_commitments"] }, { budgetStatus: "red" }, { financeStage: "active" }, { projectStatus: "open" },
     { projectId: " " }, { clientId: "x".repeat(201) }, { search: "x".repeat(201) },
     { search: ["one", "two"] }, { unexpected: "true" }
   ])("rejects malformed or contradictory budget filters: %j", async (query) => {
