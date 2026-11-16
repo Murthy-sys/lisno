@@ -1,3 +1,4 @@
+import { insertProjectInitiationDefault, withProjectInitiationDefault } from "./helpers/project-initiation-defaults.js";
 import jwt from "jsonwebtoken";
 import request from "supertest";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -48,7 +49,7 @@ beforeAll(async () => {
   ]);
 }, 120_000);
 
-beforeEach(async () => replica.clear());
+beforeEach(async () => { await replica.clear(); await insertProjectInitiationDefault(); });
 afterAll(async () => replica.stop());
 
 function bearer(id: string, role: "admin" | "super_admin" | "estimator_sales") {
@@ -1020,7 +1021,7 @@ describe("initial approval assignment summary parity", () => {
     await Promise.all([insertUser("mongo-super-admin", "super_admin"), insertUser("mongo-estimator", "estimator_sales")]);
     const mongo = createMongoRepository();
     const actor = (await mongo.findUserById("mongo-super-admin"))!;
-    const seed = structuredClone(demoSeedData);
+    const seed = withProjectInitiationDefault(demoSeedData);
     seed.users = [actor]; seed.projects = []; seed.leads = []; seed.estimateSummaries = [];
     seed.projectAccessGrants = []; seed.estimateReviewRounds = [];
     for (const [key, subtotal] of [["a", 100], ["b", 700]] as const) {

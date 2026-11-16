@@ -66,11 +66,10 @@ export function KnowledgeBasketCard({
       </div> : null}
     </div> : <div className="knowledge-basket-card__header knowledge-basket-card__group-header" data-has-details={Boolean(headerDetails) || undefined}>
       <div className="knowledge-basket-card__content">
-        {variant === "sub" ? <span className="knowledge-basket-card__kind">Sub-Basket</span> : null}
         {heading}
       </div>
       {headerDetails ? <div className="knowledge-basket-card__details">{headerDetails}</div> : null}
-      <p className="knowledge-basket-card__count">{countText}</p>
+      {variant === "direct" ? <p className="knowledge-basket-card__count">{countText}</p> : null}
       {actions ? <div className="knowledge-basket-card__actions">{actions}</div> : null}
     </div>}
     <div id={panelId} className="knowledge-basket-card__body" hidden={!expanded}>

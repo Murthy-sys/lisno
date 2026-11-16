@@ -132,7 +132,7 @@ export function ClientQuotationSetup({
       }} variableBedroomCount={variableBedroomCount} bedroomCountRequired={bedroomCountRequired} editable={detail.editingAllowed && Boolean(saved?.canConfigure)} disabled={controlsDisabled}
         roomOptions={roomOptions} selectedRoomTypeIds={rooms.map(roomKey)} onRoomsChange={changeRooms}
         retainedRooms={rooms.some((room) => !room.typeId || !availableTypes.has(room.typeId) || (roomTypeCounts.get(room.typeId) ?? 0) > 1)}
-        rooms={rooms.map((room) => ({ ...room, icon: getRoomIcon(room.typeId ?? "") }))}
+        rooms={rooms.map((room) => ({ id: room.id, selectionKey: roomKey(room), label: room.label, length: room.length, width: room.width }))}
         onDimensionChange={(id, change) => commit({ ...draft, rooms: rooms.map((room) => room.id === id ? { ...room, ...change } : room) })}
         onRemoveRoom={(id) => requestRemoval({ ...draft, rooms: rooms.filter((room) => room.id !== id) }, [id], [])} />
       {!propertyValid ? <p role="status" className="estimate-bedroom-count__error">Select a property type before saving setup.</p> : null}

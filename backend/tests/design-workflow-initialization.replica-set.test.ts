@@ -1,3 +1,4 @@
+import { insertProjectInitiationDefault } from "./helpers/project-initiation-defaults.js";
 import mongoose from "mongoose";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createProjectDesignWorkflow } from "../src/domain/design-workflow.js";
@@ -82,22 +83,23 @@ describe("Mongo Excel workflow persistence", () => {
   });
 
   it("creates an approval-handoff snapshot atomically and preserves its identity on linked retries", async () => {
+    await insertProjectInitiationDefault();
     const session = await mongoose.startSession();
     const lead = { projectId: null, ownerId: "sales-handoff", projectName: "Handoff home", clientName: "Client", clientEmail: "handoff@example.test", clientMobile: "9000000000", location: "Pune" };
     let projectId = "";
     try {
       await session.withTransaction(async () => {
-        projectId = await resolveApprovalProject({ estimate: { projectId: null, ownerId: lead.ownerId }, lead, clientId: null, occurredAt: NOW, session });
+        projectId = await resolveApprovalProject({ estimate: { projectId: null, ownerId: lead.ownerId }, lead, clientId: null, occurredAt: NOW, session, actorId: lead.ownerId, audit: createAuditService(createMongoRepository(session)) });
       });
       const first = await ProjectModel.findById(projectId).lean();
       expect(first!.designWorkflowStages).toEqual(createProjectDesignWorkflow(projectId));
       await session.withTransaction(async () => {
-        expect(await resolveApprovalProject({ estimate: { projectId, ownerId: lead.ownerId }, lead: { ...lead, projectId }, clientId: null, occurredAt: NOW, session })).toBe(projectId);
+        expect(await resolveApprovalProject({ estimate: { projectId, ownerId: lead.ownerId }, lead: { ...lead, projectId }, clientId: null, occurredAt: NOW, session, actorId: lead.ownerId, audit: createAuditService(createMongoRepository(session)) })).toBe(projectId);
       });
       expect((await ProjectModel.findById(projectId).lean())!.designWorkflowStages).toEqual(first!.designWorkflowStages);
       expect(await ProjectModel.countDocuments()).toBe(1);
       await expect(session.withTransaction(async () => {
-        await resolveApprovalProject({ estimate: { projectId: null, ownerId: lead.ownerId }, lead, clientId: null, occurredAt: NOW, session });
+        await resolveApprovalProject({ estimate: { projectId: null, ownerId: lead.ownerId }, lead, clientId: null, occurredAt: NOW, session, actorId: lead.ownerId, audit: createAuditService(createMongoRepository(session)) });
         throw new Error("Approval aborted");
       })).rejects.toThrow("Approval aborted");
       expect(await ProjectModel.countDocuments()).toBe(1);

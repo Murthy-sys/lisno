@@ -1454,7 +1454,7 @@ function LeadEstimateWorkspaceForLead({ leadId, returnTo, actorId }: { leadId: s
         variableBedroomCount={variableBedroomCount} bedroomCountRequired={bedroomSetupRequired} bedroomCountRef={bedroomCountRef}
         editable={draftEditable} disabled={roomControlsDisabled} roomOptions={roomSelectOptions} selectedRoomTypeIds={selectedRoomTypeIds}
         onRoomsChange={handleRoomsChange} retainedRooms={hasRetainedRooms}
-        rooms={rooms.map(room => ({ id: room.id, label: room.label, icon: getRoomIcon(room.typeId), length: room.length, width: room.width }))}
+        rooms={rooms.map(room => ({ id: room.id, selectionKey: room.typeId, label: room.label, length: room.length, width: room.width }))}
         onDimensionChange={updateRoom} onRemoveRoom={removeRoom} />
       <EstimateSetupBaskets search={basketSearch} onSearchChange={setBasketSearch} searchRef={basketSearchRef} onClearSearch={clearBasketSearch}
         onRefresh={() => void refreshAvailableItems()} refreshing={catalogue.isFetching || saved.isFetching} showTools={configuredMode}>

@@ -1,3 +1,4 @@
+import { resolveProjectManagerDefault } from "./project-initiation-default-resolution.js";
 import type { ProjectInitiationMetadata } from "../contracts/project-initiation.js";
 import { validateProjectInitiationIntake } from "../domain/project-initiation-metadata.js";
 import type { ProjectClientInvitationService } from "./project-client-invitation.service.js";
@@ -39,6 +40,7 @@ export interface InitiateAdminProjectInput extends ProjectInitiationMetadata {
   nextActionAt: string;
   estimatorId?: string;
   salesManagerId?: string;
+  projectManagerDefaultVersion?: number;
 }
 
 export interface SalesManagerOption {
@@ -123,11 +125,9 @@ export function createAdminProjectService(
           const receipt = await transaction.findProjectInitiationReceipt(receiptId);
           if (receipt) {
             if (receipt.actorId !== initiator.id || (receipt.fingerprint !== fingerprint && receipt.fingerprint !== legacyFingerprint)) throw new ApiError(409, "INITIATION_KEY_REUSED", "This initiation key belongs to a different project request.");
-            const originalProject = await transaction.findProjectById(receipt.projectId);
-            const managerId = initiator.role === "estimator_sales" ? input.salesManagerId : initiator.id;
-            const manager = managerId ? await transaction.findUserById(managerId) : null;
-            if (!originalProject || !manager || !manager.active) notFound();
-            const existing = await transaction.findAdminProject(manager!, receipt.projectId);
+            const existing = initiator.role === "estimator_sales"
+              ? await transaction.findSalesInitiatedProject(initiator, receipt.projectId)
+              : await transaction.findAdminProject(initiator, receipt.projectId);
             if (!existing) notFound();
             return existing!;
           }
@@ -142,8 +142,9 @@ export function createAdminProjectService(
         const salesManager = salesInitiated && input.salesManagerId
           ? await transaction.findUserById(input.salesManagerId)
           : salesInitiated ? null : initiator;
-        if (!salesManager || !salesManager.active ||
-          (salesInitiated && salesManager.role !== "admin")) {
+        if ((!salesInitiated || input.salesManagerId !== undefined) &&
+          (!salesManager || !salesManager.active || salesManager.deletedAt ||
+          (salesInitiated && salesManager.role !== "admin"))) {
           validationError("salesManagerId", "Select an active Sales Manager.");
         }
         const estimator = salesInitiated ? initiator : input.estimatorId
@@ -165,6 +166,7 @@ export function createAdminProjectService(
           isReservedDevelopmentDemoIdentity(existingClient)
         )) validationError("clientEmail", "Use an active client account eligible for project access.");
 
+        const projectManagerDefault = await resolveProjectManagerDefault(transaction, input.projectManagerDefaultVersion);
         const occurredAt = clock();
         const city = confirmedCity(input.cityName);
         const timestamp = occurredAt.toISOString();
@@ -191,7 +193,7 @@ export function createAdminProjectService(
           assignedEstimatorId: estimator.id,
           assignedDesignerIds: [],
           managerId: null,
-          programManagerId: null,
+          programManagerId: projectManagerDefault.projectManagerId,
           status: "planning",
           location: input.location ?? "",
           cityName: city?.name ?? null,
@@ -204,7 +206,7 @@ export function createAdminProjectService(
           updatedAt: timestamp
         };
         const createdProject = await transaction.createProject(project);
-        const grant = await transaction.createProjectAccessGrant({
+        const grant = salesManager ? await transaction.createProjectAccessGrant({
           projectId: createdProject.id,
           userId: salesManager.id,
           module: "projects",
@@ -214,7 +216,7 @@ export function createAdminProjectService(
           grantedAt: timestamp,
           createdAt: timestamp,
           updatedAt: timestamp
-        });
+        }) : null;
         const lead = await transaction.createLead({
           ...metadata,
           id: `lead-${randomUUID()}`,
@@ -249,7 +251,7 @@ export function createAdminProjectService(
           entityType: "project",
           entityId: createdProject.id,
           occurredAt: timestamp,
-          newValues: { status: "planning", assignedEstimatorId: estimator.id, ...(city ? { cityName: city.name, cityKey: city.key } : {}) }
+          newValues: { status: "planning", assignedEstimatorId: estimator.id, programManagerId: projectManagerDefault.projectManagerId, projectManagerDefaultVersion: projectManagerDefault.version, ...(city ? { cityName: city.name, cityKey: city.key } : {}) }
         }, transaction);
         if (existingClient) await audit.append({
           actorId: initiator.id,
@@ -260,7 +262,7 @@ export function createAdminProjectService(
           oldValues: { clientId: null },
           newValues: { clientId: existingClient.id }
         }, transaction);
-        await audit.append({
+        if (grant && salesManager) await audit.append({
           actorId: initiator.id,
           action: "project_access.granted",
           entityType: "project_access_grant",
@@ -286,7 +288,9 @@ export function createAdminProjectService(
           }
         }, transaction);
 
-        const summary = await transaction.findAdminProject(salesManager, createdProject.id);
+        const summary = salesInitiated
+          ? await transaction.findSalesInitiatedProject(initiator, createdProject.id)
+          : await transaction.findAdminProject(initiator, createdProject.id);
         if (!summary) {
           throw new Error("The created Admin project could not be read in its transaction.");
         }

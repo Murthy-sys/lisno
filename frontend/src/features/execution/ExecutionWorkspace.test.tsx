@@ -38,6 +38,51 @@ describe("execution project workflow", () => {
     expect(within(rows).getAllByText("Oak residence")).toHaveLength(2);
   });
 
+  it("preserves vendor server pagination and counts while filters reset the loaded page", async () => {
+    const requests: URLSearchParams[] = [];
+    server.use(http.get("/api/v1/vendor/work/execution", ({ request }) => {
+      const params = new URL(request.url).searchParams;
+      requests.push(params);
+      const offset = Number(params.get("offset") ?? 0);
+      const items = Array.from({ length: offset === 0 ? 25 : 1 }, (_, index) => ({ ...executionFixture, id: `work-${offset + index + 1}` }));
+      return HttpResponse.json({ data: { ...executionPageFixture(items), offset, total: 26, counts: { ...executionPageFixture().counts, open: 26 } } });
+    }));
+    const user = userEvent.setup();
+    renderWithQuery(<MemoryRouter><VendorExecutionWorkspace /></MemoryRouter>);
+    expect(await screen.findByText("1–25 of 26")).toBeVisible();
+    expect(screen.getByLabelText("Execution counts")).toHaveTextContent("Open26");
+    await user.click(screen.getByRole("button", { name: "Next" }));
+    expect(await screen.findByText("26–26 of 26")).toBeVisible();
+    expect(requests.at(-1)?.get("offset")).toBe("25");
+    await user.selectOptions(screen.getByRole("combobox", { name: "Execution status" }), "blocked");
+    await waitFor(() => expect(requests.at(-1)?.get("status")).toBe("blocked"));
+    expect(requests.at(-1)?.get("offset")).toBe("0");
+    await user.type(screen.getByRole("searchbox", { name: "Search Main Lines" }), "oak");
+    await waitFor(() => expect(requests.at(-1)?.get("q")).toBe("oak"));
+    expect(requests.at(-1)?.get("status")).toBe("blocked");
+    expect(requests.at(-1)?.get("limit")).toBe("25");
+    expect(screen.getByLabelText("Execution counts")).toHaveTextContent("Open26");
+  });
+
+  it("retains vendor rows after a failed refresh and clears them when read access is denied", async () => {
+    let status = 200;
+    server.use(http.get("/api/v1/vendor/work/execution", () => status === 200
+      ? HttpResponse.json({ data: executionPageFixture() })
+      : HttpResponse.json({ error: { code: "UNAVAILABLE", message: "Assignments unavailable" } }, { status })));
+    const user = userEvent.setup();
+    renderWithQuery(<MemoryRouter><VendorExecutionWorkspace /></MemoryRouter>);
+    await screen.findByRole("region", { name: "Main Line assignments" });
+    status = 503;
+    await user.click(screen.getByRole("button", { name: "Refresh" }));
+    expect(await screen.findByText("Refresh failed. The assignments shown may be out of date. Retry before making a decision.")).toBeVisible();
+    expect(screen.getByRole("region", { name: "Main Line assignments" })).toHaveTextContent("Oak wall panelling");
+    status = 403;
+    await user.click(screen.getByRole("button", { name: "Refresh" }));
+    expect(await screen.findByText("You no longer have access to this execution tracker.")).toBeVisible();
+    expect(screen.queryByRole("region", { name: "Main Line assignments" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Open Oak/ })).not.toBeInTheDocument();
+  });
+
   it("shows assigned project details and pending progress before any work is issued", async () => {
     authState.authorization = authorizationFor("site_manager", ["projects.read", "projects.design_workflow.read"]);
     server.use(http.get("/api/v1/projects/project-one", () => HttpResponse.json({ data: { id: "project-one", name: "Oak residence", clientName: "Oak client", location: "Pune", status: "planning", plannedStartAt: "", plannedEndAt: "", floors: [] } })),

@@ -182,6 +182,7 @@ const requestBodiesByOperation: Readonly<Record<string, OpenApiRequestBody>> = {
   "POST /auth/password-reset/complete": jsonRequest("PasswordResetCompleteRequest"),
   "POST /auth/user-invitations/inspect": jsonRequest("InvitationInspectRequest"),
   "POST /auth/user-invitations/accept": jsonRequest("InvitationAcceptRequest"),
+  "PUT /admin/project-initiation-defaults": jsonRequest("ProjectInitiationDefaultsUpdate"),
   "POST /admin/projects": jsonRequest("AdminProjectInitiationRequest"),
   "POST /admin/projects/:projectId/design-assignment": jsonRequest(
     "DesignerAssignmentRequest"
@@ -312,6 +313,8 @@ const responseSchemaByOperation: Readonly<Record<string, string>> = {
   "GET /admin/users": "UserDirectoryPage",
   "GET /admin/users/:userId/responsibilities": "UserResponsibilitiesPage",
   "DELETE /admin/users/:userId": "ManagedUserDeletionResult",
+  "GET /admin/project-initiation-defaults": "ProjectInitiationDefaults",
+  "PUT /admin/project-initiation-defaults": "ProjectInitiationDefaults",
   "GET /admin/projects": "AdminProjectPage",
   "POST /admin/projects": "ProjectIntakeRecord",
   "GET /admin/projects/:projectId": "AdminProjectSummary",
@@ -455,7 +458,9 @@ const operationSummaries: Readonly<Record<string, string>> = {
   "POST /auth/user-invitations/inspect": "Inspect a staff invitation",
   "POST /auth/user-invitations/accept": "Accept a staff invitation",
   "GET /admin/projects": "List projects for Admin or Super Admin",
-  "POST /admin/projects": "Initiate a project with its Sales Manager and Sales user",
+  "GET /admin/project-initiation-defaults": "Read the configured default Project Manager",
+  "PUT /admin/project-initiation-defaults": "Set the global Project Manager default as Super Admin",
+  "POST /admin/projects": "Initiate a project with its Sales owner and configured Project Manager",
   "GET /admin/sales-managers": "List active Sales Managers available for project initiation",
   "GET /admin/projects/:projectId": "Read Admin project details",
   "GET /admin/designers": "List assignable Designers",
@@ -2254,11 +2259,28 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
         statusCounts: { $ref: "#/components/schemas/AdminProjectStatusCounts" }
       }
     },
+    ProjectInitiationDefaultsUpdate: {
+      type: "object", additionalProperties: false, required: ["expectedVersion", "projectManagerId"],
+      properties: { expectedVersion: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER }, projectManagerId: { ...id, maxLength: 160 } },
+      description: "Sole active Super Admin only. Select an active nondeleted site_manager. Version 0 creates the default; stale versions conflict. Current-version same-person saves are no-ops. Existing projects are unchanged."
+    },
+    ProjectInitiationDefaults: {
+      oneOf: [
+        { type: "object", additionalProperties: false, required: ["version", "status", "projectManager"], properties: {
+          version: { type: "integer", minimum: 1 }, status: { type: "string", enum: ["ready"] },
+          projectManager: { type: "object", additionalProperties: false, required: ["id", "name"], properties: { id, name: { type: "string" } } }
+        } },
+        { type: "object", additionalProperties: false, required: ["version", "status", "projectManager"], properties: {
+          version: { type: "integer", minimum: 0 }, status: { type: "string", enum: ["unconfigured", "unavailable"] },
+          projectManager: { type: "object", nullable: true, enum: [null] }
+        } }
+      ], description: "Minimal default projection for authorized project initiators. Unconfigured is version 0; unavailable hides account details. Creation errors are PROJECT_INITIATION_DEFAULT_UNCONFIGURED, PROJECT_INITIATION_DEFAULT_UNAVAILABLE, or PROJECT_INITIATION_DEFAULT_VERSION_CONFLICT."
+    },
     AdminProjectInitiationRequest: {
       type: "object",
       additionalProperties: false,
       required: ["clientName", "clientEmail", "clientMobile", "projectName", "propertyType", "nextActionAt"],
-      description: "Sales must select salesManagerId; the authenticated actor owns the sales lead. Sales Manager and Super Admin must select estimatorId and cannot supply salesManagerId.",
+      description: "All newly created projects receive the configured active Project Manager. Sales owns its lead; optional legacy salesManagerId retains Sales Manager oversight. Sales Manager and Super Admin must select estimatorId and cannot supply salesManagerId. Unconfigured/unavailable defaults and stale observed versions return 409 without writes. Idempotent replay retains the original project.",
       properties: {
         ...projectIntakeProperties,
         clientName: { type: "string", minLength: 1 },
@@ -2272,8 +2294,9 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
         source: { type: "string", minLength: 1, maxLength: 200, description: "Optional free-text channel or referral describing how the client heard about Lisno. Trimmed before storage on the linked Lead; omission retains admin_project. Does not affect access-grant provenance." },
         nextAction: { type: "string", minLength: 1, default: DEFAULT_PROJECT_NEXT_ACTION, description: "The initiation screen submits Estimation. Existing API clients may supply another nonempty action." },
         nextActionAt: dateTime,
+        projectManagerDefaultVersion: { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER, description: "Observed default version, always supplied by the web. Omission supports older clients. A stale value returns PROJECT_INITIATION_DEFAULT_VERSION_CONFLICT; caller cannot override the Project Manager." },
         estimatorId: { ...id, description: "Required for Sales Manager and Super Admin. For Sales, omit or supply only your own ID." },
-        salesManagerId: { ...id, description: "Required for Sales: ID of an active Sales Manager (role code admin). Not accepted for Sales Manager or Super Admin initiation." }
+        salesManagerId: { ...id, description: "Optional legacy Sales Manager oversight for Sales callers. Must identify an active Sales Manager (admin); not accepted for Sales Manager or Super Admin initiation. This is not the Project Manager assignment." }
       }
     },
     SalesManagerOptionPage: {
@@ -2495,6 +2518,27 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
       properties: { id: { type: "string" }, code: { type: "string" }, name: { type: "string" },
         decimalScale: { type: "integer", minimum: 0, maximum: 3 } }
     },
+    EstimatorCatalogueTierDetails: {
+      type: "object", nullable: true, additionalProperties: false, required: ["specifications"],
+      description: "Safe specification names and associated brand names from the selected applicable tier, or Mode (default) when that tier has no specifications, within the same current saved revision. Malformed selected-tier data cannot trigger fallback. Null means unavailable; an empty specifications list means no configured specifications or usable fallback. No descriptions, private costs, or Configuration payloads are included.",
+      properties: {
+        specifications: { type: "array", maxItems: 50, items: {
+          type: "object", additionalProperties: false, required: ["id", "name", "brands"],
+          properties: {
+            id: { type: "string", minLength: 1, maxLength: 240 },
+            name: { type: "string", minLength: 1, maxLength: 240 },
+            brands: { type: "array", maxItems: 200, items: {
+              type: "object", additionalProperties: false, required: ["id", "name"],
+              properties: {
+                id: { type: "string", minLength: 1, maxLength: 240 },
+                name: { type: "string", nullable: true, minLength: 1, maxLength: 240,
+                  description: "Null when the selected specification scope's brand reference cannot be resolved unambiguously. Brands are never borrowed from another scope." }
+              }
+            } }
+          }
+        } }
+      }
+    },
     EstimatorCatalogueLine: {
       type: "object", additionalProperties: false,
       required: ["id", "mainLineId", "basketId", "subBasketId", "itemType", "clientVisible", "hasConfiguredBasePrice", "basePriceAvailability", "name", "displayOrder", "revisionId", "itemStatus", "revisionStatus", "itemVersion", "revisionVersion", "inHouseBaseRatePaise", "modeBaseRatesPaise", "applicableTiers", "tierPricing", "dimensionsMandatory", "dimensionRule", "uom"],
@@ -2519,6 +2563,18 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
         revisionStatus: { type: "string", enum: ["draft", "active"] },
         itemVersion: { type: "integer", minimum: 1 }, revisionVersion: { type: "integer", minimum: 1 },
         applicableTiers: { type: "array", maxItems: 3, uniqueItems: true, items: modeTier, description: "Current Overview applicability. Missing legacy configuration means Signature; an explicit empty selection remains empty." },
+        tierDetails: {
+          type: "object", readOnly: true, additionalProperties: false,
+          properties: Object.fromEntries(KNOWLEDGE_MODE_TIERS.map(tier => [tier, { $ref: "#/components/schemas/EstimatorCatalogueTierDetails" }])),
+          description: "Optional resolved display metadata for applicable tiers only. A nonempty configured tier list takes priority; an absent or valid empty list can use configured Mode (default) specifications from the same Main Line and current revision. No list merging or cross-scope brand lookup. A missing map or null/missing tier means details unavailable. This display fallback does not affect prices, estimate mutations, or publication snapshots."
+        },
+        tierDescriptions: {
+          type: "object", readOnly: true, additionalProperties: false,
+          properties: Object.fromEntries(KNOWLEDGE_MODE_TIERS.map(tier => [tier, {
+            type: "string", nullable: true, minLength: 1, maxLength: 4000
+          }])),
+          description: "Optional resolved display paragraphs for applicable tiers from the same Main Line and current saved revision. Uses the selected tier's custom or generated Configuration paragraph, then configured Mode (default) only when the tier has no usable description source. Malformed or disabled retained content cannot trigger fallback. Independent of specification fallback; null or missing means unavailable. No raw Configuration, private inputs, pricing changes, or estimate writes."
+        },
         tierPricing: { type: "object", additionalProperties: false, properties: Object.fromEntries(KNOWLEDGE_MODE_TIERS.map(tier => [tier, {
           type: "object", additionalProperties: false, required: ["modeBaseRatesPaise"],
           properties: { modeBaseRatesPaise: tierBaseRates, inHouseComponents: tierComponents }

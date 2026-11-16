@@ -141,8 +141,8 @@ function renderWorkspace() {
 async function openBuilder(user: ReturnType<typeof userEvent.setup>, additionalBasketNames: string[] = []) {
   await screen.findByRole("heading", { name: "Main Baskets" });
   await user.click(screen.getByRole("button", { name: "Select rooms" }));
-  await user.click(screen.getByRole("option", { name: "Living & Dining" }));
-  await user.click(screen.getByRole("option", { name: "Bedroom 1" }));
+  await user.click(screen.getByRole("checkbox", { name: "Living & Dining" }));
+  await user.click(screen.getByRole("checkbox", { name: "Bedroom 1" }));
   await user.click(screen.getByRole("button", { name: "Done" }));
   await user.click(screen.getByRole("button", { name: /^(?:Add|Added) POP \/ Gypsum$/ }));
   for (const name of additionalBasketNames) await user.click(screen.getByRole("button", { name: `Add ${name}` }));

@@ -53,6 +53,64 @@
 .vendor-work__submit { grid-template-columns: minmax(0,1fr) auto; align-items: end; }
 .vendor-work__submit > div { display: grid; gap: 5px; }
 .vendor-work__notice { color: var(--color-success-strong); font-size: 12px; }
+
+/* Vendor execution uses the existing workspace controls and theme tokens. */
+.vendor-assignments__label { display: none; }
+.vendor-assignments__table { table-layout: fixed; }
+.vendor-assignments__table th:first-child { width: 23%; }
+.vendor-assignments__table th:nth-child(2) { width: 16%; }
+.vendor-assignments__table th:nth-child(3) { width: 22%; }
+.vendor-assignments__table th:nth-child(4) { width: 17%; }
+.vendor-assignments__table th:nth-child(5) { width: 14%; }
+.vendor-assignments__table th:last-child { width: 8%; }
+.vendor-assignments__table td { overflow-wrap: anywhere; }
+.vendor-assignments__table .vendor-assignments__guidance { margin-top: 7px; line-height: 1.6; }
+.vendor-assignments__table .vendor-assignments__next { margin-top: 7px; color: var(--color-text-strong); font-weight: 600; }
+.vendor-assignments__table .vendor-assignments__report { margin-top: 7px; white-space: pre-wrap; }
+.vendor-assignments__open .ui-button { min-inline-size: 0; width: 100%; }
+.vendor-workflow, .vendor-review { display: grid; gap: 12px; min-inline-size: 0; }
+.vendor-workflow__heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 12px; }
+.vendor-workflow__guidance { color: var(--color-text-muted); font-size: 13px; line-height: 1.6; }
+.vendor-workflow__milestones { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; margin: 0; padding: 0; list-style: none; }
+.vendor-workflow__milestone { display: grid; align-content: start; gap: 5px; padding-block: 10px; border-block-start: 2px solid var(--color-border); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.vendor-workflow__milestone[data-state="current"] { border-block-start-color: var(--color-primary); }
+.vendor-workflow__milestone-state { color: var(--color-text-muted); font-size: 11px; }
+.vendor-workflow__milestone[data-state="current"] .vendor-workflow__milestone-state { color: var(--color-text-strong); font-weight: 600; }
+.vendor-workflow__report, .vendor-workflow__activity { display: grid; gap: 7px; min-inline-size: 0; }
+.vendor-workflow__report { padding-block: 12px; border-block: 1px solid var(--color-border); }
+.vendor-workflow__report p, .vendor-workflow__activity p { line-height: 1.6; overflow-wrap: anywhere; white-space: pre-wrap; }
+.vendor-workflow__report-meta { color: var(--color-text-muted); font-size: 11px; }
+.vendor-workflow__action-link { justify-self: start; }
+.vendor-review { padding-block: 14px; border-block-start: 1px solid var(--color-border); }
+.vendor-review__facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.vendor-review__facts dt { color: var(--color-text-muted); font-size: 11px; }
+.vendor-review__facts dd { margin: 3px 0 0; font-size: 13px; overflow-wrap: anywhere; }
+.vendor-execution-panel .execution__detail { overflow-wrap: anywhere; }
+
+@media (max-width: 1100px) {
+  .execution__table-wrap.vendor-assignments { overflow: visible; }
+  .vendor-assignments .vendor-assignments__table { display: block; min-width: 0; }
+  .vendor-assignments .vendor-assignments__table thead { position: absolute; inline-size: 1px; block-size: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .vendor-assignments .vendor-assignments__table tbody { display: block; }
+  .vendor-assignments__row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 18px; padding: 16px; }
+  .vendor-assignments__row + .vendor-assignments__row { border-block-start: 1px solid var(--color-border); }
+  .vendor-assignments .vendor-assignments__table td { display: block; padding: 0; border: 0; min-width: 0; max-width: none; }
+  .vendor-assignments .vendor-assignments__table td:first-child, .vendor-assignments .vendor-assignments__table td:nth-child(2) { min-width: 0; max-width: none; }
+  .vendor-assignments__label { display: block; margin-block-end: 5px; color: var(--color-text-muted); font-size: 11px; font-weight: 600; }
+  .vendor-assignments__scope, .vendor-assignments__workflow { grid-column: 1 / -1; }
+  .vendor-assignments__open { align-self: end; }
+  .vendor-assignments__open .ui-button { min-height: 44px; }
+}
+@media (max-width: 650px) {
+  .vendor-work__projects > div { flex-wrap: wrap; min-inline-size: 0; max-inline-size: 100%; }
+  .vendor-work__projects > div > span { overflow-wrap: anywhere; }
+  .vendor-assignments__row { grid-template-columns: minmax(0, 1fr); gap: 14px; padding: 14px; }
+  .vendor-assignments__open .vendor-assignments__label { display: none; }
+  .vendor-workflow__milestones { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .vendor-workflow__milestone { grid-template-columns: minmax(0, 1fr) auto; align-items: baseline; gap: 12px; padding-block: 8px; border-block-start-width: 1px; }
+  .vendor-workflow__action-link, .vendor-workflow__heading .ui-button { min-height: 44px; }
+  .vendor-review__facts { grid-template-columns: minmax(0, 1fr); }
+}
 @media (max-width: 980px) { .vendor-work__layout { grid-template-columns: 1fr; } .vendor-work__list { max-block-size: 340px; overflow-y: auto; } }
 @media (max-width: 560px) { .vendor-work__detail { padding: 10px; } .vendor-work__facts, .vendor-work__update-fields, .vendor-work__submit { grid-template-columns: 1fr; } .vendor-work__submit .ui-button { justify-self: stretch; } }
 @media print {

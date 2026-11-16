@@ -30,6 +30,7 @@ import {
   createUserInvitationService
 } from "../src/services/user-invitation.service.js";
 import { startMongoReplicaSet } from "./helpers/mongo-replica-set.js";
+import { defaultProjectManagerId, insertProjectInitiationDefault } from "./helpers/project-initiation-defaults.js";
 
 const NOW = "2026-08-24T12:00:00.000Z";
 const INVITEE_EMAIL = "race.invitee@example.test";
@@ -288,6 +289,7 @@ async function insertProjectActors() {
     insertUser("race-designer", "designer"),
     insertUser("race-design-manager", "design_manager")
   ]);
+  await insertProjectInitiationDefault();
   return {
     designer: publicUser("race-designer", "designer"),
     input: {
@@ -999,7 +1001,7 @@ describe("user invitation Mongo replica-set races", () => {
         actorId: projectFixture.designer.id,
         entityType: "project",
         entityId: storedProject!._id,
-        newValues: { name: "Race Project", status: "planning" }
+        newValues: { name: "Race Project", status: "planning", programManagerId: defaultProjectManagerId, projectManagerDefaultVersion: 1 }
       }], [RAW_TOKEN, ACCEPTED_PASSWORD, ACCEPTED_PASSWORD_HASH]);
     }
   });

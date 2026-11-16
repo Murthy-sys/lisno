@@ -1,7 +1,6 @@
 import { useId, type RefObject } from "react";
 import { PropertyTypeDropdown } from "../leads/PropertyTypeDropdown";
-import { RoomsMultiSelectDropdown, type RoomOption } from "../leads/RoomsMultiSelectDropdown";
-import { RoomDimensionsAccordion, type RoomDimensionItem } from "../leads/RoomDimensionsAccordion";
+import { RoomsMultiSelectDropdown, type RoomDimensionValue, type RoomOption } from "../leads/RoomsMultiSelectDropdown";
 import { MAX_BEDROOM_COUNT } from "../leads/estimateRoomOptions";
 import { propertyTypes } from "../leads/propertyTypes";
 
@@ -19,7 +18,7 @@ export interface EstimateSetupFieldsProps {
   selectedRoomTypeIds: readonly string[];
   onRoomsChange: (ids: string[]) => void;
   retainedRooms: boolean;
-  rooms: readonly RoomDimensionItem[];
+  rooms: readonly RoomDimensionValue[];
   onDimensionChange: (id: string, change: { length?: number | null; width?: number | null }) => void;
   onRemoveRoom: (id: string) => void;
 }
@@ -48,10 +47,10 @@ export function EstimateSetupFields({
           <p id={`${bedroomId}-hint`} className="estimate-bedroom-count__hint">Controls the available bedrooms, balconies and bathrooms.</p>
           {bedroomCountRequired ? <p id={`${bedroomId}-error`} className="estimate-bedroom-count__error">{bedroomCountInput ? `Enter a whole number from 1 to ${MAX_BEDROOM_COUNT}.` : "Enter the number of bedrooms to continue."}</p> : null}
         </div> : null}
-        <div className="estimate-configure-details__field" role="group" aria-labelledby={`${id}-rooms-label`}><span id={`${id}-rooms-label`}>Rooms</span><RoomsMultiSelectDropdown options={roomOptions} selected={selectedRoomTypeIds} onChange={onRoomsChange} disabled={disabled} /></div>
+        <div className="estimate-configure-details__field" role="group" aria-labelledby={`${id}-rooms-label`}><span id={`${id}-rooms-label`}>Rooms</span><RoomsMultiSelectDropdown options={roomOptions} selected={selectedRoomTypeIds} onChange={onRoomsChange}
+          dimensions={rooms} onDimensionChange={onDimensionChange} onRemoveRoom={onRemoveRoom} disabled={disabled} /></div>
       </div>
       {retainedRooms ? <p className="estimate-retained-rooms-note">Previously selected rooms are kept with their dimensions and items. Remove them explicitly if they are no longer needed.</p> : null}
     </section>
-    {rooms.length ? <section className="estimate-configure-dimensions" aria-label="Room dimensions"><RoomDimensionsAccordion rooms={rooms} onDimensionChange={onDimensionChange} onRemove={onRemoveRoom} disabled={disabled} /></section> : null}
   </>;
 }

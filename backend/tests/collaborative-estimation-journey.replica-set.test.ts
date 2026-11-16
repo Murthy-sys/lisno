@@ -1,3 +1,4 @@
+import { insertProjectInitiationDefault } from "./helpers/project-initiation-defaults.js";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { newEstimationLifecycle } from "../src/domain/estimation-lifecycle.js";
 import { sha256Hex } from "../src/domain/estimate-client-review.js";
@@ -81,6 +82,7 @@ describe("collaborative estimation service journey", () => {
     const tokens: string[] = [];
     const invitations = createProjectClientInvitationService({ repository, audit, auth, clock: () => at,
       mailer: { deliveryKind: "local_test", async sendInvitation(message) { tokens.push(message.rawToken); } } });
+    await insertProjectInitiationDefault(site.id);
     const projects = createAdminProjectService(repository, audit, () => at, invitations);
     const project = await projects.initiate(admin, { initiationKey: "journey-project-initiation", clientName: "Synthetic Client",
       clientEmail: "client@journey.example.test", clientMobile: "0000000000", projectName: "Synthetic Journey Residence",

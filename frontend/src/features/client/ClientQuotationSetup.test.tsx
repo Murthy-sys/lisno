@@ -46,8 +46,11 @@ describe("Client Sales-style quotation setup", () => {
     const user = userEvent.setup();
     const { props, changes, latest } = mount();
     expect(screen.getByRole("button", { name: "Property type: 2BHK" })).toBeVisible();
+    expect(screen.queryByRole("region", { name: "Room dimensions" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Select rooms" }));
     expect(screen.getByRole("spinbutton", { name: "Kitchen length" })).toHaveValue(12);
     expect(screen.getByRole("spinbutton", { name: "Guest bedroom width" })).toHaveValue(10);
+    await user.click(screen.getByRole("button", { name: "Done" }));
     expect(screen.getByRole("button", { name: "Added Woodwork" })).toHaveAttribute("aria-pressed", "true");
     expect(changes).toEqual([]);
     await user.click(screen.getByRole("button", { name: "Add Painting" }));
@@ -70,21 +73,23 @@ describe("Client Sales-style quotation setup", () => {
     ] });
     expect(screen.getByText(/Previously selected rooms are kept/)).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Select rooms" }));
-    expect(within(screen.getByRole("group", { name: "Previously selected" })).getByRole("option", { name: "Guest bedroom" })).toHaveAttribute("aria-selected", "true");
+    expect(within(screen.getByRole("group", { name: "Previously selected" })).getByRole("checkbox", { name: "Guest bedroom" })).toBeChecked();
   });
 
   it("adds a selected room once with a stable new ID while preserving other saved rooms", async () => {
     const user = userEvent.setup();
     const { latest } = mount();
     await user.click(screen.getByRole("button", { name: "Select rooms" }));
-    await user.click(screen.getByRole("option", { name: "Bedroom 1" }));
-    await user.click(screen.getByRole("button", { name: "Done" }));
+    await user.click(screen.getByRole("checkbox", { name: "Bedroom 1" }));
     const newRoom = latest().rooms.find((room) => room.typeId === "master")!;
     expect(newRoom.id).toMatch(/^master-/);
     expect(newRoom).toMatchObject({ label: "Bedroom 1", length: null, width: null });
     fireEvent.change(screen.getByRole("spinbutton", { name: "Bedroom 1 length" }), { target: { value: "18" } });
     expect(latest().rooms.find((room) => room.typeId === "master")).toMatchObject({ id: newRoom.id, length: 18 });
     expect(latest().rooms.find((room) => room.id === "bedroom-saved")).toMatchObject({ length: 14, width: 10 });
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    await user.click(screen.getByRole("button", { name: "Select rooms" }));
+    expect(screen.getByRole("spinbutton", { name: "Bedroom 1 length" })).toHaveValue(18);
   });
 
   it("validates variable bedroom input and dimensions without losing invalid input", async () => {
@@ -101,6 +106,7 @@ describe("Client Sales-style quotation setup", () => {
     fireEvent.change(bedrooms, { target: { value: "3" } });
     expect(latest().bedroomCount).toBe(3);
     expect(screen.getByRole("button", { name: /^(Continue to items|Save and continue to items)$/ })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Select rooms" }));
     fireEvent.change(screen.getByRole("spinbutton", { name: "Kitchen length" }), { target: { value: "1000001" } });
     expect(screen.getByRole("button", { name: /^Save (and continue to items|setup changes)$/ })).toBeDisabled();
     expect(screen.getByRole("alert")).toHaveTextContent("up to 1,000,000 ft");
@@ -112,23 +118,45 @@ describe("Client Sales-style quotation setup", () => {
     data.detail.setup!.rooms.push({ id: "legacy-room", typeId: null, label: "Kitchen", length: null, width: null, sqft: 45, canRemove: true, removalBlockedReason: null });
     data.detail.setup!.rooms.push({ id: "other-kitchen", typeId: "kitchen", label: "Pantry", length: 6, width: 4, sqft: 24, canRemove: true, removalBlockedReason: null });
     data.catalogue.setup = structuredClone(data.detail.setup!);
-    const { latest } = mount(data);
+    const { latest, props } = mount(data);
     await user.click(screen.getByRole("button", { name: "Add Painting" }));
     expect(latest().rooms.find((room) => room.id === "legacy-room")).toEqual({ id: "legacy-room", typeId: null, label: "Kitchen", length: null, width: null });
     expect(latest().rooms.find((room) => room.id === "other-kitchen")).toMatchObject({ typeId: "kitchen", label: "Pantry" });
     expect(screen.getByRole("list", { name: "Selected rooms" }).children).toHaveLength(4);
+    await user.click(screen.getByRole("button", { name: "Select rooms" }));
+    const kitchens = screen.getAllByRole("spinbutton", { name: "Kitchen length" });
+    const savedKitchen = kitchens.find((input) => (input as HTMLInputElement).value === "12")!;
+    const legacyKitchen = kitchens.find((input) => (input as HTMLInputElement).value === "")!;
+    expect(savedKitchen).toBeVisible();
+    expect(legacyKitchen).toBeVisible();
+    fireEvent.change(savedKitchen, { target: { value: "19" } });
+    fireEvent.change(legacyKitchen, { target: { value: "7" } });
+    fireEvent.change(screen.getByRole("spinbutton", { name: "Pantry width" }), { target: { value: "5" } });
+    expect(latest().rooms).toEqual([
+      { id: "kitchen-saved", typeId: "kitchen", label: "Kitchen", length: 19, width: 8 },
+      { id: "bedroom-saved", typeId: "bedroom2", label: "Guest bedroom", length: 14, width: 10 },
+      { id: "legacy-room", typeId: null, label: "Kitchen", length: 7, width: null },
+      { id: "other-kitchen", typeId: "kitchen", label: "Pantry", length: 6, width: 5 }
+    ]);
+    await user.type(screen.getByRole("textbox", { name: "Search rooms" }), "Pantry");
+    expect(screen.queryByRole("spinbutton", { name: "Kitchen length" })).not.toBeInTheDocument();
+    await user.clear(screen.getByRole("textbox", { name: "Search rooms" }));
+    expect(screen.getAllByRole("spinbutton", { name: "Kitchen length" }).map((input) => (input as HTMLInputElement).value)).toEqual(["19", "7"]);
+    expect(props.onSave).not.toHaveBeenCalled();
   });
 
   it("requires room-removal confirmation and restores focus when the Client keeps the room", async () => {
     const user = userEvent.setup();
     const { changes, latest } = mount();
-    const trigger = screen.getByRole("button", { name: "Remove Kitchen room" });
+    await user.click(screen.getByRole("button", { name: "Select rooms" }));
+    const trigger = screen.getByRole("checkbox", { name: "Kitchen" });
     await user.click(trigger);
     const dialog = screen.getByRole("alertdialog", { name: "Remove selected rooms?" });
     expect(within(dialog).getByText(/1 saved visible item is/)).toBeVisible();
     await waitFor(() => expect(within(dialog).getByRole("button", { name: "Keep selection" })).toHaveFocus());
     await user.click(within(dialog).getByRole("button", { name: "Keep selection" }));
     expect(trigger).toHaveFocus();
+    expect(trigger).toBeChecked();
     expect(changes).toEqual([]);
     await user.click(trigger);
     await user.click(screen.getByRole("button", { name: "Remove from estimate" }));
@@ -158,7 +186,9 @@ describe("Client Sales-style quotation setup", () => {
     data.catalogue.setup.rooms[0]!.removalBlockedReason = "team_review_required";
     data.catalogue.baskets[0]!.canRemove = false;
     const { changes } = mount(data);
-    await user.click(screen.getByRole("button", { name: "Remove Kitchen room" }));
+    await user.click(screen.getByRole("button", { name: "Select rooms" }));
+    await user.click(screen.getByRole("checkbox", { name: "Kitchen" }));
+    expect(screen.getByRole("checkbox", { name: "Kitchen" })).toBeChecked();
     expect(screen.getByRole("alert")).toHaveTextContent("needs team review");
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Added Woodwork" }));
@@ -170,6 +200,7 @@ describe("Client Sales-style quotation setup", () => {
   it("preserves a local draft and disables actions after a failed or stale catalogue refresh", async () => {
     const user = userEvent.setup();
     const { props, refresh, latest } = mount();
+    await user.click(screen.getByRole("button", { name: "Select rooms" }));
     fireEvent.change(screen.getByRole("spinbutton", { name: "Kitchen width" }), { target: { value: "15" } });
     refresh({ catalogueError: "Available items could not be refreshed. Try again." });
     expect(screen.getByRole("spinbutton", { name: "Kitchen width" })).toHaveValue(15);
@@ -209,15 +240,39 @@ describe("Client Sales-style quotation setup", () => {
     expect(props.onSave).toHaveBeenCalledWith(false);
   });
 
-  it("keeps unavailable and locked options readable without allowing selection", () => {
+  it("keeps unavailable and locked options readable without allowing selection", async () => {
+    const user = userEvent.setup();
     const data = fixture();
     data.catalogue.baskets[1]!.canSelect = false;
     const { refresh } = mount(data);
     expect(screen.getByRole("button", { name: "Add Painting" })).toBeDisabled();
     refresh({ disabled: true });
+    await user.click(screen.getByRole("button", { name: "Select rooms" }));
     expect(screen.getByRole("spinbutton", { name: "Kitchen length" })).toBeDisabled();
+    expect(screen.getByRole("spinbutton", { name: "Kitchen length" })).toHaveValue(12);
+    expect(screen.getByRole("checkbox", { name: "Kitchen" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Added Woodwork" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Return to saved items" })).toBeEnabled();
+  });
+
+  it.each(["busy", "loading", "refreshing"] as const)("keeps saved dimensions inspectable without mutation while %s", async (guard) => {
+    const user = userEvent.setup();
+    const { changes, props } = mount({ [guard]: true });
+    await user.click(screen.getByRole("button", { name: "Select rooms" }));
+    const length = screen.getByRole("spinbutton", { name: "Kitchen length" });
+    expect(length).toHaveValue(12);
+    expect(length).toBeDisabled();
+    fireEvent.change(length, { target: { value: "20" } });
+    const room = screen.getByRole("checkbox", { name: "Kitchen" });
+    expect(room).toBeDisabled();
+    await user.click(room);
+    expect(room).toBeChecked();
+    expect(screen.getByRole("button", { name: "Select all" })).toBeDisabled();
+    expect(within(screen.getByRole("dialog", { name: "Rooms" })).getByRole("button", { name: "Clear all" })).toBeDisabled();
+    expect(changes).toEqual([]);
+    expect(props.onSave).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    expect(screen.getByRole("button", { name: "Select rooms" })).toHaveFocus();
   });
 
   it("keeps loading and empty-catalogue states explicit and names draft discard before returning", async () => {
@@ -229,6 +284,7 @@ describe("Client Sales-style quotation setup", () => {
     refresh({ catalogue: { ...data.catalogue, baskets: [] }, loading: false });
     expect(screen.getByText("No Main Baskets are currently available for your estimate.")).toBeVisible();
     expect(screen.getByRole("button", { name: /^(Continue to items|Save and continue to items)$/ })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Select rooms" }));
     fireEvent.change(screen.getByRole("spinbutton", { name: "Kitchen width" }), { target: { value: "20" } });
     await user.click(screen.getByRole("button", { name: "Discard setup changes and return" }));
     expect(props.onCancel).toHaveBeenCalledOnce();
@@ -237,11 +293,12 @@ describe("Client Sales-style quotation setup", () => {
   it("exposes named keyboard controls and an accessible removal dialog", async () => {
     const user = userEvent.setup();
     const { container } = mount();
+    await user.click(screen.getByRole("button", { name: "Select rooms" }));
     expect((await axe.run(container, { rules: { "color-contrast": { enabled: false } } })).violations).toEqual([]);
-    await user.click(screen.getByRole("button", { name: "Remove Kitchen room" }));
+    await user.click(screen.getByRole("checkbox", { name: "Kitchen" }));
     const dialog = screen.getByRole("alertdialog");
     expect((await axe.run(dialog, { rules: { "color-contrast": { enabled: false } } })).violations).toEqual([]);
     await user.keyboard("{Escape}");
-    expect(screen.getByRole("button", { name: "Remove Kitchen room" })).toHaveFocus();
+    expect(screen.getByRole("checkbox", { name: "Kitchen" })).toHaveFocus();
   });
 });

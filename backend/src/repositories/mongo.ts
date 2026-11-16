@@ -1,4 +1,6 @@
 import { mongoUserResponsibilityCounts, mongoUserResponsibilities } from "./user-responsibilities.js";
+import { PROJECT_INITIATION_DEFAULTS_ID } from "../contracts/project-initiation-defaults.js";
+import { ProjectInitiationDefaultsModel } from "../models/ProjectInitiationDefaults.js";
 import { readProjectNumber } from "../domain/project-number.js";
 import { readProjectNumbers } from "../services/project-number-read.service.js";
 import { readProjectInitiationMetadata } from "../domain/project-initiation-metadata.js";
@@ -848,6 +850,23 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       if (!user) throw new RepositoryConflictError("Project invitation is no longer available.");
       const result = await ProjectModel.updateOne({ _id: projectId, clientId: null, clientEmailNormalized: emailNormalized, estimationWorkflowVersion: { $in: [2, 3] } }, { $set: { clientId, updatedAt: new Date(updatedAt) } }, { session, runValidators: true });
       if (result.matchedCount !== 1) throw new RepositoryConflictError("Project invitation is no longer available.");
+    },
+    async findProjectInitiationDefaults() {
+      const row = await ProjectInitiationDefaultsModel.findById(PROJECT_INITIATION_DEFAULTS_ID).session(session ?? null).lean();
+      return row ? { projectManagerId: String(row.projectManagerId), version: Number(row.version), updatedById: String(row.updatedById), updatedAt: new Date(row.updatedAt).toISOString() } : null;
+    },
+    async saveProjectInitiationDefaults(record, expectedVersion) {
+      if (!session?.inTransaction()) throw new Error("Project defaults writes require a transaction.");
+      if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 0 || !Number.isSafeInteger(record.version) || record.version !== expectedVersion + 1) {
+        throw new RepositoryConflictError("Project defaults changed.");
+      }
+      if (expectedVersion === 0) {
+        await ProjectInitiationDefaultsModel.create([{ _id: PROJECT_INITIATION_DEFAULTS_ID, ...record }], { session });
+      } else {
+        const result = await ProjectInitiationDefaultsModel.updateOne({ _id: PROJECT_INITIATION_DEFAULTS_ID, version: expectedVersion }, { $set: record }, { session, runValidators: true });
+        if (result.matchedCount !== 1) throw new RepositoryConflictError("Project defaults changed.");
+      }
+      return { ...record };
     },
     async findProjectInitiationReceipt(id) {
       const row = await ProjectInitiationReceiptModel.findById(id).session(session ?? null).lean();
@@ -2017,6 +2036,16 @@ export function createMongoRepository(session?: ClientSession): AppRepository {
       };
     },
 
+    async findSalesInitiatedProject(actor, projectId) {
+      if (actor.role !== "estimator_sales") return null;
+      const currentActor = await UserModel.findOne({ _id: actor.id, role: "estimator_sales", active: true, deletedAt: null }).session(session ?? null).lean();
+      if (!currentActor) return null;
+      const project = await ProjectModel.findOne({ _id: projectId, assignedEstimatorId: actor.id }).session(session ?? null).lean();
+      if (!project) return null;
+      const leads = await LeadModel.find({ projectId }).limit(2).select({ ownerId: 1 }).session(session ?? null).lean();
+      if (leads.length !== 1 || String(leads[0]!.ownerId) !== actor.id) return null;
+      return (await loadAdminProjectSummaries([project], mapUser(currentActor)))[0] ?? null;
+    },
     async findAdminProject(actor, projectId) {
       const filter = await projectFilterForUserInModule(actor, "projects");
       if (filter === null) return null;

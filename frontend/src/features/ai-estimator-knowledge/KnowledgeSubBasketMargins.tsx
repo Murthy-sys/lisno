@@ -1,6 +1,7 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useRef, useState } from "react";
+import { useMutation, useQueries, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useRef, useState } from "react";
 
+import { KNOWLEDGE_MODE_TIERS, KNOWLEDGE_MODE_TIER_LABELS, type KnowledgeModeTier } from "../../../../shared/knowledge/knowledgeModeTiers";
 import type { KnowledgeSubBasketMarginMode, KnowledgeSubBasketMarginRange } from "../../../../shared/knowledge/knowledgeSubBasketMarginTypes";
 import { Button } from "../../components/ui/Button";
 import { ContextPanel } from "../../components/ui/ContextPanel";
@@ -15,7 +16,7 @@ const LABELS = { pmc: "PMC", sub_vendor: "Sub-vendor", in_house: "In-house" };
 const percentage = (value: number | null) => value === null ? "Not configured" : `${value / 100}%`;
 
 function MarginRanges({ ranges, mode, compact = false }: { ranges: readonly KnowledgeSubBasketMarginRange[]; mode: KnowledgeSubBasketMarginMode; compact?: boolean }) {
-  if (compact && (!ranges.length || ranges.every((range) => range.minimumBps === null && range.maximumBps === null))) {
+  if (!ranges.length || ranges.every((range) => range.minimumBps === null && range.maximumBps === null)) {
     return <span className="knowledge-sub-margins__empty">Not set</span>;
   }
   if (ranges.some(({ component }) => component)) {
@@ -39,108 +40,136 @@ function MarginRanges({ ranges, mode, compact = false }: { ranges: readonly Know
   </span>) : <span>Not configured</span>}</span>;
 }
 
-export function KnowledgeSubBasketMargins({ basketId, subBasketId, subBasketName, enabled, readOnly }: {
+type MarginProps = {
   readonly basketId: string;
   readonly subBasketId: string;
   readonly subBasketName: string;
   readonly enabled: boolean;
   readonly readOnly: boolean;
-}) {
+};
+type MarginSelection = { readonly tier: KnowledgeModeTier; readonly mode: KnowledgeSubBasketMarginMode };
+
+export function KnowledgeSubBasketMargins(props: MarginProps) {
+  return <SubBasketTierMargins key={JSON.stringify([props.basketId, props.subBasketId])} {...props} />;
+}
+
+function SubBasketTierMargins({ basketId, subBasketId, subBasketName, enabled, readOnly }: MarginProps) {
   const client = useQueryClient();
-  const queryKey = knowledgeQueryKeys.subBasketMargins(basketId, subBasketId);
-  const query = useQuery({ queryKey, queryFn: () => getKnowledgeSubBasketMargins(basketId, subBasketId), enabled });
-  const [selected, setSelected] = useState<KnowledgeSubBasketMarginMode | null>(null);
+  const signatureKey = knowledgeQueryKeys.subBasketMargins(basketId, subBasketId);
+  const queries = useQueries({ queries: KNOWLEDGE_MODE_TIERS.map((tier) => ({
+    queryKey: knowledgeQueryKeys.subBasketMargins(basketId, subBasketId, tier),
+    queryFn: async () => {
+      const summary = await getKnowledgeSubBasketMargins(basketId, subBasketId, { modeTier: tier });
+      if (summary.basketId !== basketId || summary.subBasketId !== subBasketId) throw new Error("The margin comparison could not be verified. Please retry.");
+      return summary;
+    },
+    enabled
+  })) });
+  const [selected, setSelected] = useState<MarginSelection | null>(null);
   const [announcement, setAnnouncement] = useState("");
   const [needsReview, setNeedsReview] = useState(false);
   const [refreshWarning, setRefreshWarning] = useState(false);
   const returnFocusRef = useRef<HTMLButtonElement>(null);
   const writeLocked = useRef(false);
+  const refreshMainLineIds = useRef<readonly string[]>([]);
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+
+  async function refreshRelated(mainLineIds: readonly string[]) {
+    const results = await Promise.allSettled([
+      syncKnowledgeSubBasketMargins(client, mainLineIds),
+      client.invalidateQueries({ queryKey: signatureKey, predicate: (query) => query.queryKey.length > signatureKey.length }, { throwOnError: true })
+    ]);
+    return results.every((result) => result.status === "fulfilled" && result.value !== false);
+  }
+
   const mutation = useMutation({
-    mutationFn: ({ mode, versionToken }: { mode: KnowledgeSubBasketMarginMode; versionToken: string }) =>
-      applyKnowledgeSubBasketMargins(basketId, subBasketId, { mode, versionToken }),
-    onSuccess: async (result, { mode }) => {
-      await client.cancelQueries({ queryKey });
-      client.setQueryData(queryKey, result.summary);
-      const refreshed = await syncKnowledgeSubBasketMargins(client, result.updatedMainLineIds);
-      setRefreshWarning(!refreshed);
-      setAnnouncement(`${LABELS[mode]} default applied to ${result.updatedMainLineIds.length} main ${result.updatedMainLineIds.length === 1 ? "line" : "lines"}.`);
-      setSelected(null);
+    mutationFn: async ({ mode, versionToken }: { mode: KnowledgeSubBasketMarginMode; versionToken: string }) => {
+      const result = await applyKnowledgeSubBasketMargins(basketId, subBasketId, { mode, versionToken });
+      if (result.summary.basketId !== basketId || result.summary.subBasketId !== subBasketId) throw new Error("The saved margin comparison could not be verified. Refresh before continuing.");
+      return result;
     },
-    onError: () => setNeedsReview(true),
+    onSuccess: async (result, { mode }) => {
+      await client.cancelQueries({ queryKey: signatureKey, exact: true });
+      client.setQueryData(signatureKey, result.summary);
+      refreshMainLineIds.current = result.updatedMainLineIds;
+      const refreshed = await refreshRelated(result.updatedMainLineIds);
+      if (!mounted.current) return;
+      setRefreshWarning(!refreshed);
+      setAnnouncement(`Signature ${LABELS[mode]} default applied to ${result.updatedMainLineIds.length} main ${result.updatedMainLineIds.length === 1 ? "line" : "lines"}.`);
+      if (refreshed) setSelected(null);
+    },
+    onError: () => { if (mounted.current) setNeedsReview(true); },
     onSettled: () => { writeLocked.current = false; }
   });
-  const summary = query.data;
-  const mode = selected ? summary?.modes[selected] : undefined;
+  const selectedQuery = selected ? queries[KNOWLEDGE_MODE_TIERS.indexOf(selected.tier)] : undefined;
+  const summary = selectedQuery?.data;
+  const mode = selected ? summary?.modes[selected.mode] : undefined;
+  const signatureSelected = selected?.tier === "signature";
   const busy = mutation.isPending;
-  const unavailable = query.isPending || query.isError || !summary;
 
-  async function refresh() {
-    const result = await query.refetch();
-    if (result.isSuccess) { setNeedsReview(false); mutation.reset(); }
+  async function refresh(tier: KnowledgeModeTier) {
+    const result = await queries[KNOWLEDGE_MODE_TIERS.indexOf(tier)].refetch();
+    if (mounted.current && result.isSuccess && tier === "signature") { setNeedsReview(false); mutation.reset(); }
   }
 
   function apply() {
-    if (!selected || !summary || !mode?.canApply || !mode.mismatchCount || readOnly || busy || writeLocked.current || query.isFetching || query.isError || needsReview) return;
+    if (!selected || !signatureSelected || !summary || !mode?.canApply || !mode.mismatchCount || readOnly || busy || writeLocked.current || selectedQuery?.isFetching || selectedQuery?.isError || needsReview) return;
     writeLocked.current = true;
-    mutation.mutate({ mode: selected, versionToken: summary.versionToken });
+    mutation.mutate({ mode: selected.mode, versionToken: summary.versionToken });
   }
 
   return <div className="knowledge-sub-margins">
-    <span className="knowledge-sub-margins__eyebrow" aria-hidden="true">Default margins</span>
-    <div className="knowledge-sub-margins__controls" role="group" aria-label={`Default margins for ${subBasketName}`} aria-busy={query.isFetching || busy}>
-      {MODES.map((key) => {
-        const state = summary?.modes[key];
-        const mismatchCount = !unavailable && state?.mismatchCount ? state.mismatchCount : 0;
-        return <button key={key} type="button" className="knowledge-sub-margins__control"
-          disabled={unavailable || busy} data-mismatch={mismatchCount > 0 || undefined}
-          aria-haspopup="dialog" aria-expanded={selected === key}
-          title={key === "in_house" ? "View minimum and starting gross margins" : "View minimum and maximum margins"}
-          aria-label={`${LABELS[key]} default margins for ${subBasketName}${mismatchCount > 0 ? `, ${mismatchCount} mismatched main lines` : ""}`}
-          onClick={(event) => { returnFocusRef.current = event.currentTarget; setSelected(key); if (!needsReview) mutation.reset(); }}>
-          <span className="knowledge-sub-margins__label">{LABELS[key]}
-            <svg className="knowledge-sub-margins__chevron" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden="true"><path d="m4.5 2.5 3.5 3.5-3.5 3.5" /></svg>
-          </span>
-          {unavailable ? <span className="knowledge-sub-margins__empty">{query.isError ? "Unavailable" : "Loading…"}</span>
-            : <MarginRanges ranges={state!.ranges} mode={key} compact />}
-          {mismatchCount > 0 ? <span className="knowledge-sub-margins__count">{mismatchCount} mismatched</span> : null}
-        </button>;
-      })}
+    <div className="knowledge-sub-margins__tiers" role="group" aria-label={`Margin tiers for ${subBasketName}`}>
+      {KNOWLEDGE_MODE_TIERS.map((tier) => <button key={tier} type="button" className="knowledge-sub-margins__tier"
+        disabled={!enabled || busy} aria-haspopup="dialog" aria-expanded={selected?.tier === tier}
+        aria-label={`${KNOWLEDGE_MODE_TIER_LABELS[tier]} margins for ${subBasketName}`}
+        onClick={(event) => { returnFocusRef.current = event.currentTarget; setSelected({ tier, mode: "pmc" }); if (!needsReview) mutation.reset(); }}>
+        {KNOWLEDGE_MODE_TIER_LABELS[tier]}
+      </button>)}
     </div>
-    {query.isError ? <div className="knowledge-sub-margins__feedback" role="alert">Could not load default margins. <Button size="compact" variant="quiet" busy={query.isFetching} onClick={() => void refresh()}>Retry margins</Button></div> : null}
     <span className="sr-only" role={announcement ? "status" : undefined} aria-live="polite">{announcement}</span>
-    {refreshWarning ? <div className="knowledge-sub-margins__feedback" role="status">Margins saved. Some related views could not refresh. <Button size="compact" variant="quiet" onClick={() => void syncKnowledgeSubBasketMargins(client, mutation.data?.updatedMainLineIds ?? []).then(settled => setRefreshWarning(!settled))}>Retry refresh</Button></div> : null}
-    {selected && summary && mode ? <ContextPanel title={`${LABELS[selected]} default margins`} eyebrow={subBasketName}
-      description="Use the first main line's saved margins for mismatched main lines in this Sub-Basket."
+    {selected ? <ContextPanel title={`${KNOWLEDGE_MODE_TIER_LABELS[selected.tier]} ${LABELS[selected.mode]} margins`} eyebrow={subBasketName}
+      description={`Compare the first main line's saved ${KNOWLEDGE_MODE_TIER_LABELS[selected.tier]} margins with other main lines in this Sub-Basket.`}
       onClose={() => setSelected(null)} busy={busy} width="medium" returnFocusRef={returnFocusRef}
       className="knowledge-context-panel knowledge-sub-margins-panel"
       footer={({ requestClose }) => <div className="knowledge-dialog-actions">
         <Button variant="secondary" disabled={busy} onClick={requestClose}>Close</Button>
-        {!readOnly && mode.mismatchCount !== null && mode.mismatchCount > 0 ? <Button busy={busy} disabled={!mode.canApply || query.isFetching || query.isError || needsReview} onClick={apply}>
-          Apply default to {mode.mismatchCount ?? 0} main {mode.mismatchCount === 1 ? "line" : "lines"}
+        {signatureSelected && !readOnly && mode && mode.mismatchCount !== null && mode.mismatchCount > 0 ? <Button busy={busy} disabled={!mode.canApply || selectedQuery?.isFetching || selectedQuery?.isError || needsReview} onClick={apply}>
+          Apply default to {mode.mismatchCount} main {mode.mismatchCount === 1 ? "line" : "lines"}
         </Button> : null}
       </div>}>
       <div className="knowledge-sub-margins-panel__body">
-        <section aria-label="Default margin source">
-          <h3>Default from first main line</h3>
-          <p>{summary.source?.mainLineName ?? "No main lines in this Sub-Basket."}</p>
-          <p className="knowledge-sub-margins-panel__legend">{selected === "in_house" ? "Minimum / Starting gross margin" : "Minimum / Maximum margin"}</p>
-          <MarginRanges ranges={mode.ranges} mode={selected} />
-          <p className="knowledge-sub-margins-panel__hint">Compared across all {summary.totalMainLines} main lines, including temporary items and other pages. Only saved, configured margins are compared. Archived items are excluded.{selected === "in_house" ? " Components are matched by Main basket and Sub-basket." : ""}</p>
-        </section>
+        <div className="knowledge-sub-margins-panel__modes" role="group" aria-label={`${KNOWLEDGE_MODE_TIER_LABELS[selected.tier]} margin mode`}>
+          {MODES.map((key) => <button key={key} type="button" disabled={busy} aria-pressed={selected.mode === key}
+            onClick={() => setSelected({ ...selected, mode: key })}>{LABELS[key]}</button>)}
+        </div>
+        {selectedQuery?.isPending ? <p role="status">Loading {KNOWLEDGE_MODE_TIER_LABELS[selected.tier]} margins…</p> : null}
+        {selectedQuery?.isError ? <InlineMessage tone="error" role="alert">Could not load {KNOWLEDGE_MODE_TIER_LABELS[selected.tier]} margins. <Button size="compact" variant="quiet" busy={selectedQuery.isFetching} onClick={() => void refresh(selected.tier)}>Retry {KNOWLEDGE_MODE_TIER_LABELS[selected.tier]} margins</Button></InlineMessage> : null}
+        {summary && mode ? <>
+          <section aria-label="Default margin source">
+            <h3>Default from first main line</h3>
+            <p>{summary.source?.mainLineName ?? "No main lines in this Sub-Basket."}</p>
+            <p className="knowledge-sub-margins-panel__legend">{selected.mode === "in_house" ? "Minimum / Starting gross margin" : "Minimum / Maximum margin"}</p>
+            <MarginRanges ranges={mode.ranges} mode={selected.mode} />
+            <p className="knowledge-sub-margins-panel__hint">Compared across all {summary.totalMainLines} main lines, including temporary items and other pages. Only saved, configured margins are compared. Archived items are excluded.{selected.mode === "in_house" ? " Components are matched by Main basket and Sub-basket." : ""}</p>
+          </section>
+          {mode.unavailableReason ? <InlineMessage tone="warning">{mode.unavailableReason}</InlineMessage> : null}
+          {mode.mismatchCount === 0 ? <p>All configured margins match this default.</p> : null}
+          {mode.mismatchCount !== null && mode.mismatches.length ? <section aria-label="Mismatched main lines">
+            <h3>{mode.mismatchCount} mismatched main {mode.mismatchCount === 1 ? "line" : "lines"}</h3>
+            <ul className="knowledge-sub-margins-panel__lines">{mode.mismatches.map((line) => <li key={line.mainLineId}>
+              <strong>{line.mainLineName}</strong>
+              <MarginRanges ranges={line.ranges} mode={selected.mode} />
+              {line.blockedReason ? <p>{line.blockedReason}</p> : null}
+            </li>)}</ul>
+          </section> : null}
+        </> : null}
         {readOnly ? <InlineMessage tone="info">You have read-only access to these margins.</InlineMessage> : null}
-        {mode.unavailableReason ? <InlineMessage tone="warning">{mode.unavailableReason}</InlineMessage> : null}
-        {mode.mismatchCount === 0 ? <p>All configured margins match this default.</p> : null}
-        {mode.mismatchCount !== null && mode.mismatches.length ? <section aria-label="Mismatched main lines">
-          <h3>{mode.mismatchCount} mismatched main {mode.mismatchCount === 1 ? "line" : "lines"}</h3>
-          <ul className="knowledge-sub-margins-panel__lines">{mode.mismatches.map((line) => <li key={line.mainLineId}>
-            <strong>{line.mainLineName}</strong>
-            <MarginRanges ranges={line.ranges} mode={selected} />
-            {line.blockedReason ? <p>{line.blockedReason}</p> : null}
-          </li>)}</ul>
-        </section> : null}
-        {mutation.error ? <InlineMessage tone="error" role="alert">{mutation.error.message} Refresh the comparison before applying again.</InlineMessage> : null}
-        {query.isError && !mutation.error ? <InlineMessage tone="error" role="alert">The current margin comparison could not be loaded.</InlineMessage> : null}
-        {needsReview || query.isError ? <Button variant="secondary" busy={query.isFetching} onClick={() => void refresh()}>Refresh comparison</Button> : null}
+        {!signatureSelected ? <InlineMessage tone="info">This comparison is read-only. Edit {KNOWLEDGE_MODE_TIER_LABELS[selected.tier]} margins on each Main Line to make changes.</InlineMessage> : null}
+        {signatureSelected && mutation.error ? <InlineMessage tone="error" role="alert">{mutation.error.message} Refresh the comparison before applying again.</InlineMessage> : null}
+        {signatureSelected && needsReview ? <Button variant="secondary" busy={selectedQuery?.isFetching} onClick={() => void refresh(selected.tier)}>Refresh comparison</Button> : null}
+        {refreshWarning ? <InlineMessage tone="warning" role="status">Margins saved. Some related views could not refresh. <Button size="compact" variant="quiet" onClick={() => void refreshRelated(refreshMainLineIds.current).then((settled) => { if (mounted.current) setRefreshWarning(!settled); })}>Retry refresh</Button></InlineMessage> : null}
       </div>
     </ContextPanel> : null}
   </div>;

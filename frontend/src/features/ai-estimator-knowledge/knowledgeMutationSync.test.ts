@@ -34,13 +34,15 @@ const completeness: KnowledgeCompleteness = {
   blockers: [],
   warnings: []
 };
+const marginScopes = ["signature", "premium", "functional", "default"] as const;
 
 it("invalidates aggregate pricing and operational detail after saved In-house policy changes", async () => {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const keys = [["estimate-in-house-pricing", "lead-a"], ["leads", "lead-a", "estimate"], ["estimate-tiers", "project-a"],
     ["estimates", "revisions", "actor-a", "estimate-a", "detail", "revision-a"],
     ["quotation", "project-a", "detail"], ["procurement", "purchase-order-preparation", "project-a"],
-    ["procurement", "purchase-order-requests", "project-b"]];
+    ["procurement", "purchase-order-requests", "project-b"],
+    ...marginScopes.flatMap((tier) => [knowledgeQueryKeys.subBasketMargins("basket-1", "sub-1", tier), knowledgeQueryKeys.subBasketMargins("basket-2", "sub-2", tier)])];
   const artifactKey = ["issued-artifact", "immutable-round"];
   for (const key of [...keys, artifactKey]) client.setQueryData(key, { version: 1 });
   await syncKnowledgeSectionMutation(client, { id: "section-a", mainLineId: "line-a", revisionId: "revision-a", sectionKey: "advanced",
@@ -117,33 +119,33 @@ describe("knowledge mutation cache synchronization", () => {
   });
   it.each(["basket", "sub-basket"])("invalidates only affected margin summaries after %s changes", async (kind) => {
     const client = queryClient();
-    const affected = knowledgeQueryKeys.subBasketMargins("basket-1", "sub-1");
-    const unrelated = knowledgeQueryKeys.subBasketMargins("basket-2", "sub-2");
-    client.setQueryData(affected, { versionToken: "old" });
-    client.setQueryData(unrelated, { versionToken: "unrelated" });
+    const affected = marginScopes.map((tier) => knowledgeQueryKeys.subBasketMargins("basket-1", "sub-1", tier));
+    const unrelated = marginScopes.map((tier) => knowledgeQueryKeys.subBasketMargins("basket-2", "sub-2", tier));
+    affected.forEach((key, index) => client.setQueryData(key, { versionToken: `old-${index}` }));
+    unrelated.forEach((key, index) => client.setQueryData(key, { versionToken: `unrelated-${index}` }));
     if (kind === "basket") await syncKnowledgeBasketMutation(client, {
       ...actor, id: "basket-1", name: "Renamed", description: null, displayOrder: 1, status: "active", version: 3
     });
     else await refreshKnowledgeSubBasketCatalog(client, "basket-1");
-    expect(client.getQueryState(affected)?.isInvalidated).toBe(true);
-    expect(client.getQueryState(unrelated)?.isInvalidated).toBe(false);
+    for (const key of affected) expect(client.getQueryState(key)?.isInvalidated).toBe(true);
+    for (const key of unrelated) expect(client.getQueryState(key)?.isInvalidated).toBe(false);
     client.clear();
   });
 
   it("removes deleted Sub-Basket margin summaries while retaining other parents", async () => {
     const client = queryClient();
-    const deleted = knowledgeQueryKeys.subBasketMargins("basket-1", "sub-1");
-    const retained = knowledgeQueryKeys.subBasketMargins("basket-2", "sub-2");
-    client.setQueryData(deleted, { versionToken: "old" });
-    client.setQueryData(retained, { versionToken: "retained" });
+    const deleted = marginScopes.map((tier) => knowledgeQueryKeys.subBasketMargins("basket-1", "sub-1", tier));
+    const retained = marginScopes.map((tier) => knowledgeQueryKeys.subBasketMargins("basket-2", "sub-2", tier));
+    deleted.forEach((key, index) => client.setQueryData(key, { versionToken: `old-${index}` }));
+    retained.forEach((key, index) => client.setQueryData(key, { versionToken: `retained-${index}` }));
     await syncKnowledgeSubBasketDeletion(client, {
       basketId: "basket-1", subBasketId: "sub-1", deleted: true, deletedAt: "2026-10-25T00:00:00.000Z",
       deletedMainLineIds: [], deletedReferenceCount: 0
     });
-    expect(client.getQueryData(deleted)).toBeUndefined();
-    expect(client.getQueryData(retained)).toEqual({ versionToken: "retained" });
+    for (const key of deleted) expect(client.getQueryData(key)).toBeUndefined();
+    retained.forEach((key, index) => expect(client.getQueryData(key)).toEqual({ versionToken: `retained-${index}` }));
     await syncKnowledgeBasketDeletion(client, "basket-2");
-    expect(client.getQueryData(retained)).toBeUndefined();
+    for (const key of retained) expect(client.getQueryData(key)).toBeUndefined();
     client.clear();
   });
 

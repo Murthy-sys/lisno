@@ -1,3 +1,4 @@
+import { insertProjectInitiationDefault } from "./helpers/project-initiation-defaults.js";
 import { beforeAll, beforeEach, afterAll, describe, expect, it } from "vitest";
 import { createMongoRepository } from "../src/repositories/mongo.js";
 import { createAuthService, toPublicUser } from "../src/services/auth.service.js";
@@ -26,6 +27,7 @@ afterAll(async () => replica.stop());
 const password = "SyntheticProjectPassword!23";
 const input = { initiationKey: "mongo-project-retry", clientName: "Synthetic Client", clientEmail: "client@project-invitation.test", clientMobile: "9000000000", projectName: "Synthetic project", propertyType: "2BHK", nextAction: "Estimate", nextActionAt: "2026-10-15T10:00:00.000Z", estimatorId: "sales-invitation" };
 async function setup() {
+  await insertProjectInitiationDefault();
   const repository = createMongoRepository();
   const at = "2026-10-13T10:00:00.000Z";
   for (const [id, role] of [["sa-invitation", "super_admin"], ["sales-invitation", "estimator_sales"]] as const) await UserModel.create({ _id: id, name: id, email: `${id}@invitation.test`, emailNormalized: `${id}@invitation.test`, passwordHash: "unused", role, active: true, accountKind: "standard", version: 1, sessionVersion: 1, managerId: null, authorizedClientIds: [], createdAt: at, updatedAt: at });

@@ -159,8 +159,10 @@ export function LeadDashboard() {
       </div>}
     </section>
     {reviewLeadId && canReview ? <LeadQuickReview key={reviewLeadId} leadId={reviewLeadId} onClose={() => setReviewLeadId(null)} /> : null}
-    {initiationOpen && canInitiate ? (
+    {initiationOpen && canInitiate && auth.user ? (
       <AdminProjectInitiationDialog
+        key={auth.user.id}
+        actorId={auth.user.id}
         assignmentMode="sales-manager"
         onClose={() => setInitiationOpen(false)}
         onCreated={(project) => navigate(`/estimator-sales/leads/${encodeURIComponent(project.lead.id)}`)}

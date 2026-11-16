@@ -105,4 +105,60 @@ describe("vendor execution workspace", () => {
     expect(screen.getByText("You do not have permission to view vendor work.")).toBeVisible();
     expect(screen.queryByRole("button",{name:/Open Oak/})).not.toBeInTheDocument();
   });
+  it("separates a current vendor report from newer workflow activity and hides opaque actor IDs", async () => {
+    work = { ...work, latestNote: "Project Manager confirmed tomorrow's access.", latestVendorReport: { ...work.latestVendorReport!, note: "Installed the frame.", reason: "Waiting for area clearance.", nextAction: "Project Manager to arrange access." } };
+    server.use(http.get("/api/v1/execution/work/work-one/history", () => HttpResponse.json({ data: { items: [{ id: "activity-one", assignmentId: work.id, action: "confirm_schedule", actorId: "internal-actor-id", occurredAt: "2026-10-09T09:00:00Z", executionRound: 1, localDate: "2026-10-09", note: "Access confirmed", reason: null, nextAction: null, startDate: null, finishDate: null, reviewDate: null, progress: null, status: null }], total: 1, limit: 20, offset: 0 } })));
+    await openWork();
+    const report = screen.getByRole("region", { name: "Latest vendor report" });
+    expect(within(report).getByText("Installed the frame.")).toBeVisible();
+    expect(within(report).getByText("Reported reason: Waiting for area clearance.")).toBeVisible();
+    expect(within(report).getByText("Reported next action: Project Manager to arrange access.")).toBeVisible();
+    expect(within(report).queryByText(work.latestNote)).not.toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "Latest workflow activity" })).getByText(work.latestNote)).toBeVisible();
+    await screen.findByText("Access confirmed");
+    expect(screen.queryByText(/internal-actor-id/)).not.toBeInTheDocument();
+  });
+  it("does not reuse a prior-round report or verification during rework", async () => {
+    work = { ...work, status: "changes_requested", executionRound: 2, progress: 100, verification: { id: "old-verification", verifiedAt: "2026-10-07T09:00:00Z", verifiedById: "manager-one", executionRound: 1 }, latestNote: "Recheck the finish." };
+    await openWork();
+    const panel = screen.getByRole("dialog", { name: "Oak wall panelling" });
+    expect(within(panel).getByText("No vendor report is available for this execution round.")).toBeVisible();
+    expect(within(panel).getByText("100% · No report this round")).toBeVisible();
+    expect(within(panel).getByText("Not verified")).toBeVisible();
+    expect(within(screen.getByRole("region", { name: "Latest vendor report" })).queryByText("Frame installed")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Send to Client" })).not.toBeInTheDocument();
+  });
+  it("focuses the existing action without resetting an edited draft or submitting it", async () => {
+    let writes = 0;
+    server.use(http.post("/api/v1/vendor/work/work-one/execution", () => { writes++; return HttpResponse.json({ data: work }); }));
+    const user = await openWork();
+    await user.type(screen.getByRole("textbox", { name: "Work note" }), "Keep this draft");
+    await user.click(screen.getByRole("button", { name: "Go to next action" }));
+    expect(screen.getByRole("combobox", { name: "Action" })).toHaveFocus();
+    expect(screen.getByRole("textbox", { name: "Work note" })).toHaveValue("Keep this draft");
+    expect(writes).toBe(0);
+  });
+  it("blocks the new shortcut and upload after an assignment refresh fails", async () => {
+    const user = await openWork();
+    await user.type(screen.getByRole("textbox", { name: "Work note" }), "Still my draft");
+    server.use(http.get("/api/v1/execution/work/work-one", () => HttpResponse.json({ error: { code: "UNAVAILABLE", message: "Refresh unavailable" } }, { status: 503 })));
+    await user.click(screen.getByRole("button", { name: "Refresh assignment" }));
+    expect(await screen.findByText("Refresh failed. This assignment may be out of date.")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Go to next action" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Daily update" })).toBeDisabled();
+    expect(screen.getByLabelText("Add photo")).toBeDisabled();
+    expect(screen.getByRole("textbox", { name: "Work note" })).toHaveValue("Still my draft");
+  });
+  it("blocks Client submission while execution details are stale and preserves its note", async () => {
+    work = { ...work, status: "site_verified", progress: 100, allowedActions: [], canSubmitToClient: true, verification: { id: "verify-one", verifiedAt: "2026-10-08T10:00:00Z", verifiedById: "site-one", executionRound: 1 } };
+    const user = userEvent.setup();
+    renderWithQuery(<MemoryRouter><VendorWorkPage /></MemoryRouter>);
+    await user.click(await screen.findByRole("button", { name: /Open Oak wall panelling/ }));
+    await user.type(await screen.findByRole("textbox", { name: "Note for Client" }), "Preserve this Client note");
+    server.use(http.get("/api/v1/execution/work/work-one", () => HttpResponse.json({ error: { code: "UNAVAILABLE", message: "Refresh unavailable" } }, { status: 503 })));
+    await user.click(screen.getByRole("button", { name: "Refresh assignment" }));
+    await screen.findByText("Refresh failed. This assignment may be out of date.");
+    expect(screen.getByRole("button", { name: "Send to Client" })).toBeDisabled();
+    expect(screen.getByRole("textbox", { name: "Note for Client" })).toHaveValue("Preserve this Client note");
+  });
 });

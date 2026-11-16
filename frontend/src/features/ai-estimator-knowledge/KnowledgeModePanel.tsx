@@ -1023,16 +1023,13 @@ function ModeBlockToolbar({
   readonly draft: ModeDraft;
   readonly saving: boolean;
 }) {
+  if (!draft.dirty) return null;
+
   return (
     <div className="knowledge-section-toolbar knowledge-mode-block__toolbar">
-      <span className="knowledge-section-toolbar__meta">
-        Section version {draft.envelopeVersion ?? "Unavailable"}
+      <span className="knowledge-mode-block__dirty">
+        {saving ? "Saving…" : "Unsaved changes"}
       </span>
-      {draft.dirty ? (
-        <span className="knowledge-mode-block__dirty">
-          {saving ? "Saving…" : "Unsaved changes"}
-        </span>
-      ) : null}
     </div>
   );
 }

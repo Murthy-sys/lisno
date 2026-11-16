@@ -1,4 +1,5 @@
 export const EXISTING_AUDIT_ACTIONS = [
+  "project_initiation_defaults_updated",
   "project_number_assigned",
   "project_manager_action_recorded",
   "estimate_tier_selected",

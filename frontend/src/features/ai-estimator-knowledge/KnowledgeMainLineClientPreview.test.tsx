@@ -51,6 +51,84 @@ const row = () => screen.getByRole("group", { name: "Client preview of POP false
 describe("KnowledgeMainLineClientPreview", () => {
   beforeEach(() => { vi.mocked(getEstimationCatalogue).mockReset().mockResolvedValue(catalogue()); });
 
+  it("shows resolved Mode details for Signature and Functional and the tier-specific Premium list without changing preview values or writing", async () => {
+    const user = userEvent.setup();
+    const writes = [vi.spyOn(apiClient, "post"), vi.spyOn(apiClient, "patch"), vi.spyOn(apiClient, "put"), vi.spyOn(apiClient, "delete")];
+    const resolvedModeDetails = { specifications: [{ id: "mode-board", name: "Mode board", brands: [{ id: "mode-brand", name: "Saint-Gobain" }] }] };
+    vi.mocked(getEstimationCatalogue).mockResolvedValue(catalogue({ ...fixtureLine,
+      applicableTiers: ["signature", "premium", "functional"],
+      tierPricing: { ...fixtureLine.tierPricing, functional: { modeBaseRatesPaise: { pmc: 9000, sub_vendor: 8000, in_house: null } } },
+      tierDescriptions: { signature: "Signature ceiling finish.", premium: "Mode description with premium specifications.", functional: "Functional ceiling finish." },
+      tierDetails: {
+        signature: resolvedModeDetails,
+        premium: { specifications: [{ id: "board", name: "Premium board", brands: [{ id: "brand", name: "Knauf" }] }] },
+        functional: resolvedModeDetails
+      }
+    }));
+    mount({ initiallyOpen: true });
+    await screen.findByRole("group", { name: "Client preview of POP false ceiling" });
+    const trigger = screen.getByText("Show details of tier");
+    const initialRate = screen.getByLabelText("Price for POP false ceiling").textContent;
+    expect(trigger.closest("label")).toBeNull();
+    expect(trigger.closest("details")).not.toHaveAttribute("open");
+    await user.click(trigger);
+    expect(screen.getByLabelText("Price for POP false ceiling")).toHaveTextContent(initialRate!);
+    for (const [tier, expected, description] of [["Signature", "Mode board (Saint-Gobain)", "Signature ceiling finish."], ["Premium", "Premium board (Knauf)", "Mode description with premium specifications."], ["Functional", "Mode board (Saint-Gobain)", "Functional ceiling finish."]]) {
+      await user.click(screen.getByRole("radio", { name: `${tier} tier for POP false ceiling` }));
+      const content = screen.getByRole("region", { name: `${tier} details for POP false ceiling` });
+      expect(within(content).getByText(description!)).toBeVisible();
+      expect(within(content).getByText(description!).nextElementSibling?.tagName).toBe("UL");
+      expect(content.querySelectorAll(".estimate-line-tier-details__description")).toHaveLength(1);
+      expect(within(content).getAllByRole("listitem").map(item => item.textContent)).toEqual([expected]);
+      expect(trigger.closest("details")).toHaveAttribute("open");
+      const selectedRate = screen.getByLabelText("Price for POP false ceiling").textContent;
+      await user.click(trigger);
+      await user.click(trigger);
+      expect(screen.getByLabelText("Price for POP false ceiling")).toHaveTextContent(selectedRate!);
+      expect(screen.getByRole("checkbox", { name: "Include POP false ceiling in preview" })).toBeChecked();
+      expect(screen.getByRole("spinbutton", { name: "Quantity for POP false ceiling sq-ft" })).toHaveValue(1);
+      expect(screen.getByLabelText("Amount for POP false ceiling")).toHaveTextContent("After save");
+    }
+    await user.selectOptions(screen.getByRole("combobox", { name: "Preview type" }), "special");
+    expect(screen.getByText("Mode board (Saint-Gobain)")).toBeVisible();
+    await user.click(screen.getByRole("checkbox", { name: "Include POP false ceiling in preview" }));
+    expect(screen.queryByText("Show details of tier")).not.toBeInTheDocument();
+    expect(getEstimationCatalogue).toHaveBeenCalledTimes(1);
+    for (const write of writes) expect(write).not.toHaveBeenCalled();
+  });
+
+  it("shows a description without specifications and does not borrow its paragraph for another tier", async () => {
+    const user = userEvent.setup();
+    vi.mocked(getEstimationCatalogue).mockResolvedValue(catalogue({ ...fixtureLine,
+      tierDescriptions: { signature: "Signature description only.", premium: null },
+      tierDetails: { signature: null, premium: { specifications: [{ id: "board", name: "Premium board", brands: [] }] } }
+    }));
+    mount({ initiallyOpen: true });
+    await screen.findByRole("group", { name: "Client preview of POP false ceiling" });
+    await user.click(screen.getByText("Show details of tier"));
+    expect(screen.getByText("Signature description only.")).toBeVisible();
+    expect(screen.getByText("Specifications unavailable for this tier.")).toBeVisible();
+    await user.click(screen.getByRole("radio", { name: "Premium tier for POP false ceiling" }));
+    expect(screen.getByText("Premium board")).toBeVisible();
+    expect(screen.queryByText("Signature description only.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Specifications unavailable for this tier.")).not.toBeInTheDocument();
+  });
+
+  it.each(["legacy-response", "missing-premium"] as const)("keeps details unavailable for %s instead of resolving a frontend fallback", async response => {
+    const user = userEvent.setup();
+    vi.mocked(getEstimationCatalogue).mockResolvedValue(catalogue({ ...fixtureLine,
+      ...(response === "missing-premium" ? { tierDetails: { signature: { specifications: [{ id: "signature-only", name: "Signature-only board", brands: [] }] } } } : {})
+    }));
+    mount({ initiallyOpen: true });
+    await screen.findByRole("group", { name: "Client preview of POP false ceiling" });
+    await user.click(screen.getByText("Show details of tier"));
+    if (response === "missing-premium") expect(screen.getByText("Signature-only board")).toBeVisible();
+    else expect(screen.getByText("Details unavailable for this tier.")).toBeVisible();
+    await user.click(screen.getByRole("radio", { name: "Premium tier for POP false ceiling" }));
+    expect(screen.getByText("Details unavailable for this tier.")).toBeVisible();
+    expect(screen.queryByText("Signature-only board")).not.toBeInTheDocument();
+  });
+
   it("fetches only on opening, displays current selling data and preserves the saved-only notice", async () => {
     const user = userEvent.setup();
     mount({ dirty: true });
@@ -105,21 +183,28 @@ describe("KnowledgeMainLineClientPreview", () => {
 
   it("restores focus on Escape and refetches/reset choices on reopening", async () => {
     const user = userEvent.setup();
+    vi.mocked(getEstimationCatalogue).mockResolvedValue(catalogue({ ...fixtureLine, tierDescriptions: { signature: "Original finish." } }));
     mount();
     const trigger = screen.getByRole("button", { name: "Client view" });
     await user.click(trigger);
     await screen.findByRole("group", { name: "Client preview of POP false ceiling" });
+    await user.click(screen.getByText("Show details of tier"));
+    expect(screen.getByText("Original finish.")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Increase quantity for POP false ceiling" }));
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     await waitFor(() => expect(trigger).toHaveFocus());
     vi.mocked(getEstimationCatalogue).mockResolvedValue(catalogue({ ...fixtureLine, revisionVersion: 5,
+      tierDescriptions: { signature: "Updated saved finish." },
       tierPricing: { signature: { modeBaseRatesPaise: { sub_vendor: 23000, pmc: null, in_house: null } } } }));
     await user.click(trigger);
     await screen.findByRole("group", { name: "Client preview of POP false ceiling" });
     expect(getEstimationCatalogue).toHaveBeenCalledTimes(2);
     expect(screen.getByRole("spinbutton")).toHaveValue(1);
     expect(screen.getByLabelText("Price for POP false ceiling")).toHaveTextContent("₹230.00");
+    await user.click(screen.getByText("Show details of tier"));
+    expect(screen.getByText("Updated saved finish.")).toBeVisible();
+    expect(screen.queryByText("Original finish.")).not.toBeInTheDocument();
   });
 
   it("opens a new request even if a previous opening has not resolved", async () => {

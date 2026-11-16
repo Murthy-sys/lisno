@@ -12,6 +12,7 @@ import type {
   KnowledgeSectionKey
 } from "./knowledgeTypes";
 import { normalizeSpecificationItemName } from "../../../../shared/knowledge/knowledgeSpecificationItemNames";
+import type { KnowledgeModeConfigurationScope } from "../../../../shared/knowledge/knowledgeModeTiers";
 
 export const knowledgeQueryKeys = {
   all: ["ai-estimator-knowledge"] as const,
@@ -58,8 +59,10 @@ export const knowledgeQueryKeys = {
   subBasketMarginSummaries: (basketId?: string) => basketId
     ? ["ai-estimator-knowledge", "sub-basket-margins", basketId] as const
     : ["ai-estimator-knowledge", "sub-basket-margins"] as const,
-  subBasketMargins: (basketId: string, subBasketId: string) =>
-    ["ai-estimator-knowledge", "sub-basket-margins", basketId, subBasketId] as const,
+  subBasketMargins: (basketId: string, subBasketId: string, modeTier: KnowledgeModeConfigurationScope = "signature") =>
+    modeTier === "signature"
+      ? ["ai-estimator-knowledge", "sub-basket-margins", basketId, subBasketId] as const
+      : ["ai-estimator-knowledge", "sub-basket-margins", basketId, subBasketId, "tier", modeTier] as const,
   subBasketLists: (basketId: string) => ["ai-estimator-knowledge", "sub-baskets", basketId] as const,
   subBasketDeletionImpacts: (basketId?: string) => basketId
     ? ["ai-estimator-knowledge", "sub-basket-deletion-impact", basketId] as const

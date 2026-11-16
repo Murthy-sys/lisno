@@ -1,3 +1,5 @@
+import { defaultProjectManagerId, insertProjectInitiationDefault } from "./helpers/project-initiation-defaults.js";
+import { EstimateClientResponseProofModel } from "../src/models/EstimateClientResponseProof.js";
 import { QuotationDesignHandoffModel } from "../src/models/QuotationDesignHandoff.js";
 import { newEstimationLifecycle, newQuotationLifecycle } from "../src/domain/estimation-lifecycle.js";
 import { DesignWorkflowStateModel } from "../src/models/DesignWorkflowState.js";
@@ -301,7 +303,15 @@ describe("Design review email retry", () => {
 });
 
 describe("commercial approval handoff", () => {
-  it("opens unassigned Design work without drawings, a Designer team, freezing, or downstream queues", async () => {
+  it.each([
+    { defaultState: "ready", title: "opens unassigned Design work without drawings, a Designer team, freezing, or downstream queues" },
+    { defaultState: "missing", title: "rolls back the entire commercial approval when the Project Manager default is missing" },
+    { defaultState: "unavailable", title: "rolls back the entire commercial approval when the default Project Manager is inactive" }
+  ])("$title", async ({ defaultState }) => {
+    if (defaultState !== "missing") await insertProjectInitiationDefault();
+    if (defaultState === "unavailable") {
+      await UserModel.updateOne({ _id: defaultProjectManagerId }, { $set: { active: false } });
+    }
     await LeadModel.create({
       _id: LEAD_ID,
       projectId: null,
@@ -391,11 +401,10 @@ describe("commercial approval handoff", () => {
     const drawingReadiness = vi.fn(async () => {
       throw new Error("Commercial approval must not inspect Design drawings.");
     });
-    const appendInMongoTransaction = vi.fn(async () => ({ id: "audit-workflow" }));
+    const audit = createAuditService(createMongoRepository());
+    const appendInMongoTransaction = vi.spyOn(audit, "appendInMongoTransaction");
     const service = createEstimateDecisionService({
-      audit: {
-        appendInMongoTransaction
-      } as unknown as AuditService,
+      audit,
       estimateDesigns: {
         approvalReadinessForDecision: drawingReadiness
       },
@@ -405,7 +414,12 @@ describe("commercial approval handoff", () => {
       now: () => NOW
     });
 
-    const result = await service.decide({
+    const before = await Promise.all([
+      EstimateModel.findById(ESTIMATE_ID).lean(),
+      LeadModel.findById(LEAD_ID).lean(),
+      EstimateClientReviewRoundModel.findById("workflow-commercial-round").lean()
+    ]);
+    const deciding = service.decide({
       estimateId: ESTIMATE_ID,
       round: { id: "workflow-commercial-round", expectedVersion: 1 },
       decision: "approve",
@@ -421,6 +435,27 @@ describe("commercial approval handoff", () => {
         proof: null
       }
     });
+
+    if (defaultState !== "ready") {
+      await expect(deciding).rejects.toMatchObject({ status: 409, code: defaultState === "missing"
+        ? "PROJECT_INITIATION_DEFAULT_UNCONFIGURED" : "PROJECT_INITIATION_DEFAULT_UNAVAILABLE" });
+      const after = await Promise.all([
+        EstimateModel.findById(ESTIMATE_ID).lean(),
+        LeadModel.findById(LEAD_ID).lean(),
+        EstimateClientReviewRoundModel.findById("workflow-commercial-round").lean()
+      ]);
+      expect(after).toEqual(before);
+      expect(await ProjectModel.countDocuments()).toBe(0);
+      expect(await ProjectWorkflowTaskModel.countDocuments()).toBe(0);
+      expect(await ProjectAccessGrantModel.countDocuments()).toBe(0);
+      expect(await EstimateClientResponseProofModel.countDocuments()).toBe(0);
+      expect(await AuditEventModel.countDocuments()).toBe(0);
+      expect(await AuthorizationCoordinationModel.countDocuments()).toBe(0);
+      expect(appendInMongoTransaction).not.toHaveBeenCalled();
+      expect(drawingReadiness).not.toHaveBeenCalled();
+      return;
+    }
+    const result = await deciding;
 
     expect(drawingReadiness).not.toHaveBeenCalled();
     expect(result.estimate).toMatchObject({
@@ -453,6 +488,7 @@ describe("commercial approval handoff", () => {
       assignedEstimatorId: "workflow-estimator",
       assignedDesignerIds: [],
       managerId: null,
+      programManagerId: defaultProjectManagerId,
       status: "planning"
     });
     expect(workflowTaskCount).toBe(0);

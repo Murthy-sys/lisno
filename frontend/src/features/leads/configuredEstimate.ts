@@ -25,6 +25,8 @@ export interface ConfiguredLineDraft {
   modeTier?: KnowledgeModeTier;
   applicableTiers?: KnowledgeModeTier[];
   tierPricing?: Partial<Record<KnowledgeModeTier, EstimationTierPricing>>;
+  tierDetails?: EstimationCatalogueMainLine["tierDetails"];
+  tierDescriptions?: EstimationCatalogueMainLine["tierDescriptions"];
   selectedInHouseComponentIds?: string[];
   rateSource?: EstimateRateSource;
   pricingBasis?: typeof ESTIMATE_COMPONENT_PRICING_BASIS;
@@ -439,6 +441,8 @@ function newLine(
     modeTier,
     applicableTiers: mainLine.applicableTiers,
     tierPricing: mainLine.tierPricing,
+    tierDetails: mainLine.tierDetails,
+    tierDescriptions: mainLine.tierDescriptions,
     inHouseBaseRatePaise,
     inHouseComponents: mainLine.inHouseComponents,
     inHouseUsage: mainLine.inHouseUsage, inHousePricingState: mainLine.inHousePricingState,
@@ -490,7 +494,9 @@ export function buildConfiguredLines(
     const fresh = selectedMainBasketIds.has(saved.mainBasketId)
       ? createConfiguredLine(catalogue, room, { mainLineId: saved.mainLineId, basketId: saved.mainBasketId, subBasketId: saved.subBasketId })
       : null;
-    if (!fresh) return [{ ...saved, sourceMissing: true, modeBaseRatesPaise: undefined, tierPricing: {}, inHouseComponents: undefined }];
+    if (!fresh) return [{ ...saved, sourceMissing: true, modeBaseRatesPaise: undefined, tierPricing: {}, tierDetails: undefined, tierDescriptions: undefined, inHouseComponents: undefined }];
+    const sourceMissing = saved.mainBasketId !== fresh.mainBasketId ||
+      saved.subBasketId !== fresh.subBasketId || saved.itemType !== fresh.itemType;
     const selectedFresh = withSelectedTierPricing({ ...fresh, modeTier: saved.modeTier ?? "signature" });
     const governed = saved.pricingMode === "in_house" && (selectedFresh.inHouseUsage !== undefined || selectedFresh.inHousePricingState !== undefined || saved.aggregatePricing !== undefined);
     const storedPricing = saved.aggregatePricing ?? saved.componentPricing;
@@ -505,6 +511,8 @@ export function buildConfiguredLines(
       basePriceAvailability: fresh.basePriceAvailability,
       applicableTiers: fresh.applicableTiers,
       tierPricing: fresh.tierPricing,
+      tierDetails: sourceMissing ? undefined : fresh.tierDetails,
+      tierDescriptions: sourceMissing ? undefined : fresh.tierDescriptions,
       modeBaseRatesPaise: selectedFresh.modeBaseRatesPaise,
       inHouseBaseRatePaise: selectedFresh.inHouseBaseRatePaise,
       // Historical amounts use their saved pricing basis, never newly available live components.
@@ -512,8 +520,7 @@ export function buildConfiguredLines(
       inHouseUsage: selectedFresh.inHouseUsage, inHousePricingState: selectedFresh.inHousePricingState,
       ...(governed ? { selectedInHouseComponentIds: undefined, componentPricing: undefined,
         aggregatePricing: saved.aggregatePricing ?? (saved.componentPricing ? toEstimateAggregatePricing(saved.componentPricing) : undefined) } : {}),
-      sourceMissing: saved.mainBasketId !== fresh.mainBasketId ||
-        saved.subBasketId !== fresh.subBasketId || saved.itemType !== fresh.itemType
+      sourceMissing
     };
     const uomChanged = saved.uomId !== fresh.uomId || Boolean(fresh.dimensionsMandatory && saved.uomDecimalScale !== fresh.uomDecimalScale);
     const dimensionsNeedReview = Boolean(fresh.dimensionsMandatory && (saved.dimensionsNeedReview ||
@@ -522,6 +529,8 @@ export function buildConfiguredLines(
       ? calculateDimensionQuantity(fresh.dimensionRule, saved.dimensions)?.quantity : undefined;
     return {
       ...selectedFresh,
+      tierDetails: sourceMissing ? undefined : selectedFresh.tierDetails,
+      tierDescriptions: sourceMissing ? undefined : selectedFresh.tierDescriptions,
       persistedId: saved.persistedId,
       pricingBasis: saved.pricingBasis,
       configurationPricingChanged: pricingChanged,
@@ -546,7 +555,7 @@ export function buildConfiguredLines(
       sourceRevisionStatus: fresh.revisionStatus,
       sourceItemVersion: fresh.itemVersion,
       sourceRevisionVersion: fresh.revisionVersion,
-      sourceMissing: saved.mainBasketId !== fresh.mainBasketId || saved.subBasketId !== fresh.subBasketId || saved.itemType !== fresh.itemType,
+      sourceMissing,
       uomNeedsQuantityReview: Boolean(saved.uomNeedsQuantityReview || uomChanged),
       previousUomName: uomChanged ? saved.uomName : saved.previousUomName
     };

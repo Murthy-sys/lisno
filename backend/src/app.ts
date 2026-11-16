@@ -120,6 +120,8 @@ import type { AppRepository } from "./repositories/types.js";
 import { createAuditRouter } from "./routes/audit.js";
 import { createAccessRequestsRouter } from "./routes/access-requests.js";
 import { createAdminUsersRouter } from "./routes/admin-users.js";
+import { createProjectInitiationDefaultsRouter } from "./routes/project-initiation-defaults.js";
+import { createProjectInitiationDefaultsService } from "./services/project-initiation-defaults.service.js";
 import { createAdminProjectsRouter } from "./routes/admin-projects.js";
 import { createSuperAdminDashboardRouter } from "./routes/super-admin-dashboard.js";
 import { createAiEstimatorKnowledgeAdminRouter } from "./routes/ai-estimator-knowledge-admin.js";
@@ -394,6 +396,7 @@ export function createApp(dependencies: AppDependencies) {
   const projectClientInvitations = createProjectClientInvitationService({ repository, audit: auditService,
     mailer: dependencies.invitationMailer ?? { deliveryKind: "disabled" }, clock, auth: authService,
     allowDemoAccountExternalEmail: dependencies.allowDemoAccountExternalEmail });
+  const projectInitiationDefaultsService = createProjectInitiationDefaultsService(repository, auditService, clock);
   const adminProjectService = createAdminProjectService(
     repository,
     auditService,
@@ -692,6 +695,7 @@ export function createApp(dependencies: AppDependencies) {
     "/api/v1",
     createAdminUsersRouter(authService, userAdministrationService)
   );
+  app.use("/api/v1", createProjectInitiationDefaultsRouter(authService, projectInitiationDefaultsService));
   app.use(
     "/api/v1",
     createAdminProjectsRouter(authService, adminProjectService)

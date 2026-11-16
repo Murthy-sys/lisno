@@ -1402,7 +1402,7 @@ describe("protected role routing", () => {
     const user = userEvent.setup();
     renderApp(["/estimator-sales/leads/lead-1/estimate"]);
     await user.click(await screen.findByRole("button", { name: "Select rooms" }));
-    await user.click(screen.getByRole("option", { name: "Bedroom 1" }));
+    await user.click(screen.getByRole("checkbox", { name: "Bedroom 1" }));
     await user.click(screen.getByRole("button", { name: "Done" }));
     await user.click(await screen.findByRole("button", { name: "Add Joinery" }));
     await user.click(screen.getByRole("button", { name: /continue to item selection/i }));

@@ -122,6 +122,7 @@ function memoryAdminEstimateSummaries(state: SeedData): EstimateSummaryRecord[] 
 
 const snapshotReaders = new WeakMap<AppRepository, () => MemorySnapshot>();
 const mutationMethods = new Set<keyof AppRepository>([
+  "saveProjectInitiationDefaults",
   "saveDesignRequirementsState",
   "saveDesignWorkflowState",
   "createWorkflowUom",
@@ -257,7 +258,7 @@ function legacyApprovedEstimateBaseline(
   };
 }
 
-function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
+function buildMemoryRepository(initial: MemorySnapshot, inTransaction = false): AppRepository {
   let state = clone(initial.state);
   const counters = new Map(initial.counters);
   const transactionContext = new AsyncLocalStorage<boolean>();
@@ -517,7 +518,7 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
         state,
         counters,
         timestamp
-      });
+      }, true);
       const transactionView = new Proxy(transactionRepository, {
         get(target, property, receiver) {
           if (property === "runInTransaction") {
@@ -568,6 +569,19 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
       if (!project || project.clientId !== null || ![2, 3].includes(project.estimationWorkflowVersion ?? 0) || normalizeEmail(project.clientEmail) !== emailNormalized || !user || !user.active || user.role !== "client" || user.emailNormalized !== emailNormalized) throw new RepositoryConflictError("Project invitation is no longer available.");
       project.clientId = clientId;
       project.updatedAt = updatedAt;
+    },
+    async findProjectInitiationDefaults() {
+      return clone(state.projectInitiationDefaults ?? null);
+    },
+    async saveProjectInitiationDefaults(record, expectedVersion) {
+      if (!inTransaction) throw new Error("Project defaults writes require a transaction.");
+      if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 0 ||
+        !Number.isSafeInteger(record.version) || record.version !== expectedVersion + 1 ||
+        (state.projectInitiationDefaults?.version ?? 0) !== expectedVersion) {
+        throw new RepositoryConflictError("Project defaults changed.");
+      }
+      state.projectInitiationDefaults = clone(record);
+      return clone(record);
     },
     async findProjectInitiationReceipt(id) {
       return clone(state.projectInitiationReceipts?.find(row => row.id === id) ?? null);
@@ -1655,6 +1669,14 @@ function buildMemoryRepository(initial: MemorySnapshot): AppRepository {
       };
     },
 
+    async findSalesInitiatedProject(actor, projectId) {
+      const currentActor = state.users.find(user => user.id === actor.id);
+      if (actor.role !== "estimator_sales" || !currentActor?.active || currentActor.deletedAt || currentActor.role !== "estimator_sales") return null;
+      const project = state.projects.find(candidate => candidate.id === projectId && candidate.assignedEstimatorId === actor.id);
+      const leads = state.leads.filter(lead => lead.projectId === projectId);
+      if (!project || leads.length !== 1 || leads[0]!.ownerId !== actor.id) return null;
+      return clone(adminProjectSummary(project, state.users, leads, memoryAdminEstimateSummaries(state), currentActor, state.estimateReviewRounds ?? []));
+    },
     async findAdminProject(actor, projectId) {
       const project = (await implementation.listProjectsForUserInModule(
         actor,

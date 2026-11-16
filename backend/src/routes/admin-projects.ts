@@ -26,7 +26,8 @@ const initiationSchema = z.object({
   nextAction: projectInitiationNextActionSchema,
   nextActionAt: z.string().datetime({ offset: true }),
   estimatorId: z.string().trim().min(1).optional(),
-  salesManagerId: z.string().trim().min(1).optional()
+  salesManagerId: z.string().trim().min(1).optional(),
+  projectManagerDefaultVersion: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional()
 }).strict().refine((value) => value.budgetMin === undefined || value.budgetMax === undefined || value.budgetMax >= value.budgetMin, {
   path: ["budgetMax"],
   message: "Maximum budget must be at least the minimum budget."

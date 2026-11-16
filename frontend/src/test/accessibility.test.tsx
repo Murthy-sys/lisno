@@ -496,6 +496,7 @@ function fixtureFetch(
       }],
       pagination: { limit: 20, offset: 0, total: 1, hasMore: false }
     } });
+    if (url === "/api/v1/admin/project-initiation-defaults") return Response.json({ data: { version: 1, status: "ready", projectManager: { id: "pm-a11y", name: "Project Manager" } } });
     if (url.startsWith("/api/v1/admin/estimators?")) return Response.json({ data: {
       items: [{ id: "estimator-a11y", name: "Accessible Estimator", email: "estimator@lisno.example", title: "Senior Estimator" }],
       pagination: { limit: 20, offset: 0, total: 1, hasMore: false }

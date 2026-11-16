@@ -133,7 +133,6 @@ const stageFilters = [
   ["lost", "Lost"]
 ] as const;
 
-const salesManager = { id: "manager-1", name: "Meera Manager", email: "meera@example.com", title: "Sales Manager" };
 
 async function fillSalesInitiation(dialog: HTMLElement, user: ReturnType<typeof userEvent.setup>) {
   for (const [label, value] of Object.entries({
@@ -148,8 +147,8 @@ async function fillSalesInitiation(dialog: HTMLElement, user: ReturnType<typeof 
   expect(within(dialog).getByRole("textbox", { name: "Next action" })).toBeDisabled();
   await user.click(within(dialog).getByRole("button", { name: "Next action date" }));
   await user.click(within(dialog).getByRole("button", { name: "Today" }));
-  await user.click(within(dialog).getByRole("combobox", { name: "Sales Manager" }));
-  await user.click(await within(dialog).findByRole("option", { name: /Meera Manager/ }));
+  await waitFor(() => expect(within(dialog).getByRole("textbox", { name: "Project Manager" })).toHaveValue("Default Project Manager"));
+  expect(within(dialog).getByRole("textbox", { name: "Project Manager" })).toBeDisabled();
 }
 
 function mockDashboardReads(getLeads: (url: URL) => Lead[]) {
@@ -469,9 +468,7 @@ describe("LeadDashboard", () => {
         } });
       }
       if (url === "/api/v1/estimates") return Response.json({ data: [] });
-      if (url.startsWith("/api/v1/admin/sales-managers?")) return Response.json({ data: {
-        items: [salesManager], pagination: { limit: 20, offset: 0, total: 1, hasMore: false }
-      } });
+      if (url === "/api/v1/admin/project-initiation-defaults") return Response.json({ data: { version: 1, status: "ready", projectManager: { id: "pm-default", name: "Default Project Manager" } } });
       if (url === "/api/v1/admin/projects" && init?.method === "POST") {
         payload = JSON.parse(String(init.body)) as Record<string, unknown>;
         initiated = true;
@@ -538,7 +535,7 @@ describe("LeadDashboard", () => {
     for (const queryKey of [adminProjectKeys.all, dashboardKeys.all, leadKeys.all]) {
       expect(invalidate).toHaveBeenCalledWith({ queryKey });
     }
-    expect(payload).toMatchObject({ salesManagerId: "manager-1", projectName: "Aurora Villa", cityName: "Bengaluru", propertyType: "3BHK", source: "Customer referral" });
+    expect(payload).toMatchObject({ projectManagerDefaultVersion: 1, projectName: "Aurora Villa", cityName: "Bengaluru", propertyType: "3BHK", source: "Customer referral" });
     expect(payload).not.toHaveProperty("location");
     expect(payload).not.toHaveProperty("budgetMin");
     expect(payload).not.toHaveProperty("budgetMax");
@@ -580,9 +577,7 @@ describe("LeadDashboard", () => {
         items: [], pagination: { limit: 20, offset: 0, total: 0, hasMore: false }
       } });
       if (url === "/api/v1/estimates") return Response.json({ data: [] });
-      if (url.startsWith("/api/v1/admin/sales-managers?")) return Response.json({ data: {
-        items: [salesManager], pagination: { limit: 20, offset: 0, total: 1, hasMore: false }
-      } });
+      if (url === "/api/v1/admin/project-initiation-defaults") return Response.json({ data: { version: 1, status: "ready", projectManager: { id: "pm-default", name: "Default Project Manager" } } });
       if (url === "/api/v1/admin/projects" && init?.method === "POST") return Response.json({
         error: { code: "PROJECT_CREATION_FAILED", message: "Project creation is unavailable. Try again." }
       }, { status: 503 });
@@ -597,7 +592,7 @@ describe("LeadDashboard", () => {
     await user.click(within(dialog).getByRole("button", { name: "Initiate project" }));
     expect(await within(dialog).findByRole("alert")).toHaveTextContent("Project creation is unavailable. Try again.");
     expect(within(dialog).getByRole("textbox", { name: "Project / property name" })).toHaveValue("Aurora Villa");
-    expect(within(dialog).getByRole("button", { name: "Initiate project" })).toBeEnabled();
+    expect(within(dialog).getByRole("button", { name: "Retry initiation" })).toBeEnabled();
     expect(router.state.location.pathname).toBe("/estimator-sales");
     expect(invalidate).not.toHaveBeenCalled();
     expect(writes).toEqual(["/api/v1/admin/projects"]);

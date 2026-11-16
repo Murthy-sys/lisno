@@ -22,6 +22,7 @@ import { SiteManagerProjectPage } from "../site-manager/SiteManagerProjectPage";
 import { AssignedProjectOverview } from "../projects/AssignedProjectOverview";
 import { useAssignedProject } from "../projects/projectReadQueries";
 import { ProjectWorkflowPanel } from "../workflow/ProjectWorkflowPanel";
+import { VendorAssignmentList } from "../vendor/VendorAssignmentList";
 import "./execution.css";
 
 export type ExecutionConnectionState = "live" | "connecting" | "polling" | "offline" | "denied";
@@ -75,7 +76,10 @@ function ExecutionWorkspace({ projectId, projectName, showProjectIdentity = fals
     {query.isPending ? <PageState state="loading" message="Loading Main Line assignments…" /> : denied ? <PageState state="error" message="You no longer have access to this execution tracker." /> : query.isError && !data ? <PageState state="error" message={procurementError(query.error,"Assignments could not be loaded.")} action={{ label: "Try again", onAction: () => void query.refetch() }} /> : data ? <>
       {query.isError ? <InlineMessage tone="warning">Refresh failed. The assignments shown may be out of date. Retry before making a decision.</InlineMessage> : null}
       {data.policy ? <p className="execution__policy-summary">{data.policy.timezone} · Reminder {data.policy.reminderTime} · Update deadline {data.policy.deadlineTime} · Escalation {data.policy.escalationTime}</p> : null}
-      {data.items.length ? <div className="execution__table-wrap" role="region" aria-label="Main Line assignments" tabIndex={0}><table className="execution__table"><thead><tr><th scope="col">Main Line / issued scope</th><th scope="col">{vendor ? "Project" : "Vendor"}</th><th scope="col">Execution</th><th scope="col">Daily update</th><th scope="col">Commitment</th><th scope="col"><span className="sr-only">Actions</span></th></tr></thead><tbody>{data.items.map(work => <WorkRow key={work.id} work={work} vendor={vendor} onOpen={() => setSelected(work.id)} />)}</tbody></table></div> : <PageState state="empty" message={filters.q || filters.flag || filters.status ? "No assignments match these filters." : "No issued Main Line work is available here yet."} />}
+      {data.items.length ? vendor
+        ? <VendorAssignmentList items={data.items} onOpen={setSelected} />
+        : <div className="execution__table-wrap" role="region" aria-label="Main Line assignments" tabIndex={0}><table className="execution__table"><thead><tr><th scope="col">Main Line / issued scope</th><th scope="col">Vendor</th><th scope="col">Execution</th><th scope="col">Daily update</th><th scope="col">Commitment</th><th scope="col"><span className="sr-only">Actions</span></th></tr></thead><tbody>{data.items.map(work => <WorkRow key={work.id} work={work} vendor={false} onOpen={() => setSelected(work.id)} />)}</tbody></table></div>
+        : <PageState state="empty" message={filters.q || filters.flag || filters.status ? "No assignments match these filters." : "No issued Main Line work is available here yet."} />}
       <ExecutionPagination offset={data.offset} count={data.items.length} total={data.total} busy={query.isFetching} onChange={offset => setFilters(old => ({ ...old, offset }))} />
     </> : null}
     {selected && !denied ? <ExecutionDetailPanel key={selected} assignmentId={selected} vendor={vendor} timezone={data?.policy?.timezone} onClose={() => setSelected(null)} renderLegacy={renderLegacy} /> : null}

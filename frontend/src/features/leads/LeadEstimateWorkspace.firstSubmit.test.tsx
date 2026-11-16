@@ -113,7 +113,7 @@ function setup(options: { ownerId?: string; projectId?: string | null; mutateSav
 
 async function selectItems(user: ReturnType<typeof userEvent.setup>, count = 1) {
   await user.click(await screen.findByRole("button", { name: "Select rooms" }));
-  await user.click(screen.getByRole("option", { name: "Bedroom 1" }));
+  await user.click(screen.getByRole("checkbox", { name: "Bedroom 1" }));
   await user.click(screen.getByRole("button", { name: "Done" }));
   await user.click(await screen.findByRole("button", { name: "Add Finishes" }));
   await user.click(screen.getByRole("button", { name: "Continue to item selection" }));

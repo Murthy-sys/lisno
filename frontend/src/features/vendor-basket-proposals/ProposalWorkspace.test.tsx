@@ -129,17 +129,18 @@ describe("isolated basket proposal workspace", () => {
     expect(screen.queryByRole("button", { name: "Send for approval and activation" })).not.toBeInTheDocument();
   });
 
-  it.each([{ kind: "new_main_basket" as const }, { kind: "new_sub_basket" as const, basketId: "parent-paint" }])("keeps Mode content under its selected tab and uses the saved section version (%j)", async target => {
+  it.each([{ kind: "new_main_basket" as const }, { kind: "new_sub_basket" as const, basketId: "parent-paint" }])("keeps Mode content under its selected tab without showing section version (%j)", async target => {
     detail = proposalFixture({ target, version: 7 });
     const user = userEvent.setup(); setup();
     await screen.findByRole("combobox", { name: "Unit of measure (UOM)" });
     expect(screen.queryByText("Section version 7")).not.toBeInTheDocument();
     await user.click(screen.getByRole("tab", { name: "Mode" }));
     const panel = screen.getByRole("tabpanel", { name: "Mode" });
-    expect((await within(panel).findAllByText("Section version 7")).length).toBeGreaterThan(0);
+    expect(await within(panel).findByRole("button", { name: "Edit Specification 1" })).toBeVisible();
+    expect(within(panel).queryByText(/^Section version\b/)).not.toBeInTheDocument();
+    expect(panel.querySelector(".knowledge-mode-block__toolbar")).not.toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Mode" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "false");
-    expect(within(panel).getByRole("button", { name: "Edit Specification 1" })).toBeVisible();
     expect(writes).toEqual([]);
   });
 

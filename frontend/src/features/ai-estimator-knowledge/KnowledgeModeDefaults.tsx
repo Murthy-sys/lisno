@@ -22,9 +22,8 @@ export interface KnowledgeModeDefaultsProps {
 }
 
 export function KnowledgeModeDefaults({ item, modeTier = "signature" }: KnowledgeModeDefaultsProps) {
-  const baseKey = knowledgeQueryKeys.subBasketMargins(item.basketId, item.subBasketId ?? "");
   const query = useQuery({
-    queryKey: modeTier === "signature" ? baseKey : [...baseKey, "tier", modeTier],
+    queryKey: knowledgeQueryKeys.subBasketMargins(item.basketId, item.subBasketId ?? "", modeTier),
     queryFn: () => getKnowledgeSubBasketMargins(item.basketId, item.subBasketId!, { modeTier }),
     enabled: Boolean(item.subBasketId)
   });

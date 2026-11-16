@@ -1,3 +1,4 @@
+import { resolveProjectManagerDefault } from "./project-initiation-default-resolution.js";
 import type { WorkflowSpacePlanningSource } from "../domain/workflow-space-planning.js";
 import type { WorkflowEstimateRoom } from "../domain/workflow-estimate-items.js";
 import { RepositoryConflictError } from "../repositories/types.js";
@@ -471,6 +472,8 @@ export function createProjectService(
       const emailNormalized = normalizeEmail(input.clientEmail);
       return repository.runInTransaction(async (transaction) => {
         await transaction.coordinateAuthorizationMutation();
+        await requireActor(transaction, actor);
+        const projectManagerDefault = await resolveProjectManagerDefault(transaction);
         await transaction.coordinateClientEmail(emailNormalized);
         const existingClient = await transaction.findUserByEmail(emailNormalized);
         if (existingClient && existingClient.role !== "client") {
@@ -496,7 +499,7 @@ export function createProjectService(
           assignedEstimatorId: null,
           assignedDesignerIds,
           managerId: manager.id,
-          programManagerId: null,
+          programManagerId: projectManagerDefault.projectManagerId,
           status: "planning",
           location: input.location,
           cityName: city?.name ?? null,
@@ -516,7 +519,7 @@ export function createProjectService(
             entityType: "project",
             entityId: project.id,
             occurredAt: timestamp,
-            newValues: { name: project.name, status: project.status, ...(city ? { cityName: city.name, cityKey: city.key } : {}) }
+            newValues: { name: project.name, status: project.status, programManagerId: projectManagerDefault.projectManagerId, projectManagerDefaultVersion: projectManagerDefault.version, ...(city ? { cityName: city.name, cityKey: city.key } : {}) }
           },
           transaction
         );

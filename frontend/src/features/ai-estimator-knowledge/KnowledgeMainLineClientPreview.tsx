@@ -5,6 +5,7 @@ import { KNOWLEDGE_MODE_TIERS, KNOWLEDGE_MODE_TIER_LABELS, type KnowledgeModeTie
 import { Button } from "../../components/ui/Button";
 import { Drawer } from "../../components/ui/Drawer";
 import { EstimateLineChoice, EstimateLineLayout, EstimateLineTierNotes, EstimateLineTierOptions } from "../estimates/EstimateLineRow";
+import { EstimateLineTierDetails } from "../estimates/EstimateLineTierDetails";
 import { EstimatePricingModeControl } from "../estimates/EstimatePricingModeControl";
 import { configuredTierPricing, configuredTierUnavailableReason } from "../leads/configuredEstimate";
 import { emptyEstimateDimensions, EstimateDimensionsFields } from "../leads/EstimateDimensionsFields";
@@ -134,6 +135,8 @@ function ClientPreviewRow({ source: { line, basketName, subBasketName } }: { sou
           <div className="configured-estimate-line__amount"><span>Amount</span><output aria-label={`Amount for ${line.name}`}>After save</output></div>
         </>}>
         {included ? <>
+          {(line.applicableTiers ?? ["signature"]).includes(tier) ? <EstimateLineTierDetails rowKey={line.mainLineId}
+            label={line.name} tier={tier} description={line.tierDescriptions?.[tier]} details={line.tierDetails?.[tier]} /> : null}
           <EstimateLineTierNotes options={tierOptions} id={tierAvailabilityId} />
           {unavailableReason ? <p className="configured-estimate-line__message" role="status">Price is unavailable for the selected mode and tier. Review the available options.</p> : null}
           {line.dimensionsMandatory ? line.dimensionRule

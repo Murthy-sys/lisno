@@ -930,9 +930,13 @@ interface InitiateProjectFields extends ProjectInitiationMetadata {
   nextActionAt: string;
 }
 
-export type InitiateAdminProjectInput = InitiateProjectFields & (
+export type ProjectInitiationDefaults =
+  | { version: number; status: "ready"; projectManager: { id: string; name: string } }
+  | { version: number; status: "unconfigured" | "unavailable"; projectManager: null };
+
+export type InitiateAdminProjectInput = InitiateProjectFields & { projectManagerDefaultVersion?: number } & (
   | { estimatorId: string; salesManagerId?: never }
-  | { salesManagerId: string; estimatorId?: never }
+  | { salesManagerId?: string; estimatorId?: never }
 );
 
 export interface UserDirectoryFilters {

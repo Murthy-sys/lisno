@@ -329,7 +329,7 @@ beforeEach(() => {
 });
 
 describe("Knowledge Base index page", () => {
-  it("shows full Sub-Basket margin counts beside the name without expanding its item disclosure", async () => {
+  it("shows only tier names beside the Sub-Basket name and opens margins without expanding its item disclosure", async () => {
     const user = userEvent.setup();
     mockDeletionHierarchy();
     vi.mocked(knowledgeApi.getKnowledgeSubBasketMargins).mockImplementation(async (basketId, subBasketId) => {
@@ -344,13 +344,19 @@ describe("Knowledge Base index page", () => {
     const sub = within(parent).getByRole("region", { name: panelGroup.name });
     const toggle = within(sub).getByRole("button", { name: panelGroup.name });
     expect(toggle).toHaveAttribute("aria-expanded", "false");
-    const control = await within(sub).findByRole("button", { name: /PMC default margins.*9 mismatched/ });
-    expect(control).toHaveTextContent("12% / Max. 18%");
-    expect(within(sub).getByText("1 item on this page")).toBeVisible();
+    const control = await within(sub).findByRole("button", { name: `Signature margins for ${panelGroup.name}` });
+    expect(control).toHaveTextContent(/^Signature$/);
+    const header = sub.querySelector<HTMLElement>(".knowledge-basket-card__header")!;
+    expect(within(header).getByRole("button", { name: `Premium margins for ${panelGroup.name}` })).toHaveTextContent(/^Premium$/);
+    expect(within(header).getByRole("button", { name: `Functional margins for ${panelGroup.name}` })).toHaveTextContent(/^Functional$/);
+    expect(header).not.toHaveTextContent(/Configured margins|Sub-Basket|on this page|%|mismatched|Delete/);
     expect(vi.mocked(knowledgeApi.getKnowledgeSubBasketMargins).mock.calls.every(([id]) => id === carpentry.id)).toBe(true);
+    expect(new Set(vi.mocked(knowledgeApi.getKnowledgeSubBasketMargins).mock.calls.map(([, , options]) => options?.modeTier))).toEqual(new Set(["signature", "premium", "functional"]));
     await user.click(control);
     expect(toggle).toHaveAttribute("aria-expanded", "false");
-    expect(screen.getByRole("dialog", { name: "PMC default margins" })).toHaveTextContent("First configured line");
+    const dialog = await screen.findByRole("dialog", { name: "Signature PMC margins" });
+    expect(dialog).toHaveTextContent("First configured line");
+    expect(dialog).toHaveTextContent("12% / Max. 18%");
     expect(screen.getByText(/Compared across all 24 main lines/)).toBeVisible();
   });
 
@@ -400,9 +406,10 @@ describe("Knowledge Base index page", () => {
     for (const section of [carpentrySection, plumbingSection, directSection]) {
       expect(section.querySelector("img")).toBeNull();
     }
-    expect(within(carpentrySection).getByText("Sub-Basket")).toBeVisible();
-    expect(within(plumbingSection).getByText("Sub-Basket")).toBeVisible();
+    expect(within(carpentrySection).queryByText("Sub-Basket")).not.toBeInTheDocument();
+    expect(within(plumbingSection).queryByText("Sub-Basket")).not.toBeInTheDocument();
     expect(within(directSection).queryByText("Sub-Basket")).not.toBeInTheDocument();
+    expect(within(directSection).getByText("1 item on this page")).toBeVisible();
     expect(within(carpentryPanel).getByRole("region", { name: emptyGroup.name })).toBeVisible();
     expect(within(directSection).getByRole("link", { name: directItem.mainLineName })).toBeVisible();
 
@@ -453,12 +460,12 @@ describe("Knowledge Base index page", () => {
     await user.click(await screen.findByRole("button", { name: emptyGroup.name }));
     expect(screen.getByText("No items from this Sub-Basket on this page.")).toBeVisible();
     expect(screen.queryByText("No items in this Sub-Basket yet.")).not.toBeInTheDocument();
-    expect(within(basketPanel(carpentry.name)).getAllByText("0 items on this page")).toHaveLength(2);
+    expect(within(basketPanel(carpentry.name)).getAllByText("0 items on this page")).toHaveLength(1);
     await user.click(screen.getByRole("button", { name: "Next" }));
     expect(await screen.findByRole("link", { name: panelling.mainLineName })).toBeVisible();
     expect(screen.getByRole("button", { name: emptyGroup.name })).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByRole("button", { name: carpentry.name })).toHaveAttribute("aria-expanded", "true");
-    expect(within(basketPanel(carpentry.name)).getAllByText("1 item on this page")).toHaveLength(2);
+    expect(within(basketPanel(carpentry.name)).getAllByText("1 item on this page")).toHaveLength(1);
   });
 
   it("does not claim an unreadable child catalog is empty and recovers through its retry", async () => {
@@ -1203,7 +1210,8 @@ describe("Sub-Basket deletion from the Configuration hierarchy", () => {
     const action = await screen.findByRole("button", { name: `Delete Sub-Basket ${emptyGroup.name} permanently` });
     const toggle = screen.getByRole("button", { name: emptyGroup.name });
     expect(toggle).toHaveAttribute("aria-expanded", "false");
-    expect(visibleLabel(action)).toBe("Delete");
+    expect(visibleLabel(action)).toBe("");
+    expect(action.querySelector("svg")).not.toBeNull();
     action.focus();
     await user.keyboard("{Enter}");
     const dialog = await screen.findByRole("alertdialog", { name: "Delete Sub-Basket?" });

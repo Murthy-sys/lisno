@@ -592,14 +592,6 @@
   color: var(--kx-danger);
 }
 
-.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-card__actions .knowledge-sub-basket__delete {
-  flex: 0 0 auto;
-  min-inline-size: 64px;
-  border-color: var(--kx-danger);
-  background: transparent;
-  color: var(--kx-danger);
-}
-
 .ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-card__body {
   display: grid;
   gap: 20px;
@@ -735,6 +727,48 @@
 
   .ui-app-shell[data-role] .knowledge-page.knowledge-page--index :is(.knowledge-basket-card--sub, .knowledge-basket-card--direct) > .knowledge-basket-card__body {
     padding: 12px 0 4px;
+  }
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-card--sub > .knowledge-basket-card__group-header {
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 16px;
+  min-block-size: 60px;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-card--sub > .knowledge-basket-card__group-header > .knowledge-basket-card__content {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-card--sub > .knowledge-basket-card__group-header > .knowledge-basket-card__details {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  min-inline-size: 0;
+}
+
+.ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-card--sub > .knowledge-basket-card__group-header > .knowledge-basket-card__actions {
+  grid-column: 2;
+  grid-row: 1;
+  justify-self: end;
+}
+
+@container knowledge-basket-layout (min-width: 44rem) {
+  .ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-card--sub > .knowledge-basket-card__group-header {
+    grid-template-columns: minmax(8rem, max-content) minmax(0, 1fr) auto;
+  }
+
+  .ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-card--sub > .knowledge-basket-card__group-header > .knowledge-basket-card__content {
+    max-inline-size: 26ch;
+  }
+
+  .ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-card--sub > .knowledge-basket-card__group-header > .knowledge-basket-card__details {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .ui-app-shell[data-role] .knowledge-page.knowledge-page--index .knowledge-basket-card--sub > .knowledge-basket-card__group-header > .knowledge-basket-card__actions {
+    grid-column: 3;
   }
 }
 

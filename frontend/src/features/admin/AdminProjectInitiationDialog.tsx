@@ -33,7 +33,6 @@ import { SearchCombobox } from "../../components/ui/SearchCombobox";
 import {
   adminProjectKeys,
   getEstimatorOptions,
-  getSalesManagerOptions,
   initiateAdminProject,
   type ProjectInitiationInput
 } from "./adminProjectsApi";
@@ -41,6 +40,8 @@ import { leadKeys } from "../leads/leadsApi";
 import { dashboardKeys } from "./dashboard/superAdminDashboardApi";
 import { propertyTypes } from "../leads/propertyTypes";
 import { NextActionDateTime } from "./NextActionDateTime";
+import { projectInitiationDefaultsQuery } from "./projectInitiationDefaultsApi";
+import { ProjectInitiationDefaultsPanel } from "./ProjectInitiationDefaultsPanel";
 
 interface ProjectInitiationForm {
   clientName: string;
@@ -118,7 +119,8 @@ function validate(
   form: ProjectInitiationForm,
   selectedAssignee: EstimatorOption | null,
   assignmentField: "estimatorId" | "salesManagerId",
-  assignmentLabel: string
+  assignmentLabel: string,
+  requiresAssignee: boolean
 ): Record<string, string> {
   const errors: Record<string, string> = {};
   for (const [key, label] of fields) {
@@ -132,7 +134,7 @@ function validate(
   if (form.tentativeBudget.trim().length > TENTATIVE_BUDGET_MAX_LENGTH) errors.tentativeBudget = `Tentative Budget must be ${TENTATIVE_BUDGET_MAX_LENGTH} characters or fewer.`;
   if (form.nextActionAt && !isProjectCalendarDate(form.nextActionAt)) errors.nextActionAt = "Next action date must be valid.";
   if (form.closureTentativeDate && !isProjectCalendarDate(form.closureTentativeDate)) errors.closureTentativeDate = "Closure Tentative Date must be valid.";
-  if (!selectedAssignee) {
+  if (requiresAssignee && !selectedAssignee) {
     errors[assignmentField] = `Select an active ${assignmentLabel} user.`;
   }
   return errors;
@@ -141,15 +143,19 @@ function validate(
 export function AdminProjectInitiationDialog({
   onClose,
   onCreated,
+  actorId,
+  canManageDefaults = false,
   assignmentMode = "estimator"
 }: {
   onClose: () => void;
+  actorId: string;
+  canManageDefaults?: boolean;
   onCreated: (project: InitiatedAdminProjectSummary) => void;
   assignmentMode?: "estimator" | "sales-manager";
 }) {
-  const selectsSalesManager = assignmentMode === "sales-manager";
-  const assignmentField = selectsSalesManager ? "salesManagerId" : "estimatorId";
-  const assignmentLabel = selectsSalesManager ? "Sales Manager" : "Sales";
+  const salesInitiated = assignmentMode === "sales-manager";
+  const assignmentField = "estimatorId";
+  const assignmentLabel = "Sales";
   const queryClient = useQueryClient();
   const feedback = useFeedback();
   const [form, setForm] = useState<ProjectInitiationForm>(emptyForm);
@@ -161,6 +167,18 @@ export function AdminProjectInitiationDialog({
   const refs = useRef<Record<string, HTMLInputElement | HTMLSelectElement | HTMLButtonElement | null>>({});
   const submissionStarted = useRef(false);
   const initiationKey = useRef<string | null>(null);
+  const attemptedManagerName = useRef("");
+  const [retryInput, setRetryInput] = useState<ProjectInitiationInput | null>(null);
+  const [defaultsOpen, setDefaultsOpen] = useState(false);
+  const [returnToDefaults, setReturnToDefaults] = useState(false);
+  const defaultsAction = useRef<HTMLButtonElement>(null);
+  const defaultsQuery = useQuery(projectInitiationDefaultsQuery(actorId));
+  const defaultReady = defaultsQuery.isSuccess && !defaultsQuery.isFetching && !defaultsQuery.isError && defaultsQuery.data.status === "ready";
+  const controlsLocked = Boolean(retryInput);
+  const closeDefaults = () => {
+    setReturnToDefaults(true);
+    setDefaultsOpen(false);
+  };
 
   useEffect(() => {
     const normalized = assigneeSearch.trim();
@@ -173,12 +191,9 @@ export function AdminProjectInitiationDialog({
 
   const assigneePagination = { limit: 20, offset: 0 } as const;
   const assigneesQuery = useQuery({
-    queryKey: (selectsSalesManager ? adminProjectKeys.salesManagers : adminProjectKeys.estimators)(
-      debouncedAssigneeSearch,
-      assigneePagination
-    ),
-    queryFn: () =>
-      (selectsSalesManager ? getSalesManagerOptions : getEstimatorOptions)(debouncedAssigneeSearch, assigneePagination)
+    queryKey: adminProjectKeys.estimators(debouncedAssigneeSearch, assigneePagination),
+    queryFn: () => getEstimatorOptions(debouncedAssigneeSearch, assigneePagination),
+    enabled: !salesInitiated
   });
 
   const focusFirst = (errors: Record<string, string>) => {
@@ -208,14 +223,18 @@ export function AdminProjectInitiationDialog({
           ? "Your project is ready. The existing client already has access; no invitation is needed."
           : project.clientInvitation && ["not_issued", "delivery_failed"].includes(project.clientInvitation.status)
           ? "Your project is ready. Check the client invitation status to send or retry the invitation."
-          : selectsSalesManager
-          ? "Your lead is ready with the selected Sales Manager."
+          : salesInitiated
+          ? "Your lead is ready with the default Project Manager."
           : "The Sales handoff is ready."
       });
       onClose();
       onCreated(project);
     },
-    onError: (cause) => {
+    onError: (cause, attemptedInput) => {
+      const uncertain = !(cause instanceof ApiError) || cause.status === 0 || cause.status >= 500;
+      setRetryInput(uncertain ? attemptedInput : null);
+      if (!uncertain) initiationKey.current = null;
+      if (cause instanceof ApiError && cause.code.startsWith("PROJECT_INITIATION_DEFAULT_")) void defaultsQuery.refetch();
       submissionStarted.current = false;
       const errors = cause instanceof ApiError && cause.fields ? cause.fields : {};
       setFieldErrors(errors);
@@ -243,19 +262,27 @@ export function AdminProjectInitiationDialog({
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (submissionStarted.current || mutation.isPending) return;
+    if (retryInput) {
+      submissionStarted.current = true;
+      setSubmissionError(null);
+      mutation.mutate(retryInput);
+      return;
+    }
+    if (!defaultReady || (!salesInitiated && (assigneesQuery.isPending || assigneesQuery.isFetching || assigneesQuery.isError))) return;
     setSubmissionError(null);
-    const errors = validate(form, selectedAssignee, assignmentField, assignmentLabel);
+    const errors = validate(form, selectedAssignee, assignmentField, assignmentLabel, !salesInitiated);
     setFieldErrors(errors);
     if (Object.keys(errors).length > 0) {
       focusFirst(errors);
       return;
     }
-    if (!selectedAssignee) return;
+    if (!salesInitiated && !selectedAssignee || defaultsQuery.data?.status !== "ready") return;
 
     const source = resolvedSource(form);
     initiationKey.current ??= crypto.randomUUID();
     const input: ProjectInitiationInput = {
       initiationKey: initiationKey.current,
+      projectManagerDefaultVersion: defaultsQuery.data.version,
       clientName: form.clientName.trim(),
       clientEmail: form.clientEmail.trim(),
       clientMobile: form.clientMobile.trim(),
@@ -272,10 +299,9 @@ export function AdminProjectInitiationDialog({
       nextAction: DEFAULT_PROJECT_NEXT_ACTION,
       // The initiation form collects a local calendar date; the API stores a timestamp.
       nextActionAt: new Date(`${form.nextActionAt}T00:00:00`).toISOString(),
-      ...(selectsSalesManager
-        ? { salesManagerId: selectedAssignee.id }
-        : { estimatorId: selectedAssignee.id })
+      ...(salesInitiated ? {} : { estimatorId: selectedAssignee!.id })
     };
+    attemptedManagerName.current = defaultsQuery.data.projectManager.name;
     submissionStarted.current = true;
     mutation.mutate(input);
   };
@@ -286,19 +312,25 @@ export function AdminProjectInitiationDialog({
     : assigneesQuery.isError
       ? `We couldn't load ${assignmentLabel} options.`
       : undefined;
-  const submitDisabled =
-    mutation.isPending ||
-    assigneesQuery.isPending ||
-    assigneesQuery.isFetching ||
-    assigneesQuery.isError ||
-    !selectedAssignee;
+  const submitDisabled = mutation.isPending || !retryInput && (!defaultReady ||
+    !salesInitiated && (assigneesQuery.isPending || assigneesQuery.isFetching || assigneesQuery.isError || !selectedAssignee));
+  const defaultMessage = retryInput ? "This is the Project Manager used by the previous request."
+    : defaultsQuery.isError
+    ? "We couldn't load the default Project Manager."
+    : defaultsQuery.isPending || defaultsQuery.isFetching ? "Loading the default Project Manager…"
+    : defaultsQuery.data?.status === "unconfigured" ? "Ask Super Admin to configure the default Project Manager before creating a project."
+    : defaultsQuery.data?.status === "unavailable" ? "The default Project Manager is unavailable. Ask Super Admin to update Project defaults."
+    : "Assigned automatically from project defaults.";
 
   return (
+    <>
     <ContextPanel
+      open={!defaultsOpen}
+      initialFocusRef={returnToDefaults ? defaultsAction : undefined}
       eyebrow="Project administration"
       title="Initiate project"
-      description={selectsSalesManager
-        ? "Create your project and select the Sales Manager who will oversee it. The six-stage design workflow is included."
+      description={salesInitiated
+        ? "Create your project with the default Project Manager. The six-stage design workflow is included."
         : "Create the project now and hand its lead to Sales. The six-stage design workflow is included."}
       onClose={onClose}
       busy={mutation.isPending}
@@ -308,12 +340,13 @@ export function AdminProjectInitiationDialog({
       footer={({ requestClose }) => (
         <div className="modal-form__actions admin-project-form__actions">
           <Button variant="destructive-outline" onClick={requestClose} disabled={mutation.isPending}>Cancel</Button>
-          <Button type="submit" form="admin-project-initiation-form" busy={mutation.isPending} busyLabel="Initiating…" disabled={submitDisabled}>Initiate project</Button>
+          <Button type="submit" form="admin-project-initiation-form" busy={mutation.isPending} busyLabel="Initiating…" disabled={submitDisabled}>{retryInput ? "Retry initiation" : "Initiate project"}</Button>
         </div>
       )}
     >
       <form id="admin-project-initiation-form" className="modal-form admin-project-form" onSubmit={submit} noValidate>
         {submissionError ? <div className="form-alert admin-project-form__alert" role="alert">{submissionError}</div> : null}
+        {retryInput ? <p className="ui-field__hint admin-project-form__wide" role="status">The previous request may have completed. Retry initiation to recover its result before changing this form.</p> : null}
         {fields.map(([key, label, type, placeholder]) => (
           <Fragment key={key}>
             <Field
@@ -328,39 +361,39 @@ export function AdminProjectInitiationDialog({
                 <div className="admin-project-form__control">
                   {key === "languagesKnown" ? <ProjectLanguageMultiSelect {...controlProps}
                     value={form.languagesKnown} onChange={(value) => updateValue(key, value)}
-                    inputRef={(node) => { refs.current[key] = node; }} disabled={mutation.isPending}
+                    inputRef={(node) => { refs.current[key] = node; }} disabled={mutation.isPending || controlsLocked}
                   /> : key === "preferredLanguage" ? <Select {...controlProps}
                     ref={(node) => { refs.current[key] = node; }} name={key}
-                    value={form.preferredLanguage} onChange={update(key)} disabled={mutation.isPending}>
+                    value={form.preferredLanguage} onChange={update(key)} disabled={mutation.isPending || controlsLocked}>
                     <option value="">Select preferred language</option>
                     {PROJECT_LANGUAGE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
                   </Select> : key === "category" ? <Select {...controlProps}
                     ref={(node) => { refs.current[key] = node; }} name={key}
-                    value={form.category} onChange={update(key)} disabled={mutation.isPending}>
+                    value={form.category} onChange={update(key)} disabled={mutation.isPending || controlsLocked}>
                     <option value="">Select category</option>
                     {PROJECT_CATEGORY_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
                   </Select> : key === "propertyType" ? <Select {...controlProps}
                     ref={(node) => { refs.current[key] = node; }} name={key}
-                    value={form.propertyType} onChange={update(key)} disabled={mutation.isPending}>
+                    value={form.propertyType} onChange={update(key)} disabled={mutation.isPending || controlsLocked}>
                     <option value="">Select property type</option>
                     {propertyTypes.map((option) => <option key={option} value={option}>{option}</option>)}
                   </Select> : key === "source" ? <Select {...controlProps}
                     ref={(node) => { refs.current[key] = node; }} name={key}
-                    value={form.source} onChange={update(key)} disabled={mutation.isPending}>
+                    value={form.source} onChange={update(key)} disabled={mutation.isPending || controlsLocked}>
                     <option value="">Select source</option>
                     {sourceOptions.map((option) => <option key={option} value={option}>{option}</option>)}
                   </Select> : key === "nextActionAt" || key === "closureTentativeDate" ? <NextActionDateTime {...controlProps}
                     calendarLabel={key === "closureTentativeDate" ? "Choose closure tentative date" : undefined}
                     clearable={key === "closureTentativeDate"}
                     value={form[key]} onChange={(value) => updateValue(key, value)}
-                    inputRef={(node) => { refs.current[key] = node; }} disabled={mutation.isPending}
+                    inputRef={(node) => { refs.current[key] = node; }} disabled={mutation.isPending || controlsLocked}
                   /> : <Input
                     {...controlProps}
                     ref={(node) => { refs.current[key] = node; }}
                     name={key}
                     type={type}
                     placeholder={placeholder}
-                    disabled={mutation.isPending || key === "nextAction"}
+                    disabled={mutation.isPending || controlsLocked || key === "nextAction"}
                     maxLength={key === "nativePlace" ? NATIVE_PLACE_MAX_LENGTH : key === "tentativeBudget" ? TENTATIVE_BUDGET_MAX_LENGTH : undefined}
                     value={form[key]}
                     onChange={key === "nextAction" ? undefined : update(key)}
@@ -374,17 +407,23 @@ export function AdminProjectInitiationDialog({
                 {(controlProps) => (
                   <Input {...controlProps} ref={(node) => { refs.current.otherSource = node; }}
                     name="otherSource" value={form.otherSource} onChange={update("otherSource")}
-                    placeholder="Enter source" maxLength={200} disabled={mutation.isPending} />
+                    placeholder="Enter source" maxLength={200} disabled={mutation.isPending || controlsLocked} />
                 )}
               </Field>
             ) : null}
           </Fragment>
         ))}
-        <fieldset className="admin-project-form__estimator" disabled={mutation.isPending}>
+        <Field className="admin-project-form__wide" id="admin-project-projectManager" label="Project Manager"
+          hint={<span role={defaultsQuery.isError ? "alert" : defaultsQuery.isPending || defaultsQuery.isFetching ? "status" : undefined}>{defaultMessage}</span>}>
+          {(controlProps) => <Input {...controlProps} disabled value={retryInput ? attemptedManagerName.current : defaultsQuery.isError ? "" : defaultsQuery.data?.status === "ready" ? defaultsQuery.data.projectManager.name : ""} placeholder="Project Manager unavailable" />}
+        </Field>
+        {defaultsQuery.isError ? <div className="admin-project-form__wide"><Button variant="secondary" onClick={() => void defaultsQuery.refetch()}>Retry Project Manager</Button></div> : null}
+        {canManageDefaults ? <div className="admin-project-form__wide"><Button ref={defaultsAction} variant="secondary" disabled={mutation.isPending || controlsLocked} onClick={() => setDefaultsOpen(true)}>Project defaults</Button></div> : null}
+        {!salesInitiated ? <fieldset className="admin-project-form__estimator" disabled={mutation.isPending || controlsLocked}>
           <SearchCombobox
             label={assignmentLabel}
             name={assignmentField}
-            placeholder={selectsSalesManager ? "Search and select Sales Manager" : "Search and select Sales"}
+            placeholder="Search and select Sales"
             value={selectedAssignee}
             onChange={(option) => {
               setSelectedAssignee(option);
@@ -419,10 +458,12 @@ export function AdminProjectInitiationDialog({
           {fieldErrors[assignmentField] ? (
             <p className="ui-field__error" id={assigneeErrorId}>{fieldErrors[assignmentField]}</p>
           ) : !selectedAssignee ? (
-            <p className="ui-field__hint">Pick an option from the list — Initiate project stays disabled until {selectsSalesManager ? "a Sales Manager" : "a Sales user"} is selected.</p>
+            <p className="ui-field__hint">Pick an option from the list. Initiate project stays disabled until a Sales user is selected.</p>
           ) : null}
-        </fieldset>
+        </fieldset> : null}
       </form>
     </ContextPanel>
+    {defaultsOpen ? <ProjectInitiationDefaultsPanel actorId={actorId} onClose={closeDefaults} /> : null}
+    </>
   );
 }

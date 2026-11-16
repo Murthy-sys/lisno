@@ -52,8 +52,11 @@ describe("mobile contract provenance", () => {
     expect(PERMISSION_CODES).toEqual(canonicalPermissions);
     expect(quotedArray(frontendAuthorization, "ROLE_CODES")).toEqual(canonicalRoles);
     expect(quotedArray(frontendAuthorization, "PERMISSION_CODES")).toEqual(canonicalPermissions);
-    expect(PERMISSION_CODES).toHaveLength(217);
-    expect(canonicalPolicyVersion).toBe("2026-10-27.project-manager-consolidation.v1");
+    expect(PERMISSION_CODES).toHaveLength(228);
+    expect(PERMISSION_CODES).toEqual(expect.arrayContaining([
+      "projects.initiation_defaults.read", "projects.initiation_defaults.manage"
+    ]));
+    expect(canonicalPolicyVersion).toBe("2026-11-15.project-initiation-defaults.v1");
     expect(AUTHORIZATION_POLICY_VERSION).toBe(canonicalPolicyVersion);
     expect(frontendPolicyVersion).toBe(canonicalPolicyVersion);
   });
@@ -68,8 +71,15 @@ describe("mobile contract provenance", () => {
       permission: entry[2]!,
       superAdminBehavior: entry[3]!
     }));
-    expect(canonical).toHaveLength(478);
+    expect(canonical).toHaveLength(480);
     expect(PROTECTED_OPERATIONS).toEqual(canonical);
+  });
+
+  it("mirrors both Project defaults operations without changing their Super Admin behavior", () => {
+    expect(PROTECTED_OPERATIONS).toEqual(expect.arrayContaining([
+      { operation: "GET /admin/project-initiation-defaults", permission: "projects.initiation_defaults.read", superAdminBehavior: "global_read" },
+      { operation: "PUT /admin/project-initiation-defaults", permission: "projects.initiation_defaults.manage", superAdminBehavior: "admin_override" }
+    ]));
   });
 
   it("keeps the reviewed public route manifest explicit", () => {

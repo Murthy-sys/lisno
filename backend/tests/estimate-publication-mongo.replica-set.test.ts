@@ -1,6 +1,7 @@
 import { newQuotationLifecycle } from "../src/domain/estimation-lifecycle.js";
 import { createEstimateProposal } from "../src/domain/estimate-proposal.js";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { insertProjectInitiationDefault } from "./helpers/project-initiation-defaults.js";
 
 import {
   sha256Hex,
@@ -549,6 +550,7 @@ describe("Estimate publication and delivery on a Mongo replica set", () => {
   });
 
   it.each(["draft", "ready_for_client"] as const)("publishes and approves a %s estimate after initiation without location or budgets", async (estimateStatus) => {
+    await insertProjectInitiationDefault();
     const fixture = await seedPublication({ estimateStatus });
     const repository = createMongoRepository();
     const audit = createAuditService(repository);
