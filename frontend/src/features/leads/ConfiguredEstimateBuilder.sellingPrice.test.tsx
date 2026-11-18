@@ -50,6 +50,28 @@ function paintRow() {
 }
 
 describe("configured estimate selling prices", () => {
+  it.each([
+    { netRate: 3, quantity: 3, rate: "0.04", amount: "₹0.11" },
+    { netRate: 100, quantity: 2.5, rate: "1.18", amount: "₹2.95" }
+  ])("keeps net pricing intact when displaying GST at $quantity units", ({ netRate, quantity, rate, amount }) => {
+    const current = structuredClone(catalogue);
+    const source = current.items[0]!.subBaskets[0]!.mainLines[0]!;
+    source.modeBaseRatesPaise!.sub_vendor = netRate;
+    source.tierPricing!.signature!.modeBaseRatesPaise.sub_vendor = netRate;
+    const line = { ...createConfiguredLine(current, room, { mainLineId: "paint", basketId: "finishes", subBasketId: "walls" })!, included: true, quantity };
+    const onUpdateLine = vi.fn();
+    render(<ConfiguredEstimateBuilder rooms={[room]} activeRoomId={room.id} onSelectRoom={vi.fn()} catalogue={current}
+      selectedMainBasketIds={baskets} lines={[line]} editable roomIcons={{}} moneyPaise={value => `₹${value / 100}`}
+      roomTotal={() => netRate * quantity} onUpdateLine={onUpdateLine} onRefreshAvailableItems={vi.fn()} refreshingAvailableItems={false} />);
+    expect(screen.getByRole("textbox", { name: /Selling rate.*including 18% GST/ })).toHaveValue(rate);
+    expect(screen.getByLabelText(/Amount for.*including 18% GST/)).toHaveTextContent(amount);
+    expect(configuredLineAmountPaise(line)).toBe(netRate * quantity);
+    expect(line.rateInput).toBe(String(netRate / 100));
+    expect(onUpdateLine).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByRole("spinbutton"), { target: { value: "4" } });
+    expect(onUpdateLine).toHaveBeenCalledWith(line.key, { quantity: 4 });
+  });
+
   it("shows a combined margin-inclusive rate and exact aggregate amount without a component selector", () => {
     const current = structuredClone(catalogue);
     const source = current.items[0]!.subBaskets[0]!.mainLines[0]!;
@@ -62,8 +84,8 @@ describe("configured estimate selling prices", () => {
     render(<ConfiguredEstimateBuilder rooms={[room]} activeRoomId={room.id} onSelectRoom={vi.fn()} catalogue={current}
       selectedMainBasketIds={baskets} lines={[line]} editable roomIcons={{}} moneyPaise={amount => `₹${amount / 100}`}
       roomTotal={() => 78334} onUpdateLine={vi.fn()} onRefreshAvailableItems={vi.fn()} refreshingAvailableItems={false} />);
-    expect(screen.getByRole("textbox", { name: /Price including margin/ })).toHaveValue("261.11");
-    expect(screen.getByLabelText(/Amount for Finishes, Walls, Wall painting/)).toHaveTextContent("₹783.34");
+    expect(screen.getByRole("textbox", { name: /Price including margin/ })).toHaveValue("308.11");
+    expect(screen.getByLabelText(/Amount for Finishes, Walls, Wall painting/)).toHaveTextContent("₹924.34");
     expect(screen.queryByText("Calculated from configured components.")).not.toBeInTheDocument();
     expect(screen.queryByText("Ceiling")).not.toBeInTheDocument();
     expect(screen.queryByRole("group", { name: /In-house components/ })).not.toBeInTheDocument();
@@ -93,19 +115,19 @@ describe("configured estimate selling prices", () => {
     expect(screen.getByRole("button", { name: "Remove from estimate" })).toHaveFocus();
     await user.keyboard("{Escape}");
     expect(controls.at(-1)).toHaveFocus();
-    expect(paint.getByRole("textbox", { name: /Selling rate/ })).toHaveValue("250");
-    expect(paint.getByRole("status", { name: /Amount for/ })).toHaveTextContent("₹500");
+    expect(paint.getByRole("textbox", { name: /Selling rate/ })).toHaveValue("295");
+    expect(paint.getByRole("status", { name: /Amount for/ })).toHaveTextContent("₹590");
   });
 
   it("shows the final price and quantity total without margin calculations", () => {
     const { container } = render(<SellingPriceBuilder />);
     const paint = paintRow();
-    expect(paint.getByRole("textbox", { name: /Selling rate/ })).toHaveValue("250");
-    expect(paint.getByRole("status", { name: /Amount for/ })).toHaveTextContent("₹500");
+    expect(paint.getByRole("textbox", { name: /Selling rate/ })).toHaveValue("295");
+    expect(paint.getByRole("status", { name: /Amount for/ })).toHaveTextContent("₹590");
     expect(paint.queryByText(/Configured price|Base price/)).not.toBeInTheDocument();
     const primer = within(screen.getByText("Wall primer").closest(".configured-estimate-line") as HTMLElement);
-    expect(primer.getByRole("textbox", { name: /Selling rate/ })).toHaveValue("150");
-    expect(primer.getByRole("status", { name: /Amount for/ })).toHaveTextContent("₹450");
+    expect(primer.getByRole("textbox", { name: /Selling rate/ })).toHaveValue("177");
+    expect(primer.getByRole("status", { name: /Amount for/ })).toHaveTextContent("₹531");
     expect(screen.getByRole("button", { name: /Collapse Finishes, subtotal ₹950/ })).toBeVisible();
     expect(container).not.toHaveTextContent(/margin|profit|25%|base price|configured price|200 \+/i);
   });
@@ -119,27 +141,27 @@ describe("configured estimate selling prices", () => {
     fireEvent.change(rate, { target: { value: "225" } });
     await user.type(rate, "225");
     await user.click(paint.getByRole("button", { name: /Increase quantity/ }));
-    expect(rate).toHaveValue("250");
-    expect(paint.getByRole("status", { name: /Amount for/ })).toHaveTextContent("₹750");
+    expect(rate).toHaveValue("295");
+    expect(paint.getByRole("status", { name: /Amount for/ })).toHaveTextContent("₹885");
     await user.click(screen.getByRole("button", { name: /Refresh available items/ }));
-    expect(rate).toHaveValue("250");
+    expect(rate).toHaveValue("295");
     const pmc = paint.getByRole("switch", { name: /PMC pricing mode/ });
     pmc.focus();
     await user.keyboard(" ");
     expect(pmc).toBeChecked();
     expect(paint.queryByRole("radio", { name: /Sub-Vendor pricing mode/ })).not.toBeInTheDocument();
-    expect(rate).toHaveValue("180");
-    expect(paint.getByRole("status", { name: /Amount for/ })).toHaveTextContent("₹540");
+    expect(rate).toHaveValue("212.4");
+    expect(paint.getByRole("status", { name: /Amount for/ })).toHaveTextContent("₹637.2");
     await user.click(paint.getByRole("radio", { name: /Premium tier/ }));
-    expect(rate).toHaveValue("240");
+    expect(rate).toHaveValue("283.2");
     await user.click(pmc);
     expect(pmc).not.toBeChecked();
-    expect(rate).toHaveValue("300");
-    expect(paint.getByRole("status", { name: /Amount for/ })).toHaveTextContent("₹900");
+    expect(rate).toHaveValue("354");
+    expect(paint.getByRole("status", { name: /Amount for/ })).toHaveTextContent("₹1062");
     await user.click(pmc);
-    expect(rate).toHaveValue("240");
+    expect(rate).toHaveValue("283.2");
     expect(paint.queryByText(/Configured price|Base price/)).not.toBeInTheDocument();
-    expect(paint.getByRole("status", { name: /Amount for/ })).toHaveTextContent("₹720");
-    expect(paint.queryByText(/base price|margin|profit|%/i)).not.toBeInTheDocument();
+    expect(paint.getByRole("status", { name: /Amount for/ })).toHaveTextContent("₹849.6");
+    expect(paint.queryByText(/base price|margin|profit/i)).not.toBeInTheDocument();
   });
 });

@@ -543,14 +543,14 @@ describe("estimator tier description", { timeout: 30_000 }, () => {
   const configuration = (name: string) => ({ id: "same-pmc", modeKind: "pmc", fields: [],
     inclusions: [{ id: "same-item", name, selected: true }], exclusions: [] });
 
-  it("projects only saved tier and common Mode paragraphs without changing prices or stored data", async () => {
+  it("projects only selected-tier saved paragraphs without changing prices or stored data", async () => {
     await configureFixturePrices([configuredLine(), configuredLine({ mainLineId: "line-b", revisionId: "revision-b", ratePaise: 23100 })]);
     await AiEstimatorKnowledgeSectionModel.updateOne({ _id: "overview-a" }, { $set: { "payload.applicableTiers": ["signature", "premium", "functional"] } });
     const before = await resolveEstimatorCatalogueLines(["line-a", "line-b"]);
     await AiEstimatorKnowledgeSectionModel.updateOne({ _id: "fixture-price-revision-a" }, { $set: {
       "payload.modeDescription": "Signature wiring.\nInclusions: none.",
       "payload.modeConfigurations": [configuration("Signature transport")],
-      "payload.tierConfigurations.premium": scope({ modeConfigurations: [configuration("Premium installation")] }),
+      "payload.tierConfigurations.premium": scope({ modeDescription: "Premium wiring.", modeConfigurations: [configuration("Premium installation")] }),
       "payload.tierConfigurations.default": scope({ modeDescription: "Mode wiring paragraph." }),
       "payload.internalVendorNotes": "PRIVATE_DESCRIPTION_NOTE"
     } });
@@ -564,9 +564,9 @@ describe("estimator tier description", { timeout: 30_000 }, () => {
     const wiring = lines.find((line: any) => line.mainLineId === "line-a");
     const cabinet = lines.find((line: any) => line.mainLineId === "line-b");
     expect(wiring.tierDescriptions).toEqual({
-      signature: "Signature wiring.\nInclusions: Signature transport.",
-      premium: "Mode wiring paragraph.",
-      functional: "Mode wiring paragraph."
+      signature: "Signature wiring.\nInclusions: none.",
+      premium: "Premium wiring.",
+      functional: null
     });
     expect(cabinet.tierDescriptions).toEqual({ signature: null });
     for (const line of [wiring, cabinet]) {
@@ -579,7 +579,7 @@ describe("estimator tier description", { timeout: 30_000 }, () => {
     expect(JSON.stringify(await AiEstimatorKnowledgeSectionModel.find({ sectionKey: "advanced" }).sort({ _id: 1 }).lean())).toBe(stored);
   });
 
-  it("resolves description and specification fallback independently, including description-only results", async () => {
+  it("keeps internal specification fallback independent from selected-tier-only descriptions", async () => {
     await AiEstimatorKnowledgeSectionModel.updateOne({ _id: "overview-a" }, { $set: { "payload.applicableTiers": ["signature", "premium", "functional"] } });
     await AiEstimatorKnowledgeSectionModel.collection.insertMany([
       { _id: "paragraphs", mainLineId: "line-a", revisionId: "revision-a", sectionKey: "advanced", ...scope({
@@ -594,7 +594,7 @@ describe("estimator tier description", { timeout: 30_000 }, () => {
       }) }
     ] as never[]);
     const line = (await resolveEstimatorCatalogueLines(["line-a"])).get("line-a")!.line;
-    expect(line.tierDescriptions).toEqual({ signature: "Signature paragraph", premium: "Mode paragraph", functional: "Mode paragraph" });
+    expect(line.tierDescriptions).toEqual({ signature: "Signature paragraph", premium: null, functional: null });
     expect(line.tierDetails).toEqual({ signature: { specifications: [{ id: "mode-spec", name: "Mode board", brands: [] }] },
       premium: { specifications: [{ id: "premium-spec", name: "Premium board", brands: [] }] }, functional: null });
     await AiEstimatorKnowledgeSectionModel.updateOne({ _id: "paragraphs" }, { $set: { "payload.modeDescription": false } });
@@ -618,7 +618,7 @@ describe("estimator tier description", { timeout: 30_000 }, () => {
       }) }
     ] as never[]);
     expect((await resolveEstimatorCatalogueLines(["line-a"])).get("line-a")!.line).toMatchObject({ revisionId: "paragraph-draft",
-      tierDescriptions: { signature: "Current draft paragraph", premium: "Current draft Mode", functional: "Current draft Mode" } });
+      tierDescriptions: { signature: "Current draft paragraph", premium: null, functional: null } });
     await AiEstimatorKnowledgeSectionModel.deleteOne({ _id: "draft-paragraph" });
     expect((await resolveEstimatorCatalogueLines(["line-a"])).get("line-a")!.line).toMatchObject({ revisionId: "paragraph-draft",
       tierDescriptions: { signature: null, premium: null, functional: null } });
@@ -639,7 +639,7 @@ describe("estimator tier description", { timeout: 30_000 }, () => {
     ] as never[]);
     const rows = await resolveEstimatorCatalogueLines(["line-temp", "line-temp-direct"]);
     expect(rows.get("line-temp")!.line).toMatchObject({ itemType: "temporary", tierDescriptions: {
-      signature: "Temporary Mode paragraph", premium: null, functional: null
+      signature: null, premium: null, functional: null
     } });
     expect(rows.get("line-temp-direct")!.line.tierDescriptions).toEqual({ premium: "Direct Premium paragraph" });
   });

@@ -94,6 +94,8 @@ function services() {
     createRevision: vi.fn(async () => ({ id: "line-1", draftRevisionId: "revision-2" })),
     getSection: vi.fn(async () => ({ id: "section-1" })),
     updateSection: vi.fn(async () => ({ id: "section-1", version: 2 })),
+    initializeTierDescriptions: vi.fn(async () => ({ mainLineId: "line-1", revisionId: "revision-1", version: 2,
+      aggregateVersion: 3, sourceTier: "signature", copiedTiers: ["premium", "functional"] })),
     activate: vi.fn(async () => ({ id: "line-1", status: "active" })),
     deactivate: vi.fn(async () => ({ id: "line-1", status: "inactive" })),
     duplicate: vi.fn(async () => ({ id: "line-2" }))
@@ -146,12 +148,38 @@ function appFor(testServices: AiEstimatorKnowledgeAdminRouterServices, actor?: P
 }
 
 describe("AI Estimator Knowledge HTTP routes", () => {
+  it("initializes tier descriptions only through a versioned authorized command without client text", async () => {
+    const testServices = services();
+    const app = appFor(testServices);
+    const path = "/api/v1/admin/ai-estimator-knowledge/main-lines/line-1/revisions/revision-1/initialize-tier-descriptions";
+    const input = { expectedVersion: 1, expectedAggregateVersion: 2 };
+    const headers = { Authorization: "Bearer super-admin-token" };
+    const response = await request(app).post(path).set(headers).send(input).expect(200);
+    expect(response.body.data).toMatchObject({ sourceTier: "signature", copiedTiers: ["premium", "functional"] });
+    expect(testServices.item.initializeTierDescriptions).toHaveBeenCalledExactlyOnceWith(superAdmin, "line-1", "revision-1", input);
+    for (const invalid of [{}, { expectedVersion: 1 }, { ...input, expectedVersion: 0 }, { ...input, expectedAggregateVersion: 1.5 },
+      { ...input, expectedAggregateVersion: "2" }, { ...input, modeDescription: "Forged" }, { ...input, sourceTier: "functional" }, { ...input, copiedTiers: ["premium"] }]) {
+      await request(app).post(path).set(headers).send(invalid).expect(400);
+    }
+    await request(app).post(path).send(input).expect(401);
+    for (const role of ROLE_CODES.filter(role => role !== "super_admin")) {
+      await request(appFor(testServices, { ...superAdmin, role })).post(path).set(headers).send(input).expect(403);
+    }
+    await request(app).get("/api/v1/admin/ai-estimator-knowledge/main-lines/line-1/revisions/revision-1/sections/advanced").set(headers).expect(200);
+    expect(testServices.item.initializeTierDescriptions).toHaveBeenCalledTimes(1);
+    expect(testServices.item.updateSection).not.toHaveBeenCalled();
+  });
+
   it("validates and isolates the paginated specification item-name lookup", async () => {
     const testServices = services();
+    const savedItem = { name: "Gypsum Board", brandPrefill: { status: "ready" as const, names: ["Knauf", "USG"] } };
+    vi.mocked(testServices.specificationItemNames.list).mockResolvedValue({ items: [savedItem],
+      pagination: { limit: 20, offset: 0, total: 1, hasMore: false }, exactMatch: savedItem, similarItems: [] });
     const app = appFor(testServices);
     const path = "/api/v1/admin/ai-estimator-knowledge/specification-item-names";
     const headers = { Authorization: "Bearer super-admin-token" };
     const result = await request(app).get(path).set(headers).expect(200);
+    expect(result.body.data).toMatchObject({ items: [savedItem], exactMatch: savedItem });
     expect(result.headers["cache-control"]).toBe("private, no-store");
     expect(testServices.specificationItemNames.list).toHaveBeenLastCalledWith(superAdmin, { limit: 20, offset: 0 });
     await request(app).get(path).query({ search: "", checkName: "Plywod", limit: 5, offset: 100 }).set(headers).expect(200);

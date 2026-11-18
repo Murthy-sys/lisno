@@ -1,4 +1,4 @@
-import type { KnowledgeModeConfigurationScope } from "../domain/ai-estimator-knowledge-mode-tiers.js";
+import type { KnowledgeModeConfigurationScope, KnowledgeModeTier } from "../domain/ai-estimator-knowledge-mode-tiers.js";
 export type { DesignRules, DesignRuleKey } from "../domain/main-line-design-rules.js";
 import type {
   KnowledgeAvailabilityState,
@@ -32,8 +32,13 @@ export type KnowledgeQualityControlOptionKind = "frequency" | "performer";
 /** Public custom-option reference. Runtime validation requires qco_<24 lowercase hex>. */
 export type KnowledgeQualityControlOptionReference = `qco_${string}`;
 
+export type KnowledgeSpecificationBrandPrefill =
+  | { readonly status: "ready"; readonly names: readonly string[] }
+  | { readonly status: "unavailable"; readonly reason: "invalid_source" | "too_many_brands" };
+
 export interface KnowledgeSpecificationItemName {
   readonly name: string;
+  readonly brandPrefill?: KnowledgeSpecificationBrandPrefill;
 }
 
 export interface KnowledgeSpecificationItemNameListParams {
@@ -201,6 +206,20 @@ export interface KnowledgeSectionReferenceState {
 export interface KnowledgeSectionMutationEnvelope<TPayload = unknown>
   extends KnowledgeSectionEnvelope<TPayload> {
   aggregateVersion: number;
+}
+
+export interface KnowledgeTierDescriptionInitializationInput {
+  readonly expectedVersion: number;
+  readonly expectedAggregateVersion: number;
+}
+
+export interface KnowledgeTierDescriptionInitializationResult {
+  readonly mainLineId: string;
+  readonly revisionId: string;
+  readonly version: number;
+  readonly aggregateVersion: number;
+  readonly sourceTier: KnowledgeModeTier | null;
+  readonly copiedTiers: readonly KnowledgeModeTier[];
 }
 
 export interface KnowledgeQuantitySlab {

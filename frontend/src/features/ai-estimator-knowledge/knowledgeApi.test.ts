@@ -24,12 +24,23 @@ import {
   updateKnowledgeSurface,
   updateKnowledgeMainLine,
   updateKnowledgeSubBasket,
-  updateKnowledgeSection
+  updateKnowledgeSection,
+  initializeKnowledgeTierDescriptions
 } from "./knowledgeApi";
 
 afterEach(() => vi.restoreAllMocks());
 
 describe("knowledge API", () => {
+  it("initializes saved descriptions using only encoded identity and version guards", async () => {
+    const result = { mainLineId: "line/one", revisionId: "draft/one", version: 7, aggregateVersion: 12,
+      sourceTier: "signature" as const, copiedTiers: ["premium", "functional"] as const };
+    const post = vi.spyOn(apiClient, "post").mockResolvedValue(result);
+    await expect(initializeKnowledgeTierDescriptions("line/one", "draft/one", { expectedVersion: 6, expectedAggregateVersion: 11 })).resolves.toEqual(result);
+    expect(post).toHaveBeenCalledExactlyOnceWith(
+      "/admin/ai-estimator-knowledge/main-lines/line%2Fone/revisions/draft%2Fone/initialize-tier-descriptions",
+      { expectedVersion: 6, expectedAggregateVersion: 11 }
+    );
+  });
   it("encodes paged item-name lookup and independent candidate checks with local loading", async () => {
     const get = vi.spyOn(apiClient, "get").mockResolvedValue({});
     const signal = new AbortController().signal;

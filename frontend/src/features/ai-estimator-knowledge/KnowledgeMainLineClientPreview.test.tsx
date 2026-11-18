@@ -74,7 +74,7 @@ describe("KnowledgeMainLineClientPreview", () => {
       expect(screen.queryByText(/Internal board|Private brand|Premium internal board/)).not.toBeInTheDocument();
       expect(screen.getByRole("checkbox", { name: "Include POP false ceiling in preview" })).toBeChecked();
       expect(screen.getByRole("spinbutton", { name: "Quantity for POP false ceiling sq-ft" })).toHaveValue(1);
-      expect(screen.getByLabelText("Amount for POP false ceiling")).toHaveTextContent("After save");
+      expect(screen.getByLabelText("Amount including GST for POP false ceiling")).toHaveTextContent("After save");
     }
     await user.click(screen.getByRole("checkbox", { name: "Include POP false ceiling in preview" }));
     expect(screen.queryByText("Functional ceiling finish.")).not.toBeInTheDocument();
@@ -93,7 +93,8 @@ describe("KnowledgeMainLineClientPreview", () => {
     expect(screen.getByText("Signature description only.")).toBeVisible();
     expect(screen.queryByText("Specifications unavailable for this tier.")).not.toBeInTheDocument();
     await user.click(screen.getByRole("radio", { name: "Premium tier for POP false ceiling" }));
-    expect(screen.getByText("Description not added.")).toBeVisible();
+    expect(screen.queryByText("Description not added.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: /description for/ })).not.toBeInTheDocument();
     expect(screen.queryByText("Premium board")).not.toBeInTheDocument();
     expect(screen.queryByText("Signature description only.")).not.toBeInTheDocument();
   });
@@ -128,9 +129,11 @@ describe("KnowledgeMainLineClientPreview", () => {
     const user = userEvent.setup();
     mount({ initiallyOpen: true });
     await screen.findByRole("group", { name: "Client preview of POP false ceiling" });
-    expect(screen.getByText("Description not added.")).toBeVisible();
+    expect(screen.queryByText("Description not added.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: /description for/ })).not.toBeInTheDocument();
     await user.click(screen.getByRole("radio", { name: "Premium tier for POP false ceiling" }));
-    expect(screen.getByText("Description not added.")).toBeVisible();
+    expect(screen.queryByText("Description not added.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: /description for/ })).not.toBeInTheDocument();
     expect(screen.queryByText("Internal specifications")).not.toBeInTheDocument();
   });
 
@@ -146,9 +149,9 @@ describe("KnowledgeMainLineClientPreview", () => {
     expect(screen.getByText("POP / Gypsum / Ceilings")).toBeVisible();
     expect(within(row()).queryByText("sq-ft", { exact: true })).not.toBeInTheDocument();
     expect(within(row()).getByText("Qty (sq-ft)")).toBeVisible();
-    expect(within(row()).getByText("Rate (₹/sq-ft)")).toBeVisible();
-    expect(within(row()).getByLabelText("Price for POP false ceiling")).toHaveTextContent("₹101.25");
-    expect(within(row()).getByLabelText("Amount for POP false ceiling")).toHaveTextContent("After save");
+    expect(within(row()).getByText("Rate incl. GST (₹/sq-ft)")).toBeVisible();
+    expect(within(row()).getByLabelText("Price including GST for POP false ceiling")).toHaveTextContent("₹119.48");
+    expect(within(row()).getByLabelText("Amount including GST for POP false ceiling")).toHaveTextContent("After save");
     expect(screen.queryByText(/918\.27|91,827|Configured price|Base reference/)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /save|submit|approve/i })).not.toBeInTheDocument();
   });
@@ -161,26 +164,26 @@ describe("KnowledgeMainLineClientPreview", () => {
     await screen.findByRole("group", { name: "Client preview of POP false ceiling" });
     expect(screen.queryByRole("switch")).not.toBeInTheDocument();
     await user.click(screen.getByRole("radio", { name: "Premium tier for POP false ceiling" }));
-    expect(screen.getByLabelText("Price for POP false ceiling")).toHaveTextContent("₹156.00");
+    expect(screen.getByLabelText("Price including GST for POP false ceiling")).toHaveTextContent("₹184.08");
     await user.click(screen.getByRole("radio", { name: "Signature tier for POP false ceiling" }));
     await user.click(screen.getByRole("button", { name: "Increase quantity for POP false ceiling" }));
     expect(screen.getByRole("spinbutton", { name: "Quantity for POP false ceiling sq-ft" })).toHaveValue(2);
     await user.selectOptions(screen.getByRole("combobox", { name: "Preview type" }), "special");
     await user.click(screen.getByRole("radio", { name: "In-house pricing mode for POP false ceiling" }));
-    expect(screen.getByLabelText("Price for POP false ceiling")).toHaveTextContent("From components");
+    expect(screen.getByLabelText("Price including GST for POP false ceiling")).toHaveTextContent("From components");
     await user.click(screen.getByRole("checkbox", { name: "Labor / Installation" }));
     expect(screen.getByRole("checkbox", { name: "Labor / Installation" })).toBeChecked();
     expect(screen.getByRole("checkbox", { name: "Material (unavailable)" })).toBeDisabled();
     expect(screen.queryByText(/918\.27|91,827|Base reference/)).not.toBeInTheDocument();
     await user.click(screen.getByRole("switch", { name: "PMC pricing mode for POP false ceiling" }));
-    expect(screen.getByLabelText("Price for POP false ceiling")).toHaveTextContent("₹120.00");
+    expect(screen.getByLabelText("Price including GST for POP false ceiling")).toHaveTextContent("₹141.60");
     expect(screen.queryByRole("radio", { name: /In-house pricing/ })).not.toBeInTheDocument();
     await user.click(screen.getByRole("switch"));
     expect(screen.getByRole("radio", { name: "In-house pricing mode for POP false ceiling" })).toBeChecked();
     expect(screen.getByRole("checkbox", { name: "Labor / Installation" })).not.toBeChecked();
     await user.selectOptions(screen.getByRole("combobox", { name: "Preview type" }), "standard");
     expect(screen.queryByRole("switch")).not.toBeInTheDocument();
-    expect(screen.getByLabelText("Price for POP false ceiling")).toHaveTextContent("₹101.25");
+    expect(screen.getByLabelText("Price including GST for POP false ceiling")).toHaveTextContent("₹119.48");
     expect(getEstimationCatalogue).toHaveBeenCalledTimes(1);
     expect(post).not.toHaveBeenCalled();
     expect(patch).not.toHaveBeenCalled();
@@ -205,7 +208,7 @@ describe("KnowledgeMainLineClientPreview", () => {
     await screen.findByRole("group", { name: "Client preview of POP false ceiling" });
     expect(getEstimationCatalogue).toHaveBeenCalledTimes(2);
     expect(screen.getByRole("spinbutton")).toHaveValue(1);
-    expect(screen.getByLabelText("Price for POP false ceiling")).toHaveTextContent("₹230.00");
+    expect(screen.getByLabelText("Price including GST for POP false ceiling")).toHaveTextContent("₹271.40");
     expect(screen.getByText("Updated saved finish.")).toBeVisible();
     expect(screen.queryByText("Original finish.")).not.toBeInTheDocument();
   });
@@ -232,7 +235,7 @@ describe("KnowledgeMainLineClientPreview", () => {
     vi.mocked(getEstimationCatalogue).mockResolvedValue({ ...catalogue(), readyNonActiveSupported: false });
     mount({ initiallyOpen: true });
     expect(await screen.findByText(/cannot be previewed with this catalogue version/)).toBeVisible();
-    expect(screen.queryByLabelText("Price for POP false ceiling")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Price including GST for POP false ceiling")).not.toBeInTheDocument();
   });
 
   it.each(["close", "backdrop"] as const)("dismisses via %s and traps keyboard focus", async control => {
@@ -264,7 +267,7 @@ describe("KnowledgeMainLineClientPreview", () => {
     expect(screen.queryByRole("group", { name: "Client preview of POP false ceiling" })).not.toBeInTheDocument();
     await act(async () => reject(new Error("Unavailable")));
     expect(await screen.findByRole("alert")).toHaveTextContent("Client preview could not be loaded");
-    expect(screen.queryByLabelText("Price for POP false ceiling")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Price including GST for POP false ceiling")).not.toBeInTheDocument();
     vi.mocked(getEstimationCatalogue).mockResolvedValue(catalogue());
     await user.click(screen.getByRole("button", { name: "Retry preview" }));
     expect(await screen.findByRole("group", { name: "Client preview of POP false ceiling" })).toBeVisible();
@@ -274,7 +277,7 @@ describe("KnowledgeMainLineClientPreview", () => {
     vi.mocked(getEstimationCatalogue).mockResolvedValue(catalogue({ ...fixtureLine, id: "different-line", mainLineId: "different-line" }));
     mount({ initiallyOpen: true });
     expect(await screen.findByText(/This Main Line is not available/)).toBeVisible();
-    expect(screen.queryByLabelText("Price for POP false ceiling")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Price including GST for POP false ceiling")).not.toBeInTheDocument();
   });
 
   it("does not render a client-hidden line or its pricing", async () => {
@@ -282,7 +285,7 @@ describe("KnowledgeMainLineClientPreview", () => {
     mount({ initiallyOpen: true });
     expect(await screen.findByText("This Main Line is hidden from clients.")).toBeVisible();
     expect(screen.queryByRole("spinbutton")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("Price for POP false ceiling")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Price including GST for POP false ceiling")).not.toBeInTheDocument();
   });
 
   it("keeps missing prices pending instead of borrowing another tier or reporting zero", async () => {
@@ -291,7 +294,7 @@ describe("KnowledgeMainLineClientPreview", () => {
       modeBaseRatesPaise: { sub_vendor: 99999, pmc: null, in_house: null } }));
     mount({ initiallyOpen: true });
     await screen.findByRole("group", { name: "Client preview of POP false ceiling" });
-    expect(screen.getByLabelText("Price for POP false ceiling")).toHaveTextContent("Pending");
+    expect(screen.getByLabelText("Price including GST for POP false ceiling")).toHaveTextContent("Pending");
     expect(screen.getByText(/Price is unavailable for the selected mode and tier/)).toBeVisible();
     for (const tier of ["Signature", "Premium", "Functional"]) {
       expect(screen.getByRole("radio", { name: `${tier} tier for POP false ceiling` })).toBeEnabled();
@@ -321,14 +324,14 @@ describe("KnowledgeMainLineClientPreview", () => {
       expect(screen.getByRole("radio", { name: `${tier} tier for POP false ceiling` })).toBeChecked();
       expect(screen.getByText(description!)).toBeVisible();
       expect(screen.queryByText("Priced signature finish")).not.toBeInTheDocument();
-      expect(screen.getByLabelText("Price for POP false ceiling")).toHaveTextContent("Pending");
+      expect(screen.getByLabelText("Price including GST for POP false ceiling")).toHaveTextContent("Pending");
       expect(screen.getByText(/Price is unavailable for the selected mode and tier/)).toBeVisible();
-      expect(screen.queryByText(/₹101\.25|₹543\.21|₹0\.00/)).not.toBeInTheDocument();
-      expect(screen.getByLabelText("Amount for POP false ceiling")).toHaveTextContent("After save");
+      expect(screen.queryByText(/₹119\.48|₹640\.99|₹0\.00/)).not.toBeInTheDocument();
+      expect(screen.getByLabelText("Amount including GST for POP false ceiling")).toHaveTextContent("After save");
     }
     await user.click(signature);
     expect(screen.getByText("Priced signature finish")).toBeVisible();
-    expect(screen.getByLabelText("Price for POP false ceiling")).toHaveTextContent("₹101.25");
+    expect(screen.getByLabelText("Price including GST for POP false ceiling")).toHaveTextContent("₹119.48");
     expect(getEstimationCatalogue).toHaveBeenCalledTimes(1);
     for (const write of writes) expect(write).not.toHaveBeenCalled();
   });
@@ -347,7 +350,7 @@ describe("KnowledgeMainLineClientPreview", () => {
     await user.type(screen.getByRole("textbox", { name: "Width (ft) for POP false ceiling" }), "4");
     await user.type(screen.getByRole("textbox", { name: "Height (ft) for POP false ceiling" }), "8");
     expect(screen.getByLabelText("Quantity for POP false ceiling sq-ft")).toHaveTextContent("12");
-    expect(screen.getByLabelText("Amount for POP false ceiling")).toHaveTextContent("After save");
+    expect(screen.getByLabelText("Amount including GST for POP false ceiling")).toHaveTextContent("After save");
   });
 
   it("does not display a late response from a different Main Line", async () => {

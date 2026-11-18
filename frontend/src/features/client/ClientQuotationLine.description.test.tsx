@@ -19,16 +19,22 @@ describe("client estimator description", () => {
     const view = render(<ClientQuotationLine {...props} />);
     expect(screen.getByText(/Signature finish/).textContent).toBe("Signature finish.\nIncludes installation.");
     expect(screen.queryByText("Internal specifications")).not.toBeInTheDocument();
+    expect(screen.queryByText("Description")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Configured price including GST for Ceiling in Living room")).toHaveTextContent("11800");
+    expect(screen.getByLabelText("Saved amount including GST for Ceiling in Living room")).toHaveTextContent("118000");
     view.rerender(<ClientQuotationLine {...props} item={{ ...props.item, modeTier: "premium" }} />);
     expect(screen.getByText("Premium acoustic finish.")).toBeVisible();
     expect(screen.queryByText(/Signature finish/)).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Configured price including GST for Ceiling in Living room")).toHaveTextContent("17700");
+    expect(line.ratePaise).toBe(10000);
+    expect(line.amountPaise).toBe(100000);
   });
 
   it("uses current server descriptions and removes stale copy if the source is unavailable", () => {
     const view = render(<ClientQuotationLine {...props} currentLine={{ ...line, choices: line.choices.map(choice => ({ ...choice, description: "Updated saved wording." })) }} />);
     expect(screen.getByText("Updated saved wording.")).toBeVisible();
     view.rerender(<ClientQuotationLine {...props} currentLine={{ ...line, source: null }} />);
-    expect(screen.getByText("Description not added.")).toBeVisible();
+    expect(screen.queryByRole("region", { name: /description for/ })).not.toBeInTheDocument();
     expect(screen.queryByText(/Signature finish/)).not.toBeInTheDocument();
     view.rerender(<ClientQuotationLine {...props} selected={false} />);
     expect(screen.queryByText("Description")).not.toBeInTheDocument();

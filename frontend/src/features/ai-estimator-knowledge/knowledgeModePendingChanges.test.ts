@@ -45,10 +45,38 @@ describe("Mode pending change projection", () => {
     expect(project({ modeCalculation: calculation }, { modeCalculations: modeCalculationsForStorage({ modeCalculation: calculation }), modeConfigurations: [{ id: "new-container", modeKind: "pmc", fields: [], inclusions: [], exclusions: [] }] })).toEqual([]);
   });
 
-  it("shows only changes to saved PMC entries and keeps derived paragraph content out", () => {
+  it("shows only changes to saved PMC entries without creating description content", () => {
     const after = { modeConfigurations: [{ id: "pmc-1", modeKind: "pmc", fields: [], inclusions: [{ id: "saved-transport", name: "Transport", selected: true }], exclusions: [] }] };
     expect(project({ modeConfigurations: [{ id: "pmc-1", modeKind: "pmc", fields: [], inclusions: [{ id: "saved-transport", name: "Transport", selected: false }] }] }, after)).toEqual([{ key: "pmc:inclusions", label: "PMC · Inclusions", entries: [{ key: "pmc:inclusions:id:saved-transport", title: "Transport", kind: "updated", fields: [{ key: "selected", label: "State", value: "Selected" }] }] }]);
     expect(project(after, after)).toEqual([]);
+  });
+
+  it("keeps Description independent of checklist changes and reports explicitly authored scope clauses", () => {
+    const scope = { id: "pmc-1", modeKind: "pmc", fields: [],
+      inclusions: [{ id: "transport", name: "Transport", selected: false }], exclusions: [] };
+    const before = { modeDescription: "Saved wording.", modeConfigurations: [scope] };
+    const after = { ...before, modeConfigurations: [{ ...scope, inclusions: [{ ...scope.inclusions[0]!, selected: true }] }] };
+    expect(project(before, after).map(group => group.key)).toEqual(["pmc:inclusions"]);
+
+    const description = "Saved wording. Inclusions: Transport.";
+    const explicit = project(before, { ...after, modeDescription: description });
+    expect(explicit.map(group => group.key)).toEqual(["pmc:inclusions", "mode:paragraph"]);
+    expect(explicit[1]?.entries[0]?.fields).toEqual([{ key: "paragraph", label: "Description", value: description }]);
+  });
+
+  it("shows the exact authored Description without appending saved PMC or In-house details", () => {
+    const scopes: KnowledgeJsonObject[] = [
+      { id: "pmc", modeKind: "pmc", fields: [], inclusions: [{ id: "transport", name: "Transport", selected: true }], exclusions: [] },
+      { id: "house", modeKind: "execution", executionSource: "in_house", fields: [],
+        inclusions: [], exclusions: [{ id: "labour", name: "Labour", selected: true }] }
+    ];
+    const before = { modeDescription: "Saved wording.", modeConfigurations: scopes };
+    const description = "Hand-finished work.\nClient-approved finish.";
+    const changes = project(before, { ...before, modeDescription: description });
+    expect(changes).toHaveLength(1);
+    expect(changes[0]?.entries[0]?.fields).toEqual([{ key: "paragraph", label: "Description", value: description }]);
+    expect(project(before, before, { pendingDescription: description })[0]?.entries[0]?.fields)
+      .toEqual([{ key: "paragraph", label: "Description", value: description }]);
   });
 
   it("reports real backend item additions and final removals without phantom defaults", () => {

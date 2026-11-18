@@ -5485,6 +5485,331 @@ describe("Mode tier scoped persistence", { timeout: 30_000 }, () => {
   });
 });
 
+describe("Existing tier description initialization", { timeout: 30_000 }, () => {
+  async function fixture(name: string, payload: Record<string, unknown> = { modeDescription: "Saved Signature wording" },
+    applicability = "configured") {
+    const { item } = createServices();
+    const draft = await createConfiguredDraft(item, name);
+    const source = await updateDraftSection(item, draft, "overview", { ...overviewPayload(name), applicableTiers: ["signature", "premium", "functional"] });
+    const section = await item.getSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "advanced");
+    // Represents Configuration saved before automatic initialization existed.
+    await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: section.id }, { $set: { payload, applicability } });
+    return { item, source, section, input: { expectedVersion: section.version, expectedAggregateVersion: source.aggregateVersion } };
+  }
+
+  it("persists existing Signature text into both missing tiers and reopening is an audit/version no-op", async () => {
+    const { item, source, section, input } = await fixture("Previously saved Signature", {
+      modeDescription: "Providing, Supplying, Fixing of PP Sheet Corrugated 2mm Thick with jointing tape.",
+      tierConfigurations: { default: { applicability: "configured", payload: { modeDescription: "Separate common text" } },
+        functional: { applicability: "not_configured", payload: { modeDescription: null, dependencies: [] } } }
+    });
+    const before = await AiEstimatorKnowledgeRevisionModel.findById(source.revisionId).lean();
+    const result = await item.initializeTierDescriptions(SUPER_ADMIN, source.mainLineId, source.revisionId, input);
+    expect(result).toEqual({ mainLineId: source.mainLineId, revisionId: source.revisionId,
+      version: input.expectedVersion + 1, aggregateVersion: input.expectedAggregateVersion + 1,
+      sourceTier: "signature", copiedTiers: ["premium", "functional"] });
+    const signature = await item.getSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "advanced");
+    for (const tier of ["premium", "functional"] as const) expect(await item.getSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "advanced", tier))
+      .toMatchObject({ version: result.version, applicability: "configured", payload: { modeDescription: signature.payload.modeDescription } });
+    expect((await item.getSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "advanced", "default")).payload.modeDescription).toBe("Separate common text");
+    expect((await item.getSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "advanced", "functional")).payload.dependencies).toEqual([]);
+    expect((await AiEstimatorKnowledgeRevisionModel.findById(source.revisionId).lean())?.version).toBe(before!.version + 1);
+    const events = await AuditEventModel.find({ entityId: section.id }).lean();
+    expect(events).toHaveLength(1);
+    expect(events[0]?.newValues).toMatchObject({ initialization: true, sourceTier: "signature", copiedDescriptionTiers: ["premium", "functional"] });
+    expect(JSON.stringify(events)).not.toContain(signature.payload.modeDescription as string);
+    const after = await AiEstimatorKnowledgeSectionModel.findById(section.id).lean();
+    expect(await item.initializeTierDescriptions(SUPER_ADMIN, source.mainLineId, source.revisionId, {
+      expectedVersion: result.version, expectedAggregateVersion: result.aggregateVersion
+    })).toEqual({ ...result, sourceTier: null, copiedTiers: [] });
+    expect(await AiEstimatorKnowledgeSectionModel.findById(section.id).lean()).toEqual(after);
+    expect(await AuditEventModel.find({ entityId: section.id }).lean()).toEqual(events);
+  });
+
+  it.each(["premium", "functional"] as const)("initializes root Signature from existing %s only when it is eligible", async tier => {
+    const { item, source, input } = await fixture(`Existing ${tier}`, { tierConfigurations: {
+      [tier]: { applicability: "configured", payload: { modeDescription: `${tier} existing` } }
+    } }, "not_configured");
+    const result = await item.initializeTierDescriptions(SUPER_ADMIN, source.mainLineId, source.revisionId, input);
+    expect(result.sourceTier).toBe(tier);
+    expect(await item.getSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "advanced"))
+      .toMatchObject({ applicability: "configured", payload: { modeDescription: `${tier} existing` } });
+  });
+
+  it("preserves authored and cleared wording, then fills only a still eligible tier using Signature priority", async () => {
+    const payload = { modeDescription: "Signature original", tierConfigurations: {
+      premium: { applicability: "configured", payload: { modeDescription: "Premium authored" } },
+      functional: { applicability: "configured", payload: { modeDescription: "" } }
+    } };
+    const { item, source, section, input } = await fixture("Protected descriptions", payload);
+    expect(await item.initializeTierDescriptions(SUPER_ADMIN, source.mainLineId, source.revisionId, input))
+      .toMatchObject({ version: input.expectedVersion, aggregateVersion: input.expectedAggregateVersion, copiedTiers: [], sourceTier: null });
+    expect((await AiEstimatorKnowledgeSectionModel.findById(section.id).lean())?.payload).toEqual(payload);
+    await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: section.id }, { $unset: { "payload.tierConfigurations.functional.payload.modeDescription": "" } });
+    expect(await item.initializeTierDescriptions(SUPER_ADMIN, source.mainLineId, source.revisionId, input))
+      .toMatchObject({ sourceTier: "signature", copiedTiers: ["functional"] });
+    expect((await item.getSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "advanced", "premium")).payload.modeDescription).toBe("Premium authored");
+    expect((await item.getSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "advanced", "functional")).payload.modeDescription).toBe("Signature original");
+  });
+
+  it("does not use disabled/default sources or revive not-applicable destinations", async () => {
+    const { item, source, section } = await fixture("Disabled scopes", { modeDescription: "Disabled Signature", tierConfigurations: {
+      default: { applicability: "configured", payload: { modeDescription: "Common text" } },
+      premium: { applicability: "not_applicable", payload: {} }
+    } });
+    const updated = await updateDraftSection(item, source, "overview", { ...overviewPayload("Disabled scopes"), applicableTiers: ["premium", "functional"] });
+    const input = { expectedVersion: section.version, expectedAggregateVersion: updated.aggregateVersion };
+    expect(await item.initializeTierDescriptions(SUPER_ADMIN, source.mainLineId, source.revisionId, input)).toMatchObject({ sourceTier: null, copiedTiers: [] });
+    await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: section.id }, { $set: {
+      "payload.tierConfigurations.functional": { applicability: "configured", payload: { modeDescription: "Functional only" } }
+    } });
+    expect(await item.initializeTierDescriptions(SUPER_ADMIN, source.mainLineId, source.revisionId, input)).toMatchObject({ sourceTier: null, copiedTiers: [] });
+    expect((await item.getSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "advanced", "premium")).applicability).toBe("not_applicable");
+  });
+
+  it("commits only one concurrent initialization and protects a concurrent destination edit", async () => {
+    const { item, source, section, input } = await fixture("Concurrent initialization");
+    const initializations = await Promise.allSettled([1, 2].map(() => item.initializeTierDescriptions(SUPER_ADMIN, source.mainLineId, source.revisionId, input)));
+    expect(initializations.filter(r => r.status === "fulfilled")).toHaveLength(1);
+    expect((initializations.find(r => r.status === "rejected") as PromiseRejectedResult).reason).toMatchObject({ code: "VERSION_CONFLICT" });
+    expect(await AuditEventModel.countDocuments({ entityId: section.id, "newValues.initialization": true })).toBe(1);
+    const other = await fixture("Initialization versus editing");
+    const race = await Promise.allSettled([
+      other.item.initializeTierDescriptions(SUPER_ADMIN, other.source.mainLineId, other.source.revisionId, other.input),
+      other.item.updateSection(SUPER_ADMIN, other.source.mainLineId, other.source.revisionId, "advanced", {
+        ...other.input, modeTier: "premium", payload: { modeDescription: "Concurrent authored Premium" }
+      })
+    ]);
+    expect(race.filter(r => r.status === "fulfilled")).toHaveLength(1);
+    const premium = await other.item.getSection(SUPER_ADMIN, other.source.mainLineId, other.source.revisionId, "advanced", "premium");
+    expect(premium.payload.modeDescription).toBe(race[1]!.status === "fulfilled" ? "Concurrent authored Premium" : "Saved Signature wording");
+    expect((race.find(r => r.status === "rejected") as PromiseRejectedResult).reason).toMatchObject({ code: "VERSION_CONFLICT" });
+  });
+
+  it("rolls back initialization including section, aggregate, revision, and audit writes after audit failure", async () => {
+    const { item, source, section, input } = await fixture("Initialization rollback");
+    const snapshot = async () => Promise.all([AiEstimatorKnowledgeSectionModel.findById(section.id).lean(),
+      AiEstimatorKnowledgeMainLineModel.findById(source.mainLineId).lean(), AiEstimatorKnowledgeRevisionModel.findById(source.revisionId).lean(),
+      AuditEventModel.find({ entityId: section.id }).lean()]);
+    const before = await snapshot();
+    const audit = persistentAudit();
+    const failing = createAiEstimatorKnowledgeItemService({ now: () => NOW, uuid: nextId,
+      audit: { async appendInMongoTransaction(event, session) {
+        expect(event.newValues?.initialization).toBe(true);
+        await audit.appendInMongoTransaction(event, session);
+        throw new Error("initialization audit unavailable");
+      } } });
+    await expect(failing.initializeTierDescriptions(SUPER_ADMIN, source.mainLineId, source.revisionId, input)).rejects.toThrow("initialization audit unavailable");
+    expect(await snapshot()).toEqual(before);
+    expect((await item.initializeTierDescriptions(SUPER_ADMIN, source.mainLineId, source.revisionId, input)).copiedTiers).toEqual(["premium", "functional"]);
+  });
+
+  it("enforces authorization, source identity, immutable history and safe whole-section validation", async () => {
+    const { item, source, section, input } = await fixture("Initialization guards");
+    await seedActor(ADMIN);
+    await expect(item.initializeTierDescriptions(ADMIN, source.mainLineId, source.revisionId, input)).rejects.toMatchObject({ status: 403 });
+    await expect(item.initializeTierDescriptions(SUPER_ADMIN, "other-line", source.revisionId, input)).rejects.toMatchObject({ status: 404 });
+    await expect(item.initializeTierDescriptions(SUPER_ADMIN, source.mainLineId, source.revisionId, { ...input, expectedAggregateVersion: 999 })).rejects.toMatchObject({ code: "VERSION_CONFLICT" });
+    await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: section.id }, { $set: {
+      "payload.tierConfigurations.functional": { applicability: "configured", payload: { modeDescription: 42 } }
+    } });
+    await expect(item.initializeTierDescriptions(SUPER_ADMIN, source.mainLineId, source.revisionId, input)).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    expect((await item.getItem(SUPER_ADMIN, source.mainLineId)).version).toBe(input.expectedAggregateVersion);
+    await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: section.id }, { $unset: { "payload.tierConfigurations": "" } });
+    const active = await item.activate(SUPER_ADMIN, source.mainLineId, source.revisionId, { expectedVersion: input.expectedAggregateVersion });
+    await expect(item.initializeTierDescriptions(SUPER_ADMIN, source.mainLineId, source.revisionId, { ...input, expectedAggregateVersion: active.version }))
+      .rejects.toMatchObject({ code: "KNOWLEDGE_REVISION_IMMUTABLE" });
+    expect((await item.getSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "advanced", "premium")).payload).toEqual({});
+  });
+});
+
+describe("First-save tier description persistence", { timeout: 30_000 }, () => {
+  const tiers = ["signature", "premium", "functional"] as const;
+
+  async function enabledDraft(item: AiEstimatorKnowledgeItemService, name: string, enabled: readonly string[] = tiers) {
+    const source = await createConfiguredDraft(item, name);
+    return updateDraftSection(item, source, "overview", { ...overviewPayload(name), applicableTiers: enabled });
+  }
+
+  async function saveDescription(item: AiEstimatorKnowledgeItemService, source: DraftLocator, tier: typeof tiers[number], text: string) {
+    const section = await item.getSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "advanced", tier);
+    const detail = await item.getItem(SUPER_ADMIN, source.mainLineId);
+    return item.updateSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "advanced", {
+      modeTier: tier, expectedVersion: section.version, expectedAggregateVersion: detail.version,
+      payload: { ...section.payload, modeDescription: text }
+    });
+  }
+
+  it.each(tiers)("saves %s and initializes other enabled descriptions in one versioned, audited write", async (modeTier) => {
+    const { item } = createServices();
+    const source = await enabledDraft(item, `Copy from ${modeTier}`);
+    const other = await enabledDraft(item, "Other Main Line");
+    const section = await item.getSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "advanced");
+    expect(section.applicability).toBe("not_configured");
+    const baseline = {
+      pmcMarginBps: 1200,
+      tierConfigurations: {
+        default: { applicability: "configured", payload: { modeDescription: "Default wording" } },
+        premium: { applicability: "configured", payload: { modeDescription: null, pmcMarginBps: 1500 } },
+        functional: { applicability: "not_configured", payload: { dependencies: [] } }
+      }
+    };
+    await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: section.id }, { $set: { payload: baseline } });
+    const revisionBefore = await AiEstimatorKnowledgeRevisionModel.findById(source.revisionId).lean();
+    const text = `${modeTier} work description.\nKeep this second line.`;
+    const saved = await saveDescription(item, source, modeTier, text);
+    expect(saved.version).toBe(section.version + 1);
+    expect(saved.aggregateVersion).toBe(source.aggregateVersion + 1);
+    for (const tier of tiers) {
+      const reopened = await item.getSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "advanced", tier);
+      expect(reopened).toMatchObject({ version: saved.version, applicability: "configured", payload: { modeDescription: text } });
+      expect((await item.getSection(SUPER_ADMIN, other.mainLineId, other.revisionId, "advanced", tier)).payload.modeDescription).toBeUndefined();
+    }
+    const raw = await AiEstimatorKnowledgeSectionModel.findById(section.id).lean();
+    expect(raw?.payload).toEqual({ ...baseline, modeDescription: text, tierConfigurations: {
+      ...baseline.tierConfigurations,
+      premium: { applicability: "configured", payload: { ...baseline.tierConfigurations.premium.payload, modeDescription: text } },
+      functional: { applicability: "configured", payload: { dependencies: [], modeDescription: text } }
+    } });
+    expect((await AiEstimatorKnowledgeRevisionModel.findById(source.revisionId).lean())?.version).toBe(revisionBefore!.version + 1);
+    const audit = await AuditEventModel.findOne({ entityId: section.id, "newValues.sectionVersion": saved.version }).lean();
+    expect(audit?.newValues).toMatchObject({ modeTier, copiedDescriptionTiers: tiers.filter(tier => tier !== modeTier),
+      sectionVersion: saved.version, aggregateVersion: saved.aggregateVersion });
+    expect(JSON.stringify(audit)).not.toContain(text.split("\n")[0]);
+  });
+
+  it("copies Signature to Functional once and initializes a later-enabled Premium only after another description change", async () => {
+    const { item } = createServices();
+    const source = await enabledDraft(item, "Two tiers", ["signature", "functional"]);
+    const first = await saveDescription(item, source, "signature", "Initial wardrobe wording");
+    expect((await item.getSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "advanced", "functional")).payload.modeDescription).toBe("Initial wardrobe wording");
+    expect((await item.getSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "advanced", "premium")).payload).toEqual({});
+    await saveDescription(item, source, "functional", "Functional independent wording");
+    const cleared = await saveDescription(item, source, "functional", "");
+    await updateDraftSection(item, { ...source, aggregateVersion: cleared.aggregateVersion }, "overview", {
+      ...overviewPayload("Two tiers"), applicableTiers: tiers
+    });
+    expect((await item.getSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "advanced", "premium")).payload).toEqual({});
+    const unchanged = await saveDescription(item, source, "signature", "Initial wardrobe wording");
+    await item.updateSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "advanced", {
+      expectedVersion: unchanged.version, expectedAggregateVersion: unchanged.aggregateVersion,
+      payload: { ...unchanged.payload, pmcMarginBps: 1600 }
+    });
+    expect((await item.getSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "advanced", "premium")).payload).toEqual({});
+    const edited = await saveDescription(item, source, "signature", "Revised Signature wording");
+    expect((await item.getSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "advanced", "premium")).payload.modeDescription).toBe("Revised Signature wording");
+    expect((await item.getSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "advanced", "functional")).payload.modeDescription).toBe("");
+    const audit = await AuditEventModel.findOne({ entityId: first.id, "newValues.sectionVersion": edited.version }).lean();
+    expect(audit?.newValues).toMatchObject({ copiedDescriptionTiers: ["premium"] });
+  });
+
+  it("preserves filled and explicitly cleared descriptions and not-applicable destination scopes", async () => {
+    const { item } = createServices();
+    const source = await enabledDraft(item, "Preserve descriptions");
+    const section = await item.getSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "advanced");
+    const payload = { tierConfigurations: {
+      premium: { applicability: "configured", payload: { modeDescription: "Premium authored" } },
+      functional: { applicability: "configured", payload: { modeDescription: "" } }
+    } };
+    await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: section.id }, { $set: { payload } });
+    const saved = await saveDescription(item, source, "signature", "New Signature");
+    expect((await AiEstimatorKnowledgeSectionModel.findById(section.id).lean())?.payload).toEqual({ ...payload, modeDescription: "New Signature" });
+    const audit = await AuditEventModel.findOne({ entityId: section.id, "newValues.sectionVersion": saved.version }).lean();
+    expect(audit?.newValues).not.toHaveProperty("copiedDescriptionTiers");
+    const disabled = { tierConfigurations: { functional: { applicability: "not_applicable", payload: {} } } };
+    await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: section.id }, { $set: { payload: disabled, applicability: "not_applicable" } });
+    await saveDescription(item, source, "premium", "New Premium");
+    expect(await AiEstimatorKnowledgeSectionModel.findById(section.id).lean()).toMatchObject({ applicability: "not_applicable", payload: {
+      tierConfigurations: { ...disabled.tierConfigurations, premium: { applicability: "configured", payload: { modeDescription: "New Premium" } } }
+    } });
+    expect((await item.getSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "advanced")).payload.modeDescription).toBeUndefined();
+  });
+
+  it("rejects stale and concurrent writes without losing independently edited descriptions", async () => {
+    const { item } = createServices();
+    const source = await enabledDraft(item, "Concurrent copying");
+    const initial = await item.getSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "advanced");
+    const results = await Promise.allSettled((["signature", "functional"] as const).map(modeTier =>
+      item.updateSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "advanced", {
+        modeTier, expectedVersion: initial.version, expectedAggregateVersion: source.aggregateVersion,
+        payload: { modeDescription: `${modeTier} winner` }
+      })));
+    expect(results.filter(result => result.status === "fulfilled")).toHaveLength(1);
+    const winner = results.find(result => result.status === "fulfilled") as PromiseFulfilledResult<Awaited<ReturnType<typeof saveDescription>>>;
+    expect((results.find(result => result.status === "rejected") as PromiseRejectedResult).reason).toMatchObject({ code: "VERSION_CONFLICT" });
+    for (const tier of tiers) expect((await item.getSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "advanced", tier)).payload.modeDescription).toBe(winner.value.payload.modeDescription);
+    const refreshed = await saveDescription(item, source, "premium", "Premium independently edited");
+    await expect(item.updateSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "advanced", {
+      expectedVersion: winner.value.version, expectedAggregateVersion: winner.value.aggregateVersion,
+      payload: { modeDescription: "Stale overwrite" }
+    })).rejects.toMatchObject({ code: "VERSION_CONFLICT" });
+    expect((await item.getSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "advanced", "premium")).payload).toEqual(refreshed.payload);
+    expect(await AuditEventModel.countDocuments({ entityId: initial.id, "newValues.copiedDescriptionTiers": { $exists: true } })).toBe(1);
+  });
+
+  it("rolls back copied descriptions, versions, and audit writes when audit persistence fails", async () => {
+    const { item } = createServices();
+    const source = await enabledDraft(item, "Rollback descriptions");
+    const section = await item.getSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "advanced");
+    const readState = async () => Promise.all([
+      AiEstimatorKnowledgeSectionModel.findById(section.id).lean(),
+      AiEstimatorKnowledgeMainLineModel.findById(source.mainLineId).lean(),
+      AiEstimatorKnowledgeRevisionModel.findById(source.revisionId).lean(),
+      AuditEventModel.find({}).sort({ _id: 1 }).lean()
+    ]);
+    const before = await readState();
+    const audit = persistentAudit();
+    const failing = createAiEstimatorKnowledgeItemService({
+      now: () => NOW, uuid: nextId,
+      audit: { async appendInMongoTransaction(input, session) {
+        expect(input.newValues?.copiedDescriptionTiers).toEqual(["premium", "functional"]);
+        await audit.appendInMongoTransaction(input, session);
+        throw new Error("injected description audit outage");
+      } }
+    });
+    await expect(saveDescription(failing, source, "signature", "Must roll back"))
+      .rejects.toThrow("injected description audit outage");
+    expect(await readState()).toEqual(before);
+    await saveDescription(item, source, "signature", "Successful retry");
+    expect((await item.getSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "advanced", "functional")).payload.modeDescription).toBe("Successful retry");
+  });
+
+  it("keeps invalid descriptions and malformed sibling data out of all tiers", async () => {
+    const { item } = createServices();
+    const source = await enabledDraft(item, "Validation protection");
+    const section = await item.getSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "advanced");
+    await expect(saveDescription(item, source, "signature", "x".repeat(4001))).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    const malformed = { tierConfigurations: { functional: { applicability: "configured", payload: { modeDescription: 42 } } } };
+    await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: section.id }, { $set: { payload: malformed } });
+    await expect(saveDescription(item, source, "signature", "Cannot conceal invalid data")).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(await AiEstimatorKnowledgeSectionModel.findById(section.id).lean()).toMatchObject({ version: section.version, payload: malformed });
+    expect((await item.getItem(SUPER_ADMIN, source.mainLineId)).version).toBe(source.aggregateVersion);
+    expect(await AuditEventModel.countDocuments({ entityId: section.id })).toBe(0);
+  });
+
+  it("preserves authorization, Main Line identity, and immutable revision history", async () => {
+    const { item } = createServices();
+    const source = await enabledDraft(item, "Protected descriptions");
+    const other = await enabledDraft(item, "Unrelated descriptions");
+    const section = await item.getSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "advanced");
+    const input = { expectedVersion: section.version, expectedAggregateVersion: source.aggregateVersion,
+      payload: { modeDescription: "Not authorized" } };
+    await seedActor(ADMIN);
+    await expect(item.updateSection(ADMIN, source.mainLineId, source.revisionId, "advanced", input)).rejects.toMatchObject({ status: 403 });
+    await expect(item.updateSection(SUPER_ADMIN, other.mainLineId, source.revisionId, "advanced", input)).rejects.toMatchObject({ status: 404 });
+    expect((await item.getSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "advanced")).payload).toEqual(section.payload);
+    const saved = await saveDescription(item, source, "signature", "Approved configuration wording");
+    const active = await item.activate(SUPER_ADMIN, source.mainLineId, source.revisionId, { expectedVersion: saved.aggregateVersion });
+    const draft = await item.createRevision(SUPER_ADMIN, source.mainLineId, { expectedVersion: active.version });
+    await expect(item.updateSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "advanced", {
+      ...input, expectedVersion: saved.version, expectedAggregateVersion: draft.version
+    })).rejects.toMatchObject({ code: "KNOWLEDGE_REVISION_IMMUTABLE" });
+    await saveDescription(item, { ...source, revisionId: draft.draftRevisionId! }, "signature", "Draft-specific wording");
+    for (const tier of tiers) expect((await item.getSection(SUPER_ADMIN, source.mainLineId, source.revisionId, "advanced", tier)).payload.modeDescription).toBe("Approved configuration wording");
+    expect((await item.getSection(SUPER_ADMIN, other.mainLineId, other.revisionId, "advanced")).payload.modeDescription).toBeUndefined();
+  });
+});
+
 describe("Overview dimension requirement", { timeout: 30_000 }, () => {
   it("saves an optional requirement with source CAS, UOM coordination and immutable Active history", async () => {
     const { item } = createServices();

@@ -10,7 +10,7 @@ const governed = () => ({ ...componentDraftFixture(), inHouseUsage: "estimator" 
 describe("governed estimate pricing presentation", () => {
   it("renders only the aggregate price even if obsolete detailed evidence is cached", () => {
     render(<><EstimateComponentPricingStatus line={governed()} editable /><EstimateSubBasketAmounts lines={[governed()]} /></>);
-    expect(screen.getByLabelText("Price including margin for Main Line A in Bedroom")).toHaveTextContent("₹783.33");
+    expect(screen.getByLabelText("Price including margin for Main Line A in Bedroom, including 18% GST")).toHaveTextContent("₹924.33");
     expect(screen.queryByText(/Component selling amounts/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Finishes/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Labour/)).not.toBeInTheDocument();

@@ -28,7 +28,7 @@ import {
 } from "./knowledgeModeConfiguration";
 import { KnowledgePmcScopeChecklist } from "./KnowledgePmcScopeChecklist";
 import { KnowledgeModeDescriptionEditor } from "./KnowledgeModeDescriptionEditor";
-import { modeDescriptionIssues, syncModeDescription } from "./knowledgeModeDescription";
+import { modeDescriptionIssues } from "./knowledgeModeDescription";
 import { calculationScopeForIssue, MODE_CALCULATION_SCOPES, modeCalculationIssues, modeCalculationsIssues, type ModeCalculationScope } from "./knowledgeModeCalculation";
 import { pmcMarginRange, pmcMarginRangeIssues, subVendorMarginRange, subVendorMarginRangeIssues, withPmcMargin, withSubVendorMargin } from "./knowledgePmcMargin";
 import { KnowledgePmcMarginRange, KnowledgeSubVendorMarginRange } from "./KnowledgePmcMarginInput";
@@ -108,8 +108,7 @@ export function KnowledgeModeConfigurationBuilder({
   const subBasketName = basketContext.subBasketId
     ? basketContext.subBasketName?.trim() || "Name unavailable"
     : "Not assigned";
-  const description = typeof payload.modeDescription === "string"
-    ? syncModeDescription(payload.modeDescription, partitioned.primary.pmc, undefined, inHouseConfiguration) : "";
+  const description = typeof payload.modeDescription === "string" ? payload.modeDescription : "";
   const issues = useMemo(
     () => [...currentModeConfigurationIssues(payload, modes), ...readInHouseUsagePolicy(payload).issues, ...modeDescriptionIssues(payload.modeDescription == null || typeof payload.modeDescription === "string" ? description : payload.modeDescription), ...modeCalculationsIssues(payload), ...pmcMarginRangeIssues(payload), ...subVendorMarginRangeIssues(payload), ...serverIssues],
     [modes, description, payload, serverIssues]
@@ -204,17 +203,7 @@ export function KnowledgeModeConfigurationBuilder({
 
   function updateConfigurations(next: readonly KnowledgeModeConfiguration[]) {
     onDirty();
-    const nextPayload = retainObsoleteInHouseScope(payload, withKnowledgeModeConfigurations(payload, next));
-    onChange(typeof payload.modeDescription === "string" ? {
-      ...nextPayload,
-      modeDescription: syncModeDescription(
-        payload.modeDescription,
-        partitionKnowledgeModeConfigurations(next).primary.pmc,
-        partitioned.primary.pmc,
-        partitionKnowledgeModeConfigurations(next).primary.execution.in_house,
-        partitioned.primary.execution.in_house
-      )
-    } : nextPayload);
+    onChange(retainObsoleteInHouseScope(payload, withKnowledgeModeConfigurations(payload, next)));
   }
 
   function updateConfiguration(nextConfiguration: KnowledgeModeConfiguration) {
@@ -420,8 +409,6 @@ export function KnowledgeModeConfigurationBuilder({
           key={descriptionResetKey}
           presentation={descriptionPresentation}
           description={description}
-          pmc={partitioned.primary.pmc}
-          inHouse={inHouseConfiguration}
           readOnly={readOnly}
           validationAttempt={validationAttempt}
           error={issueFor("modeDescription")}

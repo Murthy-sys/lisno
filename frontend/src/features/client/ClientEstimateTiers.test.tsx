@@ -39,6 +39,23 @@ const tier = (name: string) => screen.getByRole("radio", { name: new RegExp(`^${
 beforeEach(() => vi.clearAllMocks());
 
 describe("client working estimate tiers", () => {
+  it("replaces the selected tier paragraph without exposing headings or retaining missing wording", async () => {
+    const detail = fixture();
+    detail.lines[0]!.choices[0]!.description = "Signature ceiling finish.";
+    detail.lines[0]!.choices[1]!.description = "Premium acoustic finish.";
+    const user = userEvent.setup();
+    const { state } = setup(detail);
+    expect(await screen.findByText("Signature ceiling finish.")).toBeVisible();
+    expect(screen.queryByText("Description")).not.toBeInTheDocument();
+    expect(screen.queryByText("Internal specifications")).not.toBeInTheDocument();
+    await user.click(tier("Premium"));
+    expect(screen.getByText("Premium acoustic finish.")).toBeVisible();
+    expect(screen.queryByText("Signature ceiling finish.")).not.toBeInTheDocument();
+    expect(state.detail.lines[0]!.ratePaise).toBe(5000);
+    expect(state.detail.lines[0]!.amountPaise).toBe(10000);
+    expect(api.updateEstimateTier).not.toHaveBeenCalled();
+  });
+
   it("renders governed combined prices and omits component IDs from comparison and tier-save requests", async () => {
     const detail = fixture(); const line = detail.lines[0]!;
     const evidence = componentPricingFixture("main-line");
@@ -52,7 +69,7 @@ describe("client working estimate tiers", () => {
       return HttpResponse.json({ data: { mainBasketId: "basket", subBasketId: "sub", roomId: "room", roomName: "Living", mainBasketName: "Finishes", subBasketName: "Ceilings", estimateVersion: 7, tiers: [] } });
     }));
     const user = userEvent.setup(); setup(detail); await screen.findByText("Ceiling");
-    expect(screen.getByText("Price including margin: ₹783.33")).toBeVisible();
+    expect(screen.getByText("Price incl. GST: ₹924.33")).toBeVisible();
     expect(screen.queryByRole("group", { name: /In-house components/ })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Check tier comparison for Ceilings in Living" }));
     await waitFor(() => expect(inputs).toHaveLength(1));
@@ -83,8 +100,8 @@ describe("client working estimate tiers", () => {
     setup(detail); await screen.findByText("Ceiling");
     expect(tier("Mode")).toBeChecked();
     expect(screen.queryByRole("group", { name: "Configuration tier for Ceiling in Living" })).not.toBeInTheDocument();
-    expect(screen.getByRole("checkbox", { name: "Finishes / Ceiling ₹783.33 for this quantity" })).toBeChecked();
-    expect(screen.getByText("Component selling amounts for Ceiling in Living · ₹783.33")).toBeVisible();
+    expect(screen.getByRole("checkbox", { name: "Finishes / Ceiling ₹924.33 incl. GST for this quantity" })).toBeChecked();
+    expect(screen.getByText("Component selling amounts for Ceiling in Living · ₹783.33 before GST")).toBeVisible();
     expect(api.updateEstimateTier).not.toHaveBeenCalled();
   });
 
@@ -93,7 +110,7 @@ describe("client working estimate tiers", () => {
     expect(tier("Mode")).toBeChecked(); expect(tier("Functional")).toBeDisabled();
     expect(tier("Functional")).toHaveAccessibleDescription("1 item is unavailable in this mode.");
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument(); expect(screen.queryByRole("spinbutton")).not.toBeInTheDocument();
-    expect(screen.getByText("₹118")).toBeVisible(); expect(api.updateEstimateTier).not.toHaveBeenCalled();
+    expect(screen.getAllByText("₹118")).toHaveLength(2); expect(api.updateEstimateTier).not.toHaveBeenCalled();
   });
 
   it("compares a staged tier with configured prices and restores saved pricing when Mode is selected", async () => {
@@ -122,7 +139,7 @@ describe("client working estimate tiers", () => {
     const user = userEvent.setup(); setup(detail); await screen.findByText("Ceiling");
     await user.click(tier("Signature"));
     expect(screen.getByRole("button", { name: "Save tier selection" })).toBeEnabled();
-    expect(screen.getByText("Selected amount: ₹100")).toBeVisible();
+    expect(screen.getByText("Selected amount incl. GST: ₹118")).toBeVisible();
     await user.click(tier("Mode"));
     expect(screen.queryByRole("button", { name: "Save tier selection" })).not.toBeInTheDocument();
     expect(api.updateEstimateTier).not.toHaveBeenCalled();
@@ -134,11 +151,11 @@ describe("client working estimate tiers", () => {
   it("saves one server-priced line with exact source/version fences and refreshes working totals", async () => {
     const user = userEvent.setup(); const { client } = setup(); await screen.findByText("Ceiling");
     const invalidate = vi.spyOn(client, "invalidateQueries");
-    await user.click(tier("Premium")); expect(screen.getByText("Selected amount: ₹140")).toBeVisible();
+    await user.click(tier("Premium")); expect(screen.getByText("Selected amount incl. GST: ₹165.2")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Save tier selection" }));
     await waitFor(() => expect(api.updateEstimateTier).toHaveBeenCalledExactlyOnceWith("project", "estimate-line", { expectedVersion: 7, modeTier: "premium", ...source }));
     await screen.findByText(/Your tier selection is saved/);
-    expect(screen.getByText("₹165.2")).toBeVisible();
+    expect(screen.getAllByText("₹165.2")).toHaveLength(2);
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ["client"] });
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ["leads"] });
     expect(screen.queryByRole("button", { name: "Save tier selection" })).not.toBeInTheDocument();
@@ -213,7 +230,7 @@ describe("client working estimate tiers", () => {
     const user = userEvent.setup(); setup(detail); await screen.findByText("Ceiling");
     const modes = screen.getByRole("group", { name: "Modes for Items in Living" });
     await user.click(within(modes).getByRole("radio", { name: /^Premium/ }));
-    expect(screen.getAllByText("Selected amount: ₹140")).toHaveLength(2);
+    expect(screen.getAllByText("Selected amount incl. GST: ₹165.2")).toHaveLength(2);
     let resolve!: (detail: api.EstimateTiersDetail) => void;
     vi.mocked(api.updateEstimateTierGroup).mockImplementationOnce(() => new Promise(done => { resolve = done; }));
     const button = screen.getByRole("button", { name: "Save tier selection" }); fireEvent.click(button); fireEvent.click(button);

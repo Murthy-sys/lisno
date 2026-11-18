@@ -14,7 +14,7 @@ const permissions = vi.hoisted(() => ({ editable: true }));
 vi.mock("../../auth/AuthProvider", () => ({ useAuth: () => ({ status: "authenticated", authorization: {}, user: { id: "configuration-admin", role: "super_admin" } }) }));
 vi.mock("../../auth/authorization", () => ({ hasFrontendPermission: (_auth: unknown, operation: string) => permissions.editable || operation.endsWith(".read") }));
 vi.mock("./knowledgeApi", async original => ({ ...await original<typeof import("./knowledgeApi")>(),
-  getKnowledgeItem: vi.fn(), getKnowledgeHistory: vi.fn(), getKnowledgeSection: vi.fn(), updateKnowledgeSection: vi.fn(),
+  getKnowledgeItem: vi.fn(), getKnowledgeHistory: vi.fn(), getKnowledgeSection: vi.fn(), updateKnowledgeSection: vi.fn(), initializeKnowledgeTierDescriptions: vi.fn(),
   listKnowledgeItems: vi.fn(), listKnowledgeBaskets: vi.fn(), listKnowledgeMasters: vi.fn(), listKnowledgeSubBaskets: vi.fn(),
   getKnowledgeBasketQuality: vi.fn(), listKnowledgeQualityControlOptions: vi.fn(), getKnowledgeSubBasketMargins: vi.fn(),
   listKnowledgeSpecificationItemNames: vi.fn()
@@ -49,8 +49,8 @@ function section(id: string, revisionId: string, sectionKey: KnowledgeSectionKey
     version: row.versions[sectionKey] ?? 1, applicability: Object.keys(payload).length ? "configured" : "not_configured",
     payload: structuredClone(payload), ...(scoped && scope !== "signature" ? { modeTier: scope } : {}) };
 }
-function renderWorkspace() {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: 30_000, gcTime: 0 }, mutations: { retry: false } } });
+function renderWorkspace(gcTime = 0) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: 30_000, gcTime }, mutations: { retry: false } } });
   const result = render(<QueryClientProvider client={client}><MemoryRouter initialEntries={["/configuration/line-a"]}>
     <Link to="/configuration/line-a">Open first line</Link><Link to="/configuration/line-b">Open other line</Link>
     <Routes><Route path="/configuration/:itemId" element={<main><KnowledgeItemWorkspacePage /></main>} /></Routes>
@@ -98,6 +98,10 @@ beforeEach(() => {
   vi.mocked(api.getKnowledgeItem).mockImplementation(async id => structuredClone(store.get(id)!.item));
   vi.mocked(api.getKnowledgeHistory).mockResolvedValue({ items: [], pagination });
   vi.mocked(api.getKnowledgeSection).mockImplementation(async (id, revisionId, key, options) => section(id, revisionId, key, options?.modeTier));
+  vi.mocked(api.initializeKnowledgeTierDescriptions).mockImplementation(async (id, revisionId) => ({
+    mainLineId: id, revisionId, version: store.get(id)!.versions.advanced!, aggregateVersion: store.get(id)!.item.version,
+    sourceTier: null, copiedTiers: []
+  }));
   vi.mocked(api.updateKnowledgeSection).mockImplementation(async (id, revisionId, key, input) => {
     const row = store.get(id)!;
     if (input.expectedVersion !== row.versions[key] || input.expectedAggregateVersion !== row.item.version) throw new ApiError(409, "VERSION_CONFLICT", "Configuration changed.");
@@ -119,6 +123,65 @@ beforeEach(() => {
 });
 
 describe("independent Configuration modes", () => {
+  it("copies an already-saved Signature description on entry without Save clicks, then reopens independent descriptions", async () => {
+    const row = store.get("line-a")!;
+    row.advanced.signature = { modeDescription: "Previously saved Signature wording", pmcMarginBps: 1200 };
+    row.advanced.premium = { pmcMarginBps: 1400 };
+    row.advanced.functional = { modeDescription: null, pmcMarginBps: 1100 };
+    const originalDefault = structuredClone(row.advanced.default);
+    vi.mocked(api.initializeKnowledgeTierDescriptions).mockImplementationOnce(async (id, revisionId, input) => {
+      expect(input).toEqual({ expectedVersion: 4, expectedAggregateVersion: 10 });
+      row.advanced.premium = { ...row.advanced.premium, modeDescription: "Previously saved Signature wording" };
+      row.advanced.functional = { ...row.advanced.functional, modeDescription: "Previously saved Signature wording" };
+      row.versions.advanced = 5; row.item = { ...row.item, version: 11 };
+      return { mainLineId: id, revisionId, version: 5, aggregateVersion: 11,
+        sourceTier: "signature", copiedTiers: ["premium", "functional"] };
+    });
+    const user = userEvent.setup(); let view = renderWorkspace(60_000);
+    const premium = await openMode(user, "Premium Mode");
+    expect(await within(premium).findByRole("textbox", { name: "Description" })).toHaveValue("Previously saved Signature wording");
+    expect(api.updateKnowledgeSection).not.toHaveBeenCalled();
+    const functional = await openMode(user, "Functional Mode");
+    expect(await within(functional).findByRole("textbox", { name: "Description" })).toHaveValue("Previously saved Signature wording");
+    expect(within(functional).getByRole("button", { name: "Save" })).toBeDisabled();
+    await setDescription(user, functional, "Independent Functional wording");
+    view.unmount(); view.client.clear(); view = renderWorkspace();
+    const reopened = await openMode(user, "Functional Mode");
+    expect(await within(reopened).findByRole("textbox", { name: "Description" })).toHaveValue("Independent Functional wording");
+    expect(row.advanced.signature.modeDescription).toBe("Previously saved Signature wording");
+    expect(row.advanced.premium.modeDescription).toBe("Previously saved Signature wording");
+    expect(row.advanced.default).toEqual(originalDefault);
+    expect(api.updateKnowledgeSection).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the named editor closed on initialization failure and opens it after explicit retry", async () => {
+    vi.mocked(api.initializeKnowledgeTierDescriptions).mockRejectedValueOnce(new Error("Initialization unavailable"));
+    const user = userEvent.setup(); renderWorkspace();
+    await selectMode(user, "Premium Mode");
+    expect(await screen.findByText("Initialization unavailable")).toBeVisible();
+    expect(screen.queryByRole("textbox", { name: "Description" })).not.toBeInTheDocument();
+    expect(api.updateKnowledgeSection).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByRole("textbox", { name: "Description" })).toHaveValue("premium saved line-a");
+    expect(api.initializeKnowledgeTierDescriptions).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not initialize default Mode, read-only named tiers, or active-only revisions", async () => {
+    const user = userEvent.setup(); let view = renderWorkspace();
+    await openMode(user, "Mode");
+    expect(api.initializeKnowledgeTierDescriptions).not.toHaveBeenCalled();
+    view.unmount(); view.client.clear(); permissions.editable = false; view = renderWorkspace();
+    await openMode(user, "Signature Mode");
+    expect(api.initializeKnowledgeTierDescriptions).not.toHaveBeenCalled();
+    view.unmount(); view.client.clear(); permissions.editable = true;
+    const row = store.get("line-a")!;
+    row.item = { ...row.item, activeRevision: { ...row.item.draftRevision!, status: "active" }, draftRevision: null,
+      activeRevisionId: row.item.draftRevisionId, draftRevisionId: null, status: "active", allowedActions: ["create_revision"] };
+    view = renderWorkspace();
+    await openMode(user, "Signature Mode");
+    expect(api.initializeKnowledgeTierDescriptions).not.toHaveBeenCalled();
+  });
+
   it("shows one empty inline textarea in common Mode and named tiers without generating or saving wording", async () => {
     const row = store.get("line-a")!;
     for (const scope of KNOWLEDGE_MODE_CONFIGURATION_SCOPES) row.advanced[scope] = {};
@@ -362,6 +425,87 @@ describe("independent Configuration modes", () => {
     expect(await within(reopened).findByRole("textbox", { name: "Description" })).toHaveValue("");
     expect(within(reopened).getByRole("button", { name: "Save" })).toBeDisabled();
     expect(store.get("line-a")!.advanced.default.modeDescription).toBe("Common wording stays separate");
+    expect(api.updateKnowledgeSection).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["signature", "Signature Mode", "functional", "Functional Mode"],
+    ["premium", "Premium Mode", "signature", "Signature Mode"]
+  ] as const)("refreshes a cached sibling after a %s description save and keeps later edits independent", async (source, sourceLabel, target, targetLabel) => {
+    const row = store.get("line-a")!;
+    row.overview = { ...row.overview, applicableTiers: [source, target] };
+    row.advanced[source] = { pmcMarginBps: 1000 };
+    row.advanced[target] = { pmcMarginBps: 900 };
+    row.advanced.default = { modeDescription: "Common wording remains separate" };
+    const otherLine = structuredClone(store.get("line-b"));
+    const saveSelected = vi.mocked(api.updateKnowledgeSection).getMockImplementation()!;
+    // Model the committed backend result; its response still contains only the requested tier.
+    vi.mocked(api.updateKnowledgeSection).mockImplementationOnce(async (...args) => {
+      const result = await saveSelected(...args);
+      row.advanced[target] = { ...row.advanced[target], modeDescription: "Shared first description" };
+      return result;
+    });
+    const user = userEvent.setup(); let view = renderWorkspace(60_000);
+    const empty = await openMode(user, targetLabel);
+    expect(await within(empty).findByRole("textbox", { name: "Description" })).toHaveValue("");
+    const sourcePanel = await openMode(user, sourceLabel);
+    await setDescription(user, sourcePanel, "Shared first description", false);
+    const save = within(sourcePanel).getByRole("button", { name: "Save" });
+    save.focus(); await user.keyboard("{Enter}");
+    await waitFor(() => expect(save).toBeDisabled());
+    expect(api.updateKnowledgeSection).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(api.updateKnowledgeSection).mock.calls[0]![3].modeTier ?? "signature").toBe(source);
+    const copied = await openMode(user, targetLabel);
+    await waitFor(() => expect(within(copied).getByRole("textbox", { name: "Description" })).toHaveValue("Shared first description"));
+    expect(within(copied).getByRole("button", { name: "Save" })).toBeDisabled();
+    await setDescription(user, copied, "Independent destination wording");
+    const returned = await openMode(user, sourceLabel);
+    expect(await within(returned).findByRole("textbox", { name: "Description" })).toHaveValue("Shared first description");
+    await setDescription(user, returned, "Later source wording");
+    view.unmount(); view.client.clear(); view = renderWorkspace();
+    const reopened = await openMode(user, targetLabel);
+    expect(await within(reopened).findByRole("textbox", { name: "Description" })).toHaveValue("Independent destination wording");
+    expect(row.advanced[source].modeDescription).toBe("Later source wording");
+    expect(row.advanced.default.modeDescription).toBe("Common wording remains separate");
+    expect(store.get("line-b")).toEqual(otherLine);
+    expect(api.updateKnowledgeSection).toHaveBeenCalledTimes(3);
+  });
+
+  it("preserves a filled and a deliberately cleared sibling after another tier's first description save", async () => {
+    const row = store.get("line-a")!;
+    row.advanced.signature = { pmcMarginBps: 1000 };
+    row.advanced.functional = { ...row.advanced.functional, modeDescription: "" };
+    const user = userEvent.setup(); renderWorkspace();
+    const signature = await openMode(user, "Signature Mode");
+    await setDescription(user, signature, "First Signature wording");
+    const premium = await openMode(user, "Premium Mode");
+    expect(await within(premium).findByRole("textbox", { name: "Description" })).toHaveValue("premium saved line-a");
+    const functional = await openMode(user, "Functional Mode");
+    expect(await within(functional).findByRole("textbox", { name: "Description" })).toHaveValue("");
+    expect(api.updateKnowledgeSection).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not display copied wording after cancellation or a failed first save", async () => {
+    const row = store.get("line-a")!;
+    row.overview = { ...row.overview, applicableTiers: ["signature", "functional"] };
+    row.advanced.signature = { pmcMarginBps: 1000 };
+    row.advanced.functional = { pmcMarginBps: 900 };
+    const user = userEvent.setup(); renderWorkspace();
+    let signature = await openMode(user, "Signature Mode");
+    await setDescription(user, signature, "Canceled description", false);
+    await user.click(within(signature).getByRole("button", { name: "Cancel" }));
+    let functional = await openMode(user, "Functional Mode");
+    expect(await within(functional).findByRole("textbox", { name: "Description" })).toHaveValue("");
+    expect(api.updateKnowledgeSection).not.toHaveBeenCalled();
+    signature = await openMode(user, "Signature Mode");
+    vi.mocked(api.updateKnowledgeSection).mockRejectedValueOnce(new Error("Save unavailable"));
+    await setDescription(user, signature, "Keep this failed edit");
+    expect(await within(signature).findByText("Unable to save the description. Please try again.")).toBeVisible();
+    expect(within(signature).getByRole("textbox", { name: "Description" })).toHaveValue("Keep this failed edit");
+    await user.click(within(signature).getByRole("button", { name: "Cancel" }));
+    functional = await openMode(user, "Functional Mode");
+    expect(await within(functional).findByRole("textbox", { name: "Description" })).toHaveValue("");
+    expect(row.advanced.functional.modeDescription).toBeUndefined();
     expect(api.updateKnowledgeSection).toHaveBeenCalledTimes(1);
   });
 

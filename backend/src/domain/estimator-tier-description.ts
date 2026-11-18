@@ -1,10 +1,6 @@
 import type { KnowledgeModeTier } from "./ai-estimator-knowledge-mode-tiers.js";
 import { validateKnowledgeSectionPayload } from "./ai-estimator-knowledge-validation.js";
-import {
-  MAX_MODE_DESCRIPTION_LENGTH,
-  syncModeDescription,
-  type ModeDescriptionScope
-} from "./knowledge-mode-description.js";
+import { MAX_MODE_DESCRIPTION_LENGTH } from "./knowledge-mode-description.js";
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === "object" && !Array.isArray(value);
@@ -21,7 +17,7 @@ function readScope(value: unknown): DescriptionScope | null {
   return { applicability, payload: value.payload };
 }
 
-/** Missing namespaces can use Mode; malformed namespaces cannot. */
+/** A missing or malformed namespace has no selected-tier description. */
 function namedScope(payload: Record<string, unknown>, name: string): DescriptionScope | null | undefined {
   if (!Object.hasOwn(payload, "tierConfigurations")) return undefined;
   if (!isRecord(payload.tierConfigurations)) return null;
@@ -29,20 +25,16 @@ function namedScope(payload: Record<string, unknown>, name: string): Description
   return readScope(payload.tierConfigurations[name]);
 }
 
-/** Resolve display text independently of specifications, within one verified source section. */
+/** Read only the selected tier's saved wording, within one verified source section. */
 export function projectEstimatorTierDescription(section: unknown, tier: KnowledgeModeTier, _mainLineName: string): string | null {
   if (!isRecord(section) || section.sectionKey !== "advanced" || !isRecord(section.payload)) return null;
   const selected = tier === "signature" ? readScope(section) : namedScope(section.payload, tier);
-  if (selected === null) return null;
-  const description = selected ? projectScopeDescription(selected) : undefined;
-  if (description !== undefined) return description;
-  const mode = namedScope(section.payload, "default");
-  return mode ? projectScopeDescription(mode) ?? null : null;
+  return selected ? projectScopeDescription(selected) : null;
 }
 
-/** Undefined allows saved common wording; null means explicitly empty, invalid or disabled. */
-function projectScopeDescription(scope: DescriptionScope): string | null | undefined {
+function projectScopeDescription(scope: DescriptionScope): string | null {
   const { payload } = scope;
+  if (scope.applicability !== "configured") return null;
   // Only validate consumed description inputs. Unrelated price fields cannot hide a paragraph.
   const inputs = Object.fromEntries(["modeDescription", "modeConfigurations"]
     .filter(key => Object.hasOwn(payload, key)).map(key => [key, payload[key]]));
@@ -52,13 +44,6 @@ function projectScopeDescription(scope: DescriptionScope): string | null | undef
   // Configuration puts legacy or unscoped rows into recovery, never into a primary scope.
   if (rows.some(row => Object.hasOwn(row, "modeId") ||
     (row.modeKind === "execution" && row.executionSource !== "sub_vendor" && row.executionSource !== "in_house"))) return null;
-  if (text === "") return null;
-  if (text === undefined && !rows.length) return undefined;
-  if (scope.applicability !== "configured") return null;
-  // Mode settings alone never create client-facing wording.
-  if (text === undefined) return undefined;
-  const pmc = rows.find(row => row.modeKind === "pmc") as ModeDescriptionScope | undefined;
-  const inHouse = rows.find(row => row.modeKind === "execution" && row.executionSource === "in_house") as ModeDescriptionScope | undefined;
-  const description = syncModeDescription(text, pmc, undefined, inHouse);
-  return description.trim() && description.length <= MAX_MODE_DESCRIPTION_LENGTH ? description : null;
+  // Checklists do not generate, replace, or append to the saved Description.
+  return text?.trim() && text.length <= MAX_MODE_DESCRIPTION_LENGTH ? text : null;
 }

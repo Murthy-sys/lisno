@@ -61,7 +61,7 @@ export interface EstimatorCatalogueLine {
   tierPricing: Partial<Record<KnowledgeModeTier, EstimatorCatalogueTierPricing>>;
   /** Current display metadata only; never part of an estimate's saved pricing snapshot. */
   tierDetails?: Partial<Record<KnowledgeModeTier, EstimatorCatalogueTierDetails | null>>;
-  /** Resolved display paragraphs, independent of specification fallback and saved prices. */
+  /** Selected-tier saved wording only; no Mode fallback or generated configuration clauses. */
   tierDescriptions?: Partial<Record<KnowledgeModeTier, string | null>>;
   inHouseComponents?: EstimatorCatalogueTierPricing["inHouseComponents"];
   inHousePolicy?: InHouseUsagePolicy;

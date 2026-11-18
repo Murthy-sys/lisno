@@ -111,7 +111,7 @@ describe("Sales direct catalogue browsing", () => {
     if (state === "unavailable") fixture.failCatalogue();
     fixture.mount();
     const amount = await screen.findByLabelText(/Amount for POP \/ Gypsum, Ceilings, Gypsum ceiling/);
-    await waitFor(() => expect(amount).toHaveTextContent("783.33"));
+    await waitFor(() => expect(amount).toHaveTextContent("924.33"));
     expect(screen.queryByRole("button", { name: "Refresh price for Gypsum ceiling" })).not.toBeInTheDocument();
     expect(fixture.previews).toHaveLength(0);
     expect(fixture.saves).toHaveLength(0);
@@ -136,7 +136,7 @@ describe("Sales direct catalogue browsing", () => {
     expect(screen.getByRole("button", { name: "Save draft" })).toBeDisabled();
     await user.click(screen.getByRole("button", { name: "Refresh price for Gypsum ceiling" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "Save draft" })).toBeEnabled());
-    expect(screen.getByLabelText("Price including margin for Gypsum ceiling in Living & Dining")).toHaveTextContent("₹902.34");
+    expect(screen.getByLabelText("Price including margin for Gypsum ceiling in Living & Dining, including 18% GST")).toHaveTextContent("₹1,064.76");
     await act(async () => { await view.client().refetchQueries({ queryKey: estimationCatalogueKeys.ready }); });
     await waitFor(() => expect(screen.getByRole("button", { name: "Save draft" })).toBeEnabled());
     expect(screen.queryByRole("button", { name: "Refresh price for Gypsum ceiling" })).not.toBeInTheDocument();
@@ -179,14 +179,14 @@ describe("Sales direct catalogue browsing", () => {
     const view = fixture.mount();
     const review = await screen.findByRole("region", { name: "Items without a positive base price" });
     expect(within(review).getByRole("checkbox", { name: /Gypsum ceiling/ })).toBeChecked();
-    expect(within(review).getByRole("textbox", { name: /Selling rate.*Gypsum ceiling/ })).toHaveValue("99");
+    expect(within(review).getByRole("textbox", { name: /Selling rate.*Gypsum ceiling/ })).toHaveValue("116.82");
     expect(within(review).getByRole("spinbutton", { name: /Quantity.*Gypsum ceiling/ })).toHaveValue(2);
-    expect(screen.getByLabelText("Estimate amount before GST: ₹198")).toBeVisible();
+    expect(screen.getByLabelText("Estimate amount including GST: ₹234")).toBeVisible();
     fixture.failCatalogue();
     await act(async () => { await view.client().refetchQueries({ queryKey: estimationCatalogueKeys.ready }); });
     expect(await screen.findByText("Available items could not be refreshed. The last loaded catalogue is shown. Try again.")).toBeVisible();
     expect(within(screen.getByRole("region", { name: "Items without a positive base price" })).getByRole("checkbox", { name: /Gypsum ceiling/ })).toBeChecked();
-    expect(screen.getByLabelText("Estimate amount before GST: ₹198")).toBeVisible();
+    expect(screen.getByLabelText("Estimate amount including GST: ₹234")).toBeVisible();
     expect(fixture.saves).toEqual([]);
     expect(fixture.requests.every(request => request.method === "GET")).toBe(true);
   });
@@ -224,7 +224,7 @@ describe("Sales direct catalogue browsing", () => {
     const search = screen.getByRole("searchbox", { name: "Search estimate items" });
     await user.type(search, "paint"); await user.clear(search);
     expect(screen.getByRole("spinbutton", { name: /Quantity.*Gypsum ceiling/ })).toHaveValue(7);
-    expect(screen.getByRole("textbox", { name: /Selling rate.*Gypsum ceiling/ })).toHaveValue("20");
+    expect(screen.getByRole("textbox", { name: /Selling rate.*Gypsum ceiling/ })).toHaveValue("23.6");
     await user.click(screen.getByRole("checkbox", { name: /Gypsum ceiling/ }));
     expect(screen.getByRole("checkbox", { name: /Wall paint/ })).not.toBeChecked();
     await user.click(screen.getByRole("checkbox", { name: /Gypsum ceiling/ }));
@@ -236,7 +236,7 @@ describe("Sales direct catalogue browsing", () => {
     expect(fixture.saves[0]!.lineItems).toEqual([expect.objectContaining({ roomId: "living", mainLineId: "ceiling", quantity: 7, ratePaise: 2000, included: true, rateSource: "configuration" })]);
     view.unmount(); fixture.mount();
     expect(await screen.findByRole("spinbutton", { name: /Quantity.*Gypsum ceiling/ })).toHaveValue(7);
-    expect(screen.getByRole("textbox", { name: /Selling rate.*Gypsum ceiling/ })).toHaveValue("20");
+    expect(screen.getByRole("textbox", { name: /Selling rate.*Gypsum ceiling/ })).toHaveValue("23.6");
     expect(screen.getByRole("checkbox", { name: /Wall paint/ })).not.toBeChecked();
   });
 

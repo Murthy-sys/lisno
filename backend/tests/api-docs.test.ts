@@ -26,6 +26,42 @@ function componentSchemas(): Record<string, OpenApiObject> {
 }
 
 describe("OpenAPI and Swagger UI", () => {
+  it("documents specification item Brand prefill as bounded optional lookup metadata", () => {
+    const schemas = componentSchemas();
+    expect(schemas.KnowledgeSpecificationItemName).toMatchObject({
+      additionalProperties: false, required: ["name"],
+      properties: { brandPrefill: { $ref: "#/components/schemas/KnowledgeSpecificationBrandPrefill" } }
+    });
+    expect(schemas.KnowledgeSpecificationBrandPrefill!.oneOf).toEqual([
+      expect.objectContaining({ additionalProperties: false, required: ["status", "names"],
+        properties: { status: { type: "string", enum: ["ready"] },
+          names: { type: "array", maxItems: 200, uniqueItems: true, items: { type: "string", minLength: 1, maxLength: 240 } } } }),
+      expect.objectContaining({ additionalProperties: false, required: ["status", "reason"],
+        properties: { status: { type: "string", enum: ["unavailable"] },
+          reason: { type: "string", enum: ["invalid_source", "too_many_brands"] } } })
+    ]);
+    expect(openApiDocument.paths["/admin/ai-estimator-knowledge/specification-item-names"]?.get)
+      .toMatchObject({ "x-lisno-permission": "ai_estimator_knowledge.configuration.read" });
+  });
+
+  it("documents tier description initialization as a strict version-only mutation", () => {
+    const schemas = componentSchemas();
+    expect(schemas.KnowledgeTierDescriptionInitializationRequest).toMatchObject({
+      additionalProperties: false, required: ["expectedVersion", "expectedAggregateVersion"],
+      properties: { expectedVersion: { type: "integer", minimum: 1 }, expectedAggregateVersion: { type: "integer", minimum: 1 } }
+    });
+    expect(Object.keys(schemas.KnowledgeTierDescriptionInitializationRequest!.properties as OpenApiObject))
+      .toEqual(["expectedVersion", "expectedAggregateVersion"]);
+    expect(schemas.KnowledgeTierDescriptionInitializationResult).toMatchObject({
+      additionalProperties: false, required: ["mainLineId", "revisionId", "version", "aggregateVersion", "sourceTier", "copiedTiers"],
+      properties: { sourceTier: { nullable: true, enum: ["signature", "premium", "functional", null] }, copiedTiers: { uniqueItems: true, maxItems: 2 } }
+    });
+    const operation = (openApiDocument.paths as Record<string, Record<string, OpenApiObject>>)
+      ["/admin/ai-estimator-knowledge/main-lines/{mainLineId}/revisions/{revisionId}/initialize-tier-descriptions"]!.post!;
+    expect(operation).toHaveProperty("requestBody.content.application/json.schema.$ref", "#/components/schemas/KnowledgeTierDescriptionInitializationRequest");
+    expect(operation).toHaveProperty("responses.2XX.content.application/json.schema.properties.data.$ref", "#/components/schemas/KnowledgeTierDescriptionInitializationResult");
+  });
+
   it("documents optional resolved tier descriptions as bounded read-only paragraphs", () => {
     const schemas = componentSchemas();
     expect(schemas.EstimatorCatalogueLine!.required).not.toContain("tierDescriptions");
@@ -1368,7 +1404,7 @@ describe("OpenAPI and Swagger UI", () => {
     }
   });
 
-  it("contains all 529 routes without versioning paths twice", () => {
+  it("contains all 530 routes without versioning paths twice", () => {
     const methods = new Set(["get", "post", "put", "patch", "delete"]);
     const operationCount = Object.values(openApiDocument.paths).reduce(
       (total, pathItem) =>
@@ -1377,7 +1413,7 @@ describe("OpenAPI and Swagger UI", () => {
     );
 
     expect(operationCount).toBe(HUMAN_JWT_OPERATION_LIST.length + 21);
-    expect(operationCount).toBe(529);
+    expect(operationCount).toBe(530);
     expect(Object.keys(openApiDocument.paths).some((path) =>
       path.startsWith("/api/v1")
     )).toBe(false);
@@ -1387,7 +1423,7 @@ describe("OpenAPI and Swagger UI", () => {
     const knowledgeOperations = HUMAN_JWT_OPERATION_LIST.filter(
       ({ availability, key }) => availability === "ai_estimator_knowledge" && !key.includes("/procurement/vendor-kpis") && !key.includes("/procurement/vendor-inductions") && !key.includes("basket-proposals")
     );
-    expect(knowledgeOperations).toHaveLength(75);
+    expect(knowledgeOperations).toHaveLength(76);
 
     for (const registered of knowledgeOperations) {
       const { method, path } = splitHumanOperationKey(registered.key);

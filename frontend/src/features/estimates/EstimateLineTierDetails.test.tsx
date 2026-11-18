@@ -18,6 +18,9 @@ describe("Selected tier description", () => {
     expect(screen.getByText(/Signature ceiling finish/)).toBeVisible();
     expect(screen.getByText(/Signature ceiling finish/).textContent).toBe(description);
     expect(container.querySelector("details")).toBeNull();
+    expect(container.textContent).toBe(description);
+    expect(screen.queryByText("Description")).not.toBeInTheDocument();
+    expect(screen.queryByText("Signature", { exact: true })).not.toBeInTheDocument();
     expect(container).not.toHaveTextContent(/Gypsum|Knauf|Saint-Gobain|Hidden Mode|Hidden brief/);
     rerender(<EstimateLineTierDetails {...props} tier="premium" description="Premium acoustic finish." details={details} />);
     expect(screen.getByText("Premium acoustic finish.")).toBeVisible();
@@ -25,10 +28,9 @@ describe("Selected tier description", () => {
     expect(screen.getByRole("region", { name: "Premium description for Ceiling in Living Room" })).toBeVisible();
   });
 
-  it.each([undefined, null, "", "   "])("uses a quiet empty state for %s without falling back to specifications", description => {
+  it.each([undefined, null, "", "   "])("omits empty description %s without falling back to specifications", description => {
     const { container } = render(<EstimateLineTierDetails {...props} description={description} details={details} />);
-    expect(screen.getByText("Description not added.")).toBeVisible();
-    expect(container).not.toHaveTextContent(/Gypsum|specifications|Hidden Mode/);
+    expect(container).toBeEmptyDOMElement();
   });
 
   it("preserves long plain text and line breaks and exposes an accessible description region", async () => {

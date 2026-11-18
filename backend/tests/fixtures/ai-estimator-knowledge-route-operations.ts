@@ -60,6 +60,7 @@ export const EXPECTED_AI_ESTIMATOR_KNOWLEDGE_OPERATIONS = [
   { key: "POST /admin/ai-estimator-knowledge/main-lines/:mainLineId/revisions", permission: "ai_estimator_knowledge.configuration.create", ...adminOperation },
   { key: "GET /admin/ai-estimator-knowledge/main-lines/:mainLineId/revisions/:revisionId/sections/:sectionKey", permission: "ai_estimator_knowledge.configuration.read", ...readOperation },
   { key: "PUT /admin/ai-estimator-knowledge/main-lines/:mainLineId/revisions/:revisionId/sections/:sectionKey", permission: "ai_estimator_knowledge.configuration.update", ...adminOperation },
+  { key: "POST /admin/ai-estimator-knowledge/main-lines/:mainLineId/revisions/:revisionId/initialize-tier-descriptions", permission: "ai_estimator_knowledge.configuration.update", ...adminOperation },
   { key: "POST /admin/ai-estimator-knowledge/main-lines/:mainLineId/revisions/:revisionId/activate", permission: "ai_estimator_knowledge.configuration.lifecycle", ...adminOperation },
   { key: "POST /admin/ai-estimator-knowledge/main-lines/:mainLineId/deactivate", permission: "ai_estimator_knowledge.configuration.lifecycle", ...adminOperation },
   { key: "POST /admin/ai-estimator-knowledge/main-lines/:mainLineId/duplicate", permission: "ai_estimator_knowledge.configuration.create", ...adminOperation },

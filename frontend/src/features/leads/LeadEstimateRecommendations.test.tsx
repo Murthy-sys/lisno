@@ -385,7 +385,7 @@ describe("Sales recommendation popup", () => {
     const { savedInputs } = installReads(false, saved, undefined, false, undefined, true);
     let rendered = renderWorkspace();
     const add = await screen.findByRole("button", { name: "Add False ceiling painting" });
-    expect(screen.getByLabelText("Estimate amount before GST: ₹696.9")).toBeVisible();
+    expect(screen.getByLabelText("Estimate amount including GST: ₹822")).toBeVisible();
     await user.click(add);
     expect(await screen.findByText("Added 1 item: False ceiling painting to Living & Dining.")).toBeVisible();
     await expectRecommendationsCompleted();
@@ -395,9 +395,9 @@ describe("Sales recommendation popup", () => {
     expect(selectedItem(/False ceiling painting/)).toBeChecked();
     expect(screen.queryByRole("checkbox", { name: /Ceiling primer|Protective coating|Feature wall texture/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Wall finish" })).not.toBeInTheDocument();
-    expect(screen.getByLabelText("Estimate amount before GST: ₹946.9")).toBeVisible();
+    expect(screen.getByLabelText("Estimate amount including GST: ₹1,117")).toBeVisible();
     expect(screen.getByRole("spinbutton", { name: /Quantity.*POP false ceiling/ })).toHaveValue(2);
-    expect(screen.getByRole("textbox", { name: /Selling rate.*POP false ceiling/ })).toHaveValue("123.45");
+    expect(screen.getByRole("textbox", { name: /Selling rate.*POP false ceiling/ })).toHaveValue("145.67");
     await user.click(screen.getByRole("button", { name: "Save draft" }));
     await screen.findByText("Estimate draft saved.");
     expect(savedInputs).toHaveLength(1);
@@ -520,7 +520,7 @@ describe("Sales recommendation popup", () => {
     await user.click(screen.getByRole("button", { name: "Save draft" }));
     await screen.findByText("Estimate draft saved.");
     expect(savedInputs).toHaveLength(1);
-    expect(savedInputs[0]!.lineItems).toEqual([expect.objectContaining({ mainLineId: "line-pop", quantity: 7, ratePaise: Number(configuredPrice) * 100, included: true })]);
+    expect(savedInputs[0]!.lineItems).toEqual([expect.objectContaining({ mainLineId: "line-pop", quantity: 7, ratePaise: 10000, included: true })]);
     expect(screen.getByRole("button", { name: "Recommendations (1)" })).toHaveAttribute("aria-expanded", "false");
   });
 

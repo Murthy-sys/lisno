@@ -253,6 +253,11 @@ const sectionUpdateSchema = z
   })
   .strict();
 
+const tierDescriptionInitializationSchema = z.object({
+  expectedVersion: expectedVersionSchema,
+  expectedAggregateVersion: expectedVersionSchema
+}).strict();
+
 const activationSchema = z
   .object({
     expectedVersion: expectedVersionSchema,
@@ -694,6 +699,13 @@ export function createAiEstimatorKnowledgeAdminRouter(
     validateBody(sectionUpdateSchema),
     validateSectionPayload,
     handler(async (request) => services.item.updateSection(request.authenticatedUser!, String(request.params.mainLineId), String(request.params.revisionId), request.params.sectionKey as KnowledgeSectionKey, request.body))
+  );
+  router.post(
+    `${prefix}/main-lines/:mainLineId/revisions/:revisionId/initialize-tier-descriptions`,
+    protectedRoute,
+    requireOperation("POST /admin/ai-estimator-knowledge/main-lines/:mainLineId/revisions/:revisionId/initialize-tier-descriptions"),
+    validateBody(tierDescriptionInitializationSchema),
+    handler(async (request) => services.item.initializeTierDescriptions(request.authenticatedUser!, String(request.params.mainLineId), String(request.params.revisionId), request.body))
   );
   router.post(
     `${prefix}/main-lines/:mainLineId/revisions/:revisionId/activate`,

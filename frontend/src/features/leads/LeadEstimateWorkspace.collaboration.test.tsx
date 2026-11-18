@@ -134,7 +134,7 @@ describe("Collaborative estimate workspace", () => {
     expect(within(row()).queryByText("Type", { exact: true })).not.toBeInTheDocument();
     expect(within(row()).queryByRole("radio", { name: /item type/ })).not.toBeInTheDocument();
     expect(within(row()).getByRole("spinbutton")).toHaveValue(19);
-    expect(within(row()).getByRole("textbox", { name: /Selling rate/ })).toHaveValue("97.25");
+    expect(within(row()).getByRole("textbox", { name: /Selling rate/ })).toHaveValue("114.76");
     expect(data.saves).toEqual([]);
   });
 

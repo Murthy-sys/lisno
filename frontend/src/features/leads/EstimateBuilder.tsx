@@ -108,6 +108,7 @@ export function EstimateBuilder({
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
+      <p className="text-xs text-[var(--color-text-muted)]">Room and section subtotals are before GST.</p>
       <SectionJumpNav
         sections={sections.map((section) => ({ id: section.id, label: section.label, subtotal: sectionSubtotal(section.id) }))}
         activeSectionId={activeSectionId}
@@ -146,6 +147,7 @@ export function EstimateBuilder({
                 {sectionLines.map((line) => (
                   <LineItemRow
                     key={line.id}
+                    pricesIncludeGst
                     catalogueId={line.catalogueId}
                     description={line.description}
                     unit={line.unit}

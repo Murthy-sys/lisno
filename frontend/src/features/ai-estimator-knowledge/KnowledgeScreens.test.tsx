@@ -63,6 +63,7 @@ vi.mock("./knowledgeApi", async (importOriginal) => {
     createKnowledgeQualityControlOption: vi.fn(),
     updateKnowledgeBasketQuality: vi.fn(),
     updateKnowledgeSection: vi.fn(),
+    initializeKnowledgeTierDescriptions: vi.fn(),
     previewKnowledge: vi.fn()
   };
 });
@@ -498,6 +499,10 @@ describe("Configuration Mode tiers", () => {
 });
 
 beforeEach(() => {
+  vi.mocked(knowledgeApi.initializeKnowledgeTierDescriptions).mockImplementation(async (mainLineId, revisionId, input) => ({
+    mainLineId, revisionId, version: input.expectedVersion, aggregateVersion: input.expectedAggregateVersion,
+    sourceTier: null, copiedTiers: []
+  }));
   vi.mocked(knowledgeApi.getKnowledgeBasketQuality).mockResolvedValue({ basketId: "basket-1", basketName: "Carpentry", basketStatus: "active", version: 1, revisionId: null, revisionNumber: 0, contentDigest: null, parameters: [], updatedAt: null });
 
   vi.clearAllMocks();

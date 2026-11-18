@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } fro
 import { useNavigate, useParams } from "react-router-dom";
 import { applicableKnowledgeTiers, KNOWLEDGE_MODE_CONFIGURATION_LABELS } from "../../../../shared/knowledge/knowledgeModeTiers";
 import { knowledgeModeTierDataSource } from "./knowledgeModeTierDataSource";
+import { useKnowledgeTierDescriptionInitialization } from "./useKnowledgeTierDescriptionInitialization";
 
 import { ApiError } from "../../api/client";
 import { useAuth } from "../../auth/AuthProvider";
@@ -351,6 +352,12 @@ export function KnowledgeItemWorkspacePage() {
     onRetry: () => { void relationshipBasketsQuery.refetch(); }
   };
   const editable = Boolean(item && revision?.status === "draft" && item.status !== "archived" && canUpdate && item.allowedActions.includes("update_section"));
+  const descriptionInitialization = useKnowledgeTierDescriptionInitialization({
+    mainLineId, revisionId: revision?.id, modeTier: activeModeTier, overviewVersion: savedOverviewQuery.data?.version,
+    enabled: editable && !itemQuery.isError && savedOverviewQuery.isSuccess && activeModeTier !== null
+      && activeModeTier !== "default" && applicableTiers.includes(activeModeTier),
+    hasPendingWork: dirty || modeDirty || modeSaving || qualityDirty || qualitySaving || designDirty || designSaving || designUnknownOutcome
+  });
   const overviewDraftPayload = activeSection === "overview" && sectionQuery.data
     ? dirty ? payload : sectionQuery.data.payload
     : payload;
@@ -619,7 +626,10 @@ export function KnowledgeItemWorkspacePage() {
       }} />
   </>;
 
-  const modeEditor = revision ? <KnowledgeModePanel
+  const modeEditor = descriptionInitialization.error ? <PageState state="error" message={descriptionInitialization.error.message}
+    action={{ label: "Try again", onAction: descriptionInitialization.retry }} />
+    : descriptionInitialization.pending ? <PageState state="loading" message="Loading saved descriptions…" />
+    : revision ? <KnowledgeModePanel
     key={pendingSession.sourceKey}
     modeLabel={activeSectionLabel}
     descriptionPresentation="inline"

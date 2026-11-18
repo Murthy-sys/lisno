@@ -1,4 +1,4 @@
-import type { KnowledgeModeConfigurationScope } from "./knowledgeModeTiers";
+import type { KnowledgeModeConfigurationScope, KnowledgeModeTier } from "./knowledgeModeTiers";
 import type { VendorKpiDirectorySummary } from "./vendorKpi";
 import type { VendorActivation } from "./vendorInduction";
 
@@ -101,8 +101,13 @@ export interface KnowledgeSubBasketBudgetAlteration extends KnowledgeBudgetAlter
 
 export type KnowledgeBudgetAlteration = KnowledgeMainLineBudgetAlteration | KnowledgeSubBasketBudgetAlteration;
 
+export type KnowledgeSpecificationBrandPrefill =
+  | { readonly status: "ready"; readonly names: readonly string[] }
+  | { readonly status: "unavailable"; readonly reason: "invalid_source" | "too_many_brands" };
+
 export interface KnowledgeSpecificationItemName {
   readonly name: string;
+  readonly brandPrefill?: KnowledgeSpecificationBrandPrefill;
 }
 
 export interface KnowledgeSpecificationItemNameListParams {
@@ -377,6 +382,15 @@ export interface KnowledgeSectionMutationEnvelope<
   TPayload extends KnowledgeJsonValue = KnowledgeJsonObject
 > extends KnowledgeSectionEnvelope<TPayload> {
   readonly aggregateVersion: number;
+}
+
+export interface KnowledgeTierDescriptionInitializationResult {
+  readonly mainLineId: string;
+  readonly revisionId: string;
+  readonly version: number;
+  readonly aggregateVersion: number;
+  readonly sourceTier: KnowledgeModeTier | null;
+  readonly copiedTiers: readonly KnowledgeModeTier[];
 }
 
 export interface KnowledgeActivationReview {

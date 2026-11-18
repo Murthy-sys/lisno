@@ -13,14 +13,9 @@ export function EstimateLineTierDetails({ rowKey, label, tier, description, deta
 }) {
   const tierName = KNOWLEDGE_MODE_TIER_LABELS[tier];
   const hasDescription = typeof description === "string" && description.trim().length > 0;
+  if (!hasDescription && !showInternalDetails) return null;
   return <section key={rowKey} className="estimate-line-tier-details" aria-label={`${tierName} description for ${label}`}>
-    <div className="estimate-line-tier-details__heading">
-      <span className="estimate-line-tier-details__label">Description</span>
-      <span className="estimate-line-tier-details__tier">{tierName}</span>
-    </div>
-    <p className={`estimate-line-tier-details__description${hasDescription ? "" : " estimate-line-tier-details__empty"}`}>
-      {hasDescription ? description : "Description not added."}
-    </p>
+    {hasDescription ? <p className="estimate-line-tier-details__description">{description}</p> : null}
     {showInternalDetails ? <details className="estimate-line-tier-details__internal">
       <summary tabIndex={0} aria-label={`Show internal specifications: ${tierName} for ${label}`}>Internal specifications</summary>
       <div className="estimate-line-tier-details__content" role="region" aria-label={`${tierName} internal specifications for ${label}`}>

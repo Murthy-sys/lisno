@@ -248,7 +248,7 @@ describe("shared Mode paragraph", () => {
     expect(screen.getByRole("textbox", { name: "Description" })).toHaveValue("");
   });
 
-  it("cancels edits and keeps custom wording synchronized with checkbox selections after save and reload", async () => {
+  it("cancels edits and preserves saved wording through checkbox changes and reload", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
     const view = render(<Harness initial={{ ...savedLists, modeDescription: generated }} onChange={onChange} />);
@@ -273,15 +273,17 @@ describe("shared Mode paragraph", () => {
     expect(screen.getByRole("checkbox", { name: "Execution" })).toBeChecked();
     expect(screen.getByRole("checkbox", { name: "Sub-Vendor" })).toBeChecked();
     await user.click(within(screen.getByRole("group", { name: "Inclusions" })).getByRole("checkbox", { name: "Shifting" }));
-    expect(screen.getByText("Custom work for both Modes. Keep this wording. Inclusions: Shifting.")).toBeVisible();
+    expect(screen.getByText("Custom work for both Modes. Keep this wording.")).toBeVisible();
     const saved = onChange.mock.calls.at(-1)![0] as KnowledgeJsonObject;
+    expect(saved.modeDescription).toBe("Custom work for both Modes.\nKeep this wording.");
     view.unmount();
     render(<Harness initial={saved} readOnly />);
-    expect(screen.getByText("Custom work for both Modes. Keep this wording. Inclusions: Shifting.")).toBeVisible();
+    expect(screen.getByText("Custom work for both Modes. Keep this wording.").textContent)
+      .toBe("Custom work for both Modes.\nKeep this wording.");
     expect(screen.queryByRole("button", { name: "Edit Description" })).not.toBeInTheDocument();
   });
 
-  it("keeps checked items in the live preview during typing, deletion, and saving", async () => {
+  it("preserves authored scope wording in preview and save when checklist selections change or disappear", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
     render(<Harness onChange={onChange} />);
@@ -298,12 +300,16 @@ describe("shared Mode paragraph", () => {
     expect(preview).toHaveTextContent("No description added.");
     await user.type(text, "Custom fixing. Inclusions: none. Exclusions: none.");
     expect(text).toHaveFocus();
-    expect(preview).toHaveTextContent("Custom fixing. Inclusions: Transport. Exclusions: Unloading.");
+    expect(preview).toHaveTextContent("Custom fixing. Inclusions: none. Exclusions: none.");
     await user.click(within(screen.getByRole("group", { name: "Inclusions" })).getByRole("checkbox", { name: "Transport" }));
     await user.click(within(screen.getByRole("group", { name: "Inclusions" })).getByRole("checkbox", { name: "Shifting" }));
-    expect(preview).toHaveTextContent("Custom fixing. Inclusions: Shifting. Exclusions: Unloading.");
+    expect(preview).toHaveTextContent("Custom fixing. Inclusions: none. Exclusions: none.");
+    fireEvent.change(text, { target: { value: "Custom fixing. Inclusions: Shifting. Exclusions: bespoke finishing." } });
+    await user.click(within(screen.getByRole("group", { name: "Inclusions" })).getByRole("button", { name: "Delete inclusion Shifting" }));
+    const expected = "Custom fixing. Inclusions: Shifting. Exclusions: bespoke finishing.";
+    expect(text).toHaveValue(expected);
+    expect(preview).toHaveTextContent(expected);
     await user.click(screen.getByRole("button", { name: "Save" }));
-    const expected = "Custom fixing. Inclusions: Shifting. Exclusions: Unloading.";
     expect(screen.getByText(expected)).toBeVisible();
     expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ modeDescription: expected }));
     await user.click(screen.getByRole("button", { name: "Edit Description" }));
@@ -315,7 +321,7 @@ describe("shared Mode paragraph", () => {
     expect(screen.getByText(expected)).toBeVisible();
   });
 
-  it("validates the complete paragraph length after inserting selected items", async () => {
+  it("accepts a full-length authored paragraph without appending selected checklist items", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
     render(<Harness onChange={onChange} />);
@@ -324,12 +330,12 @@ describe("shared Mode paragraph", () => {
     await user.click(within(screen.getByRole("group", { name: "Inclusions" })).getByRole("checkbox", { name: "Transport" }));
     await user.click(screen.getByRole("button", { name: "Edit Description" }));
     const text = screen.getByRole("textbox", { name: "Description" });
-    fireEvent.change(text, { target: { value: "a".repeat(3_995) } });
+    const description = "a".repeat(4_000);
+    fireEvent.change(text, { target: { value: description } });
     onChange.mockClear();
     await user.click(screen.getByRole("button", { name: "Save" }));
-    expect(text).toHaveAttribute("aria-invalid", "true");
-    expect(text).toHaveFocus();
-    expect(onChange).not.toHaveBeenCalled();
+    expect(screen.queryByRole("textbox", { name: "Description" })).not.toBeInTheDocument();
+    expect(onChange).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ modeDescription: description }));
   });
 
   it("allows clearing a saved description and keeps it blank after reload", async () => {

@@ -1,4 +1,4 @@
-import { QueryClient } from "@tanstack/react-query";
+import { QueryClient, QueryObserver } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import * as api from "./knowledgeApi";
 import { liveKnowledgeEditorDataSource } from "./knowledgeEditorDataSource";
@@ -56,6 +56,39 @@ describe("Mode tier data source", () => {
     expect(client.getQueryData(functional.sectionKey("line", "revision", "advanced"))).toMatchObject({ payload: { pmcMarginBps: 900 } });
     expect(client.getQueryData(knowledgeQueryKeys.item("line"))).toEqual({ version: 5 });
     client.clear();
+  });
+
+  it.each(["signature", "premium", "functional"] as const)("refreshes server-copied sibling wording after a %s save without copying the response into siblings", async tier => {
+    const client = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity, retry: false } } });
+    const target = tier === "signature" ? "functional" : "signature";
+    const source = knowledgeModeTierDataSource(tier);
+    const sibling = knowledgeModeTierDataSource(target);
+    const key = sibling.sectionKey("line", "revision", "advanced");
+    let serverSibling: KnowledgeSectionEnvelope = { ...section, ...(target === "signature" ? {} : { modeTier: target }), payload: { pmcMarginBps: 900 } };
+    vi.mocked(api.getKnowledgeSection).mockImplementation(async () => structuredClone(serverSibling));
+    await client.fetchQuery({ queryKey: key, queryFn: () => sibling.getSection("line", "revision", "advanced") });
+    const observer = new QueryObserver(client, { queryKey: key, queryFn: () => sibling.getSection("line", "revision", "advanced") });
+    const unsubscribe = observer.subscribe(() => undefined);
+    const otherLineKey = sibling.sectionKey("other", "revision", "advanced");
+    client.setQueryData(otherLineKey, { ...section, mainLineId: "other", payload: { modeDescription: "Other line" } });
+    const defaultKey = knowledgeModeTierDataSource("default").sectionKey("line", "revision", "advanced");
+    client.setQueryData(defaultKey, { ...section, modeTier: "default", payload: { modeDescription: "Separate common wording" } });
+    try {
+      const saved = { ...section, ...(tier === "signature" ? {} : { modeTier: tier }), version: 4, aggregateVersion: 5,
+        payload: { modeDescription: "Copied by the server", pmcMarginBps: 1500 } } as KnowledgeSectionMutationEnvelope;
+      serverSibling = { ...serverSibling, version: 4, payload: { pmcMarginBps: 900, modeDescription: "Copied by the server" } };
+      source.commitSection(client, saved);
+      expect(client.getQueryData(key)).toMatchObject({ payload: { pmcMarginBps: 900 } });
+      await source.invalidateSection(client, "line");
+      expect(client.getQueryData(key)).toMatchObject({ version: 4, payload: { pmcMarginBps: 900, modeDescription: "Copied by the server" } });
+      expect(vi.mocked(api.getKnowledgeSection).mock.calls.length).toBeGreaterThanOrEqual(2);
+      expect(client.getQueryData(defaultKey)).toMatchObject({ payload: { modeDescription: "Separate common wording" } });
+      expect(client.getQueryState(defaultKey)?.isInvalidated).toBe(true);
+      expect(client.getQueryState(otherLineKey)?.isInvalidated).toBe(false);
+    } finally {
+      unsubscribe();
+      client.clear();
+    }
   });
 
   it.each([undefined, "functional"] as const)("rejects a mismatched tier response (%s)", async modeTier => {

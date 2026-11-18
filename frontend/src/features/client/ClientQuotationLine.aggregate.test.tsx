@@ -24,15 +24,15 @@ describe("governed quotation line", () => {
     view.rerender(<ClientQuotationLine {...props} currentLine={governed} />);
     expect(screen.queryByText("Hidden panel")).not.toBeInTheDocument();
     expect(screen.queryByRole("group", { name: /Components/ })).not.toBeInTheDocument();
-    expect(screen.getByText("Price including margin")).toBeVisible();
-    expect(screen.getByLabelText("Configured price for Ceiling in Living")).toHaveTextContent("₹783.33");
+    expect(screen.getByText("Price incl. GST")).toBeVisible();
+    expect(screen.getByLabelText("Configured price including GST for Ceiling in Living")).toHaveTextContent("₹924.33");
     expect(screen.getByRole("spinbutton", { name: "Quantity for Ceiling in Living sq ft" })).toHaveValue(3);
     expect(screen.getByText(/calculated for the saved quantity/)).toBeVisible();
   });
 
   it("does not disclose cached components when explicit aggregate evidence is invalid", () => {
     render(<ClientQuotationLine {...props} currentLine={{ ...governed, choices: [{ ...governed.choices[0]!, amountPaise: 1, inHouseComponents: legacy.choices[0]!.inHouseComponents }] }} />);
-    expect(screen.getByLabelText("Configured price for Ceiling in Living")).toHaveTextContent("Unavailable");
+    expect(screen.getByLabelText("Configured price including GST for Ceiling in Living")).toHaveTextContent("Unavailable");
     expect(screen.queryByText("Hidden panel")).not.toBeInTheDocument();
   });
 });

@@ -48,8 +48,8 @@ describe("staff final estimate rounding", () => {
     setup(8_000_000_000_000_000, 1_440_000_000_000_000);
     const user = userEvent.setup();
     const rate = await screen.findByRole("textbox", { name: /Selling rate/ });
-    await waitFor(() => expect(rate).toHaveValue("80000000000000"));
-    expect(screen.queryByText("Amount too large for this quantity and price.")).not.toBeInTheDocument();
+    await waitFor(() => expect(rate).toHaveValue("Too large"));
+    expect(screen.getByText("Amount too large for this quantity and price.")).toBeVisible();
     expect(screen.getByText("Total incomplete")).toBeVisible();
     expect(screen.getByRole("button", { name: "Save draft" })).toBeDisabled();
     await user.click(screen.getByRole("button", { name: "Summary" }));
@@ -66,16 +66,18 @@ describe("staff final estimate rounding", () => {
     setup(subtotalPaise, gstPaise);
     const user = userEvent.setup();
     const rate = await screen.findByRole("textbox", { name: /Selling rate/ });
-    await waitFor(() => expect(rate).toHaveValue(String(subtotalPaise / 100)));
+    await waitFor(() => expect(rate).toHaveValue(String((subtotalPaise + gstPaise) / 100)));
     await user.click(screen.getByRole("button", { name: "Summary" }));
     const summary = screen.getByRole("heading", { name: "Estimate summary" }).closest("section")!;
     expect(within(summary).getByText("Sub-total").closest("span")).toHaveTextContent(`₹${subtotalPaise / 100}`);
     expect(within(summary).getByText("GST @ 18%").closest("span")).toHaveTextContent(`₹${gstPaise / 100}`);
     expect(within(summary).getByText("Total (incl. GST)").closest("span")).toHaveTextContent(total);
     expect(within(summary).getByText("Round off").closest("span")).toHaveTextContent(adjustment);
-    expect(screen.getByText(`₹${subtotalPaise / 100} total`)).toBeVisible();
+    expect(screen.getByText(`${total} total incl. GST`)).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Proposal" }));
-    expect(screen.getByText(new RegExp(`per sq ft`))).toHaveTextContent(`₹${subtotalPaise / 100} per sq ft`);
+    expect(screen.getByText("Item prices and amounts include 18% GST.")).toBeVisible();
+    expect(screen.getByText(new RegExp(`per sq ft`)).closest("div")!.querySelector("strong")).toHaveTextContent(`₹${(subtotalPaise + gstPaise) / 100}`);
+    expect(screen.getByText(new RegExp(`per sq ft`))).toHaveTextContent(`₹${(subtotalPaise + gstPaise) / 100} per sq ft`);
   });
 
   it("keeps frozen legacy totals exactly as saved without inventing a rounding adjustment", async () => {

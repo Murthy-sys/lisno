@@ -1,3 +1,4 @@
+import { estimatePriceIncludingGst } from "../../../../shared/estimation/estimateGstPresentation";
 import { Input, Select } from "../../components/ui/Field";
 import { IconButton } from "../../components/ui/IconButton";
 import { Trash2 } from "lucide-react";
@@ -16,7 +17,8 @@ export function LineItemRow({
   onSpecChange,
   onQuantityChange,
   onRemove,
-  money
+  money,
+  pricesIncludeGst = false
 }: {
   catalogueId: string;
   description: string;
@@ -32,8 +34,15 @@ export function LineItemRow({
   onQuantityChange: (value: number) => void;
   onRemove: () => void;
   money: (value: number) => string;
+  pricesIncludeGst?: boolean;
 }) {
   const active = included && !disabled;
+  const price = (netRupees: number) => {
+    if (!pricesIncludeGst) return money(netRupees);
+    const gross = Number.isFinite(netRupees) && netRupees >= 0
+      ? estimatePriceIncludingGst(Math.round(netRupees * 100)) : null;
+    return gross === null ? "Unavailable" : money(gross / 100);
+  };
 
   return (
     <div className={`estimate-line-row flex flex-col gap-2 border-b border-[var(--color-primary)]/8 px-4 py-2 last:border-b-0 md:flex-row md:flex-wrap md:items-center md:gap-3 ${included ? "" : "opacity-50"}`}>
@@ -50,7 +59,7 @@ export function LineItemRow({
           <span className="block font-semibold text-[var(--color-primary)]">
             {description} <span className="text-xs font-normal text-[var(--color-text-muted)]">{catalogueId}</span>
           </span>
-          <span className="block text-xs text-[var(--color-text-muted)]">{money(rate)} per {unit}</span>
+          <span className="block text-xs text-[var(--color-text-muted)]">{price(rate)} per {unit}{pricesIncludeGst ? " incl. GST" : ""}</span>
         </span>
       </label>
       <div className="flex flex-wrap items-center gap-2 pl-7 md:contents md:pl-0">
@@ -81,7 +90,7 @@ export function LineItemRow({
           />
           <span className="text-xs text-[var(--color-text-muted)]">{unit}</span>
         </div>
-        <strong className="ml-auto shrink-0 text-[var(--color-primary)]">{included ? money(Math.round(quantity * rate)) : "—"}</strong>
+        <strong className="ml-auto shrink-0 text-[var(--color-primary)]" aria-label={`Amount for ${description}${pricesIncludeGst ? ", including 18% GST" : ""}`}>{included ? price(Math.round(quantity * rate)) : "—"}{pricesIncludeGst && included ? <small className="block text-xs font-normal">incl. GST</small> : null}</strong>
         <IconButton
           label={`Remove ${description}`}
           disabled={disabled}

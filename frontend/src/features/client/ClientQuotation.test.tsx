@@ -90,7 +90,7 @@ describe("Client quotation", () => {
     expect(within(modes).getByRole("radio", { name: "Mode for Storage units in Kitchen" })).toBeChecked();
     await user.click(within(modes).getByRole("radio", { name: "Premium tier for Storage units in Kitchen" }));
     await user.clear(screen.getByRole("searchbox", { name: "Search estimate items" }));
-    expect(screen.getByRole("status", { name: "Configured price for Storage in Kitchen" })).toHaveTextContent("₹750.00");
+    expect(screen.getByRole("status", { name: "Configured price including GST for Storage in Kitchen" })).toHaveTextContent("₹885.00");
     expect(screen.queryByRole("radio", { name: "Premium tier for Shelf in Kitchen" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(saves[0]).toEqual({ expectedVersion: 7, operations: [{ kind: "set_group_tier", mainBasketId: "furniture", subBasketId: "storage",
@@ -163,8 +163,8 @@ describe("Client quotation", () => {
     await user.click(await screen.findByRole("button", { name: "Increase quantity for Storage in Kitchen" }));
     await user.click(screen.getByRole("radio", { name: "Premium tier for Storage units in Kitchen" }));
     await user.click(screen.getByRole("radio", { name: "Mode for Storage units in Kitchen" }));
-    expect(screen.getByRole("status", { name: "Configured price for Storage in Kitchen" })).toHaveTextContent("₹500.00");
-    expect(screen.getByRole("status", { name: "Configured price for Shelf in Kitchen" })).toHaveTextContent("₹750.00");
+    expect(screen.getByRole("status", { name: "Configured price including GST for Storage in Kitchen" })).toHaveTextContent("₹590.00");
+    expect(screen.getByRole("status", { name: "Configured price including GST for Shelf in Kitchen" })).toHaveTextContent("₹885.00");
     expect(screen.getByRole("spinbutton", { name: "Quantity for Storage in Kitchen Unit" })).toHaveValue(3);
     await user.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(saves[0]).toEqual({ expectedVersion: 7, operations: [{ kind: "update", lineItemId: "line-one", source,
@@ -186,7 +186,7 @@ describe("Client quotation", () => {
     expect(await screen.findByText("₹102.00")).toBeVisible();
     expect(screen.getByText("Round off")).toBeVisible();
     expect(screen.getByText("−₹0.24")).toBeVisible();
-    expect(screen.getByRole("status", { name: "Saved amount for Storage in Living Room" })).toHaveTextContent("₹1,000.00");
+    expect(screen.getByRole("status", { name: "Saved amount including GST for Storage in Living Room" })).toHaveTextContent("₹1,180.00");
   });
 
   it("keeps an unrounded legacy saved quotation total until the server returns an update", async () => {
@@ -240,7 +240,7 @@ describe("Client quotation", () => {
     expect(screen.queryByRole("combobox", { name: "Configured option for Storage in Living Room" })).not.toBeInTheDocument();
     await user.click(within(row).getByRole("button", { name: "Increase quantity for Storage in Living Room" }));
     expect(within(row).getByRole("spinbutton", { name: /Quantity for Storage/ })).toHaveValue(3);
-    expect(within(row).getByRole("status", { name: "Saved amount for Storage in Living Room" })).toHaveTextContent("₹1,000.00");
+    expect(within(row).getByRole("status", { name: "Saved amount including GST for Storage in Living Room" })).toHaveTextContent("₹1,180.00");
     expect(screen.getByText("₹6,180.00")).toBeVisible();
     const more = within(row).getByRole("button", { name: "More options for Storage in Living Room" });
     await user.click(more);
@@ -284,7 +284,7 @@ describe("Client quotation", () => {
     expect(screen.queryByRole("spinbutton", { name: /Quantity for Storage/ })).not.toBeInTheDocument();
     await user.clear(length); await user.type(length, "4");
     expect(screen.getByRole("status", { name: "Quantity for Storage in Living Room sq ft" })).toHaveTextContent("4");
-    expect(screen.getByRole("status", { name: "Saved amount for Storage in Living Room" })).toHaveTextContent("₹1,000.00");
+    expect(screen.getByRole("status", { name: "Saved amount including GST for Storage in Living Room" })).toHaveTextContent("₹1,180.00");
     await user.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(saves[0]).toEqual({ expectedVersion: 7, operations: [{ kind: "update", lineItemId: "line-one", source, included: true, quantity: 4, modeTier: "signature", dimensions: { length: "4", width: "1", height: "8" } }] }));
   });
@@ -349,7 +349,7 @@ describe("Client quotation", () => {
     await act(async () => { await client().refetchQueries({ queryKey: quotationKeys.detail("project-one") }); });
     await waitFor(() => expect(screen.queryByRole("button", { name: "Save changes" })).not.toBeInTheDocument());
     expect(quantity).toHaveValue(9);
-    expect(screen.getByRole("status", { name: "Saved amount for Storage in Living Room" })).toHaveTextContent("₹1,500.00");
+    expect(screen.getByRole("status", { name: "Saved amount including GST for Storage in Living Room" })).toHaveTextContent("₹1,770.00");
     expect(saves).toEqual([]);
     await user.click(screen.getByRole("button", { name: "Load latest quotation and discard changes" }));
     await waitFor(() => expect(quantity).toHaveValue(3));
@@ -558,7 +558,7 @@ describe("Client quotation", () => {
     expect(within(row).queryByRole("radio", { name: /tier/ })).not.toBeInTheDocument();
     expect(screen.getByRole("radio", { name: "Premium tier for Storage units in Kitchen" })).toBeDisabled();
     expect(within(row).getByText(/This saved item is unavailable in the current Configuration/)).toBeVisible();
-    expect(within(row).getByText("₹1,000.00")).toBeVisible();
+    expect(within(row).getByText("₹1,180.00")).toBeVisible();
     await user.click(inclusion);
     fireEvent.change(quantity, { target: { value: "9" } });
     expect(quantity).toHaveValue(2);

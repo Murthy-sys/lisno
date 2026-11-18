@@ -33,6 +33,7 @@ import type {
   KnowledgePermanentDeleteBasketResult,
   KnowledgeSectionEnvelope,
   KnowledgeSectionMutationEnvelope,
+  KnowledgeTierDescriptionInitializationResult,
   KnowledgeSectionKey,
   KnowledgeSurface,
   KnowledgeSurfaceListResponse
@@ -131,6 +132,11 @@ export interface KnowledgeSectionUpdate<TPayload extends KnowledgeJsonObject> {
 export interface KnowledgeExpectedVersionCommand {
   readonly expectedVersion: number;
   readonly reason?: string;
+}
+
+export interface KnowledgeTierDescriptionInitializationInput {
+  readonly expectedVersion: number;
+  readonly expectedAggregateVersion: number;
 }
 
 export interface KnowledgeContextRequest {
@@ -371,6 +377,17 @@ function createKnowledgeRevision(
 ): Promise<KnowledgeItemDetail> {
   return apiClient.post<KnowledgeItemDetail>(
     `${ADMIN_PREFIX}/main-lines/${segment(mainLineId)}/revisions`,
+    input
+  );
+}
+
+function initializeKnowledgeTierDescriptions(
+  mainLineId: string,
+  revisionId: string,
+  input: KnowledgeTierDescriptionInitializationInput
+): Promise<KnowledgeTierDescriptionInitializationResult> {
+  return apiClient.post<KnowledgeTierDescriptionInitializationResult>(
+    `${ADMIN_PREFIX}/main-lines/${segment(mainLineId)}/revisions/${segment(revisionId)}/initialize-tier-descriptions`,
     input
   );
 }
@@ -665,6 +682,7 @@ return {
   getKnowledgeHistory,
   getKnowledgeSection,
   updateKnowledgeSection,
+  initializeKnowledgeTierDescriptions,
   createKnowledgeRevision,
   activateKnowledgeRevision,
   deactivateKnowledgeItem,

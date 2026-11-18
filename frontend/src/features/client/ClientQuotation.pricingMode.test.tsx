@@ -91,7 +91,7 @@ describe("Client quotation pricing modes", () => {
     const row = await screen.findByRole("group", { name: "Storage Living Room" });
     expect(within(row).getByText("Special")).toBeVisible();
     expect(within(row).queryByRole("radio", { name: /(?:Standard|Special)/ })).not.toBeInTheDocument();
-    expect(within(row).getByText("Rate (₹/Unit)")).toBeVisible();
+    expect(within(row).getByText("Rate incl. GST (₹/Unit)")).toBeVisible();
     expect(within(row).getAllByRole("spinbutton")).toHaveLength(1);
     within(row).getByRole("checkbox", { name: "Include Storage in Living Room" }).focus();
     await user.tab();
@@ -113,8 +113,8 @@ describe("Client quotation pricing modes", () => {
     expect(toggle).toBeChecked();
     expect(toggle).toHaveFocus();
     expect(screen.queryByRole("radio", { name: /Sub-Vendor pricing mode/ })).not.toBeInTheDocument();
-    expect(screen.getByRole("status", { name: "Configured price for Storage in Living Room" })).toHaveTextContent("₹250.00");
-    expect(screen.getByRole("status", { name: "Saved amount for Storage in Living Room" })).toHaveTextContent("₹1,000.00");
+    expect(screen.getByRole("status", { name: "Configured price including GST for Storage in Living Room" })).toHaveTextContent("₹295.00");
+    expect(screen.getByRole("status", { name: "Saved amount including GST for Storage in Living Room" })).toHaveTextContent("₹1,180.00");
     expect(screen.queryByText(/Configured price:|Base price:/)).not.toBeInTheDocument();
     expect((await axe.run(container, { rules: { "color-contrast": { enabled: false } } })).violations).toEqual([]);
     await user.click(screen.getByRole("button", { name: "Save changes" }));
@@ -123,7 +123,7 @@ describe("Client quotation pricing modes", () => {
     await screen.findByText("Changes saved. Your team will review the revised quotation before approval.");
     expect(state.detail.lines[0]!.pricingMode).toBe("pmc");
     expect(screen.getByRole("switch", { name: toggleName })).toBeChecked();
-    expect(screen.getByRole("status", { name: "Saved amount for Storage in Living Room" })).toHaveTextContent("₹500.00");
+    expect(screen.getByRole("status", { name: "Saved amount including GST for Storage in Living Room" })).toHaveTextContent("₹590.00");
   });
 
   it("remembers non-PMC selection across room changes without sharing modes or stale component selections", async () => {
@@ -202,8 +202,8 @@ describe("Client quotation pricing modes", () => {
     await user.keyboard(" ");
     expect(finish).toBeChecked();
     expect(finish).toHaveFocus();
-    expect(screen.getByRole("status", { name: "Configured price for Storage in Living Room" })).toHaveTextContent("From components");
-    expect(screen.getByRole("status", { name: "Saved amount for Storage in Living Room" })).toHaveTextContent("₹1,000.00");
+    expect(screen.getByRole("status", { name: "Configured price including GST for Storage in Living Room" })).toHaveTextContent("From components");
+    expect(screen.getByRole("status", { name: "Saved amount including GST for Storage in Living Room" })).toHaveTextContent("₹1,180.00");
     expect(screen.queryByRole("button", { name: /Retry calculation|Use calculated rate/ })).not.toBeInTheDocument();
     expect((await axe.run(container, { rules: { "color-contrast": { enabled: false } } })).violations).toEqual([]);
     await user.click(screen.getByRole("button", { name: "Save changes" }));
@@ -223,7 +223,7 @@ describe("Client quotation pricing modes", () => {
     expect(within(components).getByRole("checkbox", { name: "Finish" })).toBeChecked();
     expect(within(components).getByRole("checkbox", { name: "Finish" })).toBeDisabled();
     expect(within(row).queryByRole("switch")).not.toBeInTheDocument();
-    expect(within(row).getByRole("status", { name: "Saved amount for Storage in Living Room" })).toHaveTextContent("₹1,000.00");
+    expect(within(row).getByRole("status", { name: "Saved amount including GST for Storage in Living Room" })).toHaveTextContent("₹1,180.00");
     expect(saves).toEqual([]);
   });
 
@@ -232,7 +232,7 @@ describe("Client quotation pricing modes", () => {
     value.lines[0]!.pricingModeChoices![1]!.choices[0] = { ...modeChoices[1]!.choices[0]!, available: false, unavailableReason: "PMC price is unavailable.", ratePaise: null, amountPaise: null };
     const { saves } = setup(value);
     await user.click(await screen.findByRole("switch", { name: toggleName }));
-    expect(screen.getByRole("status", { name: "Configured price for Storage in Living Room" })).toHaveTextContent("Unavailable");
+    expect(screen.getByRole("status", { name: "Configured price including GST for Storage in Living Room" })).toHaveTextContent("Unavailable");
     expect(screen.getByText("PMC price is unavailable.")).toBeVisible();
     expect(screen.getByRole("radio", { name: "Signature tier for Direct items in Furniture, Living Room" })).toBeDisabled();
     await user.click(screen.getByRole("button", { name: "Save changes" }));
@@ -252,7 +252,7 @@ describe("Client quotation pricing modes", () => {
     await user.click(await screen.findByRole("button", { name: "Add items" }));
     await user.click(await screen.findByRole("button", { name: "Add Desk" }));
     expect(screen.getByText("Sub-Vendor price is unavailable.")).toBeVisible();
-    expect(screen.getByRole("status", { name: "Amount for Desk in Living Room" })).toHaveTextContent("After save");
+    expect(screen.getByRole("status", { name: "Amount including GST for Desk in Living Room" })).toHaveTextContent("After save");
     await user.click(screen.getByRole("switch", { name: "PMC pricing mode for Desk in Living Room" }));
     await user.click(screen.getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(saves).toHaveLength(1));

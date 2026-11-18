@@ -1,5 +1,6 @@
 import { resolveEstimateDimensionRule } from "../domain/estimate-dimensions.js";
-import { isKnowledgeModeTier, isKnowledgeModeConfigurationScope, isKnowledgeModeSection, knowledgeModeTierPayload, knowledgeModeConfigurationPayloads, projectKnowledgeModeTierSection, mergeKnowledgeModeTierPayload, expandKnowledgeModeTierRows, type KnowledgeModeConfigurationScope } from "../domain/ai-estimator-knowledge-mode-tiers.js";
+import { isKnowledgeModeTier, isKnowledgeModeConfigurationScope, isKnowledgeModeSection, knowledgeModeTierPayload, knowledgeModeConfigurationPayloads, projectKnowledgeModeTierSection, mergeKnowledgeModeTierPayload, expandKnowledgeModeTierRows, type KnowledgeModeConfigurationScope, type KnowledgeModeTier } from "../domain/ai-estimator-knowledge-mode-tiers.js";
+import { copyUninitializedTierDescriptions, initializeSavedTierDescriptions } from "../domain/ai-estimator-knowledge-tier-description-copy.js";
 import { readInHouseComponents } from "../domain/ai-estimator-knowledge-in-house-components.js";
 import type { KnowledgeApplySubBasketMarginsInput, KnowledgeApplySubBasketMarginsResult, KnowledgeSubBasketMarginSummary } from "../contracts/ai-estimator-knowledge-sub-basket-margins.js";
 import { SUB_BASKET_MARGIN_MODES, subBasketMarginPatchUnavailableReason, withSubBasketMarginDefaults } from "../domain/ai-estimator-knowledge-sub-basket-margins.js";
@@ -18,7 +19,9 @@ import type {
   KnowledgeSlabRate,
   KnowledgeRevision,
   KnowledgeSectionEnvelope,
-  KnowledgeSectionMutationEnvelope
+  KnowledgeSectionMutationEnvelope,
+  KnowledgeTierDescriptionInitializationInput,
+  KnowledgeTierDescriptionInitializationResult
 } from "../contracts/ai-estimator-knowledge.js";
 import {
   calculateSlabRateEstimatedCost,
@@ -230,6 +233,12 @@ export interface AiEstimatorKnowledgeItemService {
     sectionKey: KnowledgeSectionKey,
     input: KnowledgeSectionUpdateInput
   ): Promise<KnowledgeSectionMutationEnvelope<Row>>;
+  initializeTierDescriptions(
+    actor: PublicUser,
+    mainLineId: string,
+    revisionId: string,
+    input: KnowledgeTierDescriptionInitializationInput
+  ): Promise<KnowledgeTierDescriptionInitializationResult>;
   activate(
     actor: PublicUser,
     mainLineId: string,
@@ -381,6 +390,66 @@ export function createAiEstimatorKnowledgeItemService(
     }, session);
   }
 
+  async function persistSectionInSession({ actorId, mainLineId, revisionId, sectionKey, section,
+    previousRootPayload, storedPayload, rootApplicability, expectedVersion, expectedAggregateVersion,
+    modeTier, occurredAt, auditDetails }: {
+      actorId: string; mainLineId: string; revisionId: string; sectionKey: KnowledgeSectionKey; section: Row;
+      previousRootPayload: Row; storedPayload: Row; rootApplicability: KnowledgeSectionApplicability;
+      expectedVersion: number; expectedAggregateVersion: number; modeTier: KnowledgeModeConfigurationScope;
+      occurredAt: Date; auditDetails: Row;
+    }, session: ClientSession): Promise<{ section: Row; aggregateVersion: number }> {
+    const updatedSection = await AiEstimatorKnowledgeSectionModel.findOneAndUpdate(
+      { _id: section._id, version: expectedVersion, revisionId },
+      {
+        $set: {
+          applicability: rootApplicability,
+          payload: storedPayload,
+          updatedById: actorId,
+          updatedAt: occurredAt
+        },
+        $inc: { version: 1 }
+      },
+      { new: true, runValidators: true, session }
+    ).lean().exec();
+    if (!updatedSection) versionConflict();
+    const updatedLine = await AiEstimatorKnowledgeMainLineModel.findOneAndUpdate(
+      { _id: mainLineId, version: expectedAggregateVersion, draftRevisionId: revisionId },
+      { $set: { updatedById: actorId, updatedAt: occurredAt }, $inc: { version: 1 } },
+      { new: true, session }
+    ).lean().exec();
+    if (!updatedLine) versionConflict();
+
+    const rows = (await AiEstimatorKnowledgeSectionModel.find({ mainLineId, revisionId })
+      .session(session).lean().exec()).map((row) => asRow(row)!);
+    await validateRevisionRelationships(mainLineId, rows, session, {
+      updatedSectionKey: sectionKey,
+      updatedModeTier: modeTier,
+      previousPayload: previousRootPayload
+    });
+    const completeness = completenessForRows(mainLineId, rows);
+    await AiEstimatorKnowledgeRevisionModel.updateOne(
+      { _id: revisionId, status: "draft" },
+      {
+        $set: { completeness, updatedById: actorId, updatedAt: occurredAt },
+        $inc: { version: 1 }
+      },
+      { session }
+    ).exec();
+    await dependencies.audit.appendInMongoTransaction({
+      actorId,
+      action: "ai_estimator_knowledge_section_updated",
+      entityType: "ai_estimator_knowledge_section",
+      entityId: requiredString(section._id),
+      occurredAt: occurredAt.toISOString(),
+      oldValues: { mainLineId, revisionId, sectionKey, sectionVersion: expectedVersion, aggregateVersion: expectedAggregateVersion },
+      newValues: { sectionVersion: expectedVersion + 1, aggregateVersion: expectedAggregateVersion + 1, ...auditDetails }
+    }, session);
+    return {
+      section: asRow(updatedSection)!,
+      aggregateVersion: requiredInteger(asRow(updatedLine)!.version)
+    };
+  }
+
   async function updateSectionInSession(actor: PublicUser, mainLineId: string, revisionId: string, sectionKey: KnowledgeSectionKey, input: KnowledgeSectionUpdateInput, session: ClientSession, marginDefaults?: Row): Promise<{ section: Row; aggregateVersion: number }> {
     const modeTier = validateModeTierRequest(sectionKey, input.modeTier, input.payload);
     validateSectionPayloadOrThrow(sectionKey, input.payload);
@@ -480,59 +549,31 @@ export function createAiEstimatorKnowledgeItemService(
         : hasKnowledgeSectionContent(persistedPayload)
           ? "configured"
           : "not_configured";
-    const storedPayload = isKnowledgeModeSection(sectionKey)
+    let storedPayload = isKnowledgeModeSection(sectionKey)
       ? mergeKnowledgeModeTierPayload(previousRootPayload, modeTier, persistedPayload, storedApplicability) : persistedPayload;
+    let rootApplicability = (modeTier === "signature" ? storedApplicability : section.applicability) as KnowledgeSectionApplicability;
+    let copiedDescriptionTiers: KnowledgeModeTier[] = [];
+    if (sectionKey === "advanced" && !marginDefaults && isKnowledgeModeTier(modeTier)
+      && typeof persistedPayload.modeDescription === "string" && persistedPayload.modeDescription.trim()
+      && persistedPayload.modeDescription !== previousPayload.modeDescription) {
+      const overview = asRow(await AiEstimatorKnowledgeSectionModel.findOne({ mainLineId, revisionId, sectionKey: "overview" })
+        .session(session).lean().exec());
+      if (!overview) notFound();
+      const copied = copyUninitializedTierDescriptions({
+        previousPayload: previousRootPayload, payload: storedPayload, rootApplicability,
+        sourceApplicability: storedApplicability, modeTier, overviewPayload: payloadFor(overview)
+      });
+      storedPayload = copied.payload;
+      rootApplicability = copied.rootApplicability;
+      copiedDescriptionTiers = copied.copiedTiers;
+    }
     validatePreservedModeNamespaces(sectionKey, storedPayload, previousRootPayload, modeTier);
-    const updatedSection = await AiEstimatorKnowledgeSectionModel.findOneAndUpdate(
-      { _id: section._id, version: input.expectedVersion, revisionId },
-      {
-        $set: {
-          applicability: modeTier === "signature" ? storedApplicability : section.applicability,
-          payload: storedPayload,
-          updatedById: storedActor.id,
-          updatedAt: occurredAt
-        },
-        $inc: { version: 1 }
-      },
-      { new: true, runValidators: true, session }
-    ).lean().exec();
-    if (!updatedSection) versionConflict();
-    const updatedLine = await AiEstimatorKnowledgeMainLineModel.findOneAndUpdate(
-      { _id: mainLineId, version: expectedAggregateVersion, draftRevisionId: revisionId },
-      { $set: { updatedById: storedActor.id, updatedAt: occurredAt }, $inc: { version: 1 } },
-      { new: true, session }
-    ).lean().exec();
-    if (!updatedLine) versionConflict();
-
-    const rows = (await AiEstimatorKnowledgeSectionModel.find({ mainLineId, revisionId })
-      .session(session).lean().exec()).map((row) => asRow(row)!);
-    await validateRevisionRelationships(mainLineId, rows, session, {
-      updatedSectionKey: sectionKey,
-      updatedModeTier: modeTier,
-      previousPayload: previousRootPayload
-    });
-    const completeness = completenessForRows(mainLineId, rows);
-    await AiEstimatorKnowledgeRevisionModel.updateOne(
-      { _id: revisionId, status: "draft" },
-      {
-        $set: { completeness, updatedById: storedActor.id, updatedAt: occurredAt },
-        $inc: { version: 1 }
-      },
-      { session }
-    ).exec();
-    await dependencies.audit.appendInMongoTransaction({
-      actorId: storedActor.id,
-      action: "ai_estimator_knowledge_section_updated",
-      entityType: "ai_estimator_knowledge_section",
-      entityId: requiredString(section._id),
-      occurredAt: occurredAt.toISOString(),
-      oldValues: { mainLineId, revisionId, sectionKey, sectionVersion: input.expectedVersion, aggregateVersion: expectedAggregateVersion },
-      newValues: { sectionVersion: input.expectedVersion + 1, aggregateVersion: expectedAggregateVersion + 1, modeTier, applicability: storedApplicability, ...(marginDefaults ? { marginDefaults } : {}) }
+    return persistSectionInSession({ actorId: storedActor.id, mainLineId, revisionId, sectionKey, section,
+      previousRootPayload, storedPayload, rootApplicability, expectedVersion: input.expectedVersion,
+      expectedAggregateVersion, modeTier, occurredAt,
+      auditDetails: { modeTier, applicability: storedApplicability,
+        ...(copiedDescriptionTiers.length ? { copiedDescriptionTiers } : {}), ...(marginDefaults ? { marginDefaults } : {}) }
     }, session);
-    return {
-      section: asRow(updatedSection)!,
-      aggregateVersion: requiredInteger(asRow(updatedLine)!.version)
-    };
   }
 
   return {
@@ -934,6 +975,37 @@ export function createAiEstimatorKnowledgeItemService(
         ? await enrichPricingSectionDto(projected)
         : { ...sectionDto(projected), ...(modeTier !== "signature" ? { modeTier } : {}) };
       return { ...section, aggregateVersion: mutation.aggregateVersion };
+    },
+
+    async initializeTierDescriptions(actor, mainLineId, revisionId, input) {
+      for (const key of ["expectedVersion", "expectedAggregateVersion"] as const) {
+        if (!Number.isSafeInteger(input[key]) || input[key] < 1) invalid(key, "Expected a positive integer version.");
+      }
+      return mongoose.connection.transaction(async session => {
+        const storedActor = await actorGuard.requireMutationActor(actor, session);
+        const line = asRow(await AiEstimatorKnowledgeMainLineModel.findById(mainLineId).session(session).lean().exec());
+        const revision = asRow(await AiEstimatorKnowledgeRevisionModel.findOne({ _id: revisionId, mainLineId }).session(session).lean().exec());
+        const section = asRow(await AiEstimatorKnowledgeSectionModel.findOne({ mainLineId, revisionId, sectionKey: "advanced" }).session(session).lean().exec());
+        const overview = asRow(await AiEstimatorKnowledgeSectionModel.findOne({ mainLineId, revisionId, sectionKey: "overview" }).session(session).lean().exec());
+        if (!line || !revision || !section || !overview) notFound();
+        if (revision.status !== "draft" || line.draftRevisionId !== revisionId || line.status === "archived") immutableHistory();
+        if (requiredInteger(section.version) !== input.expectedVersion || requiredInteger(line.version) !== input.expectedAggregateVersion) versionConflict();
+        const previousRootPayload = payloadFor(section);
+        const copied = initializeSavedTierDescriptions({ payload: previousRootPayload,
+          rootApplicability: section.applicability as KnowledgeSectionApplicability, overviewPayload: payloadFor(overview) });
+        if (!copied.sourceTier) return { mainLineId, revisionId, version: input.expectedVersion,
+          aggregateVersion: input.expectedAggregateVersion, sourceTier: null, copiedTiers: [] };
+        validatePreservedModeNamespaces("advanced", copied.payload, previousRootPayload, copied.sourceTier);
+        const mutation = await persistSectionInSession({ actorId: storedActor.id, mainLineId, revisionId,
+          sectionKey: "advanced", section, previousRootPayload, storedPayload: copied.payload,
+          rootApplicability: copied.rootApplicability, expectedVersion: input.expectedVersion,
+          expectedAggregateVersion: input.expectedAggregateVersion, modeTier: copied.sourceTier, occurredAt: now(),
+          auditDetails: { modeTier: copied.sourceTier, sourceTier: copied.sourceTier, initialization: true,
+            applicability: "configured", copiedDescriptionTiers: copied.copiedTiers }
+        }, session);
+        return { mainLineId, revisionId, version: requiredInteger(mutation.section.version),
+          aggregateVersion: mutation.aggregateVersion, sourceTier: copied.sourceTier, copiedTiers: copied.copiedTiers };
+      });
     },
 
     async activate(actor, mainLineId, revisionId, input) {
