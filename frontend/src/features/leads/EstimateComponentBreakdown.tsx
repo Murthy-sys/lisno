@@ -1,3 +1,4 @@
+import { estimatePriceIncludingGst } from "../../../../shared/estimation/estimateGstPresentation";
 import type { EstimateComponentPricing } from "../../../../shared/estimation/estimateComponentPricing";
 import { configuredAggregatePricing, configuredInHouseGoverned, configuredComponentPricing, configuredDimensionsIssue, configuredInHouseSelectionIssue, configuredUsesComponentPricing, type ConfiguredLineDraft } from "./configuredEstimate";
 import "./estimate-in-house-components.css";
@@ -5,7 +6,7 @@ import "./estimate-in-house-components.css";
 const money = (paise: number) => `₹${(paise / 100).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 export function EstimateComponentBreakdown({ pricing, label }: { pricing: EstimateComponentPricing; label: string }) {
-  return <details className="estimate-component-breakdown"><summary>Component selling amounts for {label} · {money(pricing.totalPaise)}</summary>
+  return <details className="estimate-component-breakdown"><summary>Component selling amounts for {label} · {money(pricing.totalPaise)} before GST</summary>
     <p>{pricing.quantity} {pricing.uom.name} · Calculated from saved component settings</p>
     {pricing.components.map(component => <div className="estimate-component-breakdown__row" key={component.id}>
       <strong>{component.basketName} / {component.subBasketName ?? "Existing In-house settings"}</strong>
@@ -21,8 +22,9 @@ export function EstimateComponentPricingStatus({ line, editable, displayedIssue 
 }) {
   if (!configuredUsesComponentPricing(line) || !line.included) return null;
   const aggregate = configuredAggregatePricing(line);
-  if (aggregate) return <p className="estimate-component-breakdown" aria-label={`Price including margin for ${line.mainLineName} in ${line.roomName}`}>
-    Price including margin: <strong>{money(aggregate.totalPaise)}</strong> · {aggregate.quantity} {aggregate.uom.name}
+  const aggregateGross = estimatePriceIncludingGst(aggregate?.totalPaise);
+  if (aggregate) return <p className="estimate-component-breakdown" aria-label={`Price including margin for ${line.mainLineName} in ${line.roomName}, including 18% GST`}>
+    Price incl. GST: <strong>{aggregateGross === null ? "Unavailable" : money(aggregateGross)}</strong> · {aggregate.quantity} {aggregate.uom.name}
   </p>;
   const governed = configuredInHouseGoverned(line);
   const pricing = governed ? null : configuredComponentPricing(line);
@@ -63,7 +65,7 @@ export function EstimateSubBasketAmounts({ lines }: { lines: readonly Configured
       `${line.mainLineName} · ${line.roomName} · ${pricing.quantity} ${pricing.uom.name}`, component.totalPaise);
   }
   return <section className="estimate-component-breakdown" aria-label="In-house amounts by component Sub-Basket">
-    <h3>In-house amounts by Sub-Basket</h3><p>Each Main Line contributes its selected components. These amounts are already included in the estimate total. Group amounts follow the component targets; items remain in their catalogue groups.</p>
+    <h3>In-house amounts by Sub-Basket</h3><p>Amounts are before GST. Each Main Line contributes its selected components. These amounts are already included in the estimate total. Group amounts follow the component targets; items remain in their catalogue groups.</p>
     {lines.some(line => line.included && configuredInHouseGoverned(line)) ? <p>These subtotals show visible components only. Combined-price lines remain included in the full estimate total.</p> : null}
     {incomplete ? <p role="status">Some component amounts are incomplete. Sub-Basket amounts below show calculated contributions only.</p> : null}
     {[...groups].map(([key, group]) => {

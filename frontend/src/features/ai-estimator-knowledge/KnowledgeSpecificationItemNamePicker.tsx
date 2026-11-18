@@ -12,6 +12,8 @@ import {
   sanitizeSpecificationItemName
 } from "../../../../shared/knowledge/knowledgeSpecificationItemNames";
 import type { KnowledgeSpecificationItemNameLookup } from "./knowledgeEditorDataSource";
+import type { KnowledgeSpecificationItemName } from "./knowledgeTypes";
+import type { KnowledgeSpecificationItemSelection } from "./knowledgeSpecificationBrandPrefill";
 import "./knowledge-specification-item-name-picker.css";
 
 interface Props extends FieldControlProps {
@@ -20,7 +22,7 @@ interface Props extends FieldControlProps {
   readonly otherRowNames: readonly string[];
   readonly lookup: KnowledgeSpecificationItemNameLookup;
   readonly readOnly: boolean;
-  readonly onChange: (name: string) => void;
+  readonly onChange: (selection: KnowledgeSpecificationItemSelection) => void;
 }
 
 /** Search is only discovery; selection and Add item update the existing Mode draft. */
@@ -64,12 +66,18 @@ export const KnowledgeSpecificationItemNamePicker = forwardRef<HTMLButtonElement
     });
     const conflicts = useMemo(() => new Set(otherRowNames.map(normalizeSpecificationItemName)), [otherRowNames]);
     const options = useMemo(() => mergeSavedAndDraftNames(
-      catalog.data?.pages.flatMap((page) => page.items.map((item) => item.name)) ?? [], draftNames
+      catalog.data?.pages.flatMap((page) => page.items) ?? [], draftNames
     ).filter((item) => !searchKey || normalizeSpecificationItemName(item.name).includes(searchKey)), [catalog.data, draftNames, searchKey]);
-    const matches = useMemo(() => matchSpecificationItemNames(mergeSavedAndDraftNames([
-      ...(checked.data?.exactMatch ? [checked.data.exactMatch.name] : []),
-      ...(checked.data?.similarItems.map((item) => item.name) ?? [])
-    ], draftNames), cleanCandidate ?? ""), [checked.data, cleanCandidate, draftNames]);
+    const matches = useMemo(() => {
+      const choices = mergeSavedAndDraftNames([
+        ...(checked.data?.exactMatch ? [checked.data.exactMatch] : []),
+        ...(checked.data?.similarItems ?? [])
+      ], draftNames);
+      const matched = matchSpecificationItemNames(choices, cleanCandidate ?? "");
+      const selection = (name: string) => choices.find(choice => choice.name === name)!;
+      return { exactMatch: matched.exactMatch ? selection(matched.exactMatch.name) : null,
+        similarItems: matched.similarItems.map(item => selection(item.name)) };
+    }, [checked.data, cleanCandidate, draftNames]);
     const checkReady = cleanCandidate !== null && cleanCandidate === debouncedCandidate && checked.isSuccess && !checked.isFetching;
     const catalogPending = catalog.isPending || search !== debouncedSearch;
     const candidateConflict = cleanCandidate !== null && conflicts.has(normalizeSpecificationItemName(cleanCandidate));
@@ -85,9 +93,9 @@ export const KnowledgeSpecificationItemNamePicker = forwardRef<HTMLButtonElement
       if (returnFocus) triggerRef.current?.focus();
     }
 
-    function select(name: string) {
-      if (readOnly || conflicts.has(normalizeSpecificationItemName(name))) return;
-      onChange(name);
+    function select(selection: KnowledgeSpecificationItemSelection) {
+      if (readOnly || conflicts.has(normalizeSpecificationItemName(selection.name))) return;
+      onChange(selection);
       setAdding(false);
       close(true);
     }
@@ -100,7 +108,7 @@ export const KnowledgeSpecificationItemNamePicker = forwardRef<HTMLButtonElement
 
     function add(event: FormEvent) {
       event.preventDefault();
-      if (canAdd && cleanCandidate) select(cleanCandidate);
+      if (canAdd && cleanCandidate) select({ name: cleanCandidate, origin: "new" });
     }
 
     function focusSearch() {
@@ -156,7 +164,7 @@ export const KnowledgeSpecificationItemNamePicker = forwardRef<HTMLButtonElement
                 return <button key={normalizeSpecificationItemName(item.name)} ref={(element) => { if (element) optionRefs.current.set(item.name, element); else optionRefs.current.delete(item.name); }}
                   type="button" role="option" aria-selected={normalizeSpecificationItemName(value) === normalizeSpecificationItemName(item.name)}
                   disabled={conflict || (catalog.isFetching && !catalog.isFetchingNextPage)} tabIndex={activeName === item.name || (activeName === null && availableOptions[0]?.name === item.name) ? 0 : -1}
-                  className="knowledge-item-name-picker__option" onFocus={() => setActiveName(item.name)} onClick={() => select(item.name)}
+                  className="knowledge-item-name-picker__option" onFocus={() => setActiveName(item.name)} onClick={() => select(item)}
                   onKeyDown={(event) => {
                     if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); move(event.key === "ArrowDown" ? 1 : -1); }
                     else if (event.key === "Home" || event.key === "End") { event.preventDefault(); setActiveName((event.key === "Home" ? availableOptions[0] : availableOptions.at(-1))?.name ?? null); }
@@ -180,9 +188,9 @@ export const KnowledgeSpecificationItemNamePicker = forwardRef<HTMLButtonElement
               {cleanCandidate && (checked.isPending || checked.isFetching || cleanCandidate !== debouncedCandidate) ? <p role="status">Checking saved items…</p> : null}
               {cleanCandidate && checked.isError ? <div role="alert"><p>{lookupError(checked.error)}</p><Button type="button" variant="secondary" onClick={() => void checked.refetch()}>Retry check</Button></div> : null}
               {checkReady ? <>
-                {candidateConflict ? <p role="alert">This item is already included in this Mode.</p> : matches.exactMatch ? <div><p>This item already exists.</p><Button type="button" variant="secondary" onClick={() => select(matches.exactMatch!.name)}>Select {matches.exactMatch.name}</Button></div> : null}
+                {candidateConflict ? <p role="alert">This item is already included in this Mode.</p> : matches.exactMatch ? <div><p>This item already exists.</p><Button type="button" variant="secondary" onClick={() => select(matches.exactMatch!)}>Select {matches.exactMatch.name}</Button></div> : null}
                 {mustConfirm ? <div><p>Similar items</p><div className="knowledge-item-name-picker__matches">
-                  {matches.similarItems.map((item) => <Button key={item.name} type="button" variant="secondary" disabled={conflicts.has(normalizeSpecificationItemName(item.name))} onClick={() => select(item.name)}>{item.name}{conflicts.has(normalizeSpecificationItemName(item.name)) ? " (already included)" : ""}</Button>)}
+                  {matches.similarItems.map((item) => <Button key={item.name} type="button" variant="secondary" disabled={conflicts.has(normalizeSpecificationItemName(item.name))} onClick={() => select(item)}>{item.name}{conflicts.has(normalizeSpecificationItemName(item.name)) ? " (already included)" : ""}</Button>)}
                 </div><label className="knowledge-item-name-picker__confirmation"><Checkbox checked={confirmation === confirmationKey} onChange={(event) => setConfirmation(event.target.checked ? confirmationKey : null)} />Use “{cleanCandidate}” as a different item</label></div> : null}
               </> : null}
             </div>
@@ -200,13 +208,12 @@ function lookupError(error: unknown): string {
     : "The saved item list could not load. Retry to continue.";
 }
 
-function mergeSavedAndDraftNames(savedNames: readonly string[], draftNames: readonly string[]) {
-  const saved = collectSpecificationItemNames(savedNames);
-  const savedKeys = new Set(saved.map((item) => normalizeSpecificationItemName(item.name)));
-  return collectSpecificationItemNames([
-    ...saved.map((item) => item.name),
-    ...draftNames.filter((name) => !savedKeys.has(normalizeSpecificationItemName(name)))
-  ]);
+function mergeSavedAndDraftNames(saved: readonly KnowledgeSpecificationItemName[], draftNames: readonly string[]): KnowledgeSpecificationItemSelection[] {
+  const savedByName = new Map(saved.map(item => [normalizeSpecificationItemName(item.name), item]));
+  return collectSpecificationItemNames([...saved.map(item => item.name), ...draftNames]).map(item => {
+    const stored = savedByName.get(normalizeSpecificationItemName(item.name));
+    return stored ? { ...stored, origin: "saved" } : { ...item, origin: "draft" };
+  });
 }
 
 function useDebouncedValue<T>(value: T): T {

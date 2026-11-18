@@ -1,4 +1,6 @@
 import { EstimateSubBasketModes } from "../estimates/EstimateSubBasketModes";
+import { EstimateLineTierDetails } from "../estimates/EstimateLineTierDetails";
+import { estimatePriceIncludingGst } from "../../../../shared/estimation/estimateGstPresentation";
 import { hasGovernedInHousePrice, lineAggregatePrice } from "../estimates/estimateAggregatePresentation";
 import type { EstimateTierComparisonInput } from "../estimates/estimateTierComparisonApi";
 import { ESTIMATE_COMPONENT_PRICING_BASIS, readEstimateComponentPricing } from "../../../../shared/estimation/estimateComponentPricing";
@@ -242,7 +244,8 @@ export function ClientEstimateTiers({ projectId }: { projectId: string }) {
       const disabled = !mayEdit || needsReview || dimensionsRequired || Boolean(dimensionsDraft) || Boolean(draft && draft.groupKey !== group.key);
       const label = `${line.mainLineName} in ${line.roomName}`;
       return <div className="client-estimate-tiers__line" key={line.id}>
-        <div className="client-estimate-tiers__line-heading"><div><h3>{line.mainLineName}</h3><p>{line.roomName} · {line.quantity} {line.uomName}</p></div><p>Saved amount <strong>{money(line.amountPaise)}</strong></p></div>
+        <div className="client-estimate-tiers__line-heading"><div><h3>{line.mainLineName}</h3><p>{line.roomName} · {line.quantity} {line.uomName}</p></div><p>Saved amount incl. GST <strong>{money(estimatePriceIncludingGst(line.amountPaise))}</strong></p></div>
+        <EstimateLineTierDetails rowKey={line.id} label={label} tier={tier} description={choice?.source ? choice.description : null} />
         {line.dimensionsMandatory ? dimensionsDraft?.lineId === line.id ? <div>
           <EstimateDimensionsFields label={label} dimensions={dimensionsDraft.dimensions} rule={dimensionsDraft.rule} quantityUnit={line.uomName}
             disabled={!mayEdit || needsReview} needsReview={dimensionsDraft.needsReview}
@@ -256,13 +259,13 @@ export function ClientEstimateTiers({ projectId }: { projectId: string }) {
         {dimensionsRequired && !dimensionsDraft ? <p>Save required dimensions before choosing a tier.</p> : null}
         {line.pricingMode === "in_house" && !hasGovernedInHousePrice(choice) && choice?.inHouseComponents !== undefined ? <fieldset className="client-estimate-tiers__components" disabled={disabled} aria-label={`In-house components for ${label}`}><legend>Included components</legend>
           {choice.inHouseComponents.map(component => <label key={component.id}><input type="checkbox" checked={selected.includes(component.id)} disabled={!component.available && !selected.includes(component.id)}
-            onChange={event => select(line, choice, event.target.checked ? [...selected, component.id] : selected.filter(id => id !== component.id))} /><span>{component.label} <small>{component.available ? component.amountPaise !== undefined ? `${money(component.amountPaise)} for this quantity` : `${money(component.ratePaise)} base reference` : "Unavailable"}</small></span></label>)}
+            onChange={event => select(line, choice, event.target.checked ? [...selected, component.id] : selected.filter(id => id !== component.id))} /><span>{component.label} <small>{component.available ? component.amountPaise !== undefined ? `${money(estimatePriceIncludingGst(component.amountPaise))} incl. GST for this quantity` : `${money(component.ratePaise)} base reference before GST` : "Unavailable"}</small></span></label>)}
           {selected.filter(id => !choice.inHouseComponents!.some(component => component.id === id)).map((id, index) => <label key={id}><input type="checkbox" checked onChange={() => select(line, choice, selected.filter(value => value !== id))} /><span>Unavailable selected component {index + 1}</span></label>)}
           {editing && !validComponents(line, choice, selected) ? <p>Choose at least one available component with configured pricing.</p> : null}
         </fieldset> : null}
         {componentAmount(line, line) ? <EstimateComponentBreakdown pricing={componentAmount(line, line)!} label={label} /> : null}
-        {hasGovernedInHousePrice(line) ? <p>Price including margin: {money(lineAggregatePrice(line, line)?.totalPaise ?? null)}</p> : null}
-        {editing ? <p>{line.pricingMode === "in_house" && choice?.inHouseComponents !== undefined ? "The server will calculate the amount for your selected components when saved." : `Selected amount: ${money(choice?.amountPaise ?? null)}`}</p> : null}
+        {hasGovernedInHousePrice(line) ? <p>Price incl. GST: {money(estimatePriceIncludingGst(lineAggregatePrice(line, line)?.totalPaise))}</p> : null}
+        {editing ? <p>{line.pricingMode === "in_house" && choice?.inHouseComponents !== undefined ? "The server will calculate the amount for your selected components when saved." : `Selected amount incl. GST: ${money(estimatePriceIncludingGst(choice?.amountPaise))}`}</p> : null}
       </div>;
     })}</section>;
     })}

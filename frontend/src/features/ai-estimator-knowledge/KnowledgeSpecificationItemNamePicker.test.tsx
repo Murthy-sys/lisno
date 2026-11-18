@@ -35,7 +35,7 @@ function setup({ value = "Legacy finish", names = ["Plywood", "Laminate"], draft
     const [selected, setSelected] = useState(value);
     return <QueryClientProvider client={client}><main><Field id="item" label="Item name" required>{(field) =>
       <KnowledgeSpecificationItemNamePicker {...field} ref={ref} value={selected} draftNames={draftNames} otherRowNames={otherRowNames} lookup={lookup} readOnly={locked}
-        onChange={(name) => { onChange(name); setSelected(name); }} />}</Field></main></QueryClientProvider>;
+        onChange={(selection) => { onChange(selection); setSelected(selection.name); }} />}</Field></main></QueryClientProvider>;
   }
   const rendered = render(<Harness />);
   return { ...rendered, reader, client, ref, onChange, lookup, Harness, user: userEvent.setup() };
@@ -49,6 +49,37 @@ async function openAdd(user: ReturnType<typeof userEvent.setup>) {
 }
 
 describe("Specification item name picker", () => {
+  it.each(["option", "exact", "similar"] as const)("keeps saved Brand metadata through %s selection and takes precedence over a local label", async route => {
+    const saved = { name: "Gypsum Board", brandPrefill: { status: "ready" as const, names: ["Gyproc", "Saint Gobain"] } };
+    const { user, onChange } = setup({ draftNames: ["GYPSUM BOARD"], list: async params => ({
+      items: route === "option" ? [saved] : [], pagination: { offset: 0, limit: 20, total: route === "option" ? 1 : 0, hasMore: false },
+      exactMatch: params?.checkName && route === "exact" ? saved : null,
+      similarItems: params?.checkName && route === "similar" ? [saved] : []
+    }) });
+    if (route === "option") {
+      await user.click(screen.getByRole("button", { name: "Item name" }));
+      await user.click(await screen.findByRole("option", { name: "Gypsum Board" }));
+    } else {
+      const dialog = await openAdd(user);
+      fireEvent.change(within(dialog).getByRole("textbox", { name: "Item name" }), { target: { value: route === "exact" ? "Gypsum Board" : "Gypsum Bord" } });
+      await user.click(await within(dialog).findByRole("button", { name: route === "exact" ? "Select Gypsum Board" : "Gypsum Board" }));
+    }
+    expect(onChange).toHaveBeenCalledExactlyOnceWith({ ...saved, origin: "saved" });
+  });
+
+  it("keeps Brand metadata from a later search page", async () => {
+    const saved = { name: "Saved item 20", brandPrefill: { status: "ready" as const, names: ["Later Brand"] } };
+    const names = Array.from({ length: 21 }, (_, index) => `Saved item ${String(index).padStart(2, "0")}`);
+    const { user, onChange } = setup({ list: async params => {
+      const page = response(names, params);
+      return { ...page, items: page.items.map(item => item.name === saved.name ? saved : item) };
+    } });
+    await user.click(screen.getByRole("button", { name: "Item name" }));
+    await user.click(await screen.findByRole("button", { name: "Load more items" }));
+    await user.click(await screen.findByRole("option", { name: saved.name }));
+    expect(onChange).toHaveBeenCalledExactlyOnceWith({ ...saved, origin: "saved" });
+  });
+
   it("sends valid Unicode input without expanding it beyond the API character limit", async () => {
     const name = "ﬃ".repeat(81);
     expect(normalizeSpecificationItemName(name)).toHaveLength(243);
@@ -60,7 +91,7 @@ describe("Specification item name picker", () => {
     await user.type(screen.getByRole("searchbox", { name: "Search items" }), name);
     await waitFor(() => expect(reader).toHaveBeenCalledWith(expect.objectContaining({ search: name }), expect.anything()));
     await user.click(await screen.findByRole("option", { name }));
-    expect(onChange).toHaveBeenCalledWith(name);
+    expect(onChange).toHaveBeenCalledWith({ name, origin: "saved" });
   });
   it("keeps legacy spelling, loads on opening, and separates search from selection", async () => {
     const { user, reader, onChange, ref } = setup({ value: " Legacy  spelling " });
@@ -72,7 +103,7 @@ describe("Specification item name picker", () => {
     expect(onChange).not.toHaveBeenCalled();
     await waitFor(() => expect(screen.getByRole("option", { name: "Plywood" })).toBeEnabled());
     await user.keyboard("{ArrowDown}{Enter}");
-    expect(onChange).toHaveBeenCalledWith("Plywood");
+    expect(onChange).toHaveBeenCalledWith({ name: "Plywood", origin: "saved" });
     expect(ref.current).toHaveFocus();
     expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
   });
@@ -118,7 +149,7 @@ describe("Specification item name picker", () => {
     const add = within(dialog).getByRole("button", { name: "Add and select" });
     await waitFor(() => expect(add).toBeEnabled());
     await user.click(add);
-    expect(onChange).toHaveBeenCalledExactlyOnceWith("Door panel");
+    expect(onChange).toHaveBeenCalledExactlyOnceWith({ name: "Door panel", origin: "new" });
     expect(reader.mock.calls.every(([params]) => !params || !("payload" in params))).toBe(true);
   });
 
@@ -127,7 +158,7 @@ describe("Specification item name picker", () => {
     const dialog = await openAdd(user);
     await user.type(within(dialog).getByRole("textbox", { name: "Item name" }), "  PLYwood  ");
     await user.click(await within(dialog).findByRole("button", { name: "Select Plywood" }));
-    expect(onChange).toHaveBeenCalledWith("Plywood");
+    expect(onChange).toHaveBeenCalledWith({ name: "Plywood", origin: "saved" });
   });
 
   it("offers near matches, requires a distinct spelling confirmation, and resets it when input changes", async () => {
@@ -145,7 +176,7 @@ describe("Specification item name picker", () => {
     fireEvent.change(input, { target: { value: "Plywod" } });
     await waitFor(() => expect(within(dialog).getByRole("checkbox")).not.toBeChecked());
     await user.click(within(dialog).getByRole("button", { name: "Plywood" }));
-    expect(onChange).toHaveBeenCalledWith("Plywood");
+    expect(onChange).toHaveBeenCalledWith({ name: "Plywood", origin: "saved" });
   });
 
   it("rejects an exact local duplicate in Add item", async () => {
@@ -163,7 +194,7 @@ describe("Specification item name picker", () => {
     await user.type(within(dialog).getByRole("textbox", { name: "Item name" }), "Plywod");
     await user.click(await within(dialog).findByRole("checkbox", { name: "Use “Plywod” as a different item" }));
     await user.click(within(dialog).getByRole("button", { name: "Add and select" }));
-    expect(onChange).toHaveBeenCalledWith("Plywod");
+    expect(onChange).toHaveBeenCalledWith({ name: "Plywod", origin: "new" });
     const savedPages = client.getQueryData<{ pages: KnowledgeSpecificationItemNameListResponse[] }>(knowledgeQueryKeys.specificationItemNameList({ search: "", limit: 20 }));
     expect(savedPages?.pages[0]?.items.map((item) => item.name)).toEqual(["Laminate", "Plywood"]);
   });

@@ -8,6 +8,7 @@ export const {
   getKnowledgeHistory,
   getKnowledgeSection,
   updateKnowledgeSection,
+  initializeKnowledgeTierDescriptions,
   createKnowledgeRevision,
   activateKnowledgeRevision,
   deactivateKnowledgeItem,

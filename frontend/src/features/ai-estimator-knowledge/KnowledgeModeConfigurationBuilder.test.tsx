@@ -120,6 +120,56 @@ const definitionPayload: KnowledgeJsonObject = {
 };
 
 describe("KnowledgeModeConfigurationBuilder", () => {
+  it("preserves saved Description through PMC and In-house checklist changes", async () => {
+    const user = userEvent.setup();
+    const onPayload = vi.fn();
+    const description = "Hand-finished timber.\nInclusions: bespoke detailing.";
+    render(<Harness onPayload={onPayload} initialPayload={{ modeDescription: description, modeConfigurations: [
+      { id: "pmc-description", modeKind: "pmc", fields: [],
+        inclusions: [{ id: "transport", name: "Transport", selected: true }], exclusions: [] },
+      { id: "vendor-description", modeKind: "execution", executionSource: "sub_vendor", fields: [] },
+      { id: "house-description", modeKind: "execution", executionSource: "in_house", fields: [],
+        inclusions: [{ id: "supplier", name: "Supplier", selected: true }],
+        exclusions: [{ id: "labour", name: "Labour", selected: true }] }
+    ] }} />);
+    const paragraph = screen.getByText("Hand-finished timber. Inclusions: bespoke detailing.");
+    expect(paragraph.textContent).toBe(description);
+    expect(onPayload).not.toHaveBeenCalled();
+    await user.click(within(screen.getByRole("group", { name: "Inclusions" })).getByRole("checkbox", { name: "Transport" }));
+    await user.click(within(screen.getByRole("group", { name: "In-house Inclusions" })).getByRole("checkbox", { name: "In-house Inclusion: Supplier" }));
+    await user.click(within(screen.getByRole("group", { name: "In-house Exclusions" })).getByRole("checkbox", { name: "In-house Exclusion: Labour" }));
+    expect(onPayload).toHaveBeenCalledTimes(3);
+    for (const [payload] of onPayload.mock.calls) expect(payload.modeDescription).toBe(description);
+    expect(paragraph.textContent).toBe(description);
+    expect(within(screen.getByRole("group", { name: "In-house Inclusions" })).getByRole("checkbox", { name: "In-house Inclusion: Supplier" })).not.toBeChecked();
+  });
+
+  it("uses the saved Description supplied for each scope and clears pending text when the scope changes", () => {
+    const onChange = vi.fn();
+    const onDirty = vi.fn();
+    const onPending = vi.fn();
+    const props: Omit<KnowledgeModeConfigurationBuilderProps, "payload"> = {
+      mainLineName: "Wall panelling", basketContext: { basketId: "basket-carpentry", basketName: "Carpentry" },
+      modes: [], readOnly: false, validationAttempt: 0, onChange, onDirty, onValidationChange: vi.fn(),
+      descriptionPresentation: "inline", onPendingDescriptionChange: onPending
+    };
+    const view = render(<KnowledgeModeConfigurationBuilder {...props} descriptionResetKey="signature"
+      payload={{ modeDescription: "Signature hand finish." }} />);
+    const input = screen.getByRole("textbox", { name: "Description" });
+    expect(input).toHaveValue("Signature hand finish.");
+    fireEvent.change(input, { target: { value: "Unsaved Signature edit." } });
+    expect(onPending).toHaveBeenLastCalledWith(true);
+    for (const [scope, description] of [["premium", "Premium acoustic finish."], ["functional", "Functional finish."], ["default", ""]] as const) {
+      view.rerender(<KnowledgeModeConfigurationBuilder {...props} descriptionResetKey={scope}
+        payload={{ modeDescription: description }} />);
+      expect(screen.getByRole("textbox", { name: "Description" })).toHaveValue(description);
+      expect(onPending).toHaveBeenLastCalledWith(false);
+      expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    }
+    expect(onChange).not.toHaveBeenCalled();
+    expect(onDirty).not.toHaveBeenCalled();
+  });
+
   it("keeps the usage unset until explicitly selected, then preserves it through source visibility and keyboard changes", async () => {
     const user = userEvent.setup();
     const onPayload = vi.fn();

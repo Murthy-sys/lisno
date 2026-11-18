@@ -1,7 +1,6 @@
 import { parseInHouseComponents } from "../../../../shared/knowledge/knowledgeInHouseComponents";
 import { readInHouseUsagePolicy } from "../../../../shared/knowledge/knowledgeInHouseUsage";
 import { modeCalculationDraft, modeCalculationsForPayload, parseModeQuantity, MODE_CALCULATION_SCOPES, type ModeCalculationScope } from "./knowledgeModeCalculation";
-import { syncModeDescription } from "./knowledgeModeDescription";
 import { knowledgeModeFieldTypeLabel, parseKnowledgeModeConfigurations, partitionKnowledgeModeConfigurations, type KnowledgeModeConfiguration } from "./knowledgeModeConfiguration";
 import { PMC_SCOPE_LISTS } from "./knowledgePmcScope";
 import { pmcMarginRange, pmcMarginRangeIssues, subVendorMarginRange, subVendorMarginRangeIssues } from "./knowledgePmcMargin";
@@ -69,10 +68,8 @@ function configLabel(configuration: KnowledgeModeConfiguration) {
     ? configuration.executionSource === "sub_vendor" ? "Execution · Sub-Vendor" : configuration.executionSource === "in_house" ? "Execution · In-house" : "Execution · Source not set"
     : "Mode configuration · Details unavailable";
 }
-function description(payload: KnowledgeJsonObject, pmc?: KnowledgeModeConfiguration, inHouse?: KnowledgeModeConfiguration) {
-  return typeof payload.modeDescription === "string"
-    ? syncModeDescription(payload.modeDescription, pmc, undefined, inHouse)
-    : "";
+function description(payload: KnowledgeJsonObject) {
+  return typeof payload.modeDescription === "string" ? payload.modeDescription : "";
 }
 
 /** Projects only editable display values. Saved payloads never reach the request card. */
@@ -150,16 +147,8 @@ export function projectKnowledgeModePendingChanges(input: KnowledgeModePendingCh
       if (oldConfig && (oldConfig.modeKind !== config.modeKind || oldConfig.executionSource !== config.executionSource)) entries.unshift({ key: `${key}:source`, title: "Configuration source", kind: "updated", fields: [field("source", "Source", configLabel(config))] });
       add(key, configLabel(config), entries);
     }
-    // Generated/automatically synchronized paragraph clauses are derived from scope controls,
-    // so only a user's paragraph wording change receives a separate entry.
-    const expectedDescription = syncModeDescription(
-      description(before, oldPmc, oldInHouse),
-      pmc,
-      oldPmc,
-      inHouse,
-      oldInHouse
-    );
-    const currentDescription = input.pendingDescription ?? description(after, pmc, inHouse);
+    const expectedDescription = description(before);
+    const currentDescription = input.pendingDescription ?? description(after);
     if (expectedDescription.trim() !== currentDescription.trim()) add("mode:paragraph", "Mode · Description", [{ key: "mode:paragraph", title: "Description", kind: "updated", fields: [field("paragraph", "Description", currentDescription)] }]);
     const oldComponents = parseInHouseComponents(before.inHouseComponents).components;
     const components = parseInHouseComponents(after.inHouseComponents).components;

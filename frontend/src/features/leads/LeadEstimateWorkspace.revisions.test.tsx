@@ -88,10 +88,10 @@ async function selectRevision(user: ReturnType<typeof userEvent.setup>, name: Re
 }
 
 describe("Estimate workspace revisions", () => {
-  it("shows pre-GST amounts, removes the masthead, and preserves current edits and room/filter state across history", async () => {
+  it("shows GST-inclusive totals, removes the masthead, and preserves current edits and room/filter state across history", async () => {
     const fixture = setup(); const user = userEvent.setup();
     await screen.findByRole("spinbutton", { name: /Quantity.*Current ceiling.*Living Room/ });
-    expect(screen.getByLabelText("Estimate amount before GST: ₹100")).toBeVisible();
+    expect(screen.getByLabelText("Estimate amount including GST: ₹118")).toBeVisible();
     expect(screen.queryByText("Total including GST")).not.toBeInTheDocument();
     expect(screen.queryByText("Project ID: Lisno000009")).not.toBeInTheDocument();
     expect(screen.queryByText(/workflow and client requirements/)).not.toBeInTheDocument();
@@ -104,7 +104,7 @@ describe("Estimate workspace revisions", () => {
     expect(screen.getByRole("checkbox", { name: /Current ceiling/ })).not.toBeChecked();
     await selectRevision(user, /Pre-estimate · R1/);
     expect(await screen.findByRole("article", { name: "Published ceiling" })).toBeVisible();
-    expect(screen.getAllByLabelText("Estimate amount before GST: ₹275")).toHaveLength(2);
+    expect(screen.getAllByLabelText("Estimate amount including GST: ₹324.5")).toHaveLength(2);
     expect(screen.queryByRole("button", { name: "Save draft" })).not.toBeInTheDocument();
     expect(screen.queryByRole("spinbutton")).not.toBeInTheDocument();
     const pendingDraftUnload = new Event("beforeunload", { cancelable: true });
@@ -139,7 +139,7 @@ describe("Estimate workspace revisions", () => {
     await screen.findByRole("article", { name: "Second published ceiling" });
     await act(async () => firstGate.resolve(json(fixture.first)));
     expect(screen.queryByRole("article", { name: "Published ceiling" })).not.toBeInTheDocument();
-    expect(screen.getAllByLabelText("Estimate amount before GST: ₹420")).toHaveLength(2);
+    expect(screen.getAllByLabelText("Estimate amount including GST: ₹495.6")).toHaveLength(2);
   });
 
   it("does not replace a failed historical read with current values and permits retry", async () => {
@@ -147,7 +147,7 @@ describe("Estimate workspace revisions", () => {
     const user = userEvent.setup(); await screen.findByRole("navigation", { name: "Estimate revisions" });
     await selectRevision(user, /Pre-estimate · R1/);
     await screen.findByText("The selected revision could not be loaded.");
-    expect(screen.getAllByLabelText("Estimate amount before GST: Unavailable")).toHaveLength(2);
+    expect(screen.getAllByLabelText("Estimate amount including GST: Unavailable")).toHaveLength(2);
     expect(screen.queryByRole("button", { name: "Save draft" })).not.toBeInTheDocument();
     fixture.state.detailStatus = 200;
     await user.click(screen.getByRole("button", { name: "Retry revision" }));

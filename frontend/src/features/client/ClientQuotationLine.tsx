@@ -1,4 +1,5 @@
 import { calculateDimensionQuantity } from "../../../../shared/estimation/estimateDimensions";
+import { estimatePriceIncludingGst } from "../../../../shared/estimation/estimateGstPresentation";
 import { EstimateLineTierDetails } from "../estimates/EstimateLineTierDetails";
 import { EstimateLineActions, EstimateLineChoice, EstimateLineLayout } from "../estimates/EstimateLineRow";
 import { EstimateDimensionsFields } from "../leads/EstimateDimensionsFields";
@@ -57,8 +58,8 @@ export function ClientQuotationLine({ item, currentLine, selected, disabled, gro
           <input aria-label={`Quantity for ${label} ${line.uomName}`} type="number" inputMode="decimal" min="0" step="any" value={item.quantity} disabled={fieldsDisabled} onChange={event => onChange({ quantity: event.target.value })} />
           <button type="button" aria-label={`Increase quantity for ${label}`} disabled={fieldsDisabled} onClick={() => changeQuantity(1)}>+</button>
         </span></label>}
-      <div className="configured-estimate-line__rate client-quotation__price"><span>{governed ? "Price including margin" : `Rate (₹/${line.uomName})`}</span><output className={components ? "client-quotation__component-rate" : undefined} aria-label={`Configured price for ${label}`}>{governed ? money(aggregate?.totalPaise ?? null) : components ? "From components" : money(choice?.ratePaise ?? null)}</output></div>
-      <div className="configured-estimate-line__amount"><span>{item.kind === "update" ? "Saved amount" : "Amount"}</span><output aria-label={`${item.kind === "update" ? "Saved amount" : "Amount"} for ${label}`}>{item.kind === "update" ? money(currentLine.amountPaise) : "After save"}</output></div>
+      <div className="configured-estimate-line__rate client-quotation__price"><span>{governed ? "Price incl. GST" : `Rate incl. GST (₹/${line.uomName})`}</span><output className={components ? "client-quotation__component-rate" : undefined} aria-label={`Configured price including GST for ${label}`}>{governed ? money(estimatePriceIncludingGst(aggregate?.totalPaise)) : components ? "From components" : money(estimatePriceIncludingGst(choice?.ratePaise))}</output></div>
+      <div className="configured-estimate-line__amount"><span>{item.kind === "update" ? "Saved amount" : "Amount"} incl. GST</span><output aria-label={`${item.kind === "update" ? "Saved amount" : "Amount"} including GST for ${label}`}>{item.kind === "update" ? money(estimatePriceIncludingGst(currentLine.amountPaise)) : "After save"}</output></div>
       <EstimateLineActions name={label} disabled={blocked} included={selected} onToggle={() => onChange({ included: !selected })}
         {...(!line.dimensionsMandatory && selected ? { onResetQuantity: () => onChange({ quantity: "1" }) } : {})} />
     </>}>

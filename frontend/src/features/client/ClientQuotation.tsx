@@ -390,7 +390,7 @@ function ClientQuotationForProject({ projectId, readOnly = false, workspace = fa
       baskets={visibleBaskets.map(basket => ({ id: basket.id, name: basket.name, detail: subtotal(rows.filter(line => line.roomId === currentRoomId && line.mainBasketId === basket.id)) }))}
       groups={groups} renderLine={renderLine} viewState={viewState} onViewStateChange={setViewState} scrollMode={workspace ? "pane" : "document"}
       onRefresh={() => { void refreshQuotation(); if (candidateEnabled) { void candidates.refetch(); void setup.refetch(); } void client.invalidateQueries({ queryKey: ["quotation", projectId, "items"] }); void client.invalidateQueries({ queryKey: ["quotation", projectId, "recommendations"] }); }} refreshing={query.isFetching || Boolean(review?.refreshing)}
-      beforeGroups={<><p className="client-quotation__hint">Client-visible items. Total includes internal scope.</p>
+      beforeGroups={<><p className="client-quotation__hint">Section subtotals are before GST. Total includes all scope.</p>
         {!readOnly && detail.editingAllowed ? <>
           <EstimateItemPicker roomName={activeRoom?.name ?? "this room"} open={adding} onOpenChange={setAdding} triggerRef={triggerRef}
             items={(!pickerHierarchyReady || candidates.isError ? [] : candidates.data?.items ?? []).map(candidate => {

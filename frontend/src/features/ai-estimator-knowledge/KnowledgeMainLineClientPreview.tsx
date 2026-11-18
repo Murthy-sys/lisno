@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useId, useRef, useState, type RefObject } from "react";
 import { calculateDimensionQuantity } from "../../../../shared/estimation/estimateDimensions";
+import { estimatePriceIncludingGst } from "../../../../shared/estimation/estimateGstPresentation";
 import { KNOWLEDGE_MODE_TIERS, KNOWLEDGE_MODE_TIER_LABELS, type KnowledgeModeTier } from "../../../../shared/knowledge/knowledgeModeTiers";
 import { Button } from "../../components/ui/Button";
 import { Drawer } from "../../components/ui/Drawer";
@@ -129,8 +130,8 @@ function ClientPreviewRow({ source: { line, basketName, subBasketName } }: { sou
               <input aria-label={`Quantity for ${line.name} ${line.uom.name}`} type="number" inputMode="decimal" min="0" step="any" value={quantity} disabled={!included} onChange={event => setQuantity(event.target.value)} />
               <button type="button" aria-label={`Increase quantity for ${line.name}`} disabled={!included} onClick={() => stepQuantity(1)}>+</button>
             </span></label>}
-          <div className="configured-estimate-line__rate client-quotation__price"><span>Rate (₹/{line.uom.name})</span><output aria-label={`Price for ${line.name}`} className={inHouseComponents ? "client-quotation__component-rate" : undefined}>{inHouseComponents ? "From components" : money(pricing?.modeBaseRatesPaise[mode])}</output></div>
-          <div className="configured-estimate-line__amount"><span>Amount</span><output aria-label={`Amount for ${line.name}`}>After save</output></div>
+          <div className="configured-estimate-line__rate client-quotation__price"><span>Rate incl. GST (₹/{line.uom.name})</span><output aria-label={`Price including GST for ${line.name}`} className={inHouseComponents ? "client-quotation__component-rate" : undefined}>{inHouseComponents ? "From components" : money(estimatePriceIncludingGst(pricing?.modeBaseRatesPaise[mode]))}</output></div>
+          <div className="configured-estimate-line__amount"><span>Amount incl. GST</span><output aria-label={`Amount including GST for ${line.name}`}>After save</output></div>
         </>}>
         {included ? <>
           <EstimateLineTierDetails rowKey={line.mainLineId}

@@ -8,11 +8,11 @@ import {
   projectKnowledgeModeTierSection
 } from "../domain/ai-estimator-knowledge-mode-tiers.js";
 import {
-  collectSpecificationItemNames,
   matchSpecificationItemNames,
   normalizeSpecificationItemName,
   SPECIFICATION_ITEM_NAME_MAX_LENGTH
 } from "../domain/knowledge-specification-item-names.js";
+import { collectSpecificationItemsWithBrandPrefill } from "../domain/knowledge-specification-brand-prefill.js";
 import { ApiError } from "../middleware/errors.js";
 import { AiEstimatorKnowledgeMainLineModel } from "../models/AiEstimatorKnowledgeMainLine.js";
 import { AiEstimatorKnowledgeRevisionModel } from "../models/AiEstimatorKnowledgeRevision.js";
@@ -28,7 +28,7 @@ export interface AiEstimatorKnowledgeSpecificationItemNameService {
   list(actor: PublicUser, params?: KnowledgeSpecificationItemNameListParams): Promise<KnowledgeSpecificationItemNameListResponse>;
 }
 
-/** Names are derived labels; this reader never creates or changes a specification. */
+/** Names and Brand suggestions are derived values; this reader never changes a specification. */
 export function createAiEstimatorKnowledgeSpecificationItemNameService(
   dependencies: { readonly actorGuard?: AiEstimatorKnowledgeActorGuard } = {}
 ): AiEstimatorKnowledgeSpecificationItemNameService {
@@ -54,10 +54,13 @@ export function createAiEstimatorKnowledgeSpecificationItemNameService(
           .select({ _id: 1, mainLineId: 1, status: 1 }).lean().exec(),
         AiEstimatorKnowledgeSectionModel.find({ revisionId: { $in: revisionIds }, sectionKey: { $in: ["overview", "pricing"] } })
           .select({ mainLineId: 1, revisionId: 1, sectionKey: 1, applicability: 1,
-            "payload.applicableTiers": 1, "payload.specifications.name": 1,
-            "payload.tierConfigurations.default.applicability": 1, "payload.tierConfigurations.default.payload.specifications.name": 1,
-            "payload.tierConfigurations.premium.applicability": 1, "payload.tierConfigurations.premium.payload.specifications.name": 1,
-            "payload.tierConfigurations.functional.applicability": 1, "payload.tierConfigurations.functional.payload.specifications.name": 1 })
+            "payload.applicableTiers": 1,
+            ...Object.fromEntries(["payload", "payload.tierConfigurations.default.payload", "payload.tierConfigurations.premium.payload", "payload.tierConfigurations.functional.payload"]
+              .flatMap(prefix => ["specifications.name", "specifications.brandId", "specifications.brandIds", "brands.id", "brands.name"]
+                .map(field => [`${prefix}.${field}`, 1]))),
+            "payload.tierConfigurations.default.applicability": 1,
+            "payload.tierConfigurations.premium.applicability": 1,
+            "payload.tierConfigurations.functional.applicability": 1 })
           .lean().exec()
       ]) : [[], []];
       const revisionById = new Map(revisions.map(revision => [String(revision._id), revision]));
@@ -68,7 +71,7 @@ export function createAiEstimatorKnowledgeSpecificationItemNameService(
         rows.push(section);
         sectionsByRevision.set(key, rows);
       }
-      const rawNames: unknown[] = [];
+      const pricingScopes: unknown[] = [];
       for (const current of selected) {
         const revision = revisionById.get(current.id);
         const rows = sectionsByRevision.get(current.id) ?? [];
@@ -86,11 +89,10 @@ export function createAiEstimatorKnowledgeSpecificationItemNameService(
           if (modeTier !== "default" && !applicableTiers.includes(modeTier)) continue;
           const projected = projectKnowledgeModeTierSection(pricing, modeTier);
           if (projected.applicability !== "configured") continue;
-          const specifications = record(projected.payload).specifications;
-          if (Array.isArray(specifications)) rawNames.push(...specifications.map(value => record(value).name));
+          pricingScopes.push(projected.payload);
         }
       }
-      const catalog = collectSpecificationItemNames(rawNames);
+      const catalog = collectSpecificationItemsWithBrandPrefill(pricingScopes);
       const normalizedSearch = search ? normalizeSpecificationItemName(search) : "";
       const matching = normalizedSearch ? catalog.filter(item => normalizeSpecificationItemName(item.name).includes(normalizedSearch)) : catalog;
       return {

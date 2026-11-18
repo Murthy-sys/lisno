@@ -37,8 +37,8 @@ describe("EstimateRevisionView", () => {
         uom: { id: "unit", code: "SQFT", name: "sq-ft", decimalScale: 2 }, totalPaise: 78334, inputFingerprint: "a".repeat(64) } }];
     render(<EstimateRevisionView {...props} revision={aggregate} />);
     const line = screen.getByRole("article", { name: "Archived ceiling" });
-    expect(line).toHaveTextContent("Price including margin (₹/sq-ft)₹261.11");
-    expect(line).toHaveTextContent(included ? "Amount₹783.34" : "Amount₹0.00");
+    expect(line).toHaveTextContent("Price including margin (₹/sq-ft) · before GST₹261.11");
+    expect(line).toHaveTextContent(included ? "Amount before GST₹783.34" : "Amount before GST₹0.00");
     expect(line).not.toHaveTextContent("Not recorded");
     expect(screen.queryByText(/Saved component amounts/)).not.toBeInTheDocument();
   });
@@ -139,7 +139,7 @@ describe("EstimateRevisionView", () => {
         components: [{ id: "component-1", basketId: "component-basket", subBasketId: "component-sub", basketName: "Saved component basket", subBasketName: "Saved component section", laborSellingPaise: 0, materialSellingPaise: 20000, totalPaise: 20000 }], totalPaise: 20000, inputFingerprint: "a".repeat(64) } }];
     render(<EstimateRevisionView {...props} revision={components} />);
     expect(screen.getByText("Component pricing")).toBeVisible();
-    await user.click(screen.getByText("Saved component amounts for Archived ceiling"));
+    await user.click(screen.getByText("Saved component amounts for Archived ceiling · before GST"));
     expect(screen.getByText("Saved component basket / Saved component section")).toBeVisible();
     expect(screen.getByText("₹0.00")).toBeVisible();
     expect(screen.getByText("5 sq-ft · ₹200.00")).toBeVisible();

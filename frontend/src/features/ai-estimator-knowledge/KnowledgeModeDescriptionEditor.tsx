@@ -2,15 +2,11 @@ import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 
 import { Button } from "../../components/ui/Button";
 import { Field, Textarea } from "../../components/ui/Field";
-import { MAX_MODE_DESCRIPTION_LENGTH, syncModeDescription } from "./knowledgeModeDescription";
-import type { KnowledgeModeConfiguration } from "./knowledgeModeConfiguration";
-import { PMC_SCOPE_LISTS } from "./knowledgePmcScope";
+import { MAX_MODE_DESCRIPTION_LENGTH } from "./knowledgeModeDescription";
 
 interface Props {
   readonly presentation?: "standard" | "inline";
   readonly description: string;
-  readonly pmc?: KnowledgeModeConfiguration;
-  readonly inHouse?: KnowledgeModeConfiguration;
   readonly readOnly: boolean;
   readonly validationAttempt: number;
   readonly error?: string;
@@ -26,7 +22,7 @@ function fitDescription(input: HTMLTextAreaElement) {
   input.style.height = `${Math.ceil(input.scrollHeight + border)}px`;
 }
 
-export function KnowledgeModeDescriptionEditor({ presentation = "standard", description, pmc, inHouse, readOnly, validationAttempt, error, onSave, onPendingChange, onPendingTextChange }: Props) {
+export function KnowledgeModeDescriptionEditor({ presentation = "standard", description, readOnly, validationAttempt, error, onSave, onPendingChange, onPendingTextChange }: Props) {
   const id = useId();
   const [text, setText] = useState<string | null>(null);
   const [localError, setLocalError] = useState<string>();
@@ -37,12 +33,10 @@ export function KnowledgeModeDescriptionEditor({ presentation = "standard", desc
   const editRef = useRef<HTMLButtonElement>(null);
   const restoreFocus = useRef(false);
   const lastValidationAttempt = useRef(validationAttempt);
-  const previousPmc = useRef(pmc);
-  const previousInHouse = useRef(inHouse);
   const inline = presentation === "inline";
   const baseline = description;
   const editing = text !== null;
-  const preview = text === null ? baseline : syncModeDescription(text, pmc, previousPmc.current, inHouse, previousInHouse.current);
+  const preview = text ?? baseline;
   const pending = editing && preview.trim() !== baseline.trim();
 
   useEffect(() => {
@@ -74,30 +68,6 @@ export function KnowledgeModeDescriptionEditor({ presentation = "standard", desc
       window.removeEventListener("resize", resize);
     };
   }, [inline]);
-
-  useEffect(() => {
-    const previousPmcValue = previousPmc.current;
-    const previousInHouseValue = previousInHouse.current;
-    previousPmc.current = pmc;
-    previousInHouse.current = inHouse;
-    const pmcRemoved = PMC_SCOPE_LISTS.some((list) => {
-      const remainingIds = new Set((pmc?.[list] ?? []).map((item) => item.id));
-      return (previousPmcValue?.[list] ?? []).some((item) => !remainingIds.has(item.id));
-    });
-    const inHouseRemoved = PMC_SCOPE_LISTS.some((list) => {
-      const remainingIds = new Set((inHouse?.[list] ?? []).map((item) => item.id));
-      return (previousInHouseValue?.[list] ?? []).some((item) => !remainingIds.has(item.id));
-    });
-    if (pmcRemoved || inHouseRemoved) {
-      setText((current) => current === null ? null : syncModeDescription(
-        current,
-        pmc,
-        previousPmcValue,
-        inHouse,
-        previousInHouseValue
-      ));
-    }
-  }, [inHouse, pmc]);
 
   useEffect(() => { onPendingTextChange?.(pending ? preview : null); }, [onPendingTextChange, pending, preview]);
   useEffect(() => () => onPendingTextChange?.(null), [onPendingTextChange]);
@@ -169,7 +139,7 @@ export function KnowledgeModeDescriptionEditor({ presentation = "standard", desc
       {editing || inline ? (
         <>
           <Field id={`${id}-paragraph`} label="Description" error={localError ?? error}
-            hint={inline ? undefined : "Optional. Describe the work your client should see. Selected inclusions and exclusions stay in sync once you add text."}>
+            hint={inline ? undefined : "Optional. Describe the work your client should see."}>
             {(props) => <Textarea {...props} ref={inputRef} rows={inline ? 1 : 4} value={text ?? baseline}
               disabled={!inline && readOnly} readOnly={(inline && readOnly) || saving}
               placeholder="Add a clear description of the work…" maxLength={MAX_MODE_DESCRIPTION_LENGTH}

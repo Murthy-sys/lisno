@@ -21,6 +21,7 @@ import type { KnowledgeJsonValue } from "./knowledgeTypes";
 import { KnowledgeBrandMultiSelect } from "./KnowledgeBrandMultiSelect";
 import { KnowledgeSpecificationItemNamePicker } from "./KnowledgeSpecificationItemNamePicker";
 import type { KnowledgeSpecificationItemNameLookup } from "./knowledgeEditorDataSource";
+import { prefillSpecificationBrands, type KnowledgeSpecificationItemSelection } from "./knowledgeSpecificationBrandPrefill";
 
 const MAX_BRAND_NAME_LENGTH = 240;
 
@@ -69,6 +70,8 @@ export function KnowledgeSpecificationBuilder({
   const [brandDialogBrandId, setBrandDialogBrandId] = useState<string | null>(null);
   const [brandName, setBrandName] = useState("");
   const [brandNameError, setBrandNameError] = useState<string | undefined>();
+  const [copyError, setCopyError] = useState<string | null>(null);
+  const [prefillFeedback, setPrefillFeedback] = useState<{ specificationId: string; message: string; error: boolean } | null>(null);
   const [requestedFocus, setRequestedFocus] = useState<{
     readonly attempt: number;
     readonly specificationId: string;
@@ -164,9 +167,21 @@ export function KnowledgeSpecificationBuilder({
   }
 
   function replace(specificationId: string, next: KnowledgeSpecificationConfiguration) {
+    setPrefillFeedback(null);
     update(parsed.specifications.map((entry) =>
       entry.id === specificationId ? next : entry
     ));
+  }
+
+  function selectItem(specification: KnowledgeSpecificationConfiguration, selection: KnowledgeSpecificationItemSelection) {
+    if (readOnly) return;
+    const result = prefillSpecificationBrands(specification, selection, brands, createKnowledgeBrand);
+    if (!result.ok) {
+      setPrefillFeedback({ specificationId: specification.id, message: result.error, error: true });
+      return;
+    }
+    setPrefillFeedback(result.notice ? { specificationId: specification.id, message: result.notice, error: false } : null);
+    update(parsed.specifications.map(entry => entry.id === specification.id ? result.specification : entry), result.brands);
   }
 
   function issueFor(path: string): string | undefined {
@@ -190,6 +205,8 @@ export function KnowledgeSpecificationBuilder({
   }
 
   function openEditor(specificationId: string, trigger: HTMLElement, field: SpecificationField = "name") {
+    setCopyError(null);
+    setPrefillFeedback(null);
     panelReturnFocusRef.current = trigger;
     panelInitialFocusRef.current = null;
     setRequestedFocus({ attempt: -1, specificationId, field });
@@ -204,8 +221,37 @@ export function KnowledgeSpecificationBuilder({
   }
 
   function addSpecification(trigger: HTMLElement) {
-    const specification = createKnowledgeSpecification();
-    update([...parsed.specifications, specification]);
+    if (readOnly || parsed.specifications.length >= KNOWLEDGE_MAX_SPECIFICATIONS) return;
+    const existingRows = value === undefined ? [] : value;
+    const sourceIndex = parsed.specifications.reduce((last, row, index) => row.name.trim() ? index : last, -1);
+    const source = parsed.specifications[sourceIndex];
+    const sourcePath = `specifications.${sourceIndex}`;
+    const rawSource = Array.isArray(existingRows) ? existingRows[sourceIndex] : undefined;
+    const invalidRows = !Array.isArray(existingRows) || existingRows.some(row =>
+      !isJsonObject(row) || (row.name !== undefined && typeof row.name !== "string")
+    );
+    const invalidSource = source && (
+      parsed.issues.some(issue => issue.path === sourcePath || issue.path.startsWith(`${sourcePath}.`))
+      || (rawSource && isJsonObject(rawSource) && rawSource.description !== undefined
+        && rawSource.description !== null && typeof rawSource.description !== "string")
+    );
+    const invalidBrands = brands !== undefined && !Array.isArray(brands);
+    if (invalidRows || invalidSource || invalidBrands || (source && validateKnowledgeBrands(brands).length)) {
+      setCopyError("Review the previous item's details and Brands before adding a copy.");
+      return;
+    }
+    setCopyError(null);
+    setPrefillFeedback(null);
+    const specification = { ...createKnowledgeSpecification(), ...(source ? {
+      name: source.name,
+      brandIds: [...source.brandIds],
+      description: source.description
+    } : {}) };
+    onDirty();
+    onChange({
+      specifications: [...existingRows, ...serializeKnowledgeSpecifications([specification])],
+      brands: brandValues
+    });
     panelReturnFocusRef.current = trigger;
     panelInitialFocusRef.current = null;
     setRequestedFocus({ attempt: -1, specificationId: specification.id, field: "name" });
@@ -286,6 +332,7 @@ export function KnowledgeSpecificationBuilder({
             : specification
         );
     update(nextSpecifications, nextBrands);
+    setPrefillFeedback(null);
     closeBrandDialog();
   }
 
@@ -335,6 +382,8 @@ export function KnowledgeSpecificationBuilder({
           </Button>
         ) : null}
       </div>
+
+      {copyError ? <p role="alert" className="ui-field__error">{copyError}</p> : null}
 
       {parsed.specifications.length > 0 ? (
         <div className="knowledge-specification-table-scroll">
@@ -447,7 +496,9 @@ export function KnowledgeSpecificationBuilder({
                 id={panelFieldId(editingSpecification.id, "name")}
                 label="Item name"
                 required
-                error={issueFor(`specifications.${editingIndex}.name`)}
+                error={editorIntent === "add" && issueFor(`specifications.${editingIndex}.name`) === "Item names must be unique."
+                  ? "Copied previous details. Choose a different item name before saving."
+                  : issueFor(`specifications.${editingIndex}.name`)}
               >
                 {(props) => (
                   itemNameLookup ? <KnowledgeSpecificationItemNamePicker
@@ -459,7 +510,7 @@ export function KnowledgeSpecificationBuilder({
                     draftNames={parsed.specifications.map((entry) => entry.name)}
                     otherRowNames={parsed.specifications.filter((entry) => entry.id !== editingSpecification.id).map((entry) => entry.name)}
                     readOnly={readOnly}
-                    onChange={(name) => replace(editingSpecification.id, { ...editingSpecification, name })}
+                    onChange={(selection) => selectItem(editingSpecification, selection)}
                   /> : <Input
                     {...props}
                     ref={(element) => fieldInitialRef("name", element)}
@@ -476,10 +527,12 @@ export function KnowledgeSpecificationBuilder({
               <Field
                 id={panelFieldId(editingSpecification.id, "brand")}
                 label="Brands"
-                hint={brandValues.length >= KNOWLEDGE_MAX_BRANDS
+                hint={prefillFeedback?.specificationId === editingSpecification.id && !prefillFeedback.error
+                  ? prefillFeedback.message : brandValues.length >= KNOWLEDGE_MAX_BRANDS
                   ? `Maximum ${KNOWLEDGE_MAX_BRANDS} Brands reached. Existing Brands remain selectable.`
                   : undefined}
-                error={associationIssueFor(editingIndex) ?? brandIssueFor(editingSpecification.brandIds)}
+                error={(prefillFeedback?.specificationId === editingSpecification.id && prefillFeedback.error ? prefillFeedback.message : undefined)
+                  ?? associationIssueFor(editingIndex) ?? brandIssueFor(editingSpecification.brandIds)}
               >
                 {(props) => (
                   <KnowledgeBrandMultiSelect

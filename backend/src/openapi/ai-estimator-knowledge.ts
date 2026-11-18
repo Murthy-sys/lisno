@@ -57,6 +57,7 @@ export const AI_ESTIMATOR_KNOWLEDGE_REQUEST_BODIES: Readonly<Record<string, Open
   [`DELETE ${admin}/main-lines/:mainLineId`]: jsonRequest("KnowledgeMainLineDeleteRequest"),
   [`POST ${admin}/main-lines/:mainLineId/revisions`]: jsonRequest("KnowledgeRevisionCreateRequest"),
   [`PUT ${admin}/main-lines/:mainLineId/revisions/:revisionId/sections/:sectionKey`]: jsonRequest("KnowledgeSectionUpdateRequest"),
+  [`POST ${admin}/main-lines/:mainLineId/revisions/:revisionId/initialize-tier-descriptions`]: jsonRequest("KnowledgeTierDescriptionInitializationRequest"),
   [`POST ${admin}/main-lines/:mainLineId/revisions/:revisionId/activate`]: jsonRequest("KnowledgeActivationRequest"),
   [`POST ${admin}/main-lines/:mainLineId/deactivate`]: jsonRequest("KnowledgeExpectedVersionRequest"),
   [`POST ${admin}/main-lines/:mainLineId/duplicate`]: jsonRequest("KnowledgeDuplicateRequest"),
@@ -113,6 +114,7 @@ export const AI_ESTIMATOR_KNOWLEDGE_RESPONSE_SCHEMAS: Readonly<Record<string, st
   [`POST ${admin}/main-lines/:mainLineId/revisions`]: "KnowledgeRevision",
   [`GET ${admin}/main-lines/:mainLineId/revisions/:revisionId/sections/:sectionKey`]: "KnowledgeSectionEnvelope",
   [`PUT ${admin}/main-lines/:mainLineId/revisions/:revisionId/sections/:sectionKey`]: "KnowledgeSectionMutationEnvelope",
+  [`POST ${admin}/main-lines/:mainLineId/revisions/:revisionId/initialize-tier-descriptions`]: "KnowledgeTierDescriptionInitializationResult",
   [`POST ${admin}/main-lines/:mainLineId/revisions/:revisionId/activate`]: "KnowledgeItemDetail",
   [`POST ${admin}/main-lines/:mainLineId/deactivate`]: "KnowledgeItemDetail",
   [`POST ${admin}/main-lines/:mainLineId/duplicate`]: "KnowledgeItemDetail",
@@ -166,6 +168,7 @@ export const AI_ESTIMATOR_KNOWLEDGE_OPERATION_SUMMARIES: Readonly<Record<string,
   [`POST ${admin}/main-lines/:mainLineId/revisions`]: "Create a Draft knowledge revision",
   [`GET ${admin}/main-lines/:mainLineId/revisions/:revisionId/sections/:sectionKey`]: "Read a revision section",
   [`PUT ${admin}/main-lines/:mainLineId/revisions/:revisionId/sections/:sectionKey`]: "Update a Draft revision section",
+  [`POST ${admin}/main-lines/:mainLineId/revisions/:revisionId/initialize-tier-descriptions`]: "Initialize missing Draft tier descriptions from saved wording",
   [`POST ${admin}/main-lines/:mainLineId/revisions/:revisionId/activate`]: "Activate a Draft knowledge revision",
   [`POST ${admin}/main-lines/:mainLineId/deactivate`]: "Deactivate an estimation knowledge item",
   [`POST ${admin}/main-lines/:mainLineId/duplicate`]: "Duplicate an estimation knowledge item",
@@ -408,8 +411,21 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
       description: "Custom values sorted by normalized display name and stable ID."
     }
   }),
+  KnowledgeSpecificationBrandPrefill: {
+    oneOf: [
+      strictObject(["status", "names"], {
+        status: { type: "string", enum: ["ready"] },
+        names: { type: "array", maxItems: 200, uniqueItems: true, items: { type: "string", minLength: 1, maxLength: 240 } }
+      }),
+      strictObject(["status", "reason"], {
+        status: { type: "string", enum: ["unavailable"] },
+        reason: { type: "string", enum: ["invalid_source", "too_many_brands"] }
+      })
+    ]
+  },
   KnowledgeSpecificationItemName: strictObject(["name"], {
-    name: { type: "string", minLength: 1, maxLength: 240 }
+    name: { type: "string", minLength: 1, maxLength: 240 },
+    brandPrefill: ref("KnowledgeSpecificationBrandPrefill")
   }),
   KnowledgeSpecificationItemNameList: strictObject(["items", "pagination", "exactMatch", "similarItems"], {
     items: { type: "array", maxItems: 100, items: ref("KnowledgeSpecificationItemName") },
@@ -657,6 +673,17 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
     status: { type: "string", enum: ["active", "inactive"] },
     taxVersion: ref("KnowledgeTaxVersionUpdateRequest")
   }),
+  KnowledgeTierDescriptionInitializationRequest: strictObject(
+    ["expectedVersion", "expectedAggregateVersion"],
+    { expectedVersion: version, expectedAggregateVersion: version }
+  ),
+  KnowledgeTierDescriptionInitializationResult: strictObject(
+    ["mainLineId", "revisionId", "version", "aggregateVersion", "sourceTier", "copiedTiers"],
+    { mainLineId: id, revisionId: id, version, aggregateVersion: version,
+      sourceTier: { type: "string", enum: [...KNOWLEDGE_MODE_TIERS, null], nullable: true },
+      copiedTiers: { type: "array", uniqueItems: true, maxItems: 2, items: { type: "string", enum: [...KNOWLEDGE_MODE_TIERS] } }
+    }
+  ),
   KnowledgeSectionUpdateRequest: strictObject(
     ["expectedVersion", "payload"],
     {

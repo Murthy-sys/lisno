@@ -43,7 +43,8 @@ export function knowledgeModeTierDataSource(tier: KnowledgeModeConfigurationScop
       client.setQueryData(sectionKey(section.mainLineId, section.revisionId, section.sectionKey), section);
       client.setQueryData<KnowledgeItemDetail>(source.itemKey(section.mainLineId), current => current
         ? { ...current, version: section.aggregateVersion } : current);
-      // A shared section version changed, but its Signature payload did not.
+      // The shared version changed; a description save may also initialize Signature.
+      // The save flow invalidates all tier queries before their next authoritative read.
       void client.invalidateQueries({ queryKey: source.sectionKey(section.mainLineId, section.revisionId, section.sectionKey), exact: true });
     }
   };

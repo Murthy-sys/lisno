@@ -3,6 +3,7 @@ import axe from "axe-core";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import {
   KnowledgeSpecificationBuilder,
@@ -12,7 +13,9 @@ import {
   KNOWLEDGE_MAX_BRANDS,
   type KnowledgeSpecificationIssue
 } from "./knowledgeSpecificationConfiguration";
-import type { KnowledgeJsonObject, KnowledgeJsonValue } from "./knowledgeTypes";
+import type { KnowledgeJsonObject, KnowledgeJsonValue, KnowledgeSpecificationBrandPrefill } from "./knowledgeTypes";
+import type { KnowledgeSpecificationItemNameLookup } from "./knowledgeEditorDataSource";
+import { knowledgeQueryKeys } from "./knowledgeQueryKeys";
 
 function Harness({
   initialValue = [],
@@ -25,6 +28,7 @@ function Harness({
   referencedSpecificationIds = [],
   slabReferencedSpecificationIds = [],
   readOnly = false,
+  itemNameLookup,
   onValue = vi.fn()
 }: {
   readonly initialValue?: KnowledgeJsonValue;
@@ -37,6 +41,7 @@ function Harness({
   readonly referencedSpecificationIds?: readonly string[];
   readonly slabReferencedSpecificationIds?: readonly string[];
   readonly readOnly?: boolean;
+  readonly itemNameLookup?: KnowledgeSpecificationItemNameLookup;
   readonly onValue?: (value: KnowledgeSpecificationChange) => void;
 }) {
   const [value, setValue] = useState(initialValue);
@@ -44,6 +49,7 @@ function Harness({
   return (
     <main>
       <KnowledgeSpecificationBuilder
+        itemNameLookup={itemNameLookup}
         value={value}
         brands={brands}
         savedValue={savedValue}
@@ -633,6 +639,294 @@ describe("KnowledgeSpecificationBuilder", () => {
     expect(props.onChange).not.toHaveBeenCalled();
   });
 
+});
+
+describe("copy previous Specification on Add", () => {
+  it("prefills the last named row in a new editable panel with a fresh identity", async () => {
+    const user = userEvent.setup();
+    const source = { id: "source-board", name: "Gypsum Board", brandIds: ["brand-hettich", "brand-century"],
+      description: "Previous work guidance.", type: "text", value: "Hidden value" };
+    const rows: KnowledgeJsonObject[] = [{ id: "earlier", name: "Earlier item", brandId: "brand-century" }, source, { id: "blank", name: "" }];
+    const onValue = vi.fn();
+    render(<Harness initialValue={rows} initialBrands={savedBrands} onValue={onValue}
+      referencedSpecificationIds={[source.id]} priceEntries={[{ id: "price-source", specificationId: source.id }]} />);
+
+    await user.click(screen.getByRole("button", { name: "Add Specification" }));
+
+    const panel = screen.getByRole("dialog", { name: "Add Specification" });
+    const name = within(panel).getByRole("textbox", { name: "Item name" });
+    expect(name).toHaveValue("Gypsum Board");
+    expect(name).toBeEnabled();
+    expect(name).toHaveAccessibleDescription("Copied previous details. Choose a different item name before saving.");
+    expect(within(panel).getByRole("button", { name: "Brands" })).toHaveTextContent("Hettich, Century Green");
+    expect(within(panel).getByRole("button", { name: "Brands" })).toBeEnabled();
+    expect(within(panel).getByRole("textbox", { name: "Brief description" })).toHaveValue("Previous work guidance.");
+    const copy = specificationsPayload().at(-1)!;
+    expect(copy).toEqual({ id: expect.stringMatching(/^knowledge-specification-/u), name: source.name,
+      brandIds: source.brandIds, description: source.description });
+    expect(copy.id).not.toBe(source.id);
+    expect(specificationsPayload().slice(0, 3)).toEqual(rows);
+    expect(brandsPayload()).toEqual(savedBrands);
+    expect(onValue).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(name).toHaveFocus());
+    expect((await axe.run(panel, { rules: { "color-contrast": { enabled: false } } })).violations).toEqual([]);
+
+    await user.clear(name);
+    await user.type(name, "Copied board");
+    expect(name).not.toHaveAttribute("aria-invalid");
+    await user.clear(within(panel).getByRole("textbox", { name: "Brief description" }));
+    await user.click(within(panel).getByRole("button", { name: "Brands" }));
+    await user.click(screen.getByRole("option", { name: "Not configured" }));
+    await user.keyboard("{Escape}");
+    await user.click(within(panel).getByRole("button", { name: "Done" }));
+    expect(screen.getByRole("button", { name: "Add Specification" })).toHaveFocus();
+    await user.click(screen.getByRole("button", { name: "Edit Specification 4" }));
+    expect(screen.getByRole("textbox", { name: "Item name" })).toHaveValue("Copied board");
+    expect(screen.getByRole("textbox", { name: "Brief description" })).toHaveValue("");
+    expect(screen.getByRole("button", { name: "Brands" })).toHaveTextContent("Not configured");
+    expect(specificationsPayload()[1]).toEqual(source);
+    expect(brandsPayload()).toEqual(savedBrands);
+  });
+
+  it("copies current unsaved details and an intentionally empty Brand selection", async () => {
+    const user = userEvent.setup();
+    render(<Harness initialValue={savedSpecifications} initialBrands={savedBrands}
+      savedValue={savedSpecifications} savedBrands={savedBrands} />);
+    await user.click(screen.getByRole("button", { name: "Edit Specification 2" }));
+    const description = screen.getByRole("textbox", { name: "Brief description" });
+    await user.clear(description);
+    await user.type(description, "Unsaved hinge guidance.");
+    await user.click(screen.getByRole("button", { name: "Brands" }));
+    await user.click(screen.getByRole("option", { name: "Not configured" }));
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    await user.click(screen.getByRole("button", { name: "Add Specification" }));
+    expect(screen.getByRole("textbox", { name: "Item name" })).toHaveValue("Hardware");
+    expect(screen.getByRole("textbox", { name: "Brief description" })).toHaveValue("Unsaved hinge guidance.");
+    expect(screen.getByRole("button", { name: "Brands" })).toHaveTextContent("Not configured");
+    expect(specificationsPayload()[2]).not.toHaveProperty("brandId");
+    expect(specificationsPayload()[2]).not.toHaveProperty("brandIds");
+    expect(brandsPayload()).toEqual(savedBrands);
+  });
+
+  it("keeps blank Add available so an existing unnamed Brand can be repaired when no source exists", async () => {
+    const user = userEvent.setup();
+    const legacyBrands = [{ id: "legacy-brand", name: "" }];
+    render(<Harness initialValue={[]} initialBrands={legacyBrands} />);
+    await user.click(screen.getByRole("button", { name: "Add Specification" }));
+    const panel = screen.getByRole("dialog", { name: "Add Specification" });
+    expect(within(panel).getByRole("textbox", { name: "Item name" })).toHaveValue("");
+    expect(within(panel).getByRole("button", { name: "Brands" })).toHaveTextContent("Not configured");
+    expect(brandsPayload()).toEqual(legacyBrands);
+    await user.click(within(panel).getByRole("button", { name: "Brands" }));
+    await user.click(screen.getByRole("option", { name: "Unnamed Brand 1" }));
+    await user.click(screen.getByRole("button", { name: "Edit selected brand Unnamed Brand 1" }));
+    const brandDialog = screen.getByRole("dialog", { name: "Edit Brand" });
+    await user.type(within(brandDialog).getByRole("textbox", { name: "Brand name" }), "Repaired Brand");
+    await user.click(within(brandDialog).getByRole("button", { name: "Save" }));
+    expect(brandsPayload()).toEqual([{ id: "legacy-brand", name: "Repaired Brand" }]);
+    expect(specificationsPayload()[0]).toHaveProperty("brandId", "legacy-brand");
+    expect(within(panel).getByRole("button", { name: "Brands" })).toHaveTextContent("Repaired Brand");
+  });
+
+  it.each([null, { id: "not-a-list" }] as KnowledgeJsonValue[])("preserves non-array Brands when no previous item exists: %j", async (brands) => {
+    const user = userEvent.setup();
+    const onValue = vi.fn();
+    render(<Harness initialValue={[]} initialBrands={brands} onValue={onValue} />);
+    await user.click(screen.getByRole("button", { name: "Add Specification" }));
+    expect(screen.getByRole("alert")).toBeVisible();
+    expect(onValue).not.toHaveBeenCalled();
+    expect(brandsPayload()).toEqual(brands);
+  });
+
+  it.each([
+    { label: "missing Brand", extra: { brandId: "missing" } },
+    { label: "mixed associations", extra: { brandId: "brand-century", brandIds: ["brand-hettich"] } },
+    { label: "non-string association", extra: { brandIds: [42] } },
+    { label: "repeated association", extra: { brandIds: ["brand-century", "brand-century"] } },
+    { label: "non-string description", extra: { description: 42 } },
+    { label: "oversized description", extra: { description: "x".repeat(4_001) } },
+    { label: "oversized name", extra: { name: "x".repeat(241) } },
+    { label: "non-string name", extra: { name: 42 } },
+    { label: "unknown property", extra: { unknown: "retain me" } }
+  ] as { label: string; extra: KnowledgeJsonObject }[])("rejects $label in the previous source without copying an older row", async ({ extra }) => {
+    const user = userEvent.setup();
+    const rows: KnowledgeJsonObject[] = [{ id: "older", name: "Valid older item" },
+      { id: "previous", name: "Previous item", ...extra }];
+    const onValue = vi.fn();
+    render(<Harness initialValue={rows} initialBrands={savedBrands} onValue={onValue} />);
+    await user.click(screen.getByRole("button", { name: "Add Specification" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("Review the previous item's details and Brands before adding a copy.");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(onValue).not.toHaveBeenCalled();
+    expect(specificationsPayload()).toEqual(rows);
+    expect(brandsPayload()).toEqual(savedBrands);
+  });
+
+  it.each([
+    null,
+    { id: "not-a-list" },
+    [{ id: "brand-century", name: "" }],
+    [{ id: "brand-century", name: "Century" }, { id: "brand-century", name: "Other" }]
+  ] as KnowledgeJsonValue[])("does not replace invalid Brand definitions while copying: %j", async (brands) => {
+    const user = userEvent.setup();
+    const onValue = vi.fn();
+    render(<Harness initialValue={[{ id: "previous", name: "Previous item" }]} initialBrands={brands} onValue={onValue} />);
+    await user.click(screen.getByRole("button", { name: "Add Specification" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("Review the previous item's details");
+    expect(onValue).not.toHaveBeenCalled();
+    expect(brandsPayload()).toEqual(brands);
+  });
+
+  it("does not drop malformed specification rows when Add is requested", async () => {
+    const user = userEvent.setup();
+    const rows: KnowledgeJsonValue = [42, { id: "previous", name: "Previous item" }];
+    const onValue = vi.fn();
+    render(<Harness initialValue={rows} onValue={onValue} />);
+    await user.click(screen.getByRole("button", { name: "Add Specification" }));
+    expect(screen.getByRole("alert")).toBeVisible();
+    expect(onValue).not.toHaveBeenCalled();
+    expect(specificationsPayload()).toEqual(rows);
+  });
+
+  it("uses the currently supplied scope after the caller changes Main Line or tier", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    const props: ComponentProps<typeof KnowledgeSpecificationBuilder> = {
+      value: [{ id: "scope-first", name: "Signature board", brandId: "local-brand" }],
+      brands: [{ id: "local-brand", name: "Signature brand" }],
+      priceEntries: [], readOnly: false, onDirty: vi.fn(), onChange
+    };
+    const mounted = render(<KnowledgeSpecificationBuilder {...props} />);
+    mounted.rerender(<KnowledgeSpecificationBuilder {...props}
+      value={[{ id: "scope-second", name: "Functional board", brandId: "local-brand", description: "Functional guidance" }]}
+      brands={[{ id: "local-brand", name: "Functional brand" }]} />);
+    await user.click(screen.getByRole("button", { name: "Add Specification" }));
+    expect(onChange).toHaveBeenCalledExactlyOnceWith({
+      specifications: [
+        { id: "scope-second", name: "Functional board", brandId: "local-brand", description: "Functional guidance" },
+        { id: expect.stringMatching(/^knowledge-specification-/u), name: "Functional board", brandId: "local-brand", description: "Functional guidance" }
+      ], brands: [{ id: "local-brand", name: "Functional brand" }]
+    });
+  });
+
+  it("keeps Add unavailable when the existing specification limit is reached", async () => {
+    const user = userEvent.setup();
+    const onValue = vi.fn();
+    render(<Harness initialValue={Array.from({ length: 50 }, (_, index) => ({ id: `spec-${index}`, name: `Item ${index}` }))} onValue={onValue} />);
+    const add = screen.getByRole("button", { name: "Add Specification" });
+    expect(add).toBeDisabled();
+    await user.click(add);
+    expect(onValue).not.toHaveBeenCalled();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+});
+
+function renderPrefill({ metadata = { status: "ready", names: ["Gyproc", "Saint Gobain"] },
+  brands = [{ id: "local-gyproc", name: "Gyproc", description: "Keep this detail" }],
+  row = { id: "spec-prefill", name: "Before", description: "Keep this guidance" }, readOnly = false
+}: { metadata?: KnowledgeSpecificationBrandPrefill | null; brands?: KnowledgeJsonValue; row?: KnowledgeJsonObject | null; readOnly?: boolean } = {}) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const onValue = vi.fn();
+  const lookup: KnowledgeSpecificationItemNameLookup = { queryKey: knowledgeQueryKeys.specificationItemNameList,
+    list: vi.fn(async () => ({ items: [{ name: "Gypsum Board", ...(metadata ? { brandPrefill: metadata } : {}) }],
+      pagination: { offset: 0, limit: 20, total: 1, hasMore: false }, exactMatch: null, similarItems: [] })) };
+  render(<QueryClientProvider client={client}><Harness initialValue={row ? [row] : []} initialBrands={brands} itemNameLookup={lookup} onValue={onValue} readOnly={readOnly} /></QueryClientProvider>);
+  return { client, lookup, onValue, user: userEvent.setup() };
+}
+
+async function chooseSavedGypsum(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole("button", { name: "Item name" }));
+  await user.click(await screen.findByRole("option", { name: "Gypsum Board" }));
+}
+
+describe("saved item Brand selection", () => {
+  it("automatically selects saved Brands in a new Add Specification panel before Done", async () => {
+    const { user, onValue } = renderPrefill({ row: null, brands: [] });
+    await user.click(screen.getByRole("button", { name: "Add Specification" }));
+    const panel = screen.getByRole("dialog", { name: "Add Specification" });
+    const originalId = specificationsPayload()[0]!.id;
+    expect(within(panel).getByRole("button", { name: "Brands" })).toHaveTextContent("Not configured");
+    onValue.mockClear();
+
+    await chooseSavedGypsum(user);
+
+    expect(within(panel).getByRole("button", { name: "Item name" })).toHaveTextContent("Gypsum Board");
+    expect(within(panel).getByRole("button", { name: "Brands" })).toHaveTextContent("Gyproc, Saint Gobain");
+    expect(onValue).toHaveBeenCalledTimes(1);
+    const imported = brandsPayload();
+    expect(imported.map(brand => brand.name)).toEqual(["Gyproc", "Saint Gobain"]);
+    expect(specificationsPayload()[0]).toEqual(expect.objectContaining({
+      id: originalId, name: "Gypsum Board", brandIds: imported.map(brand => brand.id)
+    }));
+    await user.click(within(panel).getByRole("button", { name: "Done" }));
+    expect(onValue).toHaveBeenCalledTimes(1);
+    await user.click(screen.getByRole("button", { name: "Edit Specification 1" }));
+    expect(screen.getByRole("button", { name: "Brands" })).toHaveTextContent("Gyproc, Saint Gobain");
+  });
+
+  it("fills the screenshot's saved item Brands in one draft update and keeps a deliberate clear until reselection", async () => {
+    const { user, onValue, client } = renderPrefill();
+    await user.click(screen.getByRole("button", { name: "Edit Specification 1" }));
+    await chooseSavedGypsum(user);
+    expect(onValue).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: "Brands" })).toHaveTextContent("Gyproc");
+    expect(screen.getByRole("button", { name: "Brands" })).toHaveTextContent("Saint Gobain");
+    const imported = brandsPayload().find(brand => brand.name === "Saint Gobain")!;
+    expect(specificationsPayload()[0]).toEqual({ id: "spec-prefill", name: "Gypsum Board", description: "Keep this guidance", brandIds: ["local-gyproc", imported.id] });
+    expect(brandsPayload()[0]).toEqual({ id: "local-gyproc", name: "Gyproc", description: "Keep this detail" });
+    await user.click(screen.getByRole("button", { name: "Brands" }));
+    await user.click(screen.getByRole("option", { name: "Not configured" }));
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("button", { name: "Done" }));
+    await user.click(screen.getByRole("button", { name: "Edit Specification 1" }));
+    await client.invalidateQueries({ queryKey: knowledgeQueryKeys.specificationItemNames() });
+    expect(screen.getByRole("button", { name: "Brands" })).toHaveTextContent("Not configured");
+    await chooseSavedGypsum(user);
+    expect(brandsPayload()).toHaveLength(2);
+    expect(specificationsPayload()[0]?.brandIds).toEqual(["local-gyproc", imported.id]);
+    expect((await axe.run(screen.getByRole("dialog", { name: "Edit Specification" }), { rules: { "color-contrast": { enabled: false } } })).violations).toEqual([]);
+  });
+
+  it("preserves an existing Brand choice when selecting a different saved item", async () => {
+    const { user } = renderPrefill({ row: { id: "spec-prefill", name: "Before", brandId: "local-gyproc" } });
+    await user.click(screen.getByRole("button", { name: "Edit Specification 1" }));
+    await chooseSavedGypsum(user);
+    expect(specificationsPayload()[0]).toEqual({ id: "spec-prefill", name: "Gypsum Board", brandId: "local-gyproc" });
+    expect(brandsPayload()).toHaveLength(1);
+  });
+
+  it.each([null, { status: "unavailable", reason: "invalid_source" }] as const)("shows incomplete saved metadata without inventing choices: %j", async metadata => {
+    const { user } = renderPrefill({ metadata });
+    await user.click(screen.getByRole("button", { name: "Edit Specification 1" }));
+    await chooseSavedGypsum(user);
+    expect(screen.getByRole("button", { name: "Brands" })).toHaveAccessibleDescription(expect.stringContaining("Saved Brands could not be filled"));
+    expect(specificationsPayload()[0]?.name).toBe("Gypsum Board");
+    expect(specificationsPayload()[0]).not.toHaveProperty("brandId");
+    expect(brandsPayload()).toHaveLength(1);
+    await user.click(screen.getByRole("button", { name: "Brands" }));
+    await user.click(screen.getByRole("option", { name: "Gyproc" }));
+    expect(screen.queryByText("Saved Brands could not be filled. Choose Brands manually.")).not.toBeInTheDocument();
+  });
+
+  it("keeps the entire prior draft when the complete Brand set will not fit", async () => {
+    const { user, onValue } = renderPrefill({ brands: Array.from({ length: 200 }, (_, index) => ({ id: `brand-${index}`, name: `Existing ${index}` })) });
+    await user.click(screen.getByRole("button", { name: "Edit Specification 1" }));
+    await chooseSavedGypsum(user);
+    expect(onValue).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Item name" })).toHaveTextContent("Before");
+    expect(screen.getByRole("button", { name: "Brands" })).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByRole("button", { name: "Brands" })).toHaveAccessibleDescription(expect.stringContaining("200-Brand limit"));
+    expect(brandsPayload()).toHaveLength(200);
+  });
+
+  it("does not read or prefill Brands from a read-only panel", async () => {
+    const { user, onValue, lookup } = renderPrefill({ readOnly: true });
+    await user.click(screen.getByRole("button", { name: "View Specification 1" }));
+    expect(screen.getByRole("button", { name: "Item name" })).toBeDisabled();
+    expect(lookup.list).not.toHaveBeenCalled();
+    expect(onValue).not.toHaveBeenCalled();
+  });
 });
 
 async function openAddBrand(user: ReturnType<typeof userEvent.setup>) {

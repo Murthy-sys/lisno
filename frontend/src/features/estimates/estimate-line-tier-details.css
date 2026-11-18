@@ -1,41 +1,23 @@
 .estimate-line-tier-details {
   min-inline-size: 0;
   max-inline-size: 100%;
-  padding-block: 12px 4px;
+  padding-block: 8px 4px;
   color: var(--color-text, inherit);
   font-size: 13px;
   line-height: 1.65;
   overflow-wrap: anywhere;
 }
 
-.estimate-line-tier-details__heading {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 8px 14px;
-  margin-block-end: 5px;
-}
-
-.estimate-line-tier-details__label { font-weight: 600; }
-.estimate-line-tier-details__tier { color: var(--color-text-muted, #59606b); font-size: 12px; }
 .estimate-line-tier-details > .estimate-line-tier-details__description {
   max-inline-size: 90ch;
   margin: 0;
   white-space: pre-wrap;
 }
-.estimate-line-tier-details__empty { color: var(--color-text-muted, #59606b); }
 
-.estimate-line-tier-details__internal { margin-block-start: 8px; }
-.estimate-line-tier-details__internal > summary {
-  min-block-size: 44px;
-  padding-block: 10px;
-  font-weight: 600;
-  cursor: pointer;
+.estimate-line-tier-details__specifications {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
-.estimate-line-tier-details__internal > summary:focus-visible {
-  outline: 2px solid var(--color-primary, #3d4a32);
-  outline-offset: 2px;
-}
-.estimate-line-tier-details__content { padding: 0 0 10px 18px; }
-.estimate-line-tier-details__content > p { margin: 0; }
-.estimate-line-tier-details__content > ul { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }

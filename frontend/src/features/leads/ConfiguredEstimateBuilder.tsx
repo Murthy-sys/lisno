@@ -1,3 +1,4 @@
+import { estimatePriceIncludingGst } from "../../../../shared/estimation/estimateGstPresentation";
 import { EstimateSubBasketModes } from "../estimates/EstimateSubBasketModes";
 import { EstimateSubBasketTierInfo, EstimateTierInfoButton } from "./EstimateSubBasketTierInfo";
 import { useEstimateTierSuggestions, type EstimateTierSuggestionGroup, type EstimateTierSuggestionState } from "./useEstimateTierSuggestions";
@@ -390,7 +391,7 @@ export function ConfiguredEstimateBuilder({
     onRetry={onRetryRecommendations} onRefresh={onRefreshAvailableItems} onSelect={selectRecommendedLine}
   /> : null;
   const renderBuilder = (suggestions: ReadonlyMap<string, EstimateTierSuggestionState>) => <><EstimateBuilderShell selectedItemsOnly
-    rooms={rooms.map(room => ({ id: room.id, label: room.label, detail: `${room.sqft} sqft · ${roomAmountLabel(room.id)}`,
+    rooms={rooms.map(room => ({ id: room.id, label: room.label, detail: `${room.sqft} sqft · ${roomAmountLabel(room.id)} before GST`,
       hasSelectedItems: lines.some(line => line.roomId === room.id && line.included) }))}
     activeRoomId={activeRoomId} onSelectRoom={onSelectRoom} selectedCount={selectedCount}
     baskets={visibleBaskets.map(basket => ({ id: basket.id, name: basket.name,
@@ -407,6 +408,7 @@ export function ConfiguredEstimateBuilder({
       ...(unavailableNew.length ? [{ id: "unavailable-selections", label: "Unavailable selections" }] : [])
     ]}
     beforeGroups={<>
+      <p className="configured-estimate-line__message">Room and basket subtotals are before GST.</p>
       <ExcludedEstimateReview showInternalTierDetails={showInternalTierDetails} pricingModeEditable={modeChangesReady} getPmcToggleTarget={getPmcToggleTarget} lines={reviewLines} requiredCount={reviewLines.filter(line => excludedReviewKeys?.has(line.key)).length} contextKey={reviewContextKey}
         canIncludeLine={hasVisiblePrice}
         editable={editable && (!browseCatalogue || !refreshingAvailableItems && availableItemsState === "ready")} onUpdateLine={(key, change) => {
@@ -568,7 +570,12 @@ function ConfiguredLineRow({ showInternalTierDetails, line, inheritedClassificat
   const aggregateOnly = configuredInHouseGoverned(line);
   const rate = parseSellingRate(line.rateInput);
   const amount = configuredLinePreviewAmountPaise(line);
-  const amountTooLarge = !componentCalculated && !line.uomNeedsQuantityReview && !configuredDimensionsIssue(line) && amount === null && rate.kind === "value"
+  const grossAmount = estimatePriceIncludingGst(amount);
+  const netUnitPrice = aggregateOnly ? amount !== null && line.quantity > 0 ? Math.round(amount / line.quantity) : null
+    : componentCalculated ? configuredModeBaseRate(line, "in_house") : rate.kind === "value" ? rate.paise : null;
+  const grossUnitPrice = estimatePriceIncludingGst(netUnitPrice);
+  const displayPriceOverflow = netUnitPrice !== null && grossUnitPrice === null || amount !== null && grossAmount === null;
+  const amountTooLarge = displayPriceOverflow || !componentCalculated && !line.uomNeedsQuantityReview && !configuredDimensionsIssue(line) && amount === null && rate.kind === "value"
     && configuredQuantityUnits(line.quantity, line.uomDecimalScale, true) !== null;
   const quantityInvalid = configuredQuantityUnits(line.quantity, line.uomDecimalScale, line.included) === null;
   const rateRequired = !componentCalculated && line.included && rate.kind === "blank";
@@ -611,8 +618,8 @@ function ConfiguredLineRow({ showInternalTierDetails, line, inheritedClassificat
       onChange={() => {}} /> : null}
     fields={<>
       {line.dimensionsMandatory ? <div className="configured-estimate-line__quantity configured-estimate-line__quantity--calculated"><span>Qty ({line.uomName})</span><output aria-label={`Quantity (${line.uomName}) for ${label}`}>{Number.isFinite(line.quantity) && !configuredDimensionsIssue(line) ? line.quantity : "Pending"}</output></div> : <label className="configured-estimate-line__quantity"><span>Qty ({line.uomName})</span><span className="configured-estimate-line__stepper"><button type="button" aria-label={`Decrease quantity for ${label}`} disabled={!editable || !Number.isFinite(line.quantity) || line.quantity <= (line.included ? step : 0)} onClick={() => changeQuantity(-1)}>−</button><input type="number" min={line.included ? step : 0} step={step} value={Number.isFinite(line.quantity) ? line.quantity : ""} disabled={!editable} aria-label={`Quantity (${line.uomName}) for ${label}`} aria-invalid={quantityInvalid || amountTooLarge} aria-describedby={amountTooLarge ? `${inputId}-amount-overflow` : undefined} onChange={(event) => onUpdateLine(line.key, { quantity: event.target.value === "" ? Number.NaN : Number(event.target.value) })} /><button type="button" aria-label={`Increase quantity for ${label}`} disabled={!editable} onClick={() => changeQuantity(1)}>+</button></span></label>}
-      <label className="configured-estimate-line__rate" htmlFor={inputId}><span aria-hidden="true">{aggregateOnly ? "Price including margin" : "Rate"} (₹/{line.uomName})</span><span className="sr-only">{aggregateOnly ? "Price including margin" : "Selling rate"} (₹/{line.uomName}) for {label}</span><input id={inputId} type="text" inputMode="decimal" value={aggregateOnly ? amount !== null && line.quantity > 0 ? (Math.round(amount / line.quantity) / 100).toFixed(2) : "" : componentCalculated ? formatRateInput(configuredModeBaseRate(line, "in_house")) : line.rateInput} disabled aria-label={`${aggregateOnly ? "Price including margin" : "Selling rate"} (₹/${line.uomName}) for ${label}`} aria-invalid={rateInvalid || rateRequired || amountTooLarge} aria-describedby={amountTooLarge ? `${inputId}-amount-overflow` : rateInvalid || rateRequired ? `${inputId}-message` : undefined} /></label>
-      <div className="configured-estimate-line__amount"><span className={line.included ? "sr-only" : undefined}>Amount{line.included ? "" : " · Not included"}</span><output aria-label={line.included ? `Amount for ${label}` : `Preview amount for ${label}, not included in totals`} aria-describedby={amountTooLarge ? `${inputId}-amount-overflow` : undefined}>{amountTooLarge ? "Too large" : amount === null ? "Pending" : moneyPaise(amount)}</output></div>
+      <label className="configured-estimate-line__rate" htmlFor={inputId}><span aria-hidden="true">{aggregateOnly ? "Price incl. GST" : "Rate incl. GST"} (₹/{line.uomName})</span><span className="sr-only">{aggregateOnly ? "Price including margin" : "Selling rate"} (₹/{line.uomName}) for {label}, including 18% GST</span><input id={inputId} type="text" inputMode="decimal" value={displayPriceOverflow ? "Too large" : rateInvalid ? line.rateInput : formatRateInput(grossUnitPrice)} disabled aria-label={`${aggregateOnly ? "Price including margin" : "Selling rate"} (₹/${line.uomName}) for ${label}, including 18% GST`} aria-invalid={rateInvalid || rateRequired || amountTooLarge} aria-describedby={amountTooLarge ? `${inputId}-amount-overflow` : rateInvalid || rateRequired ? `${inputId}-message` : undefined} /></label>
+      <div className="configured-estimate-line__amount"><span>Amount incl. GST{line.included ? "" : " · Not included"}</span><output aria-label={line.included ? `Amount for ${label}, including 18% GST` : `Preview amount for ${label}, including 18% GST, not included in totals`} aria-describedby={amountTooLarge ? `${inputId}-amount-overflow` : undefined}>{amountTooLarge ? "Too large" : grossAmount === null ? "Pending" : moneyPaise(grossAmount)}</output></div>
       <EstimateLineActions name={line.mainLineName} disabled={!editable || !selectionEditable || !line.included && !configuredLineCanInclude(line)} included={line.included}
         onToggle={() => onUpdateLine(line.key, { included: !line.included })}
         onResetQuantity={line.dimensionsMandatory ? undefined : () => onUpdateLine(line.key, { quantity: 1 })} />

@@ -489,8 +489,12 @@ export const KnowledgeModePanel = forwardRef<
       for (const sectionKey of dirtySections) {
         const draft = snapshot[sectionKey];
         const envelopeVersion = draft.envelopeVersion!;
-        const applicability = draft.applicability;
         const payload = knowledgeSectionPayloadForUpdate(sectionKey, draft.payload);
+        // A validated first specification save makes the pricing scope available
+        // to Configuration readers; explicit not-applicable choices stay intact.
+        const applicability = sectionKey === "pricing" && draft.applicability === "not_configured"
+          && Array.isArray(payload.specifications) && payload.specifications.length > 0
+          ? "configured" : draft.applicability;
         setSavingSection(sectionKey);
         try {
           const saved = await dataSource.updateSection(

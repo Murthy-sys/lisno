@@ -2583,7 +2583,7 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
           properties: Object.fromEntries(KNOWLEDGE_MODE_TIERS.map(tier => [tier, {
             type: "string", nullable: true, minLength: 1, maxLength: 4000
           }])),
-          description: "Optional resolved display paragraphs for applicable tiers from the same Main Line and current saved revision. Uses the selected tier's custom or generated Configuration paragraph, then configured Mode (default) only when the tier has no usable description source. Malformed or disabled retained content cannot trigger fallback. Independent of specification fallback; null or missing means unavailable. No raw Configuration, private inputs, pricing changes, or estimate writes."
+          description: "Optional saved Description for each applicable tier from the same Main Line and current saved revision. Uses only the selected tier's wording, without default Mode fallback, generated text, or appended configuration clauses. Missing, cleared, malformed, or disabled selected-tier content is null. Independent of specification fallback for internal details. No raw Configuration, private inputs, pricing changes, or estimate writes."
         },
         tierPricing: { type: "object", additionalProperties: false, properties: Object.fromEntries(KNOWLEDGE_MODE_TIERS.map(tier => [tier, {
           type: "object", additionalProperties: false, required: ["modeBaseRatesPaise"],

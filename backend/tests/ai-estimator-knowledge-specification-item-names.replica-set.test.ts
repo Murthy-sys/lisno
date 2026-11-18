@@ -18,6 +18,7 @@ const ACTOR: PublicUser = { id: "item-name-admin", name: "Item Name Administrato
 const metadata = { version: 1, createdById: ACTOR.id, updatedById: ACTOR.id, createdAt: NOW, updatedAt: NOW };
 let replica: Awaited<ReturnType<typeof startMongoReplicaSet>>;
 const catalog = () => createAiEstimatorKnowledgeSpecificationItemNameService();
+const readyItem = (name: string, names: string[] = []) => ({ name, brandPrefill: { status: "ready", names } });
 
 beforeAll(async () => {
   replica = await startMongoReplicaSet("specification-item-names");
@@ -30,6 +31,91 @@ beforeEach(async () => {
 afterAll(async () => { await replica?.stop(); });
 
 describe("current saved specification item names", { timeout: 30_000 }, () => {
+  it("returns only associated Brands from current owned scopes while preserving source rows and audit history", async () => {
+    const first = await source("brand-source", [], { tiers: ["signature", "premium"] });
+    await pricingPayload(first, {
+      specifications: [{ id: "spec-root", name: "Gypsum Board", brandIds: ["shared-id", "root-only"] }],
+      brands: [{ id: "shared-id", name: "Knauf" }, { id: "root-only", name: "Saint Gobain" }, { id: "unrelated", name: "Not selected" }],
+      tierConfigurations: {
+        premium: { applicability: "configured", payload: { specifications: [{ id: "spec-premium", name: " gypsum board ", brandId: "shared-id" }], brands: [{ id: "shared-id", name: "USG" }] } },
+        functional: { applicability: "configured", payload: { specifications: [{ id: "spec-disabled", name: "Gypsum Board", brandId: "shared-id" }], brands: [{ id: "shared-id", name: "Disabled brand" }] } },
+        default: { applicability: "configured", payload: { specifications: [{ id: "spec-default", name: "Gypsum Board", brandId: "shared-id" }], brands: [{ id: "shared-id", name: "Armstrong" }] } }
+      }
+    });
+    const second = await source("brand-second", [], { revisionStatus: "active" });
+    await pricingPayload(second, { specifications: [{ id: "spec-second", name: "Gypsum Board", brandId: "shared-id" }], brands: [{ id: "shared-id", name: "SAINT GOBAIN" }] });
+    await revision("brand-source-old", "brand-source", "active", ["Gypsum Board"], 2);
+    await pricingPayload("brand-source-old", { specifications: [{ id: "old", name: "Gypsum Board", brandId: "old" }], brands: [{ id: "old", name: "Old active Brand" }] });
+    await AiEstimatorKnowledgeMainLineModel.collection.updateOne({ _id: "brand-source" }, { $set: { activeRevisionId: "brand-source-old" } });
+    const archived = await source("brand-archived", [], { status: "archived" });
+    await pricingPayload(archived, { specifications: [{ id: "archived", name: "Gypsum Board", brandId: "archived" }], brands: [{ id: "archived", name: "Archived Brand" }] });
+    const before = await sourceSnapshot();
+    const expected = readyItem("Gypsum Board", ["Armstrong", "Knauf", "SAINT GOBAIN", "USG"]);
+    const result = await catalog().list(ACTOR, { checkName: "gypsum board" });
+    expect(result.items).toEqual([expected]);
+    expect(result.exactMatch).toEqual(expected);
+    expect((await catalog().list(ACTOR, { search: "no matches", checkName: "Gypsum Bord" })).similarItems).toEqual([expected]);
+    expect(await sourceSnapshot()).toEqual(before);
+    expect(JSON.stringify(result)).not.toContain("shared-id");
+  });
+
+  it("retains Brand metadata across pages and independent exact and similar matches", async () => {
+    const id = await source("brand-paging", []);
+    const names = Array.from({ length: 27 }, (_, index) => `Board ${String(index).padStart(2, "0")}`);
+    await pricingPayload(id, { specifications: names.map((name, index) => ({ id: `spec-${index}`, name, brandId: `brand-${index}` })),
+      brands: names.map((_, index) => ({ id: `brand-${index}`, name: `Maker ${index}` })) });
+    const page = await catalog().list(ACTOR, { search: "BOARD", limit: 10, offset: 20, checkName: "board 03" });
+    expect(page.items).toEqual(names.slice(20).map((name, index) => readyItem(name, [`Maker ${index + 20}`])));
+    expect(page.pagination).toEqual({ limit: 10, offset: 20, total: 27, hasMore: false });
+    expect(page.exactMatch).toEqual(readyItem("Board 03", ["Maker 3"]));
+    const similar = await catalog().list(ACTOR, { search: "absent", checkName: "Bord 03" });
+    expect(similar.similarItems).toContainEqual(readyItem("Board 03", ["Maker 3"]));
+  });
+
+  it.each([
+    { association: { brandIds: null }, brands: [{ id: "one", name: "Knauf" }] },
+    { association: { brandId: "one", brandIds: [] }, brands: [{ id: "one", name: "Knauf" }] },
+    { association: { brandIds: ["one", "missing"] }, brands: [{ id: "one", name: "Knauf" }] },
+    { association: { brandId: "one" }, brands: [{ id: "one", name: "Knauf" }, { id: "one", name: "USG" }] },
+    { association: { brandId: "one" }, brands: [{ id: "one", name: "Knauf" }, { id: "two", name: " KNAUF " }] },
+    { association: { brandId: "one" }, brands: { id: "one", name: "Knauf" } }
+  ])("keeps malformed source associations unavailable after database projection: %j", async ({ association, brands }) => {
+    const id = await source("brand-invalid", []);
+    await pricingPayload(id, { specifications: [{ id: "spec", name: "Gypsum Board", ...association }], brands });
+    expect((await catalog().list(ACTOR)).items).toEqual([{ name: "Gypsum Board", brandPrefill: { status: "unavailable", reason: "invalid_source" } }]);
+  });
+
+  it("marks an over-limit grouped set unavailable rather than returning partial Brands", async () => {
+    const first = await source("brand-limit-first", []);
+    const second = await source("brand-limit-second", []);
+    for (const [revisionId, count, offset] of [[first, 200, 0], [second, 1, 200]] as const) {
+      const brands = Array.from({ length: count }, (_, index) => ({ id: `brand-${index}`, name: `Maker ${index + offset}` }));
+      await pricingPayload(revisionId, { specifications: [{ id: "spec", name: "Gypsum Board", brandIds: brands.map(brand => brand.id) }], brands });
+    }
+    expect((await catalog().list(ACTOR)).items).toEqual([{ name: "Gypsum Board", brandPrefill: { status: "unavailable", reason: "too_many_brands" } }]);
+  });
+
+  it("publishes imported destination associations only after a successful ordinary Mode save without changing the source", async () => {
+    const sourceId = await source("brand-original", []);
+    const sourcePayload = { specifications: [{ id: "source-spec", name: "Gypsum Board", brandIds: ["source-knauf", "source-usg"] }],
+      brands: [{ id: "source-knauf", name: "Knauf" }, { id: "source-usg", name: "USG" }] };
+    await pricingPayload(sourceId, sourcePayload);
+    const sourceBefore = await AiEstimatorKnowledgeSectionModel.findById(`${sourceId}-pricing`).lean();
+    const destinationId = await source("brand-destination", []);
+    const item = createAiEstimatorKnowledgeItemService({ audit: createAuditService(createMemoryRepository()), now: () => NOW });
+    const destinationPayload = { specifications: [{ id: "destination-spec", name: "Gypsum Board", description: "Retained local guidance", brandIds: ["local-knauf", "local-usg"] }],
+      brands: [{ id: "local-knauf", name: "Knauf" }, { id: "local-usg", name: "USG" }] };
+    const saved = await item.updateSection(ACTOR, "brand-destination", destinationId, "pricing", { expectedVersion: 1, expectedAggregateVersion: 1, payload: destinationPayload });
+    expect(saved.payload).toMatchObject(destinationPayload);
+    expect((await item.getSection(ACTOR, "brand-destination", destinationId, "pricing")).payload).toMatchObject(destinationPayload);
+    expect(await AiEstimatorKnowledgeSectionModel.findById(`${sourceId}-pricing`).lean()).toEqual(sourceBefore);
+    expect((await catalog().list(ACTOR)).items).toEqual([readyItem("Gypsum Board", ["Knauf", "USG"])]);
+    await expect(item.updateSection(ACTOR, "brand-destination", destinationId, "pricing", { expectedVersion: 1, expectedAggregateVersion: 1,
+      payload: { specifications: [{ id: "destination-spec", name: "Gypsum Board", brandId: "not-saved" }], brands: [{ id: "not-saved", name: "Uncommitted Brand" }] } }))
+      .rejects.toMatchObject({ status: 409 });
+    expect((await catalog().list(ACTOR)).items).toEqual([readyItem("Gypsum Board", ["Knauf", "USG"])]);
+  });
+
   it("collects only current owned applicable names across lines, temporary items and all tiers without rewriting legacy rows", async () => {
     const first = await source("first", ["  Plywood ", "plywood", "ＡＢＣ", "", "  ", null, 42, "x".repeat(241)], {
       tiers: ["signature", "premium", "functional"],
@@ -47,7 +133,7 @@ describe("current saved specification item names", { timeout: 30_000 }, () => {
     await revision("orphan-history", "removed-line", "superseded", ["Orphan historical name"], 1);
     const before = await AiEstimatorKnowledgeSectionModel.findById(`${first}-pricing`).lean();
     const result = await catalog().list(ACTOR);
-    expect(result.items).toEqual(["ＡＢＣ", "Active oak", "Gypsum board", "Marine ply", "MDF board", "Oak veneer", "Plywood", "Tile adhesive"].map(name => ({ name })));
+    expect(result.items).toEqual(["ＡＢＣ", "Active oak", "Gypsum board", "Marine ply", "MDF board", "Oak veneer", "Plywood", "Tile adhesive"].map(name => readyItem(name)));
     expect(result.pagination).toEqual({ limit: 20, offset: 0, total: 8, hasMore: false });
     expect(result.exactMatch).toBeNull();
     expect(result.similarItems).toEqual([]);
@@ -67,10 +153,10 @@ describe("current saved specification item names", { timeout: 30_000 }, () => {
     const exact = await catalog().list(ACTOR, { search: "nothing matches", offset: 100, checkName: "  plywood " });
     expect(exact.items).toEqual([]);
     expect(exact.pagination.total).toBe(0);
-    expect(exact.exactMatch).toEqual({ name: "PLYWOOD" });
+    expect(exact.exactMatch).toEqual(readyItem("PLYWOOD"));
     const similar = await catalog().list(ACTOR, { search: "Board", limit: 1, checkName: "Plywod" });
     expect(similar.exactMatch).toBeNull();
-    expect(similar.similarItems).toEqual([{ name: "PLYWOOD" }]);
+    expect(similar.similarItems).toEqual([readyItem("PLYWOOD")]);
   });
 
   it.each(["missing", "wrong-owner", "wrong-status", "foreign-section"])("rejects a %s current draft without falling back to active names", async corruption => {
@@ -91,10 +177,10 @@ describe("current saved specification item names", { timeout: 30_000 }, () => {
     expect((await catalog().list(ACTOR)).items).toEqual([]);
     const saved = await item.updateSection(ACTOR, "save-boundary", revisionId, "pricing", { expectedVersion: 1, expectedAggregateVersion: 1, payload: draft });
     expect(saved.payload.specifications).toEqual(draft.specifications);
-    expect((await catalog().list(ACTOR)).items).toEqual([{ name: "Acoustic felt" }]);
+    expect((await catalog().list(ACTOR)).items).toEqual([readyItem("Acoustic felt")]);
     await expect(item.updateSection(ACTOR, "save-boundary", revisionId, "pricing", { expectedVersion: 1, expectedAggregateVersion: 1, payload: { specifications: [{ id: "spec-stable", name: "Uncommitted name" }] } })).rejects.toMatchObject({ status: 409 });
     await expect(item.updateSection(ACTOR, "save-boundary", revisionId, "pricing", { expectedVersion: saved.version, expectedAggregateVersion: saved.aggregateVersion, payload: { specifications: [{ id: "spec-a", name: "Duplicate" }, { id: "spec-b", name: " DUPLICATE " }] } })).rejects.toMatchObject({ status: 400 });
-    expect((await catalog().list(ACTOR)).items).toEqual([{ name: "Acoustic felt" }]);
+    expect((await catalog().list(ACTOR)).items).toEqual([readyItem("Acoustic felt")]);
     await source("other-line", ["Acoustic felt"]);
     expect((await catalog().list(ACTOR)).pagination.total).toBe(1);
     await AiEstimatorKnowledgeMainLineModel.collection.deleteOne({ _id: "save-boundary" });
@@ -158,4 +244,17 @@ async function revision(id: string, mainLineId: string, status: string, names: u
 
 async function storedActor(actor: PublicUser) {
   await UserModel.collection.insertOne({ _id: actor.id, role: actor.role, active: true, name: actor.name, email: `${actor.id}@example.invalid`, emailNormalized: `${actor.id}@example.invalid`, passwordHash: "synthetic-not-used", accountKind: "standard", ...metadata });
+}
+
+async function pricingPayload(revisionId: string, payload: Record<string, unknown>) {
+  await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: `${revisionId}-pricing` }, { $set: { payload } });
+}
+
+async function sourceSnapshot() {
+  return {
+    lines: await AiEstimatorKnowledgeMainLineModel.find().sort({ _id: 1 }).lean(),
+    revisions: await AiEstimatorKnowledgeRevisionModel.find().sort({ _id: 1 }).lean(),
+    sections: await AiEstimatorKnowledgeSectionModel.find().sort({ _id: 1 }).lean(),
+    audits: await AuditEventModel.find().sort({ _id: 1 }).lean()
+  };
 }

@@ -34,10 +34,10 @@ function SavedLine({ line, showHierarchy }: { line: RevisionLine; showHierarchy:
     </div>
     <dl className="estimate-revision-line__amounts">
       <div><dt>Quantity{unit ? ` (${unit})` : ""}</dt><dd>{quantity(line.quantity)}</dd></div>
-      <div><dt>{governed ? "Price including margin" : "Rate"}{unit ? ` (₹/${unit})` : ""}</dt><dd>{governed ? revisionMoney(aggregateRate) : line.componentPricing && line.ratePaise === null ? "Component pricing" : revisionMoney(line.ratePaise, line.rate)}</dd></div>
-      <div><dt>Amount</dt><dd>{revisionMoney(line.amountPaise, line.amount)}</dd></div>
+      <div><dt>{governed ? "Price including margin" : "Rate"}{unit ? ` (₹/${unit})` : ""} · before GST</dt><dd>{governed ? revisionMoney(aggregateRate) : line.componentPricing && line.ratePaise === null ? "Component pricing" : revisionMoney(line.ratePaise, line.rate)}</dd></div>
+      <div><dt>Amount before GST</dt><dd>{revisionMoney(line.amountPaise, line.amount)}</dd></div>
     </dl>
-    {!governed && line.componentPricing ? <details className="estimate-revision-line__components"><summary>Saved component amounts for {title}</summary>
+    {!governed && line.componentPricing ? <details className="estimate-revision-line__components"><summary>Saved component amounts for {title} · before GST</summary>
       <p>{line.componentPricing.quantity} {line.componentPricing.uom.name} · {revisionMoney(line.componentPricing.totalPaise)}</p>
       <ul>{line.componentPricing.components.map((component, index) => <li key={`${component.id}:${index}`}>
         <strong>{component.basketName}{component.subBasketName ? ` / ${component.subBasketName}` : ""}</strong>

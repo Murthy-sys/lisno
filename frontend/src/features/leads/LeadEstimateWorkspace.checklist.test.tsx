@@ -468,7 +468,7 @@ describe("Estimator submission checklist integration", () => {
     fireEvent.change(rate, { target: { value: "095.00" } });
     expect(rate).toBeDisabled();
     expect(screen.getByRole("dialog", { name: title })).toBeInTheDocument();
-    expect(rate).toHaveValue("95");
+    expect(rate).toHaveValue("112.1");
     expect(data.writes).toEqual([]);
   });
 
