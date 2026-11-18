@@ -43,14 +43,21 @@ describe("client working estimate tiers", () => {
     const detail = fixture();
     detail.lines[0]!.choices[0]!.description = "Signature ceiling finish.";
     detail.lines[0]!.choices[1]!.description = "Premium acoustic finish.";
+    Object.assign(detail.lines[0]!.choices[2]!, { description: "Functional ceiling finish.", available: true,
+      unavailableReason: null, ratePaise: 3500, amountPaise: 7000, source });
     const user = userEvent.setup();
     const { state } = setup(detail);
     expect(await screen.findByText("Signature ceiling finish.")).toBeVisible();
+    expect(screen.getByRole("region", { name: /^Signature description for/ }).textContent).toBe("Signature ceiling finish.");
     expect(screen.queryByText("Description")).not.toBeInTheDocument();
     expect(screen.queryByText("Internal specifications")).not.toBeInTheDocument();
     await user.click(tier("Premium"));
     expect(screen.getByText("Premium acoustic finish.")).toBeVisible();
+    expect(screen.getByRole("region", { name: /^Premium description for/ }).textContent).toBe("Premium acoustic finish.");
     expect(screen.queryByText("Signature ceiling finish.")).not.toBeInTheDocument();
+    await user.click(tier("Functional"));
+    expect(screen.getByRole("region", { name: /^Functional description for/ }).textContent).toBe("Functional ceiling finish.");
+    expect(screen.queryByText("Premium acoustic finish.")).not.toBeInTheDocument();
     expect(state.detail.lines[0]!.ratePaise).toBe(5000);
     expect(state.detail.lines[0]!.amountPaise).toBe(10000);
     expect(api.updateEstimateTier).not.toHaveBeenCalled();

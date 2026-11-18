@@ -2,7 +2,7 @@ import { KNOWLEDGE_MODE_TIER_LABELS, type KnowledgeModeTier } from "../../../../
 import type { EstimationTierDetails } from "../leads/estimationCatalogueApi";
 import "./estimate-line-tier-details.css";
 
-/** Client-safe by default. Internal callers must explicitly enable specifications. */
+/** Each audience receives only its content; internal access is explicitly enabled. */
 export function EstimateLineTierDetails({ rowKey, label, tier, description, details, showInternalDetails = false }: {
   rowKey: string;
   label: string;
@@ -12,20 +12,22 @@ export function EstimateLineTierDetails({ rowKey, label, tier, description, deta
   showInternalDetails?: boolean;
 }) {
   const tierName = KNOWLEDGE_MODE_TIER_LABELS[tier];
-  const hasDescription = typeof description === "string" && description.trim().length > 0;
-  if (!hasDescription && !showInternalDetails) return null;
-  return <section key={rowKey} className="estimate-line-tier-details" aria-label={`${tierName} description for ${label}`}>
-    {hasDescription ? <p className="estimate-line-tier-details__description">{description}</p> : null}
-    {showInternalDetails ? <details className="estimate-line-tier-details__internal">
-      <summary tabIndex={0} aria-label={`Show internal specifications: ${tierName} for ${label}`}>Internal specifications</summary>
-      <div className="estimate-line-tier-details__content" role="region" aria-label={`${tierName} internal specifications for ${label}`}>
-        {!details ? <p>Specifications unavailable for this tier.</p>
-          : !details.specifications.length ? <p>No specifications configured for this tier.</p>
-          : <ul>{details.specifications.map(specification => <li key={specification.id}>
-            {specification.name}{specification.brands.length
-              ? ` (${specification.brands.map(brand => brand.name ?? "Brand unavailable").join(", ")})` : ""}
-          </li>)}</ul>}
-      </div>
-    </details> : null}
+  if (!showInternalDetails) {
+    if (typeof description !== "string" || !description.trim()) return null;
+    return <section key={rowKey} className="estimate-line-tier-details" aria-label={`${tierName} description for ${label}`}>
+      <p className="estimate-line-tier-details__description">{description}</p>
+    </section>;
+  }
+
+  const specifications = details?.specifications.filter(specification => specification.name.trim());
+  if (!specifications?.length) return null;
+  return <section key={rowKey} className="estimate-line-tier-details" aria-label={`${tierName} internal specifications for ${label}`}>
+    <ul className="estimate-line-tier-details__specifications">{specifications.map(specification => {
+      const brandNames = specification.brands.map(brand => brand.name)
+        .filter((name): name is string => typeof name === "string" && name.trim().length > 0);
+      return <li key={specification.id}>
+        {specification.name}{brandNames.length ? ` (${brandNames.join(", ")})` : ""}
+      </li>;
+    })}</ul>
   </section>;
 }

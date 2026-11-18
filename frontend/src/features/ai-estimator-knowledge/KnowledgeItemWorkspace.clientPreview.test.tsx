@@ -123,6 +123,7 @@ describe("Main Line Client view entry point", () => {
     await within(drawer).findByText("Saved ceiling");
     await user.click(within(drawer).getByRole("radio", { name: /Functional/ }));
     expect(within(drawer).getByText(text)).toBeVisible();
+    expect(within(drawer).getByRole("region", { name: /^Functional description for/ }).textContent).toBe(text);
     expect(within(drawer).queryByText(/^(Description|Internal specifications|Internal information)$/)).not.toBeInTheDocument();
     expect(api.initializeKnowledgeTierDescriptions).toHaveBeenCalledTimes(1);
   });
@@ -162,8 +163,10 @@ describe("Main Line Client view entry point", () => {
     await user.click(trigger);
     drawer = await screen.findByRole("dialog", { name: "Client view" });
     expect(await within(drawer).findByText("Copied ceiling description")).toBeVisible();
+    expect(within(drawer).getByRole("region", { name: /description for/ }).textContent).toBe("Copied ceiling description");
     await user.click(within(drawer).getByRole("radio", { name: /Functional/ }));
     expect(within(drawer).getByText("Copied ceiling description")).toBeVisible();
+    expect(within(drawer).getByRole("region", { name: /^Functional description for/ }).textContent).toBe("Copied ceiling description");
     expect(within(drawer).queryByText("Independent Premium wording")).not.toBeInTheDocument();
     expect(within(drawer).queryByText(/^(Description|Internal specifications|Internal information)$/)).not.toBeInTheDocument();
     expect(api.updateKnowledgeSection).toHaveBeenCalledTimes(1);

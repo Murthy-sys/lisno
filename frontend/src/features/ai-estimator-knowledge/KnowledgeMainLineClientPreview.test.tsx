@@ -70,6 +70,7 @@ describe("KnowledgeMainLineClientPreview", () => {
       await user.click(screen.getByRole("radio", { name: `${tier} tier for POP false ceiling` }));
       const content = screen.getByRole("region", { name: `${tier} description for POP false ceiling` });
       expect(within(content).getByText(`${tier} ceiling finish.`)).toBeVisible();
+      expect(content.textContent).toBe(`${tier} ceiling finish.`);
       expect(screen.queryByText("Internal specifications")).not.toBeInTheDocument();
       expect(screen.queryByText(/Internal board|Private brand|Premium internal board/)).not.toBeInTheDocument();
       expect(screen.getByRole("checkbox", { name: "Include POP false ceiling in preview" })).toBeChecked();
