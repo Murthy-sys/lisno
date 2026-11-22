@@ -66,7 +66,7 @@ export function buildSalesEstimateCatalogue({ catalogue, room, selectedMainBaske
       if (!line.included && !browseMainBasketIds.has(target.basketId)) return [];
       return [{ line, target, isPreview: false }];
     }
-    if (!browseMainBasketIds.has(target.basketId) || !isEstimationLinePriceVisible(item)) return [];
+    if (!browseMainBasketIds.has(target.basketId) || item.showByDefault !== true || !isEstimationLinePriceVisible(item)) return [];
     const line = createConfiguredLine(catalogue, room, target);
     return line ? [{ line, target, isPreview: true }] : [];
   });

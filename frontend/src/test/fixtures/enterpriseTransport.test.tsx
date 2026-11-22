@@ -36,6 +36,37 @@ function mount(route: string, role: Role, state: EnterpriseScenario["state"] = "
   cleanup = () => { view.unmount(); router.dispose(); client.clear(); };
   return { client, view, router };
 }
+it("persists the Overview flag only in its opt-in QA scenario and rejects stale saves", async () => {
+  const route = "/admin/configuration/estimation/items/line-1?qaOverview=defaults";
+  transport = installEnterpriseTransport({ route, role: "super_admin", state: "populated" });
+  const prefix = "/api/v1/admin/ai-estimator-knowledge/main-lines/line-1";
+  const sectionPath = `${prefix}/revisions/revision-1/sections/overview`;
+  const read = async (path: string) => (await (await fetch(path)).json()).data;
+  const initial = await read(sectionPath);
+  const item = await read(prefix);
+  expect(initial.payload.showByDefault).toBeUndefined();
+  const command = { expectedVersion: initial.version, expectedAggregateVersion: item.version,
+    payload: { ...initial.payload, showByDefault: true } };
+  expect((await fetch(sectionPath, { method: "PUT", body: JSON.stringify(command) })).status).toBe(200);
+  expect(await read(sectionPath)).toMatchObject({ version: initial.version + 1, payload: command.payload });
+  expect((await fetch(sectionPath, { method: "PUT", body: JSON.stringify(command) })).status).toBe(409);
+  transport.restore();
+  transport = installEnterpriseTransport({ route: route.split("?")[0]!, role: "super_admin", state: "populated" });
+  expect((await fetch(sectionPath, { method: "PUT", body: JSON.stringify(command) })).status).toBe(422);
+});
+
+it("serves mixed default flags and refreshes discovery without removing non-default catalogue sources", async () => {
+  transport = installEnterpriseTransport({ route: "/estimator-sales/leads/lead-1/estimate?qaEstimateModes=ready&qaBasketCards=ready",
+    role: "estimator_sales", state: "populated" });
+  const read = async () => (await (await fetch("/api/v1/estimation/catalogue")).json()).data as EstimationCataloguePage;
+  const initial = (await read()).items[0]!.subBaskets[0]!.mainLines;
+  expect(initial.map(line => line.showByDefault)).toEqual([true, false, undefined]);
+  window.dispatchEvent(new CustomEvent("enterprise-qa-estimate-mode-rates", { detail: { mainLineId: initial[0]!.mainLineId, showByDefault: false } }));
+  const refreshed = (await read()).items[0]!.subBaskets[0]!.mainLines;
+  expect(refreshed).toHaveLength(3);
+  expect(refreshed[0]).toMatchObject({ showByDefault: false, modeBaseRatesPaise: initial[0]!.modeBaseRatesPaise });
+});
+
 const routes: [string, Role][] = [
   ["/admin/dashboard", "super_admin"], ["/admin/dashboard?tab=projects", "super_admin"],
   ["/admin/projects", "admin"], ["/admin/projects/project-1", "admin"], ["/admin/projects/project-murthy", "super_admin"],

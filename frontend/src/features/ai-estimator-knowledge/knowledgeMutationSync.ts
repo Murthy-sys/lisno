@@ -1,4 +1,4 @@
-import type { QueryClient } from "@tanstack/react-query";
+import type { InvalidateQueryFilters, QueryClient } from "@tanstack/react-query";
 
 import { projectDesignRequirementsKeys } from "../workflow/projectDesignRequirementsApi";
 import { projectWorkflowKeys } from "../workflow/projectWorkflowApi";
@@ -434,20 +434,27 @@ export function commitKnowledgeSectionMutation(
   );
 }
 
+const currentPricingConsumers: InvalidateQueryFilters[] = [
+  { queryKey: ["estimate-in-house-pricing"] },
+  { queryKey: ["leads"], predicate: query => query.queryKey[2] === "estimate" },
+  { queryKey: ["estimates", "review-queue"] },
+  { queryKey: ["estimates", "revisions"] },
+  { queryKey: ["estimate-tiers"] },
+  { queryKey: ["quotation"] },
+  { queryKey: ["procurement", "purchase-order-preparation"] },
+  { queryKey: ["procurement", "purchase-order-requests"] },
+  { queryKey: ["admin", "purchase-order-requests", "pending"] },
+  { queryKey: ["procurement", "project-items"] }
+];
+
 export async function invalidateKnowledgeSectionMutation(
   queryClient: QueryClient,
   mainLineId: string
 ): Promise<void> {
+  const basketId = queryClient.getQueryData<KnowledgeItemDetail>(knowledgeQueryKeys.item(mainLineId))?.basketId;
   await Promise.allSettled([
-    queryClient.invalidateQueries({ queryKey: ["estimate-in-house-pricing"] }),
-    queryClient.invalidateQueries({ queryKey: ["leads"], predicate: query => query.queryKey[2] === "estimate" }),
-    queryClient.invalidateQueries({ queryKey: ["estimates", "review-queue"] }),
-    queryClient.invalidateQueries({ queryKey: ["estimates", "revisions"] }),
-    queryClient.invalidateQueries({ queryKey: ["estimate-tiers"] }),
-    queryClient.invalidateQueries({ queryKey: ["quotation"] }),
-    queryClient.invalidateQueries({ queryKey: ["procurement", "purchase-order-preparation"] }),
-    queryClient.invalidateQueries({ queryKey: ["procurement", "purchase-order-requests"] }),
-    queryClient.invalidateQueries({ queryKey: ["admin", "purchase-order-requests", "pending"] }),
+    queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.subBasketLists(basketId) }),
+    ...currentPricingConsumers.map((filters) => queryClient.invalidateQueries(filters)),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.specificationItemNames() }),
     invalidateTemporaryMainLineDetails(queryClient),
     queryClient.invalidateQueries({ queryKey: knowledgeQueryKeys.subBasketMarginSummaries() }),
@@ -476,19 +483,21 @@ export async function invalidateKnowledgeSectionMutation(
 /** Refresh saved current configuration consumers once after a bulk margin mutation. */
 export async function syncKnowledgeSubBasketMargins(
   queryClient: QueryClient,
-  mainLineIds: readonly string[]
+  mainLineIds: readonly string[],
+  basketId: string
 ): Promise<boolean> {
   const keys = [
+    knowledgeQueryKeys.subBasketLists(basketId), knowledgeQueryKeys.basketDeletionImpacts(),
     knowledgeQueryKeys.itemLists(), knowledgeQueryKeys.mainLineLists(),
     knowledgeQueryKeys.histories(), knowledgeQueryKeys.activationReviews(), knowledgeQueryKeys.contexts(),
-    knowledgeQueryKeys.previews(), knowledgeQueryKeys.subBasketDeletionImpacts(),
+    knowledgeQueryKeys.previews(), knowledgeQueryKeys.subBasketDeletionImpacts(basketId),
     ...mainLineIds.map((id) => knowledgeQueryKeys.item(id)),
     estimateRequirementsKeys.all, estimationCatalogueKeys.all,
     projectDesignRequirementsKeys.all, projectWorkflowKeys.all,
-    procurementBasketKeys.lists(), procurementBasketKeys.details(),
-    ["procurement", "project-items"]
+    procurementBasketKeys.lists(), procurementBasketKeys.details()
   ];
-  const refreshed = await Promise.allSettled(keys.map((queryKey) => queryClient.invalidateQueries({ queryKey }, { throwOnError: true })));
+  const filters: InvalidateQueryFilters[] = [...currentPricingConsumers, ...keys.map((queryKey) => ({ queryKey }))];
+  const refreshed = await Promise.allSettled(filters.map((filter) => queryClient.invalidateQueries(filter, { throwOnError: true })));
   return refreshed.every((result) => result.status === "fulfilled");
 }
 

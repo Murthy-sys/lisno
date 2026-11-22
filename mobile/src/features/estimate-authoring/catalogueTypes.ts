@@ -32,6 +32,8 @@ export interface EstimationCatalogueMainLine {
   itemType?: "main_line" | undefined;
   name: string;
   estimateNotes?: string[] | undefined;
+  /** Current Configuration metadata; absent means not a default item. */
+  showByDefault?: boolean | undefined;
   displayOrder: number;
   revisionId: string;
   applicableTiers?: EstimateModeTier[] | undefined;

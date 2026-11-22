@@ -1,10 +1,15 @@
 import { resolveEstimateDimensionRule } from "../domain/estimate-dimensions.js";
 import { isKnowledgeModeTier, isKnowledgeModeConfigurationScope, isKnowledgeModeSection, knowledgeModeTierPayload, knowledgeModeConfigurationPayloads, projectKnowledgeModeTierSection, mergeKnowledgeModeTierPayload, expandKnowledgeModeTierRows, type KnowledgeModeConfigurationScope, type KnowledgeModeTier } from "../domain/ai-estimator-knowledge-mode-tiers.js";
 import { copyUninitializedTierDescriptions, initializeSavedTierDescriptions } from "../domain/ai-estimator-knowledge-tier-description-copy.js";
+import { inspectStoredMarginDefaults, marginScopeKey, samePairs, validMarginChange, type StoredMarginBaseline, type PendingMarginEdit } from "../domain/ai-estimator-knowledge-margin-matrix.js";
 import { readInHouseComponents } from "../domain/ai-estimator-knowledge-in-house-components.js";
-import type { KnowledgeApplySubBasketMarginsInput, KnowledgeApplySubBasketMarginsResult, KnowledgeSubBasketMarginSummary } from "../contracts/ai-estimator-knowledge-sub-basket-margins.js";
-import { SUB_BASKET_MARGIN_MODES, subBasketMarginPatchUnavailableReason, withSubBasketMarginDefaults } from "../domain/ai-estimator-knowledge-sub-basket-margins.js";
-import { marginPayload, readSubBasketMarginSnapshot } from "./ai-estimator-knowledge-sub-basket-margins.js";
+import type {
+  KnowledgeApplySubBasketMarginsInput, KnowledgeApplySubBasketMarginsResult, KnowledgeSubBasketMarginSummary,
+  MarginCommitInput, MarginCommitResult, MarginDefault, MarginEditField, MarginMatrix, MarginPreview, MarginPreviewInput, MarginTier
+} from "../contracts/ai-estimator-knowledge-sub-basket-margins.js";
+import { savedMarginDeltas } from "../domain/ai-estimator-knowledge-pending-margins.js";
+import { SUB_BASKET_MARGIN_MODES, subBasketMarginPatchUnavailableReason, subBasketMarginRanges, withSubBasketMarginDefaults } from "../domain/ai-estimator-knowledge-sub-basket-margins.js";
+import { marginPayload, planMarginDecision, readMarginMatrixSnapshot, readSubBasketMarginSnapshot, type SubBasketMarginLine } from "./ai-estimator-knowledge-sub-basket-margins.js";
 import { normalizeDesignRules } from "../domain/main-line-design-rules.js";
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
@@ -45,6 +50,7 @@ import {
   AI_ESTIMATOR_KNOWLEDGE_MAX_SHORT_TEXT,
   AI_ESTIMATOR_KNOWLEDGE_QUANTITY_GAP_BEHAVIORS,
   AI_ESTIMATOR_KNOWLEDGE_SECTION_KEYS,
+  createKnowledgeContentDigest,
   createKnowledgePriceScopeKey,
   normalizeKnowledgeIdentity,
   type KnowledgeQuantityGapBehavior,
@@ -58,6 +64,8 @@ import {
 import { normalizeKnowledgeBudgetAlterationTarget } from "../domain/ai-estimator-knowledge-recommendation.js";
 import {
   assertValidKnowledgeSectionPayload,
+  inheritedModeCopyIssues,
+  preservedModeNamespaceIssues,
   findOverlappingEffectiveWindows,
   KnowledgeValidationError,
   validateAcyclicGraph,
@@ -68,6 +76,7 @@ import {
 } from "../domain/ai-estimator-knowledge-validation.js";
 import { ApiError } from "../middleware/errors.js";
 import { AiEstimatorKnowledgeSubBasketModel } from "../models/AiEstimatorKnowledgeSubBasket.js";
+import { AiEstimatorKnowledgeMarginOperationModel } from "../models/AiEstimatorKnowledgeMarginOperation.js";
 import { AiEstimatorKnowledgeBasketModel } from "../models/AiEstimatorKnowledgeBasket.js";
 import { AiEstimatorKnowledgeMainLineModel } from "../models/AiEstimatorKnowledgeMainLine.js";
 import { cascadeDeleteMainLines, stripReferencesToDeleted } from "./ai-estimator-knowledge-cascade.js";
@@ -146,6 +155,7 @@ export interface KnowledgeMainLineDeleteInput extends KnowledgeExpectedVersionIn
 }
 
 export interface KnowledgeSectionUpdateInput {
+  readonly marginEdits?: readonly MarginEditField[];
   readonly modeTier?: KnowledgeModeConfigurationScope;
   readonly expectedVersion: number;
   readonly expectedAggregateVersion?: number;
@@ -179,7 +189,10 @@ export interface AiEstimatorKnowledgeMainLineDeletionResult {
 }
 
 export interface AiEstimatorKnowledgeItemService {
-  getSubBasketMargins(actor: PublicUser, basketId: string, subBasketId: string, modeTier?: KnowledgeModeConfigurationScope): Promise<KnowledgeSubBasketMarginSummary>;
+  getMarginMatrix(actor: PublicUser, basketId: string, subBasketId: string, inHouseScope?: "sub_basket"): Promise<MarginMatrix>;
+  previewMarginDecision(actor: PublicUser, basketId: string, subBasketId: string, input: MarginPreviewInput): Promise<MarginPreview>;
+  commitMarginDecision(actor: PublicUser, basketId: string, subBasketId: string, input: MarginCommitInput): Promise<MarginCommitResult>;
+  getSubBasketMargins(actor: PublicUser, basketId: string, subBasketId: string, modeTier?: KnowledgeModeConfigurationScope, inHouseScope?: "sub_basket"): Promise<KnowledgeSubBasketMarginSummary>;
   applySubBasketMargins(actor: PublicUser, basketId: string, subBasketId: string, input: KnowledgeApplySubBasketMarginsInput): Promise<KnowledgeApplySubBasketMarginsResult>;
 
   listMainLines(
@@ -264,6 +277,107 @@ export interface AiEstimatorKnowledgeItemServiceDependencies {
   readonly uuid?: () => string;
 }
 
+type MarginSnapshot = Awaited<ReturnType<typeof readMarginMatrixSnapshot>>;
+
+// Draft creation uses strict nested schemas. Mongoose's document-reset hook can mask an
+// abort with a synthetic "__v" error. This command returns plain data and rebuilds every
+// document on driver retries, so it only needs the driver's transaction and session lifetime.
+function runMarginCommit<T>(work: (session: ClientSession) => Promise<T>): Promise<T> {
+  return mongoose.connection.getClient().withSession(session => session.withTransaction(() => work(session)));
+}
+
+function checkDecisionScope(snapshot: MarginSnapshot, input: MarginPreviewInput) {
+  const baseline = snapshot.subBasket.marginBaseline as StoredMarginBaseline | undefined;
+  const stored = inspectStoredMarginDefaults(baseline);
+  const scopes = input.decision.kind === "approve" ? [input.decision.candidate] : input.decision.changes;
+  const blocked = stored.problems.find(problem => !problem.repairTier || !input.inHouseScope ||
+    !scopes.some(scope => scope.mode === "in_house" && scope.tier === problem.repairTier));
+  if (blocked) throw new ApiError(409, "SUB_BASKET_MARGINS_UNAVAILABLE", `${blocked.reason} Review and repair that baseline before saving.`);
+  if (input.inHouseScope) return;
+  if (scopes.some(scope => scope.mode === "in_house" && stored.sharedInHouseDefaults.some(row => row.tier === scope.tier))) {
+    throw new ApiError(409, "VERSION_CONFLICT", "This tier uses shared In-house margins. Reopen its margin panel to review the shared impact.");
+  }
+}
+
+async function persistMarginBaseline(snapshot: MarginSnapshot, defaults: MarginDefault[], actorId: string,
+  occurredAt: Date, session: ClientSession, operationId?: string): Promise<void> {
+  const { basketId, subBasketId, baselineVersion } = snapshot.matrix;
+  const prior = snapshot.subBasket.marginBaseline as StoredMarginBaseline | undefined;
+  const priorDefaults = inspectStoredMarginDefaults(prior);
+  const shared = new Map(priorDefaults.sharedInHouseDefaults.map(row => [row.tier, row]));
+  // Projected suggestions and choices have no stored authority until that tier is explicitly reviewed.
+  const legacy = new Map(snapshot.legacyDefaults.map(row => [marginScopeKey(row), row]));
+  // An older viewer sees the shared percentages projected onto components. Keep the original
+  // component baselines on disk when applying a decision to a different tier or mode.
+  for (const row of priorDefaults.defaults) {
+    if (row.mode === "in_house" && shared.has(row.tier)) legacy.set(marginScopeKey(row), row);
+  }
+  for (const value of defaults) {
+    if (value.mode === "in_house" && !value.component) {
+      if (value.resolution === "shared") shared.set(value.tier, value);
+    } else if (value.mode !== "in_house" || !shared.has(value.tier)) {
+      legacy.set(marginScopeKey(value), value);
+    }
+  }
+  const storedRow = ({ tier, mode, ranges, provenance, component }: MarginDefault) =>
+    ({ tier, mode, ranges, provenance, ...(component ? { component } : {}) });
+  const stored = await AiEstimatorKnowledgeSubBasketModel.updateOne(
+    { _id: subBasketId, basketId, version: snapshot.subBasket.version },
+    {
+      $set: {
+        marginBaseline: {
+          version: baselineVersion + 1, defaults: [...legacy.values()].map(storedRow),
+          ...(shared.size ? { sharedInHouseDefaults: [...shared.values()].map(storedRow) } : {}),
+          updatedById: actorId, updatedAt: occurredAt, ...(operationId ? { operationId } : {})
+        },
+        updatedById: actorId
+      },
+      $inc: { version: 1 }
+    },
+    { session, runValidators: true }
+  ).exec();
+  if (!stored.matchedCount) versionConflict();
+}
+
+async function fenceMarginLines(lines: SubBasketMarginLine[], basketId: string, subBasketId: string, session: ClientSession) {
+  for (const { line } of lines) {
+    const locked = await AiEstimatorKnowledgeMainLineModel.updateOne(
+      { _id: line._id, version: line.version, basketId, subBasketId },
+      { $inc: { dependencyEpoch: 1 } }, { session, timestamps: false }
+    ).exec();
+    if (locked.matchedCount !== 1) versionConflict();
+  }
+}
+
+async function clearResolvedMarginEdits(entry: SubBasketMarginLine, keep: (edit: PendingMarginEdit) => boolean, session: ClientSession) {
+  const previous = entry.pending ?? [];
+  const remaining = previous.filter(keep);
+  if (remaining.length === previous.length) return;
+  // The caller already fenced this line in this transaction. Removing a notification does not edit its revision.
+  const result = await AiEstimatorKnowledgeMainLineModel.updateOne({ _id: entry.line._id, basketId: entry.line.basketId, subBasketId: entry.line.subBasketId },
+    { $set: { pendingMarginEdits: remaining } }, { session, timestamps: false, runValidators: true }).exec();
+  if (result.matchedCount !== 1) versionConflict();
+}
+
+function applyReviewedMarginsToCopiedDraft(mainLineId: string, active: Row, draft: Row, preview: MarginPreview) {
+  const owner = { basketId: preview.basketId, subBasketId: preview.subBasketId };
+  const patches = new Map<MarginTier, Row>();
+  for (const impact of preview.impacts) {
+    if (!impact.affected.some(line => line.mainLineId === mainLineId)) continue;
+    const reviewed = knowledgeModeTierPayload(marginPayload(active), impact.tier);
+    const copied = knowledgeModeTierPayload(marginPayload(draft), impact.tier);
+    if (!isDeepStrictEqual(subBasketMarginRanges(reviewed, impact.mode), subBasketMarginRanges(copied, impact.mode))) versionConflict();
+    const ranges = impact.componentChanges
+      ? impact.componentChanges.filter(row => row.mainLineId === mainLineId).flatMap(row => impact.ranges.map(pair => ({ ...pair, component: row.component })))
+      : impact.ranges.map(pair => ({ ...pair, ...(impact.component ? { component: impact.component } : {}) }));
+    // Copying a revision cleans obsolete references. Apply only the reviewed margins to that normalized draft.
+    const next = withSubBasketMarginDefaults(patches.get(impact.tier) ?? copied, impact.mode, ranges, owner, { allowIncompleteMargins: true });
+    if (!next) versionConflict();
+    patches.set(impact.tier, next);
+  }
+  return patches;
+}
+
 export function createAiEstimatorKnowledgeItemService(
   dependencies: AiEstimatorKnowledgeItemServiceDependencies
 ): AiEstimatorKnowledgeItemService {
@@ -309,8 +423,7 @@ export function createAiEstimatorKnowledgeItemService(
     const sourceSections = sourceSectionDocuments.map((row) => asRow(row)!);
     // Reject malformed history before cloning child records or appending their audits.
     const inheritedAdvanced = payloadFor(sourceSections.find((row) => row.sectionKey === "advanced"));
-    const inheritedIssues = validateKnowledgeSectionPayload("advanced", inheritedAdvanced)
-      .filter(({ code }) => code !== "INVALID_LISNO_MARGIN_INCREMENT" && code !== "CONFLICTING_SCOPE_SELECTION");
+    const inheritedIssues = inheritedModeCopyIssues(inheritedAdvanced);
     if (inheritedIssues.length > 0) invalidRevisionSectionRules(inheritedIssues);
     const priceReferences = await cloneRevisionPrices({
       sourcePrices: sourcePriceDocuments.map((row) => asRow(row)!),
@@ -392,11 +505,11 @@ export function createAiEstimatorKnowledgeItemService(
 
   async function persistSectionInSession({ actorId, mainLineId, revisionId, sectionKey, section,
     previousRootPayload, storedPayload, rootApplicability, expectedVersion, expectedAggregateVersion,
-    modeTier, occurredAt, auditDetails }: {
+    modeTier, occurredAt, auditDetails, pendingMarginEdits }: {
       actorId: string; mainLineId: string; revisionId: string; sectionKey: KnowledgeSectionKey; section: Row;
       previousRootPayload: Row; storedPayload: Row; rootApplicability: KnowledgeSectionApplicability;
       expectedVersion: number; expectedAggregateVersion: number; modeTier: KnowledgeModeConfigurationScope;
-      occurredAt: Date; auditDetails: Row;
+      occurredAt: Date; auditDetails: Row; pendingMarginEdits?: PendingMarginEdit[];
     }, session: ClientSession): Promise<{ section: Row; aggregateVersion: number }> {
     const updatedSection = await AiEstimatorKnowledgeSectionModel.findOneAndUpdate(
       { _id: section._id, version: expectedVersion, revisionId },
@@ -414,8 +527,8 @@ export function createAiEstimatorKnowledgeItemService(
     if (!updatedSection) versionConflict();
     const updatedLine = await AiEstimatorKnowledgeMainLineModel.findOneAndUpdate(
       { _id: mainLineId, version: expectedAggregateVersion, draftRevisionId: revisionId },
-      { $set: { updatedById: actorId, updatedAt: occurredAt }, $inc: { version: 1 } },
-      { new: true, session }
+      { $set: { updatedById: actorId, updatedAt: occurredAt, ...(pendingMarginEdits ? { pendingMarginEdits } : {}) }, $inc: { version: 1 } },
+      { new: true, session, runValidators: true }
     ).lean().exec();
     if (!updatedLine) versionConflict();
 
@@ -568,20 +681,170 @@ export function createAiEstimatorKnowledgeItemService(
       copiedDescriptionTiers = copied.copiedTiers;
     }
     validatePreservedModeNamespaces(sectionKey, storedPayload, previousRootPayload, modeTier);
+    let pendingMarginEdits: PendingMarginEdit[] | undefined;
+    let manualMarginChanges: ReturnType<typeof savedMarginDeltas> = [];
+    if (!marginDefaults && sectionKey === "advanced" && isKnowledgeModeTier(modeTier) && typeof line.subBasketId === "string") {
+      const owner = { basketId: requiredString(line.basketId), subBasketId: line.subBasketId };
+      const previous = projectKnowledgeModeTierSection(section, modeTier);
+      const deltas = savedMarginDeltas(modeTier, owner, previousPayload, persistedPayload, previous.applicability === "configured",
+        storedApplicability === "configured", input.marginEdits);
+      manualMarginChanges = deltas.filter(delta => delta.manual);
+      if (deltas.length) {
+        const snapshot = await readMarginMatrixSnapshot(owner.basketId, owner.subBasketId, session, "sub_basket");
+        // Preserve an established first-line default even if the form indirectly changed a margin.
+        const changingLegacySource = previous.applicability === "configured" && snapshot.lines[0]?.line._id === mainLineId && deltas.some(delta =>
+          delta.previous.some(pair => pair.minimumBps !== null && pair.maximumBps !== null));
+        if (!snapshot.matrix.baselineVersion && (manualMarginChanges.length || changingLegacySource)) {
+          await coordinateMainLineBasketDependency(owner.basketId, session);
+          await fenceMarginLines(snapshot.lines, owner.basketId, owner.subBasketId, session);
+          await persistMarginBaseline(snapshot, snapshot.legacyDefaults, storedActor.id, occurredAt, session);
+        }
+        const entry = snapshot.lines.find(row => row.line._id === mainLineId);
+        if (!entry) versionConflict();
+        const eligible = new Set(snapshot.matrix.exceptions.filter(row => row.mainLineId === mainLineId).flatMap(row => row.proposals ?? [row]).map(marginScopeKey));
+        const edits = new Map((entry.pending ?? []).filter(edit => eligible.has(marginScopeKey(edit))).map(edit => [marginScopeKey(edit), edit]));
+        for (const delta of deltas) {
+          const key = marginScopeKey(delta.scope);
+          const priorEdit = edits.get(key);
+          edits.delete(key);
+          const baseline = snapshot.matrix.defaults.find(row => row.mode === delta.scope.mode && row.tier === delta.scope.tier);
+          const previous = delta.previous.flatMap(({ key, minimumBps, maximumBps }) =>
+            minimumBps !== null && maximumBps !== null ? [{ key, minimumBps, maximumBps }] : []);
+          const original = priorEdit?.originalRanges ?? (validMarginChange({ ...delta.scope, ranges: previous }) ? previous : undefined);
+          const comparison = baseline?.ranges.length ? baseline.ranges : original;
+          if (delta.manual && !samePairs(delta.ranges, comparison ?? [])) {
+            edits.set(key, { ...delta.scope, ranges: delta.ranges, ...(original ? { originalRanges: original } : {}),
+              revisionId, sectionVersion: input.expectedVersion + 1, actorId: storedActor.id });
+          }
+        }
+        pendingMarginEdits = [...edits.values()];
+      }
+    }
     return persistSectionInSession({ actorId: storedActor.id, mainLineId, revisionId, sectionKey, section,
       previousRootPayload, storedPayload, rootApplicability, expectedVersion: input.expectedVersion,
-      expectedAggregateVersion, modeTier, occurredAt,
+      expectedAggregateVersion, modeTier, occurredAt, pendingMarginEdits,
       auditDetails: { modeTier, applicability: storedApplicability,
+        ...(manualMarginChanges.length ? { basketId: line.basketId, subBasketId: line.subBasketId,
+          manualMarginEdits: manualMarginChanges.map(({ scope, previous, ranges }) => ({ ...scope, previous, ranges })) } : {}),
         ...(copiedDescriptionTiers.length ? { copiedDescriptionTiers } : {}), ...(marginDefaults ? { marginDefaults } : {}) }
     }, session);
   }
 
   return {
-    async getSubBasketMargins(actor, basketId, subBasketId, modeTier = "signature") {
+    async getMarginMatrix(actor, basketId, subBasketId, inHouseScope) {
+      return mongoose.connection.transaction(async session => {
+        await actorGuard.requireReadActor(actor, session);
+        return (await readMarginMatrixSnapshot(basketId, subBasketId, session, inHouseScope)).matrix;
+      });
+    },
+
+    async previewMarginDecision(actor, basketId, subBasketId, input) {
+      return mongoose.connection.transaction(async session => {
+        await actorGuard.requireReadActor(actor, session);
+        const snapshot = await readMarginMatrixSnapshot(basketId, subBasketId, session, input.inHouseScope);
+        checkDecisionScope(snapshot, input);
+        if (snapshot.matrix.versionToken !== input.versionToken) versionConflict();
+        return planMarginDecision(snapshot, input).preview;
+      });
+    },
+
+    async commitMarginDecision(actor, basketId, subBasketId, input) {
+      if (!input.operationId || input.operationId.length > 128 || !/^[a-f0-9]{64}$/u.test(input.reviewToken)) {
+        invalid("operationId", "Review the margin change before confirming.");
+      }
+      return runMarginCommit(async session => {
+        const { id: actorId } = await actorGuard.requireMutationActor(actor, session);
+        await coordinateMainLineBasketDependency(basketId, session);
+        const { operationId, decision, versionToken } = input;
+        const receiptId = createKnowledgeContentDigest({ actorId, basketId, subBasketId, operationId });
+        const requestDigest = createKnowledgeContentDigest(input);
+        // Check the exact prior command before checking its now-consumed snapshot token.
+        const receipt = asRow(await AiEstimatorKnowledgeMarginOperationModel.findById(receiptId).session(session).lean().exec());
+        if (receipt) {
+          if (!await AiEstimatorKnowledgeSubBasketModel.exists({ _id: subBasketId, basketId }).session(session).exec()) notFound();
+          if (receipt.requestDigest !== requestDigest) versionConflict();
+          return { basketId, subBasketId, operationId, alreadyApplied: true, updatedMainLineIds: stringArray(receipt.updatedMainLineIds) };
+        }
+        const snapshot = await readMarginMatrixSnapshot(basketId, subBasketId, session, input.inHouseScope);
+        checkDecisionScope(snapshot, input);
+        if (snapshot.matrix.versionToken !== versionToken) versionConflict();
+        const { preview, patches, defaults } = planMarginDecision(snapshot, input);
+        if (preview.reviewToken !== input.reviewToken) versionConflict();
+        if (preview.impacts.some(impact => impact.blockers.length)) {
+          throw new ApiError(409, "SUB_BASKET_MARGINS_UNAVAILABLE", "Resolve the blocked Main Lines before applying these margins.");
+        }
+        await fenceMarginLines(snapshot.lines, basketId, subBasketId, session);
+        const occurredAt = now();
+        const updatedMainLineIds: string[] = [];
+        for (const entry of snapshot.lines) {
+          const { line, section: reviewedSection } = entry;
+          const mainLineId = requiredString(line._id);
+          await clearResolvedMarginEdits(entry, edit => !preview.impacts.some(impact => {
+            if (impact.componentChanges) {
+              if (edit.mode !== "in_house" || edit.tier !== impact.tier) return false;
+              const matches = (component: typeof edit.component) => component?.basketId === edit.component?.basketId && component?.subBasketId === edit.component?.subBasketId;
+              if (impact.componentChanges.some(row => row.mainLineId === mainLineId && matches(row.component))) return true;
+              return samePairs(impact.ranges, edit.ranges) && snapshot.matrix.exceptions.some(group => group.mainLineId === mainLineId
+                && group.tier === edit.tier && group.proposals?.some(proposal => matches(proposal.component) && samePairs(proposal.ranges, edit.ranges)));
+            }
+            return marginScopeKey(impact) === marginScopeKey(edit) && !samePairs(impact.previous, impact.ranges)
+              && (samePairs(impact.ranges, edit.ranges) || impact.affected.some(target => target.mainLineId === mainLineId));
+          }), session);
+          let byTier = patches.get(mainLineId);
+          if (!byTier?.size) continue;
+          if (!line.draftRevisionId) {
+            await createRevisionInSession(actor, mainLineId, { expectedVersion: requiredInteger(line.version) }, session);
+          }
+          const draft = asRow(await AiEstimatorKnowledgeMainLineModel.findById(mainLineId).session(session).lean().exec());
+          if (!draft) notFound();
+          const revisionId = requiredString(draft.draftRevisionId);
+          let section = asRow(await AiEstimatorKnowledgeSectionModel.findOne({ mainLineId, revisionId, sectionKey: "advanced" })
+            .session(session).lean().exec());
+          if (!section || !reviewedSection) notFound();
+          let aggregateVersion = requiredInteger(draft.version);
+          if (!line.draftRevisionId) byTier = applyReviewedMarginsToCopiedDraft(mainLineId, reviewedSection, section, preview);
+          for (const [modeTier, payload] of byTier) {
+            const updated = await updateSectionInSession(actor, mainLineId, revisionId, "advanced", {
+              modeTier, expectedVersion: requiredInteger(section.version), expectedAggregateVersion: aggregateVersion, payload
+            }, session, { operationId, basketId, subBasketId });
+            aggregateVersion = updated.aggregateVersion;
+            section = updated.section;
+          }
+          updatedMainLineIds.push(mainLineId);
+        }
+        let auditEventId: string | null = null;
+        const establishesShared = preview.impacts.some(impact => impact.componentChanges &&
+          snapshot.matrix.defaults.find(row => row.tier === impact.tier && row.mode === "in_house")?.resolution !== "shared");
+        const repairsBaseline = inspectStoredMarginDefaults(snapshot.subBasket.marginBaseline as StoredMarginBaseline | undefined).problems.length > 0;
+        if (repairsBaseline || establishesShared || updatedMainLineIds.length || preview.impacts.some(impact => !samePairs(impact.previous, impact.ranges))) {
+          await persistMarginBaseline(snapshot, defaults, actorId, occurredAt, session, operationId);
+          const candidate = decision.kind === "approve"
+            ? snapshot.lines.find(entry => entry.line._id === decision.candidate.mainLineId) : undefined;
+          const audit = await dependencies.audit.appendInMongoTransaction({
+            actorId,
+            action: decision.kind === "approve" ? "ai_estimator_knowledge_sub_basket_margin_exception_approved" : "ai_estimator_knowledge_sub_basket_margins_updated",
+            entityType: "ai_estimator_knowledge_sub_basket", entityId: subBasketId, occurredAt: occurredAt.toISOString(),
+            oldValues: { baselineVersion: snapshot.matrix.baselineVersion },
+            newValues: {
+              operationId, basketId, subBasketId, decision, ...(input.inHouseScope ? { inHouseScope: input.inHouseScope } : {}), updatedMainLineIds,
+              baselineVersion: snapshot.matrix.baselineVersion + 1, impacts: preview.impacts,
+              ...(candidate ? { candidateRevisionId: candidate.revision?._id, candidateSectionVersion: candidate.section?.version } : {})
+            }
+          }, session);
+          auditEventId = audit.id;
+        }
+        await AiEstimatorKnowledgeMarginOperationModel.create([{
+          _id: receiptId, requestDigest, updatedMainLineIds, auditEventId
+        }], { session });
+        return { basketId, subBasketId, operationId, alreadyApplied: false, updatedMainLineIds };
+      });
+    },
+
+    async getSubBasketMargins(actor, basketId, subBasketId, modeTier = "signature", inHouseScope) {
       if (!isKnowledgeModeConfigurationScope(modeTier)) invalid("modeTier", "Select a valid Mode tier.");
       return mongoose.connection.transaction(async (session) => {
         await actorGuard.requireReadActor(actor, session);
-        return (await readSubBasketMarginSnapshot(basketId, subBasketId, session, modeTier)).summary;
+        return (await readSubBasketMarginSnapshot(basketId, subBasketId, session, modeTier, inHouseScope)).summary;
       });
     },
 
@@ -602,7 +865,9 @@ export function createAiEstimatorKnowledgeItemService(
         const targeted = input.targetMainLineId !== undefined;
         const target = targeted ? snapshot.lines.find(({ line }) => line._id === input.targetMainLineId) : undefined;
         if (targeted && !target) throw new ApiError(404, "NOT_FOUND", "This main line is no longer in the selected Sub-Basket.");
-        if (target && target.line._id === snapshot.summary.source?.mainLineId) return { updatedMainLineIds: [], summary: snapshot.summary };
+        if (!snapshot.summary.ownedMargins && target && target.line._id === snapshot.summary.source?.mainLineId) {
+          return { updatedMainLineIds: [], summary: snapshot.summary };
+        }
         const patch = (section: Row) => {
           if (section.applicability === "not_applicable") throw new ApiError(409, "SUB_BASKET_MARGINS_UNAVAILABLE", "The Mode section is marked not applicable. Review this main line before applying defaults.");
           const payload = withSubBasketMarginDefaults(knowledgeModeTierPayload(marginPayload(section)), input.mode, selected.ranges, { basketId, subBasketId }, { allowIncompleteMargins: targeted });
@@ -628,12 +893,10 @@ export function createAiEstimatorKnowledgeItemService(
         }
         // Coordinate every reviewed line, including the source and currently matching
         // siblings, so concurrent changes cannot silently invalidate the full review.
-        for (const { line } of snapshot.lines) {
-          const locked = await AiEstimatorKnowledgeMainLineModel.updateOne(
-            { _id: line._id, version: line.version, basketId, subBasketId },
-            { $inc: { dependencyEpoch: 1 } }, { session, timestamps: false }
-          ).exec();
-          if (locked.matchedCount !== 1) versionConflict();
+        await fenceMarginLines(snapshot.lines, basketId, subBasketId, session);
+        if (!snapshot.summary.ownedMargins) {
+          const legacy = await readMarginMatrixSnapshot(basketId, subBasketId, session);
+          await persistMarginBaseline(legacy, legacy.matrix.defaults, actor.id, now(), session);
         }
         const targetIds = new Set(targeted ? [input.targetMainLineId!] : selected.mismatches.map(({ mainLineId }) => mainLineId));
         const updatedMainLineIds: string[] = [];
@@ -652,8 +915,18 @@ export function createAiEstimatorKnowledgeItemService(
           await updateSectionInSession(actor, mainLineId, revisionId, "advanced", {
             expectedVersion: requiredInteger(section.version), expectedAggregateVersion: requiredInteger(line.version),
             applicability: section.applicability as KnowledgeSectionApplicability, payload
-          }, session, { basketId, subBasketId, mode: input.mode, sourceMainLineId: snapshot.summary.source!.mainLineId,
-            sourceRevisionId: snapshot.lines[0]!.revision!._id, ranges: selected.ranges });
+          }, session, { basketId, subBasketId, mode: input.mode, ranges: selected.ranges,
+            ...(snapshot.summary.ownedMargins ? { source: "sub_basket" }
+              : { sourceMainLineId: snapshot.summary.source!.mainLineId, sourceRevisionId: snapshot.lines[0]!.revision!._id }) });
+          await clearResolvedMarginEdits(entry, edit => {
+            if (edit.tier !== "signature" || edit.mode !== input.mode) return true;
+            const values = subBasketMarginRanges(payload, input.mode).filter(pair => edit.mode !== "in_house"
+              || marginScopeKey({ ...edit, component: pair.component ?? { basketId, subBasketId } }) === marginScopeKey(edit));
+            const defaults = selected.ranges.filter(pair => edit.mode !== "in_house"
+              || marginScopeKey({ ...edit, component: pair.component ?? { basketId, subBasketId } }) === marginScopeKey(edit));
+            return !defaults.length || !isDeepStrictEqual(values.map(({ key, minimumBps, maximumBps }) => [key, minimumBps, maximumBps]),
+              defaults.map(({ key, minimumBps, maximumBps }) => [key, minimumBps, maximumBps]));
+          }, session);
           updatedMainLineIds.push(mainLineId);
         }
         return { updatedMainLineIds, summary: (await readSubBasketMarginSnapshot(basketId, subBasketId, session)).summary };
@@ -1149,6 +1422,7 @@ export function createAiEstimatorKnowledgeItemService(
           _id: duplicateId,
           basketId,
           subBasketId: source.subBasketId ?? null,
+          pendingMarginEdits: [],
           itemType: source.itemType ?? "main_line",
           estimationVisibility: "internal",
           name: duplicateName,
@@ -1753,6 +2027,7 @@ export async function createKnowledgeHierarchyInSession(options: {
         _id: mainLineId,
         basketId,
         subBasketId,
+        pendingMarginEdits: [],
         itemType: input.itemType ?? "main_line",
         name: input.name,
         nameNormalized: normalizeKnowledgeIdentity(input.name),
@@ -2007,12 +2282,7 @@ async function assertResolvableRetainedPriceWindows(input: {
  * The edited tier and every tier during activation still use strict validation. */
 function validatePreservedModeNamespaces(sectionKey: KnowledgeSectionKey, payload: Row, previous: Row, editedTier: KnowledgeModeConfigurationScope): void {
   if (sectionKey !== "advanced") return validateSectionPayloadOrThrow(sectionKey, payload);
-  const issues = validateKnowledgeSectionPayload(sectionKey, payload).filter(issue => {
-    if (issue.code !== "INVALID_LISNO_MARGIN_INCREMENT") return true;
-    const match = /^payload\.tierConfigurations\.(default|premium|functional)\.payload(?:\.|$)/u.exec(issue.path);
-    const issueTier = (match?.[1] ?? "signature") as KnowledgeModeConfigurationScope;
-    return issueTier === editedTier || !isDeepStrictEqual(knowledgeModeTierPayload(previous, issueTier), knowledgeModeTierPayload(payload, issueTier));
-  });
+  const issues = preservedModeNamespaceIssues(payload, previous, editedTier);
   if (issues.length) throw new ApiError(400, "VALIDATION_ERROR", "Request validation failed.", Object.fromEntries(issues.map(issue => [issue.path, issue.message])));
 }
 

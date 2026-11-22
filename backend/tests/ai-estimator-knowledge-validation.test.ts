@@ -11,6 +11,20 @@ import {
 } from "../src/domain/ai-estimator-knowledge-validation.js";
 
 describe("AI estimator knowledge validation", () => {
+  it("accepts the optional strict default-display boolean in Overview only", () => {
+    for (const payload of [{}, { showByDefault: true }, { showByDefault: false }]) {
+      expect(validateKnowledgeSectionPayload("overview", payload)).toEqual([]);
+    }
+    for (const showByDefault of [null, "true", "false", 0, 1, [], {}]) {
+      expect(validateKnowledgeSectionPayload("overview", { showByDefault }))
+        .toContainEqual(expect.objectContaining({ path: "payload.showByDefault", code: "INVALID_TYPE" }));
+    }
+    for (const section of ["advanced", "pricing", "recommendations"] as const) {
+      expect(validateKnowledgeSectionPayload(section, { showByDefault: true }))
+        .toContainEqual(expect.objectContaining({ path: "payload.showByDefault", code: "UNKNOWN_FIELD" }));
+    }
+  });
+
   it("accepts an optional strict boolean dimension requirement in Overview only", () => {
     for (const payload of [{}, { dimensionsMandatory: true }, { dimensionsMandatory: false }]) expect(validateKnowledgeSectionPayload("overview", payload)).toEqual([]);
     for (const dimensionsMandatory of [null, "true", "false", 0, 1, {}, []]) expect(validateKnowledgeSectionPayload("overview", { dimensionsMandatory }))

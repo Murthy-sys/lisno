@@ -27,12 +27,12 @@ function setup(status: EstimateDraft["status"] = "draft", withSavedLine = false,
   ];
   const catalogue: EstimationCatalogue = { ineligibleLineCount: 0, items: [
     { id: "pop", name: "POP / Gypsum", displayOrder: 1, subBaskets: [{ id: "ceilings", basketId: "pop", name: "Ceilings", displayOrder: 1, mainLines: [
-      { id: "ceiling", mainLineId: "ceiling", name: "Gypsum ceiling", basketId: "pop", subBasketId: "ceilings", displayOrder: 1,
+      { id: "ceiling", mainLineId: "ceiling", name: "Gypsum ceiling", basketId: "pop", subBasketId: "ceilings", displayOrder: 1, showByDefault: true,
         revisionId: "ceiling-revision", uom: { id: "unit", name: "sq ft", code: "SQFT", decimalScale: 2 },
         modeBaseRatesPaise: { pmc: 1000, sub_vendor: 2000, in_house: null } }
     ] }] },
     { id: "paint", name: "Painting", displayOrder: 2, subBaskets: [{ id: "walls", basketId: "paint", name: "Wall finishes", displayOrder: 1, mainLines: [
-      { id: "paint-line", mainLineId: "paint-line", name: "Wall paint", basketId: "paint", subBasketId: "walls", displayOrder: 1,
+      { id: "paint-line", mainLineId: "paint-line", name: "Wall paint", basketId: "paint", subBasketId: "walls", displayOrder: 1, showByDefault: true,
         revisionId: "paint-revision", uom: { id: "unit", name: "sq ft", code: "SQFT", decimalScale: 2 },
         modeBaseRatesPaise: { pmc: 1500, sub_vendor: 3000, in_house: null } }
     ] }] }
@@ -97,6 +97,28 @@ async function openEmptyBuilder(user: ReturnType<typeof userEvent.setup>) {
 }
 
 describe("Sales direct catalogue browsing", () => {
+  it("adds a non-default item from an unselected basket without losing the saved non-default row", async () => {
+    const fixture = setup("draft", true, { selectedMainBasketIds: ["pop"] });
+    fixture.catalogue.items[0]!.subBaskets[0]!.mainLines[0]!.showByDefault = false;
+    delete fixture.catalogue.items[1]!.subBaskets[0]!.mainLines[0]!.showByDefault;
+    fixture.mount(); const user = userEvent.setup();
+    expect(await screen.findByRole("checkbox", { name: /Gypsum ceiling/ })).toBeChecked();
+    expect(screen.queryByRole("checkbox", { name: /Wall paint/ })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Add items" }));
+    await user.selectOptions(screen.getByRole("combobox", { name: "Main Basket" }), "paint");
+    await user.click(screen.getByRole("button", { name: "Add Wall paint" }));
+    expect(screen.getByRole("checkbox", { name: /Wall paint/ })).toBeChecked();
+    expect(screen.getByRole("spinbutton", { name: /Quantity.*Gypsum ceiling/ })).toHaveValue(2);
+    expect(fixture.saves).toHaveLength(0);
+    await user.click(screen.getByRole("button", { name: "Save draft" }));
+    await screen.findByText("Estimate draft saved.");
+    expect(fixture.saves[0]!.selectedMainBasketIds).toEqual(expect.arrayContaining(["pop", "paint"]));
+    expect(fixture.saves[0]!.lineItems).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "saved-ceiling", mainLineId: "ceiling", quantity: 2, ratePaise: 9900, included: true }),
+      expect.objectContaining({ mainLineId: "paint-line", mainBasketId: "paint", roomId: "living", included: true })
+    ]));
+  });
+
   it.each(["changed", "missing", "unavailable"])("keeps approved aggregate prices visible when current Configuration is %s", async state => {
     const aggregate = { ...toEstimateAggregatePricing(componentPricingFixture("ceiling")), revisionId: "ceiling-revision", uom: { id: "unit", name: "sq ft", code: "SQFT", decimalScale: 2 } };
     const line: ConfiguredEstimateLine = { source: "configuration", id: "saved-ceiling", catalogueId: "ceiling", roomId: "living", roomName: "Living & Dining",
@@ -198,7 +220,7 @@ describe("Sales direct catalogue browsing", () => {
     expect(screen.getByRole("heading", { name: /^Wall finishes / })).toBeVisible();
     expect(screen.getByRole("checkbox", { name: /Gypsum ceiling/ })).not.toBeChecked();
     expect(screen.getByRole("checkbox", { name: /Wall paint/ })).not.toBeChecked();
-    expect(screen.queryByRole("button", { name: "Add items" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add items" })).toBeVisible();
     expect(screen.getByText("0 selected items")).toBeVisible();
     await user.type(screen.getByRole("searchbox", { name: "Search estimate items" }), "paint");
     expect(screen.getByRole("checkbox", { name: /Wall paint/ })).toBeVisible();

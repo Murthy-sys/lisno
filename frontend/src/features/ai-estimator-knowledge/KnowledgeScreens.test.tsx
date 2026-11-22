@@ -1,3 +1,4 @@
+import { matrixFixture } from "./knowledgeMarginMatrix.test-fixture";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import axe from "axe-core";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
@@ -43,6 +44,7 @@ vi.mock("./knowledgeApi", async (importOriginal) => {
     listKnowledgeItems: vi.fn(),
     listKnowledgeBaskets: vi.fn(),
     listKnowledgeSubBaskets: vi.fn(),
+    getKnowledgeMarginMatrix: vi.fn(async (basketId: string, subBasketId: string) => matrixFixture(basketId, subBasketId)),
     getKnowledgeSubBasketMargins: vi.fn(),
     applyKnowledgeSubBasketMargins: vi.fn(),
     createKnowledgeMainLine: vi.fn(),
@@ -506,9 +508,11 @@ beforeEach(() => {
   vi.mocked(knowledgeApi.getKnowledgeBasketQuality).mockResolvedValue({ basketId: "basket-1", basketName: "Carpentry", basketStatus: "active", version: 1, revisionId: null, revisionNumber: 0, contentDigest: null, parameters: [], updatedAt: null });
 
   vi.clearAllMocks();
-  vi.mocked(knowledgeApi.getKnowledgeSubBasketMargins).mockImplementation(async (basketId, subBasketId) => {
+  vi.mocked(knowledgeApi.getKnowledgeSubBasketMargins).mockImplementation(async (basketId, subBasketId, options) => {
     const empty = { ranges: [], mismatchCount: null, mismatches: [], canApply: false, unavailableReason: "No margins configured." };
-    return { basketId, subBasketId, source: null, totalMainLines: 0, versionToken: "empty", modes: { pmc: empty, sub_vendor: empty, in_house: empty } };
+    const defaults = options?.inHouseScope ? matrixFixture(basketId, subBasketId).defaults.filter(row => row.tier === options.modeTier)
+      .map(row => ({ ...row, ranges: [], provenance: "unset" as const })) : undefined;
+    return { basketId, subBasketId, source: null, totalMainLines: 0, versionToken: "empty", defaults, modes: { pmc: empty, sub_vendor: empty, in_house: empty } };
   });
   vi.mocked(authorization.hasFrontendPermission).mockReturnValue(true);
   vi.mocked(knowledgeApi.listKnowledgeMasters).mockResolvedValue({ items: [], pagination: page });
@@ -618,12 +622,16 @@ describe("Mode sidebar compact default margins", () => {
     const advanced = { pmcMinimumMarginBps: 1000, pmcMarginBps: 1500,
       modeCalculations: { pmc: calculation, sub_vendor: null, in_house_labor: null, in_house_material: null } };
     const saved = { mismatchCount: 0, mismatches: [], canApply: false, unavailableReason: null };
+    const pmc = [{ key: "margin" as const, minimumBps: 1200, maximumBps: 1800 }];
+    const vendor = [{ key: "margin" as const, minimumBps: 2500, maximumBps: 3500 }];
+    const inHouse = [{ key: "labor" as const, minimumBps: 2000, maximumBps: 3000 }, { key: "material" as const, minimumBps: 1500, maximumBps: 2500 }];
     const defaults: KnowledgeSubBasketMarginSummary = {
       basketId: "basket-1", subBasketId: "joinery", source: { mainLineId: "source", mainLineName: "Default panelling" }, versionToken: "source-token", totalMainLines: 3,
+      defaults: [{ tier: "signature", mode: "pmc", ranges: pmc, provenance: "existing" },
+        { tier: "signature", mode: "sub_vendor", ranges: vendor, provenance: "existing" },
+        { tier: "signature", mode: "in_house", ranges: inHouse, resolution: "shared", provenance: "approved" }],
       modes: {
-        pmc: { ...saved, ranges: [{ key: "margin", minimumBps: 1200, maximumBps: 1800 }] },
-        sub_vendor: { ...saved, ranges: [{ key: "margin", minimumBps: 2500, maximumBps: 3500 }] },
-        in_house: { ...saved, ranges: [{ key: "labor", minimumBps: 2000, maximumBps: 3000 }, { key: "material", minimumBps: 2000, maximumBps: 3000 }] }
+        pmc: { ...saved, ranges: pmc }, sub_vendor: { ...saved, ranges: vendor }, in_house: { ...saved, ranges: inHouse }
       }
     };
     vi.mocked(knowledgeApi.getKnowledgeSubBasketMargins).mockResolvedValue(defaults);
@@ -640,12 +648,12 @@ describe("Mode sidebar compact default margins", () => {
     expect(knowledgeApi.getKnowledgeSubBasketMargins).not.toHaveBeenCalled();
     await selectWorkspaceMode(user, "Signature Mode");
     const panel = await screen.findByRole("region", { name: "Sub-basket defaults" });
-    expect(await within(panel).findByText("12% - 18%")).toBeVisible();
-    expect(within(panel).getByText("25% - 35%")).toBeVisible();
-    expect(within(panel).getByText("20% - 30%")).toBeVisible();
-    expect(within(panel).getByText("PMC margin:")).toBeVisible();
-    expect(within(panel).getByText("Sub-vendor margin:")).toBeVisible();
-    expect(within(panel).getByText("In-house margin:")).toBeVisible();
+    expect(await within(panel).findByText("12% / 18%")).toBeVisible();
+    expect(within(panel).getByText("25% / 35%")).toBeVisible();
+    expect(within(panel).getByText("Labour 20% / 30% · Material 15% / 25%")).toBeVisible();
+    expect(within(panel).getByText("Signature · PMC")).toBeVisible();
+    expect(within(panel).getByText("Signature · Sub-vendor")).toBeVisible();
+    expect(within(panel).getByText("Signature · In-house")).toBeVisible();
     expect(within(panel).queryByRole("combobox")).not.toBeInTheDocument();
     expect(within(panel).queryByRole("button")).not.toBeInTheDocument();
     expect(within(panel).queryByRole("heading")).not.toBeInTheDocument();
@@ -659,7 +667,7 @@ describe("Mode sidebar compact default margins", () => {
     expect(base).toHaveValue("65.00");
     await user.clear(base);
     await user.type(base, "66");
-    expect(panel).toHaveTextContent("12% - 18%");
+    expect(panel).toHaveTextContent("12% / 18%");
     await user.click(screen.getByRole("button", { name: "Save Signature Mode" }));
     await waitFor(() => expect(knowledgeApi.updateKnowledgeSection).toHaveBeenCalledWith("line-1", "revision-1", "advanced", expect.objectContaining({
       expectedVersion: 2, expectedAggregateVersion: item.version,
@@ -2401,6 +2409,41 @@ describe("AI estimator knowledge screens", () => {
     }));
     await waitFor(() => expect(screen.getByRole("region", { name: "Overview saved summary" })).toHaveTextContent("Square metre"));
     expect(screen.getByRole("region", { name: "Overview saved summary" })).not.toHaveTextContent("Square foot");
+  });
+
+  it.each([
+    ["main_line", false], ["main_line", true], ["temporary", false], ["temporary", true]
+  ] as const)("saves and reopens the %s default-display setting from %s without replacing other Overview fields", async (itemType, initial) => {
+    const user = userEvent.setup();
+    const otherFields = { uomId: squareFoot.id, clientVisible: false, applicableTiers: ["premium"], surfaceIds: [wallSurface.id] };
+    let loaded = section("overview", { ...otherFields, showByDefault: initial });
+    vi.mocked(knowledgeApi.getKnowledgeItem).mockResolvedValue({ ...item, itemType });
+    vi.mocked(knowledgeApi.getKnowledgeSection).mockImplementation(async (_line, _revision, key) =>
+      key === "overview" ? loaded : section(key));
+    vi.mocked(knowledgeApi.updateKnowledgeSection).mockImplementation(async (_line, _revision, key, input) => {
+      const saved = mutationSection(key, input.payload, loaded.version + 1);
+      loaded = saved;
+      return saved;
+    });
+    const path = "/admin/configuration/estimation/items/line-1";
+    const route = "/admin/configuration/estimation/items/:itemId";
+    const view = renderRoute(<KnowledgeItemWorkspacePage />, path, route);
+    const group = await screen.findByRole("radiogroup", { name: "Show this Main Line by default?" });
+    expect(within(group).getByRole("radio", { name: initial ? "Yes" : "No" })).toBeChecked();
+    expect(knowledgeApi.updateKnowledgeSection).not.toHaveBeenCalled();
+    await user.click(within(group).getByRole("radio", { name: initial ? "No" : "Yes" }));
+    await user.click(screen.getByRole("button", { name: "Save Overview" }));
+    await waitFor(() => expect(knowledgeApi.updateKnowledgeSection).toHaveBeenCalledExactlyOnceWith("line-1", "revision-1", "overview", {
+      expectedVersion: 2, expectedAggregateVersion: 4, applicability: "configured",
+      payload: { ...otherFields, showByDefault: !initial }
+    }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save Overview" })).toBeDisabled());
+    view.unmount();
+    view.queryClient.clear();
+    renderRoute(<KnowledgeItemWorkspacePage />, path, route);
+    const reopened = await screen.findByRole("radiogroup", { name: "Show this Main Line by default?" });
+    expect(within(reopened).getByRole("radio", { name: initial ? "No" : "Yes" })).toBeChecked();
+    expect(loaded.payload).toEqual({ ...otherFields, showByDefault: !initial });
   });
 
   it("keeps exactly one contextual Overview Save across clean, dirty, and saving states", async () => {

@@ -145,16 +145,20 @@ function overview(input: SavedSummaryProjectionInput): SavedSummaryContent {
   const visibility = row("client-visible", "Client estimate screen",
     payload.clientVisible === false ? "No" : payload.clientVisible === undefined || payload.clientVisible === true ? "Yes" : NEEDS_REVIEW);
   details.push(visibility);
+  const defaultDisplay = Object.hasOwn(payload, "showByDefault") ? row("show-by-default", "Show by default",
+    payload.showByDefault === true ? "Yes" : payload.showByDefault === false ? "No" : NEEDS_REVIEW) : null;
+  if (defaultDisplay) details.push(defaultDisplay);
   const dimensions = row("dimensions-mandatory", "Dimensions mandatory", payload.dimensionsMandatory === true ? "Yes · Length × Width" : payload.dimensionsMandatory === undefined || payload.dimensionsMandatory === false ? "No" : NEEDS_REVIEW);
   details.push(dimensions);
   if (Object.hasOwn(payload, "applicableTiers")) details.push(row("applicable-tiers", "Applicable tiers",
     applicableKnowledgeTiers(payload).map(tier => KNOWLEDGE_MODE_TIER_LABELS[tier]).join(", ") || "None"));
   preview.push(...details.filter(item => item.key.endsWith("-review")));
-  if (Object.keys(payload).some(key => present(payload[key]) && !["uomId", "surfaceIds", "clientVisible", "applicableTiers", "dimensionsMandatory"].includes(key) && (!Array.isArray(payload[key]) || payload[key].length > 0))) {
+  if (Object.keys(payload).some(key => present(payload[key]) && !["uomId", "surfaceIds", "clientVisible", "showByDefault", "applicableTiers", "dimensionsMandatory"].includes(key) && (!Array.isArray(payload[key]) || payload[key].length > 0))) {
     review(details, "overview-review", "Overview", true);
     preview.push(details[details.length - 1]!);
   }
   preview.push(visibility);
+  if (defaultDisplay) preview.push(defaultDisplay);
   preview.push(dimensions);
   preview.push(...details.filter(item => item.key === "applicable-tiers"));
   return content(details, preview);

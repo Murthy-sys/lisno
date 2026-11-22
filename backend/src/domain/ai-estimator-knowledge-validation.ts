@@ -1,4 +1,5 @@
-import { ADDITIONAL_KNOWLEDGE_MODE_CONFIGURATION_SCOPES, isKnowledgeModeSection, isKnowledgeModeTier, knowledgeModeTierPayload } from "./ai-estimator-knowledge-mode-tiers.js";
+import { isDeepStrictEqual } from "node:util";
+import { type KnowledgeModeConfigurationScope, ADDITIONAL_KNOWLEDGE_MODE_CONFIGURATION_SCOPES, isKnowledgeModeSection, isKnowledgeModeTier, knowledgeModeTierPayload } from "./ai-estimator-knowledge-mode-tiers.js";
 import { validateDesignRules } from "./main-line-design-rules.js";
 import type {
   KnowledgeQualityPerformer,
@@ -394,7 +395,7 @@ export function validateQualityParameter(
 
 const ALLOWED_SECTION_KEYS: Record<KnowledgeSectionKey, ReadonlySet<string>> = {
   design: new Set(["itemNature", "answers", "details", "discussedVendorId", "poApprovalChecklist"]),
-  overview: new Set(["description", "uomId", "priorityId", "surfaceIds", "modeIds", "sectionApplicability", "clientVisible", "applicableTiers", "dimensionsMandatory"]),
+  overview: new Set(["description", "uomId", "priorityId", "surfaceIds", "modeIds", "sectionApplicability", "clientVisible", "showByDefault", "applicableTiers", "dimensionsMandatory"]),
   pricing: new Set(["tierConfigurations", "specifications", "brands", "technicalDescription", "qualityLevel", "internalVendorNotes", "priceEntries"]),
   "quantity-margin": new Set(["quantitySlabs", "slabRates", "gapBehavior", "startMarginBps", "bottomMarginBps", "pmcMarkupBps", "wastageBps", "previewInputs"]),
   scope: new Set(["modeIds", "surfaceIds", "exclusions"]),
@@ -442,6 +443,22 @@ function inspectBoundedValue(
     }
     entries.forEach(([key, entry]) => inspectBoundedValue(entry, `${path}.${key}`, depth + 1, issues, finiteDecimalPaths));
   }
+}
+
+/** The unchanged active-to-draft copy may retain only these two historical conditions. */
+export function inheritedModeCopyIssues(payload: unknown): KnowledgeValidationIssue[] {
+  return validateKnowledgeSectionPayload("advanced", payload)
+    .filter(({ code }) => code !== "INVALID_LISNO_MARGIN_INCREMENT" && code !== "CONFLICTING_SCOPE_SELECTION");
+}
+
+export function preservedModeNamespaceIssues(payload: Record<string, unknown>, previous: Record<string, unknown>,
+  editedTier: KnowledgeModeConfigurationScope): KnowledgeValidationIssue[] {
+  return validateKnowledgeSectionPayload("advanced", payload).filter(issue => {
+    if (issue.code !== "INVALID_LISNO_MARGIN_INCREMENT") return true;
+    const match = /^payload\.tierConfigurations\.(default|premium|functional)\.payload(?:\.|$)/u.exec(issue.path);
+    const issueTier = (match?.[1] ?? "signature") as KnowledgeModeConfigurationScope;
+    return issueTier === editedTier || !isDeepStrictEqual(knowledgeModeTierPayload(previous, issueTier), knowledgeModeTierPayload(payload, issueTier));
+  });
 }
 
 export function validateKnowledgeSectionPayload(
@@ -908,6 +925,7 @@ function validateOverviewPayload(
     }
   }
   if ("dimensionsMandatory" in record) validateBoolean(record.dimensionsMandatory, "payload.dimensionsMandatory", issues);
+  if ("showByDefault" in record) validateBoolean(record.showByDefault, "payload.showByDefault", issues);
   if ("clientVisible" in record) {
     validateBoolean(record.clientVisible, "payload.clientVisible", issues);
   }
@@ -1648,6 +1666,19 @@ function validateProductivityRows(
     validateBoolean(row.active, `${path}.active`, issues);
     addUniqueString(row.id, ids, `${path}.id`, "DUPLICATE_ID", issues);
   });
+}
+
+/** A margin adjustment can repair the percentages only after the saved cost itself is usable. */
+export function inHouseCostProblem(value: unknown): { excluded?: string; blocked?: string } {
+  if (value === null || value === undefined) return { excluded: "Configure both Labour and Material costs." };
+  if (typeof value !== "object" || Array.isArray(value)) return { blocked: "Invalid saved In-house cost settings." };
+  const cost = value as Record<string, unknown>;
+  if (cost.baseRatePaise == null || cost.lowQuantityLimit == null) {
+    return { excluded: "The In-house cost needs a saved base rate and low-quantity limit." };
+  }
+  const issues: KnowledgeValidationIssue[] = [];
+  validateModeCalculationSettings({ ...cost, minimumMarkupBps: 0, startingMarkupBps: 0 }, "cost", issues, { grossMargin: true });
+  return issues.length ? { blocked: `Invalid saved In-house cost settings. ${issues[0]!.message}` } : {};
 }
 
 function validateModeCalculationSettings(

@@ -44,6 +44,9 @@ const masterFamilies = ["uoms", "vendors", "taxes", "priorities", "surfaces", "m
 
 export const AI_ESTIMATOR_KNOWLEDGE_REQUEST_BODIES: Readonly<Record<string, OpenApiObject>> = {
   [`POST ${admin}/baskets/:basketId/sub-baskets/:subBasketId/margins/apply`]: jsonRequest("KnowledgeApplySubBasketMarginsRequest"),
+  [`POST ${admin}/baskets/:basketId/sub-baskets/:subBasketId/margins/preview`]: jsonRequest("KnowledgeMarginPreviewInput"),
+  [`POST ${admin}/baskets/:basketId/sub-baskets/:subBasketId/margins/defaults`]: jsonRequest("KnowledgeMarginDefaultsInput"),
+  [`POST ${admin}/baskets/:basketId/sub-baskets/:subBasketId/margins/approve`]: jsonRequest("KnowledgeMarginApprovalInput"),
   [`POST ${admin}/quality-control-options`]: jsonRequest("KnowledgeQualityControlOptionCreateRequest"),
   [`POST ${admin}/baskets`]: jsonRequest("KnowledgeBasketCreateRequest"),
   [`PATCH ${admin}/baskets/:basketId`]: jsonRequest("KnowledgeBasketUpdateRequest"),
@@ -95,6 +98,10 @@ export const AI_ESTIMATOR_KNOWLEDGE_RESPONSE_SCHEMAS: Readonly<Record<string, st
   [`PATCH ${admin}/baskets/:basketId/sub-baskets/:subBasketId`]: "KnowledgeSubBasket",
   [`GET ${admin}/baskets/:basketId/sub-baskets/:subBasketId/margins`]: "KnowledgeSubBasketMarginSummary",
   [`POST ${admin}/baskets/:basketId/sub-baskets/:subBasketId/margins/apply`]: "KnowledgeApplySubBasketMarginsResult",
+  [`GET ${admin}/baskets/:basketId/sub-baskets/:subBasketId/margins/matrix`]: "KnowledgeMarginMatrix",
+  [`POST ${admin}/baskets/:basketId/sub-baskets/:subBasketId/margins/preview`]: "KnowledgeMarginPreview",
+  [`POST ${admin}/baskets/:basketId/sub-baskets/:subBasketId/margins/defaults`]: "KnowledgeMarginCommitResult",
+  [`POST ${admin}/baskets/:basketId/sub-baskets/:subBasketId/margins/approve`]: "KnowledgeMarginCommitResult",
   [`GET ${admin}/baskets/:basketId/sub-baskets/:subBasketId/deletion-impact`]: "KnowledgeSubBasketDeletionImpact",
   [`DELETE ${admin}/baskets/:basketId/sub-baskets/:subBasketId`]: "KnowledgePermanentDeleteSubBasketResult",
   [`GET ${admin}/baskets`]: "KnowledgeBasketPage",
@@ -147,8 +154,12 @@ export const AI_ESTIMATOR_KNOWLEDGE_OPERATION_SUMMARIES: Readonly<Record<string,
   [`GET ${admin}/baskets/:basketId/sub-baskets`]: "List a Main Basket’s Sub Baskets",
   [`POST ${admin}/baskets/:basketId/sub-baskets`]: "Create a Sub Basket",
   [`PATCH ${admin}/baskets/:basketId/sub-baskets/:subBasketId`]: "Rename a Sub Basket with contextual lifecycle validation",
-  [`GET ${admin}/baskets/:basketId/sub-baskets/:subBasketId/margins`]: "Read first-main-line margin defaults and full Sub Basket mismatches",
-  [`POST ${admin}/baskets/:basketId/sub-baskets/:subBasketId/margins/apply`]: "Apply reviewed first-main-line margin defaults to mismatched Main Lines atomically",
+  [`GET ${admin}/baskets/:basketId/sub-baskets/:subBasketId/margins`]: "Read margin defaults and mismatches for a Configuration scope",
+  [`POST ${admin}/baskets/:basketId/sub-baskets/:subBasketId/margins/apply`]: "Restore reviewed Signature defaults on selected Main Lines",
+  [`GET ${admin}/baskets/:basketId/sub-baskets/:subBasketId/margins/matrix`]: "Read tier defaults, exceptions and configuration issues",
+  [`POST ${admin}/baskets/:basketId/sub-baskets/:subBasketId/margins/preview`]: "Review the impact of a tier margin change",
+  [`POST ${admin}/baskets/:basketId/sub-baskets/:subBasketId/margins/defaults`]: "Save reviewed Sub-Basket tier margin defaults",
+  [`POST ${admin}/baskets/:basketId/sub-baskets/:subBasketId/margins/approve`]: "Approve a saved Main Line margin for its matching tier",
   [`GET ${admin}/baskets/:basketId/sub-baskets/:subBasketId/deletion-impact`]: "Preview permanent Sub Basket deletion",
   [`DELETE ${admin}/baskets/:basketId/sub-baskets/:subBasketId`]: "Permanently delete a Sub Basket and its contents",
   [`GET ${admin}/baskets`]: "List knowledge Baskets",
@@ -209,12 +220,18 @@ const masterStatusParameter = {
   required: false,
   schema: { type: "string", enum: [...AI_ESTIMATOR_KNOWLEDGE_MASTER_STATUSES] }
 } as const;
+const inHouseScope = {
+  type: "string", enum: ["sub_basket"],
+  description: "Use one In-house default per owning Sub-Basket and tier across its eligible cost components. Omit for the legacy component contract."
+};
+const inHouseScopeParameter = { name: "inHouseScope", in: "query", required: false, schema: inHouseScope };
 
 export const AI_ESTIMATOR_KNOWLEDGE_QUERY_PARAMETERS: Readonly<
   Record<string, readonly OpenApiObject[]>
 > = {
   [`GET ${admin}/main-lines/:mainLineId/revisions/:revisionId/sections/:sectionKey`]: [{ name: "modeTier", in: "query", required: false, schema: { type: "string", enum: [...KNOWLEDGE_MODE_CONFIGURATION_SCOPES], default: "signature" }, description: "Configuration scope for advanced and pricing. Explicit default has separate settings; omitted scope remains Signature. Other sections support Signature only." }],
-  [`GET ${admin}/baskets/:basketId/sub-baskets/:subBasketId/margins`]: [{ name: "modeTier", in: "query", required: false, schema: { type: "string", enum: [...KNOWLEDGE_MODE_CONFIGURATION_SCOPES], default: "signature" } }],
+  [`GET ${admin}/baskets/:basketId/sub-baskets/:subBasketId/margins`]: [{ name: "modeTier", in: "query", required: false, schema: { type: "string", enum: [...KNOWLEDGE_MODE_CONFIGURATION_SCOPES], default: "signature" } }, inHouseScopeParameter],
+  [`GET ${admin}/baskets/:basketId/sub-baskets/:subBasketId/margins/matrix`]: [inHouseScopeParameter],
   [`GET ${admin}/quality-control-options`]: [{
     name: "kind",
     in: "query",
@@ -371,6 +388,7 @@ const amountComponent = {
 } as const;
 
 export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, OpenApiObject>> = {
+  ...marginDecisionSchemas(),
   KnowledgeSectionKey: {
     type: "string",
     enum: [...AI_ESTIMATOR_KNOWLEDGE_SECTION_KEYS]
@@ -534,6 +552,8 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
       strictObject(["calculations"], { calculations: { type: "array", items: ref("KnowledgeDefaultModeCalculation") } })])))
   }),
   KnowledgeSubBasketMarginSummary: strictObject(["basketId", "subBasketId", "source", "totalMainLines", "versionToken", "modes"], {
+    ownedMargins: { type: "boolean" }, defaults: { type: "array", items: ref("KnowledgeMarginDefault") },
+    exceptions: { type: "array", items: ref("KnowledgeMarginCandidate") },
     basketId: id, subBasketId: id,
     source: { ...strictObject(["mainLineId", "mainLineName"], { mainLineId: id, mainLineName: { type: "string" } }), nullable: true },
     sourceConfiguration: nullableRef("KnowledgeSubBasketSourceConfiguration"),
@@ -691,6 +711,8 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
       expectedAggregateVersion: version,
       modeTier: { type: "string", enum: [...KNOWLEDGE_MODE_CONFIGURATION_SCOPES], default: "signature", description: "Save only this Configuration scope. The server retains all other scopes. Default, Premium and Functional start empty." },
       applicability: sectionApplicability,
+      marginEdits: { type: "array", uniqueItems: true, items: ref("KnowledgeMarginEditField"),
+        description: "Explicitly edited percentage controls on a tier Mode save. An empty list means no margin control was edited. The server checks persisted before and after values." },
       payload: ref("KnowledgeSectionPayload")
     }
   ),
@@ -1792,6 +1814,80 @@ export const AI_ESTIMATOR_KNOWLEDGE_COMPONENT_SCHEMAS: Readonly<Record<string, O
   })
 };
 
+function marginDecisionSchemas(): Record<string, OpenApiObject> {
+  const array = (schema: string) => ({ type: "array", items: ref(schema) });
+  const text = { type: "string" };
+  const count = { type: "integer", minimum: 0 };
+  const token = { type: "string", pattern: "^[a-f0-9]{64}$" };
+  const location = { basketId: id, subBasketId: id };
+  const line = { mainLineId: id, mainLineName: text };
+  const scope = {
+    tier: { type: "string", enum: [...KNOWLEDGE_MODE_TIERS] },
+    mode: { type: "string", enum: ["pmc", "sub_vendor", "in_house"] },
+    component: strictObject(["basketId", "subBasketId"], { basketId: id, subBasketId: { ...id, nullable: true } })
+  };
+  const change = { ...scope, ranges: array("KnowledgeMarginPair") };
+  const changeKeys = ["tier", "mode", "ranges"];
+  const commit = { versionToken: token, reviewToken: token, operationId: id };
+  const commitKeys = [...Object.keys(commit), "decision"];
+  const proposal = { ...change, ...line, componentName: text };
+  const proposalKeys = [...changeKeys, ...Object.keys(line)];
+  const bound = { type: "string", enum: ["minimumBps", "maximumBps"] };
+  return {
+    KnowledgeMarginEditField: { oneOf: [
+      strictObject(["mode", "key", "bound"], { mode: { type: "string", enum: ["pmc", "sub_vendor"] }, key: { type: "string", enum: ["margin"] }, bound }),
+      strictObject(["mode", "component", "key", "bound"], { mode: { type: "string", enum: ["in_house"] }, component: scope.component, key: { type: "string", enum: ["labor", "material"] }, bound })
+    ] },
+    KnowledgeMarginPair: strictObject(["key", "minimumBps", "maximumBps"], {
+      key: { type: "string", enum: ["margin", "labor", "material"] },
+      minimumBps: { ...count, maximum: 9999 }, maximumBps: { ...count, maximum: 9999 }
+    }),
+    KnowledgeMarginObservedPair: strictObject(["key", "minimumBps", "maximumBps"], {
+      key: { type: "string", enum: ["margin", "labor", "material"] },
+      minimumBps: { ...count, nullable: true }, maximumBps: { ...count, nullable: true }
+    }),
+    KnowledgeMarginDefault: strictObject([...changeKeys, "provenance"], {
+      ...change, provenance: { type: "string", enum: ["existing", "approved", "unset"] }, componentName: text,
+      resolution: { type: "string", enum: ["shared", "suggested", "choose", "unset"] }, canApplyPrefilled: { type: "boolean" },
+      choices: { type: "array", items: strictObject(["ranges"], { component: scope.component, componentName: text, ranges: change.ranges }) }
+    }),
+    KnowledgeMarginCandidate: strictObject(proposalKeys, {
+      ...proposal, proposals: { type: "array", items: strictObject(proposalKeys, proposal) }, requiresDefault: { type: "boolean" }
+    }),
+    KnowledgeMarginIssue: strictObject(["tier", "mode", ...Object.keys(line), "reason"], { ...scope, ...line, reason: text, componentName: text }),
+    KnowledgeMarginMatrix: strictObject([...Object.keys(location), "versionToken", "baselineVersion", "totalMainLines", "defaults", "exceptions", "issues"], {
+      ...location, versionToken: token, baselineVersion: count, totalMainLines: count,
+      defaults: array("KnowledgeMarginDefault"), exceptions: { ...array("KnowledgeMarginCandidate"), description: "Saved manual margin edits that still need review." }, issues: array("KnowledgeMarginIssue")
+    }),
+    KnowledgeMarginEdit: strictObject(["kind", "changes"], {
+      kind: { type: "string", enum: ["edit"] }, changes: {
+        type: "array", minItems: 1, items: strictObject(changeKeys, { ...change, ranges: { ...change.ranges, minItems: 1, maxItems: 2 } }),
+        description: "Each scope is unique. Shared In-house edits omit component and supply Labour and Material pairs. Legacy In-house edits identify one component. PMC and Sub-vendor require one margin pair."
+      }
+    }),
+    KnowledgeMarginApproval: strictObject(["kind", "candidate"], {
+      kind: { type: "string", enum: ["approve"] }, candidate: { ...strictObject(["tier", "mode", "mainLineId"], { ...scope, mainLineId: id }), description: "For In-house, component identifies the exact saved proposal selected for review." }
+    }),
+    KnowledgeMarginPreviewInput: strictObject(["versionToken", "decision"], {
+      versionToken: token, inHouseScope, decision: { oneOf: [ref("KnowledgeMarginEdit"), ref("KnowledgeMarginApproval")] }
+    }),
+    KnowledgeMarginDefaultsInput: strictObject(commitKeys, { ...commit, inHouseScope, decision: ref("KnowledgeMarginEdit") }),
+    KnowledgeMarginApprovalInput: strictObject(commitKeys, { ...commit, inHouseScope, decision: ref("KnowledgeMarginApproval") }),
+    KnowledgeMarginPreview: strictObject([...Object.keys(location), "reviewToken", "impacts"], {
+      ...location, reviewToken: token, impacts: { type: "array", items:
+        strictObject([...changeKeys, "previous", "affected", "competing", "excluded", "blockers"], {
+          ...change, previous: array("KnowledgeMarginPair"), affected: { type: "array", items: strictObject(Object.keys(line), line) },
+          competing: array("KnowledgeMarginCandidate"), excluded: array("KnowledgeMarginIssue"), blockers: array("KnowledgeMarginIssue"),
+          componentChanges: { type: "array", items: strictObject([...Object.keys(line), "component", "previous"],
+            { ...line, component: scope.component, componentName: text, previous: array("KnowledgeMarginObservedPair") }) }
+        }) }
+    }),
+    KnowledgeMarginCommitResult: strictObject([...Object.keys(location), "operationId", "alreadyApplied", "updatedMainLineIds"], {
+      ...location, operationId: id, alreadyApplied: { type: "boolean" }, updatedMainLineIds: { type: "array", items: id }
+    })
+  };
+}
+
 function strictObject(required: readonly string[], properties: Readonly<Record<string, unknown>>): OpenApiObject {
   return { type: "object", additionalProperties: false, required, properties };
 }
@@ -1810,7 +1906,7 @@ function nullableRef(name: string): OpenApiObject {
 function sectionPayloadKeys(sectionKey: string): readonly string[] {
   const keys: Readonly<Record<string, readonly string[]>> = {
     design: ["itemNature", "answers", "details", "discussedVendorId", "poApprovalChecklist"],
-    overview: ["description", "uomId", "priorityId", "surfaceIds", "modeIds", "sectionApplicability", "clientVisible", "applicableTiers", "dimensionsMandatory"],
+    overview: ["description", "uomId", "priorityId", "surfaceIds", "modeIds", "sectionApplicability", "clientVisible", "showByDefault", "applicableTiers", "dimensionsMandatory"],
     pricing: ["specifications", "brands", "technicalDescription", "qualityLevel", "internalVendorNotes", "priceEntries"],
     "quantity-margin": ["quantitySlabs", "slabRates", "gapBehavior", "startMarginBps", "bottomMarginBps", "pmcMarkupBps", "wastageBps", "previewInputs"],
     scope: ["modeIds", "surfaceIds", "exclusions"],
@@ -1827,6 +1923,7 @@ function sectionPayloadProperties(sectionKey: string): Readonly<Record<string, u
     sectionPayloadKeys(sectionKey).map((key) => [key, {}])
   );
   if (sectionKey === "overview") {
+    properties.showByDefault = { type: "boolean", default: false, description: "Show an eligible Main Line in default estimation browsing. Missing values mean No. Explicit additions, recommendations and existing estimate rows remain available." };
     properties.dimensionsMandatory = { type: "boolean", default: false, description: "Require positive Length, Width and Height at estimation. Quantity is Length × Width in the configured supported area UOM; Height is recorded only." };
     properties.applicableTiers = { type: "array", maxItems: 3, uniqueItems: true, items: { type: "string", enum: [...KNOWLEDGE_MODE_TIERS] }, description: "Absent means Signature. An empty array hides all Mode tier tabs while retaining their saved configuration." };
     properties.clientVisible = { type: "boolean", default: true,

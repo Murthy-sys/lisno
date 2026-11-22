@@ -771,7 +771,7 @@ export function KnowledgeBaseIndexPage() {
                     imageUrl={null}
                     headerDetails={<KnowledgeSubBasketMargins basketId={basketId} subBasketId={subBasketId}
                       subBasketName={subBasketName} enabled={expanded}
-                      readOnly={!canUpdate || auth.user?.role !== "super_admin" || basketRecord?.status === "archived"} />}
+                      readOnly={!canUpdate || auth.user?.role !== "super_admin" || !basketRecord || !subBasketRecord || basketRecord.status === "archived" || basketsQuery.isError || subBasketQuery?.isError === true} />}
                     countText={`${subItems.length} ${subItems.length === 1 ? "item" : "items"} on this page`}
                     expanded={subExpanded}
                     onToggle={() => toggleSubBasket(subBasketId)}

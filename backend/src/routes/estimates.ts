@@ -1091,7 +1091,7 @@ function estimatePriceReadOnly(): ApiError {
 }
 
 function savedConfiguredSnapshot(prior: Record<string, unknown>): {
-  line: Omit<EstimatorCatalogueLine, "itemStatus" | "revisionStatus" | "itemVersion" | "revisionVersion" | "inHouseBaseRatePaise" | "modeBaseRatesPaise" | "applicableTiers" | "tierPricing" | "dimensionsMandatory" | "dimensionRule" | "hasConfiguredBasePrice" | "basePriceAvailability">;
+  line: Omit<EstimatorCatalogueLine, "itemStatus" | "revisionStatus" | "itemVersion" | "revisionVersion" | "inHouseBaseRatePaise" | "modeBaseRatesPaise" | "applicableTiers" | "tierPricing" | "dimensionsMandatory" | "dimensionRule" | "hasConfiguredBasePrice" | "basePriceAvailability" | "showByDefault">;
   mainBasketName: string; subBasketName: string | null;
 } {
   const strings = ["mainBasketId", "mainLineId", "revisionId", "uomId",

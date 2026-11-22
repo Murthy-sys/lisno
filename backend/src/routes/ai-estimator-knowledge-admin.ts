@@ -1,6 +1,7 @@
 import { KNOWLEDGE_MODE_CONFIGURATION_SCOPES } from "../domain/ai-estimator-knowledge-mode-tiers.js";
 import { Router, type RequestHandler } from "express";
 import { z } from "zod";
+import { inHouseScopeSchema, marginPreviewSchema, marginDefaultsSchema, marginApprovalSchema, marginEditsSchema } from "./knowledge-margin-decision-schemas.js";
 
 import { KNOWLEDGE_CUSTOM_DISCOUNT_MESSAGE, type CalculateKnowledgePreviewInput } from "../domain/ai-estimator-knowledge-calculation.js";
 import { KNOWLEDGE_PMC_MAX_IMPACT_BPS } from "../domain/ai-estimator-knowledge-mode-calculation.js";
@@ -249,6 +250,7 @@ const sectionUpdateSchema = z
     expectedAggregateVersion: expectedVersionSchema.optional(),
     applicability: z.enum(AI_ESTIMATOR_KNOWLEDGE_SECTION_APPLICABILITY).optional(),
     modeTier: z.enum(KNOWLEDGE_MODE_CONFIGURATION_SCOPES).optional(),
+    marginEdits: marginEditsSchema.optional(),
     payload: z.record(z.string(), z.unknown())
   })
   .strict();
@@ -590,8 +592,46 @@ export function createAiEstimatorKnowledgeAdminRouter(
     `${prefix}/baskets/:basketId/sub-baskets/:subBasketId/margins`,
     protectedRoute,
     requireOperation("GET /admin/ai-estimator-knowledge/baskets/:basketId/sub-baskets/:subBasketId/margins"),
-    handler(async (request) => services.item.getSubBasketMargins(
-      request.authenticatedUser!, String(request.params.basketId), String(request.params.subBasketId), parseModeTierQuery(request.query)
+    validateQuery(modeTierQuerySchema.extend({ inHouseScope: inHouseScopeSchema })),
+    handler(async (request, response) => services.item.getSubBasketMargins(
+      request.authenticatedUser!, String(request.params.basketId), String(request.params.subBasketId),
+      response.locals.validatedQuery.modeTier, response.locals.validatedQuery.inHouseScope
+    ))
+  );
+  router.post(
+    `${prefix}/baskets/:basketId/sub-baskets/:subBasketId/margins/preview`,
+    protectedRoute,
+    requireOperation("POST /admin/ai-estimator-knowledge/baskets/:basketId/sub-baskets/:subBasketId/margins/preview"),
+    validateBody(marginPreviewSchema),
+    handler(async request => services.item.previewMarginDecision(
+      request.authenticatedUser!, String(request.params.basketId), String(request.params.subBasketId), request.body
+    ))
+  );
+  router.get(
+    `${prefix}/baskets/:basketId/sub-baskets/:subBasketId/margins/matrix`,
+    protectedRoute,
+    requireOperation("GET /admin/ai-estimator-knowledge/baskets/:basketId/sub-baskets/:subBasketId/margins/matrix"),
+    validateQuery(z.object({ inHouseScope: inHouseScopeSchema }).strict()),
+    handler(async (request, response) => services.item.getMarginMatrix(
+      request.authenticatedUser!, String(request.params.basketId), String(request.params.subBasketId), response.locals.validatedQuery.inHouseScope
+    ))
+  );
+  router.post(
+    `${prefix}/baskets/:basketId/sub-baskets/:subBasketId/margins/defaults`,
+    protectedRoute,
+    requireOperation("POST /admin/ai-estimator-knowledge/baskets/:basketId/sub-baskets/:subBasketId/margins/defaults"),
+    validateBody(marginDefaultsSchema),
+    handler(async request => services.item.commitMarginDecision(
+      request.authenticatedUser!, String(request.params.basketId), String(request.params.subBasketId), request.body
+    ))
+  );
+  router.post(
+    `${prefix}/baskets/:basketId/sub-baskets/:subBasketId/margins/approve`,
+    protectedRoute,
+    requireOperation("POST /admin/ai-estimator-knowledge/baskets/:basketId/sub-baskets/:subBasketId/margins/approve"),
+    validateBody(marginApprovalSchema),
+    handler(async request => services.item.commitMarginDecision(
+      request.authenticatedUser!, String(request.params.basketId), String(request.params.subBasketId), request.body
     ))
   );
   router.post(
@@ -827,6 +867,12 @@ const validateSectionKey: RequestHandler = (request, _response, next) => {
 
 const validateSectionPayload: RequestHandler = (request, _response, next) => {
   const sectionKey = request.params.sectionKey as KnowledgeSectionKey;
+  if (request.body.marginEdits?.length && (sectionKey !== "advanced" || request.body.modeTier === "default")) {
+    next(new ApiError(400, "VALIDATION_ERROR", "Request validation failed.", {
+      marginEdits: "Margin fields belong to a Signature, Premium or Functional Mode section."
+    }));
+    return;
+  }
   const issues = validateKnowledgeSectionPayload(sectionKey, request.body.payload);
   if (issues.length > 0) {
     next(new ApiError(400, "VALIDATION_ERROR", "Request validation failed.", Object.fromEntries(

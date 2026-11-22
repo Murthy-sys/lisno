@@ -28,15 +28,15 @@ const response = (data: unknown) => Response.json({ data });
 const uom = { id: "uom-sqft", code: "SQFT", name: "sq ft", decimalScale: 2 };
 const catalogue = { items: [
   { id: "basket-pop", name: "POP / Gypsum", displayOrder: 1, directTemporaryItems: [], subBaskets: [{ id: "sub-ceiling", basketId: "basket-pop", name: "False Ceiling", displayOrder: 1, mainLines: [
-    { id: "line-pop", mainLineId: "line-pop", basketId: "basket-pop", subBasketId: "sub-ceiling", name: "POP false ceiling", displayOrder: 1, revisionId: "rev-pop", revisionVersion: 2, itemVersion: 3, inHouseBaseRatePaise: 10_000, modeBaseRatesPaise: { pmc: 8_000, sub_vendor: 10_000, in_house: 10_000 }, uom },
-    { id: "line-functional", mainLineId: "line-functional", basketId: "basket-pop", subBasketId: "sub-ceiling", name: "Functional Lights", displayOrder: 2, revisionId: "rev-functional", revisionVersion: 1, itemVersion: 1, inHouseBaseRatePaise: 15_000, modeBaseRatesPaise: { pmc: 8_000, sub_vendor: 15_000, in_house: 15_000 }, uom }
+    { id: "line-pop", showByDefault: true, mainLineId: "line-pop", basketId: "basket-pop", subBasketId: "sub-ceiling", name: "POP false ceiling", displayOrder: 1, revisionId: "rev-pop", revisionVersion: 2, itemVersion: 3, inHouseBaseRatePaise: 10_000, modeBaseRatesPaise: { pmc: 8_000, sub_vendor: 10_000, in_house: 10_000 }, uom },
+    { id: "line-functional", showByDefault: true, mainLineId: "line-functional", basketId: "basket-pop", subBasketId: "sub-ceiling", name: "Functional Lights", displayOrder: 2, revisionId: "rev-functional", revisionVersion: 1, itemVersion: 1, inHouseBaseRatePaise: 15_000, modeBaseRatesPaise: { pmc: 8_000, sub_vendor: 15_000, in_house: 15_000 }, uom }
   ] }] },
   { id: "basket-paint", name: "Painting", displayOrder: 2, directTemporaryItems: [], subBaskets: [{ id: "sub-paint", basketId: "basket-paint", name: "Ceiling finish", displayOrder: 1, mainLines: [
     { id: "line-paint", mainLineId: "line-paint", basketId: "basket-paint", subBasketId: "sub-paint", name: "False ceiling painting", displayOrder: 1, revisionId: "rev-paint", revisionVersion: 1, itemVersion: 1, inHouseBaseRatePaise: 25_000, modeBaseRatesPaise: { pmc: 8_000, sub_vendor: 25_000, in_house: 25_000 }, uom },
-    { id: "line-primer", mainLineId: "line-primer", basketId: "basket-paint", subBasketId: "sub-paint", name: "Ceiling primer", displayOrder: 2, revisionId: "rev-primer", revisionVersion: 1, itemVersion: 1, inHouseBaseRatePaise: 12_000, modeBaseRatesPaise: { pmc: 5_000, sub_vendor: 12_000, in_house: 12_000 }, uom },
-    { id: "line-coating", mainLineId: "line-coating", basketId: "basket-paint", subBasketId: "sub-paint", name: "Protective coating", displayOrder: 3, revisionId: "rev-coating", revisionVersion: 1, itemVersion: 1, inHouseBaseRatePaise: 18_000, modeBaseRatesPaise: { pmc: 7_000, sub_vendor: 18_000, in_house: 18_000 }, uom }
+    { id: "line-primer", showByDefault: true, mainLineId: "line-primer", basketId: "basket-paint", subBasketId: "sub-paint", name: "Ceiling primer", displayOrder: 2, revisionId: "rev-primer", revisionVersion: 1, itemVersion: 1, inHouseBaseRatePaise: 12_000, modeBaseRatesPaise: { pmc: 5_000, sub_vendor: 12_000, in_house: 12_000 }, uom },
+    { id: "line-coating", showByDefault: true, mainLineId: "line-coating", basketId: "basket-paint", subBasketId: "sub-paint", name: "Protective coating", displayOrder: 3, revisionId: "rev-coating", revisionVersion: 1, itemVersion: 1, inHouseBaseRatePaise: 18_000, modeBaseRatesPaise: { pmc: 7_000, sub_vendor: 18_000, in_house: 18_000 }, uom }
   ] }, { id: "sub-wall", basketId: "basket-paint", name: "Wall finish", displayOrder: 2, mainLines: [
-    { id: "line-wall", mainLineId: "line-wall", basketId: "basket-paint", subBasketId: "sub-wall", name: "Feature wall texture", displayOrder: 1, revisionId: "rev-wall", revisionVersion: 1, itemVersion: 1, inHouseBaseRatePaise: 32_000, modeBaseRatesPaise: { pmc: 10_000, sub_vendor: 32_000, in_house: 32_000 }, uom }
+    { id: "line-wall", showByDefault: true, mainLineId: "line-wall", basketId: "basket-paint", subBasketId: "sub-wall", name: "Feature wall texture", displayOrder: 1, revisionId: "rev-wall", revisionVersion: 1, itemVersion: 1, inHouseBaseRatePaise: 32_000, modeBaseRatesPaise: { pmc: 10_000, sub_vendor: 32_000, in_house: 32_000 }, uom }
   ] }] },
   { id: "basket-light", name: "Lights", displayOrder: 3, directTemporaryItems: [], subBaskets: [{ id: "sub-light", basketId: "basket-light", name: "Integrated lights", displayOrder: 1, mainLines: [
     { id: "line-light", mainLineId: "line-light", basketId: "basket-light", subBasketId: "sub-light", name: "False ceiling functional lights", displayOrder: 1, revisionId: "rev-light", revisionVersion: 1, itemVersion: 1, inHouseBaseRatePaise: 35_000, modeBaseRatesPaise: { pmc: 8_000, sub_vendor: 35_000, in_house: 35_000 }, uom }
@@ -263,6 +263,28 @@ describe("estimator inline recommendations", () => {
 
 describe("Sales recommendation popup", () => {
   beforeEach(() => { authState.role = "estimator_sales"; });
+
+  it("adds a required recommendation whose Main Line is not shown by default", async () => {
+    const user = userEvent.setup(), current: EstimationCatalogue = structuredClone(catalogue);
+    current.items[1]!.subBaskets[0]!.mainLines[0]!.showByDefault = false;
+    const { savedInputs } = installReads(false, { ...savedConfiguredEstimate("rev-pop"), status: "draft" },
+      undefined, false, undefined, true, sourceId => sourceId === "line-pop" ? [{
+        id: "rule-non-default", requirement: "must", reason: "Complete the ceiling finish.", targetKind: "main_line",
+        targetBasketId: "basket-paint", targetSubBasketId: "sub-paint", targetMainLineId: "line-paint",
+        targetRevisionId: "rev-paint", targetRevisionVersion: 1, targetItemVersion: 1,
+        available: true, completionRequired: false
+      }] : [], () => current);
+    renderWorkspace();
+    const add = await screen.findByRole("button", { name: "Add False ceiling painting" });
+    expect(screen.queryByRole("checkbox", { name: /False ceiling painting/ })).not.toBeInTheDocument();
+    await user.click(add);
+    expect(await screen.findByRole("checkbox", { name: /False ceiling painting/ })).toBeChecked();
+    await user.click(screen.getByRole("button", { name: "Save draft" }));
+    await screen.findByText("Estimate draft saved.");
+    expect(savedInputs.at(-1)?.lineItems.find(line => line.mainLineId === "line-paint")).toMatchObject({
+      included: true, quantity: 1, ratePaise: 25_000, recommendationSourceMainLineIds: ["line-pop"]
+    });
+  });
 
   it("keeps an unavailable unpriced must target in review and rejects its stale local Add callback", async () => {
     const user = userEvent.setup();

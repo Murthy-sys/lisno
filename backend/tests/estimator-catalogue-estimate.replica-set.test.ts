@@ -653,6 +653,75 @@ describe("estimator tier description", { timeout: 30_000 }, () => {
   });
 });
 
+describe("estimator default-display metadata", { timeout: 30_000 }, () => {
+  it("projects explicit booleans for all item kinds without filtering non-default or unpriced sources", async () => {
+    await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: "overview-a" }, { $set: { "payload.showByDefault": true } });
+    await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: "overview-b" }, { $set: { "payload.showByDefault": false } });
+    await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: "overview-temp" }, { $set: { "payload.showByDefault": true } });
+    await seedFixtureItem({ id: "malformed-default", status: "active", subBasketId: "sub-a" });
+    await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: "overview-malformed-default" }, { $set: { "payload.showByDefault": "true" } });
+    const before = await AiEstimatorKnowledgeSectionModel.find({ sectionKey: "overview" }).sort({ _id: 1 }).lean();
+    const response = await request(app().server).get("/api/v1/estimation/catalogue").set(bearer("estimator")).expect(200);
+    const all = response.body.data.items.flatMap((basket: any) => [
+      ...basket.directTemporaryItems, ...basket.subBaskets.flatMap((sub: any) => [...sub.mainLines, ...sub.temporaryItems])
+    ]);
+    const expected = { "line-a": true, "line-b": false, "line-temp": true, "line-temp-direct": false, "malformed-default": false };
+    const resolved = await resolveEstimatorCatalogueLines(Object.keys(expected));
+    for (const [mainLineId, showByDefault] of Object.entries(expected)) {
+      expect(all.find((line: any) => line.mainLineId === mainLineId)).toMatchObject({ showByDefault });
+      expect(resolved.get(mainLineId)?.line).toMatchObject({ showByDefault });
+    }
+    expect(resolved.get("line-a")?.line).toMatchObject({ showByDefault: true, hasConfiguredBasePrice: false });
+    expect(await AiEstimatorKnowledgeSectionModel.find({ sectionKey: "overview" }).sort({ _id: 1 }).lean()).toEqual(before);
+  });
+
+  it.each([
+    { active: true, draft: false },
+    { active: true, draft: undefined },
+    { active: false, draft: true }
+  ])("uses draft default display $draft instead of active $active with the same current UOM", async ({ active, draft }) => {
+    await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: "overview-a" }, { $set: { "payload.showByDefault": active } });
+    await AiEstimatorKnowledgeRevisionModel.collection.insertOne({ _id: "default-display-draft", mainLineId: "line-a", status: "draft", version: 2 } as never);
+    await AiEstimatorKnowledgeMainLineModel.collection.updateOne({ _id: "line-a" }, { $set: { draftRevisionId: "default-display-draft" } });
+    await AiEstimatorKnowledgeSectionModel.collection.insertOne({ _id: "overview-default-display-draft", mainLineId: "line-a",
+      revisionId: "default-display-draft", sectionKey: "overview", payload: { uomId: "uom-ea", ...(draft === undefined ? {} : { showByDefault: draft }) } } as never);
+    const projected = (await resolveEstimatorCatalogueLines(["line-a"])).get("line-a")!.line;
+    expect(projected).toMatchObject({ revisionId: "default-display-draft", revisionVersion: 2,
+      showByDefault: draft === true, uom: { id: "uom-ea" } });
+    const response = await request(app().server).get("/api/v1/estimation/catalogue").set(bearer("estimator")).expect(200);
+    const lines = response.body.data.items.flatMap((basket: any) => basket.subBaskets.flatMap((sub: any) => sub.mainLines));
+    expect(lines.find((line: any) => line.mainLineId === "line-a")).toMatchObject({ revisionId: "default-display-draft", showByDefault: draft === true });
+  });
+
+  it("accepts explicit non-default additions and preserves saved rows, totals and frozen snapshots when defaults change", async () => {
+    await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: "overview-a" }, { $set: { "payload.showByDefault": true } });
+    await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: "overview-b" }, { $set: { "payload.showByDefault": false } });
+    const lines = [configuredLine(), configuredLine({ catalogueId: "line-b", mainLineId: "line-b", mainBasketId: "basket-b",
+      subBasketId: "sub-b", revisionId: "revision-b", uomId: "uom-ea", quantity: 2, ratePaise: 5003 })];
+    await configureFixturePrices(lines);
+    const { server } = app();
+    const path = "/api/v1/leads/default-display-saved/estimate";
+    const saved = await request(server).put(path).set(bearer("estimator")).send(estimateInput(lines, ["basket-a", "basket-b"])).expect(200);
+    const stored = await EstimateModel.findById(saved.body.data.id).lean();
+    const amounts = { subtotalPaise: 26255, gstPaise: 4726, totalPaise: 31000, roundOffPaise: 19 };
+    expect(stored).toMatchObject(amounts);
+    const frozen = toEstimateSnapshot(stored as never, { clientName: "Client", projectName: "Project", location: "City" } as never);
+    expect(frozen.lineItems).toHaveLength(2);
+    for (const line of frozen.lineItems) expect(line).not.toHaveProperty("showByDefault");
+    for (const line of saved.body.data.lineItems) expect(line).not.toHaveProperty("showByDefault");
+    await AiEstimatorKnowledgeSectionModel.collection.updateOne({ _id: "overview-a" }, { $set: { "payload.showByDefault": false } });
+    const current = await request(server).get(path).set(bearer("estimator")).expect(200);
+    expect(current.body.data.lineItems.map((line: any) => ({ id: line.id, mainLineId: line.mainLineId, included: line.included,
+      quantity: line.quantity, amountPaise: line.amountPaise }))).toEqual(saved.body.data.lineItems.map((line: any) => ({
+      id: line.id, mainLineId: line.mainLineId, included: line.included, quantity: line.quantity, amountPaise: line.amountPaise
+    })));
+    expect(current.body.data).toMatchObject(amounts);
+    expect(await EstimateModel.findById(saved.body.data.id).lean()).toEqual(stored);
+    expect(frozen).toMatchObject(amounts);
+    expect((await resolveEstimatorCatalogueLines(["line-a", "line-b"])).size).toBe(2);
+  });
+});
+
 describe("estimator configured catalogue and estimate", { timeout: 30_000 }, () => {
 
   it("projects positive base presence from any saved Configuration scope and preserves every source row", async () => {

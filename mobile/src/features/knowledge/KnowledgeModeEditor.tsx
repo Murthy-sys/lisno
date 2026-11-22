@@ -1,3 +1,4 @@
+import type { MarginEditField } from "../../../../shared/knowledge/knowledgeSubBasketMarginTypes";
 import { useEffect, useState, type ReactNode, type ComponentProps } from "react";
 import { Pressable, Text, View } from "react-native";
 import { Button, DetailIcon, Field, IconButton } from "./knowledgeDetailUi";
@@ -66,7 +67,19 @@ export function KnowledgeModeEditor({ item, payload, onChange, pricingPayload, o
     if (source === "in_house") for (const other of PMC_SCOPE_LISTS) if (!Object.hasOwn(next, other)) next[other] = inHouseScopeStarterItems(other).map(row => ({ ...row }));
     updateRows(original ? rawRows.map(row => row === original ? next : row) : [...rawRows, next]);
   }
-  const change = (next: KnowledgeJsonObject) => { if (!readOnly) onChange(next); };
+  const change = (next: KnowledgeJsonObject, editedMargin?: MarginEditField) => { if (!readOnly) onChange(next, editedMargin); };
+  function changeRange(mode: "pmc" | "sub_vendor", field: "minimum" | "maximum", text: string) {
+    const rangeChange = mode === "pmc" ? withPmcMargin : withSubVendorMargin;
+    change(rangeChange(payload, field, nativePercentage(text)), {
+      mode, key: "margin", bound: field === "minimum" ? "minimumBps" : "maximumBps"
+    });
+  }
+  function changeGrossMargin(scope: "in_house_labor" | "in_house_material", field: "minimumRate" | "startingRate", text: string) {
+    change(nativeCalculationChange(payload, scope, { ...drafts[scope], [field]: text }, uom.scale ?? 6), {
+      mode: "in_house", key: scope === "in_house_labor" ? "labor" : "material", bound: field === "minimumRate" ? "minimumBps" : "maximumBps",
+      component: { basketId: item.basketId, subBasketId: item.subBasketId ?? null }
+    });
+  }
   function calculation(scope: ModeCalculationScope) {
     const usesRange = scope === "pmc" || scope === "sub_vendor";
     const range = scope === "pmc" ? pmcMarginRange(payload) : subVendorMarginRange(payload);
@@ -84,8 +97,8 @@ export function KnowledgeModeEditor({ item, payload, onChange, pricingPayload, o
       <KnowledgeText>UOM follows Overview. Impact applies at or below the quantity limit.</KnowledgeText>
       <View style={modeStyles.calculationGroup}>
       <Text accessibilityRole="header" style={modeStyles.calculationHeading}>{usesRange ? "Margin range" : "Gross margin"}</Text>
-      <View style={modeStyles.fieldRow}>{usesRange ? (["minimum", "maximum"] as const).map(field => <View style={modeStyles.column} key={field}><NativeDecimalField label={`${scope === "pmc" ? "PMC" : "Lisno"} ${field === "minimum" ? "Min." : "Max."} Margin (%)`} displayLabel={`${field === "minimum" ? "Minimum" : "Maximum"} (%)`} value={typeof range[field] === "number" && Number.isSafeInteger(range[field]) && (range[field] as number) >= 0 ? formatPaiseForRupeeInput(range[field] as number) : knowledgeText(range[field])} editable={!readOnly} keyboardType="decimal-pad" maxLength={64} error={issues.find(issue => issue.path === (scope === "pmc" ? field === "minimum" ? "pmcMinimumMarginBps" : "pmcMarginBps" : field === "minimum" ? "subVendorMinimumMarginBps" : "subVendorMarginBps"))?.message} onChangeText={text => change((scope === "pmc" ? withPmcMargin : withSubVendorMargin)(payload, field, nativePercentage(text)))} /></View>)
-        : ([ ["minimumRate", "Min. Gross Margin (%)"], ["startingRate", "Starting Gross Margin (%)"] ] as const).map(([field, label]) => <View style={modeStyles.column} key={field}><NativeDecimalField label={`${MODE_CALCULATION_LABELS[scope]} ${label}`} displayLabel={`${field === "minimumRate" ? "Minimum" : "Starting"} (%)`} value={drafts[scope][field]} editable={!readOnly} keyboardType="decimal-pad" maxLength={64} error={errors[field]} onChangeText={text => change(nativeCalculationChange(payload, scope, { ...drafts[scope], [field]: text }, uom.scale ?? 6))} /></View>)}</View>
+      <View style={modeStyles.fieldRow}>{usesRange ? (["minimum", "maximum"] as const).map(field => <View style={modeStyles.column} key={field}><NativeDecimalField label={`${scope === "pmc" ? "PMC" : "Lisno"} ${field === "minimum" ? "Min." : "Max."} Margin (%)`} displayLabel={`${field === "minimum" ? "Minimum" : "Maximum"} (%)`} value={typeof range[field] === "number" && Number.isSafeInteger(range[field]) && (range[field] as number) >= 0 ? formatPaiseForRupeeInput(range[field] as number) : knowledgeText(range[field])} editable={!readOnly} keyboardType="decimal-pad" maxLength={64} error={issues.find(issue => issue.path === (scope === "pmc" ? field === "minimum" ? "pmcMinimumMarginBps" : "pmcMarginBps" : field === "minimum" ? "subVendorMinimumMarginBps" : "subVendorMarginBps"))?.message} onChangeText={text => changeRange(scope, field, text)} /></View>)
+        : ([ ["minimumRate", "Min. Gross Margin (%)"], ["startingRate", "Starting Gross Margin (%)"] ] as const).map(([field, label]) => <View style={modeStyles.column} key={field}><NativeDecimalField label={`${MODE_CALCULATION_LABELS[scope]} ${label}`} displayLabel={`${field === "minimumRate" ? "Minimum" : "Starting"} (%)`} value={drafts[scope][field]} editable={!readOnly} keyboardType="decimal-pad" maxLength={64} error={errors[field]} onChangeText={text => changeGrossMargin(scope, field, text)} /></View>)}</View>
       <KnowledgeText>{scope === "pmc" ? "Allowed: 10% to 20%, up to 2 decimal places. Min. ≤ Max." : scope === "sub_vendor" ? "Allowed: 0% to 95%, in multiples of 5%. Min. ≤ Max." : "Gross Margin must be less than 100%. Min. ≤ Starting."}</KnowledgeText>
       </View>
       <View style={modeStyles.calculationAction}><Button label={`Test ${MODE_CALCULATION_LABELS[scope]} calculations`} variant="quiet" onPress={() => setSimulation(scope)} /></View>

@@ -1,3 +1,4 @@
+import type { MarginComponent, MarginEditField } from "../../../../shared/knowledge/knowledgeSubBasketMarginTypes";
 import { inHouseComponentsIssues } from "../../../../shared/knowledge/knowledgeInHouseComponents";
 import { KnowledgeInHouseComponents, type InHousePendingCalculations } from "./KnowledgeInHouseComponents";
 import {
@@ -85,6 +86,7 @@ interface ModeDraft {
   readonly pendingPayload: KnowledgeJsonObject;
   readonly editedAdvancedFields: readonly AdvancedEditableField[];
   readonly editedCalculationScopes: readonly ModeCalculationScope[];
+  readonly marginEdits: readonly MarginEditField[];
   readonly specificationReferenceIds: readonly string[];
   readonly applicability: KnowledgeSectionApplicability;
   readonly envelopeVersion: number | null;
@@ -172,6 +174,8 @@ export const KnowledgeModePanel = forwardRef<
   const queryClient = useQueryClient();
   const mainLineId = item.mainLineId;
   const sourceKey = pendingChangesSourceKey ?? `${dataSource.scopeKey}:${mainLineId}:${revisionId}:mode`;
+  const trackMarginEdits = dataSource.modeTier !== "default" &&
+    (dataSource.scopeKey === liveKnowledgeEditorDataSource.scopeKey || dataSource.supportsLiveConfigurationRequests === true);
   const emptyCalculationDefaults = dataSource.modeTier !== undefined && dataSource.modeTier !== "signature";
   const [draftSourceKey, setDraftSourceKey] = useState(sourceKey);
   const currentSource = useRef(sourceKey);
@@ -323,6 +327,24 @@ export const KnowledgeModePanel = forwardRef<
     },
     [onBusyChange, onDirtyChange, onSaveErrorChange, onSavingChange]
   );
+
+  const recordMarginEdit = (field: MarginEditField, changed: boolean) => {
+    setDrafts(current => {
+      const { advanced } = current;
+      const otherEdits = advanced.marginEdits.filter(edit => edit.mode !== field.mode || edit.key !== field.key || edit.bound !== field.bound
+        || edit.component?.basketId !== field.component?.basketId || edit.component?.subBasketId !== field.component?.subBasketId);
+      const marginEdits = changed ? [...otherEdits, field] : otherEdits;
+      return { ...current, advanced: { ...advanced, marginEdits } };
+    });
+  };
+  const clearComponentEdits = (components: readonly MarginComponent[]) => {
+    setDrafts(current => {
+      const { advanced } = current;
+      const marginEdits = advanced.marginEdits.filter(edit => !components.some(component =>
+        edit.component?.basketId === component.basketId && edit.component.subBasketId === component.subBasketId));
+      return { ...current, advanced: { ...advanced, marginEdits } };
+    });
+  };
 
   const setPayload = useCallback(
     (sectionKey: ModeSectionKey, payload: KnowledgeJsonObject) => {
@@ -505,6 +527,7 @@ export const KnowledgeModePanel = forwardRef<
               expectedVersion: envelopeVersion,
               expectedAggregateVersion,
               applicability,
+              ...(sectionKey === "advanced" && trackMarginEdits ? { marginEdits: draft.marginEdits } : {}),
               payload
             }
           );
@@ -596,7 +619,7 @@ export const KnowledgeModePanel = forwardRef<
       setSavingSection(null);
       setSaving(false);
     }
-  }, [dataSource, componentsValid, descriptionPending, drafts, editable, locked, mainLineId, modeLabel, onAnnouncement, queryClient, revisionId, saving, sourceKey]);
+  }, [trackMarginEdits, dataSource, componentsValid, descriptionPending, drafts, editable, locked, mainLineId, modeLabel, onAnnouncement, queryClient, revisionId, saving, sourceKey]);
 
   const saveDescription = useCallback(async (text: string): Promise<boolean> => {
     const savedSection = advancedQuery.data;
@@ -612,6 +635,7 @@ export const KnowledgeModePanel = forwardRef<
         expectedVersion: drafts.advanced.envelopeVersion,
         expectedAggregateVersion: aggregateBaselineRef.current.version,
         applicability: text.trim() ? "configured" : savedSection.applicability,
+        ...(trackMarginEdits ? { marginEdits: [] } : {}),
         payload: knowledgeSectionPayloadForUpdate("advanced", { ...savedSection.payload, modeDescription: text })
       });
       dataSource.commitSection(queryClient, saved);
@@ -670,7 +694,7 @@ export const KnowledgeModePanel = forwardRef<
       setSavingSection(null);
       setSaving(false);
     }
-  }, [advancedQuery.data, conflict, dataSource, draftSourceKey, drafts.advanced.envelopeVersion, editable, locked,
+  }, [trackMarginEdits, advancedQuery.data, conflict, dataSource, draftSourceKey, drafts.advanced.envelopeVersion, editable, locked,
     mainLineId, modeLabel, onAnnouncement, queryClient, revisionId, saving, sourceKey]);
 
   useImperativeHandle(ref, () => ({ save, discard }), [discard, save]);
@@ -780,6 +804,11 @@ export const KnowledgeModePanel = forwardRef<
           readOnly={!editable || saving || locked}
           validationAttempt={drafts.advanced.validationAttempt}
           onChange={(payload) => setPayload("advanced", payload)}
+          onMarginEdit={(field, value) => {
+            const range = field.mode === "pmc" ? pmcMarginRange : subVendorMarginRange;
+            const bound = field.bound === "minimumBps" ? "minimum" : "maximum";
+            recordMarginEdit(field, !pendingValuesEqual(value, range(advancedQuery.data?.payload ?? {})[bound]));
+          }}
           onDirty={markAdvancedConfigurationDirty}
           onValidationChange={setAdvancedValid}
           calculationValidity={calculationValidity}
@@ -790,6 +819,7 @@ export const KnowledgeModePanel = forwardRef<
             onRequestDraft={saving || locked ? undefined : onRequestDraft}
             validationAttempt={drafts.advanced.validationAttempt} pendingSaveVersion={pendingCalculationSaveVersion} issues={drafts.advanced.serverIssues}
             onValidationChange={setComponentsValid} onPendingChange={setComponentPending}
+            onMarginEdit={recordMarginEdit} onReplaceMarginComponents={clearComponentEdits}
             onChange={(payload) => { setPayload("advanced", payload); markAdvancedConfigurationDirty(); }}
             onSaveComponent={async (payload) => {
               // A legacy editor can own unfinished text that has not entered the payload.
@@ -814,6 +844,10 @@ export const KnowledgeModePanel = forwardRef<
             subVendorMarginBps={scope === "sub_vendor" ? drafts.advanced.payload.subVendorMarginBps : undefined}
             subVendorMinimumMarginBps={scope === "sub_vendor" ? drafts.advanced.payload.subVendorMinimumMarginBps : undefined}
             marginControl={marginControl}
+            onMarginEdit={scope === "in_house_labor" || scope === "in_house_material" ? (bound, changed) => recordMarginEdit({
+              mode: "in_house", key: scope === "in_house_labor" ? "labor" : "material", bound,
+              component: { basketId: item.basketId, subBasketId: item.subBasketId ?? null }
+            }, changed) : undefined}
             contextLabel={MODE_CALCULATION_LABELS[scope]}
             issuePath={`modeCalculations.${scope}`}
             value={modeCalculationsForPayload(drafts.advanced.payload)[scope]}
@@ -946,6 +980,7 @@ function emptyModeDraft(): ModeDraft {
     pendingPayload: {},
     editedAdvancedFields: [],
     editedCalculationScopes: [],
+    marginEdits: [],
     specificationReferenceIds: [],
     applicability: "not_configured",
     envelopeVersion: null,
@@ -974,6 +1009,7 @@ function draftFromEnvelope(
     pendingPayload: envelope.payload,
     editedAdvancedFields: [],
     editedCalculationScopes: [],
+    marginEdits: [],
     specificationReferenceIds: envelope.referenceState?.specificationIds ?? [],
     applicability: envelope.applicability,
     envelopeVersion: envelope.version,

@@ -2551,13 +2551,14 @@ function componentSchemas(): Readonly<Record<string, OpenApiSchema>> {
     },
     EstimatorCatalogueLine: {
       type: "object", additionalProperties: false,
-      required: ["id", "mainLineId", "basketId", "subBasketId", "itemType", "clientVisible", "hasConfiguredBasePrice", "basePriceAvailability", "name", "displayOrder", "revisionId", "itemStatus", "revisionStatus", "itemVersion", "revisionVersion", "inHouseBaseRatePaise", "modeBaseRatesPaise", "applicableTiers", "tierPricing", "dimensionsMandatory", "dimensionRule", "uom"],
+      required: ["id", "mainLineId", "basketId", "subBasketId", "itemType", "clientVisible", "showByDefault", "hasConfiguredBasePrice", "basePriceAvailability", "name", "displayOrder", "revisionId", "itemStatus", "revisionStatus", "itemVersion", "revisionVersion", "inHouseBaseRatePaise", "modeBaseRatesPaise", "applicableTiers", "tierPricing", "dimensionsMandatory", "dimensionRule", "uom"],
       properties: {
         id: { type: "string" }, mainLineId: { type: "string" }, basketId: { type: "string" },
         subBasketId: { type: "string", nullable: true }, itemType: { type: "string", enum: ["main_line", "temporary"] },
         dimensionsMandatory: { type: "boolean", default: false, readOnly: true },
         dimensionRule: { allOf: [{ $ref: "#/components/schemas/EstimateDimensionRule" }], nullable: true, readOnly: true, description: "Derived from the configured supported area UOM. Null when not required or unsupported; never inferred from unrelated unit names." },
         clientVisible: { type: "boolean", default: true, readOnly: true, description: "Current saved Overview visibility for all client quotation screens and documents. Internal estimating and approved totals are unchanged." },
+        showByDefault: { type: "boolean", default: false, readOnly: true, description: "Current saved Overview default-display setting. Only true adds eligible unused previews to default estimation browsing. False retains sources for explicit additions, recommendations and saved estimates." },
         hasConfiguredBasePrice: { type: "boolean", readOnly: true, description: "At least one valid saved base price greater than zero in default, Signature, Premium, or Functional Configuration. Zero-only bases do not qualify; selected source records remain available when false. Discovery metadata only, without a tier or selling-rate fallback." },
         basePriceAvailability: {
           type: "object", additionalProperties: false, readOnly: true, required: [...KNOWLEDGE_MODE_CONFIGURATION_SCOPES],

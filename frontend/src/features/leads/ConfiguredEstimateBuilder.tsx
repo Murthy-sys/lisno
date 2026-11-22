@@ -133,6 +133,12 @@ export function ConfiguredEstimateBuilder({
   const [focusedInlineLine, setFocusedInlineLine] = useState<{ context: string; key: string } | null>(null);
   const inlineReviewKey = browseCatalogue && focusedInlineLine?.context === inlineEditContext &&
     catalogueRows.some(row => row.line.key === focusedInlineLine.key) ? focusedInlineLine.key : null;
+  useLayoutEffect(() => {
+    if (!browseCatalogue || focusedInlineLine?.context !== inlineEditContext ||
+      catalogueRows.some(row => row.line.key === focusedInlineLine.key)) return;
+    if (document.activeElement === document.body) (pickerTriggerRef.current ?? recommendationFallbackFocusRef.current)?.focus();
+    setFocusedInlineLine(null);
+  }, [browseCatalogue, catalogueRows, focusedInlineLine, inlineEditContext]);
   const requiredReviewKeys = lines.filter(line => line.persistedId && !line.included && excludedReviewKeys?.has(line.key)).map(line => line.key);
   const reviewKeys = new Set([...(retainedReview.context === reviewContextKey ? retainedReview.keys : []), ...requiredReviewKeys]);
   const reviewLines = lines.filter(line => line.persistedId && !line.included && reviewKeys.has(line.key) && line.key !== inlineReviewKey);
@@ -229,7 +235,14 @@ export function ConfiguredEstimateBuilder({
   };
   const roomAmountLabel = (roomId: string) => lines.some(line => line.roomId === roomId && configuredLineAmountPaise(line) === null)
     ? "Incomplete" : moneyPaise(roomTotal(roomId));
-  const browseCountLabel = (groupLines: readonly ConfiguredLineDraft[]) => `${groupLines.filter(line => line.included).length} selected · ${groupLines.length} available`;
+  const browseCountLabel = (groupLines: readonly ConfiguredLineDraft[]) => `${groupLines.filter(line => line.included).length} selected · ${groupLines.length} shown`;
+  const emptyDefaultMessage = (items: readonly { showByDefault?: boolean }[], group: "Sub-Basket" | "Main Basket" | "direct items") => {
+    if (refreshingAvailableItems || availableItemsState === "loading") return "Default items will appear after loading.";
+    if (availableItemsState !== "ready") return "Refresh available items to view defaults.";
+    if (items.some(item => item.showByDefault === true)) return "Default items are unavailable in the current Configuration.";
+    return group === "direct items" ? "No default direct items are configured for this Main Basket."
+      : `No default items are configured for this ${group}.`;
+  };
   const pageGroup = (groupLines: readonly ConfiguredLineDraft[], key: string, label: string) => {
     const filtered = groupLines.filter(matches);
     const offset = Math.min(groupOffsets[key] ?? 0, Math.max(0, Math.ceil(filtered.length / 20) - 1) * 20);
@@ -274,6 +287,7 @@ export function ConfiguredEstimateBuilder({
       const basketLines = availableRoomLines.filter(line => line.mainBasketId === basket.id && !line.sourceMissing);
       const subBaskets = basket.subBaskets.map(subBasket => ({
         id: subBasket.id, name: subBasket.name,
+        sources: [...subBasket.mainLines, ...(subBasket.temporaryItems ?? [])],
         lines: availableRoomLines.filter(line => line.mainBasketId === basket.id && line.subBasketId === subBasket.id && !line.sourceMissing)
       }));
       return { id: basket.id, name: basket.name,
@@ -292,7 +306,10 @@ export function ConfiguredEstimateBuilder({
               } : null;
               if (onBrowseRecommendationBasket?.(basket.id) === false) browseFocus.current = null;
             }}>Browse other items in {basket.name}</button>
-        </div> : undefined,
+        </div> : browseCatalogue && !query && basket.directTemporaryItems?.length && !directLines.length
+          ? <section className="configured-estimate-sub-basket" aria-label={`Direct items in ${basket.name}`}>
+            <h3>Direct items</h3><p className="configured-estimate-sub-basket__empty">{emptyDefaultMessage(basket.directTemporaryItems, "direct items")}</p>
+          </section> : undefined,
         subtotalLabel: attributedSubtotalLabel(basket.id),
         directSubtotalLabel: attributedSubtotalLabel(basket.id, null),
         directHeaderActions: groupComparisonControl(basket.id, null, `Direct items in ${basket.name}`),
@@ -304,7 +321,8 @@ export function ConfiguredEstimateBuilder({
           .map(subBasket => ({ id: subBasket.id, name: subBasket.name, count: subBasket.lines.length,
             countLabel: compact ? `${subBasket.lines.length} selected` : browseCatalogue ? browseCountLabel(subBasket.lines) : undefined,
             emptyMessage: browseCatalogue && reviewLines.some(line => line.roomId === activeRoom?.id && line.mainBasketId === basket.id && line.subBasketId === subBasket.id)
-              ? "Excluded items in this Sub Basket are shown above for review." : undefined,
+              ? "Excluded items in this Sub Basket are shown above for review."
+              : browseCatalogue ? emptyDefaultMessage(subBasket.sources, "Sub-Basket") : undefined,
             subtotalLabel: attributedSubtotalLabel(basket.id, subBasket.id),
             headingActions: subBasketHeadingActions(basket.id, subBasket.id, `${basket.name}, ${subBasket.name}`),
             ...pageGroup(subBasket.lines, `${basket.id}:${subBasket.id}`, `${basket.name}, ${subBasket.name}`),
@@ -426,7 +444,7 @@ export function ConfiguredEstimateBuilder({
         <p>{availableItemsState === "loading" ? "Loading available items…" : availableItemsState === "error" ? "Available items could not be refreshed. Your selections are preserved." : "Available items are out of date. Refresh before selecting more items."}</p>
         {availableItemsState !== "loading" ? <button type="button" className="button button--secondary" onClick={onRefreshAvailableItems}>Retry available items</button> : null}
       </div> : null}
-      {!browseCatalogue && activeRoom && editable ? <EstimateItemPicker roomName={activeRoom.label} open={pickerOpen} onOpenChange={setPickerOpen} triggerRef={pickerTriggerRef}
+      {activeRoom && editable ? <EstimateItemPicker roomName={activeRoom.label} open={pickerOpen} onOpenChange={setPickerOpen} triggerRef={pickerTriggerRef}
         items={pickerResults.slice(pageOffset, pageOffset + 20).map(item => {
           const saved = lines.find(line => line.roomId === activeRoom.id && line.mainLineId === item.target.mainLineId);
           const incompatible = Boolean(saved && (saved.mainBasketId !== item.target.basketId || saved.subBasketId !== item.target.subBasketId));
@@ -444,9 +462,10 @@ export function ConfiguredEstimateBuilder({
     </>}
     renderEmptyBasket={basket => browseCatalogue && !browsableBaskets.has(basket.id)
       ? <p className="configured-estimate-basket__empty">No items selected in this room.</p>
+      : browseCatalogue && (basket.subBaskets.length > 0 || basket.beforeLines) ? null
       : <div className="configured-estimate-basket__empty">
       <p>{browseCatalogue && reviewLines.some(line => line.roomId === activeRoom?.id && line.mainBasketId === basket.id)
-        ? "Excluded items in this Main Basket are shown above for review." : "No available items."}</p>
+        ? "Excluded items in this Main Basket are shown above for review." : browseCatalogue ? emptyDefaultMessage([], "Main Basket") : "No available items."}</p>
       <button type="button" className="button button--secondary" disabled={refreshingAvailableItems} onClick={onRefreshAvailableItems}>Refresh available items</button>
     </div>}
     afterGroups={<>

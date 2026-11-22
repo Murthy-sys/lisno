@@ -9,11 +9,11 @@ jest.mock("react-native-safe-area-context", () => ({ SafeAreaView: require("reac
 const onPayload = jest.fn();
 const onPricing = jest.fn();
 const onValidity = jest.fn();
-const setupProps = { item: { mainLineName: "Synthetic panel" }, context: { scopeKey: "test:user", api: { previewKnowledge: jest.fn() } }, masters: { modes: [], uoms: [{ id: "uom", name: "Square foot", decimalScale: 2 }] }, overviewPayload: { uomId: "uom" }, catalogsReady: true } as unknown as Pick<KnowledgeModeEditorProps, "item" | "context" | "masters" | "overviewPayload" | "catalogsReady">;
+const setupProps = { item: { mainLineName: "Synthetic panel", basketId: "basket-a", subBasketId: "sub-a" }, context: { scopeKey: "test:user", api: { previewKnowledge: jest.fn() } }, masters: { modes: [], uoms: [{ id: "uom", name: "Square foot", decimalScale: 2 }] }, overviewPayload: { uomId: "uom" }, catalogsReady: true } as unknown as Pick<KnowledgeModeEditorProps, "item" | "context" | "masters" | "overviewPayload" | "catalogsReady">;
 function Harness({ initial = {}, pricing = {}, readOnly = false, protectedIds = [] }: { initial?: KnowledgeJsonObject; pricing?: KnowledgeJsonObject; readOnly?: boolean; protectedIds?: readonly string[] }) {
   const [payload, setPayload] = useState(initial);
   const [pricingPayload, setPricing] = useState(pricing);
-  return <KnowledgeModeEditor {...setupProps} payload={payload} onChange={next => { onPayload(next); setPayload(next); }} pricingPayload={pricingPayload} onPricingChange={next => { onPricing(next); setPricing(next); }} readOnly={readOnly} referencedSpecificationIds={protectedIds} onValidityChange={onValidity} />;
+  return <KnowledgeModeEditor {...setupProps} payload={payload} onChange={(next, editedMargin) => { onPayload(next, editedMargin); setPayload(next); }} pricingPayload={pricingPayload} onPricingChange={next => { onPricing(next); setPricing(next); }} readOnly={readOnly} referencedSpecificationIds={protectedIds} onValidityChange={onValidity} />;
 }
 
 async function showExecution() {
@@ -45,6 +45,20 @@ describe("native Mode editing", () => {
     expect(onPayload.mock.lastCall?.[0].modeConfigurations).toContainEqual(retainedScope);
     expect(onValidity).toHaveBeenLastCalledWith(true);
   });
+  it("identifies direct changes to Signature margin bounds across all editable modes", async () => {
+    await render(<Harness />);
+    await fireEvent.changeText(screen.getByLabelText("PMC Max. Margin (%)"), "18");
+    expect(onPayload.mock.lastCall?.[1]).toEqual({ mode: "pmc", key: "margin", bound: "maximumBps" });
+    await showExecution();
+    await fireEvent.changeText(screen.getByLabelText("Lisno Min. Margin (%)"), "15");
+    expect(onPayload.mock.lastCall?.[1]).toEqual({ mode: "sub_vendor", key: "margin", bound: "minimumBps" });
+    await fireEvent.press(screen.getByRole("checkbox", { name: "In-house" }));
+    await fireEvent.changeText(screen.getByLabelText("Material cost Base Rate (₹)"), "20");
+    expect(onPayload.mock.lastCall?.[1]).toBeUndefined();
+    await fireEvent.changeText(screen.getByLabelText("Material cost Starting Gross Margin (%)"), "40");
+    expect(onPayload.mock.lastCall?.[1]).toEqual({ mode: "in_house", key: "material", bound: "maximumBps", component: { basketId: "basket-a", subBasketId: "sub-a" } });
+  });
+
   it("keeps incomplete money edits, dirty state and hidden modes without losing the draft", async () => {
     await render(<Harness />);
     await fireEvent.changeText(screen.getByLabelText("PMC Base Rate (₹)"), "12.");

@@ -15,10 +15,10 @@ const catalogue: EstimationCatalogue = {
   ineligibleLineCount: 0,
   items: [{ id: "basket-pop", name: "POP / Gypsum", displayOrder: 1, directTemporaryItems: [], subBaskets: [{
     id: "sub-na", basketId: "basket-pop", name: "NA", displayOrder: 1,
-    mainLines: [{ id: "line-pop", mainLineId: "line-pop", basketId: "basket-pop", subBasketId: "sub-na",
+    mainLines: [{ id: "line-pop", mainLineId: "line-pop", basketId: "basket-pop", subBasketId: "sub-na", showByDefault: true,
       name: "POP false ceiling", displayOrder: 1, revisionId: "revision-pop", itemType: "main_line",
       inHouseBaseRatePaise: 115_000, modeBaseRatesPaise: { pmc: 95_000, sub_vendor: 105_000, in_house: 115_000 }, uom: { id: "uom-sq", code: "SQFT", name: "sq ft", decimalScale: 2 } }],
-    temporaryItems: [{ id: "line-cove", mainLineId: "line-cove", basketId: "basket-pop", subBasketId: "sub-na",
+    temporaryItems: [{ id: "line-cove", mainLineId: "line-cove", basketId: "basket-pop", subBasketId: "sub-na", showByDefault: true,
       name: "Cove in Gypsum", displayOrder: 2, revisionId: "revision-cove", itemType: "temporary",
       inHouseBaseRatePaise: 12_500, modeBaseRatesPaise: { pmc: 0, sub_vendor: 10_500, in_house: null }, uom: { id: "uom-rft", code: "RFT", name: "Rft", decimalScale: 1 } }]
   }, { id: "sub-unused", basketId: "basket-pop", name: "Unused Sub Basket", displayOrder: 2,
@@ -61,6 +61,95 @@ function LiveBuilder({ initialLines = [], editable = true, pricingModeEditable =
 const chosen = () => configuredLineFixtures(catalogue, rooms, new Set(["basket-pop"]), []).map(line => ({ ...line, included: true }));
 
 describe("Sales direct catalogue browsing", () => {
+  it("filters defaults before paging and search while keeping non-default choices in Add items", async () => {
+    const user = userEvent.setup(), current = structuredClone(catalogue), changed = vi.fn();
+    const source = current.items[0]!.subBaskets[0]!.mainLines[0]!;
+    current.items[0]!.subBaskets[0]!.temporaryItems = [];
+    current.items[0]!.subBaskets[0]!.mainLines = Array.from({ length: 45 }, (_, index) => ({ ...source,
+      id: `choice-${index}`, mainLineId: `choice-${index}`, name: `Ceiling choice ${index}`, showByDefault: index >= 24 }));
+    render(<LiveBuilder availableCatalogue={current} itemPresentation="catalogue" onLinesChange={changed} />);
+    const group = screen.getByRole("region", { name: "NA" });
+    expect(within(group).getAllByRole("checkbox")).toHaveLength(20);
+    expect(within(group).getByText("0 selected · 21 shown")).toBeVisible();
+    expect(screen.getByText("1–20 of 21")).toBeVisible();
+    expect(screen.queryByRole("checkbox", { name: /Ceiling choice 0 in/ })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Next" }));
+    expect(within(group).getAllByRole("checkbox")).toHaveLength(1);
+    expect(within(group).getByRole("checkbox", { name: /Ceiling choice 44 in/ })).not.toBeChecked();
+    await user.type(screen.getByRole("searchbox", { name: "Search estimate items" }), "Ceiling choice 0");
+    expect(screen.getByText(/No available items match/)).toBeVisible();
+    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+    expect(changed).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Add items" }));
+    await user.type(screen.getByRole("searchbox", { name: "Search available items" }), "Ceiling choice 0");
+    const add = screen.getByRole("button", { name: "Add Ceiling choice 0" });
+    add.focus(); await user.keyboard("{Enter}");
+    expect(screen.getByRole("checkbox", { name: /Ceiling choice 0 in/ })).toBeChecked();
+    expect(changed.mock.lastCall?.[0]).toEqual([expect.objectContaining({ mainLineId: "choice-0", included: true })]);
+    expect(screen.getByText("1 selected item")).toBeVisible();
+  });
+
+  it("distinguishes no defaults, unavailable defaults and catalogue loading or failure for regular and direct groups", () => {
+    const current = structuredClone(catalogue);
+    const mainLine = current.items[0]!.subBaskets[0]!.mainLines[0]!;
+    mainLine.showByDefault = false;
+    delete current.items[0]!.subBaskets[0]!.temporaryItems![0]!.showByDefault;
+    current.items[0]!.directTemporaryItems = [{ ...mainLine, id: "direct", mainLineId: "direct", itemType: "temporary", subBasketId: null }];
+    const props = { rooms, activeRoomId: rooms[0]!.id, onSelectRoom: vi.fn(), catalogue: current, lines: [],
+      selectedMainBasketIds: new Set(["basket-pop"]), itemPresentation: "catalogue" as const,
+      onUpdateLine: vi.fn(), onRefreshAvailableItems: vi.fn(), refreshingAvailableItems: false,
+      roomTotal: () => 0, roomIcons: {}, moneyPaise, editable: true };
+    const view = render(<ConfiguredEstimateBuilder {...props} />);
+    expect(within(screen.getByRole("region", { name: "NA" })).getByText("No default items are configured for this Sub-Basket.")).toBeVisible();
+    expect(within(screen.getByRole("region", { name: "Direct items in POP / Gypsum" }))
+      .getByText("No default direct items are configured for this Main Basket.")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Add items" })).toBeEnabled();
+    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+    view.rerender(<ConfiguredEstimateBuilder {...props} availableItemsState="loading" />);
+    expect(screen.queryByText("No default items are configured for this Sub-Basket.")).not.toBeInTheDocument();
+    expect(screen.getByText("Loading available items…")).toBeVisible();
+    view.rerender(<ConfiguredEstimateBuilder {...props} availableItemsState="error" />);
+    expect(screen.getByRole("button", { name: "Retry available items" })).toBeVisible();
+    expect(screen.queryByText("No default items are configured for this Sub-Basket.")).not.toBeInTheDocument();
+    const unpriced = structuredClone(current);
+    Object.assign(unpriced.items[0]!.subBaskets[0]!.mainLines[0]!, { showByDefault: true, hasConfiguredBasePrice: false });
+    view.rerender(<ConfiguredEstimateBuilder {...props} catalogue={unpriced} />);
+    expect(within(screen.getByRole("region", { name: "NA" })).getByText("Default items are unavailable in the current Configuration.")).toBeVisible();
+    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+  });
+
+  it("retains explicit edits while unused defaults disappear during refresh", async () => {
+    const user = userEvent.setup(), current = structuredClone(catalogue), changed = vi.fn();
+    const view = render(<LiveBuilder availableCatalogue={current} itemPresentation="catalogue" onLinesChange={changed} />);
+    fireEvent.change(screen.getByRole("spinbutton", { name: /Quantity.*POP false ceiling/ }), { target: { value: "7" } });
+    const next = structuredClone(current);
+    next.items[0]!.subBaskets[0]!.mainLines[0]!.showByDefault = false;
+    next.items[0]!.subBaskets[0]!.temporaryItems![0]!.showByDefault = false;
+    view.rerender(<LiveBuilder availableCatalogue={next} itemPresentation="catalogue" onLinesChange={changed} />);
+    expect(screen.getByRole("spinbutton", { name: /Quantity.*POP false ceiling/ })).toHaveValue(7);
+    expect(screen.getByRole("checkbox", { name: /POP false ceiling/ })).not.toBeChecked();
+    expect(screen.queryByRole("checkbox", { name: /Cove in Gypsum/ })).not.toBeInTheDocument();
+    expect(screen.getByText("0 selected items")).toBeVisible();
+    expect(changed).toHaveBeenCalledTimes(1);
+    await user.click(screen.getByRole("checkbox", { name: /POP false ceiling/ }));
+    expect(screen.getByRole("spinbutton", { name: /Quantity.*POP false ceiling/ })).toHaveValue(7);
+    expect(screen.getByRole("checkbox", { name: /POP false ceiling/ })).toBeChecked();
+    expect(changed.mock.lastCall?.[0]).toEqual([expect.objectContaining({ included: true, quantity: 7 })]);
+  });
+
+  it("returns focus to Add items when a focused unused preview is no longer a default", async () => {
+    const user = userEvent.setup(), current = structuredClone(catalogue), changed = vi.fn();
+    const view = render(<LiveBuilder availableCatalogue={current} itemPresentation="catalogue" onLinesChange={changed} />);
+    await user.click(screen.getByRole("spinbutton", { name: /Quantity.*Cove in Gypsum/ }));
+    expect(screen.getByRole("spinbutton", { name: /Quantity.*Cove in Gypsum/ })).toHaveFocus();
+    const next = structuredClone(current);
+    next.items[0]!.subBaskets[0]!.temporaryItems![0]!.showByDefault = false;
+    view.rerender(<LiveBuilder availableCatalogue={next} itemPresentation="catalogue" onLinesChange={changed} />);
+    expect(screen.queryByRole("checkbox", { name: /Cove in Gypsum/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add items" })).toHaveFocus();
+    expect(changed).not.toHaveBeenCalled();
+  });
+
   it("defaults to description-only even when internal metadata is supplied", () => {
     const line = { ...chosen()[0]!, tierDescriptions: { signature: "Client finish." }, tierDetails: {
       signature: { specifications: [{ id: "internal-board", name: "Private specification", brands: [{ id: "brand", name: "Private brand" }] }] }
@@ -248,7 +337,7 @@ describe("Sales direct catalogue browsing", () => {
       onUpdateLine={onUpdateLine} onUpdateAvailableLine={onUpdateAvailableLine} onRefreshAvailableItems={vi.fn()} refreshingAvailableItems={false}
       roomTotal={() => 0} roomIcons={{}} moneyPaise={moneyPaise} editable />);
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
-    expect(within(screen.getByRole("region", { name: "NA" })).getByText("No available items in this Sub Basket.")).toBeVisible();
+    expect(within(screen.getByRole("region", { name: "NA" })).getByText("Default items are unavailable in the current Configuration.")).toBeVisible();
     expect(screen.getByText("0 selected items")).toBeVisible();
     expect(screen.queryByRole("navigation", { name: /item pages/ })).not.toBeInTheDocument();
     expect(onUpdateLine).not.toHaveBeenCalled();
@@ -349,11 +438,11 @@ describe("Sales direct catalogue browsing", () => {
     const onLinesChange = vi.fn();
     render(<LiveBuilder itemPresentation="catalogue" onLinesChange={onLinesChange} />);
     expect(screen.getByRole("region", { name: "NA" })).toBeVisible();
-    expect(screen.getByRole("region", { name: "Unused Sub Basket" })).toHaveTextContent("No available items");
+    expect(screen.getByRole("region", { name: "Unused Sub Basket" })).toHaveTextContent("No default items are configured for this Sub-Basket.");
     expect(screen.getByRole("checkbox", { name: /POP false ceiling/ })).not.toBeChecked();
     expect(screen.getByRole("checkbox", { name: /Cove in Gypsum/ })).not.toBeChecked();
     expect(screen.getByText("0 selected items")).toBeVisible();
-    expect(screen.queryByRole("button", { name: "Add items" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add items" })).toBeVisible();
     expect(onLinesChange).not.toHaveBeenCalled();
   });
 
@@ -515,7 +604,7 @@ describe("Sales direct catalogue browsing", () => {
     render(<LiveBuilder itemPresentation="catalogue" availableCatalogue={large} onLinesChange={onLinesChange} />);
     expect(screen.getAllByRole("checkbox")).toHaveLength(20);
     expect(screen.getByRole("region", { name: "Unused Sub Basket" })).toBeVisible();
-    expect(screen.getAllByText("0 selected · 1000 available")).toHaveLength(2);
+    expect(screen.getAllByText("0 selected · 1000 shown")).toHaveLength(2);
     await user.click(screen.getByRole("button", { name: "Next" }));
     expect(screen.getByRole("checkbox", { name: "Include Ceiling choice 20 in Living & Dining" })).toBeVisible();
     await user.type(screen.getByRole("searchbox", { name: "Search estimate items" }), "Ceiling choice 999");

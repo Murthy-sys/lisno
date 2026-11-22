@@ -54,12 +54,12 @@ describe("inline tier description persistence", () => {
     await user.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(api.updateKnowledgeSection).toHaveBeenCalledTimes(1));
     expect(vi.mocked(api.updateKnowledgeSection).mock.calls[0]![3]).toMatchObject({ expectedVersion: 1, expectedAggregateVersion: 10,
-      payload: { modeDescription: "Saved independently", pmcMarginBps: 1_200 } });
+      marginEdits: [], payload: { modeDescription: "Saved independently", pmcMarginBps: 1_200 } });
     expect(screen.getByRole("spinbutton", { name: "Max. PMC Margin (%)" })).toHaveValue(18);
     expect(panel.latest()?.groups.map(group => group.key)).toEqual(["pmc:margin"]);
     await act(async () => { expect(await panel.ref.current?.save()).toBe(true); });
     expect(vi.mocked(api.updateKnowledgeSection).mock.calls[1]![3]).toMatchObject({ expectedVersion: 2, expectedAggregateVersion: 11,
-      payload: { modeDescription: "Saved independently", pmcMarginBps: 1_800 } });
+      marginEdits: [{ mode: "pmc", key: "margin", bound: "maximumBps" }], payload: { modeDescription: "Saved independently", pmcMarginBps: 1_800 } });
     expect(panel.latest()?.groups).toEqual([]);
   });
 
@@ -74,7 +74,10 @@ describe("inline tier description persistence", () => {
     await waitFor(() => expect(api.updateKnowledgeSection).toHaveBeenCalledTimes(1));
     expect(vi.mocked(api.updateKnowledgeSection).mock.calls[0]![3]).toMatchObject({ applicability: "configured", payload: { modeDescription: "New tier wording" } });
     expect(rate).toHaveValue("12x");
-    expect(panel.latest()?.groups.find(group => group.key === "calculation:pmc")?.entries[0]).toMatchObject({ incomplete: true, fields: [{ value: "12x" }] });
+    await waitFor(() => {
+      const pending = panel.latest()?.groups.find(group => group.key === "calculation:pmc");
+      expect(pending?.entries[0]).toMatchObject({ incomplete: true, fields: [{ value: "12x" }] });
+    });
   });
 
   it("retains text on failure, prevents duplicate/global saves while pending, then explicitly clears acknowledged wording", async () => {
@@ -180,6 +183,7 @@ describe("Mode pending publication lifecycle", () => {
     expect(panel.latest()?.groups[0]?.entries[0]?.fields).toEqual([{ key: "maximum", label: "Max. Lisno Margin", value: "20.00%" }]);
     await act(async () => { expect(await panel.ref.current?.save()).toBe(true); });
     expect(api.updateKnowledgeSection).toHaveBeenCalledWith(item.mainLineId, "revision-1", "advanced", expect.objectContaining({
+      marginEdits: [{ mode: "sub_vendor", key: "margin", bound: "maximumBps" }],
       payload: { pmcMarginBps: 1_200, subVendorMinimumMarginBps: 1_500, subVendorMarginBps: 2_000 }
     }));
     expect(panel.latest()?.groups).toEqual([]);
@@ -205,7 +209,8 @@ describe("Mode pending publication lifecycle", () => {
     expect(panel.latest()?.groups[0]?.entries[0]?.fields).toEqual([{ key: "maximum", label: "Max. Lisno Margin", value: "20.00%" }]);
     await act(async () => { expect(await panel.ref.current?.save()).toBe(true); });
     expect(api.updateKnowledgeSection).toHaveBeenLastCalledWith(item.mainLineId, "revision-1", "advanced", expect.objectContaining({
-      expectedVersion: 2, payload: { pmcMarginBps: 1_450, subVendorMinimumMarginBps: 1_500, subVendorMarginBps: 2_000 }
+      expectedVersion: 2, marginEdits: [{ mode: "sub_vendor", key: "margin", bound: "maximumBps" }],
+      payload: { pmcMarginBps: 1_450, subVendorMinimumMarginBps: 1_500, subVendorMarginBps: 2_000 }
     }));
     expect(panel.latest()?.groups).toEqual([]);
   });
@@ -530,6 +535,20 @@ describe("component creation uses the parent Mode save", () => {
     expect(within(region).getAllByRole("textbox", { name: "Base Rate (₹)" })[0]).toHaveValue("unfinished");
     expect(screen.queryByRole("button", { name: "POP / Gypsum / New work" })).not.toBeInTheDocument();
   });
+  it.each(["untouched", "edited", "reverted"] as const)("sends only explicitly changed margin bounds for a new cost with %s percentages", async scenario => {
+    const panel = componentPanel({ inHouseComponents: [{ ...initialComponent, labor: null }] });
+    fireEvent.click(await screen.findByRole("button", { name: "POP / Gypsum / Existing work" }));
+    const component = within(screen.getByRole("region", { name: "POP / Gypsum / Existing work" }));
+    const minimum = component.getAllByRole("textbox", { name: "Min. Gross Margin (%)" })[0]!;
+    if (scenario !== "untouched") fireEvent.change(minimum, { target: { value: "30" } });
+    if (scenario === "reverted") fireEvent.change(minimum, { target: { value: "25.00" } });
+    fireEvent.change(component.getAllByRole("textbox", { name: "Base Rate (₹)" })[0]!, { target: { value: "32" } });
+    await act(async () => { expect(await panel.ref.current?.save()).toBe(true); });
+    const saved = vi.mocked(api.updateKnowledgeSection).mock.calls[0]![3];
+    expect(saved.marginEdits).toEqual(scenario === "edited" ? [{ mode: "in_house", key: "labor", bound: "minimumBps", component: { basketId: "basket-1", subBasketId: "sub-existing" } }] : []);
+    expect(saved.payload.inHouseComponents).toMatchObject([{ labor: { baseRatePaise: 3200, minimumMarkupBps: scenario === "edited" ? 3000 : 2500, startingMarkupBps: 3500 } }]);
+  });
+
   it("rebases independent remote component edits without replacing local costs or new remote rows", async () => {
     const user = userEvent.setup();
     const second = { ...initialComponent, id: "second", subBasketId: "sub-new" };
@@ -579,6 +598,10 @@ describe("component creation uses the parent Mode save", () => {
     const { advanced, replaced } = replacementFixture();
     const original = structuredClone(advanced);
     const panel = componentPanel(advanced);
+    const destination = await screen.findByRole("button", { name: "POP / Gypsum / New work" });
+    fireEvent.click(destination);
+    const targetEditor = within(screen.getByRole("region", { name: "POP / Gypsum / New work" }));
+    fireEvent.change(targetEditor.getAllByRole("textbox", { name: "Starting Gross Margin (%)" })[0]!, { target: { value: "45" } });
     const targetRegion = await replaceFromExisting();
     expect(api.updateKnowledgeSection).not.toHaveBeenCalled();
     expect(panel.latest()?.groups.length).toBeGreaterThan(0);
@@ -596,7 +619,7 @@ describe("component creation uses the parent Mode save", () => {
     expect(calls).toHaveLength(2);
     expect(calls[0]).toEqual(calls[1]);
     expect(calls[1]).toEqual([item.mainLineId, "revision-1", "advanced", {
-      expectedVersion: 1, expectedAggregateVersion: 10, applicability: "configured",
+      expectedVersion: 1, expectedAggregateVersion: 10, applicability: "configured", marginEdits: [],
       payload: { ...advanced, inHouseComponents: [replaced] }
     }]);
     expect(advanced).toEqual(original);
@@ -620,7 +643,7 @@ describe("component creation uses the parent Mode save", () => {
     await waitFor(() => expect(JSON.stringify(panel.latest())).not.toContain("unfinished source cost"));
     await act(async () => { expect(await panel.ref.current?.save()).toBe(true); });
     expect(api.updateKnowledgeSection).toHaveBeenCalledExactlyOnceWith(item.mainLineId, "revision-1", "advanced", {
-      expectedVersion: 1, expectedAggregateVersion: 10, applicability: "configured",
+      expectedVersion: 1, expectedAggregateVersion: 10, applicability: "configured", marginEdits: [],
       payload: { ...original, inHouseComponents: [target, sibling] }
     });
     expect(panel.latest()?.groups).toEqual([]);
@@ -665,7 +688,7 @@ describe("component creation uses the parent Mode save", () => {
     await act(async () => { expect(await panel.ref.current?.save()).toBe(true); });
 
     expect(api.updateKnowledgeSection).toHaveBeenLastCalledWith(item.mainLineId, "revision-1", "advanced", {
-      expectedVersion: 2, expectedAggregateVersion: 17, applicability: "configured",
+      expectedVersion: 2, expectedAggregateVersion: 17, applicability: "configured", marginEdits: [],
       payload: { ...remote, inHouseComponents: [replaced, remoteSibling] }
     });
     expect(panel.latest()?.groups).toEqual([]);

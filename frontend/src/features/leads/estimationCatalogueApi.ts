@@ -52,6 +52,8 @@ export interface EstimationCatalogueMainLine {
   basePriceAvailability?: EstimationBasePriceAvailability;
   estimateNotes?: string[];
   clientVisible?: boolean;
+  /** Only explicit true adds an unused preview to default estimation browsing. */
+  showByDefault?: boolean;
   dimensionsMandatory?: boolean;
   dimensionRule?: EstimateDimensionRule | null;
   displayOrder: number;

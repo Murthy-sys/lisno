@@ -23,6 +23,17 @@ function calculation(payload: Row, scope: "pmc" | "sub_vendor" | "in_house_labor
   return object(map[scope]);
 }
 
+/** Read each stored bound independently for impact review, including repairable historical costs. */
+export function inHouseMarginBounds(payload: Row, component: Owner): KnowledgeSubBasketMarginRange[] {
+  const explicit = Object.hasOwn(payload, "inHouseComponents");
+  const target = Array.isArray(payload.inHouseComponents) ? payload.inHouseComponents.find(row =>
+    row?.basketId === component.basketId && row?.subBasketId === component.subBasketId) : null;
+  return (["labor", "material"] as const).map(key => {
+    const settings = explicit ? object(target?.[key]) : calculation(payload, `in_house_${key}`);
+    return { key, minimumBps: basisPoints(settings?.minimumMarkupBps), maximumBps: basisPoints(settings?.startingMarkupBps) };
+  });
+}
+
 export function subBasketMarginRanges(payload: Row, mode: KnowledgeSubBasketMarginMode): KnowledgeSubBasketMarginRange[] {
   if (mode === "in_house" && Object.hasOwn(payload, "inHouseComponents")) {
     return (readInHouseComponents(payload) ?? []).flatMap((component) => (["labor", "material"] as const).map((key) => ({
@@ -91,10 +102,9 @@ export function withSubBasketMarginDefaults(
     let matched = 0;
     let missingCosts = false;
     const patched = components.map((component) => {
-      const ownRanges = subBasketMarginRanges({ inHouseComponents: [component] }, "in_house");
       const source = options.allowIncompleteMargins
         ? pairFor({ basketId: String(component.basketId), subBasketId: component.subBasketId === null ? null : String(component.subBasketId) })
-        : comparableInHouseMarginRanges(ranges, ownRanges, owner).source;
+        : comparableInHouseMarginRanges(ranges, subBasketMarginRanges({ inHouseComponents: [component] }, "in_house"), owner).source;
       if (source.length !== 2) return component;
       const labor = object(component.labor);
       const material = object(component.material);

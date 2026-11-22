@@ -88,6 +88,7 @@ export function KnowledgeOverviewPanel({
   const settingClassName = `ui-fieldset knowledge-overview__client-visibility${configuration ? " knowledge-overview__setting" : ""}`;
   const choicesClassName = `ui-radio-group${configuration ? " knowledge-overview__choices" : ""}`;
   const clientVisible = overviewPayload.clientVisible !== false;
+  const showByDefault = overviewPayload.showByDefault === true;
   const applicableTiers = applicableKnowledgeTiers(overviewPayload);
   const tiersEnabled = applicableTiers.length > 0;
   const surfaceIds = Array.isArray(overviewPayload.surfaceIds)
@@ -192,6 +193,21 @@ export function KnowledgeOverviewPanel({
           </div>
           {!configuration ? <p id={`${visibilityId}-help`} className="knowledge-overview__source-state">{visibilityCaveat}</p> : null}
         </fieldset>
+        {configuration ? <fieldset className={settingClassName} role="radiogroup" disabled={!editable || saving} aria-describedby={`${visibilityId}-default-help`}>
+          <legend>Show this Main Line by default?</legend>
+          <p id={`${visibilityId}-default-help`} className="knowledge-overview__description">Yes shows this item in the default estimation list. No keeps it available through Add items and recommendations.</p>
+          <div className={choicesClassName}>
+            {([true, false] as const).map(value => <label className="knowledge-overview__visibility-option" key={String(value)}>
+              <Radio name={`${visibilityId}-show-by-default`} value={String(value)} checked={showByDefault === value}
+                onChange={() => {
+                  if (!editable || saving) return;
+                  onOverviewDirty("showByDefault");
+                  onOverviewPayloadChange({ ...overviewPayload, showByDefault: value });
+                }} />
+              {value ? "Yes" : "No"}
+            </label>)}
+          </div>
+        </fieldset> : null}
         {showDimensions ? <fieldset className={settingClassName} role="radiogroup" disabled={!editable || saving} aria-describedby={configuration ? `${visibilityId}-dimensions-description ${visibilityId}-dimensions-help` : `${visibilityId}-dimensions-help`}>
           <legend>Dimensions mandatory?</legend>
           {configuration ? <p id={`${visibilityId}-dimensions-description`} className="knowledge-overview__description">Require Length, Width and Height from Sales or the client.</p> : null}

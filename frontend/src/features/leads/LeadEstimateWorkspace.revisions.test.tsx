@@ -57,7 +57,7 @@ function setup(withRequest = false) {
     if (url.startsWith("/api/v1/estimation/catalogue/recommendations")) return json({ sources: [] });
     if (url.startsWith("/api/v1/estimation/catalogue?")) return json({ items: [{ id: "basket", name: "Current interiors", displayOrder: 1,
       subBaskets: [{ id: "sub", basketId: "basket", name: "Current finishes", displayOrder: 1,
-        mainLines: [{ id: "main", mainLineId: "main", basketId: "basket", subBasketId: "sub", name: "Current ceiling", displayOrder: 1,
+        mainLines: [{ id: "main", mainLineId: "main", basketId: "basket", subBasketId: "sub", name: "Current ceiling", displayOrder: 1, showByDefault: true,
           revisionId: "current-config", itemVersion: 1, revisionVersion: 1, uom: { id: "unit", code: "SQFT", name: "sq ft", decimalScale: 2 }, modeBaseRatesPaise: { pmc: 10000, sub_vendor: 10000, in_house: null } }] }] }],
       pagination: { limit: 100, offset: 0, total: 1, hasMore: false }, ineligibleLineCount: 0 });
     if (url === "/api/v1/projects/project/estimate-requirements") return json(requirementsResponse());

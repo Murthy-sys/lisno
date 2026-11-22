@@ -697,6 +697,7 @@ describe("Collaborative estimate workspace", () => {
   it("preserves editable rows excluded from the save payload, including after saving selected items", async () => {
     authState.user.role = "estimator_sales";
     const { draft, catalogue } = configuredFixture();
+    catalogue.items[0]!.subBaskets[0]!.mainLines.find(line => line.mainLineId === "internal")!.showByDefault = true;
     draft.lineItems = draft.lineItems.filter(line => line.id !== "internal-living");
     const { state, getClient, saves } = setup(draft, structuredClone(requirements), catalogue);
     const quantity = () => screen.getByRole("spinbutton", { name: /quantity.*internal finish.*living room/i });

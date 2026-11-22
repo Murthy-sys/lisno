@@ -1,6 +1,9 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
+import type { MarginChange, MarginDecision, MarginEditField, MarginMatrix } from "../src/contracts/ai-estimator-knowledge-sub-basket-margins.js";
+import { AiEstimatorKnowledgeMarginOperationModel } from "../src/models/AiEstimatorKnowledgeMarginOperation.js";
 import { AuditEventModel } from "../src/models/AuditEvent.js";
+import { UserModel } from "../src/models/User.js";
 import { AiEstimatorKnowledgeBasketModel } from "../src/models/AiEstimatorKnowledgeBasket.js";
 import { AiEstimatorKnowledgeDisplayOrderSequenceModel } from "../src/models/AiEstimatorKnowledgeDisplayOrderSequence.js";
 import { AiEstimatorKnowledgeMainLineModel } from "../src/models/AiEstimatorKnowledgeMainLine.js";
@@ -17,7 +20,7 @@ import { startMongoReplicaSet } from "./helpers/mongo-replica-set.js";
 
 const actor = { id: "margin-admin", name: "Margin Administrator", email: "margins@example.invalid", role: "super_admin" as const };
 const actorGuard = { requireReadActor: async () => actor, requireMutationActor: async () => actor };
-const models = [AuditEventModel, AiEstimatorKnowledgeBasketModel, AiEstimatorKnowledgeDisplayOrderSequenceModel,
+const models = [AuditEventModel, AiEstimatorKnowledgeMarginOperationModel, AiEstimatorKnowledgeBasketModel, AiEstimatorKnowledgeDisplayOrderSequenceModel,
   AiEstimatorKnowledgeMainLineModel, AiEstimatorKnowledgePriceVersionModel, AiEstimatorKnowledgeRevisionModel,
   AiEstimatorKnowledgeSectionModel, AiEstimatorKnowledgeSubBasketModel, AiEstimatorKnowledgeUomModel];
 let replica: Awaited<ReturnType<typeof startMongoReplicaSet>>;
@@ -42,11 +45,15 @@ function payload(different = false) {
       in_house_labor: settings(different ? 31000 : 11000, different ? 1000 : 2500, different ? 2000 : 3500),
       in_house_material: settings(different ? 71000 : 51000, different ? 500 : 2000, different ? 1500 : 3000) } };
 }
+// Seed saved sections as they existed before Sub-Baskets owned margin baselines.
+async function legacyMode(mainLineId: string, revisionId: string, content: Record<string, unknown>) {
+  await AiEstimatorKnowledgeSectionModel.updateOne({ mainLineId, revisionId, sectionKey: "advanced" }, {
+    $set: { applicability: Object.keys(content).length ? "configured" : "not_configured", payload: content }, $inc: { version: 1 }
+  });
+}
 async function create(basketId: string, subBasketId: string, name: string, content: Record<string, unknown> = payload(true), displayOrder?: number, itemType: "main_line" | "temporary" = "main_line") {
   const item = await base.item.createMainLine(actor, basketId, { name, subBasketId, displayOrder, itemType });
-  await base.item.updateSection(actor, item.mainLineId, item.draftRevisionId!, "advanced", {
-    expectedVersion: 1, expectedAggregateVersion: item.version, payload: content
-  });
+  await legacyMode(item.mainLineId, item.draftRevisionId!, content);
   return base.item.getItem(actor, item.mainLineId);
 }
 async function fixture() {
@@ -135,8 +142,7 @@ describe("current-main-line default Mode configuration", { timeout: 30_000 }, ()
   it("labels source components even when their costs are blank and no margin pair is comparable", async () => {
     const { basket, sub, source } = await fixture();
     const current = await section(source.mainLineId);
-    await base.item.updateSection(actor, source.mainLineId, source.draftRevisionId!, "advanced", { expectedVersion: current.version,
-      payload: { ...current.payload, inHouseComponents: [{ id: "blank-component", basketId: basket.id, subBasketId: sub.id, inclusions: [], exclusions: [], labor: null, material: null }] } });
+    await legacyMode(source.mainLineId, source.draftRevisionId!, { ...current.payload, inHouseComponents: [{ id: "blank-component", basketId: basket.id, subBasketId: sub.id, inclusions: [], exclusions: [], labor: null, material: null }] });
     const summary = await base.item.getSubBasketMargins(actor, basket.id, sub.id);
     expect(summary.modes.in_house.mismatchCount).toBeNull();
     expect(summary.sourceConfiguration?.modes.in_house.calculations).toEqual([
@@ -225,18 +231,15 @@ describe("current-main-line default Mode configuration", { timeout: 30_000 }, ()
     const { basket, sub, source, target } = await fixture();
     const single = settings(45678, 1000, 2000);
     const legacy = kind === "root" ? { modeCalculation: single } : { modeCalculations: { pmc: null, sub_vendor: settings(98765, 1000, 2000), in_house: single } };
-    const targetSection = await section(target.mainLineId);
-    await base.item.updateSection(actor, target.mainLineId, target.draftRevisionId!, "advanced", { expectedVersion: targetSection.version, payload: legacy });
+    await legacyMode(target.mainLineId, target.draftRevisionId!, legacy);
     const asymmetric = await base.item.getSubBasketMargins(actor, basket.id, sub.id);
     const before = await snapshot();
     expect(asymmetric.modes.in_house.mismatches[0]?.blockedReason).toMatch(kind === "root" ? /Save scoped In-house cost settings first/ : /default labor and material margins differ/);
     await expect(base.item.applySubBasketMargins(actor, basket.id, sub.id, { mode: "in_house", versionToken: asymmetric.versionToken, targetMainLineId: target.mainLineId }))
       .rejects.toMatchObject({ code: "SUB_BASKET_MARGINS_UNAVAILABLE", message: expect.stringMatching(kind === "root" ? /Save scoped In-house cost settings first/ : /default labor and material margins differ/) });
     expect(await snapshot()).toEqual(before);
-    const sourceSection = await section(source.mainLineId);
     const original = payload();
-    await base.item.updateSection(actor, source.mainLineId, source.draftRevisionId!, "advanced", { expectedVersion: sourceSection.version,
-      payload: { ...original, modeCalculations: { ...original.modeCalculations, in_house_material: settings(51000, 2500, 3500) } } });
+    await legacyMode(source.mainLineId, source.draftRevisionId!, { ...original, modeCalculations: { ...original.modeCalculations, in_house_material: settings(51000, 2500, 3500) } });
     const reviewed = await base.item.getSubBasketMargins(actor, basket.id, sub.id);
     if (kind === "root") {
       const beforeEqualDefaults = await snapshot();
@@ -283,7 +286,7 @@ describe("Sub-Basket first-main-line margins", { timeout: 30_000 }, () => {
       { ...component("target-blank", otherBasket.id, blank.id, 60000, 2000, 3000), material: null }, component("target-extra", otherBasket.id, extra.id, 70000, 0, 500)];
     for (const [item, components] of [[source, sourceComponents], [target, targetComponents]] as const) {
       const current = await section(item.mainLineId);
-      await base.item.updateSection(actor, item.mainLineId, item.draftRevisionId!, "advanced", { expectedVersion: current.version, payload: { ...current.payload, inHouseComponents: components } });
+      await legacyMode(item.mainLineId, item.draftRevisionId!, { ...current.payload, inHouseComponents: components });
     }
     const before = await section(target.mainLineId);
     const summary = await base.item.getSubBasketMargins(actor, basket.id, sub.id);
@@ -373,7 +376,7 @@ describe("Sub-Basket first-main-line margins", { timeout: 30_000 }, () => {
     const current = await section(source.mainLineId);
     const next = { ...current.payload, subVendorMarginBps: 0 };
     delete next.subVendorMinimumMarginBps;
-    await base.item.updateSection(actor, source.mainLineId, source.draftRevisionId!, "advanced", { expectedVersion: current.version, payload: next });
+    await legacyMode(source.mainLineId, source.draftRevisionId!, next);
     const summary = await base.item.getSubBasketMargins(actor, basket.id, sub.id);
     expect(summary.modes.sub_vendor.ranges).toEqual([{ key: "margin", minimumBps: 0, maximumBps: 0 }]);
     await base.item.applySubBasketMargins(actor, basket.id, sub.id, { mode: "sub_vendor", versionToken: summary.versionToken });
@@ -413,8 +416,7 @@ describe("Sub-Basket first-main-line margins", { timeout: 30_000 }, () => {
     await AiEstimatorKnowledgeRevisionModel.updateOne({ _id: source.draftRevisionId }, { $set: { status: "active", contentDigest: "historic-source" } });
     await AiEstimatorKnowledgeMainLineModel.updateOne({ _id: source.mainLineId }, { $set: { activeRevisionId: source.draftRevisionId, draftRevisionId: null, status: "active" } });
     const draft = await base.item.createRevision(actor, source.mainLineId, { expectedVersion: source.version });
-    const current = await section(source.mainLineId);
-    await base.item.updateSection(actor, source.mainLineId, draft.draftRevisionId!, "advanced", { expectedVersion: current.version, payload: {} });
+    await legacyMode(source.mainLineId, draft.draftRevisionId!, {});
     const summary = await base.item.getSubBasketMargins(actor, basket.id, sub.id);
     expect(summary.source?.mainLineId).toBe(source.mainLineId);
     for (const mode of ["pmc", "sub_vendor", "in_house"] as const) expect(summary.modes[mode]).toMatchObject({ mismatchCount: null, canApply: false });
@@ -550,5 +552,320 @@ describe("Sub-Basket first-main-line margins", { timeout: 30_000 }, () => {
       { mode: mode as "pmc" | "sub_vendor", versionToken: summary.versionToken })));
     expect(results.filter(({ status }) => status === "fulfilled")).toHaveLength(1);
     expect(results.find(({ status }) => status === "rejected")).toMatchObject({ reason: { code: "VERSION_CONFLICT" } });
+  });
+});
+
+describe("Sub-Basket margin decisions", { timeout: 30_000 }, () => {
+  const premium = { tier: "premium", mode: "sub_vendor" } as const;
+  const pair = (maximumBps: number) => [{ key: "margin" as const, minimumBps: 2000, maximumBps }];
+  const edit = (...changes: MarginChange[]): MarginDecision => ({ kind: "edit", changes });
+  const approve = (mainLineId: string): MarginDecision => ({ kind: "approve", candidate: { ...premium, mainLineId } });
+
+  async function review(matrix: MarginMatrix, decision: MarginDecision, operationId: string) {
+    const command = { versionToken: matrix.versionToken, decision };
+    const preview = await base.item.previewMarginDecision(actor, matrix.basketId, matrix.subBasketId, command);
+    return { preview, input: { ...command, reviewToken: preview.reviewToken, operationId } };
+  }
+
+  async function tiersFixture() {
+    const { basket, sub, source, target } = await fixture();
+    const competitor = await create(basket.id, sub.id, "Temporary competitor", payload(true), 3, "temporary");
+    for (const [line, max] of [[source, 3000], [target, 3000], [competitor, 4000]] as const) {
+      const saved = await section(line.mainLineId);
+      const tiers = Object.fromEntries([["premium", max], ["functional", 2500], ["default", 5000]].map(([tier, maximum]) => [
+        tier, { applicability: "configured", payload: { ...payload(), subVendorMinimumMarginBps: 2000, subVendorMarginBps: maximum } }
+      ]));
+      await legacyMode(line.mainLineId, line.draftRevisionId!, { ...saved.payload, tierConfigurations: tiers });
+    }
+    return { basket, sub, source, target, competitor };
+  }
+
+  async function savePremium(line: Awaited<ReturnType<typeof create>>, maximum: number) {
+    const current = await base.item.getSection(actor, line.mainLineId, line.draftRevisionId!, "advanced", "premium");
+    return base.item.updateSection(actor, line.mainLineId, line.draftRevisionId!, "advanced", {
+      modeTier: "premium", expectedVersion: current.version, payload: { ...current.payload, subVendorMarginBps: maximum }
+    });
+  }
+
+  async function savedModePayload(mainLineId: string, revisionId?: string) {
+    const item = await base.item.getItem(actor, mainLineId);
+    const section = await AiEstimatorKnowledgeSectionModel.findOne({
+      mainLineId, revisionId: revisionId ?? item.draftRevisionId ?? item.activeRevisionId, sectionKey: "advanced"
+    }).lean().exec();
+    if (!section) throw new Error("Missing saved Mode section");
+    return section.payload;
+  }
+
+  it("counts saved field edits only, preserves independent pending scopes, and never promotes a copied or legacy difference", async () => {
+    const { basket, sub, source, competitor } = await tiersFixture();
+    const read = () => base.item.getMarginMatrix(actor, basket.id, sub.id);
+    const save = async (changes: Record<string, unknown>, hints: MarginEditField[]) => {
+      const current = await base.item.getSection(actor, source.mainLineId, source.draftRevisionId!, "advanced", "premium");
+      return base.item.updateSection(actor, source.mainLineId, source.draftRevisionId!, "advanced", {
+        modeTier: "premium", expectedVersion: current.version, payload: { ...current.payload, ...changes }, marginEdits: hints
+      });
+    };
+    const vendorMax = { mode: "sub_vendor", key: "margin", bound: "maximumBps" } as const;
+    const pmcMax = { mode: "pmc", key: "margin", bound: "maximumBps" } as const;
+    expect((await read()).exceptions).toEqual([]);
+    await expect(review(await read(), approve(competitor.mainLineId), "historic-mismatch")).rejects.toMatchObject({ code: "MARGIN_EXCEPTION_UNAVAILABLE" });
+
+    await save({ modeDescription: "Description only" }, [vendorMax]);
+    expect((await read()).exceptions).toEqual([]);
+    await save({ modeDescription: "Mixed save", subVendorMarginBps: 3500, pmcMarginBps: 1600 }, [vendorMax, pmcMax]);
+    const after = await read();
+    expect(after.exceptions).toHaveLength(2);
+    const sourceNow = await base.item.getItem(actor, source.mainLineId);
+    const copied = await base.item.duplicate(actor, source.mainLineId, { expectedVersion: sourceNow.version, name: "Copied differing ceiling" });
+    const latest = await read();
+    expect(latest.exceptions).toEqual(after.exceptions);
+    await expect(review(latest, approve(copied.mainLineId), "copied")).rejects.toMatchObject({ code: "MARGIN_EXCEPTION_UNAVAILABLE" });
+    await save({ subVendorMarginBps: 4000 }, [vendorMax]);
+    await save({ modeDescription: "Unrelated later save" }, []);
+    expect((await read()).exceptions).toHaveLength(2);
+    await save({ subVendorMarginBps: 3000 }, [vendorMax]);
+    expect((await read()).exceptions.map(entry => entry.mode)).toEqual(["pmc"]);
+    await save({ subVendorMarginBps: 3500 }, [vendorMax]);
+    const { input } = await review(await read(), approve(source.mainLineId), "one-pending-scope");
+    const beforeFailure = await snapshot();
+    const failing = harness({ appendInMongoTransaction: async (event, session) => {
+      if (event.action === "ai_estimator_knowledge_sub_basket_margin_exception_approved") throw new Error("Injected pending approval failure");
+      return base.audit.appendInMongoTransaction(event, session);
+    } });
+    await expect(failing.item.commitMarginDecision(actor, basket.id, sub.id, input)).rejects.toThrow("Injected pending approval failure");
+    expect(await snapshot()).toEqual(beforeFailure);
+    await base.item.commitMarginDecision(actor, basket.id, sub.id, input);
+    expect((await read()).exceptions).toMatchObject([{ mainLineId: source.mainLineId, tier: "premium", mode: "pmc" }]);
+    const stored = await AiEstimatorKnowledgeMainLineModel.findById(source.mainLineId).lean();
+    expect(stored!.pendingMarginEdits).toMatchObject([{ mode: "pmc", actorId: actor.id }]);
+    expect((await base.item.getSubBasketMargins(actor, basket.id, sub.id, "premium")).exceptions).toEqual((await read()).exceptions);
+  });
+
+  it("keeps an established first-line default when percentages are generated by a non-margin save", async () => {
+    const { basket, sub, source } = await tiersFixture();
+    const current = await base.item.getSection(actor, source.mainLineId, source.draftRevisionId!, "advanced", "premium");
+    await base.item.updateSection(actor, source.mainLineId, source.draftRevisionId!, "advanced", {
+      modeTier: "premium", expectedVersion: current.version, marginEdits: [],
+      payload: { ...current.payload, modeDescription: "Configured without touching a margin", subVendorMarginBps: 3500 }
+    });
+    const matrix = await base.item.getMarginMatrix(actor, basket.id, sub.id);
+    expect(matrix.defaults).toContainEqual(expect.objectContaining({ ...premium, ranges: pair(3000) }));
+    expect(matrix.exceptions).toEqual([]);
+    const comparison = await base.item.getSubBasketMargins(actor, basket.id, sub.id, "premium");
+    expect(comparison.modes.sub_vendor.mismatches).toContainEqual(expect.objectContaining({ mainLineId: source.mainLineId, ranges: pair(3500) }));
+  });
+
+  it("recovers only proven legacy edits using one audit read and keeps other tiers on first new write", async () => {
+    const { basket, sub, source, competitor } = await tiersFixture();
+    const saved = await section(competitor.mainLineId);
+    // Simulate a legacy controller which did not store a per-line pending record.
+    await AiEstimatorKnowledgeMainLineModel.updateMany({ basketId: basket.id }, { $unset: { pendingMarginEdits: "" } });
+    const raw = (maximumBps: number) => [{ key: "margin", minimumBps: 2000, maximumBps }];
+    await AuditEventModel.create({
+      _id: "historic-manual", entityType: "ai_estimator_knowledge_section", entityId: saved.id, actorId: actor.id,
+      action: "ai_estimator_knowledge_section_updated", occurredAt: new Date(),
+      oldValues: { mainLineId: competitor.mainLineId, revisionId: competitor.draftRevisionId, sectionKey: "advanced" },
+      newValues: { sectionVersion: saved.version, aggregateVersion: 2, basketId: basket.id, subBasketId: sub.id, modeTier: "premium",
+        manualMarginChanges: [{ mode: "sub_vendor", before: raw(3000), after: raw(4000) }] }
+    });
+    const reader = vi.spyOn(AuditEventModel, "find");
+    const before = await base.item.getMarginMatrix(actor, basket.id, sub.id);
+    expect(reader).toHaveBeenCalledTimes(1);
+    expect(before.exceptions).toMatchObject([{ mainLineId: competitor.mainLineId, ...premium }]);
+    expect(await AiEstimatorKnowledgeMainLineModel.countDocuments({ basketId: basket.id, pendingMarginEdits: { $exists: true } })).toBe(0);
+    const functional = await base.item.getSection(actor, competitor.mainLineId, competitor.draftRevisionId!, "advanced", "functional");
+    await base.item.updateSection(actor, competitor.mainLineId, competitor.draftRevisionId!, "advanced", {
+      modeTier: "functional", expectedVersion: functional.version, payload: { ...functional.payload, pmcMarginBps: 1400 },
+      marginEdits: [{ mode: "pmc", key: "margin", bound: "maximumBps" }]
+    });
+    const both = await base.item.getMarginMatrix(actor, basket.id, sub.id);
+    expect(both.exceptions.map(entry => entry.tier)).toEqual(["premium", "functional"]);
+    const record = await AiEstimatorKnowledgeMainLineModel.findById(competitor.mainLineId).lean();
+    expect(record!.pendingMarginEdits).toHaveLength(2);
+    expect((await base.item.getItem(actor, source.mainLineId)).version).toBe(source.version);
+  });
+
+  it("keeps historical component copies inspectable and rejects their promotion, even when both sides already had margins", async () => {
+    const { basket, sub, source, target } = await fixture();
+    const other = await base.reference.createSubBasket(actor, basket.id, { name: "Other component" });
+    const first = { basketId: basket.id, subBasketId: sub.id };
+    const second = { basketId: basket.id, subBasketId: other.id };
+    const component = (id: string, identity: typeof first, maximum: number) => ({
+      id, ...identity, inclusions: [], exclusions: [], labor: settings(10_000, 1500, maximum), material: settings(20_000, 2000, 4000)
+    });
+    const ranges = (identity: typeof first, maximum: number) => [
+      { component: identity, key: "labor", minimumBps: 1500, maximumBps: maximum },
+      { component: identity, key: "material", minimumBps: 2000, maximumBps: 4000 }
+    ];
+    await legacyMode(source.mainLineId, source.draftRevisionId!, { inHouseComponents: [
+      component("first-source", first, 3000), component("second-source", second, 2500)
+    ] });
+    await legacyMode(target.mainLineId, target.draftRevisionId!, { inHouseComponents: [
+      component("first-target", first, 3000), component("second-target", second, 3000)
+    ] });
+    await AiEstimatorKnowledgeMainLineModel.updateOne({ _id: target.mainLineId }, { $unset: { pendingMarginEdits: "" } });
+    const saved = await section(target.mainLineId);
+    await AuditEventModel.create({
+      _id: "historical-component-copy", actorId: actor.id, entityType: "ai_estimator_knowledge_section", entityId: saved.id,
+      action: "ai_estimator_knowledge_section_updated", occurredAt: new Date(),
+      oldValues: { mainLineId: target.mainLineId, revisionId: target.draftRevisionId, sectionKey: "advanced" },
+      newValues: { basketId: basket.id, subBasketId: sub.id, modeTier: "signature", sectionVersion: saved.version, aggregateVersion: target.version,
+        manualMarginChanges: [{ mode: "in_house", before: [...ranges(first, 3000), ...ranges(second, 2500)],
+          after: [...ranges(first, 3000), ...ranges(second, 3000)] }] }
+    });
+    const matrix = await base.item.getMarginMatrix(actor, basket.id, sub.id);
+    expect(matrix.exceptions).toEqual([]);
+    const summary = await base.item.getSubBasketMargins(actor, basket.id, sub.id, "signature");
+    expect(summary.exceptions).toEqual([]);
+    expect(summary.modes.in_house.mismatches.map(entry => entry.mainLineId)).toContain(target.mainLineId);
+    const decision = { kind: "approve", candidate: { mainLineId: target.mainLineId, tier: "signature", mode: "in_house", component: second } } as const;
+    await expect(base.item.previewMarginDecision(actor, basket.id, sub.id, { decision, versionToken: matrix.versionToken }))
+      .rejects.toMatchObject({ code: "MARGIN_EXCEPTION_UNAVAILABLE" });
+    await expect(base.item.commitMarginDecision(actor, basket.id, sub.id, {
+      decision, versionToken: matrix.versionToken, reviewToken: "a".repeat(64), operationId: "historical-copy"
+    })).rejects.toMatchObject({ code: "MARGIN_EXCEPTION_UNAVAILABLE" });
+    expect(await AuditEventModel.countDocuments({ action: "ai_estimator_knowledge_sub_basket_margin_exception_approved" })).toBe(0);
+  });
+
+  it("loads the full matrix with one membership, revision, and Mode-section query regardless of tier count", async () => {
+    const { basket, sub } = await tiersFixture();
+    const lines = vi.spyOn(AiEstimatorKnowledgeMainLineModel, "find");
+    const revisions = vi.spyOn(AiEstimatorKnowledgeRevisionModel, "find");
+    const sections = vi.spyOn(AiEstimatorKnowledgeSectionModel, "find");
+    const matrix = await base.item.getMarginMatrix(actor, basket.id, sub.id);
+    expect(matrix.totalMainLines).toBe(3);
+    expect(lines).toHaveBeenCalledTimes(1);
+    expect(revisions).toHaveBeenCalledTimes(1);
+    expect(sections).toHaveBeenCalledTimes(1);
+  });
+
+  it("rechecks the stored actor before exposing the matrix, committing, or returning an earlier receipt", async () => {
+    const { basket, sub } = await tiersFixture();
+    const secured = createAiEstimatorKnowledgeItemService({ audit: base.audit });
+    const reader = { ...actor, id: "margin-reader", role: "procurement" as const };
+    for (const user of [actor, reader]) {
+      const email = user.id + "@example.invalid";
+      await UserModel.create({ _id: user.id, name: user.name, email, emailNormalized: email, role: user.role, passwordHash: "unused-in-test", active: true });
+    }
+    const matrix = await secured.getMarginMatrix(actor, basket.id, sub.id);
+    const { input } = await review(matrix, edit({ ...premium, ranges: pair(4000) }), "confirmed-operation");
+    await expect(secured.getMarginMatrix(reader, basket.id, sub.id)).rejects.toMatchObject({ status: 403 });
+    await expect(secured.commitMarginDecision(reader, basket.id, sub.id, input)).rejects.toMatchObject({ status: 403 });
+    await expect(secured.commitMarginDecision({ ...actor, id: reader.id }, basket.id, sub.id, input)).rejects.toMatchObject({ status: 401 });
+    await secured.commitMarginDecision(actor, basket.id, sub.id, input);
+    await UserModel.updateOne({ _id: actor.id }, { $set: { active: false } });
+    await expect(secured.commitMarginDecision(actor, basket.id, sub.id, input)).rejects.toMatchObject({ status: 401 });
+  });
+
+  it("keeps same-value edits separate from applying or approving a competing line", async () => {
+    const { basket, sub } = await tiersFixture();
+    const matrix = await base.item.getMarginMatrix(actor, basket.id, sub.id);
+    const { input } = await review(matrix, edit({ ...premium, ranges: pair(3000) }), "keep-current-default");
+    const auditCount = await AuditEventModel.countDocuments();
+    const result = await base.item.commitMarginDecision(actor, basket.id, sub.id, input);
+    expect(result.updatedMainLineIds).toEqual([]);
+    expect(await base.item.getMarginMatrix(actor, basket.id, sub.id)).toEqual(matrix);
+    expect(await AuditEventModel.countDocuments()).toBe(auditCount);
+    expect(await base.item.commitMarginDecision(actor, basket.id, sub.id, input)).toEqual({ ...result, alreadyApplied: true });
+  });
+
+  it("registers a first-line edit against its pre-edit default, then approves only that Premium margin across eligible lines", async () => {
+    const { basket, sub, source, target, competitor } = await tiersFixture();
+    const second = await base.reference.createSubBasket(actor, basket.id, { name: "Another ceiling" });
+    const outsider = await create(basket.id, second.id, "Different line", payload(true));
+    const outsideBefore = await section(outsider.mainLineId);
+    const stale = await base.item.getMarginMatrix(actor, basket.id, sub.id);
+    expect(stale.baselineVersion).toBe(0);
+    await savePremium(source, 3500);
+    const matrix = await base.item.getMarginMatrix(actor, basket.id, sub.id);
+    expect(matrix.baselineVersion).toBe(1);
+    expect(matrix.defaults).toContainEqual(expect.objectContaining({ ...premium, ranges: pair(3000), provenance: "existing" }));
+    expect(matrix.exceptions).toContainEqual(expect.objectContaining({ ...premium, mainLineId: source.mainLineId, ranges: pair(3500) }));
+    expect(await AuditEventModel.countDocuments({ action: "ai_estimator_knowledge_sub_basket_margin_exception_approved" })).toBe(0);
+    await expect(review(stale, approve(source.mainLineId), "stale")).rejects.toMatchObject({ code: "VERSION_CONFLICT" });
+
+    // An active-only sibling receives a draft; its original financial configuration remains byte-for-byte stable.
+    await AiEstimatorKnowledgeSectionModel.updateOne({ mainLineId: target.mainLineId, sectionKey: "advanced" },
+      { $set: { "payload.tierConfigurations.premium.payload.dependencies": [{ id: "historical-dependency",
+        targetBasketId: basket.id, targetMainLineId: "removed-main-line", reason: "Historical dependency", active: false }] } });
+    await AiEstimatorKnowledgeRevisionModel.updateOne({ _id: target.draftRevisionId }, { $set: { status: "active", contentDigest: "immutable-approved" } });
+    await AiEstimatorKnowledgeMainLineModel.updateOne({ _id: target.mainLineId }, { $set: { status: "active", activeRevisionId: target.draftRevisionId, draftRevisionId: null } });
+    const activeBefore = await savedModePayload(target.mainLineId);
+    const fresh = await base.item.getMarginMatrix(actor, basket.id, sub.id);
+    const { preview, input } = await review(fresh, approve(source.mainLineId), "approve-premium");
+    expect(preview.impacts).toHaveLength(1);
+    expect(preview.impacts[0]).toMatchObject({ ...premium, previous: pair(3000), ranges: pair(3500), blockers: [] });
+    expect(preview.impacts[0]!.competing).toContainEqual(expect.objectContaining({ mainLineId: competitor.mainLineId, ranges: pair(4000) }));
+    const result = await base.item.commitMarginDecision(actor, basket.id, sub.id, input);
+    expect(new Set(result.updatedMainLineIds)).toEqual(new Set([target.mainLineId, competitor.mainLineId]));
+    const verified = await base.item.getMarginMatrix(actor, basket.id, sub.id);
+    expect(verified.defaults).toContainEqual(expect.objectContaining({ ...premium, ranges: pair(3500), provenance: "approved" }));
+    expect(verified.exceptions.filter(entry => entry.tier === "premium" && entry.mode === "sub_vendor")).toEqual([]);
+    expect(await savedModePayload(target.mainLineId, target.draftRevisionId!)).toEqual(activeBefore);
+    expect(await savedModePayload(target.mainLineId)).toEqual({ ...activeBefore,
+      tierConfigurations: { ...activeBefore.tierConfigurations,
+        premium: { ...activeBefore.tierConfigurations.premium,
+          payload: { ...activeBefore.tierConfigurations.premium.payload, dependencies: [], subVendorMarginBps: 3500 } } } });
+    expect(await section(outsider.mainLineId)).toEqual(outsideBefore);
+    expect(await AuditEventModel.findOne({ action: "ai_estimator_knowledge_sub_basket_margin_exception_approved" }).lean())
+      .toMatchObject({ actorId: actor.id, entityId: sub.id, newValues: { operationId: "approve-premium", candidateRevisionId: source.draftRevisionId } });
+
+    await savePremium(source, 4500);
+    const retry = await base.item.commitMarginDecision(actor, basket.id, sub.id, input);
+    expect(retry).toEqual({ ...result, alreadyApplied: true });
+    expect((await base.item.getMarginMatrix(actor, basket.id, sub.id)).exceptions)
+      .toContainEqual(expect.objectContaining({ ...premium, mainLineId: source.mainLineId, ranges: pair(4500) }));
+    await expect(base.item.commitMarginDecision(actor, basket.id, sub.id, { ...input, decision: approve(competitor.mainLineId) }))
+      .rejects.toMatchObject({ code: "VERSION_CONFLICT" });
+    expect(await AuditEventModel.countDocuments({ action: "ai_estimator_knowledge_sub_basket_margin_exception_approved" })).toBe(1);
+  });
+
+  it("commits selected tiers atomically, rolls back target drafts and receipts on audit failure, and survives source archival", async () => {
+    const { basket, sub, source, target } = await tiersFixture();
+    await AiEstimatorKnowledgeRevisionModel.updateOne({ _id: target.draftRevisionId }, { $set: { status: "active", contentDigest: "active-before-rollback" } });
+    await AiEstimatorKnowledgeMainLineModel.updateOne({ _id: target.mainLineId }, { $set: { status: "active", activeRevisionId: target.draftRevisionId, draftRevisionId: null } });
+    const matrix = await base.item.getMarginMatrix(actor, basket.id, sub.id);
+    const changes = edit({ ...premium, ranges: pair(4500) }, { tier: "functional", mode: "pmc",
+      ranges: [{ key: "margin", minimumBps: 1300, maximumBps: 1850 }] });
+    const { input } = await review(matrix, changes, "two-tiers");
+    const before = await snapshot();
+    const failing = harness({ appendInMongoTransaction: async (event, session) => {
+      if (event.action === "ai_estimator_knowledge_sub_basket_margins_updated") throw new Error("Injected final audit failure");
+      return base.audit.appendInMongoTransaction(event, session);
+    } });
+    await expect(failing.item.commitMarginDecision(actor, basket.id, sub.id, input)).rejects.toThrow("Injected final audit failure");
+    expect(await snapshot()).toEqual(before);
+    const concurrent = await Promise.all([1, 2].map(() => base.item.commitMarginDecision(actor, basket.id, sub.id, input)));
+    expect(concurrent.map(result => result.alreadyApplied).sort()).toEqual([false, true]);
+    const got = await savedModePayload(target.mainLineId);
+    expect(got.tierConfigurations.premium.payload).toMatchObject({ subVendorMarginBps: 4500, pmcMarginBps: 1800 });
+    expect(got.tierConfigurations.functional.payload).toMatchObject({ subVendorMarginBps: 2500, pmcMinimumMarginBps: 1300, pmcMarginBps: 1850 });
+    expect(got).toMatchObject({ subVendorMarginBps: 500, pmcMarginBps: 1500 });
+    await AiEstimatorKnowledgeMainLineModel.updateOne({ _id: source.mainLineId }, { $set: { status: "archived" } });
+    expect((await base.item.getMarginMatrix(actor, basket.id, sub.id)).defaults)
+      .toContainEqual(expect.objectContaining({ ...premium, ranges: pair(4500), provenance: "approved" }));
+    expect(await AuditEventModel.countDocuments({ action: "ai_estimator_knowledge_sub_basket_margins_updated" })).toBe(1);
+  });
+
+  it("keeps a first newly entered tier unapproved and rejects approval after membership or candidate changes", async () => {
+    const basket = await base.reference.createBasket(actor, { name: "Unconfigured" });
+    const sub = await base.reference.createSubBasket(actor, basket.id, { name: "Blank tiers" });
+    const source = await create(basket.id, sub.id, "First line", {});
+    await base.item.updateSection(actor, source.mainLineId, source.draftRevisionId!, "advanced", {
+      modeTier: "premium", expectedVersion: (await section(source.mainLineId)).version,
+      marginEdits: [{ mode: "sub_vendor", key: "margin", bound: "maximumBps" }],
+      payload: { subVendorMinimumMarginBps: 2000, subVendorMarginBps: 3500 }
+    });
+    const matrix = await base.item.getMarginMatrix(actor, basket.id, sub.id);
+    expect(matrix.defaults).toContainEqual(expect.objectContaining({ ...premium, ranges: [], provenance: "unset" }));
+    expect(matrix.exceptions).toContainEqual(expect.objectContaining({ ...premium, mainLineId: source.mainLineId, ranges: pair(3500) }));
+    const first = await review(matrix, approve(source.mainLineId), "before-membership");
+    await create(basket.id, sub.id, "Added after review", {});
+    await expect(base.item.commitMarginDecision(actor, basket.id, sub.id, first.input)).rejects.toMatchObject({ code: "VERSION_CONFLICT" });
+    const fresh = await review(await base.item.getMarginMatrix(actor, basket.id, sub.id), approve(source.mainLineId), "before-edit");
+    await savePremium(source, 4500);
+    const before = await snapshot();
+    await expect(base.item.commitMarginDecision(actor, basket.id, sub.id, fresh.input)).rejects.toMatchObject({ code: "VERSION_CONFLICT" });
+    expect(await snapshot()).toEqual(before);
   });
 });

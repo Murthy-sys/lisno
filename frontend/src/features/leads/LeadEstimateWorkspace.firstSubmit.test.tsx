@@ -93,7 +93,7 @@ function setup(options: { ownerId?: string; projectId?: string | null; mutateSav
       canResolve: true, requirements: [], mainBaskets: [], rooms: [], indicativeTotalPaise: null, pricingComplete: false });
     if (path === "/estimation/catalogue") return response({ items: [{ id: "basket", name: "Finishes", displayOrder: 1,
       subBaskets: [{ id: "surfaces", basketId: "basket", name: "Surfaces", displayOrder: 1, mainLines: catalogueLines.map((line, index) => ({
-        id: line.id, mainLineId: line.id, basketId: "basket", subBasketId: "surfaces", name: line.name, displayOrder: index,
+        id: line.id, mainLineId: line.id, basketId: "basket", subBasketId: "surfaces", name: line.name, displayOrder: index, showByDefault: true,
         revisionId: `revision-${line.id}`, itemVersion: 2, revisionVersion: 3, itemStatus: "active", revisionStatus: "active",
         uom: { id: "sqft", name: "sq ft", code: "SQFT", decimalScale: 2 },
         modeBaseRatesPaise: { pmc: line.ratePaise, sub_vendor: line.ratePaise, in_house: null }

@@ -41,6 +41,8 @@ export interface EstimatorCatalogueLine {
   subBasketId: string | null;
   itemType: "main_line" | "temporary";
   clientVisible: boolean;
+  /** Discovery metadata only; non-default sources remain available to explicit selection and saved estimates. */
+  showByDefault: boolean;
   /** Current saved base presence across all four Configuration scopes; discovery only. */
   hasConfiguredBasePrice: boolean;
   /** Validated positive bases for each exact current Configuration scope and method. */
@@ -584,6 +586,7 @@ async function projectLines(
   const revisionById = new Map(revisions.map((revision) => [String(revision._id), revision]));
   const uomIdByRevision = new Map<string, string>();
   const clientVisibilityByRevision = new Map<string, boolean>();
+  const showByDefaultByRevision = new Map<string, boolean>();
   const dimensionsMandatoryByRevision = new Map<string, boolean>();
   const applicableTiersByRevision = new Map<string, KnowledgeModeTier[]>();
   for (const overview of overviews) {
@@ -593,6 +596,7 @@ async function projectLines(
         typeof payload?.uomId !== "string" || !payload.uomId) continue;
     uomIdByRevision.set(revisionId, payload.uomId);
     clientVisibilityByRevision.set(revisionId, payload.clientVisible !== false);
+    showByDefaultByRevision.set(revisionId, payload.showByDefault === true);
     dimensionsMandatoryByRevision.set(revisionId, payload.dimensionsMandatory === true);
     applicableTiersByRevision.set(revisionId, !Object.hasOwn(payload, "applicableTiers") ? ["signature"]
       : Array.isArray(payload.applicableTiers) ? KNOWLEDGE_MODE_TIERS.filter(tier => (payload.applicableTiers as unknown[]).includes(tier)) : []);
@@ -672,6 +676,7 @@ async function projectLines(
       subBasketId: raw.subBasketId ? String(raw.subBasketId) : null,
       itemType: raw.itemType === "temporary" ? "temporary" : "main_line",
       clientVisible: clientVisibilityByRevision.get(revisionId) ?? true,
+      showByDefault: showByDefaultByRevision.get(revisionId) === true,
       basePriceAvailability,
       hasConfiguredBasePrice: Object.values(basePriceAvailability).some(methods => Object.values(methods).some(Boolean)),
       name: String(raw.name), displayOrder: Number(raw.displayOrder), revisionId,
